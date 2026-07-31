@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#5b7fd4"/>
+  <rect x="112" y="144" width="288" height="256" rx="28" fill="#ffffff"/>
+  <rect x="112" y="144" width="288" height="72" rx="28" fill="#dfe7f9"/>
+  <rect x="112" y="188" width="288" height="28" fill="#dfe7f9"/>
+  <rect x="156" y="104" width="30" height="72" rx="15" fill="#ffffff"/>
+  <rect x="326" y="104" width="30" height="72" rx="15" fill="#ffffff"/>
+  <text x="256" y="352" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="132" font-weight="700" fill="#5b7fd4" text-anchor="middle">BC</text>
+</svg>

@@ -206,7 +206,7 @@ export async function quickAddCommit(text) {
       state.occ.set(data.event.instanceId, data.event);
       set({ occVersion: state.occVersion + 1, quickAddOpen: false });
       toast('Event created: ' + (data.event.title || ''), { undoable: true });
-      jumpToDate(dayKeyOfISO(data.event.start), data.event.instanceId);
+      jumpToDate(occDayKey(data.event), data.event.instanceId);
       refreshWindow();
     } else {
       set({ quickAddOpen: false });

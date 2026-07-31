@@ -37,6 +37,13 @@ export function dayKeyOfISO(iso) {
   return dayKeyOf(parseISO(iso));
 }
 
+// Day key for an occurrence. All-day events are calendar dates (the server
+// serializes them as literal dates at +00:00); read the date portion verbatim,
+// never through local-timezone conversion, or the date shifts west of UTC.
+export function occDayKey(occ) {
+  return occ.allDay ? occ.start.slice(0, 10) : dayKeyOfISO(occ.start);
+}
+
 export function todayKey() {
   return dayKeyOf(new Date());
 }

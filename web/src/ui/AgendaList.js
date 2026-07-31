@@ -5,7 +5,7 @@
 
 import { html, useState, useRef, useMemo, useEffect, useCallback } from '../../vendor/index.js';
 import {
-  parseISO, fmtTime, dateOfDayKey, fmtDayLong, dayKeyOfISO, todayKey,
+  parseISO, fmtTime, dateOfDayKey, fmtDayLong, dayKeyOfISO, occDayKey, todayKey,
 } from '../lib/dates.js';
 import { EventChip } from './EventChip.js';
 
@@ -38,7 +38,7 @@ export function AgendaList({ occurrences, calendars, dimSet, onOpenEvent, onSetA
     const byDay = new Map();
     for (const occ of occurrences) {
       if (occ.attendance === 'hidden') continue;
-      const k = dayKeyOfISO(occ.start);
+      const k = occDayKey(occ);
       let g = byDay.get(k);
       if (!g) byDay.set(k, (g = []));
       g.push(occ);

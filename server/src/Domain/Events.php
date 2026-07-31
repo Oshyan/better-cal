@@ -25,6 +25,20 @@ final class Events
     ) {
     }
 
+    /** @var array<int, \DateTimeImmutable>|null calendar id => created_at, lazy per request */
+    private ?array $calCreatedAt = null;
+
+    private function calendarCreatedAt(int $calendarId): ?\DateTimeImmutable
+    {
+        if ($this->calCreatedAt === null) {
+            $this->calCreatedAt = [];
+            foreach ($this->db->all('SELECT id, created_at FROM calendars') as $c) {
+                $this->calCreatedAt[(int) $c['id']] = Time::fromDb((string) $c['created_at']);
+            }
+        }
+        return $this->calCreatedAt[$calendarId] ?? null;
+    }
+
     // ---- Window query -------------------------------------------------
 
     /** @return list<array> occurrences, sorted start asc / end desc / title asc */
@@ -537,8 +551,15 @@ final class Events
             'description' => $row['description'] !== null ? (string) $row['description'] : null,
             'location' => $row['location'] !== null ? (string) $row['location'] : null,
             'url' => $row['url'] !== null ? (string) $row['url'] : null,
-            'start' => Time::iso($startUtc->setTimezone($tz)),
-            'end' => Time::iso($endUtc->setTimezone($tz)),
+            // All-day events are calendar dates, not instants: serialize the date
+            // in the event's own zone at a fixed +00:00 midnight so clients can
+            // read the date portion literally and never shift it across zones.
+            'start' => (int) $row['all_day'] === 1
+                ? $startUtc->setTimezone($tz)->format('Y-m-d') . 'T00:00:00+00:00'
+                : Time::iso($startUtc->setTimezone($tz)),
+            'end' => (int) $row['all_day'] === 1
+                ? $endUtc->setTimezone($tz)->format('Y-m-d') . 'T00:00:00+00:00'
+                : Time::iso($endUtc->setTimezone($tz)),
             'allDay' => (int) $row['all_day'] === 1,
             'tzid' => $tzid,
             'recurring' => !empty($row['rrule']) || !empty($row['recurrence_parent_id']),
@@ -550,8 +571,25 @@ final class Events
             'styleJson' => $style ?: null,
             'createdAt' => Time::iso($createdAt),
             'updatedAt' => Time::iso(Time::fromDb((string) $row['updated_at'])),
-            'isNew' => $createdAt > Time::nowUtc()->sub(new \DateInterval('PT' . self::NEW_WINDOW_HOURS . 'H')),
+            'isNew' => $this->isNew($row, $createdAt),
         ];
+    }
+
+    /**
+     * "New" means it recently appeared on YOUR calendar. A feed's initial
+     * import is not new (everything would light up); only events that show up
+     * in a poll after the subscription settles (5 min grace) count.
+     */
+    private function isNew(array $row, \DateTimeImmutable $createdAt): bool
+    {
+        if ($createdAt <= Time::nowUtc()->sub(new \DateInterval('PT' . self::NEW_WINDOW_HOURS . 'H'))) {
+            return false;
+        }
+        if ((string) $row['source'] !== 'feed') {
+            return true;
+        }
+        $calCreated = $this->calendarCreatedAt((int) $row['calendar_id']);
+        return $calCreated === null || $createdAt > $calCreated->add(new \DateInterval('PT5M'));
     }
 
     // ---- Helpers ------------------------------------------------------

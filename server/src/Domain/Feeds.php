@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace BetterCal\Domain;
 
+use BetterCal\Dav\ChangeLog;
 use BetterCal\Http\HttpError;
 use BetterCal\Infra\Db;
 use BetterCal\Support\Time;
@@ -117,7 +118,9 @@ final class Feeds
 
         $seen = [];
         $upserts = 0;
-        $this->db->tx(function () use ($parsed, $existingByKey, &$masterIdByUid, &$seen, &$upserts, $calendarId, $userId): void {
+        $changedUids = [];
+        $newMasterUids = [];
+        $this->db->tx(function () use ($parsed, $existingByKey, &$masterIdByUid, &$seen, &$upserts, &$changedUids, &$newMasterUids, $calendarId, $userId): void {
             foreach ($parsed as $ev) {
                 $key = $ev['uid'] . '|' . ($ev['recurrence_instance_utc'] ?? '');
                 if (isset($seen[$key])) {
@@ -153,7 +156,9 @@ final class Feeds
                     ]);
                     if ($ev['recurrence_instance_utc'] === null) {
                         $masterIdByUid[(string) $ev['uid']] = $id;
+                        $newMasterUids[(string) $ev['uid']] = true;
                     }
+                    $changedUids[(string) $ev['uid']] = true;
                     $upserts++;
                     continue;
                 }
@@ -174,6 +179,7 @@ final class Feeds
                 if ($changed !== []) {
                     $changed['updated_at'] = Time::nowDb();
                     $this->db->update('events', $changed, 'id = ?', [(int) $current['id']]);
+                    $changedUids[(string) $current['uid']] = true;
                     $upserts++;
                 }
             }
@@ -182,9 +188,25 @@ final class Feeds
             foreach ($existingByKey as $key => $row) {
                 if (!isset($seen[$key])) {
                     $this->db->run('DELETE FROM events WHERE id = ?', [(int) $row['id']]);
+                    $changedUids[(string) $row['uid']] = true;
                 }
             }
         });
+
+        // CalDAV change journal: one entry per affected object (uid).
+        foreach (array_keys($changedUids) as $uid) {
+            $uid = (string) $uid;
+            if (isset($newMasterUids[$uid])) {
+                ChangeLog::record($this->db, $calendarId, $uid, ChangeLog::OP_ADD);
+                continue;
+            }
+            $masterExists = $this->db->scalar(
+                'SELECT id FROM events WHERE calendar_id = ? AND uid = ? AND deleted_at IS NULL
+                   AND recurrence_parent_id IS NULL AND recurrence_instance_utc IS NULL',
+                [$calendarId, $uid]
+            );
+            ChangeLog::record($this->db, $calendarId, $uid, $masterExists !== null ? ChangeLog::OP_MODIFY : ChangeLog::OP_DELETE);
+        }
 
         return $upserts;
     }

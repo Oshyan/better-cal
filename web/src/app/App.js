@@ -3,7 +3,7 @@
 import { html, useState, useMemo, useEffect, useCallback } from '../../vendor/index.js';
 import { useStore, set, state, calendarMeta, shallowEq } from './store.js';
 import { loadWindow } from './api.js';
-import { moveEvent, resizeEvent, triageAttendance } from './actions.js';
+import { moveEvent, resizeEvent, triageAttendance, exitReschedule, jumpToDate } from './actions.js';
 import { installKeyboard } from './keyboard.js';
 import {
   startOfWeekKey, dayKeysOfWeek, weekIndexOfKey, addDaysKey, dateOfDayKey,
@@ -14,6 +14,7 @@ import { MonthGrid } from '../ui/MonthGrid.js';
 import { TimeGrid } from '../ui/TimeGrid.js';
 import { AgendaList } from '../ui/AgendaList.js';
 import { DayExpand } from '../ui/DayExpand.js';
+import { RescheduleBanner, RescheduleStrip, RescheduleOverlay } from '../ui/RescheduleMode.js';
 import { Toolbar } from './Toolbar.js';
 import { Sidebar } from './Sidebar.js';
 import { QuickAdd } from './QuickAdd.js';
@@ -41,6 +42,8 @@ export function App() {
       anchor: st.anchor, scrollSeq: st.scrollSeq, occVersion: st.occVersion,
       calendars: st.calendars, filterText: st.filterText,
       expandedDay: st.expandedDay, agendaShowPast: st.agendaShowPast,
+      reschedule: st.reschedule,
+      visibleMonth: st.reschedule ? st.visibleMonth : null,
     }),
     shallowEq,
   );
@@ -108,6 +111,31 @@ export function App() {
   const onCreateRange = useCallback(({ start, end, allDay }) => {
     set({ editor: { mode: 'create', draft: { start, end, allDay } } });
   }, []);
+
+  // --- reschedule mode (PRD 5.9) -------------------------------------------
+  const resched = s.reschedule;
+  const reschedOcc = resched ? state.occ.get(resched.instanceId) : null;
+
+  // The mode dies with its occurrence (a window refresh can drop it).
+  useEffect(() => {
+    if (resched && !reschedOcc) exitReschedule();
+  }, [resched, reschedOcc]);
+
+  // Film-strip center month: frozen at mode entry so the strip does not shift
+  // under the pointer while navigating.
+  const stripBase = useMemo(() => {
+    if (!resched) return null;
+    if (state.visibleMonth) return state.visibleMonth;
+    const [y, m] = state.anchor.split('-').map(Number);
+    return { year: y, month: m };
+  }, [resched]);
+
+  const onReschedMove = useCallback(({ instanceId, newStart, newEnd, targetKey }) => {
+    exitReschedule();
+    moveEvent({ instanceId, newStart, newEnd });
+    jumpToDate(targetKey, instanceId); // return the view to where the event now is
+  }, []);
+  const onJumpMonth = useCallback((firstKey) => jumpToDate(firstKey), []);
 
   if (!s.booted) {
     return html`<div class="bc-boot">Loading</div>`;
@@ -195,17 +223,32 @@ export function App() {
     />`;
   }
 
+  const reschedActive = !!(resched && reschedOcc);
+
   return html`<div class="bc-app">
     <${Toolbar} onToggleSidebar=${() => setSidebarOpen(!sidebarOpen)} />
+    ${reschedActive && html`<${RescheduleBanner} occ=${reschedOcc} onExit=${exitReschedule} />`}
     <div class="bc-main">
       <${Sidebar} open=${sidebarOpen} />
       <main class="bc-view">${view}</main>
+      ${reschedActive && html`<${RescheduleStrip}
+        year=${stripBase.year} month=${stripBase.month}
+        currentYear=${s.visibleMonth ? s.visibleMonth.year : 0}
+        currentMonth=${s.visibleMonth ? s.visibleMonth.month : 0}
+        onJumpMonth=${onJumpMonth}
+      />`}
     </div>
     ${expand}
     <${QuickAdd} />
     <${EventPopover} />
     <${EditorDrawer} />
     <${SearchOverlay} />
+    ${reschedActive && html`<${RescheduleOverlay}
+      occ=${reschedOcc}
+      cal=${calMeta[reschedOcc.calendarId]}
+      onDropConfirmed=${onReschedMove}
+      onExit=${exitReschedule}
+    />`}
     <${Toasts} />
   </div>`;
 }

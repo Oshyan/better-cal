@@ -5,7 +5,7 @@
 
 import { html, useState, useRef, useEffect } from '../../vendor/index.js';
 import { useStore, set, state } from './store.js';
-import { updateEvent, deleteEvent, triageAttendance } from './actions.js';
+import { updateEvent, deleteEvent, triageAttendance, enterReschedule } from './actions.js';
 import { isMobile, trapFocus, MOBILE_QUERY } from '../ui/DayExpand.js';
 import {
   parseISO, dateOfDayKey, fmtRange, toInputValue, fromInputValue, toISOWithOffset,
@@ -125,6 +125,7 @@ export function EventPopover() {
       ${occ.description && html`<div class="bc-pop-desc">${occ.description.length > 280 ? occ.description.slice(0, 280) + '…' : occ.description}</div>`}
       ${occ.url && html`<a class="bc-pop-url" href=${occ.url} target="_blank" rel="noopener">Event link ↗</a>`}
       <div class="bc-pop-actions">
+        ${!isFeed && html`<button type="button" class="bc-btn" title="Reschedule (r)" onClick=${() => enterReschedule(occ.instanceId)}>Reschedule</button>`}
         ${!isFeed && html`<button type="button" class="bc-btn" onClick=${() => set({ popover: null, editor: { mode: 'edit', occ } })}>Edit</button>`}
         ${!isFeed && html`<button type="button" class="bc-btn bc-btn-danger" onClick=${() => deleteEvent(occ)}>Delete</button>`}
         ${isFeed && html`<div class="bc-seg" role="group" aria-label="Attendance">

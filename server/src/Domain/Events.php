@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace BetterCal\Domain;
 
+use BetterCal\Dav\ChangeLog;
 use BetterCal\Http\HttpError;
 use BetterCal\Infra\Db;
 use BetterCal\Support\Ids;
@@ -223,6 +224,7 @@ final class Events
 
         $created = $this->get($userId, $id);
         $this->undo->record($userId, 'event', $id, 'create', null, ['events' => [$created]] + $this->labels->eventLinkRows($id));
+        ChangeLog::record($this->db, (int) $created['calendar_id'], (string) $created['uid'], ChangeLog::OP_ADD);
         return $this->serializeSingle($created);
     }
 
@@ -292,6 +294,7 @@ final class Events
             ['events' => [$event]] + $beforeLinks,
             ['events' => [$after]] + $this->labels->eventLinkRows($id)
         );
+        ChangeLog::recordUpdate($this->db, $event, $after);
     }
 
     private function patchThis(int $userId, array $master, array $in): void
@@ -316,6 +319,7 @@ final class Events
             });
             $after = $this->get($userId, (int) $existing['id']);
             $this->undo->record($userId, 'event', (int) $existing['id'], 'update', ['events' => [$existing]], ['events' => [$after]]);
+            ChangeLog::record($this->db, (int) $master['calendar_id'], (string) $master['uid'], ChangeLog::OP_MODIFY);
             return;
         }
 
@@ -334,6 +338,7 @@ final class Events
         $newId = $this->db->tx(fn(): int => $this->db->insert('events', $override));
         $created = $this->get($userId, $newId);
         $this->undo->record($userId, 'event', $masterId, 'update', ['events' => [$master]], ['events' => [$master, $created]]);
+        ChangeLog::record($this->db, (int) $master['calendar_id'], (string) $master['uid'], ChangeLog::OP_MODIFY);
     }
 
     private function patchFollowing(int $userId, array $master, array $in): void
@@ -380,6 +385,8 @@ final class Events
             ['events' => array_merge([$master], $movedOverrides)],
             ['events' => [$afterMaster, $created]]
         );
+        ChangeLog::record($this->db, (int) $master['calendar_id'], (string) $master['uid'], ChangeLog::OP_MODIFY);
+        ChangeLog::record($this->db, (int) $created['calendar_id'], (string) $created['uid'], ChangeLog::OP_ADD);
     }
 
     public function deleteEvent(int $userId, int $id, ?string $scope, ?string $instanceStart): void
@@ -422,6 +429,7 @@ final class Events
         });
         $afterRows = $this->db->all('SELECT * FROM events WHERE id = ? OR recurrence_parent_id = ?', [$id, $id]);
         $this->undo->record($userId, 'event', $id, 'delete', ['events' => array_merge([$event], $overrides)], ['events' => $afterRows]);
+        ChangeLog::record($this->db, (int) $event['calendar_id'], (string) $event['uid'], ChangeLog::OP_DELETE);
     }
 
     private function deleteThis(int $userId, array $master, ?string $instanceStart): void
@@ -445,6 +453,7 @@ final class Events
         $after = $this->get($userId, $masterId);
         $before = ['events' => $override !== null ? [$master, $override] : [$master]];
         $this->undo->record($userId, 'event', $masterId, 'update', $before, ['events' => [$after]]);
+        ChangeLog::record($this->db, (int) $master['calendar_id'], (string) $master['uid'], ChangeLog::OP_MODIFY);
     }
 
     private function deleteFollowing(int $userId, array $master, ?string $instanceStart): void
@@ -473,6 +482,7 @@ final class Events
             ['events' => array_merge([$master], $movedOverrides)],
             ['events' => [$after]]
         );
+        ChangeLog::record($this->db, (int) $master['calendar_id'], (string) $master['uid'], ChangeLog::OP_MODIFY);
     }
 
     private function deleteOverrideInstance(int $userId, array $override): void
@@ -499,6 +509,7 @@ final class Events
             ['events' => $beforeRows],
             ['events' => $afterParent !== null ? [$afterParent] : []]
         );
+        ChangeLog::record($this->db, (int) $override['calendar_id'], (string) $override['uid'], ChangeLog::OP_MODIFY);
     }
 
     public function setAttendance(int $userId, int $id, string $attendance): void
@@ -510,6 +521,7 @@ final class Events
         $this->db->update('events', ['attendance' => $attendance], 'id = ?', [$id]);
         $after = $this->get($userId, $id);
         $this->undo->record($userId, 'event', $id, 'update', ['events' => [$event]], ['events' => [$after]]);
+        ChangeLog::record($this->db, (int) $event['calendar_id'], (string) $event['uid'], ChangeLog::OP_MODIFY);
     }
 
     // ---- Serialization ------------------------------------------------

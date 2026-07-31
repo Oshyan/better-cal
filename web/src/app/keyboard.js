@@ -1,9 +1,10 @@
 // Global keyboard map.
 // c quick-add, / search, t today, v cycle views, 1-6 direct view,
-// arrows navigate anchor, Esc closes overlays.
+// arrows navigate anchor, r reschedule (popover open), Esc closes overlays.
+// Esc inside reschedule mode is handled by RescheduleOverlay (capture phase).
 
 import { state, set } from './store.js';
-import { VIEWS, setView, cycleView, goToday, navigate, closeOverlays } from './actions.js';
+import { VIEWS, setView, cycleView, goToday, navigate, closeOverlays, enterReschedule } from './actions.js';
 
 function isTyping() {
   const el = document.activeElement;
@@ -31,6 +32,12 @@ export function installKeyboard() {
       case 't':
         e.preventDefault();
         goToday();
+        break;
+      case 'r':
+        if (state.popover) {
+          e.preventDefault();
+          enterReschedule(state.popover.instanceId);
+        }
         break;
       case 'v':
         e.preventDefault();

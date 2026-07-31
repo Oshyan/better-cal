@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace BetterCal\Domain;
 
+use BetterCal\Dav\ChangeLog;
 use BetterCal\Http\HttpError;
 use BetterCal\Infra\Db;
 
@@ -84,6 +85,20 @@ final class Undo
             }
             $this->db->run('UPDATE mutations SET undone = 1 WHERE id = ?', [$mutation['id']]);
         });
+
+        // CalDAV journal: an undone event mutation must reach DAV clients too.
+        // Recording MODIFY is enough — sync clients drop uris that 404.
+        $pairs = [];
+        foreach ([$before['events'] ?? [], $after['events'] ?? []] as $rows) {
+            foreach ($rows as $row) {
+                if (isset($row['calendar_id'], $row['uid'])) {
+                    $pairs[$row['calendar_id'] . '|' . $row['uid']] = [(int) $row['calendar_id'], (string) $row['uid']];
+                }
+            }
+        }
+        foreach ($pairs as [$calendarId, $uid]) {
+            ChangeLog::record($this->db, $calendarId, $uid, ChangeLog::OP_MODIFY);
+        }
 
         return ['entity' => (string) $mutation['entity'], 'op' => (string) $mutation['op']];
     }

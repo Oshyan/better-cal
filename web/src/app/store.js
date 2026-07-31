@@ -42,6 +42,7 @@ export const state = {
   editor: null,      // {mode, occ?, draft}
   expandedDay: null, // {dayKey, anchorRect}
   flashId: null,
+  reschedule: null,  // {instanceId, grabbed} dedicated reschedule mode (PRD 5.9)
 
   toasts: [], // {id, text, undoable}
 };

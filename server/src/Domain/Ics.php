@@ -96,6 +96,27 @@ final class Ics
         return $out;
     }
 
+    /**
+     * Build a single CalDAV calendar-object body: a bare VCALENDAR (no X-WR-
+     * metadata) wrapping one uid's VEVENTs (master first, then RECURRENCE-ID
+     * overrides).
+     *
+     * @param list<array<string,mixed>> $events DB event rows sharing one uid
+     */
+    public static function buildObject(array $events): string
+    {
+        $out = "BEGIN:VCALENDAR\r\n";
+        $out .= self::line('VERSION', '2.0');
+        $out .= self::line('PRODID', self::PRODID);
+        $out .= self::line('CALSCALE', 'GREGORIAN');
+        $stamp = Time::nowUtc()->format('Ymd\THis\Z');
+        foreach ($events as $ev) {
+            $out .= self::buildEvent($ev, $stamp);
+        }
+        $out .= "END:VCALENDAR\r\n";
+        return $out;
+    }
+
     private static function buildEvent(array $ev, string $stamp): string
     {
         $allDay = (int) ($ev['all_day'] ?? 0) === 1;

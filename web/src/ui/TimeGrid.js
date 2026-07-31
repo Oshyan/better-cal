@@ -4,7 +4,7 @@
 
 import { html, useState, useRef, useMemo, useEffect, useLayoutEffect, useCallback } from '../../vendor/index.js';
 import {
-  parseISO, toISOWithOffset, dayKeyOf, dayKeyOfISO, dateOfDayKey, todayKey,
+  parseISO, toISOWithOffset, dayKeyOf, dayKeyOfISO, occDayKey, dateOfDayKey, todayKey,
   fmtWeekdayShort, fmtTime, epochDayOfKey, keyOfEpochDay,
 } from '../lib/dates.js';
 import { layoutOverlaps, assignLanes } from './layout.js';
@@ -193,7 +193,7 @@ export function TimeGrid({
     ev.stopPropagation();
     const s0 = parseISO(occ.start);
     const e0 = parseISO(occ.end);
-    const dayIdx = days.indexOf(dayKeyOfISO(occ.start));
+    const dayIdx = days.indexOf(occDayKey(occ));
     if (dayIdx === -1) return;
     let result = null;
     startPointerDrag(ev, {

@@ -8,7 +8,7 @@ import { useStore, set, state } from './store.js';
 import { updateEvent, deleteEvent, triageAttendance } from './actions.js';
 import { isMobile, trapFocus, MOBILE_QUERY } from '../ui/DayExpand.js';
 import {
-  parseISO, fmtRange, toInputValue, fromInputValue, toISOWithOffset,
+  parseISO, dateOfDayKey, fmtRange, toInputValue, fromInputValue, toISOWithOffset,
 } from '../lib/dates.js';
 
 const GAP = 10;
@@ -85,8 +85,10 @@ export function EventPopover() {
     await updateEvent(occ, { start: toISOWithOffset(s), end: toISOWithOffset(e) });
   };
 
-  const s = parseISO(occ.start);
-  const e = parseISO(occ.end);
+  // All-day occurrences carry literal dates at +00:00; anchor them to local
+  // midnight for display so the date never shifts across timezones.
+  const s = occ.allDay ? dateOfDayKey(occ.start.slice(0, 10)) : parseISO(occ.start);
+  const e = occ.allDay ? dateOfDayKey(occ.end.slice(0, 10)) : parseISO(occ.end);
 
   return html`<div
     class="bc-popover${mobile ? ' bc-sheet' : ''}"

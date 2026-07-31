@@ -26,8 +26,16 @@ export function totalHeight(minWeek, maxWeek, rowH) {
 
 // The [startKey, endKeyInclusive] day span an occurrence covers on the grid.
 // Timed events ending exactly at midnight do not spill into the next day;
-// all-day events use an exclusive end date per iCal convention.
+// all-day events use an exclusive end date per iCal convention. All-day
+// occurrences carry literal dates (see occDayKey) and get pure string/day math,
+// no timezone conversion.
 export function occurrenceDaySpan(occ) {
+  if (occ.allDay) {
+    const startKey = occ.start.slice(0, 10);
+    let endEpoch = epochDayOfKey(occ.end.slice(0, 10)) - 1;
+    if (endEpoch < epochDayOfKey(startKey)) endEpoch = epochDayOfKey(startKey);
+    return { startKey, endKey: keyOfEpochDay(endEpoch) };
+  }
   const startKey = dayKeyOfISO(occ.start);
   const end = parseISO(occ.end);
   let endKey = dayKeyOf(new Date(end.getTime() - 1));

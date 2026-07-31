@@ -61,7 +61,7 @@ export function SearchOverlay() {
       state.occ.set(occ.instanceId, occ);
       set({ occVersion: state.occVersion + 1 });
     }
-    jumpToDate(dayKeyOfISO(occ.start), occ.instanceId);
+    jumpToDate(occDayKey(occ), occ.instanceId);
   };
 
   const onKeyDown = (e) => {

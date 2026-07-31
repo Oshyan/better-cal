@@ -19,9 +19,12 @@ export const state = {
   collapsedFolders: {},
 
   // User settings (contract defaults until /me or /settings answers).
+  // overviewMode null = unset: the device default applies (3day when the
+  // viewport is narrow or the pointer is coarse, month otherwise).
   settings: {
     defaultView: 'month', weekStart: 'sun', timeFormat: '12',
     defaultCalendarId: null, theme: 'system', nlParseMode: 'smart',
+    overviewMode: null,
     reminderTimed: [{ minutes: 10 }], reminderAllDay: [{ daysBefore: 1, time: '18:00' }],
   },
   // Folder visibility modes: {folderId: {mode: 'all'|'none'|'custom', custom: [calId]}}.
@@ -35,6 +38,11 @@ export const state = {
   loadedRanges: [], // [{start, end}] ms epochs, merged
 
   view: 'month', // month | weeks3 | weeks2 | week | day | agenda
+  // Responsive roster inputs (kept in sync by App via matchMedia listeners).
+  viewportNarrow: typeof window !== 'undefined' && window.matchMedia
+    ? window.matchMedia('(max-width: 800px)').matches : false,
+  coarsePointer: typeof window !== 'undefined' && window.matchMedia
+    ? window.matchMedia('(pointer: coarse)').matches : false,
   anchor: todayKey(),
   scrollSeq: 0,
   visibleMonth: null, // {year, month}

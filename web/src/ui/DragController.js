@@ -27,6 +27,7 @@ window.addEventListener('click', (e) => {
 //   makeGhost(): Node | null      ghost appended to body, moved via transform
 //   ghostOffset: {x, y}           ghost offset from pointer (default 8,8)
 //   scrollEl: Element | null      auto-scrolled near its top/bottom edges
+//   hScrollEl: Element | null     auto-scrolled near its left/right edges
 //   onLift(pt), onMove(pt), onDrop(pt), onCancel()
 //   pt = {x, y} in client coordinates
 // }
@@ -68,13 +69,17 @@ export function startPointerDrag(e, opts) {
   function loop() {
     if (done || !lifted) return;
     const el = opts.scrollEl;
+    let moved = false;
     if (el) {
       const dy = edgeScrollDy(el, lastPt.y);
-      if (dy !== 0) {
-        el.scrollTop += dy;
-        if (opts.onMove) opts.onMove(lastPt); // targets shift under the pointer
-      }
+      if (dy !== 0) { el.scrollTop += dy; moved = true; }
     }
+    const hel = opts.hScrollEl;
+    if (hel) {
+      const dx = edgeScrollDx(hel, lastPt.x);
+      if (dx !== 0) { hel.scrollLeft += dx; moved = true; }
+    }
+    if (moved && opts.onMove) opts.onMove(lastPt); // targets shift under the pointer
     raf = requestAnimationFrame(loop);
   }
 
@@ -153,6 +158,14 @@ export function edgeScrollDy(scrollEl, y) {
   const r = scrollEl.getBoundingClientRect();
   if (y < r.top + EDGE_ZONE) return -edgeSpeed(r.top + EDGE_ZONE - y);
   if (y > r.bottom - EDGE_ZONE) return edgeSpeed(y - (r.bottom - EDGE_ZONE));
+  return 0;
+}
+
+// Horizontal counterpart for left/right edges (infinite week day track).
+export function edgeScrollDx(scrollEl, x) {
+  const r = scrollEl.getBoundingClientRect();
+  if (x < r.left + EDGE_ZONE) return -edgeSpeed(r.left + EDGE_ZONE - x);
+  if (x > r.right - EDGE_ZONE) return edgeSpeed(x - (r.right - EDGE_ZONE));
   return 0;
 }
 

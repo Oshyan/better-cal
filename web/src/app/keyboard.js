@@ -6,7 +6,7 @@
 
 import { state, set } from './store.js';
 import {
-  VIEWS, setView, cycleView, goToday, navigate, closeOverlays,
+  rosterViews, setView, cycleView, goToday, navigate, closeOverlays,
   enterReschedule, openDetail, deleteEvent, stepDetailSameDay,
 } from './actions.js';
 import { HOTKEYS } from './hotkeys.js';
@@ -38,7 +38,14 @@ const handlers = {
   prevWeek: () => navigate(-7),
   nextWeek: () => navigate(7),
   cycleView,
-  setView: (e) => setView(VIEWS[Number(e.key) - 1]),
+  // Number keys map onto the visible roster (1-4 on mobile, 1-6 on desktop);
+  // keys past the roster fall through untouched.
+  setView: (e) => {
+    const v = rosterViews()[Number(e.key) - 1];
+    if (!v) return false;
+    setView(v);
+    return true;
+  },
   quickAdd: () => set({ quickAddOpen: true }),
   newEvent: () => set({ editor: { mode: 'create', draft: {} }, popover: null, detail: null }),
   openDetail: (e) => {

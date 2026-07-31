@@ -1,11 +1,22 @@
 // TimeGrid: day and week views. Hour rows (painted with CSS gradients, not
 // DOM), all-day lane at top, now-line, side-by-side overlap layout, drag to
 // create/move/resize with 15-minute snap.
+//
+// Two column modes:
+// - Fixed (day view): the `days` prop lists the columns, flex-sized to fill.
+// - Infinite (week view, `infinite` prop): day columns are horizontally
+//   virtualized inside a native horizontal scroller spanning ~10 years either
+//   side of today. Columns are fixed-width (min 110px desktop, ~44vw on
+//   narrow viewports so ~2.3 days show), rendered only for the visible window
+//   plus a buffer. One vertical scroller owns time; the header and all-day
+//   lane follow the horizontal scroll via the counter-translate pattern.
+//   Edge fades + chevrons hint at more days off-screen; drags auto-scroll
+//   horizontally near the edges.
 
 import { html, useState, useRef, useMemo, useEffect, useLayoutEffect, useCallback } from '../../vendor/index.js';
 import {
-  parseISO, toISOWithOffset, dayKeyOf, dayKeyOfISO, occDayKey, dateOfDayKey, todayKey,
-  fmtWeekdayShort, fmtTime, epochDayOfKey, keyOfEpochDay,
+  parseISO, toISOWithOffset, dayKeyOf, occDayKey, dateOfDayKey, todayKey,
+  fmtWeekdayShort, fmtMonthShort, fmtTime, epochDayOfKey, keyOfEpochDay,
 } from '../lib/dates.js';
 import { layoutOverlaps, assignLanes } from './layout.js';
 import { occurrenceDaySpan } from './monthmath.js';
@@ -15,6 +26,11 @@ import { startPointerDrag, cloneAsGhost } from './DragController.js';
 const HOUR_H = 48;   // px per hour
 const SNAP_MIN = 15;
 const MINUTES_DAY = 1440;
+const GUTTER = 52;   // px hour gutter
+const DAY_SPAN = 3653; // days either side of today (~10 years) in infinite mode
+const H_BUFFER = 3;    // extra day columns rendered either side
+const EDGE_HINT_PX = 24; // scroll distance before an edge hint counts as "more"
+const NARROW_QUERY = '(max-width: 800px)';
 
 function minutesOfDay(d) {
   return d.getHours() * 60 + d.getMinutes();
@@ -30,19 +46,167 @@ function snapMin(m) {
 }
 
 export function TimeGrid({
-  days, occurrences, calendars, dimSet,
+  days: fixedDays, occurrences, calendars, dimSet,
+  infinite = false, scrollKey, scrollSeq = 0,
+  onRequestWindow, onVisibleMonthChange,
   onCreateRange, onMoveEvent, onResizeEvent, onOpenEvent,
 }) {
-  const scrollRef = useRef(null);
+  const rootRef = useRef(null);
+  const scrollRef = useRef(null);  // vertical time scroller
+  const hscrollRef = useRef(null); // horizontal day-track scroller (infinite)
+  const trackRef = useRef(null);
+  const headTrackRef = useRef(null);
+  const alldayTrackRef = useRef(null);
   const [, forceTick] = useState(0);
-  const [draft, setDraft] = useState(null); // {dayIdx, startMin, endMin} while drag-creating
+  const [draft, setDraft] = useState(null); // {dayKey, startMin, endMin} while drag-creating
+
+  // --- horizontal virtualization (infinite mode) ---------------------------
+
+  const centerDay = useMemo(() => epochDayOfKey(todayKey()), []);
+  const minDay = centerDay - DAY_SPAN;
+  const maxDay = centerDay + DAY_SPAN;
+
+  const [viewW, setViewW] = useState(0);
+  const [narrow, setNarrow] = useState(() => window.matchMedia(NARROW_QUERY).matches);
+  useEffect(() => {
+    const mq = window.matchMedia(NARROW_QUERY);
+    const onChange = () => setNarrow(mq.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+
+  // Fixed column width: narrow viewports show ~2.3 columns; desktop divides
+  // the track into 7 with a 110px floor.
+  const colW = useMemo(() => {
+    if (!infinite) return 0;
+    const w = viewW || Math.max(280, window.innerWidth - GUTTER);
+    return narrow ? Math.max(120, Math.round(w * 0.44)) : Math.max(110, w / 7);
+  }, [infinite, viewW, narrow]);
+
+  const [hRange, setHRange] = useState(() => {
+    const a = epochDayOfKey(scrollKey || todayKey());
+    return { first: a - H_BUFFER, last: a + 9 };
+  });
+
+  // Geometry via a ref so recomputeH keeps one identity for the component's
+  // life (late rAF calls must never see stale colW).
+  const geomH = useRef({ colW, minDay, maxDay });
+  geomH.current = { colW, minDay, maxDay };
+  const leftDayRef = useRef(null); // fractional epoch day at the viewport's left edge
+
+  const syncTracks = useCallback(() => {
+    const el = hscrollRef.current;
+    if (!el) return;
+    const t = 'translateX(' + (-el.scrollLeft) + 'px)';
+    if (headTrackRef.current) headTrackRef.current.style.transform = t;
+    if (alldayTrackRef.current) alldayTrackRef.current.style.transform = t;
+  }, []);
+
+  const recomputeH = useCallback(() => {
+    const el = hscrollRef.current;
+    const g = geomH.current;
+    if (!el || !g.colW) return;
+    leftDayRef.current = g.minDay + el.scrollLeft / g.colW;
+    const first = Math.max(g.minDay, g.minDay + Math.floor(el.scrollLeft / g.colW) - H_BUFFER);
+    const last = Math.min(g.maxDay, g.minDay + Math.ceil((el.scrollLeft + el.clientWidth) / g.colW) + H_BUFFER);
+    setHRange((prev) => (prev.first === first && prev.last === last ? prev : { first, last }));
+    // Edge hints: toggled by scroll position with a threshold, per the
+    // Discourse-plugin lessons (classes, gradient fades + chevrons in CSS).
+    const root = rootRef.current;
+    if (root) {
+      const maxLeft = el.scrollWidth - el.clientWidth;
+      root.classList.toggle('has-left', el.scrollLeft > EDGE_HINT_PX);
+      root.classList.toggle('has-right', el.scrollLeft < maxLeft - EDGE_HINT_PX);
+    }
+  }, []);
+
+  // Measure the horizontal viewport.
+  useLayoutEffect(() => {
+    if (!infinite) return undefined;
+    const el = hscrollRef.current;
+    if (!el) return undefined;
+    const ro = new ResizeObserver(() => setViewW(el.clientWidth || 0));
+    ro.observe(el);
+    setViewW(el.clientWidth || 0);
+    return () => ro.disconnect();
+  }, [infinite]);
+
+  // Column-width changes (resize, narrow flip) keep the leftmost day stable.
+  // Before the first anchor positioning (leftDayRef unset) this stays quiet so
+  // the mount never computes a range at the track's far-past origin.
+  useLayoutEffect(() => {
+    if (!infinite) return;
+    const el = hscrollRef.current;
+    if (!el || !colW || leftDayRef.current == null) return;
+    el.scrollLeft = (leftDayRef.current - minDay) * colW;
+    syncTracks();
+    recomputeH();
+  }, [infinite, colW, minDay, syncTracks, recomputeH]);
+
+  // Anchor contract: explicit navigation (today, chevrons, jump) puts the
+  // anchor day at the left edge of the track.
+  useLayoutEffect(() => {
+    if (!infinite) return;
+    const el = hscrollRef.current;
+    const g = geomH.current;
+    if (!el || !scrollKey || !g.colW) return;
+    const ed = Math.max(minDay, Math.min(maxDay, epochDayOfKey(scrollKey)));
+    el.scrollLeft = (ed - minDay) * g.colW;
+    leftDayRef.current = ed;
+    syncTracks();
+    recomputeH();
+  }, [scrollSeq]); // eslint-disable-line
+
+  // Horizontal scroll: counter-translate header/all-day synchronously, then
+  // rAF-throttled range recompute.
+  useEffect(() => {
+    if (!infinite) return undefined;
+    const el = hscrollRef.current;
+    if (!el) return undefined;
+    let raf = 0;
+    const onScroll = () => {
+      syncTracks();
+      if (raf) return;
+      raf = requestAnimationFrame(() => { raf = 0; recomputeH(); });
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => { el.removeEventListener('scroll', onScroll); cancelAnimationFrame(raf); };
+  }, [infinite, syncTracks, recomputeH]);
+
+  // The all-day lane can remount as bars enter/leave the window; re-apply the
+  // counter-translate after every render.
+  useLayoutEffect(() => { if (infinite) syncTracks(); });
+
+  // Demand data + report the visible month for the toolbar label.
+  useEffect(() => {
+    if (!infinite) return;
+    if (onVisibleMonthChange && leftDayRef.current != null) {
+      const [y, m] = keyOfEpochDay(Math.round(leftDayRef.current)).split('-').map(Number);
+      onVisibleMonthChange({ year: y, month: m });
+    }
+    if (onRequestWindow) {
+      onRequestWindow({
+        start: toISOWithOffset(dateOfDayKey(keyOfEpochDay(hRange.first - 7))),
+        end: toISOWithOffset(dateOfDayKey(keyOfEpochDay(hRange.last + 8))),
+      });
+    }
+  }, [infinite, hRange.first, hRange.last]);
+
+  // --- day list + occurrence indexing --------------------------------------
+
+  const days = useMemo(() => {
+    if (!infinite) return fixedDays;
+    const out = [];
+    for (let ed = hRange.first; ed <= hRange.last; ed++) out.push(keyOfEpochDay(ed));
+    return out;
+  }, [infinite, fixedDays, hRange.first, hRange.last]);
 
   // Split occurrences into all-day-lane items and per-day timed items,
-  // clamped to the visible day window.
+  // clamped to the rendered day window.
   const { allDayBars, timedByDay } = useMemo(() => {
     const dayIdx = new Map(days.map((k, i) => [k, i]));
-    const firstDay = epochDayOfKey(days[0]);
-    const lastDay = epochDayOfKey(days[days.length - 1]);
+    const firstDay = days.length ? epochDayOfKey(days[0]) : 0;
+    const lastDay = days.length ? epochDayOfKey(days[days.length - 1]) : -1;
     const bars = [];
     const timed = days.map(() => []);
     for (const occ of occurrences) {
@@ -83,13 +247,14 @@ export function TimeGrid({
     return layoutOverlaps(items);
   }), [timedByDay]);
 
-  // Initial scroll: when the range includes today, land just above the
+  // Initial vertical scroll: when anchored on today, land just above the
   // now-line (Google-style); otherwise fall back to 7am. Ticks the now-line
-  // every 30s.
+  // every 30s. Horizontal navigation never resets the time scroll.
   useLayoutEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    if (days.includes(todayKey())) {
+    const onToday = infinite ? (scrollKey || todayKey()) === todayKey() : fixedDays.includes(todayKey());
+    if (onToday) {
       const mins = minutesOfDay(new Date());
       el.scrollTop = Math.max(0, (mins / 60) * HOUR_H - 90);
     } else {
@@ -105,14 +270,31 @@ export function TimeGrid({
 
   const pointToSlot = useCallback((pt) => {
     const el = scrollRef.current;
-    if (!el) return null;
-    const r = el.getBoundingClientRect();
-    const gutter = 52;
-    const colW = (r.width - gutter) / days.length;
-    const dayIdx = Math.max(0, Math.min(days.length - 1, Math.floor((pt.x - r.left - gutter) / colW)));
-    const min = Math.max(0, Math.min(MINUTES_DAY, ((pt.y - r.top + el.scrollTop) / HOUR_H) * 60));
-    return { dayIdx, min };
-  }, [days]);
+    if (!el || days.length === 0) return null;
+    const sr = el.getBoundingClientRect();
+    const min = Math.max(0, Math.min(MINUTES_DAY, ((pt.y - sr.top + el.scrollTop) / HOUR_H) * 60));
+    if (infinite) {
+      const track = trackRef.current;
+      const g = geomH.current;
+      if (!track || !g.colW) return null;
+      const tr = track.getBoundingClientRect();
+      const ed = Math.max(g.minDay, Math.min(g.maxDay, g.minDay + Math.floor((pt.x - tr.left) / g.colW)));
+      return { dayKey: keyOfEpochDay(ed), min };
+    }
+    const colWpx = (sr.width - GUTTER) / days.length;
+    const dayIdx = Math.max(0, Math.min(days.length - 1, Math.floor((pt.x - sr.left - GUTTER) / colWpx)));
+    return { dayKey: days[dayIdx], min };
+  }, [infinite, days]);
+
+  const previewRef = useRef(null); // DOM node moved directly during drags
+
+  const previewGeom = useCallback(() => ({
+    infinite,
+    minDay: geomH.current.minDay,
+    colW: geomH.current.colW,
+    days,
+    scrollEl: scrollRef.current,
+  }), [infinite, days]);
 
   const dragCreate = useCallback((ev) => {
     if (ev.target !== ev.currentTarget) return;
@@ -123,13 +305,14 @@ export function TimeGrid({
     let current = null;
     startPointerDrag(ev, {
       scrollEl: scrollRef.current,
-      onLift: () => setDraft({ dayIdx: origin.dayIdx, startMin: startSnap, endMin: startSnap + 30 }),
+      hScrollEl: infinite ? hscrollRef.current : null,
+      onLift: () => setDraft({ dayKey: origin.dayKey, startMin: startSnap, endMin: startSnap + 30 }),
       onMove: (pt) => {
         const s = pointToSlot(pt);
         if (!s) return;
         const m = snapMin(s.min);
         current = {
-          dayIdx: origin.dayIdx,
+          dayKey: origin.dayKey,
           startMin: Math.min(startSnap, m),
           endMin: Math.max(startSnap + SNAP_MIN, m),
         };
@@ -137,11 +320,11 @@ export function TimeGrid({
       },
       onDrop: () => {
         setDraft(null);
-        const c = current || { dayIdx: origin.dayIdx, startMin: startSnap, endMin: startSnap + 60 };
+        const c = current || { dayKey: origin.dayKey, startMin: startSnap, endMin: startSnap + 60 };
         if (onCreateRange) {
           onCreateRange({
-            start: toISOWithOffset(dateAt(days[c.dayIdx], c.startMin)),
-            end: toISOWithOffset(dateAt(days[c.dayIdx], c.endMin)),
+            start: toISOWithOffset(dateAt(c.dayKey, c.startMin)),
+            end: toISOWithOffset(dateAt(c.dayKey, c.endMin)),
             allDay: false,
           });
         }
@@ -151,16 +334,14 @@ export function TimeGrid({
         // Plain click on empty grid: 1-hour draft at the clicked slot.
         if (onCreateRange) {
           onCreateRange({
-            start: toISOWithOffset(dateAt(days[origin.dayIdx], startSnap)),
-            end: toISOWithOffset(dateAt(days[origin.dayIdx], startSnap + 60)),
+            start: toISOWithOffset(dateAt(origin.dayKey, startSnap)),
+            end: toISOWithOffset(dateAt(origin.dayKey, startSnap + 60)),
             allDay: false,
           });
         }
       },
     });
-  }, [pointToSlot, days, onCreateRange]);
-
-  const previewRef = useRef(null); // DOM node moved directly during drags
+  }, [pointToSlot, infinite, onCreateRange]);
 
   const dragMove = useCallback((occ, ev) => {
     ev.stopPropagation();
@@ -176,33 +357,34 @@ export function TimeGrid({
       makeGhost: () => cloneAsGhost(src),
       ghostOffset: { x: 10, y: -8 },
       scrollEl: scrollRef.current,
+      hScrollEl: infinite ? hscrollRef.current : null,
       onLift: () => src.classList.add('is-drag-source'),
       onMove: (pt) => {
         const slot = pointToSlot(pt);
         if (!slot) return;
         const startMin = Math.max(0, Math.min(MINUTES_DAY - durMin, snapMin(slot.min - grabOffset)));
-        target = { dayIdx: slot.dayIdx, startMin };
-        showPreview(previewRef, scrollRef, days.length, target.dayIdx, startMin, durMin);
+        target = { dayKey: slot.dayKey, startMin };
+        showPreview(previewRef, previewGeom(), target.dayKey, startMin, durMin);
       },
       onDrop: () => {
         src.classList.remove('is-drag-source');
         hidePreview(previewRef);
         if (!target || !onMoveEvent) return;
-        const ns = dateAt(days[target.dayIdx], target.startMin);
+        const ns = dateAt(target.dayKey, target.startMin);
         const ne = new Date(ns.getTime() + durMin * 60000);
         if (ns.getTime() === s0.getTime()) return;
         onMoveEvent({ instanceId: occ.instanceId, newStart: toISOWithOffset(ns), newEnd: toISOWithOffset(ne) });
       },
       onCancel: () => { src.classList.remove('is-drag-source'); hidePreview(previewRef); },
     });
-  }, [pointToSlot, days, onMoveEvent]);
+  }, [pointToSlot, infinite, previewGeom, onMoveEvent]);
 
   const dragResize = useCallback((occ, edge, ev) => {
     ev.stopPropagation();
     const s0 = parseISO(occ.start);
     const e0 = parseISO(occ.end);
-    const dayIdx = days.indexOf(occDayKey(occ));
-    if (dayIdx === -1) return;
+    const dayKey = occDayKey(occ);
+    if (!days.includes(dayKey)) return;
     let result = null;
     startPointerDrag(ev, {
       scrollEl: scrollRef.current,
@@ -215,21 +397,21 @@ export function TimeGrid({
         if (edge === 'start') sMin = Math.min(m, eMin - SNAP_MIN);
         else eMin = Math.max(m, sMin + SNAP_MIN);
         result = { sMin, eMin };
-        showPreview(previewRef, scrollRef, days.length, dayIdx, sMin, eMin - sMin);
+        showPreview(previewRef, previewGeom(), dayKey, sMin, eMin - sMin);
       },
       onDrop: () => {
         hidePreview(previewRef);
         if (!result || !onResizeEvent) return;
         onResizeEvent({
           instanceId: occ.instanceId,
-          newStart: toISOWithOffset(dateAt(days[dayIdx], result.sMin)),
-          newEnd: toISOWithOffset(dateAt(days[dayIdx], result.eMin)),
+          newStart: toISOWithOffset(dateAt(dayKey, result.sMin)),
+          newEnd: toISOWithOffset(dateAt(dayKey, result.eMin)),
           edge,
         });
       },
       onCancel: () => hidePreview(previewRef),
     });
-  }, [pointToSlot, days, onResizeEvent]);
+  }, [pointToSlot, days, previewGeom, onResizeEvent]);
 
   // --- render ---------------------------------------------------------------
 
@@ -245,78 +427,120 @@ export function TimeGrid({
 
   // Day view gets a stronger header (weekday + big day number); the shared
   // toolbar date alone is a weak anchor for a single column.
-  const single = days.length === 1;
+  const single = !infinite && days.length === 1;
+  const totalW = (maxDay - minDay + 1) * colW;
+  const dayLeft = (k) => (epochDayOfKey(k) - minDay) * colW;
 
-  return html`<div class="bc-timegrid">
+  const headCells = days.map((k) => {
+    const d = dateOfDayKey(k);
+    return html`<div
+      key=${k}
+      class="bc-tg-head-day${k === tKey ? ' is-today' : ''}"
+      style=${infinite ? `left:${dayLeft(k)}px;width:${colW}px` : undefined}
+    >
+      <span class="bc-tg-dow">${fmtWeekdayShort(d)}</span>
+      <span class="bc-tg-dom">${d.getDate()}</span>
+      ${infinite && d.getDate() === 1 && html`<span class="bc-tg-month-tag">${fmtMonthShort(d)}</span>`}
+    </div>`;
+  });
+
+  const barSlot = ({ occ, seg }) => html`<div
+    key=${occ.instanceId}
+    class="bc-bar-slot"
+    style=${infinite
+      ? `left:${(epochDayOfKey(days[0]) - minDay + seg.startCol) * colW}px;width:${(seg.endCol - seg.startCol + 1) * colW}px;top:${barLanes.get(occ.instanceId) * 24}px`
+      : `left:${(seg.startCol / days.length) * 100}%;width:${((seg.endCol - seg.startCol + 1) / days.length) * 100}%;top:${barLanes.get(occ.instanceId) * 24}px`}
+  >
+    <${EventBar} occ=${occ} cal=${calendars[occ.calendarId]} seg=${seg}
+      dimmed=${dimSet && dimSet.has(occ.instanceId)} onOpen=${onOpenEvent} />
+  </div>`;
+
+  const dayCols = days.map((k, i) => html`<div
+    key=${k}
+    class="bc-tg-col${k === tKey ? ' is-today' : ''}"
+    data-day=${k}
+    style=${infinite ? `left:${dayLeft(k)}px;width:${colW}px` : undefined}
+    onPointerDown=${dragCreate}
+  >
+    ${layoutByDay[i].map((item) => {
+      const top = (item.startMin / 60) * HOUR_H;
+      const height = Math.max(((item.visualEnd - item.startMin) / 60) * HOUR_H - 2, 18);
+      const widthPct = 100 / item.cols;
+      return html`<${EventBlock}
+        key=${item.id}
+        occ=${item.occ} cal=${calendars[item.occ.calendarId]}
+        rect=${{ top, height, leftPct: item.col * widthPct, widthPct: widthPct * (item.cols > 1 ? 0.96 : 1) }}
+        dimmed=${dimSet && dimSet.has(item.occ.instanceId)}
+        onOpen=${onOpenEvent}
+        onPointerDown=${(e) => dragMove(item.occ, e)}
+        onEdgePointerDown=${(edge, e) => dragResize(item.occ, edge, e)}
+      />`;
+    })}
+    ${draft && draft.dayKey === k && html`<div
+      class="bc-tg-draft"
+      style=${`top:${(draft.startMin / 60) * HOUR_H}px;height:${((draft.endMin - draft.startMin) / 60) * HOUR_H}px`}
+    >${fmtTime(dateAt(k, draft.startMin))} to ${fmtTime(dateAt(k, draft.endMin))}</div>`}
+    ${k === nowKey && html`<div class="bc-nowline" style=${`top:${(minutesOfDay(now) / 60) * HOUR_H}px`}><span class="bc-nowline-dot"></span></div>`}
+  </div>`);
+
+  const preview = html`<div class="bc-tg-preview" ref=${previewRef} style="display:none"></div>`;
+
+  // The all-day lane is always present in infinite mode so bars entering the
+  // window while scrolling never shift the grid vertically.
+  const showAllday = infinite || allDayBars.length > 0;
+
+  return html`<div class="bc-timegrid${infinite ? ' bc-tg-infinite' : ''}" ref=${rootRef}>
     <div class="bc-tg-head${single ? ' is-single' : ''}">
       <div class="bc-tg-gutter"></div>
-      ${days.map((k) => {
-        const d = dateOfDayKey(k);
-        return html`<div key=${k} class="bc-tg-head-day${k === tKey ? ' is-today' : ''}">
-          <span class="bc-tg-dow">${fmtWeekdayShort(d)}</span>
-          <span class="bc-tg-dom">${d.getDate()}</span>
-        </div>`;
-      })}
+      ${infinite
+        ? html`<div class="bc-tg-hclip"><div class="bc-tg-htrack" ref=${headTrackRef} style=${`width:${totalW}px`}>${headCells}</div></div>`
+        : headCells}
     </div>
-    ${(allDayBars.length > 0) && html`<div class="bc-tg-allday" style=${`height:${Math.max(1, barLaneCount) * 24 + 4}px`}>
+    ${showAllday && html`<div class="bc-tg-allday" style=${`height:${Math.max(1, barLaneCount) * 24 + 4}px`}>
       <div class="bc-tg-gutter bc-tg-allday-label">all day</div>
-      <div class="bc-tg-allday-lane">
-        ${allDayBars.map(({ occ, seg }) => html`<div
-          key=${occ.instanceId}
-          class="bc-bar-slot"
-          style=${`left:${(seg.startCol / days.length) * 100}%;width:${((seg.endCol - seg.startCol + 1) / days.length) * 100}%;top:${barLanes.get(occ.instanceId) * 24}px`}
-        >
-          <${EventBar} occ=${occ} cal=${calendars[occ.calendarId]} seg=${seg}
-            dimmed=${dimSet && dimSet.has(occ.instanceId)} onOpen=${onOpenEvent} />
-        </div>`)}
-      </div>
+      ${infinite
+        ? html`<div class="bc-tg-hclip"><div class="bc-tg-htrack" ref=${alldayTrackRef} style=${`width:${totalW}px`}>${allDayBars.map(barSlot)}</div></div>`
+        : html`<div class="bc-tg-allday-lane">${allDayBars.map(barSlot)}</div>`}
     </div>`}
     <div class="bc-tg-scroll" ref=${scrollRef}>
       <div class="bc-tg-body" style=${`height:${24 * HOUR_H}px`}>
         <div class="bc-tg-gutter bc-tg-hours">${hours}</div>
-        ${days.map((k, i) => html`<div
-          key=${k}
-          class="bc-tg-col${k === tKey ? ' is-today' : ''}"
-          data-day=${k}
-          onPointerDown=${dragCreate}
-        >
-          ${layoutByDay[i].map((item) => {
-            const top = (item.startMin / 60) * HOUR_H;
-            const height = Math.max(((item.visualEnd - item.startMin) / 60) * HOUR_H - 2, 18);
-            const widthPct = 100 / item.cols;
-            return html`<${EventBlock}
-              key=${item.id}
-              occ=${item.occ} cal=${calendars[item.occ.calendarId]}
-              rect=${{ top, height, leftPct: item.col * widthPct, widthPct: widthPct * (item.cols > 1 ? 0.96 : 1) }}
-              dimmed=${dimSet && dimSet.has(item.occ.instanceId)}
-              onOpen=${onOpenEvent}
-              onPointerDown=${(e) => dragMove(item.occ, e)}
-              onEdgePointerDown=${(edge, e) => dragResize(item.occ, edge, e)}
-            />`;
-          })}
-          ${draft && draft.dayIdx === i && html`<div
-            class="bc-tg-draft"
-            style=${`top:${(draft.startMin / 60) * HOUR_H}px;height:${((draft.endMin - draft.startMin) / 60) * HOUR_H}px`}
-          >${fmtTime(dateAt(k, draft.startMin))} to ${fmtTime(dateAt(k, draft.endMin))}</div>`}
-          ${k === nowKey && html`<div class="bc-nowline" style=${`top:${(minutesOfDay(now) / 60) * HOUR_H}px`}><span class="bc-nowline-dot"></span></div>`}
-        </div>`)}
-        <div class="bc-tg-preview" ref=${previewRef} style="display:none"></div>
+        ${infinite
+          ? html`<div class="bc-tg-hscroll" ref=${hscrollRef}>
+              <div class="bc-tg-track" ref=${trackRef} style=${`width:${totalW}px;height:${24 * HOUR_H}px`}>
+                ${dayCols}
+                ${preview}
+              </div>
+            </div>`
+          : html`${dayCols}${preview}`}
       </div>
     </div>
+    ${infinite && html`<div class="bc-tg-edge l" aria-hidden="true"><span>‹</span></div>`}
+    ${infinite && html`<div class="bc-tg-edge r" aria-hidden="true"><span>›</span></div>`}
   </div>`;
 }
 
 // Drop preview rectangle moved via direct DOM writes (no re-render per move).
-function showPreview(previewRef, scrollRef, dayCount, dayIdx, startMin, durMin) {
+// In infinite mode the preview lives inside the track (px day columns); in
+// fixed mode it lives in the body (gutter + flex columns).
+function showPreview(previewRef, geom, dayKey, startMin, durMin) {
   const el = previewRef.current;
-  const scroll = scrollRef.current;
-  if (!el || !scroll) return;
-  const gutter = 52;
-  const bodyW = scroll.clientWidth - gutter;
-  const colW = bodyW / dayCount;
+  if (!el) return;
+  let left, width;
+  if (geom.infinite) {
+    left = (epochDayOfKey(dayKey) - geom.minDay) * geom.colW + 1;
+    width = geom.colW - 4;
+  } else {
+    const scroll = geom.scrollEl;
+    if (!scroll) return;
+    const idx = Math.max(0, geom.days.indexOf(dayKey));
+    const colW = (scroll.clientWidth - GUTTER) / geom.days.length;
+    left = GUTTER + idx * colW;
+    width = colW - 4;
+  }
   el.style.display = 'block';
-  el.style.left = (gutter + dayIdx * colW) + 'px';
-  el.style.width = (colW - 4) + 'px';
+  el.style.left = left + 'px';
+  el.style.width = width + 'px';
   el.style.top = (startMin / 60) * HOUR_H + 'px';
   el.style.height = (durMin / 60) * HOUR_H + 'px';
 }

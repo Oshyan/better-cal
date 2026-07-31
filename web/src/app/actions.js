@@ -10,6 +10,34 @@ import { localTz, todayKey, addDaysKey, occDayKey, pad } from '../lib/dates.js';
 
 export const VIEWS = ['month', 'weeks3', 'weeks2', 'week', 'day', 'agenda'];
 
+// The roster the toolbar actually shows: narrow viewports drop the multiweek
+// views ([Overview] [Week] [Day] [Agenda]). v-cycle and the 1-6 keys follow
+// this list, not the full VIEWS constant.
+export function rosterViews() {
+  return state.viewportNarrow ? VIEWS.filter((v) => v !== 'weeks3' && v !== 'weeks2') : VIEWS;
+}
+
+// Overview mode for the month slot: full month grid or the 3-day ribbon.
+// Unset (null) falls back to the device default: 3day on mobile-ish devices
+// (coarse pointer or narrow viewport), month on desktop.
+export function effectiveOverviewMode() {
+  const m = state.settings.overviewMode;
+  if (m === 'month' || m === '3day') return m;
+  return (state.viewportNarrow || state.coarsePointer) ? '3day' : 'month';
+}
+
+// Pick an overview mode from the dropdown: optimistic local apply, persisted
+// through the settings endpoint (overviewMode).
+export function setOverviewMode(mode) {
+  set({
+    settings: { ...state.settings, overviewMode: mode },
+    view: 'month',
+    scrollSeq: state.scrollSeq + 1,
+  });
+  api('/settings', { method: 'PATCH', body: { overviewMode: mode } })
+    .catch((e) => toast('Could not save view choice: ' + e.message, { error: true }));
+}
+
 // --- navigation -------------------------------------------------------------
 
 export function setView(view) {
@@ -17,8 +45,9 @@ export function setView(view) {
 }
 
 export function cycleView() {
-  const i = VIEWS.indexOf(state.view);
-  setView(VIEWS[(i + 1) % VIEWS.length]);
+  const roster = rosterViews();
+  const i = roster.indexOf(state.view);
+  setView(roster[(i + 1) % roster.length]);
 }
 
 export function goToday() {
@@ -341,8 +370,14 @@ export function applySavedView(view) {
     const idSet = new Set(config.visibleCalendarIds);
     calendars = calendars.map((c) => (c.visible === idSet.has(c.id) ? c : { ...c, visible: idSet.has(c.id) }));
   }
+  let viewType = VIEWS.includes(config.viewType) ? config.viewType : state.view;
+  // Multiweek views are not in the mobile roster: fall back to Overview.
+  if ((viewType === 'weeks2' || viewType === 'weeks3') && !rosterViews().includes(viewType)) {
+    toast((viewType === 'weeks2' ? '2-week' : '3-week') + ' view is desktop-only');
+    viewType = 'month';
+  }
   set({
-    view: VIEWS.includes(config.viewType) ? config.viewType : state.view,
+    view: viewType,
     calendars,
     collapsedFolders: { ...(config.folderCollapse || {}) },
     filterText: config.filterText || '',

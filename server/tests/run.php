@@ -644,6 +644,8 @@ checkEq('set validate weekStart', ['weekStart' => 'mon'], Settings::validate(['w
 checkEq('set validate numeric timeFormat', ['timeFormat' => '24'], Settings::validate(['timeFormat' => 24]));
 checkEq('set validate defaultView', ['defaultView' => 'agenda'], Settings::validate(['defaultView' => 'agenda']));
 checkEq('set validate nlParseMode', ['nlParseMode' => 'never'], Settings::validate(['nlParseMode' => 'never']));
+checkEq('set validate overviewMode 3day', ['overviewMode' => '3day'], Settings::validate(['overviewMode' => '3day']));
+checkEq('set validate overviewMode month', ['overviewMode' => 'month'], Settings::validate(['overviewMode' => 'month']));
 checkEq('set validate null defaultCalendarId', ['defaultCalendarId' => null], Settings::validate(['defaultCalendarId' => null]));
 checkEq('set validate numeric-string defaultCalendarId', ['defaultCalendarId' => 7], Settings::validate(['defaultCalendarId' => '7']));
 try {
@@ -657,6 +659,12 @@ try {
     check('set bad weekStart rejected', false);
 } catch (HttpError $e) {
     checkEq('set bad weekStart status', 400, $e->status);
+}
+try {
+    Settings::validate(['overviewMode' => 'week']);
+    check('set bad overviewMode rejected', false);
+} catch (HttpError $e) {
+    checkEq('set bad overviewMode status', 400, $e->status);
 }
 try {
     Settings::validate(['nope' => 1]);

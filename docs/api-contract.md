@@ -20,7 +20,7 @@ Base path `/api/v1`. JSON everywhere. Auth: `bc_session` cookie; non-GET require
 ## Events
 - `GET /events?start=ISO&end=ISO&calendars=1,2&q=&includeHidden=0` → `{events:[occurrence...]}`
   Occurrence: `{instanceId, eventId, calendarId, uid, title, description, location, url, start, end, allDay, tzid, recurring:boolean, source, attendance, status, tags:[], people:[], styleJson, createdAt, updatedAt, isNew:boolean}`
-  `start`/`end` are ISO8601 with offset. Recurring events arrive pre-expanded; `instanceId = eventId + ":" + occurrenceStartUtc`.
+  `start`/`end` are ISO8601 with offset. Recurring events arrive pre-expanded; `instanceId = eventId + ":" + occurrenceStartUtc` where occurrenceStartUtc uses compact UTC basic format `YYYYMMDDTHHMMSSZ` (e.g. `42:20260801T190000Z`). This format is FROZEN; clients treat instanceId as opaque and use the occurrence's `start` field when an API call needs `instanceStart`.
 - `POST /events` `{calendarId,title,start,end,allDay?,tzid?,description?,location?,url?,rrule?,tagNames?,personNames?}` → occurrence (first instance).
 - `PATCH /events/:id` body same fields plus `{scope:"this"|"following"|"all", instanceStart?}` (scope required when event is recurring) → `{ok:true}`.
 - `DELETE /events/:id` `{scope?,instanceStart?}` → `{ok:true}`.

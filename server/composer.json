@@ -1,0 +1,22 @@
+{
+    "name": "oshyan/better-cal-server",
+    "description": "Better-Cal self-hosted calendar backend",
+    "type": "project",
+    "license": "proprietary",
+    "require": {
+        "php": ">=8.3",
+        "ext-pdo": "*",
+        "ext-curl": "*",
+        "ext-json": "*",
+        "sabre/vobject": "^4.5"
+    },
+    "autoload": {
+        "psr-4": {
+            "BetterCal\\": "src/"
+        }
+    },
+    "config": {
+        "optimize-autoloader": true,
+        "sort-packages": true
+    }
+}

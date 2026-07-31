@@ -16,6 +16,18 @@ export function ThumbIcon({ dir = 'up', size = 13 }) {
   ><path d=${d} /></svg>`;
 }
 
+// Calendar color dot, kind-aware: local calendars fill solid; subscribed
+// feeds render hollow (2px ring of the calendar color, transparent center)
+// with a "Subscribed feed" tooltip. One shared treatment for every surface
+// that shows a calendar dot.
+export function CalDot({ cal, color }) {
+  const c = (cal && cal.color) || color || '#888';
+  const feed = cal && cal.kind === 'subscribed';
+  return feed
+    ? html`<span class="bc-cal-dot is-feed" title="Subscribed feed" style=${`border-color:${c}`}></span>`
+    : html`<span class="bc-cal-dot" style=${`background:${c}`}></span>`;
+}
+
 // Filled cog silhouette: disc r5 with 8 rectangular teeth to r7.4 and a
 // r2.1 center hole. Teeth wind with the disc and the hole winds against it,
 // so the default nonzero fill unions the teeth and cuts the hole cleanly.
@@ -45,6 +57,9 @@ export function Icon({ name, size = 15 }) {
     folder: html`<path d="M1.8 4.2c0-.6.4-1 1-1h3.4l1.4 1.6h5.6c.6 0 1 .4 1 1v6c0 .6-.4 1-1 1H2.8c-.6 0-1-.4-1-1z" />`,
     mixed: html`<circle cx="8" cy="8" r="5.2" />
       <path d="M8 2.8a5.2 5.2 0 0 1 0 10.4z" fill="currentColor" stroke="none" />`,
+    pencil: html`<path d="M9.6 3.6l2.8 2.8M3.2 10l6.9-6.9c.4-.4 1-.4 1.4 0l1.4 1.4c.4.4.4 1 0 1.4L6 12.8l-3.5.7z" />`,
+    trash: html`<path d="M2.5 4h11M6.5 4V2.8c0-.4.3-.8.8-.8h1.4c.5 0 .8.4.8.8V4M4 4l.7 9.4c0 .5.4.8.8.8h5c.4 0 .8-.3.8-.8L12 4M6.5 7v4M9.5 7v4" />`,
+    arrowLeft: html`<path d="M13.5 8h-10M7.3 3.8L3.1 8l4.2 4.2" />`,
   }[name === 'organize' ? 'folder' : name];
   return html`<svg
     viewBox="0 0 16 16" width=${size} height=${size} aria-hidden="true"

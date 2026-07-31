@@ -324,6 +324,10 @@ button:focus-visible, [tabindex]:focus-visible {
 .bc-cal-row { display: flex; align-items: center; gap: 4px; padding: 1px 0 1px 6px; }
 .bc-cal-label { display: flex; align-items: center; gap: 7px; flex: 1; min-width: 0; cursor: pointer; }
 .bc-cal-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; display: inline-block; }
+/* Subscribed feeds render hollow (2px ring of the calendar color, transparent
+   center) vs the solid fill of local calendars; the inline style carries the
+   ring color. One treatment for every surface that shows a calendar dot. */
+.bc-cal-dot.is-feed { background: transparent; border: 2px solid currentColor; }
 .bc-cal-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .bc-health { color: #c9913d; cursor: help; }
 .bc-cal-gear { padding: 2px 4px; visibility: hidden; flex: none; }
@@ -1047,8 +1051,17 @@ body.bc-dragging * { cursor: grabbing !important; }
 /* Management pages share a scroll surface with a centered content column. */
 .bc-page { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 20px 24px 32px; }
 .bc-page-col { max-width: 680px; margin: 0 auto; }
-.bc-page-head { display: flex; align-items: center; gap: 14px; }
-.bc-page-head h1 { margin: 0; font-size: 20px; flex: 1; }
+/* Breadcrumb-style back link: above the title, link-colored with a left
+   arrow, so it never reads as an action button. */
+.bc-page-back {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: none; border: none; border-radius: 6px;
+  color: var(--accent); font-size: 12.5px; font-weight: 600;
+  padding: 2px 6px 2px 3px; margin: 0 0 6px -3px;
+}
+.bc-page-back:hover { text-decoration: underline; }
+.bc-page-back svg { flex: none; }
+.bc-page-title { margin: 0; font-size: 20px; }
 .bc-page-note { color: var(--fg-muted); margin: 8px 0 18px; }
 
 /* Labeled create/edit forms on the management pages. */
@@ -1078,6 +1091,15 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-card-sub { color: var(--fg-muted); font-size: 12.5px; overflow-wrap: anywhere; }
 .bc-card-actions { display: flex; gap: 6px; flex: none; }
 .bc-card.is-off .bc-card-main { opacity: 0.5; }
+/* Inline filter editing: the card being edited carries the app's accent cue
+   and its form expands directly beneath it (the sidebar's inline-panel
+   rhythm), so the connection to the row is unmissable. */
+.bc-card-item { display: flex; flex-direction: column; gap: 6px; }
+.bc-card.is-editing {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.bc-mgmt-form.is-inline { background: var(--bg-inset); margin: 0 0 4px 12px; }
 .bc-badge {
   display: inline-flex; align-items: center;
   border: 1px solid var(--border); border-radius: 9px;
@@ -1145,35 +1167,44 @@ body.bc-dragging * { cursor: grabbing !important; }
 
 /* --- organize page (calendars & folders) ----------------------------------- */
 
-/* The organize page earns a wider column: folders sit beside the calendar
-   list on roomy viewports, stacking back to one column when narrow. */
-.bc-page-col:has(.bc-org-grid) { max-width: 960px; }
-.bc-org-grid { display: grid; grid-template-columns: 1fr; gap: 0 28px; }
-@media (min-width: 880px) {
-  .bc-org-grid { grid-template-columns: minmax(250px, 330px) 1fr; }
+/* One hierarchy matching the sidebar: the new-folder form on top, folder
+   sections with their member calendars indented beneath, then Unfiled.
+   Quiet borders, icon-button folder actions, per-row Folder dropdown. */
+.bc-org-new { display: flex; gap: 8px; margin-bottom: 18px; }
+.bc-org-new input { flex: 1; min-width: 0; }
+.bc-org-section { margin-bottom: 20px; }
+.bc-org-sect-head {
+  display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
+  padding: 5px 0; border-bottom: 1px solid var(--border);
 }
-.bc-org-folder-row, .bc-org-cal-row {
-  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 7px 0;
-}
-.bc-org-folder + .bc-org-folder, .bc-org-cal + .bc-org-cal { border-top: 1px solid var(--border); }
 .bc-org-icon { display: inline-flex; color: var(--fg-muted); flex: none; }
-.bc-org-folder-name, .bc-org-cal-name { font-weight: 600; }
-.bc-org-count { color: var(--fg-muted); font-size: 12px; margin-right: auto; }
+.bc-org-folder-name { font-weight: 600; }
+.bc-org-count { color: var(--fg-muted); font-size: 12px; }
+.bc-org-tools { margin-left: auto; display: inline-flex; gap: 2px; }
+.bc-org-trash:hover { color: var(--danger); }
 .bc-org-rename { flex: 1; min-width: 120px; }
 .bc-org-confirm {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-  padding: 2px 0 8px; font-size: 12.5px;
+  padding: 8px 0 2px; font-size: 12.5px;
 }
-.bc-org-new { display: flex; gap: 8px; padding-top: 10px; }
-.bc-org-new input { flex: 1; min-width: 0; }
+.bc-org-emptyrow { color: var(--fg-muted); font-size: 12.5px; padding: 7px 0 2px 21px; }
+.bc-org-cal { margin-left: 21px; }
+.bc-org-cal + .bc-org-cal { border-top: 1px solid var(--border); }
+.bc-org-cal-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 7px 0; }
+.bc-org-cal-name { font-weight: 600; }
 .bc-org-kind {
   font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px;
   color: var(--fg-muted); background: var(--bg-inset);
   border-radius: 4px; padding: 1px 6px; flex: none;
 }
-.bc-org-folders { display: inline-flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12.5px; }
-.bc-org-open { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }
-.bc-org-open svg { color: var(--fg-muted); flex: none; }
+.bc-org-note { color: var(--fg-muted); font-size: 11.5px; }
+.bc-org-side { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-left: auto; }
+.bc-org-assign { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--fg-muted); }
+.bc-org-assign select { font-size: 12px; padding: 2px 6px; max-width: 160px; }
+.bc-org-addto { font-size: 11.5px; flex: none; }
+.bc-org-addsel { font-size: 12px; padding: 2px 6px; }
+.bc-org-gear { flex: none; }
+.bc-org-gear.is-open { color: var(--accent); }
 .bc-org-cal .bc-calset { margin: 0 0 10px; }
 
 /* --- quick create ----------------------------------------------------------- */
@@ -1422,6 +1453,14 @@ body.bc-rescheduling { user-select: none; }
 }
 .bc-timegrid.has-left .bc-tg-edge.l,
 .bc-timegrid.has-right .bc-tg-edge.r { opacity: 1; }
+
+/* Multi-day create drag (and all-day lane selection): spanned day columns
+   tint full-height. Placed after the weekend/today tints with matching
+   specificity so the draft always wins while it is active. */
+.bc-tg-track .bc-tg-col.is-range-draft,
+.bc-tg-col.is-range-draft {
+  background-color: color-mix(in srgb, var(--accent) 14%, transparent);
+}
 
 /* --- 3-day ribbon (Overview: 3 day) ---------------------------------------- */
 

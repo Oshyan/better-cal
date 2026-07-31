@@ -3,6 +3,7 @@
 // that member's full detail view.
 
 import { html, useRef, useEffect } from '../../vendor/index.js';
+import { CalDot } from '../ui/icons.js';
 import { useStore, set, state } from './store.js';
 import { openDetail } from './actions.js';
 import { isMobile, anchorPanel, trapFocus, MOBILE_QUERY } from '../ui/DayExpand.js';
@@ -63,7 +64,7 @@ export function GroupPopover() {
     aria-label=${group.title + ', ' + group.count + ' similar events'}
   >
     <div class="bc-group-head">
-      <span class="bc-cal-dot" style=${`background:${(cal && cal.color) || '#888'}`}></span>
+      <${CalDot} cal=${cal} />
       <span class="bc-group-title">${group.title}</span>
       <span class="bc-group-count">${group.count}</span>
       <button type="button" class="bc-icon-btn" aria-label="Close" onClick=${() => set({ groupPopover: null })}>✕</button>

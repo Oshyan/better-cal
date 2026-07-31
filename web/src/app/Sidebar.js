@@ -14,7 +14,7 @@ import {
 import { CalendarSettings } from './CalendarSettings.js';
 import { MiniMonth } from './MiniMonth.js';
 import { PALETTE } from '../lib/color.js';
-import { Icon } from '../ui/icons.js';
+import { Icon, CalDot } from '../ui/icons.js';
 
 // Solo ("show only this calendar"): transient, session-scoped. Entering solo
 // captures the current visibility set; exiting restores it exactly. Switching
@@ -55,7 +55,7 @@ function CalendarRow({ cal, folders, open, onGear, soloed, onSolo }) {
           onChange=${() => toggleCalendarVisible(cal)}
           aria-label=${'Toggle ' + cal.name}
         />
-        <span class="bc-cal-dot" style=${`background:${cal.color}`}></span>
+        <${CalDot} cal=${cal} />
         <span class="bc-cal-name">${cal.name}</span>
       </label>
       ${healthBadge(cal)}
@@ -122,7 +122,7 @@ function FolderHead({ folder, cals, collapsed, onToggleCollapse }) {
     ${cals.length > 0 && html`<${FolderModeButton} folder=${folder} />`}
     <span class="bc-folder-tools">
       <button type="button" class="bc-icon-btn bc-folder-tool bc-folder-delete" aria-label=${'Delete folder ' + folder.name} title=${cals.length > 0 ? 'Only empty folders can be deleted' : 'Delete folder'} onClick=${remove}>
-        <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M2.5 4h11M6.5 4V2.8c0-.4.3-.8.8-.8h1.4c.5 0 .8.4.8.8V4M4 4l.7 9.4c0 .5.4.8.8.8h5c.4 0 .8-.3.8-.8L12 4M6.5 7v4M9.5 7v4"/></svg>
+        <${Icon} name="trash" size=${12} />
       </button>
     </span>
   </div>`;

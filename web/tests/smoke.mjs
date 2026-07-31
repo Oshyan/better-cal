@@ -22,6 +22,7 @@ import { parseJumpText } from '../src/lib/jumpparse.js';
 import { monthWeeks, stepMonthOf } from '../src/lib/minimonth.js';
 import {
   normalizeDayRange, dayRangeDraft, dayRangeLabel, timeRangeLabel, chipPosition,
+  dragCreateMode, allDayRangeDraft,
 } from '../src/lib/quickcreate.js';
 import { HOTKEYS, HOTKEY_GROUPS } from '../src/app/hotkeys.js';
 import {
@@ -528,6 +529,26 @@ setTimeFormat('24');
 eq('quickcreate: timed label 24h', timeRangeLabel('2026-08-04', 840, 930), '14:00 to 15:30');
 setTimeFormat('12');
 assert('quickcreate: timed label 12h', /2:00.*to.*3:30/.test(timeRangeLabel('2026-08-04', 840, 930)));
+
+// Week-view create-drag mode: staying in the origin column is timed; crossing
+// columns becomes an inclusive day range, direction agnostic; dragging back
+// to the origin column reverts to timed.
+eq('quickcreate: drag mode same column is timed', dragCreateMode('2026-08-03', '2026-08-03'), { mode: 'timed' });
+eq('quickcreate: drag mode crossing right', dragCreateMode('2026-08-03', '2026-08-05'),
+  { mode: 'days', startKey: '2026-08-03', endKey: '2026-08-05' });
+eq('quickcreate: drag mode crossing left normalizes', dragCreateMode('2026-08-05', '2026-08-03'),
+  { mode: 'days', startKey: '2026-08-03', endKey: '2026-08-05' });
+eq('quickcreate: drag mode across month boundary', dragCreateMode('2026-09-02', '2026-08-30'),
+  { mode: 'days', startKey: '2026-08-30', endKey: '2026-09-02' });
+
+// All-day lane drafts are all-day at any length (exclusive end), and the
+// multi-day dayRangeDraft agrees with them.
+eq('quickcreate: allday lane single day draft', allDayRangeDraft('2026-08-04', '2026-08-04'),
+  { start: localISO(2026, 8, 4, 0, 0), end: localISO(2026, 8, 5, 0, 0), allDay: true });
+eq('quickcreate: allday lane range draft crosses month', allDayRangeDraft('2026-08-30', '2026-09-02'),
+  { start: localISO(2026, 8, 30, 0, 0), end: localISO(2026, 9, 3, 0, 0), allDay: true });
+eq('quickcreate: multi-day dayRangeDraft matches allDayRangeDraft',
+  dayRangeDraft('2026-03-01', '2026-03-15'), allDayRangeDraft('2026-03-01', '2026-03-15'));
 
 // Chip position clamps into the viewport with an 8px margin.
 eq('quickcreate: chip position untouched inside', chipPosition(100, 100, 200, 40, 1000, 800),

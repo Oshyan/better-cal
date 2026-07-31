@@ -1,11 +1,19 @@
 # Better-Cal API Contract (v1)
 
-Base path `/api/v1`. JSON everywhere. Auth: `bc_session` cookie; non-GET requires `X-CSRF` header. Errors: `{"error":{"code","message"}}`.
+Base path `/api/v1`. JSON everywhere. Auth: `bc_session` cookie; non-GET requires `X-CSRF` header. Alternative: `Authorization: Bearer bc_...` personal access token (CSRF-exempt; see Tokens). Errors: `{"error":{"code","message"}}`.
 
 ## Auth
 - `POST /auth/login` `{email, password}` → `{ok:true}` + sets cookie. 401 on failure.
 - `POST /auth/logout` → `{ok:true}`.
-- `GET /me` → `{user:{id,email,displayName,settings}, csrf}` or 401.
+- `GET /me` → `{user:{id,email,displayName,settings}, csrf}` or 401. (`csrf` is null under bearer auth.)
+
+## Personal access tokens
+Token value: `bc_` + 43 url-safe base64 chars; stored sha256-hashed, shown once at creation. Bearer requests skip CSRF. Management endpoints are session-auth only: a bearer token gets 403 `session_required`.
+- `GET /tokens` → `{tokens:[{id,name,createdAt,lastUsedAt}]}`.
+- `POST /tokens` `{name}` → `{id,name,token}` (token shown once).
+- `DELETE /tokens/:id` → `{ok:true}`.
+- CLI equivalent: `php server/bin/token.php --create --name=X | --list | --revoke=ID`.
+- Agent-facing guide: [agent-api.md](agent-api.md); MCP server in `tools/mcp/`.
 
 ## Calendars & structure
 - `GET /calendars` → `{calendars:[{id,name,color,kind,sourceUrl,visible,position,folderIds:[],tagNames:[],health:{lastPolledAt,status,error,stale:boolean}}], folders:[{id,name,position}], tags:[{id,name}]}`

@@ -8,6 +8,8 @@ final class Request
 {
     public ?array $user = null;
     public ?string $csrf = null;
+    /** 'session' or 'token' once authenticated; null on exempt routes. */
+    public ?string $authMethod = null;
 
     public function __construct(
         public readonly string $method,

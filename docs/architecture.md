@@ -39,7 +39,7 @@ docs/
 
 - All timestamps stored UTC in DATETIME columns; events carry `tzid` for display/recurrence math. API exchanges ISO8601 with offset.
 - IDs: BIGINT auto-increment internally; events also keep an iCal `uid` (ULID-style string) for interop.
-- API: JSON, base path `/api/v1`. Session cookie auth (`bc_session`, httpOnly, Secure, SameSite=Lax). All non-GET requests require `X-CSRF` header matching the session's csrf token (returned by /me).
+- API: JSON, base path `/api/v1`. Session cookie auth (`bc_session`, httpOnly, Secure, SameSite=Lax). All non-GET requests require `X-CSRF` header matching the session's csrf token (returned by /me). Alternatively `Authorization: Bearer bc_...` personal access tokens (sha256-hashed in `api_tokens`, CSRF-exempt) for agents/scripts; token management endpoints are session-auth only. See docs/agent-api.md and the MCP server in tools/mcp/.
 - Errors: `{"error": {"code": "string", "message": "human"}}` with proper HTTP status.
 - Recurrence: RRULE stored on the master event; the API always returns *expanded occurrences* for the requested window (`occurrence_start`/`occurrence_end` per instance plus `event_id`, `instance_id` = `eventId:startUtc`). Edits accept `scope: this|following|all`.
 - Feed events (calendar.kind = subscribed) are read-only except `attendance` and tags.

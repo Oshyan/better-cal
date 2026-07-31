@@ -185,6 +185,12 @@ button:focus-visible, [tabindex]:focus-visible {
 }
 .bc-cell:last-child { border-right: none; }
 .bc-cell.alt-month { background: var(--bg-alt); }
+/* Month starts get a quiet but legible cue: accent-tinted day label and a
+   hairline top rule that reads as a "chapter break" while scrolling. */
+.bc-cell.is-month-start { box-shadow: inset 0 2px 0 color-mix(in srgb, var(--accent) 55%, transparent); }
+.bc-cell.is-month-start .bc-daynum { color: var(--accent); font-weight: 700; }
+.bc-cell.is-today { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--today) 40%, transparent); }
+.bc-cell.is-month-start.is-today { box-shadow: inset 0 2px 0 color-mix(in srgb, var(--accent) 55%, transparent), inset 0 0 0 1px color-mix(in srgb, var(--today) 40%, transparent); }
 .bc-cell.is-today { background: color-mix(in srgb, var(--today) 9%, var(--bg)); }
 .bc-cell.bc-drop-target { background: color-mix(in srgb, var(--accent) 22%, var(--bg)); }
 .bc-daynum {
@@ -420,6 +426,7 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-drawer-backdrop { position: fixed; inset: 0; z-index: 75; background: rgba(10, 12, 18, 0.3); }
 .bc-drawer {
   position: fixed; top: 0; right: 0; bottom: 0; width: 420px; max-width: 94vw;
+  z-index: 76;
   background: var(--bg-raised); border-left: 1px solid var(--border);
   box-shadow: var(--shadow); padding: 14px 16px; overflow-y: auto;
   overscroll-behavior: contain;

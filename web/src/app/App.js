@@ -3,13 +3,15 @@
 import { html, useState, useMemo, useRef, useEffect, useCallback } from '../../vendor/index.js';
 import { useStore, set, state, calendarMeta, shallowEq } from './store.js';
 import { loadWindow } from './api.js';
-import { moveEvent, resizeEvent, triageAttendance, sendFeedback, exitReschedule, jumpToDate, openDetail } from './actions.js';
+import {
+  moveEvent, resizeEvent, triageAttendance, sendFeedback, exitReschedule,
+  jumpToDate, openDetail, effectiveOverviewMode,
+} from './actions.js';
 import { groupOccurrences, itemMatchesFilter } from '../ui/grouping.js';
 import { sortByMatch } from '../lib/rank.js';
 import { installKeyboard } from './keyboard.js';
 import {
-  startOfWeekKey, dayKeysOfWeek, weekIndexOfKey, addDaysKey, dateOfDayKey,
-  toISOWithOffset, parseISO, epochDayOfKey,
+  addDaysKey, dateOfDayKey, toISOWithOffset, parseISO, epochDayOfKey,
 } from '../lib/dates.js';
 import { occurrenceDaySpan } from '../ui/monthmath.js';
 import { MonthGrid } from '../ui/MonthGrid.js';
@@ -51,12 +53,30 @@ export function App() {
       agendaSort: st.agendaSort,
       reschedule: st.reschedule,
       visibleMonth: st.reschedule ? st.visibleMonth : null,
+      overviewMode: st.settings.overviewMode,
+      viewportNarrow: st.viewportNarrow,
+      coarsePointer: st.coarsePointer,
     }),
     shallowEq,
   );
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => installKeyboard(), []);
+
+  // Track the responsive roster inputs in the store so the toolbar, keyboard
+  // map and saved-view fallbacks all agree on what "mobile" means.
+  useEffect(() => {
+    const mqNarrow = window.matchMedia('(max-width: 800px)');
+    const mqCoarse = window.matchMedia('(pointer: coarse)');
+    const sync = () => set({ viewportNarrow: mqNarrow.matches, coarsePointer: mqCoarse.matches });
+    mqNarrow.addEventListener('change', sync);
+    mqCoarse.addEventListener('change', sync);
+    sync();
+    return () => {
+      mqNarrow.removeEventListener('change', sync);
+      mqCoarse.removeEventListener('change', sync);
+    };
+  }, []);
 
   const calMeta = useMemo(() => calendarMeta(), [s.calendars]);
 
@@ -97,14 +117,14 @@ export function App() {
     return dim;
   }, [occurrences, s.filterText]);
 
-  // Window demand for non-month views (month drives its own via scroll).
+  // Window demand for day and agenda views (month and the infinite week
+  // drive their own via scroll).
   useEffect(() => {
-    if (s.view === 'week' || s.view === 'day') {
-      const start = s.view === 'week' ? startOfWeekKey(s.anchor) : s.anchor;
-      const days = s.view === 'week' ? 7 : 1;
+    if (s.view === 'day') {
+      const start = s.anchor;
       loadWindow(
         toISOWithOffset(dateOfDayKey(addDaysKey(start, -1))),
-        toISOWithOffset(dateOfDayKey(addDaysKey(start, days + 1))),
+        toISOWithOffset(dateOfDayKey(addDaysKey(start, 2))),
       );
       const [y, m] = start.split('-').map(Number);
       set({ visibleMonth: { year: y, month: m } });
@@ -193,10 +213,16 @@ export function App() {
 
   let view = null;
   if (MONTH_ROWS[s.view]) {
+    // The "month" slot is the Overview: full month (7 columns) or the 3-day
+    // ribbon, per the persisted overviewMode (device default when unset).
+    const ribbon = s.view === 'month' && effectiveOverviewMode() === '3day';
+    const columns = ribbon ? 3 : 7;
     view = html`<${MonthGrid}
+      key=${'grid' + columns}
       occurrences=${occurrences}
       calendars=${calMeta}
-      visibleRows=${MONTH_ROWS[s.view]}
+      columns=${columns}
+      visibleRows=${ribbon ? 5 : MONTH_ROWS[s.view]}
       scrollKey=${s.anchor}
       scrollSeq=${s.scrollSeq}
       dimSet=${dimSet}
@@ -208,8 +234,26 @@ export function App() {
       onMoveEvent=${moveEvent}
       onResizeEvent=${resizeEvent}
     />`;
-  } else if (s.view === 'week' || s.view === 'day') {
-    const days = s.view === 'week' ? dayKeysOfWeek(weekIndexOfKey(s.anchor)) : [s.anchor];
+  } else if (s.view === 'week') {
+    // Week is a horizontally infinite day track: no remount on navigation,
+    // the anchor scrolls into place via scrollSeq.
+    view = html`<${TimeGrid}
+      key="week"
+      infinite=${true}
+      occurrences=${occurrences}
+      calendars=${calMeta}
+      dimSet=${dimSet}
+      scrollKey=${s.anchor}
+      scrollSeq=${s.scrollSeq}
+      onRequestWindow=${onRequestWindow}
+      onVisibleMonthChange=${onVisibleMonthChange}
+      onCreateRange=${onCreateRange}
+      onMoveEvent=${moveEvent}
+      onResizeEvent=${resizeEvent}
+      onOpenEvent=${onOpenEvent}
+    />`;
+  } else if (s.view === 'day') {
+    const days = [s.anchor];
     view = html`<${TimeGrid}
       key=${s.view + ':' + days[0]}
       days=${days}

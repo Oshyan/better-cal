@@ -1,21 +1,35 @@
 // Toolbar: saved views menu, view switcher, today, prev/next chevrons around
 // a clickable date label (opens the jump popover, hotkey g), on-page filter,
 // search, quick add and New buttons. Single-row inline layout.
+//
+// The view switcher is responsive: the month slot is an "Overview" dropdown
+// (Full month / 3 day ribbon, persisted as the overviewMode setting), and on
+// viewports <= 800px the multiweek buttons drop out, leaving
+// [Overview] [Week] [Day] [Agenda].
 
-import { html } from '../../vendor/index.js';
+import { html, useState, useRef, useEffect } from '../../vendor/index.js';
 import { useStore, set, shallowEq } from './store.js';
-import { setView, goToday, stepAnchor } from './actions.js';
+import { setView, goToday, stepAnchor, setOverviewMode, effectiveOverviewMode } from './actions.js';
 import { fmtMonthYear, fmtDayLong, dateOfDayKey } from '../lib/dates.js';
 import { ViewSwitcher } from './ViewSwitcher.js';
 import { JumpPopover } from './JumpPopover.js';
 
-const VIEW_LABELS = [
-  ['month', 'Month'],
+const DESKTOP_VIEWS = [
   ['weeks3', '3 wk'],
   ['weeks2', '2 wk'],
   ['week', 'Week'],
   ['day', 'Day'],
   ['agenda', 'Agenda'],
+];
+const MOBILE_VIEWS = [
+  ['week', 'Week'],
+  ['day', 'Day'],
+  ['agenda', 'Agenda'],
+];
+
+const OVERVIEW_MODES = [
+  ['month', 'Full month'],
+  ['3day', '3 day'],
 ];
 
 const STEP_UNITS = {
@@ -23,11 +37,63 @@ const STEP_UNITS = {
   week: 'week', day: 'day', agenda: 'month',
 };
 
+// Overview slot: click switches to the overview; when already there, click
+// opens the Full month / 3 day mode menu (the caret advertises it).
+function OverviewButton({ view, narrow }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef(null);
+  const mode = effectiveOverviewMode();
+
+  // Document-level listeners; torn down on unmount, not just close.
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDoc = (e) => {
+      if (rootRef.current && !rootRef.current.contains(e.target)) setOpen(false);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') { e.stopPropagation(); setOpen(false); }
+    };
+    document.addEventListener('pointerdown', onDoc, true);
+    document.addEventListener('keydown', onKey, true);
+    return () => {
+      document.removeEventListener('pointerdown', onDoc, true);
+      document.removeEventListener('keydown', onKey, true);
+    };
+  }, [open]);
+
+  const pick = (m) => {
+    setOpen(false);
+    if (m !== mode || view !== 'month') setOverviewMode(m);
+  };
+
+  return html`<div class="bc-ov" ref=${rootRef}>
+    <button
+      type="button"
+      class="bc-viewswitch-btn bc-ov-btn${view === 'month' ? ' is-active' : ''}"
+      aria-pressed=${view === 'month'}
+      aria-haspopup="menu" aria-expanded=${open}
+      title=${'Overview: ' + (mode === '3day' ? '3 day' : 'full month')}
+      onClick=${() => (view === 'month' ? setOpen(!open) : setView('month'))}
+    >${narrow ? 'Overview' : 'Month'}<span class="bc-ov-caret" aria-hidden="true">▾</span></button>
+    ${open && html`<div class="bc-ov-menu" role="menu" aria-label="Overview layout">
+      ${OVERVIEW_MODES.map(([m, label]) => html`<button
+        key=${m} type="button" role="menuitemradio"
+        aria-checked=${mode === m}
+        class="bc-ov-item${mode === m ? ' is-sel' : ''}"
+        onClick=${() => pick(m)}
+      ><span class="bc-ov-check" aria-hidden="true">${mode === m ? '✓' : ''}</span>${label}</button>`)}
+    </div>`}
+  </div>`;
+}
+
 export function Toolbar({ onToggleSidebar }) {
-  const { view, anchor, visibleMonth, filterText, jumpOpen } = useStore(
+  const { view, anchor, visibleMonth, filterText, jumpOpen, narrow } = useStore(
     (s) => ({
       view: s.view, anchor: s.anchor, visibleMonth: s.visibleMonth,
       filterText: s.filterText, jumpOpen: s.jumpOpen,
+      narrow: s.viewportNarrow,
+      // Subscribed so the dropdown checkmark tracks the persisted setting.
+      overviewMode: s.settings.overviewMode, coarse: s.coarsePointer,
     }),
     shallowEq,
   );
@@ -38,6 +104,7 @@ export function Toolbar({ onToggleSidebar }) {
     ? fmtDayLong(dateOfDayKey(anchor))
     : (visibleMonth ? fmtMonthYear(new Date(visibleMonth.year, visibleMonth.month - 1, 1)) : '');
   const unit = STEP_UNITS[view] || 'month';
+  const roster = narrow ? MOBILE_VIEWS : DESKTOP_VIEWS;
 
   return html`<header class="bc-toolbar">
     <button type="button" class="bc-icon-btn bc-menu-btn" aria-label="Toggle sidebar" onClick=${onToggleSidebar}>☰</button>
@@ -56,7 +123,8 @@ export function Toolbar({ onToggleSidebar }) {
       <${JumpPopover} />
     </div>
     <nav class="bc-viewswitch" aria-label="View">
-      ${VIEW_LABELS.map(([v, l]) => html`<button
+      <${OverviewButton} view=${view} narrow=${narrow} />
+      ${roster.map(([v, l]) => html`<button
         key=${v} type="button"
         class="bc-viewswitch-btn${view === v ? ' is-active' : ''}"
         aria-pressed=${view === v}

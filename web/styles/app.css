@@ -132,16 +132,41 @@ button:focus-visible, [tabindex]:focus-visible {
   padding: 3px 8px; text-align: center; min-width: 0;
 }
 .bc-toolbar-date:hover { background: var(--bg-inset); }
+/* overflow stays visible so the Overview dropdown can escape; the end
+   segments round themselves instead. */
 .bc-viewswitch {
   display: flex; border: 1px solid var(--border-strong);
-  border-radius: 6px; overflow: hidden;
+  border-radius: 6px;
 }
 .bc-viewswitch-btn {
   background: var(--bg-raised); border: none; padding: 4px 10px;
   border-right: 1px solid var(--border);
 }
-.bc-viewswitch-btn:last-child { border-right: none; }
+.bc-viewswitch > button:last-child { border-right: none; border-top-right-radius: 5px; border-bottom-right-radius: 5px; }
 .bc-viewswitch-btn.is-active { background: var(--accent); color: var(--accent-fg); }
+
+/* Overview slot: dropdown offering Full month / 3 day (overviewMode). */
+.bc-ov { position: relative; display: flex; }
+.bc-ov-btn {
+  display: inline-flex; align-items: center; gap: 4px;
+  border-top-left-radius: 5px; border-bottom-left-radius: 5px;
+}
+.bc-ov-caret { font-size: 9px; opacity: 0.75; }
+.bc-ov-menu {
+  position: absolute; left: 0; top: calc(100% + 6px); z-index: 71;
+  min-width: 140px; padding: 5px;
+  background: var(--bg-raised); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow);
+  display: flex; flex-direction: column;
+}
+.bc-ov-item {
+  display: flex; align-items: center; gap: 6px;
+  background: none; border: none; border-radius: 5px;
+  padding: 5px 8px; text-align: left; white-space: nowrap;
+}
+.bc-ov-item:hover { background: var(--bg-inset); }
+.bc-ov-item.is-sel { color: var(--accent); font-weight: 600; }
+.bc-ov-check { width: 12px; flex: none; }
 .bc-filter-input { margin-left: auto; width: 180px; }
 .bc-menu-btn { display: none; }
 .bc-views { position: relative; }
@@ -383,7 +408,7 @@ button:focus-visible, [tabindex]:focus-visible {
 .bc-gutter-year { display: block; font-size: 10px; font-weight: 600; }
 .bc-week { position: absolute; left: 0; right: 0; display: flex; }
 .bc-week-gutter { width: var(--bc-gutter-w, 44px); flex: none; border-bottom: 1px solid var(--border); }
-.bc-week-days { flex: 1; display: grid; grid-template-columns: repeat(7, 1fr); position: relative; min-width: 0; }
+.bc-week-days { flex: 1; display: grid; grid-template-columns: repeat(var(--bc-cols, 7), 1fr); position: relative; min-width: 0; }
 .bc-cell {
   border-bottom: 1px solid var(--border);
   border-right: 1px solid var(--border);
@@ -393,6 +418,10 @@ button:focus-visible, [tabindex]:focus-visible {
 }
 .bc-cell:last-child { border-right: none; }
 .bc-cell.alt-month { background: var(--bg-alt); }
+/* 3-day ribbon: weekends carry a subtle tint for orientation (there is no
+   weekday header row in that mode). Today and drop tints still win. */
+.bc-cell.is-weekend:not(.is-today):not(.bc-drop-target) { background: color-mix(in srgb, var(--fg) 4%, var(--bg)); }
+.bc-cell.alt-month.is-weekend:not(.is-today):not(.bc-drop-target) { background: color-mix(in srgb, var(--fg) 4%, var(--bg-alt)); }
 /* Month starts get a quiet but legible cue: accent-tinted day label and a
    hairline top rule that reads as a "chapter break" while scrolling. */
 .bc-cell.is-month-start { box-shadow: inset 0 2px 0 color-mix(in srgb, var(--accent) 55%, transparent); }
@@ -1230,4 +1259,58 @@ body.bc-rescheduling { user-select: none; }
   background: color-mix(in srgb, var(--accent) 10%, var(--bg-raised));
   border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
   border-radius: 6px; padding: 5px 8px; margin-bottom: 8px; font-size: 12.5px;
+}
+
+/* --- infinite week: horizontal day track, synced header, edge hints -------- */
+
+.bc-timegrid { position: relative; }
+/* Header and all-day lane follow the day track via counter-translate. */
+.bc-tg-hclip { flex: 1; min-width: 0; overflow: hidden; position: relative; }
+.bc-tg-htrack { position: relative; height: 100%; will-change: transform; }
+.bc-tg-infinite .bc-tg-head { min-height: 32px; }
+.bc-tg-infinite .bc-tg-head-day { position: absolute; top: 0; bottom: 0; }
+.bc-tg-month-tag {
+  font-size: 10px; font-weight: 700; color: var(--accent);
+  text-transform: uppercase; letter-spacing: 0.3px;
+}
+/* The horizontal scroller lives inside the vertical one; its own scrollbar is
+   hidden (edge hints + toolbar chevrons + native panning do the work). */
+.bc-tg-hscroll {
+  flex: 1; min-width: 0; overflow-x: auto; overflow-y: hidden;
+  overscroll-behavior-x: contain; touch-action: pan-x pan-y;
+  scrollbar-width: none;
+}
+.bc-tg-hscroll::-webkit-scrollbar { display: none; }
+.bc-tg-track { position: relative; }
+.bc-tg-track .bc-tg-col { position: absolute; top: 0; bottom: 0; border-right: 1px solid var(--border); }
+/* Blocks must not block horizontal panning on the track. */
+.bc-tg-infinite .bc-block { touch-action: pan-x pan-y; }
+
+/* Edge hints: gradient fade + quiet chevron while more days exist off-screen
+   (has-left/has-right toggled from scroll position with a threshold). */
+.bc-tg-edge {
+  position: absolute; top: 0; bottom: 0; width: 30px; z-index: 7;
+  display: flex; align-items: center; pointer-events: none;
+  opacity: 0; transition: opacity 0.18s ease;
+}
+.bc-tg-edge span { color: var(--fg-muted); font-size: 17px; line-height: 1; }
+.bc-tg-edge.l {
+  left: 52px; justify-content: flex-start; padding-left: 2px;
+  background: linear-gradient(to right, color-mix(in srgb, var(--bg) 80%, transparent), transparent);
+}
+.bc-tg-edge.r {
+  right: 0; justify-content: flex-end; padding-right: 2px;
+  background: linear-gradient(to left, color-mix(in srgb, var(--bg) 80%, transparent), transparent);
+}
+.bc-timegrid.has-left .bc-tg-edge.l,
+.bc-timegrid.has-right .bc-tg-edge.r { opacity: 1; }
+
+/* --- 3-day ribbon (Overview: 3 day) ---------------------------------------- */
+
+/* Ribbon cells are wide even on phones: restore the chip time and dot that
+   the 7-column mobile month hides. */
+@media (max-width: 600px) {
+  .bc-month.is-ribbon .bc-cell .bc-chip .bc-chip-time { display: inline; }
+  .bc-month.is-ribbon .bc-cell .bc-chip .bc-chip-dot { display: inline-block; }
+  .bc-month.is-ribbon .bc-cell .bc-chip .bc-chip-title { font-size: 11px; }
 }

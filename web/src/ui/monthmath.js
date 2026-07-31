@@ -45,28 +45,75 @@ export function occurrenceDaySpan(occ) {
   return { startKey, endKey };
 }
 
-// Split a [startKey..endKey] (inclusive) day span into per-week segments.
-// Each segment: {weekIndex, startCol, endCol, contLeft, contRight} with
-// columns 0..6 (Monday..Sunday) and continuation flags at week edges.
-export function segmentSpan(startKey, endKey) {
+// --- generalized row math (7-column month rows and N-day ribbon rows) -------
+// Rows with columns === 7 are calendar weeks (week-start aware). Any other
+// column count chunks the epoch-day line into consecutive fixed-size rows
+// anchored at epoch day 0 (floor(epochDay / columns)): stable boundaries that
+// never depend on the week-start setting or the viewport.
+
+export function rowIndexOfEpochDay(ed, columns = 7) {
+  if (columns === 7) return weekIndexOfEpochDay(ed);
+  return Math.floor(ed / columns);
+}
+
+export function rowIndexOfDayKey(key, columns = 7) {
+  return rowIndexOfEpochDay(epochDayOfKey(key), columns);
+}
+
+// First epoch day of a row index.
+export function firstEpochDayOfRow(ri, columns = 7) {
+  if (columns === 7) return firstEpochDayOfWeek(ri);
+  return ri * columns;
+}
+
+export function dayKeysOfRow(ri, columns = 7) {
+  const first = firstEpochDayOfRow(ri, columns);
+  const out = [];
+  for (let i = 0; i < columns; i++) out.push(keyOfEpochDay(first + i));
+  return out;
+}
+
+// Saturday/Sunday check on the epoch-day line (1970-01-01 was a Thursday).
+export function isWeekendEpochDay(ed) {
+  const dow = (((ed + 4) % 7) + 7) % 7; // 0 = Sunday .. 6 = Saturday
+  return dow === 0 || dow === 6;
+}
+
+// Split a [startKey..endKey] (inclusive) day span into per-row segments for a
+// grid with the given column count. Each segment:
+// {rowIndex, startCol, endCol, contLeft, contRight} with columns
+// 0..columns-1 and continuation flags at row edges.
+export function rowSpanSegments(startKey, endKey, columns = 7) {
   const s = epochDayOfKey(startKey);
   const e = Math.max(s, epochDayOfKey(endKey));
-  const firstWeek = weekIndexOfEpochDay(s);
-  const lastWeek = weekIndexOfEpochDay(e);
+  const firstRow = rowIndexOfEpochDay(s, columns);
+  const lastRow = rowIndexOfEpochDay(e, columns);
   const segs = [];
-  for (let wi = firstWeek; wi <= lastWeek; wi++) {
-    const weekStart = firstEpochDayOfWeek(wi);
-    const segStart = Math.max(s, weekStart);
-    const segEnd = Math.min(e, weekStart + 6);
+  for (let ri = firstRow; ri <= lastRow; ri++) {
+    const rowStart = firstEpochDayOfRow(ri, columns);
+    const segStart = Math.max(s, rowStart);
+    const segEnd = Math.min(e, rowStart + columns - 1);
     segs.push({
-      weekIndex: wi,
-      startCol: segStart - weekStart,
-      endCol: segEnd - weekStart,
-      contLeft: segStart > weekStart ? false : s < weekStart,
-      contRight: e > weekStart + 6,
+      rowIndex: ri,
+      startCol: segStart - rowStart,
+      endCol: segEnd - rowStart,
+      contLeft: s < rowStart,
+      contRight: e > rowStart + columns - 1,
     });
   }
   return segs;
+}
+
+// Week-row segmentation (columns = 7), kept as the historical shape with
+// weekIndex naming. Delegates to rowSpanSegments.
+export function segmentSpan(startKey, endKey) {
+  return rowSpanSegments(startKey, endKey, 7).map((s) => ({
+    weekIndex: s.rowIndex,
+    startCol: s.startCol,
+    endCol: s.endCol,
+    contLeft: s.contLeft,
+    contRight: s.contRight,
+  }));
 }
 
 // Is an occurrence multi-day on the grid?
@@ -75,17 +122,19 @@ export function isMultiDay(occ) {
   return endKey !== startKey;
 }
 
-// Month label info for the left gutter: for each week in [firstWeek, lastWeek]
-// that contains the 1st of a month, return {weekIndex, year, month} (month 1-12).
-export function monthStartsInRange(firstWeek, lastWeek) {
+// Month label info for the left gutter: for each row in [firstRow, lastRow]
+// that contains the 1st of a month, return {weekIndex, year, month} (month
+// 1-12). weekIndex is the row index (historical name; 7-column callers see
+// real week indexes).
+export function monthStartsInRange(firstRow, lastRow, columns = 7) {
   const out = [];
-  for (let wi = firstWeek; wi <= lastWeek; wi++) {
-    const start = firstEpochDayOfWeek(wi);
-    for (let i = 0; i < 7; i++) {
+  for (let ri = firstRow; ri <= lastRow; ri++) {
+    const start = firstEpochDayOfRow(ri, columns);
+    for (let i = 0; i < columns; i++) {
       const key = keyOfEpochDay(start + i);
       if (key.endsWith('-01')) {
         const [y, m] = key.split('-').map(Number);
-        out.push({ weekIndex: wi, year: y, month: m });
+        out.push({ weekIndex: ri, year: y, month: m });
       }
     }
   }
@@ -138,12 +187,12 @@ export function timeDropDates(occ, dayKey, minute) {
   return { newStart: toISOWithOffset(s), newEnd: toISOWithOffset(new Date(s.getTime() + durMin * 60000)) };
 }
 
-// Dominant month of a week (the month owning >= 4 of its 7 days).
+// Dominant month of a row (the month owning the most of its days).
 // Used for the toolbar's current-month label and alternating backgrounds.
-export function dominantMonthOfWeek(weekIndex) {
-  const start = firstEpochDayOfWeek(weekIndex);
+export function dominantMonthOfRow(rowIndex, columns = 7) {
+  const start = firstEpochDayOfRow(rowIndex, columns);
   const counts = new Map();
-  for (let i = 0; i < 7; i++) {
+  for (let i = 0; i < columns; i++) {
     const [y, m] = keyOfEpochDay(start + i).split('-').map(Number);
     const k = y * 12 + (m - 1);
     counts.set(k, (counts.get(k) || 0) + 1);
@@ -151,4 +200,8 @@ export function dominantMonthOfWeek(weekIndex) {
   let best = null, bestN = 0;
   for (const [k, n] of counts) if (n > bestN) { best = k; bestN = n; }
   return { year: Math.floor(best / 12), month: (best % 12) + 1 };
+}
+
+export function dominantMonthOfWeek(weekIndex) {
+  return dominantMonthOfRow(weekIndex, 7);
 }

@@ -19,7 +19,7 @@ export const HOTKEYS = [
 
   // Views
   { id: 'cycleView', keys: ['v'], label: 'Cycle through views', group: 'Views' },
-  { id: 'setView', keys: ['1', '2', '3', '4', '5', '6'], display: ['1-6'], label: 'Month, 3 wk, 2 wk, week, day, agenda', group: 'Views' },
+  { id: 'setView', keys: ['1', '2', '3', '4', '5', '6'], display: ['1-6'], label: 'Views in switcher order', group: 'Views' },
 
   // Events
   { id: 'quickAdd', keys: ['c'], label: 'Quick add (plain language)', group: 'Events' },

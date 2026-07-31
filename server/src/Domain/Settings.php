@@ -22,6 +22,9 @@ final class Settings
         'defaultCalendarId' => null,
         'theme' => 'system',
         'nlParseMode' => 'smart',
+        // Overview layout for the month slot; null = unset (client applies
+        // its device default: 3day on mobile, month on desktop).
+        'overviewMode' => null,
         'folderVisibility' => [],
         // Global default reminders; effective-reminder resolution falls back
         // to these when neither the event nor its calendar overrides them.
@@ -95,6 +98,7 @@ final class Settings
                 'timeFormat' => self::enum($key, is_scalar($value) ? (string) $value : $value, ['12', '24']),
                 'theme' => self::enum($key, $value, ['system', 'light', 'dark']),
                 'nlParseMode' => self::enum($key, $value, ['always', 'smart', 'never']),
+                'overviewMode' => self::enum($key, $value, ['month', '3day']),
                 'defaultCalendarId' => self::calendarId($value),
                 'folderVisibility' => self::folderVisibility($value),
                 'reminderTimed' => Reminders::validateTimedList($value),

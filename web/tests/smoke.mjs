@@ -11,6 +11,8 @@ import {
   visibleWeekRange, weekTop, totalHeight, segmentSpan, occurrenceDaySpan,
   monthStartsInRange, dominantMonthOfWeek, isMultiDay,
   monthsAround, miniMonthGrid, dayDropDates, timeDropDates,
+  rowSpanSegments, rowIndexOfEpochDay, rowIndexOfDayKey, firstEpochDayOfRow,
+  dayKeysOfRow, isWeekendEpochDay, dominantMonthOfRow,
 } from '../src/ui/monthmath.js';
 import { contrastText, withAlpha, parseHex } from '../src/lib/color.js';
 import { baseTitle, groupOccurrences, itemMatchesFilter, isGroupId } from '../src/ui/grouping.js';
@@ -136,6 +138,76 @@ assert('monthStartsInRange finds Aug 1',
 
 // 26. Dominant month of a boundary week (Jul 27 - Aug 2: 5 July days).
 eq('dominantMonthOfWeek boundary', dominantMonthOfWeek(weekIndexOfKey('2026-07-30')), { year: 2026, month: 7 });
+
+console.log('--- 3-column ribbon math ---');
+
+// Chunk boundaries are anchored at epoch day 0 and are exactly 3 days wide.
+eq('3col: epoch day 0 is row 0', rowIndexOfEpochDay(epochDayOfKey('1970-01-01'), 3), 0);
+eq('3col: day 2 still row 0', rowIndexOfEpochDay(epochDayOfKey('1970-01-03'), 3), 0);
+eq('3col: day 3 starts row 1', rowIndexOfEpochDay(epochDayOfKey('1970-01-04'), 3), 1);
+eq('3col: firstEpochDayOfRow inverts row 0', keyOfEpochDay(firstEpochDayOfRow(0, 3)), '1970-01-01');
+assert('3col: rows are 3 days wide',
+  firstEpochDayOfRow(rowIndexOfDayKey('2026-08-01', 3) + 1, 3) -
+  firstEpochDayOfRow(rowIndexOfDayKey('2026-08-01', 3), 3) === 3);
+
+// A day always falls inside its own row.
+const r801 = rowIndexOfDayKey('2026-08-01', 3);
+assert('3col: day within its row bounds',
+  epochDayOfKey('2026-08-01') >= firstEpochDayOfRow(r801, 3) &&
+  epochDayOfKey('2026-08-01') <= firstEpochDayOfRow(r801, 3) + 2);
+
+// The chunk holding 2026-08-01 is 2026-07-30..2026-08-01 (epoch % 3 = 2).
+eq('3col: dayKeysOfRow around Aug 1 2026', dayKeysOfRow(r801, 3),
+  ['2026-07-30', '2026-07-31', '2026-08-01']);
+
+// Stable anchors: chunking never depends on the week-start setting.
+setWeekStart('sun');
+eq('3col: row index unaffected by week start', rowIndexOfDayKey('2026-08-01', 3), r801);
+setWeekStart('mon');
+
+// columns=7 delegates to real week rows (week-start aware).
+eq('7col: rowIndex matches weekIndex', rowIndexOfEpochDay(epochDayOfKey('2026-07-30'), 7), weekIndexOfKey('2026-07-30'));
+eq('7col: dayKeysOfRow matches dayKeysOfWeek', dayKeysOfRow(weekIndexOfKey('2026-07-30'), 7), dayKeysOfWeek(weekIndexOfKey('2026-07-30')));
+
+// Segmentation within one chunk: no continuation flags.
+eq('3col: segment inside one chunk', rowSpanSegments('2026-07-30', '2026-07-31', 3), [
+  { rowIndex: r801, startCol: 0, endCol: 1, contLeft: false, contRight: false },
+]);
+
+// Segmentation across a chunk boundary splits with continuation flags.
+eq('3col: segment across two chunks', rowSpanSegments('2026-07-31', '2026-08-03', 3), [
+  { rowIndex: r801, startCol: 1, endCol: 2, contLeft: false, contRight: true },
+  { rowIndex: r801 + 1, startCol: 0, endCol: 1, contLeft: true, contRight: false },
+]);
+
+// A 7-day span covers 3+ chunks; middle chunks are fully continued.
+const seg7 = rowSpanSegments('2026-07-30', '2026-08-05', 3);
+assert('3col: 7-day span middle chunks fully continued',
+  seg7.length === 3 &&
+  seg7[0].startCol === 0 && seg7[0].endCol === 2 && !seg7[0].contLeft && seg7[0].contRight &&
+  seg7[1].contLeft && seg7[1].contRight && seg7[1].startCol === 0 && seg7[1].endCol === 2 &&
+  seg7[2].contLeft && !seg7[2].contRight && seg7[2].startCol === 0 && seg7[2].endCol === 0);
+
+// segmentSpan stays the historical columns=7 shape (delegation intact).
+eq('segmentSpan delegates to rowSpanSegments(7)',
+  segmentSpan('2026-07-31', '2026-08-04'),
+  rowSpanSegments('2026-07-31', '2026-08-04', 7).map((s) => ({
+    weekIndex: s.rowIndex, startCol: s.startCol, endCol: s.endCol,
+    contLeft: s.contLeft, contRight: s.contRight,
+  })));
+
+// Gutter labels: the chunk containing Aug 1 2026 carries the August label.
+const labels3 = monthStartsInRange(r801 - 4, r801 + 4, 3);
+assert('3col: monthStartsInRange finds Aug 1',
+  labels3.some((l) => l.year === 2026 && l.month === 8 && l.weekIndex === r801));
+
+// Dominant month of the boundary chunk Jul 30, Jul 31, Aug 1: July (2 of 3).
+eq('3col: dominantMonthOfRow boundary chunk', dominantMonthOfRow(r801, 3), { year: 2026, month: 7 });
+
+// Weekend detection (2026-08-01 Sat, 08-02 Sun, 08-03 Mon).
+assert('weekend: Saturday', isWeekendEpochDay(epochDayOfKey('2026-08-01')));
+assert('weekend: Sunday', isWeekendEpochDay(epochDayOfKey('2026-08-02')));
+assert('weekend: Monday is not', !isWeekendEpochDay(epochDayOfKey('2026-08-03')));
 
 console.log('--- reschedule math ---');
 

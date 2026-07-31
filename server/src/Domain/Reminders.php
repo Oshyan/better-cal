@@ -28,11 +28,11 @@ use BetterCal\Support\Time;
 final class Reminders
 {
     public const MAX_ENTRIES = 5;
-    public const MAX_MINUTES = 20160; // 2 weeks
-    public const MAX_DAYS_BEFORE = 14;
+    public const MAX_MINUTES = 40320; // 4 weeks
+    public const MAX_DAYS_BEFORE = 28;
 
-    /** Occurrence-start lookahead for the scan; covers the max lead time. */
-    private const SCAN_LOOKAHEAD = 'P15D';
+    /** Occurrence-start lookahead for the scan; covers the max lead time (4 weeks + margin). */
+    private const SCAN_LOOKAHEAD = 'P35D';
     /** A due reminder older than this is skipped (worker downtime cutoff). */
     private const FIRE_GRACE = 'PT1H';
     private const NOTIFIED_RETENTION = 'P7D';

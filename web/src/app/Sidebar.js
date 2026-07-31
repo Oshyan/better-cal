@@ -1,13 +1,14 @@
 // Sidebar: folders > calendars with color dots + visibility toggles, folder
 // visibility modes (all/none/custom), per-calendar settings panels (gear),
-// folder create/rename/delete, add-calendar menu (local / subscribe / import),
-// feed health badges, and the manage navigation in the footer.
+// folder create/delete (renaming lives in the folder manager), add-calendar
+// menu (local / subscribe / import), feed health badges, and the manage
+// navigation in the footer.
 
 import { html, useState, useRef } from '../../vendor/index.js';
 import { useStore, set, state, toast, shallowEq } from './store.js';
 import { api, loadCalendars } from './api.js';
 import {
-  toggleCalendarVisible, createFolder, renameFolder, deleteFolder,
+  toggleCalendarVisible, createFolder, deleteFolder,
   folderMode, setFolderVisibilityMode,
 } from './actions.js';
 import { CalendarSettings } from './CalendarSettings.js';
@@ -42,6 +43,9 @@ function Icon({ name, size = 15 }) {
       <circle cx="3.7" cy="12.3" r="1.1" fill="currentColor" stroke="none" />`,
     filters: html`<path d="M2 3h12l-4.6 5.4V13l-2.8-1.5V8.4z" />`,
     views: html`<path d="M4.5 2h7v12l-3.5-2.7L4.5 14z" />`,
+    folder: html`<path d="M1.8 4.2c0-.6.4-1 1-1h3.4l1.4 1.6h5.6c.6 0 1 .4 1 1v6c0 .6-.4 1-1 1H2.8c-.6 0-1-.4-1-1z" />`,
+    mixed: html`<circle cx="8" cy="8" r="5.2" />
+      <path d="M8 2.8a5.2 5.2 0 0 1 0 10.4z" fill="currentColor" stroke="none" />`,
   }[name];
   return html`<svg
     viewBox="0 0 16 16" width=${size} height=${size} aria-hidden="true"
@@ -109,26 +113,12 @@ function FolderModeButton({ folder }) {
     title=${MODE_TIP}
     aria-label=${'Visibility for ' + folder.name + ': ' + MODE_LABELS[mode] + '. Switch to ' + MODE_LABELS[next]}
     onClick=${() => setFolderVisibilityMode(folder.id, next)}
-  >${MODE_LABELS[mode]}</button>`;
+  >${mode === 'custom' && html`<${Icon} name="mixed" size=${9} />`}${MODE_LABELS[mode]}</button>`;
 }
 
+// Folder rename lives in the folder manager; the header keeps collapse,
+// visibility mode, and delete only.
 function FolderHead({ folder, cals, collapsed, onToggleCollapse }) {
-  const [renaming, setRenaming] = useState(false);
-  const [name, setName] = useState(folder.name);
-  const doneRef = useRef(false); // guards Enter-then-blur double commits
-
-  const startRename = () => { setName(folder.name); doneRef.current = false; setRenaming(true); };
-
-  const commitRename = async () => {
-    if (doneRef.current) return;
-    doneRef.current = true;
-    const trimmed = name.trim();
-    if (trimmed && trimmed !== folder.name) await renameFolder(folder, trimmed);
-    setRenaming(false);
-  };
-
-  const cancelRename = () => { doneRef.current = true; setRenaming(false); };
-
   const remove = () => {
     if (cals.length > 0) {
       toast('Folder has ' + cals.length + ' calendar' + (cals.length === 1 ? '' : 's') +
@@ -138,30 +128,18 @@ function FolderHead({ folder, cals, collapsed, onToggleCollapse }) {
     deleteFolder(folder);
   };
 
-  if (renaming) {
-    return html`<form class="bc-folder-rename" onSubmit=${(e) => { e.preventDefault(); commitRename(); }}>
-      <input
-        value=${name} autofocus aria-label="Folder name"
-        onInput=${(e) => setName(e.target.value)}
-        onBlur=${commitRename}
-        onKeyDown=${(e) => { if (e.key === 'Escape') cancelRename(); }}
-      />
-    </form>`;
-  }
-
   return html`<div class="bc-folder-headrow">
     <button
       type="button" class="bc-folder-head"
       aria-expanded=${!collapsed}
       onClick=${onToggleCollapse}
-      onDblClick=${startRename}
     >
       <span class="bc-folder-caret">${collapsed ? '▸' : '▾'}</span>
+      <span class="bc-folder-icon"><${Icon} name="folder" size=${12} /></span>
       <span class="bc-folder-name">${folder.name}</span>
     </button>
     ${cals.length > 0 && html`<${FolderModeButton} folder=${folder} />`}
     <span class="bc-folder-tools">
-      <button type="button" class="bc-icon-btn bc-folder-tool" aria-label=${'Rename folder ' + folder.name} title="Rename folder" onClick=${startRename}>✎</button>
       <button type="button" class="bc-icon-btn bc-folder-tool bc-folder-delete" aria-label=${'Delete folder ' + folder.name} title=${cals.length > 0 ? 'Only empty folders can be deleted' : 'Delete folder'} onClick=${remove}>
         <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M2.5 4h11M6.5 4V2.8c0-.4.3-.8.8-.8h1.4c.5 0 .8.4.8.8V4M4 4l.7 9.4c0 .5.4.8.8.8h5c.4 0 .8-.3.8-.8L12 4M6.5 7v4M9.5 7v4"/></svg>
       </button>
@@ -302,7 +280,7 @@ export function Sidebar({ open, onClose }) {
         ${!collapsedFolders[folder.id] && rows(cals)}
       </section>`)}
       <section class="bc-folder">
-        ${byFolder.length > 0 && html`<div class="bc-folder-head bc-folder-static">Calendars</div>`}
+        ${byFolder.length > 0 && html`<div class="bc-folder-head bc-folder-static">All calendars</div>`}
         ${rows(loose)}
       </section>
       <${AddMenu} />

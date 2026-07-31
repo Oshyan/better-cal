@@ -11,8 +11,10 @@ use BetterCal\Infra\JobQueue;
 /**
  * Keyword/regex/prompt filters at global, folder, or calendar scope. Enabled
  * filters are applied server-side to the events window and search: action
- * `hide` drops matching occurrences, action `dim` marks them `dimmed:true`
- * (additive occurrence field). Keyword = case-insensitive substring; regex =
+ * `hide` drops matching occurrences, action `dim` marks them `dimmed:true`,
+ * action `highlight` marks them `highlighted:true` (additive occurrence
+ * fields; precedence hide > dim > highlight when several filters match).
+ * Keyword = case-insensitive substring; regex =
  * PCRE, evaluated case-insensitively. Prompt filters are never evaluated in
  * the request path: a background worker scores feed events against the prompt
  * (see PromptEval) and the cached verdicts in `filter_evals` are joined here;
@@ -22,8 +24,13 @@ final class Filters
 {
     private const SCOPES = ['global', 'folder', 'calendar'];
     private const TYPES = ['keyword', 'regex', 'prompt'];
-    private const ACTIONS = ['hide', 'dim'];
-    public const FIELDS = ['title', 'description', 'location'];
+    private const ACTIONS = ['hide', 'dim', 'highlight'];
+    /** Disposition precedence: a stronger action beats a weaker one. */
+    private const STRENGTH = ['hide' => 3, 'dim' => 2, 'highlight' => 1];
+    /** Fields a keyword/regex filter may match against. */
+    public const FIELDS = ['title', 'description', 'location', 'tags'];
+    /** Default when config.fields is absent; tags is opt-in. */
+    public const DEFAULT_FIELDS = ['title', 'description', 'location'];
     private const MAX_PATTERN_CHARS = 500;
     private const MAX_PROMPT_CHARS = 2000;
     /** Cap on event ids per on-read filter_eval enqueue. */
@@ -66,7 +73,7 @@ final class Filters
         }
         $action = (string) ($in['action'] ?? 'hide');
         if (!in_array($action, self::ACTIONS, true)) {
-            throw HttpError::badRequest('action must be hide|dim');
+            throw HttpError::badRequest('action must be hide|dim|highlight');
         }
         $config = self::validateConfig($type, is_array($in['config'] ?? null) ? $in['config'] : []);
 
@@ -121,7 +128,7 @@ final class Filters
         if (array_key_exists('action', $in)) {
             $action = (string) $in['action'];
             if (!in_array($action, self::ACTIONS, true)) {
-                throw HttpError::badRequest('action must be hide|dim');
+                throw HttpError::badRequest('action must be hide|dim|highlight');
             }
             $fields['action'] = $action;
         }
@@ -298,7 +305,8 @@ final class Filters
 
     /**
      * Pure matcher: does an occurrence-like array (title/description/location
-     * keys) match the filter's pattern over its selected fields?
+     * keys, plus a `tags` list of tag names when the filter selects the tags
+     * field) match the filter's pattern over its selected fields?
      *
      * @param array{type?:string,config?:array{pattern?:string,fields?:list<string>}} $filter
      */
@@ -310,19 +318,41 @@ final class Filters
         if ($pattern === '') {
             return false;
         }
-        $fields = self::FIELDS;
+        $fields = self::DEFAULT_FIELDS;
         if (isset($config['fields']) && is_array($config['fields']) && $config['fields'] !== []) {
             $fields = array_values(array_intersect(self::FIELDS, array_map('strval', $config['fields'])));
         }
         foreach ($fields as $field) {
-            $value = (string) ($occ[$field] ?? '');
-            if ($value === '') {
+            if ($field === 'tags') {
+                $tags = is_array($occ['tags'] ?? null) ? $occ['tags'] : [];
+                foreach ($tags as $tag) {
+                    if (self::patternHits($type, $pattern, (string) $tag)) {
+                        return true;
+                    }
+                }
                 continue;
             }
-            $hit = $type === 'regex'
-                ? @preg_match(self::delimit($pattern), $value) === 1
-                : mb_stripos($value, $pattern) !== false;
-            if ($hit) {
+            $value = (string) ($occ[$field] ?? '');
+            if ($value !== '' && self::patternHits($type, $pattern, $value)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static function patternHits(string $type, string $pattern, string $value): bool
+    {
+        return $type === 'regex'
+            ? @preg_match(self::delimit($pattern), $value) === 1
+            : mb_stripos($value, $pattern) !== false;
+    }
+
+    /** Does any of the given resolved filters match against the tags field? */
+    public static function anyUsesTags(array $filters): bool
+    {
+        foreach ($filters as $filter) {
+            $fields = $filter['config']['fields'] ?? null;
+            if (is_array($fields) && in_array('tags', array_map('strval', $fields), true)) {
                 return true;
             }
         }
@@ -331,7 +361,8 @@ final class Filters
 
     /**
      * Decide the outcome for one event row against pre-resolved filters:
-     * 'hide' (wins outright), 'dim', or null (untouched).
+     * 'hide' (wins outright), 'dim', 'highlight', or null (untouched).
+     * Precedence across matching filters: hide > dim > highlight.
      *
      * @param list<array{type:string,config:array,action:string,calendarIds:?array<int,true>}> $filters
      */
@@ -348,7 +379,7 @@ final class Filters
             if ($filter['action'] === 'hide') {
                 return 'hide';
             }
-            $result = 'dim';
+            $result = self::strongest($result, (string) $filter['action']);
         }
         return $result;
     }
@@ -356,8 +387,8 @@ final class Filters
     /**
      * Pure prompt-filter disposition for one event row given pre-fetched
      * verdicts (see promptFilterContext). Same precedence as disposition():
-     * hide wins outright, dim otherwise, null when every filter passes,
-     * is out of scope, or has no cached verdict yet.
+     * hide wins outright, then dim, then highlight; null when every filter
+     * passes, is out of scope, or has no cached verdict yet.
      *
      * @param list<array{id:int,action:string,calendarIds:?array<int,true>}> $promptFilters
      * @param array<int,array<int,true>> $failed filterId => set of failing event ids
@@ -376,21 +407,21 @@ final class Filters
             if ($filter['action'] === 'hide') {
                 return 'hide';
             }
-            $result = 'dim';
+            $result = self::strongest($result, (string) $filter['action']);
         }
         return $result;
     }
 
-    /** Combine dispositions from independent filter tiers: hide beats dim beats null. */
+    /** Combine dispositions from independent filter tiers: hide beats dim beats highlight beats null. */
     public static function strongest(?string ...$dispositions): ?string
     {
         $result = null;
         foreach ($dispositions as $d) {
-            if ($d === 'hide') {
-                return 'hide';
+            if ($d === null || !isset(self::STRENGTH[$d])) {
+                continue;
             }
-            if ($d === 'dim') {
-                $result = 'dim';
+            if ($result === null || self::STRENGTH[$d] > self::STRENGTH[$result]) {
+                $result = $d;
             }
         }
         return $result;
@@ -413,14 +444,14 @@ final class Filters
         if (mb_strlen($pattern) > self::MAX_PATTERN_CHARS) {
             throw HttpError::badRequest('config.pattern is too long (max ' . self::MAX_PATTERN_CHARS . ' chars)');
         }
-        $fields = self::FIELDS;
+        $fields = self::DEFAULT_FIELDS;
         if (array_key_exists('fields', $config)) {
             if (!is_array($config['fields'])) {
                 throw HttpError::badRequest('config.fields must be an array');
             }
             $fields = array_values(array_intersect(self::FIELDS, array_map('strval', $config['fields'])));
             if ($fields === []) {
-                throw HttpError::badRequest('config.fields must include at least one of title, description, location');
+                throw HttpError::badRequest('config.fields must include at least one of title, description, location, tags');
             }
         }
         if ($type === 'regex' && @preg_match(self::delimit($pattern), '') === false) {
@@ -487,7 +518,7 @@ final class Filters
         $config = json_decode((string) $row['config_json'], true);
         $fallback = (string) $row['type'] === 'prompt'
             ? ['prompt' => '']
-            : ['pattern' => '', 'fields' => self::FIELDS];
+            : ['pattern' => '', 'fields' => self::DEFAULT_FIELDS];
         return [
             'id' => (int) $row['id'],
             'scope' => (string) $row['scope'],

@@ -65,7 +65,7 @@ $now = new DateTimeImmutable('2026-07-30T10:00:00', new DateTimeZone($tz));
 $p = static fn(string $text): array => FallbackParser::parse($text, $tz, $now);
 
 $d = $p('Dinner with Sam next thursday 7pm at Zuni');
-checkEq('fp1 title', 'Dinner', $d['title']);
+checkEq('fp1 title keeps with-clause', 'Dinner with Sam', $d['title']);
 checkEq('fp1 start', '2026-08-06T19:00:00-07:00', $d['start']);
 checkEq('fp1 end', '2026-08-06T20:00:00-07:00', $d['end']);
 checkEq('fp1 location', 'Zuni', $d['location']);
@@ -199,12 +199,82 @@ checkEq('fp30 hyphenated all-day title', 'Hike', $d['title']);
 // People lists with commas.
 $d = $p('Dinner with Sam, Alex and Pat tomorrow 7pm');
 checkEq('fp31 comma people list', ['Sam', 'Alex', 'Pat'], $d['personNames']);
-checkEq('fp31 title', 'Dinner', $d['title']);
+checkEq('fp31 title keeps with-clause', 'Dinner with Sam, Alex and Pat', $d['title']);
 checkEq('fp31 start', '2026-07-31T19:00:00-07:00', $d['start']);
 
 $d = $p('tomorrow 3pm');
 checkEq('fp32 untitled placeholder', 'New event', $d['title']);
 check('fp32 untitled stays below llm-skip threshold', $d['confidence'] < QuickAdd::FALLBACK_CONFIDENCE);
+
+// People + title rework: the with-clause stays in the title (title = input
+// minus date/time/location phrases only); personNames parses the clause.
+$d = $p('dinner with the Sages at 6PM today'); // exact user screenshot input
+checkEq('fp33 screenshot title keeps with-clause', 'Dinner with the Sages', $d['title']);
+checkEq('fp33 screenshot people keep article as group name', ['The Sages'], $d['personNames']);
+checkEq('fp33 screenshot start 6 PM today', '2026-07-30T18:00:00-07:00', $d['start']);
+checkEq('fp33 screenshot end', '2026-07-30T19:00:00-07:00', $d['end']);
+checkEq('fp33 screenshot not allDay', false, $d['allDay']);
+
+$d = $p('lunch w/ Ada tomorrow at noon');
+checkEq('fp34 w/ shorthand people', ['Ada'], $d['personNames']);
+checkEq('fp34 w/ shorthand title', 'Lunch w/ Ada', $d['title']);
+checkEq('fp34 w/ start', '2026-07-31T12:00:00-07:00', $d['start']);
+
+$d = $p('review w/Pat 3pm tomorrow');
+checkEq('fp35 glued w/ people', ['Pat'], $d['personNames']);
+checkEq('fp35 glued w/ title', 'Review w/Pat', $d['title']);
+
+$d = $p("Coffee with Mary-Jane O'Brien friday 9am");
+checkEq('fp36 hyphen and apostrophe name kept whole', ["Mary-Jane O'Brien"], $d['personNames']);
+checkEq('fp36 title', "Coffee with Mary-Jane O'Brien", $d['title']);
+
+$d = $p('Dinner with the Sages and Sam tomorrow 6pm');
+checkEq('fp37 group plus person', ['The Sages', 'Sam'], $d['personNames']);
+checkEq('fp37 title', 'Dinner with the Sages and Sam', $d['title']);
+
+$d = $p('Dinner with Sam, Alex and Pat at Delfina tomorrow 7pm');
+checkEq('fp38 people list with location', ['Sam', 'Alex', 'Pat'], $d['personNames']);
+checkEq('fp38 location', 'Delfina', $d['location']);
+checkEq('fp38 title', 'Dinner with Sam, Alex and Pat', $d['title']);
+
+$d = $p('Dinner at Zuni with Sam tomorrow 7pm');
+checkEq('fp39 location before with-clause', 'Zuni', $d['location']);
+checkEq('fp39 people', ['Sam'], $d['personNames']);
+checkEq('fp39 title', 'Dinner with Sam', $d['title']);
+
+$d = $p('the standup tomorrow 9am');
+checkEq('fp40 leading article sentence-cased only', 'The standup', $d['title']);
+checkEq('fp40 no people', [], $d['personNames']);
+
+$d = $p('meet at 6pm at The Ferry Building tomorrow');
+checkEq('fp41 at-time wins over at-location', '2026-07-31T18:00:00-07:00', $d['start']);
+checkEq('fp41 multi-word capitalized location intact', 'The Ferry Building', $d['location']);
+checkEq('fp41 title sentence-cased', 'Meet', $d['title']);
+
+$d = $p('Drinks at 8pm');
+checkEq('fp42 at-time is a time not a location', null, $d['location']);
+checkEq('fp42 start', '2026-07-30T20:00:00-07:00', $d['start']);
+
+$d = $p('Picnic at Golden Gate Park saturday');
+checkEq('fp43 multi-word location', 'Golden Gate Park', $d['location']);
+checkEq('fp43 allDay', true, $d['allDay']);
+checkEq('fp43 title', 'Picnic', $d['title']);
+
+$d = $p('Call at 14:30 tomorrow');
+checkEq('fp44 24h at-time wins', '2026-07-31T14:30:00-07:00', $d['start']);
+checkEq('fp44 no location', null, $d['location']);
+
+$d = $p('Hike with the team saturday');
+checkEq('fp45 article kept in group name', ['The Team'], $d['personNames']);
+checkEq('fp45 title', 'Hike with the team', $d['title']);
+
+$d = $p('sync with Sam and Alex tomorrow 10am');
+checkEq('fp46 lowercase input sentence-cased', 'Sync with Sam and Alex', $d['title']);
+checkEq('fp46 people', ['Sam', 'Alex'], $d['personNames']);
+
+$d = $p('Coffee with'); // dangling with-clause: no names, words stay in title
+checkEq('fp47 dangling with has no people', [], $d['personNames']);
+checkEq('fp47 dangling with title', 'Coffee with', $d['title']);
 
 // Completeness + confidence gates feeding the QuickAdd LLM-skip decision.
 checkEq('fp complete date+time', true, $p('Meeting tomorrow 9am')['complete']);
@@ -470,13 +540,31 @@ try {
     checkEq('flt blank pattern status', 400, $e->status);
 }
 
-// disposition: calendar scoping and hide-beats-dim.
+// Tags field: opt-in matching over the event's tag name list.
+$occTagged = ['calendar_id' => 3, 'title' => 'Practice', 'tags' => ['work', 'Deep Focus']];
+check('flt tags keyword matches tag name', Filters::evaluate($occTagged, $kw('work', ['tags'])));
+check('flt tags keyword case-insensitive substring', Filters::evaluate($occTagged, $kw('focus', ['tags'])));
+check('flt tags no match', !Filters::evaluate($occTagged, $kw('yoga', ['tags'])));
+check('flt tags regex matches', Filters::evaluate($occTagged, $rx('^deep', ['tags'])));
+check('flt default fields exclude tags', !Filters::evaluate($occTagged, $kw('work')));
+check('flt tags missing key never matches', !Filters::evaluate($occ, $kw('work', ['tags'])));
+check('flt tags plus title field still matches title', Filters::evaluate($occTagged, $kw('practice', ['title', 'tags'])));
+checkEq('flt tags accepted in config fields', ['tags'], Filters::validateConfig('keyword', ['pattern' => 'x', 'fields' => ['tags']])['fields']);
+checkEq('flt config default fields stay three', ['title', 'description', 'location'], Filters::validateConfig('keyword', ['pattern' => 'x'])['fields']);
+check('flt anyUsesTags true', Filters::anyUsesTags([['config' => ['pattern' => 'x', 'fields' => ['title', 'tags']]]]));
+check('flt anyUsesTags false', !Filters::anyUsesTags([['config' => ['pattern' => 'x', 'fields' => ['title']]], ['config' => ['pattern' => 'y']]]));
+
+// disposition: calendar scoping and hide > dim > highlight precedence.
 $hideAll = ['type' => 'keyword', 'config' => ['pattern' => 'yoga'], 'action' => 'hide', 'calendarIds' => null];
 $dimAll = ['type' => 'keyword', 'config' => ['pattern' => 'yoga'], 'action' => 'dim', 'calendarIds' => null];
+$hlAll = ['type' => 'keyword', 'config' => ['pattern' => 'yoga'], 'action' => 'highlight', 'calendarIds' => null];
 $hideCal9 = ['type' => 'keyword', 'config' => ['pattern' => 'yoga'], 'action' => 'hide', 'calendarIds' => [9 => true]];
 checkEq('flt disposition global hide', 'hide', Filters::disposition($occ, [$hideAll]));
 checkEq('flt disposition global dim', 'dim', Filters::disposition($occ, [$dimAll]));
+checkEq('flt disposition global highlight', 'highlight', Filters::disposition($occ, [$hlAll]));
 checkEq('flt disposition hide beats dim', 'hide', Filters::disposition($occ, [$dimAll, $hideAll]));
+checkEq('flt disposition dim beats highlight', 'dim', Filters::disposition($occ, [$hlAll, $dimAll]));
+checkEq('flt disposition hide beats highlight', 'hide', Filters::disposition($occ, [$hlAll, $hideAll]));
 checkEq('flt disposition other calendar skipped', null, Filters::disposition($occ, [$hideCal9]));
 checkEq('flt disposition scoped calendar applies', 'hide', Filters::disposition(['calendar_id' => 9] + $occ, [$hideCal9]));
 checkEq('flt disposition no filters', null, Filters::disposition($occ, []));
@@ -568,8 +656,15 @@ checkEq('pd no verdict treated as pass', null, Filters::promptDisposition($promp
 checkEq('pd out-of-scope calendar skipped', null, Filters::promptDisposition($promptRow, [$pfCal9Hide], $failAll));
 checkEq('pd scoped calendar applies', 'hide', Filters::promptDisposition(['calendar_id' => 9] + $promptRow, [$pfCal9Hide], $failAll));
 checkEq('pd hide beats dim', 'hide', Filters::promptDisposition($promptRow, [$pfDim, $pfHide], $failAll));
+$pfHl = ['id' => 4, 'action' => 'highlight', 'calendarIds' => null];
+$failAllHl = $failAll + [4 => [101 => true]];
+checkEq('pd fail -> highlight', 'highlight', Filters::promptDisposition($promptRow, [$pfHl], $failAllHl));
+checkEq('pd dim beats highlight', 'dim', Filters::promptDisposition($promptRow, [$pfHl, $pfDim], $failAllHl));
 checkEq('strongest hide wins', 'hide', Filters::strongest('dim', 'hide'));
 checkEq('strongest dim over null', 'dim', Filters::strongest(null, 'dim'));
+checkEq('strongest dim over highlight', 'dim', Filters::strongest('highlight', 'dim'));
+checkEq('strongest hide over highlight', 'hide', Filters::strongest('highlight', 'hide'));
+checkEq('strongest highlight over null', 'highlight', Filters::strongest(null, 'highlight'));
 checkEq('strongest all null', null, Filters::strongest(null, null));
 checkEq(
     'mixed keyword dim + prompt hide -> hide',
@@ -931,7 +1026,7 @@ checkEq(
         ['daysBefore' => 1, 'time' => '18:00'], // duplicate dropped
     ])
 );
-foreach ([[['daysBefore' => 15, 'time' => '10:00']], [['daysBefore' => 1, 'time' => '25:00']], [['daysBefore' => 1]]] as $bad) {
+foreach ([[['daysBefore' => 30, 'time' => '10:00']], [['daysBefore' => 1, 'time' => '25:00']], [['daysBefore' => 1]]] as $bad) {
     try {
         Reminders::validateAllDayList($bad);
         check('rem allday rejects bad input', false);
@@ -939,6 +1034,21 @@ foreach ([[['daysBefore' => 15, 'time' => '10:00']], [['daysBefore' => 1, 'time'
         checkEq('rem allday bad input code', 'invalid_reminders', $e->errorCode);
     }
 }
+// Extended ranges: up to 4 weeks (40320 minutes / 28 daysBefore).
+checkEq('rem range constants', [40320, 28], [Reminders::MAX_MINUTES, Reminders::MAX_DAYS_BEFORE]);
+checkEq('rem override 4 weeks accepted', [['minutes' => 40320]], Reminders::validateEventReminders([['minutes' => 40320]]));
+try {
+    Reminders::validateEventReminders([['minutes' => 40321]]);
+    check('rem override beyond 4 weeks rejected', false);
+} catch (HttpError $e) {
+    checkEq('rem override beyond 4 weeks code', 'invalid_reminders', $e->errorCode);
+}
+checkEq(
+    'rem allday daysBefore 28 accepted',
+    [['daysBefore' => 28, 'time' => '09:00']],
+    Reminders::validateAllDayList([['daysBefore' => 28, 'time' => '9:00']])
+);
+
 $defaults = Reminders::validateDefaults(['timed' => [['minutes' => 15]]]);
 checkEq('rem defaults missing key is none', [], $defaults['allDay']);
 checkEq('rem defaults timed kept', [['minutes' => 15]], $defaults['timed']);

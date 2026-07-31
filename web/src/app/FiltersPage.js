@@ -1,19 +1,23 @@
 // Filters management: list, create/edit (scope/type/config/action),
 // enable/disable toggle, delete. The server applies enabled filters to the
-// events window and search; hide removes occurrences, dim marks them.
-// Keyword/regex match inline; prompt filters are evaluated by the AI in the
-// background (worker) and their cached verdicts applied on the next load.
-// Form is type-first: pick the filter type, then the relevant fields show.
+// events window and search; hide removes occurrences, dim mutes them,
+// highlight emphasizes them with an accent ring. Keyword/regex match inline
+// (over title/description/location and, opt-in, tag names); prompt filters
+// are evaluated by the AI in the background (worker) and their cached
+// verdicts applied on the next load. Form is type-first: pick the filter
+// type, then the relevant fields show.
 
 import { html, useState, useEffect } from '../../vendor/index.js';
 import { useStore, state, toast, shallowEq } from './store.js';
 import { api, refreshWindow } from './api.js';
 import { PageShell, EmptyState } from './PageShell.js';
 
-const FIELD_OPTIONS = ['title', 'description', 'location'];
-const ALL_FIELDS = { title: true, description: true, location: true };
+const FIELD_OPTIONS = ['title', 'description', 'location', 'tags'];
+// Default selection mirrors the server default: tags is opt-in.
+const DEFAULT_FIELDS = ['title', 'description', 'location'];
+const ALL_FIELDS = { title: true, description: true, location: true, tags: false };
 const TYPE_LABELS = { keyword: 'Keyword', regex: 'Regex', prompt: 'AI prompt' };
-const ACTION_LABELS = { hide: 'Hides', dim: 'Dims' };
+const ACTION_LABELS = { hide: 'Hides', dim: 'Dims', highlight: 'Highlights' };
 
 export function FiltersPage() {
   const { calendars, folders } = useStore(
@@ -65,7 +69,7 @@ export function FiltersPage() {
       setFields({ ...ALL_FIELDS });
     } else {
       setPattern(f.config.pattern || '');
-      const on = f.config.fields || FIELD_OPTIONS;
+      const on = f.config.fields || DEFAULT_FIELDS;
       setFields(Object.fromEntries(FIELD_OPTIONS.map((x) => [x, on.includes(x)])));
       setPrompt('');
       setNegativePrompt('');
@@ -141,7 +145,7 @@ export function FiltersPage() {
 
   return html`<${PageShell}
     title="Filters"
-    note="Filters hide or dim matching events everywhere: in every view and in search."
+    note="Filters hide, dim, or highlight matching events everywhere: in every view and in search."
   >
     <form class="bc-mgmt-form" onSubmit=${submit}>
       <div class="bc-form-row">
@@ -212,6 +216,7 @@ export function FiltersPage() {
           <select value=${action} onChange=${(e) => setAction(e.target.value)}>
             <option value="hide">Hide matching events</option>
             <option value="dim">Dim matching events</option>
+            <option value="highlight">Highlight matching events</option>
           </select>
         </label>
         <div class="bc-field bc-form-actions">
@@ -224,12 +229,12 @@ export function FiltersPage() {
           </div>
         </div>
       </div>
-      ${isPrompt && html`<p class="bc-page-note bc-filter-hint">Prompt filters run in the background: new and updated feed events are scored within a few minutes of arriving, so results appear shortly rather than instantly. Non-matching events are ${action === 'hide' ? 'hidden' : 'dimmed'}; not-yet-scored events stay visible.</p>`}
+      ${isPrompt && html`<p class="bc-page-note bc-filter-hint">Prompt filters run in the background: new and updated feed events are scored within a few minutes of arriving, so results appear shortly rather than instantly. Non-matching events are ${action === 'hide' ? 'hidden' : action === 'dim' ? 'dimmed' : 'highlighted'}; not-yet-scored events stay visible.</p>`}
     </form>
 
     ${filters === null && html`<div class="bc-empty">Loading filters</div>`}
     ${filters !== null && filters.length === 0 && html`<${EmptyState}
-      text="No filters yet. A filter hides or dims events that match a keyword, a regex, or a plain-language description."
+      text="No filters yet. A filter hides, dims, or highlights events that match a keyword, a regex, or a plain-language description."
       actionLabel="Create your first filter" onAction=${focusForm}
     />`}
     ${filters !== null && filters.length > 0 && html`<div class="bc-card-list">
@@ -242,7 +247,7 @@ export function FiltersPage() {
           </div>
           <div class="bc-card-body">${f.type === 'prompt' ? f.config.prompt : f.config.pattern}</div>
           ${f.type === 'prompt' && f.config.negativePrompt && html`<div class="bc-card-sub">Excludes: ${f.config.negativePrompt}</div>`}
-          ${f.type !== 'prompt' && html`<div class="bc-card-sub">Matches in ${(f.config.fields || FIELD_OPTIONS).join(', ')}</div>`}
+          ${f.type !== 'prompt' && html`<div class="bc-card-sub">Matches in ${(f.config.fields || DEFAULT_FIELDS).join(', ')}</div>`}
         </div>
         <label class="bc-switch">
           <input type="checkbox" checked=${f.enabled} onChange=${() => toggle(f)} />

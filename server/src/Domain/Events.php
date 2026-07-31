@@ -91,10 +91,12 @@ final class Events
             $end = $start->add(new \DateInterval('PT' . self::MAX_WINDOW_SECONDS . 'S'));
         }
 
+        $qContext = $this->queryContext($userId, $q);
+
         $params = [$userId, Time::toDb($end), Time::toDb($start), Time::toDb($end)];
         $sql = 'SELECT * FROM events WHERE user_id = ? AND deleted_at IS NULL AND recurrence_parent_id IS NULL
                 AND ((rrule IS NULL AND start_utc < ? AND end_utc > ?) OR (rrule IS NOT NULL AND start_utc < ?))';
-        $sql .= $this->windowFilters($params, $calendarIds, $q, $includeHidden);
+        $sql .= $this->windowFilters($params, $calendarIds, $qContext, $includeHidden);
         $masters = $this->db->all($sql, $params);
 
         $masterIds = array_map(static fn($r) => (int) $r['id'], $masters);
@@ -139,15 +141,23 @@ final class Events
                 <=> [$b['start']->getTimestamp(), $a['end']->getTimestamp(), (string) $b['row']['title']];
         });
 
-        // User filters: hide drops the occurrence, dim marks it (additive
-        // field). Keyword/regex filters match inline; prompt filters join the
-        // cached background verdicts (filter_evals) — no LLM calls here, ever.
+        // User filters: hide drops the occurrence, dim/highlight mark it
+        // (additive fields). Keyword/regex filters match inline; prompt
+        // filters join the cached background verdicts (filter_evals) — no
+        // LLM calls here, ever.
         $activeFilters = $this->filters->enabledForUser($userId);
         $windowRows = [];
         foreach ($expanded as $occ) {
             $windowRows[(int) $occ['row']['id']] ??= $occ['row'];
         }
         $promptCtx = $this->filters->promptFilterContext($userId, array_keys($windowRows));
+
+        // When an enabled keyword/regex filter matches the tags field, tag
+        // links are needed at disposition time: load them for the candidate
+        // rows up front (the same link set is reused for serialization).
+        $links = Filters::anyUsesTags($activeFilters)
+            ? $this->labels->forEvents(array_keys($windowRows))
+            : null;
 
         // On-read healing: feed events in this window that an enabled prompt
         // filter covers but has no cached verdict for (e.g. past months never
@@ -176,26 +186,34 @@ final class Events
         if ($activeFilters !== [] || $promptCtx['filters'] !== []) {
             $kept = [];
             foreach ($expanded as $occ) {
+                $row = $occ['row'];
+                if ($links !== null) {
+                    $row['tags'] = $links['tags'][(int) $row['id']] ?? [];
+                }
                 $disposition = Filters::strongest(
-                    Filters::disposition($occ['row'], $activeFilters),
-                    Filters::promptDisposition($occ['row'], $promptCtx['filters'], $promptCtx['failed'])
+                    Filters::disposition($row, $activeFilters),
+                    Filters::promptDisposition($row, $promptCtx['filters'], $promptCtx['failed'])
                 );
                 if ($disposition === 'hide') {
                     continue;
                 }
                 if ($disposition === 'dim') {
                     $occ['dimmed'] = true;
+                } elseif ($disposition === 'highlight') {
+                    $occ['highlighted'] = true;
                 }
                 $kept[] = $occ;
             }
             $expanded = $kept;
         }
 
-        $eventIds = [];
-        foreach ($expanded as $occ) {
-            $eventIds[(int) $occ['row']['id']] = true;
+        if ($links === null) {
+            $eventIds = [];
+            foreach ($expanded as $occ) {
+                $eventIds[(int) $occ['row']['id']] = true;
+            }
+            $links = $this->labels->forEvents(array_keys($eventIds));
         }
-        $links = $this->labels->forEvents(array_keys($eventIds));
 
         return array_map(
             function (array $occ) use ($links): array {
@@ -203,13 +221,38 @@ final class Events
                 if (!empty($occ['dimmed'])) {
                     $serialized['dimmed'] = true;
                 }
+                if (!empty($occ['highlighted'])) {
+                    $serialized['highlighted'] = true;
+                }
                 return $serialized;
             },
             $expanded
         );
     }
 
-    private function windowFilters(array &$params, ?array $calendarIds, ?string $q, bool $includeHidden): string
+    /**
+     * Resolve a q= text query into SQL-ready context: LIKE text match plus
+     * tag-name matches; a query equal to or prefixed with `#` searches tags
+     * only (mirrors GET /search).
+     *
+     * @return array{like:?string,tagOnly:bool,tagEventIds:list<int>}|null null = no query
+     */
+    private function queryContext(int $userId, ?string $q): ?array
+    {
+        $q = $q !== null ? trim($q) : '';
+        if ($q === '') {
+            return null;
+        }
+        $tagOnly = str_starts_with($q, '#');
+        $term = $tagOnly ? trim(mb_substr($q, 1)) : $q;
+        return [
+            'like' => $tagOnly || $term === '' ? null : '%' . addcslashes($term, '%_\\') . '%',
+            'tagOnly' => $tagOnly,
+            'tagEventIds' => $term !== '' ? $this->labels->eventIdsForTagQuery($userId, $term) : [],
+        ];
+    }
+
+    private function windowFilters(array &$params, ?array $calendarIds, ?array $qContext, bool $includeHidden): string
     {
         $sql = '';
         if ($calendarIds !== null && $calendarIds !== []) {
@@ -220,10 +263,15 @@ final class Events
         if (!$includeHidden) {
             $sql .= " AND attendance <> 'hidden'";
         }
-        if ($q !== null && trim($q) !== '') {
-            $like = '%' . addcslashes(trim($q), '%_\\') . '%';
-            $sql .= ' AND (title LIKE ? OR description LIKE ? OR location LIKE ?)';
-            array_push($params, $like, $like, $like);
+        if ($qContext !== null) {
+            [$tagIn, $tagParams] = Db::in($qContext['tagEventIds'] !== [] ? $qContext['tagEventIds'] : [0]);
+            if ($qContext['tagOnly'] || $qContext['like'] === null) {
+                $sql .= " AND id IN $tagIn";
+                array_push($params, ...$tagParams);
+            } else {
+                $sql .= " AND (title LIKE ? OR description LIKE ? OR location LIKE ? OR id IN $tagIn)";
+                array_push($params, $qContext['like'], $qContext['like'], $qContext['like'], ...$tagParams);
+            }
         }
         return $sql;
     }

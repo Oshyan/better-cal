@@ -13,8 +13,8 @@ import {
   parseISO, toInputValue, fromInputValue, toISOWithOffset, addDaysDate, pad,
 } from '../lib/dates.js';
 import {
-  TIMED_CHOICES, ALLDAY_CHOICES, fmtOffsetMinutes, fmtReminder, entryToMinutes,
-  normalizeMinutesList, effectiveReminders,
+  TIMED_CHOICES, ALLDAY_CHOICES, REMINDER_UNITS, fmtOffsetMinutes, fmtReminder,
+  entryToMinutes, normalizeMinutesList, effectiveReminders, toMinutes,
 } from '../lib/reminders.js';
 
 const BYDAY = [['MO', 'Mon'], ['TU', 'Tue'], ['WE', 'Wed'], ['TH', 'Thu'], ['FR', 'Fri'], ['SA', 'Sat'], ['SU', 'Sun']];
@@ -64,6 +64,8 @@ export function EditorDrawer() {
   const [form, setForm] = useState(null);
   const [durationLock, setDurationLock] = useState(true);
   const [scope, setScope] = useState('this');
+  // Custom reminder entry (number + unit) revealed by the Custom option.
+  const [remCustom, setRemCustom] = useState(null); // {n, unit} | null
 
   // NL assist (create mode): debounce-parse, race-guard, flash filled fields.
   const [nlText, setNlText] = useState('');
@@ -141,6 +143,7 @@ export function EditorDrawer() {
     });
     setScope('this');
     setDurationLock(true);
+    setRemCustom(null);
     setNlText(editor.nlText || '');
     setNlFlash(null);
     nlReq.current++; // void any in-flight parse from a previous open
@@ -330,10 +333,29 @@ export function EditorDrawer() {
             <button type="button" class="bc-rem-x" aria-label=${'Remove reminder: ' + fmtReminder(entry)} onClick=${() => remRemove(i)}>✕</button>
           </span>`)}
           <select class="bc-rem-add" aria-label="Add reminder" value=""
-            onChange=${(e) => { const v = e.target.value; e.target.value = ''; if (v !== '') remAdd(Number(v)); }}>
+            onChange=${(e) => {
+              const v = e.target.value;
+              e.target.value = '';
+              if (v === 'custom') setRemCustom({ n: 1, unit: 'hours' });
+              else if (v !== '') remAdd(Number(v));
+            }}>
             <option value="">+ Add reminder</option>
             ${remChoices.map((c) => html`<option key=${c.minutes} value=${String(c.minutes)}>${c.label}</option>`)}
+            <option value="custom">Custom</option>
           </select>
+          ${remCustom && html`<span class="bc-rem-custom">
+            <input class="bc-num" type="number" min="0" max="40320" aria-label="Custom reminder amount"
+              value=${remCustom.n}
+              onInput=${(e) => setRemCustom({ ...remCustom, n: Number(e.target.value) || 0 })} />
+            <select aria-label="Custom reminder unit" value=${remCustom.unit}
+              onChange=${(e) => setRemCustom({ ...remCustom, unit: e.target.value })}>
+              ${REMINDER_UNITS.map((u) => html`<option key=${u} value=${u}>${u}</option>`)}
+            </select>
+            <button type="button" class="bc-btn"
+              onClick=${() => { remAdd(toMinutes(remCustom.n, remCustom.unit)); setRemCustom(null); }}>Add</button>
+            <button type="button" class="bc-icon-btn" aria-label="Cancel custom reminder"
+              onClick=${() => setRemCustom(null)}>✕</button>
+          </span>`}
           ${form.reminders !== null && html`<button type="button" class="bc-btn bc-rem-reset" onClick=${() => upd({ reminders: null })}>Reset to default</button>`}
           <span class="bc-rem-src">${remSrcHint}</span>
         </div>

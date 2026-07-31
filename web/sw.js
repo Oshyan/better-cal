@@ -1,7 +1,10 @@
-// Service worker: cache-first app shell + vendor, network-first API GETs
-// with a 5s timeout falling back to cache.
+// Service worker strategy:
+// - vendor files: cache-first (immutable in practice, long nginx cache)
+// - app shell/src/styles: network-first with cache fallback, so deploys are
+//   picked up on next load while offline still works
+// - API GETs: network-first with a 5s timeout falling back to cache
 
-const VERSION = 'bc-v1';
+const VERSION = 'bc-v2';
 const SHELL_CACHE = VERSION + '-shell';
 const API_CACHE = VERSION + '-api';
 const API_TIMEOUT_MS = 5000;
@@ -61,22 +64,22 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-function networkFirstWithTimeout(request) {
+function networkFirstWithTimeout(request, cacheName, timeoutMs) {
   return new Promise((resolve) => {
     let settled = false;
-    const timer = setTimeout(async () => {
+    const timer = timeoutMs ? setTimeout(async () => {
       const cached = await caches.match(request);
       if (cached && !settled) { settled = true; resolve(cached); }
-    }, API_TIMEOUT_MS);
+    }, timeoutMs) : null;
     fetch(request).then(async (res) => {
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
       if (res.ok) {
-        const cache = await caches.open(API_CACHE);
+        const cache = await caches.open(cacheName);
         cache.put(request, res.clone());
       }
       if (!settled) { settled = true; resolve(res); }
     }).catch(async () => {
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
       const cached = await caches.match(request);
       if (!settled) {
         settled = true;
@@ -94,12 +97,12 @@ self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET' || url.origin !== location.origin) return;
 
   if (url.pathname.startsWith('/api/')) {
-    event.respondWith(networkFirstWithTimeout(event.request));
+    event.respondWith(networkFirstWithTimeout(event.request, API_CACHE, API_TIMEOUT_MS));
     return;
   }
 
-  if (url.pathname === '/' || url.pathname.startsWith('/assets/')) {
-    // Cache-first for the shell and static assets.
+  if (url.pathname.startsWith('/assets/vendor/')) {
+    // Cache-first: vendor files change only with a deliberate upgrade.
     event.respondWith(
       caches.match(event.request).then((cached) => cached || fetch(event.request).then(async (res) => {
         if (res.ok) {
@@ -109,5 +112,13 @@ self.addEventListener('fetch', (event) => {
         return res;
       })),
     );
+    return;
+  }
+
+  if (url.pathname === '/' || url.pathname.startsWith('/assets/')) {
+    // Network-first with forced revalidation (bypasses stale HTTP cache entries;
+    // nginx answers 304 via ETag when unchanged). Cache keeps offline working.
+    const revalidated = new Request(event.request, { cache: 'no-cache' });
+    event.respondWith(networkFirstWithTimeout(revalidated, SHELL_CACHE, 0));
   }
 });

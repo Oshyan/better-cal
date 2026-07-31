@@ -1,10 +1,11 @@
-// Toolbar: view switcher, today, visible month label, on-page filter,
-// search and quick-add buttons. Single-row inline layout.
+// Toolbar: saved views menu, view switcher, today, visible month label,
+// on-page filter, search and quick-add buttons. Single-row inline layout.
 
 import { html } from '../../vendor/index.js';
 import { useStore, set, shallowEq } from './store.js';
 import { setView, goToday } from './actions.js';
 import { fmtMonthYear } from '../lib/dates.js';
+import { ViewSwitcher } from './ViewSwitcher.js';
 
 const VIEW_LABELS = [
   ['month', 'Month'],
@@ -27,6 +28,7 @@ export function Toolbar({ onToggleSidebar }) {
 
   return html`<header class="bc-toolbar">
     <button type="button" class="bc-icon-btn bc-menu-btn" aria-label="Toggle sidebar" onClick=${onToggleSidebar}>☰</button>
+    <${ViewSwitcher} />
     <span class="bc-brand">Better-Cal</span>
     <button type="button" class="bc-btn" onClick=${goToday}>Today</button>
     <span class="bc-toolbar-month" aria-live="polite">${label}</span>

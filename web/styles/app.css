@@ -121,6 +121,35 @@ button:focus-visible, [tabindex]:focus-visible {
 .bc-viewswitch-btn.is-active { background: var(--accent); color: var(--accent-fg); }
 .bc-filter-input { margin-left: auto; width: 180px; }
 .bc-menu-btn { display: none; }
+.bc-views { position: relative; }
+.bc-views-btn { display: inline-flex; align-items: center; gap: 6px; max-width: 170px; }
+.bc-views-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.bc-views-caret { color: var(--fg-muted); font-size: 10px; flex: none; }
+.bc-views-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none; display: inline-block; }
+.bc-views-pop {
+  position: absolute; left: 0; top: calc(100% + 6px); z-index: 71;
+  min-width: 220px; padding: 5px;
+  background: var(--bg-raised); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow);
+  display: flex; flex-direction: column;
+}
+.bc-views-item {
+  display: flex; align-items: center; gap: 6px;
+  background: none; border: none; border-radius: 5px;
+  padding: 5px 8px; text-align: left;
+}
+.bc-views-item:hover { background: var(--bg-inset); }
+.bc-views-item.is-active { font-weight: 700; color: var(--accent); }
+.bc-views-empty { color: var(--fg-muted); padding: 5px 8px; }
+.bc-views-sep { border-top: 1px solid var(--border); margin: 4px 0; }
+.bc-views-saveform { display: flex; gap: 6px; padding: 4px; }
+.bc-views-saveform input { flex: 1; min-width: 0; }
+.bc-views-confirm {
+  background: var(--bg-inset); border-radius: 6px;
+  padding: 7px 8px; margin: 4px 0;
+  display: flex; flex-direction: column; gap: 6px; font-size: 12.5px;
+}
+.bc-views-confirm-row { display: flex; gap: 6px; }
 
 /* --- sidebar --------------------------------------------------------------- */
 
@@ -148,7 +177,11 @@ button:focus-visible, [tabindex]:focus-visible {
 .bc-add-menu { display: flex; flex-direction: column; margin-top: 8px; border-top: 1px solid var(--border); padding-top: 6px; }
 .bc-add-form { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
 .bc-add-form-row { display: flex; gap: 6px; }
-.bc-sidebar-foot { border-top: 1px solid var(--border); padding: 6px 8px; }
+.bc-sidebar-foot { border-top: 1px solid var(--border); padding: 6px 8px; display: flex; flex-direction: column; }
+.bc-manage-head {
+  font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px;
+  color: var(--fg-muted); padding: 2px 4px 3px;
+}
 
 /* --- month grid ------------------------------------------------------------ */
 
@@ -224,7 +257,12 @@ button:focus-visible, [tabindex]:focus-visible {
 @container bc-cell (max-width: 110px) { .bc-cell .bc-chip-time { display: none; } }
 .bc-chip-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .bc-chip.is-interested { border-style: dashed; }
+.bc-chip-check { font-weight: 700; flex: none; }
 .is-cancelled .bc-chip-title, .bc-pop-title.is-cancelled { text-decoration: line-through; opacity: 0.75; }
+/* Server-side dim filters: readable but recessed; hover restores. */
+.is-filter-dimmed { opacity: 0.45; transition: opacity 0.12s ease; }
+.is-filter-dimmed:hover, .is-filter-dimmed:focus-visible { opacity: 1; }
+/* On-page type-to-filter dimming wins over the softer server dim. */
 .is-dimmed { opacity: 0.25; }
 .bc-new-pill {
   background: var(--accent); color: var(--accent-fg);
@@ -350,6 +388,14 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-agenda-time { width: 130px; flex: none; color: var(--fg-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 .bc-agenda-row .bc-chip { width: auto; max-width: 40%; flex: none; }
 .bc-agenda-loc { color: var(--fg-muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bc-triage { display: inline-flex; border: 1px solid var(--border-strong); border-radius: 6px; overflow: hidden; flex: none; }
+.bc-triage-btn {
+  background: var(--bg-raised); border: none; border-right: 1px solid var(--border);
+  padding: 1px 7px; font-size: 11.5px; line-height: 1.5; color: var(--fg-muted);
+}
+.bc-triage-btn:last-child { border-right: none; }
+.bc-triage-btn:hover { background: var(--bg-inset); color: var(--fg); }
+.bc-triage-btn.is-on { background: var(--accent); color: var(--accent-fg); }
 .bc-empty { color: var(--fg-muted); padding: 18px; text-align: center; }
 .bc-agenda-empty { margin-top: 32px; }
 
@@ -389,6 +435,11 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-pop-url { color: var(--accent); font-size: 12.5px; }
 .bc-pop-actions { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
 .bc-pop-close { margin-left: auto; }
+.bc-seg { display: inline-flex; border: 1px solid var(--border-strong); border-radius: 6px; overflow: hidden; }
+.bc-seg-btn { background: var(--bg-raised); border: none; border-right: 1px solid var(--border); padding: 4px 10px; }
+.bc-seg-btn:last-child { border-right: none; }
+.bc-seg-btn:hover { background: var(--bg-inset); }
+.bc-seg-btn.is-active { background: var(--accent); color: var(--accent-fg); }
 .bc-pop-timeedit { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
 
 .bc-sheet {
@@ -528,6 +579,13 @@ body.bc-dragging * { cursor: grabbing !important; }
   background: var(--bg-inset); border-radius: 5px; padding: 3px 7px;
   overflow: hidden; text-overflow: ellipsis; max-width: 260px; white-space: nowrap;
 }
+.bc-filter-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 16px; }
+.bc-filter-fields { display: inline-flex; gap: 8px; }
+.bc-filter-pattern {
+  font-family: var(--mono); font-size: 12.5px;
+  background: var(--bg-inset); border-radius: 5px; padding: 2px 7px;
+}
+.bc-outfeed-row.is-off .bc-outfeed-main { opacity: 0.5; }
 
 /* --- responsive -------------------------------------------------------------------------- */
 

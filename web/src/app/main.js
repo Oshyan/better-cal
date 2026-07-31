@@ -3,12 +3,13 @@
 import { html, render } from '../../vendor/index.js';
 import { App } from './App.js';
 import { set } from './store.js';
-import { fetchMe, loadCalendars } from './api.js';
+import { fetchMe, loadCalendars, loadSavedViews } from './api.js';
 
 async function boot() {
   try {
     await fetchMe();
     await loadCalendars();
+    await loadSavedViews().catch(() => { /* views are non-critical at boot */ });
   } catch (e) {
     // 401 already flipped authed=false; anything else lands on login too.
   }

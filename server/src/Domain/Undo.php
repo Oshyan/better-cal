@@ -17,12 +17,12 @@ final class Undo
     /** Restore order respects FK dependencies; deletions run in reverse. */
     private const TABLE_ORDER = [
         'folders', 'tags', 'people', 'calendars', 'calendar_folders', 'calendar_tags',
-        'events', 'event_tags', 'event_people', 'out_feeds',
+        'events', 'event_tags', 'event_people', 'out_feeds', 'filters', 'saved_views',
     ];
 
     private const TABLE_PK = [
         'folders' => ['id'], 'tags' => ['id'], 'people' => ['id'], 'calendars' => ['id'],
-        'events' => ['id'], 'out_feeds' => ['id'],
+        'events' => ['id'], 'out_feeds' => ['id'], 'filters' => ['id'], 'saved_views' => ['id'],
         'calendar_folders' => ['calendar_id', 'folder_id'],
         'calendar_tags' => ['calendar_id', 'tag_id'],
         'event_tags' => ['event_id', 'tag_id'],

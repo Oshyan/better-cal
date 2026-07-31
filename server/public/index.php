@@ -60,11 +60,13 @@ function bc_handle_api(Request $request, array $cfg): void
         $undo = new Domain\Undo($db);
         $labels = new Domain\Labels($db);
         $recurrence = new Domain\Recurrence();
-        $events = new Domain\Events($db, $recurrence, $undo, $labels);
+        $filters = new Domain\Filters($db, $undo);
+        $events = new Domain\Events($db, $recurrence, $undo, $labels, $filters);
         $calendars = new Domain\Calendars($db, $undo, $labels);
         $folders = new Domain\Folders($db, $undo);
         $feeds = new Domain\Feeds($db);
         $search = new Domain\Search($db);
+        $savedViews = new Domain\SavedViews($db, $undo);
         $outFeeds = new Domain\OutFeeds($db, $search, $cfg);
         $quickAdd = new Domain\QuickAdd($db, new LlmGateway($cfg), $events);
 
@@ -73,8 +75,10 @@ function bc_handle_api(Request $request, array $cfg): void
         $foldersController = new Controllers\FoldersController($folders);
         $eventsController = new Controllers\EventsController($events);
         $quickAddController = new Controllers\QuickAddController($quickAdd);
-        $searchController = new Controllers\SearchController($search, $events);
+        $searchController = new Controllers\SearchController($search, $events, $filters);
         $outFeedsController = new Controllers\OutFeedsController($outFeeds);
+        $filtersController = new Controllers\FiltersController($filters);
+        $savedViewsController = new Controllers\SavedViewsController($savedViews);
         $tokensController = new Controllers\TokensController($apiTokens);
         $healthController = new Controllers\HealthController($db, $cfg);
 
@@ -110,6 +114,16 @@ function bc_handle_api(Request $request, array $cfg): void
         });
 
         $router->add('GET', "$base/search", [$searchController, 'search']);
+
+        $router->add('GET', "$base/filters", [$filtersController, 'index']);
+        $router->add('POST', "$base/filters", [$filtersController, 'create']);
+        $router->add('PATCH', "$base/filters/:id", [$filtersController, 'patch']);
+        $router->add('DELETE', "$base/filters/:id", [$filtersController, 'delete']);
+
+        $router->add('GET', "$base/views", [$savedViewsController, 'index']);
+        $router->add('POST', "$base/views", [$savedViewsController, 'create']);
+        $router->add('PATCH', "$base/views/:id", [$savedViewsController, 'patch']);
+        $router->add('DELETE', "$base/views/:id", [$savedViewsController, 'delete']);
 
         $router->add('GET', "$base/outfeeds", [$outFeedsController, 'index']);
         $router->add('POST', "$base/outfeeds", [$outFeedsController, 'create']);

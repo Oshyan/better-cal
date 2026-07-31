@@ -68,6 +68,14 @@ export async function loadCalendars() {
   return data;
 }
 
+// --- saved views -----------------------------------------------------------
+
+export async function loadSavedViews() {
+  const data = await api('/views');
+  set({ savedViews: data.views || [] });
+  return data;
+}
+
 // --- events window loading -------------------------------------------------
 
 let windowReqId = 0;

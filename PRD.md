@@ -246,6 +246,8 @@ Conclusion: no design tradeoffs need to be made now for mobile. API-first + PWA 
 
 ## 8. Implementation Plan
 
+> **Status 2026-07-31:** Milestones 1-3 are built, deployed to https://cal.oshyan.com, and live-tested end to end (month/multi-week infinite scroll, week/day/agenda, quick-add with Gemini parsing, drag create/move/resize, search, undo, ICS import/subscribe/outbound feeds, feed health, PWA, mobile layout). Agent access (5.18c) shipped early: bearer tokens plus an MCP server in `tools/mcp/`. Phase 2 work (triage, filters, saved views) in progress. Known issues queued: all-day date anchoring across timezones, initial-import "new" pill noise.
+
 Recent experience (full Discourse calendar plugin with custom UI in days) sets the calibration: these are aggressive but genuine estimates for AI-assisted development with subagents, assuming roughly full-time focus bursts.
 
 **Milestone 1 (2 to 4 days): Skeleton that replaces nothing yet.** Schema, REST API, auth (single user), ICS import, month + agenda views with virtualized scroll, event CRUD with drag move/resize, calendars/colors/sidebar.

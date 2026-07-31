@@ -8,12 +8,12 @@ DOCROOT="/home/bettercal/htdocs/cal.oshyan.com"
 HEALTH_URL="https://cal.oshyan.com/api/v1/health"
 
 echo "== rsync code =="
-rsync -az --delete \
-  --filter='P .env' \
-  --filter='P server/vendor/' \
-  --filter='P worker.log' \
+# No --delete by explicit policy (user has been burned by it). Stale-file removal,
+# when ever needed, is a deliberate manual action on the server.
+rsync -az \
   --exclude '.git' \
   --exclude '.credentials' \
+  --exclude '.env' \
   --exclude '.DS_Store' \
   --exclude 'server/vendor' \
   --exclude 'node_modules' \

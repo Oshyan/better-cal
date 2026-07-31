@@ -207,6 +207,17 @@ The goal of Phase 1 is that Google Calendar can be abandoned for daily personal 
 - Travel assist: "when is a good window for a trip" suggestions from schedule busyness plus historical/average weather at the destination, using the weather provider pointed at any location and date range.
 - Source statistics: per-calendar and per-folder time series of raw vs filter-passing event counts, feeding stale-source detection now and, long-term, seasonality hints ("these event types cluster in winter, plan around it"). Cheap to record from day one (a counts table written on each poll), so record from day one and defer all analysis UI.
 
+**5.18b Email-to-event ingest** (user request 2026-07-31)
+
+- CC or forward an email to a dedicated address (calendar@oshyan.com or a subaddress) and Better-Cal parses it with the LLM to create the appropriate event or events from the text and context. Example: "we're all set for the campground June 1-12th" creates that multi-day event; correspondents mentioned or addressed (Mick, identified by his email address) are linked as People on the event, and optionally receive an invitation.
+- Ingest path: IMAP polling of the mailbox from the worker (mxroute-compatible), or a forwarding pipe later. Confidence gating: low-confidence parses land in an inbox/review state rather than silently creating events.
+- People matching by email address becomes part of the Person record (add email column when building this).
+
+**5.18c Agent access: API tokens and MCP** (user request 2026-07-31; tokens shipped in v0)
+
+- The REST API is the agent surface: personal access tokens (Bearer) authenticate non-browser clients such as Claude Code, Codex, and cron scripts, with the same capabilities as the UI.
+- An MCP server wraps the REST API (list/search/create/update events, quickadd, calendars) so LLM agents can drive the calendar natively; runs locally (stdio) against the remote API.
+
 **5.19 Native mobile app**
 
 - See section 7. A Capacitor wrapper around the PWA for reliable notifications is the likely first native step, Android first.

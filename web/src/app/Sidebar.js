@@ -14,6 +14,7 @@ import {
 import { CalendarSettings } from './CalendarSettings.js';
 import { MiniMonth } from './MiniMonth.js';
 import { PALETTE } from '../lib/color.js';
+import { Icon } from '../ui/icons.js';
 
 // Solo ("show only this calendar"): transient, session-scoped. Entering solo
 // captures the current visibility set; exiting restores it exactly. Switching
@@ -32,26 +33,6 @@ async function applyVisibilityMap(entries) {
     toast('Some visibility changes failed to save', { error: true });
     loadCalendars();
   }
-}
-
-// Inline stroke icons, sized for compact rows. viewBox 0 0 16 16.
-function Icon({ name, size = 15 }) {
-  const body = {
-    settings: html`<circle cx="8" cy="8" r="2.8" />
-      <path d="M8 1.2v2.1M8 12.7v2.1M1.2 8h2.1M12.7 8h2.1M3.2 3.2l1.5 1.5M11.3 11.3l1.5 1.5M12.8 3.2l-1.5 1.5M4.7 11.3l-1.5 1.5" />`,
-    outfeeds: html`<path d="M3 8.6a4.4 4.4 0 0 1 4.4 4.4M3 4.6a8.4 8.4 0 0 1 8.4 8.4" />
-      <circle cx="3.7" cy="12.3" r="1.1" fill="currentColor" stroke="none" />`,
-    filters: html`<path d="M2 3h12l-4.6 5.4V13l-2.8-1.5V8.4z" />`,
-    views: html`<path d="M4.5 2h7v12l-3.5-2.7L4.5 14z" />`,
-    folder: html`<path d="M1.8 4.2c0-.6.4-1 1-1h3.4l1.4 1.6h5.6c.6 0 1 .4 1 1v6c0 .6-.4 1-1 1H2.8c-.6 0-1-.4-1-1z" />`,
-    mixed: html`<circle cx="8" cy="8" r="5.2" />
-      <path d="M8 2.8a5.2 5.2 0 0 1 0 10.4z" fill="currentColor" stroke="none" />`,
-  }[name];
-  return html`<svg
-    viewBox="0 0 16 16" width=${size} height=${size} aria-hidden="true"
-    fill="none" stroke="currentColor" stroke-width="1.4"
-    stroke-linecap="round" stroke-linejoin="round"
-  >${body}</svg>`;
 }
 
 function healthBadge(cal) {
@@ -209,6 +190,7 @@ function AddMenu() {
 
 const MANAGE_ITEMS = [
   ['settings', 'Settings'],
+  ['organize', 'Calendars & folders'],
   ['outfeeds', 'Outbound feeds'],
   ['filters', 'Filters'],
   ['views', 'Saved views'],

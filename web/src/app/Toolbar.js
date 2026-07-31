@@ -2,10 +2,12 @@
 // a clickable date label (opens the jump popover, hotkey g), on-page filter,
 // search, quick add and New buttons. Single-row inline layout.
 //
-// The view switcher is responsive: the month slot is an "Overview" dropdown
-// (Full month / 3 day ribbon, persisted as the overviewMode setting), and on
-// viewports <= 800px the multiweek buttons drop out, leaving
-// [Overview] [Week] [Day] [Agenda].
+// The view switcher is responsive: on desktop the month slot is a plain
+// "Month" button (always the full month grid; a too-narrow calendar area
+// falls back to the 3-day ribbon automatically, no setting involved). On
+// viewports <= 800px the slot becomes an "Overview" dropdown (Full month /
+// 3 day ribbon, persisted as the mobile-only overviewMode setting) and the
+// multiweek buttons drop out, leaving [Overview] [Week] [Day] [Agenda].
 
 import { html, useState, useRef, useEffect } from '../../vendor/index.js';
 import { useStore, set, shallowEq } from './store.js';
@@ -37,9 +39,20 @@ const STEP_UNITS = {
   week: 'week', day: 'day', agenda: 'month',
 };
 
-// Overview slot: click switches to the overview; when already there, click
-// opens the Full month / 3 day mode menu (the caret advertises it).
-function OverviewButton({ view, narrow }) {
+// Desktop month slot: a plain button, no dropdown, no 3-day option.
+function MonthButton({ view }) {
+  return html`<button
+    type="button"
+    class="bc-viewswitch-btn bc-ov-btn${view === 'month' ? ' is-active' : ''}"
+    aria-pressed=${view === 'month'}
+    title="Month view"
+    onClick=${() => setView('month')}
+  >Month</button>`;
+}
+
+// Mobile Overview slot: click switches to the overview; when already there,
+// click opens the Full month / 3 day mode menu (the caret advertises it).
+function OverviewButton({ view }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef(null);
   const mode = effectiveOverviewMode();
@@ -74,7 +87,7 @@ function OverviewButton({ view, narrow }) {
       aria-haspopup="menu" aria-expanded=${open}
       title=${'Overview: ' + (mode === '3day' ? '3 day' : 'full month')}
       onClick=${() => (view === 'month' ? setOpen(!open) : setView('month'))}
-    >${narrow ? 'Overview' : 'Month'}<span class="bc-ov-caret" aria-hidden="true">▾</span></button>
+    >Overview<span class="bc-ov-caret" aria-hidden="true">▾</span></button>
     ${open && html`<div class="bc-ov-menu" role="menu" aria-label="Overview layout">
       ${OVERVIEW_MODES.map(([m, label]) => html`<button
         key=${m} type="button" role="menuitemradio"
@@ -93,7 +106,7 @@ export function Toolbar({ onToggleSidebar }) {
       filterText: s.filterText, jumpOpen: s.jumpOpen,
       narrow: s.viewportNarrow,
       // Subscribed so the dropdown checkmark tracks the persisted setting.
-      overviewMode: s.settings.overviewMode, coarse: s.coarsePointer,
+      overviewMode: s.settings.overviewMode,
     }),
     shallowEq,
   );
@@ -123,7 +136,9 @@ export function Toolbar({ onToggleSidebar }) {
       <${JumpPopover} />
     </div>
     <nav class="bc-viewswitch" aria-label="View">
-      <${OverviewButton} view=${view} narrow=${narrow} />
+      ${narrow
+        ? html`<${OverviewButton} view=${view} />`
+        : html`<${MonthButton} view=${view} />`}
       ${roster.map(([v, l]) => html`<button
         key=${v} type="button"
         class="bc-viewswitch-btn${view === v ? ' is-active' : ''}"

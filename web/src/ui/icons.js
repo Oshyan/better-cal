@@ -1,5 +1,7 @@
-// Shared inline stroke icons for event surfaces (popover, detail, agenda).
-// Same visual language as the sidebar's Icon: 16 grid, 1.4px rounded stroke.
+// Shared inline icons: 16 grid, 1.4px rounded stroke (fills where a
+// silhouette reads better at small sizes). Icon carries the named map used
+// by the sidebar manage rows, calendar gears, and the organize page, so
+// every surface renders the same glyphs.
 
 import { html } from '../../vendor/index.js';
 
@@ -12,4 +14,41 @@ export function ThumbIcon({ dir = 'up', size = 13 }) {
     fill="none" stroke="currentColor" stroke-width="1.4"
     stroke-linecap="round" stroke-linejoin="round"
   ><path d=${d} /></svg>`;
+}
+
+// Filled cog silhouette: disc r5 with 8 rectangular teeth to r7.4 and a
+// r2.1 center hole. Teeth wind with the disc and the hole winds against it,
+// so the default nonzero fill unions the teeth and cuts the hole cleanly.
+// Reads unmistakably as a gear down to 13px, unlike a spoked circle which
+// scans as a sun or star.
+const GEAR_PATH =
+  'M13 8A5 5 0 1 0 3 8A5 5 0 1 0 13 8Z' +
+  'M12.44 9.19L15.29 9.28L15.29 6.72L12.44 6.81Z' +
+  'M10.3 11.98L12.24 14.06L14.06 12.24L11.98 10.3Z' +
+  'M6.81 12.44L6.72 15.29L9.28 15.29L9.19 12.44Z' +
+  'M4.02 10.3L1.94 12.24L3.76 14.06L5.7 11.98Z' +
+  'M3.56 6.81L0.71 6.72L0.71 9.28L3.56 9.19Z' +
+  'M5.7 4.02L3.76 1.94L1.94 3.76L4.02 5.7Z' +
+  'M9.19 3.56L9.28 0.71L6.72 0.71L6.81 3.56Z' +
+  'M11.98 5.7L14.06 3.76L12.24 1.94L10.3 4.02Z' +
+  'M10.1 8A2.1 2.1 0 1 1 5.9 8A2.1 2.1 0 1 1 10.1 8Z';
+
+// Bodies are built per call (never hoisted): preact mutates vnodes, so a
+// shared constant rendered in two places at once would corrupt the tree.
+export function Icon({ name, size = 15 }) {
+  const body = {
+    settings: html`<path d=${GEAR_PATH} fill="currentColor" stroke="none" />`,
+    outfeeds: html`<path d="M3 8.6a4.4 4.4 0 0 1 4.4 4.4M3 4.6a8.4 8.4 0 0 1 8.4 8.4" />
+      <circle cx="3.7" cy="12.3" r="1.1" fill="currentColor" stroke="none" />`,
+    filters: html`<path d="M2 3h12l-4.6 5.4V13l-2.8-1.5V8.4z" />`,
+    views: html`<path d="M4.5 2h7v12l-3.5-2.7L4.5 14z" />`,
+    folder: html`<path d="M1.8 4.2c0-.6.4-1 1-1h3.4l1.4 1.6h5.6c.6 0 1 .4 1 1v6c0 .6-.4 1-1 1H2.8c-.6 0-1-.4-1-1z" />`,
+    mixed: html`<circle cx="8" cy="8" r="5.2" />
+      <path d="M8 2.8a5.2 5.2 0 0 1 0 10.4z" fill="currentColor" stroke="none" />`,
+  }[name === 'organize' ? 'folder' : name];
+  return html`<svg
+    viewBox="0 0 16 16" width=${size} height=${size} aria-hidden="true"
+    fill="none" stroke="currentColor" stroke-width="1.4"
+    stroke-linecap="round" stroke-linejoin="round"
+  >${body}</svg>`;
 }

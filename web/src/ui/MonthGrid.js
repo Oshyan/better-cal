@@ -12,7 +12,9 @@
 // labels and alternating cell backgrounds, never page jumps.
 //
 // Drag interactions manipulate DOM classes directly (no re-render per move)
-// and emit intents on drop.
+// and emit intents on drop. Creating is two-step: click or drag selects a
+// day range, then a confirm chip (CreateChip) opens the editor; the per-cell
+// hover "+" skips the chip and opens the editor directly.
 
 import { html, useState, useRef, useMemo, useEffect, useLayoutEffect, useCallback } from '../../vendor/index.js';
 import {
@@ -28,6 +30,8 @@ import {
 import { assignLanes } from './layout.js';
 import { EventChip, EventBar } from './EventChip.js';
 import { startPointerDrag, cloneAsGhost } from './DragController.js';
+import { CreateChip } from './CreateChip.js';
+import { normalizeDayRange, dayRangeDraft, dayRangeLabel } from '../lib/quickcreate.js';
 
 const WEEK_SPAN = 522; // weeks either side of today (~10 years)
 const CHIP_ROW = 22;   // px per chip/bar lane
@@ -81,6 +85,9 @@ export function MonthGrid({
   const scrollRef = useRef(null);
   const [viewH, setViewH] = useState(600);
   const [range, setRange] = useState({ first: 0, last: 0 });
+  // Two-step create: a click or cell drag selects a day range; the confirm
+  // chip opens the editor only on Create (mistaken clicks cancel harmlessly).
+  const [pendingSel, setPendingSel] = useState(null); // {startKey, endKey, x, y}
   // Same ~10-year span regardless of row width.
   const rowSpan = useMemo(() => Math.ceil((WEEK_SPAN * 7) / columns), [columns]);
   const centerRow = useMemo(() => rowIndexOfDayKey(todayKey(), columns), [columns]);
@@ -282,15 +289,17 @@ export function MonthGrid({
     });
   }, [dayKeyAtPoint, highlightDays, onResizeEvent]);
 
+  // Drag across cells selects a day range; on release the confirm chip
+  // appears at the pointer (Create opens the editor, Cancel dismisses).
+  // Plain clicks never lift the drag, so they arrive via the cell's onClick
+  // (cellClickSelect) instead; touch taps reach the same handler.
   const dragCreate = useCallback((ev) => {
     if (ev.target !== ev.currentTarget) return; // only empty cell space
     if (ev.pointerType === 'touch') return; // touch: long-press-lift on events only, scroll wins
     const originKey = ev.currentTarget.dataset.day;
-    let moved = false;
     startPointerDrag(ev, {
       scrollEl: scrollRef.current,
       onMove: (pt) => {
-        moved = true;
         const k = dayKeyAtPoint(pt) || originKey;
         const a = Math.min(epochDayOfKey(originKey), epochDayOfKey(k));
         const b = Math.max(epochDayOfKey(originKey), epochDayOfKey(k));
@@ -299,31 +308,41 @@ export function MonthGrid({
         for (let i = a; i <= b; i++) keys.push(keyOfEpochDay(i));
         highlightDays(keys);
       },
-      onDrop: () => {
+      onDrop: (pt) => {
         highlightDays([]);
         if (!onCreateRange) return;
         const k = dropRef.current.key || originKey;
-        const a = Math.min(epochDayOfKey(originKey), epochDayOfKey(k));
-        const b = Math.max(epochDayOfKey(originKey), epochDayOfKey(k));
-        if (!moved || a === b) {
-          // Plain click: quick create a 1-hour event at 9am that day.
-          const base = dateOfDayKey(keyOfEpochDay(a));
-          const s = new Date(base.getFullYear(), base.getMonth(), base.getDate(), 9, 0);
-          onCreateRange({ start: toISOWithOffset(s), end: toISOWithOffset(new Date(s.getTime() + 3600000)), allDay: false });
-        } else {
-          onCreateRange({
-            start: toISOWithOffset(dateOfDayKey(keyOfEpochDay(a))),
-            end: toISOWithOffset(dateOfDayKey(keyOfEpochDay(b + 1))),
-            allDay: true,
-          });
-        }
+        const { startKey, endKey } = normalizeDayRange(originKey, k);
+        setPendingSel({ startKey, endKey, x: pt.x, y: pt.y });
       },
-      onCancel: () => {
-        highlightDays([]);
-        // Treat an unmoved tap-cancel as nothing; click create handled in onDrop.
-      },
+      onCancel: () => highlightDays([]),
     });
   }, [dayKeyAtPoint, highlightDays, onCreateRange]);
+
+  // Plain click (mouse) or tap (touch) on empty cell space: select that day
+  // and ask. Real drags never reach here (the drag controller swallows the
+  // synthetic click after a lift), and taps that scrolled produce no click.
+  const cellClickSelect = useCallback((ev) => {
+    if (ev.target !== ev.currentTarget) return;
+    if (!onCreateRange) return;
+    const k = ev.currentTarget.dataset.day;
+    setPendingSel({ startKey: k, endKey: k, x: ev.clientX, y: ev.clientY });
+  }, [onCreateRange]);
+
+  // Hover/focus "+" in a cell corner: straight to the editor, no chip.
+  const quickCreateDay = useCallback((k) => {
+    setPendingSel(null);
+    if (onCreateRange) onCreateRange(dayRangeDraft(k, k));
+  }, [onCreateRange]);
+
+  const confirmPendingSel = () => {
+    const p = pendingSel;
+    setPendingSel(null);
+    if (p && onCreateRange) onCreateRange(dayRangeDraft(p.startKey, p.endKey));
+  };
+
+  // Navigation and view changes dismiss a waiting chip.
+  useEffect(() => { setPendingSel(null); }, [scrollSeq, columns]);
 
   // --- render ---------------------------------------------------------------
 
@@ -334,14 +353,21 @@ export function MonthGrid({
   // The mobile lane cap exists for 7 cramped columns; ribbon cells are wide
   // enough to keep every lane the row height affords.
   if (mobile && !ribbon) capacity = Math.min(capacity, MOBILE_LANES);
+  // Pending selection tint survives row re-renders (unlike the transient
+  // drag highlight classes), so it stays visible while the chip is open.
+  const sel = pendingSel
+    ? { a: epochDayOfKey(pendingSel.startKey), b: epochDayOfKey(pendingSel.endKey) }
+    : null;
   for (let wi = range.first; wi <= range.last; wi++) {
     weeks.push(html`<${WeekRow}
       key=${wi} weekIndex=${wi} columns=${columns} ribbon=${ribbon}
       top=${weekTop(wi, minWeek, rowH)} rowH=${rowH}
       byDay=${idx.byDay} bars=${idx.barsByRow.get(wi)} calendars=${calendars}
       capacity=${capacity} chipRow=${chipRow} mobile=${mobile} todayKey=${tKey} dimSet=${dimSet}
+      sel=${sel}
       onOpenEvent=${onOpenEvent} onExpandDay=${onExpandDay}
       dragMoveOcc=${dragMoveOcc} dragResizeOcc=${dragResizeOcc} dragCreate=${dragCreate}
+      cellClickSelect=${cellClickSelect} quickCreateDay=${quickCreateDay}
     />`);
   }
 
@@ -393,12 +419,19 @@ export function MonthGrid({
         ${weeks}
       </div>
     </div>
+    ${pendingSel && html`<${CreateChip}
+      x=${pendingSel.x} y=${pendingSel.y}
+      label=${'New event ' + dayRangeLabel(pendingSel.startKey, pendingSel.endKey) + '?'}
+      onConfirm=${confirmPendingSel}
+      onCancel=${() => setPendingSel(null)}
+    />`}
   </div>`;
 }
 
 function WeekRow({
   weekIndex, columns, ribbon, top, rowH, byDay, bars, calendars, capacity, chipRow, mobile,
-  todayKey: tKey, dimSet, onOpenEvent, onExpandDay, dragMoveOcc, dragResizeOcc, dragCreate,
+  todayKey: tKey, dimSet, sel, onOpenEvent, onExpandDay, dragMoveOcc, dragResizeOcc, dragCreate,
+  cellClickSelect, quickCreateDay,
 }) {
   const keys = dayKeysOfRow(weekIndex, columns);
   const barList = bars || [];
@@ -427,20 +460,29 @@ function WeekRow({
     // Ribbon rows have no weekday header, so each cell labels itself
     // ("Mon 3"; month name on month start: "Aug 1"). Weekends get a subtle
     // tint for orientation.
-    const weekend = ribbon && isWeekendEpochDay(epochDayOfKey(k));
+    const ed = epochDayOfKey(k);
+    const weekend = ribbon && isWeekendEpochDay(ed);
+    const selected = sel && ed >= sel.a && ed <= sel.b;
     const label = d === 1
       ? fmtMonthShort(dateOfDayKey(k)) + ' 1'
       : (ribbon ? fmtWeekdayShort(dateOfDayKey(k)) + ' ' + d : d);
     return html`<div
       key=${k}
-      class="bc-cell${m % 2 === 0 ? ' alt-month' : ''}${weekend ? ' is-weekend' : ''}${k === tKey ? ' is-today' : ''}${d === 1 ? ' is-month-start' : ''}"
+      class="bc-cell${m % 2 === 0 ? ' alt-month' : ''}${weekend ? ' is-weekend' : ''}${k === tKey ? ' is-today' : ''}${d === 1 ? ' is-month-start' : ''}${selected ? ' bc-drop-target' : ''}"
       data-day=${k}
       onPointerDown=${dragCreate}
+      onClick=${cellClickSelect}
     >
       <button
         type="button" class="bc-daynum" aria-label=${'Expand day ' + k}
         onClick=${(e) => { e.stopPropagation(); if (onExpandDay) onExpandDay(k); }}
       >${label}</button>
+      <button
+        type="button" class="bc-cell-add" aria-label=${'New event on ' + k}
+        title="New event"
+        onPointerDown=${(e) => e.stopPropagation()}
+        onClick=${(e) => { e.stopPropagation(); if (quickCreateDay) quickCreateDay(k); }}
+      >+</button>
       <div class="bc-cell-chips" style=${`top:${CELL_HEAD + chipStartLane * chipRow}px`}>
         ${singles.slice(0, shown).map((occ) => html`<${EventChip}
           key=${occ.instanceId} occ=${occ} cal=${calendars[occ.calendarId]}

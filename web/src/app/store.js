@@ -43,6 +43,11 @@ export const state = {
     ? window.matchMedia('(max-width: 800px)').matches : false,
   coarsePointer: typeof window !== 'undefined' && window.matchMedia
     ? window.matchMedia('(pointer: coarse)').matches : false,
+  // Responsive fallback flag: true when the calendar view area itself (not
+  // the window) is too narrow for the 7-column month grid. Fed by a
+  // ResizeObserver in App; on desktop it flips the month slot to the 3-day
+  // ribbon with no user setting involved.
+  viewAreaNarrow: false,
   anchor: todayKey(),
   scrollSeq: 0,
   visibleMonth: null, // {year, month}
@@ -53,7 +58,7 @@ export const state = {
   savedViews: [],     // [{id, name, config, position}]
   activeViewId: null, // saved view currently applied, if any
 
-  route: 'calendar', // calendar | outfeeds | filters | views | settings
+  route: 'calendar', // calendar | organize | outfeeds | filters | views | settings
 
   quickAddOpen: false,
   searchOpen: false,

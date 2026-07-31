@@ -1,6 +1,8 @@
 // TimeGrid: day and week views. Hour rows (painted with CSS gradients, not
 // DOM), all-day lane at top, now-line, side-by-side overlap layout, drag to
-// create/move/resize with 15-minute snap.
+// create/move/resize with 15-minute snap. Creating is two-step: the drag (or
+// a plain click) leaves a draft block and a confirm chip (CreateChip); the
+// editor opens only on Create.
 //
 // Two column modes:
 // - Fixed (day view): the `days` prop lists the columns, flex-sized to fill.
@@ -22,6 +24,8 @@ import { layoutOverlaps, assignLanes } from './layout.js';
 import { occurrenceDaySpan, isWeekendEpochDay } from './monthmath.js';
 import { EventBlock, EventBar } from './EventChip.js';
 import { startPointerDrag, cloneAsGhost } from './DragController.js';
+import { CreateChip } from './CreateChip.js';
+import { timeRangeLabel } from '../lib/quickcreate.js';
 
 const HOUR_H = 48;   // px per hour
 const SNAP_MIN = 15;
@@ -59,6 +63,9 @@ export function TimeGrid({
   const alldayTrackRef = useRef(null);
   const [, forceTick] = useState(0);
   const [draft, setDraft] = useState(null); // {dayKey, startMin, endMin} while drag-creating
+  // Two-step create: releasing a drag (or a plain click) keeps the draft
+  // block on the grid and asks via a confirm chip before opening the editor.
+  const [pendingSel, setPendingSel] = useState(null); // draft + {x, y} chip anchor
 
   // --- horizontal virtualization (infinite mode) ---------------------------
 
@@ -296,6 +303,9 @@ export function TimeGrid({
     scrollEl: scrollRef.current,
   }), [infinite, days]);
 
+  // Drag-create draws a draft block; releasing keeps the draft and asks via
+  // the confirm chip. A plain click (never lifted) drafts a 1-hour block at
+  // the clicked slot with the same chip; Escape mid-drag cancels outright.
   const dragCreate = useCallback((ev) => {
     if (ev.target !== ev.currentTarget) return;
     if (ev.pointerType === 'touch') return; // scroll wins on touch
@@ -303,10 +313,14 @@ export function TimeGrid({
     if (!origin) return;
     const startSnap = Math.floor(origin.min / SNAP_MIN) * SNAP_MIN;
     let current = null;
+    let lifted = false;
     startPointerDrag(ev, {
       scrollEl: scrollRef.current,
       hScrollEl: infinite ? hscrollRef.current : null,
-      onLift: () => setDraft({ dayKey: origin.dayKey, startMin: startSnap, endMin: startSnap + 30 }),
+      onLift: () => {
+        lifted = true;
+        setDraft({ dayKey: origin.dayKey, startMin: startSnap, endMin: startSnap + 30 });
+      },
       onMove: (pt) => {
         const s = pointToSlot(pt);
         if (!s) return;
@@ -318,30 +332,39 @@ export function TimeGrid({
         };
         setDraft(current);
       },
-      onDrop: () => {
-        setDraft(null);
+      onDrop: (pt) => {
         const c = current || { dayKey: origin.dayKey, startMin: startSnap, endMin: startSnap + 60 };
-        if (onCreateRange) {
-          onCreateRange({
-            start: toISOWithOffset(dateAt(c.dayKey, c.startMin)),
-            end: toISOWithOffset(dateAt(c.dayKey, c.endMin)),
-            allDay: false,
-          });
-        }
+        setDraft(c);
+        setPendingSel({ ...c, x: pt.x, y: pt.y });
       },
       onCancel: () => {
-        setDraft(null);
-        // Plain click on empty grid: 1-hour draft at the clicked slot.
-        if (onCreateRange) {
-          onCreateRange({
-            start: toISOWithOffset(dateAt(origin.dayKey, startSnap)),
-            end: toISOWithOffset(dateAt(origin.dayKey, startSnap + 60)),
-            allDay: false,
-          });
-        }
+        if (lifted) { setDraft(null); return; } // Escape mid-drag: no chip
+        const c = { dayKey: origin.dayKey, startMin: startSnap, endMin: startSnap + 60 };
+        setDraft(c);
+        setPendingSel({ ...c, x: ev.clientX, y: ev.clientY });
       },
     });
-  }, [pointToSlot, infinite, onCreateRange]);
+  }, [pointToSlot, infinite]);
+
+  const dismissPendingSel = useCallback(() => {
+    setPendingSel(null);
+    setDraft(null);
+  }, []);
+
+  const confirmPendingSel = () => {
+    const p = pendingSel;
+    dismissPendingSel();
+    if (p && onCreateRange) {
+      onCreateRange({
+        start: toISOWithOffset(dateAt(p.dayKey, p.startMin)),
+        end: toISOWithOffset(dateAt(p.dayKey, p.endMin)),
+        allDay: false,
+      });
+    }
+  };
+
+  // Navigation dismisses a waiting chip along with its draft block.
+  useEffect(() => { setPendingSel(null); setDraft(null); }, [scrollSeq]);
 
   const dragMove = useCallback((occ, ev) => {
     ev.stopPropagation();
@@ -530,6 +553,12 @@ export function TimeGrid({
     </div>
     ${infinite && html`<div class="bc-tg-edge l" aria-hidden="true"><span>‹</span></div>`}
     ${infinite && html`<div class="bc-tg-edge r" aria-hidden="true"><span>›</span></div>`}
+    ${pendingSel && html`<${CreateChip}
+      x=${pendingSel.x} y=${pendingSel.y}
+      label=${'New event ' + timeRangeLabel(pendingSel.dayKey, pendingSel.startMin, pendingSel.endMin) + '?'}
+      onConfirm=${confirmPendingSel}
+      onCancel=${dismissPendingSel}
+    />`}
   </div>`;
 }
 

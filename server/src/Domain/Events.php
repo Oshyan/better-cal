@@ -620,6 +620,8 @@ final class Events
             'title' => (string) $row['title'],
             'description' => $row['description'] !== null ? (string) $row['description'] : null,
             'location' => $row['location'] !== null ? (string) $row['location'] : null,
+            'locationLat' => isset($row['location_lat']) ? (float) $row['location_lat'] : null,
+            'locationLng' => isset($row['location_lng']) ? (float) $row['location_lng'] : null,
             'url' => $row['url'] !== null ? (string) $row['url'] : null,
             // All-day events are calendar dates, not instants: serialize the date
             // in the event's own zone at a fixed +00:00 midnight so clients can
@@ -633,6 +635,7 @@ final class Events
             'allDay' => (int) $row['all_day'] === 1,
             'tzid' => $tzid,
             'recurring' => !empty($row['rrule']) || !empty($row['recurrence_parent_id']),
+            'rrule' => !empty($row['rrule']) ? (string) $row['rrule'] : null,
             'source' => (string) $row['source'],
             'attendance' => (string) $row['attendance'],
             'status' => (string) $row['status'],
@@ -710,6 +713,14 @@ final class Events
                 if ($col === 'location' && $fields[$col] !== null) {
                     $fields[$col] = mb_substr($fields[$col], 0, 500);
                 }
+            }
+        }
+        foreach (['locationLat' => 'location_lat', 'locationLng' => 'location_lng'] as $key => $col) {
+            if (array_key_exists($key, $in)) {
+                if ($in[$key] !== null && !is_numeric($in[$key])) {
+                    throw HttpError::badRequest("$key must be a number or null");
+                }
+                $fields[$col] = $in[$key] === null ? null : (float) $in[$key];
             }
         }
         if (array_key_exists('status', $in) && $in['status'] !== null) {

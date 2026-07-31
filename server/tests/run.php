@@ -12,6 +12,7 @@ use BetterCal\Dav\DavIcs;
 use BetterCal\Domain\ApiTokens;
 use BetterCal\Domain\Calendars;
 use BetterCal\Domain\FallbackParser;
+use BetterCal\Domain\Geocode;
 use BetterCal\Domain\Filters;
 use BetterCal\Domain\Ics;
 use BetterCal\Domain\PromptEval;
@@ -593,6 +594,41 @@ check('flt eval hash differs for different sets', Filters::evalPayloadHash([1, 2
 checkEq('flt eval hash is sha256 of joined ids', hash('sha256', '1,2,3'), Filters::evalPayloadHash([2, '3', 1]));
 checkEq('flt on-read enqueue cap', 300, Filters::MAX_ON_READ_EVENT_IDS);
 checkEq('pe sweep window years', [2, 3], [PromptEval::WINDOW_YEARS_PAST, PromptEval::WINDOW_YEARS_FUTURE]);
+
+// ---------------------------------------------------------------------------
+// Geocode: normalization, hashing, response mapping, negative cache (pure)
+// ---------------------------------------------------------------------------
+
+checkEq('geo normalize trims + collapses whitespace', 'Zuni Cafe, San Francisco', Geocode::normalize("  Zuni   Cafe,\n San Francisco  "));
+checkEq('geo normalize caps length', Geocode::MAX_QUERY_LENGTH, mb_strlen(Geocode::normalize(str_repeat('a', 600))));
+checkEq('geo hash whitespace-insensitive', Geocode::queryHash('Zuni  Cafe'), Geocode::queryHash(' Zuni Cafe '));
+checkEq('geo hash case-insensitive', Geocode::queryHash('ZUNI CAFE'), Geocode::queryHash('zuni cafe'));
+check('geo hash differs for different queries', Geocode::queryHash('Zuni Cafe') !== Geocode::queryHash('Tartine'));
+check('geo hash is 64 hex chars', preg_match('/^[0-9a-f]{64}$/', Geocode::queryHash('anything')) === 1);
+
+$photon = ['features' => [[
+    'geometry' => ['coordinates' => [-122.4216, 37.7739]],
+    'properties' => ['name' => 'Zuni Cafe', 'city' => 'San Francisco', 'state' => 'California', 'country' => 'United States'],
+]]];
+$geo = Geocode::mapResponse($photon);
+checkEq('geo map lat from GeoJSON [lng,lat]', 37.7739, $geo['lat']);
+checkEq('geo map lng from GeoJSON [lng,lat]', -122.4216, $geo['lng']);
+checkEq('geo map display joins parts', 'Zuni Cafe, San Francisco, California, United States', $geo['display']);
+checkEq('geo map dedupes repeated parts', 'Berlin, Germany', Geocode::mapResponse(['features' => [[
+    'geometry' => ['coordinates' => [13.4, 52.5]],
+    'properties' => ['name' => 'Berlin', 'city' => 'Berlin', 'country' => 'Germany'],
+]]])['display']);
+checkEq('geo map empty features -> null', null, Geocode::mapResponse(['features' => []]));
+checkEq('geo map garbage -> null', null, Geocode::mapResponse('garbage'));
+checkEq('geo map missing coordinates -> null', null, Geocode::mapResponse(['features' => [['properties' => ['name' => 'X']]]]));
+checkEq('geo map non-numeric coordinates -> null', null, Geocode::mapResponse(['features' => [['geometry' => ['coordinates' => ['a', 'b']]]]]));
+
+checkEq('geo negative cache row -> all-null result', ['lat' => null, 'lng' => null, 'display' => null], Geocode::resultFromRow(['lat' => null, 'lng' => null, 'display' => null]));
+checkEq(
+    'geo positive cache row round-trips',
+    ['lat' => 37.7739, 'lng' => -122.4216, 'display' => 'Zuni Cafe'],
+    Geocode::resultFromRow(['lat' => '37.7739', 'lng' => '-122.4216', 'display' => 'Zuni Cafe'])
+);
 
 // ---------------------------------------------------------------------------
 // Settings: defaults + validation (pure, no DB)

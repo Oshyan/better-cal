@@ -25,8 +25,11 @@ import { startPointerDrag, cloneAsGhost } from './DragController.js';
 
 const WEEK_SPAN = 522; // weeks either side of today (~10 years)
 const CHIP_ROW = 22;   // px per chip/bar lane
+const CHIP_ROW_MOBILE = 15; // compact single-line pills at <=600px
+const MOBILE_LANES = 3;     // pill lanes per day on mobile, then dots + "+N"
 const CELL_HEAD = 24;  // px reserved for the day number row
 const GUTTER_W = 44;   // px month-label gutter
+const MOBILE_QUERY = '(max-width: 600px)';
 
 // Weekday header labels, in the configured week-start order (settings can
 // change it at runtime, so this is computed lazily and cached per start day).
@@ -76,6 +79,17 @@ export function MonthGrid({
   const minWeek = centerWeek - WEEK_SPAN;
   const maxWeek = centerWeek + WEEK_SPAN;
   const rowH = Math.max(64, Math.floor(viewH / visibleRows));
+
+  // Mobile month cells render every event as a compact text pill (same shape
+  // for timed and all-day) in tighter lanes; overflow becomes dots + "+N".
+  const [mobile, setMobile] = useState(() => window.matchMedia(MOBILE_QUERY).matches);
+  useEffect(() => {
+    const mq = window.matchMedia(MOBILE_QUERY);
+    const onChange = () => setMobile(mq.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+  const chipRow = mobile ? CHIP_ROW_MOBILE : CHIP_ROW;
 
   const idx = useMemo(() => indexOccurrences(occurrences), [occurrences]);
 
@@ -307,30 +321,41 @@ export function MonthGrid({
 
   const weeks = [];
   const tKey = todayKey();
-  const capacity = Math.max(1, Math.floor((rowH - CELL_HEAD - 4) / CHIP_ROW));
+  let capacity = Math.max(1, Math.floor((rowH - CELL_HEAD - 4) / chipRow));
+  if (mobile) capacity = Math.min(capacity, MOBILE_LANES);
   for (let wi = range.first; wi <= range.last; wi++) {
     weeks.push(html`<${WeekRow}
       key=${wi} weekIndex=${wi} top=${weekTop(wi, minWeek, rowH)} rowH=${rowH}
       byDay=${idx.byDay} bars=${idx.barsByWeek.get(wi)} calendars=${calendars}
-      capacity=${capacity} todayKey=${tKey} dimSet=${dimSet}
+      capacity=${capacity} chipRow=${chipRow} mobile=${mobile} todayKey=${tKey} dimSet=${dimSet}
       onOpenEvent=${onOpenEvent} onExpandDay=${onExpandDay}
       dragMoveOcc=${dragMoveOcc} dragResizeOcc=${dragResizeOcc} dragCreate=${dragCreate}
     />`);
   }
 
-  const labels = monthStartsInRange(range.first, range.last).map(({ weekIndex, year, month }) => html`<div
+  const monthStarts = monthStartsInRange(range.first, range.last);
+  const labels = monthStarts.map(({ weekIndex, year, month }) => html`<div
     key=${'m' + year + '-' + month}
     class="bc-gutter-label"
     style=${`top:${weekTop(weekIndex, minWeek, rowH) + 2}px`}
   >${fmtMonthShort(new Date(year, month - 1, 1))}<span class="bc-gutter-year">${month === 1 ? year : ''}</span></div>`);
 
-  return html`<div class="bc-month" style=${`--bc-gutter-w:${GUTTER_W}px`}>
+  // Crisp full-width divider (gutter included) at the top of each month's
+  // first week row; the per-cell accent cue stays as the mid-week marker.
+  const rules = monthStarts.map(({ weekIndex, year, month }) => html`<div
+    key=${'r' + year + '-' + month}
+    class="bc-month-rule"
+    style=${`top:${weekTop(weekIndex, minWeek, rowH)}px`}
+  ></div>`);
+
+  return html`<div class="bc-month" style=${`--bc-gutter-w:${GUTTER_W}px;--chip-h:${chipRow - 2}px`}>
     <div class="bc-month-head">
       <div class="bc-month-head-gutter"></div>
       ${weekdayNames().map((w) => html`<div key=${w} class="bc-month-head-day">${w}</div>`)}
     </div>
     <div class="bc-month-scroll" ref=${scrollRef}>
       <div class="bc-month-spacer" style=${`height:${totalHeight(minWeek, maxWeek, rowH)}px`}>
+        ${rules}
         ${labels}
         ${weeks}
       </div>
@@ -339,8 +364,8 @@ export function MonthGrid({
 }
 
 function WeekRow({
-  weekIndex, top, rowH, byDay, bars, calendars, capacity, todayKey: tKey,
-  dimSet, onOpenEvent, onExpandDay, dragMoveOcc, dragResizeOcc, dragCreate,
+  weekIndex, top, rowH, byDay, bars, calendars, capacity, chipRow, mobile,
+  todayKey: tKey, dimSet, onOpenEvent, onExpandDay, dragMoveOcc, dragResizeOcc, dragCreate,
 }) {
   const keys = dayKeysOfWeek(weekIndex);
   const barList = bars || [];
@@ -376,7 +401,7 @@ function WeekRow({
         type="button" class="bc-daynum" aria-label=${'Expand day ' + k}
         onClick=${(e) => { e.stopPropagation(); if (onExpandDay) onExpandDay(k); }}
       >${d === 1 ? fmtMonthShort(dateOfDayKey(k)) + ' 1' : d}</button>
-      <div class="bc-cell-chips" style=${`top:${CELL_HEAD + chipStartLane * 22}px`}>
+      <div class="bc-cell-chips" style=${`top:${CELL_HEAD + chipStartLane * chipRow}px`}>
         ${singles.slice(0, shown).map((occ) => html`<${EventChip}
           key=${occ.instanceId} occ=${occ} cal=${calendars[occ.calendarId]}
           dimmed=${dimSet && dimSet.has(occ.instanceId)}
@@ -387,7 +412,13 @@ function WeekRow({
           type="button" class="bc-more"
           onClick=${(e) => { e.stopPropagation(); if (onExpandDay) onExpandDay(k); }}
           onPointerDown=${(e) => e.stopPropagation()}
-        >+${hidden} more</button>`}
+        >
+          ${mobile && singles.slice(shown, shown + 3).map((o) => html`<span
+            key=${o.instanceId} class="bc-more-dot"
+            style=${`background:${(calendars[o.calendarId] && calendars[o.calendarId].color) || '#888'}`}
+          ></span>`)}
+          +${hidden}${mobile ? '' : ' more'}
+        </button>`}
       </div>
     </div>`;
   });
@@ -400,7 +431,7 @@ function WeekRow({
         ${visibleBars.map(({ occ, seg, lane }) => html`<div
           key=${occ.instanceId + ':' + seg.startCol}
           class="bc-bar-slot"
-          style=${`left:${(seg.startCol / 7) * 100}%;width:${((seg.endCol - seg.startCol + 1) / 7) * 100}%;top:${lane * 22}px`}
+          style=${`left:${(seg.startCol / 7) * 100}%;width:${((seg.endCol - seg.startCol + 1) / 7) * 100}%;top:${lane * chipRow}px`}
         >
           <${EventBar}
             occ=${occ} cal=${calendars[occ.calendarId]} seg=${seg}

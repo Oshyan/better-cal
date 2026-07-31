@@ -50,6 +50,8 @@ export const state = {
   searchOpen: false,
   jumpOpen: false,   // jump-to-date popover (toolbar date label / g)
   popover: null,     // {instanceId, anchorRect}
+  detail: null,      // {instanceId} full event detail view (modal/sheet)
+  groupPopover: null, // {group, anchorRect} near-duplicate group list
   editor: null,      // {mode, occ?, draft}
   expandedDay: null, // {dayKey, anchorRect}
   flashId: null,

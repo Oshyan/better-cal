@@ -66,11 +66,20 @@ export function jumpToDate(dayKey, flashId) {
 }
 
 export function closeOverlays() {
-  if (state.popover || state.editor || state.expandedDay || state.searchOpen || state.quickAddOpen || state.jumpOpen) {
-    set({ popover: null, editor: null, expandedDay: null, searchOpen: false, quickAddOpen: false, jumpOpen: false });
+  if (state.popover || state.detail || state.groupPopover || state.editor || state.expandedDay ||
+      state.searchOpen || state.quickAddOpen || state.jumpOpen) {
+    set({
+      popover: null, detail: null, groupPopover: null, editor: null, expandedDay: null,
+      searchOpen: false, quickAddOpen: false, jumpOpen: false,
+    });
     return true;
   }
   return false;
+}
+
+// Open the full detail view for one occurrence, replacing lighter overlays.
+export function openDetail(instanceId) {
+  set({ detail: { instanceId }, popover: null, groupPopover: null, expandedDay: null });
 }
 
 // --- reschedule mode (PRD 5.9) -----------------------------------------------
@@ -88,6 +97,8 @@ export function enterReschedule(instanceId) {
   set({
     reschedule: { instanceId, grabbed: true },
     popover: null,
+    detail: null,
+    groupPopover: null,
     expandedDay: null,
     editor: null,
   });

@@ -12,12 +12,14 @@ import { parseJumpText } from '../lib/jumpparse.js';
 import {
   todayKey, dateOfDayKey, epochDayOfKey, keyOfEpochDay, pad,
   fmtMonthYear, fmtDayLong, fmtMonthShort,
+  weekIndexOfEpochDay, firstEpochDayOfWeek, getWeekStart,
 } from '../lib/dates.js';
 
-// Week rows (Monday start) covering a month, padded with adjacent-month days.
+// Week rows (configured week start) covering a month, padded with
+// adjacent-month days.
 function monthWeeks(year, month) {
   const firstEd = epochDayOfKey(year + '-' + pad(month) + '-01');
-  const gridStart = firstEd - ((firstEd + 3) % 7); // back up to Monday
+  const gridStart = firstEpochDayOfWeek(weekIndexOfEpochDay(firstEd));
   const nextFirstEd = epochDayOfKey(month === 12
     ? (year + 1) + '-01-01'
     : year + '-' + pad(month + 1) + '-01');
@@ -30,7 +32,20 @@ function monthWeeks(year, month) {
   return weeks;
 }
 
-const WEEKDAY_HEADS = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+// Single-letter day headers in week-start order, cached per start day.
+let headCache = { start: null, heads: [] };
+function weekdayHeads() {
+  const start = getWeekStart();
+  if (headCache.start !== start) {
+    const fmt = new Intl.DateTimeFormat(undefined, { weekday: 'narrow' });
+    const first = firstEpochDayOfWeek(weekIndexOfEpochDay(epochDayOfKey('2024-01-08')));
+    headCache = {
+      start,
+      heads: Array.from({ length: 7 }, (_, i) => fmt.format(dateOfDayKey(keyOfEpochDay(first + i)))),
+    };
+  }
+  return headCache.heads;
+}
 
 export function JumpPopover() {
   const open = useStore((s) => s.jumpOpen);
@@ -126,7 +141,7 @@ export function JumpPopover() {
           >${fmtMonthShort(new Date(disp.year, i, 1))}</button>`)}
         </div>`
       : html`<div class="bc-jump-grid" role="grid" aria-label="Days">
-          ${WEEKDAY_HEADS.map((w, i) => html`<span key=${'h' + i} class="bc-jump-dow" aria-hidden="true">${w}</span>`)}
+          ${weekdayHeads().map((w, i) => html`<span key=${'h' + i} class="bc-jump-dow" aria-hidden="true">${w}</span>`)}
           ${weeks.map((row) => row.map((key) => html`<button
             key=${key} type="button"
             class="bc-jump-day${key.startsWith(monthPrefix) ? '' : ' is-out'}${key === tKey ? ' is-today' : ''}${key === state.anchor ? ' is-sel' : ''}"

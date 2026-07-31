@@ -16,7 +16,7 @@ Token value: `bc_` + 43 url-safe base64 chars; stored sha256-hashed, shown once 
 - Agent-facing guide: [agent-api.md](agent-api.md); MCP server in `tools/mcp/`.
 
 ## Calendars & structure
-- `GET /calendars` → `{calendars:[{id,name,color,kind,sourceUrl,visible,position,folderIds:[],tagNames:[],groupSimilar:boolean,health:{lastPolledAt,status,error,stale:boolean}}], folders:[{id,name,position}], tags:[{id,name}]}`
+- `GET /calendars` → `{calendars:[{id,name,color,kind,sourceUrl,visible,position,pollIntervalMinutes,staleAfterDays,folderIds:[],tagNames:[],groupSimilar:boolean,health:{lastPolledAt,status,error,stale:boolean}}], folders:[{id,name,position}], tags:[{id,name}]}`
 - `POST /calendars` `{name,color,folderIds?,tagNames?}` → calendar object.
 - `PATCH /calendars/:id` (any of name,color,visible,position,folderIds,tagNames,pollIntervalMinutes,staleAfterDays,groupSimilar) → calendar object.
 - `groupSimilar` (boolean, per calendar, persisted in `calendars.settings_json`): whether the client should visually group near-duplicate events on this calendar. Default when never set: `true` for `kind=subscribed`, `false` for `kind=local`. The server only stores and returns the flag; the grouping itself is client-side.
@@ -76,7 +76,7 @@ Named snapshots of client view state; `config` is client-defined: `{viewType, vi
 - `DELETE /views/:id` → `{ok:true}`.
 
 ## Outbound feeds
-- `GET /outfeeds` / `POST /outfeeds` `{name, scope:{type:"all"|"calendar"|"search", calendarId?, q?}, description?}` → `{id,name,url,scope,description}`.
+- `GET /outfeeds` → `{feeds:[{id,name,url,scope,description}]}` (envelope key is `feeds`). `POST /outfeeds` `{name, scope:{type:"all"|"calendar"|"search", calendarId?, q?}, description?}` → `{id,name,url,scope,description}`.
 - `DELETE /outfeeds/:id`.
 - Public: `GET /feed/{token}.ics` (no auth; X-WR-CALNAME + description embedded).
 

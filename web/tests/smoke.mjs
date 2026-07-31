@@ -4,7 +4,7 @@
 import {
   parseISO, toISOWithOffset, dayKeyOf, dateOfDayKey, epochDayOfKey,
   keyOfEpochDay, addDaysKey, diffDaysKey, weekIndexOfKey, firstEpochDayOfWeek,
-  dayKeysOfWeek, startOfWeekKey,
+  dayKeysOfWeek, startOfWeekKey, setWeekStart, getWeekStart, setTimeFormat, fmtTime,
 } from '../src/lib/dates.js';
 import { layoutOverlaps, assignLanes, rangesOverlap } from '../src/ui/layout.js';
 import {
@@ -282,6 +282,35 @@ eq('jump: weekday prefix', parseJumpText('tue', JB), '2026-08-04');
 // Garbage in, null out.
 eq('jump: gibberish', parseJumpText('fnord', JB), null);
 eq('jump: empty', parseJumpText('   ', JB), null);
+
+console.log('--- week start setting ---');
+// All earlier week tests ran under the default (Monday). Flip to Sunday and
+// verify the whole week pipeline pivots, then restore.
+
+setWeekStart('sun');
+eq('getWeekStart reflects setting', getWeekStart(), 'sun');
+// 2026-07-30 is a Thursday; its Sunday-started week begins 2026-07-26.
+eq('sun: startOfWeekKey of a Thursday', startOfWeekKey('2026-07-30'), '2026-07-26');
+eq('sun: startOfWeek of a Sunday is itself', startOfWeekKey('2026-07-26'), '2026-07-26');
+// A Monday now belongs to the week that began the day before.
+eq('sun: Monday joins the prior Sunday week', startOfWeekKey('2026-07-27'), '2026-07-26');
+const wkSun = dayKeysOfWeek(weekIndexOfKey('2026-07-30'));
+eq('sun: dayKeysOfWeek span', [wkSun[0], wkSun[6]], ['2026-07-26', '2026-08-01']);
+assert('sun: week index anchors to Sunday',
+  firstEpochDayOfWeek(weekIndexOfKey('2026-07-30')) === epochDayOfKey('2026-07-26'));
+
+setWeekStart('mon');
+eq('mon restored: startOfWeekKey', startOfWeekKey('2026-07-30'), '2026-07-27');
+eq('mon restored: getWeekStart', getWeekStart(), 'mon');
+
+console.log('--- time format setting ---');
+
+const t1405 = new Date(2026, 0, 1, 14, 5);
+setTimeFormat('24');
+assert('24h format shows 14', fmtTime(t1405).includes('14'));
+assert('24h format has no AM/PM', !/am|pm/i.test(fmtTime(t1405)));
+setTimeFormat('12');
+assert('12h format shows 2:05', fmtTime(t1405).includes('2:05'));
 
 console.log('--- color utils ---');
 

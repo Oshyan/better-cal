@@ -13,7 +13,7 @@ import { html, useState, useRef, useMemo, useEffect, useLayoutEffect, useCallbac
 import {
   keyOfEpochDay, epochDayOfKey, weekIndexOfKey, firstEpochDayOfWeek,
   dayKeysOfWeek, dateOfDayKey, addDaysDate, parseISO, toISOWithOffset,
-  todayKey, fmtMonthShort, dayKeyOfISO,
+  todayKey, fmtMonthShort, dayKeyOfISO, getWeekStart,
 } from '../lib/dates.js';
 import {
   visibleWeekRange, weekTop, totalHeight, occurrenceDaySpan, segmentSpan,
@@ -28,10 +28,18 @@ const CHIP_ROW = 22;   // px per chip/bar lane
 const CELL_HEAD = 24;  // px reserved for the day number row
 const GUTTER_W = 44;   // px month-label gutter
 
-const WEEKDAYS = (() => {
-  const base = dayKeysOfWeek(weekIndexOfKey('2024-01-01')); // a Monday week
-  return base.map((k) => new Intl.DateTimeFormat(undefined, { weekday: 'short' }).format(dateOfDayKey(k)));
-})();
+// Weekday header labels, in the configured week-start order (settings can
+// change it at runtime, so this is computed lazily and cached per start day).
+let weekdayCache = { start: null, names: [] };
+function weekdayNames() {
+  const start = getWeekStart();
+  if (weekdayCache.start !== start) {
+    const fmt = new Intl.DateTimeFormat(undefined, { weekday: 'short' });
+    const base = dayKeysOfWeek(weekIndexOfKey('2024-01-08')); // any reference week
+    weekdayCache = { start, names: base.map((k) => fmt.format(dateOfDayKey(k))) };
+  }
+  return weekdayCache.names;
+}
 
 // Index occurrences into per-week multi-day bars and per-day single chips.
 function indexOccurrences(occurrences) {
@@ -319,7 +327,7 @@ export function MonthGrid({
   return html`<div class="bc-month" style=${`--bc-gutter-w:${GUTTER_W}px`}>
     <div class="bc-month-head">
       <div class="bc-month-head-gutter"></div>
-      ${WEEKDAYS.map((w) => html`<div key=${w} class="bc-month-head-day">${w}</div>`)}
+      ${weekdayNames().map((w) => html`<div key=${w} class="bc-month-head-day">${w}</div>`)}
     </div>
     <div class="bc-month-scroll" ref=${scrollRef}>
       <div class="bc-month-spacer" style=${`height:${totalHeight(minWeek, maxWeek, rowH)}px`}>

@@ -112,7 +112,12 @@ export function EditorDrawer() {
     const end = occ ? parseISO(occ.end) : (draft.end ? parseISO(draft.end) : new Date(start.getTime() + 3600000));
     setForm({
       title: occ ? occ.title : (draft.title || ''),
-      calendarId: occ ? occ.calendarId : (draft.calendarId || (state.calendars.find((c) => c.kind !== 'subscribed') || {}).id),
+      // New events land on the draft's calendar, else the user's default
+      // calendar (settings), else the first local calendar.
+      calendarId: occ ? occ.calendarId : (draft.calendarId
+        || (state.settings.defaultCalendarId != null &&
+          (state.calendars.find((c) => c.id === state.settings.defaultCalendarId) || {}).id)
+        || (state.calendars.find((c) => c.kind !== 'subscribed') || {}).id),
       start: toInputValue(start),
       end: toInputValue(end),
       allDay: occ ? !!occ.allDay : !!draft.allDay,

@@ -103,6 +103,20 @@ final class QuickAdd
                 return (int) $owned;
             }
         }
+        // The user's configured default calendar wins; fall back to the first
+        // local calendar by position.
+        $raw = $this->db->scalar('SELECT settings_json FROM users WHERE id = ?', [$userId]);
+        $settings = is_string($raw) ? json_decode($raw, true) : null;
+        $preferred = is_array($settings) ? ($settings['defaultCalendarId'] ?? null) : null;
+        if (is_int($preferred) || (is_string($preferred) && ctype_digit($preferred))) {
+            $owned = $this->db->scalar(
+                "SELECT id FROM calendars WHERE id = ? AND user_id = ? AND kind = 'local'",
+                [(int) $preferred, $userId]
+            );
+            if ($owned !== null) {
+                return (int) $owned;
+            }
+        }
         $default = $this->db->scalar(
             "SELECT id FROM calendars WHERE user_id = ? AND kind = 'local' ORDER BY position, id LIMIT 1",
             [$userId]

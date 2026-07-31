@@ -3,7 +3,7 @@
 import { html, useState, useMemo, useEffect, useCallback } from '../../vendor/index.js';
 import { useStore, set, state, calendarMeta, shallowEq } from './store.js';
 import { loadWindow } from './api.js';
-import { moveEvent, resizeEvent } from './actions.js';
+import { moveEvent, resizeEvent, triageAttendance } from './actions.js';
 import { installKeyboard } from './keyboard.js';
 import {
   startOfWeekKey, dayKeysOfWeek, weekIndexOfKey, addDaysKey, dateOfDayKey,
@@ -23,6 +23,8 @@ import { SearchOverlay } from './SearchOverlay.js';
 import { Toasts } from './Toasts.js';
 import { Login } from './Login.js';
 import { OutfeedsPage } from './OutfeedsPage.js';
+import { FiltersPage } from './FiltersPage.js';
+import { SavedViewsPage } from './SavedViewsPage.js';
 
 const MONTH_ROWS = { month: 6, weeks3: 3, weeks2: 2 };
 
@@ -116,6 +118,12 @@ export function App() {
   if (s.route === 'outfeeds') {
     return html`<div class="bc-app"><${OutfeedsPage} /><${Toasts} /></div>`;
   }
+  if (s.route === 'filters') {
+    return html`<div class="bc-app"><${FiltersPage} /><${Toasts} /></div>`;
+  }
+  if (s.route === 'views') {
+    return html`<div class="bc-app"><${SavedViewsPage} /><${Toasts} /></div>`;
+  }
 
   let view = null;
   if (MONTH_ROWS[s.view]) {
@@ -162,6 +170,7 @@ export function App() {
         calendars=${calMeta}
         dimSet=${dimSet}
         onOpenEvent=${onOpenEvent}
+        onSetAttendance=${triageAttendance}
         emptyLabel=${s.agendaShowPast ? 'No events' : 'No upcoming events'}
       />
     </div>`;

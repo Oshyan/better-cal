@@ -31,7 +31,10 @@ export const state = {
   filterText: '',
   agendaShowPast: false,
 
-  route: 'calendar', // calendar | outfeeds
+  savedViews: [],     // [{id, name, config, position}]
+  activeViewId: null, // saved view currently applied, if any
+
+  route: 'calendar', // calendar | outfeeds | filters | views
 
   quickAddOpen: false,
   searchOpen: false,

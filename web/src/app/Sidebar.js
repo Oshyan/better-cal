@@ -1,6 +1,6 @@
 // Sidebar: folders > calendars with color dots + visibility toggles,
 // add-calendar menu (local / subscribe / import), feed health badges,
-// outbound feeds link in the footer.
+// manage links (outbound feeds, filters, saved views) in the footer.
 
 import { html, useState, useRef } from '../../vendor/index.js';
 import { useStore, set, state, toast, shallowEq } from './store.js';
@@ -127,7 +127,10 @@ export function Sidebar({ open }) {
       <${AddMenu} />
     </div>
     <footer class="bc-sidebar-foot">
+      <div class="bc-manage-head">Manage</div>
       <button type="button" class="bc-link-btn" onClick=${() => set({ route: 'outfeeds' })}>Outbound feeds</button>
+      <button type="button" class="bc-link-btn" onClick=${() => set({ route: 'filters' })}>Filters</button>
+      <button type="button" class="bc-link-btn" onClick=${() => set({ route: 'views' })}>Saved views</button>
     </footer>
   </aside>`;
 }

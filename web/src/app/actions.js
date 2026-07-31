@@ -157,17 +157,31 @@ export async function deleteEvent(occ, scope) {
 }
 
 const ATTENDANCE_CYCLE = ['none', 'interested', 'going', 'hidden'];
+const ATTENDANCE_TOASTS = {
+  none: 'Attendance cleared',
+  interested: 'Marked interested',
+  going: 'Marked going',
+  hidden: 'Event hidden',
+};
 
 export async function cycleAttendance(occ) {
   const next = ATTENDANCE_CYCLE[(ATTENDANCE_CYCLE.indexOf(occ.attendance || 'none') + 1) % ATTENDANCE_CYCLE.length];
   return setAttendance(occ, next);
 }
 
+// Triage toggle: clicking the active state resets to none.
+export async function triageAttendance(occ, attendance) {
+  return setAttendance(occ, occ.attendance === attendance ? 'none' : attendance);
+}
+
 export async function setAttendance(occ, attendance) {
   const before = patchOccurrence(occ.instanceId, { attendance });
   try {
     await api('/events/' + occ.eventId + '/attendance', { method: 'POST', body: { attendance } });
-    toast('Marked ' + attendance, { undoable: true });
+    toast(ATTENDANCE_TOASTS[attendance] || 'Attendance updated', { undoable: true });
+    // Hidden events leave the window payload on the next fetch; refresh so
+    // the cache agrees with the server (undo refreshes again to restore).
+    if (attendance === 'hidden') refreshWindow();
     return attendance;
   } catch (e) {
     restoreOccurrence(occ.instanceId, before);
@@ -203,6 +217,90 @@ export async function quickAddCommit(text) {
   } catch (e) {
     toast('Quick add failed: ' + e.message, { error: true });
     return false;
+  }
+}
+
+// --- saved views --------------------------------------------------------------
+
+// Snapshot the current mode. anchor collapses to "today" when the user is on
+// today so applying the view later follows the calendar, not a stale date.
+export function captureViewConfig() {
+  return {
+    viewType: state.view,
+    visibleCalendarIds: state.calendars.filter((c) => c.visible).map((c) => c.id),
+    folderCollapse: { ...state.collapsedFolders },
+    filterText: state.filterText,
+    anchor: state.anchor === todayKey() ? 'today' : state.anchor,
+  };
+}
+
+// Modified check for the active view. anchor is deliberately excluded:
+// navigating around inside a mode is not a change to the mode.
+export function viewConfigMatches(config) {
+  if (!config) return false;
+  const cur = captureViewConfig();
+  const ids = (a) => [...(a || [])].sort((x, y) => x - y).join(',');
+  const collapse = (o) => Object.keys(o || {}).filter((k) => o[k]).sort().join(',');
+  return cur.viewType === (config.viewType || 'month') &&
+    ids(cur.visibleCalendarIds) === ids(config.visibleCalendarIds) &&
+    collapse(cur.folderCollapse) === collapse(config.folderCollapse) &&
+    (cur.filterText || '') === (config.filterText || '');
+}
+
+// Apply a saved view to the store: view type, calendar visibility (client
+// state only), folder collapse, filter text, anchor.
+export function applySavedView(view) {
+  const config = view.config || {};
+  let calendars = state.calendars;
+  if (Array.isArray(config.visibleCalendarIds)) {
+    const idSet = new Set(config.visibleCalendarIds);
+    calendars = calendars.map((c) => (c.visible === idSet.has(c.id) ? c : { ...c, visible: idSet.has(c.id) }));
+  }
+  set({
+    view: VIEWS.includes(config.viewType) ? config.viewType : state.view,
+    calendars,
+    collapsedFolders: { ...(config.folderCollapse || {}) },
+    filterText: config.filterText || '',
+    anchor: !config.anchor || config.anchor === 'today' ? todayKey() : config.anchor,
+    activeViewId: view.id,
+    scrollSeq: state.scrollSeq + 1,
+  });
+}
+
+export async function saveViewAs(name) {
+  try {
+    const view = await api('/views', { method: 'POST', body: { name, config: captureViewConfig() } });
+    set({ savedViews: [...state.savedViews, view], activeViewId: view.id });
+    toast('View saved', { undoable: true });
+    return view;
+  } catch (e) {
+    toast('Save failed: ' + e.message, { error: true });
+    return null;
+  }
+}
+
+export async function updateSavedView(view, fields) {
+  try {
+    const updated = await api('/views/' + view.id, { method: 'PATCH', body: fields });
+    set({ savedViews: state.savedViews.map((v) => (v.id === view.id ? updated : v)) });
+    toast('View updated', { undoable: true });
+    return updated;
+  } catch (e) {
+    toast('Update failed: ' + e.message, { error: true });
+    return null;
+  }
+}
+
+export async function deleteSavedView(view) {
+  try {
+    await api('/views/' + view.id, { method: 'DELETE' });
+    set({
+      savedViews: state.savedViews.filter((v) => v.id !== view.id),
+      activeViewId: state.activeViewId === view.id ? null : state.activeViewId,
+    });
+    toast('View deleted', { undoable: true });
+  } catch (e) {
+    toast('Delete failed: ' + e.message, { error: true });
   }
 }
 

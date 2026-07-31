@@ -18,14 +18,22 @@ function calColor(cal) {
 function stateClasses(occ, dimmed) {
   let c = '';
   if (occ.attendance === 'interested') c += ' is-interested';
+  if (occ.attendance === 'going') c += ' is-going';
   if (occ.status === 'cancelled') c += ' is-cancelled';
   if (occ.isNew) c += ' is-new';
+  if (occ.dimmed) c += ' is-filter-dimmed';
   if (dimmed) c += ' is-dimmed';
   return c;
 }
 
 export function NewPill() {
   return html`<span class="bc-new-pill" aria-label="recently added">new</span>`;
+}
+
+// Solid check glyph before the title on events marked going.
+function GoingCheck({ occ }) {
+  if (occ.attendance !== 'going') return null;
+  return html`<span class="bc-chip-check" aria-label="going">✓</span>`;
 }
 
 // Compact chip for month cells and agenda rows.
@@ -52,6 +60,7 @@ export function EventChip({ occ, cal, dimmed, showTime = true, onOpen, onPointer
   >
     <span class="bc-chip-dot" style=${`background:${color}`}></span>
     ${timed && html`<span class="bc-chip-time">${fmtTime(parseISO(occ.start))}</span>`}
+    <${GoingCheck} occ=${occ} />
     <span class="bc-chip-title">${occ.title || '(untitled)'}</span>
     ${occ.isNew && html`<${NewPill} />`}
   </button>`;
@@ -87,6 +96,7 @@ export function EventBar({ occ, cal, seg, dimmed, onOpen, onPointerDown, onEdgeP
     title=${occ.title}
   >
     ${!seg.contLeft && onEdgePointerDown && html`<span class="bc-bar-handle l" onPointerDown=${(e) => onEdgePointerDown('start', e)}></span>`}
+    ${!seg.contLeft && html`<${GoingCheck} occ=${occ} />`}
     <span class="bc-chip-title">${seg.contLeft ? '‹ ' : ''}${occ.title || '(untitled)'}${seg.contRight ? ' ›' : ''}</span>
     ${occ.isNew && !seg.contLeft && html`<${NewPill} />`}
     ${!seg.contRight && onEdgePointerDown && html`<span class="bc-bar-handle r" onPointerDown=${(e) => onEdgePointerDown('end', e)}></span>`}
@@ -127,6 +137,7 @@ export function EventBlock({ occ, cal, rect, dimmed, onOpen, onPointerDown, onEd
   >
     ${onEdgePointerDown && html`<span class="bc-block-handle t" onPointerDown=${(ev) => onEdgePointerDown('start', ev)}></span>`}
     <span class="bc-block-line">
+      <${GoingCheck} occ=${occ} />
       <span class="bc-chip-title">${occ.title || '(untitled)'}</span>
       ${occ.isNew && html`<${NewPill} />`}
     </span>

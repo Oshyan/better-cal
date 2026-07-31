@@ -74,6 +74,7 @@ export function QuickAdd() {
         ${draft.start && !draft.allDay && html`<span class="bc-qchip">${fmtTime(parseISO(draft.start))}${draft.end ? ' to ' + fmtTime(parseISO(draft.end)) : ''}</span>`}
         ${draft.allDay && html`<span class="bc-qchip">all day</span>`}
         ${draft.location && html`<span class="bc-qchip">@ ${draft.location}</span>`}
+        ${draft.personNames && draft.personNames.map((n) => html`<span key=${n} class="bc-qchip">with ${n}</span>`)}
         ${cal && html`<span class="bc-qchip"><span class="bc-cal-dot" style=${`background:${cal.color}`}></span>${cal.name}</span>`}
         ${draft.source === 'fallback' && html`<span class="bc-qchip bc-qchip-fallback" title="Parsed without the language model">basic parse</span>`}
       </div>`}

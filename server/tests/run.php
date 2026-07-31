@@ -9,6 +9,7 @@ require dirname(__DIR__) . '/src/bootstrap.php';
 
 use BetterCal\Domain\ApiTokens;
 use BetterCal\Domain\FallbackParser;
+use BetterCal\Domain\Filters;
 use BetterCal\Domain\Ics;
 use BetterCal\Domain\Recurrence;
 use BetterCal\Http\HttpError;
@@ -304,6 +305,70 @@ foreach (['', 'FOO=BAR', 'FREQ=SOMETIMES', 'FREQ=WEEKLY;INTERVAL=0', 'FREQ=WEEKL
         checkEq("validateRrule '$bad' error code", 'invalid_rrule', $e->errorCode);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Filters: pure matching (Filters::evaluate / Filters::disposition, no DB)
+// ---------------------------------------------------------------------------
+
+$occ = [
+    'calendar_id' => 3,
+    'title' => 'Yoga Class at the Studio',
+    'description' => "Vinyasa flow.\nBring a mat and water.",
+    'location' => 'Mission Cultural Center',
+];
+$kw = static fn(string $pattern, ?array $fields = null): array => [
+    'type' => 'keyword',
+    'config' => $fields === null ? ['pattern' => $pattern] : ['pattern' => $pattern, 'fields' => $fields],
+];
+$rx = static fn(string $pattern, ?array $fields = null): array => [
+    'type' => 'regex',
+    'config' => $fields === null ? ['pattern' => $pattern] : ['pattern' => $pattern, 'fields' => $fields],
+];
+
+check('flt keyword case-insensitive substring', Filters::evaluate($occ, $kw('yoga')));
+check('flt keyword matches mid-word', Filters::evaluate($occ, $kw('ULTUR')));
+check('flt keyword no match', !Filters::evaluate($occ, $kw('pottery')));
+check('flt keyword field selection excludes', !Filters::evaluate($occ, $kw('mat and water', ['title'])));
+check('flt keyword description-only field matches', Filters::evaluate($occ, $kw('mat and water', ['description'])));
+check('flt keyword location field matches', Filters::evaluate($occ, $kw('mission', ['location'])));
+checkEq('flt keyword unknown field names never match', false, Filters::evaluate($occ, $kw('yoga', ['url'])));
+check('flt keyword empty pattern never matches', !Filters::evaluate($occ, $kw('')));
+check('flt keyword unicode case fold', Filters::evaluate(['title' => 'CAFÉ night'], $kw('café')));
+check('flt missing fields treated as empty', !Filters::evaluate(['title' => 'Solo'], $kw('anything', ['description'])));
+check('flt regex basic match', Filters::evaluate($occ, $rx('yo+ga')));
+check('flt regex case-insensitive', Filters::evaluate($occ, $rx('^yoga')));
+check('flt regex anchor no match', !Filters::evaluate($occ, $rx('^studio')));
+check('flt regex alternation on location', Filters::evaluate($occ, $rx('cultural|jazz', ['location'])));
+check('flt regex field selection excludes', !Filters::evaluate($occ, $rx('vinyasa', ['title', 'location'])));
+check('flt regex multiline value', Filters::evaluate($occ, $rx('bring a mat', ['description'])));
+check('flt invalid regex never matches', !Filters::evaluate($occ, $rx('([unclosed')));
+
+// validateConfig: regex validation and field normalization.
+try {
+    Filters::validateConfig('regex', ['pattern' => '([unclosed']);
+    check('flt invalid regex rejected', false);
+} catch (HttpError $e) {
+    checkEq('flt invalid regex error code', 'filter_invalid_regex', $e->errorCode);
+}
+checkEq('flt valid regex accepted', ['pattern' => 'a|b', 'fields' => ['title', 'description', 'location']], Filters::validateConfig('regex', ['pattern' => 'a|b']));
+checkEq('flt fields normalized to known order', ['title', 'location'], Filters::validateConfig('keyword', ['pattern' => 'x', 'fields' => ['location', 'title']])['fields']);
+try {
+    Filters::validateConfig('keyword', ['pattern' => '   ']);
+    check('flt blank pattern rejected', false);
+} catch (HttpError $e) {
+    checkEq('flt blank pattern status', 400, $e->status);
+}
+
+// disposition: calendar scoping and hide-beats-dim.
+$hideAll = ['type' => 'keyword', 'config' => ['pattern' => 'yoga'], 'action' => 'hide', 'calendarIds' => null];
+$dimAll = ['type' => 'keyword', 'config' => ['pattern' => 'yoga'], 'action' => 'dim', 'calendarIds' => null];
+$hideCal9 = ['type' => 'keyword', 'config' => ['pattern' => 'yoga'], 'action' => 'hide', 'calendarIds' => [9 => true]];
+checkEq('flt disposition global hide', 'hide', Filters::disposition($occ, [$hideAll]));
+checkEq('flt disposition global dim', 'dim', Filters::disposition($occ, [$dimAll]));
+checkEq('flt disposition hide beats dim', 'hide', Filters::disposition($occ, [$dimAll, $hideAll]));
+checkEq('flt disposition other calendar skipped', null, Filters::disposition($occ, [$hideCal9]));
+checkEq('flt disposition scoped calendar applies', 'hide', Filters::disposition(['calendar_id' => 9] + $occ, [$hideCal9]));
+checkEq('flt disposition no filters', null, Filters::disposition($occ, []));
 
 // ---------------------------------------------------------------------------
 // Ids

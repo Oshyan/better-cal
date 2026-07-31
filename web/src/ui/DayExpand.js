@@ -6,7 +6,7 @@ import { html, useRef, useEffect } from '../../vendor/index.js';
 import { dateOfDayKey, fmtDayLong, parseISO, fmtTime } from '../lib/dates.js';
 import { EventChip } from './EventChip.js';
 
-const MOBILE_QUERY = '(max-width: 640px)';
+export const MOBILE_QUERY = '(max-width: 640px)';
 
 export function isMobile() {
   return window.matchMedia(MOBILE_QUERY).matches;

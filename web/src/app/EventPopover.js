@@ -5,8 +5,8 @@
 
 import { html, useState, useRef, useEffect } from '../../vendor/index.js';
 import { useStore, set, state } from './store.js';
-import { updateEvent, deleteEvent, cycleAttendance } from './actions.js';
-import { isMobile, trapFocus } from '../ui/DayExpand.js';
+import { updateEvent, deleteEvent, triageAttendance } from './actions.js';
+import { isMobile, trapFocus, MOBILE_QUERY } from '../ui/DayExpand.js';
 import {
   parseISO, fmtRange, toInputValue, fromInputValue, toISOWithOffset,
 } from '../lib/dates.js';
@@ -53,6 +53,16 @@ export function EventPopover() {
       document.removeEventListener('pointerdown', onDoc, true);
       document.removeEventListener('keydown', onKey, true);
     };
+  }, [popover]);
+
+  // Anchored panel and bottom sheet position with different rules; crossing
+  // the breakpoint would leave a stale layout, so close instead.
+  useEffect(() => {
+    if (!popover) return undefined;
+    const mq = window.matchMedia(MOBILE_QUERY);
+    const onChange = () => set({ popover: null });
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
   }, [popover]);
 
   if (!popover || !occ) return null;
@@ -115,9 +125,17 @@ export function EventPopover() {
       <div class="bc-pop-actions">
         ${!isFeed && html`<button type="button" class="bc-btn" onClick=${() => set({ popover: null, editor: { mode: 'edit', occ } })}>Edit</button>`}
         ${!isFeed && html`<button type="button" class="bc-btn bc-btn-danger" onClick=${() => deleteEvent(occ)}>Delete</button>`}
-        ${isFeed && html`<button type="button" class="bc-btn" onClick=${() => cycleAttendance(occ)}>
-          ${occ.attendance === 'interested' ? '☆ Interested' : occ.attendance === 'going' ? '✓ Going' : occ.attendance === 'hidden' ? 'Hidden' : 'Mark interest'}
-        </button>`}
+        ${isFeed && html`<div class="bc-seg" role="group" aria-label="Attendance">
+          ${[['interested', 'Interested'], ['going', 'Going'], ['hidden', 'Hide']].map(([value, label]) => html`<button
+            key=${value} type="button"
+            class="bc-seg-btn${occ.attendance === value ? ' is-active' : ''}"
+            aria-pressed=${occ.attendance === value}
+            onClick=${async () => {
+              const result = await triageAttendance(occ, value);
+              if (result === 'hidden') set({ popover: null });
+            }}
+          >${label}</button>`)}
+        </div>`}
         <button type="button" class="bc-icon-btn bc-pop-close" aria-label="Close" onClick=${() => set({ popover: null })}>✕</button>
       </div>
     </div>

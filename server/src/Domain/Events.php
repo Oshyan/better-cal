@@ -21,6 +21,7 @@ final class Events
         private readonly Recurrence $recurrence,
         private readonly Undo $undo,
         private readonly Labels $labels,
+        private readonly Filters $filters,
     ) {
     }
 
@@ -90,6 +91,23 @@ final class Events
                 <=> [$b['start']->getTimestamp(), $a['end']->getTimestamp(), (string) $b['row']['title']];
         });
 
+        // User filters: hide drops the occurrence, dim marks it (additive field).
+        $activeFilters = $this->filters->enabledForUser($userId);
+        if ($activeFilters !== []) {
+            $kept = [];
+            foreach ($expanded as $occ) {
+                $disposition = Filters::disposition($occ['row'], $activeFilters);
+                if ($disposition === 'hide') {
+                    continue;
+                }
+                if ($disposition === 'dim') {
+                    $occ['dimmed'] = true;
+                }
+                $kept[] = $occ;
+            }
+            $expanded = $kept;
+        }
+
         $eventIds = [];
         foreach ($expanded as $occ) {
             $eventIds[(int) $occ['row']['id']] = true;
@@ -97,7 +115,13 @@ final class Events
         $links = $this->labels->forEvents(array_keys($eventIds));
 
         return array_map(
-            fn(array $occ) => $this->serialize($occ['row'], $occ['start'], $occ['end'], $links),
+            function (array $occ) use ($links): array {
+                $serialized = $this->serialize($occ['row'], $occ['start'], $occ['end'], $links);
+                if (!empty($occ['dimmed'])) {
+                    $serialized['dimmed'] = true;
+                }
+                return $serialized;
+            },
             $expanded
         );
     }

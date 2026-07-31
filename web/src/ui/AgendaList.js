@@ -12,7 +12,25 @@ import { EventChip } from './EventChip.js';
 const ROW_H = 36;
 const HEAD_H = 40;
 
-export function AgendaList({ occurrences, calendars, dimSet, onOpenEvent, onRequestWindow, emptyLabel }) {
+// Compact triage segment for feed events: interested / going / hide as one
+// group so a feed can be triaged top to bottom without opening popovers.
+function TriageBar({ occ, onSetAttendance }) {
+  const buttons = [
+    ['interested', '☆', 'Interested'],
+    ['going', '✓', 'Going'],
+    ['hidden', '✕', 'Hide'],
+  ];
+  return html`<span class="bc-triage" role="group" aria-label="Triage">
+    ${buttons.map(([value, glyph, label]) => html`<button
+      key=${value} type="button"
+      class="bc-triage-btn${occ.attendance === value ? ' is-on' : ''}"
+      title=${label} aria-label=${label} aria-pressed=${occ.attendance === value}
+      onClick=${(e) => { e.stopPropagation(); onSetAttendance(occ, value); }}
+    >${glyph}</button>`)}
+  </span>`;
+}
+
+export function AgendaList({ occurrences, calendars, dimSet, onOpenEvent, onSetAttendance, onRequestWindow, emptyLabel }) {
   const scrollRef = useRef(null);
   const [win, setWin] = useState({ top: 0, height: 800 });
 
@@ -75,6 +93,7 @@ export function AgendaList({ occurrences, calendars, dimSet, onOpenEvent, onRequ
               dimmed=${dimSet && dimSet.has(occ.instanceId)}
               onOpen=${onOpenEvent}
             />
+            ${occ.source === 'feed' && onSetAttendance && html`<${TriageBar} occ=${occ} onSetAttendance=${onSetAttendance} />`}
             ${occ.location && html`<span class="bc-agenda-loc">${occ.location}</span>`}
           </div>`)}
         </section>`;

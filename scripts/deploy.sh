@@ -9,6 +9,9 @@ HEALTH_URL="https://cal.oshyan.com/api/v1/health"
 
 echo "== rsync code =="
 rsync -az --delete \
+  --filter='P .env' \
+  --filter='P server/vendor/' \
+  --filter='P worker.log' \
   --exclude '.git' \
   --exclude '.credentials' \
   --exclude '.DS_Store' \

@@ -162,7 +162,7 @@ CREATE TABLE feedback_signals (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   user_id BIGINT UNSIGNED NOT NULL,
   event_id BIGINT UNSIGNED NOT NULL,
-  signal ENUM('up','down','hide') NOT NULL,
+  kind ENUM('up','down','hide') NOT NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_fs_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   CONSTRAINT fk_fs_event FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE

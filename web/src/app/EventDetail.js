@@ -7,10 +7,10 @@
 import { html, useState, useRef, useMemo, useEffect } from '../../vendor/index.js';
 import { useStore, set, state, patchOccurrence } from './store.js';
 import { api } from './api.js';
-import { deleteEvent, triageAttendance, sendFeedback, enterReschedule } from './actions.js';
+import { deleteEvent, triageAttendance, sendFeedback, enterReschedule, sameDayList } from './actions.js';
 import { trapFocus } from '../ui/DayExpand.js';
 import {
-  parseISO, dateOfDayKey, occDayKey, fmtRange, fmtDateFull, fmtTime,
+  parseISO, dateOfDayKey, fmtRange, fmtDateFull, fmtTime,
 } from '../lib/dates.js';
 
 // --- recurrence in words ----------------------------------------------------
@@ -233,23 +233,11 @@ export function EventDetail() {
   }, [instanceId, location]); // eslint-disable-line
 
   // Same-day navigation list: this day's visible events in chronological
-  // order (all-day first), never spilling into other days.
+  // order (all-day first), never spilling into other days. The list builder
+  // is shared with the [ ] hotkeys (actions.js sameDayList).
   const dayNav = useMemo(() => {
     if (!occ) return { list: [], index: -1 };
-    const dayKey = occDayKey(occ);
-    const visible = new Set(state.calendars.filter((c) => c.visible).map((c) => c.id));
-    const list = [];
-    for (const o of state.occ.values()) {
-      if (!visible.has(o.calendarId) && o.instanceId !== occ.instanceId) continue;
-      if (o.attendance === 'hidden' && o.instanceId !== occ.instanceId) continue;
-      if (occDayKey(o) !== dayKey) continue;
-      list.push(o);
-    }
-    list.sort((a, b) => {
-      if (a.allDay !== b.allDay) return a.allDay ? -1 : 1;
-      if (a.start !== b.start) return a.start < b.start ? -1 : 1;
-      return (a.title || '') < (b.title || '') ? -1 : (a.title || '') > (b.title || '') ? 1 : 0;
-    });
+    const list = sameDayList(occ);
     return { list, index: list.findIndex((o) => o.instanceId === occ.instanceId) };
   }, [occ && occ.instanceId, state.occVersion]); // eslint-disable-line
 

@@ -4,17 +4,18 @@ Running log from critical live-review passes (own-taste review, Google Calendar 
 
 ## Open
 
-- Agenda triage clutter: every feed row carries seven raw glyph buttons (star/check/x + up/down) in boxed clusters that read as debug UI. Direction: reveal on hover/focus (desktop), collapse into one compact segmented control with proper iconography, always-visible but quieter on touch. (Wave 3.5)
 - Dim readability floor: dimmed agenda rows at 45% opacity on light theme approach illegibility, especially the green feed color on white. Dim should reduce emphasis, not readability: consider desaturation + reduced contrast with a floor, or collapse dimmed items into a "N dimmed" expander per day. (Wave 3/3.5)
-- Quick-add is NL-only: no structured reference while typing (user-flagged; Google Calendar's quick create shows structured fields). Spec in roadmap Wave 3.5.
-- No sidebar mini-month: a Google Calendar staple that doubles as orientation + navigation. (Wave 3.5)
-- Week/day views scroll to fixed 7am; Google scrolls to now when viewing today. (Wave 3.5)
-- Day view column header ("FRI 31" pill) is redundant with the toolbar's full date and undersized as an anchor; consider a stronger day header or drop it in day view. (Wave 3.5)
 - Empty timegrid days give no affordance hint; fine for mouse users, invisible to newcomers. Low priority.
-- Hour label column starts visually at 1 AM; 12 AM label clipped by the all-day lane border. Cosmetic. (Wave 3.5)
 
 ## Addressed or delegated
 
+- Agenda triage clutter (Wave 3.5): the two boxed glyph clusters collapsed into one quiet segmented group per feed row (star/check/x, thin divider, up/down), borderless until hover with a muted palette and an accent-tinted active state. Revealed on row hover/focus-within on desktop with space reserved so rows never shift; always visible on touch (pointer: coarse) and whenever a triage state is active.
+- Quick-add NL-only (Wave 3.5, user-flagged): the bar is now a compact create card. NL input on top, always-visible structured strip below (date, start/end time or all day, calendar), live-filled from the parse with the flash affordance and directly editable; a touched field is only overwritten when a later parse actually changes it. Create builds from the strip (source of truth), Enter creates from anywhere in the card (flushing a pending parse first), Esc cancels, "More options" transfers everything into the editor drawer.
+- No sidebar mini-month (Wave 3.5): compact month grid at the top of the desktop sidebar. Weekday initials, today ring, anchor highlight, subtle event dots, prev/next arrows, day click jumps, title click opens the jump popover. Follows the main view's visible month, respects the week start setting, shares its grid math with the jump popover (web/src/lib/minimonth.js), and is not rendered in the mobile drawer.
+- Week/day scroll to fixed 7am (Wave 3.5): when the visible range includes today the grid now opens at the now-line minus ~90px; other ranges keep 7am.
+- Weak day-view header (Wave 3.5): day view gets a strengthened GCal-style header (weekday label + large day number, larger today pill).
+- 12 AM hour label clipped (Wave 3.5): the midnight label now renders, nudged below the all-day lane border instead of half-clipped.
+- Hotkey gaps + no cheat sheet (GH #5, Wave 3.5): added n (new event), e (edit from popover/detail), o/Enter (open detail from popover), Delete/Backspace (delete with confirm, local events), [ and ] (prev/next event that day in detail view), and a ? cheat-sheet modal. Bindings live in one table (web/src/app/hotkeys.js) that both keyboard.js and the sheet consume, with smoke-test integrity checks.
 - Filters page (sent to Wave 2 mid-flight): naked unlabeled enable checkbox; prompt text rendered as grey debug lozenge with raw metadata string; dense label-less create form; content stranded in full-width void; no designed empty states. Applies to all management pages.
 - Editor drawer translucency: was a z-index stacking bug, fixed.
 - Month-start cues, chip title priority, mobile dot coherence: earlier waves / Wave 3.

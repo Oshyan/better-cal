@@ -67,10 +67,10 @@ export function jumpToDate(dayKey, flashId) {
 
 export function closeOverlays() {
   if (state.popover || state.detail || state.groupPopover || state.editor || state.expandedDay ||
-      state.searchOpen || state.quickAddOpen || state.jumpOpen) {
+      state.searchOpen || state.quickAddOpen || state.jumpOpen || state.shortcutsOpen) {
     set({
       popover: null, detail: null, groupPopover: null, editor: null, expandedDay: null,
-      searchOpen: false, quickAddOpen: false, jumpOpen: false,
+      searchOpen: false, quickAddOpen: false, jumpOpen: false, shortcutsOpen: false,
     });
     return true;
   }
@@ -80,6 +80,40 @@ export function closeOverlays() {
 // Open the full detail view for one occurrence, replacing lighter overlays.
 export function openDetail(instanceId) {
   set({ detail: { instanceId }, popover: null, groupPopover: null, expandedDay: null });
+}
+
+// Chronological list of one day's visible occurrences (all-day first),
+// anchored on occ's day. Shared by the detail view's prev/next chevrons and
+// the [ ] hotkeys so both walk the same order.
+export function sameDayList(occ) {
+  const dayKey = occDayKey(occ);
+  const visible = new Set(state.calendars.filter((c) => c.visible).map((c) => c.id));
+  const list = [];
+  for (const o of state.occ.values()) {
+    if (!visible.has(o.calendarId) && o.instanceId !== occ.instanceId) continue;
+    if (o.attendance === 'hidden' && o.instanceId !== occ.instanceId) continue;
+    if (occDayKey(o) !== dayKey) continue;
+    list.push(o);
+  }
+  list.sort((a, b) => {
+    if (a.allDay !== b.allDay) return a.allDay ? -1 : 1;
+    if (a.start !== b.start) return a.start < b.start ? -1 : 1;
+    return (a.title || '') < (b.title || '') ? -1 : (a.title || '') > (b.title || '') ? 1 : 0;
+  });
+  return list;
+}
+
+// Step the open detail view to the previous/next event of the same day.
+export function stepDetailSameDay(dir) {
+  if (!state.detail) return false;
+  const occ = state.occ.get(state.detail.instanceId);
+  if (!occ) return false;
+  const list = sameDayList(occ);
+  const i = list.findIndex((o) => o.instanceId === occ.instanceId);
+  const target = i >= 0 ? list[i + dir] : null;
+  if (!target) return false;
+  set({ detail: { instanceId: target.instanceId } });
+  return true;
 }
 
 // --- reschedule mode (PRD 5.9) -----------------------------------------------
@@ -259,25 +293,16 @@ export async function quickAddParse(text) {
   return data.draft || null;
 }
 
-export async function quickAddCommit(text) {
-  try {
-    const data = await api('/quickadd', { method: 'POST', body: { text, tz: localTz(), commit: true } });
-    if (data.event && data.event.instanceId) {
-      state.occ.set(data.event.instanceId, data.event);
-      set({ occVersion: state.occVersion + 1, quickAddOpen: false });
-      toast('Event created: ' + (data.event.title || ''), { undoable: true });
-      jumpToDate(occDayKey(data.event), data.event.instanceId);
-      refreshWindow();
-    } else {
-      set({ quickAddOpen: false });
-      toast('Event created', { undoable: true });
-      refreshWindow();
-    }
-    return true;
-  } catch (e) {
-    toast('Quick add failed: ' + e.message, { error: true });
-    return false;
+// Create from the quick-add card's structured strip (the strip is the source
+// of truth, so edits always win over the parse). Jumps to and flashes the
+// new event on success.
+export async function quickAddCreate(fields) {
+  const occ = await createEvent(fields);
+  if (occ) {
+    set({ quickAddOpen: false });
+    if (occ.instanceId) jumpToDate(occDayKey(occ), occ.instanceId);
   }
+  return occ;
 }
 
 // --- saved views --------------------------------------------------------------

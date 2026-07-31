@@ -1,10 +1,15 @@
-// Global keyboard map.
-// c quick-add, / search, t today, g jump-to-date, v cycle views, 1-6 direct
-// view, arrows navigate anchor, r reschedule (popover open), Esc closes overlays.
+// Global keyboard map. The bindings themselves live in hotkeys.js (one
+// source of truth shared with the shortcuts cheat sheet); this file wires
+// each entry id to its handler. A handler returning false means "not
+// applicable right now" (wrong context): the key falls through untouched.
 // Esc inside reschedule mode is handled by RescheduleOverlay (capture phase).
 
 import { state, set } from './store.js';
-import { VIEWS, setView, cycleView, goToday, navigate, closeOverlays, enterReschedule } from './actions.js';
+import {
+  VIEWS, setView, cycleView, goToday, navigate, closeOverlays,
+  enterReschedule, openDetail, deleteEvent, stepDetailSameDay,
+} from './actions.js';
+import { HOTKEYS } from './hotkeys.js';
 
 function isTyping() {
   const el = document.activeElement;
@@ -13,61 +18,78 @@ function isTyping() {
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
 }
 
+// The occurrence the open popover or detail view is showing, if any.
+function focusedOcc() {
+  const src = state.detail || state.popover;
+  if (!src) return null;
+  return state.occ.get(src.instanceId) || null;
+}
+
+function isFeedOcc(occ) {
+  const cal = state.calendars.find((c) => c.id === occ.calendarId);
+  return cal ? cal.kind === 'subscribed' : occ.source === 'feed';
+}
+
+const handlers = {
+  today: goToday,
+  jump: () => set({ jumpOpen: true }),
+  prevDay: () => navigate(-1),
+  nextDay: () => navigate(1),
+  prevWeek: () => navigate(-7),
+  nextWeek: () => navigate(7),
+  cycleView,
+  setView: (e) => setView(VIEWS[Number(e.key) - 1]),
+  quickAdd: () => set({ quickAddOpen: true }),
+  newEvent: () => set({ editor: { mode: 'create', draft: {} }, popover: null, detail: null }),
+  openDetail: (e) => {
+    if (!state.popover) return false;
+    if (e.key === 'Enter') {
+      // Enter on a focused button/link should activate it, not open detail.
+      const el = document.activeElement;
+      if (el && (el.tagName === 'BUTTON' || el.tagName === 'A')) return false;
+    }
+    openDetail(state.popover.instanceId);
+    return true;
+  },
+  editEvent: () => {
+    const occ = focusedOcc();
+    if (!occ || isFeedOcc(occ)) return false;
+    set({ popover: null, detail: null, editor: { mode: 'edit', occ } });
+    return true;
+  },
+  reschedule: () => {
+    if (!state.popover) return false;
+    enterReschedule(state.popover.instanceId);
+    return true;
+  },
+  deleteEvent: () => {
+    const occ = focusedOcc();
+    if (!occ || isFeedOcc(occ)) return false;
+    if (window.confirm('Delete "' + (occ.title || 'this event') + '"?')) {
+      set({ detail: null });
+      deleteEvent(occ);
+    }
+    return true; // key consumed either way
+  },
+  detailPrev: () => (state.detail ? (stepDetailSameDay(-1), true) : false),
+  detailNext: () => (state.detail ? (stepDetailSameDay(1), true) : false),
+  search: () => set({ searchOpen: true }),
+  shortcuts: () => set({ shortcutsOpen: true }),
+  escape: () => closeOverlays(), // dispatched before the typing guard below
+};
+
 export function installKeyboard() {
   const onKey = (e) => {
     if (e.key === 'Escape') {
-      if (closeOverlays()) e.preventDefault();
+      if (handlers.escape()) e.preventDefault();
       return;
     }
     if (isTyping() || e.metaKey || e.ctrlKey || e.altKey) return;
-    switch (e.key) {
-      case 'c':
-        e.preventDefault();
-        set({ quickAddOpen: true });
-        break;
-      case '/':
-        e.preventDefault();
-        set({ searchOpen: true });
-        break;
-      case 't':
-        e.preventDefault();
-        goToday();
-        break;
-      case 'g':
-        e.preventDefault();
-        set({ jumpOpen: true });
-        break;
-      case 'r':
-        if (state.popover) {
-          e.preventDefault();
-          enterReschedule(state.popover.instanceId);
-        }
-        break;
-      case 'v':
-        e.preventDefault();
-        cycleView();
-        break;
-      case '1': case '2': case '3': case '4': case '5': case '6':
-        e.preventDefault();
-        setView(VIEWS[Number(e.key) - 1]);
-        break;
-      case 'ArrowLeft':
-        e.preventDefault();
-        navigate(-1);
-        break;
-      case 'ArrowRight':
-        e.preventDefault();
-        navigate(1);
-        break;
-      case 'ArrowUp':
-        e.preventDefault();
-        navigate(-7);
-        break;
-      case 'ArrowDown':
-        e.preventDefault();
-        navigate(7);
-        break;
-    }
+    const entry = HOTKEYS.find((h) => h.keys.includes(e.key));
+    if (!entry) return;
+    const run = handlers[entry.id];
+    if (!run) return;
+    if (run(e) !== false) e.preventDefault();
   };
   window.addEventListener('keydown', onKey);
   return () => window.removeEventListener('keydown', onKey);

@@ -9,43 +9,11 @@ import { useStore, set, state } from './store.js';
 import { jumpToDate } from './actions.js';
 import { trapFocus } from '../ui/DayExpand.js';
 import { parseJumpText } from '../lib/jumpparse.js';
+import { monthWeeks, stepMonthOf, weekdayHeads } from '../lib/minimonth.js';
 import {
-  todayKey, dateOfDayKey, epochDayOfKey, keyOfEpochDay, pad,
+  todayKey, dateOfDayKey, pad,
   fmtMonthYear, fmtDayLong, fmtMonthShort,
-  weekIndexOfEpochDay, firstEpochDayOfWeek, getWeekStart,
 } from '../lib/dates.js';
-
-// Week rows (configured week start) covering a month, padded with
-// adjacent-month days.
-function monthWeeks(year, month) {
-  const firstEd = epochDayOfKey(year + '-' + pad(month) + '-01');
-  const gridStart = firstEpochDayOfWeek(weekIndexOfEpochDay(firstEd));
-  const nextFirstEd = epochDayOfKey(month === 12
-    ? (year + 1) + '-01-01'
-    : year + '-' + pad(month + 1) + '-01');
-  const weeks = [];
-  for (let ed = gridStart; ed < nextFirstEd; ed += 7) {
-    const row = [];
-    for (let i = 0; i < 7; i++) row.push(keyOfEpochDay(ed + i));
-    weeks.push(row);
-  }
-  return weeks;
-}
-
-// Single-letter day headers in week-start order, cached per start day.
-let headCache = { start: null, heads: [] };
-function weekdayHeads() {
-  const start = getWeekStart();
-  if (headCache.start !== start) {
-    const fmt = new Intl.DateTimeFormat(undefined, { weekday: 'narrow' });
-    const first = firstEpochDayOfWeek(weekIndexOfEpochDay(epochDayOfKey('2024-01-08')));
-    headCache = {
-      start,
-      heads: Array.from({ length: 7 }, (_, i) => fmt.format(dateOfDayKey(keyOfEpochDay(first + i)))),
-    };
-  }
-  return headCache.heads;
-}
 
 export function JumpPopover() {
   const open = useStore((s) => s.jumpOpen);
@@ -87,10 +55,7 @@ export function JumpPopover() {
     jumpToDate(dayKey);
   };
 
-  const stepMonth = (n) => {
-    const k = disp.year * 12 + (disp.month - 1) + n;
-    setDisp({ year: Math.floor(k / 12), month: ((k % 12) + 12) % 12 + 1 });
-  };
+  const stepMonth = (n) => setDisp(stepMonthOf(disp.year, disp.month, n));
   const stepYear = (n) => setDisp({ year: disp.year + n, month: disp.month });
 
   const onKeyDown = (e) => {

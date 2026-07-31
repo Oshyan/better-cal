@@ -25,6 +25,7 @@ import { EventDetail } from './EventDetail.js';
 import { GroupPopover } from './GroupPopover.js';
 import { EditorDrawer } from './EditorDrawer.js';
 import { SearchOverlay } from './SearchOverlay.js';
+import { ShortcutsSheet } from './ShortcutsSheet.js';
 import { Toasts } from './Toasts.js';
 import { Login } from './Login.js';
 import { OutfeedsPage } from './OutfeedsPage.js';
@@ -178,16 +179,16 @@ export function App() {
     return html`<${Login} />`;
   }
   if (s.route === 'outfeeds') {
-    return html`<div class="bc-app"><${OutfeedsPage} /><${Toasts} /></div>`;
+    return html`<div class="bc-app"><${OutfeedsPage} /><${ShortcutsSheet} /><${Toasts} /></div>`;
   }
   if (s.route === 'filters') {
-    return html`<div class="bc-app"><${FiltersPage} /><${Toasts} /></div>`;
+    return html`<div class="bc-app"><${FiltersPage} /><${ShortcutsSheet} /><${Toasts} /></div>`;
   }
   if (s.route === 'views') {
-    return html`<div class="bc-app"><${SavedViewsPage} /><${Toasts} /></div>`;
+    return html`<div class="bc-app"><${SavedViewsPage} /><${ShortcutsSheet} /><${Toasts} /></div>`;
   }
   if (s.route === 'settings') {
-    return html`<div class="bc-app"><${SettingsPage} /><${Toasts} /></div>`;
+    return html`<div class="bc-app"><${SettingsPage} /><${ShortcutsSheet} /><${Toasts} /></div>`;
   }
 
   let view = null;
@@ -299,6 +300,7 @@ export function App() {
     <${EventDetail} />
     <${EditorDrawer} />
     <${SearchOverlay} />
+    <${ShortcutsSheet} />
     ${reschedActive && html`<${RescheduleOverlay}
       occ=${reschedOcc}
       cal=${calMeta[reschedOcc.calendarId]}

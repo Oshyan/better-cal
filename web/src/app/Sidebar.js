@@ -11,6 +11,7 @@ import {
   folderMode, setFolderVisibilityMode,
 } from './actions.js';
 import { CalendarSettings } from './CalendarSettings.js';
+import { MiniMonth } from './MiniMonth.js';
 import { PALETTE } from '../lib/color.js';
 
 // Inline stroke icons, sized for compact rows. viewBox 0 0 16 16.
@@ -238,6 +239,7 @@ export function Sidebar({ open }) {
 
   return html`<aside class="bc-sidebar${open ? ' is-open' : ''}">
     <div class="bc-sidebar-scroll">
+      <${MiniMonth} />
       ${byFolder.map(({ folder, cals }) => html`<section key=${'f' + folder.id} class="bc-folder">
         <${FolderHead}
           folder=${folder} cals=${cals}

@@ -205,3 +205,25 @@ export function dominantMonthOfRow(rowIndex, columns = 7) {
 export function dominantMonthOfWeek(weekIndex) {
   return dominantMonthOfRow(weekIndex, 7);
 }
+
+// Dominant month across a whole visible window of rows: the month owning the
+// most day cells in rows [firstRow, firstRow + rowCount). Ties go to the
+// later month (scrolling forward should never keep naming the month that is
+// leaving). Unlike dominantMonthOfRow (top row only), this is what the
+// toolbar label and mini-month should follow, so the named month is always
+// the one the user mostly sees.
+export function dominantMonthOfRows(firstRow, rowCount, columns = 7) {
+  const start = firstEpochDayOfRow(firstRow, columns);
+  const n = Math.max(1, rowCount) * columns; // rows are consecutive on the epoch-day line
+  const counts = new Map();
+  for (let i = 0; i < n; i++) {
+    const [y, m] = keyOfEpochDay(start + i).split('-').map(Number);
+    const k = y * 12 + (m - 1);
+    counts.set(k, (counts.get(k) || 0) + 1);
+  }
+  let best = null, bestN = 0;
+  for (const [k, n2] of counts) {
+    if (n2 > bestN || (n2 === bestN && (best === null || k > best))) { best = k; bestN = n2; }
+  }
+  return { year: Math.floor(best / 12), month: (best % 12) + 1 };
+}

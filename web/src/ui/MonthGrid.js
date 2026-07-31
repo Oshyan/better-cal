@@ -25,7 +25,7 @@ import {
 import {
   visibleWeekRange, weekTop, totalHeight, occurrenceDaySpan, rowSpanSegments,
   rowIndexOfDayKey, firstEpochDayOfRow, dayKeysOfRow, isWeekendEpochDay,
-  monthStartsInRange, dominantMonthOfRow,
+  monthStartsInRange, dominantMonthOfRows,
 } from './monthmath.js';
 import { assignLanes } from './layout.js';
 import { EventChip, EventBar } from './EventChip.js';
@@ -178,13 +178,23 @@ export function MonthGrid({
   // Report visible month + demand data for the visible window.
   useEffect(() => {
     if (range.last <= range.first) return;
-    if (onVisibleMonthChange) onVisibleMonthChange(dominantMonthOfRow(range.top != null ? range.top : range.first, columns));
+    if (onVisibleMonthChange) {
+      // Dominant month over the WHOLE visible window, not just the top row:
+      // with the tail of an old month as the top row, the window is mostly
+      // the next month and the toolbar/mini-month should say so.
+      const top = range.top != null ? range.top : range.first;
+      const rows = Math.min(
+        Math.max(1, Math.round(viewH / rowH)), // rows the viewport shows
+        range.last - top + 1,                  // never beyond rendered rows
+      );
+      onVisibleMonthChange(dominantMonthOfRows(top, rows, columns));
+    }
     if (onRequestWindow) {
       const start = dateOfDayKey(keyOfEpochDay(firstEpochDayOfRow(range.first, columns) - 28));
       const end = dateOfDayKey(keyOfEpochDay(firstEpochDayOfRow(range.last + 1, columns) + 28));
       onRequestWindow({ start: toISOWithOffset(start), end: toISOWithOffset(end) });
     }
-  }, [range.first, range.last, range.top, columns]);
+  }, [range.first, range.last, range.top, columns, viewH, rowH]);
 
   // --- drag helpers ---------------------------------------------------------
 

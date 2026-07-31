@@ -463,7 +463,14 @@ button:focus-visible, [tabindex]:focus-visible {
 .bc-cell-chips {
   position: absolute; left: 2px; right: 2px; bottom: 0;
   display: flex; flex-direction: column; gap: 2px;
+  /* Hit-transparent like .bc-week-bars: this container spans the whole cell
+     below the day-number strip, and without this it swallows pointerdown on
+     empty cell space, so the cell's own drag/click-to-create handlers (which
+     require target === currentTarget) never fire. Chips and the overflow
+     button re-enable their own hits. */
+  pointer-events: none;
 }
+.bc-cell-chips > * { pointer-events: auto; }
 .bc-week-bars { position: absolute; left: 0; right: 0; pointer-events: none; }
 .bc-bar-slot { position: absolute; height: var(--chip-h); padding: 0 2px; pointer-events: auto; }
 /* Full-width month boundary rule: spans the whole grid, gutter included,

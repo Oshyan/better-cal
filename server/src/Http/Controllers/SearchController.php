@@ -27,12 +27,20 @@ final class SearchController
         $rows = $this->search->search($userId, $q, $limit);
 
         // User filters: hide drops rows, dim marks them (additive field).
+        // Prompt filters join cached background verdicts; no LLM calls here.
         $activeFilters = $this->filters->enabledForUser($userId);
+        $promptCtx = $this->filters->promptFilterContext(
+            $userId,
+            array_map(static fn(array $row) => (int) $row['id'], $rows)
+        );
         $dimmedIds = [];
-        if ($activeFilters !== []) {
+        if ($activeFilters !== [] || $promptCtx['filters'] !== []) {
             $kept = [];
             foreach ($rows as $row) {
-                $disposition = Filters::disposition($row, $activeFilters);
+                $disposition = Filters::strongest(
+                    Filters::disposition($row, $activeFilters),
+                    Filters::promptDisposition($row, $promptCtx['filters'], $promptCtx['failed'])
+                );
                 if ($disposition === 'hide') {
                     continue;
                 }

@@ -30,6 +30,7 @@ export const state = {
   visibleMonth: null, // {year, month}
   filterText: '',
   agendaShowPast: false,
+  agendaSort: 'time', // 'time' | 'match' (rank score, PRD 5.8)
 
   savedViews: [],     // [{id, name, config, position}]
   activeViewId: null, // saved view currently applied, if any

@@ -13,10 +13,13 @@ use BetterCal\Support\Time;
 final class LlmGateway
 {
     private const TIMEOUT_SECONDS = 6;
+    private const BATCH_TIMEOUT_SECONDS = 45;
     private const ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent';
 
-    public function __construct(private readonly array $cfg)
-    {
+    public function __construct(
+        private readonly array $cfg,
+        private readonly ?LlmTransport $transport = null,
+    ) {
     }
 
     public function isConfigured(): bool
@@ -89,29 +92,117 @@ final class LlmGateway
         ];
     }
 
-    /** POST to Gemini and decode the forced-JSON reply; null on any failure. */
-    private function generate(array $body): ?array
+    /**
+     * Batch-evaluate a prompt filter against feed events: one JSON call, one
+     * verdict per event. Results are raw model output; callers validate and
+     * clamp via PromptEval::validateEvalResponse. Null on any failure.
+     *
+     * @param list<array{eventId:int,title:string,description:?string,location:?string,start:string}> $events
+     * @return ?list<array{eventId:int,pass:bool,score:float}>
+     */
+    public function evaluateFilterBatch(string $prompt, ?string $negativePrompt, array $events): ?array
     {
-        $url = sprintf(self::ENDPOINT, rawurlencode($this->cfg['gemini']['model']));
-        $ch = curl_init($url);
-        if ($ch === false) {
+        if (!$this->isConfigured() || $events === []) {
             return null;
         }
-        curl_setopt_array($ch, [
-            CURLOPT_POST => true,
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_TIMEOUT => self::TIMEOUT_SECONDS,
-            CURLOPT_CONNECTTIMEOUT => self::TIMEOUT_SECONDS,
-            CURLOPT_HTTPHEADER => [
-                'Content-Type: application/json',
-                'x-goog-api-key: ' . $this->cfg['gemini']['key'],
+        $instructions = "You are filtering calendar events for a user.\n"
+            . "The user wants to keep events matching this description: " . $prompt . "\n"
+            . ($negativePrompt !== null && $negativePrompt !== ''
+                ? "The user does NOT want events matching: " . $negativePrompt . "\n"
+                : '')
+            . "For each event, decide pass=true if it matches what the user wants to keep "
+            . "(and does not match the unwanted description), pass=false otherwise. "
+            . "score is your 0-1 confidence that the event matches what the user wants.\n"
+            . "Return one result per event, echoing its eventId.\n"
+            . "Events (JSON): " . json_encode($events, JSON_UNESCAPED_UNICODE);
+
+        $parsed = $this->generate([
+            'contents' => [['parts' => [['text' => $instructions]]]],
+            'generationConfig' => [
+                'response_mime_type' => 'application/json',
+                'response_schema' => [
+                    'type' => 'OBJECT',
+                    'properties' => [
+                        'results' => [
+                            'type' => 'ARRAY',
+                            'items' => [
+                                'type' => 'OBJECT',
+                                'properties' => [
+                                    'eventId' => ['type' => 'INTEGER'],
+                                    'pass' => ['type' => 'BOOLEAN'],
+                                    'score' => ['type' => 'NUMBER', 'description' => '0 to 1'],
+                                ],
+                                'required' => ['eventId', 'pass', 'score'],
+                            ],
+                        ],
+                    ],
+                    'required' => ['results'],
+                ],
+                'temperature' => 0.0,
             ],
-            CURLOPT_POSTFIELDS => json_encode($body),
-        ]);
-        $raw = curl_exec($ch);
-        $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
-        curl_close($ch);
-        if (!is_string($raw) || $status !== 200) {
+        ], self::BATCH_TIMEOUT_SECONDS);
+        return is_array($parsed['results'] ?? null) ? $parsed['results'] : null;
+    }
+
+    /**
+     * Score future feed events 0-1 against the user's thumbs-up/down history.
+     * Results are raw model output; callers validate and clamp via
+     * Ranking::validateRankResponse. Null on any failure.
+     *
+     * @param list<array{title:string,signal:string}> $examples up|down feedback examples
+     * @param list<array{eventId:int,title:string,description:?string,location:?string,start:string}> $events
+     * @return ?list<array{eventId:int,score:float}>
+     */
+    public function rankEvents(array $examples, array $events): ?array
+    {
+        if (!$this->isConfigured() || $events === []) {
+            return null;
+        }
+        $instructions = "You are ranking upcoming calendar events for a user based on their past feedback.\n"
+            . "Feedback examples (signal up = the user liked a similar event, down = disliked):\n"
+            . json_encode($examples, JSON_UNESCAPED_UNICODE) . "\n"
+            . "For each event below, output score between 0 and 1: how likely the user is to want "
+            . "to attend it, judging by similarity to the liked and disliked examples.\n"
+            . "Return one result per event, echoing its eventId.\n"
+            . "Events (JSON): " . json_encode($events, JSON_UNESCAPED_UNICODE);
+
+        $parsed = $this->generate([
+            'contents' => [['parts' => [['text' => $instructions]]]],
+            'generationConfig' => [
+                'response_mime_type' => 'application/json',
+                'response_schema' => [
+                    'type' => 'OBJECT',
+                    'properties' => [
+                        'results' => [
+                            'type' => 'ARRAY',
+                            'items' => [
+                                'type' => 'OBJECT',
+                                'properties' => [
+                                    'eventId' => ['type' => 'INTEGER'],
+                                    'score' => ['type' => 'NUMBER', 'description' => '0 to 1'],
+                                ],
+                                'required' => ['eventId', 'score'],
+                            ],
+                        ],
+                    ],
+                    'required' => ['results'],
+                ],
+                'temperature' => 0.0,
+            ],
+        ], self::BATCH_TIMEOUT_SECONDS);
+        return is_array($parsed['results'] ?? null) ? $parsed['results'] : null;
+    }
+
+    /** POST to Gemini and decode the forced-JSON reply; null on any failure. */
+    private function generate(array $body, int $timeoutSeconds = self::TIMEOUT_SECONDS): ?array
+    {
+        $url = sprintf(self::ENDPOINT, rawurlencode($this->cfg['gemini']['model']));
+        $transport = $this->transport ?? new CurlLlmTransport();
+        $raw = $transport->post($url, [
+            'Content-Type: application/json',
+            'x-goog-api-key: ' . $this->cfg['gemini']['key'],
+        ], (string) json_encode($body), $timeoutSeconds);
+        if ($raw === null) {
             return null;
         }
         $envelope = json_decode($raw, true);

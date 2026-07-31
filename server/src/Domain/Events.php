@@ -106,12 +106,22 @@ final class Events
                 <=> [$b['start']->getTimestamp(), $a['end']->getTimestamp(), (string) $b['row']['title']];
         });
 
-        // User filters: hide drops the occurrence, dim marks it (additive field).
+        // User filters: hide drops the occurrence, dim marks it (additive
+        // field). Keyword/regex filters match inline; prompt filters join the
+        // cached background verdicts (filter_evals) — no LLM calls here, ever.
         $activeFilters = $this->filters->enabledForUser($userId);
-        if ($activeFilters !== []) {
+        $windowEventIds = [];
+        foreach ($expanded as $occ) {
+            $windowEventIds[(int) $occ['row']['id']] = true;
+        }
+        $promptCtx = $this->filters->promptFilterContext($userId, array_keys($windowEventIds));
+        if ($activeFilters !== [] || $promptCtx['filters'] !== []) {
             $kept = [];
             foreach ($expanded as $occ) {
-                $disposition = Filters::disposition($occ['row'], $activeFilters);
+                $disposition = Filters::strongest(
+                    Filters::disposition($occ['row'], $activeFilters),
+                    Filters::promptDisposition($occ['row'], $promptCtx['filters'], $promptCtx['failed'])
+                );
                 if ($disposition === 'hide') {
                     continue;
                 }
@@ -522,6 +532,29 @@ final class Events
         $after = $this->get($userId, $id);
         $this->undo->record($userId, 'event', $id, 'update', ['events' => [$event]], ['events' => [$after]]);
         ChangeLog::record($this->db, (int) $event['calendar_id'], (string) $event['uid'], ChangeLog::OP_MODIFY);
+
+        // Triage on feed events doubles as ranking training signal (PRD 5.8):
+        // committing/starring is an up, hiding is a down. Clearing is neutral.
+        if ((string) $event['source'] === 'feed' && (string) $event['attendance'] !== $attendance) {
+            $kind = match ($attendance) {
+                'going', 'interested' => 'up',
+                'hidden' => 'down',
+                default => null,
+            };
+            if ($kind !== null) {
+                $this->db->insert('feedback_signals', ['user_id' => $userId, 'event_id' => $id, 'kind' => $kind]);
+            }
+        }
+    }
+
+    /** Explicit thumbs feedback ('up'|'down'); pure training signal, no undo. */
+    public function recordFeedback(int $userId, int $id, string $signal): void
+    {
+        if (!in_array($signal, ['up', 'down'], true)) {
+            throw HttpError::badRequest('signal must be up|down');
+        }
+        $this->get($userId, $id); // ownership + existence
+        $this->db->insert('feedback_signals', ['user_id' => $userId, 'event_id' => $id, 'kind' => $signal]);
     }
 
     // ---- Serialization ------------------------------------------------
@@ -578,6 +611,7 @@ final class Events
             'source' => (string) $row['source'],
             'attendance' => (string) $row['attendance'],
             'status' => (string) $row['status'],
+            'score' => isset($row['score']) && $row['score'] !== null ? (float) $row['score'] : null,
             'tags' => $links['tags'][$id] ?? [],
             'people' => $links['people'][$id] ?? [],
             'styleJson' => $style ?: null,

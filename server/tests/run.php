@@ -13,9 +13,13 @@ use BetterCal\Domain\ApiTokens;
 use BetterCal\Domain\FallbackParser;
 use BetterCal\Domain\Filters;
 use BetterCal\Domain\Ics;
+use BetterCal\Domain\PromptEval;
+use BetterCal\Domain\Ranking;
 use BetterCal\Domain\Recurrence;
 use BetterCal\Http\HttpError;
 use BetterCal\Http\Router;
+use BetterCal\Infra\LlmGateway;
+use BetterCal\Infra\LlmTransport;
 use BetterCal\Support\Ids;
 use BetterCal\Support\Time;
 
@@ -371,6 +375,190 @@ checkEq('flt disposition hide beats dim', 'hide', Filters::disposition($occ, [$d
 checkEq('flt disposition other calendar skipped', null, Filters::disposition($occ, [$hideCal9]));
 checkEq('flt disposition scoped calendar applies', 'hide', Filters::disposition(['calendar_id' => 9] + $occ, [$hideCal9]));
 checkEq('flt disposition no filters', null, Filters::disposition($occ, []));
+
+// ---------------------------------------------------------------------------
+// Prompt filters: config validation, batching, response validation, verdicts,
+// disposition precedence (pure, no DB, no LLM)
+// ---------------------------------------------------------------------------
+
+$pfConfig = Filters::validateConfig('prompt', [
+    'prompt' => '  dance and live music events, small venues ',
+    'negativePrompt' => ' no webinars ',
+    'threshold' => '0.6',
+]);
+checkEq('pf config prompt trimmed', 'dance and live music events, small venues', $pfConfig['prompt']);
+checkEq('pf config negative trimmed', 'no webinars', $pfConfig['negativePrompt']);
+checkEq('pf config threshold cast to float', 0.6, $pfConfig['threshold']);
+checkEq('pf config omits empty negative', false, array_key_exists('negativePrompt', Filters::validateConfig('prompt', ['prompt' => 'x'])));
+checkEq('pf config omits absent threshold', false, array_key_exists('threshold', Filters::validateConfig('prompt', ['prompt' => 'x'])));
+try {
+    Filters::validateConfig('prompt', ['prompt' => '   ']);
+    check('pf blank prompt rejected', false);
+} catch (HttpError $e) {
+    checkEq('pf blank prompt status', 400, $e->status);
+}
+try {
+    Filters::validateConfig('prompt', ['prompt' => 'x', 'threshold' => 1.5]);
+    check('pf out-of-range threshold rejected', false);
+} catch (HttpError $e) {
+    checkEq('pf threshold range status', 400, $e->status);
+}
+try {
+    Filters::validateConfig('prompt', ['prompt' => 'x', 'threshold' => 'high']);
+    check('pf non-numeric threshold rejected', false);
+} catch (HttpError $e) {
+    checkEq('pf threshold type status', 400, $e->status);
+}
+
+// Batching math: 25 events per LLM call.
+checkEq('pe batches 60 -> 25/25/10', [25, 25, 10], array_map('count', PromptEval::batches(range(1, 60))));
+checkEq('pe batches exact multiple', [25, 25], array_map('count', PromptEval::batches(range(1, 50))));
+checkEq('pe batches small input single batch', [3], array_map('count', PromptEval::batches([1, 2, 3])));
+checkEq('pe batches empty', [], PromptEval::batches([]));
+
+// Eval response validation: clamping, unknown ids, malformed entries.
+$evalOut = PromptEval::validateEvalResponse(['results' => [
+    ['eventId' => 1, 'pass' => true, 'score' => 1.7],
+    ['eventId' => 2, 'pass' => false, 'score' => -0.25],
+    ['eventId' => 3, 'pass' => true],
+    ['eventId' => 99, 'pass' => true, 'score' => 0.5],
+    ['eventId' => 4, 'pass' => 'yes', 'score' => 0.5],
+    'garbage',
+]], [1, 2, 3, 4]);
+checkEq('pe response clamps high score to 1', 1.0, $evalOut[1]['score']);
+checkEq('pe response clamps low score to 0', 0.0, $evalOut[2]['score']);
+checkEq('pe response missing score is null', null, $evalOut[3]['score']);
+checkEq('pe response keeps pass flags', [true, false], [$evalOut[1]['pass'], $evalOut[2]['pass']]);
+checkEq('pe response drops unknown event id', false, array_key_exists(99, $evalOut));
+checkEq('pe response drops non-bool pass', false, array_key_exists(4, $evalOut));
+checkEq('pe response garbage payload -> empty', [], PromptEval::validateEvalResponse('garbage', [1]));
+checkEq('pe response missing results -> empty', [], PromptEval::validateEvalResponse(['nope' => []], [1]));
+
+// Verdicts: threshold overrides the boolean when a score exists.
+checkEq('pe verdict pass bool', 'pass', PromptEval::verdictFor(['pass' => true, 'score' => 0.2], null));
+checkEq('pe verdict fail bool', 'fail', PromptEval::verdictFor(['pass' => false, 'score' => 0.9], null));
+checkEq('pe verdict threshold promotes', 'pass', PromptEval::verdictFor(['pass' => false, 'score' => 0.9], 0.5));
+checkEq('pe verdict threshold demotes', 'fail', PromptEval::verdictFor(['pass' => true, 'score' => 0.3], 0.5));
+checkEq('pe verdict threshold equal passes', 'pass', PromptEval::verdictFor(['pass' => false, 'score' => 0.5], 0.5));
+checkEq('pe verdict null score falls back to bool', 'pass', PromptEval::verdictFor(['pass' => true, 'score' => null], 0.5));
+
+// eventPayload: compact shape, description excerpt.
+$payload = PromptEval::eventPayload([
+    'id' => 7, 'title' => 'Salsa Night', 'description' => str_repeat('x', 400),
+    'location' => 'El Valenciano', 'start_utc' => '2026-08-02 02:00:00', 'tzid' => 'America/Los_Angeles',
+]);
+checkEq('pe payload event id', 7, $payload['eventId']);
+checkEq('pe payload local start', '2026-08-01T19:00:00-07:00', $payload['start']);
+checkEq('pe payload description excerpted', 301, mb_strlen($payload['description']));
+
+// Prompt dispositions from cached verdicts + precedence with keyword filters.
+$promptRow = ['id' => 101, 'calendar_id' => 3] + $occ;
+$pfHide = ['id' => 1, 'action' => 'hide', 'calendarIds' => null];
+$pfDim = ['id' => 2, 'action' => 'dim', 'calendarIds' => null];
+$pfCal9Hide = ['id' => 3, 'action' => 'hide', 'calendarIds' => [9 => true]];
+$failAll = [1 => [101 => true], 2 => [101 => true], 3 => [101 => true]];
+checkEq('pd fail -> hide', 'hide', Filters::promptDisposition($promptRow, [$pfHide], $failAll));
+checkEq('pd fail -> dim', 'dim', Filters::promptDisposition($promptRow, [$pfDim], $failAll));
+checkEq('pd no verdict treated as pass', null, Filters::promptDisposition($promptRow, [$pfHide, $pfDim], []));
+checkEq('pd out-of-scope calendar skipped', null, Filters::promptDisposition($promptRow, [$pfCal9Hide], $failAll));
+checkEq('pd scoped calendar applies', 'hide', Filters::promptDisposition(['calendar_id' => 9] + $promptRow, [$pfCal9Hide], $failAll));
+checkEq('pd hide beats dim', 'hide', Filters::promptDisposition($promptRow, [$pfDim, $pfHide], $failAll));
+checkEq('strongest hide wins', 'hide', Filters::strongest('dim', 'hide'));
+checkEq('strongest dim over null', 'dim', Filters::strongest(null, 'dim'));
+checkEq('strongest all null', null, Filters::strongest(null, null));
+checkEq(
+    'mixed keyword dim + prompt hide -> hide',
+    'hide',
+    Filters::strongest(
+        Filters::disposition($promptRow, [$dimAll]),
+        Filters::promptDisposition($promptRow, [$pfHide], $failAll)
+    )
+);
+checkEq(
+    'mixed keyword miss + prompt dim -> dim',
+    'dim',
+    Filters::strongest(
+        Filters::disposition(['title' => 'Pottery class', 'calendar_id' => 3, 'id' => 101], [$dimAll]),
+        Filters::promptDisposition(['title' => 'Pottery class', 'calendar_id' => 3, 'id' => 101], [$pfDim], $failAll)
+    )
+);
+
+// ---------------------------------------------------------------------------
+// Ranking: signal-to-example serialization and score validation (pure)
+// ---------------------------------------------------------------------------
+
+$sig = static fn(int $eventId, string $kind, string $title): array => ['event_id' => $eventId, 'kind' => $kind, 'title' => $title];
+$examples = Ranking::signalExamples([
+    $sig(5, 'up', 'Jazz night'),      // newest signal for event 5
+    $sig(4, 'hide', 'Crypto webinar'),
+    $sig(5, 'down', 'Jazz night'),    // older signal for event 5: superseded
+    $sig(6, 'down', 'Marketing mixer'),
+    $sig(7, 'up', '   '),             // blank title: dropped
+]);
+checkEq('rk examples shape + order', ['title' => 'Jazz night', 'signal' => 'up'], $examples[0]);
+checkEq('rk examples dedupe keeps latest signal', 1, count(array_filter($examples, static fn($e) => $e['title'] === 'Jazz night')));
+checkEq('rk examples hide folds into down', 'down', $examples[1]['signal']);
+checkEq('rk examples blank titles dropped', 3, count($examples));
+$manySignals = array_map(static fn(int $i) => $sig($i, 'up', "Event $i"), range(1, 40));
+checkEq('rk examples capped at 30', 30, count(Ranking::signalExamples($manySignals)));
+checkEq('rk examples custom cap', 2, count(Ranking::signalExamples($manySignals, 2)));
+
+$rankOut = Ranking::validateRankResponse(['results' => [
+    ['eventId' => 1, 'score' => 2.0],
+    ['eventId' => 2, 'score' => -1],
+    ['eventId' => 3, 'score' => 0.42],
+    ['eventId' => 99, 'score' => 0.9],
+    ['eventId' => 4, 'score' => 'high'],
+]], [1, 2, 3, 4]);
+checkEq('rk response clamps high', 1.0, $rankOut[1]);
+checkEq('rk response clamps low', 0.0, $rankOut[2]);
+checkEq('rk response passes in-range', 0.42, $rankOut[3]);
+checkEq('rk response drops unknown id', false, array_key_exists(99, $rankOut));
+checkEq('rk response drops non-numeric score', false, array_key_exists(4, $rankOut));
+checkEq('rk response garbage -> empty', [], Ranking::validateRankResponse(null, [1]));
+
+// ---------------------------------------------------------------------------
+// LlmGateway batch methods via a fake transport (no network)
+// ---------------------------------------------------------------------------
+
+$fakeTransport = new class implements LlmTransport {
+    public ?string $reply = null;
+    public array $requests = [];
+
+    public function post(string $url, array $headers, string $body, int $timeoutSeconds): ?string
+    {
+        $this->requests[] = ['url' => $url, 'body' => $body, 'timeout' => $timeoutSeconds];
+        return $this->reply;
+    }
+};
+$envelope = static fn(array $json): string => json_encode([
+    'candidates' => [['content' => ['parts' => [['text' => json_encode($json)]]]]],
+]);
+$gw = new LlmGateway(['gemini' => ['key' => 'test-key', 'model' => 'test-model']], $fakeTransport);
+$batchEvent = ['eventId' => 1, 'title' => 'Salsa Night', 'description' => null, 'location' => null, 'start' => '2026-08-01T19:00:00-07:00'];
+
+$fakeTransport->reply = $envelope(['results' => [['eventId' => 1, 'pass' => true, 'score' => 0.8]]]);
+checkEq(
+    'gw eval batch parses results',
+    [['eventId' => 1, 'pass' => true, 'score' => 0.8]],
+    $gw->evaluateFilterBatch('dance events', 'no webinars', [$batchEvent])
+);
+check('gw eval sent prompt to model', str_contains((string) $fakeTransport->requests[0]['body'], 'dance events'));
+check('gw eval sent negative prompt', str_contains((string) $fakeTransport->requests[0]['body'], 'no webinars'));
+
+$fakeTransport->reply = $envelope(['results' => [['eventId' => 1, 'score' => 0.4]]]);
+checkEq(
+    'gw rank parses results',
+    [['eventId' => 1, 'score' => 0.4]],
+    $gw->rankEvents([['title' => 'Jazz night', 'signal' => 'up']], [$batchEvent])
+);
+$fakeTransport->reply = $envelope(['nope' => true]);
+checkEq('gw eval missing results -> null', null, $gw->evaluateFilterBatch('x', null, [$batchEvent]));
+$fakeTransport->reply = null;
+checkEq('gw transport failure -> null', null, $gw->evaluateFilterBatch('x', null, [$batchEvent]));
+checkEq('gw empty batch short-circuits', null, $gw->evaluateFilterBatch('x', null, []));
+$gwUnconfigured = new LlmGateway(['gemini' => ['key' => '', 'model' => 'test-model']], $fakeTransport);
+checkEq('gw unconfigured -> null', null, $gwUnconfigured->rankEvents([], [$batchEvent]));
 
 // ---------------------------------------------------------------------------
 // Ids

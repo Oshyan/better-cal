@@ -7,6 +7,7 @@ namespace BetterCal\Domain;
 use BetterCal\Dav\ChangeLog;
 use BetterCal\Http\HttpError;
 use BetterCal\Infra\Db;
+use BetterCal\Infra\JobQueue;
 use BetterCal\Support\Time;
 
 /** ICS feed subscription: fetch, parse, and sync by (calendar_id, uid). */
@@ -15,7 +16,7 @@ final class Feeds
     private const FETCH_TIMEOUT = 20;
     private const MAX_BYTES = 20 * 1024 * 1024;
 
-    public function __construct(private readonly Db $db)
+    public function __construct(private readonly Db $db, private readonly ?JobQueue $queue = null)
     {
     }
 
@@ -36,6 +37,16 @@ final class Feeds
                 'last_poll_error' => null,
             ], 'id = ?', [$calendarId]);
             $this->recordStats($calendarId, count($parsed));
+            // New/updated feed events need background prompt-filter evaluation
+            // and rank scoring (mirrors the ChangeLog hook: fired per poll).
+            if ($count > 0 && $this->queue !== null) {
+                if (!$this->queue->hasPending('filter_eval')) {
+                    $this->queue->enqueue('filter_eval', []);
+                }
+                if (!$this->queue->hasPending('rank_events')) {
+                    $this->queue->enqueue('rank_events', []);
+                }
+            }
             return $count;
         } catch (\Throwable $e) {
             $this->db->update('calendars', [
@@ -120,7 +131,8 @@ final class Feeds
         $upserts = 0;
         $changedUids = [];
         $newMasterUids = [];
-        $this->db->tx(function () use ($parsed, $existingByKey, &$masterIdByUid, &$seen, &$upserts, &$changedUids, &$newMasterUids, $calendarId, $userId): void {
+        $updatedEventIds = [];
+        $this->db->tx(function () use ($parsed, $existingByKey, &$masterIdByUid, &$seen, &$upserts, &$changedUids, &$newMasterUids, &$updatedEventIds, $calendarId, $userId): void {
             foreach ($parsed as $ev) {
                 $key = $ev['uid'] . '|' . ($ev['recurrence_instance_utc'] ?? '');
                 if (isset($seen[$key])) {
@@ -180,8 +192,16 @@ final class Feeds
                     $changed['updated_at'] = Time::nowDb();
                     $this->db->update('events', $changed, 'id = ?', [(int) $current['id']]);
                     $changedUids[(string) $current['uid']] = true;
+                    $updatedEventIds[] = (int) $current['id'];
                     $upserts++;
                 }
+            }
+
+            // Content changed: cached prompt-filter verdicts are stale; drop
+            // them so the pending sweep re-evaluates (removed events cascade).
+            if ($updatedEventIds !== []) {
+                [$in, $inParams] = Db::in($updatedEventIds);
+                $this->db->run("DELETE FROM filter_evals WHERE event_id IN $in", $inParams);
             }
 
             // Remove events that disappeared from the feed.

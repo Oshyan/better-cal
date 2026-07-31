@@ -214,6 +214,14 @@ export async function setAttendance(occ, attendance) {
   }
 }
 
+// Thumbs feedback on feed events: pure training signal for ranking (PRD 5.8).
+// Optimistic: toast immediately, fire-and-forget the write; no undo needed.
+export function sendFeedback(occ, signal) {
+  toast(signal === 'up' ? 'Noted: more like this' : 'Noted: less like this', { duration: 2500 });
+  api('/events/' + occ.eventId + '/feedback', { method: 'POST', body: { signal } })
+    .catch((e) => toast('Feedback failed: ' + e.message, { error: true }));
+}
+
 export { undo, refreshWindow };
 
 // --- quick add ---------------------------------------------------------------

@@ -13,6 +13,7 @@ import {
   monthsAround, miniMonthGrid, dayDropDates, timeDropDates,
 } from '../src/ui/monthmath.js';
 import { contrastText, withAlpha, parseHex } from '../src/lib/color.js';
+import { sortByMatch } from '../src/lib/rank.js';
 
 let passed = 0;
 let failed = 0;
@@ -220,6 +221,29 @@ eq('assignLanes greedy packing', [lanes.get('a'), lanes.get('b'), lanes.get('c')
 
 // 36. rangesOverlap half-open semantics.
 assert('rangesOverlap half-open', !rangesOverlap(0, 10, 10, 20) && rangesOverlap(0, 11, 10, 20));
+
+console.log('--- match ranking sort ---');
+
+// Scored events lead (score desc), unscored sink to time order after them.
+const rk = (id, start, score) => ({ instanceId: id, start, score });
+const ranked = sortByMatch([
+  rk('a', '2026-08-01T10:00:00-07:00', 0.2),
+  rk('b', '2026-08-03T10:00:00-07:00', null),
+  rk('c', '2026-08-02T10:00:00-07:00', 0.9),
+  rk('d', '2026-08-01T09:00:00-07:00', undefined),
+]);
+eq('sortByMatch scored first by score desc', ranked.map((o) => o.instanceId), ['c', 'a', 'd', 'b']);
+
+// Equal scores fall back to time order.
+eq('sortByMatch equal scores tie by start',
+  sortByMatch([rk('x', '2026-08-05T10:00:00-07:00', 0.5), rk('y', '2026-08-04T10:00:00-07:00', 0.5)]).map((o) => o.instanceId),
+  ['y', 'x']);
+
+// All unscored: plain time order (score of 0 still counts as scored).
+eq('sortByMatch zero score is still scored',
+  sortByMatch([rk('u', '2026-08-01T10:00:00-07:00', null), rk('v', '2026-08-02T10:00:00-07:00', 0)]).map((o) => o.instanceId),
+  ['v', 'u']);
+eq('sortByMatch empty input', sortByMatch([]), []);
 
 console.log('--- color utils ---');
 

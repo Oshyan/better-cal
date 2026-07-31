@@ -24,6 +24,15 @@ final class JobQueue
         ]);
     }
 
+    /** Is any job of this type pending or running (any payload)? */
+    public function hasPending(string $type): bool
+    {
+        return $this->db->scalar(
+            "SELECT id FROM jobs WHERE type = ? AND status IN ('pending', 'running') LIMIT 1",
+            [$type]
+        ) !== null;
+    }
+
     public function hasActiveFeedPoll(int $calendarId): bool
     {
         return $this->db->scalar(

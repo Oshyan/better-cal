@@ -3,7 +3,8 @@
 import { html, useState, useMemo, useEffect, useCallback } from '../../vendor/index.js';
 import { useStore, set, state, calendarMeta, shallowEq } from './store.js';
 import { loadWindow } from './api.js';
-import { moveEvent, resizeEvent, triageAttendance, exitReschedule, jumpToDate } from './actions.js';
+import { moveEvent, resizeEvent, triageAttendance, sendFeedback, exitReschedule, jumpToDate } from './actions.js';
+import { sortByMatch } from '../lib/rank.js';
 import { installKeyboard } from './keyboard.js';
 import {
   startOfWeekKey, dayKeysOfWeek, weekIndexOfKey, addDaysKey, dateOfDayKey,
@@ -42,6 +43,7 @@ export function App() {
       anchor: st.anchor, scrollSeq: st.scrollSeq, occVersion: st.occVersion,
       calendars: st.calendars, filterText: st.filterText,
       expandedDay: st.expandedDay, agendaShowPast: st.agendaShowPast,
+      agendaSort: st.agendaSort,
       reschedule: st.reschedule,
       visibleMonth: st.reschedule ? st.visibleMonth : null,
     }),
@@ -185,20 +187,34 @@ export function App() {
     />`;
   } else {
     const nowMs = Date.now();
-    const agendaOccs = s.agendaShowPast
+    let agendaOccs = s.agendaShowPast
       ? occurrences
       : occurrences.filter((o) => parseISO(o.end).getTime() >= nowMs);
+    if (s.agendaSort === 'match') agendaOccs = sortByMatch(agendaOccs);
     view = html`<div class="bc-agenda-wrap">
-      <label class="bc-check bc-agenda-toggle">
-        <input type="checkbox" checked=${s.agendaShowPast} onChange=${(e) => set({ agendaShowPast: e.target.checked })} />
-        <span>Show past events</span>
-      </label>
+      <div class="bc-agenda-toggle">
+        <label class="bc-check">
+          <input type="checkbox" checked=${s.agendaShowPast} onChange=${(e) => set({ agendaShowPast: e.target.checked })} />
+          <span>Show past events</span>
+        </label>
+        <span class="bc-seg" role="group" aria-label="Agenda sort">
+          ${[['time', 'By time'], ['match', 'By match']].map(([value, label]) => html`<button
+            key=${value} type="button"
+            class="bc-seg-btn${s.agendaSort === value ? ' is-active' : ''}"
+            aria-pressed=${s.agendaSort === value}
+            title=${value === 'match' ? 'Best-matching feed events first (background-scored)' : 'Chronological'}
+            onClick=${() => set({ agendaSort: value })}
+          >${label}</button>`)}
+        </span>
+      </div>
       <${AgendaList}
         occurrences=${agendaOccs}
         calendars=${calMeta}
         dimSet=${dimSet}
+        sortMode=${s.agendaSort}
         onOpenEvent=${onOpenEvent}
         onSetAttendance=${triageAttendance}
+        onFeedback=${sendFeedback}
         emptyLabel=${s.agendaShowPast ? 'No events' : 'No upcoming events'}
       />
     </div>`;

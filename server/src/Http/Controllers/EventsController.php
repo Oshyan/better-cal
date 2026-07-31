@@ -89,4 +89,14 @@ final class EventsController
         );
         return Response::json(['ok' => true]);
     }
+
+    public function feedback(Request $req, array $params): Response
+    {
+        $this->events->recordFeedback(
+            (int) $req->user['id'],
+            (int) $params['id'],
+            (string) ($req->str('signal') ?? '')
+        );
+        return Response::json(['ok' => true]);
+    }
 }

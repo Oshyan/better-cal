@@ -9,6 +9,7 @@ use BetterCal\Http\Request;
 use BetterCal\Http\Response;
 use BetterCal\Http\Router;
 use BetterCal\Infra\Db;
+use BetterCal\Infra\JobQueue;
 use BetterCal\Infra\LlmGateway;
 
 require dirname(__DIR__) . '/src/bootstrap.php';
@@ -60,11 +61,12 @@ function bc_handle_api(Request $request, array $cfg): void
         $undo = new Domain\Undo($db);
         $labels = new Domain\Labels($db);
         $recurrence = new Domain\Recurrence();
-        $filters = new Domain\Filters($db, $undo);
+        $jobQueue = new JobQueue($db);
+        $filters = new Domain\Filters($db, $undo, $jobQueue);
         $events = new Domain\Events($db, $recurrence, $undo, $labels, $filters);
         $calendars = new Domain\Calendars($db, $undo, $labels);
         $folders = new Domain\Folders($db, $undo);
-        $feeds = new Domain\Feeds($db);
+        $feeds = new Domain\Feeds($db, $jobQueue);
         $search = new Domain\Search($db);
         $savedViews = new Domain\SavedViews($db, $undo);
         $outFeeds = new Domain\OutFeeds($db, $search, $cfg);
@@ -106,6 +108,7 @@ function bc_handle_api(Request $request, array $cfg): void
         $router->add('PATCH', "$base/events/:id", [$eventsController, 'patch']);
         $router->add('DELETE', "$base/events/:id", [$eventsController, 'delete']);
         $router->add('POST', "$base/events/:id/attendance", [$eventsController, 'attendance']);
+        $router->add('POST', "$base/events/:id/feedback", [$eventsController, 'feedback']);
 
         $router->add('POST', "$base/quickadd", [$quickAddController, 'run']);
         $router->add('POST', "$base/undo", function (Request $req) use ($undo): Response {

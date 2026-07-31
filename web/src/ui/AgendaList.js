@@ -30,11 +30,39 @@ function TriageBar({ occ, onSetAttendance }) {
   </span>`;
 }
 
-export function AgendaList({ occurrences, calendars, dimSet, onOpenEvent, onSetAttendance, onRequestWindow, emptyLabel }) {
+// Thumbs feedback for feed events: distinct from attendance, feeds the
+// trainable ranking (PRD 5.8). Stateless: signals accumulate server-side.
+function FeedbackBar({ occ, onFeedback }) {
+  const buttons = [
+    ['up', '▲', 'More like this'],
+    ['down', '▼', 'Less like this'],
+  ];
+  return html`<span class="bc-triage" role="group" aria-label="Feedback">
+    ${buttons.map(([value, glyph, label]) => html`<button
+      key=${value} type="button" class="bc-triage-btn"
+      title=${label} aria-label=${label}
+      onClick=${(e) => { e.stopPropagation(); onFeedback(occ, value); }}
+    >${glyph}</button>`)}
+  </span>`;
+}
+
+function fmtDayShort(occ) {
+  return dateOfDayKey(occDayKey(occ)).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+// props: sortMode 'time' (default: day-grouped) | 'match' (flat, caller-ordered
+// by score); onFeedback(occ, 'up'|'down') optional thumbs intent.
+export function AgendaList({ occurrences, calendars, dimSet, sortMode, onOpenEvent, onSetAttendance, onFeedback, onRequestWindow, emptyLabel }) {
   const scrollRef = useRef(null);
   const [win, setWin] = useState({ top: 0, height: 800 });
+  const flat = sortMode === 'match';
 
   const groups = useMemo(() => {
+    if (flat) {
+      // Match order: one flat section preserving the caller's ranked order.
+      const items = occurrences.filter((occ) => occ.attendance !== 'hidden');
+      return items.length === 0 ? [] : [{ dayKey: null, items, top: 0, height: items.length * ROW_H }];
+    }
     const byDay = new Map();
     for (const occ of occurrences) {
       if (occ.attendance === 'hidden') continue;
@@ -55,7 +83,7 @@ export function AgendaList({ occurrences, calendars, dimSet, onOpenEvent, onSetA
       offset += height;
       return g;
     });
-  }, [occurrences]);
+  }, [occurrences, flat]);
 
   const totalH = groups.length ? groups[groups.length - 1].top + groups[groups.length - 1].height : 0;
 
@@ -81,19 +109,22 @@ export function AgendaList({ occurrences, calendars, dimSet, onOpenEvent, onSetA
       ${groups.map((g) => {
         const visible = g.top + g.height >= visStart && g.top <= visEnd;
         return html`<section
-          key=${g.dayKey}
+          key=${g.dayKey === null ? 'match' : g.dayKey}
           class="bc-agenda-group${g.dayKey === tKey ? ' is-today' : ''}"
           style=${`top:${g.top}px;height:${g.height}px`}
         >
-          <h3 class="bc-agenda-day">${fmtDayLong(dateOfDayKey(g.dayKey))}</h3>
+          ${g.dayKey !== null && html`<h3 class="bc-agenda-day">${fmtDayLong(dateOfDayKey(g.dayKey))}</h3>`}
           ${visible && g.items.map((occ) => html`<div key=${occ.instanceId} class="bc-agenda-row" style=${`height:${ROW_H}px`}>
-            <span class="bc-agenda-time">${occ.allDay ? 'all day' : fmtTime(parseISO(occ.start)) + (occ.end ? ' to ' + fmtTime(parseISO(occ.end)) : '')}</span>
+            <span class="bc-agenda-time">${flat
+              ? fmtDayShort(occ) + ' · ' + (occ.allDay ? 'all day' : fmtTime(parseISO(occ.start)))
+              : occ.allDay ? 'all day' : fmtTime(parseISO(occ.start)) + (occ.end ? ' to ' + fmtTime(parseISO(occ.end)) : '')}</span>
             <${EventChip}
               occ=${occ} cal=${calendars[occ.calendarId]} showTime=${false}
               dimmed=${dimSet && dimSet.has(occ.instanceId)}
               onOpen=${onOpenEvent}
             />
             ${occ.source === 'feed' && onSetAttendance && html`<${TriageBar} occ=${occ} onSetAttendance=${onSetAttendance} />`}
+            ${occ.source === 'feed' && onFeedback && html`<${FeedbackBar} occ=${occ} onFeedback=${onFeedback} />`}
             ${occ.location && html`<span class="bc-agenda-loc">${occ.location}</span>`}
           </div>`)}
         </section>`;

@@ -6,24 +6,32 @@ namespace BetterCal\Domain;
 
 use BetterCal\Http\HttpError;
 use BetterCal\Infra\Db;
+use BetterCal\Infra\JobQueue;
 
 /**
- * Keyword/regex filters at global, folder, or calendar scope. Enabled filters
- * are applied server-side to the events window and search: action `hide`
- * drops matching occurrences, action `dim` marks them `dimmed:true`
+ * Keyword/regex/prompt filters at global, folder, or calendar scope. Enabled
+ * filters are applied server-side to the events window and search: action
+ * `hide` drops matching occurrences, action `dim` marks them `dimmed:true`
  * (additive occurrence field). Keyword = case-insensitive substring; regex =
- * PCRE, evaluated case-insensitively.
+ * PCRE, evaluated case-insensitively. Prompt filters are never evaluated in
+ * the request path: a background worker scores feed events against the prompt
+ * (see PromptEval) and the cached verdicts in `filter_evals` are joined here;
+ * verdict `fail` applies the filter's action, a missing verdict is a pass.
  */
 final class Filters
 {
     private const SCOPES = ['global', 'folder', 'calendar'];
-    private const TYPES = ['keyword', 'regex'];
+    private const TYPES = ['keyword', 'regex', 'prompt'];
     private const ACTIONS = ['hide', 'dim'];
     public const FIELDS = ['title', 'description', 'location'];
     private const MAX_PATTERN_CHARS = 500;
+    private const MAX_PROMPT_CHARS = 2000;
 
-    public function __construct(private readonly Db $db, private readonly Undo $undo)
-    {
+    public function __construct(
+        private readonly Db $db,
+        private readonly Undo $undo,
+        private readonly ?JobQueue $queue = null,
+    ) {
     }
 
     public function get(int $userId, int $id): array
@@ -52,7 +60,7 @@ final class Filters
         }
         $type = (string) ($in['type'] ?? '');
         if (!in_array($type, self::TYPES, true)) {
-            throw HttpError::badRequest('type must be keyword|regex');
+            throw HttpError::badRequest('type must be keyword|regex|prompt');
         }
         $action = (string) ($in['action'] ?? 'hide');
         if (!in_array($action, self::ACTIONS, true)) {
@@ -71,6 +79,7 @@ final class Filters
         ]);
         $created = $this->get($userId, $id);
         $this->undo->record($userId, 'filter', $id, 'create', null, ['filters' => [$created]]);
+        $this->scheduleEval($created);
         return self::serialize($created);
     }
 
@@ -96,7 +105,7 @@ final class Filters
         if (array_key_exists('type', $in)) {
             $type = (string) $in['type'];
             if (!in_array($type, self::TYPES, true)) {
-                throw HttpError::badRequest('type must be keyword|regex');
+                throw HttpError::badRequest('type must be keyword|regex|prompt');
             }
             $fields['type'] = $type;
         }
@@ -123,6 +132,16 @@ final class Filters
         }
         $after = $this->get($userId, $id);
         $this->undo->record($userId, 'filter', $id, 'update', ['filters' => [$before]], ['filters' => [$after]]);
+
+        // A prompt/type/config change invalidates cached verdicts; the
+        // background job then re-evaluates from scratch.
+        $definitionChanged = isset($fields['type']) || isset($fields['config_json']);
+        if ($definitionChanged && ($before['type'] === 'prompt' || $after['type'] === 'prompt')) {
+            $this->db->run('DELETE FROM filter_evals WHERE filter_id = ?', [$id]);
+        }
+        if ($definitionChanged || (isset($fields['enabled']) && (int) $after['enabled'] === 1)) {
+            $this->scheduleEval($after);
+        }
         return self::serialize($after);
     }
 
@@ -153,24 +172,85 @@ final class Filters
             if (!is_array($config)) {
                 continue;
             }
-            $calendarIds = null;
-            if ($row['scope'] === 'calendar') {
-                $calendarIds = [(int) $row['scope_id'] => true];
-            } elseif ($row['scope'] === 'folder') {
-                $calendarIds = [];
-                $links = $this->db->all('SELECT calendar_id FROM calendar_folders WHERE folder_id = ?', [(int) $row['scope_id']]);
-                foreach ($links as $link) {
-                    $calendarIds[(int) $link['calendar_id']] = true;
-                }
-            }
             $out[] = [
                 'type' => (string) $row['type'],
                 'config' => $config,
                 'action' => (string) $row['action'],
-                'calendarIds' => $calendarIds,
+                'calendarIds' => $this->scopeCalendarIds($row),
             ];
         }
         return $out;
+    }
+
+    /**
+     * Enabled prompt filters plus their cached `fail` verdicts for the given
+     * events, ready for promptDisposition(). No LLM calls here, ever: this
+     * only reads the filter_evals cache written by the background worker.
+     *
+     * @param list<int> $eventIds
+     * @return array{
+     *   filters: list<array{id:int,action:string,calendarIds:?array<int,true>}>,
+     *   failed: array<int,array<int,true>>
+     * } failed is filterId => set of event ids whose verdict is fail
+     */
+    public function promptFilterContext(int $userId, array $eventIds): array
+    {
+        $empty = ['filters' => [], 'failed' => []];
+        if ($eventIds === []) {
+            return $empty;
+        }
+        $rows = $this->db->all(
+            "SELECT * FROM filters WHERE user_id = ? AND enabled = 1 AND type = 'prompt' ORDER BY id",
+            [$userId]
+        );
+        if ($rows === []) {
+            return $empty;
+        }
+        $filters = [];
+        foreach ($rows as $row) {
+            $filters[] = [
+                'id' => (int) $row['id'],
+                'action' => (string) $row['action'],
+                'calendarIds' => $this->scopeCalendarIds($row),
+            ];
+        }
+        [$fIn, $fParams] = Db::in(array_column($filters, 'id'));
+        [$eIn, $eParams] = Db::in(array_values(array_unique(array_map('intval', $eventIds))));
+        $failed = [];
+        $evals = $this->db->all(
+            "SELECT filter_id, event_id FROM filter_evals
+             WHERE verdict = 'fail' AND filter_id IN $fIn AND event_id IN $eIn",
+            [...$fParams, ...$eParams]
+        );
+        foreach ($evals as $eval) {
+            $failed[(int) $eval['filter_id']][(int) $eval['event_id']] = true;
+        }
+        return ['filters' => $filters, 'failed' => $failed];
+    }
+
+    /** @return ?array<int,true> calendar ids the filter row applies to; null = all */
+    private function scopeCalendarIds(array $row): ?array
+    {
+        if ($row['scope'] === 'calendar') {
+            return [(int) $row['scope_id'] => true];
+        }
+        if ($row['scope'] === 'folder') {
+            $calendarIds = [];
+            $links = $this->db->all('SELECT calendar_id FROM calendar_folders WHERE folder_id = ?', [(int) $row['scope_id']]);
+            foreach ($links as $link) {
+                $calendarIds[(int) $link['calendar_id']] = true;
+            }
+            return $calendarIds;
+        }
+        return null;
+    }
+
+    /** Queue background (re-)evaluation for a prompt filter row. */
+    private function scheduleEval(array $row): void
+    {
+        if ($this->queue !== null && (string) $row['type'] === 'prompt' && (int) $row['enabled'] === 1) {
+            $this->queue->enqueue('filter_eval', ['filterId' => (int) $row['id']]);
+        }
     }
 
     /**
@@ -230,11 +310,59 @@ final class Filters
         return $result;
     }
 
+    /**
+     * Pure prompt-filter disposition for one event row given pre-fetched
+     * verdicts (see promptFilterContext). Same precedence as disposition():
+     * hide wins outright, dim otherwise, null when every filter passes,
+     * is out of scope, or has no cached verdict yet.
+     *
+     * @param list<array{id:int,action:string,calendarIds:?array<int,true>}> $promptFilters
+     * @param array<int,array<int,true>> $failed filterId => set of failing event ids
+     */
+    public static function promptDisposition(array $row, array $promptFilters, array $failed): ?string
+    {
+        $eventId = (int) ($row['id'] ?? 0);
+        $result = null;
+        foreach ($promptFilters as $filter) {
+            if ($filter['calendarIds'] !== null && !isset($filter['calendarIds'][(int) ($row['calendar_id'] ?? 0)])) {
+                continue;
+            }
+            if (!isset($failed[$filter['id']][$eventId])) {
+                continue;
+            }
+            if ($filter['action'] === 'hide') {
+                return 'hide';
+            }
+            $result = 'dim';
+        }
+        return $result;
+    }
+
+    /** Combine dispositions from independent filter tiers: hide beats dim beats null. */
+    public static function strongest(?string ...$dispositions): ?string
+    {
+        $result = null;
+        foreach ($dispositions as $d) {
+            if ($d === 'hide') {
+                return 'hide';
+            }
+            if ($d === 'dim') {
+                $result = 'dim';
+            }
+        }
+        return $result;
+    }
+
     // ---- Helpers ------------------------------------------------------
 
-    /** @return array{pattern:string,fields:list<string>} */
+    /**
+     * Keyword/regex: {pattern, fields}. Prompt: {prompt, negativePrompt?, threshold?}.
+     */
     public static function validateConfig(string $type, array $config): array
     {
+        if ($type === 'prompt') {
+            return self::validatePromptConfig($config);
+        }
         $pattern = trim((string) ($config['pattern'] ?? ''));
         if ($pattern === '') {
             throw HttpError::badRequest('config.pattern is required');
@@ -256,6 +384,37 @@ final class Filters
             throw HttpError::badRequest('Invalid regular expression', 'filter_invalid_regex');
         }
         return ['pattern' => $pattern, 'fields' => $fields];
+    }
+
+    /** @return array{prompt:string,negativePrompt?:string,threshold?:float} */
+    private static function validatePromptConfig(array $config): array
+    {
+        $prompt = trim((string) ($config['prompt'] ?? ''));
+        if ($prompt === '') {
+            throw HttpError::badRequest('config.prompt is required');
+        }
+        if (mb_strlen($prompt) > self::MAX_PROMPT_CHARS) {
+            throw HttpError::badRequest('config.prompt is too long (max ' . self::MAX_PROMPT_CHARS . ' chars)');
+        }
+        $out = ['prompt' => $prompt];
+        $negative = trim((string) ($config['negativePrompt'] ?? ''));
+        if ($negative !== '') {
+            if (mb_strlen($negative) > self::MAX_PROMPT_CHARS) {
+                throw HttpError::badRequest('config.negativePrompt is too long (max ' . self::MAX_PROMPT_CHARS . ' chars)');
+            }
+            $out['negativePrompt'] = $negative;
+        }
+        if (isset($config['threshold']) && $config['threshold'] !== '') {
+            if (!is_numeric($config['threshold'])) {
+                throw HttpError::badRequest('config.threshold must be a number between 0 and 1');
+            }
+            $threshold = (float) $config['threshold'];
+            if ($threshold < 0.0 || $threshold > 1.0) {
+                throw HttpError::badRequest('config.threshold must be a number between 0 and 1');
+            }
+            $out['threshold'] = $threshold;
+        }
+        return $out;
     }
 
     private function validateScopeId(int $userId, string $scope, mixed $scopeId): ?int
@@ -283,12 +442,15 @@ final class Filters
     private static function serialize(array $row): array
     {
         $config = json_decode((string) $row['config_json'], true);
+        $fallback = (string) $row['type'] === 'prompt'
+            ? ['prompt' => '']
+            : ['pattern' => '', 'fields' => self::FIELDS];
         return [
             'id' => (int) $row['id'],
             'scope' => (string) $row['scope'],
             'scopeId' => $row['scope_id'] !== null ? (int) $row['scope_id'] : null,
             'type' => (string) $row['type'],
-            'config' => is_array($config) ? $config : ['pattern' => '', 'fields' => self::FIELDS],
+            'config' => is_array($config) ? $config : $fallback,
             'action' => (string) $row['action'],
             'enabled' => (int) $row['enabled'] === 1,
         ];

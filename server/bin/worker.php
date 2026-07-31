@@ -8,8 +8,11 @@ declare(strict_types=1);
 require dirname(__DIR__) . '/src/bootstrap.php';
 
 use BetterCal\Domain\Feeds;
+use BetterCal\Domain\PromptEval;
+use BetterCal\Domain\Ranking;
 use BetterCal\Infra\Db;
 use BetterCal\Infra\JobQueue;
+use BetterCal\Infra\LlmGateway;
 use BetterCal\Support\Time;
 
 const WORKER_LOCK = 'bettercal_worker';
@@ -18,7 +21,10 @@ const MAX_RUNTIME_SECONDS = 50;
 $cfg = config();
 $db = new Db($cfg['db']);
 $queue = new JobQueue($db);
-$feeds = new Feeds($db);
+$feeds = new Feeds($db, $queue);
+$llm = new LlmGateway($cfg);
+$promptEval = new PromptEval($db, $llm, $queue);
+$ranking = new Ranking($db, $llm, $queue);
 
 $locked = $db->scalar('SELECT GET_LOCK(?, 0)', [WORKER_LOCK]);
 if ((int) $locked !== 1) {
@@ -28,6 +34,7 @@ if ((int) $locked !== 1) {
 $started = time();
 try {
     bc_enqueue_due_polls($db, $queue);
+    bc_enqueue_recurring($db, $queue);
 
     while (time() - $started < MAX_RUNTIME_SECONDS) {
         $job = $queue->claimNext();
@@ -41,6 +48,15 @@ try {
                     $calendarId = (int) ($payload['calendarId'] ?? 0);
                     $imported = $feeds->poll($calendarId);
                     echo bc_ts() . " feed_poll calendar=$calendarId imported=$imported\n";
+                    break;
+                case 'filter_eval':
+                    $filterId = isset($payload['filterId']) ? (int) $payload['filterId'] : null;
+                    $evaluated = $promptEval->run($filterId);
+                    echo bc_ts() . ' filter_eval' . ($filterId !== null ? " filter=$filterId" : '') . " evaluated=$evaluated\n";
+                    break;
+                case 'rank_events':
+                    $scored = $ranking->run();
+                    echo bc_ts() . " rank_events scored=$scored\n";
                     break;
                 default:
                     throw new \RuntimeException('Unknown job type: ' . $job['type']);
@@ -72,6 +88,28 @@ function bc_enqueue_due_polls(Db $db, JobQueue $queue): void
         if (!$queue->hasActiveFeedPoll($calendarId)) {
             $queue->enqueue('feed_poll', ['calendarId' => $calendarId]);
         }
+    }
+}
+
+/**
+ * Recurring LLM jobs: hourly rank refresh, nightly prompt-filter catch-up.
+ * "Recently created" (any status) gates re-enqueue, so failed runs still
+ * respect their own backoff instead of piling up.
+ */
+function bc_enqueue_recurring(Db $db, JobQueue $queue): void
+{
+    bc_enqueue_if_stale($db, $queue, 'rank_events', 'PT1H');
+    bc_enqueue_if_stale($db, $queue, 'filter_eval', 'P1D');
+}
+
+function bc_enqueue_if_stale(Db $db, JobQueue $queue, string $type, string $interval): void
+{
+    $recent = $db->scalar(
+        'SELECT id FROM jobs WHERE type = ? AND created_at > ? LIMIT 1',
+        [$type, Time::toDb(Time::nowUtc()->sub(new DateInterval($interval)))]
+    );
+    if ($recent === null) {
+        $queue->enqueue($type, []);
     }
 }
 

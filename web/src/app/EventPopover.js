@@ -5,7 +5,7 @@
 
 import { html, useState, useRef, useEffect } from '../../vendor/index.js';
 import { useStore, set, state } from './store.js';
-import { updateEvent, deleteEvent, triageAttendance, enterReschedule } from './actions.js';
+import { updateEvent, deleteEvent, triageAttendance, sendFeedback, enterReschedule } from './actions.js';
 import { isMobile, trapFocus, MOBILE_QUERY } from '../ui/DayExpand.js';
 import {
   parseISO, dateOfDayKey, fmtRange, toInputValue, fromInputValue, toISOWithOffset,
@@ -138,6 +138,13 @@ export function EventPopover() {
               if (result === 'hidden') set({ popover: null });
             }}
           >${label}</button>`)}
+        </div>`}
+        ${isFeed && html`<div class="bc-seg" role="group" aria-label="Feedback">
+          ${[['up', '▲', 'More like this'], ['down', '▼', 'Less like this']].map(([value, glyph, label]) => html`<button
+            key=${value} type="button" class="bc-seg-btn"
+            title=${label} aria-label=${label}
+            onClick=${() => sendFeedback(occ, value)}
+          >${glyph}</button>`)}
         </div>`}
         <button type="button" class="bc-icon-btn bc-pop-close" aria-label="Close" onClick=${() => set({ popover: null })}>✕</button>
       </div>

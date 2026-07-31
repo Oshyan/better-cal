@@ -374,7 +374,10 @@ body.bc-dragging * { cursor: grabbing !important; }
 /* --- agenda ------------------------------------------------------------------- */
 
 .bc-agenda-wrap { display: flex; flex-direction: column; flex: 1; min-height: 0; }
-.bc-agenda-toggle { padding: 6px 14px; border-bottom: 1px solid var(--border); background: var(--bg-raised); }
+.bc-agenda-toggle {
+  display: flex; align-items: center; gap: 14px;
+  padding: 6px 14px; border-bottom: 1px solid var(--border); background: var(--bg-raised);
+}
 .bc-agenda { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 0 14px; }
 .bc-agenda-spacer { position: relative; }
 .bc-agenda-group { position: absolute; left: 0; right: 0; overflow: hidden; }
@@ -580,6 +583,8 @@ body.bc-dragging * { cursor: grabbing !important; }
   overflow: hidden; text-overflow: ellipsis; max-width: 260px; white-space: nowrap;
 }
 .bc-filter-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 16px; }
+.bc-filter-form textarea { flex: 1 1 100%; min-height: 40px; resize: vertical; font: inherit; }
+.bc-filter-hint { flex-basis: 100%; margin: 0; }
 .bc-filter-fields { display: inline-flex; gap: 8px; }
 .bc-filter-pattern {
   font-family: var(--mono); font-size: 12.5px;

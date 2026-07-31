@@ -27,7 +27,7 @@ function buildRrule(r) {
 }
 
 function parseRrule(rrule) {
-  const r = { freq: 'none', interval: 1, byday: [], ends: 'until', until: '', count: 10 };
+  const r = { freq: 'none', interval: 1, byday: [], ends: 'never', until: '', count: 10 };
   if (!rrule) return r;
   for (const part of rrule.split(';')) {
     const [k, v] = part.split('=');
@@ -230,9 +230,9 @@ export function EditorDrawer() {
         </div>`}
         ${r.freq !== 'none' && html`<div class="bc-field-row">
           <select value=${r.ends} onChange=${(e) => updRrule({ ends: e.target.value, until: e.target.value === 'until' && !r.until ? defaultUntil(fromInputValue(form.start) || new Date()) : r.until })} aria-label="Ends">
+            <option value="never">Never</option>
             <option value="until">Until date</option>
             <option value="count">After N times</option>
-            <option value="never">Never</option>
           </select>
           ${r.ends === 'until' && html`<input type="date" value=${r.until} onInput=${(e) => updRrule({ until: e.target.value })} aria-label="Until date" />`}
           ${r.ends === 'count' && html`<input class="bc-num" type="number" min="1" max="999" value=${r.count} onInput=${(e) => updRrule({ count: Number(e.target.value) || 1 })} aria-label="Occurrence count" />`}

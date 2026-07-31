@@ -42,7 +42,7 @@ export function installKeyboard() {
         break;
       case 'ArrowLeft':
         e.preventDefault();
-        navigate(state.view === 'day' ? -1 : -1);
+        navigate(-1);
         break;
       case 'ArrowRight':
         e.preventDefault();

@@ -13,7 +13,7 @@ import {
   monthStartsInRange, dominantMonthOfWeek, isMultiDay,
   monthsAround, miniMonthGrid, dayDropDates, timeDropDates,
   rowSpanSegments, rowIndexOfEpochDay, rowIndexOfDayKey, firstEpochDayOfRow,
-  dayKeysOfRow, isWeekendEpochDay, dominantMonthOfRow,
+  dayKeysOfRow, isWeekendEpochDay, dominantMonthOfRow, dominantMonthOfRows,
 } from '../src/ui/monthmath.js';
 import { contrastText, withAlpha, parseHex } from '../src/lib/color.js';
 import { baseTitle, groupOccurrences, itemMatchesFilter, isGroupId } from '../src/ui/grouping.js';
@@ -144,6 +144,55 @@ assert('monthStartsInRange finds Aug 1',
 
 // 26. Dominant month of a boundary week (Jul 27 - Aug 2: 5 July days).
 eq('dominantMonthOfWeek boundary', dominantMonthOfWeek(weekIndexOfKey('2026-07-30')), { year: 2026, month: 7 });
+
+// 26b. Dominant month over the whole visible window (visible-month desync
+// fix): the top row alone can disagree with what the window mostly shows.
+const wJul27 = weekIndexOfKey('2026-07-27'); // Jul 27 - Aug 2: July-dominant row
+// Scrolled down so the old month's tail is the top row: 6 visible rows run
+// Jul 27 - Sep 6 (5 Jul, 31 Aug, 6 Sep cells) and the window is August even
+// though the top row alone says July.
+eq('dominantMonthOfRows: July tail top row, window is August',
+  dominantMonthOfRows(wJul27, 6, 7), { year: 2026, month: 8 });
+// Coming from the other direction with a short window (2 rows: Jul 27 -
+// Aug 9 = 5 Jul vs 9 Aug), August already wins.
+eq('dominantMonthOfRows: 2-row window flips at the boundary',
+  dominantMonthOfRows(wJul27, 2, 7), { year: 2026, month: 8 });
+// A 1-row window degenerates to the top-row answer (July).
+eq('dominantMonthOfRows: 1-row window matches dominantMonthOfRow',
+  dominantMonthOfRows(wJul27, 1, 7), dominantMonthOfRow(wJul27, 7));
+// Exact boundary: Jun 1 2026 is a Monday, so 4 rows are exactly Jun 1-28.
+eq('dominantMonthOfRows: exact month-aligned window',
+  dominantMonthOfRows(weekIndexOfKey('2026-06-01'), 4, 7), { year: 2026, month: 6 });
+// Tie goes to the later month: May 25-31 (all May) + Jun 1-7 (all June)
+// is 7 cells each; June wins.
+eq('dominantMonthOfRows: tie prefers later month',
+  dominantMonthOfRows(weekIndexOfKey('2026-05-25'), 2, 7), { year: 2026, month: 6 });
+// 3-column ribbon: the chunk holding Aug 1 is Jul 30-Aug 1 (July-dominant on
+// its own), but a 10-row window (Jul 30 - Aug 28) is August.
+eq('dominantMonthOfRows: 3col window is August despite July top chunk',
+  dominantMonthOfRows(rowIndexOfDayKey('2026-08-01', 3), 10, 3), { year: 2026, month: 8 });
+// Invariant sweep: the returned month always owns at least as many visible
+// cells as any other month, for both column modes across many windows.
+{
+  let holds = true;
+  for (const cols of [7, 3]) {
+    const base = rowIndexOfDayKey('2026-01-01', cols);
+    for (let r = base; r < base + 40; r++) {
+      const got = dominantMonthOfRows(r, 5, cols);
+      const counts = new Map();
+      for (let i = 0; i < 5; i++) {
+        for (const k of dayKeysOfRow(r + i, cols)) {
+          const [y, m] = k.split('-').map(Number);
+          const mk = y * 12 + (m - 1);
+          counts.set(mk, (counts.get(mk) || 0) + 1);
+        }
+      }
+      const gotN = counts.get(got.year * 12 + (got.month - 1)) || 0;
+      for (const n of counts.values()) if (n > gotN) holds = false;
+    }
+  }
+  assert('dominantMonthOfRows invariant: winner has max visible cells', holds);
+}
 
 console.log('--- 3-column ribbon math ---');
 

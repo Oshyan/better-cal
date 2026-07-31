@@ -1,8 +1,9 @@
 // Outbound feeds management: list, create with scope picker, copy URL, delete.
 
 import { html, useState, useEffect } from '../../vendor/index.js';
-import { useStore, set, state, toast } from './store.js';
+import { useStore, state, toast } from './store.js';
 import { api } from './api.js';
+import { PageShell, EmptyState } from './PageShell.js';
 
 export function OutfeedsPage() {
   const [feeds, setFeeds] = useState(null);
@@ -72,41 +73,72 @@ export function OutfeedsPage() {
     return 'Search: ' + (scope.q || '');
   };
 
-  return html`<div class="bc-page">
-    <div class="bc-page-head">
-      <h1>Outbound feeds</h1>
-      <button type="button" class="bc-btn" onClick=${() => set({ route: 'calendar' })}>Back to calendar</button>
-    </div>
-    <p class="bc-page-note">Each feed is a token ICS URL other apps can subscribe to.</p>
+  const focusForm = () => {
+    const el = document.querySelector('.bc-mgmt-form input');
+    if (el) el.focus();
+  };
 
-    <form class="bc-outfeed-form" onSubmit=${create}>
-      <input placeholder="Feed name" value=${name} onInput=${(e) => setName(e.target.value)} required />
-      <select value=${scopeType} onChange=${(e) => setScopeType(e.target.value)} aria-label="Feed scope">
-        <option value="all">All events</option>
-        <option value="calendar">One calendar</option>
-        <option value="search">Saved search</option>
-      </select>
-      ${scopeType === 'calendar' && html`<select value=${calendarId} onChange=${(e) => setCalendarId(e.target.value)} aria-label="Calendar">
-        ${calendars.map((c) => html`<option key=${c.id} value=${c.id}>${c.name}</option>`)}
-      </select>`}
-      ${scopeType === 'search' && html`<input placeholder="Search query" value=${q} onInput=${(e) => setQ(e.target.value)} required />`}
-      <input placeholder="Description (optional)" value=${description} onInput=${(e) => setDescription(e.target.value)} />
-      <button type="submit" class="bc-btn bc-btn-primary" disabled=${busy}>Create feed</button>
+  return html`<${PageShell}
+    title="Outbound feeds"
+    note="Each feed is a private token URL other calendar apps can subscribe to."
+  >
+    <form class="bc-mgmt-form" onSubmit=${create}>
+      <div class="bc-form-row">
+        <label class="bc-field grow">
+          <span>Feed name</span>
+          <input placeholder="e.g. Work calendar for Google" value=${name} onInput=${(e) => setName(e.target.value)} required />
+        </label>
+        <label class="bc-field">
+          <span>Includes</span>
+          <select value=${scopeType} onChange=${(e) => setScopeType(e.target.value)}>
+            <option value="all">All events</option>
+            <option value="calendar">One calendar</option>
+            <option value="search">Saved search</option>
+          </select>
+        </label>
+        ${scopeType === 'calendar' && html`<label class="bc-field">
+          <span>Calendar</span>
+          <select value=${calendarId} onChange=${(e) => setCalendarId(e.target.value)}>
+            ${calendars.map((c) => html`<option key=${c.id} value=${c.id}>${c.name}</option>`)}
+          </select>
+        </label>`}
+        ${scopeType === 'search' && html`<label class="bc-field grow">
+          <span>Search query</span>
+          <input placeholder="Events matching this text" value=${q} onInput=${(e) => setQ(e.target.value)} required />
+        </label>`}
+      </div>
+      <div class="bc-form-row">
+        <label class="bc-field grow">
+          <span>Description (optional)</span>
+          <input placeholder="Shown to subscribing apps" value=${description} onInput=${(e) => setDescription(e.target.value)} />
+        </label>
+        <div class="bc-field bc-form-actions">
+          <span aria-hidden="true"> </span>
+          <button type="submit" class="bc-btn bc-btn-primary" disabled=${busy}>Create feed</button>
+        </div>
+      </div>
     </form>
 
     ${feeds === null && html`<div class="bc-empty">Loading feeds</div>`}
-    ${feeds !== null && feeds.length === 0 && html`<div class="bc-empty">No outbound feeds yet</div>`}
-    ${feeds !== null && feeds.length > 0 && html`<div class="bc-outfeed-list">
-      ${feeds.map((f) => html`<div key=${f.id} class="bc-outfeed-row">
-        <div class="bc-outfeed-main">
-          <strong>${f.name}</strong>
-          <span class="bc-outfeed-scope">${scopeLabel(f.scope)}</span>
-          ${f.description && html`<span class="bc-outfeed-desc">${f.description}</span>`}
+    ${feeds !== null && feeds.length === 0 && html`<${EmptyState}
+      text="No outbound feeds yet. A feed lets Google Calendar, Apple Calendar, or any other app subscribe to your Better-Cal events."
+      actionLabel="Create your first feed" onAction=${focusForm}
+    />`}
+    ${feeds !== null && feeds.length > 0 && html`<div class="bc-card-list">
+      ${feeds.map((f) => html`<div key=${f.id} class="bc-card">
+        <div class="bc-card-main">
+          <div class="bc-card-badges">
+            <strong class="bc-card-title">${f.name}</strong>
+            <span class="bc-badge">${scopeLabel(f.scope)}</span>
+          </div>
+          ${f.description && html`<div class="bc-card-sub">${f.description}</div>`}
+          <code class="bc-outfeed-url" title=${f.url}>${f.url}</code>
         </div>
-        <code class="bc-outfeed-url">${f.url}</code>
-        <button type="button" class="bc-btn" onClick=${() => copy(f.url)}>Copy URL</button>
-        <button type="button" class="bc-btn bc-btn-danger" onClick=${() => remove(f)}>Delete</button>
+        <div class="bc-card-actions">
+          <button type="button" class="bc-btn" onClick=${() => copy(f.url)}>Copy URL</button>
+          <button type="button" class="bc-btn bc-btn-danger" onClick=${() => remove(f)}>Delete</button>
+        </div>
       </div>`)}
     </div>`}
-  </div>`;
+  <//>`;
 }

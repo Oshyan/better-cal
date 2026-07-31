@@ -22,8 +22,11 @@
   --chip-h: 20px;
 }
 
+/* Dark palette follows the OS unless the theme setting pins light/dark:
+   the app stamps data-theme on <html> (see settings.js), which must win in
+   both directions over prefers-color-scheme. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #16181d;
     --bg-raised: #1e2128;
     --bg-inset: #23262e;
@@ -35,6 +38,19 @@
     --accent: #7593dd;
     --shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
   }
+}
+
+:root[data-theme="dark"] {
+  --bg: #16181d;
+  --bg-raised: #1e2128;
+  --bg-inset: #23262e;
+  --bg-alt: #1a1d23;
+  --fg: #e6e8ec;
+  --fg-muted: #9aa1ac;
+  --border: #2c3038;
+  --border-strong: #3d424c;
+  --accent: #7593dd;
+  --shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
 }
 
 * { box-sizing: border-box; }
@@ -223,20 +239,90 @@ button:focus-visible, [tabindex]:focus-visible {
   background: none; border: none; font-weight: 600; padding: 4px 2px;
   color: var(--fg-muted); text-transform: uppercase; font-size: 11.5px; letter-spacing: 0.4px;
 }
-.bc-folder-caret { width: 12px; }
+.bc-folder-caret { width: 12px; flex: none; }
 .bc-folder-static { cursor: default; }
+.bc-folder-headrow { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.bc-folder-headrow .bc-folder-head { flex: 1; min-width: 0; }
+.bc-folder-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.bc-folder-mode {
+  background: none; border: 1px solid var(--border-strong); border-radius: 9px;
+  font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.3px;
+  color: var(--fg-muted); padding: 0 7px; line-height: 15px; flex: none;
+}
+.bc-folder-mode:hover { border-color: var(--accent); color: var(--accent); }
+.bc-folder-tools { display: none; flex: none; }
+.bc-folder-headrow:hover .bc-folder-tools,
+.bc-folder-headrow:focus-within .bc-folder-tools { display: inline-flex; }
+.bc-folder-tool { padding: 2px 4px; font-size: 11px; }
+.bc-folder-rename { padding: 2px 0; }
+.bc-folder-rename input { width: 100%; font-size: 12px; padding: 2px 6px; }
+.bc-cal-item { min-width: 0; }
 .bc-cal-row { display: flex; align-items: center; gap: 4px; padding: 1px 0 1px 6px; }
 .bc-cal-label { display: flex; align-items: center; gap: 7px; flex: 1; min-width: 0; cursor: pointer; }
 .bc-cal-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; display: inline-block; }
 .bc-cal-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .bc-health { color: #c9913d; cursor: help; }
+.bc-cal-gear { padding: 2px 4px; visibility: hidden; flex: none; }
+.bc-cal-row:hover .bc-cal-gear,
+.bc-cal-row:focus-within .bc-cal-gear,
+.bc-cal-gear.is-open { visibility: visible; }
+.bc-cal-gear.is-open { color: var(--accent); }
+
+/* Per-calendar settings panel (inline under the row). */
+.bc-calset {
+  margin: 3px 0 8px 6px; padding: 9px 10px;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--bg-inset);
+  display: flex; flex-direction: column; gap: 8px; font-size: 12.5px;
+}
+.bc-calset input, .bc-calset select { font-size: 12.5px; padding: 3px 7px; max-width: 100%; }
+.bc-calset-field { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.bc-calset-label { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.3px; color: var(--fg-muted); }
+.bc-calset-url {
+  font-family: var(--mono); font-size: 10.5px; color: var(--fg-muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.bc-calset-folders { display: flex; flex-direction: column; gap: 2px; }
+.bc-calset-status { color: var(--fg-muted); font-size: 11px; }
+.bc-swatches { display: grid; grid-template-columns: repeat(6, 20px); gap: 5px; }
+.bc-swatch {
+  width: 20px; height: 20px; border-radius: 50%;
+  border: 2px solid transparent; padding: 0; cursor: pointer;
+}
+.bc-swatch:hover { transform: scale(1.12); }
+.bc-swatch.is-sel { border-color: var(--fg); box-shadow: 0 0 0 1px var(--bg-raised) inset; }
+.bc-hex-input { width: 84px; font-family: var(--mono); margin-top: 4px; }
+.bc-calset-danger { border-top: 1px solid var(--border); padding-top: 6px; display: flex; flex-direction: column; gap: 6px; }
+.bc-danger-link { color: var(--danger); }
+.bc-calset-confirm { font-size: 12px; }
+.bc-calset-confirm-row { display: flex; gap: 6px; flex-wrap: wrap; }
+
 .bc-add-menu { display: flex; flex-direction: column; margin-top: 8px; border-top: 1px solid var(--border); padding-top: 6px; }
 .bc-add-form { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
 .bc-add-form-row { display: flex; gap: 6px; }
-.bc-sidebar-foot { border-top: 1px solid var(--border); padding: 6px 8px; display: flex; flex-direction: column; }
+.bc-sidebar-foot { border-top: 1px solid var(--border); padding: 6px 8px; display: flex; flex-direction: column; gap: 1px; }
 .bc-manage-head {
   font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px;
   color: var(--fg-muted); padding: 2px 4px 3px;
+}
+.bc-manage-item {
+  display: flex; align-items: center; gap: 8px;
+  background: none; border: none; border-radius: 6px;
+  padding: 5px 7px; text-align: left; color: var(--fg);
+}
+.bc-manage-item svg { color: var(--fg-muted); flex: none; }
+.bc-manage-item:hover { background: var(--bg-inset); }
+.bc-manage-item:hover svg { color: var(--fg); }
+.bc-manage-item.is-active {
+  background: color-mix(in srgb, var(--accent) 13%, transparent);
+  color: var(--accent); font-weight: 600;
+}
+.bc-manage-item.is-active svg { color: var(--accent); }
+
+/* No hover on touch: keep the reveal-on-hover controls reachable. */
+@media (hover: none) {
+  .bc-cal-gear { visibility: visible; }
+  .bc-folder-tools { display: inline-flex; }
 }
 
 /* --- month grid ------------------------------------------------------------ */
@@ -639,33 +725,104 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-login-brand { margin: 0 0 4px; font-size: 20px; text-align: center; }
 .bc-login-error { color: var(--danger); font-size: 13px; }
 
-.bc-page { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 18px 22px; max-width: 860px; }
+/* Management pages share a scroll surface with a centered content column. */
+.bc-page { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 20px 24px 32px; }
+.bc-page-col { max-width: 680px; margin: 0 auto; }
 .bc-page-head { display: flex; align-items: center; gap: 14px; }
-.bc-page-head h1 { margin: 0; font-size: 20px; }
-.bc-page-note { color: var(--fg-muted); }
-.bc-outfeed-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 16px; }
-.bc-outfeed-list { display: flex; flex-direction: column; gap: 8px; }
-.bc-outfeed-row {
-  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+.bc-page-head h1 { margin: 0; font-size: 20px; flex: 1; }
+.bc-page-note { color: var(--fg-muted); margin: 8px 0 18px; }
+
+/* Labeled create/edit forms on the management pages. */
+.bc-mgmt-form {
+  display: flex; flex-direction: column; gap: 10px;
   border: 1px solid var(--border); border-radius: var(--radius);
-  background: var(--bg-raised); padding: 8px 12px;
+  background: var(--bg-raised); padding: 12px 14px; margin-bottom: 20px;
 }
-.bc-outfeed-main { display: flex; align-items: baseline; gap: 8px; min-width: 180px; }
-.bc-outfeed-scope, .bc-outfeed-desc { color: var(--fg-muted); font-size: 12.5px; }
+.bc-mgmt-form textarea { min-height: 40px; resize: vertical; font: inherit; }
+.bc-form-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+.bc-form-actions { margin-left: auto; }
+.bc-form-btnrow { display: flex; gap: 6px; }
+.bc-filter-hint { margin: 0; font-size: 12px; }
+.bc-filter-fields { display: inline-flex; gap: 10px; padding: 5px 0; }
+
+/* List rows as cards: badges + body type, not raw metadata dumps. */
+.bc-card-list { display: flex; flex-direction: column; gap: 8px; }
+.bc-card {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--bg-raised); padding: 10px 14px;
+}
+.bc-card-main { flex: 1; min-width: 220px; display: flex; flex-direction: column; gap: 4px; }
+.bc-card-badges { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.bc-card-title { font-size: 14px; margin-right: 2px; }
+.bc-card-body { font-size: 14px; overflow-wrap: anywhere; }
+.bc-card-sub { color: var(--fg-muted); font-size: 12.5px; overflow-wrap: anywhere; }
+.bc-card-actions { display: flex; gap: 6px; flex: none; }
+.bc-card.is-off .bc-card-main { opacity: 0.5; }
+.bc-badge {
+  display: inline-flex; align-items: center;
+  border: 1px solid var(--border); border-radius: 9px;
+  background: var(--bg-inset); color: var(--fg-muted);
+  font-size: 11px; font-weight: 600; padding: 0 8px; line-height: 17px;
+  white-space: nowrap;
+}
+.bc-badge-type {
+  background: color-mix(in srgb, var(--accent) 13%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  color: var(--accent);
+}
+.bc-badge-action { text-transform: uppercase; letter-spacing: 0.3px; font-size: 10px; }
 .bc-outfeed-url {
   font-family: var(--mono); font-size: 11.5px; color: var(--fg-muted);
   background: var(--bg-inset); border-radius: 5px; padding: 3px 7px;
-  overflow: hidden; text-overflow: ellipsis; max-width: 260px; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; max-width: 100%; white-space: nowrap;
+  align-self: flex-start;
 }
-.bc-filter-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 16px; }
-.bc-filter-form textarea { flex: 1 1 100%; min-height: 40px; resize: vertical; font: inherit; }
-.bc-filter-hint { flex-basis: 100%; margin: 0; }
-.bc-filter-fields { display: inline-flex; gap: 8px; }
-.bc-filter-pattern {
-  font-family: var(--mono); font-size: 12.5px;
-  background: var(--bg-inset); border-radius: 5px; padding: 2px 7px;
+
+/* Labeled switch (enable/disable) with a visual track affordance. */
+.bc-switch { display: inline-flex; align-items: center; gap: 7px; cursor: pointer; flex: none; }
+.bc-switch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.bc-switch-track {
+  width: 30px; height: 17px; border-radius: 9px; flex: none;
+  background: var(--border-strong); position: relative;
+  transition: background 0.15s ease;
 }
-.bc-outfeed-row.is-off .bc-outfeed-main { opacity: 0.5; }
+.bc-switch-track::after {
+  content: ""; position: absolute; top: 2px; left: 2px;
+  width: 13px; height: 13px; border-radius: 50%; background: var(--bg-raised);
+  transition: transform 0.15s ease;
+}
+.bc-switch input:checked + .bc-switch-track { background: var(--accent); }
+.bc-switch input:checked + .bc-switch-track::after { transform: translateX(13px); }
+.bc-switch input:focus-visible + .bc-switch-track { outline: 2px solid var(--accent); outline-offset: 1px; }
+.bc-switch-label { font-size: 12px; color: var(--fg-muted); }
+
+/* Designed empty state: what this is + a way in. */
+.bc-emptystate {
+  border: 1px dashed var(--border-strong); border-radius: var(--radius);
+  padding: 28px 24px; text-align: center;
+  display: flex; flex-direction: column; align-items: center; gap: 12px;
+}
+.bc-emptystate p { margin: 0; color: var(--fg-muted); max-width: 420px; }
+
+/* Settings page sections and rows (inline label + control). */
+.bc-set-section { margin: 0 0 22px; }
+.bc-set-h {
+  margin: 0 0 4px; padding-bottom: 4px;
+  font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px;
+  color: var(--fg-muted); border-bottom: 1px solid var(--border);
+}
+.bc-set-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 8px 0; }
+.bc-set-label { width: 170px; flex: none; font-weight: 600; }
+.bc-set-control { display: inline-flex; align-items: center; gap: 10px; }
+.bc-set-value { color: var(--fg); }
+.bc-set-value code { font-family: var(--mono); background: var(--bg-inset); border-radius: 4px; padding: 0 4px; }
+.bc-set-hint { flex-basis: 100%; margin-left: 182px; color: var(--fg-muted); font-size: 12px; }
+
+@media (max-width: 640px) {
+  .bc-set-label { width: 100%; }
+  .bc-set-hint { margin-left: 0; }
+}
 
 /* --- reschedule mode (PRD 5.9) ----------------------------------------------------------- */
 /* Banner strip under the toolbar, film-strip month navigator docked right of

@@ -27,6 +27,7 @@ import { Login } from './Login.js';
 import { OutfeedsPage } from './OutfeedsPage.js';
 import { FiltersPage } from './FiltersPage.js';
 import { SavedViewsPage } from './SavedViewsPage.js';
+import { SettingsPage } from './SettingsPage.js';
 
 const MONTH_ROWS = { month: 6, weeks3: 3, weeks2: 2 };
 
@@ -153,6 +154,9 @@ export function App() {
   }
   if (s.route === 'views') {
     return html`<div class="bc-app"><${SavedViewsPage} /><${Toasts} /></div>`;
+  }
+  if (s.route === 'settings') {
+    return html`<div class="bc-app"><${SettingsPage} /><${Toasts} /></div>`;
   }
 
   let view = null;

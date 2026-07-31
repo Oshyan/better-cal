@@ -34,8 +34,12 @@ import { OutfeedsPage } from './OutfeedsPage.js';
 import { FiltersPage } from './FiltersPage.js';
 import { SavedViewsPage } from './SavedViewsPage.js';
 import { SettingsPage } from './SettingsPage.js';
+import { OrganizePage } from './OrganizePage.js';
 
 const MONTH_ROWS = { month: 6, weeks3: 3, weeks2: 2 };
+// Below this calendar-area width (px) the 7-column month grid is cramped
+// enough that the 3-day ribbon takes over automatically on desktop.
+const VIEW_AREA_MIN = 560;
 
 function matchesFilter(occ, needle) {
   return (occ.title || '').toLowerCase().includes(needle) ||
@@ -56,6 +60,7 @@ export function App() {
       visibleMonth: st.reschedule ? st.visibleMonth : null,
       overviewMode: st.settings.overviewMode,
       viewportNarrow: st.viewportNarrow,
+      viewAreaNarrow: st.viewAreaNarrow,
       coarsePointer: st.coarsePointer,
     }),
     shallowEq,
@@ -77,6 +82,23 @@ export function App() {
       mqNarrow.removeEventListener('change', sync);
       mqCoarse.removeEventListener('change', sync);
     };
+  }, []);
+
+  // Watch the calendar view area's own width (sidebar and window both move
+  // it): below VIEW_AREA_MIN the month slot falls back to the 3-day ribbon
+  // automatically (desktop responsive fallback, no user setting involved).
+  // Ref callback because <main> mounts/unmounts with the calendar route.
+  const viewAreaRO = useRef(null);
+  const viewAreaRef = useCallback((el) => {
+    if (viewAreaRO.current) { viewAreaRO.current.disconnect(); viewAreaRO.current = null; }
+    if (!el) return;
+    const sync = () => {
+      const isNarrow = el.clientWidth > 0 && el.clientWidth < VIEW_AREA_MIN;
+      if (state.viewAreaNarrow !== isNarrow) set({ viewAreaNarrow: isNarrow });
+    };
+    viewAreaRO.current = new ResizeObserver(sync);
+    viewAreaRO.current.observe(el);
+    sync();
   }, []);
 
   const calMeta = useMemo(() => calendarMeta(), [s.calendars]);
@@ -199,6 +221,9 @@ export function App() {
   if (!s.authed) {
     return html`<${Login} />`;
   }
+  if (s.route === 'organize') {
+    return html`<div class="bc-app"><${OrganizePage} /><${ShortcutsSheet} /><${Toasts} /></div>`;
+  }
   if (s.route === 'outfeeds') {
     return html`<div class="bc-app"><${OutfeedsPage} /><${ShortcutsSheet} /><${Toasts} /></div>`;
   }
@@ -214,8 +239,9 @@ export function App() {
 
   let view = null;
   if (MONTH_ROWS[s.view]) {
-    // The "month" slot is the Overview: full month (7 columns) or the 3-day
-    // ribbon, per the persisted overviewMode (device default when unset).
+    // The month slot: full month (7 columns) or the 3-day ribbon. Desktop is
+    // always the full month unless the view area is too narrow (responsive
+    // fallback); narrow viewports follow the mobile overviewMode setting.
     const ribbon = s.view === 'month' && effectiveOverviewMode() === '3day';
     const columns = ribbon ? 3 : 7;
     view = html`<${MonthGrid}
@@ -335,7 +361,7 @@ export function App() {
         onPointerDown=${(e) => { e.preventDefault(); e.stopPropagation(); setSidebarOpen(false); }}
       ></div>`}
       <${Sidebar} open=${sidebarOpen} onClose=${() => setSidebarOpen(false)} />
-      <main class="bc-view">${view}</main>
+      <main class="bc-view" ref=${viewAreaRef}>${view}</main>
       ${reschedActive && html`<${RescheduleStrip}
         year=${stripBase.year} month=${stripBase.month}
         currentYear=${s.visibleMonth ? s.visibleMonth.year : 0}

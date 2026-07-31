@@ -1143,6 +1143,70 @@ body.bc-dragging * { cursor: grabbing !important; }
   .bc-set-hint { margin-left: 0; }
 }
 
+/* --- organize page (calendars & folders) ----------------------------------- */
+
+/* The organize page earns a wider column: folders sit beside the calendar
+   list on roomy viewports, stacking back to one column when narrow. */
+.bc-page-col:has(.bc-org-grid) { max-width: 960px; }
+.bc-org-grid { display: grid; grid-template-columns: 1fr; gap: 0 28px; }
+@media (min-width: 880px) {
+  .bc-org-grid { grid-template-columns: minmax(250px, 330px) 1fr; }
+}
+.bc-org-folder-row, .bc-org-cal-row {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 7px 0;
+}
+.bc-org-folder + .bc-org-folder, .bc-org-cal + .bc-org-cal { border-top: 1px solid var(--border); }
+.bc-org-icon { display: inline-flex; color: var(--fg-muted); flex: none; }
+.bc-org-folder-name, .bc-org-cal-name { font-weight: 600; }
+.bc-org-count { color: var(--fg-muted); font-size: 12px; margin-right: auto; }
+.bc-org-rename { flex: 1; min-width: 120px; }
+.bc-org-confirm {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 2px 0 8px; font-size: 12.5px;
+}
+.bc-org-new { display: flex; gap: 8px; padding-top: 10px; }
+.bc-org-new input { flex: 1; min-width: 0; }
+.bc-org-kind {
+  font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px;
+  color: var(--fg-muted); background: var(--bg-inset);
+  border-radius: 4px; padding: 1px 6px; flex: none;
+}
+.bc-org-folders { display: inline-flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12.5px; }
+.bc-org-open { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }
+.bc-org-open svg { color: var(--fg-muted); flex: none; }
+.bc-org-cal .bc-calset { margin: 0 0 10px; }
+
+/* --- quick create ----------------------------------------------------------- */
+
+/* Confirm chip: fixed at the release point, above overlays under it. */
+.bc-create-chip {
+  position: fixed; z-index: 80;
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 8px 6px 12px;
+  background: var(--bg-raised); border: 1px solid var(--border-strong);
+  border-radius: 8px; box-shadow: var(--shadow);
+  font-size: 12.5px; white-space: nowrap;
+}
+.bc-create-chip-label { font-weight: 600; }
+
+/* Per-cell "+" (month/ribbon): top-right corner, revealed on cell hover or
+   keyboard focus; hidden entirely on touch where tap + chip covers it. */
+.bc-cell-add {
+  position: absolute; top: 2px; right: 2px; z-index: 4;
+  width: 20px; height: 20px; padding: 0;
+  border: none; border-radius: 6px;
+  background: var(--bg-inset); color: var(--fg-muted);
+  font-size: 14px; font-weight: 600; line-height: 1;
+  opacity: 0; pointer-events: none;
+}
+.bc-cell:hover .bc-cell-add, .bc-cell-add:focus-visible {
+  opacity: 1; pointer-events: auto;
+}
+.bc-cell-add:hover { background: var(--accent); color: var(--accent-fg); }
+@media (hover: none) {
+  .bc-cell-add { display: none; }
+}
+
 /* --- reschedule mode (PRD 5.9) ----------------------------------------------------------- */
 /* Banner strip under the toolbar, film-strip month navigator docked right of
    the grid, pointer-following ghost, and the two-step drop confirm chip.

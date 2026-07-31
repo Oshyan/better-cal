@@ -5,6 +5,7 @@ import {
   parseISO, toISOWithOffset, dayKeyOf, dateOfDayKey, epochDayOfKey,
   keyOfEpochDay, addDaysKey, diffDaysKey, weekIndexOfKey, firstEpochDayOfWeek,
   dayKeysOfWeek, startOfWeekKey, setWeekStart, getWeekStart, setTimeFormat, fmtTime,
+  fmtMonthShort,
 } from '../src/lib/dates.js';
 import { layoutOverlaps, assignLanes, rangesOverlap } from '../src/ui/layout.js';
 import {
@@ -19,6 +20,9 @@ import { baseTitle, groupOccurrences, itemMatchesFilter, isGroupId } from '../sr
 import { sortByMatch } from '../src/lib/rank.js';
 import { parseJumpText } from '../src/lib/jumpparse.js';
 import { monthWeeks, stepMonthOf } from '../src/lib/minimonth.js';
+import {
+  normalizeDayRange, dayRangeDraft, dayRangeLabel, timeRangeLabel, chipPosition,
+} from '../src/lib/quickcreate.js';
 import { HOTKEYS, HOTKEY_GROUPS } from '../src/app/hotkeys.js';
 import {
   fmtOffsetMinutes, fmtReminder, allDayEntryToMinutes, entryToMinutes,
@@ -488,6 +492,49 @@ setWeekStart('mon');
 eq('minimonth: step back across year', stepMonthOf(2026, 1, -1), { year: 2025, month: 12 });
 eq('minimonth: step forward across year', stepMonthOf(2026, 12, 1), { year: 2027, month: 1 });
 eq('minimonth: multi-year step', stepMonthOf(2026, 7, 30), { year: 2029, month: 1 });
+
+console.log('--- quick create selection math ---');
+
+// Range normalization is drag-direction agnostic, inclusive on both ends.
+eq('quickcreate: normalize ordered', normalizeDayRange('2026-08-04', '2026-08-06'),
+  { startKey: '2026-08-04', endKey: '2026-08-06', days: 3 });
+eq('quickcreate: normalize reversed', normalizeDayRange('2026-08-06', '2026-08-04'),
+  { startKey: '2026-08-04', endKey: '2026-08-06', days: 3 });
+eq('quickcreate: normalize single day', normalizeDayRange('2026-08-04', '2026-08-04').days, 1);
+eq('quickcreate: normalize across month', normalizeDayRange('2026-09-02', '2026-08-30'),
+  { startKey: '2026-08-30', endKey: '2026-09-02', days: 4 });
+
+// Single-day draft: default 1-hour timed event at 9am.
+eq('quickcreate: single-day draft', dayRangeDraft('2026-08-04', '2026-08-04'),
+  { start: localISO(2026, 8, 4, 9, 0), end: localISO(2026, 8, 4, 10, 0), allDay: false });
+
+// Multi-day draft: all-day span with the exclusive end.
+eq('quickcreate: multi-day draft', dayRangeDraft('2026-03-01', '2026-03-15'),
+  { start: localISO(2026, 3, 1, 0, 0), end: localISO(2026, 3, 16, 0, 0), allDay: true });
+assert('quickcreate: multi-day draft exclusive end crosses month',
+  dayRangeDraft('2026-08-30', '2026-08-31').end === localISO(2026, 9, 1, 0, 0));
+
+// Labels (built through fmtMonthShort so any runtime locale agrees).
+const aug = fmtMonthShort(dateOfDayKey('2026-08-04'));
+const mar = fmtMonthShort(dateOfDayKey('2026-03-01'));
+const apr = fmtMonthShort(dateOfDayKey('2026-04-02'));
+eq('quickcreate: single-day label', dayRangeLabel('2026-08-04', '2026-08-04'), aug + ' 4');
+eq('quickcreate: same-month range label', dayRangeLabel('2026-03-01', '2026-03-15'), mar + ' 1 to 15');
+eq('quickcreate: cross-month range label', dayRangeLabel('2026-03-28', '2026-04-02'),
+  mar + ' 28 to ' + apr + ' 2');
+
+// Timed labels honor the time format setting.
+setTimeFormat('24');
+eq('quickcreate: timed label 24h', timeRangeLabel('2026-08-04', 840, 930), '14:00 to 15:30');
+setTimeFormat('12');
+assert('quickcreate: timed label 12h', /2:00.*to.*3:30/.test(timeRangeLabel('2026-08-04', 840, 930)));
+
+// Chip position clamps into the viewport with an 8px margin.
+eq('quickcreate: chip position untouched inside', chipPosition(100, 100, 200, 40, 1000, 800),
+  { x: 100, y: 100 });
+eq('quickcreate: chip clamps right/bottom', chipPosition(950, 790, 200, 40, 1000, 800),
+  { x: 792, y: 752 });
+eq('quickcreate: chip clamps top/left', chipPosition(-20, -20, 200, 40, 1000, 800), { x: 8, y: 8 });
 
 console.log('--- hotkey table integrity ---');
 

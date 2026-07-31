@@ -18,16 +18,21 @@ export function rosterViews() {
 }
 
 // Overview mode for the month slot: full month grid or the 3-day ribbon.
-// Unset (null) falls back to the device default: 3day on mobile-ish devices
-// (coarse pointer or narrow viewport), month on desktop.
+// Desktop (wide viewport) always renders the full month; the persisted
+// overviewMode setting is mobile-only. The single desktop exception is the
+// pure responsive fallback: when the calendar area itself is too narrow for
+// 7 columns (viewAreaNarrow, fed by a ResizeObserver in App), the ribbon
+// takes over automatically. Narrow viewports (<= 800px) honor the setting,
+// defaulting to the 3-day ribbon when unset.
 export function effectiveOverviewMode() {
-  const m = state.settings.overviewMode;
-  if (m === 'month' || m === '3day') return m;
-  return (state.viewportNarrow || state.coarsePointer) ? '3day' : 'month';
+  if (!state.viewportNarrow) {
+    return state.viewAreaNarrow ? '3day' : 'month';
+  }
+  return state.settings.overviewMode === 'month' ? 'month' : '3day';
 }
 
-// Pick an overview mode from the dropdown: optimistic local apply, persisted
-// through the settings endpoint (overviewMode).
+// Pick an overview mode from the mobile Overview dropdown: optimistic local
+// apply, persisted through the settings endpoint (overviewMode).
 export function setOverviewMode(mode) {
   set({
     settings: { ...state.settings, overviewMode: mode },

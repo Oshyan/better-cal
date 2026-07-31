@@ -53,7 +53,7 @@ function snapMin(m) {
 }
 
 export function TimeGrid({
-  days: fixedDays, occurrences, calendars, dimSet,
+  days: fixedDays, occurrences, calendars, dimSet, nowMs,
   infinite = false, scrollKey, scrollSeq = 0,
   onRequestWindow, onVisibleMonthChange,
   onCreateRange, onMoveEvent, onResizeEvent, onOpenEvent,
@@ -64,7 +64,6 @@ export function TimeGrid({
   const trackRef = useRef(null);
   const headTrackRef = useRef(null);
   const alldayTrackRef = useRef(null);
-  const [, forceTick] = useState(0);
   const [draft, setDraft] = useState(null); // {dayKey, startMin, endMin} while drag-creating
   // Two-step create: releasing a drag (or a plain click) keeps the draft
   // block on the grid and asks via a confirm chip before opening the editor.
@@ -258,8 +257,11 @@ export function TimeGrid({
   }), [timedByDay]);
 
   // Initial vertical scroll: when anchored on today, land just above the
-  // now-line (Google-style); otherwise fall back to 7am. Ticks the now-line
-  // every 30s. Horizontal navigation never resets the time scroll.
+  // now-line (Google-style); otherwise fall back to 7am. The now-line (and
+  // chip time states) advance via the app-level minute tick: App re-renders
+  // on store.nowMinute, so this component sees a fresh `new Date()` each
+  // minute (the old private 30s interval is gone). Horizontal navigation
+  // never resets the time scroll.
   useLayoutEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
@@ -271,10 +273,6 @@ export function TimeGrid({
       el.scrollTop = 7 * HOUR_H;
     }
   }, []); // eslint-disable-line
-  useEffect(() => {
-    const t = setInterval(() => forceTick((n) => n + 1), 30000);
-    return () => clearInterval(t);
-  }, []);
 
   // --- pointer helpers ------------------------------------------------------
 
@@ -536,7 +534,7 @@ export function TimeGrid({
       : `left:${(seg.startCol / days.length) * 100}%;width:${((seg.endCol - seg.startCol + 1) / days.length) * 100}%;top:${barLanes.get(occ.instanceId) * 24}px`}
   >
     <${EventBar} occ=${occ} cal=${calendars[occ.calendarId]} seg=${seg}
-      dimmed=${dimSet && dimSet.has(occ.instanceId)} onOpen=${onOpenEvent} />
+      dimmed=${dimSet && dimSet.has(occ.instanceId)} nowMs=${nowMs} onOpen=${onOpenEvent} />
   </div>`;
 
   // Day-range draft (multi-day drag-create or all-day lane selection): the
@@ -563,7 +561,7 @@ export function TimeGrid({
         key=${item.id}
         occ=${item.occ} cal=${calendars[item.occ.calendarId]}
         rect=${{ top, height, leftPct: item.col * widthPct, widthPct: widthPct * (item.cols > 1 ? 0.96 : 1) }}
-        dimmed=${dimSet && dimSet.has(item.occ.instanceId)}
+        dimmed=${dimSet && dimSet.has(item.occ.instanceId)} nowMs=${nowMs}
         onOpen=${onOpenEvent}
         onPointerDown=${(e) => dragMove(item.occ, e)}
         onEdgePointerDown=${(edge, e) => dragResize(item.occ, edge, e)}

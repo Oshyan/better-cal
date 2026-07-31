@@ -59,6 +59,7 @@ export function App() {
       reschedule: st.reschedule,
       visibleMonth: st.reschedule ? st.visibleMonth : null,
       overviewMode: st.settings.overviewMode,
+      nowMinute: st.nowMinute,
       viewportNarrow: st.viewportNarrow,
       viewAreaNarrow: st.viewAreaNarrow,
       coarsePointer: st.coarsePointer,
@@ -68,6 +69,19 @@ export function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => installKeyboard(), []);
+
+  // Global minute tick: the single interval behind all time-relative styling
+  // (past dim, active gold ring, now-line). Checks every 15s but only bumps
+  // the store when the epoch minute actually changes, so the tree re-renders
+  // at most once a minute (and never drifts more than 15s past the boundary).
+  useEffect(() => {
+    const tick = () => {
+      const m = Math.floor(Date.now() / 60000);
+      if (state.nowMinute !== m) set({ nowMinute: m });
+    };
+    const t = setInterval(tick, 15000);
+    return () => clearInterval(t);
+  }, []);
 
   // Track the responsive roster inputs in the store so the toolbar, keyboard
   // map and saved-view fallbacks all agree on what "mobile" means.
@@ -102,6 +116,11 @@ export function App() {
   }, []);
 
   const calMeta = useMemo(() => calendarMeta(), [s.calendars]);
+
+  // Time-relative styling reference: the current minute as ms. Views pass it
+  // down to chips so past events dim and running events glow, advancing with
+  // the minute tick above.
+  const nowMs = s.nowMinute * 60000;
 
   // Occurrences on visible calendars, from the cache. Calendars flagged
   // groupSimilar get near-duplicate collapsing (synthetic group items).
@@ -253,6 +272,7 @@ export function App() {
       scrollKey=${s.anchor}
       scrollSeq=${s.scrollSeq}
       dimSet=${dimSet}
+      nowMs=${nowMs}
       onRequestWindow=${onRequestWindow}
       onVisibleMonthChange=${onVisibleMonthChange}
       onOpenEvent=${onOpenEvent}
@@ -270,6 +290,7 @@ export function App() {
       occurrences=${occurrences}
       calendars=${calMeta}
       dimSet=${dimSet}
+      nowMs=${nowMs}
       scrollKey=${s.anchor}
       scrollSeq=${s.scrollSeq}
       onRequestWindow=${onRequestWindow}
@@ -287,13 +308,15 @@ export function App() {
       occurrences=${occurrences}
       calendars=${calMeta}
       dimSet=${dimSet}
+      nowMs=${nowMs}
       onCreateRange=${onCreateRange}
       onMoveEvent=${moveEvent}
       onResizeEvent=${resizeEvent}
       onOpenEvent=${onOpenEvent}
     />`;
   } else {
-    const nowMs = Date.now();
+    // "Show past" filtering keys off the same minute tick as the dim styling,
+    // so an event that just ended drops out (or dims) on the next tick.
     let agendaOccs = s.agendaShowPast
       ? occurrences
       : occurrences.filter((o) => parseISO(o.end).getTime() >= nowMs);
@@ -318,6 +341,7 @@ export function App() {
         occurrences=${agendaOccs}
         calendars=${calMeta}
         dimSet=${dimSet}
+        nowMs=${nowMs}
         sortMode=${s.agendaSort}
         scrollKey=${s.anchor}
         scrollSeq=${s.scrollSeq}
@@ -343,6 +367,7 @@ export function App() {
       occurrences=${dayOccs}
       calendars=${calMeta}
       dimSet=${dimSet}
+      nowMs=${nowMs}
       onOpenEvent=${onOpenEvent}
       onOpenDetail=${onOpenDetail}
       onClose=${() => set({ expandedDay: null })}

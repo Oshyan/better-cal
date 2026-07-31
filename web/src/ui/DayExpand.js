@@ -21,7 +21,7 @@ export function anchorPanel(anchorRect, panelW, panelH, margin = 8) {
   return { left: Math.max(margin, left), top: Math.max(margin, top) };
 }
 
-export function DayExpand({ dayKey, anchorRect, occurrences, calendars, dimSet, onOpenEvent, onOpenDetail, onClose }) {
+export function DayExpand({ dayKey, anchorRect, occurrences, calendars, dimSet, nowMs, onOpenEvent, onOpenDetail, onClose }) {
   const panelRef = useRef(null);
 
   useEffect(() => {
@@ -71,7 +71,7 @@ export function DayExpand({ dayKey, anchorRect, occurrences, calendars, dimSet, 
           <span class="bc-dayexpand-time">${occ.allDay ? 'all day' : fmtTime(parseISO(occ.start))}</span>
           <${EventChip}
             occ=${occ} cal=${calendars[occ.calendarId]} showTime=${false}
-            dimmed=${dimSet && dimSet.has(occ.instanceId)}
+            dimmed=${dimSet && dimSet.has(occ.instanceId)} nowMs=${nowMs}
             onOpen=${onOpenEvent}
           />
           ${onOpenDetail && !occ.isGroup && html`<button

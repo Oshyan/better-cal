@@ -5,7 +5,7 @@ import {
   parseISO, toISOWithOffset, dayKeyOf, dateOfDayKey, epochDayOfKey,
   keyOfEpochDay, addDaysKey, diffDaysKey, weekIndexOfKey, firstEpochDayOfWeek,
   dayKeysOfWeek, startOfWeekKey, setWeekStart, getWeekStart, setTimeFormat, fmtTime,
-  fmtMonthShort,
+  fmtMonthShort, timeState,
 } from '../src/lib/dates.js';
 import { layoutOverlaps, assignLanes, rangesOverlap } from '../src/ui/layout.js';
 import {
@@ -696,6 +696,43 @@ eq('reminder effective global fallback allday',
 eq('reminder effective subscribed never inherits',
   effectiveReminders({ override: null, calendarDefaults: null, settings: remSettings, allDay: false, calendarKind: 'subscribed' }),
   { reminders: [], source: 'default' });
+
+console.log('--- time-relative state (timeState) ---');
+
+// Reference instant: 2026-07-31 12:00 local time.
+const NOW = new Date(2026, 6, 31, 12, 0).getTime();
+const timedOcc = (s, e) => ({ start: s, end: e, allDay: false });
+// All-day occurrences serialize literal dates at +00:00 with an exclusive end.
+const alldayOcc = (startDay, endDay) => ({
+  start: startDay + 'T00:00:00+00:00', end: endDay + 'T00:00:00+00:00', allDay: true,
+});
+
+// Timed: ended earlier today is past, running is now, later today is future.
+eq('timeState: timed ended earlier today is past',
+  timeState(timedOcc(localISO(2026, 7, 31, 9, 0), localISO(2026, 7, 31, 10, 0)), NOW), 'past');
+eq('timeState: timed running is now',
+  timeState(timedOcc(localISO(2026, 7, 31, 11, 30), localISO(2026, 7, 31, 12, 30)), NOW), 'now');
+eq('timeState: timed later today is future',
+  timeState(timedOcc(localISO(2026, 7, 31, 14, 0), localISO(2026, 7, 31, 15, 0)), NOW), 'future');
+
+// Boundaries: exactly at start counts as now; exactly at end counts as past.
+eq('timeState: boundary exactly at start is now',
+  timeState(timedOcc(localISO(2026, 7, 31, 12, 0), localISO(2026, 7, 31, 13, 0)), NOW), 'now');
+eq('timeState: boundary exactly at end is past',
+  timeState(timedOcc(localISO(2026, 7, 31, 11, 0), localISO(2026, 7, 31, 12, 0)), NOW), 'past');
+
+// All-day: date-anchored (literal dates, never timezone-converted).
+eq('timeState: allday yesterday is past',
+  timeState(alldayOcc('2026-07-30', '2026-07-31'), NOW), 'past');
+eq('timeState: allday today is now',
+  timeState(alldayOcc('2026-07-31', '2026-08-01'), NOW), 'now');
+// Exclusive end: an end date of today means the last day was yesterday.
+eq('timeState: allday exclusive end lands on today is past',
+  timeState(alldayOcc('2026-07-29', '2026-07-31'), NOW), 'past');
+eq('timeState: allday multi-day spanning today is now',
+  timeState(alldayOcc('2026-07-29', '2026-08-03'), NOW), 'now');
+eq('timeState: allday starting tomorrow is future',
+  timeState(alldayOcc('2026-08-01', '2026-08-02'), NOW), 'future');
 
 console.log('--- color utils ---');
 

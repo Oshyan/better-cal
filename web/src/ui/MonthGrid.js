@@ -78,7 +78,7 @@ function indexOccurrences(occurrences, columns) {
 }
 
 export function MonthGrid({
-  occurrences, calendars, visibleRows = 6, columns = 7, scrollKey, scrollSeq = 0, dimSet,
+  occurrences, calendars, visibleRows = 6, columns = 7, scrollKey, scrollSeq = 0, dimSet, nowMs,
   onRequestWindow, onVisibleMonthChange, onOpenEvent, onExpandDay,
   onCreateRange, onMoveEvent, onResizeEvent,
 }) {
@@ -373,7 +373,7 @@ export function MonthGrid({
       key=${wi} weekIndex=${wi} columns=${columns} ribbon=${ribbon}
       top=${weekTop(wi, minWeek, rowH)} rowH=${rowH}
       byDay=${idx.byDay} bars=${idx.barsByRow.get(wi)} calendars=${calendars}
-      capacity=${capacity} chipRow=${chipRow} mobile=${mobile} todayKey=${tKey} dimSet=${dimSet}
+      capacity=${capacity} chipRow=${chipRow} mobile=${mobile} todayKey=${tKey} dimSet=${dimSet} nowMs=${nowMs}
       sel=${sel}
       onOpenEvent=${onOpenEvent} onExpandDay=${onExpandDay}
       dragMoveOcc=${dragMoveOcc} dragResizeOcc=${dragResizeOcc} dragCreate=${dragCreate}
@@ -440,7 +440,7 @@ export function MonthGrid({
 
 function WeekRow({
   weekIndex, columns, ribbon, top, rowH, byDay, bars, calendars, capacity, chipRow, mobile,
-  todayKey: tKey, dimSet, sel, onOpenEvent, onExpandDay, dragMoveOcc, dragResizeOcc, dragCreate,
+  todayKey: tKey, dimSet, nowMs, sel, onOpenEvent, onExpandDay, dragMoveOcc, dragResizeOcc, dragCreate,
   cellClickSelect, quickCreateDay,
 }) {
   const keys = dayKeysOfRow(weekIndex, columns);
@@ -496,7 +496,7 @@ function WeekRow({
       <div class="bc-cell-chips" style=${`top:${CELL_HEAD + chipStartLane * chipRow}px`}>
         ${singles.slice(0, shown).map((occ) => html`<${EventChip}
           key=${occ.instanceId} occ=${occ} cal=${calendars[occ.calendarId]}
-          dimmed=${dimSet && dimSet.has(occ.instanceId)}
+          dimmed=${dimSet && dimSet.has(occ.instanceId)} nowMs=${nowMs}
           onOpen=${onOpenEvent}
           onPointerDown=${(e) => dragMoveOcc(occ, e)}
         />`)}
@@ -527,7 +527,7 @@ function WeekRow({
         >
           <${EventBar}
             occ=${occ} cal=${calendars[occ.calendarId]} seg=${seg}
-            dimmed=${dimSet && dimSet.has(occ.instanceId)}
+            dimmed=${dimSet && dimSet.has(occ.instanceId)} nowMs=${nowMs}
             onOpen=${onOpenEvent}
             onPointerDown=${(e) => dragMoveOcc(occ, e)}
             onEdgePointerDown=${(edge, e) => dragResizeOcc(occ, edge, e)}

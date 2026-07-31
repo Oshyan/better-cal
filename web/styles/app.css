@@ -1526,3 +1526,65 @@ body.bc-rescheduling { user-select: none; }
    (editor drawer and settings defaults). */
 .bc-rem-custom { display: inline-flex; align-items: center; gap: 6px; }
 .bc-rem-custom .bc-num { width: 72px; }
+
+/* --- time-relative event styling (append-only section) ---------------------
+   Past events dim on every view; currently running events carry a warm gold
+   ring. Both are driven by the global minute tick (store.nowMinute) via the
+   is-past / is-now classes stamped in EventChip and on agenda rows. */
+
+/* Warm gold for the active-event ring, tuned per theme: deeper ochre on
+   light backgrounds, lighter amber on dark. Same override pattern as the
+   core palette: data-theme (stamped by settings.js) beats the OS scheme. */
+:root { --active-gold: #c9962a; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --active-gold: #e0b04f; }
+}
+:root[data-theme="dark"] { --active-gold: #e0b04f; }
+
+/* Past = "over": an opacity-led dim, slightly stronger than the desat-led
+   .is-filter-dimmed treatment, so the two read differently at a glance.
+   Hover/focus restores, matching the filter-dim convention. Scoped to the
+   chip elements: agenda rows also carry is-past (for their time/location
+   columns below) and a bare-class rule would double-dim the chip inside. */
+:is(.bc-chip, .bc-bar, .bc-block).is-past {
+  opacity: 0.55;
+  filter: saturate(0.5);
+  transition: opacity 0.12s ease, filter 0.12s ease;
+}
+:is(.bc-chip, .bc-bar, .bc-block).is-past:hover,
+:is(.bc-chip, .bc-bar, .bc-block).is-past:focus-visible { opacity: 1; filter: none; }
+/* Past + filter-dimmed compose: both signals push it further back (the
+   standalone rules would otherwise just fight over the same
+   opacity/filter properties). */
+:is(.bc-chip, .bc-bar, .bc-block).is-past.is-filter-dimmed { opacity: 0.42; filter: saturate(0.2); }
+/* Agenda rows dim their time and location columns alongside the chip (the
+   chip dims itself; row-level opacity would double-dim it). */
+.bc-agenda-row.is-past .bc-agenda-time,
+.bc-agenda-row.is-past .bc-agenda-loc { opacity: 0.55; }
+
+/* Now = "happening": inset gold ring (inset so month-cell overflow clipping
+   never cuts it off), clearly distinct from the accent .is-highlighted ring.
+   Scoped like is-past: agenda rows carry is-now too, for the time column. */
+:is(.bc-chip, .bc-bar, .bc-block).is-now {
+  box-shadow: inset 0 0 0 1.5px var(--active-gold);
+}
+/* Active + filter-highlighted compose as a double ring: accent outside,
+   gold inside (earlier box-shadow layers paint on top). */
+:is(.bc-chip, .bc-bar, .bc-block).is-now.is-highlighted {
+  box-shadow:
+    inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 85%, transparent),
+    inset 0 0 0 3px var(--active-gold);
+}
+/* The toolbar type-to-filter ring (higher specificity) would otherwise mask
+   the gold ring; give still-visible active events the same double ring. */
+.is-page-filtering :is(.bc-chip, .bc-bar, .bc-block).is-now:not(.is-page-hidden) {
+  box-shadow:
+    inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 85%, transparent),
+    inset 0 0 0 3px var(--active-gold);
+}
+/* Agenda rows echo the state in the time column. */
+.bc-agenda-row.is-now .bc-agenda-time { color: var(--active-gold); font-weight: 600; }
+
+@media (prefers-reduced-motion: reduce) {
+  :is(.bc-chip, .bc-bar, .bc-block).is-past { transition: none; }
+}

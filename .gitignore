@@ -1,0 +1,7 @@
+.credentials
+.env
+.env.*
+node_modules/
+vendor/
+.DS_Store
+dist/

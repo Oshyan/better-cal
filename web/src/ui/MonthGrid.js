@@ -102,6 +102,19 @@ export function MonthGrid({
     return () => { el.removeEventListener('scroll', onScroll); cancelAnimationFrame(raf); };
   }, [recompute]);
 
+  // Row height changes with viewport size; keep the same top week on screen
+  // by rescaling scrollTop, then recompute the visible range.
+  const prevRowH = useRef(rowH);
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    if (prevRowH.current !== rowH && prevRowH.current > 0) {
+      el.scrollTop = (el.scrollTop / prevRowH.current) * rowH;
+    }
+    prevRowH.current = rowH;
+    recompute();
+  }, [rowH, viewH, recompute]);
+
   // Programmatic scroll to an anchor date (today button, arrows, search jump).
   useLayoutEffect(() => {
     const el = scrollRef.current;

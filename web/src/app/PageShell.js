@@ -1,17 +1,19 @@
-// Shared chrome for the management pages (Settings, Outbound feeds, Filters,
-// Saved views): scrollable page with a centered content column, a common
-// title row with "Back to calendar", and an optional intro note.
+// Shared chrome for the management pages (Settings, Organize, Outbound
+// feeds, Filters, Saved views): scrollable page with a centered content
+// column, a breadcrumb-style "Back to calendar" link above the title, and an
+// optional intro note.
 
 import { html } from '../../vendor/index.js';
 import { set } from './store.js';
+import { Icon } from '../ui/icons.js';
 
 export function PageShell({ title, note, children }) {
   return html`<div class="bc-page">
     <div class="bc-page-col">
-      <div class="bc-page-head">
-        <h1>${title}</h1>
-        <button type="button" class="bc-btn" onClick=${() => set({ route: 'calendar' })}>Back to calendar</button>
-      </div>
+      <button type="button" class="bc-page-back" onClick=${() => set({ route: 'calendar' })}>
+        <${Icon} name="arrowLeft" size=${13} /><span>Back to calendar</span>
+      </button>
+      <h1 class="bc-page-title">${title}</h1>
       ${note && html`<p class="bc-page-note">${note}</p>`}
       ${children}
     </div>

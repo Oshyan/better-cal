@@ -25,7 +25,10 @@ import { occurrenceDaySpan, isWeekendEpochDay } from './monthmath.js';
 import { EventBlock, EventBar } from './EventChip.js';
 import { startPointerDrag, cloneAsGhost } from './DragController.js';
 import { CreateChip } from './CreateChip.js';
-import { timeRangeLabel } from '../lib/quickcreate.js';
+import {
+  timeRangeLabel, dayRangeLabel, dayRangeDraft, allDayRangeDraft,
+  dragCreateMode, normalizeDayRange,
+} from '../lib/quickcreate.js';
 
 const HOUR_H = 48;   // px per hour
 const SNAP_MIN = 15;
@@ -306,6 +309,10 @@ export function TimeGrid({
   // Drag-create draws a draft block; releasing keeps the draft and asks via
   // the confirm chip. A plain click (never lifted) drafts a 1-hour block at
   // the clicked slot with the same chip; Escape mid-drag cancels outright.
+  // A drag that crosses day columns switches the draft to an inclusive day
+  // range (spanned columns tinted full-height); confirming that chip creates
+  // an all-day multi-day event. Dragging back into the origin column reverts
+  // to the timed draft.
   const dragCreate = useCallback((ev) => {
     if (ev.target !== ev.currentTarget) return;
     if (ev.pointerType === 'touch') return; // scroll wins on touch
@@ -324,12 +331,17 @@ export function TimeGrid({
       onMove: (pt) => {
         const s = pointToSlot(pt);
         if (!s) return;
-        const m = snapMin(s.min);
-        current = {
-          dayKey: origin.dayKey,
-          startMin: Math.min(startSnap, m),
-          endMin: Math.max(startSnap + SNAP_MIN, m),
-        };
+        const dm = dragCreateMode(origin.dayKey, s.dayKey);
+        if (dm.mode === 'days') {
+          current = dm;
+        } else {
+          const m = snapMin(s.min);
+          current = {
+            dayKey: origin.dayKey,
+            startMin: Math.min(startSnap, m),
+            endMin: Math.max(startSnap + SNAP_MIN, m),
+          };
+        }
         setDraft(current);
       },
       onDrop: (pt) => {
@@ -346,6 +358,43 @@ export function TimeGrid({
     });
   }, [pointToSlot, infinite]);
 
+  // All-day lane create: click or drag selects an inclusive day range with
+  // the same confirm chip. Lane selections always draft all-day events, even
+  // for a single day (the lane is the all-day surface).
+  const dragCreateAllDay = useCallback((ev) => {
+    if (ev.target !== ev.currentTarget) return; // only empty lane space
+    if (ev.pointerType === 'touch') return; // scroll wins on touch
+    const origin = pointToSlot({ x: ev.clientX, y: ev.clientY });
+    if (!origin) return;
+    const single = { mode: 'days', startKey: origin.dayKey, endKey: origin.dayKey, allDayLane: true };
+    let current = null;
+    let lifted = false;
+    startPointerDrag(ev, {
+      hScrollEl: infinite ? hscrollRef.current : null,
+      onLift: () => {
+        lifted = true;
+        setDraft(single);
+      },
+      onMove: (pt) => {
+        const s = pointToSlot(pt);
+        if (!s) return;
+        const { startKey, endKey } = normalizeDayRange(origin.dayKey, s.dayKey);
+        current = { mode: 'days', startKey, endKey, allDayLane: true };
+        setDraft(current);
+      },
+      onDrop: (pt) => {
+        const c = current || single;
+        setDraft(c);
+        setPendingSel({ ...c, x: pt.x, y: pt.y });
+      },
+      onCancel: () => {
+        if (lifted) { setDraft(null); return; } // Escape mid-drag: no chip
+        setDraft(single);
+        setPendingSel({ ...single, x: ev.clientX, y: ev.clientY });
+      },
+    });
+  }, [pointToSlot, infinite]);
+
   const dismissPendingSel = useCallback(() => {
     setPendingSel(null);
     setDraft(null);
@@ -354,7 +403,14 @@ export function TimeGrid({
   const confirmPendingSel = () => {
     const p = pendingSel;
     dismissPendingSel();
-    if (p && onCreateRange) {
+    if (!p || !onCreateRange) return;
+    if (p.mode === 'days') {
+      // Lane selections are all-day at any length; column-crossing drags
+      // reuse the shared day-range draft (all-day for 2+ days).
+      onCreateRange(p.allDayLane
+        ? allDayRangeDraft(p.startKey, p.endKey)
+        : dayRangeDraft(p.startKey, p.endKey));
+    } else {
       onCreateRange({
         start: toISOWithOffset(dateAt(p.dayKey, p.startMin)),
         end: toISOWithOffset(dateAt(p.dayKey, p.endMin)),
@@ -483,9 +539,18 @@ export function TimeGrid({
       dimmed=${dimSet && dimSet.has(occ.instanceId)} onOpen=${onOpenEvent} />
   </div>`;
 
-  const dayCols = days.map((k, i) => html`<div
+  // Day-range draft (multi-day drag-create or all-day lane selection): the
+  // spanned columns carry a full-height tint, clamped to the rendered window.
+  const rangeSel = draft && draft.mode === 'days'
+    ? { a: epochDayOfKey(draft.startKey), b: epochDayOfKey(draft.endKey) }
+    : null;
+
+  const dayCols = days.map((k, i) => {
+    const ed = epochDayOfKey(k);
+    const inRange = rangeSel && ed >= rangeSel.a && ed <= rangeSel.b;
+    return html`<div
     key=${k}
-    class="bc-tg-col${k === tKey ? ' is-today' : ''}${infinite && isWeekendEpochDay(epochDayOfKey(k)) ? ' is-weekend' : ''}${infinite && k.endsWith('-01') ? ' is-month-start' : ''}"
+    class="bc-tg-col${k === tKey ? ' is-today' : ''}${infinite && isWeekendEpochDay(ed) ? ' is-weekend' : ''}${infinite && k.endsWith('-01') ? ' is-month-start' : ''}${inRange ? ' is-range-draft' : ''}"
     data-day=${k}
     style=${infinite ? `left:${dayLeft(k)}px;width:${colW}px` : undefined}
     onPointerDown=${dragCreate}
@@ -509,7 +574,8 @@ export function TimeGrid({
       style=${`top:${(draft.startMin / 60) * HOUR_H}px;height:${((draft.endMin - draft.startMin) / 60) * HOUR_H}px`}
     >${fmtTime(dateAt(k, draft.startMin))} to ${fmtTime(dateAt(k, draft.endMin))}</div>`}
     ${k === nowKey && html`<div class="bc-nowline" style=${`top:${(minutesOfDay(now) / 60) * HOUR_H}px`}><span class="bc-nowline-dot"></span></div>`}
-  </div>`);
+  </div>`;
+  });
 
   const preview = html`<div class="bc-tg-preview" ref=${previewRef} style="display:none"></div>`;
 
@@ -535,8 +601,8 @@ export function TimeGrid({
     ${showAllday && html`<div class="bc-tg-allday" style=${`height:${Math.max(1, barLaneCount) * 24 + 4}px`}>
       <div class="bc-tg-gutter bc-tg-allday-label">all day</div>
       ${infinite
-        ? html`<div class="bc-tg-hclip"><div class="bc-tg-htrack" ref=${alldayTrackRef} style=${`width:${totalW}px`}>${alldayMonthLines}${allDayBars.map(barSlot)}</div></div>`
-        : html`<div class="bc-tg-allday-lane">${allDayBars.map(barSlot)}</div>`}
+        ? html`<div class="bc-tg-hclip"><div class="bc-tg-htrack" ref=${alldayTrackRef} style=${`width:${totalW}px`} onPointerDown=${dragCreateAllDay}>${alldayMonthLines}${allDayBars.map(barSlot)}</div></div>`
+        : html`<div class="bc-tg-allday-lane" onPointerDown=${dragCreateAllDay}>${allDayBars.map(barSlot)}</div>`}
     </div>`}
     <div class="bc-tg-scroll" ref=${scrollRef}>
       <div class="bc-tg-body" style=${`height:${24 * HOUR_H}px`}>
@@ -555,7 +621,9 @@ export function TimeGrid({
     ${infinite && html`<div class="bc-tg-edge r" aria-hidden="true"><span>›</span></div>`}
     ${pendingSel && html`<${CreateChip}
       x=${pendingSel.x} y=${pendingSel.y}
-      label=${'New event ' + timeRangeLabel(pendingSel.dayKey, pendingSel.startMin, pendingSel.endMin) + '?'}
+      label=${'New event ' + (pendingSel.mode === 'days'
+        ? dayRangeLabel(pendingSel.startKey, pendingSel.endKey)
+        : timeRangeLabel(pendingSel.dayKey, pendingSel.startMin, pendingSel.endMin)) + '?'}
       onConfirm=${confirmPendingSel}
       onCancel=${dismissPendingSel}
     />`}

@@ -9,7 +9,7 @@ import { useStore, set, state, patchOccurrence } from './store.js';
 import { api } from './api.js';
 import { deleteEvent, triageAttendance, sendFeedback, enterReschedule, sameDayList } from './actions.js';
 import { trapFocus } from '../ui/DayExpand.js';
-import { ThumbIcon } from '../ui/icons.js';
+import { ThumbIcon, CalDot } from '../ui/icons.js';
 import {
   parseISO, dateOfDayKey, fmtRange, fmtDateFull, fmtTime,
 } from '../lib/dates.js';
@@ -284,7 +284,7 @@ export function EventDetail() {
         </h2>
         <div class="bc-detail-calrow">
           <span class="bc-detail-calchip">
-            <span class="bc-cal-dot" style=${`background:${color}`}></span>
+            <${CalDot} cal=${cal} color=${color} />
             ${(cal && cal.name) || 'Calendar'}
           </span>
           ${occ.status === 'cancelled' && html`<span class="bc-badge">cancelled</span>`}

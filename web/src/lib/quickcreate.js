@@ -28,11 +28,27 @@ export function dayRangeDraft(startKey, endKey) {
       allDay: false,
     };
   }
+  return allDayRangeDraft(startKey, endKey);
+}
+
+// All-day draft for a day range regardless of length (the week view's all-day
+// lane always creates all-day events, even for a single day).
+export function allDayRangeDraft(startKey, endKey) {
   return {
     start: toISOWithOffset(dateOfDayKey(startKey)),
     end: toISOWithOffset(addDaysDate(dateOfDayKey(endKey), 1)),
     allDay: true,
   };
+}
+
+// Create-drag mode from the origin and pointer day columns: staying in the
+// origin column keeps the timed draft; crossing columns becomes an inclusive,
+// direction-agnostic day range. Dragging back to the origin column reverts
+// to timed.
+export function dragCreateMode(originKey, pointerKey) {
+  if (originKey === pointerKey) return { mode: 'timed' };
+  const { startKey, endKey } = normalizeDayRange(originKey, pointerKey);
+  return { mode: 'days', startKey, endKey };
 }
 
 // Human label for the chip: "Aug 4", "Mar 1 to 15", "Mar 28 to Apr 2".

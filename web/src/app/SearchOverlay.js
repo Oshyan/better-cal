@@ -4,6 +4,7 @@
 // tag-only search ("#tag", server-side), and result rows show their tags.
 
 import { html, useState, useRef, useEffect } from '../../vendor/index.js';
+import { CalDot } from '../ui/icons.js';
 import { useStore, set, state } from './store.js';
 import { search } from './api.js';
 import { jumpToDate, openDetail } from './actions.js';
@@ -97,7 +98,7 @@ export function SearchOverlay() {
         onClick=${() => go(occ)}
         onMouseEnter=${() => setSel(idx)}
       >
-        <span class="bc-cal-dot" style=${`background:${(cal && cal.color) || '#888'}`}></span>
+        <${CalDot} cal=${cal} />
         <span class="bc-search-title">${occ.title || '(untitled)'}</span>
         ${occ.tags && occ.tags.length > 0 && html`<span class="bc-search-rowtags">
           ${occ.tags.map((t) => html`<span key=${t} class="bc-tag-chip">#${t}</span>`)}

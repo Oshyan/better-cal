@@ -16,9 +16,10 @@ Token value: `bc_` + 43 url-safe base64 chars; stored sha256-hashed, shown once 
 - Agent-facing guide: [agent-api.md](agent-api.md); MCP server in `tools/mcp/`.
 
 ## Calendars & structure
-- `GET /calendars` → `{calendars:[{id,name,color,kind,sourceUrl,visible,position,pollIntervalMinutes,staleAfterDays,folderIds:[],tagNames:[],groupSimilar:boolean,health:{lastPolledAt,status,error,stale:boolean}}], folders:[{id,name,position}], tags:[{id,name}]}`
+- `GET /calendars` → `{calendars:[{id,name,color,kind,sourceUrl,visible,position,pollIntervalMinutes,staleAfterDays,folderIds:[],tagNames:[],groupSimilar:boolean,reminderDefaults:object|null,health:{lastPolledAt,status,error,stale:boolean}}], folders:[{id,name,position}], tags:[{id,name}]}`
 - `POST /calendars` `{name,color,folderIds?,tagNames?}` → calendar object.
-- `PATCH /calendars/:id` (any of name,color,visible,position,folderIds,tagNames,pollIntervalMinutes,staleAfterDays,groupSimilar) → calendar object.
+- `PATCH /calendars/:id` (any of name,color,visible,position,folderIds,tagNames,pollIntervalMinutes,staleAfterDays,groupSimilar,reminderDefaults) → calendar object.
+- `reminderDefaults` (per calendar, persisted in `calendars.settings_json`): `{timed:[{minutes:int}], allDay:[{daysBefore:int, time:"HH:MM"}]}` or `null` to clear (fall through to the global defaults in Settings). A missing key inside the object means "none" for that event type. See Reminders below for how defaults resolve.
 - `groupSimilar` (boolean, per calendar, persisted in `calendars.settings_json`): whether the client should visually group near-duplicate events on this calendar. Default when never set: `true` for `kind=subscribed`, `false` for `kind=local`. The server only stores and returns the flag; the grouping itself is client-side.
 - `DELETE /calendars/:id` → `{ok:true}` (soft: deletes calendar + events).
 - `POST /calendars/subscribe` `{url,name?,color?}` → calendar object; server fetches immediately, then polls hourly.
@@ -28,13 +29,15 @@ Token value: `bc_` + 43 url-safe base64 chars; stored sha256-hashed, shown once 
 
 ## Events
 - `GET /events?start=ISO&end=ISO&calendars=1,2&q=&includeHidden=0` → `{events:[occurrence...]}`
-  Occurrence: `{instanceId, eventId, calendarId, uid, title, description, location, locationLat, locationLng, url, start, end, allDay, tzid, recurring:boolean, rrule, source, attendance, status, score, tags:[], people:[], styleJson, createdAt, updatedAt, isNew:boolean}`
+  Occurrence: `{instanceId, eventId, calendarId, uid, title, description, location, locationLat, locationLng, url, start, end, allDay, tzid, recurring:boolean, rrule, source, attendance, status, score, reminders:[], reminderSource, tags:[], people:[], styleJson, createdAt, updatedAt, isNew:boolean}`
+  `reminders` is the event's *effective* reminder list (override if set, else the calendar default, else the global default) and `reminderSource` says where it came from: `"event"|"calendar"|"default"`. Entries are `{minutes:int}` (offset before start; before local midnight for all-day events) or, for inherited all-day defaults, `{daysBefore:int, time:"HH:MM"}`. See Reminders below.
   `locationLat`/`locationLng` are numbers or null (stored coordinates for the free-text location; the client resolves them lazily via `GET /geocode` and PATCHes them back onto local events). `rrule` is the master's raw RRULE string or null (present on every expanded occurrence of a recurring master; null on overrides) — clients use it for the human-readable recurrence description in the detail view.
   `score` is a number 0-1 or null: the background trainable-ranking score (feed events only; null until the worker has scored the event or while fewer than 5 feedback signals exist). Clients sort by it client-side; the API's order is unchanged.
   Additive field: occurrences matching an enabled `dim` filter also carry `"dimmed": true`; the field is absent otherwise. Occurrences matching an enabled `hide` filter are omitted from `/events` and `/search` responses entirely. Prompt-filter verdicts (see Filters) feed the same `dimmed`/omission mechanics with the same precedence (hide beats dim).
   `start`/`end` are ISO8601 with offset. Recurring events arrive pre-expanded; `instanceId = eventId + ":" + occurrenceStartUtc` where occurrenceStartUtc uses compact UTC basic format `YYYYMMDDTHHMMSSZ` (e.g. `42:20260801T190000Z`). This format is FROZEN; clients treat instanceId as opaque and use the occurrence's `start` field when an API call needs `instanceStart`.
-- `POST /events` `{calendarId,title,start,end,allDay?,tzid?,description?,location?,url?,rrule?,tagNames?,personNames?}` → occurrence (first instance).
+- `POST /events` `{calendarId,title,start,end,allDay?,tzid?,description?,location?,url?,rrule?,reminders?,tagNames?,personNames?}` → occurrence (first instance).
 - `PATCH /events/:id` body same fields plus `{locationLat?, locationLng?}` (numbers or null) and `{scope:"this"|"following"|"all", instanceStart?}` (scope required when event is recurring) → `{ok:true}`.
+  `reminders`: list of `{minutes:int}` (0-20160, max 5, normalized unique/ascending) sets a per-event override; `[]` means explicitly no reminders; `null` clears the override back to inherited defaults. Like attendance and tags, `reminders` is accepted on feed events (it is user-local metadata and survives feed polls).
 - `DELETE /events/:id` `{scope?,instanceStart?}` → `{ok:true}`.
 - `POST /events/:id/attendance` `{attendance:"none"|"interested"|"going"|"hidden"}` → `{ok:true}`. On feed events an attendance change also auto-records a ranking feedback signal (`going`/`interested` → up, `hidden` → down; `none` records nothing).
 - `POST /events/:id/feedback` `{signal:"up"|"down"}` → `{ok:true}`. Explicit thumbs feedback (distinct from attendance); accumulates as training signal for background ranking. Not undoable.
@@ -58,9 +61,28 @@ Keyword/regex/prompt filters applied server-side to `/events` and `/search`. Key
 
 Prompt filters are never evaluated in the request path. A background worker job (`filter_eval`) scores feed events against the prompt/negative prompt in Gemini batches (≤25 events per call) and caches per-(filter, event) verdicts in `filter_evals`; `/events` and `/search` join that cache and apply the filter's action to events whose verdict is `fail`. Coverage is all in-scope feed events within a wide window — 2 years back to 3 years forward (recurring masters always qualify) — not just future events, so browsing past months is filtered too. Sweeps process up to 500 events per filter per pass and chain follow-up jobs until the window is drained. Evaluation triggers: prompt-filter create/update/enable (catch-up sweep over the whole window), each feed poll that changes events, a nightly catch-up, and on-read healing: when `GET /events` returns feed events that an enabled prompt filter covers but has no cached verdict for, the server enqueues one targeted `filter_eval` job for those event ids (capped at 300 ids per enqueue, deduped by a payload hash against pending/running jobs; works even outside the sweep window). A missing or not-yet-computed verdict is treated as pass — LLM failures never hide events or block responses. Related: a `rank_events` job (hourly and after polls) uses accumulated feedback signals (≥5 required) to score future feed events onto `occurrence.score`.
 
+## Reminders & Web Push
+
+Reminders are a core feature and must fire with the app closed, so delivery is Web Push: the cron worker enqueues a `reminder_scan` job every minute that expands upcoming occurrences (15-day lookahead, recurrence-aware), computes each reminder's fire time, and sends a push to every subscription of the event's owner for reminders due since the last minute (1-hour catch-up grace; nothing older fires). Sent reminders are deduplicated in `notified_instances` keyed `eventId:occurrenceStartUtc:offsetMinutes` (rows pruned after 7 days). The service worker shows the notification (`tag` = instanceId, so re-sends replace rather than stack) and clicking it opens `/?event=instanceId`, which the app resolves to that event's detail view.
+
+Resolution order per event: the event's `reminders` override (`[]` = explicitly none) > the calendar's `reminderDefaults` > the global `reminderTimed`/`reminderAllDay` settings. Exception: subscribed (feed) calendars never inherit the global defaults — feeds only remind when the calendar has explicit `reminderDefaults` or an event has an override, so subscribing to a busy feed does not flood notifications. Events with `attendance:"hidden"` or `status:"cancelled"` never remind.
+
+Fire-time semantics: `{minutes}` = minutes before the start instant (for all-day events, before local midnight of the event date in its tzid). `{daysBefore, time}` (all-day defaults) = that wall-clock time in the event's tzid, daysBefore days before the event date (e.g. `{daysBefore:1, time:"18:00"}` = 6 PM the evening before).
+
+ICS: file import maps display VALARMs with before-start relative triggers into per-event overrides; export (outbound feeds, CalDAV objects) writes a display VALARM per override entry. Inherited defaults and explicit-none export nothing. Feed polls do not sync VALARMs (user-local overrides must survive polls).
+
+Server config: VAPID keys in `.env` (`BETTERCAL_VAPID_PUBLIC`, `BETTERCAL_VAPID_PRIVATE`, `BETTERCAL_VAPID_SUBJECT`), generated once with `php server/bin/vapid.php --generate`. Sending uses `minishlink/web-push` (composer).
+
+- `GET /push/key` → `{key:string|null}` (VAPID public key; null when unconfigured).
+- `GET /push/status` → `{subscribed:boolean, vapidConfigured:boolean}`.
+- `POST /push/subscribe` `{endpoint, keys:{p256dh, auth}}` → `{ok:true}` (upsert by endpoint; re-subscribing clears failure state).
+- `POST /push/unsubscribe` `{endpoint}` → `{ok:true}`.
+- `POST /push/test` → `{ok, sent, failed}`; 400 `push_not_configured` / `no_subscription`.
+- Failure handling: gone endpoints (404/410) mark `failing_since`; subscriptions failing for 3+ days are deleted by the worker.
+
 ## Settings
 User preferences stored in `users.settings_json`. The server stores and validates; enforcement is client-side except `nlParseMode`, which the server applies in `/quickadd` (see Events). Reads always return stored values merged over defaults; keys never set come back as their defaults. Settings changes are not undoable via `POST /undo`.
-- `GET /settings` → `{settings:{defaultView, weekStart, timeFormat, defaultCalendarId, theme, nlParseMode}}`.
+- `GET /settings` → `{settings:{defaultView, weekStart, timeFormat, defaultCalendarId, theme, nlParseMode, folderVisibility, reminderTimed, reminderAllDay}}`.
 - `PATCH /settings` (any subset of the keys below) → `{settings:{...}}` (the full merged object). Unknown keys → 400 `unknown_setting`; invalid values → 400.
 
 | Key | Values | Default | Notes |
@@ -71,6 +93,8 @@ User preferences stored in `users.settings_json`. The server stores and validate
 | `defaultCalendarId` | id of an owned `local` calendar, or `null` | `null` | validated for ownership + kind; `null` clears |
 | `theme` | `system`\|`light`\|`dark` | `system` | |
 | `nlParseMode` | `always`\|`smart`\|`never` | `smart` | server-enforced in `/quickadd`: `smart` = LLM only when the deterministic parse is incomplete/low-confidence, `always` = LLM-first, `never` = deterministic only |
+| `reminderTimed` | list of `{minutes:int}` (0-20160, max 5) | `[{minutes:10}]` | global default reminders for timed events; server-enforced by the reminder scan (see Reminders) |
+| `reminderAllDay` | list of `{daysBefore:int, time:"HH:MM"}` (0-14 days, max 5) | `[{daysBefore:1, time:"18:00"}]` | global default reminders for all-day events, fired in the event's tzid |
 
 ## Saved views
 Named snapshots of client view state; `config` is client-defined: `{viewType, visibleCalendarIds, folderCollapse, filterText, anchor:"today"|dayKey}`.

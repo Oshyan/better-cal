@@ -12,6 +12,10 @@ import { trapFocus } from '../ui/DayExpand.js';
 import {
   parseISO, toInputValue, fromInputValue, toISOWithOffset, addDaysDate, pad,
 } from '../lib/dates.js';
+import {
+  TIMED_CHOICES, ALLDAY_CHOICES, fmtOffsetMinutes, fmtReminder, entryToMinutes,
+  normalizeMinutesList, effectiveReminders,
+} from '../lib/reminders.js';
 
 const BYDAY = [['MO', 'Mon'], ['TU', 'Tue'], ['WE', 'Wed'], ['TH', 'Thu'], ['FR', 'Fri'], ['SA', 'Sat'], ['SU', 'Sun']];
 
@@ -126,6 +130,14 @@ export function EditorDrawer() {
       description: occ ? (occ.description || '') : '',
       tags: occ && occ.tags ? occ.tags.join(', ') : '',
       rrule: parseRrule(occ && occ.recurring ? (occ.rrule || editor.rrule || '') : ''),
+      // null = inherit calendar/global defaults; a list = explicit override
+      // (minutes before start; [] = no reminders). remInitial detects changes.
+      reminders: occ && occ.reminderSource === 'event'
+        ? (occ.reminders || []).map((r) => Number(r.minutes) || 0)
+        : null,
+      remInitial: occ && occ.reminderSource === 'event'
+        ? (occ.reminders || []).map((r) => Number(r.minutes) || 0).join(',')
+        : null,
     });
     setScope('this');
     setDurationLock(true);
@@ -194,6 +206,12 @@ export function EditorDrawer() {
       tagNames: form.tags.split(',').map((t) => t.trim()).filter(Boolean),
       rrule: buildRrule(form.rrule),
     };
+    // Only send reminders when the override actually changed, so unrelated
+    // edits never clobber an inherited default with a snapshot of it.
+    const remNow = form.reminders === null ? null : [...form.reminders].sort((a, b) => a - b).join(',');
+    if (remNow !== form.remInitial) {
+      fields.reminders = form.reminders === null ? null : normalizeMinutesList(form.reminders);
+    }
     let ok;
     if (occ) ok = await updateEvent(occ, fields, scope);
     else ok = await createEvent(fields);
@@ -201,6 +219,32 @@ export function EditorDrawer() {
   };
 
   const r = form.rrule;
+
+  // --- reminders row --------------------------------------------------------
+  const selectedCal = state.calendars.find((c) => c.id === Number(form.calendarId));
+  const remEff = form.reminders !== null
+    ? { reminders: form.reminders.map((m) => ({ minutes: m })), source: 'event' }
+    : effectiveReminders({
+        override: null,
+        calendarDefaults: selectedCal ? selectedCal.reminderDefaults : null,
+        settings: state.settings,
+        allDay: form.allDay,
+        calendarKind: selectedCal ? selectedCal.kind : 'local',
+      });
+  const remSrcHint = remEff.source === 'calendar' ? 'from calendar default'
+    : remEff.source === 'default' ? 'from your defaults' : 'custom for this event';
+  const remChoices = form.allDay
+    ? ALLDAY_CHOICES
+    : TIMED_CHOICES.map((m) => ({ label: fmtOffsetMinutes(m), minutes: m }));
+  const remToOverride = () => (form.reminders !== null
+    ? [...form.reminders]
+    : remEff.reminders.map(entryToMinutes));
+  const remAdd = (m) => upd({ reminders: [...new Set([...remToOverride(), m])].sort((a, b) => a - b) });
+  const remRemove = (i) => {
+    const list = remToOverride();
+    list.splice(i, 1);
+    upd({ reminders: list });
+  };
 
   return html`<div class="bc-drawer-backdrop" onClick=${(e) => { if (e.target === e.currentTarget) set({ editor: null }); }}>
     <form class="bc-drawer" ref=${panelRef} onSubmit=${submit} role="dialog" aria-modal="true" aria-label=${occ ? 'Edit event' : 'New event'}>
@@ -276,6 +320,24 @@ export function EditorDrawer() {
         <span>Tags (comma separated)</span>
         <input value=${form.tags} onInput=${(e) => upd({ tags: e.target.value })} />
       </label>
+
+      <fieldset class="bc-rem">
+        <legend>Reminders</legend>
+        <div class="bc-rem-row">
+          ${remEff.reminders.length === 0 && html`<span class="bc-rem-none">None</span>`}
+          ${remEff.reminders.map((entry, i) => html`<span key=${i + ':' + fmtReminder(entry)} class="bc-rem-chip">
+            <span aria-hidden="true">🔔</span> ${fmtReminder(entry)}
+            <button type="button" class="bc-rem-x" aria-label=${'Remove reminder: ' + fmtReminder(entry)} onClick=${() => remRemove(i)}>✕</button>
+          </span>`)}
+          <select class="bc-rem-add" aria-label="Add reminder" value=""
+            onChange=${(e) => { const v = e.target.value; e.target.value = ''; if (v !== '') remAdd(Number(v)); }}>
+            <option value="">+ Add reminder</option>
+            ${remChoices.map((c) => html`<option key=${c.minutes} value=${String(c.minutes)}>${c.label}</option>`)}
+          </select>
+          ${form.reminders !== null && html`<button type="button" class="bc-btn bc-rem-reset" onClick=${() => upd({ reminders: null })}>Reset to default</button>`}
+          <span class="bc-rem-src">${remSrcHint}</span>
+        </div>
+      </fieldset>
 
       <fieldset class="bc-rrule">
         <legend>Repeat</legend>

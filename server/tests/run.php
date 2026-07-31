@@ -891,6 +891,195 @@ if (class_exists(\Sabre\CalDAV\Backend\AbstractBackend::class)) {
 }
 
 // ---------------------------------------------------------------------------
+// Reminders: validation, effective resolution, fire-time math, dedup keys,
+// VALARM trigger mapping, push subscription validation (pure, no DB)
+// ---------------------------------------------------------------------------
+
+use BetterCal\Domain\PushSubscriptions;
+use BetterCal\Domain\Reminders;
+
+// Validation: event overrides normalize (unique, ascending); null inherits.
+checkEq('rem override null inherits', null, Reminders::validateEventReminders(null));
+checkEq('rem override empty list allowed', [], Reminders::validateEventReminders([]));
+checkEq(
+    'rem override normalized unique ascending',
+    [['minutes' => 5], ['minutes' => 30]],
+    Reminders::validateEventReminders([['minutes' => 30], ['minutes' => 5], ['minutes' => 5]])
+);
+foreach ([[['minutes' => -1]], [['minutes' => 999999]], 'nope', [['mins' => 5]]] as $bad) {
+    try {
+        Reminders::validateEventReminders($bad);
+        check('rem override rejects bad input', false);
+    } catch (HttpError $e) {
+        checkEq('rem override bad input code', 'invalid_reminders', $e->errorCode);
+    }
+}
+checkEq(
+    'rem allday list normalized',
+    [['daysBefore' => 1, 'time' => '18:00'], ['daysBefore' => 0, 'time' => '09:05']],
+    Reminders::validateAllDayList([
+        ['daysBefore' => 1, 'time' => '18:00'],
+        ['daysBefore' => 0, 'time' => '9:05'],
+        ['daysBefore' => 1, 'time' => '18:00'], // duplicate dropped
+    ])
+);
+foreach ([[['daysBefore' => 15, 'time' => '10:00']], [['daysBefore' => 1, 'time' => '25:00']], [['daysBefore' => 1]]] as $bad) {
+    try {
+        Reminders::validateAllDayList($bad);
+        check('rem allday rejects bad input', false);
+    } catch (HttpError $e) {
+        checkEq('rem allday bad input code', 'invalid_reminders', $e->errorCode);
+    }
+}
+$defaults = Reminders::validateDefaults(['timed' => [['minutes' => 15]]]);
+checkEq('rem defaults missing key is none', [], $defaults['allDay']);
+checkEq('rem defaults timed kept', [['minutes' => 15]], $defaults['timed']);
+checkEq('rem defaults null clears', null, Reminders::validateDefaults(null));
+try {
+    Reminders::validateDefaults(['weird' => []]);
+    check('rem defaults rejects unknown key', false);
+} catch (HttpError $e) {
+    checkEq('rem defaults unknown key code', 'invalid_reminders', $e->errorCode);
+}
+
+// Effective resolution order: event > calendar > global.
+$gTimed = [['minutes' => 10]];
+$gAllDay = [['daysBefore' => 1, 'time' => '18:00']];
+$calDef = ['timed' => [['minutes' => 30]], 'allDay' => [['daysBefore' => 2, 'time' => '08:00']]];
+checkEq('rem effective event wins', [[['minutes' => 5]], 'event'],
+    Reminders::effective([['minutes' => 5]], $calDef, $gTimed, $gAllDay, false));
+checkEq('rem effective explicit none stays event', [[], 'event'],
+    Reminders::effective([], $calDef, $gTimed, $gAllDay, false));
+checkEq('rem effective calendar over global', [[['minutes' => 30]], 'calendar'],
+    Reminders::effective(null, $calDef, $gTimed, $gAllDay, false));
+checkEq('rem effective calendar allday branch', [[['daysBefore' => 2, 'time' => '08:00']], 'calendar'],
+    Reminders::effective(null, $calDef, $gTimed, $gAllDay, true));
+checkEq('rem effective global timed fallback', [$gTimed, 'default'],
+    Reminders::effective(null, null, $gTimed, $gAllDay, false));
+checkEq('rem effective global allday fallback', [$gAllDay, 'default'],
+    Reminders::effective(null, null, $gTimed, $gAllDay, true));
+checkEq('rem effective subscribed never inherits global', [[], 'default'],
+    Reminders::effective(null, null, $gTimed, $gAllDay, false, 'subscribed'));
+checkEq('rem effective subscribed calendar default applies', [[['minutes' => 30]], 'calendar'],
+    Reminders::effective(null, $calDef, $gTimed, $gAllDay, false, 'subscribed'));
+
+// Fire-time math. Timed: minutes before the start instant.
+$startUtc = Time::fromDb('2026-08-07 19:00:00'); // noon LA
+checkEq('rem fire timed 10min', '2026-08-07 18:50:00',
+    Time::toDb(Reminders::fireAt(['minutes' => 10], $startUtc, false, 'America/Los_Angeles')));
+checkEq('rem fire timed zero offset', '2026-08-07 19:00:00',
+    Time::toDb(Reminders::fireAt(['minutes' => 0], $startUtc, false, 'America/Los_Angeles')));
+
+// All-day daysBefore/time fires in the EVENT's timezone (stored start is
+// local midnight: 2026-08-07 in LA = 07:00 UTC).
+$allDayLa = Time::fromDb('2026-08-07 07:00:00');
+checkEq('rem fire allday day before 18:00 LA', '2026-08-07 01:00:00',
+    Time::toDb(Reminders::fireAt(['daysBefore' => 1, 'time' => '18:00'], $allDayLa, true, 'America/Los_Angeles')));
+checkEq('rem fire allday same day 09:00 LA', '2026-08-07 16:00:00',
+    Time::toDb(Reminders::fireAt(['daysBefore' => 0, 'time' => '09:00'], $allDayLa, true, 'America/Los_Angeles')));
+// Same calendar date in Tokyo (midnight = 2026-08-06 15:00 UTC): day before
+// 18:00 JST = 2026-08-06 09:00 UTC.
+$allDayTokyo = Time::fromDb('2026-08-06 15:00:00');
+checkEq('rem fire allday day before 18:00 Tokyo', '2026-08-06 09:00:00',
+    Time::toDb(Reminders::fireAt(['daysBefore' => 1, 'time' => '18:00'], $allDayTokyo, true, 'Asia/Tokyo')));
+// Minutes offsets on all-day events count back from local midnight.
+checkEq('rem fire allday minutes before midnight', '2026-08-07 01:00:00',
+    Time::toDb(Reminders::fireAt(['minutes' => 360], $allDayLa, true, 'America/Los_Angeles')));
+checkEq('rem fire garbage entry null', null, Reminders::fireAt(['bogus' => true], $startUtc, false, 'UTC'));
+
+// Dedup key format: eventId:occurrenceStartUtc:offsetMinutes.
+checkEq('rem instance key format', '42:20260807T190000Z:10', Reminders::instanceKey(42, $startUtc, 10));
+
+// Notification payload.
+$payloadRow = [
+    'id' => 42, 'title' => 'Dinner', 'location' => 'Zuni Cafe',
+    'tzid' => 'America/Los_Angeles', 'all_day' => 0,
+];
+$pl = Reminders::payload($payloadRow, $startUtc, false);
+checkEq('rem payload title', 'Dinner', $pl['title']);
+checkEq('rem payload body time + location', 'Fri, Aug 7, 12:00 PM · Zuni Cafe', $pl['body']);
+checkEq('rem payload tag is instanceId', '42:20260807T190000Z', $pl['tag']);
+checkEq('rem payload url deep link', '/?event=' . rawurlencode('42:20260807T190000Z'), $pl['url']);
+$plAllDay = Reminders::payload(['id' => 7, 'title' => 'Fair', 'location' => null, 'tzid' => 'America/Los_Angeles', 'all_day' => 1], $allDayLa, true);
+checkEq('rem payload allday body', 'Fri, Aug 7 · All day', $plAllDay['body']);
+
+// VALARM trigger mapping, both directions.
+checkEq('valarm parse -PT10M', 10, Ics::parseTriggerMinutes('-PT10M'));
+checkEq('valarm parse -P1D', 1440, Ics::parseTriggerMinutes('-P1D'));
+checkEq('valarm parse -PT1H30M', 90, Ics::parseTriggerMinutes('-PT1H30M'));
+checkEq('valarm parse -P1W', 10080, Ics::parseTriggerMinutes('-P1W'));
+checkEq('valarm parse PT0S at start', 0, Ics::parseTriggerMinutes('PT0S'));
+checkEq('valarm parse -PT30S rounds to minute', 1, Ics::parseTriggerMinutes('-PT30S'));
+checkEq('valarm parse after-start rejected', null, Ics::parseTriggerMinutes('PT15M'));
+checkEq('valarm parse absolute rejected', null, Ics::parseTriggerMinutes('20260807T120000Z'));
+checkEq('valarm format 10', '-PT10M', Ics::formatTrigger(10));
+checkEq('valarm format 90', '-PT1H30M', Ics::formatTrigger(90));
+checkEq('valarm format 1440', '-P1D', Ics::formatTrigger(1440));
+checkEq('valarm format 1500', '-P1DT1H', Ics::formatTrigger(1500));
+checkEq('valarm format 0', 'PT0S', Ics::formatTrigger(0));
+foreach ([10, 90, 1440, 1500, 0, 360, 10080] as $m) {
+    checkEq("valarm round trip $m", $m, Ics::parseTriggerMinutes(Ics::formatTrigger($m)));
+}
+
+// Export: explicit overrides write display VALARMs; inherited/none do not.
+$valCal = Ics::buildCalendar('Rem', null, [
+    [
+        'uid' => 'r-1', 'title' => 'With override', 'start_utc' => '2026-08-07 19:00:00',
+        'end_utc' => '2026-08-07 20:00:00', 'all_day' => 0, 'tzid' => 'UTC', 'status' => 'confirmed',
+        'reminders_json' => json_encode([['minutes' => 10], ['minutes' => 1440]]),
+    ],
+    [
+        'uid' => 'r-2', 'title' => 'Inherited', 'start_utc' => '2026-08-08 19:00:00',
+        'end_utc' => '2026-08-08 20:00:00', 'all_day' => 0, 'tzid' => 'UTC', 'status' => 'confirmed',
+        'reminders_json' => null,
+    ],
+]);
+checkEq('valarm export two alarms for override', 2, substr_count($valCal, 'BEGIN:VALARM'));
+check('valarm export display action', str_contains($valCal, 'ACTION:DISPLAY'));
+check('valarm export trigger 10min', str_contains($valCal, 'TRIGGER:-PT10M'));
+check('valarm export trigger 1day', str_contains($valCal, 'TRIGGER:-P1D'));
+
+// Calendars: stored reminderDefaults surface, absent stays null.
+checkEq('cal reminderDefaults parsed', ['timed' => [['minutes' => 30]], 'allDay' => []],
+    Calendars::reminderDefaultsFor(json_encode(['reminderDefaults' => ['timed' => [['minutes' => 30]], 'allDay' => []]])));
+checkEq('cal reminderDefaults absent null', null, Calendars::reminderDefaultsFor(json_encode(['groupSimilar' => true])));
+checkEq('cal reminderDefaults null settings', null, Calendars::reminderDefaultsFor(null));
+
+// Settings: reminder keys validate through the allowlist.
+$sv = Settings::validate(['reminderTimed' => [['minutes' => 30]], 'reminderAllDay' => [['daysBefore' => 2, 'time' => '7:30']]]);
+checkEq('settings reminderTimed validated', [['minutes' => 30]], $sv['reminderTimed']);
+checkEq('settings reminderAllDay normalized time', [['daysBefore' => 2, 'time' => '07:30']], $sv['reminderAllDay']);
+checkEq('settings defaults include reminders', [['minutes' => 10]], Settings::withDefaults([])['reminderTimed']);
+checkEq('settings defaults allday reminder', [['daysBefore' => 1, 'time' => '18:00']], Settings::withDefaults([])['reminderAllDay']);
+try {
+    Settings::validate(['reminderTimed' => 'ten minutes']);
+    check('settings rejects bad reminderTimed', false);
+} catch (HttpError $e) {
+    checkEq('settings bad reminderTimed status', 400, $e->status);
+}
+
+// Push subscription validation.
+$psub = PushSubscriptions::validate([
+    'endpoint' => 'https://fcm.googleapis.com/fcm/send/abc123',
+    'keys' => ['p256dh' => 'BPk9_dh-key_', 'auth' => 'authtok='],
+]);
+checkEq('push validate endpoint kept', 'https://fcm.googleapis.com/fcm/send/abc123', $psub['endpoint']);
+checkEq('push validate keys kept', ['BPk9_dh-key_', 'authtok='], [$psub['p256dh'], $psub['auth']]);
+foreach ([
+    ['endpoint' => 'http://insecure.example/x', 'keys' => ['p256dh' => 'a', 'auth' => 'b']],
+    ['endpoint' => 'https://ok.example/x'],
+    ['endpoint' => 'https://ok.example/x', 'keys' => ['p256dh' => 'bad key!', 'auth' => 'b']],
+] as $bad) {
+    try {
+        PushSubscriptions::validate($bad);
+        check('push validate rejects bad subscription', false);
+    } catch (HttpError $e) {
+        checkEq('push validate bad subscription code', 'invalid_subscription', $e->errorCode);
+    }
+}
+checkEq('push endpoint hash is sha256', hash('sha256', 'https://x.example/e'), PushSubscriptions::endpointHash('https://x.example/e'));
+
+// ---------------------------------------------------------------------------
 
 $pass = $GLOBALS['__pass'];
 $fail = $GLOBALS['__fail'];

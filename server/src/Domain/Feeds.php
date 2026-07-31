@@ -140,6 +140,9 @@ final class Feeds
                 }
                 $seen[$key] = true;
 
+                // reminders_json is deliberately not synced: reminders on feed
+                // events are user-local (like tags), and feed VALARMs must not
+                // overwrite them on every poll.
                 $columns = [
                     'title' => $ev['title'],
                     'description' => $ev['description'],

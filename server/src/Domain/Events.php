@@ -26,18 +26,51 @@ final class Events
     ) {
     }
 
-    /** @var array<int, \DateTimeImmutable>|null calendar id => created_at, lazy per request */
-    private ?array $calCreatedAt = null;
+    /** @var array<int, array{createdAt:\DateTimeImmutable,kind:string,reminderDefaults:?array}>|null calendar id => meta, lazy per request */
+    private ?array $calMeta = null;
+    /** @var array<int, array{timed:list<array>,allDay:list<array>}> user id => global reminder defaults, lazy */
+    private array $userReminderDefaults = [];
+
+    /** @return array{createdAt:\DateTimeImmutable,kind:string,reminderDefaults:?array}|null */
+    private function calendarMeta(int $calendarId): ?array
+    {
+        if ($this->calMeta === null) {
+            $this->calMeta = [];
+            foreach ($this->db->all('SELECT id, created_at, kind, settings_json FROM calendars') as $c) {
+                $settings = is_string($c['settings_json'] ?? null)
+                    ? json_decode((string) $c['settings_json'], true)
+                    : $c['settings_json'];
+                $defaults = is_array($settings) && isset($settings['reminderDefaults']) && is_array($settings['reminderDefaults'])
+                    ? $settings['reminderDefaults']
+                    : null;
+                $this->calMeta[(int) $c['id']] = [
+                    'createdAt' => Time::fromDb((string) $c['created_at']),
+                    'kind' => (string) $c['kind'],
+                    'reminderDefaults' => $defaults,
+                ];
+            }
+        }
+        return $this->calMeta[$calendarId] ?? null;
+    }
 
     private function calendarCreatedAt(int $calendarId): ?\DateTimeImmutable
     {
-        if ($this->calCreatedAt === null) {
-            $this->calCreatedAt = [];
-            foreach ($this->db->all('SELECT id, created_at FROM calendars') as $c) {
-                $this->calCreatedAt[(int) $c['id']] = Time::fromDb((string) $c['created_at']);
-            }
+        return $this->calendarMeta($calendarId)['createdAt'] ?? null;
+    }
+
+    /** @return array{timed:list<array>,allDay:list<array>} */
+    private function reminderDefaultsForUser(int $userId): array
+    {
+        if (!isset($this->userReminderDefaults[$userId])) {
+            $raw = $this->db->scalar('SELECT settings_json FROM users WHERE id = ?', [$userId]);
+            $stored = is_string($raw) ? json_decode($raw, true) : $raw;
+            $settings = Settings::withDefaults(is_array($stored) ? $stored : []);
+            $this->userReminderDefaults[$userId] = [
+                'timed' => is_array($settings['reminderTimed'] ?? null) ? $settings['reminderTimed'] : [],
+                'allDay' => is_array($settings['reminderAllDay'] ?? null) ? $settings['reminderAllDay'] : [],
+            ];
         }
-        return $this->calCreatedAt[$calendarId] ?? null;
+        return $this->userReminderDefaults[$userId];
     }
 
     // ---- Window query -------------------------------------------------
@@ -240,6 +273,9 @@ final class Events
             'all_day' => $allDay ? 1 : 0,
             'tzid' => $tzid,
             'rrule' => $rrule,
+            'reminders_json' => array_key_exists('reminders', $in)
+                ? self::encodeReminders(Reminders::validateEventReminders($in['reminders']))
+                : null,
             'status' => $this->statusOrDefault($in['status'] ?? null),
             'source' => 'local',
             'created_at' => Time::nowDb(),
@@ -266,9 +302,11 @@ final class Events
     public function patch(int $userId, int $id, array $in): void
     {
         $event = $this->get($userId, $id);
-        $editKeys = array_diff(array_keys($in), ['scope', 'instanceStart', 'tagNames']);
+        // Reminders are user-local metadata (like tags), so feed events accept
+        // them even though their feed-derived content is read-only.
+        $editKeys = array_diff(array_keys($in), ['scope', 'instanceStart', 'tagNames', 'reminders']);
         if ($event['source'] === 'feed' && $editKeys !== []) {
-            throw HttpError::forbidden('feed_readonly', 'Feed events are read-only except attendance and tags');
+            throw HttpError::forbidden('feed_readonly', 'Feed events are read-only except attendance, tags and reminders');
         }
 
         $isRecurringMaster = !empty($event['rrule']) && empty($event['recurrence_parent_id']);
@@ -612,6 +650,16 @@ final class Events
             $style = is_array($row['style_json']) ? $row['style_json'] : json_decode((string) $row['style_json'], true);
         }
         $createdAt = Time::fromDb((string) $row['created_at']);
+        $calMeta = $this->calendarMeta((int) $row['calendar_id']);
+        $globals = $this->reminderDefaultsForUser((int) $row['user_id']);
+        [$reminders, $reminderSource] = Reminders::effective(
+            Reminders::decode($row['reminders_json'] ?? null),
+            $calMeta['reminderDefaults'] ?? null,
+            $globals['timed'],
+            $globals['allDay'],
+            (int) $row['all_day'] === 1,
+            $calMeta['kind'] ?? 'local'
+        );
         return [
             'instanceId' => Recurrence::instanceId($id, $startUtc),
             'eventId' => $id,
@@ -640,6 +688,8 @@ final class Events
             'attendance' => (string) $row['attendance'],
             'status' => (string) $row['status'],
             'score' => isset($row['score']) && $row['score'] !== null ? (float) $row['score'] : null,
+            'reminders' => $reminders,
+            'reminderSource' => $reminderSource,
             'tags' => $links['tags'][$id] ?? [],
             'people' => $links['people'][$id] ?? [],
             'styleJson' => $style ?: null,
@@ -732,7 +782,16 @@ final class Events
         if (array_key_exists('rrule', $in) && !$forOverride) {
             $fields['rrule'] = ($in['rrule'] === null || $in['rrule'] === '') ? null : (string) $in['rrule'];
         }
+        if (array_key_exists('reminders', $in)) {
+            $fields['reminders_json'] = self::encodeReminders(Reminders::validateEventReminders($in['reminders']));
+        }
         return $fields;
+    }
+
+    /** null (inherit) stays NULL; [] and lists persist as JSON. */
+    private static function encodeReminders(?array $reminders): ?string
+    {
+        return $reminders === null ? null : json_encode($reminders);
     }
 
     /** @return array{0:string,1:string} start/end as UTC db strings */

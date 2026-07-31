@@ -23,6 +23,10 @@ final class Settings
         'theme' => 'system',
         'nlParseMode' => 'smart',
         'folderVisibility' => [],
+        // Global default reminders; effective-reminder resolution falls back
+        // to these when neither the event nor its calendar overrides them.
+        'reminderTimed' => [['minutes' => 10]],
+        'reminderAllDay' => [['daysBefore' => 1, 'time' => '18:00']],
     ];
     private const VIEWS = ['month', 'multiweek', 'week', 'day', 'agenda'];
 
@@ -93,6 +97,8 @@ final class Settings
                 'nlParseMode' => self::enum($key, $value, ['always', 'smart', 'never']),
                 'defaultCalendarId' => self::calendarId($value),
                 'folderVisibility' => self::folderVisibility($value),
+                'reminderTimed' => Reminders::validateTimedList($value),
+                'reminderAllDay' => Reminders::validateAllDayList($value),
                 default => throw HttpError::badRequest("Unknown setting '$key'", 'unknown_setting'),
             };
         }

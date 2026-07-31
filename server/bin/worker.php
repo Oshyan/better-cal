@@ -9,10 +9,14 @@ require dirname(__DIR__) . '/src/bootstrap.php';
 
 use BetterCal\Domain\Feeds;
 use BetterCal\Domain\PromptEval;
+use BetterCal\Domain\PushSubscriptions;
 use BetterCal\Domain\Ranking;
+use BetterCal\Domain\Recurrence;
+use BetterCal\Domain\Reminders;
 use BetterCal\Infra\Db;
 use BetterCal\Infra\JobQueue;
 use BetterCal\Infra\LlmGateway;
+use BetterCal\Infra\PushSender;
 use BetterCal\Support\Time;
 
 const WORKER_LOCK = 'bettercal_worker';
@@ -25,6 +29,7 @@ $feeds = new Feeds($db, $queue);
 $llm = new LlmGateway($cfg);
 $promptEval = new PromptEval($db, $llm, $queue);
 $ranking = new Ranking($db, $llm, $queue);
+$reminders = new Reminders($db, new PushSubscriptions($db), new PushSender($cfg), new Recurrence());
 
 $locked = $db->scalar('SELECT GET_LOCK(?, 0)', [WORKER_LOCK]);
 if ((int) $locked !== 1) {
@@ -63,6 +68,10 @@ try {
                 case 'rank_events':
                     $scored = $ranking->run();
                     echo bc_ts() . " rank_events scored=$scored\n";
+                    break;
+                case 'reminder_scan':
+                    $result = $reminders->scan();
+                    echo bc_ts() . ' reminder_scan sent=' . $result['sent'] . ' failed=' . $result['failed'] . "\n";
                     break;
                 default:
                     throw new \RuntimeException('Unknown job type: ' . $job['type']);
@@ -106,6 +115,9 @@ function bc_enqueue_recurring(Db $db, JobQueue $queue): void
 {
     bc_enqueue_if_stale($db, $queue, 'rank_events', 'PT1H');
     bc_enqueue_if_stale($db, $queue, 'filter_eval', 'P1D');
+    // Every worker run (cron fires each minute); 50s so the previous run's
+    // job never suppresses this minute's scan.
+    bc_enqueue_if_stale($db, $queue, 'reminder_scan', 'PT50S');
 }
 
 function bc_enqueue_if_stale(Db $db, JobQueue $queue, string $type, string $interval): void

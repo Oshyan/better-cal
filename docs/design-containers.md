@@ -62,9 +62,11 @@ Display:
 
 Deletion semantics: deleting a trip detaches members (they survive); explicit "Delete trip and its events" is a second, clearly-worded option in the confirm.
 
-## Open questions for Oshyan
+## Decisions (Oshyan, 2026-07-31)
 
-1. Label: "Trip" everywhere, or a neutral "Plan"/"Group" with Trip as an example? (Recommend Trip.)
-2. Should a container's own calendar matter for member display (e.g. tint members with the trip color), or keep members visually on their own calendars? (Recommend: members keep their calendar colors; the band carries the trip color.)
-3. Single-container restriction in UX v1 (one trip per event) acceptable? (Recommend yes.)
-4. Should trip spans auto-grow when a member falls outside the span (flight lands a day after "trip end")? (Recommend: prompt "Extend trip to include this?" rather than silent growth.)
+1. Label: **Trip**.
+2. Members keep their own calendar colors; the band carries the trip color. Explicitly: membership works between events on the same calendar as well as across calendars (the link table is calendar-agnostic; UI must not assume cross-calendar).
+3. One trip per event in v1: confirmed.
+4. Span growth: prompt ("Extend trip to include this?"), never silent.
+
+Status: unblocked for implementation after the notifications and view-roster waves.

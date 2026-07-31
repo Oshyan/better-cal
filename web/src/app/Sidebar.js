@@ -14,6 +14,25 @@ import { CalendarSettings } from './CalendarSettings.js';
 import { MiniMonth } from './MiniMonth.js';
 import { PALETTE } from '../lib/color.js';
 
+// Solo ("show only this calendar"): transient, session-scoped. Entering solo
+// captures the current visibility set; exiting restores it exactly. Switching
+// the solo target keeps the ORIGINAL captured set so "Show all" always returns
+// to the pre-solo state. Applied as real visible-flag PATCHes (silent, batch)
+// so every view and the server agree; folder custom sets are not touched.
+async function applyVisibilityMap(entries) {
+  const want = new Map(entries);
+  const changed = state.calendars.filter((c) => want.has(c.id) && c.visible !== want.get(c.id));
+  if (changed.length === 0) return;
+  set({ calendars: state.calendars.map((c) => (want.has(c.id) && c.visible !== want.get(c.id) ? { ...c, visible: want.get(c.id) } : c)) });
+  const results = await Promise.allSettled(
+    changed.map((c) => api('/calendars/' + c.id, { method: 'PATCH', body: { visible: want.get(c.id) } })),
+  );
+  if (results.some((r) => r.status === 'rejected')) {
+    toast('Some visibility changes failed to save', { error: true });
+    loadCalendars();
+  }
+}
+
 // Inline stroke icons, sized for compact rows. viewBox 0 0 16 16.
 function Icon({ name, size = 15 }) {
   const body = {
@@ -41,7 +60,7 @@ function healthBadge(cal) {
   return html`<span class="bc-health" role="img" aria-label=${tip} title=${tip}>⚠</span>`;
 }
 
-function CalendarRow({ cal, folders, open, onGear }) {
+function CalendarRow({ cal, folders, open, onGear, soloed, onSolo }) {
   return html`<div class="bc-cal-item">
     <div class="bc-cal-row">
       <label class="bc-cal-label">
@@ -55,6 +74,14 @@ function CalendarRow({ cal, folders, open, onGear }) {
         <span class="bc-cal-name">${cal.name}</span>
       </label>
       ${healthBadge(cal)}
+      <button
+        type="button"
+        class="bc-icon-btn bc-cal-solo${soloed ? ' is-on' : ''}"
+        aria-label=${soloed ? 'Stop showing only ' + cal.name : 'Show only ' + cal.name}
+        aria-pressed=${soloed}
+        title=${soloed ? 'Showing only this calendar. Click to restore.' : 'Show only this calendar'}
+        onClick=${() => onSolo(cal)}
+      >${soloed ? 'Only ✓' : 'Only'}</button>
       <button
         type="button"
         class="bc-icon-btn bc-cal-gear${open ? ' is-open' : ''}"
@@ -135,7 +162,9 @@ function FolderHead({ folder, cals, collapsed, onToggleCollapse }) {
     ${cals.length > 0 && html`<${FolderModeButton} folder=${folder} />`}
     <span class="bc-folder-tools">
       <button type="button" class="bc-icon-btn bc-folder-tool" aria-label=${'Rename folder ' + folder.name} title="Rename folder" onClick=${startRename}>✎</button>
-      <button type="button" class="bc-icon-btn bc-folder-tool" aria-label=${'Delete folder ' + folder.name} title=${cals.length > 0 ? 'Only empty folders can be deleted' : 'Delete folder'} onClick=${remove}>✕</button>
+      <button type="button" class="bc-icon-btn bc-folder-tool bc-folder-delete" aria-label=${'Delete folder ' + folder.name} title=${cals.length > 0 ? 'Only empty folders can be deleted' : 'Delete folder'} onClick=${remove}>
+        <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M2.5 4h11M6.5 4V2.8c0-.4.3-.8.8-.8h1.4c.5 0 .8.4.8.8V4M4 4l.7 9.4c0 .5.4.8.8.8h5c.4 0 .8-.3.8-.8L12 4M6.5 7v4M9.5 7v4"/></svg>
+      </button>
     </span>
   </div>`;
 }
@@ -207,7 +236,7 @@ const MANAGE_ITEMS = [
   ['views', 'Saved views'],
 ];
 
-export function Sidebar({ open }) {
+export function Sidebar({ open, onClose }) {
   const { calendars, folders, collapsedFolders, route } = useStore(
     (s) => ({
       calendars: s.calendars, folders: s.folders,
@@ -217,8 +246,22 @@ export function Sidebar({ open }) {
     shallowEq,
   );
   const [openCalId, setOpenCalId] = useState(null);
+  const [solo, setSolo] = useState(null); // {calId, prev: [[id, visible], ...]}
 
   const toggleGear = (id) => setOpenCalId(openCalId === id ? null : id);
+
+  const enterSolo = async (cal) => {
+    const prev = solo ? solo.prev : state.calendars.map((c) => [c.id, c.visible]);
+    setSolo({ calId: cal.id, prev });
+    await applyVisibilityMap(state.calendars.map((c) => [c.id, c.id === cal.id]));
+  };
+  const exitSolo = async () => {
+    if (!solo) return;
+    const prev = solo.prev;
+    setSolo(null);
+    await applyVisibilityMap(prev);
+  };
+  const soloCal = solo ? calendars.find((c) => c.id === solo.calId) : null;
 
   const inFolder = new Set();
   const byFolder = folders.map((f) => {
@@ -235,11 +278,21 @@ export function Sidebar({ open }) {
   const rows = (cals) => cals.map((c) => html`<${CalendarRow}
     key=${c.id} cal=${c} folders=${folders}
     open=${openCalId === c.id} onGear=${toggleGear}
+    soloed=${solo && solo.calId === c.id}
+    onSolo=${(cal) => (solo && solo.calId === cal.id ? exitSolo() : enterSolo(cal))}
   />`);
 
   return html`<aside class="bc-sidebar${open ? ' is-open' : ''}">
+    ${onClose && html`<div class="bc-sidebar-mobilehead">
+      <span class="bc-manage-head">Calendars</span>
+      <button type="button" class="bc-icon-btn" aria-label="Close sidebar" onClick=${onClose}>✕</button>
+    </div>`}
     <div class="bc-sidebar-scroll">
       <${MiniMonth} />
+      ${soloCal && html`<div class="bc-solo-banner" role="status">
+        Showing only <strong>${soloCal.name}</strong>
+        <button type="button" class="bc-link-btn" onClick=${exitSolo}>Show all</button>
+      </div>`}
       ${byFolder.map(({ folder, cals }) => html`<section key=${'f' + folder.id} class="bc-folder">
         <${FolderHead}
           folder=${folder} cals=${cals}

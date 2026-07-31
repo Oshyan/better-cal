@@ -72,6 +72,8 @@ function bc_handle_api(Request $request, array $cfg): void
         $outFeeds = new Domain\OutFeeds($db, $search, $cfg);
         $settings = new Domain\Settings($db);
         $geocode = new Domain\Geocode($db);
+        $pushSubscriptions = new Domain\PushSubscriptions($db);
+        $pushSender = new \BetterCal\Infra\PushSender($cfg);
         $quickAdd = new Domain\QuickAdd($db, new LlmGateway($cfg), $events, $settings);
 
         $authController = new Controllers\AuthController($auth);
@@ -86,6 +88,7 @@ function bc_handle_api(Request $request, array $cfg): void
         $tokensController = new Controllers\TokensController($apiTokens);
         $settingsController = new Controllers\SettingsController($settings);
         $geocodeController = new Controllers\GeocodeController($geocode);
+        $pushController = new Controllers\PushController($pushSubscriptions, $pushSender);
         $healthController = new Controllers\HealthController($db, $cfg);
 
         $router = new Router();
@@ -137,6 +140,12 @@ function bc_handle_api(Request $request, array $cfg): void
         $router->add('GET', "$base/outfeeds", [$outFeedsController, 'index']);
         $router->add('POST', "$base/outfeeds", [$outFeedsController, 'create']);
         $router->add('DELETE', "$base/outfeeds/:id", [$outFeedsController, 'delete']);
+
+        $router->add('GET', "$base/push/key", fn(): Response => $pushController->key());
+        $router->add('GET', "$base/push/status", [$pushController, 'status']);
+        $router->add('POST', "$base/push/subscribe", [$pushController, 'subscribe']);
+        $router->add('POST', "$base/push/unsubscribe", [$pushController, 'unsubscribe']);
+        $router->add('POST', "$base/push/test", [$pushController, 'test']);
 
         $router->add('GET', "$base/settings", [$settingsController, 'index']);
         $router->add('PATCH', "$base/settings", [$settingsController, 'patch']);

@@ -4,7 +4,7 @@
 //   picked up on next load while offline still works
 // - API GETs: network-first with a 5s timeout falling back to cache
 
-const VERSION = 'bc-v2';
+const VERSION = 'bc-v3';
 const SHELL_CACHE = VERSION + '-shell';
 const API_CACHE = VERSION + '-api';
 const API_TIMEOUT_MS = 5000;
@@ -26,6 +26,7 @@ const SHELL = [
   '/assets/src/app/store.js',
   '/assets/src/app/api.js',
   '/assets/src/app/actions.js',
+  '/assets/src/app/push.js',
   '/assets/src/app/keyboard.js',
   '/assets/src/app/Toolbar.js',
   '/assets/src/app/Sidebar.js',
@@ -46,6 +47,7 @@ const SHELL = [
   '/assets/src/ui/monthmath.js',
   '/assets/src/lib/dates.js',
   '/assets/src/lib/color.js',
+  '/assets/src/lib/reminders.js',
 ];
 
 self.addEventListener('install', (event) => {
@@ -91,6 +93,42 @@ function networkFirstWithTimeout(request, cacheName, timeoutMs) {
     });
   });
 }
+
+// --- Web Push reminders -----------------------------------------------------
+// The worker sends {title, body, url, tag}; tag replaces earlier notifications
+// for the same occurrence instead of stacking duplicates.
+
+self.addEventListener('push', (event) => {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch (e) {
+    data = { body: event.data ? event.data.text() : '' };
+  }
+  event.waitUntil(self.registration.showNotification(data.title || 'Better-Cal', {
+    body: data.body || '',
+    tag: data.tag || undefined,
+    icon: '/assets/icons/icon-192.png',
+    badge: '/assets/icons/icon-192.png',
+    data: { url: data.url || '/' },
+  }));
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const url = (event.notification.data && event.notification.data.url) || '/';
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
+      for (const client of list) {
+        if (new URL(client.url).origin === self.location.origin && 'focus' in client) {
+          client.focus();
+          return 'navigate' in client ? client.navigate(url) : undefined;
+        }
+      }
+      return clients.openWindow(url);
+    }),
+  );
+});
 
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);

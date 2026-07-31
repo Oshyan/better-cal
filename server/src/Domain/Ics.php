@@ -163,7 +163,72 @@ final class Ics
         if (in_array($status, ['CONFIRMED', 'TENTATIVE', 'CANCELLED'], true)) {
             $out .= self::line('STATUS', $status);
         }
+        // Explicit per-event reminder overrides export as display VALARMs;
+        // inherited defaults (NULL) and explicit-none ([]) write nothing.
+        if (!empty($ev['reminders_json'])) {
+            $reminders = is_array($ev['reminders_json'])
+                ? $ev['reminders_json']
+                : json_decode((string) $ev['reminders_json'], true);
+            if (is_array($reminders)) {
+                foreach ($reminders as $entry) {
+                    if (!is_array($entry) || !isset($entry['minutes']) || !is_numeric($entry['minutes'])) {
+                        continue;
+                    }
+                    $out .= "BEGIN:VALARM\r\n";
+                    $out .= self::line('ACTION', 'DISPLAY');
+                    $out .= self::line('DESCRIPTION', 'Reminder');
+                    $out .= self::line('TRIGGER', self::formatTrigger((int) $entry['minutes']));
+                    $out .= "END:VALARM\r\n";
+                }
+            }
+        }
         $out .= "END:VEVENT\r\n";
+        return $out;
+    }
+
+    // ---- VALARM trigger mapping (pure) --------------------------------
+
+    /**
+     * Parse an iCalendar duration TRIGGER into minutes before start, or null
+     * when it is not a before-start relative trigger (absolute date-times and
+     * after-start durations are ignored).
+     */
+    public static function parseTriggerMinutes(string $trigger): ?int
+    {
+        $trigger = strtoupper(trim($trigger));
+        if (preg_match('/^([+-])?P(?:(\d+)W)?(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/', $trigger, $m) !== 1) {
+            return null; // absolute DATE-TIME triggers (or garbage)
+        }
+        $minutes = (int) ($m[2] ?? 0) * 10080
+            + (int) ($m[3] ?? 0) * 1440
+            + (int) ($m[4] ?? 0) * 60
+            + (int) ($m[5] ?? 0)
+            + intdiv((int) ($m[6] ?? 0) + 30, 60);
+        if ($minutes === 0) {
+            return 0; // PT0S: at start, sign irrelevant
+        }
+        return ($m[1] ?? '') === '-' ? $minutes : null; // positive = after start
+    }
+
+    /** Minutes-before-start as an iCalendar duration TRIGGER value. */
+    public static function formatTrigger(int $minutes): string
+    {
+        if ($minutes <= 0) {
+            return 'PT0S';
+        }
+        if ($minutes % 1440 === 0) {
+            return '-P' . intdiv($minutes, 1440) . 'D';
+        }
+        $h = intdiv($minutes % 1440, 60);
+        $mi = $minutes % 60;
+        $days = intdiv($minutes, 1440);
+        $out = '-P' . ($days > 0 ? $days . 'D' : '') . 'T';
+        if ($h > 0) {
+            $out .= $h . 'H';
+        }
+        if ($mi > 0) {
+            $out .= $mi . 'M';
+        }
         return $out;
     }
 
@@ -172,7 +237,8 @@ final class Ics
      * Handles VTIMEZONE, DATE values, RRULE, EXDATE and RECURRENCE-ID.
      *
      * @return list<array<string,mixed>> keys: uid, title, description, location, url,
-     *   start_utc, end_utc, all_day, tzid, rrule, exdates (list), status, recurrence_instance_utc
+     *   start_utc, end_utc, all_day, tzid, rrule, exdates (list), status,
+     *   recurrence_instance_utc, reminders (list of {minutes} from display VALARMs)
      */
     public static function parse(string $ics): array
     {
@@ -260,6 +326,31 @@ final class Ics
             $status = 'confirmed';
         }
 
+        // Display alarms with before-start relative triggers map to reminder
+        // offsets; audio/email alarms, absolute triggers and RELATED=END are
+        // dropped (nothing in the model expresses them).
+        $reminders = [];
+        foreach ($vevent->select('VALARM') as $alarm) {
+            $action = strtoupper(trim((string) ($alarm->ACTION ?? 'DISPLAY')));
+            if ($action !== '' && $action !== 'DISPLAY') {
+                continue;
+            }
+            $trigger = $alarm->TRIGGER ?? null;
+            if ($trigger === null) {
+                continue;
+            }
+            $related = $trigger['RELATED'] ?? null;
+            if ($related !== null && strtoupper((string) $related) === 'END') {
+                continue;
+            }
+            $minutes = self::parseTriggerMinutes((string) $trigger);
+            if ($minutes !== null && $minutes <= 20160) {
+                $reminders[$minutes] = true;
+            }
+        }
+        ksort($reminders);
+        $reminders = array_map(static fn(int $m): array => ['minutes' => $m], array_keys($reminders));
+
         return [
             'uid' => isset($vevent->UID) ? substr((string) $vevent->UID, 0, 255) : \BetterCal\Support\Ids::ulid(),
             'title' => mb_substr((string) ($vevent->SUMMARY ?? ''), 0, 500),
@@ -274,6 +365,7 @@ final class Ics
             'exdates' => array_values(array_unique($exdates)),
             'status' => $status,
             'recurrence_instance_utc' => $recurrenceInstance,
+            'reminders' => $reminders,
         ];
     }
 }

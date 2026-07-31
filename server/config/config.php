@@ -26,7 +26,7 @@ function bc_load_env(string $path): void
     }
 }
 
-/** @return array{db:array{dsn:string,user:string,pass:string},base_url:string,gemini:array{key:string,model:string},session_secret:string,version:string,app_root:string} */
+/** @return array{db:array{dsn:string,user:string,pass:string},base_url:string,gemini:array{key:string,model:string},session_secret:string,vapid:array{public:string,private:string,subject:string},version:string,app_root:string} */
 function config(): array
 {
     static $cfg = null;
@@ -50,6 +50,11 @@ function config(): array
             'model' => $env('BETTERCAL_GEMINI_MODEL', 'gemini-3.6-flash'),
         ],
         'session_secret' => $env('BETTERCAL_SESSION_SECRET'),
+        'vapid' => [
+            'public' => $env('BETTERCAL_VAPID_PUBLIC'),
+            'private' => $env('BETTERCAL_VAPID_PRIVATE'),
+            'subject' => $env('BETTERCAL_VAPID_SUBJECT'),
+        ],
         'version' => '0.1.0',
         'app_root' => $appRoot,
     ];

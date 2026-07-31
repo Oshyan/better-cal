@@ -110,11 +110,36 @@ final class Events
         // field). Keyword/regex filters match inline; prompt filters join the
         // cached background verdicts (filter_evals) — no LLM calls here, ever.
         $activeFilters = $this->filters->enabledForUser($userId);
-        $windowEventIds = [];
+        $windowRows = [];
         foreach ($expanded as $occ) {
-            $windowEventIds[(int) $occ['row']['id']] = true;
+            $windowRows[(int) $occ['row']['id']] ??= $occ['row'];
         }
-        $promptCtx = $this->filters->promptFilterContext($userId, array_keys($windowEventIds));
+        $promptCtx = $this->filters->promptFilterContext($userId, array_keys($windowRows));
+
+        // On-read healing: feed events in this window that an enabled prompt
+        // filter covers but has no cached verdict for (e.g. past months never
+        // swept) get queued for background evaluation. Enqueue only — the LLM
+        // never runs in the request path.
+        if ($promptCtx['filters'] !== []) {
+            $missing = [];
+            foreach ($windowRows as $eventId => $row) {
+                if ((string) $row['source'] !== 'feed') {
+                    continue;
+                }
+                foreach ($promptCtx['filters'] as $pf) {
+                    if ($pf['calendarIds'] !== null && !isset($pf['calendarIds'][(int) $row['calendar_id']])) {
+                        continue;
+                    }
+                    if (!isset($promptCtx['evaluated'][$pf['id']][$eventId])) {
+                        $missing[] = $eventId;
+                        break;
+                    }
+                }
+            }
+            if ($missing !== []) {
+                $this->filters->enqueueEvalForEvents($missing);
+            }
+        }
         if ($activeFilters !== [] || $promptCtx['filters'] !== []) {
             $kept = [];
             foreach ($expanded as $occ) {

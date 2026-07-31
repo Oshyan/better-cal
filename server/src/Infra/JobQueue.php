@@ -33,6 +33,16 @@ final class JobQueue
         ) !== null;
     }
 
+    /** Is a job of this type with the given payload `hash` pending or running? */
+    public function hasPendingWithHash(string $type, string $hash): bool
+    {
+        return $this->db->scalar(
+            "SELECT id FROM jobs WHERE type = ? AND status IN ('pending', 'running')
+             AND JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.hash')) = ? LIMIT 1",
+            [$type, $hash]
+        ) !== null;
+    }
+
     public function hasActiveFeedPoll(int $calendarId): bool
     {
         return $this->db->scalar(

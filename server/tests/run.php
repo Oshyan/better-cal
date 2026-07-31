@@ -10,12 +10,15 @@ require dirname(__DIR__) . '/src/bootstrap.php';
 use BetterCal\Dav\ChangeLog;
 use BetterCal\Dav\DavIcs;
 use BetterCal\Domain\ApiTokens;
+use BetterCal\Domain\Calendars;
 use BetterCal\Domain\FallbackParser;
 use BetterCal\Domain\Filters;
 use BetterCal\Domain\Ics;
 use BetterCal\Domain\PromptEval;
+use BetterCal\Domain\QuickAdd;
 use BetterCal\Domain\Ranking;
 use BetterCal\Domain\Recurrence;
+use BetterCal\Domain\Settings;
 use BetterCal\Http\HttpError;
 use BetterCal\Http\Router;
 use BetterCal\Infra\LlmGateway;
@@ -123,6 +126,107 @@ checkEq('fp14 start', '2026-08-01T00:00:00-07:00', $d['start']);
 
 $d = $p('Sync this thursday 4pm');
 checkEq('fp15 this thursday is today', '2026-07-30T16:00:00-07:00', $d['start']);
+
+// Date ranges → multi-day all-day events (end exclusive).
+$d = $p('Conference June 1-12');
+checkEq('fp16 range rolls to next year', '2027-06-01T00:00:00-07:00', $d['start']);
+checkEq('fp16 range end exclusive', '2027-06-13T00:00:00-07:00', $d['end']);
+checkEq('fp16 range allDay', true, $d['allDay']);
+checkEq('fp16 range title', 'Conference', $d['title']);
+checkEq('fp16 range complete', true, $d['complete']);
+
+$d = $p('Retreat Aug 3 to Aug 7');
+checkEq('fp17 month-to-month range start', '2026-08-03T00:00:00-07:00', $d['start']);
+checkEq('fp17 month-to-month range end', '2026-08-08T00:00:00-07:00', $d['end']);
+
+$d = $p('Festival Sep 4-6, 2027');
+checkEq('fp18 range explicit year start', '2027-09-04T00:00:00-07:00', $d['start']);
+checkEq('fp18 range explicit year end', '2027-09-07T00:00:00-07:00', $d['end']);
+
+$d = $p('Trip Dec 30 to Jan 2');
+checkEq('fp19 cross-year range start', '2026-12-30T00:00:00-08:00', $d['start']);
+checkEq('fp19 cross-year range end', '2027-01-03T00:00:00-08:00', $d['end']);
+
+$d = $p('Vacation July 20 through July 24');
+checkEq('fp20 through range rolls forward', '2027-07-20T00:00:00-07:00', $d['start']);
+checkEq('fp20 through range end', '2027-07-25T00:00:00-07:00', $d['end']);
+
+$d = $p('Demo June 1 to 5pm');
+checkEq('fp21 time tail is not a range', '2027-06-01T17:00:00-07:00', $d['start']);
+checkEq('fp21 time tail not allDay', false, $d['allDay']);
+
+// noon / midnight
+$d = $p('Lunch tomorrow at noon');
+checkEq('fp22 noon', '2026-07-31T12:00:00-07:00', $d['start']);
+checkEq('fp22 noon title', 'Lunch', $d['title']);
+
+$d = $p('Call at midnight');
+checkEq('fp23 midnight rolls to tomorrow', '2026-07-31T00:00:00-07:00', $d['start']);
+checkEq('fp23 midnight incomplete without date', false, $d['complete']);
+
+$d = $p('Coffee noon');
+checkEq('fp24 bare noon later today', '2026-07-30T12:00:00-07:00', $d['start']);
+
+// "next week <weekday>" = that weekday within the next calendar week (Mon start).
+$d = $p('Standup next week monday 9am');
+checkEq('fp25 next week monday', '2026-08-03T09:00:00-07:00', $d['start']);
+checkEq('fp25 title', 'Standup', $d['title']);
+
+$d = $p('Review next week friday');
+checkEq('fp26 next week friday', '2026-08-07T00:00:00-07:00', $d['start']);
+checkEq('fp26 allDay', true, $d['allDay']);
+
+$d = $p('Brunch next week sunday');
+checkEq('fp27 next week sunday ends the week', '2026-08-09T00:00:00-07:00', $d['start']);
+
+// "all day" keyword
+$d = $p('Conference tomorrow all day');
+checkEq('fp28 all day keyword', true, $d['allDay']);
+checkEq('fp28 all day start', '2026-07-31T00:00:00-07:00', $d['start']);
+checkEq('fp28 all day title', 'Conference', $d['title']);
+checkEq('fp28 all day complete', true, $d['complete']);
+
+$d = $p('Focus block all day');
+checkEq('fp29 all day without date is today', '2026-07-30T00:00:00-07:00', $d['start']);
+checkEq('fp29 all day without date incomplete', false, $d['complete']);
+
+$d = $p('Hike all-day saturday');
+checkEq('fp30 hyphenated all-day', true, $d['allDay']);
+checkEq('fp30 hyphenated all-day start', '2026-08-01T00:00:00-07:00', $d['start']);
+checkEq('fp30 hyphenated all-day title', 'Hike', $d['title']);
+
+// People lists with commas.
+$d = $p('Dinner with Sam, Alex and Pat tomorrow 7pm');
+checkEq('fp31 comma people list', ['Sam', 'Alex', 'Pat'], $d['personNames']);
+checkEq('fp31 title', 'Dinner', $d['title']);
+checkEq('fp31 start', '2026-07-31T19:00:00-07:00', $d['start']);
+
+$d = $p('tomorrow 3pm');
+checkEq('fp32 untitled placeholder', 'New event', $d['title']);
+check('fp32 untitled stays below llm-skip threshold', $d['confidence'] < QuickAdd::FALLBACK_CONFIDENCE);
+
+// Completeness + confidence gates feeding the QuickAdd LLM-skip decision.
+checkEq('fp complete date+time', true, $p('Meeting tomorrow 9am')['complete']);
+checkEq('fp complete date-only allDay', true, $p('Trip 2026-08-15')['complete']);
+checkEq('fp incomplete time-only', false, $p('Coffee 8am')['complete']);
+checkEq('fp incomplete bare title', false, $p('Brainstorm')['complete']);
+check('fp date+time clears threshold', $p('Meeting tomorrow 9am')['confidence'] >= QuickAdd::FALLBACK_CONFIDENCE);
+check('fp date-only clears threshold', $p('Trip 2026-08-15')['confidence'] >= QuickAdd::FALLBACK_CONFIDENCE);
+check('fp time-only below threshold', $p('Coffee 8am')['confidence'] < QuickAdd::FALLBACK_CONFIDENCE);
+
+// ---------------------------------------------------------------------------
+// QuickAdd::useLlm — nlParseMode gating (pure, no DB, no LLM)
+// ---------------------------------------------------------------------------
+
+$completeParse = ['complete' => true, 'confidence' => 0.8];
+checkEq('qa never skips llm', false, QuickAdd::useLlm('never', ['complete' => false, 'confidence' => 0.1]));
+checkEq('qa always calls llm even when complete', true, QuickAdd::useLlm('always', $completeParse));
+checkEq('qa smart skips llm on complete confident parse', false, QuickAdd::useLlm('smart', $completeParse));
+checkEq('qa smart calls llm below threshold', true, QuickAdd::useLlm('smart', ['complete' => true, 'confidence' => 0.7]));
+checkEq('qa smart threshold boundary skips', false, QuickAdd::useLlm('smart', ['complete' => true, 'confidence' => 0.75]));
+checkEq('qa smart calls llm on incomplete parse', true, QuickAdd::useLlm('smart', ['complete' => false, 'confidence' => 0.9]));
+checkEq('qa smart integrates with parser (complete)', false, QuickAdd::useLlm('smart', $p('Meeting tomorrow 9am')));
+checkEq('qa smart integrates with parser (incomplete)', true, QuickAdd::useLlm('smart', $p('Brainstorm')));
 
 // ---------------------------------------------------------------------------
 // ICS escaping and folding
@@ -482,6 +586,65 @@ checkEq(
         Filters::promptDisposition(['title' => 'Pottery class', 'calendar_id' => 3, 'id' => 101], [$pfDim], $failAll)
     )
 );
+
+// On-read healing job identity: stable hash over the sorted unique id set.
+checkEq('flt eval hash order-insensitive', Filters::evalPayloadHash([3, 1, 2]), Filters::evalPayloadHash([1, 2, 3, 3]));
+check('flt eval hash differs for different sets', Filters::evalPayloadHash([1, 2]) !== Filters::evalPayloadHash([1, 3]));
+checkEq('flt eval hash is sha256 of joined ids', hash('sha256', '1,2,3'), Filters::evalPayloadHash([2, '3', 1]));
+checkEq('flt on-read enqueue cap', 300, Filters::MAX_ON_READ_EVENT_IDS);
+checkEq('pe sweep window years', [2, 3], [PromptEval::WINDOW_YEARS_PAST, PromptEval::WINDOW_YEARS_FUTURE]);
+
+// ---------------------------------------------------------------------------
+// Settings: defaults + validation (pure, no DB)
+// ---------------------------------------------------------------------------
+
+checkEq('set defaults on empty store', Settings::DEFAULTS, Settings::withDefaults([]));
+$merged = Settings::withDefaults(['theme' => 'dark', 'legacyKey' => 1]);
+checkEq('set stored value wins', 'dark', $merged['theme']);
+checkEq('set unknown stored keys dropped', false, array_key_exists('legacyKey', $merged));
+checkEq('set other defaults filled in', 'smart', $merged['nlParseMode']);
+
+checkEq('set validate weekStart', ['weekStart' => 'mon'], Settings::validate(['weekStart' => 'mon']));
+checkEq('set validate numeric timeFormat', ['timeFormat' => '24'], Settings::validate(['timeFormat' => 24]));
+checkEq('set validate defaultView', ['defaultView' => 'agenda'], Settings::validate(['defaultView' => 'agenda']));
+checkEq('set validate nlParseMode', ['nlParseMode' => 'never'], Settings::validate(['nlParseMode' => 'never']));
+checkEq('set validate null defaultCalendarId', ['defaultCalendarId' => null], Settings::validate(['defaultCalendarId' => null]));
+checkEq('set validate numeric-string defaultCalendarId', ['defaultCalendarId' => 7], Settings::validate(['defaultCalendarId' => '7']));
+try {
+    Settings::validate(['theme' => 'neon']);
+    check('set bad enum rejected', false);
+} catch (HttpError $e) {
+    checkEq('set bad enum status', 400, $e->status);
+}
+try {
+    Settings::validate(['weekStart' => 'tue']);
+    check('set bad weekStart rejected', false);
+} catch (HttpError $e) {
+    checkEq('set bad weekStart status', 400, $e->status);
+}
+try {
+    Settings::validate(['nope' => 1]);
+    check('set unknown key rejected', false);
+} catch (HttpError $e) {
+    checkEq('set unknown key code', 'unknown_setting', $e->errorCode);
+}
+try {
+    Settings::validate(['defaultCalendarId' => -1]);
+    check('set negative calendar id rejected', false);
+} catch (HttpError $e) {
+    checkEq('set negative calendar id status', 400, $e->status);
+}
+
+// ---------------------------------------------------------------------------
+// Calendars::groupSimilarFor — per-calendar setting with kind defaults (pure)
+// ---------------------------------------------------------------------------
+
+checkEq('cal groupSimilar subscribed default true', true, Calendars::groupSimilarFor(null, 'subscribed'));
+checkEq('cal groupSimilar local default false', false, Calendars::groupSimilarFor(null, 'local'));
+checkEq('cal groupSimilar stored false wins', false, Calendars::groupSimilarFor('{"groupSimilar":false}', 'subscribed'));
+checkEq('cal groupSimilar stored true wins', true, Calendars::groupSimilarFor('{"groupSimilar":true}', 'local'));
+checkEq('cal groupSimilar bad json falls back to kind', true, Calendars::groupSimilarFor('not json', 'subscribed'));
+checkEq('cal groupSimilar unrelated settings fall back', false, Calendars::groupSimilarFor('{"other":1}', 'local'));
 
 // ---------------------------------------------------------------------------
 // Ranking: signal-to-example serialization and score validation (pure)

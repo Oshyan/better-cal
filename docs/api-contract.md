@@ -5,7 +5,7 @@ Base path `/api/v1`. JSON everywhere. Auth: `bc_session` cookie; non-GET require
 ## Auth
 - `POST /auth/login` `{email, password}` → `{ok:true}` + sets cookie. 401 on failure.
 - `POST /auth/logout` → `{ok:true}`.
-- `GET /me` → `{user:{id,email,displayName,settings}, csrf}` or 401. (`csrf` is null under bearer auth.)
+- `GET /me` → `{user:{id,email,displayName,settings}, csrf}` or 401. (`csrf` is null under bearer auth.) `settings` is the same merged object returned by `GET /settings` (stored values over defaults).
 
 ## Personal access tokens
 Token value: `bc_` + 43 url-safe base64 chars; stored sha256-hashed, shown once at creation. Bearer requests skip CSRF. Management endpoints are session-auth only: a bearer token gets 403 `session_required`.
@@ -16,9 +16,10 @@ Token value: `bc_` + 43 url-safe base64 chars; stored sha256-hashed, shown once 
 - Agent-facing guide: [agent-api.md](agent-api.md); MCP server in `tools/mcp/`.
 
 ## Calendars & structure
-- `GET /calendars` → `{calendars:[{id,name,color,kind,sourceUrl,visible,position,folderIds:[],tagNames:[],health:{lastPolledAt,status,error,stale:boolean}}], folders:[{id,name,position}], tags:[{id,name}]}`
+- `GET /calendars` → `{calendars:[{id,name,color,kind,sourceUrl,visible,position,folderIds:[],tagNames:[],groupSimilar:boolean,health:{lastPolledAt,status,error,stale:boolean}}], folders:[{id,name,position}], tags:[{id,name}]}`
 - `POST /calendars` `{name,color,folderIds?,tagNames?}` → calendar object.
-- `PATCH /calendars/:id` (any of name,color,visible,position,folderIds,tagNames,pollIntervalMinutes,staleAfterDays) → calendar object.
+- `PATCH /calendars/:id` (any of name,color,visible,position,folderIds,tagNames,pollIntervalMinutes,staleAfterDays,groupSimilar) → calendar object.
+- `groupSimilar` (boolean, per calendar, persisted in `calendars.settings_json`): whether the client should visually group near-duplicate events on this calendar. Default when never set: `true` for `kind=subscribed`, `false` for `kind=local`. The server only stores and returns the flag; the grouping itself is client-side.
 - `DELETE /calendars/:id` → `{ok:true}` (soft: deletes calendar + events).
 - `POST /calendars/subscribe` `{url,name?,color?}` → calendar object; server fetches immediately, then polls hourly.
 - `POST /calendars/:id/refresh` → `{ok:true, imported:N}` (force poll now).
@@ -37,6 +38,7 @@ Token value: `bc_` + 43 url-safe base64 chars; stored sha256-hashed, shown once 
 - `POST /events/:id/attendance` `{attendance:"none"|"interested"|"going"|"hidden"}` → `{ok:true}`. On feed events an attendance change also auto-records a ranking feedback signal (`going`/`interested` → up, `hidden` → down; `none` records nothing).
 - `POST /events/:id/feedback` `{signal:"up"|"down"}` → `{ok:true}`. Explicit thumbs feedback (distinct from attendance); accumulates as training signal for background ranking. Not undoable.
 - `POST /quickadd` `{text, tz, commit?:boolean, calendarId?}` → `{draft:{title,start,end,allDay,location,personNames:[],calendarId,confidence,source:"llm"|"fallback"}}`; if `commit:true` also creates and returns `{event}`.
+  Parsing is deterministic-first: the fallback parser always runs, and the LLM is consulted only per the `nlParseMode` setting (see Settings). `smart` (default): the LLM runs only when the deterministic parse is incomplete (no resolved date+time / date+allDay) or its confidence is below 0.75 — a complete confident parse returns immediately with `source:"fallback"`. `always`: LLM-first with deterministic fallback on failure. `never`: deterministic only. LLM failure never blocks; the fallback draft is returned.
 - `POST /undo` → `{ok:true, undone:{entity,op}}` or 404 if nothing to undo.
 
 ## Search
@@ -50,7 +52,21 @@ Keyword/regex/prompt filters applied server-side to `/events` and `/search`. Key
 - `PATCH /filters/:id` (any of scope, scopeId, type, config, action, enabled) → filter. Changing a prompt filter's type/config invalidates its cached verdicts and re-evaluates in the background.
 - `DELETE /filters/:id` → `{ok:true}`.
 
-Prompt filters are never evaluated in the request path. A background worker job (`filter_eval`) scores feed events against the prompt/negative prompt in Gemini batches (≤25 events per call) and caches per-(filter, event) verdicts in `filter_evals`; `/events` and `/search` join that cache and apply the filter's action to events whose verdict is `fail`. Evaluation triggers: prompt-filter create/update (future feed events, capped at the 500 most recent), each feed poll that changes events, and a nightly catch-up. A missing or not-yet-computed verdict is treated as pass — LLM failures never hide events or block responses. Related: a `rank_events` job (hourly and after polls) uses accumulated feedback signals (≥5 required) to score future feed events onto `occurrence.score`.
+Prompt filters are never evaluated in the request path. A background worker job (`filter_eval`) scores feed events against the prompt/negative prompt in Gemini batches (≤25 events per call) and caches per-(filter, event) verdicts in `filter_evals`; `/events` and `/search` join that cache and apply the filter's action to events whose verdict is `fail`. Coverage is all in-scope feed events within a wide window — 2 years back to 3 years forward (recurring masters always qualify) — not just future events, so browsing past months is filtered too. Sweeps process up to 500 events per filter per pass and chain follow-up jobs until the window is drained. Evaluation triggers: prompt-filter create/update/enable (catch-up sweep over the whole window), each feed poll that changes events, a nightly catch-up, and on-read healing: when `GET /events` returns feed events that an enabled prompt filter covers but has no cached verdict for, the server enqueues one targeted `filter_eval` job for those event ids (capped at 300 ids per enqueue, deduped by a payload hash against pending/running jobs; works even outside the sweep window). A missing or not-yet-computed verdict is treated as pass — LLM failures never hide events or block responses. Related: a `rank_events` job (hourly and after polls) uses accumulated feedback signals (≥5 required) to score future feed events onto `occurrence.score`.
+
+## Settings
+User preferences stored in `users.settings_json`. The server stores and validates; enforcement is client-side except `nlParseMode`, which the server applies in `/quickadd` (see Events). Reads always return stored values merged over defaults; keys never set come back as their defaults. Settings changes are not undoable via `POST /undo`.
+- `GET /settings` → `{settings:{defaultView, weekStart, timeFormat, defaultCalendarId, theme, nlParseMode}}`.
+- `PATCH /settings` (any subset of the keys below) → `{settings:{...}}` (the full merged object). Unknown keys → 400 `unknown_setting`; invalid values → 400.
+
+| Key | Values | Default | Notes |
+|---|---|---|---|
+| `defaultView` | `month`\|`multiweek`\|`week`\|`day`\|`agenda` | `month` | view opened on load |
+| `weekStart` | `mon`\|`sun` | `sun` | first day of week in grids |
+| `timeFormat` | `"12"`\|`"24"` | `"12"` | accepted as string or number, stored/returned as string |
+| `defaultCalendarId` | id of an owned `local` calendar, or `null` | `null` | validated for ownership + kind; `null` clears |
+| `theme` | `system`\|`light`\|`dark` | `system` | |
+| `nlParseMode` | `always`\|`smart`\|`never` | `smart` | server-enforced in `/quickadd`: `smart` = LLM only when the deterministic parse is incomplete/low-confidence, `always` = LLM-first, `never` = deterministic only |
 
 ## Saved views
 Named snapshots of client view state; `config` is client-defined: `{viewType, visibleCalendarIds, folderCollapse, filterText, anchor:"today"|dayKey}`.

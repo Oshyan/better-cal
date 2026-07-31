@@ -6,7 +6,7 @@ import { useStore, set, state } from './store.js';
 import { search } from './api.js';
 import { jumpToDate } from './actions.js';
 import { trapFocus } from '../ui/DayExpand.js';
-import { parseISO, fmtDateFull, fmtTime, dayKeyOfISO } from '../lib/dates.js';
+import { parseISO, fmtDateFull, fmtTime, occDayKey } from '../lib/dates.js';
 
 export function SearchOverlay() {
   const open = useStore((s) => s.searchOpen);
@@ -91,15 +91,18 @@ export function SearchOverlay() {
 
   return html`<div class="bc-overlay bc-search-overlay" onClick=${(e) => { if (e.target === e.currentTarget) set({ searchOpen: false }); }}>
     <div class="bc-search" ref=${panelRef} role="dialog" aria-modal="true" aria-label="Search events">
-      <input
-        ref=${inputRef}
-        class="bc-search-input"
-        placeholder="Search all events"
-        value=${q}
-        onInput=${onInput}
-        onKeyDown=${onKeyDown}
-        aria-label="Search all events"
-      />
+      <div class="bc-search-top">
+        <input
+          ref=${inputRef}
+          class="bc-search-input"
+          placeholder="Search all events"
+          value=${q}
+          onInput=${onInput}
+          onKeyDown=${onKeyDown}
+          aria-label="Search all events"
+        />
+        <button type="button" class="bc-icon-btn bc-search-close" aria-label="Close" onClick=${() => set({ searchOpen: false })}>✕</button>
+      </div>
       <div class="bc-search-results">
         ${results !== null && ordered.length === 0 && html`<div class="bc-empty">No matches for "${q}"</div>`}
         ${renderGroup('Upcoming', future, 0)}

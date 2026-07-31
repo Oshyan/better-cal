@@ -1,10 +1,13 @@
 // EditorDrawer: full event editor with duration lock, all-day, tags, and an
 // RRULE builder (daily / weekly-on-days / monthly / yearly / custom interval,
 // ends: until date (default 12 weeks out) / count / never).
+// Create mode adds an NL assist input at the top: typing there debounce-parses
+// via /quickadd (400ms) and live-fills title/start/end/allDay/location below,
+// with a brief flash on the fields it touched. Fields stay fully editable.
 
 import { html, useState, useEffect, useRef } from '../../vendor/index.js';
 import { useStore, set, state } from './store.js';
-import { createEvent, updateEvent, deleteEvent } from './actions.js';
+import { createEvent, updateEvent, deleteEvent, quickAddParse } from './actions.js';
 import { trapFocus } from '../ui/DayExpand.js';
 import {
   parseISO, toInputValue, fromInputValue, toISOWithOffset, addDaysDate, pad,
@@ -58,6 +61,49 @@ export function EditorDrawer() {
   const [durationLock, setDurationLock] = useState(true);
   const [scope, setScope] = useState('this');
 
+  // NL assist (create mode): debounce-parse, race-guard, flash filled fields.
+  const [nlText, setNlText] = useState('');
+  const [nlFlash, setNlFlash] = useState(null); // Set of field names, or null
+  const nlTimer = useRef(0);
+  const nlReq = useRef(0);
+  const flashTimer = useRef(0);
+
+  const applyNlDraft = (d) => {
+    if (!d) return;
+    const touched = [];
+    setForm((f) => {
+      if (!f) return f;
+      const nf = { ...f };
+      if (d.title) { nf.title = d.title; touched.push('title'); }
+      if (d.start) { nf.start = toInputValue(parseISO(d.start)); touched.push('start'); }
+      if (d.end) { nf.end = toInputValue(parseISO(d.end)); touched.push('end'); }
+      if (d.allDay != null) { nf.allDay = !!d.allDay; touched.push('allDay'); }
+      if (d.location) { nf.location = d.location; touched.push('location'); }
+      return nf;
+    });
+    if (touched.length) {
+      setNlFlash(new Set(touched));
+      clearTimeout(flashTimer.current);
+      flashTimer.current = setTimeout(() => setNlFlash(null), 900);
+    }
+  };
+
+  const onNlInput = (e) => {
+    const v = e.target.value;
+    setNlText(v);
+    clearTimeout(nlTimer.current);
+    if (!v.trim()) return;
+    nlTimer.current = setTimeout(async () => {
+      const id = ++nlReq.current;
+      try {
+        const d = await quickAddParse(v);
+        if (id === nlReq.current) applyNlDraft(d);
+      } catch { /* assist is best-effort */ }
+    }, 400);
+  };
+
+  useEffect(() => () => { clearTimeout(nlTimer.current); clearTimeout(flashTimer.current); }, []);
+
   useEffect(() => {
     if (!editor) { setForm(null); return; }
     const occ = editor.occ;
@@ -78,6 +124,17 @@ export function EditorDrawer() {
     });
     setScope('this');
     setDurationLock(true);
+    setNlText(editor.nlText || '');
+    setNlFlash(null);
+    nlReq.current++; // void any in-flight parse from a previous open
+    // Transferred from quick add: re-parse the carried text once so the form
+    // reflects anything typed after the bar's last debounce fired.
+    if (!editor.occ && editor.nlText && editor.nlText.trim()) {
+      const id = ++nlReq.current;
+      quickAddParse(editor.nlText)
+        .then((d) => { if (id === nlReq.current) applyNlDraft(d); })
+        .catch(() => { /* assist is best-effort */ });
+    }
   }, [editor]);
 
   useEffect(() => {
@@ -147,9 +204,21 @@ export function EditorDrawer() {
         <button type="button" class="bc-icon-btn" aria-label="Close" onClick=${() => set({ editor: null })}>✕</button>
       </div>
 
-      <label class="bc-field">
+      ${!occ && html`<div class="bc-nl">
+        <input
+          class="bc-nl-input"
+          placeholder="Type it naturally: Lunch with Ada Friday noon at Zuni"
+          value=${nlText}
+          onInput=${onNlInput}
+          autofocus=${!!editor.nlText}
+          aria-label="Describe the event in plain language"
+        />
+        <span class="bc-nl-hint">Fills the fields below as you type; everything stays editable</span>
+      </div>`}
+
+      <label class=${'bc-field' + (nlFlash && nlFlash.has('title') ? ' bc-nl-applied' : '')}>
         <span>Title</span>
-        <input value=${form.title} onInput=${(e) => upd({ title: e.target.value })} required autofocus />
+        <input value=${form.title} onInput=${(e) => upd({ title: e.target.value })} required autofocus=${!editor.nlText} />
       </label>
 
       <label class="bc-field">
@@ -160,7 +229,7 @@ export function EditorDrawer() {
       </label>
 
       <div class="bc-field-row">
-        <label class="bc-field">
+        <label class=${'bc-field' + (nlFlash && nlFlash.has('start') ? ' bc-nl-applied' : '')}>
           <span>Start</span>
           <input type="datetime-local" value=${form.start} onInput=${(e) => onStartChange(e.target.value)} required />
         </label>
@@ -172,18 +241,18 @@ export function EditorDrawer() {
           title=${durationLock ? 'Duration locked: moving start moves end' : 'Duration unlocked: ends edit independently'}
           onClick=${() => setDurationLock(!durationLock)}
         >${durationLock ? '🔒' : '🔓'}</button>
-        <label class="bc-field">
+        <label class=${'bc-field' + (nlFlash && nlFlash.has('end') ? ' bc-nl-applied' : '')}>
           <span>End</span>
           <input type="datetime-local" value=${form.end} onInput=${(e) => upd({ end: e.target.value })} required />
         </label>
-        <label class="bc-check">
+        <label class=${'bc-check' + (nlFlash && nlFlash.has('allDay') ? ' bc-nl-applied' : '')}>
           <input type="checkbox" checked=${form.allDay} onChange=${(e) => upd({ allDay: e.target.checked })} />
           <span>All day</span>
         </label>
       </div>
 
       <div class="bc-field-row">
-        <label class="bc-field grow">
+        <label class=${'bc-field grow' + (nlFlash && nlFlash.has('location') ? ' bc-nl-applied' : '')}>
           <span>Location</span>
           <input value=${form.location} onInput=${(e) => upd({ location: e.target.value })} />
         </label>

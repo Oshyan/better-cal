@@ -1,9 +1,11 @@
 // QuickAdd: natural-language event input. Debounced parse preview as you
-// type (400ms), Enter commits, Esc cancels. Shows parsed chips for date,
-// time, location, calendar, plus a fallback-parser indicator.
+// type (400ms), Enter or the Create button commits, Esc or Cancel dismisses.
+// Shows parsed chips for date, time, location, calendar, plus a fallback
+// indicator. "Open full editor" carries the current draft and text into the
+// editor drawer's structured form.
 
 import { html, useState, useRef, useEffect } from '../../vendor/index.js';
-import { useStore, state } from './store.js';
+import { useStore, set, state } from './store.js';
 import { quickAddParse, quickAddCommit } from './actions.js';
 import { parseISO, fmtDayMedium, fmtTime } from '../lib/dates.js';
 
@@ -42,15 +44,44 @@ export function QuickAdd() {
     }, 400);
   };
 
-  const onKeyDown = async (e) => {
-    if (e.key === 'Enter' && text.trim() && !busy) {
+  const submit = async () => {
+    if (!text.trim() || busy) return;
+    setBusy(true);
+    await quickAddCommit(text);
+    setBusy(false);
+    setText('');
+    setDraft(null);
+  };
+
+  const onKeyDown = (e) => {
+    if (e.key === 'Enter') {
       e.preventDefault();
-      setBusy(true);
-      await quickAddCommit(text);
-      setBusy(false);
-      setText('');
-      setDraft(null);
+      submit();
     }
+  };
+
+  const cancel = () => {
+    clearTimeout(timerRef.current);
+    set({ quickAddOpen: false });
+  };
+
+  // Hand the current draft to the structured editor; the raw text rides along
+  // so the drawer's NL assist can keep refining it.
+  const openFullEditor = () => {
+    clearTimeout(timerRef.current);
+    const d = draft || {};
+    set({
+      quickAddOpen: false,
+      editor: {
+        mode: 'create',
+        draft: {
+          title: d.title || text.trim(),
+          start: d.start, end: d.end, allDay: d.allDay,
+          location: d.location, calendarId: d.calendarId,
+        },
+        nlText: text,
+      },
+    });
   };
 
   const cal = draft && draft.calendarId != null
@@ -78,7 +109,12 @@ export function QuickAdd() {
         ${cal && html`<span class="bc-qchip"><span class="bc-cal-dot" style=${`background:${cal.color}`}></span>${cal.name}</span>`}
         ${draft.source === 'fallback' && html`<span class="bc-qchip bc-qchip-fallback" title="Parsed without the language model">basic parse</span>`}
       </div>`}
-      <div class="bc-quickadd-hint">Enter to create, Esc to cancel</div>
+      <div class="bc-quickadd-actions">
+        <button type="button" class="bc-btn bc-btn-primary" disabled=${busy || !text.trim()} onClick=${submit}>Create</button>
+        <button type="button" class="bc-btn" onClick=${cancel}>Cancel</button>
+        <button type="button" class="bc-link-btn bc-quickadd-expand" onClick=${openFullEditor}>Open full editor</button>
+        <span class="bc-quickadd-hint">Enter to create, Esc to cancel</span>
+      </div>
     </div>
   </div>`;
 }

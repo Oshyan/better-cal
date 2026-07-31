@@ -14,6 +14,7 @@ import {
 } from '../src/ui/monthmath.js';
 import { contrastText, withAlpha, parseHex } from '../src/lib/color.js';
 import { sortByMatch } from '../src/lib/rank.js';
+import { parseJumpText } from '../src/lib/jumpparse.js';
 
 let passed = 0;
 let failed = 0;
@@ -244,6 +245,43 @@ eq('sortByMatch zero score is still scored',
   sortByMatch([rk('u', '2026-08-01T10:00:00-07:00', null), rk('v', '2026-08-02T10:00:00-07:00', 0)]).map((o) => o.instanceId),
   ['v', 'u']);
 eq('sortByMatch empty input', sortByMatch([]), []);
+
+console.log('--- jump text parser ---');
+
+// Base for all cases: Friday 2026-07-31.
+const JB = '2026-07-31';
+
+// Relative words.
+eq('jump: today', parseJumpText('today', JB), '2026-07-31');
+eq('jump: tomorrow crosses month', parseJumpText('tomorrow', JB), '2026-08-01');
+
+// ISO and plain year.
+eq('jump: ISO date', parseJumpText('2027-06-15', JB), '2027-06-15');
+eq('jump: bare year', parseJumpText('2027', JB), '2027-01-01');
+
+// m/d forms: future-biased without a year, literal with one.
+eq('jump: m/d upcoming this year', parseJumpText('8/15', JB), '2026-08-15');
+eq('jump: m/d already passed rolls to next year', parseJumpText('3/1', JB), '2027-03-01');
+eq('jump: m/d/yy', parseJumpText('8/15/27', JB), '2027-08-15');
+eq('jump: invalid day rejected', parseJumpText('2/30', JB), null);
+
+// Month names: prefix match, case-insensitive, future-biased.
+eq('jump: month + year', parseJumpText('June 2027', JB), '2027-06-01');
+eq('jump: bare future month stays this year', parseJumpText('august', JB), '2026-08-01');
+eq('jump: bare passed month rolls to next year', parseJumpText('jun', JB), '2027-06-01');
+eq('jump: current month is not passed', parseJumpText('july', JB), '2026-07-01');
+eq('jump: month + day passed rolls forward', parseJumpText('jun 5', JB), '2027-06-05');
+eq('jump: day-first form with year', parseJumpText('5 june 2027', JB), '2027-06-05');
+
+// Weekdays: soonest strictly-future occurrence; "next"/"this" are synonyms.
+eq('jump: weekday', parseJumpText('tuesday', JB), '2026-08-04');
+eq('jump: next weekday', parseJumpText('next tuesday', JB), '2026-08-04');
+eq('jump: same weekday means a week out', parseJumpText('friday', JB), '2026-08-07');
+eq('jump: weekday prefix', parseJumpText('tue', JB), '2026-08-04');
+
+// Garbage in, null out.
+eq('jump: gibberish', parseJumpText('fnord', JB), null);
+eq('jump: empty', parseJumpText('   ', JB), null);
 
 console.log('--- color utils ---');
 

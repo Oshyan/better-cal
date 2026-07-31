@@ -297,7 +297,7 @@ export function RescheduleOverlay({ occ, cal, onDropConfirmed, onExit }) {
     // normal close-that-overlay meaning.
     const onKey = (e) => {
       if (e.key !== 'Escape') return;
-      if (e.target.closest && e.target.closest('.bc-search, .bc-quickadd-wrap, .bc-drawer')) return;
+      if (e.target.closest && e.target.closest('.bc-search, .bc-quickadd-wrap, .bc-drawer, .bc-jump-pop')) return;
       e.preventDefault();
       e.stopPropagation();
       if (pendingRef.current) setPending(null);

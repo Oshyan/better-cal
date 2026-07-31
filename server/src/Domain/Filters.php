@@ -26,6 +26,8 @@ final class Filters
     public const FIELDS = ['title', 'description', 'location'];
     private const MAX_PATTERN_CHARS = 500;
     private const MAX_PROMPT_CHARS = 2000;
+    /** Cap on event ids per on-read filter_eval enqueue. */
+    public const MAX_ON_READ_EVENT_IDS = 300;
 
     public function __construct(
         private readonly Db $db,
@@ -183,19 +185,22 @@ final class Filters
     }
 
     /**
-     * Enabled prompt filters plus their cached `fail` verdicts for the given
-     * events, ready for promptDisposition(). No LLM calls here, ever: this
-     * only reads the filter_evals cache written by the background worker.
+     * Enabled prompt filters plus their cached verdicts for the given events,
+     * ready for promptDisposition(). No LLM calls here, ever: this only reads
+     * the filter_evals cache written by the background worker.
      *
      * @param list<int> $eventIds
      * @return array{
      *   filters: list<array{id:int,action:string,calendarIds:?array<int,true>}>,
-     *   failed: array<int,array<int,true>>
-     * } failed is filterId => set of event ids whose verdict is fail
+     *   failed: array<int,array<int,true>>,
+     *   evaluated: array<int,array<int,true>>
+     * } failed is filterId => set of event ids whose verdict is fail;
+     *   evaluated is filterId => set of event ids with ANY cached verdict
+     *   (so callers can spot coverage gaps and queue background evaluation).
      */
     public function promptFilterContext(int $userId, array $eventIds): array
     {
-        $empty = ['filters' => [], 'failed' => []];
+        $empty = ['filters' => [], 'failed' => [], 'evaluated' => []];
         if ($eventIds === []) {
             return $empty;
         }
@@ -217,15 +222,21 @@ final class Filters
         [$fIn, $fParams] = Db::in(array_column($filters, 'id'));
         [$eIn, $eParams] = Db::in(array_values(array_unique(array_map('intval', $eventIds))));
         $failed = [];
+        $evaluated = [];
         $evals = $this->db->all(
-            "SELECT filter_id, event_id FROM filter_evals
-             WHERE verdict = 'fail' AND filter_id IN $fIn AND event_id IN $eIn",
+            "SELECT filter_id, event_id, verdict FROM filter_evals
+             WHERE filter_id IN $fIn AND event_id IN $eIn",
             [...$fParams, ...$eParams]
         );
         foreach ($evals as $eval) {
-            $failed[(int) $eval['filter_id']][(int) $eval['event_id']] = true;
+            $filterId = (int) $eval['filter_id'];
+            $eventId = (int) $eval['event_id'];
+            $evaluated[$filterId][$eventId] = true;
+            if ((string) $eval['verdict'] === 'fail') {
+                $failed[$filterId][$eventId] = true;
+            }
         }
-        return ['filters' => $filters, 'failed' => $failed];
+        return ['filters' => $filters, 'failed' => $failed, 'evaluated' => $evaluated];
     }
 
     /** @return ?array<int,true> calendar ids the filter row applies to; null = all */
@@ -251,6 +262,38 @@ final class Filters
         if ($this->queue !== null && (string) $row['type'] === 'prompt' && (int) $row['enabled'] === 1) {
             $this->queue->enqueue('filter_eval', ['filterId' => (int) $row['id']]);
         }
+    }
+
+    /**
+     * On-read healing: queue a targeted filter_eval job for events that lack
+     * cached verdicts (e.g. old events browsed for the first time). Never
+     * evaluates inline — the worker does the LLM calls. Capped at
+     * MAX_ON_READ_EVENT_IDS ids and deduped by payload hash so repeated reads
+     * of the same window enqueue at most one pending job.
+     *
+     * @param list<int> $eventIds
+     */
+    public function enqueueEvalForEvents(array $eventIds): void
+    {
+        if ($this->queue === null || $eventIds === []) {
+            return;
+        }
+        $ids = array_values(array_unique(array_map('intval', $eventIds)));
+        sort($ids);
+        $ids = array_slice($ids, 0, self::MAX_ON_READ_EVENT_IDS);
+        $hash = self::evalPayloadHash($ids);
+        if ($this->queue->hasPendingWithHash('filter_eval', $hash)) {
+            return;
+        }
+        $this->queue->enqueue('filter_eval', ['eventIds' => $ids, 'hash' => $hash]);
+    }
+
+    /** Stable job identity for an event-id set: sha256 over the sorted unique ids. */
+    public static function evalPayloadHash(array $eventIds): string
+    {
+        $ids = array_values(array_unique(array_map('intval', $eventIds)));
+        sort($ids);
+        return hash('sha256', implode(',', $ids));
     }
 
     /**

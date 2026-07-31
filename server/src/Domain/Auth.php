@@ -93,7 +93,7 @@ final class Auth
             'id' => (int) $user['id'],
             'email' => (string) $user['email'],
             'displayName' => (string) $user['display_name'],
-            'settings' => $settings ?: new \stdClass(),
+            'settings' => Settings::withDefaults(is_array($settings) ? $settings : []),
         ];
     }
 }

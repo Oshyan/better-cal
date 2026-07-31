@@ -39,6 +39,7 @@ export const state = {
 
   quickAddOpen: false,
   searchOpen: false,
+  jumpOpen: false,   // jump-to-date popover (toolbar date label / g)
   popover: null,     // {instanceId, anchorRect}
   editor: null,      // {mode, occ?, draft}
   expandedDay: null, // {dayKey, anchorRect}

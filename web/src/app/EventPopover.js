@@ -5,8 +5,9 @@
 
 import { html, useState, useRef, useEffect } from '../../vendor/index.js';
 import { useStore, set, state } from './store.js';
-import { updateEvent, deleteEvent, triageAttendance, sendFeedback, enterReschedule, openDetail } from './actions.js';
+import { updateEvent, deleteEvent, triageAttendance, sendFeedback, enterReschedule, openDetail, sameDayList } from './actions.js';
 import { isMobile, trapFocus, MOBILE_QUERY } from '../ui/DayExpand.js';
+import { ThumbIcon } from '../ui/icons.js';
 import {
   parseISO, dateOfDayKey, fmtRange, toInputValue, fromInputValue, toISOWithOffset,
 } from '../lib/dates.js';
@@ -73,6 +74,19 @@ export function EventPopover() {
   const mobile = isMobile();
   const pos = !mobile && popover.anchorRect ? place(popover.anchorRect) : null;
 
+  // Mobile sheet only: same-day prev/next in the header row, sharing the
+  // detail view's list builder. Navigating swaps the popover's occurrence.
+  // The desktop popover stays anchored to its chip and is unchanged.
+  let nav = null;
+  if (mobile) {
+    const list = sameDayList(occ);
+    nav = { list, index: list.findIndex((o) => o.instanceId === occ.instanceId) };
+  }
+  const goSheet = (idx) => {
+    const target = nav && nav.list[idx];
+    if (target) set({ popover: { ...popover, instanceId: target.instanceId } });
+  };
+
   const saveTitle = async () => {
     setEditingTitle(false);
     if (title !== occ.title) await updateEvent(occ, { title });
@@ -101,6 +115,17 @@ export function EventPopover() {
   >
     <div class="bc-pop-color" style=${`background:${(cal && cal.color) || '#888'}`}></div>
     <div class="bc-pop-body">
+      ${mobile && nav && html`<div class="bc-sheet-nav" role="group" aria-label="Previous and next event this day">
+        <button
+          type="button" class="bc-icon-btn bc-sheet-chev" aria-label="Previous event this day"
+          disabled=${nav.index <= 0} onClick=${() => goSheet(nav.index - 1)}
+        >‹</button>
+        <button
+          type="button" class="bc-icon-btn bc-sheet-chev" aria-label="Next event this day"
+          disabled=${nav.index < 0 || nav.index >= nav.list.length - 1} onClick=${() => goSheet(nav.index + 1)}
+        >›</button>
+        ${nav.list.length > 1 && html`<span class="bc-sheet-count">${nav.index + 1} of ${nav.list.length}</span>`}
+      </div>`}
       ${editingTitle
         ? html`<input
             class="bc-pop-title-input" value=${title} autofocus
@@ -146,11 +171,11 @@ export function EventPopover() {
           >${label}</button>`)}
         </div>`}
         ${isFeed && html`<div class="bc-seg" role="group" aria-label="Feedback">
-          ${[['up', '▲', 'More like this'], ['down', '▼', 'Less like this']].map(([value, glyph, label]) => html`<button
-            key=${value} type="button" class="bc-seg-btn"
+          ${[['up', 'More like this'], ['down', 'Less like this']].map(([value, label]) => html`<button
+            key=${value} type="button" class="bc-seg-btn bc-seg-icon"
             title=${label} aria-label=${label}
             onClick=${() => sendFeedback(occ, value)}
-          >${glyph}</button>`)}
+          ><${ThumbIcon} dir=${value} /></button>`)}
         </div>`}
         <button type="button" class="bc-icon-btn bc-pop-close" aria-label="Close" onClick=${() => set({ popover: null })}>✕</button>
       </div>

@@ -22,7 +22,8 @@ import { monthWeeks, stepMonthOf } from '../src/lib/minimonth.js';
 import { HOTKEYS, HOTKEY_GROUPS } from '../src/app/hotkeys.js';
 import {
   fmtOffsetMinutes, fmtReminder, allDayEntryToMinutes, entryToMinutes,
-  normalizeMinutesList, effectiveReminders,
+  normalizeMinutesList, effectiveReminders, toMinutes, fromMinutes,
+  TIMED_CHOICES, MAX_REMINDER_MINUTES, REMINDER_UNITS,
 } from '../src/lib/reminders.js';
 
 let passed = 0;
@@ -524,6 +525,27 @@ eq('reminder fmt minutes', fmtOffsetMinutes(10), '10 minutes before');
 eq('reminder fmt hour', fmtOffsetMinutes(60), '1 hour before');
 eq('reminder fmt 90 stays minutes', fmtOffsetMinutes(90), '90 minutes before');
 eq('reminder fmt day', fmtOffsetMinutes(1440), '1 day before');
+eq('reminder fmt week', fmtOffsetMinutes(10080), '1 week before');
+eq('reminder fmt 2 weeks', fmtOffsetMinutes(20160), '2 weeks before');
+
+// toMinutes/fromMinutes: unit conversion, clamping, clean-unit decomposition.
+eq('toMinutes minutes passthrough', toMinutes(45, 'minutes'), 45);
+eq('toMinutes hours', toMinutes(2, 'hours'), 120);
+eq('toMinutes days', toMinutes(3, 'days'), 4320);
+eq('toMinutes weeks', toMinutes(1, 'weeks'), 10080);
+eq('toMinutes fractional rounds', toMinutes(1.5, 'hours'), 90);
+eq('toMinutes clamps at 4 weeks', toMinutes(99, 'weeks'), MAX_REMINDER_MINUTES);
+eq('toMinutes negative clamps to 0', toMinutes(-5, 'hours'), 0);
+eq('toMinutes unknown unit treated as minutes', toMinutes(7, 'nope'), 7);
+eq('fromMinutes week', fromMinutes(10080), { n: 1, unit: 'weeks' });
+eq('fromMinutes days', fromMinutes(2880), { n: 2, unit: 'days' });
+eq('fromMinutes hours', fromMinutes(120), { n: 2, unit: 'hours' });
+eq('fromMinutes uneven stays minutes', fromMinutes(90), { n: 90, unit: 'minutes' });
+eq('fromMinutes zero is minutes', fromMinutes(0), { n: 0, unit: 'minutes' });
+eq('toMinutes/fromMinutes round trip', toMinutes(fromMinutes(4320).n, fromMinutes(4320).unit), 4320);
+assert('reminder units well-formed', REMINDER_UNITS.length === 4 && REMINDER_UNITS.includes('weeks'));
+assert('timed presets within server cap', TIMED_CHOICES.every((m) => m >= 0 && m <= MAX_REMINDER_MINUTES));
+assert('timed presets include week', TIMED_CHOICES.includes(10080));
 eq('reminder fmt entry minutes shape', fmtReminder({ minutes: 15 }), '15 minutes before');
 eq('reminder fmt entry allday shape', fmtReminder({ daysBefore: 1, time: '18:00' }), 'Day before at 18:00');
 eq('reminder fmt entry same day', fmtReminder({ daysBefore: 0, time: '09:00' }), 'Same day at 09:00');

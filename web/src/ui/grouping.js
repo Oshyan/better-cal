@@ -66,6 +66,7 @@ export function groupOccurrences(occurrences, groupFlags) {
       end: last.end > first.end ? last.end : first.end,
       allDay: sorted.every((m) => m.allDay),
       dimmed: sorted.every((m) => !!m.dimmed),
+      highlighted: sorted.some((m) => !!m.highlighted),
       attendance: 'none',
       members: sorted,
     });

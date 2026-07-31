@@ -59,26 +59,39 @@ final class FallbackParser
         }
 
         // Trailing "at <location>" (times were already removed, so a remaining
-        // "at ..." tail is a place, not a time).
+        // "at ..." tail is a place, not a time — the time pattern always wins).
+        // Multi-word locations are kept intact; a trailing with-clause is not
+        // part of the location ("Dinner at Zuni with Sam" -> "Zuni").
         $location = null;
-        if (preg_match('/\s(?:at|@)\s+([^,]+?)\s*$/i', $work, $m) && !preg_match('/^\d/', trim($m[1]))) {
+        $locPattern = '/\s(?:at|@)\s+([^,]+?)\s*(?=$|\bwith\s|\bw\/)/i';
+        if (preg_match($locPattern, $work, $m) && !preg_match('/^\d/', trim($m[1]))) {
             $location = trim($m[1]);
-            $work = preg_replace('/\s(?:at|@)\s+([^,]+?)\s*$/i', ' ', $work, 1);
+            $work = preg_replace($locPattern, ' ', $work, 1);
             $confidence += 0.05;
         }
 
-        // "with Sam", "with Sam and Alex", "with Sam, Alex and Pat"
+        // People: "with <phrase>" / "w/ <phrase>". The clause STAYS in the
+        // title (the title is the input minus date/time/location phrases
+        // only), while personNames parses the clause: split on commas/and/&,
+        // title-cased; a leading article stays part of a group name
+        // ("the Sages" -> "The Sages"), a bare article is never a name.
         $personNames = [];
-        if (preg_match('/\bwith\s+([A-Za-z][A-Za-z\'\-]*(?:\s*(?:,|\band\b|&)\s*[A-Za-z][A-Za-z\'\-]*)*)/i', $work, $m)) {
-            $personNames = array_values(array_filter(array_map('trim', preg_split('/\s*(?:,|\band\b|&)\s*/i', $m[1]))));
-            $work = self::cut($work, $m[0]);
-            $confidence += 0.05;
+        if (preg_match('/\b(?:with|w\/)\s*(.+)$/iu', $work, $m)) {
+            $personNames = self::parsePeople($m[1]);
+            if ($personNames !== []) {
+                $confidence += 0.05;
+            }
         }
 
         $title = trim(preg_replace('/\s+/', ' ', $work), " \t\n\r,.-@");
         if ($title === '') {
             $title = 'New event';
             $confidence -= 0.1;
+        } else {
+            // Sentence-case: uppercase the first letter only, so a leading
+            // article never turns the title into Title Case ("the standup"
+            // -> "The standup", never "The Standup").
+            $title = mb_strtoupper(mb_substr($title, 0, 1)) . mb_substr($title, 1);
         }
 
         $allDay = false;
@@ -296,6 +309,46 @@ final class FallbackParser
             return null;
         }
         return $now->setDate($y, $m, $d);
+    }
+
+    /**
+     * Person names from a with-clause: split on commas/and/&, drop bare
+     * articles and non-name junk, title-case each word. A leading article is
+     * kept as part of a group name ("the Sages" -> "The Sages").
+     *
+     * @return list<string>
+     */
+    private static function parsePeople(string $clause): array
+    {
+        $clause = trim(preg_replace('/\s+/', ' ', $clause) ?? '', " \t\n\r,.-@");
+        if ($clause === '') {
+            return [];
+        }
+        $out = [];
+        foreach (preg_split('/\s*(?:,|\band\b|&)\s*/i', $clause) ?: [] as $part) {
+            $part = trim((string) $part, " \t\n\r,.-@");
+            if ($part === '' || preg_match('/^[A-Za-z][A-Za-z\'\- ]*$/', $part) !== 1) {
+                continue;
+            }
+            if (in_array(strtolower($part), ['the', 'a', 'an'], true)) {
+                continue;
+            }
+            $out[] = self::titleCaseName($part);
+        }
+        return array_values(array_unique($out));
+    }
+
+    /** Uppercase the first letter of each word, leaving the rest untouched. */
+    private static function titleCaseName(string $name): string
+    {
+        $words = explode(' ', $name);
+        foreach ($words as &$word) {
+            if ($word !== '') {
+                $word = mb_strtoupper(mb_substr($word, 0, 1)) . mb_substr($word, 1);
+            }
+        }
+        unset($word);
+        return implode(' ', $words);
     }
 
     private static function cut(string $work, string $match): string

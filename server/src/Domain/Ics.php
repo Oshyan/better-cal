@@ -344,7 +344,7 @@ final class Ics
                 continue;
             }
             $minutes = self::parseTriggerMinutes((string) $trigger);
-            if ($minutes !== null && $minutes <= 20160) {
+            if ($minutes !== null && $minutes <= Reminders::MAX_MINUTES) {
                 $reminders[$minutes] = true;
             }
         }

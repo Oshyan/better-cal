@@ -19,7 +19,7 @@ import {
   fmtWeekdayShort, fmtMonthShort, fmtTime, epochDayOfKey, keyOfEpochDay,
 } from '../lib/dates.js';
 import { layoutOverlaps, assignLanes } from './layout.js';
-import { occurrenceDaySpan } from './monthmath.js';
+import { occurrenceDaySpan, isWeekendEpochDay } from './monthmath.js';
 import { EventBlock, EventBar } from './EventChip.js';
 import { startPointerDrag, cloneAsGhost } from './DragController.js';
 
@@ -431,11 +431,16 @@ export function TimeGrid({
   const totalW = (maxDay - minDay + 1) * colW;
   const dayLeft = (k) => (epochDayOfKey(k) - minDay) * colW;
 
+  // Infinite week track: month boundaries and weekend tints mirror the
+  // month/ribbon views (2px accent rule on each month's first day column,
+  // subtle weekend background + muted-accent weekday label).
   const headCells = days.map((k) => {
     const d = dateOfDayKey(k);
+    const weekend = infinite && isWeekendEpochDay(epochDayOfKey(k));
+    const monthStart = infinite && d.getDate() === 1;
     return html`<div
       key=${k}
-      class="bc-tg-head-day${k === tKey ? ' is-today' : ''}"
+      class="bc-tg-head-day${k === tKey ? ' is-today' : ''}${weekend ? ' is-weekend' : ''}${monthStart ? ' is-month-start' : ''}"
       style=${infinite ? `left:${dayLeft(k)}px;width:${colW}px` : undefined}
     >
       <span class="bc-tg-dow">${fmtWeekdayShort(d)}</span>
@@ -457,7 +462,7 @@ export function TimeGrid({
 
   const dayCols = days.map((k, i) => html`<div
     key=${k}
-    class="bc-tg-col${k === tKey ? ' is-today' : ''}"
+    class="bc-tg-col${k === tKey ? ' is-today' : ''}${infinite && isWeekendEpochDay(epochDayOfKey(k)) ? ' is-weekend' : ''}${infinite && k.endsWith('-01') ? ' is-month-start' : ''}"
     data-day=${k}
     style=${infinite ? `left:${dayLeft(k)}px;width:${colW}px` : undefined}
     onPointerDown=${dragCreate}
@@ -489,6 +494,14 @@ export function TimeGrid({
   // window while scrolling never shift the grid vertically.
   const showAllday = infinite || allDayBars.length > 0;
 
+  // Month boundary markers for the all-day lane (rendered before the bars so
+  // bars paint above); header and time columns get theirs via is-month-start.
+  const alldayMonthLines = infinite
+    ? days.filter((k) => k.endsWith('-01')).map((k) => html`<div
+        key=${'ml' + k} class="bc-tg-month-line" style=${`left:${dayLeft(k)}px`}
+      ></div>`)
+    : null;
+
   return html`<div class="bc-timegrid${infinite ? ' bc-tg-infinite' : ''}" ref=${rootRef}>
     <div class="bc-tg-head${single ? ' is-single' : ''}">
       <div class="bc-tg-gutter"></div>
@@ -499,7 +512,7 @@ export function TimeGrid({
     ${showAllday && html`<div class="bc-tg-allday" style=${`height:${Math.max(1, barLaneCount) * 24 + 4}px`}>
       <div class="bc-tg-gutter bc-tg-allday-label">all day</div>
       ${infinite
-        ? html`<div class="bc-tg-hclip"><div class="bc-tg-htrack" ref=${alldayTrackRef} style=${`width:${totalW}px`}>${allDayBars.map(barSlot)}</div></div>`
+        ? html`<div class="bc-tg-hclip"><div class="bc-tg-htrack" ref=${alldayTrackRef} style=${`width:${totalW}px`}>${alldayMonthLines}${allDayBars.map(barSlot)}</div></div>`
         : html`<div class="bc-tg-allday-lane">${allDayBars.map(barSlot)}</div>`}
     </div>`}
     <div class="bc-tg-scroll" ref=${scrollRef}>

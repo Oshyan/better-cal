@@ -12,7 +12,10 @@ import { PageShell } from './PageShell.js';
 import {
   permissionState, pushSupported, fetchPushStatus, enablePush, disablePush, sendTestNotification,
 } from './push.js';
-import { TIMED_CHOICES, ALLDAY_DAYS_CHOICES, fmtOffsetMinutes } from '../lib/reminders.js';
+import {
+  TIMED_CHOICES, ALLDAY_DAYS_CHOICES, REMINDER_UNITS, fmtOffsetMinutes,
+  toMinutes, fromMinutes,
+} from '../lib/reminders.js';
 
 const VIEW_OPTIONS = [
   ['month', 'Month'], ['weeks3', '3 weeks'], ['weeks2', '2 weeks'],
@@ -80,16 +83,52 @@ function NotificationsSection({ settings }) {
     setBusy(false);
   };
 
-  const timedValue = settings.reminderTimed && settings.reminderTimed.length > 0
-    ? String(settings.reminderTimed[0].minutes)
-    : '';
+  // Timed default: presets plus a Custom option revealing number + unit
+  // inputs. Stored shape stays [{minutes}].
+  const timedMinutes = settings.reminderTimed && settings.reminderTimed.length > 0
+    ? Number(settings.reminderTimed[0].minutes) || 0
+    : null;
+  const [timedCustom, setTimedCustom] = useState(null); // {n, unit} | null
+  const timedCustomActive = timedCustom !== null
+    || (timedMinutes !== null && !TIMED_CHOICES.includes(timedMinutes));
+  const timedPair = timedCustom
+    || (timedMinutes !== null ? fromMinutes(timedMinutes) : { n: 30, unit: 'minutes' });
+  const saveTimedPair = (pair) => {
+    setTimedCustom(pair);
+    saveSetting('reminderTimed', [{ minutes: toMinutes(pair.n, pair.unit) }]);
+  };
+  const onTimedSelect = (v) => {
+    if (v === 'custom') { setTimedCustom(timedPair); return; }
+    setTimedCustom(null);
+    saveSetting('reminderTimed', v === '' ? [] : [{ minutes: Number(v) }]);
+  };
+
+  // All-day default: day presets plus Custom number + unit (days/weeks).
   const allDayEntry = settings.reminderAllDay && settings.reminderAllDay.length > 0
     ? settings.reminderAllDay[0]
     : null;
+  const allDayDays = allDayEntry ? Number(allDayEntry.daysBefore) || 0 : null;
+  const [allDayCustom, setAllDayCustom] = useState(null); // {n, unit} | null
+  const allDayCustomActive = allDayCustom !== null
+    || (allDayDays !== null && !ALLDAY_DAYS_CHOICES.some(([d]) => d === allDayDays));
+  const allDayPair = allDayCustom || (allDayDays !== null && allDayDays > 0 && allDayDays % 7 === 0
+    ? { n: allDayDays / 7, unit: 'weeks' }
+    : { n: allDayDays == null ? 3 : allDayDays, unit: 'days' });
 
   const saveAllDay = (patch) => {
     const base = allDayEntry || { daysBefore: 1, time: '18:00' };
     saveSetting('reminderAllDay', [{ ...base, ...patch }]);
+  };
+  const saveAllDayPair = (pair) => {
+    setAllDayCustom(pair);
+    const days = Math.max(0, Math.min(28, Math.round((Number(pair.n) || 0) * (pair.unit === 'weeks' ? 7 : 1))));
+    saveAllDay({ daysBefore: days });
+  };
+  const onAllDaySelect = (v) => {
+    if (v === 'custom') { setAllDayCustom(allDayPair); return; }
+    setAllDayCustom(null);
+    if (v === '') saveSetting('reminderAllDay', []);
+    else saveAllDay({ daysBefore: Number(v) });
   };
 
   return html`<section class="bc-set-section">
@@ -103,22 +142,44 @@ function NotificationsSection({ settings }) {
       ${enabled && html`<button type="button" class="bc-btn" disabled=${busy}
         onClick=${run(sendTestNotification, (r) => 'Test sent to ' + ((r && r.sent) || 0) + ' device(s)')}>Send test notification</button>`}
     <//>
-    <${Row} label="Default reminder (timed events)" hint="Used unless a calendar or event overrides it.">
-      <select aria-label="Default reminder for timed events" value=${timedValue}
-        onChange=${(e) => saveSetting('reminderTimed', e.target.value === '' ? [] : [{ minutes: Number(e.target.value) }])}>
+    <${Row} label="Default reminder (timed events)" hint="Used unless a calendar or event overrides it. Custom accepts up to 4 weeks ahead.">
+      <select aria-label="Default reminder for timed events"
+        value=${timedCustomActive ? 'custom' : (timedMinutes === null ? '' : String(timedMinutes))}
+        onChange=${(e) => onTimedSelect(e.target.value)}>
         <option value="">None</option>
         ${TIMED_CHOICES.map((m) => html`<option key=${m} value=${String(m)}>${fmtOffsetMinutes(m)}</option>`)}
+        <option value="custom">Custom</option>
       </select>
+      ${timedCustomActive && html`<span class="bc-rem-custom">
+        <input class="bc-num" type="number" min="0" max="40320" aria-label="Custom reminder amount"
+          value=${timedPair.n}
+          onChange=${(e) => saveTimedPair({ ...timedPair, n: Number(e.target.value) || 0 })} />
+        <select aria-label="Custom reminder unit" value=${timedPair.unit}
+          onChange=${(e) => saveTimedPair({ ...timedPair, unit: e.target.value })}>
+          ${REMINDER_UNITS.map((u) => html`<option key=${u} value=${u}>${u}</option>`)}
+        </select>
+        <span class="bc-set-hint">before start</span>
+      </span>`}
     <//>
-    <${Row} label="Default reminder (all-day events)" hint="Fires at the chosen time in the event's timezone.">
+    <${Row} label="Default reminder (all-day events)" hint="Fires at the chosen time in the event's timezone. Custom accepts up to 4 weeks ahead.">
       <select aria-label="Default reminder day for all-day events"
-        value=${allDayEntry ? String(allDayEntry.daysBefore) : ''}
-        onChange=${(e) => (e.target.value === ''
-          ? saveSetting('reminderAllDay', [])
-          : saveAllDay({ daysBefore: Number(e.target.value) }))}>
+        value=${allDayCustomActive ? 'custom' : (allDayDays === null ? '' : String(allDayDays))}
+        onChange=${(e) => onAllDaySelect(e.target.value)}>
         <option value="">None</option>
         ${ALLDAY_DAYS_CHOICES.map(([d, label]) => html`<option key=${d} value=${String(d)}>${label}</option>`)}
+        <option value="custom">Custom</option>
       </select>
+      ${allDayCustomActive && html`<span class="bc-rem-custom">
+        <input class="bc-num" type="number" min="0" max="28" aria-label="Custom reminder amount for all-day events"
+          value=${allDayPair.n}
+          onChange=${(e) => saveAllDayPair({ ...allDayPair, n: Number(e.target.value) || 0 })} />
+        <select aria-label="Custom reminder unit for all-day events" value=${allDayPair.unit}
+          onChange=${(e) => saveAllDayPair({ ...allDayPair, unit: e.target.value })}>
+          <option value="days">days</option>
+          <option value="weeks">weeks</option>
+        </select>
+        <span class="bc-set-hint">before</span>
+      </span>`}
       ${allDayEntry && html`<input type="time" aria-label="Default reminder time for all-day events"
         value=${allDayEntry.time} onChange=${(e) => e.target.value && saveAllDay({ time: e.target.value })} />`}
     <//>

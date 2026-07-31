@@ -6,6 +6,7 @@ namespace BetterCal\Http\Controllers;
 
 use BetterCal\Domain\Events;
 use BetterCal\Domain\Filters;
+use BetterCal\Domain\Labels;
 use BetterCal\Domain\Search;
 use BetterCal\Http\Request;
 use BetterCal\Http\Response;
@@ -16,6 +17,7 @@ final class SearchController
         private readonly Search $search,
         private readonly Events $events,
         private readonly Filters $filters,
+        private readonly Labels $labels,
     ) {
     }
 
@@ -26,26 +28,36 @@ final class SearchController
         $limit = (int) ($req->q('limit') ?? '50');
         $rows = $this->search->search($userId, $q, $limit);
 
-        // User filters: hide drops rows, dim marks them (additive field).
-        // Prompt filters join cached background verdicts; no LLM calls here.
+        // User filters: hide drops rows, dim/highlight mark them (additive
+        // fields). Prompt filters join cached background verdicts; no LLM
+        // calls here.
         $activeFilters = $this->filters->enabledForUser($userId);
-        $promptCtx = $this->filters->promptFilterContext(
-            $userId,
-            array_map(static fn(array $row) => (int) $row['id'], $rows)
-        );
+        $rowIds = array_map(static fn(array $row) => (int) $row['id'], $rows);
+        $promptCtx = $this->filters->promptFilterContext($userId, $rowIds);
+        // Filters matching on the tags field need each row's tag names.
+        $tagsByEvent = Filters::anyUsesTags($activeFilters)
+            ? $this->labels->forEvents($rowIds)['tags']
+            : null;
         $dimmedIds = [];
+        $highlightedIds = [];
         if ($activeFilters !== [] || $promptCtx['filters'] !== []) {
             $kept = [];
             foreach ($rows as $row) {
+                $candidate = $row;
+                if ($tagsByEvent !== null) {
+                    $candidate['tags'] = $tagsByEvent[(int) $row['id']] ?? [];
+                }
                 $disposition = Filters::strongest(
-                    Filters::disposition($row, $activeFilters),
-                    Filters::promptDisposition($row, $promptCtx['filters'], $promptCtx['failed'])
+                    Filters::disposition($candidate, $activeFilters),
+                    Filters::promptDisposition($candidate, $promptCtx['filters'], $promptCtx['failed'])
                 );
                 if ($disposition === 'hide') {
                     continue;
                 }
                 if ($disposition === 'dim') {
                     $dimmedIds[(int) $row['id']] = true;
+                } elseif ($disposition === 'highlight') {
+                    $highlightedIds[(int) $row['id']] = true;
                 }
                 $kept[] = $row;
             }
@@ -56,6 +68,9 @@ final class SearchController
         foreach ($results as &$occ) {
             if (isset($dimmedIds[$occ['eventId']])) {
                 $occ['dimmed'] = true;
+            }
+            if (isset($highlightedIds[$occ['eventId']])) {
+                $occ['highlighted'] = true;
             }
         }
         unset($occ);

@@ -174,9 +174,20 @@ function edgeSpeed(depth) {
 }
 
 // Clone an element for use as a drag ghost, preserving its rendered size.
+// The source may carry inline layout styles from its positioned parent
+// (.bc-block sets top/left within its day column); cloned as-is they would
+// override the .bc-drag-ghost stylesheet position and displace the ghost far
+// from the pointer. Reset positioning so the ghost is fixed at the origin and
+// driven purely by the pointer transform, keeping only the rendered size.
 export function cloneAsGhost(el) {
   const r = el.getBoundingClientRect();
   const g = el.cloneNode(true);
+  g.style.position = 'fixed';
+  g.style.left = '0';
+  g.style.top = '0';
+  g.style.right = 'auto';
+  g.style.bottom = 'auto';
+  g.style.margin = '0';
   g.style.width = r.width + 'px';
   g.style.height = r.height + 'px';
   return g;

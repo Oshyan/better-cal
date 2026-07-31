@@ -40,7 +40,8 @@ const MONTH_ROWS = { month: 6, weeks3: 3, weeks2: 2 };
 function matchesFilter(occ, needle) {
   return (occ.title || '').toLowerCase().includes(needle) ||
     (occ.location || '').toLowerCase().includes(needle) ||
-    (occ.description || '').toLowerCase().includes(needle);
+    (occ.description || '').toLowerCase().includes(needle) ||
+    (occ.tags || []).some((t) => t.toLowerCase().includes(needle));
 }
 
 export function App() {
@@ -324,7 +325,7 @@ export function App() {
 
   const reschedActive = !!(resched && reschedOcc);
 
-  return html`<div class="bc-app">
+  return html`<div class="bc-app${dimSet ? ' is-page-filtering' : ''}">
     <${Toolbar} onToggleSidebar=${() => setSidebarOpen(!sidebarOpen)} />
     ${reschedActive && html`<${RescheduleBanner} occ=${reschedOcc} onExit=${exitReschedule} />`}
     <div class="bc-main">

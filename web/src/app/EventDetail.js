@@ -9,6 +9,7 @@ import { useStore, set, state, patchOccurrence } from './store.js';
 import { api } from './api.js';
 import { deleteEvent, triageAttendance, sendFeedback, enterReschedule, sameDayList } from './actions.js';
 import { trapFocus } from '../ui/DayExpand.js';
+import { ThumbIcon } from '../ui/icons.js';
 import {
   parseISO, dateOfDayKey, fmtRange, fmtDateFull, fmtTime,
 } from '../lib/dates.js';
@@ -339,11 +340,11 @@ export function EventDetail() {
             >${label}</button>`)}
           </div>`}
           ${isFeed && html`<div class="bc-seg" role="group" aria-label="Feedback">
-            ${[['up', '▲', 'More like this'], ['down', '▼', 'Less like this']].map(([value, glyph, label]) => html`<button
-              key=${value} type="button" class="bc-seg-btn"
+            ${[['up', 'More like this'], ['down', 'Less like this']].map(([value, label]) => html`<button
+              key=${value} type="button" class="bc-seg-btn bc-seg-icon"
               title=${label} aria-label=${label}
               onClick=${() => sendFeedback(occ, value)}
-            >${glyph}</button>`)}
+            ><${ThumbIcon} dir=${value} /></button>`)}
           </div>`}
         </div>
       </div>

@@ -8,6 +8,7 @@ import {
   parseISO, fmtTime, dateOfDayKey, fmtDayLong, dayKeyOfISO, occDayKey, todayKey,
 } from '../lib/dates.js';
 import { EventChip } from './EventChip.js';
+import { ThumbIcon } from './icons.js';
 
 const ROW_H = 36;
 const HEAD_H = 40;
@@ -23,8 +24,8 @@ const TRIAGE_BUTTONS = [
   ['hidden', '✕', 'Hide'],
 ];
 const FEEDBACK_BUTTONS = [
-  ['up', '▲', 'More like this'],
-  ['down', '▼', 'Less like this'],
+  ['up', 'More like this'],
+  ['down', 'Less like this'],
 ];
 
 function TriageCluster({ occ, onSetAttendance, onFeedback }) {
@@ -40,11 +41,11 @@ function TriageCluster({ occ, onSetAttendance, onFeedback }) {
       onClick=${(e) => { e.stopPropagation(); onSetAttendance(occ, value); }}
     >${glyph}</button>`)}
     ${onFeedback && html`<span class="bc-triage-sep" aria-hidden="true"></span>`}
-    ${onFeedback && FEEDBACK_BUTTONS.map(([value, glyph, label]) => html`<button
-      key=${value} type="button" class="bc-triage-btn"
+    ${onFeedback && FEEDBACK_BUTTONS.map(([value, label]) => html`<button
+      key=${value} type="button" class="bc-triage-btn bc-triage-thumb"
       title=${label} aria-label=${label}
       onClick=${(e) => { e.stopPropagation(); onFeedback(occ, value); }}
-    >${glyph}</button>`)}
+    ><${ThumbIcon} dir=${value} size=${12} /></button>`)}
   </span>`;
 }
 

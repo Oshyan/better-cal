@@ -345,12 +345,30 @@ export function MonthGrid({
     />`);
   }
 
-  const monthStarts = monthStartsInRange(range.first, range.last, columns);
-  const labels = monthStarts.map(({ weekIndex, year, month }) => html`<div
-    key=${'m' + year + '-' + month}
-    class="bc-gutter-label"
-    style=${`top:${weekTop(weekIndex, minWeek, rowH) + 2}px`}
-  >${fmtMonthShort(new Date(year, month - 1, 1))}<span class="bc-gutter-year">${month === 1 ? year : ''}</span></div>`);
+  // Sticky month labels: one absolutely positioned container per month spans
+  // that month's rows; the label inside is position: sticky (top: 0), so the
+  // current month's abbreviation pins at the gutter top while scrolling until
+  // the next month's container pushes it off. The window is widened by enough
+  // rows either side to catch the month whose start row is scrolled out of
+  // the render range (its label still needs to pin while its rows show).
+  const lookRows = Math.ceil(31 / columns) + 1;
+  const monthStarts = monthStartsInRange(
+    Math.max(minWeek, range.first - lookRows),
+    Math.min(maxWeek, range.last + lookRows),
+    columns,
+  );
+  const labels = monthStarts.map(({ weekIndex, year, month }, i) => {
+    const next = monthStarts[i + 1];
+    const top = weekTop(weekIndex, minWeek, rowH);
+    const bottom = next ? weekTop(next.weekIndex, minWeek, rowH) : top + lookRows * rowH;
+    return html`<div
+      key=${'m' + year + '-' + month}
+      class="bc-gutter-month"
+      style=${`top:${top}px;height:${bottom - top}px`}
+    >
+      <div class="bc-gutter-label">${fmtMonthShort(new Date(year, month - 1, 1))}<span class="bc-gutter-year">${month === 1 ? year : ''}</span></div>
+    </div>`;
+  });
 
   // Crisp full-width divider (gutter included) at the top of each month's
   // first row; the per-cell accent cue stays as the mid-row marker.

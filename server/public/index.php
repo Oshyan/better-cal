@@ -31,7 +31,7 @@ if (preg_match('#^/feed/([A-Za-z0-9_-]{20,64})\.ics$#', $request->path, $m)) {
     }
     try {
         $db = new Db($cfg['db']);
-        $outFeeds = new Domain\OutFeeds($db, new Domain\Search($db), $cfg);
+        $outFeeds = new Domain\OutFeeds($db, new Domain\Search($db, new Domain\Labels($db)), $cfg);
         (new Controllers\OutFeedsController($outFeeds))->publicFeed($m[1])->send();
     } catch (\Throwable $e) {
         error_log('feed render error: ' . $e->getMessage());
@@ -67,7 +67,7 @@ function bc_handle_api(Request $request, array $cfg): void
         $calendars = new Domain\Calendars($db, $undo, $labels);
         $folders = new Domain\Folders($db, $undo);
         $feeds = new Domain\Feeds($db, $jobQueue);
-        $search = new Domain\Search($db);
+        $search = new Domain\Search($db, $labels);
         $savedViews = new Domain\SavedViews($db, $undo);
         $outFeeds = new Domain\OutFeeds($db, $search, $cfg);
         $settings = new Domain\Settings($db);
@@ -81,7 +81,7 @@ function bc_handle_api(Request $request, array $cfg): void
         $foldersController = new Controllers\FoldersController($folders);
         $eventsController = new Controllers\EventsController($events);
         $quickAddController = new Controllers\QuickAddController($quickAdd);
-        $searchController = new Controllers\SearchController($search, $events, $filters);
+        $searchController = new Controllers\SearchController($search, $events, $filters, $labels);
         $outFeedsController = new Controllers\OutFeedsController($outFeeds);
         $filtersController = new Controllers\FiltersController($filters);
         $savedViewsController = new Controllers\SavedViewsController($savedViews);

@@ -1,5 +1,7 @@
 // SearchOverlay: `/` opens; instant results grouped past/future; Enter or
-// click jumps the calendar to the event's date and flashes it.
+// click jumps the calendar to the event's date and flashes it. The user's
+// tags render as clickable chips beneath the input; clicking one runs a
+// tag-only search ("#tag", server-side), and result rows show their tags.
 
 import { html, useState, useRef, useEffect } from '../../vendor/index.js';
 import { useStore, set, state } from './store.js';
@@ -10,6 +12,7 @@ import { parseISO, fmtDateFull, fmtTime, occDayKey } from '../lib/dates.js';
 
 export function SearchOverlay() {
   const open = useStore((s) => s.searchOpen);
+  const userTags = useStore((s) => s.tags);
   const [q, setQ] = useState('');
   const [results, setResults] = useState(null);
   const [sel, setSel] = useState(0);
@@ -36,18 +39,30 @@ export function SearchOverlay() {
 
   if (!open) return null;
 
+  const runSearch = async (query) => {
+    try {
+      const r = await search(query);
+      if (r !== null) setResults(r); // null = superseded by newer request
+    } catch { setResults([]); }
+  };
+
   const onInput = (e) => {
     const v = e.target.value;
     setQ(v);
     setSel(0);
     clearTimeout(timerRef.current);
     if (!v.trim()) { setResults(null); return; }
-    timerRef.current = setTimeout(async () => {
-      try {
-        const r = await search(v.trim());
-        if (r !== null) setResults(r); // null = superseded by newer request
-      } catch { setResults([]); }
-    }, 250);
+    timerRef.current = setTimeout(() => runSearch(v.trim()), 250);
+  };
+
+  // Tag chip click: tag-only search ("#name" matches tags, not text).
+  const searchTag = (name) => {
+    const query = '#' + name;
+    setQ(query);
+    setSel(0);
+    clearTimeout(timerRef.current);
+    runSearch(query);
+    if (inputRef.current) inputRef.current.focus();
   };
 
   const flat = results || [];
@@ -84,6 +99,9 @@ export function SearchOverlay() {
       >
         <span class="bc-cal-dot" style=${`background:${(cal && cal.color) || '#888'}`}></span>
         <span class="bc-search-title">${occ.title || '(untitled)'}</span>
+        ${occ.tags && occ.tags.length > 0 && html`<span class="bc-search-rowtags">
+          ${occ.tags.map((t) => html`<span key=${t} class="bc-tag-chip">#${t}</span>`)}
+        </span>`}
         ${occ.location && html`<span class="bc-search-loc">${occ.location}</span>`}
         <span class="bc-search-date">${fmtDateFull(parseISO(occ.start))}${occ.allDay ? '' : ' ' + fmtTime(parseISO(occ.start))}</span>
       </button>`;
@@ -104,6 +122,12 @@ export function SearchOverlay() {
         />
         <button type="button" class="bc-icon-btn bc-search-close" aria-label="Close" onClick=${() => set({ searchOpen: false })}>✕</button>
       </div>
+      ${userTags && userTags.length > 0 && html`<div class="bc-search-tags" role="group" aria-label="Search by tag">
+        ${userTags.map((t) => html`<button
+          key=${t.id} type="button" class="bc-tag-chip bc-tag-chip-btn"
+          onClick=${() => searchTag(t.name)}
+        >#${t.name}</button>`)}
+      </div>`}
       <div class="bc-search-results">
         ${results !== null && ordered.length === 0 && html`<div class="bc-empty">No matches for "${q}"</div>`}
         ${renderGroup('Upcoming', future, 0)}

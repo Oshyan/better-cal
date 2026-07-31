@@ -29,7 +29,11 @@ function stateClasses(occ, dimmed) {
   if (occ.isNew) c += ' is-new';
   if (occ.isGroup) c += ' is-group';
   if (occ.dimmed) c += ' is-filter-dimmed';
-  if (dimmed) c += ' is-dimmed';
+  // Server highlight filters: accent ring + slight saturation boost.
+  if (occ.highlighted) c += ' is-highlighted';
+  // On-page type-to-filter: non-matching events are removed from view while
+  // the filter text is non-empty (the `dimmed` prop carries that flag).
+  if (dimmed) c += ' is-page-hidden';
   return c;
 }
 

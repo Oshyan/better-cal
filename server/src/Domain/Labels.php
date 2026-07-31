@@ -76,6 +76,29 @@ final class Labels
         return ['tags' => $tags, 'people' => $people];
     }
 
+    /**
+     * Ids of the user's events carrying a tag whose name contains $term
+     * (case-insensitive substring, collation-backed). Used by search and the
+     * events-window q= treatment, including `#tag` tag-only queries.
+     *
+     * @return list<int>
+     */
+    public function eventIdsForTagQuery(int $userId, string $term): array
+    {
+        $term = trim($term);
+        if ($term === '') {
+            return [];
+        }
+        $like = '%' . addcslashes($term, '%_\\') . '%';
+        $rows = $this->db->all(
+            'SELECT DISTINCT et.event_id FROM event_tags et
+             JOIN tags t ON t.id = et.tag_id
+             WHERE t.user_id = ? AND t.name LIKE ?',
+            [$userId, $like]
+        );
+        return array_map(static fn(array $row): int => (int) $row['event_id'], $rows);
+    }
+
     /** Link rows for undo snapshots. @return array<string,list<array>> */
     public function eventLinkRows(int $eventId): array
     {

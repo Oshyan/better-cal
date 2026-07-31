@@ -10,6 +10,7 @@ import { layoutOverlaps, assignLanes, rangesOverlap } from '../src/ui/layout.js'
 import {
   visibleWeekRange, weekTop, totalHeight, segmentSpan, occurrenceDaySpan,
   monthStartsInRange, dominantMonthOfWeek, isMultiDay,
+  monthsAround, miniMonthGrid, dayDropDates, timeDropDates,
 } from '../src/ui/monthmath.js';
 import { contrastText, withAlpha, parseHex } from '../src/lib/color.js';
 
@@ -126,6 +127,38 @@ assert('monthStartsInRange finds Aug 1',
 
 // 26. Dominant month of a boundary week (Jul 27 - Aug 2: 5 July days).
 eq('dominantMonthOfWeek boundary', dominantMonthOfWeek(weekIndexOfKey('2026-07-30')), { year: 2026, month: 7 });
+
+console.log('--- reschedule math ---');
+
+// monthsAround: 25 entries centered on the base, rolling across year bounds.
+const ma = monthsAround(2026, 1, 12);
+eq('monthsAround span', [ma.length, ma[0].year, ma[0].month, ma[24].year, ma[24].month],
+  [25, 2025, 1, 2027, 1]);
+
+// miniMonthGrid: Feb 2027 starts on a Monday and fits exactly 4 week rows.
+eq('miniMonthGrid Feb 2027', miniMonthGrid(2027, 2),
+  { year: 2027, month: 2, firstKey: '2027-02-01', weekCount: 4 });
+
+// miniMonthGrid: Aug 2026 (Sat start, Mon end) spans 6 week rows.
+eq('miniMonthGrid Aug 2026 weeks', miniMonthGrid(2026, 8).weekCount, 6);
+
+// dayDropDates preserves time-of-day and duration.
+const occTimed = { start: localISO(2026, 8, 3, 14, 30), end: localISO(2026, 8, 3, 16, 0), allDay: false };
+eq('dayDropDates timed', dayDropDates(occTimed, '2026-08-12'),
+  { newStart: localISO(2026, 8, 12, 14, 30), newEnd: localISO(2026, 8, 12, 16, 0), delta: 9 });
+
+// dayDropDates multi-day: length kept, drop sets the START day.
+const occMulti = { start: localISO(2026, 8, 3, 9, 0), end: localISO(2026, 8, 6, 17, 0), allDay: false };
+eq('dayDropDates multi-day keeps length', dayDropDates(occMulti, '2026-09-01'),
+  { newStart: localISO(2026, 9, 1, 9, 0), newEnd: localISO(2026, 9, 4, 17, 0), delta: 29 });
+
+// timeDropDates snaps the pointer minute to 15 and keeps the duration.
+eq('timeDropDates snaps to 15', timeDropDates(occTimed, '2026-08-12', 611), // 10:11 -> 10:15
+  { newStart: localISO(2026, 8, 12, 10, 15), newEnd: localISO(2026, 8, 12, 11, 45) });
+
+// timeDropDates clamps so the event still starts inside the target day.
+eq('timeDropDates clamps to day end', timeDropDates(occTimed, '2026-08-12', 1435).newEnd,
+  localISO(2026, 8, 13, 0, 0));
 
 console.log('--- overlap layout ---');
 

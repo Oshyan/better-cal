@@ -3,7 +3,8 @@
 
 import {
   epochDayOfKey, keyOfEpochDay, weekIndexOfEpochDay, firstEpochDayOfWeek,
-  dayKeyOfISO, parseISO, dayKeyOf,
+  dayKeyOfISO, parseISO, dayKeyOf, addDaysDate, toISOWithOffset, dateOfDayKey,
+  pad,
 } from '../lib/dates.js';
 
 // Visible week window for a virtualized scroller.
@@ -89,6 +90,52 @@ export function monthStartsInRange(firstWeek, lastWeek) {
     }
   }
   return out;
+}
+
+// --- reschedule mode math (PRD 5.9) ----------------------------------------
+
+// The 2*radius+1 consecutive {year, month} entries centered on a month
+// (month 1-12), rolling across year boundaries.
+export function monthsAround(year, month, radius = 12) {
+  const out = [];
+  const base = year * 12 + (month - 1);
+  for (let k = base - radius; k <= base + radius; k++) {
+    out.push({ year: Math.floor(k / 12), month: ((k % 12) + 12) % 12 + 1 });
+  }
+  return out;
+}
+
+// Mini-month descriptor for the film-strip navigator: the first day key plus
+// how many Monday-started week rows the month spans (4-6).
+export function miniMonthGrid(year, month) {
+  const firstKey = year + '-' + pad(month) + '-01';
+  const nextFirst = month === 12 ? (year + 1) + '-01-01' : year + '-' + pad(month + 1) + '-01';
+  const lastEpoch = epochDayOfKey(nextFirst) - 1;
+  const weekCount = weekIndexOfEpochDay(lastEpoch) - weekIndexOfEpochDay(epochDayOfKey(firstKey)) + 1;
+  return { year, month, firstKey, weekCount };
+}
+
+// Day-cell drop resolution: move the occurrence so its first grid day becomes
+// targetKey, preserving time-of-day and duration (multi-day events keep their
+// length; the drop sets the START day). Mirrors the MonthGrid drag-move math.
+export function dayDropDates(occ, targetKey) {
+  const { startKey } = occurrenceDaySpan(occ);
+  const delta = epochDayOfKey(targetKey) - epochDayOfKey(startKey);
+  const s = addDaysDate(parseISO(occ.start), delta);
+  const e = addDaysDate(parseISO(occ.end), delta);
+  return { newStart: toISOWithOffset(s), newEnd: toISOWithOffset(e), delta };
+}
+
+// Time-slot drop resolution (week/day views): snap the pointer minute to 15,
+// keep the duration, and clamp so the event still starts inside the day.
+export function timeDropDates(occ, dayKey, minute) {
+  const s0 = parseISO(occ.start);
+  const e0 = parseISO(occ.end);
+  const durMin = Math.max(15, (e0.getTime() - s0.getTime()) / 60000);
+  const startMin = Math.max(0, Math.min(1440 - durMin, Math.round(minute / 15) * 15));
+  const base = dateOfDayKey(dayKey);
+  const s = new Date(base.getFullYear(), base.getMonth(), base.getDate(), 0, startMin);
+  return { newStart: toISOWithOffset(s), newEnd: toISOWithOffset(new Date(s.getTime() + durMin * 60000)) };
 }
 
 // Dominant month of a week (the month owning >= 4 of its 7 days).

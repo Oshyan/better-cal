@@ -56,6 +56,30 @@ export function closeOverlays() {
   return false;
 }
 
+// --- reschedule mode (PRD 5.9) -----------------------------------------------
+
+// Enter the dedicated reschedule mode for one occurrence: the event is
+// immediately grabbed into a pointer-following ghost and the popover closes.
+// Feed events are read-only upstream, so the mode only opens for local events.
+// Recurring events are rescheduled as this occurrence only (scope "this",
+// applied by moveEvent on confirm).
+export function enterReschedule(instanceId) {
+  const occ = state.occ.get(instanceId);
+  if (!occ) return;
+  const cal = state.calendars.find((c) => c.id === occ.calendarId);
+  if (cal && cal.kind === 'subscribed') return;
+  set({
+    reschedule: { instanceId, grabbed: true },
+    popover: null,
+    expandedDay: null,
+    editor: null,
+  });
+}
+
+export function exitReschedule() {
+  if (state.reschedule) set({ reschedule: null });
+}
+
 // --- event mutations --------------------------------------------------------
 
 function scopeFields(occ) {

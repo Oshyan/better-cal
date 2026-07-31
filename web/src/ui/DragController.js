@@ -69,10 +69,7 @@ export function startPointerDrag(e, opts) {
     if (done || !lifted) return;
     const el = opts.scrollEl;
     if (el) {
-      const r = el.getBoundingClientRect();
-      let dy = 0;
-      if (lastPt.y < r.top + EDGE_ZONE) dy = -edgeSpeed(r.top + EDGE_ZONE - lastPt.y);
-      else if (lastPt.y > r.bottom - EDGE_ZONE) dy = edgeSpeed(lastPt.y - (r.bottom - EDGE_ZONE));
+      const dy = edgeScrollDy(el, lastPt.y);
       if (dy !== 0) {
         el.scrollTop += dy;
         if (opts.onMove) opts.onMove(lastPt); // targets shift under the pointer
@@ -81,9 +78,6 @@ export function startPointerDrag(e, opts) {
     raf = requestAnimationFrame(loop);
   }
 
-  function edgeSpeed(depth) {
-    return Math.min(EDGE_MAX_SPEED, 2 + (depth / EDGE_ZONE) * EDGE_MAX_SPEED);
-  }
 
   function onMove(ev) {
     lastPt = { x: ev.clientX, y: ev.clientY };
@@ -150,6 +144,20 @@ export function startPointerDrag(e, opts) {
   if (isTouch) pressTimer = setTimeout(lift, LONG_PRESS_MS);
 
   return cancel;
+}
+
+// Vertical auto-scroll delta for a pointer y near a scroll container's
+// top/bottom edges; speed proportional to edge proximity. Shared by
+// startPointerDrag and RescheduleMode.
+export function edgeScrollDy(scrollEl, y) {
+  const r = scrollEl.getBoundingClientRect();
+  if (y < r.top + EDGE_ZONE) return -edgeSpeed(r.top + EDGE_ZONE - y);
+  if (y > r.bottom - EDGE_ZONE) return edgeSpeed(y - (r.bottom - EDGE_ZONE));
+  return 0;
+}
+
+function edgeSpeed(depth) {
+  return Math.min(EDGE_MAX_SPEED, 2 + (depth / EDGE_ZONE) * EDGE_MAX_SPEED);
 }
 
 // Clone an element for use as a drag ghost, preserving its rendered size.

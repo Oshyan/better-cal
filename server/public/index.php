@@ -56,6 +56,7 @@ function bc_handle_api(Request $request, array $cfg): void
     try {
         $db = new Db($cfg['db']);
         $auth = new Domain\Auth($db, $cfg);
+        $apiTokens = new Domain\ApiTokens($db);
         $undo = new Domain\Undo($db);
         $labels = new Domain\Labels($db);
         $recurrence = new Domain\Recurrence();
@@ -74,6 +75,7 @@ function bc_handle_api(Request $request, array $cfg): void
         $quickAddController = new Controllers\QuickAddController($quickAdd);
         $searchController = new Controllers\SearchController($search, $events);
         $outFeedsController = new Controllers\OutFeedsController($outFeeds);
+        $tokensController = new Controllers\TokensController($apiTokens);
         $healthController = new Controllers\HealthController($db, $cfg);
 
         $router = new Router();
@@ -113,6 +115,10 @@ function bc_handle_api(Request $request, array $cfg): void
         $router->add('POST', "$base/outfeeds", [$outFeedsController, 'create']);
         $router->add('DELETE', "$base/outfeeds/:id", [$outFeedsController, 'delete']);
 
+        $router->add('GET', "$base/tokens", [$tokensController, 'index']);
+        $router->add('POST', "$base/tokens", [$tokensController, 'create']);
+        $router->add('DELETE', "$base/tokens/:id", [$tokensController, 'delete']);
+
         $router->add('GET', "$base/health", fn(): Response => $healthController->health());
 
         $match = $router->match($request->method, $request->path);
@@ -121,17 +127,29 @@ function bc_handle_api(Request $request, array $cfg): void
             || ($request->path === "$base/health");
 
         if (!$isExempt) {
-            $session = $auth->resolve($request->cookies[Domain\Auth::COOKIE] ?? null);
-            if ($session === null) {
-                throw HttpError::unauthorized();
-            }
-            $request->user = $session['user'];
-            $request->csrf = $session['csrf'];
+            $bearer = Domain\ApiTokens::parseBearer($request->header('Authorization'));
+            if ($bearer !== null) {
+                // Personal access token auth: no cookie involved, so CSRF-exempt.
+                $user = $apiTokens->resolve($bearer);
+                if ($user === null) {
+                    throw HttpError::unauthorized('Invalid or expired API token');
+                }
+                $request->user = $user;
+                $request->authMethod = 'token';
+            } else {
+                $session = $auth->resolve($request->cookies[Domain\Auth::COOKIE] ?? null);
+                if ($session === null) {
+                    throw HttpError::unauthorized();
+                }
+                $request->user = $session['user'];
+                $request->csrf = $session['csrf'];
+                $request->authMethod = 'session';
 
-            if (!in_array($request->method, ['GET', 'HEAD', 'OPTIONS'], true)
-                && !hash_equals($session['csrf'], (string) ($request->header('X-CSRF') ?? ''))
-            ) {
-                throw HttpError::forbidden('csrf', 'Missing or invalid X-CSRF header');
+                if (!in_array($request->method, ['GET', 'HEAD', 'OPTIONS'], true)
+                    && !hash_equals($session['csrf'], (string) ($request->header('X-CSRF') ?? ''))
+                ) {
+                    throw HttpError::forbidden('csrf', 'Missing or invalid X-CSRF header');
+                }
             }
         }
 

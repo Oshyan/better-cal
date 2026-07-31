@@ -7,6 +7,7 @@ declare(strict_types=1);
 
 require dirname(__DIR__) . '/src/bootstrap.php';
 
+use BetterCal\Domain\ApiTokens;
 use BetterCal\Domain\FallbackParser;
 use BetterCal\Domain\Ics;
 use BetterCal\Domain\Recurrence;
@@ -314,6 +315,36 @@ check('ulid alphabet', preg_match('/^[0-9A-HJKMNP-TV-Z]{26}$/', $ulid) === 1);
 check('ulid time prefix non-decreasing', strcmp(substr($ulid, 0, 10), substr(Ids::ulid(), 0, 10)) <= 0);
 $token = Ids::feedToken();
 check('feed token 43 chars urlsafe', strlen($token) === 43 && preg_match('/^[A-Za-z0-9_-]+$/', $token) === 1);
+
+// ---------------------------------------------------------------------------
+// ApiTokens: value format, hashing, Bearer header parsing (pure, no DB)
+// ---------------------------------------------------------------------------
+
+$apiToken = ApiTokens::generate();
+check('api token is 46 chars', strlen($apiToken) === 46);
+check('api token has bc_ prefix', str_starts_with($apiToken, 'bc_'));
+check('api token matches format', ApiTokens::isValidFormat($apiToken));
+check('api tokens are unique', ApiTokens::generate() !== $apiToken);
+checkEq('api token hash is sha256 of full value', hash('sha256', $apiToken), ApiTokens::hashToken($apiToken));
+check('api token hash is 64 hex chars', preg_match('/^[0-9a-f]{64}$/', ApiTokens::hashToken($apiToken)) === 1);
+
+check('format rejects missing prefix', !ApiTokens::isValidFormat(substr($apiToken, 3)));
+check('format rejects wrong prefix', !ApiTokens::isValidFormat('bx_' . substr($apiToken, 3)));
+check('format rejects short token', !ApiTokens::isValidFormat('bc_short'));
+check('format rejects long token', !ApiTokens::isValidFormat($apiToken . 'a'));
+check('format rejects non-urlsafe chars', !ApiTokens::isValidFormat('bc_' . str_repeat('a', 41) . '+/'));
+check('format rejects empty', !ApiTokens::isValidFormat(''));
+
+checkEq('bearer parse', $apiToken, ApiTokens::parseBearer('Bearer ' . $apiToken));
+checkEq('bearer parse lowercase scheme', $apiToken, ApiTokens::parseBearer('bearer ' . $apiToken));
+checkEq('bearer parse tolerates extra whitespace', $apiToken, ApiTokens::parseBearer('  Bearer   ' . $apiToken . '  '));
+checkEq('bearer null header', null, ApiTokens::parseBearer(null));
+checkEq('bearer empty header', null, ApiTokens::parseBearer(''));
+checkEq('bearer wrong scheme', null, ApiTokens::parseBearer('Basic dXNlcjpwYXNz'));
+checkEq('bearer scheme without token', null, ApiTokens::parseBearer('Bearer'));
+checkEq('bearer scheme with only spaces', null, ApiTokens::parseBearer('Bearer   '));
+checkEq('bearer glued scheme rejected', null, ApiTokens::parseBearer('Bearer' . $apiToken));
+checkEq('bearer scheme prefix rejected', null, ApiTokens::parseBearer('BearerX ' . $apiToken));
 
 // ---------------------------------------------------------------------------
 

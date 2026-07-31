@@ -81,13 +81,22 @@ export function MonthGrid({
     return () => ro.disconnect();
   }, []);
 
+  const topWeekRef = useRef(null);
+  // Geometry lives in a ref so recompute has ONE stable identity for the whole
+  // component life. A version with rowH captured in its closure can be invoked
+  // late (rAF-throttled scroll events) after rowH changed, computing the range
+  // against the wrong geometry and blanking the grid.
+  const geomRef = useRef({ rowH, minWeek, maxWeek });
+  geomRef.current = { rowH, minWeek, maxWeek };
   const recompute = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
-    const r = visibleWeekRange(el.scrollTop, el.clientHeight, rowH, minWeek, maxWeek, 3);
-    r.top = Math.max(minWeek, Math.min(maxWeek, minWeek + Math.floor(el.scrollTop / rowH)));
+    const g = geomRef.current;
+    const r = visibleWeekRange(el.scrollTop, el.clientHeight, g.rowH, g.minWeek, g.maxWeek, 3);
+    r.top = Math.max(g.minWeek, Math.min(g.maxWeek, g.minWeek + Math.floor(el.scrollTop / g.rowH)));
+    topWeekRef.current = r.top;
     setRange((prev) => (prev.first === r.first && prev.last === r.last && prev.top === r.top ? prev : r));
-  }, [rowH, minWeek, maxWeek]);
+  }, []);
 
   // Scroll handling via rAF throttle.
   useEffect(() => {
@@ -102,26 +111,32 @@ export function MonthGrid({
     return () => { el.removeEventListener('scroll', onScroll); cancelAnimationFrame(raf); };
   }, [recompute]);
 
-  // Row height changes with viewport size; keep the same top week on screen
-  // by rescaling scrollTop, then recompute the visible range.
-  const prevRowH = useRef(rowH);
+  // Geometry changes (viewport resize, layout switch, container remount) must
+  // not move the user in time: restore scrollTop from the last known top week
+  // rather than trusting pixel positions across a rowH change.
   useLayoutEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    if (prevRowH.current !== rowH && prevRowH.current > 0) {
-      el.scrollTop = (el.scrollTop / prevRowH.current) * rowH;
+    if (topWeekRef.current != null) {
+      el.scrollTop = weekTop(topWeekRef.current, minWeek, rowH);
     }
-    prevRowH.current = rowH;
     recompute();
-  }, [rowH, viewH, recompute]);
+  }, [rowH, viewH, minWeek, recompute]);
 
   // Programmatic scroll to an anchor date (today button, arrows, search jump).
+  // Fires only on explicit navigation (scrollSeq); geometry changes are handled
+  // by the top-week restore effect above. rowH is read fresh via a ref so this
+  // effect does not re-fire (and yank the user back) when geometry changes.
+  const rowHRef = useRef(rowH);
+  rowHRef.current = rowH;
   useLayoutEffect(() => {
     const el = scrollRef.current;
     if (!el || !scrollKey) return;
-    el.scrollTop = weekTop(weekIndexOfKey(scrollKey), minWeek, rowH);
+    const w = weekIndexOfKey(scrollKey);
+    el.scrollTop = weekTop(w, minWeek, rowHRef.current);
+    topWeekRef.current = w;
     recompute();
-  }, [scrollSeq, rowH]); // eslint-disable-line
+  }, [scrollSeq]); // eslint-disable-line
 
   // Report visible month + demand data for the visible window.
   useEffect(() => {
@@ -345,7 +360,7 @@ function WeekRow({
     const hidden = singles.length - shown + overflowFromBars;
     return html`<div
       key=${k}
-      class="bc-cell${m % 2 === 0 ? ' alt-month' : ''}${k === tKey ? ' is-today' : ''}"
+      class="bc-cell${m % 2 === 0 ? ' alt-month' : ''}${k === tKey ? ' is-today' : ''}${d === 1 ? ' is-month-start' : ''}"
       data-day=${k}
       onPointerDown=${dragCreate}
     >

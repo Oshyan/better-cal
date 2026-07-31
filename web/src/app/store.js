@@ -49,6 +49,7 @@ export const state = {
   quickAddOpen: false,
   searchOpen: false,
   jumpOpen: false,   // jump-to-date popover (toolbar date label / g)
+  shortcutsOpen: false, // keyboard shortcuts cheat sheet (?)
   popover: null,     // {instanceId, anchorRect}
   detail: null,      // {instanceId} full event detail view (modal/sheet)
   groupPopover: null, // {group, anchorRect} near-duplicate group list

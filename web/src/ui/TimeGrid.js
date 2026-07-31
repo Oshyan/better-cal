@@ -83,11 +83,19 @@ export function TimeGrid({
     return layoutOverlaps(items);
   }), [timedByDay]);
 
-  // Scroll to 7am on mount; tick the now-line every 30s.
+  // Initial scroll: when the range includes today, land just above the
+  // now-line (Google-style); otherwise fall back to 7am. Ticks the now-line
+  // every 30s.
   useLayoutEffect(() => {
     const el = scrollRef.current;
-    if (el) el.scrollTop = 7 * HOUR_H;
-  }, []);
+    if (!el) return;
+    if (days.includes(todayKey())) {
+      const mins = minutesOfDay(new Date());
+      el.scrollTop = Math.max(0, (mins / 60) * HOUR_H - 90);
+    } else {
+      el.scrollTop = 7 * HOUR_H;
+    }
+  }, []); // eslint-disable-line
   useEffect(() => {
     const t = setInterval(() => forceTick((n) => n + 1), 30000);
     return () => clearInterval(t);
@@ -229,12 +237,18 @@ export function TimeGrid({
   const now = new Date();
   const nowKey = dayKeyOf(now);
   const hours = [];
-  for (let h = 1; h < 24; h++) {
-    hours.push(html`<div key=${h} class="bc-hour-label" style=${`top:${h * HOUR_H}px`}>${fmtTime(new Date(2000, 0, 1, h, 0)).replace(':00', '')}</div>`);
+  // h=0 renders too (12 AM sits below the top edge instead of being clipped
+  // by the all-day lane border).
+  for (let h = 0; h < 24; h++) {
+    hours.push(html`<div key=${h} class="bc-hour-label${h === 0 ? ' is-first' : ''}" style=${`top:${h * HOUR_H}px`}>${fmtTime(new Date(2000, 0, 1, h, 0)).replace(':00', '')}</div>`);
   }
 
+  // Day view gets a stronger header (weekday + big day number); the shared
+  // toolbar date alone is a weak anchor for a single column.
+  const single = days.length === 1;
+
   return html`<div class="bc-timegrid">
-    <div class="bc-tg-head">
+    <div class="bc-tg-head${single ? ' is-single' : ''}">
       <div class="bc-tg-gutter"></div>
       ${days.map((k) => {
         const d = dateOfDayKey(k);

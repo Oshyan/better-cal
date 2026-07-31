@@ -12,33 +12,35 @@ import { EventChip } from './EventChip.js';
 const ROW_H = 36;
 const HEAD_H = 40;
 
-// Compact triage segment for feed events: interested / going / hide as one
-// group so a feed can be triaged top to bottom without opening popovers.
-function TriageBar({ occ, onSetAttendance }) {
-  const buttons = [
-    ['interested', '☆', 'Interested'],
-    ['going', '✓', 'Going'],
-    ['hidden', '✕', 'Hide'],
-  ];
-  return html`<span class="bc-triage" role="group" aria-label="Triage">
-    ${buttons.map(([value, glyph, label]) => html`<button
+// One compact segmented group per feed row: triage (interested / going /
+// hide) plus, past a thin divider, thumbs feedback for the trainable
+// ranking (PRD 5.8). Quiet by design: revealed on row hover/focus on
+// desktop (space is reserved so rows never shift), always visible on touch,
+// and kept visible when a triage state is active.
+const TRIAGE_BUTTONS = [
+  ['interested', '☆', 'Interested'],
+  ['going', '✓', 'Going'],
+  ['hidden', '✕', 'Hide'],
+];
+const FEEDBACK_BUTTONS = [
+  ['up', '▲', 'More like this'],
+  ['down', '▼', 'Less like this'],
+];
+
+function TriageCluster({ occ, onSetAttendance, onFeedback }) {
+  const hasOn = TRIAGE_BUTTONS.some(([value]) => occ.attendance === value);
+  return html`<span
+    class="bc-triage bc-agenda-triage${hasOn ? ' has-on' : ''}"
+    role="group" aria-label="Triage and feedback"
+  >
+    ${TRIAGE_BUTTONS.map(([value, glyph, label]) => html`<button
       key=${value} type="button"
       class="bc-triage-btn${occ.attendance === value ? ' is-on' : ''}"
       title=${label} aria-label=${label} aria-pressed=${occ.attendance === value}
       onClick=${(e) => { e.stopPropagation(); onSetAttendance(occ, value); }}
     >${glyph}</button>`)}
-  </span>`;
-}
-
-// Thumbs feedback for feed events: distinct from attendance, feeds the
-// trainable ranking (PRD 5.8). Stateless: signals accumulate server-side.
-function FeedbackBar({ occ, onFeedback }) {
-  const buttons = [
-    ['up', '▲', 'More like this'],
-    ['down', '▼', 'Less like this'],
-  ];
-  return html`<span class="bc-triage" role="group" aria-label="Feedback">
-    ${buttons.map(([value, glyph, label]) => html`<button
+    ${onFeedback && html`<span class="bc-triage-sep" aria-hidden="true"></span>`}
+    ${onFeedback && FEEDBACK_BUTTONS.map(([value, glyph, label]) => html`<button
       key=${value} type="button" class="bc-triage-btn"
       title=${label} aria-label=${label}
       onClick=${(e) => { e.stopPropagation(); onFeedback(occ, value); }}
@@ -140,8 +142,7 @@ export function AgendaList({ occurrences, calendars, dimSet, sortMode, scrollKey
               dimmed=${dimSet && dimSet.has(occ.instanceId)}
               onOpen=${onOpenEvent}
             />
-            ${occ.source === 'feed' && onSetAttendance && html`<${TriageBar} occ=${occ} onSetAttendance=${onSetAttendance} />`}
-            ${occ.source === 'feed' && onFeedback && html`<${FeedbackBar} occ=${occ} onFeedback=${onFeedback} />`}
+            ${occ.source === 'feed' && onSetAttendance && html`<${TriageCluster} occ=${occ} onSetAttendance=${onSetAttendance} onFeedback=${onFeedback} />`}
             ${occ.location && html`<span class="bc-agenda-loc">${occ.location}</span>`}
           </div>`)}
         </section>`;

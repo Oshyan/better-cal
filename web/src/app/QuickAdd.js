@@ -1,63 +1,225 @@
-// QuickAdd: natural-language event input. Debounced parse preview as you
-// type (400ms), Enter or the Create button commits, Esc or Cancel dismisses.
-// Shows parsed chips for date, time, location, calendar, plus a fallback
-// indicator. "Open full editor" carries the current draft and text into the
-// editor drawer's structured form.
+// QuickAdd: a compact create card. Natural-language input on top (debounced
+// parse preview, 400ms) over an always-visible structured strip: date, start
+// and end time (or all day), calendar. The strip live-fills from the parse
+// (with the editor drawer's flash affordance) and stays directly editable;
+// a field the user touched is only overwritten when a later parse actually
+// changes that field. The strip is the source of truth on Create. Enter
+// creates from anywhere in the card (flushing any pending parse first), Esc
+// cancels, "More options" transfers everything into the full editor drawer.
 
 import { html, useState, useRef, useEffect } from '../../vendor/index.js';
 import { useStore, set, state } from './store.js';
-import { quickAddParse, quickAddCommit } from './actions.js';
-import { parseISO, fmtDayMedium, fmtTime } from '../lib/dates.js';
+import { quickAddParse, quickAddCreate } from './actions.js';
+import {
+  parseISO, dayKeyOf, dateOfDayKey, addDaysKey, toISOWithOffset, pad,
+} from '../lib/dates.js';
+
+const hm = (d) => pad(d.getHours()) + ':' + pad(d.getMinutes());
+
+// Next full hour (rolling into tomorrow near midnight) as the default slot.
+function defaultForm() {
+  const s = new Date();
+  s.setMinutes(0, 0, 0);
+  s.setHours(s.getHours() + 1);
+  const e = new Date(s.getTime() + 3600000);
+  return {
+    dateKey: dayKeyOf(s),
+    startTime: hm(s),
+    endTime: hm(e),
+    allDay: false,
+    calendarId: defaultCalendarId(),
+  };
+}
+
+function defaultCalendarId() {
+  const wanted = state.settings.defaultCalendarId;
+  const byId = wanted != null && state.calendars.find((c) => c.id === wanted);
+  return (byId || state.calendars.find((c) => c.kind !== 'subscribed') || {}).id;
+}
+
+// The strip fields a parse draft wants to set. All-day drafts carry literal
+// dates, read verbatim (never through timezone conversion).
+function parseWants(d) {
+  const want = {};
+  if (d.start) {
+    if (d.allDay) {
+      want.dateKey = d.start.slice(0, 10);
+    } else {
+      const sd = parseISO(d.start);
+      want.dateKey = dayKeyOf(sd);
+      want.startTime = hm(sd);
+    }
+  }
+  if (d.end && !d.allDay) want.endTime = hm(parseISO(d.end));
+  if (d.allDay != null) want.allDay = !!d.allDay;
+  if (d.calendarId != null &&
+      state.calendars.some((c) => c.id === d.calendarId && c.kind !== 'subscribed')) {
+    want.calendarId = d.calendarId;
+  }
+  return want;
+}
+
+// Strip values -> {start, end} ISO strings, or null when incomplete.
+function buildRange(form, draft, dateTouched) {
+  if (!form.dateKey) return null;
+  if (form.allDay) {
+    let endKey = addDaysKey(form.dateKey, 1);
+    // Preserve a parsed multi-day all-day span while the date is untouched.
+    if (draft && draft.allDay && draft.end && !dateTouched) {
+      const parsedEnd = draft.end.slice(0, 10);
+      if (parsedEnd > endKey) endKey = parsedEnd;
+    }
+    return {
+      start: toISOWithOffset(dateOfDayKey(form.dateKey)),
+      end: toISOWithOffset(dateOfDayKey(endKey)),
+    };
+  }
+  if (!form.startTime || !form.endTime) return null;
+  const base = dateOfDayKey(form.dateKey);
+  const [sh, sm] = form.startTime.split(':').map(Number);
+  const [eh, em] = form.endTime.split(':').map(Number);
+  const s = new Date(base.getFullYear(), base.getMonth(), base.getDate(), sh, sm);
+  let e = new Date(base.getFullYear(), base.getMonth(), base.getDate(), eh, em);
+  if (e <= s) e = new Date(s.getTime() + 3600000); // end at/before start: give it an hour
+  return { start: toISOWithOffset(s), end: toISOWithOffset(e) };
+}
 
 export function QuickAdd() {
   const open = useStore((s) => s.quickAddOpen);
   const [text, setText] = useState('');
   const [draft, setDraft] = useState(null);
+  const [form, setForm] = useState(defaultForm);
+  const [flash, setFlash] = useState(null); // Set of strip field names, or null
   const [busy, setBusy] = useState(false);
   const inputRef = useRef(null);
   const timerRef = useRef(0);
   const reqRef = useRef(0);
+  const flashTimer = useRef(0);
+  const touchedRef = useRef(new Set());  // strip fields the user edited
+  const prevParseRef = useRef({});       // last parse-derived value per field
+  const lastParsedRef = useRef('');      // text of the last applied parse
+  const formRef = useRef(form);          // sync mirror for async callbacks
+  formRef.current = form;
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
 
   useEffect(() => {
     if (open && inputRef.current) {
       inputRef.current.focus();
       setText('');
       setDraft(null);
+      const f = defaultForm();
+      setForm(f);
+      formRef.current = f;
+      draftRef.current = null;
+      setFlash(null);
+      touchedRef.current = new Set();
+      prevParseRef.current = {};
+      lastParsedRef.current = '';
+      reqRef.current++; // void any in-flight parse from a previous open
     }
   }, [open]);
 
-  useEffect(() => () => clearTimeout(timerRef.current), []);
+  useEffect(() => () => { clearTimeout(timerRef.current); clearTimeout(flashTimer.current); }, []);
 
   if (!open) return null;
+
+  // Fill the strip from a parse. Untouched fields always follow the parse;
+  // touched fields are only overwritten when the parse's value for that
+  // field changed since the previous parse (the user's edit wins otherwise).
+  const applyParse = (d, sourceText) => {
+    setDraft(d);
+    draftRef.current = d;
+    lastParsedRef.current = sourceText;
+    if (!d) return;
+    const want = parseWants(d);
+    const prev = prevParseRef.current;
+    const touched = touchedRef.current;
+    const nf = { ...formRef.current };
+    const flashed = [];
+    for (const k of Object.keys(want)) {
+      if (touched.has(k) && want[k] === prev[k]) continue; // edit wins
+      if (nf[k] !== want[k]) {
+        nf[k] = want[k];
+        flashed.push(k);
+      }
+      touched.delete(k); // the parse re-took this field
+    }
+    prevParseRef.current = { ...prev, ...want };
+    if (flashed.length) {
+      setForm(nf);
+      formRef.current = nf;
+      setFlash(new Set(flashed));
+      clearTimeout(flashTimer.current);
+      flashTimer.current = setTimeout(() => setFlash(null), 900);
+    }
+  };
 
   const onInput = (e) => {
     const v = e.target.value;
     setText(v);
     clearTimeout(timerRef.current);
-    if (!v.trim()) { setDraft(null); return; }
+    if (!v.trim()) { setDraft(null); draftRef.current = null; return; }
     timerRef.current = setTimeout(async () => {
       const id = ++reqRef.current;
       try {
         const d = await quickAddParse(v);
-        if (id === reqRef.current) setDraft(d);
+        if (id === reqRef.current) applyParse(d, v.trim());
       } catch { /* parse preview is best-effort */ }
     }, 400);
   };
 
-  const submit = async () => {
-    if (!text.trim() || busy) return;
-    setBusy(true);
-    await quickAddCommit(text);
-    setBusy(false);
-    setText('');
-    setDraft(null);
+  const touch = (field, value) => {
+    touchedRef.current.add(field);
+    setForm((f) => {
+      const nf = { ...f, [field]: value };
+      formRef.current = nf;
+      return nf;
+    });
   };
 
-  const onKeyDown = (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      submit();
-    }
+  // Creating faster than the debounce: parse the latest text first so the
+  // strip (and title) reflect what was actually typed.
+  const flushParse = async () => {
+    const t = text.trim();
+    if (!t || t === lastParsedRef.current) return;
+    clearTimeout(timerRef.current);
+    const id = ++reqRef.current;
+    try {
+      const d = await quickAddParse(t);
+      if (id === reqRef.current) applyParse(d, t);
+    } catch { /* best-effort; the strip already holds usable values */ }
+  };
+
+  const submit = async () => {
+    if (busy) return;
+    setBusy(true);
+    await flushParse();
+    const d = draftRef.current;
+    const f = formRef.current;
+    const title = (d && d.title) || text.trim();
+    const range = buildRange(f, d, touchedRef.current.has('dateKey'));
+    if (!title || !range || f.calendarId == null) { setBusy(false); return; }
+    await quickAddCreate({
+      title,
+      calendarId: Number(f.calendarId),
+      start: range.start,
+      end: range.end,
+      allDay: f.allDay,
+      location: (d && d.location) || null,
+      ...(d && d.personNames && d.personNames.length ? { personNames: d.personNames } : {}),
+    });
+    setBusy(false);
+  };
+
+  // Enter anywhere in the card creates; buttons and links keep Enter for
+  // their own activation. Esc is handled by the global keyboard map.
+  const onCardKeyDown = (e) => {
+    if (e.key !== 'Enter') return;
+    const tag = e.target.tagName;
+    if (tag === 'BUTTON' || tag === 'A') return;
+    e.preventDefault();
+    submit();
   };
 
   const cancel = () => {
@@ -65,54 +227,96 @@ export function QuickAdd() {
     set({ quickAddOpen: false });
   };
 
-  // Hand the current draft to the structured editor; the raw text rides along
-  // so the drawer's NL assist can keep refining it.
+  // Hand everything to the structured editor; the raw text rides along only
+  // while the strip is untouched, so the drawer's NL assist cannot clobber
+  // the user's manual edits.
   const openFullEditor = () => {
     clearTimeout(timerRef.current);
-    const d = draft || {};
+    const range = buildRange(form, draft, touchedRef.current.has('dateKey'));
     set({
       quickAddOpen: false,
       editor: {
         mode: 'create',
         draft: {
-          title: d.title || text.trim(),
-          start: d.start, end: d.end, allDay: d.allDay,
-          location: d.location, calendarId: d.calendarId,
+          title: (draft && draft.title) || text.trim(),
+          start: range && range.start,
+          end: range && range.end,
+          allDay: form.allDay,
+          location: draft && draft.location,
+          calendarId: form.calendarId != null ? Number(form.calendarId) : undefined,
         },
-        nlText: text,
+        nlText: touchedRef.current.size === 0 ? text : '',
       },
     });
   };
 
-  const cal = draft && draft.calendarId != null
-    ? state.calendars.find((c) => c.id === draft.calendarId)
-    : null;
+  const localCals = state.calendars.filter((c) => c.kind !== 'subscribed');
+  const flashCls = (f) => (flash && flash.has(f) ? ' bc-nl-applied' : '');
+  const canCreate = !busy && !!((draft && draft.title) || text.trim()) &&
+    !!buildRange(form, draft, touchedRef.current.has('dateKey')) && form.calendarId != null;
 
   return html`<div class="bc-quickadd-wrap">
-    <div class="bc-quickadd" role="dialog" aria-label="Quick add event">
+    <div class="bc-quickadd" role="dialog" aria-label="Quick add event" onKeyDown=${onCardKeyDown}>
       <input
         ref=${inputRef}
         class="bc-quickadd-input"
         placeholder="Dinner with Sam next Thursday 7pm at Zuni"
         value=${text}
         onInput=${onInput}
-        onKeyDown=${onKeyDown}
         aria-label="Describe the event"
       />
       ${draft && html`<div class="bc-quickadd-preview">
         <span class="bc-qchip bc-qchip-title">${draft.title || '(untitled)'}</span>
-        ${draft.start && html`<span class="bc-qchip">${fmtDayMedium(parseISO(draft.start))}</span>`}
-        ${draft.start && !draft.allDay && html`<span class="bc-qchip">${fmtTime(parseISO(draft.start))}${draft.end ? ' to ' + fmtTime(parseISO(draft.end)) : ''}</span>`}
-        ${draft.allDay && html`<span class="bc-qchip">all day</span>`}
         ${draft.location && html`<span class="bc-qchip">@ ${draft.location}</span>`}
         ${draft.personNames && draft.personNames.map((n) => html`<span key=${n} class="bc-qchip">with ${n}</span>`)}
-        ${cal && html`<span class="bc-qchip"><span class="bc-cal-dot" style=${`background:${cal.color}`}></span>${cal.name}</span>`}
         ${draft.source === 'fallback' && html`<span class="bc-qchip bc-qchip-fallback" title="Parsed without the language model">basic parse</span>`}
       </div>`}
+      <div class="bc-quickadd-strip">
+        <label class=${'bc-qa-field' + flashCls('dateKey')}>
+          <span class="bc-qa-label">Date</span>
+          <input
+            type="date" class="bc-qa-date" value=${form.dateKey}
+            onInput=${(e) => touch('dateKey', e.target.value)}
+            aria-label="Date"
+          />
+        </label>
+        ${!form.allDay && html`<label class=${'bc-qa-field' + flashCls('startTime')}>
+          <span class="bc-qa-label">Start</span>
+          <input
+            type="time" class="bc-qa-time" value=${form.startTime}
+            onInput=${(e) => touch('startTime', e.target.value)}
+            aria-label="Start time"
+          />
+        </label>
+        <span class="bc-qa-to" aria-hidden="true">to</span>
+        <label class=${'bc-qa-field' + flashCls('endTime')}>
+          <span class="bc-qa-label">End</span>
+          <input
+            type="time" class="bc-qa-time" value=${form.endTime}
+            onInput=${(e) => touch('endTime', e.target.value)}
+            aria-label="End time"
+          />
+        </label>`}
+        <label class=${'bc-check bc-qa-allday' + flashCls('allDay')}>
+          <input
+            type="checkbox" checked=${form.allDay}
+            onChange=${(e) => touch('allDay', e.target.checked)}
+          />
+          <span>All day</span>
+        </label>
+        <label class=${'bc-qa-field bc-qa-calfield' + flashCls('calendarId')}>
+          <span class="bc-qa-label">Calendar</span>
+          <select
+            class="bc-qa-cal" value=${form.calendarId}
+            onChange=${(e) => touch('calendarId', Number(e.target.value))}
+            aria-label="Calendar"
+          >${localCals.map((c) => html`<option key=${c.id} value=${c.id}>${c.name}</option>`)}</select>
+        </label>
+      </div>
       <div class="bc-quickadd-actions">
-        <button type="button" class="bc-btn bc-btn-primary" disabled=${busy || !text.trim()} onClick=${submit}>Create</button>
+        <button type="button" class="bc-btn bc-btn-primary" disabled=${!canCreate} onClick=${submit}>Create</button>
         <button type="button" class="bc-btn" onClick=${cancel}>Cancel</button>
-        <button type="button" class="bc-link-btn bc-quickadd-expand" onClick=${openFullEditor}>Open full editor</button>
+        <button type="button" class="bc-link-btn bc-quickadd-expand" onClick=${openFullEditor}>More options</button>
         <span class="bc-quickadd-hint">Enter to create, Esc to cancel</span>
       </div>
     </div>

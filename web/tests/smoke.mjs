@@ -16,6 +16,8 @@ import { contrastText, withAlpha, parseHex } from '../src/lib/color.js';
 import { baseTitle, groupOccurrences, itemMatchesFilter, isGroupId } from '../src/ui/grouping.js';
 import { sortByMatch } from '../src/lib/rank.js';
 import { parseJumpText } from '../src/lib/jumpparse.js';
+import { monthWeeks, stepMonthOf } from '../src/lib/minimonth.js';
+import { HOTKEYS, HOTKEY_GROUPS } from '../src/app/hotkeys.js';
 
 let passed = 0;
 let failed = 0;
@@ -384,6 +386,50 @@ assert('sun: week index anchors to Sunday',
 setWeekStart('mon');
 eq('mon restored: startOfWeekKey', startOfWeekKey('2026-07-30'), '2026-07-27');
 eq('mon restored: getWeekStart', getWeekStart(), 'mon');
+
+console.log('--- mini month grid (shared: jump popover + sidebar) ---');
+
+// Monday start (restored above): July 2026 (Wed start, Fri end) spans 5 rows.
+const mw = monthWeeks(2026, 7);
+assert('minimonth: every row is 7 wide', mw.every((r) => r.length === 7));
+eq('minimonth: July 2026 row count', mw.length, 5);
+eq('minimonth: grid starts on the configured week start', mw[0][0], startOfWeekKey('2026-07-01'));
+assert('minimonth: first row contains the 1st', mw[0].includes('2026-07-01'));
+assert('minimonth: last row contains the 31st', mw[mw.length - 1].includes('2026-07-31'));
+eq('minimonth: covers every day of the month exactly once',
+  mw.flat().filter((k) => k.startsWith('2026-07')).length, 31);
+eq('minimonth: pads with adjacent-month days', mw[0][0], '2026-06-29');
+
+// Feb 2027 fits exactly 4 Monday-started rows; a Sunday start adds a fifth.
+eq('minimonth: Feb 2027 Monday start rows', monthWeeks(2027, 2).length, 4);
+setWeekStart('sun');
+eq('minimonth: Feb 2027 Sunday start rows', monthWeeks(2027, 2).length, 5);
+eq('minimonth: Sunday grid starts on a Sunday', monthWeeks(2027, 2)[0][0], '2027-01-31');
+setWeekStart('mon');
+
+// stepMonthOf rolls across year boundaries in both directions.
+eq('minimonth: step back across year', stepMonthOf(2026, 1, -1), { year: 2025, month: 12 });
+eq('minimonth: step forward across year', stepMonthOf(2026, 12, 1), { year: 2027, month: 1 });
+eq('minimonth: multi-year step', stepMonthOf(2026, 7, 30), { year: 2029, month: 1 });
+
+console.log('--- hotkey table integrity ---');
+
+// keyboard.js dispatches from this table and the ? cheat sheet renders it;
+// these assertions keep the table well-formed so neither can drift.
+assert('hotkeys: table is non-empty', HOTKEYS.length >= 15);
+assert('hotkeys: every entry has keys + label + group + id', HOTKEYS.every((h) =>
+  Array.isArray(h.keys) && h.keys.length > 0 &&
+  h.keys.every((k) => typeof k === 'string' && k.length > 0) &&
+  typeof h.label === 'string' && h.label.length > 0 &&
+  typeof h.id === 'string' && h.id.length > 0 &&
+  HOTKEY_GROUPS.includes(h.group)));
+eq('hotkeys: ids are unique', new Set(HOTKEYS.map((h) => h.id)).size, HOTKEYS.length);
+const allKeys = HOTKEYS.flatMap((h) => h.keys);
+eq('hotkeys: no key bound twice', new Set(allKeys).size, allKeys.length);
+assert('hotkeys: every group is used', HOTKEY_GROUPS.every((g) => HOTKEYS.some((h) => h.group === g)));
+assert('hotkeys: cheat sheet binding exists', HOTKEYS.some((h) => h.keys.includes('?')));
+assert('hotkeys: display overrides are string arrays', HOTKEYS.every((h) =>
+  h.display === undefined || (Array.isArray(h.display) && h.display.every((k) => typeof k === 'string'))));
 
 console.log('--- time format setting ---');
 

@@ -4,8 +4,10 @@ Running log from critical live-review passes (own-taste review, Google Calendar 
 
 ## Open
 
-- Dim readability floor: dimmed agenda rows at 45% opacity on light theme approach illegibility, especially the green feed color on white. Dim should reduce emphasis, not readability: consider desaturation + reduced contrast with a floor, or collapse dimmed items into a "N dimmed" expander per day. (Wave 3/3.5)
+- Mobile week view crams 7 columns into a phone width; the last column clips offscreen and columns are ~50px. Google switches to a 3-day view on phones. Direction: Week on narrow viewports becomes a 3-day rolling view (or the switcher swaps Week for "3 day"). Found in the 2026-07-31 adversarial pass.
 - Empty timegrid days give no affordance hint; fine for mouse users, invisible to newcomers. Low priority.
+
+Note: the dim readability floor item was addressed in Wave 3 (desaturation + opacity floor); verified readable in both themes during the adversarial pass.
 
 ## Addressed or delegated
 

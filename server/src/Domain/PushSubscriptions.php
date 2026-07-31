@@ -1,0 +1,124 @@
+<?php
+
+declare(strict_types=1);
+
+namespace BetterCal\Domain;
+
+use BetterCal\Http\HttpError;
+use BetterCal\Infra\Db;
+use BetterCal\Support\Time;
+
+/**
+ * Web Push subscription storage. Endpoints are unique via a sha256 hash
+ * column (endpoints exceed index length limits as TEXT). Delivery failures
+ * with gone endpoints (404/410) set failing_since; subscriptions failing for
+ * longer than the reminder scan's TTL are pruned by the worker.
+ */
+final class PushSubscriptions
+{
+    public function __construct(private readonly Db $db)
+    {
+    }
+
+    public static function endpointHash(string $endpoint): string
+    {
+        return hash('sha256', $endpoint);
+    }
+
+    /**
+     * Validate a PushSubscription JSON payload {endpoint, keys:{p256dh, auth}}.
+     *
+     * @return array{endpoint:string, p256dh:string, auth:string}
+     */
+    public static function validate(array $in): array
+    {
+        $endpoint = trim((string) ($in['endpoint'] ?? ''));
+        if ($endpoint === '' || !str_starts_with($endpoint, 'https://') || strlen($endpoint) > 2000) {
+            throw HttpError::badRequest('endpoint must be an https push endpoint URL', 'invalid_subscription');
+        }
+        $keys = $in['keys'] ?? null;
+        if (!is_array($keys)) {
+            throw HttpError::badRequest('keys {p256dh, auth} are required', 'invalid_subscription');
+        }
+        $p256dh = trim((string) ($keys['p256dh'] ?? ''));
+        $auth = trim((string) ($keys['auth'] ?? ''));
+        foreach (['p256dh' => $p256dh, 'auth' => $auth] as $name => $value) {
+            if ($value === '' || strlen($value) > 255 || preg_match('/^[A-Za-z0-9_\-+\/=]+$/', $value) !== 1) {
+                throw HttpError::badRequest("keys.$name must be a base64 key", 'invalid_subscription');
+            }
+        }
+        return ['endpoint' => $endpoint, 'p256dh' => $p256dh, 'auth' => $auth];
+    }
+
+    /** Upsert by endpoint hash; re-subscribing clears any failing state. */
+    public function subscribe(int $userId, array $in): void
+    {
+        $sub = self::validate($in);
+        $this->db->run(
+            'INSERT INTO push_subscriptions (user_id, endpoint, endpoint_hash, p256dh, auth, last_used_at)
+             VALUES (?, ?, ?, ?, ?, NULL) AS new_row
+             ON DUPLICATE KEY UPDATE
+               user_id = new_row.user_id, endpoint = new_row.endpoint,
+               p256dh = new_row.p256dh, auth = new_row.auth, failing_since = NULL',
+            [$userId, $sub['endpoint'], self::endpointHash($sub['endpoint']), $sub['p256dh'], $sub['auth']]
+        );
+    }
+
+    public function unsubscribe(int $userId, string $endpoint): bool
+    {
+        if (trim($endpoint) === '') {
+            return false;
+        }
+        return $this->db->run(
+            'DELETE FROM push_subscriptions WHERE user_id = ? AND endpoint_hash = ?',
+            [$userId, self::endpointHash(trim($endpoint))]
+        )->rowCount() > 0;
+    }
+
+    public function hasAny(int $userId): bool
+    {
+        return $this->db->scalar('SELECT id FROM push_subscriptions WHERE user_id = ? LIMIT 1', [$userId]) !== null;
+    }
+
+    /** @return list<array> */
+    public function forUser(int $userId): array
+    {
+        return $this->db->all('SELECT * FROM push_subscriptions WHERE user_id = ? ORDER BY id', [$userId]);
+    }
+
+    /** @return array<int, list<array>> all subscriptions grouped by user id */
+    public function allByUser(): array
+    {
+        $out = [];
+        foreach ($this->db->all('SELECT * FROM push_subscriptions ORDER BY user_id, id') as $row) {
+            $out[(int) $row['user_id']][] = $row;
+        }
+        return $out;
+    }
+
+    public function recordSuccess(int $id): void
+    {
+        $this->db->run(
+            'UPDATE push_subscriptions SET last_used_at = ?, failing_since = NULL WHERE id = ?',
+            [Time::nowDb(), $id]
+        );
+    }
+
+    /** Gone endpoint (404/410): start (or keep) the failing clock. */
+    public function recordFailure(int $id): void
+    {
+        $this->db->run(
+            'UPDATE push_subscriptions SET failing_since = COALESCE(failing_since, ?) WHERE id = ?',
+            [Time::nowDb(), $id]
+        );
+    }
+
+    /** Delete subscriptions that have been failing since before $before. */
+    public function pruneFailing(\DateTimeImmutable $before): int
+    {
+        return $this->db->run(
+            'DELETE FROM push_subscriptions WHERE failing_since IS NOT NULL AND failing_since < ?',
+            [Time::toDb($before)]
+        )->rowCount();
+    }
+}

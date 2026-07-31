@@ -133,6 +133,8 @@ final class CalendarsController
                     'tzid' => $ev['tzid'],
                     'rrule' => $ev['rrule'],
                     'exdates_json' => $ev['exdates'] === [] ? null : json_encode($ev['exdates']),
+                    // VALARM reminders become explicit overrides; none = inherit defaults.
+                    'reminders_json' => ($ev['reminders'] ?? []) === [] ? null : json_encode($ev['reminders']),
                     'status' => $ev['status'],
                     'recurrence_instance_utc' => $ev['recurrence_instance_utc'],
                     'recurrence_parent_id' => $ev['recurrence_instance_utc'] !== null

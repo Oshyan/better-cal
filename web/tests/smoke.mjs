@@ -18,6 +18,10 @@ import { sortByMatch } from '../src/lib/rank.js';
 import { parseJumpText } from '../src/lib/jumpparse.js';
 import { monthWeeks, stepMonthOf } from '../src/lib/minimonth.js';
 import { HOTKEYS, HOTKEY_GROUPS } from '../src/app/hotkeys.js';
+import {
+  fmtOffsetMinutes, fmtReminder, allDayEntryToMinutes, entryToMinutes,
+  normalizeMinutesList, effectiveReminders,
+} from '../src/lib/reminders.js';
 
 let passed = 0;
 let failed = 0;
@@ -439,6 +443,48 @@ assert('24h format shows 14', fmtTime(t1405).includes('14'));
 assert('24h format has no AM/PM', !/am|pm/i.test(fmtTime(t1405)));
 setTimeFormat('12');
 assert('12h format shows 2:05', fmtTime(t1405).includes('2:05'));
+
+console.log('--- reminder helpers ---');
+
+// Offset formatting picks the largest clean unit.
+eq('reminder fmt 0', fmtOffsetMinutes(0), 'At start');
+eq('reminder fmt minutes', fmtOffsetMinutes(10), '10 minutes before');
+eq('reminder fmt hour', fmtOffsetMinutes(60), '1 hour before');
+eq('reminder fmt 90 stays minutes', fmtOffsetMinutes(90), '90 minutes before');
+eq('reminder fmt day', fmtOffsetMinutes(1440), '1 day before');
+eq('reminder fmt entry minutes shape', fmtReminder({ minutes: 15 }), '15 minutes before');
+eq('reminder fmt entry allday shape', fmtReminder({ daysBefore: 1, time: '18:00' }), 'Day before at 18:00');
+eq('reminder fmt entry same day', fmtReminder({ daysBefore: 0, time: '09:00' }), 'Same day at 09:00');
+
+// All-day default -> minutes before local midnight; same-day clamps to 0.
+eq('reminder allday to minutes day before 18:00', allDayEntryToMinutes({ daysBefore: 1, time: '18:00' }), 360);
+eq('reminder allday to minutes 2 days noon', allDayEntryToMinutes({ daysBefore: 2, time: '12:00' }), 2160);
+eq('reminder allday same-day clamps', allDayEntryToMinutes({ daysBefore: 0, time: '09:00' }), 0);
+eq('reminder entryToMinutes passthrough', entryToMinutes({ minutes: 30 }), 30);
+
+// Normalization: unique + ascending {minutes} entries.
+eq('reminder normalize', normalizeMinutesList([30, 5, 5, 0]),
+  [{ minutes: 0 }, { minutes: 5 }, { minutes: 30 }]);
+
+// Effective resolution mirrors the server: event > calendar > global, and
+// subscribed calendars never inherit the global default.
+const remSettings = { reminderTimed: [{ minutes: 10 }], reminderAllDay: [{ daysBefore: 1, time: '18:00' }] };
+const remCalDef = { timed: [{ minutes: 30 }], allDay: [] };
+eq('reminder effective event wins',
+  effectiveReminders({ override: [{ minutes: 5 }], calendarDefaults: remCalDef, settings: remSettings, allDay: false }),
+  { reminders: [{ minutes: 5 }], source: 'event' });
+eq('reminder effective explicit none',
+  effectiveReminders({ override: [], calendarDefaults: remCalDef, settings: remSettings, allDay: false }),
+  { reminders: [], source: 'event' });
+eq('reminder effective calendar over global',
+  effectiveReminders({ override: null, calendarDefaults: remCalDef, settings: remSettings, allDay: false }),
+  { reminders: [{ minutes: 30 }], source: 'calendar' });
+eq('reminder effective global fallback allday',
+  effectiveReminders({ override: null, calendarDefaults: null, settings: remSettings, allDay: true }),
+  { reminders: [{ daysBefore: 1, time: '18:00' }], source: 'default' });
+eq('reminder effective subscribed never inherits',
+  effectiveReminders({ override: null, calendarDefaults: null, settings: remSettings, allDay: false, calendarKind: 'subscribed' }),
+  { reminders: [], source: 'default' });
 
 console.log('--- color utils ---');
 

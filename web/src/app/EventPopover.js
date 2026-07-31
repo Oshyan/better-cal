@@ -10,6 +10,7 @@ import { isMobile, trapFocus, MOBILE_QUERY } from '../ui/DayExpand.js';
 import {
   parseISO, dateOfDayKey, fmtRange, toInputValue, fromInputValue, toISOWithOffset,
 } from '../lib/dates.js';
+import { fmtReminder } from '../lib/reminders.js';
 
 const GAP = 10;
 const WIDTH = 320;
@@ -115,6 +116,10 @@ export function EventPopover() {
         ? html`<${TimeEditor} start=${s} end=${e} onSave=${saveTime} onCancel=${() => setEditingTime(false)} />`
         : html`<div class="bc-pop-when" onClick=${() => !isFeed && setEditingTime(true)} title=${isFeed ? '' : 'Click to edit time'}>
             ${fmtRange(s, e, occ.allDay)}${occ.recurring ? ' · repeats' : ''}
+            ${occ.reminders && occ.reminders.length > 0 && html` <span
+              class="bc-bell" role="img" aria-label="Has reminders"
+              title=${'Reminders: ' + occ.reminders.map(fmtReminder).join(', ')}
+            >🔔</span>`}
           </div>`}
       ${occ.location && html`<div class="bc-pop-where">${occ.location}</div>`}
       <div class="bc-pop-cal">

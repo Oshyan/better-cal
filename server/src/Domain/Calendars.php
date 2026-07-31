@@ -137,10 +137,20 @@ final class Calendars
         if (array_key_exists('staleAfterDays', $in)) {
             $fields['stale_after_days'] = max(1, (int) $in['staleAfterDays']);
         }
-        if (array_key_exists('groupSimilar', $in)) {
+        if (array_key_exists('groupSimilar', $in) || array_key_exists('reminderDefaults', $in)) {
             $settings = json_decode((string) ($before['settings_json'] ?? ''), true);
             $settings = is_array($settings) ? $settings : [];
-            $settings['groupSimilar'] = filter_var($in['groupSimilar'], FILTER_VALIDATE_BOOL);
+            if (array_key_exists('groupSimilar', $in)) {
+                $settings['groupSimilar'] = filter_var($in['groupSimilar'], FILTER_VALIDATE_BOOL);
+            }
+            if (array_key_exists('reminderDefaults', $in)) {
+                $validated = Reminders::validateDefaults($in['reminderDefaults']);
+                if ($validated === null) {
+                    unset($settings['reminderDefaults']); // fall through to global defaults
+                } else {
+                    $settings['reminderDefaults'] = $validated;
+                }
+            }
             $fields['settings_json'] = json_encode($settings);
         }
 
@@ -225,6 +235,9 @@ final class Calendars
                 $c['settings_json'] !== null ? (string) $c['settings_json'] : null,
                 (string) $c['kind']
             ),
+            'reminderDefaults' => self::reminderDefaultsFor(
+                $c['settings_json'] !== null ? (string) $c['settings_json'] : null
+            ),
             'health' => [
                 'lastPolledAt' => $c['last_polled_at'] !== null ? Time::dbToIso((string) $c['last_polled_at']) : null,
                 'status' => (string) $c['last_poll_status'],
@@ -266,6 +279,15 @@ final class Calendars
             return (bool) $settings['groupSimilar'];
         }
         return $kind === 'subscribed';
+    }
+
+    /** Stored per-calendar reminder defaults, or null when unset (global defaults apply). */
+    public static function reminderDefaultsFor(?string $settingsJson): ?array
+    {
+        $settings = $settingsJson !== null && $settingsJson !== '' ? json_decode($settingsJson, true) : null;
+        return is_array($settings) && isset($settings['reminderDefaults']) && is_array($settings['reminderDefaults'])
+            ? $settings['reminderDefaults']
+            : null;
     }
 
     private function colorOrDefault(mixed $color): string

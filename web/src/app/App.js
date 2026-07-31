@@ -284,7 +284,12 @@ export function App() {
     <${Toolbar} onToggleSidebar=${() => setSidebarOpen(!sidebarOpen)} />
     ${reschedActive && html`<${RescheduleBanner} occ=${reschedOcc} onExit=${exitReschedule} />`}
     <div class="bc-main">
-      <${Sidebar} open=${sidebarOpen} />
+      ${sidebarOpen && html`<div
+        class="bc-sidebar-scrim"
+        aria-hidden="true"
+        onPointerDown=${(e) => { e.preventDefault(); e.stopPropagation(); setSidebarOpen(false); }}
+      ></div>`}
+      <${Sidebar} open=${sidebarOpen} onClose=${() => setSidebarOpen(false)} />
       <main class="bc-view">${view}</main>
       ${reschedActive && html`<${RescheduleStrip}
         year=${stripBase.year} month=${stripBase.month}

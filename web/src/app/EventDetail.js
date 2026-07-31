@@ -12,6 +12,7 @@ import { trapFocus } from '../ui/DayExpand.js';
 import {
   parseISO, dateOfDayKey, fmtRange, fmtDateFull, fmtTime,
 } from '../lib/dates.js';
+import { fmtReminder } from '../lib/reminders.js';
 
 // --- recurrence in words ----------------------------------------------------
 
@@ -290,6 +291,10 @@ export function EventDetail() {
         <div class="bc-detail-when">
           ${fmtRange(s, e, occ.allDay)}
           ${occ.recurring && html`<span class="bc-detail-recur">${describeRrule(occ.rrule)}</span>`}
+          ${occ.reminders && occ.reminders.length > 0 && html`<span
+            class="bc-bell" role="img" aria-label="Has reminders"
+            title=${'Reminders: ' + occ.reminders.map(fmtReminder).join(', ')}
+          >🔔</span>`}
         </div>
         ${occ.location && html`<div class="bc-detail-section bc-detail-loc">
           <div class="bc-detail-label">Location</div>

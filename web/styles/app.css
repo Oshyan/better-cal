@@ -514,12 +514,17 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-timegrid { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow-x: clip; }
 .bc-tg-head { display: flex; border-bottom: 1px solid var(--border); background: var(--bg-raised); scrollbar-gutter: stable; }
 .bc-tg-gutter { width: 52px; flex: none; }
-.bc-tg-head-day { flex: 1; display: flex; align-items: baseline; justify-content: center; gap: 6px; padding: 4px 0; }
+.bc-tg-head-day { flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 4px 0; }
 .bc-tg-dow { font-size: 11.5px; font-weight: 600; color: var(--fg-muted); text-transform: uppercase; }
-.bc-tg-dom { font-size: 16px; font-weight: 600; }
+/* Every day number gets the same 24px line box so the today pill never shifts
+   its column's vertical alignment relative to neighbors. */
+.bc-tg-dom {
+  font-size: 16px; font-weight: 600;
+  min-width: 24px; height: 24px; text-align: center; line-height: 24px;
+}
 .bc-tg-head-day.is-today .bc-tg-dom {
   background: var(--today); color: var(--accent-fg);
-  border-radius: 50%; min-width: 24px; height: 24px; text-align: center; line-height: 24px;
+  border-radius: 50%;
 }
 /* Day view: a stronger single-day anchor (weekday + big number, GCal-style). */
 .bc-tg-head.is-single .bc-tg-head-day {
@@ -867,6 +872,24 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-byday-day input { position: absolute; opacity: 0; pointer-events: none; }
 .bc-drawer-actions { display: flex; gap: 8px; margin-top: 4px; }
 
+/* --- reminders (editor row + bell glyph) ------------------------------------------- */
+
+.bc-rem { border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 10px; }
+.bc-rem legend { font-size: 11.5px; font-weight: 600; color: var(--fg-muted); padding: 0 4px; }
+.bc-rem-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.bc-rem-none { color: var(--fg-muted); font-size: 12.5px; }
+.bc-rem-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  border: 1px solid var(--border-strong); border-radius: 999px;
+  padding: 2px 6px 2px 8px; font-size: 12px; white-space: nowrap;
+}
+.bc-rem-x { background: none; border: none; cursor: pointer; color: var(--fg-muted); padding: 0 2px; font-size: 11px; line-height: 1; }
+.bc-rem-x:hover { color: var(--fg); }
+.bc-rem-add { max-width: 160px; }
+.bc-rem-reset { padding: 2px 8px; font-size: 12px; }
+.bc-rem-src { color: var(--fg-muted); font-size: 11.5px; font-style: italic; }
+.bc-bell { font-size: 11px; margin-left: 4px; cursor: default; }
+
 /* --- search ------------------------------------------------------------------------ */
 
 .bc-search-overlay { display: flex; justify-content: center; align-items: flex-start; padding-top: 10vh; }
@@ -1174,3 +1197,37 @@ body.bc-rescheduling { user-select: none; }
   .bc-agenda-time { width: 84px; }
 }
 .bc-more-dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; flex: none; }
+
+/* --- wave 4a: mobile sidebar scrim + close, folder delete ------------------ */
+
+.bc-sidebar-scrim { display: none; }
+.bc-sidebar-mobilehead { display: none; }
+.bc-folder-delete:hover { color: var(--danger); }
+
+@media (max-width: 800px) {
+  .bc-sidebar-scrim {
+    display: block; position: fixed; inset: 0; z-index: 49;
+    background: rgba(10, 12, 18, 0.35);
+  }
+  .bc-sidebar-mobilehead {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 8px 4px 12px; border-bottom: 1px solid var(--border);
+  }
+}
+
+/* Solo calendar: quiet "Only" affordance, revealed on row hover on desktop,
+   always visible on touch and while active. */
+.bc-cal-solo {
+  font-size: 10.5px; padding: 2px 6px; flex: none;
+  color: var(--fg-muted); opacity: 0; transition: opacity 0.12s ease;
+}
+.bc-cal-row:hover .bc-cal-solo, .bc-cal-row:focus-within .bc-cal-solo,
+.bc-cal-solo.is-on { opacity: 1; }
+.bc-cal-solo.is-on { color: var(--accent); font-weight: 700; }
+@media (pointer: coarse) { .bc-cal-solo { opacity: 1; } }
+.bc-solo-banner {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-raised));
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-radius: 6px; padding: 5px 8px; margin-bottom: 8px; font-size: 12.5px;
+}

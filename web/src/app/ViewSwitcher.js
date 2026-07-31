@@ -24,6 +24,7 @@ export function ViewSwitcher() {
   const [name, setName] = useState('');
   const [pendingView, setPendingView] = useState(null); // target view awaiting save/discard
   const panelRef = useRef(null);
+  const rootRef = useRef(null);
 
   const active = s.savedViews.find((v) => v.id === s.activeViewId) || null;
   const modified = active ? !viewConfigMatches(active.config) : false;
@@ -34,7 +35,10 @@ export function ViewSwitcher() {
   useEffect(() => {
     if (!open) return undefined;
     const onDoc = (e) => {
-      if (panelRef.current && !panelRef.current.contains(e.target)) close();
+      // Test against the whole widget (trigger + panel): closing on a
+      // pointerdown that lands on the trigger makes the follow-up click
+      // reopen it, so the button can never toggle the popover closed.
+      if (rootRef.current && !rootRef.current.contains(e.target)) close();
     };
     const onKey = (e) => {
       if (e.key === 'Escape') { e.stopPropagation(); close(); }
@@ -80,7 +84,7 @@ export function ViewSwitcher() {
     close();
   };
 
-  return html`<div class="bc-views">
+  return html`<div class="bc-views" ref=${rootRef}>
     <button
       type="button" class="bc-btn bc-views-btn"
       aria-haspopup="dialog" aria-expanded=${open} title="Saved views"

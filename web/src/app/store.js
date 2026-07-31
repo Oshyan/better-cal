@@ -22,6 +22,7 @@ export const state = {
   settings: {
     defaultView: 'month', weekStart: 'sun', timeFormat: '12',
     defaultCalendarId: null, theme: 'system', nlParseMode: 'smart',
+    reminderTimed: [{ minutes: 10 }], reminderAllDay: [{ daysBefore: 1, time: '18:00' }],
   },
   // Folder visibility modes: {folderId: {mode: 'all'|'none'|'custom', custom: [calId]}}.
   // Mirrored server-side in settings under the folderVisibility key.

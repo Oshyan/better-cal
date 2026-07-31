@@ -1,7 +1,9 @@
 // Minimal date helpers. No external date library.
 // Day keys are 'YYYY-MM-DD' strings in the user's local timezone.
 // Epoch days are integer day counts since 1970-01-01 (local calendar days).
-// Week indexes are integers over Monday-started weeks; week 0 contains 1969-12-29.
+// Week indexes are integers over weeks starting on the configured first day
+// (setWeekStart, default Monday); week 0 contains the start-of-week nearest
+// before 1970-01-01.
 
 const DAY_MS = 86400000;
 
@@ -85,20 +87,33 @@ export function addMinutesDate(d, n) {
   return new Date(d.getTime() + n * 60000);
 }
 
-// --- weeks (Monday start) -------------------------------------------------
+// --- weeks (configurable start day) ---------------------------------------
 
-// 1970-01-01 was a Thursday; Monday of that week is 1969-12-29 (epoch day -3).
+// 1970-01-01 was a Thursday; the Monday of that week is 1969-12-29 (epoch
+// day -3) and the Sunday is 1969-12-28 (epoch day -4). weekAnchor is that
+// negated offset, so all week math pivots on one number. Settings thread it
+// in at boot via setWeekStart; the default matches the historical behavior.
+let weekAnchor = 3; // 3 = Monday start, 4 = Sunday start
+
+export function setWeekStart(ws) {
+  weekAnchor = ws === 'sun' ? 4 : 3;
+}
+
+export function getWeekStart() {
+  return weekAnchor === 4 ? 'sun' : 'mon';
+}
+
 export function weekIndexOfEpochDay(ed) {
-  return Math.floor((ed + 3) / 7);
+  return Math.floor((ed + weekAnchor) / 7);
 }
 
 export function weekIndexOfKey(key) {
   return weekIndexOfEpochDay(epochDayOfKey(key));
 }
 
-// First (Monday) epoch day of a week index.
+// First epoch day (configured start day) of a week index.
 export function firstEpochDayOfWeek(wi) {
-  return wi * 7 - 3;
+  return wi * 7 - weekAnchor;
 }
 
 export function dayKeysOfWeek(wi) {
@@ -114,8 +129,17 @@ export function startOfWeekKey(key) {
 
 // --- formatting via Intl --------------------------------------------------
 
-const timeFmt = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' });
-const timeShortFmt = new Intl.DateTimeFormat(undefined, { hour: 'numeric' });
+// Time formatters honor the 12/24-hour setting (setTimeFormat, from user
+// settings at boot); everything else follows the locale.
+let timeFmt = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' });
+let timeShortFmt = new Intl.DateTimeFormat(undefined, { hour: 'numeric' });
+
+export function setTimeFormat(tf) {
+  const opts = tf === '24' ? { hour12: false } : tf === '12' ? { hour12: true } : {};
+  timeFmt = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit', ...opts });
+  timeShortFmt = new Intl.DateTimeFormat(undefined, { hour: 'numeric', ...opts });
+}
+
 const monthYearFmt = new Intl.DateTimeFormat(undefined, { month: 'long', year: 'numeric' });
 const monthShortFmt = new Intl.DateTimeFormat(undefined, { month: 'short' });
 const weekdayShortFmt = new Intl.DateTimeFormat(undefined, { weekday: 'short' });

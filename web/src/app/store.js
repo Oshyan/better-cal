@@ -18,6 +18,15 @@ export const state = {
   tags: [],
   collapsedFolders: {},
 
+  // User settings (contract defaults until /me or /settings answers).
+  settings: {
+    defaultView: 'month', weekStart: 'sun', timeFormat: '12',
+    defaultCalendarId: null, theme: 'system', nlParseMode: 'smart',
+  },
+  // Folder visibility modes: {folderId: {mode: 'all'|'none'|'custom', custom: [calId]}}.
+  // Mirrored server-side in settings under the folderVisibility key.
+  folderVisibility: {},
+
   // Occurrence cache: instanceId -> occurrence. occVersion bumps on change
   // so memos can key off it cheaply.
   occ: new Map(),
@@ -35,7 +44,7 @@ export const state = {
   savedViews: [],     // [{id, name, config, position}]
   activeViewId: null, // saved view currently applied, if any
 
-  route: 'calendar', // calendar | outfeeds | filters | views
+  route: 'calendar', // calendar | outfeeds | filters | views | settings
 
   quickAddOpen: false,
   searchOpen: false,

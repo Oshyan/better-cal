@@ -22,6 +22,7 @@ final class Settings
         'defaultCalendarId' => null,
         'theme' => 'system',
         'nlParseMode' => 'smart',
+        'folderVisibility' => [],
     ];
     private const VIEWS = ['month', 'multiweek', 'week', 'day', 'agenda'];
 
@@ -91,6 +92,7 @@ final class Settings
                 'theme' => self::enum($key, $value, ['system', 'light', 'dark']),
                 'nlParseMode' => self::enum($key, $value, ['always', 'smart', 'never']),
                 'defaultCalendarId' => self::calendarId($value),
+                'folderVisibility' => self::folderVisibility($value),
                 default => throw HttpError::badRequest("Unknown setting '$key'", 'unknown_setting'),
             };
         }
@@ -103,6 +105,46 @@ final class Settings
             throw HttpError::badRequest("$key must be one of: " . implode('|', $allowed));
         }
         return $value;
+    }
+
+    /**
+     * Per-folder visibility state (GH issue #6): map of folderId (string key)
+     * to {mode: all|none|custom, custom: [calendarId, ...]}. Client-owned
+     * semantics; the server only validates shape and bounds.
+     *
+     * @return array<string, array{mode:string, custom:list<int>}>
+     */
+    private static function folderVisibility(mixed $value): array
+    {
+        if (!is_array($value)) {
+            throw HttpError::badRequest('folderVisibility must be an object');
+        }
+        if (count($value) > 200) {
+            throw HttpError::badRequest('folderVisibility has too many entries');
+        }
+        $out = [];
+        foreach ($value as $folderId => $entry) {
+            if (!is_array($entry)) {
+                throw HttpError::badRequest('folderVisibility entries must be objects');
+            }
+            $mode = $entry['mode'] ?? null;
+            if (!is_string($mode) || !in_array($mode, ['all', 'none', 'custom'], true)) {
+                throw HttpError::badRequest('folderVisibility mode must be all|none|custom');
+            }
+            $custom = $entry['custom'] ?? [];
+            if (!is_array($custom) || count($custom) > 500) {
+                throw HttpError::badRequest('folderVisibility custom must be a list of calendar ids');
+            }
+            $ids = [];
+            foreach ($custom as $id) {
+                if (!is_int($id) && !(is_string($id) && ctype_digit($id))) {
+                    throw HttpError::badRequest('folderVisibility custom must contain integer calendar ids');
+                }
+                $ids[] = (int) $id;
+            }
+            $out[(string) $folderId] = ['mode' => $mode, 'custom' => $ids];
+        }
+        return $out;
     }
 
     private static function calendarId(mixed $value): ?int

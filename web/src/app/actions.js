@@ -4,7 +4,8 @@ import {
   state, set, toast, patchOccurrence, restoreOccurrence,
   removeOccurrencesOfEvent, mergeWindow,
 } from './store.js';
-import { api, refreshWindow, undo } from './api.js';
+import { api, refreshWindow, undo, loadCalendars } from './api.js';
+import { adoptSettings } from './settings.js';
 import { localTz, todayKey, addDaysKey, occDayKey, pad } from '../lib/dates.js';
 
 export const VIEWS = ['month', 'weeks3', 'weeks2', 'week', 'day', 'agenda'];
@@ -352,15 +353,181 @@ export async function deleteSavedView(view) {
   }
 }
 
+// --- settings -----------------------------------------------------------------
+
+// Save one setting immediately (per-control, no debounce) and apply it
+// client-side on success. scrollSeq bumps so grids re-anchor if week math
+// changed while the calendar stayed mounted.
+export async function saveSetting(key, value) {
+  try {
+    const data = await api('/settings', { method: 'PATCH', body: { [key]: value } });
+    adoptSettings(data.settings || { [key]: value });
+    set({ scrollSeq: state.scrollSeq + 1 });
+    toast('Setting saved', { duration: 2000 });
+    return true;
+  } catch (e) {
+    toast('Save failed: ' + e.message, { error: true });
+    return false;
+  }
+}
+
 // --- calendar mutations -------------------------------------------------------
 
 export async function toggleCalendarVisible(cal) {
   const calendars = state.calendars.map((c) => (c.id === cal.id ? { ...c, visible: !c.visible } : c));
   set({ calendars });
+  noteFolderCustomToggle(cal);
   try {
     await api('/calendars/' + cal.id, { method: 'PATCH', body: { visible: !cal.visible } });
   } catch (e) {
     set({ calendars: state.calendars.map((c) => (c.id === cal.id ? { ...c, visible: cal.visible } : c)) });
     toast('Failed: ' + e.message, { error: true });
+  }
+}
+
+export async function updateCalendar(cal, fields) {
+  try {
+    const updated = await api('/calendars/' + cal.id, { method: 'PATCH', body: fields });
+    set({ calendars: state.calendars.map((c) => (c.id === cal.id ? { ...c, ...updated } : c)) });
+    toast('Calendar updated', { duration: 2500 });
+    return updated;
+  } catch (e) {
+    toast('Failed: ' + e.message, { error: true });
+    return null;
+  }
+}
+
+export async function refreshCalendar(cal) {
+  try {
+    const res = await api('/calendars/' + cal.id + '/refresh', { method: 'POST' });
+    toast('Feed refreshed: ' + ((res && res.imported) || 0) + ' events imported');
+    await loadCalendars();
+    refreshWindow();
+    return true;
+  } catch (e) {
+    toast('Refresh failed: ' + e.message, { error: true });
+    return false;
+  }
+}
+
+export async function deleteCalendar(cal) {
+  try {
+    await api('/calendars/' + cal.id, { method: 'DELETE' });
+    toast('Calendar deleted', { undoable: true });
+    await loadCalendars();
+    refreshWindow();
+    return true;
+  } catch (e) {
+    toast('Delete failed: ' + e.message, { error: true });
+    return false;
+  }
+}
+
+// --- folders ------------------------------------------------------------------
+
+export async function createFolder(name) {
+  try {
+    await api('/folders', { method: 'POST', body: { name } });
+    toast('Folder created');
+    await loadCalendars();
+    return true;
+  } catch (e) {
+    toast('Failed: ' + e.message, { error: true });
+    return false;
+  }
+}
+
+export async function renameFolder(folder, name) {
+  try {
+    await api('/folders/' + folder.id, { method: 'PATCH', body: { name } });
+    set({ folders: state.folders.map((f) => (f.id === folder.id ? { ...f, name } : f)) });
+    toast('Folder renamed');
+    return true;
+  } catch (e) {
+    toast('Failed: ' + e.message, { error: true });
+    return false;
+  }
+}
+
+// Delete only applies to empty folders; the caller checks and explains.
+export async function deleteFolder(folder) {
+  try {
+    await api('/folders/' + folder.id, { method: 'DELETE' });
+    toast('Folder deleted');
+    await loadCalendars();
+    return true;
+  } catch (e) {
+    toast('Failed: ' + e.message, { error: true });
+    return false;
+  }
+}
+
+// --- folder visibility modes (issue #6) ---------------------------------------
+// Each folder has a visibility mode: all (every calendar shown), none (all
+// hidden, folder stays present), custom (the user's own per-calendar set).
+// All/none act by batch-setting the calendars' real visible flags, so every
+// downstream consumer (event filtering, saved views) is untouched. The last
+// custom selection is remembered per folder and restored on switching back.
+// State shape, mirrored to the server under the folderVisibility settings key:
+// {"<folderId>": {"mode": "all"|"none"|"custom", "custom": [calendarId,...]}}
+
+export function folderMode(folderId) {
+  const entry = state.folderVisibility[folderId];
+  return (entry && entry.mode) || 'custom';
+}
+
+function folderCalendars(folderId) {
+  return state.calendars.filter((c) => (c.folderIds || []).includes(folderId));
+}
+
+// Fire-and-forget server mirror. The backend allowlist may not accept the
+// key yet; in that case the mode still works for the session, silently.
+function persistFolderVisibility(next) {
+  set({ folderVisibility: next });
+  api('/settings', { method: 'PATCH', body: { folderVisibility: next } })
+    .catch(() => { /* unknown_setting until the backend allowlists the key */ });
+}
+
+// An individual calendar toggle while a containing folder is in all/none mode
+// flips that folder to custom; toggles in custom mode update the remembered
+// set. Called with the calendar's pre-toggle object, after the store flip.
+function noteFolderCustomToggle(cal) {
+  if (!cal.folderIds || cal.folderIds.length === 0) return;
+  const next = { ...state.folderVisibility };
+  for (const fid of cal.folderIds) {
+    const visibleIds = folderCalendars(fid).filter((c) => c.visible).map((c) => c.id);
+    next[fid] = { mode: 'custom', custom: visibleIds };
+  }
+  persistFolderVisibility(next);
+}
+
+export function setFolderVisibilityMode(folderId, mode) {
+  const cals = folderCalendars(folderId);
+  const entry = state.folderVisibility[folderId] || { mode: 'custom', custom: null };
+  const currentVisibleIds = cals.filter((c) => c.visible).map((c) => c.id);
+  const nextEntry = { ...entry, mode };
+
+  let wantVisible;
+  if (mode === 'all' || mode === 'none') {
+    // Leaving custom (or a never-recorded state): remember today's selection.
+    if (entry.mode === 'custom' || entry.custom == null) nextEntry.custom = currentVisibleIds;
+    wantVisible = () => mode === 'all';
+  } else {
+    const remembered = new Set(entry.custom == null ? currentVisibleIds : entry.custom);
+    wantVisible = (c) => remembered.has(c.id);
+  }
+
+  const changed = cals.filter((c) => c.visible !== wantVisible(c));
+  if (changed.length > 0) {
+    const flip = new Map(changed.map((c) => [c.id, !c.visible]));
+    set({ calendars: state.calendars.map((c) => (flip.has(c.id) ? { ...c, visible: flip.get(c.id) } : c)) });
+  }
+  persistFolderVisibility({ ...state.folderVisibility, [folderId]: nextEntry });
+
+  // Persist the flag flips; on failure reload to resync rather than tracking
+  // per-calendar rollbacks across a batch.
+  for (const c of changed) {
+    api('/calendars/' + c.id, { method: 'PATCH', body: { visible: !c.visible } })
+      .catch((e) => { toast('Failed: ' + e.message, { error: true }); loadCalendars(); });
   }
 }

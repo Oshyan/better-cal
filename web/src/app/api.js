@@ -3,6 +3,7 @@
 // out-of-order responses never render.
 
 import { state, set, mergeWindow, rangeCovered, toast } from './store.js';
+import { adoptSettings } from './settings.js';
 
 const BASE = '/api/v1';
 
@@ -47,6 +48,9 @@ export async function api(path, { method = 'GET', body, formData } = {}) {
 export async function fetchMe() {
   const data = await api('/me');
   set({ authed: true, user: data.user, csrf: data.csrf });
+  // /me carries the merged settings object; apply them (view, week start,
+  // time format, theme) before anything renders against defaults.
+  adoptSettings(data.user && data.user.settings, { initial: true });
   return data;
 }
 

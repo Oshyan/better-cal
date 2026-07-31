@@ -380,6 +380,13 @@ button:focus-visible, [tabindex]:focus-visible {
 }
 .bc-week-bars { position: absolute; left: 0; right: 0; pointer-events: none; }
 .bc-bar-slot { position: absolute; height: var(--chip-h); padding: 0 2px; pointer-events: auto; }
+/* Full-width month boundary rule: spans the whole grid, gutter included,
+   at the top of each month's first week row. */
+.bc-month-rule {
+  position: absolute; left: 0; right: 0; height: 2px;
+  background: color-mix(in srgb, var(--accent) 60%, var(--border-strong));
+  z-index: 3; pointer-events: none;
+}
 
 /* --- chips, bars, blocks ---------------------------------------------------- */
 
@@ -401,11 +408,19 @@ button:focus-visible, [tabindex]:focus-visible {
 .bc-chip.is-interested { border-style: dashed; }
 .bc-chip-check { font-weight: 700; flex: none; }
 .is-cancelled .bc-chip-title, .bc-pop-title.is-cancelled { text-decoration: line-through; opacity: 0.75; }
-/* Server-side dim filters: readable but recessed; hover restores. */
-.is-filter-dimmed { opacity: 0.45; transition: opacity 0.12s ease; }
-.is-filter-dimmed:hover, .is-filter-dimmed:focus-visible { opacity: 1; }
+/* Dim treatment floor: desaturate + muted foreground instead of pure
+   opacity, so dimmed items stay readable (clearly secondary, never
+   illegible) in both themes; hover restores. */
+.is-filter-dimmed {
+  opacity: 0.78;
+  filter: saturate(0.25);
+  transition: opacity 0.12s ease, filter 0.12s ease;
+}
+.bc-chip.is-filter-dimmed { color: var(--fg-muted); }
+.is-filter-dimmed:hover, .is-filter-dimmed:focus-visible { opacity: 1; filter: none; }
 /* On-page type-to-filter dimming wins over the softer server dim. */
-.is-dimmed { opacity: 0.25; }
+.is-dimmed { opacity: 0.55; filter: saturate(0.15); }
+.bc-chip.is-dimmed { color: var(--fg-muted); }
 .bc-new-pill {
   background: var(--accent); color: var(--accent-fg);
   border-radius: 7px; font-size: 9px; font-weight: 700;
@@ -561,6 +576,7 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-dayexpand-row { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
 .bc-dayexpand-time { width: 64px; flex: none; font-size: 11.5px; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
 .bc-dayexpand-row .bc-chip { width: auto; flex: 1; }
+.bc-dayexpand-open { flex: none; padding: 2px 6px; font-size: 12px; }
 
 .bc-popover {
   position: fixed; z-index: 70;
@@ -594,6 +610,116 @@ body.bc-dragging * { cursor: grabbing !important; }
   animation: bc-sheet-up 0.18s ease;
 }
 @keyframes bc-sheet-up { from { transform: translateY(30%); opacity: 0.6; } }
+
+/* --- near-duplicate group chips + popover -------------------------------------- */
+
+.bc-stack-glyph { flex: none; font-size: 10px; opacity: 0.8; line-height: 1; }
+.bc-chip.is-group .bc-chip-title, .bc-bar.is-group .bc-chip-title { font-weight: 600; }
+.bc-bar.is-group { cursor: pointer; }
+.bc-group-pop {
+  position: fixed; z-index: 70;
+  background: var(--bg-raised); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.bc-group-head {
+  display: flex; align-items: center; gap: 7px;
+  padding: 8px 6px 8px 12px; border-bottom: 1px solid var(--border);
+}
+.bc-group-title {
+  font-weight: 700; flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.bc-group-count {
+  background: var(--bg-inset); border: 1px solid var(--border);
+  border-radius: 9px; padding: 0 7px; line-height: 17px;
+  font-size: 11px; font-weight: 600; color: var(--fg-muted); flex: none;
+}
+.bc-group-list { overflow-y: auto; overscroll-behavior: contain; padding: 4px; max-height: 340px; }
+.bc-group-row {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  background: none; border: none; border-radius: 5px;
+  padding: 5px 8px; text-align: left;
+}
+.bc-group-row:hover { background: var(--bg-inset); }
+.bc-group-time { width: 64px; flex: none; font-size: 11.5px; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+.bc-group-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* --- event detail view --------------------------------------------------------- */
+
+.bc-detail-overlay {
+  display: flex; align-items: center; justify-content: center;
+  z-index: 74; padding: 24px 16px; background: rgba(10, 12, 18, 0.35);
+}
+.bc-detail {
+  width: 560px; max-width: 100%; max-height: min(84vh, 720px);
+  background: var(--bg-raised); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.bc-detail-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 7px 10px; border-bottom: 1px solid var(--border);
+}
+.bc-detail-nav { display: flex; align-items: center; gap: 2px; }
+.bc-detail-chev { font-size: 18px; line-height: 1.1; padding: 3px 10px; }
+.bc-detail-chev:disabled { opacity: 0.35; cursor: default; }
+.bc-detail-chev:disabled:hover { background: none; color: var(--fg-muted); }
+.bc-detail-count { color: var(--fg-muted); font-size: 12px; margin-left: 6px; }
+.bc-detail-body {
+  padding: 12px 16px 16px; overflow-y: auto; overscroll-behavior: contain;
+  display: flex; flex-direction: column; gap: 9px;
+}
+.bc-detail-title { margin: 0; font-size: 19px; line-height: 1.25; }
+.bc-detail-title.is-cancelled { text-decoration: line-through; opacity: 0.75; }
+.bc-detail-calrow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.bc-detail-calchip {
+  display: inline-flex; align-items: center; gap: 6px;
+  border: 1px solid var(--border); border-radius: 11px;
+  background: var(--bg-inset); padding: 1px 9px;
+  font-size: 12px; color: var(--fg-muted);
+}
+.bc-detail-when { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; font-size: 14px; }
+.bc-detail-recur { color: var(--fg-muted); font-size: 12.5px; }
+.bc-detail-section { display: flex; flex-direction: column; gap: 3px; }
+.bc-detail-label {
+  font-size: 10.5px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.4px; color: var(--fg-muted);
+}
+.bc-detail-desc {
+  white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px;
+  max-height: 240px; overflow-y: auto; overscroll-behavior: contain;
+}
+.bc-detail-desc a, .bc-detail-section a { color: var(--accent); }
+.bc-detail-labels { flex-direction: row; gap: 12px; flex-wrap: wrap; }
+.bc-detail-people { color: var(--fg-muted); }
+.bc-detail-meta { color: var(--fg-muted); font-size: 11.5px; border-top: 1px solid var(--border); padding-top: 8px; }
+.bc-detail-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.bc-detail-openlink { text-decoration: none; display: inline-flex; align-items: center; }
+
+/* Mini-map: fixed height, inert until clicked, marker + OSM link. */
+.bc-map-wrap { position: relative; margin-top: 6px; }
+.bc-map {
+  height: 200px; border-radius: 6px; border: 1px solid var(--border);
+  overflow: hidden; background: var(--bg-inset);
+}
+.bc-map-cover {
+  position: absolute; left: 0; right: 0; top: 0; height: 200px; z-index: 1000;
+  background: transparent; border: none;
+  display: flex; align-items: flex-end; justify-content: flex-end; padding: 6px;
+}
+.bc-map-cover span {
+  background: rgba(20, 26, 40, 0.55); color: #fff; border-radius: 5px;
+  font-size: 10.5px; padding: 2px 7px; opacity: 0; transition: opacity 0.12s ease;
+}
+.bc-map-wrap:hover .bc-map-cover span, .bc-map-cover:focus-visible span { opacity: 1; }
+.bc-map-osm { display: inline-block; margin-top: 4px; font-size: 12px; color: var(--accent); }
+
+/* Full-screen sheet on mobile. */
+@media (max-width: 640px) {
+  .bc-detail-overlay { padding: 0; align-items: stretch; }
+  .bc-detail { width: 100%; max-height: none; border-radius: 0; border: none; }
+}
 
 /* --- quick add ----------------------------------------------------------------- */
 
@@ -920,15 +1046,26 @@ body.bc-rescheduling { user-select: none; }
 }
 
 @media (max-width: 600px) {
-  /* Month cells collapse chips to dots + a compact +N (proven density pattern). */
-  .bc-chip { padding: 0 2px; gap: 2px; height: 12px; justify-content: center; }
+  /* Unified mobile month rendering: timed chips and all-day bars alike
+     become compact single-line text pills (10px, ellipsized) in up to 3
+     lanes; overflow renders as dots + "+N" (no more dots-vs-text split). */
+  .bc-cell .bc-chip {
+    padding: 0 3px; gap: 3px; height: var(--chip-h, 13px);
+    justify-content: flex-start; border-radius: 4px;
+  }
   .bc-cell .bc-chip .bc-chip-time,
-  .bc-cell .bc-chip .bc-chip-title,
-  .bc-cell .bc-chip .bc-new-pill { display: none; }
-  .bc-cell .bc-chip .bc-chip-dot { width: 8px; height: 8px; }
-  .bc-cell-chips { flex-direction: row; flex-wrap: wrap; gap: 2px; bottom: 2px; }
+  .bc-cell .bc-chip .bc-new-pill,
+  .bc-cell .bc-chip .bc-chip-dot { display: none; }
+  .bc-cell .bc-chip .bc-chip-title { display: block; font-size: 10px; }
+  .bc-bar { padding: 0 4px; }
   .bc-bar .bc-chip-title { font-size: 10px; }
+  .bc-cell-chips { gap: 2px; bottom: 2px; }
+  .bc-more {
+    height: 13px; font-size: 10px; padding: 0 3px;
+    display: flex; align-items: center; gap: 2px;
+  }
   .bc-viewswitch-btn { padding: 4px 7px; font-size: 12px; }
   :root { --bc-gutter-w: 34px; }
   .bc-agenda-time { width: 84px; }
 }
+.bc-more-dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; flex: none; }

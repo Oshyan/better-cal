@@ -13,6 +13,7 @@ import {
   monthsAround, miniMonthGrid, dayDropDates, timeDropDates,
 } from '../src/ui/monthmath.js';
 import { contrastText, withAlpha, parseHex } from '../src/lib/color.js';
+import { baseTitle, groupOccurrences, itemMatchesFilter, isGroupId } from '../src/ui/grouping.js';
 import { sortByMatch } from '../src/lib/rank.js';
 import { parseJumpText } from '../src/lib/jumpparse.js';
 
@@ -245,6 +246,87 @@ eq('sortByMatch zero score is still scored',
   sortByMatch([rk('u', '2026-08-01T10:00:00-07:00', null), rk('v', '2026-08-02T10:00:00-07:00', 0)]).map((o) => o.instanceId),
   ['v', 'u']);
 eq('sortByMatch empty input', sortByMatch([]), []);
+
+console.log('--- near-duplicate grouping ---');
+
+// All-day occurrence factory (literal-date serialization, exclusive end).
+let occSeq = 0;
+const mkOcc = (calendarId, title, dayKey, opts = {}) => ({
+  instanceId: 'occ' + (++occSeq),
+  calendarId,
+  title,
+  start: dayKey + 'T00:00:00+00:00',
+  end: addDaysKey(dayKey, opts.days || 1) + 'T00:00:00+00:00',
+  allDay: true,
+  attendance: 'none',
+  ...opts.extra,
+});
+const FLAGS = { 1: true, 2: true, 3: false };
+
+// baseTitle strips one trailing parenthetical, keeps everything else.
+eq('grouping: baseTitle strips parenthetical', baseTitle('Juneteenth (Alabama)'), 'Juneteenth');
+eq('grouping: baseTitle plain title unchanged', baseTitle('Juneteenth'), 'Juneteenth');
+eq('grouping: baseTitle keeps mid-title parens', baseTitle('Day (off) party'), 'Day (off) party');
+eq('grouping: baseTitle pure parenthetical kept', baseTitle('(TBD)'), '(TBD)');
+
+// Parenthetical variants plus an exact-duplicate title collapse to one group.
+const j1 = mkOcc(1, 'Juneteenth (Alabama)', '2026-06-19');
+const j2 = mkOcc(1, 'Juneteenth (Texas)', '2026-06-19');
+const j3 = mkOcc(1, 'Juneteenth', '2026-06-19');
+const j4 = mkOcc(1, 'Juneteenth', '2026-06-19'); // exact duplicate title
+const solo = mkOcc(1, 'Solstice', '2026-06-19');
+const g1 = groupOccurrences([j1, j2, j3, j4, solo], FLAGS);
+eq('grouping: variants + duplicates collapse to group + singleton', g1.length, 2);
+assert('grouping: group item flagged and counted', g1[0].isGroup === true && g1[0].count === 4);
+eq('grouping: group title is the shared base', g1[0].title, 'Juneteenth');
+assert('grouping: group id is recognizable', isGroupId(g1[0].instanceId) && !isGroupId(solo.instanceId));
+assert('grouping: group replaces first member in order', g1[1] === solo);
+assert('grouping: members kept inside the group', g1[0].members.length === 4 && g1[0].members.includes(j3));
+
+// Singletons never group: a lone parenthetical variant passes through as-is.
+const loneVariant = mkOcc(1, 'Juneteenth (Alabama)', '2026-06-20');
+eq('grouping: no group for singletons', groupOccurrences([loneVariant, solo], FLAGS), [loneVariant, solo]);
+
+// Different calendars never group, even with identical titles and day.
+const calA = mkOcc(1, 'Juneteenth', '2026-06-19');
+const calB = mkOcc(2, 'Juneteenth', '2026-06-19');
+assert('grouping: different calendars never group', groupOccurrences([calA, calB], FLAGS).every((o) => !o.isGroup));
+
+// Different days never group.
+const day1 = mkOcc(1, 'Standup', '2026-06-19');
+const day2 = mkOcc(1, 'Standup', '2026-06-20');
+assert('grouping: different days never group', groupOccurrences([day1, day2], FLAGS).every((o) => !o.isGroup));
+
+// Calendars without groupSimilar never group.
+const off1 = mkOcc(3, 'Juneteenth (A)', '2026-06-19');
+const off2 = mkOcc(3, 'Juneteenth (B)', '2026-06-19');
+assert('grouping: flag off passes through', groupOccurrences([off1, off2], FLAGS).every((o) => !o.isGroup));
+
+// Hidden members never join a group; counts exclude them.
+const h1 = mkOcc(1, 'Holiday (A)', '2026-07-04');
+const h2 = mkOcc(1, 'Holiday (B)', '2026-07-04');
+const h3 = mkOcc(1, 'Holiday (C)', '2026-07-04', { extra: { attendance: 'hidden' } });
+const gh = groupOccurrences([h1, h2, h3], FLAGS);
+assert('grouping: hidden excluded from count', gh[0].isGroup && gh[0].count === 2 && gh.includes(h3));
+
+// Multi-day events never group.
+const m1 = mkOcc(1, 'Fair', '2026-06-19', { days: 3 });
+const m2 = mkOcc(1, 'Fair', '2026-06-19', { days: 3 });
+assert('grouping: multi-day never groups', groupOccurrences([m1, m2], FLAGS).every((o) => !o.isGroup));
+
+// Group dim state: dimmed only when ALL members are dimmed.
+const dm1 = mkOcc(1, 'Fest (A)', '2026-08-01', { extra: { dimmed: true } });
+const dm2 = mkOcc(1, 'Fest (B)', '2026-08-01', { extra: { dimmed: true } });
+const dm3 = mkOcc(1, 'Fest (C)', '2026-08-01');
+assert('grouping: all members dimmed -> group dimmed', groupOccurrences([dm1, dm2], FLAGS)[0].dimmed === true);
+assert('grouping: one undimmed member -> group not dimmed', groupOccurrences([dm1, dm2, dm3], FLAGS)[0].dimmed === false);
+
+// Client-filter predicate: a group matches when any member matches.
+const gMatch = groupOccurrences([j1, j2], FLAGS)[0];
+assert('grouping: group matches when any member matches',
+  itemMatchesFilter(gMatch, (o) => o.title.includes('Texas')) &&
+  !itemMatchesFilter(gMatch, (o) => o.title.includes('Ohio')) &&
+  itemMatchesFilter(solo, (o) => o.title === 'Solstice'));
 
 console.log('--- jump text parser ---');
 

@@ -4,7 +4,7 @@
 import { html, useState, useRef, useEffect } from '../../vendor/index.js';
 import { useStore, set, state } from './store.js';
 import { search } from './api.js';
-import { jumpToDate } from './actions.js';
+import { jumpToDate, openDetail } from './actions.js';
 import { trapFocus } from '../ui/DayExpand.js';
 import { parseISO, fmtDateFull, fmtTime, occDayKey } from '../lib/dates.js';
 
@@ -62,6 +62,7 @@ export function SearchOverlay() {
       set({ occVersion: state.occVersion + 1 });
     }
     jumpToDate(occDayKey(occ), occ.instanceId);
+    openDetail(occ.instanceId); // land on the full detail view after the jump
   };
 
   const onKeyDown = (e) => {

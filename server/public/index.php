@@ -71,6 +71,7 @@ function bc_handle_api(Request $request, array $cfg): void
         $savedViews = new Domain\SavedViews($db, $undo);
         $outFeeds = new Domain\OutFeeds($db, $search, $cfg);
         $settings = new Domain\Settings($db);
+        $geocode = new Domain\Geocode($db);
         $quickAdd = new Domain\QuickAdd($db, new LlmGateway($cfg), $events, $settings);
 
         $authController = new Controllers\AuthController($auth);
@@ -84,6 +85,7 @@ function bc_handle_api(Request $request, array $cfg): void
         $savedViewsController = new Controllers\SavedViewsController($savedViews);
         $tokensController = new Controllers\TokensController($apiTokens);
         $settingsController = new Controllers\SettingsController($settings);
+        $geocodeController = new Controllers\GeocodeController($geocode);
         $healthController = new Controllers\HealthController($db, $cfg);
 
         $router = new Router();
@@ -119,6 +121,8 @@ function bc_handle_api(Request $request, array $cfg): void
         });
 
         $router->add('GET', "$base/search", [$searchController, 'search']);
+
+        $router->add('GET', "$base/geocode", [$geocodeController, 'lookup']);
 
         $router->add('GET', "$base/filters", [$filtersController, 'index']);
         $router->add('POST', "$base/filters", [$filtersController, 'create']);

@@ -1,14 +1,15 @@
 // App root: routes between views, wires bettercal-ui to the store and API.
 
-import { html, useState, useMemo, useEffect, useCallback } from '../../vendor/index.js';
+import { html, useState, useMemo, useRef, useEffect, useCallback } from '../../vendor/index.js';
 import { useStore, set, state, calendarMeta, shallowEq } from './store.js';
 import { loadWindow } from './api.js';
-import { moveEvent, resizeEvent, triageAttendance, sendFeedback, exitReschedule, jumpToDate } from './actions.js';
+import { moveEvent, resizeEvent, triageAttendance, sendFeedback, exitReschedule, jumpToDate, openDetail } from './actions.js';
+import { groupOccurrences, itemMatchesFilter } from '../ui/grouping.js';
 import { sortByMatch } from '../lib/rank.js';
 import { installKeyboard } from './keyboard.js';
 import {
   startOfWeekKey, dayKeysOfWeek, weekIndexOfKey, addDaysKey, dateOfDayKey,
-  toISOWithOffset, todayKey, parseISO, epochDayOfKey,
+  toISOWithOffset, parseISO, epochDayOfKey,
 } from '../lib/dates.js';
 import { occurrenceDaySpan } from '../ui/monthmath.js';
 import { MonthGrid } from '../ui/MonthGrid.js';
@@ -20,6 +21,8 @@ import { Toolbar } from './Toolbar.js';
 import { Sidebar } from './Sidebar.js';
 import { QuickAdd } from './QuickAdd.js';
 import { EventPopover } from './EventPopover.js';
+import { EventDetail } from './EventDetail.js';
+import { GroupPopover } from './GroupPopover.js';
 import { EditorDrawer } from './EditorDrawer.js';
 import { SearchOverlay } from './SearchOverlay.js';
 import { Toasts } from './Toasts.js';
@@ -56,23 +59,39 @@ export function App() {
 
   const calMeta = useMemo(() => calendarMeta(), [s.calendars]);
 
-  // Occurrences on visible calendars, from the cache.
+  // Occurrences on visible calendars, from the cache. Calendars flagged
+  // groupSimilar get near-duplicate collapsing (synthetic group items).
   const occurrences = useMemo(() => {
     const visible = new Set(s.calendars.filter((c) => c.visible).map((c) => c.id));
     const out = [];
     for (const occ of state.occ.values()) {
       if (visible.has(occ.calendarId)) out.push(occ);
     }
-    return out;
+    const flags = {};
+    for (const c of s.calendars) flags[c.id] = !!c.groupSimilar;
+    return groupOccurrences(out, flags);
   }, [s.occVersion, s.calendars]);
 
+  // Group lookup for click routing (onOpenEvent has a stable identity, so it
+  // reads the current map through a ref).
+  const groupsRef = useRef(new Map());
+  groupsRef.current = useMemo(() => {
+    const m = new Map();
+    for (const item of occurrences) {
+      if (item.isGroup) m.set(item.instanceId, item);
+    }
+    return m;
+  }, [occurrences]);
+
   // On-page filter: dim non-matching rendered events (client-side, live).
+  // A group dims only when none of its members match.
   const dimSet = useMemo(() => {
     const needle = s.filterText.trim().toLowerCase();
     if (!needle) return null;
+    const matches = (occ) => matchesFilter(occ, needle);
     const dim = new Set();
-    for (const occ of occurrences) {
-      if (!matchesFilter(occ, needle)) dim.add(occ.instanceId);
+    for (const item of occurrences) {
+      if (!itemMatchesFilter(item, matches)) dim.add(item.instanceId);
     }
     return dim;
   }, [occurrences, s.filterText]);
@@ -89,10 +108,12 @@ export function App() {
       const [y, m] = start.split('-').map(Number);
       set({ visibleMonth: { year: y, month: m } });
     } else if (s.view === 'agenda') {
-      const from = s.agendaShowPast ? addDaysKey(todayKey(), -365) : todayKey();
+      // Anchor-aware window: follow the anchor (navigation/jump) rather than
+      // always loading today-forward; "show past" widens the lookback.
+      const from = addDaysKey(s.anchor, s.agendaShowPast ? -365 : -90);
       loadWindow(
         toISOWithOffset(dateOfDayKey(from)),
-        toISOWithOffset(dateOfDayKey(addDaysKey(todayKey(), 120))),
+        toISOWithOffset(dateOfDayKey(addDaysKey(s.anchor, 120))),
       );
       const [y, m] = s.anchor.split('-').map(Number);
       set({ visibleMonth: { year: y, month: m } });
@@ -104,9 +125,19 @@ export function App() {
     set((st) => (st.visibleMonth && st.visibleMonth.year === vm.year && st.visibleMonth.month === vm.month
       ? {} : { visibleMonth: vm }));
   }, []);
-  const onOpenEvent = useCallback((instanceId, anchorRect) => {
+  const onOpenEvent = useCallback((instanceId, anchorRect, opts) => {
+    const group = groupsRef.current.get(instanceId);
+    if (group) {
+      set({ groupPopover: { group, anchorRect }, popover: null });
+      return;
+    }
+    if (opts && opts.detail) {
+      openDetail(instanceId);
+      return;
+    }
     set({ popover: { instanceId, anchorRect } });
   }, []);
+  const onOpenDetail = useCallback((instanceId) => openDetail(instanceId), []);
   const onExpandDay = useCallback((dayKey) => {
     const cell = document.querySelector(`[data-day="${dayKey}"]`);
     set({ expandedDay: { dayKey, anchorRect: cell ? cell.getBoundingClientRect() : null } });
@@ -216,6 +247,8 @@ export function App() {
         calendars=${calMeta}
         dimSet=${dimSet}
         sortMode=${s.agendaSort}
+        scrollKey=${s.anchor}
+        scrollSeq=${s.scrollSeq}
         onOpenEvent=${onOpenEvent}
         onSetAttendance=${triageAttendance}
         onFeedback=${sendFeedback}
@@ -239,6 +272,7 @@ export function App() {
       calendars=${calMeta}
       dimSet=${dimSet}
       onOpenEvent=${onOpenEvent}
+      onOpenDetail=${onOpenDetail}
       onClose=${() => set({ expandedDay: null })}
     />`;
   }
@@ -261,6 +295,8 @@ export function App() {
     ${expand}
     <${QuickAdd} />
     <${EventPopover} />
+    <${GroupPopover} />
+    <${EventDetail} />
     <${EditorDrawer} />
     <${SearchOverlay} />
     ${reschedActive && html`<${RescheduleOverlay}

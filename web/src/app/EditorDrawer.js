@@ -125,7 +125,7 @@ export function EditorDrawer() {
       url: occ ? (occ.url || '') : '',
       description: occ ? (occ.description || '') : '',
       tags: occ && occ.tags ? occ.tags.join(', ') : '',
-      rrule: parseRrule(occ && occ.recurring ? (editor.rrule || '') : ''),
+      rrule: parseRrule(occ && occ.recurring ? (occ.rrule || editor.rrule || '') : ''),
     });
     setScope('this');
     setDurationLock(true);

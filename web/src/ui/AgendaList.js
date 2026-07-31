@@ -51,8 +51,11 @@ function fmtDayShort(occ) {
 }
 
 // props: sortMode 'time' (default: day-grouped) | 'match' (flat, caller-ordered
-// by score); onFeedback(occ, 'up'|'down') optional thumbs intent.
-export function AgendaList({ occurrences, calendars, dimSet, sortMode, onOpenEvent, onSetAttendance, onFeedback, onRequestWindow, emptyLabel }) {
+// by score); onFeedback(occ, 'up'|'down') optional thumbs intent;
+// scrollKey/scrollSeq: anchor day key + a monotonically bumped sequence — each
+// new seq scrolls the list to the anchor's day group (nearest following group
+// when the exact day has no events).
+export function AgendaList({ occurrences, calendars, dimSet, sortMode, scrollKey, scrollSeq, onOpenEvent, onSetAttendance, onFeedback, onRequestWindow, emptyLabel }) {
   const scrollRef = useRef(null);
   const [win, setWin] = useState({ top: 0, height: 800 });
   const flat = sortMode === 'match';
@@ -97,6 +100,20 @@ export function AgendaList({ occurrences, calendars, dimSet, sortMode, onOpenEve
   }, []);
 
   useEffect(() => { onScroll(); }, [groups.length, onScroll]);
+
+  // Anchor-aware scroll: apply each scrollSeq once, retrying as groups fill in
+  // (the window load is async) but never re-yanking after it has applied.
+  const appliedSeqRef = useRef(null);
+  useEffect(() => {
+    if (flat || !scrollSeq || !scrollKey) return;
+    if (appliedSeqRef.current === scrollSeq) return;
+    const el = scrollRef.current;
+    if (!el || groups.length === 0) return;
+    const target = groups.find((g) => g.dayKey >= scrollKey) || groups[groups.length - 1];
+    el.scrollTop = target.top;
+    appliedSeqRef.current = scrollSeq;
+    onScroll();
+  }, [scrollSeq, scrollKey, groups, flat, onScroll]);
 
   const tKey = todayKey();
   const buffer = 600;

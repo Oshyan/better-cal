@@ -1,5 +1,11 @@
 // Shared event rendering: chips (month/agenda) and blocks (timegrid).
 // Pure presentation: data in, intent callbacks out.
+//
+// Synthetic group items (occ.isGroup, from grouping.js) render as a stack
+// chip "Title · N": no drag, no resize handles, no time; a click emits the
+// same onOpen intent (the app layer routes group ids to the group popover).
+// Double-click on a real event asks for the full detail view via
+// onOpen(instanceId, rect, {detail: true}).
 
 import { html } from '../../vendor/index.js';
 import { contrastText, withAlpha, DEFAULT_COLOR } from '../lib/color.js';
@@ -21,6 +27,7 @@ function stateClasses(occ, dimmed) {
   if (occ.attendance === 'going') c += ' is-going';
   if (occ.status === 'cancelled') c += ' is-cancelled';
   if (occ.isNew) c += ' is-new';
+  if (occ.isGroup) c += ' is-group';
   if (occ.dimmed) c += ' is-filter-dimmed';
   if (dimmed) c += ' is-dimmed';
   return c;
@@ -36,33 +43,52 @@ function GoingCheck({ occ }) {
   return html`<span class="bc-chip-check" aria-label="going">✓</span>`;
 }
 
+// Small stack glyph marking a near-duplicate group chip.
+function StackGlyph() {
+  return html`<span class="bc-stack-glyph" aria-hidden="true">⧉</span>`;
+}
+
+function openHandlers(occ, onOpen) {
+  return {
+    onClick: (e) => {
+      if (hasModifier(e)) return;
+      e.stopPropagation();
+      if (onOpen) onOpen(occ.instanceId, e.currentTarget.getBoundingClientRect());
+    },
+    onDblClick: (e) => {
+      if (hasModifier(e) || occ.isGroup) return;
+      e.stopPropagation();
+      if (onOpen) onOpen(occ.instanceId, e.currentTarget.getBoundingClientRect(), { detail: true });
+    },
+  };
+}
+
 // Compact chip for month cells and agenda rows.
-// props: occ, cal, dimmed, showTime, onOpen(instanceId, anchorRect), onPointerDown
+// props: occ, cal, dimmed, showTime, onOpen(instanceId, anchorRect, opts?),
+//        onPointerDown
 export function EventChip({ occ, cal, dimmed, showTime = true, onOpen, onPointerDown }) {
   const color = calColor(cal);
   const interested = occ.attendance === 'interested';
   const style = interested
     ? `border-color:${color};color:${color};background:transparent`
     : `background:${withAlpha(color, 0.16)};color:var(--fg)`;
-  const timed = !occ.allDay && showTime;
+  const timed = !occ.allDay && showTime && !occ.isGroup;
+  const { onClick, onDblClick } = openHandlers(occ, onOpen);
   return html`<button
     type="button"
     class="bc-chip${stateClasses(occ, dimmed)}"
     style=${style}
     data-instance=${occ.instanceId}
-    onPointerDown=${onPointerDown}
-    onClick=${(e) => {
-      if (hasModifier(e)) return;
-      e.stopPropagation();
-      if (onOpen) onOpen(occ.instanceId, e.currentTarget.getBoundingClientRect());
-    }}
-    title=${occ.title}
+    onPointerDown=${occ.isGroup ? undefined : onPointerDown}
+    onClick=${onClick}
+    onDblClick=${onDblClick}
+    title=${occ.isGroup ? `${occ.title} (${occ.count} similar)` : occ.title}
   >
     <span class="bc-chip-dot" style=${`background:${color}`}></span>
     ${timed && html`<span class="bc-chip-time">${fmtTime(parseISO(occ.start))}</span>`}
-    <${GoingCheck} occ=${occ} />
-    <span class="bc-chip-title">${occ.title || '(untitled)'}</span>
-    ${occ.isNew && html`<${NewPill} />`}
+    ${occ.isGroup ? html`<${StackGlyph} />` : html`<${GoingCheck} occ=${occ} />`}
+    <span class="bc-chip-title">${occ.title || '(untitled)'}${occ.isGroup ? ` · ${occ.count}` : ''}</span>
+    ${occ.isNew && !occ.isGroup && html`<${NewPill} />`}
   </button>`;
 }
 
@@ -75,31 +101,30 @@ export function EventBar({ occ, cal, seg, dimmed, onOpen, onPointerDown, onEdgeP
   const style = interested
     ? `border:1px solid ${color};color:${color};background:transparent`
     : `background:${color};color:${contrastText(color)}`;
+  const { onClick, onDblClick } = openHandlers(occ, onOpen);
+  const edges = occ.isGroup ? null : onEdgePointerDown;
   return html`<div
     class="bc-bar${stateClasses(occ, dimmed)}${seg.contLeft ? ' cont-l' : ''}${seg.contRight ? ' cont-r' : ''}"
     style=${style}
     data-instance=${occ.instanceId}
     role="button"
     tabindex="0"
-    onPointerDown=${onPointerDown}
-    onClick=${(e) => {
-      if (hasModifier(e)) return;
-      e.stopPropagation();
-      if (onOpen) onOpen(occ.instanceId, e.currentTarget.getBoundingClientRect());
-    }}
+    onPointerDown=${occ.isGroup ? undefined : onPointerDown}
+    onClick=${onClick}
+    onDblClick=${onDblClick}
     onKeyDown=${(e) => {
       if ((e.key === 'Enter' || e.key === ' ') && onOpen) {
         e.preventDefault();
         onOpen(occ.instanceId, e.currentTarget.getBoundingClientRect());
       }
     }}
-    title=${occ.title}
+    title=${occ.isGroup ? `${occ.title} (${occ.count} similar)` : occ.title}
   >
-    ${!seg.contLeft && onEdgePointerDown && html`<span class="bc-bar-handle l" onPointerDown=${(e) => onEdgePointerDown('start', e)}></span>`}
-    ${!seg.contLeft && html`<${GoingCheck} occ=${occ} />`}
-    <span class="bc-chip-title">${seg.contLeft ? '‹ ' : ''}${occ.title || '(untitled)'}${seg.contRight ? ' ›' : ''}</span>
-    ${occ.isNew && !seg.contLeft && html`<${NewPill} />`}
-    ${!seg.contRight && onEdgePointerDown && html`<span class="bc-bar-handle r" onPointerDown=${(e) => onEdgePointerDown('end', e)}></span>`}
+    ${!seg.contLeft && edges && html`<span class="bc-bar-handle l" onPointerDown=${(e) => edges('start', e)}></span>`}
+    ${!seg.contLeft && (occ.isGroup ? html`<${StackGlyph} />` : html`<${GoingCheck} occ=${occ} />`)}
+    <span class="bc-chip-title">${seg.contLeft ? '‹ ' : ''}${occ.title || '(untitled)'}${occ.isGroup ? ` · ${occ.count}` : ''}${seg.contRight ? ' ›' : ''}</span>
+    ${occ.isNew && !occ.isGroup && !seg.contLeft && html`<${NewPill} />`}
+    ${!seg.contRight && edges && html`<span class="bc-bar-handle r" onPointerDown=${(e) => edges('end', e)}></span>`}
   </div>`;
 }
 
@@ -114,20 +139,19 @@ export function EventBlock({ occ, cal, rect, dimmed, onOpen, onPointerDown, onEd
     : `background:${withAlpha(color, 0.85)};color:${contrastText(color)};border-left:3px solid ${color}`;
   const s = parseISO(occ.start);
   const e = parseISO(occ.end);
-  const showMeta = rect.height > 34;
+  const showMeta = rect.height > 34 && !occ.isGroup;
   const showLoc = rect.height > 52 && occ.location;
+  const { onClick, onDblClick } = openHandlers(occ, onOpen);
+  const edges = occ.isGroup ? null : onEdgePointerDown;
   return html`<div
     class="bc-block${stateClasses(occ, dimmed)}"
     style=${`top:${rect.top}px;height:${rect.height}px;left:${rect.leftPct}%;width:${rect.widthPct}%;${bg}`}
     data-instance=${occ.instanceId}
     role="button"
     tabindex="0"
-    onPointerDown=${onPointerDown}
-    onClick=${(ev) => {
-      if (hasModifier(ev)) return;
-      ev.stopPropagation();
-      if (onOpen) onOpen(occ.instanceId, ev.currentTarget.getBoundingClientRect());
-    }}
+    onPointerDown=${occ.isGroup ? undefined : onPointerDown}
+    onClick=${onClick}
+    onDblClick=${onDblClick}
     onKeyDown=${(ev) => {
       if ((ev.key === 'Enter' || ev.key === ' ') && onOpen) {
         ev.preventDefault();
@@ -135,14 +159,14 @@ export function EventBlock({ occ, cal, rect, dimmed, onOpen, onPointerDown, onEd
       }
     }}
   >
-    ${onEdgePointerDown && html`<span class="bc-block-handle t" onPointerDown=${(ev) => onEdgePointerDown('start', ev)}></span>`}
+    ${edges && html`<span class="bc-block-handle t" onPointerDown=${(ev) => edges('start', ev)}></span>`}
     <span class="bc-block-line">
-      <${GoingCheck} occ=${occ} />
-      <span class="bc-chip-title">${occ.title || '(untitled)'}</span>
-      ${occ.isNew && html`<${NewPill} />`}
+      ${occ.isGroup ? html`<${StackGlyph} />` : html`<${GoingCheck} occ=${occ} />`}
+      <span class="bc-chip-title">${occ.title || '(untitled)'}${occ.isGroup ? ` · ${occ.count}` : ''}</span>
+      ${occ.isNew && !occ.isGroup && html`<${NewPill} />`}
     </span>
     ${showMeta && html`<span class="bc-block-time">${fmtTime(s)} to ${fmtTime(e)}</span>`}
     ${showLoc && html`<span class="bc-block-loc">${occ.location}</span>`}
-    ${onEdgePointerDown && html`<span class="bc-block-handle b" onPointerDown=${(ev) => onEdgePointerDown('end', ev)}></span>`}
+    ${edges && html`<span class="bc-block-handle b" onPointerDown=${(ev) => edges('end', ev)}></span>`}
   </div>`;
 }

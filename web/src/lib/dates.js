@@ -50,6 +50,28 @@ export function todayKey() {
   return dayKeyOf(new Date());
 }
 
+// 'past' | 'now' | 'future' for an occurrence at the instant nowMs.
+// Timed events compare real instants: past once end <= now, active while
+// start <= now < end. All-day events are calendar dates (literal date
+// serialization, see occDayKey): read the date portions verbatim — never
+// timezone-convert — and compare against the local day of nowMs. The all-day
+// end date is exclusive, so an event whose end date is today ended yesterday.
+export function timeState(occ, nowMs) {
+  if (occ.allDay) {
+    const today = dayKeyOf(new Date(nowMs));
+    const startKey = occ.start.slice(0, 10);
+    const endKey = occ.end ? occ.end.slice(0, 10) : addDaysKey(startKey, 1);
+    if (endKey <= today) return 'past';
+    if (startKey > today) return 'future';
+    return 'now';
+  }
+  const s = parseISO(occ.start).getTime();
+  const e = occ.end ? parseISO(occ.end).getTime() : s;
+  if (e <= nowMs) return 'past';
+  if (s <= nowMs) return 'now';
+  return 'future';
+}
+
 // Local midnight Date for a day key.
 export function dateOfDayKey(key) {
   const [y, m, d] = key.split('-').map(Number);

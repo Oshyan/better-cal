@@ -6,6 +6,7 @@
 import { html, useState, useRef, useMemo, useEffect, useCallback } from '../../vendor/index.js';
 import {
   parseISO, fmtTime, dateOfDayKey, fmtDayLong, dayKeyOfISO, occDayKey, todayKey,
+  timeState,
 } from '../lib/dates.js';
 import { EventChip } from './EventChip.js';
 import { ThumbIcon } from './icons.js';
@@ -58,7 +59,7 @@ function fmtDayShort(occ) {
 // scrollKey/scrollSeq: anchor day key + a monotonically bumped sequence — each
 // new seq scrolls the list to the anchor's day group (nearest following group
 // when the exact day has no events).
-export function AgendaList({ occurrences, calendars, dimSet, sortMode, scrollKey, scrollSeq, onOpenEvent, onSetAttendance, onFeedback, onRequestWindow, emptyLabel }) {
+export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, scrollKey, scrollSeq, onOpenEvent, onSetAttendance, onFeedback, onRequestWindow, emptyLabel }) {
   const scrollRef = useRef(null);
   const [win, setWin] = useState({ top: 0, height: 800 });
   const flat = sortMode === 'match';
@@ -134,18 +135,27 @@ export function AgendaList({ occurrences, calendars, dimSet, sortMode, scrollKey
           style=${`top:${g.top}px;height:${g.height}px`}
         >
           ${g.dayKey !== null && html`<h3 class="bc-agenda-day">${fmtDayLong(dateOfDayKey(g.dayKey))}</h3>`}
-          ${visible && g.items.map((occ) => html`<div key=${occ.instanceId} class="bc-agenda-row" style=${`height:${ROW_H}px`}>
+          ${visible && g.items.map((occ) => {
+            // Row-level time state so the time and location columns dim with
+            // the chip; the chip carries the same class itself via nowMs.
+            const ts = nowMs ? timeState(occ, nowMs) : null;
+            return html`<div
+              key=${occ.instanceId}
+              class="bc-agenda-row${ts === 'past' ? ' is-past' : ts === 'now' ? ' is-now' : ''}"
+              style=${`height:${ROW_H}px`}
+            >
             <span class="bc-agenda-time">${flat
               ? fmtDayShort(occ) + ' · ' + (occ.allDay ? 'all day' : fmtTime(parseISO(occ.start)))
               : occ.allDay ? 'all day' : fmtTime(parseISO(occ.start)) + (occ.end ? ' to ' + fmtTime(parseISO(occ.end)) : '')}</span>
             <${EventChip}
               occ=${occ} cal=${calendars[occ.calendarId]} showTime=${false}
-              dimmed=${dimSet && dimSet.has(occ.instanceId)}
+              dimmed=${dimSet && dimSet.has(occ.instanceId)} nowMs=${nowMs}
               onOpen=${onOpenEvent}
             />
             ${occ.source === 'feed' && onSetAttendance && html`<${TriageCluster} occ=${occ} onSetAttendance=${onSetAttendance} onFeedback=${onFeedback} />`}
             ${occ.location && html`<span class="bc-agenda-loc">${occ.location}</span>`}
-          </div>`)}
+          </div>`;
+          })}
         </section>`;
       })}
     </div>

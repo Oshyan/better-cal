@@ -9,7 +9,7 @@
 
 import { html } from '../../vendor/index.js';
 import { contrastText, withAlpha, DEFAULT_COLOR } from '../lib/color.js';
-import { parseISO, fmtTime } from '../lib/dates.js';
+import { parseISO, fmtTime, timeState } from '../lib/dates.js';
 
 // Bail out of custom click handling when modifier keys are pressed so
 // browser-native behaviors are never hijacked.
@@ -21,7 +21,7 @@ function calColor(cal) {
   return (cal && cal.color) || DEFAULT_COLOR;
 }
 
-function stateClasses(occ, dimmed) {
+function stateClasses(occ, dimmed, nowMs) {
   let c = '';
   if (occ.attendance === 'interested') c += ' is-interested';
   if (occ.attendance === 'going') c += ' is-going';
@@ -29,6 +29,13 @@ function stateClasses(occ, dimmed) {
   if (occ.isNew) c += ' is-new';
   if (occ.isGroup) c += ' is-group';
   if (occ.dimmed) c += ' is-filter-dimmed';
+  // Time-relative state (from the global minute tick): ended events dim,
+  // currently running events carry the gold ring.
+  if (nowMs) {
+    const ts = timeState(occ, nowMs);
+    if (ts === 'past') c += ' is-past';
+    else if (ts === 'now') c += ' is-now';
+  }
   // Server highlight filters: accent ring + slight saturation boost.
   if (occ.highlighted) c += ' is-highlighted';
   // On-page type-to-filter: non-matching events are removed from view while
@@ -68,9 +75,9 @@ function openHandlers(occ, onOpen) {
 }
 
 // Compact chip for month cells and agenda rows.
-// props: occ, cal, dimmed, showTime, onOpen(instanceId, anchorRect, opts?),
-//        onPointerDown
-export function EventChip({ occ, cal, dimmed, showTime = true, onOpen, onPointerDown }) {
+// props: occ, cal, dimmed, nowMs, showTime,
+//        onOpen(instanceId, anchorRect, opts?), onPointerDown
+export function EventChip({ occ, cal, dimmed, nowMs, showTime = true, onOpen, onPointerDown }) {
   const color = calColor(cal);
   const interested = occ.attendance === 'interested';
   const style = interested
@@ -80,7 +87,7 @@ export function EventChip({ occ, cal, dimmed, showTime = true, onOpen, onPointer
   const { onClick, onDblClick } = openHandlers(occ, onOpen);
   return html`<button
     type="button"
-    class="bc-chip${stateClasses(occ, dimmed)}"
+    class="bc-chip${stateClasses(occ, dimmed, nowMs)}"
     style=${style}
     data-instance=${occ.instanceId}
     onPointerDown=${occ.isGroup ? undefined : onPointerDown}
@@ -97,9 +104,9 @@ export function EventChip({ occ, cal, dimmed, showTime = true, onOpen, onPointer
 }
 
 // Solid segment bar for multi-day events in month/week rows.
-// props: occ, cal, seg {contLeft, contRight}, dimmed, onOpen, onPointerDown,
-//        onEdgePointerDown(edge, ev)
-export function EventBar({ occ, cal, seg, dimmed, onOpen, onPointerDown, onEdgePointerDown }) {
+// props: occ, cal, seg {contLeft, contRight}, dimmed, nowMs, onOpen,
+//        onPointerDown, onEdgePointerDown(edge, ev)
+export function EventBar({ occ, cal, seg, dimmed, nowMs, onOpen, onPointerDown, onEdgePointerDown }) {
   const color = calColor(cal);
   const interested = occ.attendance === 'interested';
   const style = interested
@@ -108,7 +115,7 @@ export function EventBar({ occ, cal, seg, dimmed, onOpen, onPointerDown, onEdgeP
   const { onClick, onDblClick } = openHandlers(occ, onOpen);
   const edges = occ.isGroup ? null : onEdgePointerDown;
   return html`<div
-    class="bc-bar${stateClasses(occ, dimmed)}${seg.contLeft ? ' cont-l' : ''}${seg.contRight ? ' cont-r' : ''}"
+    class="bc-bar${stateClasses(occ, dimmed, nowMs)}${seg.contLeft ? ' cont-l' : ''}${seg.contRight ? ' cont-r' : ''}"
     style=${style}
     data-instance=${occ.instanceId}
     role="button"
@@ -133,9 +140,9 @@ export function EventBar({ occ, cal, seg, dimmed, onOpen, onPointerDown, onEdgeP
 }
 
 // Positioned block for the time grid.
-// props: occ, cal, rect {top,height,leftPct,widthPct}, dimmed, compact,
+// props: occ, cal, rect {top,height,leftPct,widthPct}, dimmed, nowMs, compact,
 //        onOpen, onPointerDown, onEdgePointerDown(edge, ev)
-export function EventBlock({ occ, cal, rect, dimmed, onOpen, onPointerDown, onEdgePointerDown }) {
+export function EventBlock({ occ, cal, rect, dimmed, nowMs, onOpen, onPointerDown, onEdgePointerDown }) {
   const color = calColor(cal);
   const interested = occ.attendance === 'interested';
   const bg = interested
@@ -148,7 +155,7 @@ export function EventBlock({ occ, cal, rect, dimmed, onOpen, onPointerDown, onEd
   const { onClick, onDblClick } = openHandlers(occ, onOpen);
   const edges = occ.isGroup ? null : onEdgePointerDown;
   return html`<div
-    class="bc-block${stateClasses(occ, dimmed)}"
+    class="bc-block${stateClasses(occ, dimmed, nowMs)}"
     style=${`top:${rect.top}px;height:${rect.height}px;left:${rect.leftPct}%;width:${rect.widthPct}%;${bg}`}
     data-instance=${occ.instanceId}
     role="button"

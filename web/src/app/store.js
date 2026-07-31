@@ -50,6 +50,10 @@ export const state = {
   viewAreaNarrow: false,
   anchor: todayKey(),
   scrollSeq: 0,
+  // Current epoch minute (Date.now() / 60000, floored), bumped by the single
+  // global tick installed in App. Views read it so time-relative styling
+  // (past dim, active gold ring) and the now-line advance as time passes.
+  nowMinute: Math.floor(Date.now() / 60000),
   visibleMonth: null, // {year, month}
   filterText: '',
   agendaShowPast: false,

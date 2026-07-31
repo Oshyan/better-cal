@@ -85,7 +85,8 @@ export function MonthGrid({
     const el = scrollRef.current;
     if (!el) return;
     const r = visibleWeekRange(el.scrollTop, el.clientHeight, rowH, minWeek, maxWeek, 3);
-    setRange((prev) => (prev.first === r.first && prev.last === r.last ? prev : r));
+    r.top = Math.max(minWeek, Math.min(maxWeek, minWeek + Math.floor(el.scrollTop / rowH)));
+    setRange((prev) => (prev.first === r.first && prev.last === r.last && prev.top === r.top ? prev : r));
   }, [rowH, minWeek, maxWeek]);
 
   // Scroll handling via rAF throttle.
@@ -112,14 +113,13 @@ export function MonthGrid({
   // Report visible month + demand data for the visible window.
   useEffect(() => {
     if (range.last <= range.first) return;
-    const topWeek = Math.min(range.first + 3 + 1, range.last);
-    if (onVisibleMonthChange) onVisibleMonthChange(dominantMonthOfWeek(topWeek));
+    if (onVisibleMonthChange) onVisibleMonthChange(dominantMonthOfWeek(range.top != null ? range.top : range.first));
     if (onRequestWindow) {
       const start = dateOfDayKey(keyOfEpochDay(firstEpochDayOfWeek(range.first - 4)));
       const end = dateOfDayKey(keyOfEpochDay(firstEpochDayOfWeek(range.last + 5)));
       onRequestWindow({ start: toISOWithOffset(start), end: toISOWithOffset(end) });
     }
-  }, [range.first, range.last]);
+  }, [range.first, range.last, range.top]);
 
   // --- drag helpers ---------------------------------------------------------
 

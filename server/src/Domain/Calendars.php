@@ -137,6 +137,12 @@ final class Calendars
         if (array_key_exists('staleAfterDays', $in)) {
             $fields['stale_after_days'] = max(1, (int) $in['staleAfterDays']);
         }
+        if (array_key_exists('groupSimilar', $in)) {
+            $settings = json_decode((string) ($before['settings_json'] ?? ''), true);
+            $settings = is_array($settings) ? $settings : [];
+            $settings['groupSimilar'] = filter_var($in['groupSimilar'], FILTER_VALIDATE_BOOL);
+            $fields['settings_json'] = json_encode($settings);
+        }
 
         $this->db->tx(function () use ($userId, $id, $fields, $in): void {
             if ($fields !== []) {
@@ -215,6 +221,10 @@ final class Calendars
             'staleAfterDays' => (int) $c['stale_after_days'],
             'folderIds' => $folderIds,
             'tagNames' => $tagNames,
+            'groupSimilar' => self::groupSimilarFor(
+                $c['settings_json'] !== null ? (string) $c['settings_json'] : null,
+                (string) $c['kind']
+            ),
             'health' => [
                 'lastPolledAt' => $c['last_polled_at'] !== null ? Time::dbToIso((string) $c['last_polled_at']) : null,
                 'status' => (string) $c['last_poll_status'],
@@ -241,6 +251,21 @@ final class Calendars
         foreach ($this->labels->tagIds($userId, $tagNames) as $tagId) {
             $this->db->run('INSERT IGNORE INTO calendar_tags (calendar_id, tag_id) VALUES (?, ?)', [$calendarId, $tagId]);
         }
+    }
+
+    /**
+     * Effective groupSimilar for a calendar: the stored settings_json value
+     * when set, otherwise the kind default (subscribed feeds group similar
+     * events by default; local calendars do not). Grouping itself is client-
+     * side; the server only persists the preference.
+     */
+    public static function groupSimilarFor(?string $settingsJson, string $kind): bool
+    {
+        $settings = $settingsJson !== null && $settingsJson !== '' ? json_decode($settingsJson, true) : null;
+        if (is_array($settings) && array_key_exists('groupSimilar', $settings)) {
+            return (bool) $settings['groupSimilar'];
+        }
+        return $kind === 'subscribed';
     }
 
     private function colorOrDefault(mixed $color): string

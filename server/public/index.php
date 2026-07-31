@@ -70,7 +70,8 @@ function bc_handle_api(Request $request, array $cfg): void
         $search = new Domain\Search($db);
         $savedViews = new Domain\SavedViews($db, $undo);
         $outFeeds = new Domain\OutFeeds($db, $search, $cfg);
-        $quickAdd = new Domain\QuickAdd($db, new LlmGateway($cfg), $events);
+        $settings = new Domain\Settings($db);
+        $quickAdd = new Domain\QuickAdd($db, new LlmGateway($cfg), $events, $settings);
 
         $authController = new Controllers\AuthController($auth);
         $calendarsController = new Controllers\CalendarsController($db, $calendars, $feeds);
@@ -82,6 +83,7 @@ function bc_handle_api(Request $request, array $cfg): void
         $filtersController = new Controllers\FiltersController($filters);
         $savedViewsController = new Controllers\SavedViewsController($savedViews);
         $tokensController = new Controllers\TokensController($apiTokens);
+        $settingsController = new Controllers\SettingsController($settings);
         $healthController = new Controllers\HealthController($db, $cfg);
 
         $router = new Router();
@@ -131,6 +133,9 @@ function bc_handle_api(Request $request, array $cfg): void
         $router->add('GET', "$base/outfeeds", [$outFeedsController, 'index']);
         $router->add('POST', "$base/outfeeds", [$outFeedsController, 'create']);
         $router->add('DELETE', "$base/outfeeds/:id", [$outFeedsController, 'delete']);
+
+        $router->add('GET', "$base/settings", [$settingsController, 'index']);
+        $router->add('PATCH', "$base/settings", [$settingsController, 'patch']);
 
         $router->add('GET', "$base/tokens", [$tokensController, 'index']);
         $router->add('POST', "$base/tokens", [$tokensController, 'create']);

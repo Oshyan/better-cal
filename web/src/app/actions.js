@@ -5,7 +5,7 @@ import {
   removeOccurrencesOfEvent, mergeWindow,
 } from './store.js';
 import { api, refreshWindow, undo } from './api.js';
-import { localTz, todayKey, addDaysKey, dayKeyOfISO } from '../lib/dates.js';
+import { localTz, todayKey, addDaysKey, occDayKey, pad } from '../lib/dates.js';
 
 export const VIEWS = ['month', 'weeks3', 'weeks2', 'week', 'day', 'agenda'];
 
@@ -26,6 +26,22 @@ export function goToday() {
 
 export function navigate(days) {
   set({ anchor: addDaysKey(state.anchor, days), scrollSeq: state.scrollSeq + 1 });
+}
+
+// Toolbar chevron step, sized to the current view: month and agenda step by
+// month, multiweek by its week count, week by week, day by day.
+export function stepAnchor(dir) {
+  const v = state.view;
+  if (v === 'day') return navigate(dir);
+  if (v === 'week') return navigate(7 * dir);
+  if (v === 'weeks2') return navigate(14 * dir);
+  if (v === 'weeks3') return navigate(21 * dir);
+  const vm = state.visibleMonth ||
+    { year: Number(state.anchor.slice(0, 4)), month: Number(state.anchor.slice(5, 7)) };
+  const k = vm.year * 12 + (vm.month - 1) + dir;
+  const y = Math.floor(k / 12);
+  const m = ((k % 12) + 12) % 12 + 1;
+  set({ anchor: y + '-' + pad(m) + '-01', scrollSeq: state.scrollSeq + 1 });
 }
 
 export function jumpToDate(dayKey, flashId) {
@@ -49,8 +65,8 @@ export function jumpToDate(dayKey, flashId) {
 }
 
 export function closeOverlays() {
-  if (state.popover || state.editor || state.expandedDay || state.searchOpen || state.quickAddOpen) {
-    set({ popover: null, editor: null, expandedDay: null, searchOpen: false, quickAddOpen: false });
+  if (state.popover || state.editor || state.expandedDay || state.searchOpen || state.quickAddOpen || state.jumpOpen) {
+    set({ popover: null, editor: null, expandedDay: null, searchOpen: false, quickAddOpen: false, jumpOpen: false });
     return true;
   }
   return false;

@@ -10,15 +10,21 @@ use BetterCal\Infra\LlmGateway;
 use BetterCal\Support\Time;
 
 /**
- * Natural-language quick-add: LLM parse with deterministic fallback.
+ * Natural-language quick-add, deterministic-first: FallbackParser always runs;
+ * the LLM is only consulted when the deterministic parse is incomplete or
+ * low-confidence and the user's nlParseMode setting allows it (see useLlm).
  * LLM failure never surfaces to the user.
  */
 final class QuickAdd
 {
+    /** Minimum fallback confidence for a complete parse to skip the LLM. */
+    public const FALLBACK_CONFIDENCE = 0.75;
+
     public function __construct(
         private readonly Db $db,
         private readonly LlmGateway $llm,
         private readonly Events $events,
+        private readonly Settings $settings,
     ) {
     }
 
@@ -32,16 +38,22 @@ final class QuickAdd
         $tz = Time::normalizeTzid($tz);
         $now = Time::nowUtc();
 
+        $fallback = FallbackParser::parse($text, $tz, $now);
+        $mode = (string) ($this->settings->forUser($userId)['nlParseMode'] ?? 'smart');
+
         $draft = null;
-        try {
-            $parsed = $this->llm->parseEvent($text, $now, $tz);
-            if ($parsed !== null) {
-                $draft = $parsed + ['confidence' => 0.9, 'source' => 'llm'];
+        if (self::useLlm($mode, $fallback)) {
+            try {
+                $parsed = $this->llm->parseEvent($text, $now, $tz);
+                if ($parsed !== null) {
+                    $draft = $parsed + ['confidence' => 0.9, 'source' => 'llm'];
+                }
+            } catch (\Throwable $e) {
+                error_log('quickadd llm failure: ' . $e->getMessage());
             }
-        } catch (\Throwable $e) {
-            error_log('quickadd llm failure: ' . $e->getMessage());
         }
-        $draft ??= FallbackParser::parse($text, $tz, $now);
+        $draft ??= $fallback;
+        unset($draft['complete']); // parser-internal, not part of the draft contract
 
         $draft['calendarId'] = $this->resolveCalendarId($userId, $calendarId);
 
@@ -60,6 +72,24 @@ final class QuickAdd
         }
 
         return ['draft' => $draft, 'event' => $event];
+    }
+
+    /**
+     * Pure decision: should the LLM parse run? Mode `always` keeps the old
+     * LLM-first behavior, `never` is deterministic-only, `smart` (default)
+     * skips the LLM when the fallback parse is complete (date resolved AND
+     * time-or-allDay) with confidence >= FALLBACK_CONFIDENCE.
+     */
+    public static function useLlm(string $mode, array $fallback): bool
+    {
+        if ($mode === 'never') {
+            return false;
+        }
+        if ($mode === 'always') {
+            return true;
+        }
+        $complete = (bool) ($fallback['complete'] ?? false);
+        return !($complete && (float) ($fallback['confidence'] ?? 0.0) >= self::FALLBACK_CONFIDENCE);
     }
 
     private function resolveCalendarId(int $userId, ?int $calendarId): ?int

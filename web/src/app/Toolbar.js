@@ -1,11 +1,13 @@
-// Toolbar: saved views menu, view switcher, today, visible month label,
-// on-page filter, search and quick-add buttons. Single-row inline layout.
+// Toolbar: saved views menu, view switcher, today, prev/next chevrons around
+// a clickable date label (opens the jump popover, hotkey g), on-page filter,
+// search, quick add and New buttons. Single-row inline layout.
 
 import { html } from '../../vendor/index.js';
 import { useStore, set, shallowEq } from './store.js';
-import { setView, goToday } from './actions.js';
-import { fmtMonthYear } from '../lib/dates.js';
+import { setView, goToday, stepAnchor } from './actions.js';
+import { fmtMonthYear, fmtDayLong, dateOfDayKey } from '../lib/dates.js';
 import { ViewSwitcher } from './ViewSwitcher.js';
+import { JumpPopover } from './JumpPopover.js';
 
 const VIEW_LABELS = [
   ['month', 'Month'],
@@ -16,22 +18,43 @@ const VIEW_LABELS = [
   ['agenda', 'Agenda'],
 ];
 
+const STEP_UNITS = {
+  month: 'month', weeks3: '3 weeks', weeks2: '2 weeks',
+  week: 'week', day: 'day', agenda: 'month',
+};
+
 export function Toolbar({ onToggleSidebar }) {
-  const { view, visibleMonth, filterText } = useStore(
-    (s) => ({ view: s.view, visibleMonth: s.visibleMonth, filterText: s.filterText }),
+  const { view, anchor, visibleMonth, filterText, jumpOpen } = useStore(
+    (s) => ({
+      view: s.view, anchor: s.anchor, visibleMonth: s.visibleMonth,
+      filterText: s.filterText, jumpOpen: s.jumpOpen,
+    }),
     shallowEq,
   );
 
-  const label = visibleMonth
-    ? fmtMonthYear(new Date(visibleMonth.year, visibleMonth.month - 1, 1))
-    : '';
+  // Day view shows the full date ("Friday, August 8"); everything else the
+  // visible month.
+  const label = view === 'day'
+    ? fmtDayLong(dateOfDayKey(anchor))
+    : (visibleMonth ? fmtMonthYear(new Date(visibleMonth.year, visibleMonth.month - 1, 1)) : '');
+  const unit = STEP_UNITS[view] || 'month';
 
   return html`<header class="bc-toolbar">
     <button type="button" class="bc-icon-btn bc-menu-btn" aria-label="Toggle sidebar" onClick=${onToggleSidebar}>☰</button>
     <${ViewSwitcher} />
     <span class="bc-brand">Better-Cal</span>
     <button type="button" class="bc-btn" onClick=${goToday}>Today</button>
-    <span class="bc-toolbar-month" aria-live="polite">${label}</span>
+    <div class="bc-toolbar-nav">
+      <button type="button" class="bc-icon-btn bc-nav-btn" aria-label=${'Previous ' + unit} title=${'Previous ' + unit} onClick=${() => stepAnchor(-1)}>‹</button>
+      <button
+        type="button" class="bc-toolbar-month bc-toolbar-date"
+        aria-haspopup="dialog" aria-expanded=${jumpOpen}
+        title="Jump to date (g)" aria-live="polite"
+        onClick=${() => set({ jumpOpen: !jumpOpen })}
+      >${label}</button>
+      <button type="button" class="bc-icon-btn bc-nav-btn" aria-label=${'Next ' + unit} title=${'Next ' + unit} onClick=${() => stepAnchor(1)}>›</button>
+      <${JumpPopover} />
+    </div>
     <nav class="bc-viewswitch" aria-label="View">
       ${VIEW_LABELS.map(([v, l]) => html`<button
         key=${v} type="button"
@@ -49,6 +72,7 @@ export function Toolbar({ onToggleSidebar }) {
       onInput=${(e) => set({ filterText: e.target.value })}
     />
     <button type="button" class="bc-icon-btn" aria-label="Search" title="Search ( / )" onClick=${() => set({ searchOpen: true })}>${'🔍'}</button>
-    <button type="button" class="bc-btn bc-btn-primary" title="Quick add (c)" onClick=${() => set({ quickAddOpen: true })}>+ New</button>
+    <button type="button" class="bc-icon-btn" aria-label="Quick add" title="Quick add: type it in plain language (c)" onClick=${() => set({ quickAddOpen: true })}>${'⚡'}</button>
+    <button type="button" class="bc-btn bc-btn-primary" title="New event (full editor)" onClick=${() => set({ editor: { mode: 'create', draft: {} } })}>+ New</button>
   </header>`;
 }

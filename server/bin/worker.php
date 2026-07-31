@@ -51,8 +51,14 @@ try {
                     break;
                 case 'filter_eval':
                     $filterId = isset($payload['filterId']) ? (int) $payload['filterId'] : null;
-                    $evaluated = $promptEval->run($filterId);
-                    echo bc_ts() . ' filter_eval' . ($filterId !== null ? " filter=$filterId" : '') . " evaluated=$evaluated\n";
+                    $eventIds = isset($payload['eventIds']) && is_array($payload['eventIds'])
+                        ? array_map('intval', $payload['eventIds'])
+                        : null;
+                    $evaluated = $promptEval->run($filterId, $eventIds);
+                    echo bc_ts() . ' filter_eval'
+                        . ($filterId !== null ? " filter=$filterId" : '')
+                        . ($eventIds !== null ? ' events=' . count($eventIds) : '')
+                        . " evaluated=$evaluated\n";
                     break;
                 case 'rank_events':
                     $scored = $ranking->run();

@@ -1,6 +1,6 @@
 // Global keyboard map.
-// c quick-add, / search, t today, v cycle views, 1-6 direct view,
-// arrows navigate anchor, r reschedule (popover open), Esc closes overlays.
+// c quick-add, / search, t today, g jump-to-date, v cycle views, 1-6 direct
+// view, arrows navigate anchor, r reschedule (popover open), Esc closes overlays.
 // Esc inside reschedule mode is handled by RescheduleOverlay (capture phase).
 
 import { state, set } from './store.js';
@@ -32,6 +32,10 @@ export function installKeyboard() {
       case 't':
         e.preventDefault();
         goToday();
+        break;
+      case 'g':
+        e.preventDefault();
+        set({ jumpOpen: true });
         break;
       case 'r':
         if (state.popover) {

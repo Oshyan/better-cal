@@ -13,16 +13,23 @@ use BetterCal\Support\Time;
  * Background evaluation of prompt filters against feed events (PRD 5.4/5.8).
  * Runs only from the worker ('filter_eval' jobs), never in the request path.
  * Pending (filter, event) pairs — enabled prompt filters crossed with
- * in-scope future feed events that have no cached verdict — are scored in
- * batches of up to BATCH_SIZE events per Gemini call and cached in
- * filter_evals. Un-evaluated pairs are treated as pass by the read path, so
- * LLM failures never hide or delay anything; the job's backoff retries them.
+ * in-scope feed events inside a wide window (WINDOW_YEARS_PAST back to
+ * WINDOW_YEARS_FUTURE forward, so browsing past months is covered too) that
+ * have no cached verdict — are scored in batches of up to BATCH_SIZE events
+ * per Gemini call and cached in filter_evals. A job may also carry explicit
+ * eventIds (on-read healing from Events::window); those are evaluated
+ * regardless of the window. Un-evaluated pairs are treated as pass by the
+ * read path, so LLM failures never hide or delay anything; the job's backoff
+ * retries them, and oversized sweeps chain follow-up jobs until drained.
  */
 final class PromptEval
 {
     public const BATCH_SIZE = 25;
-    /** Cap per filter per enqueue (create/update re-evaluation sweep). */
+    /** Cap per filter per run pass; leftovers drain via chained follow-up jobs. */
     public const MAX_EVENTS_PER_FILTER = 500;
+    /** Sweep window: how far back/forward feed events are auto-evaluated. */
+    public const WINDOW_YEARS_PAST = 2;
+    public const WINDOW_YEARS_FUTURE = 3;
     /** LLM calls per job run; leftovers continue in a follow-up job. */
     private const MAX_CALLS_PER_RUN = 4;
     private const DESCRIPTION_EXCERPT_CHARS = 300;
@@ -35,12 +42,15 @@ final class PromptEval
     }
 
     /**
-     * Evaluate pending pairs for one filter (create/update sweep) or for all
-     * enabled prompt filters (poll hook, nightly catch-up). Returns the number
-     * of events evaluated. Throws when one or more LLM batches failed so the
-     * job queue retries with backoff; verdicts already written stay written.
+     * Evaluate pending pairs for one filter (create/update sweep), for all
+     * enabled prompt filters (poll hook, nightly catch-up), or for an explicit
+     * event-id set (on-read healing). Returns the number of events evaluated.
+     * Throws when one or more LLM batches failed so the job queue retries
+     * with backoff; verdicts already written stay written.
+     *
+     * @param ?list<int> $eventIds restrict to these events (skips the window)
      */
-    public function run(?int $filterId = null): int
+    public function run(?int $filterId = null, ?array $eventIds = null): int
     {
         if (!$this->llm->isConfigured()) {
             return 0; // un-evaluated pairs are passes; nothing to retry
@@ -62,7 +72,7 @@ final class PromptEval
             if (!is_array($config) || trim((string) ($config['prompt'] ?? '')) === '') {
                 continue;
             }
-            $pending = $this->pendingEvents($filter);
+            $pending = $this->pendingEvents($filter, $eventIds);
             foreach (self::batches($pending) as $batch) {
                 if ($calls >= self::MAX_CALLS_PER_RUN) {
                     $remaining = true;
@@ -99,20 +109,41 @@ final class PromptEval
         }
         if ($remaining && $this->queue !== null) {
             // Continue in the next worker minute instead of overrunning this run.
-            $this->queue->enqueue('filter_eval', $filterId !== null ? ['filterId' => $filterId] : []);
+            $payload = [];
+            if ($filterId !== null) {
+                $payload['filterId'] = $filterId;
+            }
+            if ($eventIds !== null) {
+                $payload['eventIds'] = array_values($eventIds);
+                $payload['hash'] = Filters::evalPayloadHash($eventIds);
+            }
+            $this->queue->enqueue('filter_eval', $payload);
         }
         return $evaluated;
     }
 
     /**
-     * Feed events in the filter's scope, future (or recurring), with no
-     * cached verdict for this filter yet. Most recently added first, capped.
+     * Feed events in the filter's scope with no cached verdict for this
+     * filter yet, restricted either to the explicit $eventIds (on-read
+     * healing, no date window) or to the wide sweep window (2 years back to
+     * 3 years forward; recurring masters always qualify). Most recently
+     * added first, capped per pass — chained runs drain the rest.
      *
+     * @param ?list<int> $eventIds
      * @return list<array<string,mixed>>
      */
-    private function pendingEvents(array $filter): array
+    private function pendingEvents(array $filter, ?array $eventIds): array
     {
-        $params = [(int) $filter['id'], (int) $filter['user_id'], Time::nowDb()];
+        $params = [(int) $filter['id'], (int) $filter['user_id']];
+        if ($eventIds !== null) {
+            [$in, $inParams] = Db::in(array_map('intval', $eventIds));
+            $windowSql = " AND e.id IN $in";
+            array_push($params, ...$inParams);
+        } else {
+            $windowSql = ' AND (e.rrule IS NOT NULL OR (e.end_utc >= ? AND e.start_utc <= ?))';
+            $params[] = Time::toDb(Time::nowUtc()->sub(new \DateInterval('P' . self::WINDOW_YEARS_PAST . 'Y')));
+            $params[] = Time::toDb(Time::nowUtc()->add(new \DateInterval('P' . self::WINDOW_YEARS_FUTURE . 'Y')));
+        }
         $scopeSql = '';
         if ($filter['scope'] === 'calendar') {
             $scopeSql = ' AND e.calendar_id = ?';
@@ -126,7 +157,7 @@ final class PromptEval
              FROM events e
              LEFT JOIN filter_evals fe ON fe.filter_id = ? AND fe.event_id = e.id
              WHERE fe.id IS NULL AND e.user_id = ? AND e.source = 'feed' AND e.deleted_at IS NULL
-               AND (e.end_utc >= ? OR e.rrule IS NOT NULL)
+               $windowSql
                $scopeSql
              ORDER BY e.created_at DESC, e.id DESC
              LIMIT " . self::MAX_EVENTS_PER_FILTER,

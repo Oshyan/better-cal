@@ -130,8 +130,9 @@ function MiniMap({ lat, lng, location }) {
         keyboard: false,
         zoomControl: false,
       });
-      // MapTiler raster tiles when the server has a key configured (style
-      // from the mapStyle setting); plain OSM tiles otherwise.
+      // Stadia Outdoors tiles (auth is by authorized domain on the Stadia
+      // account, no key in the URL); MapTiler when a key is configured
+      // (legacy option, kept for self-hosters); plain OSM as last resort.
       const maptilerKey = state.config && state.config.maptilerKey;
       if (maptilerKey) {
         const style = (state.settings && state.settings.mapStyle) || 'streets-v2';
@@ -143,9 +144,9 @@ function MiniMap({ lat, lng, location }) {
           }
         ).addTo(map);
       } else {
-        L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        L.tileLayer('https://tiles.stadiamaps.com/tiles/outdoors/{z}/{x}/{y}{r}.png', {
           maxZoom: 19,
-          attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+          attribution: '© <a href="https://stadiamaps.com/">Stadia Maps</a> © <a href="https://openmaptiles.org/">OpenMapTiles</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
         }).addTo(map);
       }
       const icon = L.icon({

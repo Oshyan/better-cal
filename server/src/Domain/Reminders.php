@@ -257,7 +257,10 @@ final class Reminders
                     continue; // already sent (dedup)
                 }
                 foreach ($subs as $sub) {
-                    $result = $this->sender->send($sub, $due['payload']);
+                    // Reminders lose their value fast: if the push service
+                    // cannot deliver within 15 minutes (device unreachable or
+                    // dozing), drop it rather than arriving hours stale.
+                    $result = $this->sender->send($sub, $due['payload'], 900);
                     if ($result === PushSender::OK) {
                         $this->subscriptions->recordSuccess((int) $sub['id']);
                         $sent++;

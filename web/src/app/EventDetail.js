@@ -7,7 +7,8 @@
 import { html, useState, useRef, useMemo, useEffect } from '../../vendor/index.js';
 import { useStore, set, state, patchOccurrence } from './store.js';
 import { api } from './api.js';
-import { deleteEvent, triageAttendance, sendFeedback, enterReschedule, sameDayList } from './actions.js';
+import { deleteEvent, triageAttendance, sendFeedback, enterReschedule, sameDayList, openTripByEventId } from './actions.js';
+import { TripDetail, TripRow } from './Trips.js';
 import { trapFocus } from '../ui/DayExpand.js';
 import { ThumbIcon, CalDot } from '../ui/icons.js';
 import {
@@ -261,6 +262,9 @@ export function EventDetail() {
 
   if (!detail || !occ) return null;
 
+  // Containers get their own view: span line, member list, add/detach.
+  if (occ.isContainer) return html`<${TripDetail} occ=${occ} />`;
+
   const cal = state.calendars.find((c) => c.id === occ.calendarId);
   const isFeed = cal ? cal.kind === 'subscribed' : occ.source === 'feed';
   const color = (cal && cal.color) || '#888';
@@ -298,6 +302,10 @@ export function EventDetail() {
         <h2 class="bc-detail-title${occ.status === 'cancelled' ? ' is-cancelled' : ''}">
           ${occ.title || '(untitled)'}${occ.isNew ? html` <span class="bc-new-pill">new</span>` : ''}
         </h2>
+        ${occ.containers && occ.containers.length > 0 && html`<button
+          type="button" class="bc-partof" title="Open this trip"
+          onClick=${() => openTripByEventId(occ.containers[0].eventId)}
+        ><span class="bc-partof-glyph" aria-hidden="true">🔗</span> Part of: ${occ.containers[0].title}</button>`}
         <div class="bc-detail-calrow">
           <span class="bc-detail-calchip">
             <${CalDot} cal=${cal} color=${color} />
@@ -333,6 +341,7 @@ export function EventDetail() {
           ${occ.tags && occ.tags.length > 0 && html`<span class="bc-pop-tags">${occ.tags.map((t) => '#' + t).join(' ')}</span>`}
           ${occ.people && occ.people.length > 0 && html`<span class="bc-detail-people">With ${occ.people.join(', ')}</span>`}
         </div>`}
+        <${TripRow} occ=${occ} />
         ${isFeed && cal && html`<div class="bc-detail-section bc-detail-source">
           <div class="bc-detail-label">Source</div>
           ${cal.sourceUrl

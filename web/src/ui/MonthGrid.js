@@ -28,7 +28,7 @@ import {
   monthStartsInRange, dominantMonthOfRows,
 } from './monthmath.js';
 import { assignLanes } from './layout.js';
-import { EventChip, EventBar } from './EventChip.js';
+import { EventChip, EventBar, TripBand } from './EventChip.js';
 import { startPointerDrag, cloneAsGhost } from './DragController.js';
 import { CreateChip } from './CreateChip.js';
 import { normalizeDayRange, dayRangeDraft, dayRangeLabel } from '../lib/quickcreate.js';
@@ -40,6 +40,9 @@ const MOBILE_LANES = 3;     // pill lanes per day on mobile 7-col, then dots + "
 const CELL_HEAD = 24;  // px reserved for the day number row
 const GUTTER_W = 44;   // px month-label gutter
 const MOBILE_QUERY = '(max-width: 600px)';
+const BAND_H = 16;        // px per trip backdrop band lane (desktop)
+const BAND_H_MOBILE = 12; // compact band lane at <=600px
+const MAX_BAND_LANES = 2; // stacked bands per row; more overflow into day expand
 
 // Weekday header labels, in the configured week-start order (settings can
 // change it at runtime, so this is computed lazily and cached per start day).
@@ -54,13 +57,24 @@ function weekdayNames() {
   return weekdayCache.names;
 }
 
-// Index occurrences into per-row multi-day bars and per-day single chips.
+// Index occurrences into per-row multi-day bars, per-day single chips, and
+// per-row trip backdrop bands (containers never fight for chip/bar lanes:
+// they render as tinted bands along the top of their day span).
 function indexOccurrences(occurrences, columns) {
   const byDay = new Map();
   const barsByRow = new Map();
+  const bandsByRow = new Map();
   for (const occ of occurrences) {
     if (occ.attendance === 'hidden') continue;
     const { startKey, endKey } = occurrenceDaySpan(occ);
+    if (occ.isContainer) {
+      for (const seg of rowSpanSegments(startKey, endKey, columns)) {
+        let list = bandsByRow.get(seg.rowIndex);
+        if (!list) bandsByRow.set(seg.rowIndex, (list = []));
+        list.push({ occ, seg });
+      }
+      continue;
+    }
     if (startKey === endKey && !occ.allDay) {
       let list = byDay.get(startKey);
       if (!list) byDay.set(startKey, (list = []));
@@ -74,7 +88,7 @@ function indexOccurrences(occurrences, columns) {
     }
   }
   for (const list of byDay.values()) list.sort((a, b) => a.start < b.start ? -1 : 1);
-  return { byDay, barsByRow };
+  return { byDay, barsByRow, bandsByRow };
 }
 
 export function MonthGrid({
@@ -372,7 +386,7 @@ export function MonthGrid({
     weeks.push(html`<${WeekRow}
       key=${wi} weekIndex=${wi} columns=${columns} ribbon=${ribbon}
       top=${weekTop(wi, minWeek, rowH)} rowH=${rowH}
-      byDay=${idx.byDay} bars=${idx.barsByRow.get(wi)} calendars=${calendars}
+      byDay=${idx.byDay} bars=${idx.barsByRow.get(wi)} bands=${idx.bandsByRow.get(wi)} calendars=${calendars}
       capacity=${capacity} chipRow=${chipRow} mobile=${mobile} todayKey=${tKey} dimSet=${dimSet} nowMs=${nowMs}
       sel=${sel}
       onOpenEvent=${onOpenEvent} onExpandDay=${onExpandDay}
@@ -439,16 +453,38 @@ export function MonthGrid({
 }
 
 function WeekRow({
-  weekIndex, columns, ribbon, top, rowH, byDay, bars, calendars, capacity, chipRow, mobile,
+  weekIndex, columns, ribbon, top, rowH, byDay, bars, bands, calendars, capacity, chipRow, mobile,
   todayKey: tKey, dimSet, nowMs, sel, onOpenEvent, onExpandDay, dragMoveOcc, dragResizeOcc, dragCreate,
   cellClickSelect, quickCreateDay,
 }) {
   const keys = dayKeysOfRow(weekIndex, columns);
+
+  // Trip backdrop bands: stacked under the day-number strip, capped at
+  // MAX_BAND_LANES (extras overflow into the day expand via the +N counter).
+  // Bars and chips shift down by the band block so bands never eat lanes.
+  const bandList = bands || [];
+  const bandH = mobile ? BAND_H_MOBILE : BAND_H;
+  const bandLanes = assignLanes(bandList.map((b) => ({ id: b.occ.instanceId + ':' + b.seg.startCol, startCol: b.seg.startCol, endCol: b.seg.endCol })));
+  let bandLaneCount = 0;
+  for (const l of bandLanes.values()) bandLaneCount = Math.max(bandLaneCount, l + 1);
+  const shownBandLanes = Math.min(bandLaneCount, MAX_BAND_LANES);
+  const bandOffset = shownBandLanes * bandH;
+  const bandExtraByCol = new Array(columns).fill(0);
+  const visibleBands = [];
+  for (const b of bandList) {
+    const lane = bandLanes.get(b.occ.instanceId + ':' + b.seg.startCol);
+    if (lane < MAX_BAND_LANES) visibleBands.push({ ...b, lane });
+    else for (let c = b.seg.startCol; c <= b.seg.endCol; c++) bandExtraByCol[c]++;
+  }
+  // Rows carrying bands have less chip room; recompute against the real
+  // remaining height (never below one lane).
+  const cap = Math.min(capacity, Math.max(1, Math.floor((rowH - CELL_HEAD - bandOffset - 4) / chipRow)));
+
   const barList = bars || [];
   const lanes = assignLanes(barList.map((b) => ({ id: b.occ.instanceId + ':' + b.seg.startCol, startCol: b.seg.startCol, endCol: b.seg.endCol })));
   let barLaneCount = 0;
   for (const l of lanes.values()) barLaneCount = Math.max(barLaneCount, l + 1);
-  const maxBarLanes = Math.min(barLaneCount, Math.max(1, capacity - 1));
+  const maxBarLanes = Math.min(barLaneCount, Math.max(1, cap - 1));
   const chipStartLane = Math.min(barLaneCount, maxBarLanes);
   // Hidden bar segments count toward each covered day's overflow.
   const extraByCol = new Array(columns).fill(0);
@@ -462,8 +498,8 @@ function WeekRow({
   const cells = keys.map((k, col) => {
     const [y, m, d] = k.split('-').map(Number);
     const singles = byDay.get(k) || [];
-    const room = Math.max(0, capacity - chipStartLane);
-    const overflowFromBars = extraByCol[col];
+    const room = Math.max(0, cap - chipStartLane);
+    const overflowFromBars = extraByCol[col] + bandExtraByCol[col];
     const needsMore = singles.length + overflowFromBars > room;
     const shown = needsMore ? Math.max(0, room - 1) : singles.length;
     const hidden = singles.length - shown + overflowFromBars;
@@ -493,7 +529,7 @@ function WeekRow({
         onPointerDown=${(e) => e.stopPropagation()}
         onClick=${(e) => { e.stopPropagation(); if (quickCreateDay) quickCreateDay(k); }}
       >+</button>
-      <div class="bc-cell-chips" style=${`top:${CELL_HEAD + chipStartLane * chipRow}px`}>
+      <div class="bc-cell-chips" style=${`top:${CELL_HEAD + bandOffset + chipStartLane * chipRow}px`}>
         ${singles.slice(0, shown).map((occ) => html`<${EventChip}
           key=${occ.instanceId} occ=${occ} cal=${calendars[occ.calendarId]}
           dimmed=${dimSet && dimSet.has(occ.instanceId)} nowMs=${nowMs}
@@ -519,7 +555,20 @@ function WeekRow({
     <div class="bc-week-gutter"></div>
     <div class="bc-week-days">
       ${cells}
-      <div class="bc-week-bars" style=${`top:${CELL_HEAD}px`}>
+      ${visibleBands.length > 0 && html`<div class="bc-week-bands" style=${`top:${CELL_HEAD}px`}>
+        ${visibleBands.map(({ occ, seg, lane }) => html`<div
+          key=${'band:' + occ.instanceId + ':' + seg.startCol}
+          class="bc-band-slot"
+          style=${`left:${(seg.startCol / columns) * 100}%;width:${((seg.endCol - seg.startCol + 1) / columns) * 100}%;top:${lane * bandH}px;height:${bandH}px`}
+        >
+          <${TripBand}
+            occ=${occ} cal=${calendars[occ.calendarId]} seg=${seg}
+            dimmed=${dimSet && dimSet.has(occ.instanceId)} nowMs=${nowMs}
+            onOpen=${onOpenEvent}
+          />
+        </div>`)}
+      </div>`}
+      <div class="bc-week-bars" style=${`top:${CELL_HEAD + bandOffset}px`}>
         ${visibleBars.map(({ occ, seg, lane }) => html`<div
           key=${occ.instanceId + ':' + seg.startCol}
           class="bc-bar-slot"

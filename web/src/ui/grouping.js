@@ -37,6 +37,7 @@ export function groupOccurrences(occurrences, groupFlags) {
   for (const occ of occurrences) {
     if (!flags[occ.calendarId]) continue;
     if (occ.attendance === 'hidden') continue;
+    if (occ.isContainer) continue; // trips render as bands, never as group chips
     const { startKey, endKey } = occurrenceDaySpan(occ);
     if (startKey !== endKey) continue; // multi-day events never group
     const key = occ.calendarId + '|' + startKey + '|' + baseTitle(occ.title).toLowerCase();

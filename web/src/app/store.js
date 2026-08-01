@@ -66,6 +66,10 @@ export const state = {
   savedViews: [],     // [{id, name, config, position}]
   activeViewId: null, // saved view currently applied, if any
 
+  // Bumped after every trip link change (attach/detach/trip delete) so open
+  // trip detail views refetch their member list.
+  tripLinksSeq: 0,
+
   route: 'calendar', // calendar | organize | outfeeds | filters | views | settings
 
   quickAddOpen: false,
@@ -195,9 +199,20 @@ export function removeOccurrencesOfEvent(eventId) {
 }
 
 let toastSeq = 0;
+// opts: undoable, error, duration, and an optional action prompt
+// (actionLabel + onAction, with dismissLabel replacing the ✕ dismiss).
 export function toast(text, opts = {}) {
   const id = ++toastSeq;
-  set({ toasts: [...state.toasts, { id, text, undoable: !!opts.undoable, error: !!opts.error }] });
+  set({
+    toasts: [...state.toasts, {
+      id, text,
+      undoable: !!opts.undoable,
+      error: !!opts.error,
+      actionLabel: opts.actionLabel || null,
+      onAction: opts.onAction || null,
+      dismissLabel: opts.dismissLabel || null,
+    }],
+  });
   setTimeout(() => {
     set({ toasts: state.toasts.filter((t) => t.id !== id) });
   }, opts.duration || 6000);

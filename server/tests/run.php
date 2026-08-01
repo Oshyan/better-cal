@@ -1117,9 +1117,23 @@ $pl = Reminders::payload($payloadRow, $startUtc, false);
 checkEq('rem payload title', 'Dinner', $pl['title']);
 checkEq('rem payload body time + location', 'Fri, Aug 7, 12:00 PM · Zuni Cafe', $pl['body']);
 checkEq('rem payload tag is instanceId', '42:20260807T190000Z', $pl['tag']);
-checkEq('rem payload url deep link', '/?event=' . rawurlencode('42:20260807T190000Z'), $pl['url']);
+checkEq(
+    'rem payload url deep link carries event + at',
+    '/?event=' . rawurlencode('42:20260807T190000Z') . '&at=' . rawurlencode('2026-08-07T19:00:00Z'),
+    $pl['url']
+);
+checkEq(
+    'rem payload url format',
+    1,
+    preg_match('#^/\?event=\d+%3A\d{8}T\d{6}Z&at=\d{4}-\d{2}-\d{2}T\d{2}%3A\d{2}%3A\d{2}Z$#', $pl['url'])
+);
 $plAllDay = Reminders::payload(['id' => 7, 'title' => 'Fair', 'location' => null, 'tzid' => 'America/Los_Angeles', 'all_day' => 1], $allDayLa, true);
 checkEq('rem payload allday body', 'Fri, Aug 7 · All day', $plAllDay['body']);
+checkEq(
+    'rem payload allday url at is occurrence start utc',
+    '/?event=' . rawurlencode('7:20260807T070000Z') . '&at=' . rawurlencode('2026-08-07T07:00:00Z'),
+    $plAllDay['url']
+);
 
 // VALARM trigger mapping, both directions.
 checkEq('valarm parse -PT10M', 10, Ics::parseTriggerMinutes('-PT10M'));

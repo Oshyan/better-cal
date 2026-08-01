@@ -194,7 +194,10 @@ final class Events
                     Filters::disposition($row, $activeFilters),
                     Filters::promptDisposition($row, $promptCtx['filters'], $promptCtx['failed'])
                 );
-                if ($disposition === 'hide') {
+                // includeHidden=1 also bypasses filter hiding: reminders fire
+                // regardless of filters, and the notification deep link must
+                // be able to resolve the occurrence it points at.
+                if ($disposition === 'hide' && !$includeHidden) {
                     continue;
                 }
                 if ($disposition === 'dim') {

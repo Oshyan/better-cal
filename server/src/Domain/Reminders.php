@@ -392,10 +392,13 @@ final class Reminders
             $body .= ' · ' . mb_substr((string) $row['location'], 0, 120);
         }
         $instanceId = Recurrence::instanceId((int) $row['id'], $startUtc);
+        // &at= carries the occurrence start so the click handler can load a
+        // window guaranteed to contain it (contract: docs/api-contract.md).
+        $at = $startUtc->setTimezone(Time::utc())->format('Y-m-d\TH:i:s\Z');
         return [
             'title' => (string) ($row['title'] ?? '') !== '' ? (string) $row['title'] : '(untitled event)',
             'body' => $body,
-            'url' => '/?event=' . rawurlencode($instanceId),
+            'url' => '/?event=' . rawurlencode($instanceId) . '&at=' . rawurlencode($at),
             'tag' => $instanceId,
         ];
     }

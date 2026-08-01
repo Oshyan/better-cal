@@ -157,6 +157,15 @@ function mergeRanges(ranges) {
   return out;
 }
 
+// Insert one occurrence fetched outside the window pipeline (notification
+// deep links). Deliberately does NOT register a loaded range: the occurrence
+// may come from an includeHidden fetch, and views must still do a full load
+// for that range later.
+export function insertOccurrence(occ) {
+  state.occ.set(occ.instanceId, occ);
+  set({ occVersion: state.occVersion + 1 });
+}
+
 export function patchOccurrence(instanceId, patch) {
   const occ = state.occ.get(instanceId);
   if (!occ) return null;

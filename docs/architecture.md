@@ -46,7 +46,7 @@ docs/
 - Frontend bettercal-ui is pure: takes data + emits intents (callbacks); never fetches. App layer owns state and API.
 - Undo: every mutating API call records an inverse patch in `mutations`; `POST /api/v1/undo` reverts the latest for the user.
 - LLM: `LlmGateway` with `parse_event(text, now, tz)` and `translate_search(text, now, tz)`; provider `gemini` (model gemini-3.6-flash, key from env `BETTERCAL_GEMINI_API_KEY`). Deterministic fallback parser must handle common absolute/relative datetimes; LLM failure never blocks event creation.
-- Config via environment (set in `.env` file at app root on server, loaded by config.php): `BETTERCAL_DB_DSN`, `BETTERCAL_DB_USER`, `BETTERCAL_DB_PASS`, `BETTERCAL_GEMINI_API_KEY`, `BETTERCAL_BASE_URL`, `BETTERCAL_SESSION_SECRET`, `BETTERCAL_VAPID_PUBLIC`, `BETTERCAL_VAPID_PRIVATE`, `BETTERCAL_VAPID_SUBJECT` (Web Push reminders; generate keys once with `php server/bin/vapid.php --generate`).
+- Config via environment (set in `.env` file at app root on server, loaded by config.php): `BETTERCAL_DB_DSN`, `BETTERCAL_DB_USER`, `BETTERCAL_DB_PASS`, `BETTERCAL_GEMINI_API_KEY`, `BETTERCAL_BASE_URL`, `BETTERCAL_SESSION_SECRET`, `BETTERCAL_VAPID_PUBLIC`, `BETTERCAL_VAPID_PRIVATE`, `BETTERCAL_VAPID_SUBJECT` (Web Push reminders; generate keys once with `php server/bin/vapid.php --generate`), `BETTERCAL_MAPTILER_KEY` (optional MapTiler raster tile key for the event detail mini-map; exposed to the client via `GET /api/v1/config`, OSM tiles when unset).
 
 ## Milestone scope being built now (M1-M3)
 

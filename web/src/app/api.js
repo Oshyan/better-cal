@@ -64,6 +64,17 @@ export async function logout() {
   set({ authed: false, user: null, csrf: null });
 }
 
+// --- server config ---------------------------------------------------------
+
+// Public-safe config (MapTiler tile key, map style), fetched once at boot.
+// Failure just means the mini-map keeps its OSM tiles.
+export async function loadConfig() {
+  try {
+    const data = await api('/config');
+    set({ config: { maptilerKey: (data && data.maptilerKey) || null } });
+  } catch (e) { /* non-critical */ }
+}
+
 // --- calendars -------------------------------------------------------------
 
 export async function loadCalendars() {

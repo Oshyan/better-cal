@@ -1212,6 +1212,190 @@ foreach ([
 checkEq('push endpoint hash is sha256', hash('sha256', 'https://x.example/e'), PushSubscriptions::endpointHash('https://x.example/e'));
 
 // ---------------------------------------------------------------------------
+// Sanitize: description HTML allowlist (pure, no DB)
+// ---------------------------------------------------------------------------
+
+use BetterCal\Domain\PlaceSearch;
+use BetterCal\Domain\Sanitize;
+
+// Plain text passes through untouched, including angle-bracket prose.
+checkEq('san plain text untouched', "Coffee first\nthen work", Sanitize::description("Coffee first\nthen work"));
+checkEq('san math prose untouched', 'a < b and b > c', Sanitize::description('a < b and b > c'));
+checkEq('san null stays null', null, Sanitize::description(null));
+
+// Allowed formatting tags survive, attributes are stripped.
+checkEq('san bold kept', '<b>hi</b>', Sanitize::description('<b>hi</b>'));
+checkEq('san lists kept', '<ul><li>a</li><li>b</li></ul>', Sanitize::description('<ul><li>a</li><li>b</li></ul>'));
+checkEq('san div/br kept', '<div>one<br>two</div>', Sanitize::description('<div>one<br/>two</div>'));
+checkEq('san class and style attributes stripped', '<p>x</p>', Sanitize::description('<p class="big" style="color:red">x</p>'));
+
+// Dangerous content is removed entirely.
+checkEq('san script dropped with contents', '<p>ok</p>', Sanitize::description('<p>ok</p><script>alert(1)</script>'));
+checkEq('san style block dropped', 'text', Sanitize::description('<style>body{display:none}</style>text'));
+checkEq('san iframe dropped', 'before after', Sanitize::description('before <iframe src="https://evil.example"></iframe>after'));
+checkEq('san onclick stripped', '<b>click</b>', Sanitize::description('<b onclick="steal()">click</b>'));
+checkEq('san onerror img gone', 'x', Sanitize::description('x<img src=x onerror=alert(1)>'));
+
+// Links: http/https kept (with hardening attrs), javascript: unwrapped.
+checkEq(
+    'san https link kept and hardened',
+    '<a href="https://example.com/x" target="_blank" rel="noopener noreferrer">site</a>',
+    Sanitize::description('<a href="https://example.com/x">site</a>')
+);
+checkEq('san javascript href unwrapped', 'evil', Sanitize::description('<a href="javascript:alert(1)">evil</a>'));
+checkEq('san data href unwrapped', 'x', Sanitize::description('<a href="data:text/html,pwn">x</a>'));
+
+// Unknown tags unwrap but keep their text.
+checkEq('san span unwrapped', 'hello <b>there</b>', Sanitize::description('<span data-x="1">hello</span> <b>there</b>'));
+checkEq('san heading unwrapped', 'Title<p>body</p>', Sanitize::description('<h1>Title</h1><p>body</p>'));
+
+// Text nodes are entity-escaped on the way out.
+checkEq('san text re-escaped', '<p>a &amp; b</p>', Sanitize::description('<p>a &amp; b</p>'));
+
+// isHtml detection.
+check('san isHtml true for tags', Sanitize::isHtml('<p>x</p>'));
+check('san isHtml false for prose', !Sanitize::isHtml('less < more, x > y'));
+check('san isHtml false for null', !Sanitize::isHtml(null));
+
+// toText flattens blocks and brs to newlines and decodes entities.
+checkEq('san toText plain passthrough', 'just text', Sanitize::toText('just text'));
+checkEq('san toText blocks to newlines', "one\ntwo\nthree", Sanitize::toText('<p>one</p><div>two<br>three</div>'));
+checkEq('san toText decodes entities', 'a & b', Sanitize::toText('<p>a &amp; b</p>'));
+checkEq('san toText drops script bodies', 'ok', Sanitize::toText('<script>bad()</script><p>ok</p>'));
+
+// ---------------------------------------------------------------------------
+// ICS: rich descriptions -> DESCRIPTION (text) + X-ALT-DESC (html)
+// ---------------------------------------------------------------------------
+
+$richCal = Ics::buildCalendar('Rich', null, [
+    [
+        'uid' => 'rich-1', 'title' => 'Board meeting', 'description' => '<p>Agenda:</p><ul><li>budget</li></ul>',
+        'start_utc' => '2026-08-01 17:00:00', 'end_utc' => '2026-08-01 18:00:00',
+        'all_day' => 0, 'tzid' => 'UTC', 'status' => 'confirmed',
+    ],
+    [
+        'uid' => 'rich-2', 'title' => 'Plain', 'description' => "Line1\nLine2",
+        'start_utc' => '2026-08-02 17:00:00', 'end_utc' => '2026-08-02 18:00:00',
+        'all_day' => 0, 'tzid' => 'UTC', 'status' => 'confirmed',
+    ],
+]);
+$richUnfolded = Ics::unfold($richCal);
+check('ics rich DESCRIPTION is stripped text', str_contains($richUnfolded, 'DESCRIPTION:Agenda:\\nbudget'));
+check('ics rich X-ALT-DESC carries html', str_contains($richUnfolded, 'X-ALT-DESC;FMTTYPE=text/html:<p>Agenda:</p><ul><li>budget</li></ul>'));
+checkEq('ics plain description has no X-ALT-DESC', 1, substr_count($richUnfolded, 'X-ALT-DESC'));
+check('ics plain description unchanged', str_contains($richUnfolded, 'DESCRIPTION:Line1\\nLine2'));
+
+// ---------------------------------------------------------------------------
+// PlaceSearch: tz centroids, address compose, distance, ranking (pure)
+// ---------------------------------------------------------------------------
+
+// tz centroid map: known zones resolve, unknown/empty do not.
+$sfCentroid = PlaceSearch::tzCentroid('America/Los_Angeles');
+check('ps centroid LA near SF', $sfCentroid !== null && abs($sfCentroid[0] - 37.77) < 0.01 && abs($sfCentroid[1] + 122.42) < 0.01);
+check('ps centroid Tokyo in Japan', PlaceSearch::tzCentroid('Asia/Tokyo')[1] > 135);
+checkEq('ps centroid unknown zone null', null, PlaceSearch::tzCentroid('Mars/Olympus_Mons'));
+checkEq('ps centroid null input null', null, PlaceSearch::tzCentroid(null));
+checkEq('ps centroid empty input null', null, PlaceSearch::tzCentroid(''));
+check('ps centroid map has broad coverage', count(PlaceSearch::TZ_CENTROIDS) >= 40);
+$psValid = true;
+foreach (PlaceSearch::TZ_CENTROIDS as $tzName => $pair) {
+    if (!in_array($tzName, \DateTimeZone::listIdentifiers(), true)) {
+        $psValid = false;
+        echo "  bad tz id: $tzName\n";
+    }
+    if (abs($pair[0]) > 90 || abs($pair[1]) > 180) {
+        $psValid = false;
+    }
+}
+check('ps centroid ids are real IANA zones with sane coords', $psValid);
+
+// composeAddress: street + housenumber, city, state, country; concise.
+checkEq(
+    'ps address full',
+    '1658 Market Street, San Francisco, California, United States',
+    PlaceSearch::composeAddress(['housenumber' => '1658', 'street' => 'Market Street', 'city' => 'San Francisco', 'state' => 'California', 'country' => 'United States'])
+);
+checkEq('ps address street only', 'Market Street, San Francisco', PlaceSearch::composeAddress(['street' => 'Market Street', 'city' => 'San Francisco']));
+checkEq('ps address city dedupes name', 'Germany', PlaceSearch::composeAddress(['name' => 'Berlin', 'city' => 'Berlin', 'country' => 'Germany']));
+checkEq('ps address dedupes repeated parts', 'Singapore', PlaceSearch::composeAddress(['city' => 'Singapore', 'state' => 'Singapore', 'country' => 'Singapore', 'name' => 'Zoo']));
+checkEq('ps address empty props', '', PlaceSearch::composeAddress([]));
+
+// distanceKm: SF -> LA is roughly 560 km; zero distance to self.
+$dSfLa = PlaceSearch::distanceKm(37.77, -122.42, 34.05, -118.24);
+check('ps distance SF-LA plausible', $dSfLa > 540 && $dSfLa < 580, "got $dSfLa");
+check('ps distance to self is zero', PlaceSearch::distanceKm(10.0, 20.0, 10.0, 20.0) < 0.001);
+
+// mapFeatures: shape, GeoJSON [lng,lat] order, dedupe, bias distance + far flag.
+$psPhoton = ['features' => [
+    [
+        'geometry' => ['coordinates' => [-122.4216, 37.7739]],
+        'properties' => ['name' => 'Zuni Cafe', 'housenumber' => '1658', 'street' => 'Market Street', 'city' => 'San Francisco', 'state' => 'California', 'country' => 'United States'],
+    ],
+    [ // duplicate of the first (other OSM layer): dropped
+        'geometry' => ['coordinates' => [-122.4216, 37.7739]],
+        'properties' => ['name' => 'Zuni Cafe', 'housenumber' => '1658', 'street' => 'Market Street', 'city' => 'San Francisco', 'state' => 'California', 'country' => 'United States'],
+    ],
+    [
+        'geometry' => ['coordinates' => [151.21, -33.87]],
+        'properties' => ['name' => 'Zuni', 'city' => 'Sydney', 'country' => 'Australia'],
+    ],
+    ['geometry' => ['coordinates' => ['x', 'y']], 'properties' => ['name' => 'Broken']],
+]];
+$psMapped = PlaceSearch::mapFeatures($psPhoton, 37.77, -122.42);
+checkEq('ps map count after dedupe + invalid drop', 2, count($psMapped));
+checkEq('ps map lat from GeoJSON', 37.7739, $psMapped[0]['lat']);
+checkEq('ps map lng from GeoJSON', -122.4216, $psMapped[0]['lng']);
+checkEq('ps map display', 'Zuni Cafe, 1658 Market Street, San Francisco, California, United States', $psMapped[0]['display']);
+checkEq('ps map city extracted', 'San Francisco', $psMapped[0]['city']);
+check('ps map near candidate not far', $psMapped[0]['far'] === false && $psMapped[0]['distanceKm'] < 5);
+check('ps map antipodal candidate flagged far', $psMapped[1]['far'] === true && $psMapped[1]['distanceKm'] > 10000);
+checkEq('ps map garbage -> empty', [], PlaceSearch::mapFeatures('garbage', null, null));
+checkEq('ps map no bias -> null distance', null, PlaceSearch::mapFeatures($psPhoton, null, null)[0]['distanceKm']);
+
+// rank: a near match overtakes a textually-first far match; near-order stable.
+$psRanked = PlaceSearch::rank([
+    ['name' => 'Far first', 'distanceKm' => 9000.0],
+    ['name' => 'Near second', 'distanceKm' => 3.0],
+    ['name' => 'Near third', 'distanceKm' => 8.0],
+]);
+checkEq('ps rank near beats far', ['Near second', 'Near third', 'Far first'], array_column($psRanked, 'name'));
+$psClose = PlaceSearch::rank([
+    ['name' => 'A', 'distanceKm' => 10.0],
+    ['name' => 'B', 'distanceKm' => 12.0],
+]);
+checkEq('ps rank preserves photon order among near ties', ['A', 'B'], array_column($psClose, 'name'));
+checkEq('ps rank no bias keeps order', ['X', 'Y'], array_column(PlaceSearch::rank([
+    ['name' => 'X', 'distanceKm' => null],
+    ['name' => 'Y', 'distanceKm' => null],
+]), 'name'));
+checkEq('ps rank empty', [], PlaceSearch::rank([]));
+
+// ---------------------------------------------------------------------------
+// Settings: home location + map style keys
+// ---------------------------------------------------------------------------
+
+checkEq('set homeLat validated', ['homeLat' => 37.77], Settings::validate(['homeLat' => 37.77]));
+checkEq('set homeLng string accepted', ['homeLng' => -122.42], Settings::validate(['homeLng' => '-122.42']));
+checkEq('set homeLat null clears', ['homeLat' => null], Settings::validate(['homeLat' => null]));
+checkEq('set homeLabel trimmed', ['homeLabel' => 'San Francisco'], Settings::validate(['homeLabel' => '  San Francisco  ']));
+checkEq('set homeLabel blank becomes null', ['homeLabel' => null], Settings::validate(['homeLabel' => '   ']));
+checkEq('set mapStyle validated', ['mapStyle' => 'dataviz'], Settings::validate(['mapStyle' => 'dataviz']));
+checkEq('set mapStyle default', 'streets-v2', Settings::withDefaults([])['mapStyle']);
+checkEq('set home defaults null', [null, null, null], [
+    Settings::withDefaults([])['homeLat'],
+    Settings::withDefaults([])['homeLng'],
+    Settings::withDefaults([])['homeLabel'],
+]);
+foreach ([['homeLat' => 91], ['homeLng' => -181], ['homeLat' => 'north'], ['mapStyle' => 'satellite'], ['homeLabel' => 42]] as $bad) {
+    try {
+        Settings::validate($bad);
+        check('set bad home/map value rejected: ' . json_encode($bad), false);
+    } catch (HttpError $e) {
+        checkEq('set bad home/map value status', 400, $e->status);
+    }
+}
+
+// ---------------------------------------------------------------------------
 
 $pass = $GLOBALS['__pass'];
 $fail = $GLOBALS['__fail'];

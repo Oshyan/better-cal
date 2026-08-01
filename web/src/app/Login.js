@@ -1,7 +1,7 @@
 // Login screen: email + password against POST /auth/login.
 
 import { html, useState } from '../../vendor/index.js';
-import { login, loadCalendars } from './api.js';
+import { login, loadCalendars, loadConfig } from './api.js';
 
 export function Login() {
   const [email, setEmail] = useState('');
@@ -16,6 +16,7 @@ export function Login() {
     try {
       await login(email, password);
       await loadCalendars();
+      loadConfig(); // fire-and-forget
     } catch (err) {
       setError(err.status === 401 ? 'Wrong email or password' : err.message);
     }

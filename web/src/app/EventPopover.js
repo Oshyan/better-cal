@@ -12,6 +12,7 @@ import {
   parseISO, dateOfDayKey, fmtRange, toInputValue, fromInputValue, toISOWithOffset,
 } from '../lib/dates.js';
 import { fmtReminder } from '../lib/reminders.js';
+import { stripToText } from '../lib/richtext.js';
 
 const GAP = 10;
 const WIDTH = 320;
@@ -152,7 +153,11 @@ export function EventPopover() {
         ${(cal && cal.name) || 'Calendar'}
         ${occ.tags && occ.tags.length > 0 && html`<span class="bc-pop-tags">${occ.tags.map((t) => '#' + t).join(' ')}</span>`}
       </div>
-      ${occ.description && html`<div class="bc-pop-desc">${occ.description.length > 280 ? occ.description.slice(0, 280) + '…' : occ.description}</div>`}
+      ${occ.description && (() => {
+        // Rich descriptions preview as plain text (280 chars max).
+        const text = stripToText(occ.description);
+        return text && html`<div class="bc-pop-desc">${text.length > 280 ? text.slice(0, 280) + '…' : text}</div>`;
+      })()}
       ${occ.url && html`<a class="bc-pop-url" href=${occ.url} target="_blank" rel="noopener">Event link ↗</a>`}
       <div class="bc-pop-actions">
         <button type="button" class="bc-btn" title="Open full details" onClick=${() => openDetail(occ.instanceId)}>Open</button>

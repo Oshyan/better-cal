@@ -26,7 +26,11 @@ export const state = {
     defaultCalendarId: null, theme: 'system', nlParseMode: 'smart',
     overviewMode: null,
     reminderTimed: [{ minutes: 10 }], reminderAllDay: [{ daysBefore: 1, time: '18:00' }],
+    homeLat: null, homeLng: null, homeLabel: null,
+    mapStyle: 'streets-v2',
   },
+  // Public-safe server config (GET /config), fetched once at boot.
+  config: { maptilerKey: null },
   // Folder visibility modes: {folderId: {mode: 'all'|'none'|'custom', custom: [calId]}}.
   // Mirrored server-side in settings under the folderVisibility key.
   folderVisibility: {},

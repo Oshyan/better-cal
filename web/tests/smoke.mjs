@@ -31,6 +31,7 @@ import {
   TIMED_CHOICES, MAX_REMINDER_MINUTES, REMINDER_UNITS,
 } from '../src/lib/reminders.js';
 import { deepLinkAnchorMs, deepLinkWindows } from '../src/lib/deeplink.js';
+import { hasHtml, stripToText, isEmptyHtml } from '../src/lib/richtext.js';
 
 let passed = 0;
 let failed = 0;
@@ -773,6 +774,31 @@ eq('timeState: allday multi-day spanning today is now',
   timeState(alldayOcc('2026-07-29', '2026-08-03'), NOW), 'now');
 eq('timeState: allday starting tomorrow is future',
   timeState(alldayOcc('2026-08-01', '2026-08-02'), NOW), 'future');
+
+console.log('--- rich text helpers ---');
+
+// hasHtml: markup detection, prose with angle brackets stays plain.
+assert('richtext: hasHtml true for tags', hasHtml('<p>hi</p>'));
+assert('richtext: hasHtml true for closing tag only', hasHtml('text</div>'));
+assert('richtext: hasHtml false for prose', !hasHtml('a < b and b > c'));
+assert('richtext: hasHtml false for heart', !hasHtml('I <3 calendars'));
+assert('richtext: hasHtml false for non-string', !hasHtml(null) && !hasHtml(42));
+
+// stripToText: blocks and brs become newlines, tags drop, entities decode.
+eq('richtext: strip plain passthrough', stripToText('just text'), 'just text');
+eq('richtext: strip blocks to newlines', stripToText('<div>one</div><div>two<br>three</div>'), 'one\ntwo\nthree');
+eq('richtext: strip list items separate', stripToText('<ul><li>a</li><li>b</li></ul>'), 'a\nb');
+eq('richtext: strip inline formatting seamless', stripToText('<b>bold</b> and <i>italic</i>'), 'bold and italic');
+eq('richtext: strip decodes entities', stripToText('<p>a &amp; b &lt;ok&gt;</p>'), 'a & b <ok>');
+eq('richtext: strip drops script bodies', stripToText('<script>alert(1)</script><p>fine</p>'), 'fine');
+eq('richtext: strip empty input', stripToText(''), '');
+
+// isEmptyHtml: squire's empty document shapes count as empty.
+assert('richtext: empty div-br is empty', isEmptyHtml('<div><br></div>'));
+assert('richtext: empty string is empty', isEmptyHtml(''));
+assert('richtext: null is empty', isEmptyHtml(null));
+assert('richtext: real content is not empty', !isEmptyHtml('<div>note</div>'));
+assert('richtext: plain text is not empty', !isEmptyHtml('note'));
 
 console.log('--- color utils ---');
 

@@ -50,6 +50,11 @@ function config(): array
             'model' => $env('BETTERCAL_GEMINI_MODEL', 'gemini-3.6-flash'),
         ],
         'session_secret' => $env('BETTERCAL_SESSION_SECRET'),
+        'maptiler' => [
+            // Optional MapTiler tile key; when empty the event detail
+            // mini-map keeps plain OSM tiles.
+            'key' => $env('BETTERCAL_MAPTILER_KEY'),
+        ],
         'vapid' => [
             'public' => $env('BETTERCAL_VAPID_PUBLIC'),
             'private' => $env('BETTERCAL_VAPID_PRIVATE'),

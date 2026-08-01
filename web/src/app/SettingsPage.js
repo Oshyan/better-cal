@@ -9,6 +9,8 @@ import { api, logout } from './api.js';
 import { adoptSettings } from './settings.js';
 import { saveSetting } from './actions.js';
 import { PageShell } from './PageShell.js';
+import { PlaceInput, pickFillText } from './PlaceInput.js';
+import { localTz } from '../lib/dates.js';
 import {
   permissionState, pushSupported, fetchPushStatus, enablePush, disablePush, sendTestNotification,
 } from './push.js';
@@ -20,6 +22,10 @@ import {
 const VIEW_OPTIONS = [
   ['month', 'Month'], ['weeks3', '3 weeks'], ['weeks2', '2 weeks'],
   ['week', 'Week'], ['day', 'Day'], ['agenda', 'Agenda'],
+];
+
+const MAP_STYLES = [
+  ['streets-v2', 'Streets'], ['dataviz', 'Minimal'], ['outdoor-v2', 'Outdoor'], ['bright-v2', 'Bright'],
 ];
 
 const NL_HINTS = {
@@ -186,9 +192,90 @@ function NotificationsSection({ settings }) {
   </section>`;
 }
 
+// Home location (place search bias) + map style. The home input mirrors the
+// stored homeLabel; picking a place or using device geolocation saves the
+// lat/lng pair and label in one PATCH.
+function LocationSection({ settings, config }) {
+  const [homeText, setHomeText] = useState(settings.homeLabel || '');
+  const [locBusy, setLocBusy] = useState(false);
+  useEffect(() => { setHomeText(settings.homeLabel || ''); }, [settings.homeLabel]);
+
+  const saveHome = async (patch, okText) => {
+    try {
+      const data = await api('/settings', { method: 'PATCH', body: patch });
+      adoptSettings(data.settings);
+      toast(okText, { duration: 2000 });
+    } catch (e) {
+      toast('Save failed: ' + e.message, { error: true });
+    }
+  };
+
+  const useMyLocation = () => {
+    if (!navigator.geolocation) {
+      toast('Geolocation is not available in this browser', { error: true });
+      return;
+    }
+    setLocBusy(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setLocBusy(false);
+        const label = 'My location';
+        setHomeText(label);
+        saveHome({
+          homeLat: Math.round(pos.coords.latitude * 10000) / 10000,
+          homeLng: Math.round(pos.coords.longitude * 10000) / 10000,
+          homeLabel: label,
+        }, 'Home location saved');
+      },
+      () => {
+        setLocBusy(false);
+        toast('Could not get your location', { error: true });
+      },
+      { timeout: 10000 },
+    );
+  };
+
+  const hasHome = settings.homeLat != null && settings.homeLng != null;
+
+  return html`<section class="bc-set-section">
+    <h2 class="bc-set-h">Location and maps</h2>
+    <${Row} label="Home location" hint="Biases location search toward your area so nearby places match first.">
+      <${PlaceInput}
+        value=${homeText}
+        ariaLabel="Home location"
+        placeholder="Search for your city or address"
+        tz=${localTz()}
+        onText=${setHomeText}
+        onPick=${(r) => {
+          const label = pickFillText(r);
+          setHomeText(label);
+          saveHome({ homeLat: r.lat, homeLng: r.lng, homeLabel: label }, 'Home location saved');
+        }}
+      />
+      <button type="button" class="bc-btn" disabled=${locBusy} onClick=${useMyLocation}>Use my location</button>
+      ${hasHome && html`<button type="button" class="bc-btn" onClick=${() => {
+        setHomeText('');
+        saveHome({ homeLat: null, homeLng: null, homeLabel: null }, 'Home location cleared');
+      }}>Clear</button>`}
+    <//>
+    <${Row} label="Map style" hint=${config && config.maptilerKey
+      ? 'Style for the event detail map.'
+      : 'Needs a MapTiler key on the server (BETTERCAL_MAPTILER_KEY); the map uses OpenStreetMap tiles until then.'}>
+      <select
+        value=${settings.mapStyle || 'streets-v2'}
+        aria-label="Map style"
+        disabled=${!(config && config.maptilerKey)}
+        onChange=${(e) => saveSetting('mapStyle', e.target.value)}
+      >
+        ${MAP_STYLES.map(([v, l]) => html`<option key=${v} value=${v}>${l}</option>`)}
+      </select>
+    <//>
+  </section>`;
+}
+
 export function SettingsPage() {
-  const { settings, user, calendars } = useStore(
-    (s) => ({ settings: s.settings, user: s.user, calendars: s.calendars }),
+  const { settings, user, calendars, config } = useStore(
+    (s) => ({ settings: s.settings, user: s.user, calendars: s.calendars, config: s.config }),
     shallowEq,
   );
   const [version, setVersion] = useState(null);
@@ -246,6 +333,8 @@ export function SettingsPage() {
         </select>
       <//>
     </section>
+
+    <${LocationSection} settings=${settings} config=${config} />
 
     <${NotificationsSection} settings=${settings} />
 

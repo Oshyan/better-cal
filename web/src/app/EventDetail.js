@@ -14,6 +14,7 @@ import {
   parseISO, dateOfDayKey, fmtRange, fmtDateFull, fmtTime,
 } from '../lib/dates.js';
 import { fmtReminder } from '../lib/reminders.js';
+import { hasHtml, sanitizeHtml } from '../lib/richtext.js';
 
 // --- recurrence in words ----------------------------------------------------
 
@@ -129,10 +130,24 @@ function MiniMap({ lat, lng, location }) {
         keyboard: false,
         zoomControl: false,
       });
-      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxZoom: 19,
-        attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-      }).addTo(map);
+      // MapTiler raster tiles when the server has a key configured (style
+      // from the mapStyle setting); plain OSM tiles otherwise.
+      const maptilerKey = state.config && state.config.maptilerKey;
+      if (maptilerKey) {
+        const style = (state.settings && state.settings.mapStyle) || 'streets-v2';
+        L.tileLayer(
+          'https://api.maptiler.com/maps/' + style + '/{z}/{x}/{y}@2x.png?key=' + encodeURIComponent(maptilerKey),
+          {
+            maxZoom: 19,
+            attribution: '© <a href="https://www.maptiler.com/copyright/">MapTiler</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+          }
+        ).addTo(map);
+      } else {
+        L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          maxZoom: 19,
+          attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+        }).addTo(map);
+      }
       const icon = L.icon({
         iconUrl: '/assets/vendor/leaflet/images/marker-icon.png',
         iconRetinaUrl: '/assets/vendor/leaflet/images/marker-icon-2x.png',
@@ -304,7 +319,11 @@ export function EventDetail() {
         </div>`}
         ${occ.description && html`<div class="bc-detail-section">
           <div class="bc-detail-label">Description</div>
-          <div class="bc-detail-desc">${linkify(occ.description)}</div>
+          ${hasHtml(occ.description)
+            // Rich descriptions render as HTML, allowlist-sanitized client-side
+            // too (defense in depth; also covers verbatim feed imports).
+            ? html`<div class="bc-detail-desc bc-rich" dangerouslySetInnerHTML=${{ __html: sanitizeHtml(occ.description) }}></div>`
+            : html`<div class="bc-detail-desc">${linkify(occ.description)}</div>`}
         </div>`}
         ${occ.url && html`<div class="bc-detail-section">
           <a href=${occ.url} target="_blank" rel="noopener noreferrer">Event link ↗</a>

@@ -10,8 +10,9 @@
 import { html, useState, useRef, useEffect } from '../../vendor/index.js';
 import { useStore, set, state } from './store.js';
 import { quickAddParse, quickAddCreate } from './actions.js';
+import { PlaceInput, pickFillText } from './PlaceInput.js';
 import {
-  parseISO, dayKeyOf, dateOfDayKey, addDaysKey, toISOWithOffset, pad,
+  parseISO, dayKeyOf, dateOfDayKey, addDaysKey, toISOWithOffset, pad, localTz,
 } from '../lib/dates.js';
 
 const hm = (d) => pad(d.getHours()) + ':' + pad(d.getMinutes());
@@ -28,6 +29,9 @@ function defaultForm() {
     endTime: hm(e),
     allDay: false,
     calendarId: defaultCalendarId(),
+    location: '',
+    locationLat: null,
+    locationLng: null,
   };
 }
 
@@ -52,6 +56,7 @@ function parseWants(d) {
   }
   if (d.end && !d.allDay) want.endTime = hm(parseISO(d.end));
   if (d.allDay != null) want.allDay = !!d.allDay;
+  if (d.location) want.location = d.location;
   if (d.calendarId != null &&
       state.calendars.some((c) => c.id === d.calendarId && c.kind !== 'subscribed')) {
     want.calendarId = d.calendarId;
@@ -142,6 +147,9 @@ export function QuickAdd() {
       if (nf[k] !== want[k]) {
         nf[k] = want[k];
         flashed.push(k);
+        // Parsed free-text location: any previously picked coordinates are
+        // for old text and no longer apply.
+        if (k === 'location') { nf.locationLat = null; nf.locationLng = null; }
       }
       touched.delete(k); // the parse re-took this field
     }
@@ -200,13 +208,16 @@ export function QuickAdd() {
     const title = (d && d.title) || text.trim();
     const range = buildRange(f, d, touchedRef.current.has('dateKey'));
     if (!title || !range || f.calendarId == null) { setBusy(false); return; }
+    const location = (f.location || '').trim() || (d && d.location) || null;
     await quickAddCreate({
       title,
       calendarId: Number(f.calendarId),
       start: range.start,
       end: range.end,
       allDay: f.allDay,
-      location: (d && d.location) || null,
+      location,
+      locationLat: location && f.locationLat != null ? f.locationLat : null,
+      locationLng: location && f.locationLng != null ? f.locationLng : null,
       ...(d && d.personNames && d.personNames.length ? { personNames: d.personNames } : {}),
     });
     setBusy(false);
@@ -242,7 +253,9 @@ export function QuickAdd() {
           start: range && range.start,
           end: range && range.end,
           allDay: form.allDay,
-          location: draft && draft.location,
+          location: (form.location || '').trim() || (draft && draft.location),
+          locationLat: (form.location || '').trim() ? form.locationLat : null,
+          locationLng: (form.location || '').trim() ? form.locationLng : null,
           calendarId: form.calendarId != null ? Number(form.calendarId) : undefined,
         },
         nlText: touchedRef.current.size === 0 ? text : '',
@@ -303,6 +316,33 @@ export function QuickAdd() {
             onChange=${(e) => touch('allDay', e.target.checked)}
           />
           <span>All day</span>
+        </label>
+        <label class=${'bc-qa-field bc-qa-locfield' + flashCls('location')}>
+          <span class="bc-qa-label">Where</span>
+          <${PlaceInput}
+            compact
+            value=${form.location}
+            ariaLabel="Location"
+            placeholder="Optional"
+            inputClass="bc-qa-loc"
+            tz=${localTz()}
+            onText=${(v) => {
+              touchedRef.current.add('location');
+              setForm((f) => {
+                const nf = { ...f, location: v, locationLat: null, locationLng: null };
+                formRef.current = nf;
+                return nf;
+              });
+            }}
+            onPick=${(r) => {
+              touchedRef.current.add('location');
+              setForm((f) => {
+                const nf = { ...f, location: pickFillText(r), locationLat: r.lat, locationLng: r.lng };
+                formRef.current = nf;
+                return nf;
+              });
+            }}
+          />
         </label>
         <label class=${'bc-qa-field bc-qa-calfield' + flashCls('calendarId')}>
           <span class="bc-qa-label">Calendar</span>

@@ -30,8 +30,17 @@ final class Settings
         // to these when neither the event nor its calendar overrides them.
         'reminderTimed' => [['minutes' => 10]],
         'reminderAllDay' => [['daysBefore' => 1, 'time' => '18:00']],
+        // Home location: bias point for place search (nullable pair) plus a
+        // display label for the Settings page.
+        'homeLat' => null,
+        'homeLng' => null,
+        'homeLabel' => null,
+        // MapTiler raster style for the event detail mini-map (used only when
+        // BETTERCAL_MAPTILER_KEY is configured; OSM tiles otherwise).
+        'mapStyle' => 'streets-v2',
     ];
     private const VIEWS = ['month', 'multiweek', 'week', 'day', 'agenda'];
+    private const MAP_STYLES = ['streets-v2', 'dataviz', 'outdoor-v2', 'bright-v2'];
 
     public function __construct(private readonly Db $db)
     {
@@ -103,10 +112,39 @@ final class Settings
                 'folderVisibility' => self::folderVisibility($value),
                 'reminderTimed' => Reminders::validateTimedList($value),
                 'reminderAllDay' => Reminders::validateAllDayList($value),
+                'homeLat' => self::coordinate($key, $value, 90.0),
+                'homeLng' => self::coordinate($key, $value, 180.0),
+                'homeLabel' => self::label($key, $value),
+                'mapStyle' => self::enum($key, $value, self::MAP_STYLES),
                 default => throw HttpError::badRequest("Unknown setting '$key'", 'unknown_setting'),
             };
         }
         return $out;
+    }
+
+    /** Nullable coordinate bounded at +-$bound (90 for lat, 180 for lng). */
+    private static function coordinate(string $key, mixed $value, float $bound): ?float
+    {
+        if ($value === null) {
+            return null;
+        }
+        if (!is_numeric($value) || abs((float) $value) > $bound) {
+            throw HttpError::badRequest("$key must be a number between -$bound and $bound, or null");
+        }
+        return (float) $value;
+    }
+
+    /** Nullable short display string (home location label). */
+    private static function label(string $key, mixed $value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+        if (!is_string($value)) {
+            throw HttpError::badRequest("$key must be a string or null");
+        }
+        $value = trim($value);
+        return $value === '' ? null : mb_substr($value, 0, 200);
     }
 
     private static function enum(string $key, mixed $value, array $allowed): string

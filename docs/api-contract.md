@@ -31,13 +31,14 @@ Token value: `bc_` + 43 url-safe base64 chars; stored sha256-hashed, shown once 
 - `GET /events?start=ISO&end=ISO&calendars=1,2&q=&includeHidden=0` → `{events:[occurrence...]}`
   Occurrence: `{instanceId, eventId, calendarId, uid, title, description, location, locationLat, locationLng, url, start, end, allDay, tzid, recurring:boolean, rrule, source, attendance, status, score, reminders:[], reminderSource, tags:[], people:[], styleJson, createdAt, updatedAt, isNew:boolean}`
   `reminders` is the event's *effective* reminder list (override if set, else the calendar default, else the global default) and `reminderSource` says where it came from: `"event"|"calendar"|"default"`. Entries are `{minutes:int}` (offset before start; before local midnight for all-day events) or, for inherited all-day defaults, `{daysBefore:int, time:"HH:MM"}`. See Reminders below.
-  `locationLat`/`locationLng` are numbers or null (stored coordinates for the free-text location; the client resolves them lazily via `GET /geocode` and PATCHes them back onto local events). `rrule` is the master's raw RRULE string or null (present on every expanded occurrence of a recurring master; null on overrides) — clients use it for the human-readable recurrence description in the detail view.
+  `locationLat`/`locationLng` are numbers or null (stored coordinates for the free-text location; the client stores them directly when the user picks a candidate from `GET /geocode/search`, and otherwise resolves them lazily via `GET /geocode` and PATCHes them back onto local events). `rrule` is the master's raw RRULE string or null (present on every expanded occurrence of a recurring master; null on overrides) — clients use it for the human-readable recurrence description in the detail view.
   `score` is a number 0-1 or null: the background trainable-ranking score (feed events only; null until the worker has scored the event or while fewer than 5 feedback signals exist). Clients sort by it client-side; the API's order is unchanged.
   Additive fields: occurrences matching an enabled `dim` filter carry `"dimmed": true`, occurrences matching an enabled `highlight` filter carry `"highlighted": true`; the fields are absent otherwise. Occurrences matching an enabled `hide` filter are omitted from `/events` and `/search` responses entirely. Prompt-filter verdicts (see Filters) feed the same mechanics with the same precedence (hide beats dim beats highlight).
   `includeHidden=1` returns occurrences normal responses omit: `attendance:"hidden"` events AND occurrences an enabled `hide` filter (keyword/regex or prompt) would drop. Reminders fire regardless of filters, so the notification deep-link handler uses this to resolve the occurrence a notification points at.
   `q=` matches title/description/location as a substring and also tag names; a `q` equal to or prefixed with `#` (e.g. `#work`) matches tags only. Same treatment as `/search`.
   `start`/`end` are ISO8601 with offset. Recurring events arrive pre-expanded; `instanceId = eventId + ":" + occurrenceStartUtc` where occurrenceStartUtc uses compact UTC basic format `YYYYMMDDTHHMMSSZ` (e.g. `42:20260801T190000Z`). This format is FROZEN; clients treat instanceId as opaque and use the occurrence's `start` field when an API call needs `instanceStart`.
-- `POST /events` `{calendarId,title,start,end,allDay?,tzid?,description?,location?,url?,rrule?,reminders?,tagNames?,personNames?}` → occurrence (first instance).
+- `POST /events` `{calendarId,title,start,end,allDay?,tzid?,description?,location?,locationLat?,locationLng?,url?,rrule?,reminders?,tagNames?,personNames?}` → occurrence (first instance). `locationLat`/`locationLng` (numbers or null) store coordinates directly when the client picked a place from `GET /geocode/search`; omitted/null means "resolve lazily later".
+  `description` is ONE field holding either plain text or rich HTML (the editor writes HTML). The server sanitizes any markup on create/PATCH through an allowlist (`p, br, b, strong, i, em, u, a[href http/https], ul, ol, li, div`; all attributes, styles, classes and script-bearing tags stripped, unknown tags unwrapped to their text). Plain text without markup is stored verbatim. Clients render descriptions containing tags as sanitized HTML and plain text with line breaks otherwise.
 - `PATCH /events/:id` body same fields plus `{locationLat?, locationLng?}` (numbers or null) and `{scope:"this"|"following"|"all", instanceStart?}` (scope required when event is recurring) → `{ok:true}`.
   `reminders`: list of `{minutes:int}` (0-40320, max 5, normalized unique/ascending) sets a per-event override; `[]` means explicitly no reminders; `null` clears the override back to inherited defaults. Like attendance and tags, `reminders` is accepted on feed events (it is user-local metadata and survives feed polls).
 - `DELETE /events/:id` `{scope?,instanceStart?}` → `{ok:true}`.
@@ -53,6 +54,7 @@ Token value: `bc_` + 43 url-safe base64 chars; stored sha256-hashed, shown once 
 
 ## Geocode
 - `GET /geocode?q=free+text+location` → `{lat, lng, display}` (numbers + string, or all null when nothing was found). Proxies photon.komoot.io (no key, 3s timeout, User-Agent `Better-Cal/0.1 (self-hosted)`), first result only. Results are cached permanently in `geocode_cache` keyed by a sha256 of the lowercased whitespace-normalized query; provider "no result" answers are cached as negative rows, transport failures are returned as not-found but never cached. Empty `q` → 400. The client calls this lazily when the event detail view opens with a location and no stored `locationLat`/`locationLng`, then PATCHes resolved coordinates onto local events (feed events keep the result transient).
+- `GET /geocode/search?q=&lat=&lng=&tz=&limit=6` → `{results:[{name, address, lat, lng, display, city, distanceKm, far}]}` — multi-candidate place autocomplete for location pickers (same Photon proxy, timeout and UA; uncached, limit clamped 1-10, default 6). `address` is a concise composition of street+housenumber, city, state, country (name excluded, repeats deduped); `display` = `name, address`; `city` is nullable. Location bias precedence: explicit `lat`/`lng` (the client sends the `homeLat`/`homeLng` settings when set) > `tz` (an IANA zone id resolved server-side to an approximate centroid; ~60 major zones, unknown zones mean no bias) > none. With a bias, candidates are re-ranked by blending Photon's order with distance and each carries `distanceKm` plus `far: true` beyond 500 km so the UI can flag matches half a world away; without a bias `distanceKm` is null and Photon's order is kept. Transport failures return `{results:[]}`, never an error.
 
 ## Filters
 Keyword/regex/prompt filters applied server-side to `/events` and `/search`. Keyword = case-insensitive substring; regex = PCRE, evaluated case-insensitively. Scope `global` applies to everything, `folder` to every calendar in the folder, `calendar` to that calendar (`scopeId` required for folder/calendar scope). Action `hide` removes matching occurrences; `dim` adds `"dimmed": true` to them; `highlight` adds `"highlighted": true` (accent emphasis client-side). Across all filter types the strongest action wins: `hide` beats `dim` beats `highlight` (an event matching both a hide and a highlight filter is hidden).
@@ -85,7 +87,7 @@ Server config: VAPID keys in `.env` (`BETTERCAL_VAPID_PUBLIC`, `BETTERCAL_VAPID_
 
 ## Settings
 User preferences stored in `users.settings_json`. The server stores and validates; enforcement is client-side except `nlParseMode`, which the server applies in `/quickadd` (see Events). Reads always return stored values merged over defaults; keys never set come back as their defaults. Settings changes are not undoable via `POST /undo`.
-- `GET /settings` → `{settings:{defaultView, weekStart, timeFormat, defaultCalendarId, theme, nlParseMode, folderVisibility, reminderTimed, reminderAllDay}}`.
+- `GET /settings` → `{settings:{defaultView, weekStart, timeFormat, defaultCalendarId, theme, nlParseMode, folderVisibility, reminderTimed, reminderAllDay, homeLat, homeLng, homeLabel, mapStyle}}`.
 - `PATCH /settings` (any subset of the keys below) → `{settings:{...}}` (the full merged object). Unknown keys → 400 `unknown_setting`; invalid values → 400.
 
 | Key | Values | Default | Notes |
@@ -98,6 +100,10 @@ User preferences stored in `users.settings_json`. The server stores and validate
 | `nlParseMode` | `always`\|`smart`\|`never` | `smart` | server-enforced in `/quickadd`: `smart` = LLM only when the deterministic parse is incomplete/low-confidence, `always` = LLM-first, `never` = deterministic only |
 | `reminderTimed` | list of `{minutes:int}` (0-40320, max 5) | `[{minutes:10}]` | global default reminders for timed events; server-enforced by the reminder scan (see Reminders) |
 | `reminderAllDay` | list of `{daysBefore:int, time:"HH:MM"}` (0-28 days, max 5) | `[{daysBefore:1, time:"18:00"}]` | global default reminders for all-day events, fired in the event's tzid |
+| `homeLat` | number -90..90 or `null` | `null` | home location latitude; with `homeLng`, the bias point for `/geocode/search` |
+| `homeLng` | number -180..180 or `null` | `null` | home location longitude |
+| `homeLabel` | string (≤200) or `null` | `null` | display name for the home location (Settings page only) |
+| `mapStyle` | `streets-v2`\|`dataviz`\|`outdoor-v2`\|`bright-v2` | `streets-v2` | MapTiler raster style for the event detail mini-map; only used when the server has `BETTERCAL_MAPTILER_KEY` configured (see `GET /config`) |
 
 ## Saved views
 Named snapshots of client view state; `config` is client-defined: `{viewType, visibleCalendarIds, folderCollapse, filterText, anchor:"today"|dayKey}`.
@@ -110,9 +116,11 @@ Named snapshots of client view state; `config` is client-defined: `{viewType, vi
 - `GET /outfeeds` → `{feeds:[{id,name,url,scope,description}]}` (envelope key is `feeds`). `POST /outfeeds` `{name, scope:{type:"all"|"calendar"|"search", calendarId?, q?}, description?}` → `{id,name,url,scope,description}`.
 - `DELETE /outfeeds/:id`.
 - Public: `GET /feed/{token}.ics` (no auth; X-WR-CALNAME + description embedded).
+- ICS export (outbound feeds, CalDAV feed objects built by `Ics::buildCalendar`): rich (HTML) descriptions write `DESCRIPTION` as tag-stripped plain text plus `X-ALT-DESC;FMTTYPE=text/html` carrying the sanitized HTML; plain text descriptions export exactly as before. ICS import is unchanged (descriptions imported as text).
 
 ## Misc
 - `GET /health` (no auth) → `{ok:true,time,db:true,version}`.
+- `GET /config` (auth) → `{maptilerKey, mapStyle}` — public-safe client configuration, fetched once at boot. `maptilerKey` is the optional MapTiler tile key from `BETTERCAL_MAPTILER_KEY` (null when unset; the mini-map falls back to OSM tiles); `mapStyle` echoes the requesting user's map style setting.
 
 ## Frontend state contract (bettercal-ui props)
 

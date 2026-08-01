@@ -9,8 +9,11 @@ import { html, useState, useEffect, useRef } from '../../vendor/index.js';
 import { useStore, set, state } from './store.js';
 import { createEvent, updateEvent, deleteEvent, quickAddParse } from './actions.js';
 import { trapFocus } from '../ui/DayExpand.js';
+import { PlaceInput, pickFillText } from './PlaceInput.js';
+import { RichText } from './RichText.js';
+import { isEmptyHtml } from '../lib/richtext.js';
 import {
-  parseISO, toInputValue, fromInputValue, toISOWithOffset, addDaysDate, pad,
+  parseISO, toInputValue, fromInputValue, toISOWithOffset, addDaysDate, pad, localTz,
 } from '../lib/dates.js';
 import {
   TIMED_CHOICES, ALLDAY_CHOICES, REMINDER_UNITS, fmtOffsetMinutes, fmtReminder,
@@ -84,7 +87,13 @@ export function EditorDrawer() {
       if (d.start) { nf.start = toInputValue(parseISO(d.start)); touched.push('start'); }
       if (d.end) { nf.end = toInputValue(parseISO(d.end)); touched.push('end'); }
       if (d.allDay != null) { nf.allDay = !!d.allDay; touched.push('allDay'); }
-      if (d.location) { nf.location = d.location; touched.push('location'); }
+      if (d.location) {
+        nf.location = d.location;
+        // Parsed free text: stale picked coordinates no longer apply.
+        nf.locationLat = null;
+        nf.locationLng = null;
+        touched.push('location');
+      }
       return nf;
     });
     if (touched.length) {
@@ -128,6 +137,10 @@ export function EditorDrawer() {
       end: toInputValue(end),
       allDay: occ ? !!occ.allDay : !!draft.allDay,
       location: occ ? (occ.location || '') : (draft.location || ''),
+      locationLat: occ ? (occ.locationLat != null ? occ.locationLat : null)
+        : (draft.locationLat != null ? draft.locationLat : null),
+      locationLng: occ ? (occ.locationLng != null ? occ.locationLng : null)
+        : (draft.locationLng != null ? draft.locationLng : null),
       url: occ ? (occ.url || '') : '',
       description: occ ? (occ.description || '') : '',
       tags: occ && occ.tags ? occ.tags.join(', ') : '',
@@ -204,8 +217,12 @@ export function EditorDrawer() {
       end: toISOWithOffset(en),
       allDay: form.allDay,
       location: form.location || null,
+      // Picked coordinates persist directly; free-typed text sends null so
+      // stale coordinates clear and the lazy geocode re-resolves later.
+      locationLat: form.location ? form.locationLat : null,
+      locationLng: form.location ? form.locationLng : null,
       url: form.url || null,
-      description: form.description || null,
+      description: isEmptyHtml(form.description) ? null : form.description,
       tagNames: form.tags.split(',').map((t) => t.trim()).filter(Boolean),
       rrule: buildRrule(form.rrule),
     };
@@ -306,7 +323,13 @@ export function EditorDrawer() {
       <div class="bc-field-row">
         <label class=${'bc-field grow' + (nlFlash && nlFlash.has('location') ? ' bc-nl-applied' : '')}>
           <span>Location</span>
-          <input value=${form.location} onInput=${(e) => upd({ location: e.target.value })} />
+          <${PlaceInput}
+            value=${form.location}
+            ariaLabel="Location"
+            tz=${occ ? occ.tzid : localTz()}
+            onText=${(v) => upd({ location: v, locationLat: null, locationLng: null })}
+            onPick=${(r) => upd({ location: pickFillText(r), locationLat: r.lat, locationLng: r.lng })}
+          />
         </label>
         <label class="bc-field grow">
           <span>URL</span>
@@ -314,10 +337,15 @@ export function EditorDrawer() {
         </label>
       </div>
 
-      <label class="bc-field">
+      <div class="bc-field">
         <span>Description</span>
-        <textarea rows="3" value=${form.description} onInput=${(e) => upd({ description: e.target.value })}></textarea>
-      </label>
+        <${RichText}
+          seed=${occ ? (occ.description || '') : (editor.draft && editor.draft.description) || ''}
+          seedKey=${occ ? occ.instanceId : 'new'}
+          ariaLabel="Description"
+          onChange=${(htmlValue) => upd({ description: htmlValue })}
+        />
+      </div>
 
       <label class="bc-field">
         <span>Tags (comma separated)</span>

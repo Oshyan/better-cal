@@ -1588,3 +1588,69 @@ body.bc-rescheduling { user-select: none; }
 @media (prefers-reduced-motion: reduce) {
   :is(.bc-chip, .bc-bar, .bc-block).is-past { transition: none; }
 }
+
+/* --- place search (location autocomplete) ----------------------------------------- */
+
+.bc-place { position: relative; display: flex; min-width: 0; }
+.bc-place input { width: 100%; min-width: 0; }
+.bc-place-list {
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: 90;
+  min-width: 100%; width: max-content; max-width: min(360px, 92vw);
+  margin: 0; padding: 4px; list-style: none;
+  background: var(--bg-raised); border: 1px solid var(--border-strong);
+  border-radius: var(--radius); box-shadow: var(--shadow);
+  max-height: 280px; overflow-y: auto; overscroll-behavior: contain;
+}
+.bc-place-row {
+  display: flex; flex-direction: column; gap: 1px;
+  padding: 7px 9px; border-radius: 6px; cursor: pointer;
+}
+.bc-place-row.is-active { background: var(--bg-inset); }
+.bc-place-name { font-weight: 600; font-size: 13px; }
+.bc-place-addr { color: var(--fg-muted); font-size: 11.5px; overflow-wrap: anywhere; }
+.bc-place-row.is-far .bc-place-name { color: var(--fg-muted); }
+.bc-place-farpill {
+  display: inline-block; margin-right: 6px; padding: 0 6px;
+  border: 1px solid var(--border-strong); border-radius: 10px;
+  font-size: 10.5px; font-weight: 600; color: var(--fg-muted);
+}
+/* Compact variant for the quick add strip. */
+.bc-place-compact .bc-place-list { font-size: 12px; }
+.bc-qa-locfield { flex: 1; min-width: 120px; }
+.bc-qa-locfield .bc-place { flex: 1; }
+.bc-qa-loc { font-size: 12.5px; padding: 3px 6px; width: 100%; min-width: 90px; }
+
+/* --- rich text description editor (Squire) ---------------------------------------- */
+
+.bc-rt { border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--bg-raised); }
+.bc-rt:focus-within { border-color: var(--accent); }
+.bc-rt-bar {
+  display: flex; align-items: center; gap: 2px;
+  padding: 4px 6px; border-bottom: 1px solid var(--border);
+}
+.bc-rt-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 24px; padding: 0;
+  background: none; border: 1px solid transparent; border-radius: 6px;
+  color: var(--fg-muted); font-size: 12.5px; cursor: pointer;
+}
+.bc-rt-btn:hover { background: var(--bg-inset); color: var(--fg); }
+.bc-rt-btn.is-active { background: var(--bg-inset); border-color: var(--border-strong); color: var(--fg); }
+.bc-rt-b { font-weight: 700; }
+.bc-rt-i { font-style: italic; font-family: Georgia, serif; }
+.bc-rt-u { text-decoration: underline; }
+.bc-rt-sep { width: 1px; height: 16px; background: var(--border); margin: 0 4px; }
+.bc-rt-editor {
+  min-height: 68px; max-height: 220px; overflow-y: auto; overscroll-behavior: contain;
+  padding: 7px 9px; font-size: 13px; line-height: 1.45; outline: none;
+  cursor: text; overflow-wrap: anywhere;
+}
+.bc-rt-editor.is-loading { color: var(--fg-muted); }
+.bc-rt-editor a { color: var(--accent); }
+.bc-rt-editor ul, .bc-rt-editor ol { margin: 4px 0; padding-left: 22px; }
+.bc-rt-editor div, .bc-rt-editor p { margin: 0; }
+
+/* Rich description display (detail view): sanitized HTML, not preformatted text. */
+.bc-detail-desc.bc-rich { white-space: normal; }
+.bc-detail-desc.bc-rich p, .bc-detail-desc.bc-rich div { margin: 0 0 2px; }
+.bc-detail-desc.bc-rich ul, .bc-detail-desc.bc-rich ol { margin: 4px 0; padding-left: 22px; }

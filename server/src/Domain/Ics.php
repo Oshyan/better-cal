@@ -151,7 +151,17 @@ final class Ics
         }
         $out .= self::line('SUMMARY', self::escape((string) ($ev['title'] ?? '')));
         if (!empty($ev['description'])) {
-            $out .= self::line('DESCRIPTION', self::escape((string) $ev['description']));
+            // Rich (HTML) descriptions export as plain text in DESCRIPTION
+            // plus the original HTML in X-ALT-DESC (the de facto rich-text
+            // field, understood by Outlook and Apple Calendar). Plain text
+            // descriptions export exactly as before.
+            $description = (string) $ev['description'];
+            if (Sanitize::isHtml($description)) {
+                $out .= self::line('DESCRIPTION', self::escape(Sanitize::toText($description)));
+                $out .= self::fold('X-ALT-DESC;FMTTYPE=text/html:' . self::escape($description)) . "\r\n";
+            } else {
+                $out .= self::line('DESCRIPTION', self::escape($description));
+            }
         }
         if (!empty($ev['location'])) {
             $out .= self::line('LOCATION', self::escape((string) $ev['location']));

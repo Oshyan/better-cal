@@ -4,7 +4,7 @@
 //   picked up on next load while offline still works
 // - API GETs: network-first with a 5s timeout falling back to cache
 
-const VERSION = 'bc-v3';
+const VERSION = 'bc-v4';
 const SHELL_CACHE = VERSION + '-shell';
 const API_CACHE = VERSION + '-api';
 const API_TIMEOUT_MS = 5000;
@@ -33,6 +33,8 @@ const SHELL = [
   '/assets/src/app/QuickAdd.js',
   '/assets/src/app/EventPopover.js',
   '/assets/src/app/EditorDrawer.js',
+  '/assets/src/app/PlaceInput.js',
+  '/assets/src/app/RichText.js',
   '/assets/src/app/SearchOverlay.js',
   '/assets/src/app/Toasts.js',
   '/assets/src/app/Login.js',
@@ -48,6 +50,7 @@ const SHELL = [
   '/assets/src/lib/dates.js',
   '/assets/src/lib/color.js',
   '/assets/src/lib/reminders.js',
+  '/assets/src/lib/richtext.js',
 ];
 
 self.addEventListener('install', (event) => {

@@ -316,8 +316,10 @@ final class Events
             'calendar_id' => $calendarId,
             'uid' => Ids::ulid(),
             'title' => mb_substr(trim((string) ($in['title'] ?? '')), 0, 500),
-            'description' => isset($in['description']) ? (string) $in['description'] : null,
+            'description' => isset($in['description']) ? Sanitize::description((string) $in['description']) : null,
             'location' => isset($in['location']) ? mb_substr((string) $in['location'], 0, 500) : null,
+            'location_lat' => self::coordOrNull($in, 'locationLat'),
+            'location_lng' => self::coordOrNull($in, 'locationLng'),
             'url' => isset($in['url']) ? (string) $in['url'] : null,
             'start_utc' => $startUtc,
             'end_utc' => $endUtc,
@@ -814,6 +816,9 @@ final class Events
                 if ($col === 'location' && $fields[$col] !== null) {
                     $fields[$col] = mb_substr($fields[$col], 0, 500);
                 }
+                if ($col === 'description' && $fields[$col] !== null) {
+                    $fields[$col] = Sanitize::description($fields[$col]);
+                }
             }
         }
         foreach (['locationLat' => 'location_lat', 'locationLng' => 'location_lng'] as $key => $col) {
@@ -837,6 +842,18 @@ final class Events
             $fields['reminders_json'] = self::encodeReminders(Reminders::validateEventReminders($in['reminders']));
         }
         return $fields;
+    }
+
+    /** Optional locationLat/locationLng on create: number or null. */
+    private static function coordOrNull(array $in, string $key): ?float
+    {
+        if (!array_key_exists($key, $in) || $in[$key] === null) {
+            return null;
+        }
+        if (!is_numeric($in[$key])) {
+            throw HttpError::badRequest("$key must be a number or null");
+        }
+        return (float) $in[$key];
     }
 
     /** null (inherit) stays NULL; [] and lists persist as JSON. */

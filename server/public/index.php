@@ -72,6 +72,7 @@ function bc_handle_api(Request $request, array $cfg): void
         $outFeeds = new Domain\OutFeeds($db, $search, $cfg);
         $settings = new Domain\Settings($db);
         $geocode = new Domain\Geocode($db);
+        $placeSearch = new Domain\PlaceSearch();
         $pushSubscriptions = new Domain\PushSubscriptions($db);
         $pushSender = new \BetterCal\Infra\PushSender($cfg);
         $quickAdd = new Domain\QuickAdd($db, new LlmGateway($cfg), $events, $settings);
@@ -87,7 +88,8 @@ function bc_handle_api(Request $request, array $cfg): void
         $savedViewsController = new Controllers\SavedViewsController($savedViews);
         $tokensController = new Controllers\TokensController($apiTokens);
         $settingsController = new Controllers\SettingsController($settings);
-        $geocodeController = new Controllers\GeocodeController($geocode);
+        $geocodeController = new Controllers\GeocodeController($geocode, $placeSearch);
+        $configController = new Controllers\ConfigController($settings, $cfg);
         $pushController = new Controllers\PushController($pushSubscriptions, $pushSender);
         $healthController = new Controllers\HealthController($db, $cfg);
 
@@ -126,6 +128,9 @@ function bc_handle_api(Request $request, array $cfg): void
         $router->add('GET', "$base/search", [$searchController, 'search']);
 
         $router->add('GET', "$base/geocode", [$geocodeController, 'lookup']);
+        $router->add('GET', "$base/geocode/search", [$geocodeController, 'search']);
+
+        $router->add('GET', "$base/config", [$configController, 'index']);
 
         $router->add('GET', "$base/filters", [$filtersController, 'index']);
         $router->add('POST', "$base/filters", [$filtersController, 'create']);

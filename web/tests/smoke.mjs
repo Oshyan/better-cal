@@ -30,6 +30,7 @@ import {
   normalizeMinutesList, effectiveReminders, toMinutes, fromMinutes,
   TIMED_CHOICES, MAX_REMINDER_MINUTES, REMINDER_UNITS,
 } from '../src/lib/reminders.js';
+import { deepLinkAnchorMs, deepLinkWindows } from '../src/lib/deeplink.js';
 
 let passed = 0;
 let failed = 0;
@@ -696,6 +697,45 @@ eq('reminder effective global fallback allday',
 eq('reminder effective subscribed never inherits',
   effectiveReminders({ override: null, calendarDefaults: null, settings: remSettings, allDay: false, calendarKind: 'subscribed' }),
   { reminders: [], source: 'default' });
+
+console.log('--- notification deep-link windows ---');
+
+// Anchor resolution: &at= wins, instanceId compact timestamp is the fallback,
+// garbage falls back to now.
+const DL_NOW = Date.UTC(2026, 6, 31, 12, 0, 0);
+eq('deeplink: at param wins',
+  deepLinkAnchorMs('42:20260807T190000Z', '2026-09-01T10:00:00Z', DL_NOW),
+  Date.UTC(2026, 8, 1, 10, 0, 0));
+eq('deeplink: instanceId timestamp fallback',
+  deepLinkAnchorMs('42:20260807T190000Z', null, DL_NOW),
+  Date.UTC(2026, 7, 7, 19, 0, 0));
+eq('deeplink: invalid at falls back to instanceId',
+  deepLinkAnchorMs('42:20260807T190000Z', 'not-a-date', DL_NOW),
+  Date.UTC(2026, 7, 7, 19, 0, 0));
+eq('deeplink: opaque id falls back to now', deepLinkAnchorMs('whatever', null, DL_NOW), DL_NOW);
+eq('deeplink: empty id falls back to now', deepLinkAnchorMs('', null, DL_NOW), DL_NOW);
+
+// Broad window spans now AND the occurrence; tight window brackets the
+// occurrence by 36h on each side.
+{
+  const farAt = '2026-08-28T07:00:00Z'; // 28 days out (max daysBefore lead)
+  const w = deepLinkWindows('7:20260828T070000Z', farAt, DL_NOW);
+  const atMs = Date.parse(farAt);
+  assert('deeplink: broad window starts before now', parseISO(w.broad.start).getTime() < DL_NOW);
+  assert('deeplink: broad window ends after far occurrence', parseISO(w.broad.end).getTime() > atMs);
+  assert('deeplink: tight window brackets occurrence',
+    parseISO(w.tight.start).getTime() === atMs - 1.5 * 86400000 &&
+    parseISO(w.tight.end).getTime() === atMs + 1.5 * 86400000);
+  assert('deeplink: window ISO strings carry offsets',
+    [w.broad.start, w.broad.end, w.tight.start, w.tight.end].every((s) => /[+-]\d{2}:\d{2}$/.test(s)));
+}
+// Past occurrence (grace-period reminder clicked late): broad still spans both.
+{
+  const w = deepLinkWindows('9:20260730T090000Z', null, DL_NOW);
+  assert('deeplink: past occurrence inside broad window',
+    parseISO(w.broad.start).getTime() < Date.UTC(2026, 6, 30, 9, 0, 0) &&
+    parseISO(w.broad.end).getTime() > DL_NOW);
+}
 
 console.log('--- time-relative state (timeState) ---');
 

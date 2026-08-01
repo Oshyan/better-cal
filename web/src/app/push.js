@@ -4,9 +4,9 @@
 // settings, never on page load.
 
 import { api, loadWindow } from './api.js';
-import { state, toast } from './store.js';
+import { state, toast, insertOccurrence } from './store.js';
 import { openDetail } from './actions.js';
-import { toISOWithOffset } from '../lib/dates.js';
+import { deepLinkWindows } from '../lib/deeplink.js';
 
 export function pushSupported() {
   return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
@@ -69,26 +69,44 @@ export function sendTestNotification() {
   return api('/push/test', { method: 'POST' });
 }
 
-// Notification clicks open /?event=instanceId. After boot, load a window
-// around now (reminders fire near now), open the event's detail view, and
+// Notification clicks open /?event=instanceId&at=ISO. After boot, load a
+// window covering the occurrence (&at= from the server; older notifications
+// fall back to the instanceId timestamp), open the event's detail view, and
 // strip the query so refreshes do not reopen it.
 export async function handleEventLink() {
   const params = new URLSearchParams(window.location.search);
   const instanceId = params.get('event');
   if (!instanceId) return;
+  const at = params.get('at');
   params.delete('event');
+  params.delete('at');
   const rest = params.toString();
   window.history.replaceState(null, '', window.location.pathname + (rest ? '?' + rest : ''));
-  const now = Date.now();
+
+  const { broad, tight } = deepLinkWindows(instanceId, at, Date.now());
   try {
-    await loadWindow(
-      toISOWithOffset(new Date(now - 2 * 86400000)),
-      toISOWithOffset(new Date(now + 16 * 86400000)),
-    );
-  } catch { /* cache may still hold it */ }
+    await loadWindow(broad.start, broad.end);
+  } catch { /* cache may still hold it; the targeted retry below covers it */ }
   if (state.occ.has(instanceId)) {
     openDetail(instanceId);
-  } else {
-    toast('Could not find the event from that notification', { error: true });
+    return;
   }
+  // Not in the cache. Two known ways that happens even though the event
+  // exists: (a) the calendar view issued its own window load concurrently and
+  // the monotonic request id discarded our merge as stale; (b) the occurrence
+  // is excluded from normal window responses (attendance hidden, or an
+  // enabled filter hides it) while reminders still fire for it. Retry once
+  // with a tight window around the occurrence, includeHidden=1, and insert
+  // just the linked occurrence so hidden events do not leak into the grids.
+  try {
+    const q = new URLSearchParams({ start: tight.start, end: tight.end, includeHidden: '1' });
+    const data = await api('/events?' + q.toString());
+    const hit = (data.events || []).find((ev) => ev.instanceId === instanceId);
+    if (hit) {
+      insertOccurrence(hit);
+      openDetail(instanceId);
+      return;
+    }
+  } catch { /* fall through: genuinely unreachable */ }
+  toast('Could not find the event from that notification', { error: true });
 }

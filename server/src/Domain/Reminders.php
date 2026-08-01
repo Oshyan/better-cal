@@ -280,7 +280,9 @@ final class Reminders
         foreach ($this->db->all('SELECT id, email, settings_json FROM users') as $user) {
             $userId = (int) $user['id'];
             $stored = is_string($user['settings_json'] ?? null) ? json_decode((string) $user['settings_json'], true) : null;
-            $channel = (string) Settings::withDefaults(is_array($stored) ? $stored : [])['notifyChannel'];
+            $settings = Settings::withDefaults(is_array($stored) ? $stored : []);
+            $channel = (string) $settings['notifyChannel'];
+            $emailTo = Settings::notifyDestination($settings, (string) $user['email']);
             $subs = $subsByUser[$userId] ?? [];
             $wantsPush = $channel !== 'email' && $subs !== [];
             $wantsEmail = $emailReady && $channel !== 'push';
@@ -317,10 +319,10 @@ final class Reminders
                     }
                 }
                 $plan = self::channelPlan($channel, $hasLiveSub, $outcomes);
-                if ($wantsEmail && $plan['email'] && (string) $user['email'] !== '') {
+                if ($wantsEmail && $plan['email'] && $emailTo !== '') {
                     // Email failures log inside sendReminder and never block
                     // the scan; the dedup row above stays either way.
-                    if ($this->email->sendReminder((string) $user['email'], $due['payload'])) {
+                    if ($this->email->sendReminder($emailTo, $due['payload'])) {
                         $emailed++;
                     }
                 }

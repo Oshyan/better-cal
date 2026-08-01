@@ -74,7 +74,7 @@ Resolution order per event: the event's `reminders` override (`[]` = explicitly 
 
 Fire-time semantics: `{minutes}` = minutes before the start instant (for all-day events, before local midnight of the event date in its tzid). `{daysBefore, time}` (all-day defaults) = that wall-clock time in the event's tzid, daysBefore days before the event date (e.g. `{daysBefore:1, time:"18:00"}` = 6 PM the evening before).
 
-Delivery channels: the `notifyChannel` setting (see Settings) picks how each due reminder is delivered. `push` (default) = Web Push only; `email` = a reminder email to the account address only; `both` = both; `push-fallback` = push normally, with an email only when no non-failing subscription exists or every push send that attempt was rejected/gone (a push the service *accepted* but never displayed — device unreachable past the TTL — cannot be detected, so fallback email does not cover it). One `notified_instances` row marks the reminder sent regardless of channel, so retries never double-send after a partial success. Email failures are logged and never block the scan. Reminder emails carry the event title, the local time string, location, and a button deep link (absolute against `BETTERCAL_BASE_URL`).
+Delivery channels: the `notifyChannel` setting (see Settings) picks how each due reminder is delivered. `push` (default) = Web Push only; `email` = a reminder email only (to the `notifyEmail` setting when set, else the account address); `both` = both; `push-fallback` = push normally, with an email only when no non-failing subscription exists or every push send that attempt was rejected/gone (a push the service *accepted* but never displayed — device unreachable past the TTL — cannot be detected, so fallback email does not cover it). One `notified_instances` row marks the reminder sent regardless of channel, so retries never double-send after a partial success. Email failures are logged and never block the scan. Reminder emails carry the event title, the local time string, location, and a button deep link (absolute against `BETTERCAL_BASE_URL`).
 
 ICS: file import maps display VALARMs with before-start relative triggers into per-event overrides; export (outbound feeds, CalDAV objects) writes a display VALARM per override entry. Inherited defaults and explicit-none export nothing. Feed polls do not sync VALARMs (user-local overrides must survive polls).
 
@@ -90,7 +90,7 @@ Server config: VAPID keys in `.env` (`BETTERCAL_VAPID_PUBLIC`, `BETTERCAL_VAPID_
 
 ## Settings
 User preferences stored in `users.settings_json`. The server stores and validates; enforcement is client-side except `nlParseMode`, which the server applies in `/quickadd` (see Events). Reads always return stored values merged over defaults; keys never set come back as their defaults. Settings changes are not undoable via `POST /undo`.
-- `GET /settings` → `{settings:{defaultView, weekStart, timeFormat, defaultCalendarId, theme, nlParseMode, notifyChannel, folderVisibility, reminderTimed, reminderAllDay, homeLat, homeLng, homeLabel, mapStyle}}`.
+- `GET /settings` → `{settings:{defaultView, weekStart, timeFormat, defaultCalendarId, theme, nlParseMode, notifyChannel, notifyEmail, folderVisibility, reminderTimed, reminderAllDay, homeLat, homeLng, homeLabel, mapStyle}}`.
 - `PATCH /settings` (any subset of the keys below) → `{settings:{...}}` (the full merged object). Unknown keys → 400 `unknown_setting`; invalid values → 400.
 
 | Key | Values | Default | Notes |
@@ -102,6 +102,7 @@ User preferences stored in `users.settings_json`. The server stores and validate
 | `theme` | `system`\|`light`\|`dark` | `system` | |
 | `nlParseMode` | `always`\|`smart`\|`never` | `smart` | server-enforced in `/quickadd`: `smart` = LLM only when the deterministic parse is incomplete/low-confidence, `always` = LLM-first, `never` = deterministic only |
 | `notifyChannel` | `push`\|`email`\|`both`\|`push-fallback` | `push` | reminder delivery channel, server-enforced by the reminder scan (see Reminders: Delivery channels) |
+| `notifyEmail` | email address (≤254, `FILTER_VALIDATE_EMAIL`) or `null` | `null` | where reminder and test emails are sent; `null`/blank = the account email (the SMTP sender mailbox) |
 | `reminderTimed` | list of `{minutes:int}` (0-40320, max 5) | `[{minutes:10}]` | global default reminders for timed events; server-enforced by the reminder scan (see Reminders) |
 | `reminderAllDay` | list of `{daysBefore:int, time:"HH:MM"}` (0-28 days, max 5) | `[{daysBefore:1, time:"18:00"}]` | global default reminders for all-day events, fired in the event's tzid |
 | `homeLat` | number -90..90 or `null` | `null` | home location latitude; with `homeLng`, the bias point for `/geocode/search` |

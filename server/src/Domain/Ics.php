@@ -169,6 +169,16 @@ final class Ics
         if (!empty($ev['url'])) {
             $out .= self::line('URL', (string) $ev['url']);
         }
+        // Trip relationships (RFC 5545 RELATED-TO): containers list member
+        // uids as RELTYPE=CHILD, members list container uids as
+        // RELTYPE=PARENT. Callers opt in by decorating rows with
+        // related_children / related_parents uid lists (Trips::relatedUidMap);
+        // undecorated rows write nothing. Import ignores RELATED-TO (parse()).
+        foreach (['related_children' => 'CHILD', 'related_parents' => 'PARENT'] as $key => $reltype) {
+            foreach (is_array($ev[$key] ?? null) ? $ev[$key] : [] as $relUid) {
+                $out .= self::line('RELATED-TO;RELTYPE=' . $reltype, self::escape((string) $relUid));
+            }
+        }
         $status = strtoupper((string) ($ev['status'] ?? 'confirmed'));
         if (in_array($status, ['CONFIRMED', 'TENTATIVE', 'CANCELLED'], true)) {
             $out .= self::line('STATUS', $status);
@@ -245,6 +255,10 @@ final class Ics
     /**
      * Parse an ICS document into normalized event arrays via sabre/vobject.
      * Handles VTIMEZONE, DATE values, RRULE, EXDATE and RECURRENCE-ID.
+     * RELATED-TO properties are deliberately ignored on import for now: trip
+     * membership is user-local metadata created only through the API (see
+     * docs/design-containers.md), so inbound feeds and file imports never
+     * create or mutate event_links rows.
      *
      * @return list<array<string,mixed>> keys: uid, title, description, location, url,
      *   start_utc, end_utc, all_day, tzid, rrule, exdates (list), status,

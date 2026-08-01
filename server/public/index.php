@@ -63,7 +63,8 @@ function bc_handle_api(Request $request, array $cfg): void
         $recurrence = new Domain\Recurrence();
         $jobQueue = new JobQueue($db);
         $filters = new Domain\Filters($db, $undo, $jobQueue);
-        $events = new Domain\Events($db, $recurrence, $undo, $labels, $filters);
+        $trips = new Domain\Trips($db, $undo);
+        $events = new Domain\Events($db, $recurrence, $undo, $labels, $filters, $trips);
         $calendars = new Domain\Calendars($db, $undo, $labels);
         $folders = new Domain\Folders($db, $undo);
         $feeds = new Domain\Feeds($db, $jobQueue);
@@ -81,7 +82,7 @@ function bc_handle_api(Request $request, array $cfg): void
         $authController = new Controllers\AuthController($auth);
         $calendarsController = new Controllers\CalendarsController($db, $calendars, $feeds);
         $foldersController = new Controllers\FoldersController($folders);
-        $eventsController = new Controllers\EventsController($events);
+        $eventsController = new Controllers\EventsController($events, $trips);
         $quickAddController = new Controllers\QuickAddController($quickAdd);
         $searchController = new Controllers\SearchController($search, $events, $filters, $labels);
         $outFeedsController = new Controllers\OutFeedsController($outFeeds);
@@ -117,6 +118,9 @@ function bc_handle_api(Request $request, array $cfg): void
         $router->add('POST', "$base/events", [$eventsController, 'create']);
         $router->add('PATCH', "$base/events/:id", [$eventsController, 'patch']);
         $router->add('DELETE', "$base/events/:id", [$eventsController, 'delete']);
+        $router->add('GET', "$base/events/:id/links", [$eventsController, 'links']);
+        $router->add('POST', "$base/events/:id/links", [$eventsController, 'attachLink']);
+        $router->add('DELETE', "$base/events/:id/links/:eventId", [$eventsController, 'detachLink']);
         $router->add('POST', "$base/events/:id/attendance", [$eventsController, 'attendance']);
         $router->add('POST', "$base/events/:id/feedback", [$eventsController, 'feedback']);
 

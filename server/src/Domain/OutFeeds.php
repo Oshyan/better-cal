@@ -104,6 +104,20 @@ final class OutFeeds
             ),
         };
 
+        // Trip relationships export as RELATED-TO lines (same treatment as
+        // CalDAV objects): decorate rows with member/container uids.
+        $related = Trips::relatedUidMap($this->db, array_map(static fn(array $e): int => (int) $e['id'], $events));
+        foreach ($events as &$ev) {
+            $id = (int) $ev['id'];
+            if (!empty($related['children'][$id])) {
+                $ev['related_children'] = $related['children'][$id];
+            }
+            if (!empty($related['parents'][$id])) {
+                $ev['related_parents'] = $related['parents'][$id];
+            }
+        }
+        unset($ev);
+
         return Ics::buildCalendar((string) $feed['name'], $this->describeScope($feed, $scope), $events);
     }
 

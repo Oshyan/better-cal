@@ -8,6 +8,7 @@ use BetterCal\Domain\PushSubscriptions;
 use BetterCal\Http\HttpError;
 use BetterCal\Http\Request;
 use BetterCal\Http\Response;
+use BetterCal\Infra\EmailSender;
 use BetterCal\Infra\PushSender;
 
 final class PushController
@@ -15,6 +16,7 @@ final class PushController
     public function __construct(
         private readonly PushSubscriptions $subscriptions,
         private readonly PushSender $sender,
+        private readonly EmailSender $email,
     ) {
     }
 
@@ -30,6 +32,7 @@ final class PushController
         return Response::json([
             'subscribed' => $this->subscriptions->hasAny((int) $req->user['id']),
             'vapidConfigured' => $this->sender->configured(),
+            'emailConfigured' => $this->email->isConfigured(),
         ]);
     }
 
@@ -78,5 +81,27 @@ final class PushController
             }
         }
         return Response::json(['ok' => $sent > 0, 'sent' => $sent, 'failed' => $failed]);
+    }
+
+    /** POST /push/test-email: send a test reminder email to the account address. */
+    public function testEmail(Request $req): Response
+    {
+        if (!$this->email->isConfigured()) {
+            throw new HttpError(
+                'email_not_configured',
+                'Email is not configured on this server (set BETTERCAL_SMTP_HOST and BETTERCAL_SMTP_FROM in .env)',
+                501
+            );
+        }
+        $to = (string) ($req->user['email'] ?? '');
+        $ok = $this->email->sendReminder($to, [
+            'title' => 'Better-Cal test email',
+            'body' => 'Email notifications are working.',
+            'url' => '/',
+        ]);
+        if (!$ok) {
+            throw HttpError::badRequest('Sending failed; check the server SMTP settings and logs', 'email_send_failed');
+        }
+        return Response::json(['ok' => true, 'to' => $to]);
     }
 }

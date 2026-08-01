@@ -75,6 +75,7 @@ function bc_handle_api(Request $request, array $cfg): void
         $placeSearch = new Domain\PlaceSearch();
         $pushSubscriptions = new Domain\PushSubscriptions($db);
         $pushSender = new \BetterCal\Infra\PushSender($cfg);
+        $emailSender = new \BetterCal\Infra\EmailSender($cfg);
         $quickAdd = new Domain\QuickAdd($db, new LlmGateway($cfg), $events, $settings);
 
         $authController = new Controllers\AuthController($auth);
@@ -90,7 +91,7 @@ function bc_handle_api(Request $request, array $cfg): void
         $settingsController = new Controllers\SettingsController($settings);
         $geocodeController = new Controllers\GeocodeController($geocode, $placeSearch);
         $configController = new Controllers\ConfigController($settings, $cfg);
-        $pushController = new Controllers\PushController($pushSubscriptions, $pushSender);
+        $pushController = new Controllers\PushController($pushSubscriptions, $pushSender, $emailSender);
         $healthController = new Controllers\HealthController($db, $cfg);
 
         $router = new Router();
@@ -151,6 +152,7 @@ function bc_handle_api(Request $request, array $cfg): void
         $router->add('POST', "$base/push/subscribe", [$pushController, 'subscribe']);
         $router->add('POST', "$base/push/unsubscribe", [$pushController, 'unsubscribe']);
         $router->add('POST', "$base/push/test", [$pushController, 'test']);
+        $router->add('POST', "$base/push/test-email", [$pushController, 'testEmail']);
 
         $router->add('GET', "$base/settings", [$settingsController, 'index']);
         $router->add('PATCH', "$base/settings", [$settingsController, 'patch']);

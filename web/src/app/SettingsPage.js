@@ -12,8 +12,12 @@ import { PageShell } from './PageShell.js';
 import { PlaceInput, pickFillText } from './PlaceInput.js';
 import { localTz } from '../lib/dates.js';
 import {
-  permissionState, pushSupported, fetchPushStatus, enablePush, disablePush, sendTestNotification,
+  permissionState, pushSupported, fetchPushStatus, enablePush, disablePush,
+  sendTestNotification, sendTestEmail,
 } from './push.js';
+import {
+  BATTERY_TIP_TITLE, BATTERY_TIP_BODY, batteryTipApplies, batteryTipDismissed, dismissBatteryTip,
+} from '../lib/batterytip.js';
 import {
   TIMED_CHOICES, ALLDAY_DAYS_CHOICES, REMINDER_UNITS, fmtOffsetMinutes,
   toMinutes, fromMinutes,
@@ -27,6 +31,17 @@ const VIEW_OPTIONS = [
 const MAP_STYLES = [
   ['streets-v2', 'Streets'], ['dataviz', 'Minimal'], ['outdoor-v2', 'Outdoor'], ['bright-v2', 'Bright'],
 ];
+
+const CHANNEL_OPTIONS = [
+  ['push', 'Push'], ['email', 'Email'], ['both', 'Push and email'], ['push-fallback', 'Push, email as fallback'],
+];
+
+const CHANNEL_HINTS = {
+  push: 'Notifications go to devices where you enabled push; nothing is emailed.',
+  email: 'Every reminder is emailed to your account address; no push notifications.',
+  both: 'Every reminder goes out as a push notification and an email.',
+  'push-fallback': 'Push normally; an email goes out only when no device looks reachable or every push send fails. A push the service accepts but drops later (device off too long) cannot be detected, so it will not trigger an email.',
+};
 
 const NL_HINTS = {
   always: 'The AI parses every quick add; most flexible, every entry costs an AI call.',
@@ -53,12 +68,14 @@ function Row({ label, hint, children }) {
   </div>`;
 }
 
-// Notifications: Web Push status + enable/disable/test, plus the global
-// default reminder editors (the fallbacks behind calendar/event overrides).
-function NotificationsSection({ settings }) {
-  const [status, setStatus] = useState(null); // {subscribed, vapidConfigured}
+// Notifications: Web Push status + enable/disable/test, delivery channel
+// (push/email), Android battery guidance, plus the global default reminder
+// editors (the fallbacks behind calendar/event overrides).
+function NotificationsSection({ settings, user }) {
+  const [status, setStatus] = useState(null); // {subscribed, vapidConfigured, emailConfigured}
   const [perm, setPerm] = useState(permissionState());
   const [busy, setBusy] = useState(false);
+  const [tipHidden, setTipHidden] = useState(batteryTipDismissed());
 
   const refresh = () => {
     setPerm(permissionState());
@@ -147,6 +164,29 @@ function NotificationsSection({ settings }) {
         onClick=${run(disablePush, 'Notifications disabled')}>Disable</button>`}
       ${enabled && html`<button type="button" class="bc-btn" disabled=${busy}
         onClick=${run(sendTestNotification, (r) => 'Test sent to ' + ((r && r.sent) || 0) + ' device(s)')}>Send test notification</button>`}
+    <//>
+    ${enabled && !tipHidden && batteryTipApplies() && html`<div class="bc-card">
+      <div class="bc-card-main">
+        <span class="bc-card-title">${BATTERY_TIP_TITLE}</span>
+        <span class="bc-card-sub">${BATTERY_TIP_BODY}</span>
+      </div>
+      <div class="bc-card-actions">
+        <button type="button" class="bc-btn" onClick=${() => { dismissBatteryTip(); setTipHidden(true); }}>Got it</button>
+      </div>
+    </div>`}
+    <${Row} label="Delivery channel" hint=${CHANNEL_HINTS[settings.notifyChannel] || CHANNEL_HINTS.push}>
+      <select aria-label="Reminder delivery channel"
+        value=${settings.notifyChannel || 'push'}
+        onChange=${(e) => saveSetting('notifyChannel', e.target.value)}>
+        ${CHANNEL_OPTIONS.map(([v, l]) => html`<option key=${v} value=${v}>${l}</option>`)}
+      </select>
+    <//>
+    <${Row} label="Reminder email" hint="Reminder emails go to your account address.">
+      <span class="bc-set-value">${(user && user.email) || ''}</span>
+      ${status && status.emailConfigured === false
+        && html`<span class="bc-set-value">Email not configured on server</span>`}
+      <button type="button" class="bc-btn" disabled=${busy || !(status && status.emailConfigured)}
+        onClick=${run(sendTestEmail, (r) => 'Test email sent to ' + ((r && r.to) || 'your address'))}>Send test email</button>
     <//>
     <${Row} label="Default reminder (timed events)" hint="Used unless a calendar or event overrides it. Custom accepts up to 4 weeks ahead.">
       <select aria-label="Default reminder for timed events"
@@ -336,7 +376,7 @@ export function SettingsPage() {
 
     <${LocationSection} settings=${settings} config=${config} />
 
-    <${NotificationsSection} settings=${settings} />
+    <${NotificationsSection} settings=${settings} user=${user} />
 
     <section class="bc-set-section">
       <h2 class="bc-set-h">Quick add</h2>

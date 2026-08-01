@@ -32,6 +32,7 @@ import {
 } from '../src/lib/reminders.js';
 import { deepLinkAnchorMs, deepLinkWindows } from '../src/lib/deeplink.js';
 import { hasHtml, stripToText, isEmptyHtml } from '../src/lib/richtext.js';
+import { batteryTipApplies, BATTERY_TIP_BODY, BATTERY_TIP_TITLE } from '../src/lib/batterytip.js';
 
 let passed = 0;
 let failed = 0;
@@ -799,6 +800,16 @@ assert('richtext: empty string is empty', isEmptyHtml(''));
 assert('richtext: null is empty', isEmptyHtml(null));
 assert('richtext: real content is not empty', !isEmptyHtml('<div>note</div>'));
 assert('richtext: plain text is not empty', !isEmptyHtml('note'));
+
+console.log('--- battery tip ---');
+
+// Android-only guidance; the copy must name the settings path users follow.
+assert('batterytip: applies on Android UA', batteryTipApplies('Mozilla/5.0 (Linux; Android 15; Pixel 9) Chrome/126'));
+assert('batterytip: not on iPhone', !batteryTipApplies('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)'));
+assert('batterytip: not on desktop', !batteryTipApplies('Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5)'));
+assert('batterytip: empty UA no-op', !batteryTipApplies(''));
+assert('batterytip: copy names Unrestricted path', BATTERY_TIP_BODY.includes('Battery') && BATTERY_TIP_BODY.includes('Unrestricted'));
+assert('batterytip: title mentions Android', BATTERY_TIP_TITLE.includes('Android'));
 
 console.log('--- color utils ---');
 

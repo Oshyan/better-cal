@@ -69,6 +69,10 @@ export function sendTestNotification() {
   return api('/push/test', { method: 'POST' });
 }
 
+export function sendTestEmail() {
+  return api('/push/test-email', { method: 'POST' });
+}
+
 // Notification clicks open /?event=instanceId&at=ISO. After boot, load a
 // window covering the occurrence (&at= from the server; older notifications
 // fall back to the instanceId timestamp), open the event's detail view, and

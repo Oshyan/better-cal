@@ -6,6 +6,7 @@ namespace BetterCal\Domain;
 
 use BetterCal\Http\HttpError;
 use BetterCal\Infra\Db;
+use BetterCal\Infra\EmailSender;
 use BetterCal\Infra\PushSender;
 use BetterCal\Support\Time;
 
@@ -42,6 +43,7 @@ final class Reminders
         private readonly Db $db,
         private readonly PushSubscriptions $subscriptions,
         private readonly PushSender $sender,
+        private readonly EmailSender $email,
         private readonly Recurrence $recurrence,
     ) {
     }
@@ -219,14 +221,42 @@ final class Reminders
         return $eventId . ':' . $startUtc->setTimezone(Time::utc())->format('Ymd\THis\Z') . ':' . $offsetMinutes;
     }
 
+    // ---- Pure: delivery channel decision -------------------------------
+
+    /**
+     * Which channels one due reminder goes to, per the user's notifyChannel
+     * setting. push-fallback sends push normally and emails only when (a) no
+     * live (non-failing) subscription exists or (b) every push send this
+     * attempt came back rejected/gone. Honest limitation: a push the service
+     * ACCEPTED but never displayed (device unreachable past the TTL) cannot
+     * be detected here, so fallback email does not cover that case.
+     *
+     * @param list<string> $pushOutcomes PushSender results for this attempt
+     * @return array{push:bool, email:bool}
+     */
+    public static function channelPlan(string $channel, bool $hasLiveSub, array $pushOutcomes): array
+    {
+        return [
+            'push' => $channel !== 'email',
+            'email' => match ($channel) {
+                'email', 'both' => true,
+                'push-fallback' => !$hasLiveSub || !in_array(PushSender::OK, $pushOutcomes, true),
+                default => false,
+            },
+        ];
+    }
+
     // ---- Worker job ---------------------------------------------------
 
     /**
-     * Minutely scan: expand upcoming occurrences, compute due reminders, send
-     * Web Push for due-and-unsent instances, then clean up old dedup rows and
-     * long-failing subscriptions.
+     * Minutely scan: expand upcoming occurrences, compute due reminders,
+     * deliver due-and-unsent instances over the user's channels (Web Push
+     * and/or email), then clean up old dedup rows and long-failing
+     * subscriptions. One notified_instances row marks the reminder sent
+     * regardless of channel, so a retry after a partial success never
+     * double-sends.
      *
-     * @return array{sent:int, failed:int}
+     * @return array{sent:int, failed:int, emailed:int}
      */
     public function scan(?\DateTimeImmutable $now = null): array
     {
@@ -237,43 +267,66 @@ final class Reminders
         );
         $this->subscriptions->pruneFailing($now->sub(new \DateInterval(self::FAILING_SUBSCRIPTION_TTL)));
 
-        if (!$this->sender->configured()) {
-            return ['sent' => 0, 'failed' => 0];
+        $pushReady = $this->sender->configured();
+        $emailReady = $this->email->isConfigured();
+        if (!$pushReady && !$emailReady) {
+            return ['sent' => 0, 'failed' => 0, 'emailed' => 0];
         }
-        $subsByUser = $this->subscriptions->allByUser();
-        if ($subsByUser === []) {
-            return ['sent' => 0, 'failed' => 0];
-        }
+        $subsByUser = $pushReady ? $this->subscriptions->allByUser() : [];
 
         $sent = 0;
         $failed = 0;
-        foreach ($subsByUser as $userId => $subs) {
-            foreach ($this->dueForUser((int) $userId, $now) as $due) {
+        $emailed = 0;
+        foreach ($this->db->all('SELECT id, email, settings_json FROM users') as $user) {
+            $userId = (int) $user['id'];
+            $stored = is_string($user['settings_json'] ?? null) ? json_decode((string) $user['settings_json'], true) : null;
+            $channel = (string) Settings::withDefaults(is_array($stored) ? $stored : [])['notifyChannel'];
+            $subs = $subsByUser[$userId] ?? [];
+            $wantsPush = $channel !== 'email' && $subs !== [];
+            $wantsEmail = $emailReady && $channel !== 'push';
+            if (!$wantsPush && !$wantsEmail) {
+                continue; // nothing could deliver; skip the expansion work
+            }
+            $hasLiveSub = array_filter($subs, static fn(array $s): bool => ($s['failing_since'] ?? null) === null) !== [];
+
+            foreach ($this->dueForUser($userId, $now) as $due) {
                 $inserted = $this->db->run(
                     'INSERT IGNORE INTO notified_instances (instance_key, sent_at) VALUES (?, ?)',
                     [$due['key'], Time::toDb($now)]
                 )->rowCount();
                 if ($inserted === 0) {
-                    continue; // already sent (dedup)
+                    continue; // already sent (dedup, shared across channels)
                 }
-                foreach ($subs as $sub) {
-                    // Reminders lose their value fast: if the push service
-                    // cannot deliver within 15 minutes (device unreachable or
-                    // dozing), drop it rather than arriving hours stale.
-                    $result = $this->sender->send($sub, $due['payload'], 900);
-                    if ($result === PushSender::OK) {
-                        $this->subscriptions->recordSuccess((int) $sub['id']);
-                        $sent++;
-                    } else {
-                        if ($result === PushSender::GONE) {
-                            $this->subscriptions->recordFailure((int) $sub['id']);
+                $outcomes = [];
+                if ($wantsPush) {
+                    foreach ($subs as $sub) {
+                        // Reminders lose their value fast: if the push service
+                        // cannot deliver within 15 minutes (device unreachable
+                        // or dozing), drop it rather than arriving hours stale.
+                        $result = $this->sender->send($sub, $due['payload'], 900);
+                        $outcomes[] = $result;
+                        if ($result === PushSender::OK) {
+                            $this->subscriptions->recordSuccess((int) $sub['id']);
+                            $sent++;
+                        } else {
+                            if ($result === PushSender::GONE) {
+                                $this->subscriptions->recordFailure((int) $sub['id']);
+                            }
+                            $failed++;
                         }
-                        $failed++;
+                    }
+                }
+                $plan = self::channelPlan($channel, $hasLiveSub, $outcomes);
+                if ($wantsEmail && $plan['email'] && (string) $user['email'] !== '') {
+                    // Email failures log inside sendReminder and never block
+                    // the scan; the dedup row above stays either way.
+                    if ($this->email->sendReminder((string) $user['email'], $due['payload'])) {
+                        $emailed++;
                     }
                 }
             }
         }
-        return ['sent' => $sent, 'failed' => $failed];
+        return ['sent' => $sent, 'failed' => $failed, 'emailed' => $emailed];
     }
 
     /**

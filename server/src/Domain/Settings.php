@@ -26,6 +26,9 @@ final class Settings
         // (push, with email only when no device looks reachable). Enforced
         // server-side by the reminder scan (Reminders::channelPlan).
         'notifyChannel' => 'push',
+        // Where reminder/test emails are sent; null = the account email
+        // (which is also the SMTP sender mailbox and may not be read).
+        'notifyEmail' => null,
         // Overview layout for the month slot; null = unset (client applies
         // its device default: 3day on mobile, month on desktop).
         'overviewMode' => null,
@@ -112,6 +115,7 @@ final class Settings
                 'theme' => self::enum($key, $value, ['system', 'light', 'dark']),
                 'nlParseMode' => self::enum($key, $value, ['always', 'smart', 'never']),
                 'notifyChannel' => self::enum($key, $value, ['push', 'email', 'both', 'push-fallback']),
+                'notifyEmail' => self::email($key, $value),
                 'overviewMode' => self::enum($key, $value, ['month', '3day']),
                 'defaultCalendarId' => self::calendarId($value),
                 'folderVisibility' => self::folderVisibility($value),
@@ -125,6 +129,35 @@ final class Settings
             };
         }
         return $out;
+    }
+
+    /**
+     * Effective destination for reminder/test emails: the notifyEmail setting
+     * when set, else the account email. $settings is a withDefaults() result.
+     */
+    public static function notifyDestination(array $settings, string $accountEmail): string
+    {
+        $to = $settings['notifyEmail'] ?? null;
+        return is_string($to) && $to !== '' ? $to : $accountEmail;
+    }
+
+    /** Nullable email address (notification destination); null or blank clears. */
+    private static function email(string $key, mixed $value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+        if (!is_string($value)) {
+            throw HttpError::badRequest("$key must be an email address or null");
+        }
+        $value = trim($value);
+        if ($value === '') {
+            return null;
+        }
+        if (strlen($value) > 254 || filter_var($value, FILTER_VALIDATE_EMAIL) === false) {
+            throw HttpError::badRequest("$key must be a valid email address or null");
+        }
+        return $value;
     }
 
     /** Nullable coordinate bounded at +-$bound (90 for lat, 180 for lng). */

@@ -1247,6 +1247,35 @@ foreach (['sms', 'pushfallback', '', 1] as $bad) {
     }
 }
 
+// notifyEmail: validation (valid/trimmed accepted, invalid rejected, null and
+// blank clear) plus the recipient-resolution helper (set vs unset).
+checkEq('settings notifyEmail default', null, Settings::withDefaults([])['notifyEmail']);
+checkEq(
+    'settings notifyEmail valid accepted+trimmed',
+    ['notifyEmail' => 'me@example.com'],
+    Settings::validate(['notifyEmail' => '  me@example.com  '])
+);
+checkEq('settings notifyEmail null clears', ['notifyEmail' => null], Settings::validate(['notifyEmail' => null]));
+checkEq('settings notifyEmail blank clears', ['notifyEmail' => null], Settings::validate(['notifyEmail' => '   ']));
+foreach (['not-an-email', 'a@b', 'x@' . str_repeat('d', 250) . '.com', 42] as $bad) {
+    try {
+        Settings::validate(['notifyEmail' => $bad]);
+        check('settings rejects bad notifyEmail', false);
+    } catch (HttpError $e) {
+        checkEq('settings bad notifyEmail status', 400, $e->status);
+    }
+}
+checkEq(
+    'notifyDestination uses notifyEmail when set',
+    'inbox@example.com',
+    Settings::notifyDestination(Settings::withDefaults(['notifyEmail' => 'inbox@example.com']), 'account@example.com')
+);
+checkEq(
+    'notifyDestination falls back to account email',
+    'account@example.com',
+    Settings::notifyDestination(Settings::withDefaults([]), 'account@example.com')
+);
+
 // Push subscription validation.
 $psub = PushSubscriptions::validate([
     'endpoint' => 'https://fcm.googleapis.com/fcm/send/abc123',

@@ -77,6 +77,18 @@ function NotificationsSection({ settings, user }) {
   const [busy, setBusy] = useState(false);
   const [tipHidden, setTipHidden] = useState(batteryTipDismissed());
 
+  // Email destination: mirrors the notifyEmail setting; blank means the
+  // account address (which is also the SMTP sender mailbox).
+  const [notifyTo, setNotifyTo] = useState(settings.notifyEmail || '');
+  useEffect(() => { setNotifyTo(settings.notifyEmail || ''); }, [settings.notifyEmail]);
+  const accountEmail = (user && user.email) || '';
+  const effectiveEmail = settings.notifyEmail || accountEmail;
+  const saveNotifyEmail = () => {
+    const v = notifyTo.trim();
+    if ((v || null) === (settings.notifyEmail || null)) return;
+    saveSetting('notifyEmail', v === '' ? null : v);
+  };
+
   const refresh = () => {
     setPerm(permissionState());
     fetchPushStatus().then(setStatus).catch(() => setStatus(null));
@@ -181,8 +193,14 @@ function NotificationsSection({ settings, user }) {
         ${CHANNEL_OPTIONS.map(([v, l]) => html`<option key=${v} value=${v}>${l}</option>`)}
       </select>
     <//>
-    <${Row} label="Reminder email" hint="Reminder emails go to your account address.">
-      <span class="bc-set-value">${(user && user.email) || ''}</span>
+    <${Row} label=${status && status.emailConfigured ? 'Send email to' : 'Reminder email'}
+      hint=${status && status.emailConfigured
+        ? 'Blank sends to your account address. The test goes to ' + effectiveEmail + '.'
+        : 'Reminder emails go to your account address.'}>
+      ${status && status.emailConfigured
+        ? html`<input type="email" aria-label="Send email to" placeholder=${accountEmail}
+            value=${notifyTo} onInput=${(e) => setNotifyTo(e.target.value)} onChange=${saveNotifyEmail} />`
+        : html`<span class="bc-set-value">${accountEmail}</span>`}
       ${status && status.emailConfigured === false
         && html`<span class="bc-set-value">Email not configured on server</span>`}
       <button type="button" class="bc-btn" disabled=${busy || !(status && status.emailConfigured)}

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace BetterCal\Http\Controllers;
 
 use BetterCal\Domain\PushSubscriptions;
+use BetterCal\Domain\Settings;
 use BetterCal\Http\HttpError;
 use BetterCal\Http\Request;
 use BetterCal\Http\Response;
@@ -83,7 +84,7 @@ final class PushController
         return Response::json(['ok' => $sent > 0, 'sent' => $sent, 'failed' => $failed]);
     }
 
-    /** POST /push/test-email: send a test reminder email to the account address. */
+    /** POST /push/test-email: send a test reminder email to the user's notifyEmail setting, else the account address. */
     public function testEmail(Request $req): Response
     {
         if (!$this->email->isConfigured()) {
@@ -93,7 +94,13 @@ final class PushController
                 501
             );
         }
-        $to = (string) ($req->user['email'] ?? '');
+        $stored = is_string($req->user['settings_json'] ?? null)
+            ? json_decode((string) $req->user['settings_json'], true)
+            : null;
+        $to = Settings::notifyDestination(
+            Settings::withDefaults(is_array($stored) ? $stored : []),
+            (string) ($req->user['email'] ?? '')
+        );
         $ok = $this->email->sendReminder($to, [
             'title' => 'Better-Cal test email',
             'body' => 'Email notifications are working.',

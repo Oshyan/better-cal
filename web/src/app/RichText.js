@@ -11,17 +11,27 @@
 import { html, useState, useRef, useEffect } from '../../vendor/index.js';
 import { hasHtml, sanitizeHtml, textToHtml } from '../lib/richtext.js';
 
+function loadScript(src, ready) {
+  return new Promise((resolve, reject) => {
+    if (ready()) { resolve(); return; }
+    const script = document.createElement('script');
+    script.src = src;
+    script.onload = () => (ready() ? resolve() : reject(new Error(src + ' loaded but global missing')));
+    script.onerror = () => reject(new Error(src + ' failed to load'));
+    document.head.appendChild(script);
+  });
+}
+
 let squirePromise = null;
 function loadSquire() {
-  if (window.Squire) return Promise.resolve(window.Squire);
   if (!squirePromise) {
-    squirePromise = new Promise((resolve, reject) => {
-      const script = document.createElement('script');
-      script.src = '/assets/vendor/squire/squire-raw.js';
-      script.onload = () => (window.Squire ? resolve(window.Squire) : reject(new Error('squire missing')));
-      script.onerror = () => reject(new Error('squire load failed'));
-      document.head.appendChild(script);
-    });
+    // squire-raw.js requires DOMPurify as an external global (the whole point
+    // of the -raw build), so purify must load first or the Squire constructor
+    // throws "DOMPurify is not defined".
+    squirePromise = loadScript('/assets/vendor/squire/purify.min.js', () => !!window.DOMPurify)
+      .then(() => loadScript('/assets/vendor/squire/squire-raw.js', () => !!window.Squire))
+      .then(() => window.Squire);
+    squirePromise.catch(() => { squirePromise = null; }); // allow retry on next mount
   }
   return squirePromise;
 }
@@ -66,7 +76,20 @@ export function RichText({ seed, seedKey, onChange, ariaLabel }) {
       editor.addEventListener('pathChange', readFormats);
       editor.setHTML(seedHtml(seed));
       setReady(true);
-    }).catch(() => { /* editor stays a plain block; the field is still there */ });
+    }).catch((e) => {
+      // Loud failure: a silently-degraded editor looks like data loss to the
+      // user (typing works, nothing saves). Surface it instead.
+      console.error('Rich text editor failed to initialize:', e);
+      // Plain-text fallback that still SAVES: without Squire there is no
+      // input event wiring, which reads as data loss. Wire the native one.
+      const el = elRef.current;
+      if (el && !disposed) {
+        el.setAttribute('contenteditable', 'true');
+        el.textContent = seed ? String(seed).replace(/<[^>]*>/g, '') : '';
+        el.addEventListener('input', () => onChangeRef.current(el.textContent || ''));
+      }
+      setReady(true);
+    });
     return () => {
       disposed = true;
       if (editorRef.current) {

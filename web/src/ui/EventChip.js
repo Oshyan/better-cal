@@ -28,6 +28,7 @@ function stateClasses(occ, dimmed, nowMs) {
   if (occ.status === 'cancelled') c += ' is-cancelled';
   if (occ.isNew) c += ' is-new';
   if (occ.isGroup) c += ' is-group';
+  if (occ.isContainer) c += ' is-trip';
   if (occ.dimmed) c += ' is-filter-dimmed';
   // Time-relative state (from the global minute tick): ended events dim,
   // currently running events carry the gold ring.
@@ -64,7 +65,9 @@ function openHandlers(occ, onOpen) {
     onClick: (e) => {
       if (hasModifier(e)) return;
       e.stopPropagation();
-      if (onOpen) onOpen(occ.instanceId, e.currentTarget.getBoundingClientRect());
+      // Containers skip the popover: a single click always opens the trip
+      // detail view (the popover's inline edits make no sense for a trip).
+      if (onOpen) onOpen(occ.instanceId, e.currentTarget.getBoundingClientRect(), occ.isContainer ? { detail: true } : undefined);
     },
     onDblClick: (e) => {
       if (hasModifier(e) || occ.isGroup) return;
@@ -109,24 +112,29 @@ export function EventChip({ occ, cal, dimmed, nowMs, showTime = true, onOpen, on
 export function EventBar({ occ, cal, seg, dimmed, nowMs, onOpen, onPointerDown, onEdgePointerDown }) {
   const color = calColor(cal);
   const interested = occ.attendance === 'interested';
-  const style = interested
-    ? `border:1px solid ${color};color:${color};background:transparent`
-    : `background:${color};color:${contrastText(color)}`;
+  const trip = !!occ.isContainer;
+  // Containers get a distinct outlined variant (is-trip): tinted, not solid,
+  // and never draggable or resizable in v1.
+  const style = trip
+    ? `border:1.5px solid ${color};color:var(--fg);background:${withAlpha(color, 0.1)}`
+    : interested
+      ? `border:1px solid ${color};color:${color};background:transparent`
+      : `background:${color};color:${contrastText(color)}`;
   const { onClick, onDblClick } = openHandlers(occ, onOpen);
-  const edges = occ.isGroup ? null : onEdgePointerDown;
+  const edges = occ.isGroup || trip ? null : onEdgePointerDown;
   return html`<div
     class="bc-bar${stateClasses(occ, dimmed, nowMs)}${seg.contLeft ? ' cont-l' : ''}${seg.contRight ? ' cont-r' : ''}"
     style=${style}
     data-instance=${occ.instanceId}
     role="button"
     tabindex="0"
-    onPointerDown=${occ.isGroup ? undefined : onPointerDown}
+    onPointerDown=${occ.isGroup || trip ? undefined : onPointerDown}
     onClick=${onClick}
     onDblClick=${onDblClick}
     onKeyDown=${(e) => {
       if ((e.key === 'Enter' || e.key === ' ') && onOpen) {
         e.preventDefault();
-        onOpen(occ.instanceId, e.currentTarget.getBoundingClientRect());
+        onOpen(occ.instanceId, e.currentTarget.getBoundingClientRect(), trip ? { detail: true } : undefined);
       }
     }}
     title=${occ.isGroup ? `${occ.title} (${occ.count} similar)` : occ.title}
@@ -145,28 +153,31 @@ export function EventBar({ occ, cal, seg, dimmed, nowMs, onOpen, onPointerDown, 
 export function EventBlock({ occ, cal, rect, dimmed, nowMs, onOpen, onPointerDown, onEdgePointerDown }) {
   const color = calColor(cal);
   const interested = occ.attendance === 'interested';
-  const bg = interested
-    ? `border:1.5px solid ${color};color:${color};background:var(--bg-raised)`
-    : `background:${withAlpha(color, 0.85)};color:${contrastText(color)};border-left:3px solid ${color}`;
+  const trip = !!occ.isContainer;
+  const bg = trip
+    ? `border:1.5px solid ${color};color:var(--fg);background:${withAlpha(color, 0.1)}`
+    : interested
+      ? `border:1.5px solid ${color};color:${color};background:var(--bg-raised)`
+      : `background:${withAlpha(color, 0.85)};color:${contrastText(color)};border-left:3px solid ${color}`;
   const s = parseISO(occ.start);
   const e = parseISO(occ.end);
   const showMeta = rect.height > 34 && !occ.isGroup;
   const showLoc = rect.height > 52 && occ.location;
   const { onClick, onDblClick } = openHandlers(occ, onOpen);
-  const edges = occ.isGroup ? null : onEdgePointerDown;
+  const edges = occ.isGroup || trip ? null : onEdgePointerDown;
   return html`<div
     class="bc-block${stateClasses(occ, dimmed, nowMs)}"
     style=${`top:${rect.top}px;height:${rect.height}px;left:${rect.leftPct}%;width:${rect.widthPct}%;${bg}`}
     data-instance=${occ.instanceId}
     role="button"
     tabindex="0"
-    onPointerDown=${occ.isGroup ? undefined : onPointerDown}
+    onPointerDown=${occ.isGroup || trip ? undefined : onPointerDown}
     onClick=${onClick}
     onDblClick=${onDblClick}
     onKeyDown=${(ev) => {
       if ((ev.key === 'Enter' || ev.key === ' ') && onOpen) {
         ev.preventDefault();
-        onOpen(occ.instanceId, ev.currentTarget.getBoundingClientRect());
+        onOpen(occ.instanceId, ev.currentTarget.getBoundingClientRect(), trip ? { detail: true } : undefined);
       }
     }}
   >
@@ -179,5 +190,36 @@ export function EventBlock({ occ, cal, rect, dimmed, nowMs, onOpen, onPointerDow
     ${showMeta && html`<span class="bc-block-time">${fmtTime(s)} to ${fmtTime(e)}</span>`}
     ${showLoc && html`<span class="bc-block-loc">${occ.location}</span>`}
     ${edges && html`<span class="bc-block-handle b" onPointerDown=${(ev) => edges('end', ev)}></span>`}
+  </div>`;
+}
+
+// Backdrop band for container (trip) events in month/ribbon rows: a soft
+// tinted strip along the top of the trip's day span, under the normal bars
+// and above the cell background. The inline style carries the calendar tint
+// plus the stronger 2px top edge. Not draggable in v1; click or Enter opens
+// the trip detail. The title labels each row's segment, small and truncated.
+export function TripBand({ occ, cal, seg, dimmed, nowMs, onOpen }) {
+  const color = calColor(cal);
+  const open = (e) => {
+    if (hasModifier(e)) return;
+    e.stopPropagation();
+    if (onOpen) onOpen(occ.instanceId, e.currentTarget.getBoundingClientRect(), { detail: true });
+  };
+  return html`<div
+    class="bc-band${stateClasses(occ, dimmed, nowMs)}${seg.contLeft ? ' cont-l' : ''}${seg.contRight ? ' cont-r' : ''}"
+    style=${`background:${withAlpha(color, 0.13)};box-shadow:inset 0 2px 0 ${color}`}
+    data-instance=${occ.instanceId}
+    role="button"
+    tabindex="0"
+    title=${occ.title || '(untitled)'}
+    onClick=${open}
+    onKeyDown=${(e) => {
+      if ((e.key === 'Enter' || e.key === ' ') && onOpen) {
+        e.preventDefault();
+        onOpen(occ.instanceId, e.currentTarget.getBoundingClientRect(), { detail: true });
+      }
+    }}
+  >
+    <span class="bc-band-label">${seg.contLeft ? '‹ ' : ''}${occ.title || '(untitled)'}</span>
   </div>`;
 }

@@ -31,6 +31,10 @@ import {
   TIMED_CHOICES, MAX_REMINDER_MINUTES, REMINDER_UNITS,
 } from '../src/lib/reminders.js';
 import { deepLinkAnchorMs, deepLinkWindows } from '../src/lib/deeplink.js';
+import {
+  tripSpan, tripSpanLabel, tripBandSegments, spansOverlapOrAbut,
+  candidateTrips, attachableInSpan, extendTripSpan,
+} from '../src/ui/trips.js';
 import { hasHtml, stripToText, isEmptyHtml } from '../src/lib/richtext.js';
 import { batteryTipApplies, BATTERY_TIP_BODY, BATTERY_TIP_TITLE } from '../src/lib/batterytip.js';
 
@@ -810,6 +814,78 @@ assert('batterytip: not on desktop', !batteryTipApplies('Mozilla/5.0 (Macintosh;
 assert('batterytip: empty UA no-op', !batteryTipApplies(''));
 assert('batterytip: copy names Unrestricted path', BATTERY_TIP_BODY.includes('Battery') && BATTERY_TIP_BODY.includes('Unrestricted'));
 assert('batterytip: title mentions Android', BATTERY_TIP_TITLE.includes('Android'));
+
+console.log('--- trips (container events) ---');
+
+// A 12-day all-day trip: Jun 1 to Jun 12 with the iCal exclusive end Jun 13.
+const trip = {
+  eventId: 1, instanceId: 't1', isContainer: true, allDay: true,
+  start: '2026-06-01T00:00:00+00:00', end: '2026-06-13T00:00:00+00:00',
+  title: 'Hawaii Trip',
+};
+
+// Inclusive span honors the all-day exclusive end date.
+eq('tripSpan all-day exclusive end', tripSpan(trip),
+  { startKey: '2026-06-01', endKey: '2026-06-12', days: 12 });
+eq('tripSpanLabel', tripSpanLabel(trip), 'Jun 1 to 12, 12 days');
+const oneDayTrip = {
+  eventId: 9, isContainer: true, allDay: true,
+  start: '2026-06-01T00:00:00+00:00', end: '2026-06-02T00:00:00+00:00',
+};
+eq('tripSpanLabel single day', tripSpanLabel(oneDayTrip), 'Jun 1, 1 day');
+
+// Band segmentation is exactly the shared row segmentation (bars and bands
+// always agree on row boundaries), for month and ribbon column counts.
+eq('tripBandSegments matches rowSpanSegments (7 cols)',
+  tripBandSegments(trip, 7), rowSpanSegments('2026-06-01', '2026-06-12', 7));
+eq('tripBandSegments matches rowSpanSegments (3-col ribbon)',
+  tripBandSegments(trip, 3), rowSpanSegments('2026-06-01', '2026-06-12', 3));
+
+// Overlap/abut with the +/-1 day slack of the candidate filter.
+assert('spans overlap', spansOverlapOrAbut('2026-06-01', '2026-06-12', '2026-06-05', '2026-06-05'));
+assert('spans abut the day before', spansOverlapOrAbut('2026-06-01', '2026-06-12', '2026-05-31', '2026-05-31'));
+assert('spans abut the day after', spansOverlapOrAbut('2026-06-01', '2026-06-12', '2026-06-13', '2026-06-13'));
+assert('spans beyond the slack do not abut', !spansOverlapOrAbut('2026-06-01', '2026-06-12', '2026-06-15', '2026-06-16'));
+
+// Candidate trips for an event: overlapping/abutting containers only,
+// deduped by eventId; the event itself and far-away trips never qualify.
+const flightOut = { eventId: 2, allDay: false, start: '2026-05-31T08:00:00-07:00', end: '2026-05-31T11:00:00-07:00' };
+const farTrip = {
+  eventId: 3, instanceId: 't3', isContainer: true, allDay: true,
+  start: '2026-07-01T00:00:00+00:00', end: '2026-07-05T00:00:00+00:00',
+};
+eq('candidateTrips abutting flight finds the trip once',
+  candidateTrips(flightOut, [trip, farTrip, flightOut, { ...trip, instanceId: 't1b' }]).map((c) => c.eventId),
+  [1]);
+
+// attachableInSpan: overlapping non-containers only; outside, hidden and
+// container occurrences drop out.
+const inside = { eventId: 4, allDay: false, start: '2026-06-03T09:00:00-07:00', end: '2026-06-03T10:00:00-07:00' };
+const outside = { eventId: 5, allDay: false, start: '2026-06-20T09:00:00-07:00', end: '2026-06-20T10:00:00-07:00' };
+const hiddenOcc = { eventId: 6, attendance: 'hidden', allDay: false, start: '2026-06-04T09:00:00-07:00', end: '2026-06-04T10:00:00-07:00' };
+eq('attachableInSpan filters to overlapping non-containers',
+  attachableInSpan(trip, [inside, outside, hiddenOcc, farTrip, trip]).map((o) => o.eventId),
+  [4]);
+
+// Span extension: a member inside the span changes nothing.
+eq('extendTripSpan no-op inside the span', extendTripSpan(trip, inside), null);
+// A member after the end grows the exclusive all-day end to cover it.
+const lateEvent = { eventId: 7, allDay: false, start: '2026-06-14T09:00:00-07:00', end: '2026-06-14T10:00:00-07:00' };
+const grown = extendTripSpan(trip, lateEvent);
+assert('extendTripSpan keeps the start', grown.start.slice(0, 10) === '2026-06-01');
+assert('extendTripSpan exclusive end covers the late member', grown.end.slice(0, 10) === '2026-06-15');
+// A member before the start moves the start day.
+const earlyEvent = { eventId: 8, allDay: true, start: '2026-05-30T00:00:00+00:00', end: '2026-05-31T00:00:00+00:00' };
+eq('extendTripSpan earlier start', extendTripSpan(trip, earlyEvent).start.slice(0, 10), '2026-05-30');
+// Timed trips keep their times of day on the new boundary days.
+const timedTrip = {
+  eventId: 10, isContainer: true, allDay: false,
+  start: '2026-06-01T10:00:00-07:00', end: '2026-06-02T18:00:00-07:00',
+};
+const timedGrown = extendTripSpan(timedTrip, lateEvent);
+assert('extendTripSpan timed keeps the end time of day',
+  timedGrown.end.slice(0, 10) === '2026-06-14' && timedGrown.end.slice(11, 16) === '18:00');
+assert('extendTripSpan timed keeps the start time of day', timedGrown.start.slice(11, 16) === '10:00');
 
 console.log('--- color utils ---');
 

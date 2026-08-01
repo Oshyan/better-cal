@@ -1654,3 +1654,119 @@ body.bc-rescheduling { user-select: none; }
 .bc-detail-desc.bc-rich { white-space: normal; }
 .bc-detail-desc.bc-rich p, .bc-detail-desc.bc-rich div { margin: 0 0 2px; }
 .bc-detail-desc.bc-rich ul, .bc-detail-desc.bc-rich ol { margin: 4px 0; padding-left: 22px; }
+
+/* --- trips (container events, GH #2; append-only section) -------------------
+   The signature rendering is the month/ribbon backdrop band: a soft tinted
+   strip along the top of the trip's day span, under the normal bars and
+   above the cell background. Calendar color arrives via inline styles
+   (background tint + 2px top edge); these rules carry layout only. */
+
+.bc-week-bands { position: absolute; left: 0; right: 0; pointer-events: none; }
+.bc-band-slot { position: absolute; padding: 0 1px; pointer-events: auto; }
+.bc-band {
+  height: 100%; display: flex; align-items: center;
+  padding: 0 6px; overflow: hidden;
+  border-radius: 0 0 4px 4px; cursor: pointer; user-select: none;
+}
+.bc-band.cont-l { border-bottom-left-radius: 0; }
+.bc-band.cont-r { border-bottom-right-radius: 0; }
+.bc-band-label {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.2px;
+  color: var(--fg); opacity: 0.85;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* Trip bars (week/day all-day lane) and blocks: the outlined is-trip variant
+   (inline styles carry the calendar color); title weight matches the band. */
+.bc-bar.is-trip, .bc-block.is-trip { cursor: pointer; }
+.bc-bar.is-trip .bc-chip-title,
+.bc-block.is-trip .bc-chip-title,
+.bc-chip.is-trip .bc-chip-title { font-weight: 600; }
+
+/* Agenda: a small band-colored left edge (inline background) plus the Trip
+   badge after the chip. */
+.bc-agenda-row.is-trip { position: relative; padding-left: 8px; }
+.bc-agenda-tripedge {
+  position: absolute; left: 0; top: 5px; bottom: 5px; width: 3px;
+  border-radius: 2px;
+}
+.bc-trip-badge { flex: none; }
+
+/* Member marking: "Part of: <trip>" link line in popover and detail. */
+.bc-partof {
+  display: inline-flex; align-items: center; gap: 5px; align-self: flex-start;
+  background: none; border: none; padding: 0;
+  color: var(--accent); font-size: 12.5px; text-align: left; min-width: 0;
+}
+.bc-partof:hover { text-decoration: underline; }
+.bc-partof-glyph { font-size: 11px; flex: none; }
+
+/* Trip detail: chronological member list with open + detach per row. */
+.bc-trip-loading, .bc-trip-empty { color: var(--fg-muted); font-size: 12.5px; }
+.bc-trip-members { display: flex; flex-direction: column; }
+.bc-trip-member { display: flex; align-items: center; gap: 4px; padding: 2px 0; min-width: 0; }
+.bc-trip-member-when {
+  width: 118px; flex: none; color: var(--fg-muted);
+  font-size: 12px; font-variant-numeric: tabular-nums;
+}
+.bc-trip-member-title {
+  flex: 1; min-width: 0; display: inline-flex; align-items: center; gap: 7px;
+  background: none; border: none; border-radius: 5px;
+  padding: 2px 5px; text-align: left; color: var(--fg);
+}
+.bc-trip-member-title:hover { background: var(--bg-inset); }
+.bc-trip-x:hover { color: var(--danger); }
+.bc-trip-addrow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+
+/* Inline "Add events" picker: multi-select within the trip's span. */
+.bc-trip-picker {
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--bg-inset); padding: 8px 10px; margin-top: 6px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.bc-trip-pick-list {
+  display: flex; flex-direction: column; gap: 2px;
+  max-height: 200px; overflow-y: auto; overscroll-behavior: contain;
+}
+.bc-trip-pick-row {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12.5px; min-width: 0; cursor: pointer;
+  padding: 2px 2px; border-radius: 5px;
+}
+.bc-trip-pick-row:hover { background: var(--bg-raised); }
+.bc-trip-pick-when {
+  width: 110px; flex: none; color: var(--fg-muted);
+  font-size: 11.5px; font-variant-numeric: tabular-nums;
+}
+.bc-trip-pick-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.bc-trip-pick-actions { display: flex; align-items: center; gap: 8px; }
+
+/* Two-option delete confirm (remove trip only vs delete trip and events). */
+.bc-trip-confirm {
+  display: flex; flex-direction: column; gap: 6px;
+  border: 1px solid color-mix(in srgb, var(--danger) 40%, var(--border));
+  border-radius: var(--radius); padding: 8px 10px; font-size: 12.5px;
+}
+.bc-trip-confirm-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.bc-trip-confirm-note { color: var(--fg-muted); font-size: 11.5px; }
+
+/* Event-side "Trip" row: current trip or None, overlap candidates, plus the
+   "Other trip" title search over loaded containers. */
+.bc-trip-rowsect { min-width: 0; }
+.bc-trip-rowline { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.bc-trip-select { max-width: 240px; }
+.bc-trip-search { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
+.bc-trip-search-list {
+  display: flex; flex-direction: column;
+  max-height: 160px; overflow-y: auto; overscroll-behavior: contain;
+}
+.bc-trip-search-row {
+  display: flex; align-items: center; gap: 8px; min-width: 0;
+  background: none; border: none; border-radius: 5px;
+  padding: 4px 6px; text-align: left;
+}
+.bc-trip-search-row:hover { background: var(--bg-inset); }
+
+/* Action toasts (span growth prompt): Extend keeps the undo-button look;
+   Keep is the quieter dismiss. */
+.bc-toast-keep { text-decoration: none; opacity: 0.8; font-weight: 600; }

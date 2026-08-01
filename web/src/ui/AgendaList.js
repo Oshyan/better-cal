@@ -139,11 +139,16 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
             // Row-level time state so the time and location columns dim with
             // the chip; the chip carries the same class itself via nowMs.
             const ts = nowMs ? timeState(occ, nowMs) : null;
+            const trip = !!occ.isContainer;
             return html`<div
               key=${occ.instanceId}
-              class="bc-agenda-row${ts === 'past' ? ' is-past' : ts === 'now' ? ' is-now' : ''}"
+              class="bc-agenda-row${ts === 'past' ? ' is-past' : ts === 'now' ? ' is-now' : ''}${trip ? ' is-trip' : ''}"
               style=${`height:${ROW_H}px`}
             >
+            ${trip && html`<span
+              class="bc-agenda-tripedge" aria-hidden="true"
+              style=${`background:${(calendars[occ.calendarId] && calendars[occ.calendarId].color) || '#888'}`}
+            ></span>`}
             <span class="bc-agenda-time">${flat
               ? fmtDayShort(occ) + ' · ' + (occ.allDay ? 'all day' : fmtTime(parseISO(occ.start)))
               : occ.allDay ? 'all day' : fmtTime(parseISO(occ.start)) + (occ.end ? ' to ' + fmtTime(parseISO(occ.end)) : '')}</span>
@@ -152,6 +157,7 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
               dimmed=${dimSet && dimSet.has(occ.instanceId)} nowMs=${nowMs}
               onOpen=${onOpenEvent}
             />
+            ${trip && html`<span class="bc-badge bc-trip-badge">Trip</span>`}
             ${occ.source === 'feed' && onSetAttendance && html`<${TriageCluster} occ=${occ} onSetAttendance=${onSetAttendance} onFeedback=${onFeedback} />`}
             ${occ.location && html`<span class="bc-agenda-loc">${occ.location}</span>`}
           </div>`;

@@ -5,7 +5,7 @@
 
 import { html, useState, useRef, useEffect } from '../../vendor/index.js';
 import { useStore, set, state } from './store.js';
-import { updateEvent, deleteEvent, triageAttendance, sendFeedback, enterReschedule, openDetail, sameDayList } from './actions.js';
+import { updateEvent, deleteEvent, triageAttendance, sendFeedback, enterReschedule, openDetail, sameDayList, openTripByEventId } from './actions.js';
 import { isMobile, trapFocus, MOBILE_QUERY } from '../ui/DayExpand.js';
 import { ThumbIcon, CalDot } from '../ui/icons.js';
 import {
@@ -138,6 +138,10 @@ export function EventPopover() {
         : html`<h2 class="bc-pop-title${occ.status === 'cancelled' ? ' is-cancelled' : ''}" onClick=${() => !isFeed && setEditingTitle(true)} title=${isFeed ? '' : 'Click to edit title'}>
             ${occ.title || '(untitled)'}${occ.isNew ? html` <span class="bc-new-pill">new</span>` : ''}
           </h2>`}
+      ${occ.containers && occ.containers.length > 0 && html`<button
+        type="button" class="bc-partof" title="Open this trip"
+        onClick=${() => { set({ popover: null }); openTripByEventId(occ.containers[0].eventId); }}
+      ><span class="bc-partof-glyph" aria-hidden="true">🔗</span> Part of: ${occ.containers[0].title}</button>`}
       ${editingTime
         ? html`<${TimeEditor} start=${s} end=${e} onSave=${saveTime} onCancel=${() => setEditingTime(false)} />`
         : html`<div class="bc-pop-when" onClick=${() => !isFeed && setEditingTime(true)} title=${isFeed ? '' : 'Click to edit time'}>

@@ -7,6 +7,7 @@ import {
 import { api, refreshWindow, undo, loadCalendars } from './api.js';
 import { adoptSettings } from './settings.js';
 import { localTz, todayKey, addDaysKey, occDayKey, pad } from '../lib/dates.js';
+import { extendTripSpan } from '../ui/trips.js';
 
 export const VIEWS = ['month', 'weeks3', 'weeks2', 'week', 'day', 'agenda'];
 
@@ -250,7 +251,12 @@ export async function updateEvent(occ, fields, scope) {
     await refreshWindow();
     return true;
   } catch (e) {
-    toast('Update failed: ' + e.message, { error: true });
+    // Clearing the trip flag while events are still attached: the server
+    // refuses (trip_has_members); explain the fix instead of echoing a code.
+    const msg = e.code === 'trip_has_members'
+      ? "This trip still has events attached. Remove the trip's events first"
+      : 'Update failed: ' + e.message;
+    toast(msg, { error: true });
     return false;
   }
 }
@@ -319,6 +325,124 @@ export function sendFeedback(occ, signal) {
 }
 
 export { undo, refreshWindow };
+
+// --- trips (container events, docs/design-containers.md) ---------------------
+// Attach/detach are relationships, not edits: members keep their own
+// calendar, colors and lifecycle. Every link change bumps tripLinksSeq (open
+// trip detail views refetch their member list) and refreshes the window so
+// occurrence containers/isContainer stay current.
+
+function bumpTripLinks() {
+  set({ tripLinksSeq: state.tripLinksSeq + 1 });
+}
+
+export async function attachToTrip(tripOcc, memberOcc, { silent } = {}) {
+  try {
+    await api('/events/' + tripOcc.eventId + '/links', {
+      method: 'POST',
+      body: { eventId: memberOcc.eventId },
+    });
+    if (!silent) toast('Added to ' + (tripOcc.title || 'trip'), { undoable: true });
+    bumpTripLinks();
+    refreshWindow();
+    maybePromptExtendTrip(tripOcc, memberOcc);
+    return true;
+  } catch (e) {
+    toast('Could not add to trip: ' + e.message, { error: true });
+    return false;
+  }
+}
+
+export async function detachFromTrip(tripEventId, memberOcc, { silent } = {}) {
+  try {
+    await api('/events/' + tripEventId + '/links/' + memberOcc.eventId, { method: 'DELETE' });
+    if (!silent) toast('Removed from trip', { undoable: true });
+    bumpTripLinks();
+    refreshWindow();
+    return true;
+  } catch (e) {
+    toast('Could not remove from trip: ' + e.message, { error: true });
+    return false;
+  }
+}
+
+// Span growth prompt (design decision #4): attaching an event outside the
+// trip's dates asks before the span grows, never silently.
+export function maybePromptExtendTrip(tripOcc, memberOcc) {
+  const ext = extendTripSpan(tripOcc, memberOcc);
+  if (!ext) return;
+  toast('Extend trip to include this event?', {
+    duration: 12000,
+    actionLabel: 'Extend',
+    dismissLabel: 'Keep',
+    onAction: async () => {
+      try {
+        await api('/events/' + tripOcc.eventId, {
+          method: 'PATCH',
+          body: { start: ext.start, end: ext.end, ...(tripOcc.recurring ? { scope: 'all' } : {}) },
+        });
+        toast('Trip extended', { undoable: true });
+        refreshWindow();
+      } catch (e) {
+        toast('Extend failed: ' + e.message, { error: true });
+      }
+    },
+  });
+}
+
+// Open the trip detail for a container by its eventId (member "Part of" links
+// carry {eventId, title}, not an instanceId). Trips overlap their members'
+// dates, so the trip occurrence is normally already in the loaded window.
+export function openTripByEventId(eventId) {
+  for (const o of state.occ.values()) {
+    if (o.eventId === eventId && o.isContainer) {
+      openDetail(o.instanceId);
+      return true;
+    }
+  }
+  toast('That trip is outside the loaded date range');
+  return false;
+}
+
+// "Remove trip only": deleting a trip detaches its members server-side; they
+// survive on their own calendars.
+export async function deleteTripOnly(occ) {
+  const removed = removeOccurrencesOfEvent(occ.eventId);
+  set({ detail: null });
+  try {
+    await api('/events/' + occ.eventId, { method: 'DELETE', body: {} });
+    toast('Trip removed, its events kept', { undoable: true });
+    bumpTripLinks();
+    refreshWindow();
+  } catch (e) {
+    for (const r of removed) state.occ.set(r.instanceId, r);
+    set({ occVersion: state.occVersion + 1 });
+    toast('Delete failed: ' + e.message, { error: true });
+  }
+}
+
+// "Delete trip and its N events": members first, then the trip (api-contract
+// order), so repeated undo restores the trip first and then its events.
+export async function deleteTripAndMembers(occ, members) {
+  set({ detail: null });
+  try {
+    for (const m of members) {
+      await api('/events/' + m.eventId, {
+        method: 'DELETE',
+        body: m.recurring ? { scope: 'all' } : {},
+      });
+      removeOccurrencesOfEvent(m.eventId);
+    }
+    await api('/events/' + occ.eventId, { method: 'DELETE', body: {} });
+    removeOccurrencesOfEvent(occ.eventId);
+    toast('Trip and its ' + members.length + (members.length === 1 ? ' event deleted' : ' events deleted'), { undoable: true });
+    bumpTripLinks();
+    refreshWindow();
+  } catch (e) {
+    toast('Delete failed: ' + e.message, { error: true });
+    refreshWindow();
+  }
+}
 
 // --- quick add ---------------------------------------------------------------
 

@@ -7,7 +7,8 @@
 
 import { html, useState, useEffect, useRef } from '../../vendor/index.js';
 import { useStore, set, state } from './store.js';
-import { createEvent, updateEvent, deleteEvent, quickAddParse } from './actions.js';
+import { createEvent, updateEvent, deleteEvent, quickAddParse, attachToTrip } from './actions.js';
+import { TripRow } from './Trips.js';
 import { trapFocus } from '../ui/DayExpand.js';
 import { PlaceInput, pickFillText } from './PlaceInput.js';
 import { RichText } from './RichText.js';
@@ -136,6 +137,7 @@ export function EditorDrawer() {
       start: toInputValue(start),
       end: toInputValue(end),
       allDay: occ ? !!occ.allDay : !!draft.allDay,
+      isContainer: occ ? !!occ.isContainer : !!draft.isContainer,
       location: occ ? (occ.location || '') : (draft.location || ''),
       locationLat: occ ? (occ.locationLat != null ? occ.locationLat : null)
         : (draft.locationLat != null ? draft.locationLat : null),
@@ -232,9 +234,21 @@ export function EditorDrawer() {
     if (remNow !== form.remInitial) {
       fields.reminders = form.reminders === null ? null : normalizeMinutesList(form.reminders);
     }
+    // Trip flag: sent only when it changes (clearing it on a trip that still
+    // has attached events gets the server's trip_has_members refusal, which
+    // updateEvent turns into a helpful toast).
+    if (occ ? !!occ.isContainer !== form.isContainer : form.isContainer) {
+      fields.isContainer = form.isContainer;
+    }
     let ok;
-    if (occ) ok = await updateEvent(occ, fields, scope);
-    else ok = await createEvent(fields);
+    if (occ) {
+      ok = await updateEvent(occ, fields, scope);
+    } else {
+      const created = await createEvent(fields);
+      ok = !!created;
+      // "New event in this trip": auto-attach the fresh event to its trip.
+      if (created && editor.attachTrip) await attachToTrip(editor.attachTrip, created);
+    }
     if (ok) set({ editor: null });
   };
 
@@ -318,6 +332,10 @@ export function EditorDrawer() {
           <input type="checkbox" checked=${form.allDay} onChange=${(e) => upd({ allDay: e.target.checked })} />
           <span>All day</span>
         </label>
+        <label class="bc-check" title="A trip is a span of days that other events happen inside">
+          <input type="checkbox" checked=${form.isContainer} onChange=${(e) => upd({ isContainer: e.target.checked })} />
+          <span>This is a trip</span>
+        </label>
       </div>
 
       <div class="bc-field-row">
@@ -351,6 +369,8 @@ export function EditorDrawer() {
         <span>Tags (comma separated)</span>
         <input value=${form.tags} onInput=${(e) => upd({ tags: e.target.value })} />
       </label>
+
+      ${occ && !occ.isContainer && !form.isContainer && html`<${TripRow} occ=${occ} />`}
 
       <fieldset class="bc-rem">
         <legend>Reminders</legend>

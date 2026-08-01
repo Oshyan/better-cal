@@ -43,7 +43,7 @@ final class PushSender
      * @param array $payload {title, body, url, tag}
      * @return self::OK|self::GONE|self::ERROR
      */
-    public function send(array $subscription, array $payload): string
+    public function send(array $subscription, array $payload, ?int $ttl = null): string
     {
         try {
             $webPush = $this->webPush();
@@ -53,11 +53,30 @@ final class PushSender
                 'authToken' => (string) $subscription['auth'],
                 'contentEncoding' => 'aes128gcm',
             ]);
+            $options = ['TTL' => $ttl ?? self::TTL_SECONDS, 'urgency' => 'high'];
+            // Collapse repeated sends for the same occurrence at the push
+            // service (Topic header), mirroring the client-side tag replace.
+            if (!empty($payload['tag'])) {
+                $options['topic'] = substr(preg_replace('/[^A-Za-z0-9_\-=]/', '', base64_encode((string) $payload['tag'])), 0, 32);
+            }
             $report = $webPush->sendOneNotification(
                 $sub,
                 json_encode($payload, JSON_UNESCAPED_SLASHES) ?: '{}',
-                ['TTL' => self::TTL_SECONDS, 'urgency' => 'high']
+                $options
             );
+            // Forensics for delayed-delivery reports: when the push service
+            // accepted the message, record the acceptance status + options so
+            // late arrivals can be attributed to delivery, not to us.
+            $accepted = $report->isSuccess() ? 'accepted' : 'rejected';
+            $status = $report->getResponse() !== null ? $report->getResponse()->getStatusCode() : 0;
+            error_log(sprintf(
+                'push %s status=%d ttl=%d urgency=high tag=%s host=%s',
+                $accepted,
+                $status,
+                $options['TTL'],
+                (string) ($payload['tag'] ?? ''),
+                parse_url((string) $subscription['endpoint'], PHP_URL_HOST) ?: '?'
+            ));
             if ($report->isSuccess()) {
                 return self::OK;
             }

@@ -60,6 +60,16 @@ function config(): array
             'private' => $env('BETTERCAL_VAPID_PRIVATE'),
             'subject' => $env('BETTERCAL_VAPID_SUBJECT'),
         ],
+        'smtp' => [
+            // Optional SMTP relay for reminder emails; host + from are the
+            // minimum, user/pass only when the relay requires auth. Email
+            // delivery stays off (gracefully) while these are empty.
+            'host' => $env('BETTERCAL_SMTP_HOST'),
+            'port' => (int) $env('BETTERCAL_SMTP_PORT', '587'),
+            'user' => $env('BETTERCAL_SMTP_USER'),
+            'pass' => $env('BETTERCAL_SMTP_PASS'),
+            'from' => $env('BETTERCAL_SMTP_FROM'),
+        ],
         'version' => '0.1.0',
         'app_root' => $appRoot,
     ];

@@ -22,6 +22,10 @@ final class Settings
         'defaultCalendarId' => null,
         'theme' => 'system',
         'nlParseMode' => 'smart',
+        // Reminder delivery channel: push | email | both | push-fallback
+        // (push, with email only when no device looks reachable). Enforced
+        // server-side by the reminder scan (Reminders::channelPlan).
+        'notifyChannel' => 'push',
         // Overview layout for the month slot; null = unset (client applies
         // its device default: 3day on mobile, month on desktop).
         'overviewMode' => null,
@@ -107,6 +111,7 @@ final class Settings
                 'timeFormat' => self::enum($key, is_scalar($value) ? (string) $value : $value, ['12', '24']),
                 'theme' => self::enum($key, $value, ['system', 'light', 'dark']),
                 'nlParseMode' => self::enum($key, $value, ['always', 'smart', 'never']),
+                'notifyChannel' => self::enum($key, $value, ['push', 'email', 'both', 'push-fallback']),
                 'overviewMode' => self::enum($key, $value, ['month', '3day']),
                 'defaultCalendarId' => self::calendarId($value),
                 'folderVisibility' => self::folderVisibility($value),

@@ -2,9 +2,12 @@
 
 import { html, render } from '../../vendor/index.js';
 import { App } from './App.js';
-import { set } from './store.js';
+import { set, toast } from './store.js';
 import { fetchMe, loadCalendars, loadSavedViews, loadConfig } from './api.js';
 import { handleEventLink } from './push.js';
+import {
+  BATTERY_TIP_BODY, shouldShowInstallTip, markInstallTipShown,
+} from '../lib/batterytip.js';
 
 async function boot() {
   let authed = false;
@@ -26,6 +29,20 @@ async function boot() {
 
 render(html`<${App} />`, document.getElementById('app'));
 boot();
+
+// Android battery guidance, one time only: after installing the PWA (or on
+// the first standalone launch, whichever happens first) explain that battery
+// optimization can delay notifications. There is no web API to request the
+// exemption, so telling the user the settings path is the whole mechanism.
+function maybeShowBatteryTip() {
+  if (!shouldShowInstallTip()) return;
+  markInstallTipShown();
+  toast(BATTERY_TIP_BODY, { duration: 15000 });
+}
+window.addEventListener('appinstalled', maybeShowBatteryTip);
+if (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) {
+  maybeShowBatteryTip();
+}
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {

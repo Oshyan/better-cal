@@ -1135,6 +1135,49 @@ checkEq(
     $plAllDay['url']
 );
 
+// Delivery channel plan: which channels a due reminder goes to, per the
+// notifyChannel setting, live-subscription state, and push outcomes.
+use BetterCal\Infra\EmailSender;
+use BetterCal\Infra\PushSender;
+
+checkEq('chan push with live sub', ['push' => true, 'email' => false],
+    Reminders::channelPlan('push', true, [PushSender::OK]));
+checkEq('chan push no sub never emails', ['push' => true, 'email' => false],
+    Reminders::channelPlan('push', false, []));
+checkEq('chan push all failed never emails', ['push' => true, 'email' => false],
+    Reminders::channelPlan('push', true, [PushSender::ERROR]));
+checkEq('chan email skips push', ['push' => false, 'email' => true],
+    Reminders::channelPlan('email', true, []));
+checkEq('chan email no sub still emails', ['push' => false, 'email' => true],
+    Reminders::channelPlan('email', false, []));
+checkEq('chan both always both', ['push' => true, 'email' => true],
+    Reminders::channelPlan('both', true, [PushSender::OK]));
+checkEq('chan both no sub still emails', ['push' => true, 'email' => true],
+    Reminders::channelPlan('both', false, []));
+checkEq('chan fallback delivered push only', ['push' => true, 'email' => false],
+    Reminders::channelPlan('push-fallback', true, [PushSender::OK]));
+checkEq('chan fallback partial success no email', ['push' => true, 'email' => false],
+    Reminders::channelPlan('push-fallback', true, [PushSender::ERROR, PushSender::OK]));
+checkEq('chan fallback all rejected emails', ['push' => true, 'email' => true],
+    Reminders::channelPlan('push-fallback', true, [PushSender::ERROR]));
+checkEq('chan fallback all gone emails', ['push' => true, 'email' => true],
+    Reminders::channelPlan('push-fallback', true, [PushSender::GONE, PushSender::GONE]));
+checkEq('chan fallback no live sub emails', ['push' => true, 'email' => true],
+    Reminders::channelPlan('push-fallback', false, []));
+
+// Reminder email builder: subject/body carry title + local time + location,
+// deep link is absolute against the base URL (pure, no SMTP).
+$msg = EmailSender::buildMessage($pl, 'https://cal.example.com');
+checkEq('email subject carries title', 'Reminder: Dinner', $msg['subject']);
+check('email html carries local time', str_contains($msg['html'], 'Fri, Aug 7, 12:00 PM'));
+check('email html carries location', str_contains($msg['html'], 'Zuni Cafe'));
+$absLink = 'https://cal.example.com/?event=' . rawurlencode('42:20260807T190000Z') . '&at=' . rawurlencode('2026-08-07T19:00:00Z');
+check('email html button link absolute', str_contains($msg['html'], 'href="' . htmlspecialchars($absLink, ENT_QUOTES, 'UTF-8') . '"'));
+check('email text alt carries title and link', str_contains($msg['text'], 'Dinner') && str_contains($msg['text'], $absLink));
+check('email html escapes markup', !str_contains(EmailSender::buildMessage(['title' => '<b>x</b>', 'body' => '', 'url' => '/'], 'https://cal.example.com')['html'], '<b>x</b>'));
+checkEq('email untitled fallback', 'Reminder: (untitled event)', EmailSender::buildMessage(['body' => '', 'url' => '/'], 'https://x.example')['subject']);
+check('email base url trailing slash collapsed', str_contains(EmailSender::buildMessage(['title' => 'T', 'body' => '', 'url' => '/'], 'https://x.example/')['text'], 'https://x.example/'));
+
 // VALARM trigger mapping, both directions.
 checkEq('valarm parse -PT10M', 10, Ics::parseTriggerMinutes('-PT10M'));
 checkEq('valarm parse -P1D', 1440, Ics::parseTriggerMinutes('-P1D'));
@@ -1188,6 +1231,20 @@ try {
     check('settings rejects bad reminderTimed', false);
 } catch (HttpError $e) {
     checkEq('settings bad reminderTimed status', 400, $e->status);
+}
+
+// notifyChannel: enum validation + default.
+checkEq('settings notifyChannel default', 'push', Settings::withDefaults([])['notifyChannel']);
+foreach (['push', 'email', 'both', 'push-fallback'] as $chan) {
+    checkEq("settings notifyChannel $chan accepted", ['notifyChannel' => $chan], Settings::validate(['notifyChannel' => $chan]));
+}
+foreach (['sms', 'pushfallback', '', 1] as $bad) {
+    try {
+        Settings::validate(['notifyChannel' => $bad]);
+        check('settings rejects bad notifyChannel', false);
+    } catch (HttpError $e) {
+        checkEq('settings bad notifyChannel status', 400, $e->status);
+    }
 }
 
 // Push subscription validation.

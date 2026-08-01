@@ -74,20 +74,23 @@ Resolution order per event: the event's `reminders` override (`[]` = explicitly 
 
 Fire-time semantics: `{minutes}` = minutes before the start instant (for all-day events, before local midnight of the event date in its tzid). `{daysBefore, time}` (all-day defaults) = that wall-clock time in the event's tzid, daysBefore days before the event date (e.g. `{daysBefore:1, time:"18:00"}` = 6 PM the evening before).
 
+Delivery channels: the `notifyChannel` setting (see Settings) picks how each due reminder is delivered. `push` (default) = Web Push only; `email` = a reminder email to the account address only; `both` = both; `push-fallback` = push normally, with an email only when no non-failing subscription exists or every push send that attempt was rejected/gone (a push the service *accepted* but never displayed — device unreachable past the TTL — cannot be detected, so fallback email does not cover it). One `notified_instances` row marks the reminder sent regardless of channel, so retries never double-send after a partial success. Email failures are logged and never block the scan. Reminder emails carry the event title, the local time string, location, and a button deep link (absolute against `BETTERCAL_BASE_URL`).
+
 ICS: file import maps display VALARMs with before-start relative triggers into per-event overrides; export (outbound feeds, CalDAV objects) writes a display VALARM per override entry. Inherited defaults and explicit-none export nothing. Feed polls do not sync VALARMs (user-local overrides must survive polls).
 
-Server config: VAPID keys in `.env` (`BETTERCAL_VAPID_PUBLIC`, `BETTERCAL_VAPID_PRIVATE`, `BETTERCAL_VAPID_SUBJECT`), generated once with `php server/bin/vapid.php --generate`. Sending uses `minishlink/web-push` (composer).
+Server config: VAPID keys in `.env` (`BETTERCAL_VAPID_PUBLIC`, `BETTERCAL_VAPID_PRIVATE`, `BETTERCAL_VAPID_SUBJECT`), generated once with `php server/bin/vapid.php --generate`. Sending uses `minishlink/web-push` (composer). Email delivery is optional and separate: SMTP via `BETTERCAL_SMTP_HOST`, `BETTERCAL_SMTP_PORT` (default 587, STARTTLS; 465 = implicit TLS), `BETTERCAL_SMTP_USER`/`BETTERCAL_SMTP_PASS` (only when the relay needs auth), `BETTERCAL_SMTP_FROM` (sender address, display name "Better-Cal"); sending uses `phpmailer/phpmailer` (composer). All SMTP vars optional — email stays off gracefully while host or from is empty.
 
 - `GET /push/key` → `{key:string|null}` (VAPID public key; null when unconfigured).
-- `GET /push/status` → `{subscribed:boolean, vapidConfigured:boolean}`.
+- `GET /push/status` → `{subscribed:boolean, vapidConfigured:boolean, emailConfigured:boolean}`.
 - `POST /push/subscribe` `{endpoint, keys:{p256dh, auth}}` → `{ok:true}` (upsert by endpoint; re-subscribing clears failure state).
 - `POST /push/unsubscribe` `{endpoint}` → `{ok:true}`.
 - `POST /push/test` → `{ok, sent, failed}`; 400 `push_not_configured` / `no_subscription`.
+- `POST /push/test-email` → `{ok:true, to}` (test reminder email to the account address); 501 `email_not_configured` when SMTP is not set up, 400 `email_send_failed` when the relay rejects the send.
 - Failure handling: gone endpoints (404/410) mark `failing_since`; subscriptions failing for 3+ days are deleted by the worker.
 
 ## Settings
 User preferences stored in `users.settings_json`. The server stores and validates; enforcement is client-side except `nlParseMode`, which the server applies in `/quickadd` (see Events). Reads always return stored values merged over defaults; keys never set come back as their defaults. Settings changes are not undoable via `POST /undo`.
-- `GET /settings` → `{settings:{defaultView, weekStart, timeFormat, defaultCalendarId, theme, nlParseMode, folderVisibility, reminderTimed, reminderAllDay, homeLat, homeLng, homeLabel, mapStyle}}`.
+- `GET /settings` → `{settings:{defaultView, weekStart, timeFormat, defaultCalendarId, theme, nlParseMode, notifyChannel, folderVisibility, reminderTimed, reminderAllDay, homeLat, homeLng, homeLabel, mapStyle}}`.
 - `PATCH /settings` (any subset of the keys below) → `{settings:{...}}` (the full merged object). Unknown keys → 400 `unknown_setting`; invalid values → 400.
 
 | Key | Values | Default | Notes |
@@ -98,6 +101,7 @@ User preferences stored in `users.settings_json`. The server stores and validate
 | `defaultCalendarId` | id of an owned `local` calendar, or `null` | `null` | validated for ownership + kind; `null` clears |
 | `theme` | `system`\|`light`\|`dark` | `system` | |
 | `nlParseMode` | `always`\|`smart`\|`never` | `smart` | server-enforced in `/quickadd`: `smart` = LLM only when the deterministic parse is incomplete/low-confidence, `always` = LLM-first, `never` = deterministic only |
+| `notifyChannel` | `push`\|`email`\|`both`\|`push-fallback` | `push` | reminder delivery channel, server-enforced by the reminder scan (see Reminders: Delivery channels) |
 | `reminderTimed` | list of `{minutes:int}` (0-40320, max 5) | `[{minutes:10}]` | global default reminders for timed events; server-enforced by the reminder scan (see Reminders) |
 | `reminderAllDay` | list of `{daysBefore:int, time:"HH:MM"}` (0-28 days, max 5) | `[{daysBefore:1, time:"18:00"}]` | global default reminders for all-day events, fired in the event's tzid |
 | `homeLat` | number -90..90 or `null` | `null` | home location latitude; with `homeLng`, the bias point for `/geocode/search` |

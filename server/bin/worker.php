@@ -14,6 +14,7 @@ use BetterCal\Domain\Ranking;
 use BetterCal\Domain\Recurrence;
 use BetterCal\Domain\Reminders;
 use BetterCal\Infra\Db;
+use BetterCal\Infra\EmailSender;
 use BetterCal\Infra\JobQueue;
 use BetterCal\Infra\LlmGateway;
 use BetterCal\Infra\PushSender;
@@ -29,7 +30,7 @@ $feeds = new Feeds($db, $queue);
 $llm = new LlmGateway($cfg);
 $promptEval = new PromptEval($db, $llm, $queue);
 $ranking = new Ranking($db, $llm, $queue);
-$reminders = new Reminders($db, new PushSubscriptions($db), new PushSender($cfg), new Recurrence());
+$reminders = new Reminders($db, new PushSubscriptions($db), new PushSender($cfg), new EmailSender($cfg), new Recurrence());
 
 $locked = $db->scalar('SELECT GET_LOCK(?, 0)', [WORKER_LOCK]);
 if ((int) $locked !== 1) {
@@ -71,7 +72,8 @@ try {
                     break;
                 case 'reminder_scan':
                     $result = $reminders->scan();
-                    echo bc_ts() . ' reminder_scan sent=' . $result['sent'] . ' failed=' . $result['failed'] . "\n";
+                    echo bc_ts() . ' reminder_scan sent=' . $result['sent'] . ' failed=' . $result['failed']
+                        . ' emailed=' . ($result['emailed'] ?? 0) . "\n";
                     break;
                 default:
                     throw new \RuntimeException('Unknown job type: ' . $job['type']);

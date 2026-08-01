@@ -10,6 +10,7 @@
         "ext-json": "*",
         "ext-openssl": "*",
         "minishlink/web-push": "^9.0",
+        "phpmailer/phpmailer": "^6.9",
         "sabre/dav": "^4.7",
         "sabre/vobject": "^4.5"
     },

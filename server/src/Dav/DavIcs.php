@@ -79,13 +79,24 @@ final class DavIcs
 
     /**
      * Serialize one calendar object: the master VEVENT (with RRULE/EXDATEs)
-     * plus its per-instance overrides as RECURRENCE-ID VEVENTs.
+     * plus its per-instance overrides as RECURRENCE-ID VEVENTs. Trip
+     * relationships ride on the master as RELATED-TO lines: $relatedChildren
+     * = member uids when the master is a container (RELTYPE=CHILD),
+     * $relatedParents = container uids when it is a member (RELTYPE=PARENT).
      *
      * @param array<string,mixed> $master
      * @param list<array<string,mixed>> $overrides
+     * @param list<string> $relatedChildren
+     * @param list<string> $relatedParents
      */
-    public static function buildObject(array $master, array $overrides): string
+    public static function buildObject(array $master, array $overrides, array $relatedChildren = [], array $relatedParents = []): string
     {
+        if ($relatedChildren !== []) {
+            $master['related_children'] = $relatedChildren;
+        }
+        if ($relatedParents !== []) {
+            $master['related_parents'] = $relatedParents;
+        }
         return Ics::buildObject([$master, ...$overrides]);
     }
 }

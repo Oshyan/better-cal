@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace BetterCal\Http\Controllers;
 
 use BetterCal\Domain\Events;
+use BetterCal\Domain\Trips;
 use BetterCal\Http\HttpError;
 use BetterCal\Http\Request;
 use BetterCal\Http\Response;
@@ -12,8 +13,10 @@ use BetterCal\Support\Time;
 
 final class EventsController
 {
-    public function __construct(private readonly Events $events)
-    {
+    public function __construct(
+        private readonly Events $events,
+        private readonly Trips $trips,
+    ) {
     }
 
     public function window(Request $req): Response
@@ -87,6 +90,33 @@ final class EventsController
             (int) $params['id'],
             (string) ($req->str('attendance') ?? '')
         );
+        return Response::json(['ok' => true]);
+    }
+
+    // ---- Trip links ---------------------------------------------------
+
+    /** GET /events/:id/links — every member of a trip, chronological. */
+    public function links(Request $req, array $params): Response
+    {
+        $rows = $this->trips->listMembers((int) $req->user['id'], (int) $params['id']);
+        return Response::json(['events' => $this->events->serializeRows($rows)]);
+    }
+
+    /** POST /events/:id/links {eventId} — attach an event to a trip. */
+    public function attachLink(Request $req, array $params): Response
+    {
+        $eventId = (int) ($req->str('eventId') ?? 0);
+        if ($eventId <= 0) {
+            throw HttpError::badRequest('eventId is required');
+        }
+        $this->trips->attach((int) $req->user['id'], (int) $params['id'], $eventId);
+        return Response::json(['ok' => true], 201);
+    }
+
+    /** DELETE /events/:id/links/:eventId — detach; the member survives. */
+    public function detachLink(Request $req, array $params): Response
+    {
+        $this->trips->detach((int) $req->user['id'], (int) $params['id'], (int) $params['eventId']);
         return Response::json(['ok' => true]);
     }
 

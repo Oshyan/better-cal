@@ -1482,6 +1482,121 @@ foreach ([['homeLat' => 91], ['homeLng' => -181], ['homeLat' => 'north'], ['mapS
 }
 
 // ---------------------------------------------------------------------------
+// Trips: linkability matrix, clear gating, container map shape, RELATED-TO
+// serialization both directions (pure, no DB)
+// ---------------------------------------------------------------------------
+
+use BetterCal\Domain\Trips;
+
+$tripRow = ['id' => 1, 'is_container' => 1, 'calendar_id' => 3, 'uid' => 'trip-1'];
+$tripMemberRow = ['id' => 2, 'is_container' => 0, 'calendar_id' => 4, 'uid' => 'ev-2', 'source' => 'feed'];
+
+try {
+    Trips::assertLinkable($tripRow, $tripMemberRow);
+    check('trip attach valid pair accepted (feed member ok)', true);
+} catch (HttpError) {
+    check('trip attach valid pair accepted (feed member ok)', false);
+}
+try {
+    // Same-calendar membership is explicitly supported (design decision 2).
+    Trips::assertLinkable($tripRow, ['id' => 8, 'is_container' => 0, 'calendar_id' => 3]);
+    check('trip attach same-calendar member accepted', true);
+} catch (HttpError) {
+    check('trip attach same-calendar member accepted', false);
+}
+foreach ([
+    'non-container target' => [['id' => 9, 'is_container' => 0], $tripMemberRow],
+    'container in container' => [$tripRow, ['id' => 5, 'is_container' => 1]],
+    'self-attach' => [$tripRow, $tripRow],
+] as $tripLabel => [$tripC, $tripM]) {
+    try {
+        Trips::assertLinkable($tripC, $tripM);
+        check("trip attach rejects $tripLabel", false);
+    } catch (HttpError $e) {
+        checkEq("trip attach $tripLabel error code", 'trip_invalid', $e->errorCode);
+        checkEq("trip attach $tripLabel status", 400, $e->status);
+    }
+}
+
+// Clearing is_container requires an empty trip.
+try {
+    Trips::assertClearable(0);
+    check('trip clear with no members allowed', true);
+} catch (HttpError) {
+    check('trip clear with no members allowed', false);
+}
+try {
+    Trips::assertClearable(2);
+    check('trip clear with members rejected', false);
+} catch (HttpError $e) {
+    checkEq('trip clear with members code', 'trip_has_members', $e->errorCode);
+    checkEq('trip clear with members status', 400, $e->status);
+}
+
+// containersFor batch shape: link rows fold to eventId => [{eventId,title}].
+$tripMap = Trips::containerMap([
+    ['event_id' => 2, 'container_id' => 1, 'title' => 'Hawaii Trip'],
+    ['event_id' => 7, 'container_id' => 1, 'title' => 'Hawaii Trip'],
+    ['event_id' => '7', 'container_id' => '9', 'title' => 'Conference'],
+]);
+checkEq('trip map single container entry', [['eventId' => 1, 'title' => 'Hawaii Trip']], $tripMap[2]);
+checkEq('trip map n:m rows keep order', [
+    ['eventId' => 1, 'title' => 'Hawaii Trip'],
+    ['eventId' => 9, 'title' => 'Conference'],
+], $tripMap[7]);
+checkEq('trip map only linked ids present', [2, 7], array_keys($tripMap));
+checkEq('trip map empty input', [], Trips::containerMap([]));
+
+// RELATED-TO export: container VEVENT lists member uids as RELTYPE=CHILD,
+// member VEVENT lists its container uid as RELTYPE=PARENT (feed + CalDAV).
+$tripCal = Ics::buildCalendar('Trips', null, [
+    [
+        'uid' => 'trip-1', 'title' => 'Hawaii Trip', 'start_utc' => '2026-06-01 07:00:00',
+        'end_utc' => '2026-06-13 07:00:00', 'all_day' => 1, 'tzid' => 'America/Los_Angeles',
+        'status' => 'confirmed', 'related_children' => ['flight-out', 'flight-back'],
+    ],
+    [
+        'uid' => 'flight-out', 'title' => 'Flight to HNL', 'start_utc' => '2026-06-01 16:00:00',
+        'end_utc' => '2026-06-01 22:00:00', 'all_day' => 0, 'tzid' => 'America/Los_Angeles',
+        'status' => 'confirmed', 'related_parents' => ['trip-1'],
+    ],
+]);
+$tripUnfolded = Ics::unfold($tripCal);
+checkEq('trip ics container child lines', 2, substr_count($tripUnfolded, 'RELATED-TO;RELTYPE=CHILD:'));
+check('trip ics child uid out', str_contains($tripUnfolded, 'RELATED-TO;RELTYPE=CHILD:flight-out'));
+check('trip ics child uid back', str_contains($tripUnfolded, 'RELATED-TO;RELTYPE=CHILD:flight-back'));
+checkEq('trip ics member parent line', 1, substr_count($tripUnfolded, 'RELATED-TO;RELTYPE=PARENT:trip-1'));
+check('trip ics undecorated rows write nothing', !str_contains(Ics::buildCalendar('X', null, [[
+    'uid' => 'plain', 'title' => 'Plain', 'start_utc' => '2026-06-01 16:00:00',
+    'end_utc' => '2026-06-01 17:00:00', 'all_day' => 0, 'tzid' => 'UTC', 'status' => 'confirmed',
+]]), 'RELATED-TO'));
+
+// DavIcs object builder threads relationship uids onto the master VEVENT.
+$tripObj = Ics::unfold(DavIcs::buildObject($davMaster, [$davOverride], ['member-uid'], []));
+check('dav object related child on master', str_contains($tripObj, 'RELATED-TO;RELTYPE=CHILD:member-uid'));
+checkEq('dav object override carries no relations', 1, substr_count($tripObj, 'RELATED-TO'));
+check('dav object related parent on master', str_contains(
+    Ics::unfold(DavIcs::buildObject($davMaster, [], [], ['trip-uid'])),
+    'RELATED-TO;RELTYPE=PARENT:trip-uid'
+));
+check('dav object no relations by default', !str_contains(DavIcs::buildObject($davMaster, [$davOverride]), 'RELATED-TO'));
+
+// ICS import ignores RELATED-TO (trip links are user-local; API-only).
+if (class_exists(\Sabre\VObject\Reader::class)) {
+    $tripImport = Ics::parse(
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:t1\r\n"
+        . "DTSTART:20260601T160000Z\r\nDTEND:20260601T170000Z\r\nSUMMARY:X\r\n"
+        . "RELATED-TO;RELTYPE=PARENT:trip-1\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+    );
+    check(
+        'trip ics import ignores RELATED-TO',
+        count($tripImport) === 1
+            && !array_key_exists('related_parents', $tripImport[0])
+            && !array_key_exists('related_children', $tripImport[0])
+    );
+}
+
+// ---------------------------------------------------------------------------
 
 $pass = $GLOBALS['__pass'];
 $fail = $GLOBALS['__fail'];

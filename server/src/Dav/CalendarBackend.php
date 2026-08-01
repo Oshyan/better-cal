@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace BetterCal\Dav;
 
 use BetterCal\Domain\Ics;
+use BetterCal\Domain\Trips;
 use BetterCal\Domain\Undo;
 use BetterCal\Infra\Db;
 use BetterCal\Support\Time;
@@ -163,13 +164,26 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
             }
         }
 
+        // Trip relationships export as RELATED-TO on the master VEVENT
+        // (batch-loaded once for all requested objects).
+        $related = Trips::relatedUidMap(
+            $this->db,
+            array_map(static fn(array $m): int => (int) $m['id'], array_values($masters))
+        );
+
         $out = [];
         foreach ($uids as $uid) {
             $master = $masters[$uid] ?? null;
             if ($master === null) {
                 continue;
             }
-            $data = DavIcs::buildObject($master, $overrides[$uid] ?? []);
+            $mid = (int) $master['id'];
+            $data = DavIcs::buildObject(
+                $master,
+                $overrides[$uid] ?? [],
+                $related['children'][$mid] ?? [],
+                $related['parents'][$mid] ?? []
+            );
             $updated = (string) $master['updated_at'];
             foreach ($overrides[$uid] ?? [] as $ov) {
                 $updated = max($updated, (string) $ov['updated_at']);

@@ -23,6 +23,7 @@ final class Events
         private readonly Undo $undo,
         private readonly Labels $labels,
         private readonly Filters $filters,
+        private readonly Trips $trips,
     ) {
     }
 
@@ -210,13 +211,15 @@ final class Events
             $expanded = $kept;
         }
 
+        $eventIds = [];
+        foreach ($expanded as $occ) {
+            $eventIds[(int) $occ['row']['id']] = true;
+        }
         if ($links === null) {
-            $eventIds = [];
-            foreach ($expanded as $occ) {
-                $eventIds[(int) $occ['row']['id']] = true;
-            }
             $links = $this->labels->forEvents(array_keys($eventIds));
         }
+        // Trip membership, batch-loaded like tags (one query, no N+1).
+        $links['containers'] = $this->trips->containersFor(array_keys($eventIds));
 
         return array_map(
             function (array $occ) use ($links): array {
@@ -326,6 +329,7 @@ final class Events
             'all_day' => $allDay ? 1 : 0,
             'tzid' => $tzid,
             'rrule' => $rrule,
+            'is_container' => filter_var($in['isContainer'] ?? false, FILTER_VALIDATE_BOOL) ? 1 : 0,
             'reminders_json' => array_key_exists('reminders', $in)
                 ? self::encodeReminders(Reminders::validateEventReminders($in['reminders']))
                 : null,
@@ -360,6 +364,16 @@ final class Events
         $editKeys = array_diff(array_keys($in), ['scope', 'instanceStart', 'tagNames', 'reminders']);
         if ($event['source'] === 'feed' && $editKeys !== []) {
             throw HttpError::forbidden('feed_readonly', 'Feed events are read-only except attendance, tags and reminders');
+        }
+
+        // Clearing the trip flag requires an empty trip: members would
+        // otherwise dangle pointing at a non-container.
+        if (
+            array_key_exists('isContainer', $in)
+            && !filter_var($in['isContainer'], FILTER_VALIDATE_BOOL)
+            && (int) ($event['is_container'] ?? 0) === 1
+        ) {
+            Trips::assertClearable($this->trips->liveMemberCount($id));
         }
 
         $isRecurringMaster = !empty($event['rrule']) && empty($event['recurrence_parent_id']);
@@ -679,20 +693,23 @@ final class Events
     public function serializeSingle(array $row): array
     {
         $links = $this->labels->forEvents([(int) $row['id']]);
+        $links['containers'] = $this->trips->containersFor([(int) $row['id']]);
         return $this->serialize($row, Time::fromDb((string) $row['start_utc']), Time::fromDb((string) $row['end_utc']), $links);
     }
 
     /** @param list<array> $rows @return list<array> */
     public function serializeRows(array $rows): array
     {
-        $links = $this->labels->forEvents(array_map(static fn($r) => (int) $r['id'], $rows));
+        $ids = array_map(static fn($r) => (int) $r['id'], $rows);
+        $links = $this->labels->forEvents($ids);
+        $links['containers'] = $this->trips->containersFor($ids);
         return array_map(
             fn(array $row) => $this->serialize($row, Time::fromDb((string) $row['start_utc']), Time::fromDb((string) $row['end_utc']), $links),
             $rows
         );
     }
 
-    /** @param array{tags:array<int,list<string>>,people:array<int,list<string>>} $links */
+    /** @param array{tags:array<int,list<string>>,people:array<int,list<string>>,containers:array<int,list<array{eventId:int,title:string}>>} $links */
     private function serialize(array $row, \DateTimeImmutable $startUtc, \DateTimeImmutable $endUtc, array $links): array
     {
         $id = (int) $row['id'];
@@ -745,6 +762,8 @@ final class Events
             'reminderSource' => $reminderSource,
             'tags' => $links['tags'][$id] ?? [],
             'people' => $links['people'][$id] ?? [],
+            'isContainer' => (int) ($row['is_container'] ?? 0) === 1,
+            'containers' => $links['containers'][$id] ?? [],
             'styleJson' => $style ?: null,
             'createdAt' => Time::iso($createdAt),
             'updatedAt' => Time::iso(Time::fromDb((string) $row['updated_at'])),
@@ -837,6 +856,10 @@ final class Events
         }
         if (array_key_exists('rrule', $in) && !$forOverride) {
             $fields['rrule'] = ($in['rrule'] === null || $in['rrule'] === '') ? null : (string) $in['rrule'];
+        }
+        if (array_key_exists('isContainer', $in) && !$forOverride) {
+            // Clearing with live members is rejected in patch() before this runs.
+            $fields['is_container'] = filter_var($in['isContainer'], FILTER_VALIDATE_BOOL) ? 1 : 0;
         }
         if (array_key_exists('reminders', $in)) {
             $fields['reminders_json'] = self::encodeReminders(Reminders::validateEventReminders($in['reminders']));

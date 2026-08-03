@@ -137,6 +137,18 @@ final class FallbackParser
             $confidence += 0.2; // resolved as an all-day date (implicit, keyword, or range)
         }
 
+        // Leftover temporal words in the title mean a phrase was only half
+        // understood ("Lunch day after" from "day after tomorrow" before that
+        // compound existed) — stop claiming completeness so smart mode
+        // consults the LLM, whose answer still passes the merge-guard.
+        $suspect = preg_match(
+            '/\b(?:after|before|from\s+now|following|week\s+of|first|second|third|fourth|last|every|other)\b/i',
+            $title
+        ) === 1;
+        if ($suspect) {
+            $confidence = min($confidence, 0.5);
+        }
+
         return [
             'title' => $title,
             'start' => Time::iso($start),
@@ -146,7 +158,7 @@ final class FallbackParser
             'personNames' => $personNames,
             'confidence' => round(min(0.95, max(0.05, $confidence)), 2),
             'source' => 'fallback',
-            'complete' => $dateFound && ($timeFound || $allDay),
+            'complete' => $dateFound && ($timeFound || $allDay) && !$suspect,
             // Internal signal for QuickAdd's LLM merge-guard: an explicit date
             // in the text means a past start may be intentional.
             'dateFound' => $dateFound,
@@ -225,6 +237,46 @@ final class FallbackParser
                         $candidate = $candidate->modify('+1 year');
                     }
                     return [self::cut($work, $m[0]), $candidate, true, null];
+                }
+            }
+        }
+        $dayAltAll = implode('|', array_keys(self::WEEKDAYS));
+        // Compounds BEFORE their fragments, or "day after tomorrow" would
+        // match as "tomorrow" and "a week from Friday" as "Friday".
+        if (preg_match('/\b(?:the\s+)?day\s+after\s+tomorrow\b/i', $work, $m)) {
+            return [self::cut($work, $m[0]), $now->add(new \DateInterval('P2D')), true, null];
+        }
+        // "a week from Friday" / "week from tomorrow": the base day plus 7.
+        if (preg_match('/\b(?:a\s+)?week\s+from\s+(today|tomorrow|' . $dayAltAll . ')\b/i', $work, $m)) {
+            $base = strtolower($m[1]);
+            if ($base === 'today') {
+                $day = $now;
+            } elseif ($base === 'tomorrow') {
+                $day = $now->add(new \DateInterval('P1D'));
+            } else {
+                $diff = (self::WEEKDAYS[$base] - (int) $now->format('w') + 7) % 7;
+                $day = $now->add(new \DateInterval('P' . $diff . 'D'));
+            }
+            return [self::cut($work, $m[0]), $day->add(new \DateInterval('P7D')), true, null];
+        }
+        // "first Monday of September" / "last Friday in October" (nth weekday
+        // of a month; rolls to next year when the whole month is past).
+        if (preg_match(
+            '/\b(first|second|third|fourth|last)\s+(' . $dayAltAll . ')\s+(?:of|in)\s+(' . $monthAlt . ')\b(?:,?\s*(\d{4}))?/i',
+            $work,
+            $m
+        )) {
+            $monthNum = self::MONTHS[strtolower(substr($m[3], 0, 3))] ?? null;
+            if ($monthNum !== null) {
+                $year = ($m[4] ?? '') !== '' ? (int) $m[4] : (int) $now->format('Y');
+                $candidate = self::nthWeekdayOfMonth($now, $year, $monthNum, self::WEEKDAYS[strtolower($m[2])], strtolower($m[1]));
+                if ($candidate !== null) {
+                    if (($m[4] ?? '') === '' && $candidate < $now->setTime(0, 0)) {
+                        $candidate = self::nthWeekdayOfMonth($now, $year + 1, $monthNum, self::WEEKDAYS[strtolower($m[2])], strtolower($m[1]));
+                    }
+                    if ($candidate !== null) {
+                        return [self::cut($work, $m[0]), $candidate, true, null];
+                    }
                 }
             }
         }
@@ -323,6 +375,25 @@ final class FallbackParser
             $h += 12;
         }
         return [$h, min(59, $min)];
+    }
+
+    /** "first Monday of September": nth (or last) weekday within a month. */
+    private static function nthWeekdayOfMonth(\DateTimeImmutable $now, int $y, int $m, int $weekday, string $ordinal): ?\DateTimeImmutable
+    {
+        $first = self::mkDate($now, $y, $m, 1);
+        if ($first === null) {
+            return null;
+        }
+        if ($ordinal === 'last') {
+            $lastDay = (int) $first->format('t');
+            $last = $first->setDate($y, $m, $lastDay);
+            $back = ((int) $last->format('w') - $weekday + 7) % 7;
+            return $last->sub(new \DateInterval('P' . $back . 'D'));
+        }
+        $n = ['first' => 0, 'second' => 1, 'third' => 2, 'fourth' => 3][$ordinal] ?? 0;
+        $forward = ($weekday - (int) $first->format('w') + 7) % 7 + $n * 7;
+        $day = 1 + $forward;
+        return $day <= (int) $first->format('t') ? $first->setDate($y, $m, $day) : null;
     }
 
     private static function mkDate(\DateTimeImmutable $now, int $y, int $m, int $d): ?\DateTimeImmutable

@@ -10,7 +10,7 @@ import { api } from './api.js';
 import { deleteEvent, triageAttendance, sendFeedback, enterReschedule, sameDayList, openTripByEventId } from './actions.js';
 import { TripDetail } from './Trips.js';
 import { trapFocus } from '../ui/DayExpand.js';
-import { ThumbIcon, CalDot, PinIcon } from '../ui/icons.js';
+import { ThumbIcon, CalDot, PinIcon, LinkIcon } from '../ui/icons.js';
 import {
   parseISO, dateOfDayKey, fmtRange, fmtDateFull, fmtTime,
 } from '../lib/dates.js';
@@ -320,7 +320,7 @@ export function EventDetail() {
           ${occ.containers && occ.containers.length > 0 && html`<button
             type="button" class="bc-partof" title="Open this trip"
             onClick=${() => openTripByEventId(occ.containers[0].eventId)}
-          ><span class="bc-partof-glyph" aria-hidden="true">🔗</span> Part of: ${occ.containers[0].title}</button>`}
+          ><${LinkIcon} size=${12} /> Part of: ${occ.containers[0].title}</button>`}
         </div>
         <div class="bc-detail-when">
           <span class="bc-detail-calchip">

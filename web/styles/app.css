@@ -518,6 +518,7 @@ button:focus-visible, [tabindex]:focus-visible {
   background: var(--accent); color: var(--accent-fg);
   border-radius: 7px; font-size: 9px; font-weight: 700;
   padding: 0 5px; line-height: 13px; flex: none; text-transform: uppercase;
+  display: inline-block; vertical-align: middle;
 }
 .bc-more {
   background: none; border: none; font-size: 11px; color: var(--fg-muted);
@@ -767,6 +768,8 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-pop-cal { display: flex; align-items: center; gap: 6px; color: var(--fg-muted); font-size: 12.5px; }
 .bc-pop-tags { color: var(--accent); }
 .bc-pop-desc { color: var(--fg-muted); font-size: 12.5px; max-height: 90px; overflow-y: auto; white-space: pre-wrap; }
+.bc-pop-desc-rich { white-space: normal; }
+.bc-pop-desc a { color: var(--accent); }
 .bc-pop-url { color: var(--accent); font-size: 12.5px; }
 /* Wraps so the attendance + feedback segments never clip at the popover's
    320px width; the close button keeps the first row's right edge. */
@@ -858,7 +861,10 @@ body.bc-dragging * { cursor: grabbing !important; }
   padding: 10px 16px 14px; overflow-y: auto; overscroll-behavior: contain;
   display: flex; flex-direction: column; gap: 7px;
 }
-.bc-detail-titlerow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+/* Baseline-align so the Part-of chip's text sits on the title's baseline
+   rather than floating at the row's vertical center. */
+.bc-detail-titlerow { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.bc-detail-titlerow .bc-partof { align-self: baseline; }
 .bc-detail-title { margin: 0; font-size: 19px; line-height: 1.25; }
 .bc-detail-title.is-cancelled { text-decoration: line-through; opacity: 0.75; }
 .bc-detail-calrow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -1702,10 +1708,11 @@ body.bc-rescheduling { user-select: none; }
 .bc-rt-editor ul, .bc-rt-editor ol { margin: 4px 0; padding-left: 22px; }
 .bc-rt-editor div, .bc-rt-editor p { margin: 0; }
 
-/* Rich description display (detail view): sanitized HTML, not preformatted text. */
-.bc-detail-desc.bc-rich { white-space: normal; }
-.bc-detail-desc.bc-rich p, .bc-detail-desc.bc-rich div { margin: 0 0 2px; }
-.bc-detail-desc.bc-rich ul, .bc-detail-desc.bc-rich ol { margin: 4px 0; padding-left: 22px; }
+/* Rich description display (detail view + popover): sanitized HTML, not
+   preformatted text. */
+.bc-rich { white-space: normal; }
+.bc-rich p, .bc-rich div { margin: 0 0 2px; }
+.bc-rich ul, .bc-rich ol { margin: 4px 0; padding-left: 22px; }
 
 /* --- trips (container events, GH #2; append-only section) -------------------
    The signature rendering is the month/ribbon backdrop band: a soft tinted
@@ -1762,7 +1769,7 @@ body.bc-rescheduling { user-select: none; }
   color: var(--accent); font-size: 12.5px; text-align: left; min-width: 0;
 }
 .bc-partof:hover { text-decoration: underline; }
-.bc-partof-glyph { font-size: 11px; flex: none; }
+.bc-partof svg { flex: none; }
 
 /* Trip detail: chronological member list with open + detach per row. */
 .bc-trip-loading, .bc-trip-empty { color: var(--fg-muted); font-size: 12.5px; }

@@ -83,6 +83,20 @@ export function PinIcon({ size = 12 }) {
     <circle cx="8" cy="6.7" r="1.9" /></svg>`;
 }
 
+// Link glyph for "Part of: <trip>" markers: an SVG like every other UI icon,
+// so it inherits the accent color and centers with its text — the colored
+// link emoji it replaced sat on a different baseline and clashed with the
+// icon set.
+export function LinkIcon({ size = 12 }) {
+  return html`<svg
+    viewBox="0 0 16 16" width=${size} height=${size} aria-hidden="true"
+    fill="none" stroke="currentColor" stroke-width="1.5"
+    stroke-linecap="round" stroke-linejoin="round"
+  ><path d="M6.5 9.5l3-3" />
+    <path d="M7.6 4.6l1.1-1.1a2.4 2.4 0 0 1 3.4 3.4l-1.1 1.1" />
+    <path d="M8.4 11.4l-1.1 1.1a2.4 2.4 0 0 1-3.4-3.4l1.1-1.1" /></svg>`;
+}
+
 // Trip badge: suitcase glyph plus label in one quiet accent-tinted pill (the
 // accent, not the calendar color, so it reads as a container marker). One
 // shared treatment for agenda boundary rows, the trip detail header, and any

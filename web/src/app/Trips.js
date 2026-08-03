@@ -16,7 +16,7 @@ import {
   openDetail, attachToTrip, detachFromTrip, deleteTripOnly, deleteTripAndMembers,
 } from './actions.js';
 import { trapFocus } from '../ui/DayExpand.js';
-import { CalDot, TripBadge } from '../ui/icons.js';
+import { CalDot, TripBadge, LinkIcon } from '../ui/icons.js';
 import { tripSpan, tripSpanLabel, candidateTrips, attachableInSpan } from '../ui/trips.js';
 import {
   parseISO, dateOfDayKey, addDaysDate, toISOWithOffset, occDayKey, fmtTime,
@@ -289,7 +289,7 @@ export function TripRow({ occ }) {
           const cur = all.find((o) => o.isContainer && o.eventId === current.eventId);
           if (cur) openDetail(cur.instanceId);
         }}
-      ><span class="bc-partof-glyph" aria-hidden="true">🔗</span> ${current.title}</button>`}
+      ><${LinkIcon} size=${12} /> ${current.title}</button>`}
       <select class="bc-trip-select" aria-label="Trip" value=${current ? String(current.eventId) : ''} onChange=${onSelect}>
         <option value="">None</option>
         ${candidates.map((c) => html`<option key=${c.eventId} value=${String(c.eventId)}>${c.title || '(untitled)'}</option>`)}

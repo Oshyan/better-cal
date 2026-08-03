@@ -7,12 +7,12 @@ import { html, useState, useRef, useEffect } from '../../vendor/index.js';
 import { useStore, set, state } from './store.js';
 import { updateEvent, deleteEvent, triageAttendance, sendFeedback, enterReschedule, openDetail, sameDayList, openTripByEventId } from './actions.js';
 import { isMobile, trapFocus, MOBILE_QUERY } from '../ui/DayExpand.js';
-import { ThumbIcon, CalDot, PinIcon } from '../ui/icons.js';
+import { ThumbIcon, CalDot, PinIcon, LinkIcon } from '../ui/icons.js';
 import {
   parseISO, dateOfDayKey, fmtRange, toInputValue, fromInputValue, toISOWithOffset,
 } from '../lib/dates.js';
 import { fmtReminder } from '../lib/reminders.js';
-import { stripToText } from '../lib/richtext.js';
+import { stripToText, hasHtml, sanitizeHtml } from '../lib/richtext.js';
 import { gmapsUrl } from '../lib/maps.js';
 
 const GAP = 10;
@@ -142,7 +142,7 @@ export function EventPopover() {
       ${occ.containers && occ.containers.length > 0 && html`<button
         type="button" class="bc-partof" title="Open this trip"
         onClick=${() => { set({ popover: null }); openTripByEventId(occ.containers[0].eventId); }}
-      ><span class="bc-partof-glyph" aria-hidden="true">🔗</span> Part of: ${occ.containers[0].title}</button>`}
+      ><${LinkIcon} size=${12} /> Part of: ${occ.containers[0].title}</button>`}
       ${editingTime
         ? html`<${TimeEditor} start=${s} end=${e} onSave=${saveTime} onCancel=${() => setEditingTime(false)} />`
         : html`<div class="bc-pop-when" onClick=${() => !isFeed && setEditingTime(true)} title=${isFeed ? '' : 'Click to edit time'}>
@@ -165,7 +165,11 @@ export function EventPopover() {
         ${occ.tags && occ.tags.length > 0 && html`<span class="bc-pop-tags">${occ.tags.map((t) => '#' + t).join(' ')}</span>`}
       </div>
       ${occ.description && (() => {
-        // Rich descriptions preview as plain text (280 chars max).
+        // Rich descriptions render rich here too (sanitized, height-capped
+        // by CSS); plain text keeps the 280-char preview.
+        if (hasHtml(occ.description)) {
+          return html`<div class="bc-pop-desc bc-pop-desc-rich bc-rich" dangerouslySetInnerHTML=${{ __html: sanitizeHtml(occ.description) }}></div>`;
+        }
         const text = stripToText(occ.description);
         return text && html`<div class="bc-pop-desc">${text.length > 280 ? text.slice(0, 280) + '…' : text}</div>`;
       })()}

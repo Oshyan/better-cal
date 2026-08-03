@@ -184,13 +184,15 @@ function MiniMap({ lat, lng, location }) {
     setInteractive(true);
   };
 
-  const osmUrl = `https://www.openstreetmap.org/?mlat=${lat}&mlon=${lng}#map=16/${lat}/${lng}`;
+  // Google Maps directions link: coordinates are unambiguous as destination,
+  // and the dir endpoint drops mobile users straight into navigation.
+  const gmapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
   return html`<div class="bc-map-wrap">
     <div class="bc-map" ref=${elRef}></div>
     ${!interactive && html`<button type="button" class="bc-map-cover" onClick=${enable}>
       <span>Click to zoom and pan</span>
     </button>`}
-    <a class="bc-map-osm" href=${osmUrl} target="_blank" rel="noopener noreferrer">Open in OpenStreetMap ↗</a>
+    <a class="bc-map-osm" href=${gmapsUrl} target="_blank" rel="noopener noreferrer">Directions in Google Maps ↗</a>
   </div>`;
 }
 

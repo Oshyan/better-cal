@@ -39,10 +39,11 @@ function chronological(a, b) {
 // Day groups for the agenda, including synthesized boundary-day groups.
 // Hidden occurrences are dropped. Each group:
 //   {dayKey, rows: [{kind: 'start'|'end'|'normal', occ}], top, height}
-// Row order within a group: end markers first (the day opens with what is
-// wrapping up), then starts and single-day rows merged chronologically.
-// Heights and tops are pixel values (rowH per row, headH per header) so the
-// windowed renderer and railRanges share one coordinate space.
+// Row order within a group: starts and single-day rows merged
+// chronologically (all-day first), then end markers last, so a span bounds
+// its final day (the rail bar runs down past that day's events to the end
+// pill). Heights and tops are pixel values (rowH per row, headH per header)
+// so the windowed renderer and railRanges share one coordinate space.
 export function buildAgendaGroups(occurrences, opts = {}) {
   const rowH = opts.rowH ?? AGENDA_ROW_H;
   const headH = opts.headH ?? AGENDA_HEAD_H;
@@ -71,7 +72,7 @@ export function buildAgendaGroups(occurrences, opts = {}) {
       ...b.starts.map((occ) => ({ kind: 'start', occ })),
       ...b.normals.map((occ) => ({ kind: 'normal', occ })),
     ].sort((x, y) => chronological(x.occ, y.occ));
-    const rows = [...b.ends.map((occ) => ({ kind: 'end', occ })), ...merged];
+    const rows = [...merged, ...b.ends.map((occ) => ({ kind: 'end', occ }))];
     const height = headH + rows.length * rowH;
     const g = { dayKey: k, rows, top: offset, height };
     offset += height;
@@ -79,11 +80,13 @@ export function buildAgendaGroups(occurrences, opts = {}) {
   });
 }
 
-// Rail pixel ranges: one per multi-day occurrence, from the top of its start
-// row to the bottom of its end marker row. Overlapping rails pack into lanes
-// (lowest free lane by pixel range); occurrences past maxLanes keep their
-// start/end rows but get no rail. opts.colorOf(occ) resolves the calendar
-// color (the math stays presentation-free without it).
+// Rail pixel ranges: one per multi-day occurrence, from the bottom of its
+// start row to the top of its end marker row, so the bar visually connects
+// the start pill to the end pill (pill, bar, pill reads as one object).
+// Overlapping rails pack into lanes (lowest free lane by pixel range);
+// occurrences past maxLanes keep their start/end rows but get no rail.
+// opts.colorOf(occ) resolves the calendar color (the math stays
+// presentation-free without it).
 // Returns [{instanceId, calendarId, title, isTrip, topPx, heightPx, lane, color}].
 export function railRanges(groups, opts = {}) {
   const rowH = opts.rowH ?? AGENDA_ROW_H;
@@ -100,8 +103,8 @@ export function railRanges(groups, opts = {}) {
       if (!eg) return; // boundary group missing: rows only, no rail
       const ei = eg.rows.findIndex((r) => r.kind === 'end' && r.occ.instanceId === occ.instanceId);
       if (ei < 0) return;
-      const topPx = g.top + headH + i * rowH;
-      const bottomPx = eg.top + headH + (ei + 1) * rowH;
+      const topPx = g.top + headH + (i + 1) * rowH; // bottom of the start pill's row
+      const bottomPx = eg.top + headH + ei * rowH; // top of the end pill's row
       spans.push({ occ, topPx, heightPx: bottomPx - topPx });
     });
   }

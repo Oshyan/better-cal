@@ -35,6 +35,9 @@ import {
   tripSpan, tripSpanLabel, tripBandSegments, spansOverlapOrAbut,
   candidateTrips, attachableInSpan, extendTripSpan,
 } from '../src/ui/trips.js';
+import {
+  buildAgendaGroups, railRanges, headerSuffixes, spanDayCount, dayOfSpanLabel,
+} from '../src/ui/agendarails.js';
 import { hasHtml, stripToText, isEmptyHtml } from '../src/lib/richtext.js';
 import { batteryTipApplies, BATTERY_TIP_BODY, BATTERY_TIP_TITLE } from '../src/lib/batterytip.js';
 
@@ -886,6 +889,113 @@ const timedGrown = extendTripSpan(timedTrip, lateEvent);
 assert('extendTripSpan timed keeps the end time of day',
   timedGrown.end.slice(0, 10) === '2026-06-14' && timedGrown.end.slice(11, 16) === '18:00');
 assert('extendTripSpan timed keeps the start time of day', timedGrown.start.slice(11, 16) === '10:00');
+
+console.log('--- agenda multi-day rails ---');
+
+// Fixtures: an all-day trip Jun 1-4 (exclusive iCal end), a timed two-day
+// event Jun 2-3, a single all-day and a single timed event.
+const railTrip = {
+  instanceId: 'rt1', calendarId: 'c1', title: 'Tahoe', isContainer: true,
+  allDay: true, start: '2026-06-01T00:00:00+00:00', end: '2026-06-05T00:00:00+00:00',
+};
+const railTimed = {
+  instanceId: 'rm1', calendarId: 'c2', title: 'Offsite',
+  allDay: false, start: '2026-06-02T09:00:00-07:00', end: '2026-06-03T17:00:00-07:00',
+};
+const railSingle = {
+  instanceId: 'rs1', calendarId: 'c1', title: 'Dentist',
+  allDay: false, start: '2026-06-02T11:00:00-07:00', end: '2026-06-02T12:00:00-07:00',
+};
+const railAllDaySingle = {
+  instanceId: 'ra1', calendarId: 'c1', title: 'Holiday',
+  allDay: true, start: '2026-06-02T00:00:00+00:00', end: '2026-06-03T00:00:00+00:00',
+};
+const railHidden = {
+  instanceId: 'rh1', calendarId: 'c1', title: 'Hidden span', attendance: 'hidden',
+  allDay: true, start: '2026-06-01T00:00:00+00:00', end: '2026-06-05T00:00:00+00:00',
+};
+
+const railGroups = buildAgendaGroups([railTrip, railTimed, railSingle, railAllDaySingle, railHidden]);
+
+// Boundary days synthesize groups; intermediate empty days (Jun 4 is the
+// trip's end so it exists, but a pure middle day like Jun 3 exists here only
+// because the timed event ends there — drop it from the check below).
+eq('buildAgendaGroups group day keys',
+  railGroups.map((g) => g.dayKey),
+  ['2026-06-01', '2026-06-02', '2026-06-03', '2026-06-04']);
+
+// Synthesized start day: header plus the single start row.
+eq('start day rows', railGroups[0].rows.map((r) => r.kind + ':' + r.occ.instanceId), ['start:rt1']);
+
+// End markers come first in a group, then starts/normals chronologically
+// (all-day first, then by start time).
+eq('mixed day row order',
+  railGroups[1].rows.map((r) => r.kind + ':' + r.occ.instanceId),
+  ['normal:ra1', 'start:rm1', 'normal:rs1']);
+eq('end marker day rows', railGroups[3].rows.map((r) => r.kind + ':' + r.occ.instanceId), ['end:rt1']);
+
+// Hidden occurrences never produce rows or synthesized groups.
+assert('hidden multi-day excluded', !railGroups.some((g) => g.rows.some((r) => r.occ.instanceId === 'rh1')));
+
+// Tops/heights stack (headH 40 + rowH 36 per row).
+eq('group heights', railGroups.map((g) => g.height), [76, 148, 76, 76]);
+eq('group tops', railGroups.map((g) => g.top), [0, 76, 224, 300]);
+
+// A two-day event gets a start row on day 1 and an end marker on day 2.
+const twoDay = buildAgendaGroups([railTimed]);
+eq('two-day start/end split',
+  twoDay.map((g) => g.rows.map((r) => r.kind).join(',')),
+  ['start', 'end']);
+
+// Single-day events never produce end markers.
+assert('single-day has no markers',
+  buildAgendaGroups([railSingle]).every((g) => g.rows.every((r) => r.kind === 'normal')));
+
+// Day count / label helpers.
+eq('spanDayCount trip', spanDayCount(railTrip), 4);
+eq('spanDayCount single', spanDayCount(railSingle), 1);
+eq('dayOfSpanLabel start', dayOfSpanLabel(railTrip, '2026-06-01'), 'Day 1/4');
+eq('dayOfSpanLabel end', dayOfSpanLabel(railTrip, '2026-06-04'), 'Day 4/4');
+
+// Rails: pixel span from the start row's top to the end row's bottom, lanes
+// packed for overlaps, calendar color resolved via colorOf.
+const railsOut = railRanges(railGroups, { colorOf: (o) => (o.calendarId === 'c1' ? '#a00' : '#0a0') });
+eq('rail count', railsOut.length, 2);
+const tripRail = railsOut.find((r) => r.instanceId === 'rt1');
+const timedRail = railsOut.find((r) => r.instanceId === 'rm1');
+eq('trip rail top', tripRail.topPx, 40); // group 0 top 0 + headH 40 + row 0
+eq('trip rail height', tripRail.heightPx, 336); // to 376, bottom of the Jun 4 end row
+eq('timed rail span', [timedRail.topPx, timedRail.heightPx], [152, 148]); // row 1 of Jun 2 to end row of Jun 3
+eq('overlapping rails get distinct lanes', [tripRail.lane, timedRail.lane], [0, 1]);
+assert('rail is-trip flag', tripRail.isTrip === true && timedRail.isTrip === false);
+eq('rail colors', [tripRail.color, timedRail.color], ['#a00', '#0a0']);
+
+// Lane overflow: a fourth overlapping span keeps its rows but gets no rail.
+const stacked = ['a', 'b', 'c', 'd'].map((id) => ({
+  instanceId: id, calendarId: 'c1', title: id, allDay: true,
+  start: '2026-06-01T00:00:00+00:00', end: '2026-06-05T00:00:00+00:00',
+}));
+const stackedGroups = buildAgendaGroups(stacked);
+eq('lane overflow drops the 4th rail', railRanges(stackedGroups).length, 3);
+assert('overflow keeps start/end rows',
+  stackedGroups[0].rows.length === 4 && stackedGroups[1].rows.length === 4);
+
+// Non-overlapping spans reuse lane 0.
+const sequential = railRanges(buildAgendaGroups([
+  { instanceId: 'q1', calendarId: 'c1', title: 'A', allDay: true, start: '2026-06-01T00:00:00+00:00', end: '2026-06-03T00:00:00+00:00' },
+  { instanceId: 'q2', calendarId: 'c1', title: 'B', allDay: true, start: '2026-06-10T00:00:00+00:00', end: '2026-06-12T00:00:00+00:00' },
+]));
+eq('sequential rails share lane 0', sequential.map((r) => r.lane), [0, 0]);
+
+// Header suffixes: every covered day (inclusive) names the span; max 2 items
+// then an overflow count; uncovered days stay absent.
+const sfx = headerSuffixes(railGroups);
+eq('suffix on start day', sfx.get('2026-06-01').items.map((o) => o.instanceId), ['rt1']);
+eq('suffix on covered middle day', sfx.get('2026-06-02').items.map((o) => o.instanceId), ['rt1', 'rm1']);
+eq('suffix on end day', sfx.get('2026-06-04').items.map((o) => o.instanceId), ['rt1']);
+const sfxMany = headerSuffixes(stackedGroups);
+eq('suffix overflow count', [sfxMany.get('2026-06-01').items.length, sfxMany.get('2026-06-01').more], [2, 2]);
+assert('no suffix map entries without spans', headerSuffixes(buildAgendaGroups([railSingle])).size === 0);
 
 console.log('--- color utils ---');
 

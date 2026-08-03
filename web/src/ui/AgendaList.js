@@ -2,17 +2,25 @@
 // Windowing is by day group: only groups intersecting the scroll viewport
 // (plus buffer) render their rows; others render fixed-height placeholders,
 // which is enough for a few thousand items.
+//
+// Multi-day treatment (rail concept): buildAgendaGroups synthesizes groups
+// for every multi-day occurrence's start and end day, railRanges yields
+// continuous colored rails in the left gutter between them, and covered day
+// headers gain quiet colored title suffixes. All the math lives in
+// agendarails.js; this file only renders it. Match-sort flat mode keeps the
+// historical single-row-per-occurrence behavior (no rails, no markers).
 
 import { html, useState, useRef, useMemo, useEffect, useCallback } from '../../vendor/index.js';
 import {
-  parseISO, fmtTime, dateOfDayKey, fmtDayLong, dayKeyOfISO, occDayKey, todayKey,
+  parseISO, fmtTime, dateOfDayKey, fmtDayLong, occDayKey, todayKey,
   timeState,
 } from '../lib/dates.js';
 import { EventChip } from './EventChip.js';
 import { ThumbIcon } from './icons.js';
-
-const ROW_H = 36;
-const HEAD_H = 40;
+import {
+  buildAgendaGroups, railRanges, headerSuffixes, dayOfSpanLabel,
+  AGENDA_ROW_H as ROW_H, AGENDA_HEAD_H as HEAD_H,
+} from './agendarails.js';
 
 // One compact segmented group per feed row: triage (interested / going /
 // hide) plus, past a thin divider, thumbs feedback for the trainable
@@ -54,6 +62,10 @@ function fmtDayShort(occ) {
   return dateOfDayKey(occDayKey(occ)).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
+function calColorOf(calendars, occ) {
+  return (calendars[occ.calendarId] && calendars[occ.calendarId].color) || '#888';
+}
+
 // props: sortMode 'time' (default: day-grouped) | 'match' (flat, caller-ordered
 // by score); onFeedback(occ, 'up'|'down') optional thumbs intent;
 // scrollKey/scrollSeq: anchor day key + a monotonically bumped sequence — each
@@ -67,30 +79,21 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
   const groups = useMemo(() => {
     if (flat) {
       // Match order: one flat section preserving the caller's ranked order.
-      const items = occurrences.filter((occ) => occ.attendance !== 'hidden');
-      return items.length === 0 ? [] : [{ dayKey: null, items, top: 0, height: items.length * ROW_H }];
+      const rows = occurrences
+        .filter((occ) => occ.attendance !== 'hidden')
+        .map((occ) => ({ kind: 'normal', occ }));
+      return rows.length === 0 ? [] : [{ dayKey: null, rows, top: 0, height: rows.length * ROW_H }];
     }
-    const byDay = new Map();
-    for (const occ of occurrences) {
-      if (occ.attendance === 'hidden') continue;
-      const k = occDayKey(occ);
-      let g = byDay.get(k);
-      if (!g) byDay.set(k, (g = []));
-      g.push(occ);
-    }
-    const keys = [...byDay.keys()].sort();
-    let offset = 0;
-    return keys.map((k) => {
-      const items = byDay.get(k).sort((a, b) => {
-        if (a.allDay !== b.allDay) return a.allDay ? -1 : 1;
-        return a.start < b.start ? -1 : 1;
-      });
-      const height = HEAD_H + items.length * ROW_H;
-      const g = { dayKey: k, items, top: offset, height };
-      offset += height;
-      return g;
-    });
+    return buildAgendaGroups(occurrences);
   }, [occurrences, flat]);
+
+  // Rails and header suffixes only exist in day-grouped mode; match mode
+  // reorders rows, so a vertical span would connect unrelated positions.
+  const rails = useMemo(
+    () => (flat ? [] : railRanges(groups, { colorOf: (occ) => calColorOf(calendars, occ) })),
+    [groups, flat, calendars],
+  );
+  const suffixes = useMemo(() => (flat ? new Map() : headerSuffixes(groups)), [groups, flat]);
 
   const totalH = groups.length ? groups[groups.length - 1].top + groups[groups.length - 1].height : 0;
 
@@ -119,6 +122,11 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
     onScroll();
   }, [scrollSeq, scrollKey, groups, flat, onScroll]);
 
+  const openDetail = useCallback((instanceId) => (e) => {
+    e.stopPropagation();
+    if (onOpenEvent) onOpenEvent(instanceId, e.currentTarget.getBoundingClientRect(), { detail: true });
+  }, [onOpenEvent]);
+
   const tKey = todayKey();
   const buffer = 600;
   const visStart = win.top - buffer;
@@ -127,39 +135,75 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
   return html`<div class="bc-agenda" ref=${scrollRef} onScroll=${onScroll}>
     ${groups.length === 0 && html`<div class="bc-empty bc-agenda-empty">${emptyLabel || 'No events in this range'}</div>`}
     <div class="bc-agenda-spacer" style=${`height:${totalH}px`}>
+      ${rails.map((r) => {
+        if (r.topPx > visEnd || r.topPx + r.heightPx < visStart) return null;
+        return html`<div
+          key=${'rail:' + r.instanceId}
+          class="bc-agenda-rail${r.isTrip ? ' is-trip' : ''}"
+          style=${`top:${r.topPx}px;height:${r.heightPx}px;left:${-26 + r.lane * 6}px`}
+          aria-hidden="true" title=${r.title}
+          onClick=${openDetail(r.instanceId)}
+        ><span class="bc-agenda-rail-line" style=${`background:${r.color}`}></span></div>`;
+      })}
       ${groups.map((g) => {
         const visible = g.top + g.height >= visStart && g.top <= visEnd;
+        const sfx = g.dayKey !== null ? suffixes.get(g.dayKey) : undefined;
         return html`<section
           key=${g.dayKey === null ? 'match' : g.dayKey}
           class="bc-agenda-group${g.dayKey === tKey ? ' is-today' : ''}"
           style=${`top:${g.top}px;height:${g.height}px`}
         >
-          ${g.dayKey !== null && html`<h3 class="bc-agenda-day">${fmtDayLong(dateOfDayKey(g.dayKey))}</h3>`}
-          ${visible && g.items.map((occ) => {
+          ${g.dayKey !== null && html`<h3 class="bc-agenda-day">
+            ${fmtDayLong(dateOfDayKey(g.dayKey))}
+            ${sfx && sfx.items.map((occ) => html`<button
+              key=${'sfx:' + occ.instanceId} type="button" class="bc-agenda-daysfx"
+              style=${`color:${calColorOf(calendars, occ)}`}
+              title=${occ.title || '(untitled)'}
+              onClick=${openDetail(occ.instanceId)}
+            > · ${occ.title || '(untitled)'}</button>`)}
+            ${sfx && sfx.more > 0 && html`<span class="bc-agenda-daysfx-more"> · +${sfx.more} more</span>`}
+          </h3>`}
+          ${visible && g.rows.map((row) => {
+            const occ = row.occ;
             // Row-level time state so the time and location columns dim with
             // the chip; the chip carries the same class itself via nowMs.
             const ts = nowMs ? timeState(occ, nowMs) : null;
             const trip = !!occ.isContainer;
+            const start = row.kind === 'start';
+            const end = row.kind === 'end';
+            // Start rows of ALL-DAY multi-day occurrences put the chip in the
+            // gutter column (position + no time implies all-day; the label is
+            // omitted). Timed multi-day starts keep the normal layout. Both
+            // gain a quiet "Day 1/N" suffix; end markers show "Day N/N" in
+            // the gutter with the chip in the body.
+            const gutterChip = start && occ.allDay && !flat;
+            const gutter = flat
+              ? fmtDayShort(occ) + ' · ' + (occ.allDay ? 'all day' : fmtTime(parseISO(occ.start)))
+              : end ? dayOfSpanLabel(occ, g.dayKey)
+              : occ.allDay ? 'all day'
+              : fmtTime(parseISO(occ.start)) + (occ.end && !start ? ' to ' + fmtTime(parseISO(occ.end)) : '');
+            const chip = html`<${EventChip}
+              occ=${occ} cal=${calendars[occ.calendarId]} showTime=${false}
+              dimmed=${dimSet && dimSet.has(occ.instanceId)} nowMs=${nowMs}
+              onOpen=${onOpenEvent}
+            />`;
             return html`<div
-              key=${occ.instanceId}
+              key=${row.kind + ':' + occ.instanceId}
               class="bc-agenda-row${ts === 'past' ? ' is-past' : ts === 'now' ? ' is-now' : ''}${trip ? ' is-trip' : ''}"
               style=${`height:${ROW_H}px`}
             >
             ${trip && html`<span
               class="bc-agenda-tripedge" aria-hidden="true"
-              style=${`background:${(calendars[occ.calendarId] && calendars[occ.calendarId].color) || '#888'}`}
+              style=${`background:${calColorOf(calendars, occ)}`}
             ></span>`}
-            <span class="bc-agenda-time">${flat
-              ? fmtDayShort(occ) + ' · ' + (occ.allDay ? 'all day' : fmtTime(parseISO(occ.start)))
-              : occ.allDay ? 'all day' : fmtTime(parseISO(occ.start)) + (occ.end ? ' to ' + fmtTime(parseISO(occ.end)) : '')}</span>
-            <${EventChip}
-              occ=${occ} cal=${calendars[occ.calendarId]} showTime=${false}
-              dimmed=${dimSet && dimSet.has(occ.instanceId)} nowMs=${nowMs}
-              onOpen=${onOpenEvent}
-            />
+            ${gutterChip
+              ? html`<span class="bc-agenda-time bc-agenda-gutterchip">${chip}</span>`
+              : html`<span class="bc-agenda-time">${gutter}</span>`}
+            ${!gutterChip && chip}
+            ${start && !flat && html`<span class="bc-agenda-dayn">${dayOfSpanLabel(occ, g.dayKey)}</span>`}
             ${trip && html`<span class="bc-badge bc-trip-badge">Trip</span>`}
-            ${occ.source === 'feed' && onSetAttendance && html`<${TriageCluster} occ=${occ} onSetAttendance=${onSetAttendance} onFeedback=${onFeedback} />`}
-            ${occ.location && html`<span class="bc-agenda-loc">${occ.location}</span>`}
+            ${!end && occ.source === 'feed' && onSetAttendance && html`<${TriageCluster} occ=${occ} onSetAttendance=${onSetAttendance} onFeedback=${onFeedback} />`}
+            ${!end && occ.location && html`<span class="bc-agenda-loc">${occ.location}</span>`}
           </div>`;
           })}
         </section>`;

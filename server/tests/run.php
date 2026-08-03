@@ -711,6 +711,13 @@ check('geo airport code: lowercase is not one', !Geocode::isAirportCode('sfo'));
 check('geo airport code: mixed case is not one', !Geocode::isAirportCode('Gym'));
 check('geo airport code: longer text is not one', !Geocode::isAirportCode('SFO Airport'));
 check('geo airport code: digits are not one', !Geocode::isAirportCode('SF1'));
+$sfoAirport = Geocode::airport('SFO');
+check('geo airport SFO is in the Bay Area', $sfoAirport !== null && abs($sfoAirport['lat'] - 37.62) < 0.1 && abs($sfoAirport['lng'] + 122.37) < 0.1);
+checkEq('geo airport SFO display', 'San Francisco International Airport, San Francisco, US', $sfoAirport['display']);
+$koaAirport = Geocode::airport('KOA');
+check('geo airport KOA is on the Big Island', $koaAirport !== null && abs($koaAirport['lat'] - 19.74) < 0.1 && abs($koaAirport['lng'] + 156.05) < 0.1);
+checkEq('geo airport unknown code -> null', null, Geocode::airport('QQZ'));
+checkEq('geo airport non-code -> null', null, Geocode::airport('Zuni Cafe'));
 
 $photon = ['features' => [[
     'geometry' => ['coordinates' => [-122.4216, 37.7739]],

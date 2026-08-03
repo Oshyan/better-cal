@@ -64,6 +64,43 @@ final class Geocode
         return preg_match('/^[A-Z]{3}$/', self::normalize($q)) === 1;
     }
 
+    /** @var array<string, array{0: float, 1: float, 2: string, 3: string, 4: string}>|null */
+    private static ?array $iata = null;
+
+    /**
+     * Resolve an IATA airport code against the vendored OurAirports table
+     * (server/data/iata-airports.php, ~9k airports). Null when the query is
+     * not an airport code or the code is unknown — callers fall through to
+     * regular geocoding.
+     *
+     * @return array{lat: float, lng: float, display: string, name: string, city: string, country: string}|null
+     */
+    public static function airport(string $q): ?array
+    {
+        if (!self::isAirportCode($q)) {
+            return null;
+        }
+        self::$iata ??= require __DIR__ . '/../../data/iata-airports.php';
+        $row = self::$iata[self::normalize($q)] ?? null;
+        if ($row === null) {
+            return null;
+        }
+        $parts = [$row[2]];
+        foreach ([$row[3], $row[4]] as $part) {
+            if ($part !== '' && !in_array($part, $parts, true)) {
+                $parts[] = $part;
+            }
+        }
+        return [
+            'lat' => (float) $row[0],
+            'lng' => (float) $row[1],
+            'display' => implode(', ', $parts),
+            'name' => $row[2],
+            'city' => $row[3],
+            'country' => $row[4],
+        ];
+    }
+
     /**
      * Map a decoded photon response to a result, or null when the provider
      * found nothing usable. Photon is GeoJSON: coordinates are [lng, lat].
@@ -116,11 +153,12 @@ final class Geocode
     // ---- Lookup --------------------------------------------------------
 
     /**
-     * Single best result with the same regional bias as the place picker:
-     * airport codes resolve against aerodromes globally (text relevance, no
-     * bias — the right airport is rarely the nearest one), everything else
-     * fetches a small candidate set with Photon's location bias and re-ranks
-     * by PlaceSearch's order-plus-distance blend before taking the top hit.
+     * Single best result with the same regional bias as the place picker.
+     * Airport codes resolve against the vendored IATA table (offline,
+     * authoritative — Photon fuzzy-matches "SFO" to Danish after-school
+     * programs); everything else fetches a small candidate set with Photon's
+     * location bias and re-ranks by PlaceSearch's order-plus-distance blend
+     * before taking the top hit.
      *
      * @return array{lat: float|null, lng: float|null, display: string|null}
      */
@@ -130,7 +168,6 @@ final class Geocode
         if ($normalized === '') {
             throw HttpError::badRequest('q is required');
         }
-        $airport = self::isAirportCode($normalized);
         $hash = self::queryHash($normalized, $biasLat, $biasLng);
 
         $row = $this->db->one('SELECT lat, lng, display FROM geocode_cache WHERE query_hash = ?', [$hash]);
@@ -138,24 +175,11 @@ final class Geocode
             return self::resultFromRow($row);
         }
 
-        if ($airport) {
-            $params = ['q' => $normalized, 'limit' => 3, 'osm_tag' => 'aeroway:aerodrome'];
+        $mapped = null;
+        $airportHit = self::airport($normalized);
+        if ($airportHit !== null) {
+            $mapped = ['lat' => $airportHit['lat'], 'lng' => $airportHit['lng'], 'display' => $airportHit['display']];
         } else {
-            $params = ['q' => $normalized, 'limit' => 5];
-            if ($biasLat !== null && $biasLng !== null) {
-                $params['lat'] = $biasLat;
-                $params['lon'] = $biasLng;
-            }
-        }
-        $body = $this->fetch($params);
-        if ($body === null) {
-            // Transport failure: answer not-found, cache nothing.
-            return ['lat' => null, 'lng' => null, 'display' => null];
-        }
-        $mapped = $airport ? self::mapResponse(json_decode($body, true)) : null;
-        if ($airport && $mapped === null) {
-            // Not actually an airport (no aerodrome matched): plain biased query.
-            $airport = false;
             $params = ['q' => $normalized, 'limit' => 5];
             if ($biasLat !== null && $biasLng !== null) {
                 $params['lat'] = $biasLat;
@@ -163,10 +187,9 @@ final class Geocode
             }
             $body = $this->fetch($params);
             if ($body === null) {
+                // Transport failure: answer not-found, cache nothing.
                 return ['lat' => null, 'lng' => null, 'display' => null];
             }
-        }
-        if (!$airport) {
             $decoded = json_decode($body, true);
             if ($biasLat !== null && $biasLng !== null) {
                 $ranked = PlaceSearch::rank(PlaceSearch::mapFeatures($decoded, $biasLat, $biasLng));

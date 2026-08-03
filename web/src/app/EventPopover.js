@@ -6,6 +6,7 @@
 import { html, useState, useRef, useEffect } from '../../vendor/index.js';
 import { useStore, set, state } from './store.js';
 import { updateEvent, deleteEvent, triageAttendance, sendFeedback, enterReschedule, openDetail, sameDayList, openTripByEventId } from './actions.js';
+import { describeRrule } from './EventDetail.js';
 import { isMobile, trapFocus, MOBILE_QUERY } from '../ui/DayExpand.js';
 import { ThumbIcon, PinIcon, LinkIcon, Icon } from '../ui/icons.js';
 import {
@@ -128,7 +129,6 @@ export function EventPopover() {
         >›</button>
         ${nav.list.length > 1 && html`<span class="bc-sheet-count">${nav.index + 1} of ${nav.list.length}</span>`}
       </div>`}
-      <button type="button" class="bc-icon-btn bc-pop-corner-close" aria-label="Close" onClick=${() => set({ popover: null })}>✕</button>
       <div class="bc-pop-titlerow">
         ${editingTitle
           ? html`<input
@@ -141,10 +141,13 @@ export function EventPopover() {
           : html`<h2 class="bc-pop-title${occ.status === 'cancelled' ? ' is-cancelled' : ''}" onClick=${() => !isFeed && setEditingTitle(true)} title=${isFeed ? '' : 'Click to edit title'}>
               ${occ.title || '(untitled)'}${occ.isNew ? html` <span class="bc-new-pill">new</span>` : ''}
             </h2>`}
-        ${!editingTitle && html`<span class="bc-pop-calchip" title=${'Calendar: ' + ((cal && cal.name) || 'Calendar')}>
-          <span class="bc-pop-calicon" style=${`color:${(cal && cal.color) || '#888'}`}><${Icon} name="calendar" size=${12} /></span>
-          ${(cal && cal.name) || 'Calendar'}
-        </span>`}
+        <span class="bc-pop-iconrow" role="group" aria-label="Event actions">
+          <button type="button" class="bc-icon-btn" title="Open full details" aria-label="Open full details" onClick=${() => openDetail(occ.instanceId)}><${Icon} name="expand" size=${14} /></button>
+          ${!isFeed && html`<button type="button" class="bc-icon-btn" title="Reschedule (r)" aria-label="Reschedule" onClick=${() => enterReschedule(occ.instanceId)}><${Icon} name="reschedule" size=${14} /></button>`}
+          ${!isFeed && html`<button type="button" class="bc-icon-btn" title="Edit" aria-label="Edit" onClick=${() => set({ popover: null, editor: { mode: 'edit', occ } })}><${Icon} name="pencil" size=${14} /></button>`}
+          ${!isFeed && html`<button type="button" class="bc-icon-btn bc-pop-trash" title="Delete" aria-label="Delete" onClick=${() => deleteEvent(occ)}><${Icon} name="trash" size=${14} /></button>`}
+          <button type="button" class="bc-icon-btn" aria-label="Close" onClick=${() => set({ popover: null })}>✕</button>
+        </span>
       </div>
       ${occ.containers && occ.containers.length > 0 && html`<button
         type="button" class="bc-partof" title="Open this trip"
@@ -153,12 +156,12 @@ export function EventPopover() {
       ${editingTime
         ? html`<${TimeEditor} start=${s} end=${e} onSave=${saveTime} onCancel=${() => setEditingTime(false)} />`
         : html`<div class="bc-pop-when" onClick=${() => !isFeed && setEditingTime(true)} title=${isFeed ? '' : 'Click to edit time'}>
-            ${fmtRange(s, e, occ.allDay)}${occ.recurring ? ' · repeats' : ''}
-            ${occ.reminders && occ.reminders.length > 0 && html` <span
-              class="bc-bell" role="img" aria-label="Has reminders"
-              title=${'Reminders: ' + occ.reminders.map(fmtReminder).join(', ')}
-            >🔔</span>`}
+            ${fmtRange(s, e, occ.allDay)}
+            ${occ.recurring && html`<span class="bc-pop-recur">${describeRrule(occ.rrule)}</span>`}
           </div>`}
+      ${occ.reminders && occ.reminders.length > 0 && html`<div class="bc-pop-rem">
+        <${Icon} name="bell" size=${12} />${occ.reminders.map(fmtReminder).join(', ')}
+      </div>`}
       ${occ.location && html`<div class="bc-pop-where">
         <${PinIcon} size=${12} />${occ.location}
         <a
@@ -186,12 +189,12 @@ export function EventPopover() {
         return text && html`<div class="bc-pop-desc">${text.length > 280 ? text.slice(0, 280) + '…' : text}</div>`;
       })()}
       ${occ.url && html`<a class="bc-pop-url" href=${occ.url} target="_blank" rel="noopener">Event link ↗</a>`}
-      <div class="bc-pop-actions">
-        <button type="button" class="bc-btn" title="Open full details" onClick=${() => openDetail(occ.instanceId)}>Open</button>
-        ${!isFeed && html`<button type="button" class="bc-btn" title="Reschedule (r)" onClick=${() => enterReschedule(occ.instanceId)}>Reschedule</button>`}
-        ${!isFeed && html`<button type="button" class="bc-btn" onClick=${() => set({ popover: null, editor: { mode: 'edit', occ } })}>Edit</button>`}
-        ${!isFeed && html`<button type="button" class="bc-btn bc-btn-danger" onClick=${() => deleteEvent(occ)}>Delete</button>`}
-        ${isFeed && html`<div class="bc-seg" role="group" aria-label="Attendance">
+      <div class="bc-pop-calline" title=${'Calendar: ' + ((cal && cal.name) || 'Calendar')}>
+        <span class="bc-pop-calicon" style=${`color:${(cal && cal.color) || '#888'}`}><${Icon} name="calendar" size=${12} /></span>
+        ${(cal && cal.name) || 'Calendar'}
+      </div>
+      ${isFeed && html`<div class="bc-pop-actions">
+        <div class="bc-seg" role="group" aria-label="Attendance">
           ${[['interested', 'Interested'], ['going', 'Going'], ['hidden', 'Hide']].map(([value, label]) => html`<button
             key=${value} type="button"
             class="bc-seg-btn${occ.attendance === value ? ' is-active' : ''}"
@@ -201,15 +204,15 @@ export function EventPopover() {
               if (result === 'hidden') set({ popover: null });
             }}
           >${label}</button>`)}
-        </div>`}
-        ${isFeed && html`<div class="bc-seg" role="group" aria-label="Feedback">
+        </div>
+        <div class="bc-seg" role="group" aria-label="Feedback">
           ${[['up', 'More like this'], ['down', 'Less like this']].map(([value, label]) => html`<button
             key=${value} type="button" class="bc-seg-btn bc-seg-icon"
             title=${label} aria-label=${label}
             onClick=${() => sendFeedback(occ, value)}
           ><${ThumbIcon} dir=${value} /></button>`)}
-        </div>`}
-      </div>
+        </div>
+      </div>`}
     </div>
   </div>`;
 }

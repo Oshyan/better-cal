@@ -761,14 +761,17 @@ body.bc-dragging * { cursor: grabbing !important; }
 }
 .bc-pop-color { width: 5px; flex: none; }
 .bc-pop-body { position: relative; padding: 10px 12px; display: flex; flex-direction: column; gap: 5px; min-width: 0; flex: 1; }
-.bc-pop-corner-close { position: absolute; top: 6px; right: 6px; }
-/* Title left, compact calendar chip right; both wrap under the corner ✕. */
-.bc-pop-titlerow { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; padding-right: 24px; }
+/* Title left, GCal-style icon actions right (open, reschedule, edit,
+   delete, close). */
+.bc-pop-titlerow { display: flex; align-items: flex-start; gap: 8px; }
 .bc-pop-titlerow .bc-pop-title { flex: 1; min-width: 0; }
-.bc-pop-calchip {
-  display: inline-flex; align-items: center; gap: 4px; flex: none;
-  color: var(--fg-muted); font-size: 11.5px;
-}
+.bc-pop-iconrow { display: inline-flex; align-items: center; gap: 0; flex: none; margin: -3px -4px 0 0; }
+.bc-pop-iconrow .bc-icon-btn { padding: 3px 5px; color: var(--fg-muted); }
+.bc-pop-iconrow .bc-icon-btn:hover { color: var(--fg); }
+.bc-pop-iconrow .bc-pop-trash:hover { color: var(--danger, #c33); }
+.bc-pop-recur { color: var(--fg-muted); font-size: 12px; margin-left: 8px; }
+.bc-pop-rem { display: flex; align-items: center; gap: 5px; color: var(--fg-muted); font-size: 12.5px; }
+.bc-pop-calline { display: flex; align-items: center; gap: 5px; color: var(--fg-muted); font-size: 12.5px; }
 .bc-pop-calicon { display: inline-flex; align-self: center; }
 .bc-pop-title { font-size: 15px; margin: 0; font-weight: 700; cursor: text; }
 .bc-pop-title-input { font-size: 15px; font-weight: 700; width: 100%; }
@@ -1558,13 +1561,15 @@ body.bc-rescheduling { user-select: none; }
 /* While the toolbar type-to-filter is active (.is-page-filtering on the app
    root, wired in App.js), every still-visible event gets the same highlight
    ring; non-matching events carry .is-page-hidden and disappear. */
-.is-page-filtering :is(.bc-chip, .bc-bar, .bc-block):not(.is-page-hidden) {
+.is-page-filtering :is(.bc-chip, .bc-bar, .bc-block, .bc-band):not(.is-page-hidden) {
   box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 85%, transparent);
   filter: saturate(1.3);
 }
 
 /* On-page type-to-filter: non-matching events are removed from view. */
-.is-page-hidden { display: none; }
+/* !important because state must beat any later-in-file display rule on the
+   element's own class (the appended trips section's .bc-band bit us here). */
+.is-page-hidden { display: none !important; }
 /* Wrapper rows collapse together with their hidden chip (agenda, day expand). */
 .bc-agenda-row:has(.is-page-hidden),
 .bc-dayexpand-row:has(.is-page-hidden) { display: none; }

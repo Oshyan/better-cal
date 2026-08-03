@@ -104,8 +104,13 @@ export function railRanges(groups, opts = {}) {
       if (!eg) return; // boundary group missing: rows only, no rail
       const ei = eg.rows.findIndex((r) => r.kind === 'end' && r.occ.instanceId === occ.instanceId);
       if (ei < 0) return;
-      const topPx = g.top + headH + i * rowH + rowH / 2; // vertical center of the start pill's row
-      const bottomPx = eg.top + headH + ei * rowH + rowH / 2; // vertical center of the end pill's row
+      // Full pill coverage: the 20px chip is centered in the 36px row (8px
+      // insets), so the bar runs from the TOP of the start pill to the BOTTOM
+      // of the end pill. Anything shorter visibly stops mid-pill because chip
+      // backgrounds are translucent.
+      const pillInset = (rowH - 20) / 2;
+      const topPx = g.top + headH + i * rowH + pillInset;
+      const bottomPx = eg.top + headH + ei * rowH + (rowH - pillInset);
       spans.push({ occ, topPx, heightPx: bottomPx - topPx });
     });
   }

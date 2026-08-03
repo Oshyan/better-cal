@@ -143,7 +143,7 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
         return html`<div
           key=${'rail:' + r.instanceId}
           class="bc-agenda-rail${r.isTrip ? ' is-trip' : ''}"
-          style=${`top:${r.topPx}px;height:${r.heightPx}px;left:${-7 - r.lane * 6}px`}
+          style=${`top:${r.topPx}px;height:${r.heightPx}px;left:${-14 - r.lane * 6}px`}
           aria-hidden="true" title=${r.title}
           onClick=${openDetail(r.instanceId)}
         ><span class="bc-agenda-rail-line" style=${`background:${r.color}`}></span></div>`;

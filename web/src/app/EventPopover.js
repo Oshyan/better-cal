@@ -7,7 +7,7 @@ import { html, useState, useRef, useEffect } from '../../vendor/index.js';
 import { useStore, set, state } from './store.js';
 import { updateEvent, deleteEvent, triageAttendance, sendFeedback, enterReschedule, openDetail, sameDayList, openTripByEventId } from './actions.js';
 import { isMobile, trapFocus, MOBILE_QUERY } from '../ui/DayExpand.js';
-import { ThumbIcon, CalDot } from '../ui/icons.js';
+import { ThumbIcon, CalDot, PinIcon } from '../ui/icons.js';
 import {
   parseISO, dateOfDayKey, fmtRange, toInputValue, fromInputValue, toISOWithOffset,
 } from '../lib/dates.js';
@@ -151,7 +151,7 @@ export function EventPopover() {
               title=${'Reminders: ' + occ.reminders.map(fmtReminder).join(', ')}
             >🔔</span>`}
           </div>`}
-      ${occ.location && html`<div class="bc-pop-where">${occ.location}</div>`}
+      ${occ.location && html`<div class="bc-pop-where"><${PinIcon} size=${12} />${occ.location}</div>`}
       <div class="bc-pop-cal">
         <${CalDot} cal=${cal} />
         ${(cal && cal.name) || 'Calendar'}

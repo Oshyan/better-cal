@@ -943,8 +943,9 @@ const endDayMix = buildAgendaGroups([railTrip, {
 eq('end day: marker sorts last',
   endDayMix[endDayMix.length - 1].rows.map((r) => r.kind + ':' + r.occ.instanceId),
   ['normal:rx1', 'end:rt1']);
-// Start row bottom 76; end group top 76, end row is index 1: 76+40+36 = 152.
-eq('end day: rail reaches below the day events', railRanges(endDayMix)[0].heightPx, 76);
+// Start row center 40+18 = 58; end group top 76, end row is index 1, its
+// center 76+40+36+18 = 170; height 170-58 = 112.
+eq('end day: rail reaches below the day events', railRanges(endDayMix)[0].heightPx, 112);
 
 // Hidden occurrences never produce rows or synthesized groups.
 assert('hidden multi-day excluded', !railGroups.some((g) => g.rows.some((r) => r.occ.instanceId === 'rh1')));
@@ -958,6 +959,10 @@ const twoDay = buildAgendaGroups([railTimed]);
 eq('two-day start/end split',
   twoDay.map((g) => g.rows.map((r) => r.kind).join(',')),
   ['start', 'end']);
+// Adjacent boundary days still yield a positive-height connected bar: start
+// row center 0+40+18 = 58 down to end row center 76+40+18 = 134.
+eq('two-day rail spans row centers',
+  railRanges(twoDay).map((r) => [r.topPx, r.heightPx]), [[58, 76]]);
 
 // Single-day events never produce end markers.
 assert('single-day has no markers',
@@ -969,16 +974,17 @@ eq('spanDayCount single', spanDayCount(railSingle), 1);
 eq('dayOfSpanLabel start', dayOfSpanLabel(railTrip, '2026-06-01'), 'Day 1/4');
 eq('dayOfSpanLabel end', dayOfSpanLabel(railTrip, '2026-06-04'), 'Day 4/4');
 
-// Rails: pixel span from the start row's bottom (below the start pill) to
-// the end row's top (above the end pill), lanes packed for overlaps,
-// calendar color resolved via colorOf.
+// Rails: pixel span from the start row's vertical center to the end row's
+// vertical center (both ends terminate behind their pills, so bar and pills
+// physically connect), lanes packed for overlaps, calendar color resolved
+// via colorOf.
 const railsOut = railRanges(railGroups, { colorOf: (o) => (o.calendarId === 'c1' ? '#a00' : '#0a0') });
 eq('rail count', railsOut.length, 2);
 const tripRail = railsOut.find((r) => r.instanceId === 'rt1');
 const timedRail = railsOut.find((r) => r.instanceId === 'rm1');
-eq('trip rail top', tripRail.topPx, 76); // group 0 top 0 + headH 40 + one row (bottom of the start pill)
-eq('trip rail height', tripRail.heightPx, 264); // to 340, top of the Jun 4 end row
-eq('timed rail span', [timedRail.topPx, timedRail.heightPx], [188, 76]); // bottom of Jun 2 row 1 to top of the Jun 3 end row
+eq('trip rail top', tripRail.topPx, 58); // group 0 top 0 + headH 40 + half a row (center of the start pill's row)
+eq('trip rail height', tripRail.heightPx, 300); // to 358, center of the Jun 4 end row (300+40+18)
+eq('timed rail span', [timedRail.topPx, timedRail.heightPx], [170, 112]); // center of Jun 2 row 1 (76+40+36+18) to center of the Jun 3 end row (224+40+18)
 eq('overlapping rails get distinct lanes', [tripRail.lane, timedRail.lane], [0, 1]);
 assert('rail is-trip flag', tripRail.isTrip === true && timedRail.isTrip === false);
 eq('rail colors', [tripRail.color, timedRail.color], ['#a00', '#0a0']);

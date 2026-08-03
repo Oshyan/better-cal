@@ -80,9 +80,10 @@ export function buildAgendaGroups(occurrences, opts = {}) {
   });
 }
 
-// Rail pixel ranges: one per multi-day occurrence, from the bottom of its
-// start row to the top of its end marker row, so the bar visually connects
-// the start pill to the end pill (pill, bar, pill reads as one object).
+// Rail pixel ranges: one per multi-day occurrence, from the vertical center
+// of its start row to the vertical center of its end marker row, so each end
+// of the bar terminates under its pill and the two pills physically join the
+// bar (pill, bar, pill reads as one object).
 // Overlapping rails pack into lanes (lowest free lane by pixel range);
 // occurrences past maxLanes keep their start/end rows but get no rail.
 // opts.colorOf(occ) resolves the calendar color (the math stays
@@ -103,8 +104,8 @@ export function railRanges(groups, opts = {}) {
       if (!eg) return; // boundary group missing: rows only, no rail
       const ei = eg.rows.findIndex((r) => r.kind === 'end' && r.occ.instanceId === occ.instanceId);
       if (ei < 0) return;
-      const topPx = g.top + headH + (i + 1) * rowH; // bottom of the start pill's row
-      const bottomPx = eg.top + headH + ei * rowH; // top of the end pill's row
+      const topPx = g.top + headH + i * rowH + rowH / 2; // vertical center of the start pill's row
+      const bottomPx = eg.top + headH + ei * rowH + rowH / 2; // vertical center of the end pill's row
       spans.push({ occ, topPx, heightPx: bottomPx - topPx });
     });
   }

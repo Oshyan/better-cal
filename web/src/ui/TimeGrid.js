@@ -1,8 +1,8 @@
 // TimeGrid: day and week views. Hour rows (painted with CSS gradients, not
 // DOM), all-day lane at top, now-line, side-by-side overlap layout, drag to
-// create/move/resize with 15-minute snap. Creating is two-step: the drag (or
-// a plain click) leaves a draft block and a confirm chip (CreateChip); the
-// editor opens only on Create.
+// create/move/resize with 15-minute snap. Creating is one step (GCal-style):
+// finishing a drag (or a plain click) opens the editor pre-filled with the
+// selection; dismissing the editor is the cancel.
 //
 // Two column modes:
 // - Fixed (day view): the `days` prop lists the columns, flex-sized to fill.
@@ -24,10 +24,8 @@ import { layoutOverlaps, assignLanes } from './layout.js';
 import { occurrenceDaySpan, isWeekendEpochDay } from './monthmath.js';
 import { EventBlock, EventBar } from './EventChip.js';
 import { startPointerDrag, cloneAsGhost } from './DragController.js';
-import { CreateChip } from './CreateChip.js';
 import {
-  timeRangeLabel, dayRangeLabel, dayRangeDraft, allDayRangeDraft,
-  dragCreateMode, normalizeDayRange,
+  dayRangeDraft, allDayRangeDraft, dragCreateMode, normalizeDayRange,
 } from '../lib/quickcreate.js';
 
 const HOUR_H = 48;   // px per hour
@@ -65,9 +63,6 @@ export function TimeGrid({
   const headTrackRef = useRef(null);
   const alldayTrackRef = useRef(null);
   const [draft, setDraft] = useState(null); // {dayKey, startMin, endMin} while drag-creating
-  // Two-step create: releasing a drag (or a plain click) keeps the draft
-  // block on the grid and asks via a confirm chip before opening the editor.
-  const [pendingSel, setPendingSel] = useState(null); // draft + {x, y} chip anchor
 
   // --- horizontal virtualization (infinite mode) ---------------------------
 
@@ -342,16 +337,12 @@ export function TimeGrid({
         }
         setDraft(current);
       },
-      onDrop: (pt) => {
-        const c = current || { dayKey: origin.dayKey, startMin: startSnap, endMin: startSnap + 60 };
-        setDraft(c);
-        setPendingSel({ ...c, x: pt.x, y: pt.y });
+      onDrop: () => {
+        commitSelection(current || { dayKey: origin.dayKey, startMin: startSnap, endMin: startSnap + 60 });
       },
       onCancel: () => {
-        if (lifted) { setDraft(null); return; } // Escape mid-drag: no chip
-        const c = { dayKey: origin.dayKey, startMin: startSnap, endMin: startSnap + 60 };
-        setDraft(c);
-        setPendingSel({ ...c, x: ev.clientX, y: ev.clientY });
+        if (lifted) { setDraft(null); return; } // Escape mid-drag: no create
+        commitSelection({ dayKey: origin.dayKey, startMin: startSnap, endMin: startSnap + 60 });
       },
     });
   }, [pointToSlot, infinite]);
@@ -380,27 +371,20 @@ export function TimeGrid({
         current = { mode: 'days', startKey, endKey, allDayLane: true };
         setDraft(current);
       },
-      onDrop: (pt) => {
-        const c = current || single;
-        setDraft(c);
-        setPendingSel({ ...c, x: pt.x, y: pt.y });
+      onDrop: () => {
+        commitSelection(current || single);
       },
       onCancel: () => {
-        if (lifted) { setDraft(null); return; } // Escape mid-drag: no chip
-        setDraft(single);
-        setPendingSel({ ...single, x: ev.clientX, y: ev.clientY });
+        if (lifted) { setDraft(null); return; } // Escape mid-drag: no create
+        commitSelection(single);
       },
     });
   }, [pointToSlot, infinite]);
 
-  const dismissPendingSel = useCallback(() => {
-    setPendingSel(null);
+  // One-step create (GCal-style): the finished selection opens the editor
+  // pre-filled; dismissing the editor is the cancel.
+  const commitSelection = useCallback((p) => {
     setDraft(null);
-  }, []);
-
-  const confirmPendingSel = () => {
-    const p = pendingSel;
-    dismissPendingSel();
     if (!p || !onCreateRange) return;
     if (p.mode === 'days') {
       // Lane selections are all-day at any length; column-crossing drags
@@ -415,10 +399,10 @@ export function TimeGrid({
         allDay: false,
       });
     }
-  };
+  }, [onCreateRange]);
 
-  // Navigation dismisses a waiting chip along with its draft block.
-  useEffect(() => { setPendingSel(null); setDraft(null); }, [scrollSeq]);
+  // Navigation clears a mid-drag draft block.
+  useEffect(() => { setDraft(null); }, [scrollSeq]);
 
   const dragMove = useCallback((occ, ev) => {
     ev.stopPropagation();
@@ -617,14 +601,6 @@ export function TimeGrid({
     </div>
     ${infinite && html`<div class="bc-tg-edge l" aria-hidden="true"><span>‹</span></div>`}
     ${infinite && html`<div class="bc-tg-edge r" aria-hidden="true"><span>›</span></div>`}
-    ${pendingSel && html`<${CreateChip}
-      x=${pendingSel.x} y=${pendingSel.y}
-      label=${'New event ' + (pendingSel.mode === 'days'
-        ? dayRangeLabel(pendingSel.startKey, pendingSel.endKey)
-        : timeRangeLabel(pendingSel.dayKey, pendingSel.startMin, pendingSel.endMin)) + '?'}
-      onConfirm=${confirmPendingSel}
-      onCancel=${dismissPendingSel}
-    />`}
   </div>`;
 }
 

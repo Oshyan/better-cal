@@ -12,9 +12,9 @@
 // labels and alternating cell backgrounds, never page jumps.
 //
 // Drag interactions manipulate DOM classes directly (no re-render per move)
-// and emit intents on drop. Creating is two-step: click or drag selects a
-// day range, then a confirm chip (CreateChip) opens the editor; the per-cell
-// hover "+" skips the chip and opens the editor directly.
+// and emit intents on drop. Creating is one step (GCal-style): a click or
+// drag on empty cell space opens the editor pre-filled with the selection;
+// dismissing the editor is the cancel.
 
 import { html, useState, useRef, useMemo, useEffect, useLayoutEffect, useCallback } from '../../vendor/index.js';
 import {
@@ -30,8 +30,7 @@ import {
 import { assignLanes } from './layout.js';
 import { EventChip, EventBar, TripBand } from './EventChip.js';
 import { startPointerDrag, cloneAsGhost } from './DragController.js';
-import { CreateChip } from './CreateChip.js';
-import { normalizeDayRange, dayRangeDraft, dayRangeLabel } from '../lib/quickcreate.js';
+import { normalizeDayRange, dayRangeDraft } from '../lib/quickcreate.js';
 
 const WEEK_SPAN = 522; // weeks either side of today (~10 years)
 const CHIP_ROW = 22;   // px per chip/bar lane
@@ -99,9 +98,6 @@ export function MonthGrid({
   const scrollRef = useRef(null);
   const [viewH, setViewH] = useState(600);
   const [range, setRange] = useState({ first: 0, last: 0 });
-  // Two-step create: a click or cell drag selects a day range; the confirm
-  // chip opens the editor only on Create (mistaken clicks cancel harmlessly).
-  const [pendingSel, setPendingSel] = useState(null); // {startKey, endKey, x, y}
   // Same ~10-year span regardless of row width.
   const rowSpan = useMemo(() => Math.ceil((WEEK_SPAN * 7) / columns), [columns]);
   const centerRow = useMemo(() => rowIndexOfDayKey(todayKey(), columns), [columns]);
@@ -332,41 +328,32 @@ export function MonthGrid({
         for (let i = a; i <= b; i++) keys.push(keyOfEpochDay(i));
         highlightDays(keys);
       },
-      onDrop: (pt) => {
+      onDrop: () => {
         highlightDays([]);
         if (!onCreateRange) return;
         const k = dropRef.current.key || originKey;
         const { startKey, endKey } = normalizeDayRange(originKey, k);
-        setPendingSel({ startKey, endKey, x: pt.x, y: pt.y });
+        // Straight into the editor (GCal-style): dismissing it is the cancel.
+        onCreateRange(dayRangeDraft(startKey, endKey));
       },
       onCancel: () => highlightDays([]),
     });
   }, [dayKeyAtPoint, highlightDays, onCreateRange]);
 
-  // Plain click (mouse) or tap (touch) on empty cell space: select that day
-  // and ask. Real drags never reach here (the drag controller swallows the
-  // synthetic click after a lift), and taps that scrolled produce no click.
+  // Plain click (mouse) or tap (touch) on empty cell space: straight into
+  // the editor for that day. Real drags never reach here (the drag
+  // controller swallows the synthetic click after a lift), and taps that
+  // scrolled produce no click.
   const cellClickSelect = useCallback((ev) => {
     if (ev.target !== ev.currentTarget) return;
     if (!onCreateRange) return;
-    const k = ev.currentTarget.dataset.day;
-    setPendingSel({ startKey: k, endKey: k, x: ev.clientX, y: ev.clientY });
+    onCreateRange(dayRangeDraft(ev.currentTarget.dataset.day, ev.currentTarget.dataset.day));
   }, [onCreateRange]);
 
-  // Hover/focus "+" in a cell corner: straight to the editor, no chip.
+  // Hover/focus "+" in a cell corner: same path.
   const quickCreateDay = useCallback((k) => {
-    setPendingSel(null);
     if (onCreateRange) onCreateRange(dayRangeDraft(k, k));
   }, [onCreateRange]);
-
-  const confirmPendingSel = () => {
-    const p = pendingSel;
-    setPendingSel(null);
-    if (p && onCreateRange) onCreateRange(dayRangeDraft(p.startKey, p.endKey));
-  };
-
-  // Navigation and view changes dismiss a waiting chip.
-  useEffect(() => { setPendingSel(null); }, [scrollSeq, columns]);
 
   // --- render ---------------------------------------------------------------
 
@@ -377,11 +364,7 @@ export function MonthGrid({
   // The mobile lane cap exists for 7 cramped columns; ribbon cells are wide
   // enough to keep every lane the row height affords.
   if (mobile && !ribbon) capacity = Math.min(capacity, MOBILE_LANES);
-  // Pending selection tint survives row re-renders (unlike the transient
-  // drag highlight classes), so it stays visible while the chip is open.
-  const sel = pendingSel
-    ? { a: epochDayOfKey(pendingSel.startKey), b: epochDayOfKey(pendingSel.endKey) }
-    : null;
+  const sel = null; // selection tint retired with the two-step confirm chip
   for (let wi = range.first; wi <= range.last; wi++) {
     weeks.push(html`<${WeekRow}
       key=${wi} weekIndex=${wi} columns=${columns} ribbon=${ribbon}
@@ -443,12 +426,6 @@ export function MonthGrid({
         ${weeks}
       </div>
     </div>
-    ${pendingSel && html`<${CreateChip}
-      x=${pendingSel.x} y=${pendingSel.y}
-      label=${'New event ' + dayRangeLabel(pendingSel.startKey, pendingSel.endKey) + '?'}
-      onConfirm=${confirmPendingSel}
-      onCancel=${() => setPendingSel(null)}
-    />`}
   </div>`;
 }
 

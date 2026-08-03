@@ -646,7 +646,9 @@ body.bc-dragging * { cursor: grabbing !important; }
   display: flex; align-items: center; gap: 14px;
   padding: 6px 14px; border-bottom: 1px solid var(--border); background: var(--bg-raised);
 }
-.bc-agenda { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 0 14px; }
+/* Left padding is widened to 32px: the extra band is the rail gutter where
+   multi-day span lines (bc-agenda-rail) live. */
+.bc-agenda { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 0 14px 0 32px; }
 .bc-agenda-spacer { position: relative; }
 .bc-agenda-group { position: absolute; left: 0; right: 0; overflow: hidden; }
 .bc-agenda-day {
@@ -685,6 +687,38 @@ body.bc-dragging * { cursor: grabbing !important; }
 @media (pointer: coarse) { .bc-agenda-triage { opacity: 1; } }
 .bc-empty { color: var(--fg-muted); padding: 18px; text-align: center; }
 .bc-agenda-empty { margin-top: 32px; }
+
+/* Multi-day rail treatment: continuous calendar-colored lines in the widened
+   left gutter, one lane per overlapping span (agendarails.js assigns lanes,
+   3px line + 3px gap). The 9px-wide element is the invisible hit area (click
+   opens the detail view); the inner line is the visible 3px rail, 4px for
+   trips to echo the month band. aria-hidden: the start/end rows and header
+   suffixes carry the semantics for screen readers. */
+.bc-agenda-rail { position: absolute; width: 9px; cursor: pointer; }
+.bc-agenda-rail-line {
+  position: absolute; left: 3px; top: 0; bottom: 0; width: 3px;
+  border-radius: 2px; opacity: 0.75;
+}
+.bc-agenda-rail:hover .bc-agenda-rail-line { opacity: 1; }
+.bc-agenda-rail.is-trip .bc-agenda-rail-line { width: 4px; left: 2px; opacity: 0.9; }
+/* Start rows of all-day multi-day events put the chip in the gutter column
+   (where the "all day" label normally sits); position plus the missing time
+   implies all-day, so the label is omitted. */
+.bc-agenda-gutterchip { display: inline-flex; }
+.bc-agenda-row .bc-agenda-gutterchip .bc-chip { max-width: 100%; }
+/* Quiet "Day 1/N" suffix after the chip on multi-day start rows. */
+.bc-agenda-dayn { flex: none; color: var(--fg-muted); font-size: 11px; }
+/* Day-header suffixes: days covered by a multi-day span name it in calendar
+   color (inline style); real buttons styled as text inside the h3 so screen
+   readers read them and clicks open the event detail. */
+.bc-agenda-daysfx {
+  background: none; border: none; padding: 0; margin-left: 2px;
+  font-size: 11.5px; font-weight: 600; cursor: pointer;
+  max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  vertical-align: bottom;
+}
+.bc-agenda-daysfx:hover { text-decoration: underline; }
+.bc-agenda-daysfx-more { color: var(--fg-muted); font-weight: 400; font-size: 11.5px; }
 
 /* --- overlays: day expand, popover, sheets ------------------------------------- */
 

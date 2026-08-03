@@ -16,7 +16,7 @@ import {
   openDetail, attachToTrip, detachFromTrip, deleteTripOnly, deleteTripAndMembers,
 } from './actions.js';
 import { trapFocus } from '../ui/DayExpand.js';
-import { CalDot, TripBadge, LinkIcon } from '../ui/icons.js';
+import { CalDot, TripBadge, LinkIcon, Icon } from '../ui/icons.js';
 import { tripSpan, tripSpanLabel, candidateTrips, attachableInSpan } from '../ui/trips.js';
 import {
   parseISO, dateOfDayKey, addDaysDate, toISOWithOffset, occDayKey, fmtTime,
@@ -124,7 +124,11 @@ export function TripDetail({ occ }) {
     <div class="bc-detail" ref=${panelRef} role="dialog" aria-modal="true" aria-label="Trip detail">
       <div class="bc-detail-head" style=${`border-top: 4px solid ${color}`}>
         <${TripBadge} />
-        <button type="button" class="bc-icon-btn" aria-label="Close" onClick=${close}>✕</button>
+        <span class="bc-pop-iconrow" role="group" aria-label="Trip actions">
+          <button type="button" class="bc-icon-btn" title="Edit" aria-label="Edit trip" onClick=${() => set({ detail: null, editor: { mode: 'edit', occ } })}><${Icon} name="pencil" size=${15} /></button>
+          <button type="button" class="bc-icon-btn bc-pop-trash" title="Delete" aria-label="Delete trip" onClick=${() => setConfirmDelete(true)}><${Icon} name="trash" size=${15} /></button>
+          <button type="button" class="bc-icon-btn" aria-label="Close" onClick=${close}>✕</button>
+        </span>
       </div>
       <div class="bc-detail-body">
         <h2 class="bc-detail-title">${occ.title || '(untitled)'}</h2>
@@ -211,10 +215,6 @@ export function TripDetail({ occ }) {
           </div>`}
         </div>
 
-        <div class="bc-detail-actions">
-          <button type="button" class="bc-btn" onClick=${() => set({ detail: null, editor: { mode: 'edit', occ } })}>Edit</button>
-          ${!confirmDelete && html`<button type="button" class="bc-btn bc-btn-danger" onClick=${() => setConfirmDelete(true)}>Delete</button>`}
-        </div>
         ${confirmDelete && html`<div class="bc-trip-confirm">
           <span>Delete this trip?</span>
           <div class="bc-trip-confirm-row">

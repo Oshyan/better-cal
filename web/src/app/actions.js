@@ -4,7 +4,7 @@ import {
   state, set, toast, patchOccurrence, restoreOccurrence,
   removeOccurrencesOfEvent, mergeWindow,
 } from './store.js';
-import { api, refreshWindow, undo, loadCalendars } from './api.js';
+import { api, refreshWindow, undo, loadCalendars, loadPeople } from './api.js';
 import { adoptSettings } from './settings.js';
 import { localTz, todayKey, addDaysKey, occDayKey, pad } from '../lib/dates.js';
 import { extendTripSpan } from '../ui/trips.js';
@@ -730,4 +730,64 @@ export function setFolderVisibilityMode(folderId, mode) {
     api('/calendars/' + c.id, { method: 'PATCH', body: { visible: !c.visible } })
       .catch((e) => { toast('Failed: ' + e.message, { error: true }); loadCalendars(); });
   }
+}
+
+// --- people availability (docs/design-availability.md) ----------------------
+
+// Toggle whether a person's away/busy spans render as calendar bands.
+// Persisted server-side (round-trips to the People page).
+export function togglePersonVisible(person) {
+  const next = !person.showOnCalendar;
+  set({
+    people: state.people.map((p) => (p.id === person.id ? { ...p, showOnCalendar: next } : p)),
+    availSeq: state.availSeq + 1,
+  });
+  api('/people/' + person.id, { method: 'PATCH', body: { showOnCalendar: next } })
+    .catch((e) => { toast('Failed: ' + e.message, { error: true }); loadPeople(); });
+}
+
+// "Only this person": capture everyone's showOnCalendar, leave just the
+// target on. Mirrors the calendar solo: real persisted PATCHes, original
+// set restored on exit.
+export function enterPeopleSolo(person) {
+  const saved = Object.fromEntries(state.people.map((p) => [p.id, p.showOnCalendar]));
+  set({
+    peopleSolo: { personId: person.id, saved },
+    people: state.people.map((p) => ({ ...p, showOnCalendar: p.id === person.id })),
+    availSeq: state.availSeq + 1,
+  });
+  for (const p of state.people) {
+    const want = p.id === person.id;
+    if (saved[p.id] !== want) {
+      api('/people/' + p.id, { method: 'PATCH', body: { showOnCalendar: want } }).catch(() => {});
+    }
+  }
+}
+
+export function exitPeopleSolo() {
+  const solo = state.peopleSolo;
+  if (!solo) return;
+  set({
+    peopleSolo: null,
+    people: state.people.map((p) => ({ ...p, showOnCalendar: !!solo.saved[p.id] })),
+    availSeq: state.availSeq + 1,
+  });
+  for (const p of state.people) {
+    if (p.showOnCalendar !== !!solo.saved[p.id]) {
+      api('/people/' + p.id, { method: 'PATCH', body: { showOnCalendar: !!solo.saved[p.id] } }).catch(() => {});
+    }
+  }
+}
+
+export async function addAvailabilitySpan(personId, fields) {
+  const span = await api('/people/' + personId + '/availability', { method: 'POST', body: fields });
+  set({ availSeq: state.availSeq + 1 });
+  loadPeople().catch(() => {});
+  return span;
+}
+
+export async function deleteAvailabilitySpan(personId, spanId) {
+  await api('/people/' + personId + '/availability/' + spanId, { method: 'DELETE' });
+  set({ availSeq: state.availSeq + 1 });
+  loadPeople().catch(() => {});
 }

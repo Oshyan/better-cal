@@ -338,6 +338,21 @@ try {
 check('people empty name throws', $threw);
 
 // ---------------------------------------------------------------------------
+// QuickAdd::awayIntent — availability statement detection (pure)
+// ---------------------------------------------------------------------------
+
+$ai = QuickAdd::awayIntent('John is away Aug 10 to 15');
+checkEq('qa away intent name', 'John', $ai['name']);
+checkEq('qa away intent kind', 'away', $ai['kind']);
+checkEq('qa away intent rest', 'Aug 10 to 15', $ai['rest']);
+checkEq('qa away intent full name', 'Virginia Miller', QuickAdd::awayIntent('Virginia Miller will be out next week')['name']);
+checkEq('qa busy stays busy', 'busy', QuickAdd::awayIntent('Sam is busy Friday')['kind']);
+checkEq('qa traveling means away', 'away', QuickAdd::awayIntent('Ada traveling Sep 1-5')['kind']);
+checkEq('qa bare gone form parses', 'Sam', QuickAdd::awayIntent('Sam gone Tuesday to Friday')['name']);
+checkEq('qa event text with digits is not an intent', null, QuickAdd::awayIntent('Checkout 3pm gone wrong'));
+checkEq('qa plain event is not an intent', null, QuickAdd::awayIntent('Dinner with Sam Friday 7pm'));
+
+// ---------------------------------------------------------------------------
 // QuickAdd::useLlm — nlParseMode gating (pure, no DB, no LLM)
 // ---------------------------------------------------------------------------
 

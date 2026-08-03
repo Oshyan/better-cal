@@ -10,6 +10,7 @@ import { api, loadCalendars } from './api.js';
 import {
   toggleCalendarVisible, createFolder, deleteFolder,
   folderMode, setFolderVisibilityMode,
+  togglePersonVisible, enterPeopleSolo, exitPeopleSolo,
 } from './actions.js';
 import { CalendarSettings } from './CalendarSettings.js';
 import { MiniMonth } from './MiniMonth.js';
@@ -198,11 +199,13 @@ const MANAGE_ITEMS = [
 ];
 
 export function Sidebar({ open, onClose }) {
-  const { calendars, folders, collapsedFolders, route } = useStore(
+  const { calendars, folders, collapsedFolders, route, people, collapsedAllCals, collapsedPeople, peopleSolo } = useStore(
     (s) => ({
       calendars: s.calendars, folders: s.folders,
       collapsedFolders: s.collapsedFolders, route: s.route,
       folderVisibility: s.folderVisibility,
+      people: s.people, collapsedAllCals: s.collapsedAllCals,
+      collapsedPeople: s.collapsedPeople, peopleSolo: s.peopleSolo,
     }),
     shallowEq,
   );
@@ -263,9 +266,46 @@ export function Sidebar({ open, onClose }) {
         ${!collapsedFolders[folder.id] && rows(cals)}
       </section>`)}
       <section class="bc-folder">
-        ${byFolder.length > 0 && html`<div class="bc-folder-head bc-folder-static">All calendars</div>`}
-        ${rows(loose)}
+        ${byFolder.length > 0 && html`<button
+          type="button" class="bc-folder-head bc-folder-static"
+          aria-expanded=${!collapsedAllCals}
+          onClick=${() => set({ collapsedAllCals: !collapsedAllCals })}
+        ><span class="bc-folder-caret">${collapsedAllCals ? '▸' : '▾'}</span>All calendars</button>`}
+        ${(byFolder.length === 0 || !collapsedAllCals) && rows(loose)}
       </section>
+      ${people.length > 0 && html`<section class="bc-folder">
+        <button
+          type="button" class="bc-folder-head bc-folder-static"
+          aria-expanded=${!collapsedPeople}
+          onClick=${() => set({ collapsedPeople: !collapsedPeople })}
+        ><span class="bc-folder-caret">${collapsedPeople ? '▸' : '▾'}</span>People</button>
+        ${!collapsedPeople && people.map((p) => html`<div key=${p.id} class="bc-cal-item">
+          <div class="bc-cal-row${p.currentSpan && p.currentSpan.kind === 'away' ? ' is-person-away' : ''}">
+            <span class="bc-cal-label">
+              <input
+                type="checkbox"
+                checked=${p.showOnCalendar}
+                onChange=${() => togglePersonVisible(p)}
+                title="Show away/busy spans on the calendar"
+                aria-label=${'Show ' + p.name + ' availability on calendar'}
+              />
+              <button
+                type="button" class="bc-cal-name bc-person-namebtn"
+                title=${(p.currentSpan ? p.name + ' is ' + p.currentSpan.kind + ' now. ' : '') + 'Open in People'}
+                onClick=${() => set({ route: 'people', peopleFocus: p.name })}
+              >${p.name}</button>
+              ${p.currentSpan && html`<span class="bc-badge bc-away-pill">${p.currentSpan.kind}</span>`}
+            </span>
+            <button
+              type="button"
+              class="bc-icon-btn bc-cal-solo${peopleSolo && peopleSolo.personId === p.id ? ' is-on' : ''}"
+              aria-pressed=${peopleSolo && peopleSolo.personId === p.id}
+              title=${peopleSolo && peopleSolo.personId === p.id ? 'Showing only this person. Click to restore.' : "Show only this person's spans"}
+              onClick=${() => (peopleSolo && peopleSolo.personId === p.id ? exitPeopleSolo() : enterPeopleSolo(p))}
+            >${peopleSolo && peopleSolo.personId === p.id ? 'Only ✓' : 'Only'}</button>
+          </div>
+        </div>`)}
+      </section>`}
       <${AddMenu} />
     </div>
     <footer class="bc-sidebar-foot">

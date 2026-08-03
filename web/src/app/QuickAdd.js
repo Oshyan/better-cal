@@ -8,8 +8,9 @@
 // cancels, "More options" transfers everything into the full editor drawer.
 
 import { html, useState, useRef, useEffect } from '../../vendor/index.js';
-import { useStore, set, state } from './store.js';
+import { useStore, set, state, toast } from './store.js';
 import { quickAddParse, quickAddCreate } from './actions.js';
+import { api, loadPeople } from './api.js';
 import { PlaceInput, pickFillText } from './PlaceInput.js';
 import {
   parseISO, dayKeyOf, dateOfDayKey, addDaysKey, toISOWithOffset, pad, localTz,
@@ -89,6 +90,14 @@ function buildRange(form, draft, dateTouched) {
   return { start: toISOWithOffset(s), end: toISOWithOffset(e) };
 }
 
+// "Aug 10 – Aug 15" for an availability draft (end exclusive -> inclusive).
+function fmtAvailRange(d) {
+  const f = (x) => x.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  const s = parseISO(d.start);
+  const e = new Date(parseISO(d.end).getTime() - 60000);
+  return f(s) === f(e) ? f(s) : f(s) + ' – ' + f(e);
+}
+
 export function QuickAdd() {
   const open = useStore((s) => s.quickAddOpen);
   const [text, setText] = useState('');
@@ -107,6 +116,18 @@ export function QuickAdd() {
   formRef.current = form;
   const draftRef = useRef(draft);
   draftRef.current = draft;
+  const cardRef = useRef(null);
+
+  // Click/tap outside the card dismisses it (the click still lands where it
+  // was aimed; capture-phase listener like the popover's).
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDoc = (e) => {
+      if (cardRef.current && !cardRef.current.contains(e.target)) set({ quickAddOpen: false });
+    };
+    document.addEventListener('pointerdown', onDoc, true);
+    return () => document.removeEventListener('pointerdown', onDoc, true);
+  }, [open]);
 
   useEffect(() => {
     if (open && inputRef.current) {
@@ -205,6 +226,24 @@ export function QuickAdd() {
     await flushParse();
     const d = draftRef.current;
     const f = formRef.current;
+    // Availability statement ("Sam is away Aug 10-15"): record the span, not
+    // an event.
+    if (d && d.intent === 'availability') {
+      try {
+        await api('/people/' + d.personId + '/availability', {
+          method: 'POST',
+          body: { start: d.start, end: d.end, kind: d.kind },
+        });
+        set({ availSeq: state.availSeq + 1, quickAddOpen: false });
+        toast(d.personName + ' marked ' + d.kind);
+        loadPeople().catch(() => {});
+      } catch (err) {
+        toast(err.message || 'Could not record availability', { error: true });
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
     const title = (d && d.title) || text.trim();
     const range = buildRange(f, d, touchedRef.current.has('dateKey'));
     if (!title || !range || f.calendarId == null) { setBusy(false); return; }
@@ -265,11 +304,11 @@ export function QuickAdd() {
 
   const localCals = state.calendars.filter((c) => c.kind !== 'subscribed');
   const flashCls = (f) => (flash && flash.has(f) ? ' bc-nl-applied' : '');
-  const canCreate = !busy && !!((draft && draft.title) || text.trim()) &&
-    !!buildRange(form, draft, touchedRef.current.has('dateKey')) && form.calendarId != null;
+  const canCreate = (!busy && draft && draft.intent === 'availability') || (!busy && !!((draft && draft.title) || text.trim()) &&
+    !!buildRange(form, draft, touchedRef.current.has('dateKey')) && form.calendarId != null);
 
   return html`<div class="bc-quickadd-wrap">
-    <div class="bc-quickadd" role="dialog" aria-label="Quick add event" onKeyDown=${onCardKeyDown}>
+    <div class="bc-quickadd" ref=${cardRef} role="dialog" aria-label="Quick add event" onKeyDown=${onCardKeyDown}>
       <input
         ref=${inputRef}
         class="bc-quickadd-input"
@@ -278,13 +317,19 @@ export function QuickAdd() {
         onInput=${onInput}
         aria-label="Describe the event"
       />
-      ${draft && html`<div class="bc-quickadd-preview">
+      ${draft && draft.intent === 'availability' && html`<div class="bc-quickadd-preview">
+        <span class="bc-qchip bc-qchip-title">${draft.personName}</span>
+        <span class="bc-qchip bc-away-pill is-${draft.kind}">${draft.kind}</span>
+        <span class="bc-qchip">${fmtAvailRange(draft)}</span>
+        <span class="bc-qchip bc-qchip-fallback">records availability, not an event</span>
+      </div>`}
+      ${draft && draft.intent !== 'availability' && html`<div class="bc-quickadd-preview">
         <span class="bc-qchip bc-qchip-title">${draft.title || '(untitled)'}</span>
         ${draft.location && html`<span class="bc-qchip">@ ${draft.location}</span>`}
         ${draft.personNames && draft.personNames.map((n) => html`<span key=${n} class="bc-qchip">with ${n}</span>`)}
         ${draft.source === 'fallback' && html`<span class="bc-qchip bc-qchip-fallback" title="Parsed without the language model">basic parse</span>`}
       </div>`}
-      <div class="bc-quickadd-strip">
+      ${(!draft || draft.intent !== 'availability') && html`<div class="bc-quickadd-strip">
         <label class=${'bc-qa-field' + flashCls('dateKey')}>
           <span class="bc-qa-label">Date</span>
           <input
@@ -352,7 +397,7 @@ export function QuickAdd() {
             aria-label="Calendar"
           >${localCals.map((c) => html`<option key=${c.id} value=${c.id}>${c.name}</option>`)}</select>
         </label>
-      </div>
+      </div>`}
       <div class="bc-quickadd-actions">
         <button type="button" class="bc-btn bc-btn-primary" disabled=${!canCreate} onClick=${submit}>Create</button>
         <button type="button" class="bc-btn" onClick=${cancel}>Cancel</button>

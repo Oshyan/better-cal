@@ -83,6 +83,14 @@ export async function loadCalendars() {
   return data;
 }
 
+// --- people ----------------------------------------------------------------
+
+export async function loadPeople() {
+  const data = await api('/people');
+  set({ people: data.people || [] });
+  return data;
+}
+
 // --- saved views -----------------------------------------------------------
 
 export async function loadSavedViews() {

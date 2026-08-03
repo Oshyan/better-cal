@@ -1930,3 +1930,38 @@ body.bc-rescheduling { user-select: none; }
   color: var(--accent); cursor: pointer;
 }
 .bc-person-link:hover { text-decoration: underline; }
+
+/* --- availability (docs/design-availability.md; append-only section) -------- */
+
+/* Sidebar People folder: away people dim; kind pill. */
+.bc-cal-row.is-person-away .bc-cal-name, .bc-cal-row.is-person-away .bc-badge { opacity: 0.55; }
+.bc-person-namebtn {
+  background: none; border: none; padding: 0; font: inherit; color: inherit;
+  cursor: pointer; text-align: left; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.bc-person-namebtn:hover { text-decoration: underline; }
+.bc-away-pill { text-transform: uppercase; font-size: 8.5px; letter-spacing: 0.4px; }
+.bc-away-pill.is-away { background: #8b93a422; color: #6b7484; border: 1px solid #8b93a455; }
+.bc-away-pill.is-busy { background: #d19a3822; color: #a4762a; border: 1px solid #d19a3855; }
+
+/* Availability bands: dashed top edge distinguishes them from trip bands. */
+.bc-band.is-avail { border-top: 2px dashed currentColor; box-shadow: none !important; }
+.bc-band.is-avail .bc-band-label { font-style: italic; }
+
+/* Editor scheduling assist. */
+.bc-avail-warn {
+  display: flex; flex-direction: column; gap: 2px;
+  color: #a4762a; font-size: 12.5px;
+  background: #d19a3814; border: 1px solid #d19a3844; border-radius: var(--radius);
+  padding: 5px 9px;
+}
+
+/* People page availability section. */
+.bc-person-avail { border-top: 1px solid var(--border); padding-top: 6px; display: flex; flex-direction: column; gap: 4px; }
+.bc-person-availrow { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.bc-person-availrange { color: var(--fg); }
+.bc-person-availnote { color: var(--fg-muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.bc-person-availform { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+.bc-person-availform .bc-person-availnotein { flex: 1; min-width: 120px; }
+.bc-person-show { margin-top: 2px; color: var(--fg-muted); font-size: 12.5px; }

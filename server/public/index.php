@@ -77,7 +77,8 @@ function bc_handle_api(Request $request, array $cfg): void
         $pushSubscriptions = new Domain\PushSubscriptions($db);
         $pushSender = new \BetterCal\Infra\PushSender($cfg);
         $emailSender = new \BetterCal\Infra\EmailSender($cfg);
-        $quickAdd = new Domain\QuickAdd($db, new LlmGateway($cfg), $events, $settings);
+        $people = new Domain\People($db);
+        $quickAdd = new Domain\QuickAdd($db, new LlmGateway($cfg), $events, $settings, $people);
 
         $authController = new Controllers\AuthController($auth);
         $calendarsController = new Controllers\CalendarsController($db, $calendars, $feeds);
@@ -91,7 +92,7 @@ function bc_handle_api(Request $request, array $cfg): void
         $tokensController = new Controllers\TokensController($apiTokens);
         $settingsController = new Controllers\SettingsController($settings);
         $geocodeController = new Controllers\GeocodeController($geocode, $placeSearch);
-        $peopleController = new Controllers\PeopleController(new Domain\People($db), $events);
+        $peopleController = new Controllers\PeopleController($people, $events);
         $configController = new Controllers\ConfigController($settings, $cfg);
         $pushController = new Controllers\PushController($pushSubscriptions, $pushSender, $emailSender);
         $healthController = new Controllers\HealthController($db, $cfg);
@@ -137,6 +138,11 @@ function bc_handle_api(Request $request, array $cfg): void
         $router->add('PATCH', "$base/people/:id", [$peopleController, 'patch']);
         $router->add('DELETE', "$base/people/:id", [$peopleController, 'delete']);
         $router->add('GET', "$base/people/:id/events", [$peopleController, 'events']);
+        $router->add('GET', "$base/people/:id/availability", [$peopleController, 'spans']);
+        $router->add('POST', "$base/people/:id/availability", [$peopleController, 'addSpan']);
+        $router->add('DELETE', "$base/people/:id/availability/:spanId", [$peopleController, 'deleteSpan']);
+        $router->add('GET', "$base/availability", [$peopleController, 'window']);
+        $router->add('GET', "$base/availability/check", [$peopleController, 'check']);
 
         $router->add('GET', "$base/geocode", [$geocodeController, 'lookup']);
         $router->add('GET', "$base/geocode/search", [$geocodeController, 'search']);

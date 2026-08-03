@@ -4,11 +4,13 @@
 // which is enough for a few thousand items.
 //
 // Multi-day treatment (rail concept): buildAgendaGroups synthesizes groups
-// for every multi-day occurrence's start and end day, railRanges yields
-// continuous colored rails in the left gutter between them, and covered day
-// headers gain quiet colored title suffixes. All the math lives in
-// agendarails.js; this file only renders it. Match-sort flat mode keeps the
-// historical single-row-per-occurrence behavior (no rails, no markers).
+// for every multi-day occurrence's start and end day, railRanges yields one
+// continuous colored bar per span sitting just left of the time/date text
+// column, connecting the start row's pill to the end row's pill (overlapping
+// spans shift further left by lane), and covered day headers gain quiet
+// colored title suffixes. All the math lives in agendarails.js; this file
+// only renders it. Match-sort flat mode keeps the historical
+// single-row-per-occurrence behavior (no rails, no markers).
 
 import { html, useState, useRef, useMemo, useEffect, useCallback } from '../../vendor/index.js';
 import {
@@ -16,7 +18,7 @@ import {
   timeState,
 } from '../lib/dates.js';
 import { EventChip } from './EventChip.js';
-import { ThumbIcon } from './icons.js';
+import { ThumbIcon, TripBadge } from './icons.js';
 import {
   buildAgendaGroups, railRanges, headerSuffixes, dayOfSpanLabel,
   AGENDA_ROW_H as ROW_H, AGENDA_HEAD_H as HEAD_H,
@@ -140,7 +142,7 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
         return html`<div
           key=${'rail:' + r.instanceId}
           class="bc-agenda-rail${r.isTrip ? ' is-trip' : ''}"
-          style=${`top:${r.topPx}px;height:${r.heightPx}px;left:${-26 + r.lane * 6}px`}
+          style=${`top:${r.topPx}px;height:${r.heightPx}px;left:${-11 - r.lane * 6}px`}
           aria-hidden="true" title=${r.title}
           onClick=${openDetail(r.instanceId)}
         ><span class="bc-agenda-rail-line" style=${`background:${r.color}`}></span></div>`;
@@ -171,15 +173,16 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
             const trip = !!occ.isContainer;
             const start = row.kind === 'start';
             const end = row.kind === 'end';
-            // Start rows of ALL-DAY multi-day occurrences put the chip in the
-            // gutter column (position + no time implies all-day; the label is
-            // omitted). Timed multi-day starts keep the normal layout. Both
-            // gain a quiet "Day 1/N" suffix; end markers show "Day N/N" in
-            // the gutter with the chip in the body.
-            const gutterChip = start && occ.allDay && !flat;
+            // Boundary rows of multi-day occurrences lead with the title chip
+            // so both ends read the same: [chip][Day i/N][Trip badge]. All-day
+            // starts and every end marker put the chip flush left in the
+            // gutter column, where the rail bar meets the pill (position + no
+            // time implies all-day; the label is omitted). Timed multi-day
+            // starts keep the start time in the gutter with the chip in the
+            // body.
+            const gutterChip = (end || (start && occ.allDay)) && !flat;
             const gutter = flat
               ? fmtDayShort(occ) + ' · ' + (occ.allDay ? 'all day' : fmtTime(parseISO(occ.start)))
-              : end ? dayOfSpanLabel(occ, g.dayKey)
               : occ.allDay ? 'all day'
               : fmtTime(parseISO(occ.start)) + (occ.end && !start ? ' to ' + fmtTime(parseISO(occ.end)) : '');
             const chip = html`<${EventChip}
@@ -192,7 +195,7 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
               class="bc-agenda-row${ts === 'past' ? ' is-past' : ts === 'now' ? ' is-now' : ''}${trip ? ' is-trip' : ''}"
               style=${`height:${ROW_H}px`}
             >
-            ${trip && html`<span
+            ${trip && !start && !end && html`<span
               class="bc-agenda-tripedge" aria-hidden="true"
               style=${`background:${calColorOf(calendars, occ)}`}
             ></span>`}
@@ -200,8 +203,8 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
               ? html`<span class="bc-agenda-time bc-agenda-gutterchip">${chip}</span>`
               : html`<span class="bc-agenda-time">${gutter}</span>`}
             ${!gutterChip && chip}
-            ${start && !flat && html`<span class="bc-agenda-dayn">${dayOfSpanLabel(occ, g.dayKey)}</span>`}
-            ${trip && html`<span class="bc-badge bc-trip-badge">Trip</span>`}
+            ${(start || end) && !flat && html`<span class="bc-agenda-dayn">${dayOfSpanLabel(occ, g.dayKey)}</span>`}
+            ${trip && html`<${TripBadge} />`}
             ${!end && occ.source === 'feed' && onSetAttendance && html`<${TriageCluster} occ=${occ} onSetAttendance=${onSetAttendance} onFeedback=${onFeedback} />`}
             ${!end && occ.location && html`<span class="bc-agenda-loc">${occ.location}</span>`}
           </div>`;

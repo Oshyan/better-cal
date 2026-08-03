@@ -927,12 +927,24 @@ eq('buildAgendaGroups group day keys',
 // Synthesized start day: header plus the single start row.
 eq('start day rows', railGroups[0].rows.map((r) => r.kind + ':' + r.occ.instanceId), ['start:rt1']);
 
-// End markers come first in a group, then starts/normals chronologically
-// (all-day first, then by start time).
+// Starts and normals merge chronologically (all-day first, then by start
+// time); end markers sort last in their group.
 eq('mixed day row order',
   railGroups[1].rows.map((r) => r.kind + ':' + r.occ.instanceId),
   ['normal:ra1', 'start:rm1', 'normal:rs1']);
 eq('end marker day rows', railGroups[3].rows.map((r) => r.kind + ':' + r.occ.instanceId), ['end:rt1']);
+
+// End markers sort after the final day's normal events (the span bounds its
+// last day) and the rail extends down past them to the end pill.
+const endDayMix = buildAgendaGroups([railTrip, {
+  instanceId: 'rx1', calendarId: 'c1', title: 'Flight home',
+  allDay: false, start: '2026-06-04T11:00:00-07:00', end: '2026-06-04T12:00:00-07:00',
+}]);
+eq('end day: marker sorts last',
+  endDayMix[endDayMix.length - 1].rows.map((r) => r.kind + ':' + r.occ.instanceId),
+  ['normal:rx1', 'end:rt1']);
+// Start row bottom 76; end group top 76, end row is index 1: 76+40+36 = 152.
+eq('end day: rail reaches below the day events', railRanges(endDayMix)[0].heightPx, 76);
 
 // Hidden occurrences never produce rows or synthesized groups.
 assert('hidden multi-day excluded', !railGroups.some((g) => g.rows.some((r) => r.occ.instanceId === 'rh1')));
@@ -957,15 +969,16 @@ eq('spanDayCount single', spanDayCount(railSingle), 1);
 eq('dayOfSpanLabel start', dayOfSpanLabel(railTrip, '2026-06-01'), 'Day 1/4');
 eq('dayOfSpanLabel end', dayOfSpanLabel(railTrip, '2026-06-04'), 'Day 4/4');
 
-// Rails: pixel span from the start row's top to the end row's bottom, lanes
-// packed for overlaps, calendar color resolved via colorOf.
+// Rails: pixel span from the start row's bottom (below the start pill) to
+// the end row's top (above the end pill), lanes packed for overlaps,
+// calendar color resolved via colorOf.
 const railsOut = railRanges(railGroups, { colorOf: (o) => (o.calendarId === 'c1' ? '#a00' : '#0a0') });
 eq('rail count', railsOut.length, 2);
 const tripRail = railsOut.find((r) => r.instanceId === 'rt1');
 const timedRail = railsOut.find((r) => r.instanceId === 'rm1');
-eq('trip rail top', tripRail.topPx, 40); // group 0 top 0 + headH 40 + row 0
-eq('trip rail height', tripRail.heightPx, 336); // to 376, bottom of the Jun 4 end row
-eq('timed rail span', [timedRail.topPx, timedRail.heightPx], [152, 148]); // row 1 of Jun 2 to end row of Jun 3
+eq('trip rail top', tripRail.topPx, 76); // group 0 top 0 + headH 40 + one row (bottom of the start pill)
+eq('trip rail height', tripRail.heightPx, 264); // to 340, top of the Jun 4 end row
+eq('timed rail span', [timedRail.topPx, timedRail.heightPx], [188, 76]); // bottom of Jun 2 row 1 to top of the Jun 3 end row
 eq('overlapping rails get distinct lanes', [tripRail.lane, timedRail.lane], [0, 1]);
 assert('rail is-trip flag', tripRail.isTrip === true && timedRail.isTrip === false);
 eq('rail colors', [tripRail.color, timedRail.color], ['#a00', '#0a0']);

@@ -14,7 +14,7 @@ import {
   openDetail, attachToTrip, detachFromTrip, deleteTripOnly, deleteTripAndMembers,
 } from './actions.js';
 import { trapFocus } from '../ui/DayExpand.js';
-import { CalDot } from '../ui/icons.js';
+import { CalDot, TripBadge } from '../ui/icons.js';
 import { tripSpan, tripSpanLabel, candidateTrips, attachableInSpan } from '../ui/trips.js';
 import {
   parseISO, dateOfDayKey, addDaysDate, toISOWithOffset, occDayKey, fmtTime,
@@ -120,7 +120,7 @@ export function TripDetail({ occ }) {
   return html`<div class="bc-overlay bc-detail-overlay" onClick=${(ev) => { if (ev.target === ev.currentTarget) close(); }}>
     <div class="bc-detail" ref=${panelRef} role="dialog" aria-modal="true" aria-label="Trip detail">
       <div class="bc-detail-head" style=${`border-top: 4px solid ${color}`}>
-        <span class="bc-badge bc-trip-badge">Trip</span>
+        <${TripBadge} />
         <button type="button" class="bc-icon-btn" aria-label="Close" onClick=${close}>✕</button>
       </div>
       <div class="bc-detail-body">

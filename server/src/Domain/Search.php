@@ -21,10 +21,11 @@ final class Search
     /**
      * FULLTEXT natural-language search with LIKE fallback for short or
      * stopword-only queries. Ranked by relevance, then newest first.
-     * Tag names match too: events tagged with a name containing the query
-     * are included, and a query equal to or prefixed with `#` (e.g. "#work")
-     * searches tags only. $excerpt trims descriptions for list payloads;
-     * feed export passes false.
+     * Tag and people names match too: events tagged with a name containing
+     * the query, or linked to a person whose name contains it, are included.
+     * A `#` prefix (e.g. "#work") searches tags only; an `@` prefix (e.g.
+     * "@virginia") searches people only. $excerpt trims descriptions for
+     * list payloads; feed export passes false.
      *
      * @return list<array> event rows
      */
@@ -37,14 +38,21 @@ final class Search
         $limit = max(1, min(200, $limit));
 
         $tagOnly = str_starts_with($q, '#');
-        $term = $tagOnly ? trim(mb_substr($q, 1)) : $q;
+        $personOnly = str_starts_with($q, '@');
+        $term = ($tagOnly || $personOnly) ? trim(mb_substr($q, 1)) : $q;
         if ($term === '') {
             return [];
         }
-        $tagEventIds = $this->labels->eventIdsForTagQuery($userId, $term);
+        $tagEventIds = $personOnly ? [] : $this->labels->eventIdsForTagQuery($userId, $term);
+        if (!$tagOnly) {
+            $tagEventIds = array_values(array_unique([
+                ...$tagEventIds,
+                ...$this->labels->eventIdsForPersonQuery($userId, $term),
+            ]));
+        }
 
         $rows = [];
-        if ($tagOnly) {
+        if ($tagOnly || $personOnly) {
             if ($tagEventIds !== []) {
                 [$in, $inParams] = Db::in($tagEventIds);
                 $rows = $this->db->all(

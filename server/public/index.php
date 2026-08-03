@@ -91,6 +91,7 @@ function bc_handle_api(Request $request, array $cfg): void
         $tokensController = new Controllers\TokensController($apiTokens);
         $settingsController = new Controllers\SettingsController($settings);
         $geocodeController = new Controllers\GeocodeController($geocode, $placeSearch);
+        $peopleController = new Controllers\PeopleController(new Domain\People($db), $events);
         $configController = new Controllers\ConfigController($settings, $cfg);
         $pushController = new Controllers\PushController($pushSubscriptions, $pushSender, $emailSender);
         $healthController = new Controllers\HealthController($db, $cfg);
@@ -131,6 +132,11 @@ function bc_handle_api(Request $request, array $cfg): void
         });
 
         $router->add('GET', "$base/search", [$searchController, 'search']);
+
+        $router->add('GET', "$base/people", [$peopleController, 'index']);
+        $router->add('PATCH', "$base/people/:id", [$peopleController, 'patch']);
+        $router->add('DELETE', "$base/people/:id", [$peopleController, 'delete']);
+        $router->add('GET', "$base/people/:id/events", [$peopleController, 'events']);
 
         $router->add('GET', "$base/geocode", [$geocodeController, 'lookup']);
         $router->add('GET', "$base/geocode/search", [$geocodeController, 'search']);

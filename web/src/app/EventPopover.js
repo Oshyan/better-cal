@@ -159,6 +159,7 @@ export function EventPopover() {
           target="_blank" rel="noopener noreferrer" title="Open in Google Maps"
         >Map ↗</a>
       </div>`}
+      ${occ.people && occ.people.length > 0 && html`<div class="bc-pop-people">With ${occ.people.join(', ')}</div>`}
       <div class="bc-pop-cal">
         <${CalDot} cal=${cal} />
         ${(cal && cal.name) || 'Calendar'}

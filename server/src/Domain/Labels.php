@@ -99,6 +99,29 @@ final class Labels
         return array_map(static fn(array $row): int => (int) $row['event_id'], $rows);
     }
 
+    /**
+     * Event ids whose linked people match the term (substring). Mirrors
+     * eventIdsForTagQuery for the search layer's people matching, including
+     * `@name` people-only queries.
+     *
+     * @return list<int>
+     */
+    public function eventIdsForPersonQuery(int $userId, string $term): array
+    {
+        $term = trim($term);
+        if ($term === '') {
+            return [];
+        }
+        $like = '%' . addcslashes($term, '%_\\') . '%';
+        $rows = $this->db->all(
+            'SELECT DISTINCT ep.event_id FROM event_people ep
+             JOIN people p ON p.id = ep.person_id
+             WHERE p.user_id = ? AND p.name LIKE ?',
+            [$userId, $like]
+        );
+        return array_map(static fn(array $row): int => (int) $row['event_id'], $rows);
+    }
+
     /** Link rows for undo snapshots. @return array<string,list<array>> */
     public function eventLinkRows(int $eventId): array
     {

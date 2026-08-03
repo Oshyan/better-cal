@@ -60,6 +60,10 @@ export function Icon({ name, size = 15 }) {
     pencil: html`<path d="M9.6 3.6l2.8 2.8M3.2 10l6.9-6.9c.4-.4 1-.4 1.4 0l1.4 1.4c.4.4.4 1 0 1.4L6 12.8l-3.5.7z" />`,
     trash: html`<path d="M2.5 4h11M6.5 4V2.8c0-.4.3-.8.8-.8h1.4c.5 0 .8.4.8.8V4M4 4l.7 9.4c0 .5.4.8.8.8h5c.4 0 .8-.3.8-.8L12 4M6.5 7v4M9.5 7v4" />`,
     arrowLeft: html`<path d="M13.5 8h-10M7.3 3.8L3.1 8l4.2 4.2" />`,
+    // Two heads-and-shoulders for the People page.
+    people: html`<circle cx="5.6" cy="5.6" r="2.3" />
+      <path d="M1.8 13.2c0-2.1 1.7-3.8 3.8-3.8s3.8 1.7 3.8 3.8" />
+      <path d="M10.8 3.5a2.3 2.3 0 0 1 0 4.3M11.4 9.6c1.7.4 2.9 1.9 2.9 3.6" />`,
     // Suitcase: handle, body, two strap seams. Marks trip containers.
     trip: html`<rect x="2.8" y="4.8" width="10.4" height="8.8" rx="1.6" />
       <path d="M6.2 4.8V3.6c0-.6.4-1 1-1h1.6c.6 0 1 .4 1 1v1.2M5.6 4.8v8.8M10.4 4.8v8.8" />`,

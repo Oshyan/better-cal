@@ -17,9 +17,19 @@ final class GeocodeController
     ) {
     }
 
+    /**
+     * GET /geocode?q=&lat=&lng=&tz= — single best result. Bias precedence
+     * matches search: explicit lat/lng (home location) > tz centroid > none.
+     */
     public function lookup(Request $req): Response
     {
-        return Response::json($this->geocode->lookup((string) ($req->q('q') ?? '')));
+        $lat = self::floatParam($req->q('lat'));
+        $lng = self::floatParam($req->q('lng'));
+        if ($lat === null || $lng === null) {
+            $centroid = PlaceSearch::tzCentroid($req->q('tz'));
+            [$lat, $lng] = $centroid ?? [null, null];
+        }
+        return Response::json($this->geocode->lookup((string) ($req->q('q') ?? ''), $lat, $lng));
     }
 
     /**

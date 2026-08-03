@@ -27,6 +27,10 @@ final class QuickAddController
         if ($result['event'] !== null) {
             $out['event'] = $result['event'];
         }
-        return Response::json($out, $result['event'] !== null ? 201 : 200);
+        if (($result['availability'] ?? null) !== null) {
+            $out['availability'] = $result['availability'];
+        }
+        $created = $result['event'] !== null || ($result['availability'] ?? null) !== null;
+        return Response::json($out, $created ? 201 : 200);
     }
 }

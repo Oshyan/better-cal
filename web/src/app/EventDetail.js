@@ -10,7 +10,7 @@ import { api } from './api.js';
 import { deleteEvent, triageAttendance, sendFeedback, enterReschedule, sameDayList, openTripByEventId } from './actions.js';
 import { TripDetail } from './Trips.js';
 import { trapFocus } from '../ui/DayExpand.js';
-import { ThumbIcon, CalDot, PinIcon, LinkIcon } from '../ui/icons.js';
+import { ThumbIcon, CalDot, PinIcon, LinkIcon, Icon } from '../ui/icons.js';
 import {
   parseISO, dateOfDayKey, fmtRange, fmtDateFull, fmtTime,
 } from '../lib/dates.js';
@@ -310,7 +310,12 @@ export function EventDetail() {
           >›</button>
           ${dayNav.list.length > 1 && html`<span class="bc-detail-count">${dayNav.index + 1} of ${dayNav.list.length} this day</span>`}
         </div>
-        <button type="button" class="bc-icon-btn" aria-label="Close" onClick=${close}>✕</button>
+        <span class="bc-pop-iconrow" role="group" aria-label="Event actions">
+          ${!isFeed && html`<button type="button" class="bc-icon-btn" title="Reschedule (r)" aria-label="Reschedule" onClick=${() => enterReschedule(occ.instanceId)}><${Icon} name="reschedule" size=${15} /></button>`}
+          ${!isFeed && html`<button type="button" class="bc-icon-btn" title="Edit (e)" aria-label="Edit" onClick=${() => set({ detail: null, editor: { mode: 'edit', occ } })}><${Icon} name="pencil" size=${15} /></button>`}
+          ${!isFeed && html`<button type="button" class="bc-icon-btn bc-pop-trash" title="Delete" aria-label="Delete" onClick=${() => { set({ detail: null }); deleteEvent(occ); }}><${Icon} name="trash" size=${15} /></button>`}
+          <button type="button" class="bc-icon-btn" aria-label="Close" onClick=${close}>✕</button>
+        </span>
       </div>
       <div class="bc-detail-body">
         <div class="bc-detail-titlerow">
@@ -374,12 +379,9 @@ export function EventDetail() {
           Added ${fmtDateFull(parseISO(occ.createdAt))} ${fmtTime(parseISO(occ.createdAt))}
           ${occ.updatedAt !== occ.createdAt && html` · Updated ${fmtDateFull(parseISO(occ.updatedAt))} ${fmtTime(parseISO(occ.updatedAt))}`}
         </div>
-        <div class="bc-detail-actions">
-          ${!isFeed && html`<button type="button" class="bc-btn" onClick=${() => set({ detail: null, editor: { mode: 'edit', occ } })}>Edit</button>`}
-          ${!isFeed && html`<button type="button" class="bc-btn" onClick=${() => enterReschedule(occ.instanceId)}>Reschedule</button>`}
-          ${!isFeed && html`<button type="button" class="bc-btn bc-btn-danger" onClick=${() => { set({ detail: null }); deleteEvent(occ); }}>Delete</button>`}
-          ${isFeed && occ.url && html`<a class="bc-btn bc-detail-openlink" href=${occ.url} target="_blank" rel="noopener noreferrer">Open original link ↗</a>`}
-          ${isFeed && html`<div class="bc-seg" role="group" aria-label="Attendance">
+        ${isFeed && html`<div class="bc-detail-actions">
+          ${occ.url && html`<a class="bc-btn bc-detail-openlink" href=${occ.url} target="_blank" rel="noopener noreferrer">Open original link ↗</a>`}
+          <div class="bc-seg" role="group" aria-label="Attendance">
             ${[['interested', 'Interested'], ['going', 'Going'], ['hidden', 'Hide']].map(([value, label]) => html`<button
               key=${value} type="button"
               class="bc-seg-btn${occ.attendance === value ? ' is-active' : ''}"
@@ -389,15 +391,15 @@ export function EventDetail() {
                 if (result === 'hidden') close();
               }}
             >${label}</button>`)}
-          </div>`}
-          ${isFeed && html`<div class="bc-seg" role="group" aria-label="Feedback">
+          </div>
+          <div class="bc-seg" role="group" aria-label="Feedback">
             ${[['up', 'More like this'], ['down', 'Less like this']].map(([value, label]) => html`<button
               key=${value} type="button" class="bc-seg-btn bc-seg-icon"
               title=${label} aria-label=${label}
               onClick=${() => sendFeedback(occ, value)}
             ><${ThumbIcon} dir=${value} /></button>`)}
-          </div>`}
-        </div>
+          </div>
+        </div>`}
       </div>
     </div>
   </div>`;

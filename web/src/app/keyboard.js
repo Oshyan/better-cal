@@ -48,13 +48,8 @@ const handlers = {
   },
   quickAdd: () => set({ quickAddOpen: true }),
   newEvent: () => set({ editor: { mode: 'create', draft: {} }, popover: null, detail: null }),
-  openDetail: (e) => {
+  openDetail: () => {
     if (!state.popover) return false;
-    if (e.key === 'Enter') {
-      // Enter on a focused button/link should activate it, not open detail.
-      const el = document.activeElement;
-      if (el && (el.tagName === 'BUTTON' || el.tagName === 'A')) return false;
-    }
     openDetail(state.popover.instanceId);
     return true;
   },
@@ -81,6 +76,12 @@ const handlers = {
   detailPrev: () => (state.detail ? (stepDetailSameDay(-1), true) : false),
   detailNext: () => (state.detail ? (stepDetailSameDay(1), true) : false),
   search: () => set({ searchOpen: true }),
+  filter: () => {
+    const el = document.querySelector('.bc-filter-input');
+    if (!el) return false;
+    el.focus();
+    return true;
+  },
   shortcuts: () => set({ shortcutsOpen: true }),
   escape: () => closeOverlays(), // dispatched before the typing guard below
 };

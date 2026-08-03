@@ -199,14 +199,18 @@ export function EventBlock({ occ, cal, rect, dimmed, nowMs, onOpen, onPointerDow
 // plus the stronger 2px top edge. Not draggable in v1; click or Enter opens
 // the trip detail. The title labels each row's segment, small and truncated.
 export function TripBand({ occ, cal, seg, dimmed, nowMs, onOpen }) {
-  const color = calColor(cal);
+  // Availability pseudo-occurrences carry no calendar: away is a neutral
+  // slate, busy a warm amber, both distinct from any calendar color.
+  const color = occ.availKind
+    ? (occ.availKind === 'away' ? '#8b93a4' : '#d19a38')
+    : calColor(cal);
   const open = (e) => {
     if (hasModifier(e)) return;
     e.stopPropagation();
     if (onOpen) onOpen(occ.instanceId, e.currentTarget.getBoundingClientRect(), { detail: true });
   };
   return html`<div
-    class="bc-band${stateClasses(occ, dimmed, nowMs)}${seg.contLeft ? ' cont-l' : ''}${seg.contRight ? ' cont-r' : ''}"
+    class="bc-band${occ.availKind ? ' is-avail' : ''}${stateClasses(occ, dimmed, nowMs)}${seg.contLeft ? ' cont-l' : ''}${seg.contRight ? ' cont-r' : ''}"
     style=${`background:${withAlpha(color, 0.13)};box-shadow:inset 0 2px 0 ${color}`}
     data-instance=${occ.instanceId}
     role="button"

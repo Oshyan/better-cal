@@ -2,7 +2,7 @@
 
 import { html, useState, useMemo, useRef, useEffect, useCallback } from '../../vendor/index.js';
 import { useStore, set, state, calendarMeta, shallowEq } from './store.js';
-import { loadWindow } from './api.js';
+import { loadWindow, api } from './api.js';
 import {
   moveEvent, resizeEvent, triageAttendance, sendFeedback, exitReschedule,
   jumpToDate, openDetail, effectiveOverviewMode,
@@ -12,6 +12,7 @@ import { sortByMatch } from '../lib/rank.js';
 import { installKeyboard } from './keyboard.js';
 import {
   addDaysKey, dateOfDayKey, toISOWithOffset, parseISO, epochDayOfKey,
+  occDayKey, dayKeyOf, todayKey,
 } from '../lib/dates.js';
 import { occurrenceDaySpan } from '../ui/monthmath.js';
 import { MonthGrid } from '../ui/MonthGrid.js';
@@ -137,6 +138,52 @@ export function App() {
     return groupOccurrences(out, flags);
   }, [s.occVersion, s.calendars]);
 
+  // Availability bands: visible people's away/busy spans for a wide window
+  // around the visible month, synthesized into container-shaped pseudo
+  // occurrences so the month/ribbon band machinery renders them.
+  const availSpans = useStore((st) => st.availSpans);
+  const availSeq = useStore((st) => st.availSeq);
+  const anyPersonVisible = s.calendars && state.people.some((p) => p.showOnCalendar);
+  useEffect(() => {
+    if (!anyPersonVisible) {
+      if (state.availSpans.length > 0) set({ availSpans: [] });
+      return;
+    }
+    const vm = s.visibleMonth || { year: Number(todayKey().slice(0, 4)), month: Number(todayKey().slice(5, 7)) };
+    const start = new Date(vm.year, vm.month - 1 - 1, 1);
+    const end = new Date(vm.year, vm.month - 1 + 2, 1);
+    api('/availability?' + new URLSearchParams({ start: toISOWithOffset(start), end: toISOWithOffset(end) }))
+      .then((d) => set({ availSpans: d.spans || [] }))
+      .catch(() => {});
+  }, [anyPersonVisible, s.visibleMonth && s.visibleMonth.year, s.visibleMonth && s.visibleMonth.month, availSeq]); // eslint-disable-line
+
+  const availOccs = useMemo(() => availSpans.map((sp) => {
+    const startKey = occDayKey({ allDay: false, start: sp.start });
+    // End instant is exclusive; step back a minute so a midnight end doesn't
+    // bleed the band into the next day.
+    const endDate = new Date(parseISO(sp.end).getTime() - 60000);
+    const endKey = dayKeyOf(endDate);
+    return {
+      instanceId: 'avail:' + sp.id,
+      eventId: null,
+      calendarId: null,
+      title: sp.name + ' ' + sp.kind + (sp.note ? ' — ' + sp.note : ''),
+      isContainer: true,
+      availKind: sp.kind,
+      personName: sp.name,
+      allDay: true,
+      start: startKey + 'T00:00:00+00:00',
+      end: (endKey >= startKey ? endKey : startKey) + 'T00:00:00+00:00',
+      attendance: 'none',
+      status: 'confirmed',
+      source: 'local',
+    };
+  }), [availSpans]);
+  const occurrencesWithAvail = useMemo(
+    () => (availOccs.length > 0 ? [...occurrences, ...availOccs] : occurrences),
+    [occurrences, availOccs],
+  );
+
   // Group lookup for click routing (onOpenEvent has a stable identity, so it
   // reads the current map through a ref).
   const groupsRef = useRef(new Map());
@@ -191,6 +238,12 @@ export function App() {
       ? {} : { visibleMonth: vm }));
   }, []);
   const onOpenEvent = useCallback((instanceId, anchorRect, opts) => {
+    // Availability bands are people, not events: land on their People entry.
+    if (String(instanceId).startsWith('avail:')) {
+      const span = state.availSpans.find((sp) => 'avail:' + sp.id === instanceId);
+      set({ route: 'people', peopleFocus: span ? span.name : null });
+      return;
+    }
     const group = groupsRef.current.get(instanceId);
     if (group) {
       set({ groupPopover: { group, anchorRect }, popover: null });
@@ -270,7 +323,7 @@ export function App() {
     const columns = ribbon ? 3 : 7;
     view = html`<${MonthGrid}
       key=${'grid' + columns}
-      occurrences=${occurrences}
+      occurrences=${occurrencesWithAvail}
       calendars=${calMeta}
       columns=${columns}
       visibleRows=${ribbon ? 5 : MONTH_ROWS[s.view]}

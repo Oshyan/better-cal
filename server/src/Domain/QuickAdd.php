@@ -25,7 +25,37 @@ final class QuickAdd
         private readonly LlmGateway $llm,
         private readonly Events $events,
         private readonly Settings $settings,
+        private readonly ?People $people = null,
     ) {
+    }
+
+    /**
+     * Detect an availability statement: "NAME is away Aug 10-15", "John will
+     * be out next week", "Sam gone Tuesday to Friday". Pure; returns the name
+     * half, the normalized kind (busy stays busy, every other word means
+     * away), and the remainder for date parsing — or null when the text
+     * doesn't read as one.
+     *
+     * @return array{name:string,kind:string,rest:string}|null
+     */
+    public static function awayIntent(string $text): ?array
+    {
+        if (preg_match(
+            '/^\s*(.{1,80}?)\s+(?:is|will\s+be|)\s*\b(away|busy|out|gone|traveling|travelling|on\s+vacation|ooo)\b\s*(.*)$/i',
+            trim($text),
+            $m
+        ) !== 1) {
+            return null;
+        }
+        $name = trim($m[1], " \t,.-");
+        if ($name === '' || preg_match('/^[\p{L}][\p{L}\'\-. ]*$/u', $name) !== 1) {
+            return null; // names only; "Checkout gone wrong 3pm" stays an event
+        }
+        return [
+            'name' => $name,
+            'kind' => strtolower($m[2]) === 'busy' ? 'busy' : 'away',
+            'rest' => trim($m[3]),
+        ];
     }
 
     /** @return array{draft:array, event:?array} */
@@ -37,6 +67,41 @@ final class QuickAdd
         }
         $tz = Time::normalizeTzid($tz);
         $now = Time::nowUtc();
+
+        // Availability statements divert to a span draft — but only when the
+        // leading words exactly match an existing person, so event titles
+        // that merely contain "out"/"gone" still parse as events.
+        $intent = self::awayIntent($text);
+        if ($intent !== null && $this->people !== null) {
+            $person = $this->db->one(
+                'SELECT id, name FROM people WHERE user_id = ? AND LOWER(name) = ?',
+                [$userId, mb_strtolower($intent['name'])]
+            );
+            if ($person !== null) {
+                // Reuse the event parser purely for its date-range smarts.
+                $range = FallbackParser::parse($intent['rest'] !== '' ? $intent['rest'] : 'today', $tz, $now);
+                $draft = [
+                    'intent' => 'availability',
+                    'personId' => (int) $person['id'],
+                    'personName' => (string) $person['name'],
+                    'kind' => $intent['kind'],
+                    'start' => $range['start'],
+                    'end' => $range['end'],
+                    'allDay' => $range['allDay'],
+                    'confidence' => $range['confidence'],
+                    'source' => 'fallback',
+                ];
+                $span = null;
+                if ($commit) {
+                    $span = $this->people->addSpan($userId, (int) $person['id'], [
+                        'start' => $range['start'],
+                        'end' => $range['end'],
+                        'kind' => $intent['kind'],
+                    ]);
+                }
+                return ['draft' => $draft, 'event' => null, 'availability' => $span];
+            }
+        }
 
         $fallback = FallbackParser::parse($text, $tz, $now);
         $mode = (string) ($this->settings->forUser($userId)['nlParseMode'] ?? 'smart');

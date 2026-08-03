@@ -3,7 +3,7 @@
 import { html, render } from '../../vendor/index.js';
 import { App } from './App.js';
 import { set, toast } from './store.js';
-import { fetchMe, loadCalendars, loadSavedViews, loadConfig } from './api.js';
+import { fetchMe, loadCalendars, loadSavedViews, loadConfig, loadPeople } from './api.js';
 import { handleEventLink } from './push.js';
 import {
   BATTERY_TIP_BODY, shouldShowInstallTip, markInstallTipShown,
@@ -16,6 +16,7 @@ async function boot() {
     await loadCalendars();
     await loadSavedViews().catch(() => { /* views are non-critical at boot */ });
     loadConfig(); // fire-and-forget; map tiles fall back to OSM meanwhile
+    loadPeople().catch(() => { /* people are non-critical at boot */ });
     authed = true;
   } catch (e) {
     // 401 already flipped authed=false; anything else lands on login too.

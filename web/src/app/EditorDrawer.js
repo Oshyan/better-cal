@@ -8,6 +8,7 @@
 import { html, useState, useEffect, useRef } from '../../vendor/index.js';
 import { useStore, set, state } from './store.js';
 import { createEvent, updateEvent, deleteEvent, quickAddParse, attachToTrip } from './actions.js';
+import { api } from './api.js';
 import { TripRow } from './Trips.js';
 import { trapFocus } from '../ui/DayExpand.js';
 import { PlaceInput, pickFillText } from './PlaceInput.js';
@@ -137,6 +138,33 @@ export function EditorDrawer() {
   };
 
   useEffect(() => () => { clearTimeout(nlTimer.current); clearTimeout(flashTimer.current); }, []);
+
+  // Scheduling assist (docs/design-availability.md §4): when the event's
+  // people are away/busy during its time, warn inline under the People
+  // field. Best-effort and debounced; never blocks saving.
+  const [availWarn, setAvailWarn] = useState([]);
+  const availTimer = useRef(0);
+  const availReq = useRef(0);
+  const warnPeople = form ? (form.people || []) : [];
+  const warnStart = form ? form.start : '';
+  const warnEnd = form ? form.end : '';
+  useEffect(() => {
+    clearTimeout(availTimer.current);
+    if (warnPeople.length === 0 || !warnStart || !warnEnd) { setAvailWarn([]); return undefined; }
+    availTimer.current = setTimeout(async () => {
+      const id = ++availReq.current;
+      try {
+        const s = fromInputValue(warnStart);
+        const e = fromInputValue(warnEnd);
+        if (isNaN(s) || isNaN(e)) return;
+        const d = await api('/availability/check?' + new URLSearchParams({
+          start: toISOWithOffset(s), end: toISOWithOffset(e), names: warnPeople.join(','),
+        }));
+        if (id === availReq.current) setAvailWarn((d && d.conflicts) || []);
+      } catch { /* assist only */ }
+    }, 300);
+    return () => clearTimeout(availTimer.current);
+  }, [warnPeople.join('|'), warnStart, warnEnd]); // eslint-disable-line
 
   useEffect(() => {
     if (!editor) { setForm(null); return; }
@@ -399,6 +427,9 @@ export function EditorDrawer() {
           <input value=${form.tags} onInput=${(e) => upd({ tags: e.target.value })} />
         </label>
       </div>
+      ${availWarn.length > 0 && html`<div class="bc-avail-warn" role="status">
+        ${availWarn.map((c) => html`<span key=${c.id}>⚠ ${c.name} is ${c.kind} then${c.note ? ' (' + c.note + ')' : ''}</span>`)}
+      </div>`}
 
       <fieldset class="bc-trip-fieldset">
         <legend>Trip</legend>

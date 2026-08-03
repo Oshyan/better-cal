@@ -17,6 +17,15 @@ export const state = {
   folders: [],
   tags: [],
   collapsedFolders: {},
+  collapsedAllCals: false,
+  collapsedPeople: false,
+
+  // People directory (sidebar folder, editor autocomplete, People page).
+  people: [],         // [{id, name, notes, showOnCalendar, eventCount, currentSpan, nextSpan, ...}]
+  peopleFocus: null,  // person name to auto-expand when the People page opens
+  peopleSolo: null,   // {personId, saved: {id: bool}} while "only this person" is active
+  availSpans: [],     // visible people's availability spans for the loaded window
+  availSeq: 0,        // bumped on span/visibility changes to refetch availSpans
 
   // User settings (contract defaults until /me or /settings answers).
   // overviewMode null = unset: the device default applies (3day when the

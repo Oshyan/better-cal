@@ -285,6 +285,24 @@ check('fp date+time clears threshold', $p('Meeting tomorrow 9am')['confidence'] 
 check('fp date-only clears threshold', $p('Trip 2026-08-15')['confidence'] >= QuickAdd::FALLBACK_CONFIDENCE);
 check('fp time-only below threshold', $p('Coffee 8am')['confidence'] < QuickAdd::FALLBACK_CONFIDENCE);
 
+// Vague time-of-day defaults + tonight/yesterday
+$d = $p('Call mom Sunday evening');
+checkEq('fp trailing evening -> 6pm', '18:00', substr($d['start'], 11, 5));
+checkEq('fp trailing evening keeps title', 'Call mom', $d['title']);
+check('fp trailing evening is timed', !$d['allDay']);
+$d = $p('Standup Monday in the morning');
+checkEq('fp in-the-morning -> 9am', '09:00', substr($d['start'], 11, 5));
+$d = $p('Dinner tonight');
+checkEq('fp tonight -> today 6pm', '18:00', substr($d['start'], 11, 5));
+checkEq('fp tonight resolves date', true, $d['dateFound']);
+checkEq('fp tonight keeps title', 'Dinner', $d['title']);
+$d = $p('Night hike Friday');
+check('fp leading Night stays in title', str_contains($d['title'], 'Night hike'));
+check('fp leading Night stays all-day', $d['allDay']);
+$d = $p('Gym yesterday 6pm');
+checkEq('fp yesterday is explicit past date', true, $d['dateFound']);
+check('fp yesterday lands in the past', $d['start'] < \BetterCal\Support\Time::iso($now));
+
 // ---------------------------------------------------------------------------
 // QuickAdd::useLlm — nlParseMode gating (pure, no DB, no LLM)
 // ---------------------------------------------------------------------------
@@ -298,6 +316,45 @@ checkEq('qa smart threshold boundary skips', false, QuickAdd::useLlm('smart', ['
 checkEq('qa smart calls llm on incomplete parse', true, QuickAdd::useLlm('smart', ['complete' => false, 'confidence' => 0.9]));
 checkEq('qa smart integrates with parser (complete)', false, QuickAdd::useLlm('smart', $p('Meeting tomorrow 9am')));
 checkEq('qa smart integrates with parser (incomplete)', true, QuickAdd::useLlm('smart', $p('Brainstorm')));
+
+// ---------------------------------------------------------------------------
+// QuickAdd::mergeLlm — deterministic guard over LLM drafts (pure)
+// ---------------------------------------------------------------------------
+
+$mergeNow = new DateTimeImmutable('2026-08-03T12:00:00-07:00');
+$mkLlm = static fn(array $over = []) => $over + [
+    'title' => 'Cocktails', 'start' => '2026-08-04T16:00:00-07:00', 'end' => '2026-08-04T17:00:00-07:00',
+    'allDay' => false, 'location' => null, 'personNames' => [],
+];
+$mkFb = static fn(array $over = []) => $over + [
+    'title' => 'Cocktails with Virginia', 'start' => '2026-08-03T16:00:00-07:00', 'end' => '2026-08-03T17:00:00-07:00',
+    'allDay' => false, 'location' => null, 'personNames' => ['Virginia'],
+    'confidence' => 0.6, 'source' => 'fallback', 'complete' => false, 'dateFound' => false,
+];
+
+$m = QuickAdd::mergeLlm($mkLlm(['start' => '2026-08-01T16:00:00-07:00', 'end' => '2026-08-01T17:00:00-07:00']), $mkFb(), $mergeNow);
+checkEq('qam past LLM start without explicit date takes fallback times', '2026-08-03T16:00:00-07:00', $m['start']);
+checkEq('qam past-start guard carries fallback end', '2026-08-03T17:00:00-07:00', $m['end']);
+
+$m = QuickAdd::mergeLlm($mkLlm(['start' => '2026-08-01T16:00:00-07:00']), $mkFb(['dateFound' => true, 'start' => '2026-08-01T16:00:00-07:00']), $mergeNow);
+checkEq('qam explicit past date is honored', '2026-08-01T16:00:00-07:00', $m['start']);
+
+$m = QuickAdd::mergeLlm($mkLlm(['start' => 'garbage']), $mkFb(), $mergeNow);
+checkEq('qam unparseable LLM start falls back', '2026-08-03T16:00:00-07:00', $m['start']);
+
+$m = QuickAdd::mergeLlm($mkLlm(), $mkFb(), $mergeNow);
+checkEq('qam future LLM start is kept', '2026-08-04T16:00:00-07:00', $m['start']);
+checkEq('qam stripped with-clause restores fallback title', 'Cocktails with Virginia', $m['title']);
+checkEq('qam personNames union pulls fallback people', ['Virginia'], $m['personNames']);
+
+$m = QuickAdd::mergeLlm($mkLlm(['title' => 'Cocktails with Virginia Miller', 'personNames' => ['Virginia Miller']]), $mkFb(), $mergeNow);
+checkEq('qam LLM title with with-clause is kept', 'Cocktails with Virginia Miller', $m['title']);
+checkEq('qam union dedupes case-insensitively but keeps distinct names', ['Virginia Miller', 'Virginia'], $m['personNames']);
+
+$m = QuickAdd::mergeLlm($mkLlm(), $mkFb(['location' => 'Zuni Cafe']), $mergeNow);
+checkEq('qam location backfills from fallback', 'Zuni Cafe', $m['location']);
+$m = QuickAdd::mergeLlm($mkLlm(['location' => 'Tartine']), $mkFb(['location' => 'Zuni Cafe']), $mergeNow);
+checkEq('qam LLM location wins when present', 'Tartine', $m['location']);
 
 // ---------------------------------------------------------------------------
 // ICS escaping and folding

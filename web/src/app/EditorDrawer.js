@@ -104,18 +104,31 @@ export function EditorDrawer() {
     }
   };
 
+  const runNlParse = async (v) => {
+    if (!v.trim()) return;
+    const id = ++nlReq.current;
+    try {
+      const d = await quickAddParse(v);
+      if (id === nlReq.current) applyNlDraft(d);
+    } catch { /* assist is best-effort */ }
+  };
+
   const onNlInput = (e) => {
     const v = e.target.value;
     setNlText(v);
     clearTimeout(nlTimer.current);
     if (!v.trim()) return;
-    nlTimer.current = setTimeout(async () => {
-      const id = ++nlReq.current;
-      try {
-        const d = await quickAddParse(v);
-        if (id === nlReq.current) applyNlDraft(d);
-      } catch { /* assist is best-effort */ }
-    }, 400);
+    nlTimer.current = setTimeout(() => runNlParse(v), 400);
+  };
+
+  // Enter parses immediately instead of submitting the half-filled form; the
+  // debounce (and its possible LLM round-trip) shouldn't gate quick entry.
+  const onNlKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      clearTimeout(nlTimer.current);
+      runNlParse(nlText);
+    }
   };
 
   useEffect(() => () => { clearTimeout(nlTimer.current); clearTimeout(flashTimer.current); }, []);
@@ -288,15 +301,19 @@ export function EditorDrawer() {
       </div>
 
       ${!occ && html`<div class="bc-nl">
-        <input
-          class="bc-nl-input"
-          placeholder="Type it naturally: Lunch with Ada Friday noon at Zuni"
-          value=${nlText}
-          onInput=${onNlInput}
-          autofocus=${!!editor.nlText}
-          aria-label="Describe the event in plain language"
-        />
-        <span class="bc-nl-hint">Fills the fields below as you type; everything stays editable</span>
+        <div class="bc-nl-row">
+          <input
+            class="bc-nl-input"
+            placeholder="Type it naturally: Lunch with Ada Friday noon at Zuni"
+            value=${nlText}
+            onInput=${onNlInput}
+            onKeyDown=${onNlKeyDown}
+            autofocus=${!!editor.nlText}
+            aria-label="Describe the event in plain language"
+          />
+          <button type="button" class="bc-btn bc-nl-go" title="Fill the fields now" onClick=${() => { clearTimeout(nlTimer.current); runNlParse(nlText); }}>Fill</button>
+        </div>
+        <span class="bc-nl-hint">Fills the fields below as you type — Enter or Fill applies immediately; everything stays editable</span>
       </div>`}
 
       <label class=${'bc-field' + (nlFlash && nlFlash.has('title') ? ' bc-nl-applied' : '')}>
@@ -332,10 +349,6 @@ export function EditorDrawer() {
           <input type="checkbox" checked=${form.allDay} onChange=${(e) => upd({ allDay: e.target.checked })} />
           <span>All day</span>
         </label>
-        <label class="bc-check" title="A trip is a span of days that other events happen inside">
-          <input type="checkbox" checked=${form.isContainer} onChange=${(e) => upd({ isContainer: e.target.checked })} />
-          <span>This is a trip</span>
-        </label>
       </div>
 
       <div class="bc-field-row">
@@ -370,7 +383,14 @@ export function EditorDrawer() {
         <input value=${form.tags} onInput=${(e) => upd({ tags: e.target.value })} />
       </label>
 
-      ${occ && !occ.isContainer && !form.isContainer && html`<${TripRow} occ=${occ} />`}
+      <fieldset class="bc-trip-fieldset">
+        <legend>Trip</legend>
+        <label class="bc-check" title="A trip is a span of days that other events happen inside">
+          <input type="checkbox" checked=${form.isContainer} onChange=${(e) => upd({ isContainer: e.target.checked })} />
+          <span>This event is itself a trip (contains other events)</span>
+        </label>
+        ${occ && !occ.isContainer && !form.isContainer && html`<${TripRow} occ=${occ} />`}
+      </fieldset>
 
       <fieldset class="bc-rem">
         <legend>Reminders</legend>

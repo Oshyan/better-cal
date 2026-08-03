@@ -13,6 +13,7 @@ import {
 } from '../lib/dates.js';
 import { fmtReminder } from '../lib/reminders.js';
 import { stripToText } from '../lib/richtext.js';
+import { gmapsUrl } from '../lib/maps.js';
 
 const GAP = 10;
 const WIDTH = 320;
@@ -151,7 +152,13 @@ export function EventPopover() {
               title=${'Reminders: ' + occ.reminders.map(fmtReminder).join(', ')}
             >🔔</span>`}
           </div>`}
-      ${occ.location && html`<div class="bc-pop-where"><${PinIcon} size=${12} />${occ.location}</div>`}
+      ${occ.location && html`<div class="bc-pop-where">
+        <${PinIcon} size=${12} />${occ.location}
+        <a
+          class="bc-maplink" href=${gmapsUrl(occ.location, occ.locationLat, occ.locationLng)}
+          target="_blank" rel="noopener noreferrer" title="Open in Google Maps"
+        >Map ↗</a>
+      </div>`}
       <div class="bc-pop-cal">
         <${CalDot} cal=${cal} />
         ${(cal && cal.name) || 'Calendar'}

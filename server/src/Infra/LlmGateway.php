@@ -40,9 +40,15 @@ final class LlmGateway
         $localNow = $now->setTimezone(Time::zone($tz));
         $prompt = "Extract a calendar event from the user's text.\n"
             . 'Current datetime: ' . Time::iso($localNow) . ' (' . $localNow->format('l') . ") in timezone $tz.\n"
-            . "Rules: resolve relative dates against the current datetime; if no time is given, treat as an all-day event; "
+            . "Rules: resolve relative dates against the current datetime; when a time is given without a date, "
+            . "use the soonest FUTURE occurrence of that time (today if still ahead, else tomorrow); never place start "
+            . "before the current datetime unless the text explicitly names a past date; "
+            . "if no time is given, treat as an all-day event; "
             . "if no end is given, default to one hour after start; start and end must be ISO8601 with UTC offset; "
-            . "location is a place name or empty string; personNames are people mentioned as companions (e.g. \"with Sam\").\n"
+            . "the title is the text minus only its date/time/location phrases — keep companion phrases "
+            . "(\"Cocktails with Virginia at 4pm\" -> title \"Cocktails with Virginia\", NOT \"Cocktails\"); "
+            . "location is a place name or empty string; personNames are people mentioned as companions "
+            . "(e.g. \"with Sam\" -> [\"Sam\"], also listed in personNames while staying in the title).\n"
             . "Text: " . $text;
 
         $body = [

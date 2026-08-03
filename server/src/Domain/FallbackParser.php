@@ -26,13 +26,16 @@ final class FallbackParser
      * (date resolved AND (time resolved OR all-day)); it is stripped before the
      * draft reaches the API response.
      *
-     * @return array{title:string,start:string,end:string,allDay:bool,location:?string,personNames:list<string>,confidence:float,source:string,complete:bool}
+     * @return array{title:string,start:string,end:string,allDay:bool,location:?string,personNames:list<string>,confidence:float,source:string,complete:bool,dateFound:bool}
      */
     public static function parse(string $text, string $tzid, ?\DateTimeImmutable $now = null): array
     {
         $tz = Time::zone($tzid);
         $now = ($now ?? new \DateTimeImmutable('now'))->setTimezone($tz);
         $work = ' ' . trim($text) . ' ';
+        // "tonight" carries both a date and a vague time; normalize it so the
+        // two extractors each pick up their half.
+        $work = preg_replace('/\btonight\b/i', ' today evening ', $work) ?? $work;
         $confidence = 0.3;
 
         // Explicit "all day" / "all-day" keyword forces an all-day event.
@@ -144,6 +147,9 @@ final class FallbackParser
             'confidence' => round(min(0.95, max(0.05, $confidence)), 2),
             'source' => 'fallback',
             'complete' => $dateFound && ($timeFound || $allDay),
+            // Internal signal for QuickAdd's LLM merge-guard: an explicit date
+            // in the text means a past start may be intentional.
+            'dateFound' => $dateFound,
         ];
     }
 
@@ -229,6 +235,12 @@ final class FallbackParser
         if (preg_match('/\btomorrow\b/i', $work, $m)) {
             return [self::cut($work, $m[0]), $now->add(new \DateInterval('P1D')), true, null];
         }
+        // "yesterday" is an explicit (past) date: logging something that
+        // already happened is legitimate, and marking dateFound keeps the
+        // LLM merge-guard from "correcting" it into the future.
+        if (preg_match('/\byesterday\b/i', $work, $m)) {
+            return [self::cut($work, $m[0]), $now->sub(new \DateInterval('P1D')), true, null];
+        }
         $dayAlt = implode('|', array_keys(self::WEEKDAYS));
         // "next week thursday": the named weekday within the next calendar week
         // (weeks start Monday). Checked before the bare-weekday branch below.
@@ -289,6 +301,16 @@ final class FallbackParser
         }
         if (preg_match('/\b(?:at\s+)?midnight\b/i', $work, $m)) {
             return [self::cut($work, $m[0]), [0, 0], null, true];
+        }
+        // Vague time-of-day words get sensible defaults — but only when
+        // clearly meant as a time ("this evening", "in the morning", or
+        // trailing as in "call mom Sunday evening"), so a title like
+        // "Night hike Friday" keeps its noun and stays all-day.
+        $vague = ['morning' => [9, 0], 'afternoon' => [14, 0], 'evening' => [18, 0], 'night' => [20, 0]];
+        if (preg_match('/\b(?:in\s+the\s+|this\s+)(morning|afternoon|evening|night)\b/i', $work, $m)
+            || preg_match('/\b(morning|afternoon|evening|night)\s*$/i', $work, $m)
+        ) {
+            return [self::cut($work, $m[0]), $vague[strtolower($m[1])], null, true];
         }
         return [$work, null, null, false];
     }

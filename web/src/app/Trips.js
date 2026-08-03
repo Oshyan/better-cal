@@ -3,9 +3,11 @@
 //   chronological member list (GET /events/:id/links), inline "Add events"
 //   picker, "New event in this trip" shortcut, and the two-option delete
 //   confirm (remove trip only vs delete trip and its events).
-// - TripRow: the "Trip" row on a NON-container event's detail/editor: shows
-//   the current trip or None, offers overlapping/abutting trips, and an
-//   "Other trip" title search across every loaded container.
+// - TripRow: the "Part of" trip-membership row in a NON-container event's
+//   EDITOR (the read-only detail view shows membership as the "Part of:"
+//   chip under the title instead): shows the current trip or None, offers
+//   overlapping/abutting trips, and an "Other trip" title search across
+//   every loaded container.
 
 import { html, useState, useRef, useEffect } from '../../vendor/index.js';
 import { useStore, set, state, insertOccurrence, toast } from './store.js';
@@ -20,6 +22,7 @@ import {
   parseISO, dateOfDayKey, addDaysDate, toISOWithOffset, occDayKey, fmtTime,
 } from '../lib/dates.js';
 import { dayRangeDraft } from '../lib/quickcreate.js';
+import { gmapsUrl } from '../lib/maps.js';
 
 // "Jun 3 · 9:00 AM" / "Jun 3 · all day" for member and picker rows.
 function fmtWhen(occ) {
@@ -133,8 +136,13 @@ export function TripDetail({ occ }) {
         </div>
         <div class="bc-detail-when">${tripSpanLabel(occ)}</div>
         ${occ.location && html`<div class="bc-detail-section">
-          <div class="bc-detail-label">Location</div>
-          <div>${occ.location}</div>
+          <div class="bc-detail-locline">
+            ${occ.location}
+            <a
+              class="bc-maplink" href=${gmapsUrl(occ.location, occ.locationLat, occ.locationLng)}
+              target="_blank" rel="noopener noreferrer" title="Open in Google Maps"
+            >Google Maps ↗</a>
+          </div>
         </div>`}
 
         <div class="bc-detail-section">
@@ -272,9 +280,9 @@ export function TripRow({ occ }) {
         .slice(0, 12)
     : [];
 
-  return html`<div class="bc-detail-section bc-trip-rowsect">
-    <div class="bc-detail-label">Trip</div>
+  return html`<div class="bc-trip-rowsect">
     <div class="bc-trip-rowline">
+      <span class="bc-trip-rowlabel">Part of</span>
       ${current && html`<button
         type="button" class="bc-partof" title="Open this trip"
         onClick=${() => {

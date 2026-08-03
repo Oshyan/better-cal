@@ -68,6 +68,11 @@ final class LlmGateway
                     'required' => ['title', 'start', 'end', 'allDay'],
                 ],
                 'temperature' => 0.1,
+                // gemini-3.6-flash thinks by default (~750 thought tokens per
+                // parse), regularly blowing the 6s interactive timeout so the
+                // call nulled out and quick-add silently fell back. Structured
+                // extraction gains nothing from thinking: turn it off.
+                'thinkingConfig' => ['thinkingLevel' => 'minimal'],
             ],
         ];
 

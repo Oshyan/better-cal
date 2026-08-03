@@ -303,6 +303,24 @@ $d = $p('Gym yesterday 6pm');
 checkEq('fp yesterday is explicit past date', true, $d['dateFound']);
 check('fp yesterday lands in the past', $d['start'] < \BetterCal\Support\Time::iso($now));
 
+// Compound relative dates ($now = Thu 2026-07-30)
+$d = $p('Lunch day after tomorrow');
+checkEq('fp day after tomorrow -> +2 days', '2026-08-01', substr($d['start'], 0, 10));
+checkEq('fp day after tomorrow keeps title', 'Lunch', $d['title']);
+$d = $p('Dentist a week from Friday 3pm');
+checkEq('fp week from Friday -> Friday+7', '2026-08-07', substr($d['start'], 0, 10));
+checkEq('fp week from Friday keeps time', '15:00', substr($d['start'], 11, 5));
+checkEq('fp week from Friday title', 'Dentist', $d['title']);
+$d = $p('Review first Monday of September 10am');
+checkEq('fp first Monday of September', '2026-09-07', substr($d['start'], 0, 10));
+$d = $p('Retro last Friday of October');
+checkEq('fp last Friday of October', '2026-10-30', substr($d['start'], 0, 10));
+$d = $p('Standup first Monday of July 9am');
+checkEq('fp past nth-weekday month rolls to next year', '2027-07-05', substr($d['start'], 0, 10));
+$d = $p('Party the Saturday after next 8pm');
+checkEq('fp leftover temporal words demote completeness', false, $d['complete']);
+check('fp leftover temporal words cap confidence', $d['confidence'] <= 0.5);
+
 // ---------------------------------------------------------------------------
 // QuickAdd::useLlm — nlParseMode gating (pure, no DB, no LLM)
 // ---------------------------------------------------------------------------

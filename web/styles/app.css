@@ -760,21 +760,29 @@ body.bc-dragging * { cursor: grabbing !important; }
   display: flex; overflow: hidden;
 }
 .bc-pop-color { width: 5px; flex: none; }
-.bc-pop-body { padding: 10px 12px; display: flex; flex-direction: column; gap: 5px; min-width: 0; flex: 1; }
+.bc-pop-body { position: relative; padding: 10px 12px; display: flex; flex-direction: column; gap: 5px; min-width: 0; flex: 1; }
+.bc-pop-corner-close { position: absolute; top: 6px; right: 6px; }
+/* Title left, compact calendar chip right; both wrap under the corner ✕. */
+.bc-pop-titlerow { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; padding-right: 24px; }
+.bc-pop-titlerow .bc-pop-title { flex: 1; min-width: 0; }
+.bc-pop-calchip {
+  display: inline-flex; align-items: center; gap: 4px; flex: none;
+  color: var(--fg-muted); font-size: 11.5px;
+}
+.bc-pop-calicon { display: inline-flex; align-self: center; }
 .bc-pop-title { font-size: 15px; margin: 0; font-weight: 700; cursor: text; }
 .bc-pop-title-input { font-size: 15px; font-weight: 700; width: 100%; }
 .bc-pop-when { color: var(--fg); cursor: text; }
 .bc-pop-where { color: var(--fg-muted); display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
-.bc-pop-cal { display: flex; align-items: center; gap: 6px; color: var(--fg-muted); font-size: 12.5px; }
+.bc-pop-meta { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 12.5px; }
 .bc-pop-tags { color: var(--accent); }
 .bc-pop-desc { color: var(--fg-muted); font-size: 12.5px; max-height: 90px; overflow-y: auto; white-space: pre-wrap; }
 .bc-pop-desc-rich { white-space: normal; }
 .bc-pop-desc a { color: var(--accent); }
 .bc-pop-url { color: var(--accent); font-size: 12.5px; }
-/* Wraps so the attendance + feedback segments never clip at the popover's
-   320px width; the close button keeps the first row's right edge. */
+/* One line at the popover's 360px width for local events (Open, Reschedule,
+   Edit, Delete); wrap stays on as a safety net for the wider feed segments. */
 .bc-pop-actions { display: flex; align-items: center; gap: 6px; margin-top: 4px; flex-wrap: wrap; }
-.bc-pop-close { margin-left: auto; }
 .bc-seg { display: inline-flex; border: 1px solid var(--border-strong); border-radius: 6px; overflow: hidden; }
 .bc-seg-btn { background: var(--bg-raised); border: none; border-right: 1px solid var(--border); padding: 4px 10px; }
 .bc-seg-btn:last-child { border-right: none; }
@@ -1908,3 +1916,11 @@ body.bc-rescheduling { user-select: none; }
 .bc-person-eventrow:hover { background: var(--bg-inset); }
 .bc-person-when { color: var(--fg-muted); font-size: 12px; flex: none; min-width: 130px; }
 .bc-person-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Clickable person names (popover meta row, detail With line). */
+.bc-pop-people { display: inline-flex; align-items: center; gap: 5px; color: var(--fg-muted); }
+.bc-person-link {
+  background: none; border: none; padding: 0; font-size: inherit;
+  color: var(--accent); cursor: pointer;
+}
+.bc-person-link:hover { text-decoration: underline; }

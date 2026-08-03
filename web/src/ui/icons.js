@@ -60,6 +60,9 @@ export function Icon({ name, size = 15 }) {
     pencil: html`<path d="M9.6 3.6l2.8 2.8M3.2 10l6.9-6.9c.4-.4 1-.4 1.4 0l1.4 1.4c.4.4.4 1 0 1.4L6 12.8l-3.5.7z" />`,
     trash: html`<path d="M2.5 4h11M6.5 4V2.8c0-.4.3-.8.8-.8h1.4c.5 0 .8.4.8.8V4M4 4l.7 9.4c0 .5.4.8.8.8h5c.4 0 .8-.3.8-.8L12 4M6.5 7v4M9.5 7v4" />`,
     arrowLeft: html`<path d="M13.5 8h-10M7.3 3.8L3.1 8l4.2 4.2" />`,
+    // Small calendar page: binding rings + top rule. Marks calendar names.
+    calendar: html`<rect x="2.2" y="3.4" width="11.6" height="10.4" rx="1.4" />
+      <path d="M2.2 6.6h11.6M5.4 1.8v3M10.6 1.8v3" />`,
     // Two heads-and-shoulders for the People page.
     people: html`<circle cx="5.6" cy="5.6" r="2.3" />
       <path d="M1.8 13.2c0-2.1 1.7-3.8 3.8-3.8s3.8 1.7 3.8 3.8" />

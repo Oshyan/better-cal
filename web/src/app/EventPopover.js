@@ -7,7 +7,7 @@ import { html, useState, useRef, useEffect } from '../../vendor/index.js';
 import { useStore, set, state } from './store.js';
 import { updateEvent, deleteEvent, triageAttendance, sendFeedback, enterReschedule, openDetail, sameDayList, openTripByEventId } from './actions.js';
 import { isMobile, trapFocus, MOBILE_QUERY } from '../ui/DayExpand.js';
-import { ThumbIcon, CalDot, PinIcon, LinkIcon } from '../ui/icons.js';
+import { ThumbIcon, PinIcon, LinkIcon, Icon } from '../ui/icons.js';
 import {
   parseISO, dateOfDayKey, fmtRange, toInputValue, fromInputValue, toISOWithOffset,
 } from '../lib/dates.js';
@@ -16,7 +16,7 @@ import { stripToText, hasHtml, sanitizeHtml } from '../lib/richtext.js';
 import { gmapsUrl } from '../lib/maps.js';
 
 const GAP = 10;
-const WIDTH = 320;
+const WIDTH = 360;
 
 function place(anchorRect) {
   const h = 300; // estimate; clamped below anyway
@@ -128,17 +128,24 @@ export function EventPopover() {
         >›</button>
         ${nav.list.length > 1 && html`<span class="bc-sheet-count">${nav.index + 1} of ${nav.list.length}</span>`}
       </div>`}
-      ${editingTitle
-        ? html`<input
-            class="bc-pop-title-input" value=${title} autofocus
-            onInput=${(ev) => setTitle(ev.target.value)}
-            onKeyDown=${(ev) => { if (ev.key === 'Enter') saveTitle(); if (ev.key === 'Escape') { ev.stopPropagation(); setEditingTitle(false); setTitle(occ.title); } }}
-            onBlur=${saveTitle}
-            aria-label="Event title"
-          />`
-        : html`<h2 class="bc-pop-title${occ.status === 'cancelled' ? ' is-cancelled' : ''}" onClick=${() => !isFeed && setEditingTitle(true)} title=${isFeed ? '' : 'Click to edit title'}>
-            ${occ.title || '(untitled)'}${occ.isNew ? html` <span class="bc-new-pill">new</span>` : ''}
-          </h2>`}
+      <button type="button" class="bc-icon-btn bc-pop-corner-close" aria-label="Close" onClick=${() => set({ popover: null })}>✕</button>
+      <div class="bc-pop-titlerow">
+        ${editingTitle
+          ? html`<input
+              class="bc-pop-title-input" value=${title} autofocus
+              onInput=${(ev) => setTitle(ev.target.value)}
+              onKeyDown=${(ev) => { if (ev.key === 'Enter') saveTitle(); if (ev.key === 'Escape') { ev.stopPropagation(); setEditingTitle(false); setTitle(occ.title); } }}
+              onBlur=${saveTitle}
+              aria-label="Event title"
+            />`
+          : html`<h2 class="bc-pop-title${occ.status === 'cancelled' ? ' is-cancelled' : ''}" onClick=${() => !isFeed && setEditingTitle(true)} title=${isFeed ? '' : 'Click to edit title'}>
+              ${occ.title || '(untitled)'}${occ.isNew ? html` <span class="bc-new-pill">new</span>` : ''}
+            </h2>`}
+        ${!editingTitle && html`<span class="bc-pop-calchip" title=${'Calendar: ' + ((cal && cal.name) || 'Calendar')}>
+          <span class="bc-pop-calicon" style=${`color:${(cal && cal.color) || '#888'}`}><${Icon} name="calendar" size=${12} /></span>
+          ${(cal && cal.name) || 'Calendar'}
+        </span>`}
+      </div>
       ${occ.containers && occ.containers.length > 0 && html`<button
         type="button" class="bc-partof" title="Open this trip"
         onClick=${() => { set({ popover: null }); openTripByEventId(occ.containers[0].eventId); }}
@@ -159,12 +166,16 @@ export function EventPopover() {
           target="_blank" rel="noopener noreferrer" title="Open in Google Maps"
         >Map ↗</a>
       </div>`}
-      ${occ.people && occ.people.length > 0 && html`<div class="bc-pop-people">With ${occ.people.join(', ')}</div>`}
-      <div class="bc-pop-cal">
-        <${CalDot} cal=${cal} />
-        ${(cal && cal.name) || 'Calendar'}
+      ${((occ.people && occ.people.length > 0) || (occ.tags && occ.tags.length > 0)) && html`<div class="bc-pop-meta">
+        ${occ.people && occ.people.length > 0 && html`<span class="bc-pop-people">
+          <${Icon} name="people" size=${12} />
+          ${occ.people.map((n, i) => html`<span key=${n}>${i > 0 && ', '}<button
+            type="button" class="bc-person-link" title=${'Open ' + n + ' in People'}
+            onClick=${() => set({ popover: null, route: 'people', peopleFocus: n })}
+          >${n}</button></span>`)}
+        </span>`}
         ${occ.tags && occ.tags.length > 0 && html`<span class="bc-pop-tags">${occ.tags.map((t) => '#' + t).join(' ')}</span>`}
-      </div>
+      </div>`}
       ${occ.description && (() => {
         // Rich descriptions render rich here too (sanitized, height-capped
         // by CSS); plain text keeps the 280-char preview.
@@ -198,7 +209,6 @@ export function EventPopover() {
             onClick=${() => sendFeedback(occ, value)}
           ><${ThumbIcon} dir=${value} /></button>`)}
         </div>`}
-        <button type="button" class="bc-icon-btn bc-pop-close" aria-label="Close" onClick=${() => set({ popover: null })}>✕</button>
       </div>
     </div>
   </div>`;

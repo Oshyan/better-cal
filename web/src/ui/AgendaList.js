@@ -140,6 +140,9 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
     <div class="bc-agenda-spacer" style=${`height:${totalH}px`}>
       ${rails.map((r) => {
         if (r.topPx > visEnd || r.topPx + r.heightPx < visStart) return null;
+        // Type-to-filter: a filtered-out trip's boundary rows hide via their
+        // chips, so its rail must not linger either.
+        if (dimSet && dimSet.has(r.instanceId)) return null;
         return html`<div
           key=${'rail:' + r.instanceId}
           class="bc-agenda-rail${r.isTrip ? ' is-trip' : ''}"
@@ -158,7 +161,7 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
         >
           ${g.dayKey !== null && html`<h3 class="bc-agenda-day">
             ${fmtDayLong(dateOfDayKey(g.dayKey))}
-            ${sfx && sfx.items.map((occ) => html`<button
+            ${sfx && sfx.items.filter((occ) => !(dimSet && dimSet.has(occ.instanceId))).map((occ) => html`<button
               key=${'sfx:' + occ.instanceId} type="button" class="bc-agenda-daysfx"
               style=${`color:${calColorOf(calendars, occ)}`}
               title=${occ.title || '(untitled)'}

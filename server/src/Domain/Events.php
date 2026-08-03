@@ -31,6 +31,18 @@ final class Events
     private ?array $calMeta = null;
     /** @var array<int, array{timed:list<array>,allDay:list<array>}> user id => global reminder defaults, lazy */
     private array $userReminderDefaults = [];
+    /** @var array<int, ?string> recurrence parent id => rrule, memoized per request */
+    private array $parentRrules = [];
+
+    /** The master's rrule for an override row (null when the parent is gone). */
+    private function parentRrule(int $parentId): ?string
+    {
+        if (!array_key_exists($parentId, $this->parentRrules)) {
+            $value = $this->db->scalar('SELECT rrule FROM events WHERE id = ?', [$parentId]);
+            $this->parentRrules[$parentId] = is_string($value) && $value !== '' ? $value : null;
+        }
+        return $this->parentRrules[$parentId];
+    }
 
     /** @return array{createdAt:\DateTimeImmutable,kind:string,reminderDefaults:?array}|null */
     private function calendarMeta(int $calendarId): ?array
@@ -753,7 +765,11 @@ final class Events
             'allDay' => (int) $row['all_day'] === 1,
             'tzid' => $tzid,
             'recurring' => !empty($row['rrule']) || !empty($row['recurrence_parent_id']),
-            'rrule' => !empty($row['rrule']) ? (string) $row['rrule'] : null,
+            // Overrides carry no rrule of their own; surface the parent's so
+            // clients can always describe the cadence, not just "repeats".
+            'rrule' => !empty($row['rrule'])
+                ? (string) $row['rrule']
+                : (!empty($row['recurrence_parent_id']) ? $this->parentRrule((int) $row['recurrence_parent_id']) : null),
             'source' => (string) $row['source'],
             'attendance' => (string) $row['attendance'],
             'status' => (string) $row['status'],

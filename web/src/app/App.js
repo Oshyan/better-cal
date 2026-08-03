@@ -17,6 +17,7 @@ import { occurrenceDaySpan } from '../ui/monthmath.js';
 import { MonthGrid } from '../ui/MonthGrid.js';
 import { TimeGrid } from '../ui/TimeGrid.js';
 import { AgendaList } from '../ui/AgendaList.js';
+import { dayRangeDraft } from '../lib/quickcreate.js';
 import { DayExpand } from '../ui/DayExpand.js';
 import { RescheduleBanner, RescheduleStrip, RescheduleOverlay } from '../ui/RescheduleMode.js';
 import { Toolbar } from './Toolbar.js';
@@ -352,6 +353,7 @@ export function App() {
         onOpenEvent=${onOpenEvent}
         onSetAttendance=${triageAttendance}
         onFeedback=${sendFeedback}
+        onCreateDay=${(k) => onCreateRange(dayRangeDraft(k, k))}
         emptyLabel=${s.agendaShowPast ? 'No events' : 'No upcoming events'}
       />
     </div>`;

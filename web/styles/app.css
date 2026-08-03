@@ -1285,19 +1285,9 @@ body.bc-dragging * { cursor: grabbing !important; }
 
 /* --- quick create ----------------------------------------------------------- */
 
-/* Confirm chip: fixed at the release point, above overlays under it. */
-.bc-create-chip {
-  position: fixed; z-index: 80;
-  display: flex; align-items: center; gap: 8px;
-  padding: 6px 8px 6px 12px;
-  background: var(--bg-raised); border: 1px solid var(--border-strong);
-  border-radius: 8px; box-shadow: var(--shadow);
-  font-size: 12.5px; white-space: nowrap;
-}
-.bc-create-chip-label { font-weight: 600; }
-
 /* Per-cell "+" (month/ribbon): top-right corner, revealed on cell hover or
-   keyboard focus; hidden entirely on touch where tap + chip covers it. */
+   keyboard focus; hidden entirely on touch where tap goes straight to the
+   editor. */
 .bc-cell-add {
   position: absolute; top: 2px; right: 2px; z-index: 4;
   width: 20px; height: 20px; padding: 0;
@@ -1921,6 +1911,17 @@ body.bc-rescheduling { user-select: none; }
 .bc-person-eventrow:hover { background: var(--bg-inset); }
 .bc-person-when { color: var(--fg-muted); font-size: 12px; flex: none; min-width: 130px; }
 .bc-person-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Agenda day-header "+": quiet until the header is hovered or it has focus. */
+.bc-agenda-dayadd {
+  background: none; border: 1px solid var(--border); border-radius: 5px;
+  color: var(--fg-muted); font-size: 13px; line-height: 1;
+  padding: 0 5px 2px; margin-left: 8px; cursor: pointer;
+  opacity: 0; transition: opacity 0.1s ease;
+}
+.bc-agenda-day:hover .bc-agenda-dayadd, .bc-agenda-dayadd:focus-visible { opacity: 1; }
+.bc-agenda-dayadd:hover { color: var(--fg); border-color: var(--border-strong); }
+@media (pointer: coarse) { .bc-agenda-dayadd { opacity: 1; } }
 
 /* Clickable person names (popover meta row, detail With line). */
 .bc-pop-people { display: inline-flex; align-items: center; gap: 5px; color: var(--fg-muted); }

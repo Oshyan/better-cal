@@ -74,7 +74,7 @@ function calColorOf(calendars, occ) {
 // scrollKey/scrollSeq: anchor day key + a monotonically bumped sequence — each
 // new seq scrolls the list to the anchor's day group (nearest following group
 // when the exact day has no events).
-export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, scrollKey, scrollSeq, onOpenEvent, onSetAttendance, onFeedback, onRequestWindow, emptyLabel }) {
+export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, scrollKey, scrollSeq, onOpenEvent, onSetAttendance, onFeedback, onCreateDay, onRequestWindow, emptyLabel }) {
   const scrollRef = useRef(null);
   const [win, setWin] = useState({ top: 0, height: 800 });
   const flat = sortMode === 'match';
@@ -161,6 +161,12 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
         >
           ${g.dayKey !== null && html`<h3 class="bc-agenda-day">
             ${fmtDayLong(dateOfDayKey(g.dayKey))}
+            ${onCreateDay && html`<button
+              type="button" class="bc-agenda-dayadd"
+              title=${'New event on ' + fmtDayLong(dateOfDayKey(g.dayKey))}
+              aria-label=${'New event on ' + fmtDayLong(dateOfDayKey(g.dayKey))}
+              onClick=${() => onCreateDay(g.dayKey)}
+            >+</button>`}
             ${sfx && sfx.items.filter((occ) => !(dimSet && dimSet.has(occ.instanceId))).map((occ) => html`<button
               key=${'sfx:' + occ.instanceId} type="button" class="bc-agenda-daysfx"
               style=${`color:${calColorOf(calendars, occ)}`}

@@ -60,6 +60,9 @@ export function Icon({ name, size = 15 }) {
     pencil: html`<path d="M9.6 3.6l2.8 2.8M3.2 10l6.9-6.9c.4-.4 1-.4 1.4 0l1.4 1.4c.4.4.4 1 0 1.4L6 12.8l-3.5.7z" />`,
     trash: html`<path d="M2.5 4h11M6.5 4V2.8c0-.4.3-.8.8-.8h1.4c.5 0 .8.4.8.8V4M4 4l.7 9.4c0 .5.4.8.8.8h5c.4 0 .8-.3.8-.8L12 4M6.5 7v4M9.5 7v4" />`,
     arrowLeft: html`<path d="M13.5 8h-10M7.3 3.8L3.1 8l4.2 4.2" />`,
+    // Keyboard: body + key dots + spacebar. Toolbar shortcuts button.
+    keyboard: html`<rect x="1.6" y="4.2" width="12.8" height="7.6" rx="1.4" />
+      <path d="M4 6.6h.01M6.7 6.6h.01M9.4 6.6h.01M12.1 6.6h.01M4 9.4h.6M11.4 9.4h.6M6.4 9.4h3.2" />`,
     // Open-in-full: corner arrow leaving a box. Popover -> detail view.
     expand: html`<path d="M9.2 2.6h4.2v4.2M13.1 2.9L8.6 7.4" />
       <path d="M6.8 2.6H4c-.8 0-1.4.6-1.4 1.4V12c0 .8.6 1.4 1.4 1.4h8c.8 0 1.4-.6 1.4-1.4V9.2" />`,

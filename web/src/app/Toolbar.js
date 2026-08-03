@@ -14,6 +14,7 @@ import { useStore, set, shallowEq } from './store.js';
 import { setView, goToday, stepAnchor, setOverviewMode, effectiveOverviewMode } from './actions.js';
 import { fmtMonthYear, fmtDayLong, dateOfDayKey } from '../lib/dates.js';
 import { ViewSwitcher } from './ViewSwitcher.js';
+import { Icon } from '../ui/icons.js';
 import { JumpPopover } from './JumpPopover.js';
 
 const DESKTOP_VIEWS = [
@@ -154,6 +155,7 @@ export function Toolbar({ onToggleSidebar }) {
       value=${filterText}
       onInput=${(e) => set({ filterText: e.target.value })}
     />
+    <button type="button" class="bc-icon-btn" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)" onClick=${() => set({ shortcutsOpen: true })}><${Icon} name="keyboard" size=${16} /></button>
     <button type="button" class="bc-icon-btn" aria-label="Search" title="Search ( / )" onClick=${() => set({ searchOpen: true })}>${'🔍'}</button>
     <button type="button" class="bc-icon-btn" aria-label="Quick add" title="Quick add: type it in plain language (c)" onClick=${() => set({ quickAddOpen: true })}>${'⚡'}</button>
     <button type="button" class="bc-btn bc-btn-primary" title="New event (full editor)" onClick=${() => set({ editor: { mode: 'create', draft: {} } })}>+ New</button>

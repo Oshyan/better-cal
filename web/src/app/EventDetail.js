@@ -8,7 +8,7 @@ import { html, useState, useRef, useMemo, useEffect } from '../../vendor/index.j
 import { useStore, set, state, patchOccurrence } from './store.js';
 import { api } from './api.js';
 import { deleteEvent, triageAttendance, sendFeedback, enterReschedule, sameDayList, openTripByEventId } from './actions.js';
-import { TripDetail, TripRow } from './Trips.js';
+import { TripDetail } from './Trips.js';
 import { trapFocus } from '../ui/DayExpand.js';
 import { ThumbIcon, CalDot, PinIcon } from '../ui/icons.js';
 import {
@@ -16,6 +16,7 @@ import {
 } from '../lib/dates.js';
 import { fmtReminder } from '../lib/reminders.js';
 import { hasHtml, sanitizeHtml } from '../lib/richtext.js';
+import { gmapsUrl } from '../lib/maps.js';
 
 // --- recurrence in words ----------------------------------------------------
 
@@ -188,16 +189,11 @@ function MiniMap({ lat, lng, location }) {
     setInteractive(true);
   };
 
-  // Google Maps place view (not directions): viewing the spot is the base
-  // case and directions are one tap from there; landing in directions mode
-  // costs extra taps to unwind when you only wanted to look.
-  const gmapsUrl = `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
   return html`<div class="bc-map-wrap">
     <div class="bc-map" ref=${elRef}></div>
     ${!interactive && html`<button type="button" class="bc-map-cover" onClick=${enable}>
       <span>Click to zoom and pan</span>
     </button>`}
-    <a class="bc-map-osm" href=${gmapsUrl} target="_blank" rel="noopener noreferrer">Open in Google Maps ↗</a>
   </div>`;
 }
 
@@ -317,31 +313,37 @@ export function EventDetail() {
         <button type="button" class="bc-icon-btn" aria-label="Close" onClick=${close}>✕</button>
       </div>
       <div class="bc-detail-body">
-        <h2 class="bc-detail-title${occ.status === 'cancelled' ? ' is-cancelled' : ''}">
-          ${occ.title || '(untitled)'}${occ.isNew ? html` <span class="bc-new-pill">new</span>` : ''}
-        </h2>
-        ${occ.containers && occ.containers.length > 0 && html`<button
-          type="button" class="bc-partof" title="Open this trip"
-          onClick=${() => openTripByEventId(occ.containers[0].eventId)}
-        ><span class="bc-partof-glyph" aria-hidden="true">🔗</span> Part of: ${occ.containers[0].title}</button>`}
-        <div class="bc-detail-calrow">
+        <div class="bc-detail-titlerow">
+          <h2 class="bc-detail-title${occ.status === 'cancelled' ? ' is-cancelled' : ''}">
+            ${occ.title || '(untitled)'}${occ.isNew ? html` <span class="bc-new-pill">new</span>` : ''}
+          </h2>
+          ${occ.containers && occ.containers.length > 0 && html`<button
+            type="button" class="bc-partof" title="Open this trip"
+            onClick=${() => openTripByEventId(occ.containers[0].eventId)}
+          ><span class="bc-partof-glyph" aria-hidden="true">🔗</span> Part of: ${occ.containers[0].title}</button>`}
+        </div>
+        <div class="bc-detail-when">
           <span class="bc-detail-calchip">
             <${CalDot} cal=${cal} color=${color} />
             ${(cal && cal.name) || 'Calendar'}
           </span>
-          ${occ.status === 'cancelled' && html`<span class="bc-badge">cancelled</span>`}
-        </div>
-        <div class="bc-detail-when">
           ${fmtRange(s, e, occ.allDay)}
           ${occ.recurring && html`<span class="bc-detail-recur">${describeRrule(occ.rrule)}</span>`}
           ${occ.reminders && occ.reminders.length > 0 && html`<span
             class="bc-bell" role="img" aria-label="Has reminders"
             title=${'Reminders: ' + occ.reminders.map(fmtReminder).join(', ')}
           >🔔</span>`}
+          ${occ.status === 'cancelled' && html`<span class="bc-badge">cancelled</span>`}
         </div>
         ${occ.location && html`<div class="bc-detail-section bc-detail-loc">
-          <div class="bc-detail-label">Location</div>
-          <div><${PinIcon} size=${12} />${occ.location}</div>
+          <div class="bc-detail-locline">
+            <${PinIcon} size=${12} />${occ.location}
+            <a
+              class="bc-maplink"
+              href=${gmapsUrl(occ.location, showMap ? geo.lat : occ.locationLat, showMap ? geo.lng : occ.locationLng)}
+              target="_blank" rel="noopener noreferrer" title="Open in Google Maps"
+            >Google Maps ↗</a>
+          </div>
           ${showMap && html`<${MiniMap} lat=${geo.lat} lng=${geo.lng} location=${occ.location} />`}
         </div>`}
         ${occ.description && html`<div class="bc-detail-section">
@@ -352,14 +354,11 @@ export function EventDetail() {
             ? html`<div class="bc-detail-desc bc-rich" dangerouslySetInnerHTML=${{ __html: sanitizeHtml(occ.description) }}></div>`
             : html`<div class="bc-detail-desc">${linkify(occ.description)}</div>`}
         </div>`}
-        ${occ.url && html`<div class="bc-detail-section">
-          <a href=${occ.url} target="_blank" rel="noopener noreferrer">Event link ↗</a>
-        </div>`}
-        ${((occ.tags && occ.tags.length > 0) || (occ.people && occ.people.length > 0)) && html`<div class="bc-detail-section bc-detail-labels">
-          ${occ.tags && occ.tags.length > 0 && html`<span class="bc-pop-tags">${occ.tags.map((t) => '#' + t).join(' ')}</span>`}
+        ${(occ.url || (occ.tags && occ.tags.length > 0) || (occ.people && occ.people.length > 0)) && html`<div class="bc-detail-section bc-detail-labels">
+          ${occ.url && html`<a href=${occ.url} target="_blank" rel="noopener noreferrer">Event link ↗</a>`}
           ${occ.people && occ.people.length > 0 && html`<span class="bc-detail-people">With ${occ.people.join(', ')}</span>`}
+          ${occ.tags && occ.tags.length > 0 && html`<span class="bc-pop-tags">${occ.tags.map((t) => '#' + t).join(' ')}</span>`}
         </div>`}
-        <${TripRow} occ=${occ} />
         ${isFeed && cal && html`<div class="bc-detail-section bc-detail-source">
           <div class="bc-detail-label">Source</div>
           ${cal.sourceUrl

@@ -763,7 +763,7 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-pop-title { font-size: 15px; margin: 0; font-weight: 700; cursor: text; }
 .bc-pop-title-input { font-size: 15px; font-weight: 700; width: 100%; }
 .bc-pop-when { color: var(--fg); cursor: text; }
-.bc-pop-where { color: var(--fg-muted); }
+.bc-pop-where { color: var(--fg-muted); display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
 .bc-pop-cal { display: flex; align-items: center; gap: 6px; color: var(--fg-muted); font-size: 12.5px; }
 .bc-pop-tags { color: var(--accent); }
 .bc-pop-desc { color: var(--fg-muted); font-size: 12.5px; max-height: 90px; overflow-y: auto; white-space: pre-wrap; }
@@ -855,9 +855,10 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-detail-chev:disabled:hover { background: none; color: var(--fg-muted); }
 .bc-detail-count { color: var(--fg-muted); font-size: 12px; margin-left: 6px; }
 .bc-detail-body {
-  padding: 12px 16px 16px; overflow-y: auto; overscroll-behavior: contain;
-  display: flex; flex-direction: column; gap: 9px;
+  padding: 10px 16px 14px; overflow-y: auto; overscroll-behavior: contain;
+  display: flex; flex-direction: column; gap: 7px;
 }
+.bc-detail-titlerow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .bc-detail-title { margin: 0; font-size: 19px; line-height: 1.25; }
 .bc-detail-title.is-cancelled { text-decoration: line-through; opacity: 0.75; }
 .bc-detail-calrow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -867,7 +868,10 @@ body.bc-dragging * { cursor: grabbing !important; }
   background: var(--bg-inset); padding: 1px 9px;
   font-size: 12px; color: var(--fg-muted);
 }
-.bc-detail-when { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; font-size: 14px; }
+.bc-detail-when { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 14px; }
+.bc-detail-locline { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.bc-maplink { font-size: 12px; color: var(--accent); text-decoration: none; white-space: nowrap; }
+.bc-maplink:hover { text-decoration: underline; }
 .bc-detail-recur { color: var(--fg-muted); font-size: 12.5px; }
 .bc-detail-section { display: flex; flex-direction: column; gap: 3px; }
 .bc-detail-label {
@@ -901,7 +905,6 @@ body.bc-dragging * { cursor: grabbing !important; }
   font-size: 10.5px; padding: 2px 7px; opacity: 0; transition: opacity 0.12s ease;
 }
 .bc-map-wrap:hover .bc-map-cover span, .bc-map-cover:focus-visible span { opacity: 1; }
-.bc-map-osm { display: inline-block; margin-top: 4px; font-size: 12px; color: var(--accent); }
 
 /* Full-screen sheet on mobile. */
 @media (max-width: 640px) {
@@ -968,7 +971,9 @@ body.bc-dragging * { cursor: grabbing !important; }
   background: var(--bg-inset); border: 1px solid var(--border);
   border-radius: var(--radius); padding: 8px 10px 7px;
 }
-.bc-nl-input { width: 100%; }
+.bc-nl-row { display: flex; align-items: center; gap: 6px; }
+.bc-nl-input { flex: 1; min-width: 0; }
+.bc-nl-go { flex: none; }
 .bc-nl-hint { color: var(--fg-muted); font-size: 11px; }
 /* NL assist just filled these fields: brief accent wash on the control. */
 .bc-nl-applied input, .bc-nl-applied select { animation: bc-nl-flash 0.9s ease; }
@@ -1810,8 +1815,14 @@ body.bc-rescheduling { user-select: none; }
 
 /* Event-side "Trip" row: current trip or None, overlap candidates, plus the
    "Other trip" title search over loaded containers. */
+.bc-trip-fieldset {
+  border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 8px 10px; display: flex; flex-direction: column; gap: 8px;
+}
+.bc-trip-fieldset legend { font-size: 11.5px; font-weight: 600; color: var(--fg-muted); padding: 0 4px; }
 .bc-trip-rowsect { min-width: 0; }
 .bc-trip-rowline { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.bc-trip-rowlabel { color: var(--fg-muted); font-size: 12.5px; }
 .bc-trip-select { max-width: 240px; }
 .bc-trip-search { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
 .bc-trip-search-list {

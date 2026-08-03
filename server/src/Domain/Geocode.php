@@ -33,10 +33,35 @@ final class Geocode
         return mb_substr(trim($collapsed ?? $q), 0, self::MAX_QUERY_LENGTH);
     }
 
-    /** Cache key: sha256 over the lowercased normalized query. */
-    public static function queryHash(string $q): string
+    /**
+     * Cache key: sha256 over the lowercased normalized query plus the coarse
+     * bias cell. Bias participates because the same text resolves differently
+     * per region ("SFO" is an airport here, an after-school program in
+     * Denmark); integer-degree cells (~100 km) keep travel from thrashing the
+     * cache while still separating regions.
+     */
+    public static function queryHash(string $q, ?float $biasLat = null, ?float $biasLng = null): string
     {
-        return hash('sha256', mb_strtolower(self::normalize($q)));
+        return hash('sha256', mb_strtolower(self::normalize($q)) . '|' . self::biasCell($biasLat, $biasLng));
+    }
+
+    /** "38,-123"-style integer-degree cell, or "none" without a bias. */
+    public static function biasCell(?float $biasLat, ?float $biasLng): string
+    {
+        if ($biasLat === null || $biasLng === null) {
+            return 'none';
+        }
+        return (string) (int) round($biasLat) . ',' . (string) (int) round($biasLng);
+    }
+
+    /**
+     * A location that is exactly three uppercase ASCII letters is treated as
+     * an IATA airport code ("SFO", "KOA"): overwhelmingly the right reading
+     * in a calendar, and the uppercase requirement keeps ordinary words out.
+     */
+    public static function isAirportCode(string $q): bool
+    {
+        return preg_match('/^[A-Z]{3}$/', self::normalize($q)) === 1;
     }
 
     /**
@@ -90,27 +115,71 @@ final class Geocode
 
     // ---- Lookup --------------------------------------------------------
 
-    /** @return array{lat: float|null, lng: float|null, display: string|null} */
-    public function lookup(string $q): array
+    /**
+     * Single best result with the same regional bias as the place picker:
+     * airport codes resolve against aerodromes globally (text relevance, no
+     * bias — the right airport is rarely the nearest one), everything else
+     * fetches a small candidate set with Photon's location bias and re-ranks
+     * by PlaceSearch's order-plus-distance blend before taking the top hit.
+     *
+     * @return array{lat: float|null, lng: float|null, display: string|null}
+     */
+    public function lookup(string $q, ?float $biasLat = null, ?float $biasLng = null): array
     {
         $normalized = self::normalize($q);
         if ($normalized === '') {
             throw HttpError::badRequest('q is required');
         }
-        $hash = self::queryHash($normalized);
+        $airport = self::isAirportCode($normalized);
+        $hash = self::queryHash($normalized, $biasLat, $biasLng);
 
         $row = $this->db->one('SELECT lat, lng, display FROM geocode_cache WHERE query_hash = ?', [$hash]);
         if ($row !== null) {
             return self::resultFromRow($row);
         }
 
-        $body = $this->fetch($normalized);
+        if ($airport) {
+            $params = ['q' => $normalized, 'limit' => 3, 'osm_tag' => 'aeroway:aerodrome'];
+        } else {
+            $params = ['q' => $normalized, 'limit' => 5];
+            if ($biasLat !== null && $biasLng !== null) {
+                $params['lat'] = $biasLat;
+                $params['lon'] = $biasLng;
+            }
+        }
+        $body = $this->fetch($params);
         if ($body === null) {
             // Transport failure: answer not-found, cache nothing.
             return ['lat' => null, 'lng' => null, 'display' => null];
         }
-
-        $mapped = self::mapResponse(json_decode($body, true));
+        $mapped = $airport ? self::mapResponse(json_decode($body, true)) : null;
+        if ($airport && $mapped === null) {
+            // Not actually an airport (no aerodrome matched): plain biased query.
+            $airport = false;
+            $params = ['q' => $normalized, 'limit' => 5];
+            if ($biasLat !== null && $biasLng !== null) {
+                $params['lat'] = $biasLat;
+                $params['lon'] = $biasLng;
+            }
+            $body = $this->fetch($params);
+            if ($body === null) {
+                return ['lat' => null, 'lng' => null, 'display' => null];
+            }
+        }
+        if (!$airport) {
+            $decoded = json_decode($body, true);
+            if ($biasLat !== null && $biasLng !== null) {
+                $ranked = PlaceSearch::rank(PlaceSearch::mapFeatures($decoded, $biasLat, $biasLng));
+                $top = $ranked[0] ?? null;
+                $mapped = $top === null ? null : [
+                    'lat' => (float) $top['lat'],
+                    'lng' => (float) $top['lng'],
+                    'display' => (string) $top['display'],
+                ];
+            } else {
+                $mapped = self::mapResponse($decoded);
+            }
+        }
         $this->db->run(
             'INSERT INTO geocode_cache (query_hash, query, lat, lng, display) VALUES (?, ?, ?, ?, ?)
              ON DUPLICATE KEY UPDATE query_hash = query_hash',
@@ -127,9 +196,9 @@ final class Geocode
     }
 
     /** Raw provider fetch; null on any transport-level failure. */
-    private function fetch(string $q): ?string
+    private function fetch(array $params): ?string
     {
-        $url = self::ENDPOINT . '?' . http_build_query(['q' => $q, 'limit' => 1]);
+        $url = self::ENDPOINT . '?' . http_build_query($params);
         $ch = curl_init($url);
         if ($ch === false) {
             return null;

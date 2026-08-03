@@ -246,6 +246,21 @@ final class PlaceSearch
         if ($biasLat !== null && $biasLng !== null) {
             $candidates = self::rank($candidates);
         }
+        // Airport codes: pin matching aerodromes above everything, unranked —
+        // bias must not bury SFO under a same-named street nearby, and in
+        // Denmark "SFO" is an after-school program, which is never the intent
+        // of an all-caps three-letter location. Text relevance only.
+        if (Geocode::isAirportCode($q)) {
+            $airBody = $this->fetch(['q' => $q, 'limit' => 2, 'osm_tag' => 'aeroway:aerodrome']);
+            if ($airBody !== null) {
+                $airports = self::mapFeatures(json_decode($airBody, true), $biasLat, $biasLng);
+                $keys = array_map(static fn(array $a): string => mb_strtolower($a['name'] . '|' . $a['address']), $airports);
+                $candidates = array_merge($airports, array_values(array_filter(
+                    $candidates,
+                    static fn(array $c): bool => !in_array(mb_strtolower($c['name'] . '|' . $c['address']), $keys, true)
+                )));
+            }
+        }
         return array_slice($candidates, 0, $limit);
     }
 

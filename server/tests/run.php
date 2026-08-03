@@ -700,6 +700,17 @@ checkEq('geo hash whitespace-insensitive', Geocode::queryHash('Zuni  Cafe'), Geo
 checkEq('geo hash case-insensitive', Geocode::queryHash('ZUNI CAFE'), Geocode::queryHash('zuni cafe'));
 check('geo hash differs for different queries', Geocode::queryHash('Zuni Cafe') !== Geocode::queryHash('Tartine'));
 check('geo hash is 64 hex chars', preg_match('/^[0-9a-f]{64}$/', Geocode::queryHash('anything')) === 1);
+check('geo hash differs across bias regions', Geocode::queryHash('SFO', 37.77, -122.42) !== Geocode::queryHash('SFO', 55.68, 12.57));
+checkEq('geo hash stable within a bias cell', Geocode::queryHash('SFO', 37.61, -122.38), Geocode::queryHash('SFO', 37.77, -122.42));
+check('geo hash unbiased differs from biased', Geocode::queryHash('SFO') !== Geocode::queryHash('SFO', 37.77, -122.42));
+checkEq('geo bias cell rounds to integer degrees', '38,-122', Geocode::biasCell(37.77, -122.42));
+checkEq('geo bias cell none without bias', 'none', Geocode::biasCell(null, null));
+check('geo airport code: SFO', Geocode::isAirportCode('SFO'));
+check('geo airport code: trims whitespace', Geocode::isAirportCode(' KOA '));
+check('geo airport code: lowercase is not one', !Geocode::isAirportCode('sfo'));
+check('geo airport code: mixed case is not one', !Geocode::isAirportCode('Gym'));
+check('geo airport code: longer text is not one', !Geocode::isAirportCode('SFO Airport'));
+check('geo airport code: digits are not one', !Geocode::isAirportCode('SF1'));
 
 $photon = ['features' => [[
     'geometry' => ['coordinates' => [-122.4216, 37.7739]],

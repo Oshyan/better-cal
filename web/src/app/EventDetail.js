@@ -147,6 +147,10 @@ function MiniMap({ lat, lng, location }) {
       } else {
         L.tileLayer('https://tiles.stadiamaps.com/tiles/outdoors/{z}/{x}/{y}{r}.png', {
           maxZoom: 19,
+          // Stadia authorizes by request domain; the site's Referrer-Policy
+          // (same-origin) would strip it from cross-origin tile requests and
+          // every tile would 401, so tiles opt into sending the origin.
+          referrerPolicy: 'origin',
           attribution: '© <a href="https://stadiamaps.com/">Stadia Maps</a> © <a href="https://openmaptiles.org/">OpenMapTiles</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
         }).addTo(map);
       }
@@ -184,15 +188,16 @@ function MiniMap({ lat, lng, location }) {
     setInteractive(true);
   };
 
-  // Google Maps directions link: coordinates are unambiguous as destination,
-  // and the dir endpoint drops mobile users straight into navigation.
-  const gmapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
+  // Google Maps place view (not directions): viewing the spot is the base
+  // case and directions are one tap from there; landing in directions mode
+  // costs extra taps to unwind when you only wanted to look.
+  const gmapsUrl = `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
   return html`<div class="bc-map-wrap">
     <div class="bc-map" ref=${elRef}></div>
     ${!interactive && html`<button type="button" class="bc-map-cover" onClick=${enable}>
       <span>Click to zoom and pan</span>
     </button>`}
-    <a class="bc-map-osm" href=${gmapsUrl} target="_blank" rel="noopener noreferrer">Directions in Google Maps ↗</a>
+    <a class="bc-map-osm" href=${gmapsUrl} target="_blank" rel="noopener noreferrer">Open in Google Maps ↗</a>
   </div>`;
 }
 
@@ -228,7 +233,18 @@ export function EventDetail() {
     if (!location || !location.trim()) { setGeo(null); return undefined; }
     let alive = true;
     setGeo({ status: 'loading' });
-    api('/geocode?' + new URLSearchParams({ q: location.trim() }))
+    // Same bias precedence as the place picker (home location, else event
+    // timezone) so "Main Street" — or "SFO" — resolves in the right region.
+    const params = new URLSearchParams({ q: location.trim() });
+    const s = state.settings || {};
+    if (s.homeLat != null && s.homeLng != null) {
+      params.set('lat', String(s.homeLat));
+      params.set('lng', String(s.homeLng));
+    } else {
+      const tz = occ.tzid || Intl.DateTimeFormat().resolvedOptions().timeZone;
+      if (tz) params.set('tz', tz);
+    }
+    api('/geocode?' + params)
       .then((res) => {
         if (!alive) return;
         if (res && res.lat != null && res.lng != null) {

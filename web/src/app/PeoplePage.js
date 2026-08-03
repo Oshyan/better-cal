@@ -79,7 +79,16 @@ export function PeoplePage() {
   const [confirmId, setConfirmId] = useState(null);
 
   const reload = () => api('/people')
-    .then((d) => setPeople((d && d.people) || []))
+    .then((d) => {
+      const list = (d && d.people) || [];
+      setPeople(list);
+      // Arrived via a person link (popover/detail): expand that person once.
+      if (state.peopleFocus) {
+        const target = list.find((p) => p.name.toLowerCase() === String(state.peopleFocus).toLowerCase());
+        if (target) setOpenId(target.id);
+        set({ peopleFocus: null });
+      }
+    })
     .catch(() => setPeople([]));
 
   useEffect(() => { reload(); }, []);

@@ -356,7 +356,12 @@ export function EventDetail() {
         </div>`}
         ${(occ.url || (occ.tags && occ.tags.length > 0) || (occ.people && occ.people.length > 0)) && html`<div class="bc-detail-section bc-detail-labels">
           ${occ.url && html`<a href=${occ.url} target="_blank" rel="noopener noreferrer">Event link ↗</a>`}
-          ${occ.people && occ.people.length > 0 && html`<span class="bc-detail-people">With ${occ.people.join(', ')}</span>`}
+          ${occ.people && occ.people.length > 0 && html`<span class="bc-detail-people">
+            With ${occ.people.map((n, i) => html`<span key=${n}>${i > 0 && ', '}<button
+              type="button" class="bc-person-link" title=${'Open ' + n + ' in People'}
+              onClick=${() => set({ detail: null, route: 'people', peopleFocus: n })}
+            >${n}</button></span>`)}
+          </span>`}
           ${occ.tags && occ.tags.length > 0 && html`<span class="bc-pop-tags">${occ.tags.map((t) => '#' + t).join(' ')}</span>`}
         </div>`}
         ${isFeed && cal && html`<div class="bc-detail-section bc-detail-source">

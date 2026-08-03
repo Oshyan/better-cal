@@ -943,9 +943,9 @@ const endDayMix = buildAgendaGroups([railTrip, {
 eq('end day: marker sorts last',
   endDayMix[endDayMix.length - 1].rows.map((r) => r.kind + ':' + r.occ.instanceId),
   ['normal:rx1', 'end:rt1']);
-// Start row center 40+18 = 58; end group top 76, end row is index 1, its
-// center 76+40+36+18 = 170; height 170-58 = 112.
-eq('end day: rail reaches below the day events', railRanges(endDayMix)[0].heightPx, 112);
+// Start pill top 40+8 = 48; end group top 76, end row is index 1, its pill
+// bottom 76+40+36+28 = 180; height 180-48 = 132.
+eq('end day: rail reaches below the day events', railRanges(endDayMix)[0].heightPx, 132);
 
 // Hidden occurrences never produce rows or synthesized groups.
 assert('hidden multi-day excluded', !railGroups.some((g) => g.rows.some((r) => r.occ.instanceId === 'rh1')));
@@ -960,9 +960,9 @@ eq('two-day start/end split',
   twoDay.map((g) => g.rows.map((r) => r.kind).join(',')),
   ['start', 'end']);
 // Adjacent boundary days still yield a positive-height connected bar: start
-// row center 0+40+18 = 58 down to end row center 76+40+18 = 134.
+// pill top 0+40+8 = 48 down to end pill bottom 76+40+28 = 144.
 eq('two-day rail spans row centers',
-  railRanges(twoDay).map((r) => [r.topPx, r.heightPx]), [[58, 76]]);
+  railRanges(twoDay).map((r) => [r.topPx, r.heightPx]), [[48, 96]]);
 
 // Single-day events never produce end markers.
 assert('single-day has no markers',
@@ -982,9 +982,9 @@ const railsOut = railRanges(railGroups, { colorOf: (o) => (o.calendarId === 'c1'
 eq('rail count', railsOut.length, 2);
 const tripRail = railsOut.find((r) => r.instanceId === 'rt1');
 const timedRail = railsOut.find((r) => r.instanceId === 'rm1');
-eq('trip rail top', tripRail.topPx, 58); // group 0 top 0 + headH 40 + half a row (center of the start pill's row)
-eq('trip rail height', tripRail.heightPx, 300); // to 358, center of the Jun 4 end row (300+40+18)
-eq('timed rail span', [timedRail.topPx, timedRail.heightPx], [170, 112]); // center of Jun 2 row 1 (76+40+36+18) to center of the Jun 3 end row (224+40+18)
+eq('trip rail top', tripRail.topPx, 48); // group 0 top 0 + headH 40 + pill inset 8 (top of the start pill)
+eq('trip rail height', tripRail.heightPx, 320); // to 368, bottom of the Jun 4 end pill (300+40+28)
+eq('timed rail span', [timedRail.topPx, timedRail.heightPx], [160, 132]); // top of the Jun 2 row-1 pill (76+40+36+8) to bottom of the Jun 3 end pill (224+40+28)
 eq('overlapping rails get distinct lanes', [tripRail.lane, timedRail.lane], [0, 1]);
 assert('rail is-trip flag', tripRail.isTrip === true && timedRail.isTrip === false);
 eq('rail colors', [tripRail.color, timedRail.color], ['#a00', '#0a0']);

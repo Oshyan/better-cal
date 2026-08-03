@@ -322,6 +322,22 @@ checkEq('fp leftover temporal words demote completeness', false, $d['complete'])
 check('fp leftover temporal words cap confidence', $d['confidence'] <= 0.5);
 
 // ---------------------------------------------------------------------------
+// People::normalizeName (pure)
+// ---------------------------------------------------------------------------
+
+use BetterCal\Domain\People;
+
+checkEq('people name trims + collapses whitespace', 'Virginia Miller', People::normalizeName("  Virginia \n Miller  "));
+checkEq('people name caps length', People::MAX_NAME, mb_strlen(People::normalizeName(str_repeat('a', 300))));
+$threw = false;
+try {
+    People::normalizeName('   ');
+} catch (\BetterCal\Http\HttpError) {
+    $threw = true;
+}
+check('people empty name throws', $threw);
+
+// ---------------------------------------------------------------------------
 // QuickAdd::useLlm — nlParseMode gating (pure, no DB, no LLM)
 // ---------------------------------------------------------------------------
 

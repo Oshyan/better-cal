@@ -191,6 +191,7 @@ function AddMenu() {
 const MANAGE_ITEMS = [
   ['settings', 'Settings'],
   ['organize', 'Calendars & folders'],
+  ['people', 'People'],
   ['outfeeds', 'Outbound feeds'],
   ['filters', 'Filters'],
   ['views', 'Saved views'],

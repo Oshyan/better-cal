@@ -59,7 +59,11 @@ A trip (docs/design-containers.md) is a normal event with `isContainer:true` tha
 - CalDAV/ICS export: a trip VEVENT carries one `RELATED-TO;RELTYPE=CHILD:<member-uid>` line per member, and each member VEVENT carries `RELATED-TO;RELTYPE=PARENT:<trip-uid>` (RFC 5545; survives round-trips with clients that preserve the property, degrades harmlessly elsewhere). Outbound `/feed/{token}.ics` gets the same treatment. ICS/feed **import ignores `RELATED-TO`** for now: trip membership is created only through this API, never from inbound calendar data.
 
 ## Search
-- `GET /search?q=text&limit=50` → `{results:[occurrence...]}` (FULLTEXT, past included, ranked, newest window first).
+- `GET /search?q=text&limit=50` → `{results:[occurrence...]}` (FULLTEXT, past included, ranked, newest window first). Tag names and people names match too; `#term` searches tags only, `@term` searches people only.
+- `GET /people` → `{people:[{id, name, notes, eventCount, nextStart}]}` — everyone linked to events (alphabetical; `eventCount` counts undeleted events, `nextStart` is the soonest future start in UTC ISO or null). People rows are created implicitly by `personNames` on event create/patch and quick-add "with X" clauses; there is no explicit create.
+- `PATCH /people/:id` `{name?, notes?}` → `{id, name, notes}`. Renaming onto an existing person's name MERGES the two (links move to the survivor, the renamed row is deleted, the survivor is returned).
+- `DELETE /people/:id` → `{ok:true}` — removes the person and their event links; events are untouched.
+- `GET /people/:id/events` → `{results:[occurrence...]}` — that person's events (undeleted, newest first, limit 200), same shape as `/search` results.
   Tag names match too (case-insensitive substring over the user's tags, joined via `event_tags`): tag-matched events are included after text-relevance matches. A `q` equal to or prefixed with `#` (e.g. `#work`) searches tags only and returns tag-matched events newest first.
 
 ## Geocode

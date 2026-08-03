@@ -34,6 +34,7 @@ import { OutfeedsPage } from './OutfeedsPage.js';
 import { FiltersPage } from './FiltersPage.js';
 import { SavedViewsPage } from './SavedViewsPage.js';
 import { SettingsPage } from './SettingsPage.js';
+import { PeoplePage } from './PeoplePage.js';
 import { OrganizePage } from './OrganizePage.js';
 
 const MONTH_ROWS = { month: 6, weeks3: 3, weeks2: 2 };
@@ -254,6 +255,9 @@ export function App() {
   }
   if (s.route === 'settings') {
     return html`<div class="bc-app"><${SettingsPage} /><${ShortcutsSheet} /><${Toasts} /></div>`;
+  }
+  if (s.route === 'people') {
+    return html`<div class="bc-app"><${PeoplePage} /><${ShortcutsSheet} /><${Toasts} /></div>`;
   }
 
   let view = null;

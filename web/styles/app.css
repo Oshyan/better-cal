@@ -1846,3 +1846,65 @@ body.bc-rescheduling { user-select: none; }
 /* Action toasts (span growth prompt): Extend keeps the undo-button look;
    Keep is the quieter dismiss. */
 .bc-toast-keep { text-decoration: none; opacity: 0.8; font-weight: 600; }
+
+/* --- people (directory + editor chip input; append-only section) ------------ */
+
+/* Editor chip input: chips and the entry input share one bordered "field". */
+.bc-peoplein {
+  display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--bg); padding: 3px 6px; min-height: 30px;
+}
+.bc-peoplein:focus-within { border-color: var(--accent); }
+.bc-peoplein-chip {
+  display: inline-flex; align-items: center; gap: 3px;
+  background: var(--bg-inset); border: 1px solid var(--border);
+  border-radius: 11px; padding: 0 4px 0 8px; font-size: 12px; line-height: 19px;
+}
+.bc-peoplein-x {
+  background: none; border: none; padding: 0 3px; font-size: 10px;
+  color: var(--fg-muted); cursor: pointer; border-radius: 50%;
+}
+.bc-peoplein-x:hover { color: var(--fg); }
+.bc-peoplein-entry { position: relative; flex: 1; min-width: 90px; }
+.bc-peoplein-entry input {
+  border: none; outline: none; background: none; width: 100%;
+  padding: 2px 0; font-size: 13px; color: var(--fg);
+}
+.bc-peoplein-drop {
+  position: absolute; left: 0; top: calc(100% + 4px); z-index: 40;
+  min-width: 180px; background: var(--bg); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.bc-peoplein-opt {
+  background: none; border: none; text-align: left; padding: 6px 10px;
+  font-size: 13px; color: var(--fg); cursor: pointer;
+}
+.bc-peoplein-opt.is-active { background: var(--bg-inset); }
+
+/* Popover "With ..." line. */
+.bc-pop-people { color: var(--fg-muted); font-size: 12.5px; }
+
+/* People page cards: header row, notes preview/edit, per-person event list. */
+.bc-person-card { flex-direction: column; align-items: stretch; gap: 8px; }
+.bc-person-head { display: flex; align-items: flex-start; gap: 10px; justify-content: space-between; flex-wrap: wrap; }
+.bc-person-notes {
+  color: var(--fg-muted); font-size: 12.5px; white-space: pre-wrap;
+  max-height: 54px; overflow: hidden;
+}
+.bc-person-notesedit { display: flex; flex-direction: column; gap: 6px; }
+.bc-person-notesedit textarea { resize: vertical; min-height: 60px; }
+.bc-person-events { border-top: 1px solid var(--border); padding-top: 6px; display: flex; flex-direction: column; gap: 4px; }
+.bc-person-group-label {
+  font-size: 10.5px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.4px; color: var(--fg-muted); margin: 4px 0 2px;
+}
+.bc-person-eventrow {
+  display: flex; align-items: center; gap: 7px; width: 100%;
+  background: none; border: none; text-align: left; padding: 3px 4px;
+  border-radius: 5px; font-size: 13px; color: var(--fg); cursor: pointer;
+}
+.bc-person-eventrow:hover { background: var(--bg-inset); }
+.bc-person-when { color: var(--fg-muted); font-size: 12px; flex: none; min-width: 130px; }
+.bc-person-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

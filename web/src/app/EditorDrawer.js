@@ -11,6 +11,7 @@ import { createEvent, updateEvent, deleteEvent, quickAddParse, attachToTrip } fr
 import { TripRow } from './Trips.js';
 import { trapFocus } from '../ui/DayExpand.js';
 import { PlaceInput, pickFillText } from './PlaceInput.js';
+import { PeopleInput } from './PeopleInput.js';
 import { RichText } from './RichText.js';
 import { isEmptyHtml } from '../lib/richtext.js';
 import {
@@ -95,6 +96,10 @@ export function EditorDrawer() {
         nf.locationLng = null;
         touched.push('location');
       }
+      if (d.personNames && d.personNames.length) {
+        nf.people = d.personNames;
+        touched.push('people');
+      }
       return nf;
     });
     if (touched.length) {
@@ -159,6 +164,7 @@ export function EditorDrawer() {
       url: occ ? (occ.url || '') : '',
       description: occ ? (occ.description || '') : '',
       tags: occ && occ.tags ? occ.tags.join(', ') : '',
+      people: occ ? (occ.people || []) : (draft.personNames || []),
       rrule: parseRrule(occ && occ.recurring ? (occ.rrule || editor.rrule || '') : ''),
       // null = inherit calendar/global defaults; a list = explicit override
       // (minutes before start; [] = no reminders). remInitial detects changes.
@@ -239,6 +245,7 @@ export function EditorDrawer() {
       url: form.url || null,
       description: isEmptyHtml(form.description) ? null : form.description,
       tagNames: form.tags.split(',').map((t) => t.trim()).filter(Boolean),
+      personNames: form.people,
       rrule: buildRrule(form.rrule),
     };
     // Only send reminders when the override actually changed, so unrelated
@@ -378,10 +385,20 @@ export function EditorDrawer() {
         />
       </div>
 
-      <label class="bc-field">
-        <span>Tags (comma separated)</span>
-        <input value=${form.tags} onInput=${(e) => upd({ tags: e.target.value })} />
-      </label>
+      <div class="bc-field-row">
+        <div class=${'bc-field grow' + (nlFlash && nlFlash.has('people') ? ' bc-nl-applied' : '')}>
+          <span>People</span>
+          <${PeopleInput}
+            value=${form.people}
+            ariaLabel="People at this event"
+            onChange=${(list) => upd({ people: list })}
+          />
+        </div>
+        <label class="bc-field grow">
+          <span>Tags (comma separated)</span>
+          <input value=${form.tags} onInput=${(e) => upd({ tags: e.target.value })} />
+        </label>
+      </div>
 
       <fieldset class="bc-trip-fieldset">
         <legend>Trip</legend>

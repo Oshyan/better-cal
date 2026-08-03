@@ -10,7 +10,7 @@ import { api } from './api.js';
 import { deleteEvent, triageAttendance, sendFeedback, enterReschedule, sameDayList, openTripByEventId } from './actions.js';
 import { TripDetail, TripRow } from './Trips.js';
 import { trapFocus } from '../ui/DayExpand.js';
-import { ThumbIcon, CalDot } from '../ui/icons.js';
+import { ThumbIcon, CalDot, PinIcon } from '../ui/icons.js';
 import {
   parseISO, dateOfDayKey, fmtRange, fmtDateFull, fmtTime,
 } from '../lib/dates.js';
@@ -323,7 +323,7 @@ export function EventDetail() {
         </div>
         ${occ.location && html`<div class="bc-detail-section bc-detail-loc">
           <div class="bc-detail-label">Location</div>
-          <div>${occ.location}</div>
+          <div><${PinIcon} size=${12} />${occ.location}</div>
           ${showMap && html`<${MiniMap} lat=${geo.lat} lng=${geo.lng} location=${occ.location} />`}
         </div>`}
         ${occ.description && html`<div class="bc-detail-section">

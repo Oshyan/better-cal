@@ -5,10 +5,11 @@
 //
 // Multi-day treatment (rail concept): buildAgendaGroups synthesizes groups
 // for every multi-day occurrence's start and end day, railRanges yields one
-// continuous colored bar per span sitting just left of the time/date text
-// column, connecting the start row's pill to the end row's pill (overlapping
-// spans shift further left by lane), and covered day headers gain quiet
-// colored title suffixes. All the math lives in agendarails.js; this file
+// continuous colored bar per span running from the start row's center to the
+// end row's center, with its right edge tucked 2px under the flush-left
+// boundary pills so bar and pills physically connect (overlapping spans
+// shift further left by lane and give up pill contact), and covered day
+// headers gain quiet colored title suffixes. All the math lives in agendarails.js; this file
 // only renders it. Match-sort flat mode keeps the historical
 // single-row-per-occurrence behavior (no rails, no markers).
 
@@ -18,7 +19,7 @@ import {
   timeState,
 } from '../lib/dates.js';
 import { EventChip } from './EventChip.js';
-import { ThumbIcon, TripBadge } from './icons.js';
+import { ThumbIcon, TripBadge, PinIcon } from './icons.js';
 import {
   buildAgendaGroups, railRanges, headerSuffixes, dayOfSpanLabel,
   AGENDA_ROW_H as ROW_H, AGENDA_HEAD_H as HEAD_H,
@@ -142,7 +143,7 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
         return html`<div
           key=${'rail:' + r.instanceId}
           class="bc-agenda-rail${r.isTrip ? ' is-trip' : ''}"
-          style=${`top:${r.topPx}px;height:${r.heightPx}px;left:${-11 - r.lane * 6}px`}
+          style=${`top:${r.topPx}px;height:${r.heightPx}px;left:${-7 - r.lane * 6}px`}
           aria-hidden="true" title=${r.title}
           onClick=${openDetail(r.instanceId)}
         ><span class="bc-agenda-rail-line" style=${`background:${r.color}`}></span></div>`;
@@ -206,7 +207,7 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
             ${(start || end) && !flat && html`<span class="bc-agenda-dayn">${dayOfSpanLabel(occ, g.dayKey)}</span>`}
             ${trip && html`<${TripBadge} />`}
             ${!end && occ.source === 'feed' && onSetAttendance && html`<${TriageCluster} occ=${occ} onSetAttendance=${onSetAttendance} onFeedback=${onFeedback} />`}
-            ${!end && occ.location && html`<span class="bc-agenda-loc">${occ.location}</span>`}
+            ${!end && occ.location && html`<span class="bc-agenda-loc"><${PinIcon} size=${11} />${occ.location}</span>`}
           </div>`;
           })}
         </section>`;

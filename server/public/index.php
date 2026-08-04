@@ -136,6 +136,18 @@ function bc_handle_api(Request $request, array $cfg): void
 
         $router->add('GET', "$base/search", [$searchController, 'search']);
 
+        // Change cursor: an opaque string that changes whenever the user's
+        // events (via calendar synctokens — bumped by API, CalDAV, feed
+        // polls, and mail ingest), availability spans, or people change.
+        // Clients poll it cheaply and refetch only when it moves.
+        $router->add('GET', "$base/changes/cursor", function (Request $req) use ($db): Response {
+            $userId = (int) $req->user['id'];
+            $cal = $db->one('SELECT COALESCE(SUM(synctoken), 0) AS s, COUNT(*) AS c FROM calendars WHERE user_id = ?', [$userId]);
+            $av = $db->one('SELECT COUNT(*) AS c, COALESCE(MAX(a.id), 0) AS m FROM availability a JOIN people p ON p.id = a.person_id WHERE p.user_id = ?', [$userId]);
+            $people = $db->scalar('SELECT COUNT(*) FROM people WHERE user_id = ?', [$userId]);
+            return Response::json(['cursor' => $cal['s'] . ':' . $cal['c'] . ':' . $av['c'] . ':' . $av['m'] . ':' . $people]);
+        });
+
         $router->add('GET', "$base/people", [$peopleController, 'index']);
         $router->add('POST', "$base/people", [$peopleController, 'create']);
         $router->add('PATCH', "$base/people/:id", [$peopleController, 'patch']);

@@ -2,7 +2,7 @@
 
 import { html, useState, useMemo, useRef, useEffect, useCallback } from '../../vendor/index.js';
 import { useStore, set, state, calendarMeta, shallowEq } from './store.js';
-import { loadWindow, api } from './api.js';
+import { loadWindow, api, refreshWindow, loadPeople } from './api.js';
 import {
   moveEvent, resizeEvent, triageAttendance, sendFeedback, exitReschedule,
   jumpToDate, openDetail, effectiveOverviewMode,
@@ -85,6 +85,47 @@ export function App() {
     };
     const t = setInterval(tick, 15000);
     return () => clearInterval(t);
+  }, []);
+
+  // Auto-refresh: the server changes underneath us (mail ingest, feed polls,
+  // CalDAV edits from other devices, agent API). Poll the cheap change
+  // cursor every 30s while visible, and immediately on focus / visibility /
+  // network return; when it moves, silently refetch the window plus
+  // people/availability. Own mutations also move the cursor — the redundant
+  // refresh merges harmlessly.
+  useEffect(() => {
+    let cursor = null;
+    let stopped = false;
+    let inFlight = false;
+    const check = async () => {
+      if (stopped || inFlight || document.visibilityState !== 'visible') return;
+      inFlight = true;
+      try {
+        const d = await api('/changes/cursor');
+        if (!stopped && d && d.cursor) {
+          if (cursor !== null && d.cursor !== cursor) {
+            refreshWindow();
+            loadPeople().catch(() => {});
+            set({ availSeq: state.availSeq + 1 });
+          }
+          cursor = d.cursor;
+        }
+      } catch { /* transient network problems just delay freshness */ }
+      inFlight = false;
+    };
+    const timer = setInterval(check, 30000);
+    const onWake = () => { if (document.visibilityState === 'visible') check(); };
+    window.addEventListener('focus', onWake);
+    window.addEventListener('online', onWake);
+    document.addEventListener('visibilitychange', onWake);
+    check(); // establish the baseline cursor
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+      window.removeEventListener('focus', onWake);
+      window.removeEventListener('online', onWake);
+      document.removeEventListener('visibilitychange', onWake);
+    };
   }, []);
 
   // Track the responsive roster inputs in the store so the toolbar, keyboard

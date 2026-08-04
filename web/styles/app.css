@@ -2033,3 +2033,9 @@ body.bc-rescheduling { user-select: none; }
   cursor: pointer; padding: 0;
 }
 .bc-colorswatch.is-on { border-color: var(--fg); }
+
+/* Visibility ModeMenu (sidebar): the mode button keeps its compact size; the
+   menu reuses the overview dropdown chrome. */
+.bc-modemenu { flex: none; }
+.bc-modemenu .bc-ov-menu { right: 0; left: auto; min-width: 110px; }
+.bc-ov-item:disabled { opacity: 0.45; cursor: default; }

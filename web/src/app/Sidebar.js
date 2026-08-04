@@ -83,35 +83,67 @@ function CalendarRow({ cal, folders, open, onGear, soloed, onSolo }) {
   </div>`;
 }
 
-// Folder visibility mode: compact cycle button, All -> None -> Custom.
-const MODE_ORDER = ['all', 'none', 'custom'];
+// Visibility mode: All / None / Custom as a small dropdown (a click-to-cycle
+// button proved a trap — from None the next stop was Custom, which can be a
+// no-op, wedging the cycle; a menu lets any mode be picked directly).
 const MODE_LABELS = { all: 'All', none: 'None', custom: 'Custom' };
-const MODE_TIP = 'Folder visibility: All shows every calendar, None hides them all, ' +
-  'Custom is your own per-calendar selection. Click to switch.';
 
-function FolderModeButton({ folder }) {
-  const mode = folderMode(folder.id);
-  const next = MODE_ORDER[(MODE_ORDER.indexOf(mode) + 1) % MODE_ORDER.length];
-  return html`<button
-    type="button" class="bc-folder-mode"
-    title=${MODE_TIP}
-    aria-label=${'Visibility for ' + folder.name + ': ' + MODE_LABELS[mode] + '. Switch to ' + MODE_LABELS[next]}
-    onClick=${() => setFolderVisibilityMode(folder.id, next)}
-  >${mode === 'custom' && html`<${Icon} name="mixed" size=${9} />`}${MODE_LABELS[mode]}</button>`;
+function ModeMenu({ mode, tip, ariaName, customDisabled, onPick }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDoc = (e) => {
+      if (rootRef.current && !rootRef.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener('pointerdown', onDoc, true);
+    return () => document.removeEventListener('pointerdown', onDoc, true);
+  }, [open]);
+
+  return html`<div class="bc-ov bc-modemenu" ref=${rootRef}>
+    <button
+      type="button" class="bc-folder-mode"
+      title=${tip}
+      aria-label=${ariaName + ': ' + MODE_LABELS[mode]}
+      aria-haspopup="menu" aria-expanded=${open}
+      onClick=${() => setOpen(!open)}
+    >${mode === 'custom' && html`<${Icon} name="mixed" size=${9} />`}${MODE_LABELS[mode]}<span class="bc-ov-caret" aria-hidden="true">▾</span></button>
+    ${open && html`<div class="bc-ov-menu" role="menu" aria-label=${ariaName}>
+      ${['all', 'none', 'custom'].map((m) => html`<button
+        key=${m} type="button" role="menuitemradio"
+        aria-checked=${mode === m}
+        disabled=${m === 'custom' && customDisabled}
+        title=${m === 'custom' && customDisabled ? 'No custom selection saved yet — toggle individual checkboxes to make one' : ''}
+        class="bc-ov-item${mode === m ? ' is-sel' : ''}"
+        onClick=${() => { setOpen(false); if (m !== mode) onPick(m); }}
+      ><span class="bc-ov-check" aria-hidden="true">${mode === m ? '✓' : ''}</span>${MODE_LABELS[m]}</button>`)}
+    </div>`}
+  </div>`;
 }
 
-// People folder visibility: same All/None/Custom cycle as calendar folders.
-// None is the one-click "silence every availability indicator".
+function FolderModeButton({ folder }) {
+  return html`<${ModeMenu}
+    mode=${folderMode(folder.id)}
+    tip="Folder visibility: All shows every calendar, None hides them all, Custom is your own per-calendar selection."
+    ariaName=${'Visibility for ' + folder.name}
+    customDisabled=${false}
+    onPick=${(m) => setFolderVisibilityMode(folder.id, m)}
+  />`;
+}
+
+// People folder visibility; None is the one-click "silence every
+// availability indicator".
 function PeopleModeButton() {
-  useStore((s) => s.people);
+  const { peopleVisCustom } = useStore((s) => ({ people: s.people, peopleVisCustom: s.peopleVisCustom }), shallowEq);
   const mode = peopleVisibilityMode();
-  const next = MODE_ORDER[(MODE_ORDER.indexOf(mode) + 1) % MODE_ORDER.length];
-  return html`<button
-    type="button" class="bc-folder-mode"
-    title="People visibility: All shows everyone's away/busy spans, None hides them all, Custom is your own per-person selection. Click to switch."
-    aria-label=${'People visibility: ' + MODE_LABELS[mode] + '. Switch to ' + MODE_LABELS[next]}
-    onClick=${() => setPeopleVisibilityMode(next)}
-  >${mode === 'custom' && html`<${Icon} name="mixed" size=${9} />`}${MODE_LABELS[mode]}</button>`;
+  return html`<${ModeMenu}
+    mode=${mode}
+    tip="People visibility: All shows everyone's away/busy spans, None hides them all, Custom is your own per-person selection."
+    ariaName="People visibility"
+    customDisabled=${mode !== 'custom' && !(peopleVisCustom && peopleVisCustom.length > 0)}
+    onPick=${setPeopleVisibilityMode}
+  />`;
 }
 
 // Folder header: collapse, visibility mode, hover-revealed + (new calendar

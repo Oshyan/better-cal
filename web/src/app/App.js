@@ -72,6 +72,16 @@ export function App() {
     shallowEq,
   );
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  // Desktop sidebar collapse (persisted); mobile uses the slide-in drawer.
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try { return localStorage.getItem('bc-sidebar-collapsed') === '1'; } catch { return false; }
+  });
+  const toggleSidebar = () => {
+    if (state.viewportNarrow) { setSidebarOpen(!sidebarOpen); return; }
+    const next = !sidebarCollapsed;
+    setSidebarCollapsed(next);
+    try { localStorage.setItem('bc-sidebar-collapsed', next ? '1' : '0'); } catch { /* private mode */ }
+  };
 
   useEffect(() => installKeyboard(), []);
 
@@ -299,9 +309,18 @@ export function App() {
       openDetail(instanceId);
       return;
     }
-    set({ popover: { instanceId, anchorRect } });
+    // Clicking the event whose popover is already open dismisses it (a
+    // second click otherwise just re-opens the same popover with no way to
+    // close it from inside the grid).
+    set((st) => (st.popover && st.popover.instanceId === instanceId
+      ? { popover: null }
+      : { popover: { instanceId, anchorRect } }));
   }, []);
   const onOpenDetail = useCallback((instanceId) => openDetail(instanceId), []);
+  // Day-number clicks (month grid, week header) go to that day's Day view.
+  const onOpenDay = useCallback((dayKey) => {
+    set({ view: 'day', anchor: dayKey, scrollSeq: state.scrollSeq + 1 });
+  }, []);
   const onExpandDay = useCallback((dayKey) => {
     const cell = document.querySelector(`[data-day="${dayKey}"]`);
     set({ expandedDay: { dayKey, anchorRect: cell ? cell.getBoundingClientRect() : null } });
@@ -384,6 +403,7 @@ export function App() {
       onVisibleMonthChange=${onVisibleMonthChange}
       onOpenEvent=${onOpenEvent}
       onExpandDay=${onExpandDay}
+      onOpenDay=${onOpenDay}
       onCreateRange=${onCreateRange}
       onMoveEvent=${moveEvent}
       onResizeEvent=${resizeEvent}
@@ -406,6 +426,7 @@ export function App() {
       onMoveEvent=${moveEvent}
       onResizeEvent=${resizeEvent}
       onOpenEvent=${onOpenEvent}
+      onOpenDay=${onOpenDay}
     />`;
   } else if (s.view === 'day') {
     const days = [s.anchor];
@@ -485,7 +506,7 @@ export function App() {
   const reschedActive = !!(resched && reschedOcc);
 
   return html`<div class="bc-app${dimSet ? ' is-page-filtering' : ''}">
-    <${Toolbar} onToggleSidebar=${() => setSidebarOpen(!sidebarOpen)} />
+    <${Toolbar} onToggleSidebar=${toggleSidebar} />
     ${reschedActive && html`<${RescheduleBanner} occ=${reschedOcc} onExit=${exitReschedule} />`}
     <div class="bc-main">
       ${sidebarOpen && html`<div
@@ -493,7 +514,7 @@ export function App() {
         aria-hidden="true"
         onPointerDown=${(e) => { e.preventDefault(); e.stopPropagation(); setSidebarOpen(false); }}
       ></div>`}
-      <${Sidebar} open=${sidebarOpen} onClose=${() => setSidebarOpen(false)} />
+      <${Sidebar} open=${sidebarOpen} collapsed=${sidebarCollapsed} onClose=${() => setSidebarOpen(false)} />
       <main class="bc-view" ref=${viewAreaRef}>${view}</main>
       ${reschedActive && html`<${RescheduleStrip}
         year=${stripBase.year} month=${stripBase.month}

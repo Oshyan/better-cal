@@ -90,9 +90,17 @@ function indexOccurrences(occurrences, columns) {
   return { byDay, barsByRow, bandsByRow };
 }
 
+// ISO 8601 week number (GCal's gutter numbering). Thursday-anchored.
+function isoWeekOfDate(d) {
+  const t = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  t.setDate(t.getDate() + 3 - ((t.getDay() + 6) % 7));
+  const jan4 = new Date(t.getFullYear(), 0, 4);
+  return 1 + Math.round(((t - jan4) / 86400000 - 3 + ((jan4.getDay() + 6) % 7)) / 7);
+}
+
 export function MonthGrid({
   occurrences, calendars, visibleRows = 6, columns = 7, scrollKey, scrollSeq = 0, dimSet, nowMs,
-  onRequestWindow, onVisibleMonthChange, onOpenEvent, onExpandDay,
+  onRequestWindow, onVisibleMonthChange, onOpenEvent, onExpandDay, onOpenDay,
   onCreateRange, onMoveEvent, onResizeEvent,
 }) {
   const scrollRef = useRef(null);
@@ -372,7 +380,7 @@ export function MonthGrid({
       byDay=${idx.byDay} bars=${idx.barsByRow.get(wi)} bands=${idx.bandsByRow.get(wi)} calendars=${calendars}
       capacity=${capacity} chipRow=${chipRow} mobile=${mobile} todayKey=${tKey} dimSet=${dimSet} nowMs=${nowMs}
       sel=${sel}
-      onOpenEvent=${onOpenEvent} onExpandDay=${onExpandDay}
+      onOpenEvent=${onOpenEvent} onExpandDay=${onExpandDay} onOpenDay=${onOpenDay}
       dragMoveOcc=${dragMoveOcc} dragResizeOcc=${dragResizeOcc} dragCreate=${dragCreate}
       cellClickSelect=${cellClickSelect} quickCreateDay=${quickCreateDay}
     />`);
@@ -431,10 +439,13 @@ export function MonthGrid({
 
 function WeekRow({
   weekIndex, columns, ribbon, top, rowH, byDay, bars, bands, calendars, capacity, chipRow, mobile,
-  todayKey: tKey, dimSet, nowMs, sel, onOpenEvent, onExpandDay, dragMoveOcc, dragResizeOcc, dragCreate,
+  todayKey: tKey, dimSet, nowMs, sel, onOpenEvent, onExpandDay, onOpenDay, dragMoveOcc, dragResizeOcc, dragCreate,
   cellClickSelect, quickCreateDay,
 }) {
   const keys = dayKeysOfRow(weekIndex, columns);
+  // Week-of-year in the gutter (7-col rows only): taken from the row's
+  // midpoint so week-start settings never straddle the ISO boundary oddly.
+  const weekNum = !ribbon && keys.length === 7 ? isoWeekOfDate(dateOfDayKey(keys[3])) : null;
 
   // Trip backdrop bands: stacked under the day-number strip, capped at
   // MAX_BAND_LANES (extras overflow into the day expand via the +N counter).
@@ -497,9 +508,17 @@ function WeekRow({
       onClick=${cellClickSelect}
     >
       <button
-        type="button" class="bc-daynum" aria-label=${'Expand day ' + k}
-        onClick=${(e) => { e.stopPropagation(); if (onExpandDay) onExpandDay(k); }}
+        type="button" class="bc-daynum" aria-label=${'Open day view for ' + k}
+        title="Open day view"
+        onPointerDown=${(e) => e.stopPropagation()}
+        onClick=${(e) => { e.stopPropagation(); if (onOpenDay) onOpenDay(k); else if (onExpandDay) onExpandDay(k); }}
       >${label}</button>
+      <button
+        type="button" class="bc-cell-headstrip" aria-label=${'List events on ' + k}
+        title="Show this day's events here"
+        onPointerDown=${(e) => e.stopPropagation()}
+        onClick=${(e) => { e.stopPropagation(); if (onExpandDay) onExpandDay(k); }}
+      ><span class="bc-headstrip-glyph" aria-hidden="true">⌄</span></button>
       <button
         type="button" class="bc-cell-add" aria-label=${'New event on ' + k}
         title="New event"
@@ -529,7 +548,7 @@ function WeekRow({
   });
 
   return html`<div class="bc-week" style=${`top:${top}px;height:${rowH}px`}>
-    <div class="bc-week-gutter"></div>
+    <div class="bc-week-gutter">${weekNum != null && html`<span class="bc-weeknum" title=${'Week ' + weekNum}>${weekNum}</span>`}</div>
     <div class="bc-week-days">
       ${cells}
       ${visibleBands.length > 0 && html`<div class="bc-week-bands" style=${`top:${CELL_HEAD}px`}>

@@ -54,7 +54,7 @@ export function TimeGrid({
   days: fixedDays, occurrences, calendars, dimSet, nowMs,
   infinite = false, scrollKey, scrollSeq = 0,
   onRequestWindow, onVisibleMonthChange,
-  onCreateRange, onMoveEvent, onResizeEvent, onOpenEvent,
+  onCreateRange, onMoveEvent, onResizeEvent, onOpenEvent, onOpenDay,
 }) {
   const rootRef = useRef(null);
   const scrollRef = useRef(null);  // vertical time scroller
@@ -63,6 +63,7 @@ export function TimeGrid({
   const headTrackRef = useRef(null);
   const alldayTrackRef = useRef(null);
   const [draft, setDraft] = useState(null); // {dayKey, startMin, endMin} while drag-creating
+  const [alldayOpen, setAlldayOpen] = useState(true); // all-day lane expand/collapse
 
   // --- horizontal virtualization (infinite mode) ---------------------------
 
@@ -147,16 +148,18 @@ export function TimeGrid({
     recomputeH();
   }, [infinite, colW, minDay, syncTracks, recomputeH]);
 
-  // Anchor contract: explicit navigation (today, chevrons, jump) puts the
-  // anchor day at the left edge of the track.
+  // Anchor contract: explicit navigation (today, chevrons, jump) centers the
+  // anchor day in the track — the edge fades advertise more days both ways,
+  // so landing mid-viewport reads better than pinning to the left edge.
   useLayoutEffect(() => {
     if (!infinite) return;
     const el = hscrollRef.current;
     const g = geomH.current;
     if (!el || !scrollKey || !g.colW) return;
     const ed = Math.max(minDay, Math.min(maxDay, epochDayOfKey(scrollKey)));
-    el.scrollLeft = (ed - minDay) * g.colW;
-    leftDayRef.current = ed;
+    const centerPad = Math.max(0, (el.clientWidth - g.colW) / 2);
+    el.scrollLeft = Math.max(0, (ed - minDay) * g.colW - centerPad);
+    leftDayRef.current = g.minDay + el.scrollLeft / g.colW;
     syncTracks();
     recomputeH();
   }, [scrollSeq]); // eslint-disable-line
@@ -499,15 +502,19 @@ export function TimeGrid({
     const d = dateOfDayKey(k);
     const weekend = infinite && isWeekendEpochDay(epochDayOfKey(k));
     const monthStart = infinite && d.getDate() === 1;
-    return html`<div
+    return html`<button
+      type="button"
       key=${k}
       class="bc-tg-head-day${k === tKey ? ' is-today' : ''}${weekend ? ' is-weekend' : ''}${monthStart ? ' is-month-start' : ''}"
       style=${infinite ? `left:${dayLeft(k)}px;width:${colW}px` : undefined}
+      title="Open day view"
+      aria-label=${'Open day view for ' + k}
+      onClick=${() => { if (onOpenDay) onOpenDay(k); }}
     >
       <span class="bc-tg-dow">${fmtWeekdayShort(d)}</span>
       <span class="bc-tg-dom">${d.getDate()}</span>
       ${infinite && d.getDate() === 1 && html`<span class="bc-tg-month-tag">${fmtMonthShort(d)}</span>`}
-    </div>`;
+    </button>`;
   });
 
   const barSlot = ({ occ, seg }) => html`<div
@@ -540,11 +547,16 @@ export function TimeGrid({
     ${layoutByDay[i].map((item) => {
       const top = (item.startMin / 60) * HOUR_H;
       const height = Math.max(((item.visualEnd - item.startMin) / 60) * HOUR_H - 2, 18);
-      const widthPct = 100 / item.cols;
+      // GCal-style cascade: overlapping events keep generous widths and
+      // overlap each other (later columns stack above, offset right) instead
+      // of shrinking into equal slivers.
+      const colPct = 100 / item.cols;
+      const leftPct = item.col * colPct;
+      const widthPct = item.cols > 1 ? Math.min(100 - leftPct, colPct * 1.7) : 100;
       return html`<${EventBlock}
         key=${item.id}
         occ=${item.occ} cal=${calendars[item.occ.calendarId]}
-        rect=${{ top, height, leftPct: item.col * widthPct, widthPct: widthPct * (item.cols > 1 ? 0.96 : 1) }}
+        rect=${{ top, height, leftPct, widthPct, z: item.col + 1 }}
         dimmed=${dimSet && dimSet.has(item.occ.instanceId)} nowMs=${nowMs}
         onOpen=${onOpenEvent}
         onPointerDown=${(e) => dragMove(item.occ, e)}
@@ -580,8 +592,16 @@ export function TimeGrid({
         ? html`<div class="bc-tg-hclip"><div class="bc-tg-htrack" ref=${headTrackRef} style=${`width:${totalW}px`}>${headCells}</div></div>`
         : headCells}
     </div>
-    ${showAllday && html`<div class="bc-tg-allday" style=${`height:${Math.max(1, barLaneCount) * 24 + 4}px`}>
-      <div class="bc-tg-gutter bc-tg-allday-label">all day</div>
+    ${showAllday && html`<div class="bc-tg-allday${alldayOpen ? '' : ' is-collapsed'}" style=${`height:${(alldayOpen ? Math.max(1, barLaneCount) : 1) * 24 + 4}px`}>
+      <div class="bc-tg-gutter bc-tg-allday-label">
+        all day
+        ${barLaneCount > 1 && html`<button
+          type="button" class="bc-allday-toggle"
+          title=${alldayOpen ? 'Collapse all-day events' : 'Show all all-day events'}
+          aria-expanded=${alldayOpen}
+          onClick=${() => setAlldayOpen(!alldayOpen)}
+        >${alldayOpen ? '⌃' : `⌄ ${barLaneCount - 1}+`}</button>`}
+      </div>
       ${infinite
         ? html`<div class="bc-tg-hclip"><div class="bc-tg-htrack" ref=${alldayTrackRef} style=${`width:${totalW}px`} onPointerDown=${dragCreateAllDay}>${alldayMonthLines}${allDayBars.map(barSlot)}</div></div>`
         : html`<div class="bc-tg-allday-lane" onPointerDown=${dragCreateAllDay}>${allDayBars.map(barSlot)}</div>`}

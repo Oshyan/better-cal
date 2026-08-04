@@ -46,10 +46,13 @@ export function DayExpand({ dayKey, anchorRect, occurrences, calendars, dimSet, 
   const mobile = isMobile();
   let style = '';
   if (!mobile && anchorRect) {
-    const w = Math.max(280, Math.min(360, anchorRect.width * 2));
-    const h = Math.min(420, 64 + sorted.length * 34 + 40);
+    // Size to the content up to ~85% of the viewport; a scrollbar only
+    // appears when the day genuinely cannot fit on screen.
+    const w = Math.max(280, Math.min(380, anchorRect.width * 2));
+    const maxH = Math.round(window.innerHeight * 0.85);
+    const h = Math.min(maxH, 64 + sorted.length * 34 + 40);
     const p = anchorPanel(anchorRect, w, h);
-    style = `left:${p.left}px;top:${p.top}px;width:${w}px;max-height:420px`;
+    style = `left:${p.left}px;top:${p.top}px;width:${w}px;max-height:${maxH}px`;
   }
 
   return html`<div class="bc-overlay" onClick=${(e) => { if (e.target === e.currentTarget) onClose(); }}>

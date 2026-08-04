@@ -6,3 +6,4 @@ vendor/
 .DS_Store
 dist/
 better-cal-gcal-redirect-*.zip
+workfolder/

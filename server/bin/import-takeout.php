@@ -40,8 +40,15 @@ $calCount = (int) $db->scalar('SELECT COUNT(*) FROM calendars WHERE user_id = ?'
 $totalImported = 0;
 foreach ($files as $i => $path) {
     $name = pathinfo($path, PATHINFO_FILENAME);
-    // Takeout names personal calendars after the account email.
     $name = preg_replace('/%40/', '@', $name) ?? $name;
+    // GCal's settings Export names files "Calendar Name_calendarid@...ics";
+    // the prefix is the clean human name. (Takeout uses the bare address for
+    // the primary calendar; X-WR-CALNAME mislabels Birthdays, so filename
+    // parsing wins.)
+    if (preg_match('/^(.+)_[^_]*@[^_]*$/', $name, $nm) === 1 && trim($nm[1]) !== '') {
+        $name = trim($nm[1]);
+    }
+    $name = preg_replace('/\.ical$/', '', $name) ?? $name;
     $exists = $db->scalar('SELECT id FROM calendars WHERE user_id = ? AND name = ?', [$userId, $name]);
     if ($exists !== null) {
         echo "skip (exists): $name\n";

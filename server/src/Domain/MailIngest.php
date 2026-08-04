@@ -189,6 +189,63 @@ final class MailIngest
         return preg_match(self::LLM_SUBJECT_GATE, $subject) === 1;
     }
 
+    /**
+     * Google Calendar template links embedded in a body ("Add to Google"
+     * buttons in Eventbrite/Luma mails). Deterministic tier between markup
+     * and the LLM — forwards strip JSON-LD but keep these links.
+     *
+     * @return list<string>
+     */
+    public static function extractGcalLinks(string $content): array
+    {
+        $content = html_entity_decode($content, ENT_QUOTES | ENT_HTML5);
+        if (preg_match_all(
+            '~https://(?:www\.)?calendar\.google\.com/calendar/(?:u/\d+/)?(?:r/eventedit|render)\?[^\s"\'<>\)\]]+~i',
+            $content,
+            $m
+        ) < 1) {
+            return [];
+        }
+        return array_values(array_unique($m[0]));
+    }
+
+    /** HTML body to readable text: drop script/style, strip tags, decode. */
+    public static function flattenHtml(string $html): string
+    {
+        $html = preg_replace('~<(script|style)[^>]*>.*?</\1>~si', ' ', $html) ?? $html;
+        $html = preg_replace('~<br\s*/?>|</p>|</div>|</tr>~i', "\n", $html) ?? $html;
+        $text = html_entity_decode(strip_tags($html), ENT_QUOTES | ENT_HTML5);
+        return trim(preg_replace('/[ \t]+/', ' ', preg_replace('/\n{3,}/', "\n\n", $text) ?? $text) ?? $text);
+    }
+
+    /**
+     * Remove a Gmail forward preamble (From/Date/Subject/To header block) so
+     * the forward's own timestamp can't masquerade as the event date.
+     */
+    public static function stripForwardPreamble(string $text): string
+    {
+        if (stripos($text, 'Forwarded message') === false) {
+            return $text;
+        }
+        return preg_replace(
+            '/-{3,}\s*Forwarded message\s*-{3,}\s*From:.{0,400}?To:\s*<?[^\s<>]+@[^\s<>]+>?/su',
+            ' ',
+            $text,
+            1
+        ) ?? $text;
+    }
+
+    /** Is there any date-shaped token to anchor an LLM parse on? */
+    public static function hasDateEvidence(string $text): bool
+    {
+        return preg_match(
+            '/\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2}\b'
+            . '|\b\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b'
+            . '|\b\d{1,2}\/\d{1,2}\b|\b\d{4}-\d{2}-\d{2}\b|\btomorrow\b|\btonight\b/i',
+            $text
+        ) === 1;
+    }
+
     // ---- Ingest --------------------------------------------------------
 
     /**
@@ -252,9 +309,40 @@ final class MailIngest
             }
         }
 
-        // Tier 3: LLM, subject-gated.
-        if ($this->llm !== null && $msg['text'] !== null && self::llmGateAllows($msg['subject'])) {
-            $body = mb_substr($msg['subject'] . "\n\n" . $msg['text'], 0, 4000);
+        // Tier 2.5: an embedded "Add to Google Calendar" template link.
+        // Deterministic like markup, and survives Gmail forwards (which strip
+        // JSON-LD but keep hrefs).
+        foreach (self::extractGcalLinks(($msg['html'] ?? '') . ' ' . ($msg['text'] ?? '')) as $link) {
+            $draft = GcalLink::parse($link, $tz);
+            if ($draft === null) {
+                continue;
+            }
+            $created = $this->createFromDraft($userId, $msg, [
+                'title' => $draft['title'],
+                'start' => $draft['start'],
+                'end' => $draft['end'],
+                'allDay' => $draft['allDay'],
+                'location' => $draft['location'],
+                'description' => $draft['description'],
+                'url' => null,
+            ], 'gcal-link', $tz);
+            if ($created !== null) {
+                return ['tier' => 'gcal-link', 'outcome' => 'created', 'eventId' => $created, 'error' => null];
+            }
+        }
+
+        // Tier 3: LLM, subject-gated. The flattened HTML is the readable
+        // version of marketing mail (the text/plain part is mostly tracking
+        // links); the forward preamble is stripped so the forward's own
+        // timestamp can't be mistaken for the event date, and with no
+        // date-shaped token at all there is nothing trustworthy to parse.
+        $llmSource = $msg['html'] !== null ? self::flattenHtml($msg['html']) : (string) $msg['text'];
+        $llmSource = self::stripForwardPreamble($llmSource);
+        if ($this->llm !== null && trim($llmSource) !== '' && self::llmGateAllows($msg['subject'])) {
+            if (!self::hasDateEvidence($llmSource)) {
+                return ['tier' => 'llm', 'outcome' => 'skipped', 'eventId' => null, 'error' => 'no date evidence in body'];
+            }
+            $body = mb_substr(self::stripForwardPreamble($msg['subject']) . "\n\n" . $llmSource, 0, 4000);
             $parsed = $this->llm->parseEvent($body, Time::nowUtc(), $tz);
             if ($parsed !== null && !empty($parsed['title']) && $parsed['title'] !== 'New event') {
                 $created = $this->createFromDraft($userId, $msg, [
@@ -359,8 +447,8 @@ final class MailIngest
             'allDay' => $allDay,
             'tzid' => $tz,
             'location' => $draft['location'],
-            'url' => $draft['url'],
-            'description' => null,
+            'url' => $draft['url'] ?? null,
+            'description' => $draft['description'] ?? null,
         ]);
         $eventId = (int) $occurrence['eventId'];
         $this->storeInvite($eventId, [

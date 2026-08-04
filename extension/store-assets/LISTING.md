@@ -60,3 +60,20 @@ Required scope for the declarative redirect rule to act on Google Calendar "add 
 **Regions**: all (irrelevant for unlisted)
 
 After approval, install from the item link on every Chrome profile you use; it syncs and auto-updates from then on.
+
+## Review notes / test instructions (optional field)
+
+No credentials — the redirect is fully verifiable without any account:
+
+```text
+No account or credentials are needed to verify the extension's complete functionality.
+
+The extension's sole behavior is a static declarativeNetRequest redirect of Google Calendar "add event" template links to the user's self-hosted calendar (cal.oshyan.com). The redirect is fully observable in the address bar:
+
+1. Install the extension.
+2. Navigate to any Google Calendar "add event" template URL, e.g.:
+   https://calendar.google.com/calendar/render?action=TEMPLATE&text=Review%20Test&dates=20260901T170000Z/20260901T180000Z&location=Test%20Location
+3. Observe the navigation is redirected to https://cal.oshyan.com/add?action=TEMPLATE&text=... with identical query parameters. This redirect is the extension's entire feature set.
+4. The target site then shows a personal login page — that site is the developer's private calendar application, not part of the extension. No extension functionality exists behind the login: the extension contains no scripts, only the static redirect rule visible in rules.json.
+5. Ordinary Google Calendar browsing (e.g. https://calendar.google.com/calendar/r) is not affected.
+```

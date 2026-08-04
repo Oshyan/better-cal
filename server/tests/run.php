@@ -382,6 +382,29 @@ checkEq('ldjson no markup -> empty', [], MailIngest::extractLdJsonEvents('<p>pla
 check('llm gate passes eventish subject', MailIngest::llmGateAllows('Your registration is confirmed!'));
 check('llm gate blocks ordinary mail', !MailIngest::llmGateAllows('Re: lunch tomorrow?'));
 
+// Embedded GCal link tier (survives Gmail forwards that strip JSON-LD)
+$ebHtml = '<a href="https://www.google.com/maps">map</a> '
+    . '<a href="https://calendar.google.com/calendar/render?action=TEMPLATE&amp;text=The%20Feels&amp;dates=20260815T170000Z%2F20260817T000000Z&amp;location=The%20Fold">Add to Google</a>';
+$links = MailIngest::extractGcalLinks($ebHtml);
+checkEq('gcal link extracted from html', 1, count($links));
+check('gcal link entities decoded', str_contains($links[0], '&text=The%20Feels'));
+checkEq('no gcal links -> empty', [], MailIngest::extractGcalLinks('<p>plain</p>'));
+
+$fwd = "---Sig line--- ---------- Forwarded message --------- From: Eventbrite <noreply@order.eventbrite.com> Date: Mon, Aug 3, 2026 at 7:09 AM Subject: Your Tickets To: <me@example.com> Saturday, August 15, 2026 at 10:00 AM";
+$stripped = MailIngest::stripForwardPreamble($fwd);
+check('forward preamble date removed', !str_contains($stripped, 'Aug 3, 2026'));
+check('forward preamble keeps event date', str_contains($stripped, 'August 15, 2026'));
+checkEq('no preamble -> unchanged', 'plain text', MailIngest::stripForwardPreamble('plain text'));
+
+check('date evidence: month name', MailIngest::hasDateEvidence('Saturday, August 15, 2026 at 10 AM'));
+check('date evidence: slash date', MailIngest::hasDateEvidence('See you 8/15!'));
+check('date evidence: none in link soup', !MailIngest::hasDateEvidence('Go to My Tickets Access your tickets in the app'));
+
+$flat = MailIngest::flattenHtml('<html><style>.x{color:red}</style><body><p>Hello &amp; welcome</p><script>evil()</script><div>Aug 15</div></body></html>');
+check('flatten drops style/script', !str_contains($flat, 'color:red') && !str_contains($flat, 'evil'));
+check('flatten decodes entities', str_contains($flat, 'Hello & welcome'));
+check('flatten keeps content', str_contains($flat, 'Aug 15'));
+
 $reply = MailIngest::buildReplyIcs('abc-123@example.com', 'alice@example.com', 'oshyan@gmail.com', 'ACCEPTED', 2, 'Team sync', new DateTimeImmutable('2026-08-03T12:00:00Z'));
 check('rsvp reply has METHOD', str_contains($reply, 'METHOD:REPLY'));
 check('rsvp reply has partstat attendee', str_contains($reply, 'ATTENDEE;PARTSTAT=ACCEPTED:mailto:oshyan@gmail.com'));

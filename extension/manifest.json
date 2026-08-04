@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "Better-Cal: Google Calendar Link Redirect",
+  "version": "1.0.0",
+  "description": "Sends 'Add to Google Calendar' links (Luma, Eventbrite, ...) to your Better-Cal instead. Toggle the extension off to use Google Calendar again.",
+  "permissions": [
+    "declarativeNetRequest"
+  ],
+  "host_permissions": [
+    "https://calendar.google.com/*"
+  ],
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "gcal_redirect",
+        "enabled": true,
+        "path": "rules.json"
+      }
+    ]
+  },
+  "icons": {
+    "128": "icon-128.png"
+  }
+}

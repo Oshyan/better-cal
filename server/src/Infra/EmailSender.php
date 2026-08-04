@@ -99,4 +99,51 @@ final class EmailSender
             return false;
         }
     }
+
+    /**
+     * Send an iMIP REPLY (RSVP) to an organizer. Prefers the dedicated
+     * rsvp_smtp profile (e.g. Gmail with an app password, so the reply comes
+     * from the address that was actually invited); falls back to the main
+     * SMTP profile. The ICS rides both as the text/calendar body alternative
+     * and as an attachment, which covers the pickier servers.
+     */
+    public function sendImipReply(string $toEmail, string $subject, string $ics, string $bodyText): bool
+    {
+        $rsvp = $this->cfg['rsvp_smtp'] ?? [];
+        $smtp = ($rsvp['host'] ?? '') !== '' ? $rsvp : ($this->cfg['smtp'] ?? []);
+        if (($smtp['host'] ?? '') === '' || ($smtp['from'] ?? ($smtp['user'] ?? '')) === '') {
+            return false;
+        }
+        if (!class_exists(\PHPMailer\PHPMailer\PHPMailer::class)) {
+            error_log('rsvp send skipped: phpmailer not installed');
+            return false;
+        }
+        try {
+            $mail = new \PHPMailer\PHPMailer\PHPMailer(true);
+            $mail->isSMTP();
+            $mail->Host = (string) $smtp['host'];
+            $mail->Port = (int) ($smtp['port'] ?? 587);
+            $mail->SMTPSecure = $mail->Port === 465
+                ? \PHPMailer\PHPMailer\PHPMailer::ENCRYPTION_SMTPS
+                : \PHPMailer\PHPMailer\PHPMailer::ENCRYPTION_STARTTLS;
+            if (($smtp['user'] ?? '') !== '') {
+                $mail->SMTPAuth = true;
+                $mail->Username = (string) $smtp['user'];
+                $mail->Password = (string) ($smtp['pass'] ?? '');
+            }
+            $mail->CharSet = \PHPMailer\PHPMailer\PHPMailer::CHARSET_UTF8;
+            $from = (string) (($smtp['from'] ?? '') !== '' ? $smtp['from'] : $smtp['user']);
+            $mail->setFrom($from);
+            $mail->addAddress($toEmail);
+            $mail->Subject = $subject;
+            $mail->Body = $bodyText;
+            $mail->ContentType = 'text/plain';
+            $mail->addStringAttachment($ics, 'invite.ics', 'base64', 'text/calendar; method=REPLY');
+            $mail->send();
+            return true;
+        } catch (\Throwable $e) {
+            error_log('rsvp send error: ' . $e->getMessage());
+            return false;
+        }
+    }
 }

@@ -6,6 +6,8 @@
 
 import { html, useState } from '../../vendor/index.js';
 import { updateCalendar, refreshCalendar, deleteCalendar } from './actions.js';
+import { api, loadCalendars } from './api.js';
+import { toast } from './store.js';
 import { parseHex, PALETTE } from '../lib/color.js';
 
 // Preset grid: the app palette plus teal and slate to round out 12.
@@ -157,7 +159,23 @@ export function CalendarSettings({ cal, folders, onClose }) {
         ${refreshing ? 'Refreshing' : 'Refresh now'}
       </button>
     </div>
-    <div class="bc-calset-status">${pollStatusLine(cal)}</div>`}
+    <div class="bc-calset-status">${pollStatusLine(cal)}</div>
+    <div class="bc-calset-field">
+      <button
+        type="button" class="bc-btn"
+        title="Sever the feed link and make every event a local, editable copy (one-way; used when migrating off the old calendar)"
+        onClick=${async () => {
+          if (!window.confirm('Adopt "' + cal.name + '" as a local calendar? It will stop syncing from its feed and all events become editable.')) return;
+          try {
+            await api('/calendars/' + cal.id + '/adopt', { method: 'POST' });
+            toast('Adopted as local calendar');
+            await loadCalendars();
+          } catch (e) {
+            toast('Adopt failed: ' + e.message, { error: true });
+          }
+        }}
+      >Adopt as local calendar</button>
+    </div>`}
 
     <div class="bc-calset-danger">
       ${confirmDelete

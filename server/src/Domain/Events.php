@@ -329,7 +329,11 @@ final class Events
         $row = [
             'user_id' => $userId,
             'calendar_id' => $calendarId,
-            'uid' => Ids::ulid(),
+            // Callers with an external identity (mail ingest iMIP) pass uid so
+            // updates and cancellations can find the event again.
+            'uid' => is_string($in['uid'] ?? null) && trim($in['uid']) !== ''
+                ? mb_substr(trim($in['uid']), 0, 255)
+                : Ids::ulid(),
             'title' => mb_substr(trim((string) ($in['title'] ?? '')), 0, 500),
             'description' => isset($in['description']) ? Sanitize::description((string) $in['description']) : null,
             'location' => isset($in['location']) ? mb_substr((string) $in['location'], 0, 500) : null,
@@ -779,6 +783,11 @@ final class Events
             'tags' => $links['tags'][$id] ?? [],
             'people' => $links['people'][$id] ?? [],
             'isContainer' => (int) ($row['is_container'] ?? 0) === 1,
+            // Mail-ingested invitations: organizer/attendees/partstat for the
+            // detail view's invitation panel and RSVP.
+            'invite' => isset($row['invite_json']) && $row['invite_json'] !== null
+                ? (is_array($row['invite_json']) ? $row['invite_json'] : json_decode((string) $row['invite_json'], true))
+                : null,
             'containers' => $links['containers'][$id] ?? [],
             'styleJson' => $style ?: null,
             'createdAt' => Time::iso($createdAt),

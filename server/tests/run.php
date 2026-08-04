@@ -338,6 +338,57 @@ try {
 check('people empty name throws', $threw);
 
 // ---------------------------------------------------------------------------
+// MailIngest — iMIP parse, schema.org extraction, RSVP reply (pure)
+// ---------------------------------------------------------------------------
+
+use BetterCal\Domain\MailIngest;
+
+if (class_exists(\Sabre\VObject\Reader::class)) {
+$imipIcs = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Test//EN\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\n"
+    . "UID:abc-123\@example.com\r\nDTSTAMP:20260801T000000Z\r\nDTSTART:20260810T170000Z\r\nDTEND:20260810T180000Z\r\n"
+    . "SUMMARY:Team sync\r\nLOCATION:Room 4\r\nSEQUENCE:2\r\n"
+    . "ORGANIZER;CN=Alice:mailto:alice@example.com\r\n"
+    . "ATTENDEE;CN=Oshyan;PARTSTAT=NEEDS-ACTION:mailto:oshyan@gmail.com\r\n"
+    . "END:VEVENT\r\nEND:VCALENDAR\r\n";
+$imip = MailIngest::parseImip($imipIcs);
+checkEq('imip method', 'REQUEST', $imip['method']);
+checkEq('imip event title', 'Team sync', $imip['events'][0]['title']);
+checkEq('imip organizer email', 'alice@example.com', $imip['events'][0]['invite']['organizer']['email']);
+checkEq('imip organizer name', 'Alice', $imip['events'][0]['invite']['organizer']['name']);
+checkEq('imip attendee partstat', 'NEEDS-ACTION', $imip['events'][0]['invite']['attendees'][0]['partstat']);
+checkEq('imip sequence', 2, $imip['events'][0]['invite']['sequence']);
+checkEq('imip garbage -> null', null, MailIngest::parseImip('not an ics'));
+}
+
+$ldHtml = '<html><body><script type="application/ld+json">'
+    . json_encode(['@context' => 'https://schema.org', '@type' => 'Event', 'name' => 'Concert Night',
+        'startDate' => '2026-09-12T19:30:00-07:00', 'endDate' => '2026-09-12T22:00:00-07:00',
+        'location' => ['@type' => 'Place', 'name' => 'The Fillmore', 'address' => ['streetAddress' => '1805 Geary Blvd', 'addressLocality' => 'San Francisco']],
+        'url' => 'https://example.com/tix'])
+    . '</script></body></html>';
+$ld = MailIngest::extractLdJsonEvents($ldHtml);
+checkEq('ldjson event name', 'Concert Night', $ld[0]['title']);
+checkEq('ldjson start', '2026-09-12T19:30:00-07:00', $ld[0]['start']);
+checkEq('ldjson location composed', 'The Fillmore, 1805 Geary Blvd, San Francisco', $ld[0]['location']);
+checkEq('ldjson url', 'https://example.com/tix', $ld[0]['url']);
+
+$resHtml = '<script type="application/ld+json">' . json_encode([
+    '@type' => 'EventReservation',
+    'reservationFor' => ['@type' => 'Event', 'name' => 'Workshop', 'startDate' => '2026-10-01T10:00:00-07:00'],
+]) . '</script>';
+checkEq('ldjson reservation unwraps', 'Workshop', MailIngest::extractLdJsonEvents($resHtml)[0]['title']);
+checkEq('ldjson no markup -> empty', [], MailIngest::extractLdJsonEvents('<p>plain mail</p>'));
+
+check('llm gate passes eventish subject', MailIngest::llmGateAllows('Your registration is confirmed!'));
+check('llm gate blocks ordinary mail', !MailIngest::llmGateAllows('Re: lunch tomorrow?'));
+
+$reply = MailIngest::buildReplyIcs('abc-123@example.com', 'alice@example.com', 'oshyan@gmail.com', 'ACCEPTED', 2, 'Team sync', new DateTimeImmutable('2026-08-03T12:00:00Z'));
+check('rsvp reply has METHOD', str_contains($reply, 'METHOD:REPLY'));
+check('rsvp reply has partstat attendee', str_contains($reply, 'ATTENDEE;PARTSTAT=ACCEPTED:mailto:oshyan@gmail.com'));
+check('rsvp reply has organizer', str_contains($reply, 'ORGANIZER:mailto:alice@example.com'));
+check('rsvp reply keeps sequence', str_contains($reply, 'SEQUENCE:2'));
+
+// ---------------------------------------------------------------------------
 // GcalLink — Google Calendar template link parsing (pure)
 // ---------------------------------------------------------------------------
 

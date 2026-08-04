@@ -176,6 +176,30 @@ final class Calendars
     }
 
     /** Delete calendar + events. Fully captured in the mutation log, so undo restores everything. */
+    /**
+     * Adopt a subscribed calendar as local (docs/migration.md "transition
+     * mode"): the feed link is severed, every event becomes an editable
+     * local event, and history is kept exactly as last synced. One-way.
+     *
+     * @return array the updated calendar row (serialized)
+     */
+    public function adopt(int $userId, int $id): array
+    {
+        $row = $this->db->one('SELECT * FROM calendars WHERE id = ? AND user_id = ?', [$id, $userId]);
+        if ($row === null) {
+            throw HttpError::notFound('No such calendar');
+        }
+        if ((string) $row['kind'] !== 'subscribed') {
+            throw HttpError::badRequest('Only subscribed calendars can be adopted');
+        }
+        $this->db->run(
+            "UPDATE calendars SET kind = 'local', source_url = NULL, last_poll_status = 'never', last_poll_error = NULL WHERE id = ?",
+            [$id]
+        );
+        $this->db->run("UPDATE events SET source = 'local' WHERE calendar_id = ?", [$id]);
+        return $this->serializeById($userId, $id);
+    }
+
     public function delete(int $userId, int $id): void
     {
         $calendar = $this->get($userId, $id);

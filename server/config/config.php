@@ -70,6 +70,26 @@ function config(): array
             'pass' => $env('BETTERCAL_SMTP_PASS'),
             'from' => $env('BETTERCAL_SMTP_FROM'),
         ],
+        'imap' => [
+            // Mailbox the ingest worker polls for forwarded invites
+            // (docs/email-ingest.md). Defaults reuse the SMTP mailbox
+            // (calendar@): same account, IMAP port.
+            'host' => $env('BETTERCAL_IMAP_HOST', $env('BETTERCAL_SMTP_HOST')),
+            'port' => (int) $env('BETTERCAL_IMAP_PORT', '993'),
+            'user' => $env('BETTERCAL_IMAP_USER', $env('BETTERCAL_SMTP_USER')),
+            'pass' => $env('BETTERCAL_IMAP_PASS', $env('BETTERCAL_SMTP_PASS')),
+        ],
+        'rsvp_smtp' => [
+            // Optional second SMTP profile for iMIP RSVP replies, so they can
+            // come from the address organizers actually invited (e.g. Gmail
+            // with an app password). Falls back to the main SMTP profile
+            // (calendar@) when empty — accepted by many but not all servers.
+            'host' => $env('BETTERCAL_RSVP_SMTP_HOST'),
+            'port' => (int) $env('BETTERCAL_RSVP_SMTP_PORT', '587'),
+            'user' => $env('BETTERCAL_RSVP_SMTP_USER'),
+            'pass' => $env('BETTERCAL_RSVP_SMTP_PASS'),
+            'from' => $env('BETTERCAL_RSVP_SMTP_FROM'),
+        ],
         'version' => '0.1.0',
         'app_root' => $appRoot,
     ];

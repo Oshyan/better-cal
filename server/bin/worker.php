@@ -8,6 +8,7 @@ declare(strict_types=1);
 require dirname(__DIR__) . '/src/bootstrap.php';
 
 use BetterCal\Domain\Feeds;
+use BetterCal\Domain\MailIngest;
 use BetterCal\Domain\PromptEval;
 use BetterCal\Domain\PushSubscriptions;
 use BetterCal\Domain\Ranking;
@@ -16,6 +17,7 @@ use BetterCal\Domain\Reminders;
 use BetterCal\Infra\Db;
 use BetterCal\Infra\EmailSender;
 use BetterCal\Infra\JobQueue;
+use BetterCal\Infra\MailFetcher;
 use BetterCal\Infra\LlmGateway;
 use BetterCal\Infra\PushSender;
 use BetterCal\Support\Time;
@@ -31,6 +33,12 @@ $llm = new LlmGateway($cfg);
 $promptEval = new PromptEval($db, $llm, $queue);
 $ranking = new Ranking($db, $llm, $queue);
 $reminders = new Reminders($db, new PushSubscriptions($db), new PushSender($cfg), new EmailSender($cfg), new Recurrence());
+// Mail ingest needs the full Events domain (create/patch invited events).
+$undo = new BetterCal\Domain\Undo($db);
+$labels = new BetterCal\Domain\Labels($db);
+$filters = new BetterCal\Domain\Filters($db, $undo, $queue);
+$trips = new BetterCal\Domain\Trips($db, $undo);
+$eventsDomain = new BetterCal\Domain\Events($db, new Recurrence(), $undo, $labels, $filters, $trips);
 
 $locked = $db->scalar('SELECT GET_LOCK(?, 0)', [WORKER_LOCK]);
 if ((int) $locked !== 1) {
@@ -69,6 +77,26 @@ try {
                 case 'rank_events':
                     $scored = $ranking->run();
                     echo bc_ts() . " rank_events scored=$scored\n";
+                    break;
+                case 'mail_ingest':
+                    $fetcher = new MailFetcher($cfg);
+                    if ($fetcher->isConfigured()) {
+                        $ingest = new MailIngest($db, $eventsDomain, $llm);
+                        $uid = (int) ($db->scalar('SELECT id FROM users ORDER BY id LIMIT 1') ?? 0);
+                        $tzRow = $db->scalar('SELECT settings_json FROM users ORDER BY id LIMIT 1');
+                        $tzSettings = is_string($tzRow) ? (json_decode($tzRow, true) ?: []) : [];
+                        $tz = is_string($tzSettings['tz'] ?? null) && $tzSettings['tz'] !== '' ? $tzSettings['tz'] : 'UTC';
+                        $done = 0;
+                        foreach ($fetcher->fetchUnseen(10) as $msg) {
+                            $r = $ingest->ingestMessage($uid, $msg, $tz);
+                            echo bc_ts() . ' mail_ingest msg=' . substr($msg['messageId'], 0, 40)
+                                . ' tier=' . ($r['tier'] ?? '-') . ' outcome=' . $r['outcome'] . "\n";
+                            $done++;
+                        }
+                        if ($done === 0) {
+                            echo bc_ts() . " mail_ingest idle\n";
+                        }
+                    }
                     break;
                 case 'reminder_scan':
                     $result = $reminders->scan();
@@ -120,6 +148,8 @@ function bc_enqueue_recurring(Db $db, JobQueue $queue): void
     // Every worker run (cron fires each minute); 50s so the previous run's
     // job never suppresses this minute's scan.
     bc_enqueue_if_stale($db, $queue, 'reminder_scan', 'PT50S');
+    // Mail ingest polls the calendar@ mailbox every ~2 minutes.
+    bc_enqueue_if_stale($db, $queue, 'mail_ingest', 'PT2M');
 }
 
 function bc_enqueue_if_stale(Db $db, JobQueue $queue, string $type, string $interval): void

@@ -117,6 +117,31 @@ final class People
         ], $rows);
     }
 
+    /**
+     * Explicit person creation (People page / New menu). Returns the
+     * existing person when the name is already taken (idempotent).
+     *
+     * @param array{name?: mixed, notes?: mixed} $in
+     * @return array{id:int,name:string,notes:?string,created:bool}
+     */
+    public function create(int $userId, array $in): array
+    {
+        $name = self::normalizeName(is_string($in['name'] ?? null) ? $in['name'] : '');
+        $existing = $this->db->one('SELECT id, name, notes FROM people WHERE user_id = ? AND name = ?', [$userId, $name]);
+        if ($existing !== null) {
+            return [
+                'id' => (int) $existing['id'],
+                'name' => (string) $existing['name'],
+                'notes' => $existing['notes'] !== null ? (string) $existing['notes'] : null,
+                'created' => false,
+            ];
+        }
+        $notes = isset($in['notes']) && is_string($in['notes']) && trim($in['notes']) !== ''
+            ? mb_substr(trim($in['notes']), 0, self::MAX_NOTES) : null;
+        $id = $this->db->insert('people', ['user_id' => $userId, 'name' => $name, 'notes' => $notes]);
+        return ['id' => $id, 'name' => $name, 'notes' => $notes, 'created' => true];
+    }
+
     // ---- Availability spans --------------------------------------------
 
     /** @return list<array> all spans for one person, newest first */

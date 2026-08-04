@@ -32,14 +32,10 @@ export function EventPopover() {
   const popover = useStore((s) => s.popover);
   const occ = popover ? state.occ.get(popover.instanceId) : null;
   const panelRef = useRef(null);
-  const [editingTitle, setEditingTitle] = useState(false);
   const [editingTime, setEditingTime] = useState(false);
-  const [title, setTitle] = useState('');
 
   useEffect(() => {
-    setEditingTitle(false);
     setEditingTime(false);
-    setTitle(occ ? occ.title : '');
   }, [popover && popover.instanceId]);
 
   // Document-level listeners; torn down on unmount, not just close.
@@ -90,11 +86,6 @@ export function EventPopover() {
     if (target) set({ popover: { ...popover, instanceId: target.instanceId } });
   };
 
-  const saveTitle = async () => {
-    setEditingTitle(false);
-    if (title !== occ.title) await updateEvent(occ, { title });
-  };
-
   const saveTime = async (startVal, endVal) => {
     const s = fromInputValue(startVal);
     const e = fromInputValue(endVal);
@@ -130,17 +121,9 @@ export function EventPopover() {
         ${nav.list.length > 1 && html`<span class="bc-sheet-count">${nav.index + 1} of ${nav.list.length}</span>`}
       </div>`}
       <div class="bc-pop-titlerow">
-        ${editingTitle
-          ? html`<input
-              class="bc-pop-title-input" value=${title} autofocus
-              onInput=${(ev) => setTitle(ev.target.value)}
-              onKeyDown=${(ev) => { if (ev.key === 'Enter') saveTitle(); if (ev.key === 'Escape') { ev.stopPropagation(); setEditingTitle(false); setTitle(occ.title); } }}
-              onBlur=${saveTitle}
-              aria-label="Event title"
-            />`
-          : html`<h2 class="bc-pop-title${occ.status === 'cancelled' ? ' is-cancelled' : ''}" onClick=${() => !isFeed && setEditingTitle(true)} title=${isFeed ? '' : 'Click to edit title'}>
-              ${occ.title || '(untitled)'}${occ.isNew ? html` <span class="bc-new-pill">new</span>` : ''}
-            </h2>`}
+        <h2 class="bc-pop-title${occ.status === 'cancelled' ? ' is-cancelled' : ''}" onClick=${() => openDetail(occ.instanceId)} title="Open full details">
+          ${occ.title || '(untitled)'}${occ.isNew ? html` <span class="bc-new-pill">new</span>` : ''}
+        </h2>
         <span class="bc-pop-iconrow" role="group" aria-label="Event actions">
           <button type="button" class="bc-icon-btn" title="Open full details" aria-label="Open full details" onClick=${() => openDetail(occ.instanceId)}><${Icon} name="expand" size=${14} /></button>
           ${!isFeed && html`<button type="button" class="bc-icon-btn" title="Reschedule (r)" aria-label="Reschedule" onClick=${() => enterReschedule(occ.instanceId)}><${Icon} name="reschedule" size=${14} /></button>`}

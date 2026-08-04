@@ -158,6 +158,42 @@ export function Toolbar({ onToggleSidebar }) {
     <button type="button" class="bc-icon-btn" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)" onClick=${() => set({ shortcutsOpen: true })}><${Icon} name="keyboard" size=${16} /></button>
     <button type="button" class="bc-icon-btn" aria-label="Search" title="Search ( / )" onClick=${() => set({ searchOpen: true })}>${'🔍'}</button>
     <button type="button" class="bc-icon-btn" aria-label="Quick add" title="Quick add: type it in plain language (c)" onClick=${() => set({ quickAddOpen: true })}>${'⚡'}</button>
-    <button type="button" class="bc-btn bc-btn-primary" title="New event (full editor)" onClick=${() => set({ editor: { mode: 'create', draft: {} } })}>+ New</button>
+    <${NewMenu} />
   </header>`;
+}
+
+// "+ New" split menu: Event is the headline action; the caret reveals Trip,
+// Person, and Calendar.
+function NewMenu() {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDoc = (e) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener('pointerdown', onDoc, true);
+    return () => document.removeEventListener('pointerdown', onDoc, true);
+  }, [open]);
+
+  const go = (fn) => () => { setOpen(false); fn(); };
+  const items = [
+    ['Event', () => set({ editor: { mode: 'create', draft: {} } })],
+    ['Trip', () => set({ editor: { mode: 'create', draft: { isContainer: true, allDay: true } } })],
+    ['Person', () => set({ route: 'people', peopleCreate: true })],
+    ['Calendar', () => set({ addCalRequest: {} })],
+  ];
+
+  return html`<span class="bc-newmenu" ref=${wrapRef}>
+    <button type="button" class="bc-btn bc-btn-primary bc-newmenu-main" title="New event (n)" onClick=${() => set({ editor: { mode: 'create', draft: {} } })}>+ New</button>
+    <button
+      type="button" class="bc-btn bc-btn-primary bc-newmenu-caret"
+      aria-label="More things to create" aria-expanded=${open} aria-haspopup="menu"
+      onClick=${() => setOpen(!open)}
+    >▾</button>
+    ${open && html`<div class="bc-newmenu-drop" role="menu">
+      ${items.map(([label, fn]) => html`<button key=${label} type="button" role="menuitem" class="bc-newmenu-item" onClick=${go(fn)}>${label}</button>`)}
+    </div>`}
+  </span>`;
 }

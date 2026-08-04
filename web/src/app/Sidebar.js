@@ -4,13 +4,14 @@
 // menu (local / subscribe / import), feed health badges, and the manage
 // navigation in the footer.
 
-import { html, useState, useRef } from '../../vendor/index.js';
+import { html, useState, useRef, useEffect } from '../../vendor/index.js';
 import { useStore, set, state, toast, shallowEq } from './store.js';
 import { api, loadCalendars } from './api.js';
 import {
   toggleCalendarVisible, createFolder, deleteFolder,
   folderMode, setFolderVisibilityMode,
   togglePersonVisible, enterPeopleSolo, exitPeopleSolo,
+  peopleVisibilityMode, setPeopleVisibilityMode,
 } from './actions.js';
 import { CalendarSettings } from './CalendarSettings.js';
 import { MiniMonth } from './MiniMonth.js';
@@ -98,34 +99,85 @@ function FolderModeButton({ folder }) {
   >${mode === 'custom' && html`<${Icon} name="mixed" size=${9} />`}${MODE_LABELS[mode]}</button>`;
 }
 
-// Folder rename lives in the folder manager; the header keeps collapse,
-// visibility mode, and delete only.
+// People folder visibility: same All/None/Custom cycle as calendar folders.
+// None is the one-click "silence every availability indicator".
+function PeopleModeButton() {
+  useStore((s) => s.people);
+  const mode = peopleVisibilityMode();
+  const next = MODE_ORDER[(MODE_ORDER.indexOf(mode) + 1) % MODE_ORDER.length];
+  return html`<button
+    type="button" class="bc-folder-mode"
+    title="People visibility: All shows everyone's away/busy spans, None hides them all, Custom is your own per-person selection. Click to switch."
+    aria-label=${'People visibility: ' + MODE_LABELS[mode] + '. Switch to ' + MODE_LABELS[next]}
+    onClick=${() => setPeopleVisibilityMode(next)}
+  >${mode === 'custom' && html`<${Icon} name="mixed" size=${9} />`}${MODE_LABELS[mode]}</button>`;
+}
+
+// Folder header: collapse, visibility mode, hover-revealed + (new calendar
+// in this folder) and a gear opening a small options panel (rename, delete).
 function FolderHead({ folder, cals, collapsed, onToggleCollapse }) {
+  const [options, setOptions] = useState(false);
+  const [renameTo, setRenameTo] = useState(folder.name);
+
   const remove = () => {
     if (cals.length > 0) {
       toast('Folder has ' + cals.length + ' calendar' + (cals.length === 1 ? '' : 's') +
         '; remove them from the folder first (calendar settings > folders)', { error: true });
       return;
     }
-    deleteFolder(folder);
+    if (window.confirm('Delete folder "' + folder.name + '"?')) deleteFolder(folder);
   };
 
-  return html`<div class="bc-folder-headrow">
-    <button
-      type="button" class="bc-folder-head"
-      aria-expanded=${!collapsed}
-      onClick=${onToggleCollapse}
-    >
-      <span class="bc-folder-caret">${collapsed ? '▸' : '▾'}</span>
-      <span class="bc-folder-icon"><${Icon} name="folder" size=${12} /></span>
-      <span class="bc-folder-name">${folder.name}</span>
-    </button>
-    ${cals.length > 0 && html`<${FolderModeButton} folder=${folder} />`}
-    <span class="bc-folder-tools">
-      <button type="button" class="bc-icon-btn bc-folder-tool bc-folder-delete" aria-label=${'Delete folder ' + folder.name} title=${cals.length > 0 ? 'Only empty folders can be deleted' : 'Delete folder'} onClick=${remove}>
-        <${Icon} name="trash" size=${12} />
+  const submitRename = async (e) => {
+    e.preventDefault();
+    const name = renameTo.trim();
+    setOptions(false);
+    if (!name || name === folder.name) return;
+    try {
+      await api('/folders/' + folder.id, { method: 'PATCH', body: { name } });
+      await loadCalendars();
+    } catch (err) {
+      toast('Rename failed: ' + err.message, { error: true });
+    }
+  };
+
+  return html`<div class="bc-folder-headwrap">
+    <div class="bc-folder-headrow">
+      <button
+        type="button" class="bc-folder-head"
+        aria-expanded=${!collapsed}
+        onClick=${onToggleCollapse}
+      >
+        <span class="bc-folder-caret">${collapsed ? '▸' : '▾'}</span>
+        <span class="bc-folder-icon"><${Icon} name="folder" size=${12} /></span>
+        <span class="bc-folder-name">${folder.name}</span>
       </button>
-    </span>
+      ${cals.length > 0 && html`<${FolderModeButton} folder=${folder} />`}
+      <span class="bc-folder-tools">
+        <button
+          type="button" class="bc-icon-btn bc-folder-tool bc-head-plus"
+          aria-label=${'New calendar in ' + folder.name} title="New calendar in this folder"
+          onClick=${() => set({ addCalRequest: { folderId: folder.id } })}
+        >+</button>
+        <button
+          type="button" class="bc-icon-btn bc-folder-tool"
+          aria-label=${'Options for folder ' + folder.name} aria-expanded=${options}
+          title="Folder options"
+          onClick=${() => { setRenameTo(folder.name); setOptions(!options); }}
+        ><${Icon} name="settings" size=${12} /></button>
+      </span>
+    </div>
+    ${options && html`<div class="bc-folder-options">
+      <form class="bc-folder-renameform" onSubmit=${submitRename}>
+        <input value=${renameTo} onInput=${(e) => setRenameTo(e.target.value)} aria-label="Folder name" />
+        <button type="submit" class="bc-btn">Rename</button>
+      </form>
+      <button
+        type="button" class="bc-btn bc-btn-danger"
+        title=${cals.length > 0 ? 'Only empty folders can be deleted' : 'Delete folder'}
+        onClick=${remove}
+      >Delete folder</button>
+    </div>`}
   </div>`;
 }
 
@@ -136,14 +188,28 @@ function AddMenu() {
   const [busy, setBusy] = useState(false);
   const fileRef = useRef(null);
 
-  const close = () => { setMode(null); setName(''); setUrl(''); };
+  // Section-header "+" buttons request a new calendar (optionally into a
+  // folder) by setting addCalRequest; consume it by opening the local form.
+  const addCalRequest = useStore((s) => s.addCalRequest);
+  const folderReqRef = useRef(null);
+  useEffect(() => {
+    if (!addCalRequest) return;
+    folderReqRef.current = addCalRequest.folderId || null;
+    setMode('local');
+    set({ addCalRequest: null });
+  }, [addCalRequest]);
+
+  const close = () => { setMode(null); setName(''); setUrl(''); folderReqRef.current = null; };
 
   const submit = async (e) => {
     e.preventDefault();
     setBusy(true);
     try {
       if (mode === 'local') {
-        await api('/calendars', { method: 'POST', body: { name: name || 'New calendar', color: PALETTE[state.calendars.length % PALETTE.length] } });
+        const created = await api('/calendars', { method: 'POST', body: { name: name || 'New calendar', color: PALETTE[state.calendars.length % PALETTE.length] } });
+        if (folderReqRef.current != null && created && created.id != null) {
+          await api('/calendars/' + created.id, { method: 'PATCH', body: { folderIds: [folderReqRef.current] } }).catch(() => {});
+        }
         toast('Calendar created');
         await loadCalendars();
       } else if (mode === 'subscribe') {
@@ -266,19 +332,38 @@ export function Sidebar({ open, onClose }) {
         ${!collapsedFolders[folder.id] && rows(cals)}
       </section>`)}
       <section class="bc-folder">
-        ${byFolder.length > 0 && html`<button
-          type="button" class="bc-folder-head bc-folder-static"
-          aria-expanded=${!collapsedAllCals}
-          onClick=${() => set({ collapsedAllCals: !collapsedAllCals })}
-        ><span class="bc-folder-caret">${collapsedAllCals ? '▸' : '▾'}</span>All calendars</button>`}
+        ${byFolder.length > 0 && html`<div class="bc-folder-headrow">
+          <button
+            type="button" class="bc-folder-head bc-folder-static"
+            aria-expanded=${!collapsedAllCals}
+            onClick=${() => set({ collapsedAllCals: !collapsedAllCals })}
+          ><span class="bc-folder-caret">${collapsedAllCals ? '▸' : '▾'}</span>All calendars</button>
+          <span class="bc-folder-tools">
+            <button
+              type="button" class="bc-icon-btn bc-folder-tool bc-head-plus"
+              aria-label="New calendar" title="New calendar"
+              onClick=${() => set({ addCalRequest: {} })}
+            >+</button>
+          </span>
+        </div>`}
         ${(byFolder.length === 0 || !collapsedAllCals) && rows(loose)}
       </section>
       ${people.length > 0 && html`<section class="bc-folder">
-        <button
-          type="button" class="bc-folder-head bc-folder-static"
-          aria-expanded=${!collapsedPeople}
-          onClick=${() => set({ collapsedPeople: !collapsedPeople })}
-        ><span class="bc-folder-caret">${collapsedPeople ? '▸' : '▾'}</span>People</button>
+        <div class="bc-folder-headrow">
+          <button
+            type="button" class="bc-folder-head bc-folder-static"
+            aria-expanded=${!collapsedPeople}
+            onClick=${() => set({ collapsedPeople: !collapsedPeople })}
+          ><span class="bc-folder-caret">${collapsedPeople ? '▸' : '▾'}</span>People</button>
+          <${PeopleModeButton} />
+          <span class="bc-folder-tools">
+            <button
+              type="button" class="bc-icon-btn bc-folder-tool bc-head-plus"
+              aria-label="New person" title="New person"
+              onClick=${() => set({ route: 'people', peopleCreate: true })}
+            >+</button>
+          </span>
+        </div>
         ${!collapsedPeople && people.map((p) => html`<div key=${p.id} class="bc-cal-item">
           <div class="bc-cal-row${p.currentSpan && p.currentSpan.kind === 'away' ? ' is-person-away' : ''}">
             <span class="bc-cal-label">

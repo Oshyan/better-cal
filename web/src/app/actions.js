@@ -103,9 +103,15 @@ export function jumpToDate(dayKey, flashId) {
 export function closeOverlays() {
   if (state.popover || state.detail || state.groupPopover || state.editor || state.expandedDay ||
       state.searchOpen || state.quickAddOpen || state.jumpOpen || state.shortcutsOpen) {
+    // An editor with entered data confirms before discarding (the drawer
+    // keeps state.editorDirty current).
+    if (state.editor && state.editorDirty && !window.confirm('Discard this event? Entered details will be lost.')) {
+      return true; // consumed the Esc, kept the editor
+    }
     set({
       popover: null, detail: null, groupPopover: null, editor: null, expandedDay: null,
       searchOpen: false, quickAddOpen: false, jumpOpen: false, shortcutsOpen: false,
+      editorDirty: false,
     });
     return true;
   }
@@ -790,4 +796,40 @@ export async function deleteAvailabilitySpan(personId, spanId) {
   await api('/people/' + personId + '/availability/' + spanId, { method: 'DELETE' });
   set({ availSeq: state.availSeq + 1 });
   loadPeople().catch(() => {});
+}
+
+// People folder visibility mode: All / None / Custom, mirroring the calendar
+// folders' cycle. "None" is the important one — one click silences every
+// availability indicator. Custom remembers the per-person selection made
+// while in custom (session-scoped memory; the flags themselves persist).
+export function peopleVisibilityMode() {
+  const people = state.people;
+  if (people.length === 0 || people.every((p) => !p.showOnCalendar)) return 'none';
+  if (people.every((p) => p.showOnCalendar)) return 'all';
+  return 'custom';
+}
+
+export function setPeopleVisibilityMode(next) {
+  const current = peopleVisibilityMode();
+  if (current === 'custom') {
+    set({ peopleVisCustom: state.people.filter((p) => p.showOnCalendar).map((p) => p.id) });
+  }
+  let wantVisible;
+  if (next === 'all') wantVisible = () => true;
+  else if (next === 'none') wantVisible = () => false;
+  else {
+    const remembered = new Set(state.peopleVisCustom || []);
+    if (remembered.size === 0) return; // nothing to restore
+    wantVisible = (p) => remembered.has(p.id);
+  }
+  const changed = state.people.filter((p) => p.showOnCalendar !== wantVisible(p));
+  if (changed.length === 0) return;
+  set({
+    people: state.people.map((p) => (wantVisible(p) === p.showOnCalendar ? p : { ...p, showOnCalendar: wantVisible(p) })),
+    availSeq: state.availSeq + 1,
+  });
+  for (const p of changed) {
+    api('/people/' + p.id, { method: 'PATCH', body: { showOnCalendar: !p.showOnCalendar } })
+      .catch(() => { loadPeople(); });
+  }
 }

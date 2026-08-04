@@ -17,13 +17,17 @@ export const state = {
   folders: [],
   tags: [],
   collapsedFolders: {},
+  editorDirty: false, // editor drawer has unsaved entered data (confirm on close)
   collapsedAllCals: false,
   collapsedPeople: false,
 
   // People directory (sidebar folder, editor autocomplete, People page).
   people: [],         // [{id, name, notes, showOnCalendar, eventCount, currentSpan, nextSpan, ...}]
   peopleFocus: null,  // person name to auto-expand when the People page opens
+  peopleCreate: false, // open the People page's new-person form on arrival
+  addCalRequest: null, // {folderId?} sidebar AddMenu opens its new-calendar form
   peopleSolo: null,   // {personId, saved: {id: bool}} while "only this person" is active
+  peopleVisCustom: null, // remembered per-person selection for the Custom visibility mode
   availSpans: [],     // visible people's availability spans for the loaded window
   availSeq: 0,        // bumped on span/visibility changes to refetch availSpans
 

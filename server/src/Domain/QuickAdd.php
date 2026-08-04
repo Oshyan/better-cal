@@ -68,6 +68,32 @@ final class QuickAdd
         $tz = Time::normalizeTzid($tz);
         $now = Time::nowUtc();
 
+        // A pasted Google Calendar template link IS the event: parse its
+        // query parameters directly (one parser also serves the /add deep
+        // link and the browser-extension redirect).
+        if (GcalLink::isTemplateUrl($text)) {
+            $draft = GcalLink::parse($text, $tz);
+            if ($draft !== null) {
+                $draft['calendarId'] = $this->resolveCalendarId($userId, $calendarId);
+                $event = null;
+                if ($commit) {
+                    $event = $this->events->create($userId, [
+                        'calendarId' => $draft['calendarId'],
+                        'title' => $draft['title'],
+                        'start' => $draft['start'],
+                        'end' => $draft['end'],
+                        'allDay' => $draft['allDay'],
+                        'tzid' => $tz,
+                        'location' => $draft['location'],
+                        'description' => $draft['description'],
+                        'rrule' => $draft['rrule'],
+                        'personNames' => [],
+                    ]);
+                }
+                return ['draft' => $draft, 'event' => $event];
+            }
+        }
+
         // Availability statements divert to a span draft — but only when the
         // leading words exactly match an existing person, so event titles
         // that merely contain "out"/"gone" still parse as events.

@@ -338,6 +338,41 @@ try {
 check('people empty name throws', $threw);
 
 // ---------------------------------------------------------------------------
+// GcalLink — Google Calendar template link parsing (pure)
+// ---------------------------------------------------------------------------
+
+use BetterCal\Domain\GcalLink;
+
+$lumaUrl = 'https://calendar.google.com/calendar/render?action=TEMPLATE&dates=20260809T160000Z%2F20260810T050000Z&details=Get%20up-to-date%20information%20at%3A%20https%3A%2F%2Fluma.com%2Fthe-noe6&location=540%20Laguna%20St%2C%20San%20Francisco%20%2B%20Full%20Space&text=The%20Commons%20Public%20Hours%20%E2%98%95';
+check('gcal detects render links', GcalLink::isTemplateUrl($lumaUrl));
+check('gcal detects eventedit links', GcalLink::isTemplateUrl('https://calendar.google.com/calendar/u/0/r/eventedit?text=Hi&dates=20260101/20260102'));
+check('gcal detects with surrounding whitespace', GcalLink::isTemplateUrl('  ' . $lumaUrl . '  '));
+check('gcal rejects plain text', !GcalLink::isTemplateUrl('Lunch with Ada Friday noon'));
+check('gcal rejects other google urls', !GcalLink::isTemplateUrl('https://calendar.google.com/calendar/r?cid=abc'));
+
+$g = GcalLink::parse($lumaUrl, 'America/Los_Angeles');
+checkEq('gcal luma title', 'The Commons Public Hours ☕', $g['title']);
+checkEq('gcal luma start (UTC->LA)', '2026-08-09T09:00:00-07:00', $g['start']);
+checkEq('gcal luma end', '2026-08-09T22:00:00-07:00', $g['end']);
+check('gcal luma is timed', !$g['allDay']);
+checkEq('gcal luma location', '540 Laguna St, San Francisco + Full Space', $g['location']);
+check('gcal luma description carries link', str_contains($g['description'], 'https://luma.com/the-noe6'));
+checkEq('gcal luma source', 'gcal-link', $g['source']);
+
+$g = GcalLink::parse('https://calendar.google.com/calendar/render?action=TEMPLATE&text=Offsite&dates=20260901/20260903', 'America/Los_Angeles');
+check('gcal all-day range', $g['allDay']);
+checkEq('gcal all-day start', '2026-09-01T00:00:00-07:00', $g['start']);
+checkEq('gcal all-day exclusive end kept', '2026-09-03T00:00:00-07:00', $g['end']);
+
+$g = GcalLink::parse('https://calendar.google.com/calendar/render?action=TEMPLATE&text=Call&dates=20260901T100000/20260901T110000&ctz=America/New_York', 'America/Los_Angeles');
+checkEq('gcal naive times honor ctz', '2026-09-01T10:00:00-04:00', $g['start']);
+
+$g = GcalLink::parse('https://calendar.google.com/calendar/render?action=TEMPLATE&text=Standup&dates=20260901T100000Z/20260901T103000Z&recur=RRULE:FREQ=WEEKLY;BYDAY=TU', 'America/Los_Angeles');
+checkEq('gcal recur strips RRULE prefix', 'FREQ=WEEKLY;BYDAY=TU', $g['rrule']);
+
+checkEq('gcal missing dates -> null', null, GcalLink::parse('https://calendar.google.com/calendar/render?action=TEMPLATE&text=NoDates', 'America/Los_Angeles'));
+
+// ---------------------------------------------------------------------------
 // QuickAdd::awayIntent — availability statement detection (pure)
 // ---------------------------------------------------------------------------
 

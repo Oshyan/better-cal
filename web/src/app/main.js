@@ -3,7 +3,8 @@
 import { html, render } from '../../vendor/index.js';
 import { App } from './App.js';
 import { set, toast } from './store.js';
-import { fetchMe, loadCalendars, loadSavedViews, loadConfig, loadPeople } from './api.js';
+import { fetchMe, loadCalendars, loadSavedViews, loadConfig, loadPeople, api } from './api.js';
+import { localTz } from '../lib/dates.js';
 import { handleEventLink } from './push.js';
 import {
   BATTERY_TIP_BODY, shouldShowInstallTip, markInstallTipShown,
@@ -25,7 +26,78 @@ async function boot() {
   if (authed) {
     // Notification deep link (/?event=instanceId): open that event's detail.
     handleEventLink().catch(() => { /* best-effort */ });
+    handleDeepPaths().catch(() => { /* best-effort */ });
   }
+}
+
+// Deep-link entry paths (all serve the SPA shell; the path carries intent):
+//   /add?<gcal template params>  -> editor prefilled (extension redirect target)
+//   /subscribe?url=<ics|webcal>  -> subscribe drawer prefilled
+//   /import                      -> import drawer (file arrives via launchQueue)
+//   /share?url=&text=&title=     -> Web Share Target: route by content
+async function handleDeepPaths() {
+  const path = location.pathname;
+  if (path === '/' || path === '') return;
+  const params = new URLSearchParams(location.search);
+  const fullUrl = location.href;
+  history.replaceState(null, '', '/');
+
+  const openGcal = async (url) => {
+    // One parser for every entry path: QuickAdd handles GCal template links.
+    const data = await api('/quickadd', { method: 'POST', body: { text: url, tz: localTz() } });
+    const d = data && data.draft;
+    if (!d || !d.start) { toast('Could not read that calendar link', { error: true }); return; }
+    set({
+      editor: {
+        mode: 'create',
+        draft: {
+          title: d.title, start: d.start, end: d.end, allDay: d.allDay,
+          location: d.location, description: d.description, rrule: d.rrule,
+          calendarId: d.calendarId,
+        },
+      },
+    });
+  };
+  const openSubscribe = (url) => {
+    if (url && url.startsWith('webcal://')) url = 'https://' + url.slice('webcal://'.length);
+    set({ createDrawer: { kind: 'subscribe', url: url || '' } });
+  };
+
+  if (path === '/add') {
+    // /add carries the GCal template params verbatim (extension redirect);
+    // hand the parser a canonical GCal URL so it matches strictly.
+    await openGcal('https://calendar.google.com/calendar/render' + new URL(fullUrl).search);
+  } else if (path === '/subscribe') {
+    openSubscribe(params.get('url') || '');
+  } else if (path === '/import') {
+    set({ createDrawer: { kind: 'import' } });
+  } else if (path === '/share') {
+    const shared = [params.get('url'), params.get('text'), params.get('title')]
+      .filter(Boolean).join(' ').trim();
+    // First URL in the shared payload decides the route.
+    const m = shared.match(/https?:\/\/\S+|webcal:\/\/\S+/i);
+    const sharedUrl = m ? m[0] : null;
+    if (sharedUrl && /calendar\.google\.com\/calendar\/(u\/\d+\/)?(r\/eventedit|render)\?/i.test(sharedUrl)) {
+      await openGcal(sharedUrl);
+    } else if (sharedUrl && (/\.ics(\?|$)/i.test(sharedUrl) || sharedUrl.startsWith('webcal://'))) {
+      openSubscribe(sharedUrl);
+    } else if (shared) {
+      // Anything else lands in quick add for the parser to chew on.
+      set({ quickAddOpen: true, quickAddSeed: shared });
+    }
+  }
+}
+
+// Installed-PWA file handling (.ics): the OS hands files here.
+if ('launchQueue' in window) {
+  window.launchQueue.setConsumer(async (launchParams) => {
+    const handle = launchParams.files && launchParams.files[0];
+    if (!handle) return;
+    try {
+      const file = await handle.getFile();
+      set({ pendingImportFile: file, createDrawer: { kind: 'import' } });
+    } catch { /* best-effort */ }
+  });
 }
 
 render(html`<${App} />`, document.getElementById('app'));

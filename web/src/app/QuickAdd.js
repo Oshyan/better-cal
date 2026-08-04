@@ -143,6 +143,20 @@ export function QuickAdd() {
       prevParseRef.current = {};
       lastParsedRef.current = '';
       reqRef.current++; // void any in-flight parse from a previous open
+      // Share-target seed: arrive with the shared text typed and parsing.
+      if (state.quickAddSeed) {
+        const seed = state.quickAddSeed;
+        set({ quickAddSeed: null });
+        setText(seed);
+        clearTimeout(timerRef.current);
+        timerRef.current = setTimeout(async () => {
+          const id = ++reqRef.current;
+          try {
+            const d = await quickAddParse(seed);
+            if (id === reqRef.current) applyParse(d, seed.trim());
+          } catch { /* best-effort */ }
+        }, 50);
+      }
     }
   }, [open]);
 

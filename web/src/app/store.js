@@ -25,8 +25,10 @@ export const state = {
   people: [],         // [{id, name, notes, showOnCalendar, eventCount, currentSpan, nextSpan, ...}]
   peopleFocus: null,  // person name to auto-expand when the People page opens
   // Generalized "New <thing>" slide-in (CreateDrawer):
-  // {kind: 'calendar'|'subscribe'|'import'|'folder'|'person', folderId?}
+  // {kind: 'calendar'|'subscribe'|'import'|'folder'|'person', folderId?, url?}
   createDrawer: null,
+  quickAddSeed: null,      // text to prefill quick add with on next open (share target)
+  pendingImportFile: null, // File handed over by the OS (PWA file_handlers)
   peopleSolo: null,   // {personId, saved: {id: bool}} while "only this person" is active
   peopleVisCustom: null, // remembered per-person selection for the Custom visibility mode
   availSpans: [],     // visible people's availability spans for the loaded window

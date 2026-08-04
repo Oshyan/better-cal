@@ -15,7 +15,7 @@ import { Icon } from '../ui/icons.js';
 const SOURCES = [
   ['web', 'Web', 'manual'],
   ['quickadd', 'Quick add', 'manual'],
-  ['caldav', 'Phone sync', 'manual'],
+  ['caldav', 'CalDAV', 'manual'],
   ['rsvp', 'RSVP', 'manual'],
   ['api', 'Agent/API', 'auto'],
   ['feed', 'Feeds', 'auto'],

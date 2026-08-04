@@ -10,7 +10,7 @@ import { useStore, set, state, toast } from './store.js';
 import { api, loadPeople } from './api.js';
 import { jumpToDate, openDetail, addAvailabilitySpan, deleteAvailabilitySpan } from './actions.js';
 import { PageShell, EmptyState } from './PageShell.js';
-import { CalDot } from '../ui/icons.js';
+import { CalDot, Icon } from '../ui/icons.js';
 import { parseISO, occDayKey, fmtTime, dateOfDayKey, toISOWithOffset } from '../lib/dates.js';
 
 function fmtDay(iso) {
@@ -53,9 +53,11 @@ function PersonEvents({ personId }) {
     openDetail(occ.instanceId);
   };
 
+  // An event is "past" only once it has ENDED, so in-progress (including
+  // multi-day) events stay in the upcoming group.
   const now = Date.now();
-  const upcoming = (list || []).filter((o) => parseISO(o.start).getTime() >= now).reverse();
-  const past = (list || []).filter((o) => parseISO(o.start).getTime() < now);
+  const upcoming = (list || []).filter((o) => parseISO(o.end).getTime() >= now).reverse();
+  const past = (list || []).filter((o) => parseISO(o.end).getTime() < now);
 
   const rows = (label, items) => items.length > 0 && html`<div class="bc-person-group">
     <div class="bc-person-group-label">${label}</div>
@@ -155,11 +157,30 @@ export function PeoplePage() {
   const [name, setName] = useState('');
   const [notesId, setNotesId] = useState(null);
   const [notes, setNotes] = useState('');
-  const [confirmId, setConfirmId] = useState(null);
+  const [creating, setCreating] = useState(() => !!state.peopleCreate);
+  const [newName, setNewName] = useState('');
 
   useEffect(() => {
+    if (state.peopleCreate) set({ peopleCreate: false });
     loadPeople().catch(() => {}).finally(() => setLoaded(true));
   }, []);
+
+  const submitCreate = async (e) => {
+    e.preventDefault();
+    const trimmed = newName.trim();
+    if (!trimmed) return;
+    try {
+      const person = await api('/people', { method: 'POST', body: { name: trimmed } });
+      toast(person.created ? `Added ${person.name}` : `${person.name} already exists`);
+      setNewName('');
+      setCreating(false);
+      await loadPeople();
+      setOpenId(person.id);
+      setOpenSection('availability');
+    } catch (err) {
+      toast(err.message || 'Could not add person', { error: true });
+    }
+  };
 
   // Arrived via a person link (popover/detail/sidebar/band): expand once.
   useEffect(() => {
@@ -202,7 +223,6 @@ export function PeoplePage() {
   };
 
   const remove = async (p) => {
-    setConfirmId(null);
     try {
       await api('/people/' + p.id, { method: 'DELETE' });
       toast(`Removed ${p.name} (events kept)`);
@@ -226,6 +246,15 @@ export function PeoplePage() {
     title="People"
     note="Everyone linked to your events. Add people from the editor's People field, or just write “with Sam” when creating events. Quick add also understands “Sam is away Aug 10 to 15”. Renaming someone onto an existing name merges their history."
   >
+    <div class="bc-person-createrow">
+      ${creating
+        ? html`<form class="bc-views-saveform" onSubmit=${submitCreate}>
+            <input value=${newName} autofocus placeholder="Person's name" aria-label="New person name" onInput=${(e) => setNewName(e.target.value)} />
+            <button type="submit" class="bc-btn bc-btn-primary" disabled=${!newName.trim()}>Add person</button>
+            <button type="button" class="bc-btn" onClick=${() => { setCreating(false); setNewName(''); }}>Cancel</button>
+          </form>`
+        : html`<button type="button" class="bc-btn" onClick=${() => setCreating(true)}>+ New person</button>`}
+    </div>
     ${loaded && people.length === 0 && html`<${EmptyState}
       text="No people yet. Create an event “with” someone — quick add understands phrases like “Lunch with Ada Friday noon” — or use the People field in the event editor."
       actionLabel="Go to calendar" onAction=${() => set({ route: 'calendar' })}
@@ -254,17 +283,25 @@ export function PeoplePage() {
                 </label>
               </div>`}
           <div class="bc-card-actions">
-            <button type="button" class="bc-btn" onClick=${() => toggleOpen(p, 'events')}>
-              ${openId === p.id && openSection === 'events' ? 'Hide events' : 'Events'}
-            </button>
-            <button type="button" class="bc-btn" onClick=${() => toggleOpen(p, 'availability')}>
-              ${openId === p.id && openSection === 'availability' ? 'Hide availability' : 'Availability'}
-            </button>
+            <button
+              type="button" class="bc-btn bc-btn-toggle${openId === p.id && openSection === 'events' ? ' is-active' : ''}"
+              aria-pressed=${openId === p.id && openSection === 'events'}
+              title="Show this person's events"
+              onClick=${() => toggleOpen(p, 'events')}
+            >Events</button>
+            <button
+              type="button" class="bc-btn bc-btn-toggle${openId === p.id && openSection === 'availability' ? ' is-active' : ''}"
+              aria-pressed=${openId === p.id && openSection === 'availability'}
+              title="Show and edit away/busy spans"
+              onClick=${() => toggleOpen(p, 'availability')}
+            >Availability</button>
             <button type="button" class="bc-btn" onClick=${() => { setNotesId(p.id); setNotes(p.notes || ''); }}>Notes</button>
             <button type="button" class="bc-btn" onClick=${() => { setEditingId(p.id); setName(p.name); }}>Rename</button>
-            ${confirmId === p.id
-              ? html`<button type="button" class="bc-btn bc-btn-danger" onClick=${() => remove(p)}>Really remove?</button>`
-              : html`<button type="button" class="bc-btn bc-btn-danger" onClick=${() => setConfirmId(p.id)}>Remove</button>`}
+            <button
+              type="button" class="bc-icon-btn bc-pop-trash" title=${'Remove ' + p.name + ' (events kept)'}
+              aria-label=${'Remove ' + p.name}
+              onClick=${() => { if (window.confirm('Remove ' + p.name + '? Their events stay on your calendars.')) remove(p); }}
+            ><${Icon} name="trash" size=${14} /></button>
           </div>
         </div>
         ${notesId === p.id && html`<div class="bc-person-notesedit">

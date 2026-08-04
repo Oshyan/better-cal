@@ -135,6 +135,7 @@ function bc_handle_api(Request $request, array $cfg): void
         $router->add('GET', "$base/search", [$searchController, 'search']);
 
         $router->add('GET', "$base/people", [$peopleController, 'index']);
+        $router->add('POST', "$base/people", [$peopleController, 'create']);
         $router->add('PATCH', "$base/people/:id", [$peopleController, 'patch']);
         $router->add('DELETE', "$base/people/:id", [$peopleController, 'delete']);
         $router->add('GET', "$base/people/:id/events", [$peopleController, 'events']);

@@ -8,7 +8,7 @@
 import { html, useState, useEffect, useRef } from '../../vendor/index.js';
 import { useStore, set, state } from './store.js';
 import { createEvent, updateEvent, deleteEvent, quickAddParse, attachToTrip } from './actions.js';
-import { api } from './api.js';
+import { api, loadPeople } from './api.js';
 import { TripRow } from './Trips.js';
 import { trapFocus } from '../ui/DayExpand.js';
 import { PlaceInput, pickFillText } from './PlaceInput.js';
@@ -17,6 +17,7 @@ import { RichText } from './RichText.js';
 import { isEmptyHtml } from '../lib/richtext.js';
 import {
   parseISO, toInputValue, fromInputValue, toISOWithOffset, addDaysDate, pad, localTz,
+  dateOfDayKey,
 } from '../lib/dates.js';
 import {
   TIMED_CHOICES, ALLDAY_CHOICES, REMINDER_UNITS, fmtOffsetMinutes, fmtReminder,
@@ -72,6 +73,9 @@ export function EditorDrawer() {
   const [scope, setScope] = useState('this');
   // Custom reminder entry (number + unit) revealed by the Custom option.
   const [remCustom, setRemCustom] = useState(null); // {n, unit} | null
+
+  // Dirty tracking baseline (JSON of the initial form; NL text counts too).
+  const initialSnapRef = useRef(null);
 
   // NL assist (create mode): debounce-parse, race-guard, flash filled fields.
   const [nlText, setNlText] = useState('');
@@ -139,6 +143,15 @@ export function EditorDrawer() {
 
   useEffect(() => () => { clearTimeout(nlTimer.current); clearTimeout(flashTimer.current); }, []);
 
+  // Keep state.editorDirty current so every close path (✕, backdrop, Cancel,
+  // global Esc) can confirm before discarding entered data.
+  useEffect(() => {
+    if (!form || initialSnapRef.current == null) return;
+    const dirty = JSON.stringify(form) !== initialSnapRef.current
+      || (nlText || '').trim() !== ((editor && editor.nlText) || '').trim();
+    if (dirty !== state.editorDirty) set({ editorDirty: dirty });
+  }, [form, nlText]); // eslint-disable-line
+
   // Scheduling assist (docs/design-availability.md §4): when the event's
   // people are away/busy during its time, warn inline under the People
   // field. Best-effort and debounced; never blocks saving.
@@ -170,9 +183,13 @@ export function EditorDrawer() {
     if (!editor) { setForm(null); return; }
     const occ = editor.occ;
     const draft = editor.draft || {};
-    const start = occ ? parseISO(occ.start) : (draft.start ? parseISO(draft.start) : new Date());
-    const end = occ ? parseISO(occ.end) : (draft.end ? parseISO(draft.end) : new Date(start.getTime() + 3600000));
-    setForm({
+    // All-day occurrences carry literal dates at +00:00; parsing them as
+    // instants would land a day early west of UTC (saving then actually
+    // moved the event back a day). Anchor them to local midnight instead.
+    const anchor = (iso, allDay) => (allDay ? dateOfDayKey(iso.slice(0, 10)) : parseISO(iso));
+    const start = occ ? anchor(occ.start, occ.allDay) : (draft.start ? anchor(draft.start, !!draft.allDay) : new Date());
+    const end = occ ? anchor(occ.end, occ.allDay) : (draft.end ? anchor(draft.end, !!draft.allDay) : new Date(start.getTime() + 3600000));
+    const initial = {
       title: occ ? occ.title : (draft.title || ''),
       // New events land on the draft's calendar, else the user's default
       // calendar (settings), else the first local calendar.
@@ -202,7 +219,10 @@ export function EditorDrawer() {
       remInitial: occ && occ.reminderSource === 'event'
         ? (occ.reminders || []).map((r) => Number(r.minutes) || 0).join(',')
         : null,
-    });
+    };
+    setForm(initial);
+    initialSnapRef.current = JSON.stringify(initial);
+    set({ editorDirty: false });
     setScope('this');
     setDurationLock(true);
     setRemCustom(null);
@@ -229,6 +249,14 @@ export function EditorDrawer() {
 
   const occ = editor.occ;
   const upd = (patch) => setForm((f) => ({ ...f, ...patch }));
+
+  // Dirty tracking: any change to the form (or typed NL text) arms a
+  // discard-confirm on every close path, including the global Esc (which
+  // reads state.editorDirty in closeOverlays).
+  const requestClose = () => {
+    if (state.editorDirty && !window.confirm('Discard this event? Entered details will be lost.')) return;
+    set({ editor: null, editorDirty: false });
+  };
 
   const onStartChange = (v) => {
     if (durationLock) {
@@ -297,7 +325,12 @@ export function EditorDrawer() {
       // "New event in this trip": auto-attach the fresh event to its trip.
       if (created && editor.attachTrip) await attachToTrip(editor.attachTrip, created);
     }
-    if (ok) set({ editor: null });
+    if (ok) {
+      // New people linked via this save should appear in the sidebar folder
+      // and autocomplete right away.
+      if ((fields.personNames || []).length > 0) loadPeople().catch(() => {});
+      set({ editor: null, editorDirty: false });
+    }
   };
 
   const r = form.rrule;
@@ -328,11 +361,11 @@ export function EditorDrawer() {
     upd({ reminders: list });
   };
 
-  return html`<div class="bc-drawer-backdrop" onClick=${(e) => { if (e.target === e.currentTarget) set({ editor: null }); }}>
+  return html`<div class="bc-drawer-backdrop" onClick=${(e) => { if (e.target === e.currentTarget) requestClose(); }}>
     <form class="bc-drawer" ref=${panelRef} onSubmit=${submit} role="dialog" aria-modal="true" aria-label=${occ ? 'Edit event' : 'New event'}>
       <div class="bc-drawer-head">
         <h2>${occ ? 'Edit event' : 'New event'}</h2>
-        <button type="button" class="bc-icon-btn" aria-label="Close" onClick=${() => set({ editor: null })}>✕</button>
+        <button type="button" class="bc-icon-btn" aria-label="Close" onClick=${requestClose}>✕</button>
       </div>
 
       ${!occ && html`<div class="bc-nl">
@@ -525,7 +558,7 @@ export function EditorDrawer() {
       <div class="bc-drawer-actions">
         <button type="submit" class="bc-btn bc-btn-primary">${occ ? 'Save' : 'Create'}</button>
         ${occ && html`<button type="button" class="bc-btn bc-btn-danger" onClick=${() => deleteEvent(occ, scope)}>Delete</button>`}
-        <button type="button" class="bc-btn" onClick=${() => set({ editor: null })}>Cancel</button>
+        <button type="button" class="bc-btn" onClick=${requestClose}>Cancel</button>
       </div>
     </form>
   </div>`;

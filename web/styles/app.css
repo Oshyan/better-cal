@@ -1945,8 +1945,9 @@ body.bc-rescheduling { user-select: none; }
 .bc-away-pill.is-away { background: #8b93a422; color: #6b7484; border: 1px solid #8b93a455; }
 .bc-away-pill.is-busy { background: #d19a3822; color: #a4762a; border: 1px solid #d19a3855; }
 
-/* Availability bands: dashed top edge distinguishes them from trip bands. */
-.bc-band.is-avail { border-top: 2px dashed currentColor; box-shadow: none !important; }
+/* Availability bands: soft dashed top edge (inline style carries the
+   reduced-alpha color) distinguishes them from trip bands. */
+.bc-band.is-avail { box-shadow: none !important; }
 .bc-band.is-avail .bc-band-label { font-style: italic; }
 
 /* Editor scheduling assist. */
@@ -1965,3 +1966,45 @@ body.bc-rescheduling { user-select: none; }
 .bc-person-availform { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
 .bc-person-availform .bc-person-availnotein { flex: 1; min-width: 120px; }
 .bc-person-show { margin-top: 2px; color: var(--fg-muted); font-size: 12.5px; }
+
+/* --- wave 8: sidebar tools, new menu, people page toggles ------------------- */
+
+/* Hover-revealed "+" on section headers; gear follows the same reveal. */
+.bc-folder-tools { display: inline-flex; align-items: center; gap: 2px; margin-left: auto; flex: none; }
+.bc-folder-tools .bc-folder-tool { opacity: 0; transition: opacity 0.1s ease; padding: 2px 5px; }
+.bc-folder-headrow:hover .bc-folder-tool, .bc-folder-tool:focus-visible,
+.bc-folder-headrow:focus-within .bc-folder-tool { opacity: 1; }
+@media (pointer: coarse) { .bc-folder-tools .bc-folder-tool { opacity: 1; } }
+.bc-head-plus { font-size: 14px; line-height: 1; color: var(--fg-muted); }
+.bc-head-plus:hover { color: var(--fg); }
+
+/* Folder options panel (gear): rename + delete, indented under the header. */
+.bc-folder-options {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  padding: 5px 6px 7px 22px;
+}
+.bc-folder-renameform { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.bc-folder-renameform input { min-width: 0; width: 120px; }
+
+/* Toolbar "+ New" split menu. */
+.bc-newmenu { position: relative; display: inline-flex; }
+.bc-newmenu-main { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.bc-newmenu-caret {
+  border-top-left-radius: 0; border-bottom-left-radius: 0;
+  padding-left: 5px; padding-right: 6px; margin-left: 1px; font-size: 10px;
+}
+.bc-newmenu-drop {
+  position: absolute; right: 0; top: calc(100% + 5px); z-index: 90;
+  min-width: 120px; background: var(--bg-raised); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow);
+  display: flex; flex-direction: column; overflow: hidden; padding: 3px;
+}
+.bc-newmenu-item {
+  background: none; border: none; text-align: left; padding: 6px 10px;
+  font-size: 13px; color: var(--fg); cursor: pointer; border-radius: 5px;
+}
+.bc-newmenu-item:hover { background: var(--bg-inset); }
+
+/* People page: stable section toggles + create row. */
+.bc-btn-toggle.is-active { background: var(--bg-inset); border-color: var(--accent); color: var(--accent); }
+.bc-person-createrow { margin-bottom: 4px; }

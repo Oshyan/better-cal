@@ -22,6 +22,12 @@ final class PeopleController
         return Response::json(['people' => $this->people->list((int) $req->user['id'])]);
     }
 
+    public function create(Request $req): Response
+    {
+        $person = $this->people->create((int) $req->user['id'], $req->body);
+        return Response::json($person, $person['created'] ? 201 : 200);
+    }
+
     public function patch(Request $req, array $params): Response
     {
         return Response::json($this->people->update((int) $req->user['id'], (int) $params['id'], $req->body));

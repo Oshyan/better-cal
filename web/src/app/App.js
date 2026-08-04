@@ -28,6 +28,7 @@ import { EventPopover } from './EventPopover.js';
 import { EventDetail } from './EventDetail.js';
 import { GroupPopover } from './GroupPopover.js';
 import { EditorDrawer } from './EditorDrawer.js';
+import { CreateDrawer } from './CreateDrawer.js';
 import { SearchOverlay } from './SearchOverlay.js';
 import { ShortcutsSheet } from './ShortcutsSheet.js';
 import { Toasts } from './Toasts.js';
@@ -143,19 +144,22 @@ export function App() {
   // occurrences so the month/ribbon band machinery renders them.
   const availSpans = useStore((st) => st.availSpans);
   const availSeq = useStore((st) => st.availSeq);
+  // Scalar month key so the effect follows real navigation (the s.visibleMonth
+  // selector above is reschedule-gated and unsuitable here).
+  const visMonthKey = useStore((st) => (st.visibleMonth ? st.visibleMonth.year * 100 + st.visibleMonth.month : 0));
   const anyPersonVisible = s.calendars && state.people.some((p) => p.showOnCalendar);
   useEffect(() => {
     if (!anyPersonVisible) {
       if (state.availSpans.length > 0) set({ availSpans: [] });
       return;
     }
-    const vm = s.visibleMonth || { year: Number(todayKey().slice(0, 4)), month: Number(todayKey().slice(5, 7)) };
+    const vm = state.visibleMonth || { year: Number(todayKey().slice(0, 4)), month: Number(todayKey().slice(5, 7)) };
     const start = new Date(vm.year, vm.month - 1 - 1, 1);
     const end = new Date(vm.year, vm.month - 1 + 2, 1);
     api('/availability?' + new URLSearchParams({ start: toISOWithOffset(start), end: toISOWithOffset(end) }))
       .then((d) => set({ availSpans: d.spans || [] }))
       .catch(() => {});
-  }, [anyPersonVisible, s.visibleMonth && s.visibleMonth.year, s.visibleMonth && s.visibleMonth.month, availSeq]); // eslint-disable-line
+  }, [anyPersonVisible, visMonthKey, availSeq]); // eslint-disable-line
 
   const availOccs = useMemo(() => availSpans.map((sp) => {
     const startKey = occDayKey({ allDay: false, start: sp.start });
@@ -296,22 +300,22 @@ export function App() {
     return html`<${Login} />`;
   }
   if (s.route === 'organize') {
-    return html`<div class="bc-app"><${OrganizePage} /><${ShortcutsSheet} /><${Toasts} /></div>`;
+    return html`<div class="bc-app"><${OrganizePage} /><${CreateDrawer} /><${ShortcutsSheet} /><${Toasts} /></div>`;
   }
   if (s.route === 'outfeeds') {
-    return html`<div class="bc-app"><${OutfeedsPage} /><${ShortcutsSheet} /><${Toasts} /></div>`;
+    return html`<div class="bc-app"><${OutfeedsPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${Toasts} /></div>`;
   }
   if (s.route === 'filters') {
-    return html`<div class="bc-app"><${FiltersPage} /><${ShortcutsSheet} /><${Toasts} /></div>`;
+    return html`<div class="bc-app"><${FiltersPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${Toasts} /></div>`;
   }
   if (s.route === 'views') {
-    return html`<div class="bc-app"><${SavedViewsPage} /><${ShortcutsSheet} /><${Toasts} /></div>`;
+    return html`<div class="bc-app"><${SavedViewsPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${Toasts} /></div>`;
   }
   if (s.route === 'settings') {
-    return html`<div class="bc-app"><${SettingsPage} /><${ShortcutsSheet} /><${Toasts} /></div>`;
+    return html`<div class="bc-app"><${SettingsPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${Toasts} /></div>`;
   }
   if (s.route === 'people') {
-    return html`<div class="bc-app"><${PeoplePage} /><${ShortcutsSheet} /><${Toasts} /></div>`;
+    return html`<div class="bc-app"><${PeoplePage} /><${CreateDrawer} /><${ShortcutsSheet} /><${Toasts} /></div>`;
   }
 
   let view = null;
@@ -459,6 +463,7 @@ export function App() {
     <${GroupPopover} />
     <${EventDetail} />
     <${EditorDrawer} />
+    <${CreateDrawer} />
     <${SearchOverlay} />
     <${ShortcutsSheet} />
     ${reschedActive && html`<${RescheduleOverlay}

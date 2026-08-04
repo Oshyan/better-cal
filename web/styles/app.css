@@ -2024,3 +2024,12 @@ body.bc-rescheduling { user-select: none; }
   display: flex; flex-direction: column; gap: 6px;
 }
 .bc-person-noteview-text { white-space: pre-wrap; font-size: 13px; }
+
+/* CreateDrawer: narrower variant of the editor drawer chrome + color picker. */
+.bc-drawer-slim { max-width: 340px; }
+.bc-colorrow { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.bc-colorswatch {
+  width: 20px; height: 20px; border-radius: 50%; border: 2px solid transparent;
+  cursor: pointer; padding: 0;
+}
+.bc-colorswatch.is-on { border-color: var(--fg); }

@@ -24,8 +24,9 @@ export const state = {
   // People directory (sidebar folder, editor autocomplete, People page).
   people: [],         // [{id, name, notes, showOnCalendar, eventCount, currentSpan, nextSpan, ...}]
   peopleFocus: null,  // person name to auto-expand when the People page opens
-  peopleCreate: false, // open the People page's new-person form on arrival
-  addCalRequest: null, // {folderId?} sidebar AddMenu opens its new-calendar form
+  // Generalized "New <thing>" slide-in (CreateDrawer):
+  // {kind: 'calendar'|'subscribe'|'import'|'folder'|'person', folderId?}
+  createDrawer: null,
   peopleSolo: null,   // {personId, saved: {id: bool}} while "only this person" is active
   peopleVisCustom: null, // remembered per-person selection for the Custom visibility mode
   availSpans: [],     // visible people's availability spans for the loaded window

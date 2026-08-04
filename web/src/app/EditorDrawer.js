@@ -207,10 +207,12 @@ export function EditorDrawer() {
       locationLng: occ ? (occ.locationLng != null ? occ.locationLng : null)
         : (draft.locationLng != null ? draft.locationLng : null),
       url: occ ? (occ.url || '') : '',
-      description: occ ? (occ.description || '') : '',
+      description: occ ? (occ.description || '') : (draft.description || ''),
       tags: occ && occ.tags ? occ.tags.join(', ') : '',
       people: occ ? (occ.people || []) : (draft.personNames || []),
-      rrule: parseRrule(occ && occ.recurring ? (occ.rrule || editor.rrule || '') : ''),
+      rrule: parseRrule(occ
+        ? (occ.recurring ? (occ.rrule || editor.rrule || '') : '')
+        : (draft.rrule || '')),
       // null = inherit calendar/global defaults; a list = explicit override
       // (minutes before start; [] = no reminders). remInitial detects changes.
       reminders: occ && occ.reminderSource === 'event'

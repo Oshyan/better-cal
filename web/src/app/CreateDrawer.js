@@ -35,7 +35,7 @@ export function CreateDrawer() {
   useEffect(() => {
     if (!req) return;
     setName('');
-    setUrl('');
+    setUrl(req.url || '');
     setNotes('');
     setColor(PALETTE[state.calendars.length % PALETTE.length]);
     setFolderId(req.folderId != null ? String(req.folderId) : '');
@@ -51,7 +51,7 @@ export function CreateDrawer() {
   if (!req) return null;
 
   const kind = req.kind;
-  const close = () => set({ createDrawer: null });
+  const close = () => set({ createDrawer: null, pendingImportFile: null });
 
   const submit = async (e) => {
     e.preventDefault();
@@ -69,7 +69,8 @@ export function CreateDrawer() {
         toast('Subscribed; first fetch running');
         await loadCalendars();
       } else if (kind === 'import') {
-        const file = fileRef.current && fileRef.current.files[0];
+        // A file handed over by the OS (PWA file handler) wins over the picker.
+        const file = state.pendingImportFile || (fileRef.current && fileRef.current.files[0]);
         if (!file) { setBusy(false); return; }
         const fd = new FormData();
         fd.append('ics', file);
@@ -126,7 +127,9 @@ export function CreateDrawer() {
 
       ${kind === 'import' && html`<label class="bc-field">
         <span>ICS file</span>
-        <input type="file" accept=".ics,text/calendar" ref=${fileRef} required />
+        ${state.pendingImportFile
+          ? html`<span class="bc-badge" title="Opened from your device">${state.pendingImportFile.name}</span>`
+          : html`<input type="file" accept=".ics,text/calendar" ref=${fileRef} required />`}
       </label>`}
 
       ${kind === 'calendar' && html`<div class="bc-field">

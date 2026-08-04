@@ -181,8 +181,8 @@ function NewMenu() {
   const items = [
     ['Event', () => set({ editor: { mode: 'create', draft: {} } })],
     ['Trip', () => set({ editor: { mode: 'create', draft: { isContainer: true, allDay: true } } })],
-    ['Person', () => set({ route: 'people', peopleCreate: true })],
-    ['Calendar', () => set({ addCalRequest: {} })],
+    ['Person', () => set({ createDrawer: { kind: 'person' } })],
+    ['Calendar', () => set({ createDrawer: { kind: 'calendar' } })],
   ];
 
   return html`<span class="bc-newmenu" ref=${wrapRef}>

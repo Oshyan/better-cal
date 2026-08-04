@@ -1,7 +1,8 @@
 // Sidebar: folders > calendars with color dots + visibility toggles, folder
 // visibility modes (all/none/custom), per-calendar settings panels (gear),
-// folder create/delete (renaming lives in the folder manager), add-calendar
-// menu (local / subscribe / import), feed health badges, and the manage
+// folder gear options (rename/delete), the People folder (availability
+// visibility), hover "+" launchers and the creation launcher list (all of
+// which open the titled CreateDrawer), feed health badges, and the manage
 // navigation in the footer.
 
 import { html, useState, useRef, useEffect } from '../../vendor/index.js';
@@ -157,7 +158,7 @@ function FolderHead({ folder, cals, collapsed, onToggleCollapse }) {
         <button
           type="button" class="bc-icon-btn bc-folder-tool bc-head-plus"
           aria-label=${'New calendar in ' + folder.name} title="New calendar in this folder"
-          onClick=${() => set({ addCalRequest: { folderId: folder.id } })}
+          onClick=${() => set({ createDrawer: { kind: 'calendar', folderId: folder.id } })}
         >+</button>
         <button
           type="button" class="bc-icon-btn bc-folder-tool"
@@ -181,78 +182,15 @@ function FolderHead({ folder, cals, collapsed, onToggleCollapse }) {
   </div>`;
 }
 
+// Creation launchers: every "+ ..." opens the titled CreateDrawer (the
+// slide-in from the right), never an anonymous inline form.
 function AddMenu() {
-  const [mode, setMode] = useState(null); // null | 'local' | 'subscribe' | 'import' | 'folder'
-  const [name, setName] = useState('');
-  const [url, setUrl] = useState('');
-  const [busy, setBusy] = useState(false);
-  const fileRef = useRef(null);
-
-  // Section-header "+" buttons request a new calendar (optionally into a
-  // folder) by setting addCalRequest; consume it by opening the local form.
-  const addCalRequest = useStore((s) => s.addCalRequest);
-  const folderReqRef = useRef(null);
-  useEffect(() => {
-    if (!addCalRequest) return;
-    folderReqRef.current = addCalRequest.folderId || null;
-    setMode('local');
-    set({ addCalRequest: null });
-  }, [addCalRequest]);
-
-  const close = () => { setMode(null); setName(''); setUrl(''); folderReqRef.current = null; };
-
-  const submit = async (e) => {
-    e.preventDefault();
-    setBusy(true);
-    try {
-      if (mode === 'local') {
-        const created = await api('/calendars', { method: 'POST', body: { name: name || 'New calendar', color: PALETTE[state.calendars.length % PALETTE.length] } });
-        if (folderReqRef.current != null && created && created.id != null) {
-          await api('/calendars/' + created.id, { method: 'PATCH', body: { folderIds: [folderReqRef.current] } }).catch(() => {});
-        }
-        toast('Calendar created');
-        await loadCalendars();
-      } else if (mode === 'subscribe') {
-        await api('/calendars/subscribe', { method: 'POST', body: { url, name: name || undefined } });
-        toast('Subscribed; first fetch running');
-        await loadCalendars();
-      } else if (mode === 'import') {
-        const file = fileRef.current && fileRef.current.files[0];
-        if (!file) { setBusy(false); return; }
-        const fd = new FormData();
-        fd.append('ics', file);
-        if (name) fd.append('name', name);
-        const res = await api('/calendars/import', { method: 'POST', formData: fd });
-        toast('Imported ' + ((res && res.imported) || 0) + ' events');
-        await loadCalendars();
-      } else if (mode === 'folder') {
-        await createFolder(name || 'New folder');
-      }
-      close();
-    } catch (err) {
-      toast('Failed: ' + err.message, { error: true });
-    }
-    setBusy(false);
-  };
-
-  if (!mode) {
-    return html`<div class="bc-add-menu">
-      <button type="button" class="bc-link-btn" onClick=${() => setMode('local')}>+ New calendar</button>
-      <button type="button" class="bc-link-btn" onClick=${() => setMode('subscribe')}>+ Subscribe URL</button>
-      <button type="button" class="bc-link-btn" onClick=${() => setMode('import')}>+ Import ICS</button>
-      <button type="button" class="bc-link-btn" onClick=${() => setMode('folder')}>+ New folder</button>
-    </div>`;
-  }
-
-  return html`<form class="bc-add-form" onSubmit=${submit}>
-    <input placeholder="Name" required=${mode === 'folder'} value=${name} onInput=${(e) => setName(e.target.value)} />
-    ${mode === 'subscribe' && html`<input placeholder="ICS URL" required type="url" value=${url} onInput=${(e) => setUrl(e.target.value)} />`}
-    ${mode === 'import' && html`<input type="file" accept=".ics,text/calendar" ref=${fileRef} required />`}
-    <div class="bc-add-form-row">
-      <button type="submit" class="bc-btn bc-btn-primary" disabled=${busy}>${busy ? 'Working' : 'Add'}</button>
-      <button type="button" class="bc-btn" onClick=${close}>Cancel</button>
-    </div>
-  </form>`;
+  return html`<div class="bc-add-menu">
+    <button type="button" class="bc-link-btn" onClick=${() => set({ createDrawer: { kind: 'calendar' } })}>+ New calendar</button>
+    <button type="button" class="bc-link-btn" onClick=${() => set({ createDrawer: { kind: 'subscribe' } })}>+ Subscribe URL</button>
+    <button type="button" class="bc-link-btn" onClick=${() => set({ createDrawer: { kind: 'import' } })}>+ Import ICS</button>
+    <button type="button" class="bc-link-btn" onClick=${() => set({ createDrawer: { kind: 'folder' } })}>+ New folder</button>
+  </div>`;
 }
 
 const MANAGE_ITEMS = [
@@ -342,7 +280,7 @@ export function Sidebar({ open, onClose }) {
             <button
               type="button" class="bc-icon-btn bc-folder-tool bc-head-plus"
               aria-label="New calendar" title="New calendar"
-              onClick=${() => set({ addCalRequest: {} })}
+              onClick=${() => set({ createDrawer: { kind: 'calendar' } })}
             >+</button>
           </span>
         </div>`}
@@ -360,7 +298,7 @@ export function Sidebar({ open, onClose }) {
             <button
               type="button" class="bc-icon-btn bc-folder-tool bc-head-plus"
               aria-label="New person" title="New person"
-              onClick=${() => set({ route: 'people', peopleCreate: true })}
+              onClick=${() => set({ createDrawer: { kind: 'person' } })}
             >+</button>
           </span>
         </div>

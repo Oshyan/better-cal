@@ -102,7 +102,8 @@ export function jumpToDate(dayKey, flashId) {
 
 export function closeOverlays() {
   if (state.popover || state.detail || state.groupPopover || state.editor || state.expandedDay ||
-      state.searchOpen || state.quickAddOpen || state.jumpOpen || state.shortcutsOpen) {
+      state.searchOpen || state.quickAddOpen || state.jumpOpen || state.shortcutsOpen ||
+      state.createDrawer) {
     // An editor with entered data confirms before discarding (the drawer
     // keeps state.editorDirty current).
     if (state.editor && state.editorDirty && !window.confirm('Discard this event? Entered details will be lost.')) {
@@ -111,7 +112,7 @@ export function closeOverlays() {
     set({
       popover: null, detail: null, groupPopover: null, editor: null, expandedDay: null,
       searchOpen: false, quickAddOpen: false, jumpOpen: false, shortcutsOpen: false,
-      editorDirty: false,
+      editorDirty: false, createDrawer: null,
     });
     return true;
   }

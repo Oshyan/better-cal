@@ -158,30 +158,9 @@ export function PeoplePage() {
   const [notesId, setNotesId] = useState(null);   // editing
   const [notes, setNotes] = useState('');
   const [noteViewId, setNoteViewId] = useState(null); // read-only view
-  const [creating, setCreating] = useState(() => !!state.peopleCreate);
-  const [newName, setNewName] = useState('');
-
   useEffect(() => {
-    if (state.peopleCreate) set({ peopleCreate: false });
     loadPeople().catch(() => {}).finally(() => setLoaded(true));
   }, []);
-
-  const submitCreate = async (e) => {
-    e.preventDefault();
-    const trimmed = newName.trim();
-    if (!trimmed) return;
-    try {
-      const person = await api('/people', { method: 'POST', body: { name: trimmed } });
-      toast(person.created ? `Added ${person.name}` : `${person.name} already exists`);
-      setNewName('');
-      setCreating(false);
-      await loadPeople();
-      setOpenId(person.id);
-      setOpenSection('availability');
-    } catch (err) {
-      toast(err.message || 'Could not add person', { error: true });
-    }
-  };
 
   // Arrived via a person link (popover/detail/sidebar/band): expand once.
   useEffect(() => {
@@ -249,13 +228,7 @@ export function PeoplePage() {
     note="Everyone linked to your events. Add people from the editor's People field, or just write “with Sam” when creating events. Quick add also understands “Sam is away Aug 10 to 15”. Renaming someone onto an existing name merges their history."
   >
     <div class="bc-person-createrow">
-      ${creating
-        ? html`<form class="bc-views-saveform" onSubmit=${submitCreate}>
-            <input value=${newName} autofocus placeholder="Person's name" aria-label="New person name" onInput=${(e) => setNewName(e.target.value)} />
-            <button type="submit" class="bc-btn bc-btn-primary" disabled=${!newName.trim()}>Add person</button>
-            <button type="button" class="bc-btn" onClick=${() => { setCreating(false); setNewName(''); }}>Cancel</button>
-          </form>`
-        : html`<button type="button" class="bc-btn" onClick=${() => setCreating(true)}>+ New person</button>`}
+      <button type="button" class="bc-btn" onClick=${() => set({ createDrawer: { kind: 'person' } })}>+ New person</button>
     </div>
     ${loaded && people.length === 0 && html`<${EmptyState}
       text="No people yet. Create an event “with” someone — quick add understands phrases like “Lunch with Ada Friday noon” — or use the People field in the event editor."

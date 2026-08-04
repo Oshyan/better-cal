@@ -362,9 +362,9 @@ export function EditorDrawer() {
   };
 
   return html`<div class="bc-drawer-backdrop" onClick=${(e) => { if (e.target === e.currentTarget) requestClose(); }}>
-    <form class="bc-drawer" ref=${panelRef} onSubmit=${submit} role="dialog" aria-modal="true" aria-label=${occ ? 'Edit event' : 'New event'}>
+    <form class="bc-drawer" ref=${panelRef} onSubmit=${submit} role="dialog" aria-modal="true" aria-label=${(occ ? 'Edit ' : 'New ') + (form.isContainer ? 'trip' : 'event')}>
       <div class="bc-drawer-head">
-        <h2>${occ ? 'Edit event' : 'New event'}</h2>
+        <h2>${(occ ? 'Edit ' : 'New ') + (form.isContainer ? 'trip' : 'event')}</h2>
         <button type="button" class="bc-icon-btn" aria-label="Close" onClick=${requestClose}>✕</button>
       </div>
 

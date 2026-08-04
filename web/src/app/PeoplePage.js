@@ -155,8 +155,9 @@ export function PeoplePage() {
   const [openSection, setOpenSection] = useState('events'); // 'events' | 'availability'
   const [editingId, setEditingId] = useState(null);
   const [name, setName] = useState('');
-  const [notesId, setNotesId] = useState(null);
+  const [notesId, setNotesId] = useState(null);   // editing
   const [notes, setNotes] = useState('');
+  const [noteViewId, setNoteViewId] = useState(null); // read-only view
   const [creating, setCreating] = useState(() => !!state.peopleCreate);
   const [newName, setNewName] = useState('');
 
@@ -212,6 +213,7 @@ export function PeoplePage() {
 
   const saveNotes = async (p) => {
     setNotesId(null);
+    setNoteViewId(null);
     const next = notes.trim() || null;
     if (next === (p.notes || null)) return;
     try {
@@ -275,8 +277,18 @@ export function PeoplePage() {
                   ${!p.currentSpan && p.nextSpan && html`<span class="bc-badge">${p.nextSpan.kind} ${fmtSpanRange(p.nextSpan)}</span>`}
                   <span class="bc-badge">${p.eventCount} ${p.eventCount === 1 ? 'event' : 'events'}</span>
                   ${p.nextStart && html`<span class="bc-badge">next ${fmtDay(p.nextStart)}</span>`}
+                  ${p.notes && html`<button
+                    type="button" class="bc-icon-btn bc-person-noteind${noteViewId === p.id ? ' is-on' : ''}"
+                    title=${noteViewId === p.id ? 'Hide note' : 'View note'}
+                    aria-label=${(noteViewId === p.id ? 'Hide' : 'View') + ' note for ' + p.name}
+                    aria-expanded=${noteViewId === p.id}
+                    onClick=${() => { setNoteViewId(noteViewId === p.id ? null : p.id); setNotesId(null); }}
+                  ><${Icon} name="note" size=${13} /></button>`}
                 </div>
-                ${notesId !== p.id && p.notes && html`<div class="bc-person-notes" title="Notes">${p.notes}</div>`}
+                ${notesId !== p.id && noteViewId !== p.id && p.notes && html`<button
+                  type="button" class="bc-person-notes" title="View note"
+                  onClick=${() => setNoteViewId(p.id)}
+                >${p.notes}</button>`}
                 <label class="bc-check bc-person-show">
                   <input type="checkbox" checked=${p.showOnCalendar} onChange=${() => toggleShow(p)} />
                   <span>Show away/busy on calendar</span>
@@ -295,7 +307,7 @@ export function PeoplePage() {
               title="Show and edit away/busy spans"
               onClick=${() => toggleOpen(p, 'availability')}
             >Availability</button>
-            <button type="button" class="bc-btn" onClick=${() => { setNotesId(p.id); setNotes(p.notes || ''); }}>Notes</button>
+            ${!p.notes && html`<button type="button" class="bc-btn" onClick=${() => { setNotesId(p.id); setNotes(''); }}>Add note</button>`}
             <button type="button" class="bc-btn" onClick=${() => { setEditingId(p.id); setName(p.name); }}>Rename</button>
             <button
               type="button" class="bc-icon-btn bc-pop-trash" title=${'Remove ' + p.name + ' (events kept)'}
@@ -304,6 +316,13 @@ export function PeoplePage() {
             ><${Icon} name="trash" size=${14} /></button>
           </div>
         </div>
+        ${noteViewId === p.id && notesId !== p.id && html`<div class="bc-person-noteview">
+          <div class="bc-person-noteview-text">${p.notes}</div>
+          <div class="bc-card-actions">
+            <button type="button" class="bc-btn" onClick=${() => { setNotesId(p.id); setNotes(p.notes || ''); }}>Edit note</button>
+            <button type="button" class="bc-btn" onClick=${() => setNoteViewId(null)}>Close</button>
+          </div>
+        </div>`}
         ${notesId === p.id && html`<div class="bc-person-notesedit">
           <textarea
             value=${notes} autofocus rows="3" aria-label=${'Notes for ' + p.name}

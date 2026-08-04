@@ -1,0 +1,16 @@
+[
+  {
+    "id": 1,
+    "priority": 1,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "regexSubstitution": "https://cal.oshyan.com/add?\\1"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https://(?:www\\.)?calendar\\.google\\.com/calendar/(?:u/\\d+/)?(?:r/eventedit|render)\\?(.*)$",
+      "resourceTypes": ["main_frame"]
+    }
+  }
+]

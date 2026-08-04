@@ -103,6 +103,11 @@ try {
                     echo bc_ts() . ' reminder_scan sent=' . $result['sent'] . ' failed=' . $result['failed']
                         . ' emailed=' . ($result['emailed'] ?? 0) . "\n";
                     break;
+                case 'activity_prune':
+                    $result = (new BetterCal\Domain\Activity($db))->prune();
+                    echo bc_ts() . ' activity_prune cleared=' . $result['snapshotsCleared']
+                        . ' deleted=' . $result['deleted'] . "\n";
+                    break;
                 default:
                     throw new \RuntimeException('Unknown job type: ' . $job['type']);
             }
@@ -150,6 +155,8 @@ function bc_enqueue_recurring(Db $db, JobQueue $queue): void
     bc_enqueue_if_stale($db, $queue, 'reminder_scan', 'PT50S');
     // Mail ingest polls the calendar@ mailbox every ~2 minutes.
     bc_enqueue_if_stale($db, $queue, 'mail_ingest', 'PT2M');
+    // Activity retention: snapshots kept 7 days, log rows 90 (docs/api-contract.md).
+    bc_enqueue_if_stale($db, $queue, 'activity_prune', 'P1D');
 }
 
 function bc_enqueue_if_stale(Db $db, JobQueue $queue, string $type, string $interval): void

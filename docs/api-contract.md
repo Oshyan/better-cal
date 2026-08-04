@@ -144,6 +144,14 @@ Named snapshots of client view state; `config` is client-defined: `{viewType, vi
 - Public: `GET /feed/{token}.ics` (no auth; X-WR-CALNAME + description embedded).
 - ICS export (outbound feeds, CalDAV feed objects built by `Ics::buildCalendar`): rich (HTML) descriptions write `DESCRIPTION` as tag-stripped plain text plus `X-ALT-DESC;FMTTYPE=text/html` carrying the sanitized HTML; plain text descriptions export exactly as before. ICS import is unchanged (descriptions imported as text).
 
+## Activity log
+- Every mutating code path journals to `mutations` via `Undo::record()`, tagged with a request-scoped source (`ActivityContext`): `web` (default), `api` (bearer-token), `caldav`, `quickadd`, `rsvp`, `import`, `feed` (poll rollups, log-only), `mail:imip|markup|gcal-link|llm` (ingest tiers).
+- `GET /activity?before=&limit=&sources=&q=` → `{entries:[{id,at,source,entity,entityId,op,summary,details,undone,undoable}], nextBefore}`. Latest-first; `before` is a cursor (entry id), `limit` ≤ 100 (default 50). `sources` is comma-separated from `web,api,caldav,feed,mail,quickadd,rsvp,import` (`mail` matches all `mail:*` tiers). `q` substring-matches summaries. `undoable` = has snapshots, not undone, within the 7-day window.
+- `POST /activity/:id/undo` body `{force?:bool}` → `{ok,undone:{entity,op}}`. Errors: `already_undone`, `not_undoable` (log-only entry: feed rollups, RSVP notes, or snapshots pruned past 7 days), `stale_undo` (newer un-undone mutations exist for the same entity — retry with `force:true` to overwrite them deliberately).
+- `GET /events/:id/occurrence` → `{occurrence}` (single serialized occurrence; the Activity page's jump-to-event).
+- Retention (worker `activity_prune`, daily): snapshots cleared after 7 days (entries become log-only), rows deleted after 90.
+- Feed-poll rollups are one entry per poll with changes: `Feed 'Name': N added, M updated, K removed`, `details.addedTitles` (≤20). Log-only by design — undoing a feed import would be redone by the next poll.
+
 ## Misc
 - `GET /health` (no auth) → `{ok:true,time,db:true,version}`.
 - `GET /config` (auth) → `{maptilerKey, mapStyle}` — public-safe client configuration, fetched once at boot. `maptilerKey` is the optional MapTiler tile key from `BETTERCAL_MAPTILER_KEY` (null when unset; the mini-map falls back to OSM tiles); `mapStyle` echoes the requesting user's map style setting.

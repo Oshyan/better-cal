@@ -58,6 +58,16 @@ final class QuickAdd
         ];
     }
 
+    /**
+     * Activity source for quick-add commits: claim 'quickadd' only for plain
+     * web sessions — bearer-token (agent) and other entry points keep their
+     * own tag so the log's manual/automated split stays truthful.
+     */
+    private static function activitySource(): string
+    {
+        return ActivityContext::get() === 'web' ? 'quickadd' : ActivityContext::get();
+    }
+
     /** @return array{draft:array, event:?array} */
     public function run(int $userId, string $text, string $tz, bool $commit, ?int $calendarId): array
     {
@@ -77,7 +87,7 @@ final class QuickAdd
                 $draft['calendarId'] = $this->resolveCalendarId($userId, $calendarId);
                 $event = null;
                 if ($commit) {
-                    $event = $this->events->create($userId, [
+                    $event = ActivityContext::with(self::activitySource(), fn() => $this->events->create($userId, [
                         'calendarId' => $draft['calendarId'],
                         'title' => $draft['title'],
                         'start' => $draft['start'],
@@ -88,7 +98,7 @@ final class QuickAdd
                         'description' => $draft['description'],
                         'rrule' => $draft['rrule'],
                         'personNames' => [],
-                    ]);
+                    ]));
                 }
                 return ['draft' => $draft, 'event' => $event];
             }
@@ -119,11 +129,11 @@ final class QuickAdd
                 ];
                 $span = null;
                 if ($commit) {
-                    $span = $this->people->addSpan($userId, (int) $person['id'], [
+                    $span = ActivityContext::with(self::activitySource(), fn() => $this->people->addSpan($userId, (int) $person['id'], [
                         'start' => $range['start'],
                         'end' => $range['end'],
                         'kind' => $intent['kind'],
-                    ]);
+                    ]));
                 }
                 return ['draft' => $draft, 'event' => null, 'availability' => $span];
             }
@@ -151,7 +161,7 @@ final class QuickAdd
 
         $event = null;
         if ($commit) {
-            $event = $this->events->create($userId, [
+            $event = ActivityContext::with(self::activitySource(), fn() => $this->events->create($userId, [
                 'calendarId' => $draft['calendarId'],
                 'title' => $draft['title'],
                 'start' => $draft['start'],
@@ -160,7 +170,7 @@ final class QuickAdd
                 'tzid' => $tz,
                 'location' => $draft['location'],
                 'personNames' => $draft['personNames'],
-            ]);
+            ]));
         }
 
         return ['draft' => $draft, 'event' => $event];

@@ -14,6 +14,8 @@ use BetterCal\Infra\Db;
 
 require dirname(__DIR__) . '/src/bootstrap.php';
 
+BetterCal\Domain\ActivityContext::set('caldav');
+
 if (!class_exists(\Sabre\DAV\Server::class)) {
     http_response_code(503);
     header('Content-Type: text/plain; charset=utf-8');

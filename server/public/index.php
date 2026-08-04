@@ -134,6 +134,30 @@ function bc_handle_api(Request $request, array $cfg): void
             return Response::json(['ok' => true, 'undone' => $undone]);
         });
 
+        // Activity log: latest-first, filterable by source group and text.
+        $router->add('GET', "$base/activity", function (Request $req) use ($db): Response {
+            $sourcesRaw = $req->q('sources');
+            $sources = $sourcesRaw !== null && $sourcesRaw !== ''
+                ? array_values(array_filter(array_map('trim', explode(',', $sourcesRaw))))
+                : null;
+            $before = $req->q('before');
+            return Response::json((new Domain\Activity($db))->list((int) $req->user['id'], [
+                'before' => $before !== null ? (int) $before : null,
+                'limit' => (int) ($req->q('limit') ?? 50),
+                'sources' => $sources,
+                'q' => $req->q('q'),
+            ]));
+        });
+        $router->add('POST', "$base/activity/:id/undo", function (Request $req, array $params) use ($undo): Response {
+            $undone = $undo->undoById((int) $req->user['id'], (int) $params['id'], (bool) ($req->body['force'] ?? false));
+            return Response::json(['ok' => true, 'undone' => $undone]);
+        });
+        // Single-event occurrence, for activity jump-to-event.
+        $router->add('GET', "$base/events/:id/occurrence", function (Request $req, array $params) use ($events): Response {
+            $row = $events->get((int) $req->user['id'], (int) $params['id']);
+            return Response::json(['occurrence' => $events->serializeSingle($row)]);
+        });
+
         $router->add('GET', "$base/search", [$searchController, 'search']);
 
         // Change cursor: an opaque string that changes whenever the user's
@@ -209,6 +233,7 @@ function bc_handle_api(Request $request, array $cfg): void
                 }
                 $request->user = $user;
                 $request->authMethod = 'token';
+                Domain\ActivityContext::set('api'); // agent/token writes tagged in the activity log
             } else {
                 $session = $auth->resolve($request->cookies[Domain\Auth::COOKIE] ?? null);
                 if ($session === null) {

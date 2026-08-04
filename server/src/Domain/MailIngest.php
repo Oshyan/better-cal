@@ -370,7 +370,7 @@ final class MailIngest
             return null;
         }
         $existing = $this->db->one(
-            'SELECT id FROM events WHERE user_id = ? AND uid = ? AND deleted_at IS NULL AND recurrence_parent_id IS NULL',
+            'SELECT id, calendar_id FROM events WHERE user_id = ? AND uid = ? AND deleted_at IS NULL AND recurrence_parent_id IS NULL',
             [$userId, $uid]
         );
 
@@ -379,6 +379,7 @@ final class MailIngest
                 return ['skipped', null];
             }
             $this->db->run("UPDATE events SET status = 'cancelled' WHERE id = ?", [(int) $existing['id']]);
+            \BetterCal\Dav\ChangeLog::record($this->db, (int) $existing['calendar_id'], $uid, \BetterCal\Dav\ChangeLog::OP_MODIFY);
             return ['cancelled', (int) $existing['id']];
         }
 
@@ -539,7 +540,7 @@ final class MailIngest
             throw \BetterCal\Http\HttpError::badRequest('answer must be accepted, declined or tentative');
         }
         $row = $this->db->one(
-            'SELECT id, uid, title, invite_json FROM events WHERE id = ? AND user_id = ? AND deleted_at IS NULL',
+            'SELECT id, calendar_id, uid, title, invite_json FROM events WHERE id = ? AND user_id = ? AND deleted_at IS NULL',
             [$eventId, $userId]
         );
         if ($row === null || $row['invite_json'] === null) {
@@ -548,6 +549,8 @@ final class MailIngest
         $invite = is_array($row['invite_json']) ? $row['invite_json'] : json_decode((string) $row['invite_json'], true);
         $invite['myPartstat'] = $partstat;
         $this->db->run('UPDATE events SET invite_json = ? WHERE id = ?', [json_encode($invite), $eventId]);
+        // Journal so other open clients see the RSVP on their next cursor poll.
+        \BetterCal\Dav\ChangeLog::record($this->db, (int) $row['calendar_id'], (string) $row['uid'], \BetterCal\Dav\ChangeLog::OP_MODIFY);
 
         $sent = false;
         $organizer = $invite['organizer']['email'] ?? null;

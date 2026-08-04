@@ -50,8 +50,8 @@ function healthBadge(cal) {
 
 function CalendarRow({ cal, folders, open, onGear, soloed, onSolo }) {
   return html`<div class="bc-cal-item">
-    <div class="bc-cal-row">
-      <label class="bc-cal-label">
+    <div class="bc-cal-row${cal.visible ? '' : ' is-off'}">
+      <label class="bc-cal-label" title=${cal.name}>
         <input
           type="checkbox"
           checked=${cal.visible}
@@ -68,7 +68,7 @@ function CalendarRow({ cal, folders, open, onGear, soloed, onSolo }) {
         aria-label=${soloed ? 'Stop showing only ' + cal.name : 'Show only ' + cal.name}
         aria-pressed=${soloed}
         title=${soloed ? 'Showing only this calendar. Click to restore.' : 'Show only this calendar'}
-        onClick=${() => onSolo(cal)}
+        onClick=${(e) => { onSolo(cal); e.currentTarget.blur(); }}
       >${soloed ? 'Only ✓' : 'Only'}</button>
       <button
         type="button"
@@ -181,9 +181,9 @@ function FolderHead({ folder, cals, collapsed, onToggleCollapse }) {
         aria-expanded=${!collapsed}
         onClick=${onToggleCollapse}
       >
-        <span class="bc-folder-caret">${collapsed ? '▸' : '▾'}</span>
-        <span class="bc-folder-icon"><${Icon} name="folder" size=${12} /></span>
-        <span class="bc-folder-name">${folder.name}</span>
+        <span class="bc-folder-caret${collapsed ? ' is-closed' : ''}"><${Icon} name="chevronDown" size=${13} /></span>
+        <span class="bc-folder-icon"><${Icon} name="folder" size=${13} /></span>
+        <span class="bc-folder-name" title=${folder.name}>${folder.name}</span>
       </button>
       ${cals.length > 0 && html`<${FolderModeButton} folder=${folder} />`}
       <span class="bc-folder-tools">
@@ -235,7 +235,7 @@ const MANAGE_ITEMS = [
   ['views', 'Saved views'],
 ];
 
-export function Sidebar({ open, onClose }) {
+export function Sidebar({ open, collapsed, onClose }) {
   const { calendars, folders, collapsedFolders, route, people, collapsedAllCals, collapsedPeople, peopleSolo } = useStore(
     (s) => ({
       calendars: s.calendars, folders: s.folders,
@@ -283,24 +283,20 @@ export function Sidebar({ open, onClose }) {
     onSolo=${(cal) => (solo && solo.calId === cal.id ? exitSolo() : enterSolo(cal))}
   />`);
 
-  return html`<aside class="bc-sidebar${open ? ' is-open' : ''}">
+  return html`<aside class="bc-sidebar${open ? ' is-open' : ''}${collapsed ? ' is-collapsed' : ''}">
     ${onClose && html`<div class="bc-sidebar-mobilehead">
       <span class="bc-manage-head">Calendars</span>
       <button type="button" class="bc-icon-btn" aria-label="Close sidebar" onClick=${onClose}>✕</button>
     </div>`}
     <div class="bc-sidebar-scroll">
       <${MiniMonth} />
-      ${soloCal && html`<div class="bc-solo-banner" role="status">
-        Showing only <strong>${soloCal.name}</strong>
-        <button type="button" class="bc-link-btn" onClick=${exitSolo}>Show all</button>
-      </div>`}
       ${byFolder.map(({ folder, cals }) => html`<section key=${'f' + folder.id} class="bc-folder">
         <${FolderHead}
           folder=${folder} cals=${cals}
           collapsed=${!!collapsedFolders[folder.id]}
           onToggleCollapse=${() => toggleFolder(folder.id)}
         />
-        ${!collapsedFolders[folder.id] && rows(cals)}
+        ${!collapsedFolders[folder.id] && html`<div class="bc-folder-body">${rows(cals)}</div>`}
       </section>`)}
       <section class="bc-folder">
         ${byFolder.length > 0 && html`<div class="bc-folder-headrow">
@@ -308,7 +304,7 @@ export function Sidebar({ open, onClose }) {
             type="button" class="bc-folder-head bc-folder-static"
             aria-expanded=${!collapsedAllCals}
             onClick=${() => set({ collapsedAllCals: !collapsedAllCals })}
-          ><span class="bc-folder-caret">${collapsedAllCals ? '▸' : '▾'}</span>All calendars</button>
+          ><span class="bc-folder-caret${collapsedAllCals ? ' is-closed' : ''}"><${Icon} name="chevronDown" size=${13} /></span>All calendars</button>
           <span class="bc-folder-tools">
             <button
               type="button" class="bc-icon-btn bc-folder-tool bc-head-plus"
@@ -325,7 +321,7 @@ export function Sidebar({ open, onClose }) {
             type="button" class="bc-folder-head bc-folder-static"
             aria-expanded=${!collapsedPeople}
             onClick=${() => set({ collapsedPeople: !collapsedPeople })}
-          ><span class="bc-folder-caret">${collapsedPeople ? '▸' : '▾'}</span>People</button>
+          ><span class="bc-folder-caret${collapsedPeople ? ' is-closed' : ''}"><${Icon} name="chevronDown" size=${13} /></span>People</button>
           <${PeopleModeButton} />
           <span class="bc-folder-tools">
             <button
@@ -336,7 +332,7 @@ export function Sidebar({ open, onClose }) {
           </span>
         </div>
         ${!collapsedPeople && people.map((p) => html`<div key=${p.id} class="bc-cal-item">
-          <div class="bc-cal-row${p.currentSpan && p.currentSpan.kind === 'away' ? ' is-person-away' : ''}">
+          <div class="bc-cal-row${p.currentSpan && p.currentSpan.kind === 'away' ? ' is-person-away' : ''}${p.showOnCalendar ? '' : ' is-off'}">
             <span class="bc-cal-label">
               <input
                 type="checkbox"
@@ -357,12 +353,16 @@ export function Sidebar({ open, onClose }) {
               class="bc-icon-btn bc-cal-solo${peopleSolo && peopleSolo.personId === p.id ? ' is-on' : ''}"
               aria-pressed=${peopleSolo && peopleSolo.personId === p.id}
               title=${peopleSolo && peopleSolo.personId === p.id ? 'Showing only this person. Click to restore.' : "Show only this person's spans"}
-              onClick=${() => (peopleSolo && peopleSolo.personId === p.id ? exitPeopleSolo() : enterPeopleSolo(p))}
+              onClick=${(e) => { if (peopleSolo && peopleSolo.personId === p.id) exitPeopleSolo(); else enterPeopleSolo(p); e.currentTarget.blur(); }}
             >${peopleSolo && peopleSolo.personId === p.id ? 'Only ✓' : 'Only'}</button>
           </div>
         </div>`)}
       </section>`}
       <${AddMenu} />
+      ${soloCal && html`<div class="bc-solo-banner" role="status">
+        Showing only <strong>${soloCal.name}</strong>
+        <button type="button" class="bc-link-btn" onClick=${exitSolo}>Show all</button>
+      </div>`}
     </div>
     <footer class="bc-sidebar-foot">
       <div class="bc-manage-head">Manage</div>

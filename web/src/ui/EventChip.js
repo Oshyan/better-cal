@@ -83,14 +83,18 @@ function openHandlers(occ, onOpen) {
 export function EventChip({ occ, cal, dimmed, nowMs, showTime = true, onOpen, onPointerDown }) {
   const color = calColor(cal);
   const interested = occ.attendance === 'interested';
+  // GCal semantics: all-day (and group) chips are filled with the calendar
+  // tint; timed events are quiet dot + time + title rows. The tint rides a
+  // CSS variable so the mobile pill layout can re-fill dot chips.
+  const dotStyle = !occ.allDay && !occ.isGroup && !interested;
   const style = interested
     ? `border-color:${color};color:${color};background:transparent`
-    : `background:${withAlpha(color, 0.16)};color:var(--fg)`;
+    : `--tint:${withAlpha(color, 0.16)};color:var(--fg)`;
   const timed = !occ.allDay && showTime && !occ.isGroup;
   const { onClick, onDblClick } = openHandlers(occ, onOpen);
   return html`<button
     type="button"
-    class="bc-chip${stateClasses(occ, dimmed, nowMs)}"
+    class="bc-chip${dotStyle ? ' is-dotstyle' : ''}${stateClasses(occ, dimmed, nowMs)}"
     style=${style}
     data-instance=${occ.instanceId}
     onPointerDown=${occ.isGroup ? undefined : onPointerDown}
@@ -141,7 +145,7 @@ export function EventBar({ occ, cal, seg, dimmed, nowMs, onOpen, onPointerDown, 
   >
     ${!seg.contLeft && edges && html`<span class="bc-bar-handle l" onPointerDown=${(e) => edges('start', e)}></span>`}
     ${!seg.contLeft && (occ.isGroup ? html`<${StackGlyph} />` : html`<${GoingCheck} occ=${occ} />`)}
-    <span class="bc-chip-title">${seg.contLeft ? '‹ ' : ''}${occ.title || '(untitled)'}${occ.isGroup ? ` · ${occ.count}` : ''}${seg.contRight ? ' ›' : ''}</span>
+    <span class="bc-chip-title">${occ.title || '(untitled)'}${occ.isGroup ? ` · ${occ.count}` : ''}</span>
     ${occ.isNew && !occ.isGroup && !seg.contLeft && html`<${NewPill} />`}
     ${!seg.contRight && edges && html`<span class="bc-bar-handle r" onPointerDown=${(e) => edges('end', e)}></span>`}
   </div>`;
@@ -167,7 +171,7 @@ export function EventBlock({ occ, cal, rect, dimmed, nowMs, onOpen, onPointerDow
   const edges = occ.isGroup || trip ? null : onEdgePointerDown;
   return html`<div
     class="bc-block${stateClasses(occ, dimmed, nowMs)}"
-    style=${`top:${rect.top}px;height:${rect.height}px;left:${rect.leftPct}%;width:${rect.widthPct}%;${bg}`}
+    style=${`top:${rect.top}px;height:${rect.height}px;left:${rect.leftPct}%;width:${rect.widthPct}%;${rect.z ? `z-index:${rect.z};` : ''}${bg}`}
     data-instance=${occ.instanceId}
     role="button"
     tabindex="0"

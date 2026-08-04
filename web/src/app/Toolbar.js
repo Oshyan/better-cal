@@ -1,13 +1,11 @@
-// Toolbar: saved views menu, view switcher, today, prev/next chevrons around
-// a clickable date label (opens the jump popover, hotkey g), on-page filter,
-// search, quick add and New buttons. Single-row inline layout.
+// Toolbar: sidebar toggle, brand, today + stable prev/next chevrons ahead of
+// the date label (their position never shifts with the label's width, so
+// rapid month-stepping works), saved views menu, on-page filter, a
+// right-aligned current-view dropdown (GCal-style), search, quick add, New.
 //
-// The view switcher is responsive: on desktop the month slot is a plain
-// "Month" button (always the full month grid; a too-narrow calendar area
-// falls back to the 3-day ribbon automatically, no setting involved). On
-// viewports <= 800px the slot becomes an "Overview" dropdown (Full month /
-// 3 day ribbon, persisted as the mobile-only overviewMode setting) and the
-// multiweek buttons drop out, leaving [Overview] [Week] [Day] [Agenda].
+// The view dropdown lists every view on desktop; on viewports <= 800px the
+// month slot splits into "Full month" and "3 day" (persisted as the
+// mobile-only overviewMode setting) and the multiweek options drop out.
 
 import { html, useState, useRef, useEffect } from '../../vendor/index.js';
 import { useStore, set, shallowEq } from './store.js';
@@ -18,21 +16,19 @@ import { Icon } from '../ui/icons.js';
 import { JumpPopover } from './JumpPopover.js';
 
 const DESKTOP_VIEWS = [
-  ['weeks3', '3 wk'],
-  ['weeks2', '2 wk'],
+  ['month', 'Month'],
+  ['weeks3', '3 weeks'],
+  ['weeks2', '2 weeks'],
   ['week', 'Week'],
   ['day', 'Day'],
   ['agenda', 'Agenda'],
 ];
 const MOBILE_VIEWS = [
+  ['month:month', 'Full month'],
+  ['month:3day', '3 day'],
   ['week', 'Week'],
   ['day', 'Day'],
   ['agenda', 'Agenda'],
-];
-
-const OVERVIEW_MODES = [
-  ['month', 'Full month'],
-  ['3day', '3 day'],
 ];
 
 const STEP_UNITS = {
@@ -40,25 +36,12 @@ const STEP_UNITS = {
   week: 'week', day: 'day', agenda: 'month',
 };
 
-// Desktop month slot: a plain button, no dropdown, no 3-day option.
-function MonthButton({ view }) {
-  return html`<button
-    type="button"
-    class="bc-viewswitch-btn bc-ov-btn${view === 'month' ? ' is-active' : ''}"
-    aria-pressed=${view === 'month'}
-    title="Month view"
-    onClick=${() => setView('month')}
-  >Month</button>`;
-}
-
-// Mobile Overview slot: click switches to the overview; when already there,
-// click opens the Full month / 3 day mode menu (the caret advertises it).
-function OverviewButton({ view }) {
+// Current-view dropdown, right-aligned so the label's width never moves it.
+function ViewMenu({ view, narrow }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef(null);
   const mode = effectiveOverviewMode();
 
-  // Document-level listeners; torn down on unmount, not just close.
   useEffect(() => {
     if (!open) return undefined;
     const onDoc = (e) => {
@@ -75,27 +58,32 @@ function OverviewButton({ view }) {
     };
   }, [open]);
 
-  const pick = (m) => {
+  const items = narrow ? MOBILE_VIEWS : DESKTOP_VIEWS;
+  const currentKey = narrow && view === 'month' ? 'month:' + mode : view;
+  const current = items.find(([k]) => k === currentKey);
+  const label = current ? current[1] : 'Month';
+
+  const pick = (k) => {
     setOpen(false);
-    if (m !== mode || view !== 'month') setOverviewMode(m);
+    if (k === currentKey) return;
+    if (k.startsWith('month:')) setOverviewMode(k.slice(6));
+    else setView(k);
   };
 
-  return html`<div class="bc-ov" ref=${rootRef}>
+  return html`<div class="bc-ov bc-viewmenu" ref=${rootRef}>
     <button
-      type="button"
-      class="bc-viewswitch-btn bc-ov-btn${view === 'month' ? ' is-active' : ''}"
-      aria-pressed=${view === 'month'}
+      type="button" class="bc-btn bc-viewmenu-btn"
       aria-haspopup="menu" aria-expanded=${open}
-      title=${'Overview: ' + (mode === '3day' ? '3 day' : 'full month')}
-      onClick=${() => (view === 'month' ? setOpen(!open) : setView('month'))}
-    >Overview<span class="bc-ov-caret" aria-hidden="true">▾</span></button>
-    ${open && html`<div class="bc-ov-menu" role="menu" aria-label="Overview layout">
-      ${OVERVIEW_MODES.map(([m, label]) => html`<button
-        key=${m} type="button" role="menuitemradio"
-        aria-checked=${mode === m}
-        class="bc-ov-item${mode === m ? ' is-sel' : ''}"
-        onClick=${() => pick(m)}
-      ><span class="bc-ov-check" aria-hidden="true">${mode === m ? '✓' : ''}</span>${label}</button>`)}
+      title="Change view (v cycles, 1-6 direct)"
+      onClick=${() => setOpen(!open)}
+    >${label}<span class="bc-viewmenu-caret" aria-hidden="true"><${Icon} name="chevronDown" size=${11} /></span></button>
+    ${open && html`<div class="bc-ov-menu bc-viewmenu-drop" role="menu" aria-label="Calendar view">
+      ${items.map(([k, l]) => html`<button
+        key=${k} type="button" role="menuitemradio"
+        aria-checked=${currentKey === k}
+        class="bc-ov-item${currentKey === k ? ' is-sel' : ''}"
+        onClick=${() => pick(k)}
+      ><span class="bc-ov-check" aria-hidden="true">${currentKey === k ? '✓' : ''}</span>${l}</button>`)}
     </div>`}
   </div>`;
 }
@@ -118,35 +106,24 @@ export function Toolbar({ onToggleSidebar }) {
     ? fmtDayLong(dateOfDayKey(anchor))
     : (visibleMonth ? fmtMonthYear(new Date(visibleMonth.year, visibleMonth.month - 1, 1)) : '');
   const unit = STEP_UNITS[view] || 'month';
-  const roster = narrow ? MOBILE_VIEWS : DESKTOP_VIEWS;
 
   return html`<header class="bc-toolbar">
-    <button type="button" class="bc-icon-btn bc-menu-btn" aria-label="Toggle sidebar" onClick=${onToggleSidebar}>☰</button>
-    <${ViewSwitcher} />
-    <span class="bc-brand">Better-Cal</span>
+    <button type="button" class="bc-icon-btn bc-menu-btn" aria-label="Toggle sidebar" title="Show or hide the sidebar" onClick=${onToggleSidebar}><${Icon} name="menu" size=${17} /></button>
+    <span class="bc-brand"><span class="bc-brand-icon"><${Icon} name="brand" size=${21} /></span><span class="bc-brand-name">Better-Cal</span></span>
     <button type="button" class="bc-btn" onClick=${goToday}>Today</button>
     <div class="bc-toolbar-nav">
       <button type="button" class="bc-icon-btn bc-nav-btn" aria-label=${'Previous ' + unit} title=${'Previous ' + unit} onClick=${() => stepAnchor(-1)}>‹</button>
+      <button type="button" class="bc-icon-btn bc-nav-btn" aria-label=${'Next ' + unit} title=${'Next ' + unit} onClick=${() => stepAnchor(1)}>›</button>
       <button
         type="button" class="bc-toolbar-month bc-toolbar-date"
         aria-haspopup="dialog" aria-expanded=${jumpOpen}
         title="Jump to date (g)" aria-live="polite"
         onClick=${() => set({ jumpOpen: !jumpOpen })}
       >${label}</button>
-      <button type="button" class="bc-icon-btn bc-nav-btn" aria-label=${'Next ' + unit} title=${'Next ' + unit} onClick=${() => stepAnchor(1)}>›</button>
       <${JumpPopover} />
     </div>
-    <nav class="bc-viewswitch" aria-label="View">
-      ${narrow
-        ? html`<${OverviewButton} view=${view} />`
-        : html`<${MonthButton} view=${view} />`}
-      ${roster.map(([v, l]) => html`<button
-        key=${v} type="button"
-        class="bc-viewswitch-btn${view === v ? ' is-active' : ''}"
-        aria-pressed=${view === v}
-        onClick=${() => setView(v)}
-      >${l}</button>`)}
-    </nav>
+    <${ViewSwitcher} />
+    <span class="bc-toolbar-spacer"></span>
     <input
       class="bc-filter-input"
       type="search"
@@ -155,6 +132,7 @@ export function Toolbar({ onToggleSidebar }) {
       value=${filterText}
       onInput=${(e) => set({ filterText: e.target.value })}
     />
+    <${ViewMenu} view=${view} narrow=${narrow} />
     <button type="button" class="bc-icon-btn" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)" onClick=${() => set({ shortcutsOpen: true })}><${Icon} name="keyboard" size=${16} /></button>
     <button type="button" class="bc-icon-btn" aria-label="Search" title="Search ( / )" onClick=${() => set({ searchOpen: true })}>${'🔍'}</button>
     <button type="button" class="bc-icon-btn" aria-label="Quick add" title="Quick add: type it in plain language (c)" onClick=${() => set({ quickAddOpen: true })}>${'⚡'}</button>

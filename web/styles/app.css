@@ -123,34 +123,23 @@ button:focus-visible, [tabindex]:focus-visible {
   background: var(--bg-raised);
   flex-wrap: wrap;
 }
-.bc-brand { font-weight: 700; letter-spacing: 0.2px; }
-.bc-toolbar-month { font-size: 16px; font-weight: 600; min-width: 130px; }
+.bc-brand { display: inline-flex; align-items: center; gap: 7px; margin-right: 6px; }
+.bc-brand-icon { display: inline-flex; color: var(--accent); }
+.bc-brand-name { font-weight: 700; letter-spacing: 0.2px; font-size: 15px; }
+.bc-toolbar-spacer { flex: 1 1 0; min-width: 4px; }
+.bc-toolbar-month { font-size: 16px; font-weight: 600; }
 .bc-toolbar-nav { display: flex; align-items: center; gap: 2px; position: relative; }
+.bc-viewmenu-btn { display: inline-flex; align-items: center; gap: 5px; min-width: 92px; justify-content: space-between; }
+.bc-viewmenu-caret { display: inline-flex; opacity: 0.7; }
+.bc-viewmenu-drop { left: auto; right: 0; }
 .bc-nav-btn { font-size: 18px; padding: 2px 8px; line-height: 1.2; }
 .bc-toolbar-date {
   background: none; border: none; border-radius: 6px;
   padding: 3px 8px; text-align: center; min-width: 0;
 }
 .bc-toolbar-date:hover { background: var(--bg-inset); }
-/* overflow stays visible so the Overview dropdown can escape; the end
-   segments round themselves instead. */
-.bc-viewswitch {
-  display: flex; border: 1px solid var(--border-strong);
-  border-radius: 6px;
-}
-.bc-viewswitch-btn {
-  background: var(--bg-raised); border: none; padding: 4px 10px;
-  border-right: 1px solid var(--border);
-}
-.bc-viewswitch > button:last-child { border-right: none; border-top-right-radius: 5px; border-bottom-right-radius: 5px; }
-.bc-viewswitch-btn.is-active { background: var(--accent); color: var(--accent-fg); }
-
 /* Overview slot: dropdown offering Full month / 3 day (overviewMode). */
 .bc-ov { position: relative; display: flex; }
-.bc-ov-btn {
-  display: inline-flex; align-items: center; gap: 4px;
-  border-top-left-radius: 5px; border-bottom-left-radius: 5px;
-}
 .bc-ov-caret { font-size: 9px; opacity: 0.75; }
 .bc-ov-menu {
   position: absolute; left: 0; top: calc(100% + 6px); z-index: 71;
@@ -167,8 +156,8 @@ button:focus-visible, [tabindex]:focus-visible {
 .bc-ov-item:hover { background: var(--bg-inset); }
 .bc-ov-item.is-sel { color: var(--accent); font-weight: 600; }
 .bc-ov-check { width: 12px; flex: none; }
-.bc-filter-input { margin-left: auto; width: 180px; }
-.bc-menu-btn { display: none; }
+.bc-filter-input { width: 180px; }
+.bc-menu-btn { display: inline-flex; padding: 5px 7px; }
 .bc-views { position: relative; }
 .bc-views-btn { display: inline-flex; align-items: center; gap: 6px; max-width: 170px; }
 .bc-views-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
@@ -251,13 +240,18 @@ button:focus-visible, [tabindex]:focus-visible {
 /* --- sidebar --------------------------------------------------------------- */
 
 .bc-sidebar {
-  width: 220px; flex: none;
+  width: 256px; flex: none;
   border-right: 1px solid var(--border);
   background: var(--bg-raised);
   display: flex; flex-direction: column;
   min-height: 0;
 }
-.bc-sidebar-scroll { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 8px; }
+.bc-sidebar-scroll { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 8px 10px; }
+/* Desktop collapse: the toolbar hamburger hides the sidebar entirely
+   (mobile ignores this class; the drawer has its own open state). */
+@media (min-width: 801px) {
+  .bc-sidebar.is-collapsed { display: none; }
+}
 
 /* Mini-month: compact always-on navigator at the top of the sidebar.
    Desktop only; the mobile drawer hides it (see the 800px media block). */
@@ -293,11 +287,18 @@ button:focus-visible, [tabindex]:focus-visible {
 
 .bc-folder { margin-bottom: 6px; }
 .bc-folder-head {
-  display: flex; align-items: center; gap: 4px; width: 100%;
-  background: none; border: none; font-weight: 600; padding: 4px 2px;
-  color: var(--fg-muted); text-transform: uppercase; font-size: 11.5px; letter-spacing: 0.4px;
+  display: flex; align-items: center; gap: 5px; width: 100%;
+  background: none; border: none; font-weight: 650; padding: 5px 2px;
+  color: var(--fg); font-size: 12.5px; border-radius: 6px;
 }
-.bc-folder-caret { width: 12px; flex: none; }
+.bc-folder-head:hover { background: var(--bg-inset); }
+.bc-folder-caret {
+  width: 15px; flex: none; display: inline-flex; align-items: center;
+  color: var(--fg-muted); transition: transform 0.14s ease;
+}
+.bc-folder-caret.is-closed { transform: rotate(-90deg); }
+/* Enclosure: folder members indent behind a soft rail. */
+.bc-folder-body { margin-left: 8px; padding-left: 9px; border-left: 1.5px solid var(--border); }
 .bc-folder-static { cursor: default; }
 .bc-folder-headrow { display: flex; align-items: center; gap: 2px; min-width: 0; }
 .bc-folder-headrow .bc-folder-head { flex: 1; min-width: 0; }
@@ -321,8 +322,21 @@ button:focus-visible, [tabindex]:focus-visible {
 .bc-folder-headrow:focus-within .bc-folder-tools { opacity: 1; }
 .bc-folder-tool { padding: 2px 4px; font-size: 11px; }
 .bc-cal-item { min-width: 0; }
-.bc-cal-row { display: flex; align-items: center; gap: 4px; padding: 1px 0 1px 6px; }
+.bc-cal-row { display: flex; align-items: center; gap: 4px; padding: 2px 0 2px 4px; border-radius: 6px; }
+.bc-cal-row:hover { background: var(--bg-inset); }
 .bc-cal-label { display: flex; align-items: center; gap: 7px; flex: 1; min-width: 0; cursor: pointer; }
+/* Checkboxes surface on hover only; the color dot is the resting identity
+   and a dimmed row is the "hidden" signal (GCal keeps them always-on, which
+   reads noisy at our density). Space is reserved so rows never shift. */
+.bc-cal-row input[type="checkbox"] {
+  opacity: 0; transition: opacity 0.12s ease; margin: 0; flex: none;
+}
+.bc-cal-row:hover input[type="checkbox"],
+.bc-cal-row:focus-within input[type="checkbox"] { opacity: 1; }
+@media (pointer: coarse) { .bc-cal-row input[type="checkbox"] { opacity: 1; } }
+.bc-cal-row.is-off .bc-cal-name { color: var(--fg-muted); }
+.bc-cal-row.is-off .bc-cal-dot { opacity: 0.35; }
+.bc-cal-row.is-off .bc-person-namebtn { color: var(--fg-muted); }
 .bc-cal-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; display: inline-block; }
 /* Subscribed feeds render hollow (2px ring of the calendar color, transparent
    center) vs the solid fill of local calendars; the inline style carries the
@@ -431,6 +445,7 @@ button:focus-visible, [tabindex]:focus-visible {
   width: var(--bc-gutter-w, 44px); flex: none;
   border-bottom: 1px solid var(--border); border-right: 1px solid var(--border);
   background: var(--bg-inset);
+  position: relative;
 }
 .bc-week-days { flex: 1; display: grid; grid-template-columns: repeat(var(--bc-cols, 7), 1fr); position: relative; min-width: 0; }
 .bc-cell {
@@ -457,9 +472,30 @@ button:focus-visible, [tabindex]:focus-visible {
 .bc-daynum {
   background: none; border: none; font-size: 12px; font-weight: 600;
   color: var(--fg-muted); padding: 3px 6px; border-radius: 10px; line-height: 1.3;
+  position: relative; z-index: 2;
 }
 .bc-daynum:hover { background: var(--bg-inset); color: var(--fg); }
 .bc-cell.is-today .bc-daynum { color: var(--accent-fg); background: var(--today); margin: 2px; padding: 1px 7px; }
+/* The strip between the day number and the + is its own affordance: click
+   lists the day in place (the number now opens Day view). Quiet until the
+   cell is hovered. */
+.bc-cell-headstrip {
+  position: absolute; top: 0; left: 0; right: 0; height: 22px;
+  background: none; border: none; padding: 0; z-index: 1;
+  display: flex; align-items: center; justify-content: center;
+  color: transparent;
+}
+.bc-cell:hover .bc-cell-headstrip { color: var(--fg-muted); }
+.bc-cell-headstrip:hover { background: var(--bg-inset); color: var(--fg); }
+.bc-headstrip-glyph { font-size: 13px; line-height: 1; }
+@media (hover: none) { .bc-cell-headstrip { display: none; } }
+/* ISO week number, bottom-right of each row's gutter (the sticky month
+   label owns the top). */
+.bc-weeknum {
+  position: absolute; bottom: 2px; right: 4px;
+  font-size: 9.5px; font-weight: 600; color: var(--fg-muted);
+  font-variant-numeric: tabular-nums; opacity: 0.85;
+}
 .bc-cell-chips {
   position: absolute; left: 2px; right: 2px; bottom: 0;
   display: flex; flex-direction: column; gap: 2px;
@@ -490,7 +526,12 @@ button:focus-visible, [tabindex]:focus-visible {
   font-size: 11.5px; text-align: left; width: 100%;
   overflow: hidden; white-space: nowrap; user-select: none;
   touch-action: pan-y;
+  background: var(--tint, transparent);
 }
+/* Timed events are quiet rows (dot + time + title, GCal-style); all-day
+   chips keep the tinted fill. Hover restores a neutral hit target. */
+.bc-chip.is-dotstyle { background: transparent; }
+.bc-chip.is-dotstyle:hover { background: var(--bg-inset); }
 .bc-chip-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
 .bc-chip-time { color: var(--fg-muted); font-variant-numeric: tabular-nums; flex: none; font-size: 10.5px; }
 /* In month cells the title wins the space fight: pill collapses to the dot glow, time hides when the cell is tight */
@@ -534,8 +575,21 @@ button:focus-visible, [tabindex]:focus-visible {
   user-select: none; cursor: grab; position: relative;
   touch-action: pan-y;
 }
-.bc-bar.cont-l { border-top-left-radius: 0; border-bottom-left-radius: 0; }
-.bc-bar.cont-r { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+/* Continuation beyond this row: GCal-style angled arrow ends pointing the
+   direction the event keeps going (replaces the old text chevrons). */
+.bc-bar.cont-l {
+  border-top-left-radius: 0; border-bottom-left-radius: 0;
+  clip-path: polygon(7px 0, 100% 0, 100% 100%, 7px 100%, 0 50%);
+  padding-left: 11px;
+}
+.bc-bar.cont-r {
+  border-top-right-radius: 0; border-bottom-right-radius: 0;
+  clip-path: polygon(0 0, calc(100% - 7px) 0, 100% 50%, calc(100% - 7px) 100%, 0 100%);
+  padding-right: 11px;
+}
+.bc-bar.cont-l.cont-r {
+  clip-path: polygon(7px 0, calc(100% - 7px) 0, 100% 50%, calc(100% - 7px) 100%, 7px 100%, 0 50%);
+}
 .bc-bar-handle { position: absolute; top: 0; bottom: 0; width: 8px; cursor: ew-resize; }
 .bc-bar-handle.l { left: 0; }
 .bc-bar-handle.r { right: 0; }
@@ -546,7 +600,10 @@ button:focus-visible, [tabindex]:focus-visible {
   display: flex; flex-direction: column; gap: 1px;
   touch-action: pan-y;
   min-width: 0;
+  /* Hairline of page background so cascaded (overlapping) blocks separate. */
+  box-shadow: 0 0 0 1px var(--bg);
 }
+.bc-block:hover { z-index: 30 !important; }
 .bc-block-line { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .bc-block-time, .bc-block-loc { font-size: 10.5px; opacity: 0.85; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bc-block-handle { position: absolute; left: 0; right: 0; height: 6px; cursor: ns-resize; }
@@ -575,7 +632,11 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-timegrid { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow-x: clip; }
 .bc-tg-head { display: flex; border-bottom: 1px solid var(--border); background: var(--bg-raised); scrollbar-gutter: stable; }
 .bc-tg-gutter { width: 52px; flex: none; }
-.bc-tg-head-day { flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 4px 0; }
+.bc-tg-head-day {
+  flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 4px 0;
+  background: none; border: none; border-radius: 6px; cursor: pointer;
+}
+.bc-tg-head-day:hover { background: var(--bg-inset); }
 .bc-tg-dow { font-size: 11.5px; font-weight: 600; color: var(--fg-muted); text-transform: uppercase; }
 /* Every day number gets the same 24px line box so the today pill never shifts
    its column's vertical alignment relative to neighbors. */
@@ -587,18 +648,29 @@ body.bc-dragging * { cursor: grabbing !important; }
   background: var(--today); color: var(--accent-fg);
   border-radius: 50%;
 }
-/* Day view: a stronger single-day anchor (weekday + big number, GCal-style). */
+/* Day view: a stronger single-day anchor. One fixed number size and circle
+   whether or not the day is today, so navigating days never shifts or
+   resizes the header. */
 .bc-tg-head.is-single .bc-tg-head-day {
   justify-content: flex-start; align-items: center;
-  gap: 10px; padding: 6px 0 5px 12px;
+  gap: 10px; padding: 5px 0 5px 12px;
 }
 .bc-tg-head.is-single .bc-tg-dow { font-size: 12px; letter-spacing: 0.6px; }
-.bc-tg-head.is-single .bc-tg-dom { font-size: 26px; line-height: 1.1; }
+.bc-tg-head.is-single .bc-tg-dom {
+  font-size: 17px; min-width: 32px; height: 32px; line-height: 32px;
+}
 .bc-tg-head.is-single .bc-tg-head-day.is-today .bc-tg-dom {
-  min-width: 40px; height: 40px; line-height: 40px; font-size: 22px;
+  min-width: 32px; height: 32px; line-height: 32px; font-size: 17px;
 }
 .bc-tg-allday { display: flex; border-bottom: 1px solid var(--border); background: var(--bg-raised); position: relative; scrollbar-gutter: stable; }
+.bc-tg-allday.is-collapsed { overflow: hidden; }
 .bc-tg-allday-label { font-size: 10px; color: var(--fg-muted); text-align: right; padding: 4px 6px 0 0; text-transform: uppercase; }
+.bc-allday-toggle {
+  display: block; margin-left: auto; margin-top: 1px;
+  background: none; border: none; padding: 0 6px 0 0;
+  font-size: 10px; color: var(--fg-muted); line-height: 1.2; cursor: pointer;
+}
+.bc-allday-toggle:hover { color: var(--accent); }
 .bc-tg-allday-lane { flex: 1; position: relative; }
 .bc-tg-allday .bc-bar-slot { height: 22px; padding: 1px 2px; }
 .bc-tg-scroll { flex: 1; overflow-y: auto; overflow-x: clip; overscroll-behavior: contain; scrollbar-gutter: stable; }
@@ -1387,8 +1459,7 @@ body.bc-rescheduling { user-select: none; }
 /* --- responsive -------------------------------------------------------------------------- */
 
 @media (max-width: 800px) {
-  .bc-menu-btn { display: block; }
-  .bc-brand { display: none; }
+  .bc-brand-name { display: none; }
   .bc-sidebar {
     position: fixed; left: 0; top: 0; bottom: 0; z-index: 50;
     transform: translateX(-100%); transition: transform 0.18s ease;
@@ -1412,6 +1483,8 @@ body.bc-rescheduling { user-select: none; }
   .bc-cell .bc-chip .bc-new-pill,
   .bc-cell .bc-chip .bc-chip-dot { display: none; }
   .bc-cell .bc-chip .bc-chip-title { display: block; font-size: 10px; }
+  /* Mobile pills need the fill back (dots are hidden at this size). */
+  .bc-cell .bc-chip.is-dotstyle { background: var(--tint, transparent); }
   .bc-bar { padding: 0 4px; }
   .bc-bar .bc-chip-title { font-size: 10px; }
   .bc-cell-chips { gap: 2px; bottom: 2px; }
@@ -1419,7 +1492,6 @@ body.bc-rescheduling { user-select: none; }
     height: 13px; font-size: 10px; padding: 0 3px;
     display: flex; align-items: center; gap: 2px;
   }
-  .bc-viewswitch-btn { padding: 4px 7px; font-size: 12px; }
   :root { --bc-gutter-w: 34px; }
   .bc-agenda-time { width: 84px; }
 }
@@ -1452,11 +1524,15 @@ body.bc-rescheduling { user-select: none; }
 .bc-cal-solo.is-on { opacity: 1; }
 .bc-cal-solo.is-on { color: var(--accent); font-weight: 700; }
 @media (pointer: coarse) { .bc-cal-solo { opacity: 1; } }
+/* Solo notice: sticky at the bottom of the sidebar scroll area so entering
+   or leaving solo never pushes the calendar list (quick toggling stays put). */
 .bc-solo-banner {
+  position: sticky; bottom: 0; z-index: 5;
   display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
   background: color-mix(in srgb, var(--accent) 10%, var(--bg-raised));
   border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
-  border-radius: 6px; padding: 5px 8px; margin-bottom: 8px; font-size: 12.5px;
+  border-radius: 6px; padding: 5px 8px; margin-top: 8px; font-size: 12.5px;
+  box-shadow: var(--shadow);
 }
 
 /* --- infinite week: horizontal day track, synced header, edge hints -------- */

@@ -41,7 +41,13 @@ export function EventPopover() {
   // Document-level listeners; torn down on unmount, not just close.
   useEffect(() => {
     const onDoc = (e) => {
-      if (panelRef.current && !panelRef.current.contains(e.target)) set({ popover: null });
+      if (!panelRef.current || panelRef.current.contains(e.target)) return;
+      // A pointerdown on the popover's own event element is left for the
+      // click handler: onOpenEvent toggles the open popover closed. Closing
+      // here first would make that click look like a fresh open.
+      const el = e.target.closest && e.target.closest('[data-instance]');
+      if (el && popover && el.dataset.instance === popover.instanceId) return;
+      set({ popover: null });
     };
     const onKey = (e) => {
       if (e.key === 'Tab') trapFocus(panelRef.current, e);

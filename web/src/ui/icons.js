@@ -53,6 +53,14 @@ export function Icon({ name, size = 15 }) {
     outfeeds: html`<path d="M3 8.6a4.4 4.4 0 0 1 4.4 4.4M3 4.6a8.4 8.4 0 0 1 8.4 8.4" />
       <circle cx="3.7" cy="12.3" r="1.1" fill="currentColor" stroke="none" />`,
     filters: html`<path d="M2 3h12l-4.6 5.4V13l-2.8-1.5V8.4z" />`,
+    // Hamburger: sidebar toggle.
+    menu: html`<path d="M2.5 4.2h11M2.5 8h11M2.5 11.8h11" />`,
+    // Small caret for dropdown triggers.
+    chevronDown: html`<path d="M3.5 6l4.5 4.5L12.5 6" />`,
+    // Brand mark: calendar page with filled header band and a bold check.
+    brand: html`<rect x="1.8" y="2.8" width="12.4" height="11.4" rx="2.4" fill="none" stroke-width="1.6" />
+      <path d="M1.8 6.4h12.4V5.2c0-1.3-1.1-2.4-2.4-2.4H4.2c-1.3 0-2.4 1.1-2.4 2.4z" fill="currentColor" stroke="none" />
+      <path d="M5.2 10.4l2 2 3.6-3.8" fill="none" stroke-width="1.7" />`,
     // Clock face with a counter-clockwise history arrow: the Activity log.
     activity: html`<path d="M2.6 8A5.4 5.4 0 1 0 8 2.6c-1.6 0-3 .7-4 1.8M2.6 2.4v2.4H5" />
       <path d="M8 5.4V8l1.9 1.1" />`,

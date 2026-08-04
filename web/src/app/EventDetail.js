@@ -7,7 +7,7 @@
 import { html, useState, useRef, useMemo, useEffect } from '../../vendor/index.js';
 import { useStore, set, state, patchOccurrence } from './store.js';
 import { api } from './api.js';
-import { deleteEvent, triageAttendance, sendFeedback, enterReschedule, sameDayList, openTripByEventId } from './actions.js';
+import { deleteEvent, triageAttendance, sendFeedback, enterReschedule, sameDayList, openTripByEventId, rsvpEvent } from './actions.js';
 import { TripDetail } from './Trips.js';
 import { trapFocus } from '../ui/DayExpand.js';
 import { ThumbIcon, CalDot, PinIcon, LinkIcon, Icon } from '../ui/icons.js';
@@ -358,6 +358,23 @@ export function EventDetail() {
             // too (defense in depth; also covers verbatim feed imports).
             ? html`<div class="bc-detail-desc bc-rich" dangerouslySetInnerHTML=${{ __html: sanitizeHtml(occ.description) }}></div>`
             : html`<div class="bc-detail-desc">${linkify(occ.description)}</div>`}
+        </div>`}
+        ${occ.invite && html`<div class="bc-detail-section bc-invite">
+          <div class="bc-invite-line">
+            <span class="bc-invite-from">
+              Invitation${occ.invite.organizer && occ.invite.organizer.email
+                ? ' from ' + (occ.invite.organizer.name || occ.invite.organizer.email) : ''}
+              ${occ.invite.attendees && occ.invite.attendees.length > 1 && html`<span class="bc-invite-count"> · ${occ.invite.attendees.length} invited</span>`}
+            </span>
+            <div class="bc-seg" role="group" aria-label="RSVP">
+              ${[['accepted', 'ACCEPTED', 'Accept'], ['tentative', 'TENTATIVE', 'Maybe'], ['declined', 'DECLINED', 'Decline']].map(([answer, ps, label]) => html`<button
+                key=${answer} type="button"
+                class="bc-seg-btn${occ.invite.myPartstat === ps ? ' is-active' : ''}"
+                aria-pressed=${occ.invite.myPartstat === ps}
+                onClick=${() => rsvpEvent(occ, answer)}
+              >${label}</button>`)}
+            </div>
+          </div>
         </div>`}
         ${(occ.url || (occ.tags && occ.tags.length > 0) || (occ.people && occ.people.length > 0)) && html`<div class="bc-detail-section bc-detail-labels">
           ${occ.url && html`<a href=${occ.url} target="_blank" rel="noopener noreferrer">Event link ↗</a>`}

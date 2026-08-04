@@ -83,7 +83,7 @@ function bc_handle_api(Request $request, array $cfg): void
         $authController = new Controllers\AuthController($auth);
         $calendarsController = new Controllers\CalendarsController($db, $calendars, $feeds);
         $foldersController = new Controllers\FoldersController($folders);
-        $eventsController = new Controllers\EventsController($events, $trips);
+        $eventsController = new Controllers\EventsController($events, $trips, new Domain\MailIngest($db, $events));
         $quickAddController = new Controllers\QuickAddController($quickAdd);
         $searchController = new Controllers\SearchController($search, $events, $filters, $labels);
         $outFeedsController = new Controllers\OutFeedsController($outFeeds);
@@ -110,6 +110,7 @@ function bc_handle_api(Request $request, array $cfg): void
         $router->add('POST', "$base/calendars", [$calendarsController, 'create']);
         $router->add('POST', "$base/calendars/:id/refresh", [$calendarsController, 'refresh']);
         $router->add('PATCH', "$base/calendars/:id", [$calendarsController, 'patch']);
+        $router->add('POST', "$base/calendars/:id/adopt", [$calendarsController, 'adopt']);
         $router->add('DELETE', "$base/calendars/:id", [$calendarsController, 'delete']);
 
         $router->add('POST', "$base/folders", [$foldersController, 'create']);
@@ -124,6 +125,7 @@ function bc_handle_api(Request $request, array $cfg): void
         $router->add('POST', "$base/events/:id/links", [$eventsController, 'attachLink']);
         $router->add('DELETE', "$base/events/:id/links/:eventId", [$eventsController, 'detachLink']);
         $router->add('POST', "$base/events/:id/attendance", [$eventsController, 'attendance']);
+        $router->add('POST', "$base/events/:id/rsvp", [$eventsController, 'rsvp']);
         $router->add('POST', "$base/events/:id/feedback", [$eventsController, 'feedback']);
 
         $router->add('POST', "$base/quickadd", [$quickAddController, 'run']);

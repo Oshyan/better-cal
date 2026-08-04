@@ -36,6 +36,11 @@ final class CalendarsController
         return Response::json($this->calendars->patch($this->userId($req), (int) $params['id'], $req->body));
     }
 
+    public function adopt(Request $req, array $params): Response
+    {
+        return Response::json($this->calendars->adopt((int) $req->user['id'], (int) $params['id']));
+    }
+
     public function delete(Request $req, array $params): Response
     {
         $this->calendars->delete($this->userId($req), (int) $params['id']);

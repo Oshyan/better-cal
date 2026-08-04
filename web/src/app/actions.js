@@ -739,6 +739,21 @@ export function setFolderVisibilityMode(folderId, mode) {
   }
 }
 
+// RSVP to a mail-ingested invitation (docs/email-ingest.md).
+export async function rsvpEvent(occ, answer) {
+  try {
+    const result = await api('/events/' + occ.eventId + '/rsvp', { method: 'POST', body: { answer } });
+    patchOccurrence(occ.instanceId, { invite: { ...occ.invite, myPartstat: result.myPartstat } });
+    toast(result.sent
+      ? 'RSVP sent to the organizer'
+      : 'RSVP recorded (no reply sent — organizer unknown or RSVP mail not configured)');
+    return result;
+  } catch (e) {
+    toast('RSVP failed: ' + e.message, { error: true });
+    return null;
+  }
+}
+
 // --- people availability (docs/design-availability.md) ----------------------
 
 // Toggle whether a person's away/busy spans render as calendar bands.

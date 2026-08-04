@@ -12,7 +12,9 @@ declare(strict_types=1);
 
 require dirname(__DIR__) . '/src/bootstrap.php';
 
+use BetterCal\Domain\ActivityContext;
 use BetterCal\Domain\Ics;
+use BetterCal\Domain\Undo;
 use BetterCal\Infra\Db;
 
 $dir = $argv[1] ?? '';
@@ -115,6 +117,15 @@ foreach ($files as $i => $path) {
             $imported++;
         }
     });
+    ActivityContext::with('import', static fn() => (new Undo($db))->record(
+        $userId,
+        'calendar',
+        $calendarId,
+        'create',
+        null,
+        null,
+        "Imported calendar '$name' ($imported events)"
+    ));
     $totalImported += $imported;
     echo "imported: $name — $imported events\n";
 }

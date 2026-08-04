@@ -1829,6 +1829,49 @@ if (class_exists(\Sabre\VObject\Reader::class)) {
     );
 }
 
+// --- Activity log: sources + default summaries -----------------------------
+
+use BetterCal\Domain\ActivityContext;
+use BetterCal\Domain\Undo;
+
+checkEq('activity default source', 'web', ActivityContext::get());
+$seen = null;
+ActivityContext::with('feed', function () use (&$seen): void {
+    $seen = ActivityContext::get();
+});
+checkEq('activity with() sets source inside', 'feed', $seen);
+checkEq('activity with() restores source after', 'web', ActivityContext::get());
+try {
+    ActivityContext::with('mail:llm', function (): void {
+        throw new \RuntimeException('boom');
+    });
+} catch (\RuntimeException) {
+}
+checkEq('activity with() restores source after throw', 'web', ActivityContext::get());
+$returned = ActivityContext::with('api', fn(): string => 'value');
+checkEq('activity with() passes through return value', 'value', $returned);
+
+checkEq(
+    'activity summary: event create with date',
+    "Added event 'Dinner at Zuni' (Aug 14)",
+    Undo::defaultSummary('event', 'create', null, ['events' => [['title' => 'Dinner at Zuni', 'start_utc' => '2026-08-14 02:00:00']]])
+);
+checkEq(
+    'activity summary: delete names from before side',
+    "Deleted calendar 'Work'",
+    Undo::defaultSummary('calendar', 'delete', ['calendars' => [['name' => 'Work']]], null)
+);
+checkEq(
+    'activity summary: no snapshot stays generic',
+    'Updated event',
+    Undo::defaultSummary('event', 'update', null, null)
+);
+checkEq(
+    'activity summary: saved view underscores become spaces',
+    "Added saved view 'Focus'",
+    Undo::defaultSummary('saved_view', 'create', null, ['saved_views' => [['name' => 'Focus']]])
+);
+
 // ---------------------------------------------------------------------------
 
 $pass = $GLOBALS['__pass'];

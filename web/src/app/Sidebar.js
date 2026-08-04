@@ -229,6 +229,7 @@ const MANAGE_ITEMS = [
   ['settings', 'Settings'],
   ['organize', 'Calendars & folders'],
   ['people', 'People'],
+  ['activity', 'Activity'],
   ['outfeeds', 'Outbound feeds'],
   ['filters', 'Filters'],
   ['views', 'Saved views'],

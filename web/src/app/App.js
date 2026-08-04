@@ -38,6 +38,7 @@ import { FiltersPage } from './FiltersPage.js';
 import { SavedViewsPage } from './SavedViewsPage.js';
 import { SettingsPage } from './SettingsPage.js';
 import { PeoplePage } from './PeoplePage.js';
+import { ActivityPage } from './ActivityPage.js';
 import { OrganizePage } from './OrganizePage.js';
 
 const MONTH_ROWS = { month: 6, weeks3: 3, weeks2: 2 };
@@ -357,6 +358,9 @@ export function App() {
   }
   if (s.route === 'people') {
     return html`<div class="bc-app"><${PeoplePage} /><${CreateDrawer} /><${ShortcutsSheet} /><${Toasts} /></div>`;
+  }
+  if (s.route === 'activity') {
+    return html`<div class="bc-app"><${ActivityPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${Toasts} /></div>`;
   }
 
   let view = null;

@@ -132,7 +132,9 @@ final class Feeds
         $changedUids = [];
         $newMasterUids = [];
         $updatedEventIds = [];
-        $this->db->tx(function () use ($parsed, $existingByKey, &$masterIdByUid, &$seen, &$upserts, &$changedUids, &$newMasterUids, &$updatedEventIds, $calendarId, $userId): void {
+        $addedTitles = [];
+        $removedCount = 0;
+        $this->db->tx(function () use ($parsed, $existingByKey, &$masterIdByUid, &$seen, &$upserts, &$changedUids, &$newMasterUids, &$updatedEventIds, &$addedTitles, &$removedCount, $calendarId, $userId): void {
             foreach ($parsed as $ev) {
                 $key = $ev['uid'] . '|' . ($ev['recurrence_instance_utc'] ?? '');
                 if (isset($seen[$key])) {
@@ -174,6 +176,7 @@ final class Feeds
                         $newMasterUids[(string) $ev['uid']] = true;
                     }
                     $changedUids[(string) $ev['uid']] = true;
+                    $addedTitles[] = (string) $ev['title'];
                     $upserts++;
                     continue;
                 }
@@ -212,6 +215,7 @@ final class Feeds
                 if (!isset($seen[$key])) {
                     $this->db->run('DELETE FROM events WHERE id = ?', [(int) $row['id']]);
                     $changedUids[(string) $row['uid']] = true;
+                    $removedCount++;
                 }
             }
         });
@@ -229,6 +233,35 @@ final class Feeds
                 [$calendarId, $uid]
             );
             ChangeLog::record($this->db, $calendarId, $uid, $masterExists !== null ? ChangeLog::OP_MODIFY : ChangeLog::OP_DELETE);
+        }
+
+        // Activity log: one roll-up entry per poll that changed anything
+        // (log-only; the next poll would redo an undo, so none is offered).
+        $addedCount = count($addedTitles);
+        $updatedCount = count($updatedEventIds);
+        if ($addedCount + $updatedCount + $removedCount > 0) {
+            $parts = [];
+            if ($addedCount > 0) {
+                $parts[] = $addedCount . ' added';
+            }
+            if ($updatedCount > 0) {
+                $parts[] = $updatedCount . ' updated';
+            }
+            if ($removedCount > 0) {
+                $parts[] = $removedCount . ' removed';
+            }
+            ActivityContext::with('feed', function () use ($userId, $calendarId, $calendar, $parts, $addedTitles): void {
+                (new Undo($this->db))->record(
+                    $userId,
+                    'calendar',
+                    $calendarId,
+                    'update',
+                    null,
+                    null,
+                    "Feed '" . (string) $calendar['name'] . "': " . implode(', ', $parts),
+                    ['addedTitles' => array_slice($addedTitles, 0, 20)]
+                );
+            });
         }
 
         return $upserts;

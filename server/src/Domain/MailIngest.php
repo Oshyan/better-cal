@@ -292,7 +292,7 @@ final class MailIngest
                 continue;
             }
             foreach ($imip['events'] as $ev) {
-                $outcome = $this->applyImipEvent($userId, $imip['method'], $ev, $tz);
+                $outcome = ActivityContext::with('mail:imip', fn() => $this->applyImipEvent($userId, $imip['method'], $ev, $tz));
                 if ($outcome !== null) {
                     return ['tier' => 'imip', 'outcome' => $outcome[0], 'eventId' => $outcome[1], 'error' => null];
                 }
@@ -302,7 +302,7 @@ final class MailIngest
         // Tier 2: schema.org markup.
         if ($msg['html'] !== null) {
             foreach (self::extractLdJsonEvents($msg['html']) as $draft) {
-                $created = $this->createFromDraft($userId, $msg, $draft, 'markup', $tz);
+                $created = ActivityContext::with('mail:markup', fn() => $this->createFromDraft($userId, $msg, $draft, 'markup', $tz));
                 if ($created !== null) {
                     return ['tier' => 'markup', 'outcome' => 'created', 'eventId' => $created, 'error' => null];
                 }
@@ -317,7 +317,7 @@ final class MailIngest
             if ($draft === null) {
                 continue;
             }
-            $created = $this->createFromDraft($userId, $msg, [
+            $created = ActivityContext::with('mail:gcal-link', fn() => $this->createFromDraft($userId, $msg, [
                 'title' => $draft['title'],
                 'start' => $draft['start'],
                 'end' => $draft['end'],
@@ -325,7 +325,7 @@ final class MailIngest
                 'location' => $draft['location'],
                 'description' => $draft['description'],
                 'url' => null,
-            ], 'gcal-link', $tz);
+            ], 'gcal-link', $tz));
             if ($created !== null) {
                 return ['tier' => 'gcal-link', 'outcome' => 'created', 'eventId' => $created, 'error' => null];
             }
@@ -345,14 +345,14 @@ final class MailIngest
             $body = mb_substr(self::stripForwardPreamble($msg['subject']) . "\n\n" . $llmSource, 0, 4000);
             $parsed = $this->llm->parseEvent($body, Time::nowUtc(), $tz);
             if ($parsed !== null && !empty($parsed['title']) && $parsed['title'] !== 'New event') {
-                $created = $this->createFromDraft($userId, $msg, [
+                $created = ActivityContext::with('mail:llm', fn() => $this->createFromDraft($userId, $msg, [
                     'title' => $parsed['title'],
                     'start' => $parsed['start'],
                     'end' => $parsed['end'],
                     'location' => $parsed['location'],
                     'url' => null,
                     'allDay' => (bool) $parsed['allDay'],
-                ], 'llm', $tz);
+                ], 'llm', $tz));
                 if ($created !== null) {
                     return ['tier' => 'llm', 'outcome' => 'created', 'eventId' => $created, 'error' => null];
                 }
@@ -549,6 +549,15 @@ final class MailIngest
         $invite = is_array($row['invite_json']) ? $row['invite_json'] : json_decode((string) $row['invite_json'], true);
         $invite['myPartstat'] = $partstat;
         $this->db->run('UPDATE events SET invite_json = ? WHERE id = ?', [json_encode($invite), $eventId]);
+        ActivityContext::with('rsvp', fn() => (new Undo($this->db))->record(
+            $userId,
+            'event',
+            $eventId,
+            'update',
+            null,
+            null,
+            "RSVP'd " . ucfirst(strtolower($partstat)) . " to '" . (string) $row['title'] . "'"
+        ));
         // Journal so other open clients see the RSVP on their next cursor poll.
         \BetterCal\Dav\ChangeLog::record($this->db, (int) $row['calendar_id'], (string) $row['uid'], \BetterCal\Dav\ChangeLog::OP_MODIFY);
 

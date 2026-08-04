@@ -158,7 +158,7 @@ final class People
     /** @param array{start?:mixed,end?:mixed,kind?:mixed,note?:mixed} $in */
     public function addSpan(int $userId, int $personId, array $in): array
     {
-        $this->requirePerson($userId, $personId);
+        $person = $this->requirePerson($userId, $personId);
         $start = self::instant($in['start'] ?? null, 'start');
         $end = self::instant($in['end'] ?? null, 'end');
         if ($end <= $start) {
@@ -174,16 +174,36 @@ final class People
             'kind' => $kind,
             'note' => $note,
         ]);
-        return self::spanRow($this->db->one('SELECT * FROM availability WHERE id = ?', [$id]));
+        $row = $this->db->one('SELECT * FROM availability WHERE id = ?', [$id]);
+        (new Undo($this->db))->record(
+            $userId,
+            'availability',
+            $id,
+            'create',
+            null,
+            ['availability' => [$row]],
+            'Marked ' . (string) $person['name'] . ' ' . $kind . ' (' . $start->format('M j') . ')'
+        );
+        return self::spanRow($row);
     }
 
     public function deleteSpan(int $userId, int $personId, int $spanId): void
     {
-        $this->requirePerson($userId, $personId);
+        $person = $this->requirePerson($userId, $personId);
+        $row = $this->db->one('SELECT * FROM availability WHERE id = ? AND person_id = ?', [$spanId, $personId]);
         $count = $this->db->run('DELETE FROM availability WHERE id = ? AND person_id = ?', [$spanId, $personId]);
         if ($count === 0) {
             throw HttpError::notFound('No such availability span');
         }
+        (new Undo($this->db))->record(
+            $userId,
+            'availability',
+            $spanId,
+            'delete',
+            ['availability' => [$row]],
+            null,
+            'Removed ' . (string) $row['kind'] . ' span for ' . (string) $person['name']
+        );
     }
 
     /**

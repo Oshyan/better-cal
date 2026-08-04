@@ -53,6 +53,9 @@ export function Icon({ name, size = 15 }) {
     outfeeds: html`<path d="M3 8.6a4.4 4.4 0 0 1 4.4 4.4M3 4.6a8.4 8.4 0 0 1 8.4 8.4" />
       <circle cx="3.7" cy="12.3" r="1.1" fill="currentColor" stroke="none" />`,
     filters: html`<path d="M2 3h12l-4.6 5.4V13l-2.8-1.5V8.4z" />`,
+    // Clock face with a counter-clockwise history arrow: the Activity log.
+    activity: html`<path d="M2.6 8A5.4 5.4 0 1 0 8 2.6c-1.6 0-3 .7-4 1.8M2.6 2.4v2.4H5" />
+      <path d="M8 5.4V8l1.9 1.1" />`,
     views: html`<path d="M4.5 2h7v12l-3.5-2.7L4.5 14z" />`,
     folder: html`<path d="M1.8 4.2c0-.6.4-1 1-1h3.4l1.4 1.6h5.6c.6 0 1 .4 1 1v6c0 .6-.4 1-1 1H2.8c-.6 0-1-.4-1-1z" />`,
     mixed: html`<circle cx="8" cy="8" r="5.2" />

@@ -5,3 +5,4 @@ node_modules/
 vendor/
 .DS_Store
 dist/
+better-cal-gcal-redirect-*.zip

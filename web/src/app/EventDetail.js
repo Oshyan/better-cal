@@ -340,7 +340,7 @@ export function EventDetail() {
           ${occ.reminders && occ.reminders.length > 0 && html`<span
             class="bc-bell" role="img" aria-label="Has reminders"
             title=${'Reminders: ' + occ.reminders.map(fmtReminder).join(', ')}
-          >🔔</span>`}
+          ><${Icon} name="bell" size=${12} /></span>`}
           ${occ.status === 'cancelled' && html`<span class="bc-badge">cancelled</span>`}
         </div>
         ${occ.location && html`<div class="bc-detail-section bc-detail-loc">

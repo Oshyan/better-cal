@@ -15,7 +15,7 @@ export class ApiError extends Error {
   }
 }
 
-export async function api(path, { method = 'GET', body, formData } = {}) {
+export async function api(path, { method = 'GET', body, formData, signal } = {}) {
   const headers = {};
   if (method !== 'GET' && state.csrf) headers['X-CSRF'] = state.csrf;
   if (body !== undefined) headers['Content-Type'] = 'application/json';
@@ -25,9 +25,11 @@ export async function api(path, { method = 'GET', body, formData } = {}) {
       method,
       headers,
       credentials: 'same-origin',
+      signal,
       body: formData ? formData : (body !== undefined ? JSON.stringify(body) : undefined),
     });
   } catch (e) {
+    if (e && e.name === 'AbortError') throw new ApiError('aborted', 'Request superseded', 0);
     throw new ApiError('network', 'Network error', 0);
   }
   if (res.status === 401) {
@@ -114,20 +116,35 @@ function coveredInFlight(s, e) {
   return inFlight.some((r) => r.start <= s && r.end >= e);
 }
 
+// A wider request makes a narrower one in flight pointless: its response is
+// discarded by the windowReqId check anyway, so letting it run just costs a
+// second multi-month query racing the one we actually want. A virtualized
+// view settling its scroll does exactly this on every cold load (measured:
+// Jun-Oct followed ~immediately by Jun-Nov, both ~900ms server-side).
+function abortSubsumed(s, e) {
+  for (const r of inFlight) {
+    if (s <= r.start && e >= r.end && r.ctrl) r.ctrl.abort();
+  }
+}
+
 export async function loadWindow(startISO, endISO, { force = false } = {}) {
   lastWindow = { start: startISO, end: endISO };
   if (!force && rangeCovered(startISO, endISO)) return;
   const s = new Date(startISO).getTime();
   const e = new Date(endISO).getTime();
   if (!force && coveredInFlight(s, e)) return;
+  abortSubsumed(s, e);
   const id = ++windowReqId;
-  const entry = { start: s, end: e };
+  const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const entry = { start: s, end: e, ctrl };
   inFlight.push(entry);
   const params = new URLSearchParams({ start: startISO, end: endISO });
   try {
-    const data = await api('/events?' + params.toString());
+    const data = await api('/events?' + params.toString(), { signal: ctrl ? ctrl.signal : undefined });
     if (id !== windowReqId) return; // stale response: a newer request superseded it
     mergeWindow(startISO, endISO, data.events || []);
+  } catch (err) {
+    if (!err || err.code !== 'aborted') throw err;
   } finally {
     const i = inFlight.indexOf(entry);
     if (i >= 0) inFlight.splice(i, 1);

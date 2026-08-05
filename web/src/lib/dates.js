@@ -29,6 +29,12 @@ export function byStart(a, b) {
   return startMs(a) - startMs(b);
 }
 
+// Same rule for the far edge: an occurrence's end carries its own offset too.
+export function endMs(occ) {
+  const t = new Date(occ.end).getTime();
+  return Number.isNaN(t) ? 0 : t;
+}
+
 // Format a Date as ISO8601 with the local timezone offset:
 // 2026-07-30T14:30:00-07:00
 export function toISOWithOffset(d) {

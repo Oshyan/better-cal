@@ -10,7 +10,7 @@ import { useStore, set, state, toast, shallowEq } from './store.js';
 import { api, loadCalendars } from './api.js';
 import {
   toggleCalendarVisible, createFolder, deleteFolder,
-  folderMode, setFolderVisibilityMode,
+  folderMode, setFolderVisibilityMode, LOOSE_FOLDER_ID, setSidebarActiveOnly,
   togglePersonVisible, enterPeopleSolo, exitPeopleSolo,
   peopleVisibilityMode, setPeopleVisibilityMode,
 } from './actions.js';
@@ -124,6 +124,35 @@ function ModeMenu({ mode, tip, ariaName, customDisabled, onPick }) {
       ><span class="bc-ov-check" aria-hidden="true">${mode === m ? html`<${Icon} name="check" size=${11} />` : ''}</span><${Icon} name=${MODE_ICONS[m]} size=${12} />${MODE_LABELS[m]}</button>`)}
     </div>`}
   </div>`;
+}
+
+// The same control for the unfoldered group. It governs exactly the calendars
+// that section lists, so All / None / Custom there means what it says.
+function LooseModeButton() {
+  return html`<${ModeMenu}
+    mode=${folderMode(LOOSE_FOLDER_ID)}
+    tip="Visibility for calendars not in a folder: All shows every one, None hides them all, Custom is your own selection."
+    ariaName="Visibility for calendars not in a folder"
+    customDisabled=${false}
+    onPick=${(m) => setFolderVisibilityMode(LOOSE_FOLDER_ID, m)}
+  />`;
+}
+
+// Display-only: hides unchecked rows from the list without changing a single
+// calendar's visibility. It sits in the All-calendars header because that is
+// the longest list, but it applies to every section — hence the tooltip, and
+// hence the button staying lit for as long as rows are being hidden.
+function ActiveOnlyButton() {
+  const on = useStore((s) => !!s.settings.sidebarActiveOnly);
+  return html`<button
+    type="button" class="bc-icon-btn bc-folder-tool bc-activeonly${on ? ' is-on' : ''}"
+    aria-pressed=${on}
+    aria-label=${on ? 'List every row again' : 'List only active rows'}
+    title=${on
+      ? 'Listing only active rows in every section — click to list them all again'
+      : 'List only active rows, in every section. Changes what the list shows, not which calendars are on.'}
+    onClick=${() => setSidebarActiveOnly(!on)}
+  ><${Icon} name="activeOnly" size=${13} /></button>`;
 }
 
 function FolderModeButton({ folder }) {
@@ -240,13 +269,14 @@ const MANAGE_ITEMS = [
 ];
 
 export function Sidebar({ open, collapsed, onClose }) {
-  const { calendars, folders, collapsedFolders, route, people, collapsedAllCals, collapsedPeople, peopleSolo } = useStore(
+  const { calendars, folders, collapsedFolders, route, people, collapsedAllCals, collapsedPeople, peopleSolo, activeOnly } = useStore(
     (s) => ({
       calendars: s.calendars, folders: s.folders,
       collapsedFolders: s.collapsedFolders, route: s.route,
       folderVisibility: s.folderVisibility,
       people: s.people, collapsedAllCals: s.collapsedAllCals,
       collapsedPeople: s.collapsedPeople, peopleSolo: s.peopleSolo,
+      activeOnly: !!s.settings.sidebarActiveOnly,
     }),
     shallowEq,
   );
@@ -280,7 +310,14 @@ export function Sidebar({ open, collapsed, onClose }) {
     set({ collapsedFolders: { ...collapsedFolders, [id]: !collapsedFolders[id] } });
   };
 
-  const rows = (cals) => cals.map((c) => html`<${CalendarRow}
+  // "Only active" drops unchecked rows from the LIST. The row whose gear is
+  // open stays regardless: switching a calendar off from its own settings
+  // panel would otherwise yank the panel out from under the pointer.
+  const listed = (cals) => (activeOnly
+    ? cals.filter((c) => c.visible || openCalId === c.id)
+    : cals);
+
+  const rows = (cals) => listed(cals).map((c) => html`<${CalendarRow}
     key=${c.id} cal=${c} folders=${folders}
     open=${openCalId === c.id} onGear=${toggleGear}
     soloed=${solo && solo.calId === c.id}
@@ -315,6 +352,8 @@ export function Sidebar({ open, collapsed, onClose }) {
               aria-label="New calendar" title="New calendar"
               onClick=${() => set({ createDrawer: { kind: 'calendar' } })}
             ><${Icon} name="plus" size=${13} /></button>
+            <${ActiveOnlyButton} />
+            <${LooseModeButton} />
           </span>
         </div>`}
         ${(byFolder.length === 0 || !collapsedAllCals) && rows(loose)}
@@ -335,7 +374,7 @@ export function Sidebar({ open, collapsed, onClose }) {
             ><${Icon} name="plus" size=${13} /></button>
           </span>
         </div>
-        ${!collapsedPeople && people.map((p) => html`<div key=${p.id} class="bc-cal-item">
+        ${!collapsedPeople && people.filter((p) => !activeOnly || p.showOnCalendar).map((p) => html`<div key=${p.id} class="bc-cal-item">
           <div class="bc-cal-row${p.currentSpan && p.currentSpan.kind === 'away' ? ' is-person-away' : ''}${p.showOnCalendar ? '' : ' is-off'}">
             <span class="bc-cal-label">
               <input

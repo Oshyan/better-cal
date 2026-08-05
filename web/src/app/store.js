@@ -40,6 +40,7 @@ export const state = {
   settings: {
     defaultView: 'month', weekStart: 'sun', timeFormat: '12',
     defaultCalendarId: null, theme: 'system', nlParseMode: 'smart',
+    sidebarActiveOnly: false,
     overviewMode: null,
     reminderTimed: [{ minutes: 10 }], reminderAllDay: [{ daysBefore: 1, time: '18:00' }],
     homeLat: null, homeLng: null, homeLabel: null,

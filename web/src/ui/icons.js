@@ -126,6 +126,12 @@ export function Icon({ name, size = 15 }) {
     // Bell: reminders line.
     bell: html`<path d="M8 2.3c-2.1 0-3.5 1.5-3.5 3.7 0 2.7-.9 3.6-1.6 4.3h10.2c-.7-.7-1.6-1.6-1.6-4.3 0-2.2-1.4-3.7-3.5-3.7z" />
       <path d="M6.7 12.5a1.4 1.4 0 0 0 2.6 0" />`,
+    // Shortened list beside a tick: "show only the checked rows". A list that
+    // visibly loses its last line says compaction; the tick says which rows
+    // survive. Deliberately not the filter funnel — that means the Filters
+    // feature, which is a different thing sitting a few rows below it.
+    activeOnly: html`<path d="M2.4 4.4h6.4M2.4 8h6.4M2.4 11.6h3.4" />
+      <path d="M9.6 11.4l1.6 1.7 3-3.4" />`,
     // Padlock, closed and open: the duration lock in the editor. The shackle
     // is the only thing that changes between the two, so the toggle reads as
     // one object in two states rather than two different glyphs.

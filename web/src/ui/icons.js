@@ -72,6 +72,9 @@ export function Icon({ name, size = 15 }) {
     arrowUpRight: html`<path d="M5.2 10.8L10.8 5.2M6.4 5.2h4.4v4.4" />`,
     check: html`<path d="M3.2 8.4l3.2 3.2 6.4-7" />`,
     star: html`<path d="M8 2.2l1.8 3.7 4 .6-2.9 2.8.7 4-3.6-1.9-3.6 1.9.7-4L2.2 6.5l4-.6z" />`,
+    // Camera body + lens: a location that is really a video call link.
+    video: html`<rect x="1.6" y="4.2" width="9" height="7.6" rx="1.4" />
+      <path d="M10.6 7.4l3.8-2.2v5.6l-3.8-2.2z" />`,
     warning: html`<path d="M7.1 2.9L1.7 12.3c-.4.7.1 1.5.9 1.5h10.8c.8 0 1.3-.8.9-1.5L8.9 2.9c-.4-.7-1.4-.7-1.8 0z" />
       <path d="M8 6.2v3.1M8 11.4h.01" />`,
     // Two offset pages: a stack of near-duplicate events.

@@ -481,6 +481,7 @@ export function App() {
         sortMode=${s.agendaSort}
         scrollKey=${s.anchor}
         scrollSeq=${s.scrollSeq}
+        onVisibleMonthChange=${onVisibleMonthChange}
         onOpenEvent=${onOpenEvent}
         onSetAttendance=${triageAttendance}
         onFeedback=${sendFeedback}

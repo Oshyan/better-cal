@@ -13,7 +13,10 @@ use BetterCal\Support\Time;
 final class Events
 {
     private const MAX_WINDOW_SECONDS = 2 * 366 * 86400; // ~2 year hard cap per query
-    private const NEW_WINDOW_HOURS = 48;
+    // How long a genuinely-new event wears its badge. A day is long enough to
+    // catch it on the next visit without the calendar staying lit for most of
+    // a week.
+    private const NEW_WINDOW_HOURS = 24;
     private const SCOPES = ['this', 'following', 'all'];
     private const ATTENDANCE = ['none', 'interested', 'going', 'hidden'];
 
@@ -806,9 +809,12 @@ final class Events
         if ($createdAt <= Time::nowUtc()->sub(new \DateInterval('PT' . self::NEW_WINDOW_HOURS . 'H'))) {
             return false;
         }
-        if ((string) $row['source'] !== 'feed') {
-            return true;
-        }
+        // Bulk population is never "new": a feed's first poll and a Takeout
+        // import both create thousands of rows at once, and marking them all
+        // new makes the badge meaningless (it was on nearly every event for
+        // two days after the migration). Anything written within the
+        // calendar's own first minutes is part of that initial load,
+        // whatever its source.
         $calCreated = $this->calendarCreatedAt((int) $row['calendar_id']);
         return $calCreated === null || $createdAt > $calCreated->add(new \DateInterval('PT5M'));
     }

@@ -19,7 +19,8 @@ import {
   timeState,
 } from '../lib/dates.js';
 import { EventChip } from './EventChip.js';
-import { ThumbIcon, TripBadge, PinIcon } from './icons.js';
+import { ThumbIcon, TripBadge, PinIcon, Icon } from './icons.js';
+import { gmapsUrl } from '../lib/maps.js';
 import {
   buildAgendaGroups, railRanges, headerSuffixes, dayOfSpanLabel,
   AGENDA_ROW_H as ROW_H, AGENDA_HEAD_H as HEAD_H,
@@ -65,6 +66,34 @@ function fmtDayShort(occ) {
   return dateOfDayKey(occDayKey(occ)).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
+// A location that is really a link (Zoom, Meet, any URL) becomes one; a real
+// place gets a maps link. Either way it is clickable from the agenda instead
+// of a string you have to copy out by hand.
+function AgendaLocation({ location, lat, lng }) {
+  const url = /^https?:\/\//i.test(location.trim()) ? location.trim() : null;
+  const stop = (e) => e.stopPropagation();
+  if (url) {
+    let label = url;
+    try {
+      const u = new URL(url);
+      label = u.hostname.replace(/^www\./, '') + (u.pathname !== '/' ? u.pathname : '');
+    } catch { /* keep the raw string */ }
+    return html`<a
+      class="bc-agenda-loc bc-agenda-loclink" href=${url}
+      target="_blank" rel="noopener noreferrer" title=${url} onClick=${stop}
+    ><${Icon} name="video" size=${11} />${label}</a>`;
+  }
+  return html`<a
+    class="bc-agenda-loc bc-agenda-loclink" href=${gmapsUrl(location, lat, lng)}
+    target="_blank" rel="noopener noreferrer" title=${'Open in Google Maps: ' + location} onClick=${stop}
+  ><${PinIcon} size=${11} />${location}</a>`;
+}
+
+// Month boundaries in the scroll: "August 2026" as a full-width rule.
+function monthLabelOf(dayKey) {
+  return dateOfDayKey(dayKey).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+}
+
 function calColorOf(calendars, occ) {
   return (calendars[occ.calendarId] && calendars[occ.calendarId].color) || '#888';
 }
@@ -74,9 +103,13 @@ function calColorOf(calendars, occ) {
 // scrollKey/scrollSeq: anchor day key + a monotonically bumped sequence — each
 // new seq scrolls the list to the anchor's day group (nearest following group
 // when the exact day has no events).
-export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, scrollKey, scrollSeq, onOpenEvent, onSetAttendance, onFeedback, onCreateDay, onRequestWindow, emptyLabel }) {
+export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, scrollKey, scrollSeq, onOpenEvent, onSetAttendance, onFeedback, onCreateDay, onRequestWindow, onVisibleMonthChange, emptyLabel }) {
   const scrollRef = useRef(null);
   const [win, setWin] = useState({ top: 0, height: 800 });
+  // A span's rail and its boundary rows highlight together, whichever one the
+  // pointer is over: with several spans running at once there is otherwise no
+  // way to tell which bar belongs to which event.
+  const [hoverId, setHoverId] = useState(null);
   const flat = sortMode === 'match';
 
   const groups = useMemo(() => {
@@ -135,8 +168,27 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
   const visStart = win.top - buffer;
   const visEnd = win.top + win.height + buffer;
 
+  // The month at the top of the viewport: drives the sticky header (the only
+  // place the YEAR appears in this view) and is reported upward so the
+  // mini-month follows an agenda scroll like it does every other view.
+  const topMonth = useMemo(() => {
+    if (flat || groups.length === 0) return null;
+    let current = groups[0];
+    for (const g of groups) {
+      if (g.top <= win.top + 8) current = g; else break;
+    }
+    return current.dayKey || null;
+  }, [groups, win.top, flat]);
+
+  useEffect(() => {
+    if (!topMonth || !onVisibleMonthChange) return;
+    const [y, m] = topMonth.split('-').map(Number);
+    onVisibleMonthChange({ year: y, month: m });
+  }, [topMonth && topMonth.slice(0, 7)]); // eslint-disable-line
+
   return html`<div class="bc-agenda" ref=${scrollRef} onScroll=${onScroll}>
     ${groups.length === 0 && html`<div class="bc-empty bc-agenda-empty">${emptyLabel || 'No events in this range'}</div>`}
+    ${topMonth && html`<div class="bc-agenda-monthbar">${monthLabelOf(topMonth)}</div>`}
     <div class="bc-agenda-spacer" style=${`height:${totalH}px`}>
       ${rails.map((r) => {
         if (r.topPx > visEnd || r.topPx + r.heightPx < visStart) return null;
@@ -145,16 +197,32 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
         if (dimSet && dimSet.has(r.instanceId)) return null;
         return html`<div
           key=${'rail:' + r.instanceId}
-          class="bc-agenda-rail${r.isTrip ? ' is-trip' : ''}"
+          class="bc-agenda-rail${r.isTrip ? ' is-trip' : ''}${hoverId === r.instanceId ? ' is-linked' : ''}"
           style=${`top:${r.topPx}px;height:${r.heightPx}px;left:${-14 - r.lane * 6}px`}
           aria-hidden="true" title=${r.title}
+          onPointerEnter=${() => setHoverId(r.instanceId)}
+          onPointerLeave=${() => setHoverId(null)}
           onClick=${openDetail(r.instanceId)}
         ><span class="bc-agenda-rail-line" style=${`background:${r.color}`}></span></div>`;
       })}
-      ${groups.map((g) => {
+      ${groups.map((g, gi) => {
         const visible = g.top + g.height >= visStart && g.top <= visEnd;
+        // Suffixes only on days the span merely PASSES THROUGH. On its start
+        // and end days the event already has a row of its own, and printing
+        // it in the header too was pure duplication.
         const sfx = g.dayKey !== null ? suffixes.get(g.dayKey) : undefined;
-        return html`<section
+        const ownRows = new Set(g.rows.map((r) => r.occ.instanceId));
+        const passing = sfx
+          ? { items: sfx.items.filter((occ) => !ownRows.has(occ.instanceId)), more: sfx.more }
+          : undefined;
+        const prev = gi > 0 ? groups[gi - 1] : null;
+        const newMonth = !flat && g.dayKey
+          && (!prev || !prev.dayKey || prev.dayKey.slice(0, 7) !== g.dayKey.slice(0, 7));
+        return html`<${'div'} key=${'wrap:' + (g.dayKey || 'match')}>
+        ${newMonth && prev && html`<div class="bc-agenda-monthsep" style=${`top:${g.top}px`}>
+          <span>${monthLabelOf(g.dayKey)}</span>
+        </div>`}
+        <section
           key=${g.dayKey === null ? 'match' : g.dayKey}
           class="bc-agenda-group${g.dayKey === tKey ? ' is-today' : ''}"
           style=${`top:${g.top}px;height:${g.height}px`}
@@ -167,13 +235,16 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
               aria-label=${'New event on ' + fmtDayLong(dateOfDayKey(g.dayKey))}
               onClick=${() => onCreateDay(g.dayKey)}
             >+</button>`}
-            ${sfx && sfx.items.filter((occ) => !(dimSet && dimSet.has(occ.instanceId))).map((occ) => html`<button
-              key=${'sfx:' + occ.instanceId} type="button" class="bc-agenda-daysfx"
+            ${passing && passing.items.filter((occ) => !(dimSet && dimSet.has(occ.instanceId))).map((occ) => html`<button
+              key=${'sfx:' + occ.instanceId} type="button"
+              class="bc-agenda-daysfx${hoverId === occ.instanceId ? ' is-linked' : ''}"
               style=${`color:${calColorOf(calendars, occ)}`}
               title=${occ.title || '(untitled)'}
+              onPointerEnter=${() => setHoverId(occ.instanceId)}
+              onPointerLeave=${() => setHoverId(null)}
               onClick=${openDetail(occ.instanceId)}
             > · ${occ.title || '(untitled)'}</button>`)}
-            ${sfx && sfx.more > 0 && html`<span class="bc-agenda-daysfx-more"> · +${sfx.more} more</span>`}
+            ${passing && passing.more > 0 && html`<span class="bc-agenda-daysfx-more"> · +${passing.more} more</span>`}
           </h3>`}
           ${visible && g.rows.map((row) => {
             const occ = row.occ;
@@ -183,43 +254,46 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
             const trip = !!occ.isContainer;
             const start = row.kind === 'start';
             const end = row.kind === 'end';
-            // Boundary rows of multi-day occurrences lead with the title chip
-            // so both ends read the same: [chip][Day i/N][Trip badge]. All-day
-            // starts and every end marker put the chip flush left in the
-            // gutter column, where the rail bar meets the pill (position + no
-            // time implies all-day; the label is omitted). Timed multi-day
-            // starts keep the start time in the gutter with the chip in the
-            // body.
-            const gutterChip = (end || (start && occ.allDay)) && !flat;
+            const span = (start || end) && !flat;
+            // ONE column layout for every row: the gutter is always a label
+            // and the chip always sits in the body beside every other event.
+            // Multi-day boundaries put "Day i/N" in the gutter (where all-day
+            // rows say "all day"), tinted with the calendar colour so the
+            // label reads as part of the rail running down the left edge.
             const gutter = flat
               ? fmtDayShort(occ) + ' · ' + (occ.allDay ? 'all day' : fmtTime(parseISO(occ.start)))
+              : span ? dayOfSpanLabel(occ, g.dayKey)
               : occ.allDay ? 'all day'
-              : fmtTime(parseISO(occ.start)) + (occ.end && !start ? ' to ' + fmtTime(parseISO(occ.end)) : '');
-            const chip = html`<${EventChip}
-              occ=${occ} cal=${calendars[occ.calendarId]} showTime=${false}
-              dimmed=${dimSet && dimSet.has(occ.instanceId)} nowMs=${nowMs}
-              onOpen=${onOpenEvent}
-            />`;
+              : fmtTime(parseISO(occ.start)) + (occ.end ? ' to ' + fmtTime(parseISO(occ.end)) : '');
+            const color = calColorOf(calendars, occ);
+            const linked = hoverId === occ.instanceId;
             return html`<div
               key=${row.kind + ':' + occ.instanceId}
-              class="bc-agenda-row${ts === 'past' ? ' is-past' : ts === 'now' ? ' is-now' : ''}${trip ? ' is-trip' : ''}"
+              class="bc-agenda-row${ts === 'past' ? ' is-past' : ts === 'now' ? ' is-now' : ''}${trip ? ' is-trip' : ''}${linked ? ' is-linked' : ''}"
               style=${`height:${ROW_H}px`}
+              onPointerEnter=${span ? () => setHoverId(occ.instanceId) : undefined}
+              onPointerLeave=${span ? () => setHoverId(null) : undefined}
             >
             ${trip && !start && !end && html`<span
               class="bc-agenda-tripedge" aria-hidden="true"
-              style=${`background:${calColorOf(calendars, occ)}`}
+              style=${`background:${color}`}
             ></span>`}
-            ${gutterChip
-              ? html`<span class="bc-agenda-time bc-agenda-gutterchip">${chip}</span>`
-              : html`<span class="bc-agenda-time">${gutter}</span>`}
-            ${!gutterChip && chip}
-            ${(start || end) && !flat && html`<span class="bc-agenda-dayn">${dayOfSpanLabel(occ, g.dayKey)}</span>`}
+            <span
+              class="bc-agenda-time${span ? ' is-span' : ''}"
+              style=${span ? `--span-color:${color}` : undefined}
+            >${gutter}</span>
+            <${EventChip}
+              occ=${occ} cal=${calendars[occ.calendarId]} showTime=${false}
+              dimmed=${dimSet && dimSet.has(occ.instanceId)} nowMs=${nowMs}
+              onOpen=${onOpenEvent}
+            />
             ${trip && html`<${TripBadge} />`}
             ${!end && occ.source === 'feed' && onSetAttendance && html`<${TriageCluster} occ=${occ} onSetAttendance=${onSetAttendance} onFeedback=${onFeedback} />`}
-            ${!end && occ.location && html`<span class="bc-agenda-loc"><${PinIcon} size=${11} />${occ.location}</span>`}
+            ${!end && occ.location && html`<${AgendaLocation} location=${occ.location} lat=${occ.locationLat} lng=${occ.locationLng} />`}
           </div>`;
           })}
-        </section>`;
+        </section>
+        <//>`;
       })}
     </div>
   </div>`;

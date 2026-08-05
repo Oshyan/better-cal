@@ -1739,12 +1739,28 @@ body.bc-rescheduling { user-select: none; }
 /* --- feature wave: tags, highlight filters, on-page filter, custom reminders
    (append-only section) ----------------------------------------------------- */
 
-/* Highlight filter treatment: accent ring + slightly saturated background.
-   Inset ring so month-cell overflow clipping never cuts it off; color-mix on
-   --accent keeps it legible in both light and dark themes. */
+/* Highlight filter treatment: an inward glow from the edges, NOT a ring.
+   A crisp ring is the vocabulary every other state here speaks — hover, the
+   active-now gold, the search flash — so a highlighted event read as one of
+   those stuck on, and hovering it had nothing distinct left to say. A soft
+   inner falloff belongs to no other state, survives the month cell's
+   overflow clip like any other inset shadow, and leaves the ring free for
+   hover to use normally. */
 .is-highlighted {
-  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 85%, transparent);
-  filter: saturate(1.3);
+  box-shadow: inset 0 0 7px -1px color-mix(in srgb, var(--accent) 62%, transparent);
+  filter: saturate(1.15);
+}
+/* Hover keeps its own grey ring and the glow stays underneath it, so the two
+   states read together instead of one replacing the other. */
+.bc-chip.is-highlighted:hover {
+  box-shadow:
+    0 0 0 1px var(--border-strong),
+    inset 0 0 7px -1px color-mix(in srgb, var(--accent) 62%, transparent);
+}
+:is(.bc-bar, .bc-block).is-highlighted:hover {
+  box-shadow:
+    inset 0 0 0 1.5px color-mix(in srgb, var(--fg) 34%, transparent),
+    inset 0 0 7px -1px color-mix(in srgb, var(--accent) 62%, transparent);
 }
 /* While the toolbar type-to-filter is active (.is-page-filtering on the app
    root, wired in App.js), every still-visible event gets the same highlight
@@ -1827,12 +1843,13 @@ body.bc-rescheduling { user-select: none; }
 :is(.bc-chip, .bc-bar, .bc-block).is-now {
   box-shadow: inset 0 0 0 1.5px var(--active-gold);
 }
-/* Active + filter-highlighted compose as a double ring: accent outside,
-   gold inside (earlier box-shadow layers paint on top). */
+/* Active + filter-highlighted: the gold ring keeps the edge (that is the
+   state you need to spot at a glance) and the accent glow sits behind it.
+   Two different shapes, so neither has to give up its meaning. */
 :is(.bc-chip, .bc-bar, .bc-block).is-now.is-highlighted {
   box-shadow:
-    inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 85%, transparent),
-    inset 0 0 0 3px var(--active-gold);
+    inset 0 0 0 1.5px var(--active-gold),
+    inset 0 0 7px -1px color-mix(in srgb, var(--accent) 62%, transparent);
 }
 /* The toolbar type-to-filter ring (higher specificity) would otherwise mask
    the gold ring; give still-visible active events the same double ring. */
@@ -2178,6 +2195,9 @@ body.bc-rescheduling { user-select: none; }
 .bc-folder-headrow:hover .bc-folder-tools .bc-folder-tool, .bc-folder-tool:focus-visible,
 .bc-folder-headrow:has(:focus-visible) .bc-folder-tools .bc-folder-tool { opacity: 1; }
 @media (pointer: coarse) { .bc-folder-tools .bc-folder-tool { opacity: 1; } }
+/* A control that HIDES rows cannot itself hide: with only-active on, the way
+   back has to be visible without hunting for it. */
+.bc-folder-tools .bc-activeonly.is-on { opacity: 1; color: var(--accent); }
 
 /* Folder options panel (gear): rename + delete, indented under the header. */
 .bc-folder-options {

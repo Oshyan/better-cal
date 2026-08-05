@@ -712,8 +712,15 @@ export function folderMode(folderId) {
   return (entry && entry.mode) || 'custom';
 }
 
+// The unfoldered group ("All calendars" in the sidebar) behaves like a folder
+// for visibility purposes but has no row in the folders table, so it gets a
+// reserved key of its own in folderVisibility.
+export const LOOSE_FOLDER_ID = 'loose';
+
 function folderCalendars(folderId) {
-  return state.calendars.filter((c) => (c.folderIds || []).includes(folderId));
+  return folderId === LOOSE_FOLDER_ID
+    ? state.calendars.filter((c) => !c.folderIds || c.folderIds.length === 0)
+    : state.calendars.filter((c) => (c.folderIds || []).includes(folderId));
 }
 
 // Fire-and-forget server mirror. The backend allowlist may not accept the
@@ -728,13 +735,23 @@ function persistFolderVisibility(next) {
 // flips that folder to custom; toggles in custom mode update the remembered
 // set. Called with the calendar's pre-toggle object, after the store flip.
 function noteFolderCustomToggle(cal) {
-  if (!cal.folderIds || cal.folderIds.length === 0) return;
+  const ids = (!cal.folderIds || cal.folderIds.length === 0)
+    ? [LOOSE_FOLDER_ID]
+    : cal.folderIds;
   const next = { ...state.folderVisibility };
-  for (const fid of cal.folderIds) {
+  for (const fid of ids) {
     const visibleIds = folderCalendars(fid).filter((c) => c.visible).map((c) => c.id);
     next[fid] = { mode: 'custom', custom: visibleIds };
   }
   persistFolderVisibility(next);
+}
+
+// List density only: which rows the sidebar draws, never which calendars are
+// on. Kept in settings so it survives a reload like the other list prefs.
+export function setSidebarActiveOnly(on) {
+  set({ settings: { ...state.settings, sidebarActiveOnly: !!on } });
+  api('/settings', { method: 'PATCH', body: { sidebarActiveOnly: !!on } })
+    .catch(() => { /* the preference still holds for this session */ });
 }
 
 export function setFolderVisibilityMode(folderId, mode) {

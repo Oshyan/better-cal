@@ -13,7 +13,7 @@
 // only renders it. Match-sort flat mode keeps the historical
 // single-row-per-occurrence behavior (no rails, no markers).
 
-import { html, useState, useRef, useMemo, useEffect, useCallback } from '../../vendor/index.js';
+import { html, useState, useRef, useMemo, useEffect, useLayoutEffect, useCallback } from '../../vendor/index.js';
 import {
   parseISO, fmtTime, dateOfDayKey, fmtDayLong, occDayKey, todayKey,
   timeState, addDaysKey, fmtDateShort,
@@ -148,20 +148,54 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
 
   const totalH = groups.length ? groups[groups.length - 1].top + groups[groups.length - 1].height : 0;
 
+  // Applied navigation sequence; declared here because the restore effect
+  // below must not fight a pending explicit navigation.
+  const appliedSeqRef = useRef(null);
+
+  // Where the user is IN TIME, not in pixels: the day at the top of the
+  // viewport plus how far into it they are. Toggling "show past" rebuilds the
+  // group list with a year of earlier days prepended (or removed), so every
+  // group's top moves by thousands of pixels — holding scrollTop across that
+  // landed the reader in August 2025 one way and November 2026 the other.
+  const topPosRef = useRef(null);
+  const groupsRef = useRef(groups);
+  groupsRef.current = groups;
+  const noteTopPos = useCallback(() => {
+    const el = scrollRef.current;
+    const gs = groupsRef.current;
+    if (!el || !gs.length || gs[0].dayKey === null) return;
+    let g = gs[0];
+    for (const cur of gs) { if (cur.top <= el.scrollTop) g = cur; else break; }
+    topPosRef.current = { dayKey: g.dayKey, within: el.scrollTop - g.top };
+  }, []);
+
   const onScroll = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
+    noteTopPos();
     setWin((prev) => {
       const next = { top: el.scrollTop, height: el.clientHeight };
       return Math.abs(prev.top - next.top) > 200 || prev.height !== next.height ? next : prev;
     });
-  }, []);
+  }, [noteTopPos]);
 
   useEffect(() => { onScroll(); }, [groups.length, onScroll]);
 
+  // Restore that day after the group set changes. When nothing shifted, the
+  // recomputed offset equals the current scrollTop, so the common case (the
+  // minute tick rebuilding groups) moves nothing at all.
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    const pos = topPosRef.current;
+    if (!el || flat || !pos || groups.length === 0) return;
+    if (appliedSeqRef.current !== scrollSeq) return; // an explicit navigation owns this pass
+    const g = groups.find((x) => x.dayKey >= pos.dayKey) || groups[groups.length - 1];
+    const want = Math.max(0, g.top + (g.dayKey === pos.dayKey ? pos.within : 0));
+    if (Math.abs(el.scrollTop - want) > 1) el.scrollTop = want;
+  }, [groups]); // eslint-disable-line
+
   // Anchor-aware scroll: apply each scrollSeq once, retrying as groups fill in
   // (the window load is async) but never re-yanking after it has applied.
-  const appliedSeqRef = useRef(null);
   useEffect(() => {
     if (flat || !scrollSeq || !scrollKey) return;
     if (appliedSeqRef.current === scrollSeq) return;

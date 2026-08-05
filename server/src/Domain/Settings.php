@@ -33,6 +33,9 @@ final class Settings
         // its device default: 3day on mobile, month on desktop).
         'overviewMode' => null,
         'folderVisibility' => [],
+        // Sidebar list density: hide unchecked calendars/people from the list
+        // itself. Purely a display preference; it never changes visibility.
+        'sidebarActiveOnly' => false,
         // Global default reminders; effective-reminder resolution falls back
         // to these when neither the event nor its calendar overrides them.
         'reminderTimed' => [['minutes' => 10]],
@@ -119,6 +122,7 @@ final class Settings
                 'overviewMode' => self::enum($key, $value, ['month', '3day']),
                 'defaultCalendarId' => self::calendarId($value),
                 'folderVisibility' => self::folderVisibility($value),
+                'sidebarActiveOnly' => self::bool($key, $value),
                 'reminderTimed' => Reminders::validateTimedList($value),
                 'reminderAllDay' => Reminders::validateAllDayList($value),
                 'homeLat' => self::coordinate($key, $value, 90.0),
@@ -183,6 +187,14 @@ final class Settings
         }
         $value = trim($value);
         return $value === '' ? null : mb_substr($value, 0, 200);
+    }
+
+    private static function bool(string $key, mixed $value): bool
+    {
+        if (!is_bool($value)) {
+            throw HttpError::badRequest("$key must be true or false");
+        }
+        return $value;
     }
 
     private static function enum(string $key, mixed $value, array $allowed): string

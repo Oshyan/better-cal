@@ -53,6 +53,9 @@ export function Icon({ name, size = 15 }) {
     outfeeds: html`<path d="M3 8.6a4.4 4.4 0 0 1 4.4 4.4M3 4.6a8.4 8.4 0 0 1 8.4 8.4" />
       <circle cx="3.7" cy="12.3" r="1.1" fill="currentColor" stroke="none" />`,
     filters: html`<path d="M2 3h12l-4.6 5.4V13l-2.8-1.5V8.4z" />`,
+    // Plus: "new thing here" tools. An SVG (not a text "+") so it shares the
+    // gear's optical box and the two align in a row.
+    plus: html`<path d="M8 3.4v9.2M3.4 8h9.2" />`,
     // Hamburger: sidebar toggle.
     menu: html`<path d="M2.5 4.2h11M2.5 8h11M2.5 11.8h11" />`,
     // Small caret for dropdown triggers.
@@ -68,6 +71,13 @@ export function Icon({ name, size = 15 }) {
     folder: html`<path d="M1.8 4.2c0-.6.4-1 1-1h3.4l1.4 1.6h5.6c.6 0 1 .4 1 1v6c0 .6-.4 1-1 1H2.8c-.6 0-1-.4-1-1z" />`,
     mixed: html`<circle cx="8" cy="8" r="5.2" />
       <path d="M8 2.8a5.2 5.2 0 0 1 0 10.4z" fill="currentColor" stroke="none" />`,
+    // Visibility modes: all (filled), none (struck through).
+    visAll: html`<circle cx="8" cy="8" r="5.2" fill="currentColor" stroke="none" />`,
+    visNone: html`<circle cx="8" cy="8" r="5.2" />
+      <path d="M4.3 11.7l7.4-7.4" />`,
+    // Four-way move arrows: pick the event up and drop it elsewhere.
+    reschedule: html`<path d="M8 2.2v11.6M2.2 8h11.6" />
+      <path d="M8 2.2L6.3 4M8 2.2L9.7 4M8 13.8L6.3 12M8 13.8L9.7 12M2.2 8L4 6.3M2.2 8L4 9.7M13.8 8L12 6.3M13.8 8L12 9.7" />`,
     pencil: html`<path d="M9.6 3.6l2.8 2.8M3.2 10l6.9-6.9c.4-.4 1-.4 1.4 0l1.4 1.4c.4.4.4 1 0 1.4L6 12.8l-3.5.7z" />`,
     trash: html`<path d="M2.5 4h11M6.5 4V2.8c0-.4.3-.8.8-.8h1.4c.5 0 .8.4.8.8V4M4 4l.7 9.4c0 .5.4.8.8.8h5c.4 0 .8-.3.8-.8L12 4M6.5 7v4M9.5 7v4" />`,
     arrowLeft: html`<path d="M13.5 8h-10M7.3 3.8L3.1 8l4.2 4.2" />`,
@@ -80,9 +90,6 @@ export function Icon({ name, size = 15 }) {
     // Open-in-full: corner arrow leaving a box. Popover -> detail view.
     expand: html`<path d="M9.2 2.6h4.2v4.2M13.1 2.9L8.6 7.4" />
       <path d="M6.8 2.6H4c-.8 0-1.4.6-1.4 1.4V12c0 .8.6 1.4 1.4 1.4h8c.8 0 1.4-.6 1.4-1.4V9.2" />`,
-    // Clock with a cycling arrow: reschedule.
-    reschedule: html`<path d="M13.4 8A5.4 5.4 0 1 1 8 2.6c1.6 0 3 .7 4 1.8M13.4 2.4v2.4H11" />
-      <path d="M8 5.4V8l1.9 1.1" />`,
     // Bell: reminders line.
     bell: html`<path d="M8 2.3c-2.1 0-3.5 1.5-3.5 3.7 0 2.7-.9 3.6-1.6 4.3h10.2c-.7-.7-1.6-1.6-1.6-4.3 0-2.2-1.4-3.7-3.5-3.7z" />
       <path d="M6.7 12.5a1.4 1.4 0 0 0 2.6 0" />`,

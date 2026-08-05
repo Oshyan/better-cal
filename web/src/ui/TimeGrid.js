@@ -36,6 +36,12 @@ const DAY_SPAN = 3653; // days either side of today (~10 years) in infinite mode
 const H_BUFFER = 3;    // extra day columns rendered either side
 const EDGE_HINT_PX = 24; // scroll distance before an edge hint counts as "more"
 const NARROW_QUERY = '(max-width: 800px)';
+// Day view (vstack): consecutive days stacked vertically. The window is a
+// fixed-size band that recenters on the day you scroll to, so the DOM stays
+// bounded while scrolling feels endless.
+const V_BEFORE = 7;
+const V_AFTER = 21;
+const V_EDGE = 3; // days from a window edge that trigger a recenter
 
 function minutesOfDay(d) {
   return d.getHours() * 60 + d.getMinutes();
@@ -52,8 +58,8 @@ function snapMin(m) {
 
 export function TimeGrid({
   days: fixedDays, occurrences, calendars, dimSet, nowMs,
-  infinite = false, scrollKey, scrollSeq = 0,
-  onRequestWindow, onVisibleMonthChange,
+  infinite = false, vstack = false, scrollKey, scrollSeq = 0,
+  onRequestWindow, onVisibleMonthChange, onVisibleDay,
   onCreateRange, onMoveEvent, onResizeEvent, onOpenEvent, onOpenDay,
 }) {
   const rootRef = useRef(null);
@@ -64,6 +70,32 @@ export function TimeGrid({
   const alldayTrackRef = useRef(null);
   const [draft, setDraft] = useState(null); // {dayKey, startMin, endMin} while drag-creating
   const [alldayOpen, setAlldayOpen] = useState(true); // all-day lane expand/collapse
+
+  // --- vertical day stack (day view) ---------------------------------------
+
+  const [vWin, setVWin] = useState(() => {
+    const a = epochDayOfKey(scrollKey || todayKey());
+    return { first: a - V_BEFORE, last: a + V_AFTER };
+  });
+  // Scroll anchor honoured after the next render: {dayKey, offset} keeps the
+  // day under the viewport top exactly where it was when the window shifts,
+  // measured from the DOM so variable panel heights never drift.
+  const vPinRef = useRef(null);
+  const vDayRef = useRef(scrollKey || todayKey()); // day currently at the top
+
+  const vPanel = useCallback((dayKey) => {
+    const root = scrollRef.current;
+    return root ? root.querySelector(`[data-vday="${dayKey}"]`) : null;
+  }, []);
+
+  // Scroll so `dayKey` sits at the top of the viewport, `within` px into it.
+  const vScrollTo = useCallback((dayKey, within) => {
+    const el = scrollRef.current;
+    const panel = vPanel(dayKey);
+    if (!el || !panel) return false;
+    el.scrollTop = panel.offsetTop + within;
+    return true;
+  }, [vPanel]);
 
   // --- horizontal virtualization (infinite mode) ---------------------------
 
@@ -202,11 +234,15 @@ export function TimeGrid({
   // --- day list + occurrence indexing --------------------------------------
 
   const days = useMemo(() => {
-    if (!infinite) return fixedDays;
     const out = [];
+    if (vstack) {
+      for (let ed = vWin.first; ed <= vWin.last; ed++) out.push(keyOfEpochDay(ed));
+      return out;
+    }
+    if (!infinite) return fixedDays;
     for (let ed = hRange.first; ed <= hRange.last; ed++) out.push(keyOfEpochDay(ed));
     return out;
-  }, [infinite, fixedDays, hRange.first, hRange.last]);
+  }, [vstack, infinite, fixedDays, hRange.first, hRange.last, vWin.first, vWin.last]);
 
   // Split occurrences into all-day-lane items and per-day timed items,
   // clamped to the rendered day window.
@@ -232,6 +268,26 @@ export function TimeGrid({
     }
     return { allDayBars: bars, timedByDay: timed };
   }, [occurrences, days]);
+
+  // Vertical stack: every day owns its all-day bars, angled where the event
+  // continues past that day (same cue as the day-expand list).
+  const vAllDay = useMemo(() => {
+    if (!vstack) return null;
+    return days.map((k) => {
+      const ed = epochDayOfKey(k);
+      const out = [];
+      for (const occ of occurrences) {
+        if (occ.attendance === 'hidden') continue;
+        const { startKey, endKey } = occurrenceDaySpan(occ);
+        if (!occ.allDay && startKey === endKey) continue;
+        const s = epochDayOfKey(startKey);
+        const e = epochDayOfKey(endKey);
+        if (s > ed || e < ed) continue;
+        out.push({ occ, seg: { contLeft: s < ed, contRight: e > ed } });
+      }
+      return out;
+    });
+  }, [vstack, days, occurrences]);
 
   const barLanes = useMemo(
     () => assignLanes(allDayBars.map((b) => ({ id: b.occ.instanceId, startCol: b.seg.startCol, endCol: b.seg.endCol }))),
@@ -262,7 +318,7 @@ export function TimeGrid({
   // never resets the time scroll.
   useLayoutEffect(() => {
     const el = scrollRef.current;
-    if (!el) return;
+    if (!el || vstack) return; // the stack has its own anchor effect below
     const onToday = infinite ? (scrollKey || todayKey()) === todayKey() : fixedDays.includes(todayKey());
     if (onToday) {
       const mins = minutesOfDay(new Date());
@@ -272,11 +328,95 @@ export function TimeGrid({
     }
   }, []); // eslint-disable-line
 
+  // Stack: explicit navigation (today, chevrons, jump, a day-number click)
+  // rebuilds the window around the anchor and scrolls it to the top, opening
+  // near "now" on today and 7am elsewhere.
+  useLayoutEffect(() => {
+    if (!vstack) return;
+    const key = scrollKey || todayKey();
+    const a = epochDayOfKey(key);
+    const within = (key === todayKey()
+      ? Math.max(0, (minutesOfDay(new Date()) / 60) * HOUR_H - 90)
+      : 7 * HOUR_H);
+    vDayRef.current = key;
+    vPinRef.current = { dayKey: key, within };
+    setVWin((prev) => (prev.first === a - V_BEFORE && prev.last === a + V_AFTER
+      ? prev : { first: a - V_BEFORE, last: a + V_AFTER }));
+  }, [scrollSeq, vstack]); // eslint-disable-line
+
+  // Apply a pending anchor once the window it refers to has rendered.
+  useLayoutEffect(() => {
+    if (!vstack) return;
+    const pin = vPinRef.current;
+    if (!pin) return;
+    if (vScrollTo(pin.dayKey, pin.within)) vPinRef.current = null;
+  }, [vstack, vWin.first, vWin.last, vScrollTo]);
+
+  // Stack scrolling: report the day at the viewport top (drives the toolbar
+  // label) and recenter the window before either edge comes into view.
+  useEffect(() => {
+    if (!vstack) return undefined;
+    const el = scrollRef.current;
+    if (!el) return undefined;
+    let raf = 0;
+    const check = () => {
+      raf = 0;
+      if (vPinRef.current) return; // mid-restore; positions are not meaningful yet
+      const panels = el.querySelectorAll('[data-vday]');
+      const top = el.scrollTop;
+      let current = null;
+      let within = 0;
+      for (const p of panels) {
+        if (p.offsetTop <= top + 4) { current = p.dataset.vday; within = top - p.offsetTop; }
+        else break;
+      }
+      if (!current) return;
+      if (current !== vDayRef.current) {
+        vDayRef.current = current;
+        if (onVisibleDay) onVisibleDay(current);
+      }
+      const ed = epochDayOfKey(current);
+      if (ed - vWin.first < V_EDGE || vWin.last - ed < V_EDGE) {
+        vPinRef.current = { dayKey: current, within };
+        setVWin({ first: ed - V_BEFORE, last: ed + V_AFTER });
+      }
+    };
+    const onScroll = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(check);
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => { el.removeEventListener('scroll', onScroll); cancelAnimationFrame(raf); };
+  }, [vstack, vWin.first, vWin.last, onVisibleDay]);
+
+  // Stack: demand data for the rendered band.
+  useEffect(() => {
+    if (!vstack || !onRequestWindow) return;
+    onRequestWindow({
+      start: toISOWithOffset(dateOfDayKey(keyOfEpochDay(vWin.first - 3))),
+      end: toISOWithOffset(dateOfDayKey(keyOfEpochDay(vWin.last + 4))),
+    });
+  }, [vstack, vWin.first, vWin.last]); // eslint-disable-line
+
   // --- pointer helpers ------------------------------------------------------
 
   const pointToSlot = useCallback((pt) => {
     const el = scrollRef.current;
     if (!el || days.length === 0) return null;
+    // Stack mode: the day is whichever panel's column the pointer is over,
+    // read from live rects so variable panel heights need no math.
+    if (vstack) {
+      const cols = el.querySelectorAll('.bc-tg-col[data-day]');
+      let best = null;
+      for (const c of cols) {
+        const r = c.getBoundingClientRect();
+        if (pt.y >= r.top && pt.y <= r.bottom) { best = { c, r }; break; }
+        if (!best || Math.abs(r.top - pt.y) < Math.abs(best.r.top - pt.y)) best = { c, r };
+      }
+      if (!best) return null;
+      const min = Math.max(0, Math.min(MINUTES_DAY, ((pt.y - best.r.top) / best.r.height) * MINUTES_DAY));
+      return { dayKey: best.c.dataset.day, min };
+    }
     const sr = el.getBoundingClientRect();
     const min = Math.max(0, Math.min(MINUTES_DAY, ((pt.y - sr.top + el.scrollTop) / HOUR_H) * 60));
     if (infinite) {
@@ -290,17 +430,18 @@ export function TimeGrid({
     const colWpx = (sr.width - GUTTER) / days.length;
     const dayIdx = Math.max(0, Math.min(days.length - 1, Math.floor((pt.x - sr.left - GUTTER) / colWpx)));
     return { dayKey: days[dayIdx], min };
-  }, [infinite, days]);
+  }, [infinite, vstack, days]);
 
   const previewRef = useRef(null); // DOM node moved directly during drags
 
   const previewGeom = useCallback(() => ({
     infinite,
+    vstack,
     minDay: geomH.current.minDay,
     colW: geomH.current.colW,
     days,
     scrollEl: scrollRef.current,
-  }), [infinite, days]);
+  }), [infinite, vstack, days]);
 
   // Drag-create draws a draft block; releasing keeps the draft and asks via
   // the confirm chip. A plain click (never lifted) drafts a 1-hour block at
@@ -482,12 +623,18 @@ export function TimeGrid({
   const tKey = todayKey();
   const now = new Date();
   const nowKey = dayKeyOf(now);
-  const hours = [];
+  // Built per call, never hoisted: preact mutates vnodes, so one shared array
+  // rendered in several panels at once would corrupt the tree.
   // h=0 renders too (12 AM sits below the top edge instead of being clipped
   // by the all-day lane border).
-  for (let h = 0; h < 24; h++) {
-    hours.push(html`<div key=${h} class="bc-hour-label${h === 0 ? ' is-first' : ''}" style=${`top:${h * HOUR_H}px`}>${fmtTime(new Date(2000, 0, 1, h, 0)).replace(':00', '')}</div>`);
-  }
+  const buildHours = () => {
+    const out = [];
+    for (let h = 0; h < 24; h++) {
+      out.push(html`<div key=${h} class="bc-hour-label${h === 0 ? ' is-first' : ''}" style=${`top:${h * HOUR_H}px`}>${fmtTime(new Date(2000, 0, 1, h, 0)).replace(':00', '')}</div>`);
+    }
+    return out;
+  };
+  const hours = buildHours();
 
   // Day view gets a stronger header (weekday + big day number); the shared
   // toolbar date alone is a weak anchor for a single column.
@@ -573,6 +720,53 @@ export function TimeGrid({
 
   const preview = html`<div class="bc-tg-preview" ref=${previewRef} style="display:none"></div>`;
 
+  // --- vertical day stack ---------------------------------------------------
+  // Day view scrolls straight into the next day: consecutive day panels with
+  // a gap and a sticky dated header between them, each carrying its own
+  // all-day bars and hour gutter.
+  if (vstack) {
+    return html`<div class="bc-timegrid bc-tg-vstacked" ref=${rootRef}>
+      <div class="bc-tg-scroll" ref=${scrollRef}>
+        <div class="bc-tg-vdays">
+          ${days.map((k, i) => {
+            const d = dateOfDayKey(k);
+            const bars = (vAllDay && vAllDay[i]) || [];
+            return html`<section key=${k} class="bc-tg-vday" data-vday=${k}>
+              <header class="bc-tg-vday-head${k === tKey ? ' is-today' : ''}">
+                <button
+                  type="button" class="bc-tg-vday-date"
+                  title="Scroll this day to the top"
+                  onClick=${() => { vDayRef.current = k; vScrollTo(k, 0); if (onVisibleDay) onVisibleDay(k); }}
+                >
+                  <span class="bc-tg-dow">${fmtWeekdayShort(d)}</span>
+                  <span class="bc-tg-dom">${d.getDate()}</span>
+                  <span class="bc-tg-vday-month">${fmtMonthShort(d)}</span>
+                </button>
+                <div
+                  class="bc-tg-vday-allday"
+                  onClick=${(ev) => {
+                    if (ev.target !== ev.currentTarget || !onCreateRange) return;
+                    onCreateRange(allDayRangeDraft(k, k));
+                  }}
+                >
+                  ${bars.map(({ occ, seg }) => html`<${EventBar}
+                    key=${occ.instanceId} occ=${occ} cal=${calendars[occ.calendarId]} seg=${seg}
+                    dimmed=${dimSet && dimSet.has(occ.instanceId)} nowMs=${nowMs} onOpen=${onOpenEvent}
+                  />`)}
+                </div>
+              </header>
+              <div class="bc-tg-vday-body">
+                <div class="bc-tg-gutter bc-tg-hours">${buildHours()}</div>
+                ${dayCols[i]}
+              </div>
+            </section>`;
+          })}
+          ${preview}
+        </div>
+      </div>
+    </div>`;
+  }
+
   // The all-day lane is always present in infinite mode so bars entering the
   // window while scrolling never shift the grid vertically.
   const showAllday = infinite || allDayBars.length > 0;
@@ -592,7 +786,7 @@ export function TimeGrid({
         ? html`<div class="bc-tg-hclip"><div class="bc-tg-htrack" ref=${headTrackRef} style=${`width:${totalW}px`}>${headCells}</div></div>`
         : headCells}
     </div>
-    ${showAllday && html`<div class="bc-tg-allday${alldayOpen ? '' : ' is-collapsed'}" style=${`height:${(alldayOpen ? Math.max(1, barLaneCount) : 1) * 24 + 4}px`}>
+    ${showAllday && html`<div class="bc-tg-allday${alldayOpen ? '' : ' is-collapsed'}" style=${`height:${(alldayOpen ? Math.max(1, barLaneCount) : 1) * 24 + (barLaneCount > 1 ? 20 : 6)}px`}>
       <div class="bc-tg-gutter bc-tg-allday-label">
         all day
         ${barLaneCount > 1 && html`<button
@@ -631,6 +825,19 @@ function showPreview(previewRef, geom, dayKey, startMin, durMin) {
   const el = previewRef.current;
   if (!el) return;
   let left, width;
+  if (geom.vstack) {
+    // The preview lives in the stack's positioned container, so a column's
+    // own offsets place it without any per-day height arithmetic.
+    const scroll = geom.scrollEl;
+    const col = scroll && scroll.querySelector(`.bc-tg-col[data-day="${dayKey}"]`);
+    if (!col) return;
+    el.style.display = 'block';
+    el.style.left = col.offsetLeft + 1 + 'px';
+    el.style.width = col.offsetWidth - 4 + 'px';
+    el.style.top = col.offsetTop + (startMin / 60) * HOUR_H + 'px';
+    el.style.height = (durMin / 60) * HOUR_H + 'px';
+    return;
+  }
   if (geom.infinite) {
     left = (epochDayOfKey(dayKey) - geom.minDay) * geom.colW + 1;
     width = geom.colW - 4;

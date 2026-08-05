@@ -6,7 +6,8 @@ import {
 } from './store.js';
 import { api, refreshWindow, undo, loadCalendars, loadPeople } from './api.js';
 import { adoptSettings } from './settings.js';
-import { localTz, todayKey, addDaysKey, occDayKey, pad } from '../lib/dates.js';
+import { localTz, todayKey, addDaysKey, occDayKey, epochDayOfKey, startMs, pad } from '../lib/dates.js';
+import { occurrenceDaySpan } from '../ui/monthmath.js';
 import { extendTripSpan } from '../ui/trips.js';
 
 export const VIEWS = ['month', 'weeks3', 'weeks2', 'week', 'day', 'agenda'];
@@ -124,22 +125,26 @@ export function openDetail(instanceId) {
   set({ detail: { instanceId }, popover: null, groupPopover: null, expandedDay: null });
 }
 
-// Chronological list of one day's visible occurrences (all-day first),
-// anchored on occ's day. Shared by the detail view's prev/next chevrons and
-// the [ ] hotkeys so both walk the same order.
-export function sameDayList(occ) {
-  const dayKey = occDayKey(occ);
+// Chronological list of one day's visible occurrences (all-day first).
+// `anchorDay` pins the day being browsed: without it, stepping onto a
+// multi-day event would re-derive the day from THAT event's start and walk
+// off to another day mid-navigation. Membership is span-based (an event
+// covering the day belongs to it), matching the day-expand list.
+export function sameDayList(occ, anchorDay) {
+  const dayKey = anchorDay || occDayKey(occ);
+  const ed = epochDayOfKey(dayKey);
   const visible = new Set(state.calendars.filter((c) => c.visible).map((c) => c.id));
   const list = [];
   for (const o of state.occ.values()) {
     if (!visible.has(o.calendarId) && o.instanceId !== occ.instanceId) continue;
     if (o.attendance === 'hidden' && o.instanceId !== occ.instanceId) continue;
-    if (occDayKey(o) !== dayKey) continue;
+    const span = occurrenceDaySpan(o);
+    if (epochDayOfKey(span.startKey) > ed || epochDayOfKey(span.endKey) < ed) continue;
     list.push(o);
   }
   list.sort((a, b) => {
     if (a.allDay !== b.allDay) return a.allDay ? -1 : 1;
-    if (a.start !== b.start) return a.start < b.start ? -1 : 1;
+    if (startMs(a) !== startMs(b)) return startMs(a) - startMs(b);
     return (a.title || '') < (b.title || '') ? -1 : (a.title || '') > (b.title || '') ? 1 : 0;
   });
   return list;
@@ -150,11 +155,12 @@ export function stepDetailSameDay(dir) {
   if (!state.detail) return false;
   const occ = state.occ.get(state.detail.instanceId);
   if (!occ) return false;
-  const list = sameDayList(occ);
+  const dayKey = state.detail.dayKey || occDayKey(occ);
+  const list = sameDayList(occ, dayKey);
   const i = list.findIndex((o) => o.instanceId === occ.instanceId);
   const target = i >= 0 ? list[i + dir] : null;
   if (!target) return false;
-  set({ detail: { instanceId: target.instanceId } });
+  set({ detail: { instanceId: target.instanceId, dayKey } });
   return true;
 }
 

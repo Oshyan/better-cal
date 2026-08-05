@@ -39,7 +39,9 @@ export function RescheduleBanner({ occ, onExit }) {
     <span class="bc-resched-label">Rescheduling: <strong>${occ.title || '(untitled)'}</strong></span>
     ${occ.recurring && html`<span class="bc-resched-scope">This occurrence only</span>`}
     <span class="bc-resched-hint">Drop the event on a new day, or use the month strip on the right</span>
-    <button type="button" class="bc-btn bc-resched-cancel" onClick=${onExit}>Cancel <kbd>Esc</kbd></button>
+    <button type="button" class="bc-btn bc-resched-cancel" onClick=${onExit}>
+      Cancel<kbd>Esc</kbd>
+    </button>
   </div>`;
 }
 

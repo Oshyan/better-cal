@@ -12,7 +12,7 @@ import { TripDetail } from './Trips.js';
 import { trapFocus } from '../ui/DayExpand.js';
 import { ThumbIcon, CalDot, PinIcon, LinkIcon, Icon } from '../ui/icons.js';
 import {
-  parseISO, dateOfDayKey, fmtRange, fmtDateFull, fmtTime,
+  parseISO, dateOfDayKey, fmtRange, fmtDateFull, fmtTime, occDayKey,
 } from '../lib/dates.js';
 import { fmtReminder } from '../lib/reminders.js';
 import { hasHtml, sanitizeHtml } from '../lib/richtext.js';
@@ -268,11 +268,14 @@ export function EventDetail() {
   // Same-day navigation list: this day's visible events in chronological
   // order (all-day first), never spilling into other days. The list builder
   // is shared with the [ ] hotkeys (actions.js sameDayList).
+  // The browsed day is pinned in detail state so stepping onto a multi-day
+  // event never re-derives the day from that event's start.
+  const navDay = (detail && detail.dayKey) || (occ ? occDayKey(occ) : null);
   const dayNav = useMemo(() => {
     if (!occ) return { list: [], index: -1 };
-    const list = sameDayList(occ);
+    const list = sameDayList(occ, navDay);
     return { list, index: list.findIndex((o) => o.instanceId === occ.instanceId) };
-  }, [occ && occ.instanceId, state.occVersion]); // eslint-disable-line
+  }, [occ && occ.instanceId, navDay, state.occVersion]); // eslint-disable-line
 
   if (!detail || !occ) return null;
 
@@ -289,7 +292,7 @@ export function EventDetail() {
   const close = () => set({ detail: null });
   const goTo = (idx) => {
     const target = dayNav.list[idx];
-    if (target) set({ detail: { instanceId: target.instanceId } });
+    if (target) set({ detail: { instanceId: target.instanceId, dayKey: navDay } });
   };
   const hasPrev = dayNav.index > 0;
   const hasNext = dayNav.index >= 0 && dayNav.index < dayNav.list.length - 1;

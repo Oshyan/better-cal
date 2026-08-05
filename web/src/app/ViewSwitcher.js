@@ -9,6 +9,7 @@ import {
   applySavedView, saveViewAs, updateSavedView, viewConfigMatches, captureViewConfig,
 } from './actions.js';
 import { trapFocus } from '../ui/DayExpand.js';
+import { Icon } from '../ui/icons.js';
 
 export function ViewSwitcher() {
   const s = useStore(
@@ -90,9 +91,9 @@ export function ViewSwitcher() {
       aria-haspopup="dialog" aria-expanded=${open} title="Saved views"
       onClick=${() => (open ? close() : setOpen(true))}
     >
-      <span class="bc-views-label">${active ? active.name : 'Views'}</span>
+      <span class="bc-views-label">${active ? active.name : 'Saved views'}</span>
       ${active && modified && html`<span class="bc-views-dot" role="img" aria-label="View modified" title="View modified"></span>`}
-      <span class="bc-views-caret" aria-hidden="true">▾</span>
+      <span class="bc-views-caret" aria-hidden="true"><${Icon} name="chevronDown" size=${12} /></span>
     </button>
     ${open && html`<div class="bc-views-pop" ref=${panelRef} role="dialog" aria-label="Saved views">
       ${s.savedViews.length === 0 && html`<div class="bc-views-empty">No saved views yet</div>`}

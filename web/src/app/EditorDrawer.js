@@ -7,7 +7,7 @@
 
 import { html, useState, useEffect, useRef } from '../../vendor/index.js';
 import { useStore, set, state } from './store.js';
-import { createEvent, updateEvent, deleteEvent, quickAddParse, attachToTrip } from './actions.js';
+import { createEvent, updateEvent, deleteEvent, quickAddParse, attachToTrip, defaultTargetCalendarId } from './actions.js';
 import { api, loadPeople } from './api.js';
 import { TripRow } from './Trips.js';
 import { trapFocus } from '../ui/DayExpand.js';
@@ -210,10 +210,7 @@ export function EditorDrawer() {
       title: occ ? occ.title : (draft.title || ''),
       // New events land on the draft's calendar, else the user's default
       // calendar (settings), else the first local calendar.
-      calendarId: occ ? occ.calendarId : (draft.calendarId
-        || (state.settings.defaultCalendarId != null &&
-          (state.calendars.find((c) => c.id === state.settings.defaultCalendarId) || {}).id)
-        || (state.calendars.find((c) => c.kind !== 'subscribed') || {}).id),
+      calendarId: occ ? occ.calendarId : (draft.calendarId || defaultTargetCalendarId()),
       start: toInputValue(start),
       end: toInputValue(end),
       allDay: occ ? !!occ.allDay : !!draft.allDay,
@@ -427,7 +424,7 @@ export function EditorDrawer() {
           aria-label="Lock duration"
           title=${durationLock ? 'Duration locked: moving start moves end' : 'Duration unlocked: ends edit independently'}
           onClick=${() => setDurationLock(!durationLock)}
-        >${durationLock ? '🔒' : '🔓'}</button>
+        ><${Icon} name=${durationLock ? 'lock' : 'unlock'} size=${13} /></button>
         <label class=${'bc-field' + (nlFlash && nlFlash.has('end') ? ' bc-nl-applied' : '')}>
           <span>End</span>
           <input type="datetime-local" value=${form.end} onInput=${(e) => upd({ end: e.target.value })} required />
@@ -482,7 +479,7 @@ export function EditorDrawer() {
         </label>
       </div>
       ${availWarn.length > 0 && html`<div class="bc-avail-warn" role="status">
-        ${availWarn.map((c) => html`<span key=${c.id}>⚠ ${c.name} is ${c.kind} then${c.note ? ' (' + c.note + ')' : ''}</span>`)}
+        ${availWarn.map((c) => html`<span key=${c.id}><${Icon} name="warning" size=${12} /> ${c.name} is ${c.kind} then${c.note ? ' (' + c.note + ')' : ''}</span>`)}
       </div>`}
 
       <fieldset class="bc-trip-fieldset">
@@ -499,7 +496,7 @@ export function EditorDrawer() {
         <div class="bc-rem-row">
           ${remEff.reminders.length === 0 && html`<span class="bc-rem-none">None</span>`}
           ${remEff.reminders.map((entry, i) => html`<span key=${i + ':' + fmtReminder(entry)} class="bc-rem-chip">
-            <span aria-hidden="true">🔔</span> ${fmtReminder(entry)}
+            <${Icon} name="bell" size=${11} /> ${fmtReminder(entry)}
             <button type="button" class="bc-rem-x" aria-label=${'Remove reminder: ' + fmtReminder(entry)} onClick=${() => remRemove(i)}><${Icon} name="close" size=${10} /></button>
           </span>`)}
           <select class="bc-rem-add" aria-label="Add reminder" value=""

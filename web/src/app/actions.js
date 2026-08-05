@@ -235,6 +235,18 @@ export async function resizeEvent({ instanceId, newStart, newEnd }) {
   }
 }
 
+// The writable calendar a new event should land on when nothing else says
+// otherwise. Visibility is part of "writable" here: falling back to the first
+// local calendar in id order lands on whatever happens to be first, and if
+// that one is switched off the event is created and instantly invisible.
+export function defaultTargetCalendarId() {
+  const wanted = state.settings.defaultCalendarId;
+  const byId = wanted != null && state.calendars.find((c) => c.id === wanted);
+  if (byId) return byId.id;
+  const local = state.calendars.filter((c) => c.kind !== 'subscribed');
+  return (local.find((c) => c.visible) || local[0] || {}).id;
+}
+
 export async function createEvent(fields) {
   const body = { tzid: localTz(), ...fields };
   try {
@@ -243,7 +255,18 @@ export async function createEvent(fields) {
       state.occ.set(occ.instanceId, occ);
       set({ occVersion: state.occVersion + 1 });
     }
-    toast('Event created', { undoable: true });
+    // Never let a create disappear silently. Picking a hidden calendar is a
+    // legitimate choice, so don't override it — just say where the event went
+    // and offer the one click that makes it visible.
+    const cal = occ && state.calendars.find((c) => c.id === occ.calendarId);
+    if (cal && !cal.visible) {
+      toast(`Created in ${cal.name}, which is hidden`, {
+        actionLabel: 'Show it',
+        onAction: () => toggleCalendarVisible(cal),
+      });
+    } else {
+      toast('Event created', { undoable: true });
+    }
     refreshWindow();
     return occ;
   } catch (e) {

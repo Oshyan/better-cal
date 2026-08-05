@@ -83,7 +83,7 @@ function ViewMenu({ view, narrow }) {
         aria-checked=${currentKey === k}
         class="bc-ov-item${currentKey === k ? ' is-sel' : ''}"
         onClick=${() => pick(k)}
-      ><span class="bc-ov-check" aria-hidden="true">${currentKey === k ? '✓' : ''}</span>${l}</button>`)}
+      ><span class="bc-ov-check" aria-hidden="true">${currentKey === k ? html`<${Icon} name="check" size=${12} />` : ''}</span>${l}</button>`)}
     </div>`}
   </div>`;
 }

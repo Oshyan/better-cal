@@ -126,6 +126,13 @@ export function Icon({ name, size = 15 }) {
     // Bell: reminders line.
     bell: html`<path d="M8 2.3c-2.1 0-3.5 1.5-3.5 3.7 0 2.7-.9 3.6-1.6 4.3h10.2c-.7-.7-1.6-1.6-1.6-4.3 0-2.2-1.4-3.7-3.5-3.7z" />
       <path d="M6.7 12.5a1.4 1.4 0 0 0 2.6 0" />`,
+    // Padlock, closed and open: the duration lock in the editor. The shackle
+    // is the only thing that changes between the two, so the toggle reads as
+    // one object in two states rather than two different glyphs.
+    lock: html`<rect x="3.2" y="7" width="9.6" height="7" rx="1.5" />
+      <path d="M5.6 7V5.2a2.4 2.4 0 0 1 4.8 0V7" />`,
+    unlock: html`<rect x="3.2" y="7" width="9.6" height="7" rx="1.5" />
+      <path d="M5.6 7V5.2a2.4 2.4 0 0 1 4.8 0" />`,
     // Small calendar page: binding rings + top rule. Marks calendar names.
     calendar: html`<rect x="2.2" y="3.4" width="11.6" height="10.4" rx="1.4" />
       <path d="M2.2 6.6h11.6M5.4 1.8v3M10.6 1.8v3" />`,

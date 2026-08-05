@@ -453,9 +453,16 @@ export function App() {
   } else {
     // "Show past" filtering keys off the same minute tick as the dim styling,
     // so an event that just ended drops out (or dims) on the next tick.
+    //
+    // The cutoff follows the anchor once the anchor moves BEHIND now: the
+    // chevrons used to walk the label back through May while the list stayed
+    // pinned to today, because every occurrence they were walking toward had
+    // already been filtered out. Anchors on today or ahead of it keep the
+    // now-cutoff, so the default view still drops this morning's leftovers.
+    const agendaCutoff = Math.min(nowMs, dateOfDayKey(s.anchor).getTime());
     let agendaOccs = s.agendaShowPast
       ? occurrences
-      : occurrences.filter((o) => parseISO(o.end).getTime() >= nowMs);
+      : occurrences.filter((o) => parseISO(o.end).getTime() >= agendaCutoff);
     if (s.agendaSort === 'match') agendaOccs = sortByMatch(agendaOccs);
     view = html`<div class="bc-agenda-wrap">
       <div class="bc-agenda-toggle">

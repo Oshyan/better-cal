@@ -9,7 +9,7 @@
 
 import { html, useState, useRef, useEffect } from '../../vendor/index.js';
 import { useStore, set, state, toast } from './store.js';
-import { quickAddParse, quickAddCreate } from './actions.js';
+import { quickAddParse, quickAddCreate, defaultTargetCalendarId } from './actions.js';
 import { api, loadPeople } from './api.js';
 import { PlaceInput, pickFillText } from './PlaceInput.js';
 import {
@@ -37,9 +37,7 @@ function defaultForm() {
 }
 
 function defaultCalendarId() {
-  const wanted = state.settings.defaultCalendarId;
-  const byId = wanted != null && state.calendars.find((c) => c.id === wanted);
-  return (byId || state.calendars.find((c) => c.kind !== 'subscribed') || {}).id;
+  return defaultTargetCalendarId();
 }
 
 // The strip fields a parse draft wants to set. All-day drafts carry literal

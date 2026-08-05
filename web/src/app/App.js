@@ -494,6 +494,7 @@ export function App() {
         onFeedback=${sendFeedback}
         onCreateDay=${(k) => onCreateRange(dayRangeDraft(k, k))}
         emptyLabel=${s.agendaShowPast ? 'No events' : 'No upcoming events'}
+        gapFrom=${s.agendaShowPast ? null : dayKeyOf(new Date(agendaCutoff))}
       />
     </div>`;
   }

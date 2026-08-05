@@ -51,6 +51,18 @@ function minutesOfDay(d) {
   return d.getHours() * 60 + d.getMinutes();
 }
 
+// Scroll offset that opens a day with "now" a little above centre. A fixed
+// 90px lead pinned the current hour near the top edge, so on a tall window
+// the middle of the screen showed the small hours of the NEXT day instead of
+// the part of today still ahead. Sized from the viewport, the current hour
+// lands in the same place whatever the window height.
+const NOW_LEAD_FRACTION = 0.42;
+function nowWithin(viewportH) {
+  const nowPx = (minutesOfDay(new Date()) / 60) * HOUR_H;
+  const lead = viewportH > 0 ? viewportH * NOW_LEAD_FRACTION : 90;
+  return Math.max(0, nowPx - lead);
+}
+
 function dateAt(dayKey, minutes) {
   const base = dateOfDayKey(dayKey);
   return new Date(base.getFullYear(), base.getMonth(), base.getDate(), 0, minutes);
@@ -341,12 +353,7 @@ export function TimeGrid({
     const el = scrollRef.current;
     if (!el || vstack) return; // the stack has its own anchor effect below
     const onToday = infinite ? (scrollKey || todayKey()) === todayKey() : fixedDays.includes(todayKey());
-    if (onToday) {
-      const mins = minutesOfDay(new Date());
-      el.scrollTop = Math.max(0, (mins / 60) * HOUR_H - 90);
-    } else {
-      el.scrollTop = 7 * HOUR_H;
-    }
+    el.scrollTop = onToday ? nowWithin(el.clientHeight) : 7 * HOUR_H;
   }, []); // eslint-disable-line
 
   // Stack: explicit navigation (today, chevrons, jump, a day-number click)
@@ -357,7 +364,7 @@ export function TimeGrid({
     const key = scrollKey || todayKey();
     const a = epochDayOfKey(key);
     const within = (key === todayKey()
-      ? Math.max(0, (minutesOfDay(new Date()) / 60) * HOUR_H - 90)
+      ? nowWithin(scrollRef.current ? scrollRef.current.clientHeight : 0)
       : 7 * HOUR_H);
     vDayRef.current = key;
     vPinRef.current = { dayKey: key, within };

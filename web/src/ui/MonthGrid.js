@@ -113,6 +113,10 @@ export function MonthGrid({
   const minWeek = centerRow - rowSpan;
   const maxWeek = centerRow + rowSpan;
   const rowH = Math.max(64, Math.floor(viewH / visibleRows));
+  // Read by settleAnchor, which runs inside effects that must compare against
+  // the height THIS render's rowH came from, not a stale closure's.
+  const viewHRef = useRef(viewH);
+  viewHRef.current = viewH;
 
   // Mobile month cells render every event as a compact text pill (same shape
   // for timed and all-day) in tighter lanes; overflow becomes dots + "+N".
@@ -185,23 +189,30 @@ export function MonthGrid({
     topWeekRef.current = Math.max(minWeek, minWeek + Math.floor(el.scrollTop / rowHRef.current));
   }, [minWeek]);
 
+  // An anchor is only SETTLED once the box we positioned against is the same
+  // height that rowH was derived from. Until the ResizeObserver has measured
+  // the scroller, viewH is still its 600px placeholder, so rowH is short and
+  // weekTop() underestimates the anchor row's offset by tens of pixels PER
+  // ROW — scrolling to a point far above today and leaving the previous month
+  // filling the screen with today pushed to the bottom. Both the geometry
+  // effect and the navigation effect clear through here so they cannot
+  // disagree about when the anchor is done.
+  const settleAnchor = useCallback(() => {
+    const el = scrollRef.current;
+    if (el && Math.abs(el.clientHeight - viewHRef.current) <= 2) pendingRowRef.current = null;
+  }, []);
+
   useLayoutEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     if (pendingRowRef.current != null && el.clientHeight > 0) {
       applyAnchor(pendingRowRef.current);
-      // The anchor is only SETTLED once the measured height we derived rowH
-      // from matches the box we just positioned against. During first paint
-      // the scroller is briefly unconstrained, and centring against that
-      // oversized height threw the anchor row to the bottom of the viewport
-      // (today's month scrolled off, the previous month filling the screen).
-      // Staying pending makes the next geometry pass redo it correctly.
-      if (Math.abs(el.clientHeight - viewH) <= 2) pendingRowRef.current = null;
+      settleAnchor();
     } else if (topWeekRef.current != null) {
       el.scrollTop = weekTop(topWeekRef.current, minWeek, rowH);
     }
     recompute();
-  }, [rowH, viewH, minWeek, recompute, applyAnchor]);
+  }, [rowH, viewH, minWeek, recompute, applyAnchor, settleAnchor]);
 
   // Programmatic scroll to an anchor date (today button, arrows, search jump).
   // Fires only on explicit navigation (scrollSeq); geometry changes are handled
@@ -219,7 +230,7 @@ export function MonthGrid({
     pendingRowRef.current = w;
     if (el.clientHeight > 0) {
       applyAnchor(w);
-      pendingRowRef.current = null;
+      settleAnchor(); // NOT an unconditional clear: see settleAnchor
     }
     recompute();
   }, [scrollSeq]); // eslint-disable-line

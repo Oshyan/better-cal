@@ -190,7 +190,13 @@ export function MonthGrid({
     if (!el) return;
     if (pendingRowRef.current != null && el.clientHeight > 0) {
       applyAnchor(pendingRowRef.current);
-      pendingRowRef.current = null;
+      // The anchor is only SETTLED once the measured height we derived rowH
+      // from matches the box we just positioned against. During first paint
+      // the scroller is briefly unconstrained, and centring against that
+      // oversized height threw the anchor row to the bottom of the viewport
+      // (today's month scrolled off, the previous month filling the screen).
+      // Staying pending makes the next geometry pass redo it correctly.
+      if (Math.abs(el.clientHeight - viewH) <= 2) pendingRowRef.current = null;
     } else if (topWeekRef.current != null) {
       el.scrollTop = weekTop(topWeekRef.current, minWeek, rowH);
     }

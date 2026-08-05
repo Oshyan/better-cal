@@ -103,15 +103,35 @@ export async function loadSavedViews() {
 
 let windowReqId = 0;
 let lastWindow = null;
+// Ranges currently in flight. rangeCovered only knows about ranges that have
+// already LANDED, so a virtualized view settling its scroll position would
+// fire two near-identical multi-month queries back to back and pay for both
+// (measured: 800ms + 879ms racing on a cold load). A request whose range is
+// already inside an in-flight one is redundant by definition.
+const inFlight = [];
+
+function coveredInFlight(s, e) {
+  return inFlight.some((r) => r.start <= s && r.end >= e);
+}
 
 export async function loadWindow(startISO, endISO, { force = false } = {}) {
   lastWindow = { start: startISO, end: endISO };
   if (!force && rangeCovered(startISO, endISO)) return;
+  const s = new Date(startISO).getTime();
+  const e = new Date(endISO).getTime();
+  if (!force && coveredInFlight(s, e)) return;
   const id = ++windowReqId;
+  const entry = { start: s, end: e };
+  inFlight.push(entry);
   const params = new URLSearchParams({ start: startISO, end: endISO });
-  const data = await api('/events?' + params.toString());
-  if (id !== windowReqId) return; // stale response: a newer request superseded it
-  mergeWindow(startISO, endISO, data.events || []);
+  try {
+    const data = await api('/events?' + params.toString());
+    if (id !== windowReqId) return; // stale response: a newer request superseded it
+    mergeWindow(startISO, endISO, data.events || []);
+  } finally {
+    const i = inFlight.indexOf(entry);
+    if (i >= 0) inFlight.splice(i, 1);
+  }
 }
 
 // Refetch the most recently requested window (after mutations/undo).

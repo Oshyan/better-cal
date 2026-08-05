@@ -8,6 +8,7 @@
 
 import { html, useState, useRef, useEffect } from '../../vendor/index.js';
 import { api } from './api.js';
+import { Icon } from '../ui/icons.js';
 
 export function PeopleInput({ value, onChange, ariaLabel }) {
   const [text, setText] = useState('');

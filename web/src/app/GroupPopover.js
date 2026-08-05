@@ -67,7 +67,7 @@ export function GroupPopover() {
       <${CalDot} cal=${cal} />
       <span class="bc-group-title">${group.title}</span>
       <span class="bc-group-count">${group.count}</span>
-      <button type="button" class="bc-icon-btn" aria-label="Close" onClick=${() => set({ groupPopover: null })}>✕</button>
+      <button type="button" class="bc-icon-btn" aria-label="Close" onClick=${() => set({ groupPopover: null })}><${Icon} name="close" size=${14} /></button>
     </div>
     <div class="bc-group-list">
       ${group.members.map((occ) => html`<button

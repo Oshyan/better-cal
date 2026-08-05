@@ -56,6 +56,27 @@ export function Icon({ name, size = 15 }) {
     // Plus: "new thing here" tools. An SVG (not a text "+") so it shares the
     // gear's optical box and the two align in a row.
     plus: html`<path d="M8 3.4v9.2M3.4 8h9.2" />`,
+    // The former emoji/glyph set, redrawn as line art on the same 16px grid
+    // and 1.4 stroke as everything else. Emoji carry their own weight, color
+    // and metrics, so they never sat on the same optical baseline as the
+    // custom icons around them.
+    search: html`<circle cx="7" cy="7" r="4.6" /><path d="M10.4 10.4l3.2 3.2" />`,
+    // Quick add: a bolt for "fastest way in". The toolbar tints it amber
+    // (see .bc-qa-btn) — the one spot of colour that earns attention.
+    quickadd: html`<path d="M9.1 1.8L3.6 9.1h3.8l-.5 5.1 5.5-7.3H8.6z" />`,
+    close: html`<path d="M4 4l8 8M12 4l-8 8" />`,
+    chevronLeft: html`<path d="M10 3.5L5.5 8l4.5 4.5" />`,
+    chevronRight: html`<path d="M6 3.5L10.5 8 6 12.5" />`,
+    chevronUp: html`<path d="M3.5 10.5L8 6l4.5 4.5" />`,
+    // Arrow leaving toward the top-right: external links and "open this".
+    arrowUpRight: html`<path d="M5.2 10.8L10.8 5.2M6.4 5.2h4.4v4.4" />`,
+    check: html`<path d="M3.2 8.4l3.2 3.2 6.4-7" />`,
+    star: html`<path d="M8 2.2l1.8 3.7 4 .6-2.9 2.8.7 4-3.6-1.9-3.6 1.9.7-4L2.2 6.5l4-.6z" />`,
+    warning: html`<path d="M7.1 2.9L1.7 12.3c-.4.7.1 1.5.9 1.5h10.8c.8 0 1.3-.8.9-1.5L8.9 2.9c-.4-.7-1.4-.7-1.8 0z" />
+      <path d="M8 6.2v3.1M8 11.4h.01" />`,
+    // Two offset pages: a stack of near-duplicate events.
+    stack: html`<rect x="2.2" y="4.8" width="8" height="8" rx="1.3" />
+      <path d="M5.4 4.8V3.6c0-.7.6-1.3 1.3-1.3h5.5c.7 0 1.3.6 1.3 1.3v5.5c0 .7-.6 1.3-1.3 1.3h-1.2" />`,
     // Hamburger: sidebar toggle.
     menu: html`<path d="M2.5 4.2h11M2.5 8h11M2.5 11.8h11" />`,
     // Small caret for dropdown triggers.

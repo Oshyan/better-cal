@@ -127,7 +127,7 @@ export function TripDetail({ occ }) {
         <span class="bc-pop-iconrow" role="group" aria-label="Trip actions">
           <button type="button" class="bc-icon-btn" title="Edit" aria-label="Edit trip" onClick=${() => set({ detail: null, editor: { mode: 'edit', occ } })}><${Icon} name="pencil" size=${15} /></button>
           <button type="button" class="bc-icon-btn bc-pop-trash" title="Delete" aria-label="Delete trip" onClick=${() => setConfirmDelete(true)}><${Icon} name="trash" size=${15} /></button>
-          <button type="button" class="bc-icon-btn" aria-label="Close" onClick=${close}>✕</button>
+          <button type="button" class="bc-icon-btn" aria-label="Close" onClick=${close}><${Icon} name="close" size=${15} /></button>
         </span>
       </div>
       <div class="bc-detail-body">
@@ -145,7 +145,7 @@ export function TripDetail({ occ }) {
             <a
               class="bc-maplink" href=${gmapsUrl(occ.location, occ.locationLat, occ.locationLng)}
               target="_blank" rel="noopener noreferrer" title="Open in Google Maps"
-            >Google Maps ↗</a>
+            >Google Maps <${Icon} name="arrowUpRight" size=${10} /></a>
           </div>
         </div>`}
 
@@ -174,12 +174,12 @@ export function TripDetail({ occ }) {
                   type="button" class="bc-icon-btn"
                   title="Open details" aria-label=${'Open details for ' + (m.title || 'event')}
                   onClick=${() => openMember(m)}
-                >↗</button>
+                ><${Icon} name="arrowUpRight" size=${13} /></button>
                 <button
                   type="button" class="bc-icon-btn bc-trip-x"
                   title="Remove from trip" aria-label=${'Remove ' + (m.title || 'event') + ' from trip'}
                   onClick=${() => detachFromTrip(occ.eventId, m)}
-                >✕</button>
+                ><${Icon} name="close" size=${12} /></button>
               </div>`;
             })}
           </div>`}

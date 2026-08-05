@@ -109,8 +109,23 @@ button:focus-visible, [tabindex]:focus-visible {
 .bc-icon-btn {
   background: none; border: none; border-radius: 6px;
   padding: 4px 7px; color: var(--fg-muted); line-height: 1;
+  /* Every icon button now holds an SVG: centre it so the old glyph-metric
+     paddings do not leave the mark sitting off-axis. */
+  display: inline-flex; align-items: center; justify-content: center;
 }
 .bc-icon-btn:hover { background: var(--bg-inset); color: var(--fg); }
+/* Quick add is the one toolbar action with colour: it is the fastest way in
+   and worth spotting without hunting. Amber, with a soft glow on hover. */
+.bc-qa-btn { color: #c8931a; }
+.bc-qa-btn:hover {
+  color: #b8850f;
+  background: color-mix(in srgb, #c8931a 14%, transparent);
+  filter: drop-shadow(0 0 3px color-mix(in srgb, #c8931a 55%, transparent));
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .bc-qa-btn { color: #e8b53c; }
+}
+:root[data-theme="dark"] .bc-qa-btn { color: #e8b53c; }
 .bc-link-btn { background: none; border: none; color: var(--accent); padding: 3px 4px; text-align: left; }
 .bc-link-btn:hover { text-decoration: underline; }
 
@@ -132,7 +147,7 @@ button:focus-visible, [tabindex]:focus-visible {
 .bc-viewmenu-btn { display: inline-flex; align-items: center; gap: 5px; min-width: 92px; justify-content: space-between; }
 .bc-viewmenu-caret { display: inline-flex; opacity: 0.7; }
 .bc-viewmenu-drop { left: auto; right: 0; }
-.bc-nav-btn { font-size: 18px; padding: 2px 8px; line-height: 1.2; }
+.bc-nav-btn { padding: 4px 6px; }
 .bc-toolbar-date {
   background: none; border: none; border-radius: 6px;
   padding: 3px 8px; text-align: center; min-width: 0;
@@ -202,7 +217,7 @@ button:focus-visible, [tabindex]:focus-visible {
 .bc-jump-preview { color: var(--fg-muted); font-size: 11.5px; min-height: 15px; }
 .bc-jump-preview strong { color: var(--fg); }
 .bc-jump-head { display: flex; align-items: center; gap: 2px; }
-.bc-jump-step { font-size: 14px; padding: 2px 6px; }
+.bc-jump-step { padding: 3px 5px; }
 .bc-jump-title {
   flex: 1; background: none; border: none; border-radius: 6px;
   font-weight: 600; padding: 3px 4px; white-space: nowrap;
@@ -263,7 +278,7 @@ button:focus-visible, [tabindex]:focus-visible {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .bc-mm-title:hover { background: var(--bg-inset); }
-.bc-mm-step { padding: 1px 6px; font-size: 13px; flex: none; }
+.bc-mm-step { padding: 2px 5px; flex: none; }
 .bc-mm-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 0; margin-top: 3px; }
 .bc-mm-dow {
   text-align: center; font-size: 9px; font-weight: 700;
@@ -359,7 +374,7 @@ button:focus-visible, [tabindex]:focus-visible {
    ring color. One treatment for every surface that shows a calendar dot. */
 .bc-cal-dot.is-feed { background: transparent; border: 2px solid currentColor; }
 .bc-cal-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.bc-health { color: #c9913d; cursor: help; }
+.bc-health { color: #c9913d; cursor: help; display: inline-flex; align-items: center; }
 .bc-cal-gear { padding: 2px 4px; visibility: hidden; flex: none; }
 .bc-cal-row:hover .bc-cal-gear,
 .bc-cal-row:focus-within .bc-cal-gear,
@@ -503,7 +518,7 @@ button:focus-visible, [tabindex]:focus-visible {
 }
 .bc-cell:hover .bc-cell-headstrip { color: var(--fg-muted); }
 .bc-cell-headstrip:hover { background: var(--bg-inset); color: var(--fg); }
-.bc-headstrip-glyph { font-size: 13px; line-height: 1; }
+.bc-headstrip-glyph { display: inline-flex; line-height: 1; }
 @media (hover: none) { .bc-cell-headstrip { display: none; } }
 /* ISO week number, bottom-right of each row's gutter (the sticky month
    label owns the top). */
@@ -556,7 +571,7 @@ button:focus-visible, [tabindex]:focus-visible {
 @container bc-cell (max-width: 110px) { .bc-cell .bc-chip-time { display: none; } }
 .bc-chip-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .bc-chip.is-interested { border-style: dashed; }
-.bc-chip-check { font-weight: 700; flex: none; }
+.bc-chip-check { flex: none; display: inline-flex; align-items: center; }
 .is-cancelled .bc-chip-title, .bc-pop-title.is-cancelled { text-decoration: line-through; opacity: 0.75; }
 /* Dim treatment floor: desaturate + muted foreground instead of pure
    opacity, so dimmed items stay readable (clearly secondary, never
@@ -929,14 +944,14 @@ body.bc-dragging * { cursor: grabbing !important; }
   display: flex; align-items: center; gap: 2px;
   margin: -4px 0 0; padding-bottom: 3px; border-bottom: 1px solid var(--border);
 }
-.bc-sheet-chev { font-size: 18px; line-height: 1.1; padding: 2px 10px; }
+.bc-sheet-chev { padding: 4px 10px; }
 .bc-sheet-chev:disabled { opacity: 0.35; cursor: default; }
 .bc-sheet-chev:disabled:hover { background: none; color: var(--fg-muted); }
 .bc-sheet-count { color: var(--fg-muted); font-size: 12px; margin-left: 6px; }
 
 /* --- near-duplicate group chips + popover -------------------------------------- */
 
-.bc-stack-glyph { flex: none; font-size: 10px; opacity: 0.8; line-height: 1; }
+.bc-stack-glyph { flex: none; opacity: 0.8; line-height: 1; display: inline-flex; align-items: center; }
 .bc-chip.is-group .bc-chip-title, .bc-bar.is-group .bc-chip-title { font-weight: 600; }
 .bc-bar.is-group { cursor: pointer; }
 .bc-group-pop {
@@ -985,7 +1000,7 @@ body.bc-dragging * { cursor: grabbing !important; }
   padding: 7px 10px; border-bottom: 1px solid var(--border);
 }
 .bc-detail-nav { display: flex; align-items: center; gap: 2px; }
-.bc-detail-chev { font-size: 18px; line-height: 1.1; padding: 3px 10px; }
+.bc-detail-chev { padding: 4px 10px; }
 .bc-detail-chev:disabled { opacity: 0.35; cursor: default; }
 .bc-detail-chev:disabled:hover { background: none; color: var(--fg-muted); }
 .bc-detail-count { color: var(--fg-muted); font-size: 12px; margin-left: 6px; }
@@ -1150,7 +1165,7 @@ body.bc-dragging * { cursor: grabbing !important; }
   border: 1px solid var(--border-strong); border-radius: 999px;
   padding: 2px 6px 2px 8px; font-size: 12px; white-space: nowrap;
 }
-.bc-rem-x { background: none; border: none; cursor: pointer; color: var(--fg-muted); padding: 0 2px; font-size: 11px; line-height: 1; }
+.bc-rem-x { background: none; border: none; cursor: pointer; color: var(--fg-muted); padding: 0 2px; line-height: 1; display: inline-flex; align-items: center; }
 .bc-rem-x:hover { color: var(--fg); }
 .bc-rem-add { max-width: 160px; }
 .bc-rem-reset { padding: 2px 8px; font-size: 12px; }
@@ -1647,7 +1662,7 @@ body.bc-rescheduling { user-select: none; }
   display: flex; align-items: center; pointer-events: none;
   opacity: 0; transition: opacity 0.18s ease;
 }
-.bc-tg-edge span { color: var(--fg-muted); font-size: 17px; line-height: 1; }
+.bc-tg-edge span { color: var(--fg-muted); line-height: 1; display: inline-flex; }
 .bc-tg-edge.l {
   left: 52px; justify-content: flex-start; padding-left: 2px;
   background: linear-gradient(to right, color-mix(in srgb, var(--bg) 80%, transparent), transparent);

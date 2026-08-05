@@ -23,6 +23,7 @@ import {
 import { layoutOverlaps, assignLanes } from './layout.js';
 import { occurrenceDaySpan, isWeekendEpochDay } from './monthmath.js';
 import { EventBlock, EventBar } from './EventChip.js';
+import { Icon } from './icons.js';
 import { startPointerDrag, cloneAsGhost } from './DragController.js';
 import {
   dayRangeDraft, allDayRangeDraft, dragCreateMode, normalizeDayRange,
@@ -839,7 +840,9 @@ export function TimeGrid({
           title=${alldayOpen ? 'Collapse all-day events' : 'Show all all-day events'}
           aria-expanded=${alldayOpen}
           onClick=${() => setAlldayOpen(!alldayOpen)}
-        >${alldayOpen ? '⌃' : `⌄ ${barLaneCount - 1}+`}</button>`}
+        >${alldayOpen
+          ? html`<${Icon} name="chevronUp" size=${11} />`
+          : html`<${Icon} name="chevronDown" size=${11} />${barLaneCount - 1}+`}</button>`}
       </div>
       ${infinite
         ? html`<div class="bc-tg-hclip"><div class="bc-tg-htrack" ref=${alldayTrackRef} style=${`width:${totalW}px`} onPointerDown=${dragCreateAllDay}>${alldayMonthLines}${allDayBars.map(barSlot)}</div></div>`
@@ -858,8 +861,8 @@ export function TimeGrid({
           : html`${dayCols}${preview}`}
       </div>
     </div>
-    ${infinite && html`<div class="bc-tg-edge l" aria-hidden="true"><span>‹</span></div>`}
-    ${infinite && html`<div class="bc-tg-edge r" aria-hidden="true"><span>›</span></div>`}
+    ${infinite && html`<div class="bc-tg-edge l" aria-hidden="true"><span><${Icon} name="chevronLeft" size=${16} /></span></div>`}
+    ${infinite && html`<div class="bc-tg-edge r" aria-hidden="true"><span><${Icon} name="chevronRight" size=${16} /></span></div>`}
   </div>`;
 }
 

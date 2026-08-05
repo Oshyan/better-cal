@@ -141,11 +141,11 @@ export function EventPopover() {
         <button
           type="button" class="bc-icon-btn bc-sheet-chev" aria-label="Previous event this day"
           disabled=${nav.index <= 0} onClick=${() => goSheet(nav.index - 1)}
-        >‹</button>
+        ><${Icon} name="chevronLeft" size=${16} /></button>
         <button
           type="button" class="bc-icon-btn bc-sheet-chev" aria-label="Next event this day"
           disabled=${nav.index < 0 || nav.index >= nav.list.length - 1} onClick=${() => goSheet(nav.index + 1)}
-        >›</button>
+        ><${Icon} name="chevronRight" size=${16} /></button>
         ${nav.list.length > 1 && html`<span class="bc-sheet-count">${nav.index + 1} of ${nav.list.length}</span>`}
       </div>`}
       <div class="bc-pop-titlerow">
@@ -157,7 +157,7 @@ export function EventPopover() {
           ${!isFeed && html`<button type="button" class="bc-icon-btn" title="Reschedule (r)" aria-label="Reschedule" onClick=${() => enterReschedule(occ.instanceId)}><${Icon} name="reschedule" size=${14} /></button>`}
           ${!isFeed && html`<button type="button" class="bc-icon-btn" title="Edit" aria-label="Edit" onClick=${() => set({ popover: null, editor: { mode: 'edit', occ } })}><${Icon} name="pencil" size=${14} /></button>`}
           ${!isFeed && html`<button type="button" class="bc-icon-btn bc-pop-trash" title="Delete" aria-label="Delete" onClick=${() => deleteEvent(occ)}><${Icon} name="trash" size=${14} /></button>`}
-          <button type="button" class="bc-icon-btn" aria-label="Close" onClick=${() => set({ popover: null })}>✕</button>
+          <button type="button" class="bc-icon-btn" aria-label="Close" onClick=${() => set({ popover: null })}><${Icon} name="close" size=${14} /></button>
         </span>
       </div>
       ${occ.containers && occ.containers.length > 0 && html`<button
@@ -178,7 +178,7 @@ export function EventPopover() {
         <a
           class="bc-maplink" href=${gmapsUrl(occ.location, occ.locationLat, occ.locationLng)}
           target="_blank" rel="noopener noreferrer" title="Open in Google Maps"
-        >Map ↗</a>
+        >Map <${Icon} name="arrowUpRight" size=${10} /></a>
       </div>`}
       ${((occ.people && occ.people.length > 0) || (occ.tags && occ.tags.length > 0)) && html`<div class="bc-pop-meta">
         ${occ.people && occ.people.length > 0 && html`<span class="bc-pop-people">
@@ -207,7 +207,7 @@ export function EventPopover() {
           >More</button>`}
         </div>`;
       })()}
-      ${occ.url && html`<a class="bc-pop-url" href=${occ.url} target="_blank" rel="noopener">Event link ↗</a>`}
+      ${occ.url && html`<a class="bc-pop-url" href=${occ.url} target="_blank" rel="noopener">Event link <${Icon} name="arrowUpRight" size=${10} /></a>`}
       <div class="bc-pop-calline" title=${'Calendar: ' + ((cal && cal.name) || 'Calendar')}>
         <span class="bc-pop-calicon" style=${`color:${(cal && cal.color) || '#888'}`}><${Icon} name="calendar" size=${12} /></span>
         ${(cal && cal.name) || 'Calendar'}

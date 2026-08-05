@@ -306,18 +306,18 @@ export function EventDetail() {
           <button
             type="button" class="bc-icon-btn bc-detail-chev" aria-label="Previous event this day"
             disabled=${!hasPrev} onClick=${() => goTo(dayNav.index - 1)}
-          >‹</button>
+          ><${Icon} name="chevronLeft" size=${16} /></button>
           <button
             type="button" class="bc-icon-btn bc-detail-chev" aria-label="Next event this day"
             disabled=${!hasNext} onClick=${() => goTo(dayNav.index + 1)}
-          >›</button>
+          ><${Icon} name="chevronRight" size=${16} /></button>
           ${dayNav.list.length > 1 && html`<span class="bc-detail-count">${dayNav.index + 1} of ${dayNav.list.length} this day</span>`}
         </div>
         <span class="bc-pop-iconrow" role="group" aria-label="Event actions">
           ${!isFeed && html`<button type="button" class="bc-icon-btn" title="Reschedule (r)" aria-label="Reschedule" onClick=${() => enterReschedule(occ.instanceId)}><${Icon} name="reschedule" size=${15} /></button>`}
           ${!isFeed && html`<button type="button" class="bc-icon-btn" title="Edit (e)" aria-label="Edit" onClick=${() => set({ detail: null, editor: { mode: 'edit', occ } })}><${Icon} name="pencil" size=${15} /></button>`}
           ${!isFeed && html`<button type="button" class="bc-icon-btn bc-pop-trash" title="Delete" aria-label="Delete" onClick=${() => { set({ detail: null }); deleteEvent(occ); }}><${Icon} name="trash" size=${15} /></button>`}
-          <button type="button" class="bc-icon-btn" aria-label="Close" onClick=${close}>✕</button>
+          <button type="button" class="bc-icon-btn" aria-label="Close" onClick=${close}><${Icon} name="close" size=${15} /></button>
         </span>
       </div>
       <div class="bc-detail-body">
@@ -350,7 +350,7 @@ export function EventDetail() {
               class="bc-maplink"
               href=${gmapsUrl(occ.location, showMap ? geo.lat : occ.locationLat, showMap ? geo.lng : occ.locationLng)}
               target="_blank" rel="noopener noreferrer" title="Open in Google Maps"
-            >Google Maps ↗</a>
+            >Google Maps <${Icon} name="arrowUpRight" size=${10} /></a>
           </div>
           ${showMap && html`<${MiniMap} lat=${geo.lat} lng=${geo.lng} location=${occ.location} />`}
         </div>`}
@@ -380,7 +380,7 @@ export function EventDetail() {
           </div>
         </div>`}
         ${(occ.url || (occ.tags && occ.tags.length > 0) || (occ.people && occ.people.length > 0)) && html`<div class="bc-detail-section bc-detail-labels">
-          ${occ.url && html`<a href=${occ.url} target="_blank" rel="noopener noreferrer">Event link ↗</a>`}
+          ${occ.url && html`<a href=${occ.url} target="_blank" rel="noopener noreferrer">Event link <${Icon} name="arrowUpRight" size=${10} /></a>`}
           ${occ.people && occ.people.length > 0 && html`<span class="bc-detail-people">
             With ${occ.people.map((n, i) => html`<span key=${n}>${i > 0 && ', '}<button
               type="button" class="bc-person-link" title=${'Open ' + n + ' in People'}
@@ -392,7 +392,7 @@ export function EventDetail() {
         ${isFeed && cal && html`<div class="bc-detail-section bc-detail-source">
           <div class="bc-detail-label">Source</div>
           ${cal.sourceUrl
-            ? html`<a href=${cal.sourceUrl} target="_blank" rel="noopener noreferrer">${cal.name} ↗</a>`
+            ? html`<a href=${cal.sourceUrl} target="_blank" rel="noopener noreferrer">${cal.name} <${Icon} name="arrowUpRight" size=${10} /></a>`
             : html`<span>${cal.name}</span>`}
         </div>`}
         <div class="bc-detail-meta">
@@ -400,7 +400,7 @@ export function EventDetail() {
           ${occ.updatedAt !== occ.createdAt && html` · Updated ${fmtDateFull(parseISO(occ.updatedAt))} ${fmtTime(parseISO(occ.updatedAt))}`}
         </div>
         ${isFeed && html`<div class="bc-detail-actions">
-          ${occ.url && html`<a class="bc-btn bc-detail-openlink" href=${occ.url} target="_blank" rel="noopener noreferrer">Open original link ↗</a>`}
+          ${occ.url && html`<a class="bc-btn bc-detail-openlink" href=${occ.url} target="_blank" rel="noopener noreferrer">Open original link <${Icon} name="arrowUpRight" size=${11} /></a>`}
           <div class="bc-seg" role="group" aria-label="Attendance">
             ${[['interested', 'Interested'], ['going', 'Going'], ['hidden', 'Hide']].map(([value, label]) => html`<button
               key=${value} type="button"

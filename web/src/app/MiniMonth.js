@@ -14,6 +14,7 @@ import {
   epochDayOfKey, keyOfEpochDay,
 } from '../lib/dates.js';
 import { occurrenceDaySpan } from '../ui/monthmath.js';
+import { Icon } from '../ui/icons.js';
 
 export function MiniMonth() {
   const s = useStore(
@@ -59,8 +60,8 @@ export function MiniMonth() {
         title="Jump to date (g)" aria-haspopup="dialog"
         onClick=${() => set({ jumpOpen: true })}
       >${fmtMonthYear(dateOfDayKey(monthPrefix + '-01'))}</button>
-      <button type="button" class="bc-icon-btn bc-mm-step" aria-label="Previous month" onClick=${() => setDisp(stepMonthOf(shown.year, shown.month, -1))}>‹</button>
-      <button type="button" class="bc-icon-btn bc-mm-step" aria-label="Next month" onClick=${() => setDisp(stepMonthOf(shown.year, shown.month, 1))}>›</button>
+      <button type="button" class="bc-icon-btn bc-mm-step" aria-label="Previous month" onClick=${() => setDisp(stepMonthOf(shown.year, shown.month, -1))}><${Icon} name="chevronLeft" size=${13} /></button>
+      <button type="button" class="bc-icon-btn bc-mm-step" aria-label="Next month" onClick=${() => setDisp(stepMonthOf(shown.year, shown.month, 1))}><${Icon} name="chevronRight" size=${13} /></button>
     </div>
     <div class="bc-mm-grid" role="grid" aria-label=${'Days of ' + fmtMonthYear(dateOfDayKey(monthPrefix + '-01'))}>
       ${weekdayHeads().map((w, i) => html`<span key=${'h' + i} class="bc-mm-dow" aria-hidden="true">${w}</span>`)}

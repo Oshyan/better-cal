@@ -383,7 +383,7 @@ export function EditorDrawer() {
     <form class="bc-drawer" ref=${panelRef} onSubmit=${submit} role="dialog" aria-modal="true" aria-label=${(occ ? 'Edit ' : 'New ') + (form.isContainer ? 'trip' : 'event')}>
       <div class="bc-drawer-head">
         <h2>${(occ ? 'Edit ' : 'New ') + (form.isContainer ? 'trip' : 'event')}</h2>
-        <button type="button" class="bc-icon-btn" aria-label="Close" onClick=${requestClose}>✕</button>
+        <button type="button" class="bc-icon-btn" aria-label="Close" onClick=${requestClose}><${Icon} name="close" size=${15} /></button>
       </div>
 
       ${!occ && html`<div class="bc-nl">
@@ -499,7 +499,7 @@ export function EditorDrawer() {
           ${remEff.reminders.length === 0 && html`<span class="bc-rem-none">None</span>`}
           ${remEff.reminders.map((entry, i) => html`<span key=${i + ':' + fmtReminder(entry)} class="bc-rem-chip">
             <span aria-hidden="true">🔔</span> ${fmtReminder(entry)}
-            <button type="button" class="bc-rem-x" aria-label=${'Remove reminder: ' + fmtReminder(entry)} onClick=${() => remRemove(i)}>✕</button>
+            <button type="button" class="bc-rem-x" aria-label=${'Remove reminder: ' + fmtReminder(entry)} onClick=${() => remRemove(i)}><${Icon} name="close" size=${10} /></button>
           </span>`)}
           <select class="bc-rem-add" aria-label="Add reminder" value=""
             onChange=${(e) => {
@@ -523,7 +523,7 @@ export function EditorDrawer() {
             <button type="button" class="bc-btn"
               onClick=${() => { remAdd(toMinutes(remCustom.n, remCustom.unit)); setRemCustom(null); }}>Add</button>
             <button type="button" class="bc-icon-btn" aria-label="Cancel custom reminder"
-              onClick=${() => setRemCustom(null)}>✕</button>
+              onClick=${() => setRemCustom(null)}><${Icon} name="close" size=${10} /></button>
           </span>`}
           ${form.reminders !== null && html`<button type="button" class="bc-btn bc-rem-reset" onClick=${() => upd({ reminders: null })}>Reset to default</button>`}
           <span class="bc-rem-src">${remSrcHint}</span>

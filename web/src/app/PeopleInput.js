@@ -71,7 +71,7 @@ export function PeopleInput({ value, onChange, ariaLabel }) {
       <button
         type="button" class="bc-peoplein-x"
         aria-label=${'Remove ' + n} onClick=${() => remove(i)}
-      >✕</button>
+      ><${Icon} name="close" size=${10} /></button>
     </span>`)}
     <span class="bc-peoplein-entry">
       <input

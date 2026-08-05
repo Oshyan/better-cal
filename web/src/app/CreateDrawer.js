@@ -12,6 +12,7 @@ import { api, loadCalendars, loadPeople } from './api.js';
 import { createFolder } from './actions.js';
 import { trapFocus } from '../ui/DayExpand.js';
 import { PALETTE } from '../lib/color.js';
+import { Icon } from '../ui/icons.js';
 
 const TITLES = {
   calendar: 'New calendar',
@@ -108,7 +109,7 @@ export function CreateDrawer() {
     <form class="bc-drawer bc-drawer-slim" ref=${panelRef} onSubmit=${submit} role="dialog" aria-modal="true" aria-label=${TITLES[kind]}>
       <div class="bc-drawer-head">
         <h2>${TITLES[kind]}</h2>
-        <button type="button" class="bc-icon-btn" aria-label="Close" onClick=${close}>✕</button>
+        <button type="button" class="bc-icon-btn" aria-label="Close" onClick=${close}><${Icon} name="close" size=${15} /></button>
       </div>
 
       <label class="bc-field">

@@ -14,6 +14,7 @@ import { trapFocus } from '../ui/DayExpand.js';
 import { PlaceInput, pickFillText } from './PlaceInput.js';
 import { PeopleInput } from './PeopleInput.js';
 import { RichText } from './RichText.js';
+import { Icon } from '../ui/icons.js';
 import { isEmptyHtml } from '../lib/richtext.js';
 import {
   parseISO, toInputValue, fromInputValue, toISOWithOffset, addDaysDate, pad, localTz,

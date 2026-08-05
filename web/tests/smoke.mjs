@@ -36,7 +36,7 @@ import {
   candidateTrips, attachableInSpan, extendTripSpan,
 } from '../src/ui/trips.js';
 import {
-  buildAgendaGroups, railRanges, coveringByDay, spanDayCount, dayOfSpanLabel,
+  buildAgendaGroups, railRanges, washRects, spanDayCount, dayOfSpanLabel,
 } from '../src/ui/agendarails.js';
 import { hasHtml, stripToText, isEmptyHtml } from '../src/lib/richtext.js';
 import { batteryTipApplies, BATTERY_TIP_BODY, BATTERY_TIP_TITLE } from '../src/lib/batterytip.js';
@@ -1034,15 +1034,20 @@ const sequential = railRanges(buildAgendaGroups([
 ]));
 eq('sequential rails share lane 0', sequential.map((r) => r.lane), [0, 0]);
 
-// Day washes: every covered day (boundaries included) lists the spans that
-// cross it, so the agenda can layer one tint per span; days outside every
-// span stay absent, and no cap applies (tints blend rather than overflow).
-const cov = coveringByDay(railGroups);
-eq('wash on start day', cov.get('2026-06-01').map((o) => o.instanceId), ['rt1']);
-eq('wash on covered middle day', cov.get('2026-06-02').map((o) => o.instanceId), ['rt1', 'rm1']);
-eq('wash on end day', cov.get('2026-06-04').map((o) => o.instanceId), ['rt1']);
-eq('overlapping spans all wash the same day', coveringByDay(stackedGroups).get('2026-06-01').length, 4);
-assert('no wash entries without spans', coveringByDay(buildAgendaGroups([railSingle])).size === 0);
+// Washes are bounded by each span's own pills, not by whole days, so two
+// overlapping spans produce three visible tones (first alone, both, second
+// alone). Rails cap at MAX_RAIL_LANES; washes never do.
+const wash = washRects(railGroups);
+eq('one wash per span', wash.length, railRanges(railGroups).length);
+eq('wash matches its rail geometry',
+  wash.map((w) => [w.topPx, w.heightPx]).sort((a, b) => a[0] - b[0]),
+  railRanges(railGroups).map((r) => [r.topPx, r.heightPx]).sort((a, b) => a[0] - b[0]));
+assert('washes are ordered longest first',
+  washRects(railGroups).every((w, i, a) => i === 0 || a[i - 1].heightPx >= w.heightPx));
+eq('every overlapping span gets a wash even past the rail lane cap',
+  washRects(stackedGroups).length, 4);
+assert('rails still cap at three lanes', railRanges(stackedGroups).length === 3);
+eq('no washes without spans', washRects(buildAgendaGroups([railSingle])).length, 0);
 
 console.log('--- color utils ---');
 

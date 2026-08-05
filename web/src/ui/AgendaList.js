@@ -22,7 +22,7 @@ import { EventChip } from './EventChip.js';
 import { ThumbIcon, TripBadge, PinIcon, Icon } from './icons.js';
 import { gmapsUrl } from '../lib/maps.js';
 import {
-  buildAgendaGroups, railRanges, coveringByDay, dayOfSpanLabel,
+  buildAgendaGroups, railRanges, washRects, dayOfSpanLabel,
   AGENDA_ROW_H as ROW_H, AGENDA_HEAD_H as HEAD_H,
 } from './agendarails.js';
 import { withAlpha } from '../lib/color.js';
@@ -107,11 +107,22 @@ function calColorOf(calendars, occ) {
 export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, scrollKey, scrollSeq, onOpenEvent, onSetAttendance, onFeedback, onCreateDay, onRequestWindow, onVisibleMonthChange, emptyLabel }) {
   const scrollRef = useRef(null);
   const [win, setWin] = useState({ top: 0, height: 800 });
-  // A span's rail and its boundary rows highlight together, whichever one the
-  // pointer is over: with several spans running at once there is otherwise no
-  // way to tell which bar belongs to which event.
-  const [hoverId, setHoverId] = useState(null);
   const flat = sortMode === 'match';
+
+  // A span's rail, wash and boundary rows highlight together, whichever one
+  // the pointer is over. Done by toggling classes on the matching nodes, NOT
+  // through state: hover on a list of this size must not re-render every
+  // group (that was visible as scroll jank).
+  const linkedRef = useRef([]);
+  const setLinked = useCallback((instanceId) => {
+    for (const el of linkedRef.current) el.classList.remove('is-linked');
+    linkedRef.current = [];
+    const root = scrollRef.current;
+    if (!root || !instanceId) return;
+    const els = root.querySelectorAll(`[data-span="${CSS.escape(instanceId)}"]`);
+    for (const el of els) el.classList.add('is-linked');
+    linkedRef.current = [...els];
+  }, []);
 
   const groups = useMemo(() => {
     if (flat) {
@@ -130,7 +141,10 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
     () => (flat ? [] : railRanges(groups, { colorOf: (occ) => calColorOf(calendars, occ) })),
     [groups, flat, calendars],
   );
-  const covering = useMemo(() => (flat ? new Map() : coveringByDay(groups)), [groups, flat]);
+  const washes = useMemo(
+    () => (flat ? [] : washRects(groups, { colorOf: (occ) => calColorOf(calendars, occ) })),
+    [groups, flat, calendars],
+  );
 
   const totalH = groups.length ? groups[groups.length - 1].top + groups[groups.length - 1].height : 0;
 
@@ -190,6 +204,22 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
   return html`<div class="bc-agenda" ref=${scrollRef} onScroll=${onScroll}>
     ${groups.length === 0 && html`<div class="bc-empty bc-agenda-empty">${emptyLabel || 'No events in this range'}</div>`}
     <div class="bc-agenda-spacer" style=${`height:${totalH}px`}>
+      ${washes.map((r) => {
+        if (r.topPx > visEnd || r.topPx + r.heightPx < visStart) return null;
+        if (dimSet && dimSet.has(r.instanceId)) return null;
+        // Fades out to the right so a wide window does not read as a heavy
+        // block of colour; overlapping bands blend where they cross.
+        const strong = withAlpha(r.color, 0.16);
+        const mid = withAlpha(r.color, 0.05);
+        return html`<div
+          key=${'wash:' + r.instanceId}
+          class="bc-agenda-wash"
+          data-span=${r.instanceId}
+          style=${`top:${r.topPx}px;height:${r.heightPx}px;`
+            + `background:linear-gradient(90deg, ${strong} 0%, ${mid} 55%, transparent 100%)`}
+          aria-hidden="true"
+        ></div>`;
+      })}
       ${rails.map((r) => {
         if (r.topPx > visEnd || r.topPx + r.heightPx < visStart) return null;
         // Type-to-filter: a filtered-out trip's boundary rows hide via their
@@ -197,31 +227,21 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
         if (dimSet && dimSet.has(r.instanceId)) return null;
         return html`<div
           key=${'rail:' + r.instanceId}
-          class="bc-agenda-rail${r.isTrip ? ' is-trip' : ''}${hoverId === r.instanceId ? ' is-linked' : ''}"
+          class="bc-agenda-rail${r.isTrip ? ' is-trip' : ''}"
+          data-span=${r.instanceId}
           style=${`top:${r.topPx}px;height:${r.heightPx}px;left:${-14 - r.lane * 6}px`}
           aria-hidden="true" title=${r.title}
-          onPointerEnter=${() => setHoverId(r.instanceId)}
-          onPointerLeave=${() => setHoverId(null)}
+          onPointerEnter=${() => setLinked(r.instanceId)}
+          onPointerLeave=${() => setLinked(null)}
           onClick=${openDetail(r.instanceId)}
         ><span class="bc-agenda-rail-line" style=${`background:${r.color}`}></span></div>`;
       })}
       ${groups.map((g) => {
         const visible = g.top + g.height >= visStart && g.top <= visEnd;
-        // One low-opacity wash per span covering this day, layered so
-        // overlapping spans blend into a combined tint. A filtered-out span
-        // must not keep tinting the days it crossed.
-        const spans = (g.dayKey !== null ? covering.get(g.dayKey) : null) || [];
-        const washes = spans
-          .filter((occ) => !(dimSet && dimSet.has(occ.instanceId)))
-          .map((occ) => {
-            const c = withAlpha(calColorOf(calendars, occ), hoverId === occ.instanceId ? 0.2 : 0.09);
-            return `linear-gradient(${c}, ${c})`;
-          });
         return html`<section
           key=${g.dayKey === null ? 'match' : g.dayKey}
-          class="bc-agenda-group${g.dayKey === tKey ? ' is-today' : ''}${washes.length ? ' is-spanned' : ''}"
-          style=${`top:${g.top}px;height:${g.height}px`
-            + (washes.length ? `;background-image:${washes.join(',')}` : '')}
+          class="bc-agenda-group${g.dayKey === tKey ? ' is-today' : ''}"
+          style=${`top:${g.top}px;height:${g.height}px`}
         >
           ${g.monthStart && html`<div class="bc-agenda-monthsep"><span>${monthLabelOf(g.dayKey)}</span></div>`}
           ${g.dayKey !== null && html`<h3 class="bc-agenda-day">
@@ -249,8 +269,11 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
             // label reads as part of the rail running down the left edge.
             // A timed span keeps its clock time beside the day counter: the
             // start row shows when it begins, the end row when it finishes.
+            // A timed span says WHICH end of itself each row is: "from" on the
+            // start day, "until" on the last. Bare times read as if the event
+            // ran those hours on both days, which is not what a span means.
             const spanTime = span && !occ.allDay
-              ? fmtTime(parseISO(start ? occ.start : occ.end))
+              ? (start ? 'from ' : 'until ') + fmtTime(parseISO(start ? occ.start : occ.end))
               : null;
             const gutter = flat
               ? fmtDayShort(occ) + ' · ' + (occ.allDay ? 'all day' : fmtTime(parseISO(occ.start)))
@@ -258,13 +281,13 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
               : occ.allDay ? 'all day'
               : fmtTime(parseISO(occ.start)) + (occ.end ? ' to ' + fmtTime(parseISO(occ.end)) : '');
             const color = calColorOf(calendars, occ);
-            const linked = hoverId === occ.instanceId;
             return html`<div
               key=${row.kind + ':' + occ.instanceId}
-              class="bc-agenda-row${ts === 'past' ? ' is-past' : ts === 'now' ? ' is-now' : ''}${trip ? ' is-trip' : ''}${linked ? ' is-linked' : ''}"
+              class="bc-agenda-row${ts === 'past' ? ' is-past' : ts === 'now' ? ' is-now' : ''}${trip ? ' is-trip' : ''}"
+              data-span=${span ? occ.instanceId : undefined}
               style=${`height:${ROW_H}px`}
-              onPointerEnter=${span ? () => setHoverId(occ.instanceId) : undefined}
-              onPointerLeave=${span ? () => setHoverId(null) : undefined}
+              onPointerEnter=${span ? () => setLinked(occ.instanceId) : undefined}
+              onPointerLeave=${span ? () => setLinked(null) : undefined}
             >
             ${trip && !start && !end && html`<span
               class="bc-agenda-tripedge" aria-hidden="true"
@@ -281,7 +304,7 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
             />
             ${trip && html`<${TripBadge} />`}
             ${!end && occ.source === 'feed' && onSetAttendance && html`<${TriageCluster} occ=${occ} onSetAttendance=${onSetAttendance} onFeedback=${onFeedback} />`}
-            ${!end && occ.location && html`<${AgendaLocation} location=${occ.location} lat=${occ.locationLat} lng=${occ.locationLng} />`}
+            ${occ.location && html`<${AgendaLocation} location=${occ.location} lat=${occ.locationLat} lng=${occ.locationLng} />`}
           </div>`;
           })}
         </section>`;

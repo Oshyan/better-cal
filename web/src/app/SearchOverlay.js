@@ -4,7 +4,7 @@
 // tag-only search ("#tag", server-side), and result rows show their tags.
 
 import { html, useState, useRef, useEffect } from '../../vendor/index.js';
-import { CalDot } from '../ui/icons.js';
+import { CalDot, Icon } from '../ui/icons.js';
 import { useStore, set, state } from './store.js';
 import { search } from './api.js';
 import { jumpToDate, openDetail } from './actions.js';

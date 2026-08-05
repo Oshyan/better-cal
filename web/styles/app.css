@@ -769,7 +769,7 @@ body.bc-dragging * { cursor: grabbing !important; }
 }
 .bc-agenda-group.is-today .bc-agenda-day { color: var(--accent); }
 .bc-agenda-row { display: flex; align-items: center; gap: 10px; padding: 2px 0; }
-.bc-agenda-time { width: 130px; flex: none; color: var(--fg-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.bc-agenda-time { width: 158px; flex: none; color: var(--fg-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 .bc-agenda-row .bc-chip { width: auto; max-width: 40%; flex: none; }
 .bc-agenda-loc { color: var(--fg-muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Map pin preceding location text (agenda rows, popover, detail view):
@@ -834,11 +834,20 @@ body.bc-dragging * { cursor: grabbing !important; }
 /* Day-header suffixes: days covered by a multi-day span name it in calendar
    color (inline style); real buttons styled as text inside the h3 so screen
    readers read them and clicks open the event detail. */
-/* Days covered by a multi-day span carry a low-opacity wash in the span's
-   colour (layered, so overlapping spans blend) instead of repeating the
-   event's name in every header. Nothing to wrap, nothing to truncate, and
-   the span reads as one continuous stretch down the list. */
-.bc-agenda-group.is-spanned { border-radius: 4px; }
+/* One wash band per multi-day span, bounded by its own start and end pills
+   rather than by whole days: two overlapping spans therefore read as three
+   tones (first alone, both blended, second alone), and a timed span never
+   tints the hours before it began. Fades out to the right so a wide window
+   does not turn into a slab of colour. */
+.bc-agenda-wash {
+  position: absolute; left: -32px; right: -14px;
+  pointer-events: none; z-index: 0;
+  transition: filter 0.12s ease;
+}
+.bc-agenda-wash.is-linked { filter: saturate(1.5) brightness(0.97); }
+/* Rows and rails sit above the wash. */
+.bc-agenda-group, .bc-agenda-rail { position: relative; z-index: 1; }
+.bc-agenda-group { position: absolute; }
 
 /* --- overlays: day expand, popover, sheets ------------------------------------- */
 
@@ -2305,15 +2314,13 @@ body.bc-rescheduling { user-select: none; }
   border-radius: 0 5px 5px 0;
   padding: 3px 8px; margin-left: -3px;
   color: var(--fg); font-weight: 600; font-size: 11.5px;
-  width: 130px; box-sizing: border-box; white-space: nowrap;
+  width: 158px; box-sizing: border-box; white-space: nowrap;
   overflow: hidden; text-overflow: ellipsis;
 }
 /* A span's rail, its boundary rows and its pass-through header chips all
    light up together, whichever one the pointer is on. */
 .bc-agenda-row.is-linked { background: var(--bg-inset); border-radius: 6px; }
-.bc-agenda-row.is-linked .bc-agenda-time.is-span {
-  background: color-mix(in srgb, var(--span-color) 26%, transparent);
-}
+.bc-agenda-row.is-linked .bc-agenda-time.is-span { background: color-mix(in srgb, var(--span-color) 26%, transparent); }
 .bc-agenda-rail.is-linked .bc-agenda-rail-line { opacity: 1; }
 /* The linked row's chip lights up too: highlighting the row and the Day i/N
    label while leaving the event name plain read as a half-finished hover. */

@@ -3,7 +3,7 @@
 // that member's full detail view.
 
 import { html, useRef, useEffect } from '../../vendor/index.js';
-import { CalDot } from '../ui/icons.js';
+import { CalDot, Icon } from '../ui/icons.js';
 import { useStore, set, state } from './store.js';
 import { openDetail } from './actions.js';
 import { isMobile, anchorPanel, trapFocus, MOBILE_QUERY } from '../ui/DayExpand.js';

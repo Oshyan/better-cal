@@ -95,10 +95,13 @@ export function buildAgendaGroups(occurrences, opts = {}) {
 // opts.colorOf(occ) resolves the calendar color (the math stays
 // presentation-free without it).
 // Returns [{instanceId, calendarId, title, isTrip, topPx, heightPx, lane, color}].
-export function railRanges(groups, opts = {}) {
+// Pixel range of every multi-day span, start pill top to end pill bottom.
+// Shared by the rails (which add lanes and a cap) and the background washes
+// (which take all of them). Returns [{occ, topPx, heightPx}], top-down.
+export function spanPixelRanges(groups, opts = {}) {
   const rowH = opts.rowH ?? AGENDA_ROW_H;
   const headH = opts.headH ?? AGENDA_HEAD_H;
-  const maxLanes = opts.maxLanes ?? MAX_RAIL_LANES;
+  const sepH = opts.sepH ?? AGENDA_MONTH_SEP_H;
   const byKey = new Map(groups.map((g) => [g.dayKey, g]));
   const spans = [];
   for (const g of groups) {
@@ -117,13 +120,18 @@ export function railRanges(groups, opts = {}) {
       const pillInset = (rowH - 20) / 2;
       // Groups that open a month carry the separator band above their header,
       // so their rows start that much lower.
-      const sepH = opts.sepH ?? AGENDA_MONTH_SEP_H;
       const topPx = g.top + (g.monthStart ? sepH : 0) + headH + i * rowH + pillInset;
       const bottomPx = eg.top + (eg.monthStart ? sepH : 0) + headH + ei * rowH + (rowH - pillInset);
       spans.push({ occ, topPx, heightPx: bottomPx - topPx });
     });
   }
   spans.sort((a, b) => a.topPx - b.topPx || (b.topPx + b.heightPx) - (a.topPx + a.heightPx));
+  return spans;
+}
+
+export function railRanges(groups, opts = {}) {
+  const maxLanes = opts.maxLanes ?? MAX_RAIL_LANES;
+  const spans = spanPixelRanges(groups, opts);
   const laneBottoms = []; // per-lane occupied bottom px
   const out = [];
   for (const s of spans) {
@@ -145,29 +153,21 @@ export function railRanges(groups, opts = {}) {
   return out;
 }
 
-// Every multi-day span covering each day, boundaries included. The agenda
-// paints one low-opacity wash per covering span across the whole day block,
-// so a span reads as a continuous stretch of tinted days rather than a name
-// repeated in every header; overlapping spans layer, and their colours blend.
-// Returns Map dayKey -> [occ], in span-start order.
-export function coveringByDay(groups) {
-  const spans = [];
-  for (const g of groups) {
-    for (const r of g.rows) {
-      if (r.kind !== 'start') continue;
-      const { startKey, endKey } = occurrenceDaySpan(r.occ);
-      spans.push({ occ: r.occ, s: epochDayOfKey(startKey), e: epochDayOfKey(endKey) });
-    }
-  }
-  const out = new Map();
-  if (spans.length === 0) return out;
-  spans.sort((a, b) => a.s - b.s || chronological(a.occ, b.occ));
-  for (const g of groups) {
-    if (!g.dayKey) continue;
-    const ed = epochDayOfKey(g.dayKey);
-    const covering = spans.filter((m) => m.s <= ed && ed <= m.e).map((m) => m.occ);
-    if (covering.length > 0) out.set(g.dayKey, covering);
-  }
-  return out;
+// Background washes: one full-width band per span, bounded by the span's own
+// start and end pills rather than by whole days. That is what produces the
+// three tones the eye expects when two spans overlap — first span alone,
+// both blended, second span alone — and it stops a timed span from tinting
+// the hours before it began on its first day.
+// Returns [{instanceId, topPx, heightPx, color}], longest-first so shorter
+// spans layer above longer ones.
+export function washRects(groups, opts = {}) {
+  return spanPixelRanges(groups, opts)
+    .map((s) => ({
+      instanceId: s.occ.instanceId,
+      topPx: s.topPx,
+      heightPx: s.heightPx,
+      color: opts.colorOf ? opts.colorOf(s.occ) : undefined,
+    }))
+    .sort((a, b) => b.heightPx - a.heightPx);
 }
 

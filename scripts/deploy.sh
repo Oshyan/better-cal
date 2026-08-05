@@ -7,6 +7,17 @@ APP_DIR="/home/bettercal/app"
 DOCROOT="/home/bettercal/htdocs/cal.oshyan.com"
 HEALTH_URL="https://cal.oshyan.com/api/v1/health"
 
+# Pre-flight gate. Every live break so far (blank app from a stray import, a
+# dead "+ New" button, a frozen agenda) was a broken reference that a test run
+# would have caught — but deploy never ran the tests. It does now. Set
+# SKIP_TESTS=1 only when deliberately shipping a known-red tree.
+if [ "${SKIP_TESTS:-0}" != "1" ]; then
+  echo "== pre-flight tests =="
+  node --experimental-vm-modules "${ROOT_DIR}/web/tests/static.mjs" 2>/dev/null | tail -1
+  node "${ROOT_DIR}/web/tests/smoke.mjs" 2>/dev/null | tail -1
+  php "${ROOT_DIR}/server/tests/run.php" | tail -1
+fi
+
 echo "== rsync code =="
 # No --delete by explicit policy (user has been burned by it). Stale-file removal,
 # when ever needed, is a deliberate manual action on the server.

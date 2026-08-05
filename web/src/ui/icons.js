@@ -93,9 +93,12 @@ export function Icon({ name, size = 15 }) {
     // Keyboard: body + key dots + spacebar. Toolbar shortcuts button.
     keyboard: html`<rect x="1.6" y="4.2" width="12.8" height="7.6" rx="1.4" />
       <path d="M4 6.6h.01M6.7 6.6h.01M9.4 6.6h.01M12.1 6.6h.01M4 9.4h.6M11.4 9.4h.6M6.4 9.4h3.2" />`,
-    // Open-in-full: corner arrow leaving a box. Popover -> detail view.
-    expand: html`<path d="M9.2 2.6h4.2v4.2M13.1 2.9L8.6 7.4" />
-      <path d="M6.8 2.6H4c-.8 0-1.4.6-1.4 1.4V12c0 .8.6 1.4 1.4 1.4h8c.8 0 1.4-.6 1.4-1.4V9.2" />`,
+    // Expand (popover -> full detail): arrows pushing out to opposite
+    // corners. A single arrow leaving a box reads as "open in a new window";
+    // two opposed arrows read as "make this bigger". The box is dropped on
+    // purpose — enclosing the diagonals crowds them at button size.
+    expand: html`<path d="M9.6 2.4h4v4M13.6 2.4L9.5 6.5" />
+      <path d="M6.4 13.6h-4v-4M2.4 13.6l4.1-4.1" />`,
     // Bell: reminders line.
     bell: html`<path d="M8 2.3c-2.1 0-3.5 1.5-3.5 3.7 0 2.7-.9 3.6-1.6 4.3h10.2c-.7-.7-1.6-1.6-1.6-4.3 0-2.2-1.4-3.7-3.5-3.7z" />
       <path d="M6.7 12.5a1.4 1.4 0 0 0 2.6 0" />`,

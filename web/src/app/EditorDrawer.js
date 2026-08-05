@@ -143,6 +143,22 @@ export function EditorDrawer() {
 
   useEffect(() => () => { clearTimeout(nlTimer.current); clearTimeout(flashTimer.current); }, []);
 
+  // The rich-text editor rewrites the description into its own canonical
+  // markup as it loads (an empty one becomes "<div><br></div>"). Take that
+  // value AND move the dirty baseline with it: the editor tidying its own
+  // seed is not something the user typed, and counting it as an edit made
+  // opening an event and closing it ask to discard changes.
+  const adoptSeededDescription = (htmlValue) => {
+    if (initialSnapRef.current != null) {
+      try {
+        const snap = JSON.parse(initialSnapRef.current);
+        snap.description = htmlValue;
+        initialSnapRef.current = JSON.stringify(snap);
+      } catch { /* malformed baseline: leave it, worst case is one prompt */ }
+    }
+    setForm((f) => (f && f.description !== htmlValue ? { ...f, description: htmlValue } : f));
+  };
+
   // Keep state.editorDirty current so every close path (✕, backdrop, Cancel,
   // global Esc) can confirm before discarding entered data.
   useEffect(() => {
@@ -444,7 +460,9 @@ export function EditorDrawer() {
           seed=${occ ? (occ.description || '') : (editor.draft && editor.draft.description) || ''}
           seedKey=${occ ? occ.instanceId : 'new'}
           ariaLabel="Description"
-          onChange=${(htmlValue) => upd({ description: htmlValue })}
+          onChange=${(htmlValue, meta) => (meta && meta.seeded
+            ? adoptSeededDescription(htmlValue)
+            : upd({ description: htmlValue }))}
         />
       </div>
 

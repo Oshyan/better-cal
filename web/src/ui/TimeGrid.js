@@ -364,17 +364,21 @@ export function TimeGrid({
       ? prev : { first: a - V_BEFORE, last: a + V_AFTER }));
   }, [scrollSeq, vstack]); // eslint-disable-line
 
-  // Apply a pending anchor once the window it refers to has rendered. The pin
-  // is ALWAYS cleared, even if the panel could not be found: a pin left set
-  // silently disables every later scroll check, which reads as "the calendar
-  // stopped scrolling".
+  // Apply a pending anchor once the window it refers to has rendered.
+  //
+  // Runs after EVERY render, deliberately. Keyed on the window bounds it was
+  // skipped whenever the requested window happened to equal the current one
+  // — which is exactly what "Today" does when today is already inside the
+  // rendered band: the scroll never happened and the un-applied pin then
+  // disabled scroll tracking entirely. The pin is also always cleared, so a
+  // panel that cannot be found costs one restore rather than wedging.
   useLayoutEffect(() => {
     if (!vstack) return;
     const pin = vPinRef.current;
     if (!pin) return;
     vScrollTo(pin.dayKey, pin.within);
     vPinRef.current = null;
-  }, [vstack, vWin.first, vWin.last, vScrollTo]);
+  });
 
   // Stack scrolling: report the day at the viewport top (drives the toolbar
   // label) and recenter the window before either edge comes into view.

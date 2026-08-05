@@ -42,6 +42,9 @@ const NARROW_QUERY = '(max-width: 800px)';
 const V_BEFORE = 7;
 const V_AFTER = 21;
 const V_EDGE = 3; // days from a window edge that trigger a recenter
+// A sticky header must never eat the viewport: a task-heavy day can carry 30+
+// all-day items, so the rest overflow into the day-expand list.
+const V_ALLDAY_MAX = 3;
 
 function minutesOfDay(d) {
   return d.getHours() * 60 + d.getMinutes();
@@ -60,7 +63,7 @@ export function TimeGrid({
   days: fixedDays, occurrences, calendars, dimSet, nowMs,
   infinite = false, vstack = false, scrollKey, scrollSeq = 0,
   onRequestWindow, onVisibleMonthChange, onVisibleDay,
-  onCreateRange, onMoveEvent, onResizeEvent, onOpenEvent, onOpenDay,
+  onCreateRange, onMoveEvent, onResizeEvent, onOpenEvent, onOpenDay, onExpandDay,
 }) {
   const rootRef = useRef(null);
   const scrollRef = useRef(null);  // vertical time scroller
@@ -749,10 +752,15 @@ export function TimeGrid({
                     onCreateRange(allDayRangeDraft(k, k));
                   }}
                 >
-                  ${bars.map(({ occ, seg }) => html`<${EventBar}
+                  ${bars.slice(0, V_ALLDAY_MAX).map(({ occ, seg }) => html`<${EventBar}
                     key=${occ.instanceId} occ=${occ} cal=${calendars[occ.calendarId]} seg=${seg}
                     dimmed=${dimSet && dimSet.has(occ.instanceId)} nowMs=${nowMs} onOpen=${onOpenEvent}
                   />`)}
+                  ${bars.length > V_ALLDAY_MAX && html`<button
+                    type="button" class="bc-vday-more"
+                    title="List everything on this day"
+                    onClick=${() => onExpandDay && onExpandDay(k)}
+                  >+${bars.length - V_ALLDAY_MAX} more</button>`}
                 </div>
               </header>
               <div class="bc-tg-vday-body">
@@ -826,15 +834,24 @@ function showPreview(previewRef, geom, dayKey, startMin, durMin) {
   if (!el) return;
   let left, width;
   if (geom.vstack) {
-    // The preview lives in the stack's positioned container, so a column's
-    // own offsets place it without any per-day height arithmetic.
+    // The preview is a child of the stack container, so the column's offsets
+    // must be summed up the offsetParent chain to reach it: the day panel and
+    // its body are both positioned, so a bare offsetTop is day-relative and
+    // would pin every preview to the top of the stack.
     const scroll = geom.scrollEl;
     const col = scroll && scroll.querySelector(`.bc-tg-col[data-day="${dayKey}"]`);
-    if (!col) return;
+    const stack = scroll && scroll.querySelector('.bc-tg-vdays');
+    if (!col || !stack) return;
+    let top = 0;
+    let left = 0;
+    for (let node = col; node && node !== stack; node = node.offsetParent) {
+      top += node.offsetTop;
+      left += node.offsetLeft;
+    }
     el.style.display = 'block';
-    el.style.left = col.offsetLeft + 1 + 'px';
+    el.style.left = left + 1 + 'px';
     el.style.width = col.offsetWidth - 4 + 'px';
-    el.style.top = col.offsetTop + (startMin / 60) * HOUR_H + 'px';
+    el.style.top = top + (startMin / 60) * HOUR_H + 'px';
     el.style.height = (durMin / 60) * HOUR_H + 'px';
     return;
   }

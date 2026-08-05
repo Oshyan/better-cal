@@ -444,6 +444,7 @@ export function App() {
       scrollSeq=${s.scrollSeq}
       onRequestWindow=${onRequestWindow}
       onVisibleDay=${onVisibleDay}
+      onExpandDay=${onExpandDay}
       onCreateRange=${onCreateRange}
       onMoveEvent=${moveEvent}
       onResizeEvent=${resizeEvent}

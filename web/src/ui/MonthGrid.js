@@ -169,14 +169,32 @@ export function MonthGrid({
   // Geometry changes (viewport resize, layout switch, container remount) must
   // not move the user in time: restore scrollTop from the last known top row
   // rather than trusting pixel positions across a rowH change.
+  // A pending anchor outranks the top-row restore: on mount (and on a view
+  // switch) this effect runs before the ResizeObserver has measured the real
+  // viewport, so the first centring uses a placeholder height. Re-applying it
+  // once the geometry settles is what keeps the anchor day mid-view instead
+  // of wherever the stale height put it.
+  const pendingRowRef = useRef(null);
+  const applyAnchor = useCallback((row) => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const h = el.clientHeight || 0;
+    const lead = Math.max(0, Math.round((h - rowHRef.current) * 0.4));
+    el.scrollTop = Math.max(0, weekTop(row, minWeek, rowHRef.current) - lead);
+    topWeekRef.current = Math.max(minWeek, minWeek + Math.floor(el.scrollTop / rowHRef.current));
+  }, [minWeek]);
+
   useLayoutEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    if (topWeekRef.current != null) {
+    if (pendingRowRef.current != null && el.clientHeight > 0) {
+      applyAnchor(pendingRowRef.current);
+      pendingRowRef.current = null;
+    } else if (topWeekRef.current != null) {
       el.scrollTop = weekTop(topWeekRef.current, minWeek, rowH);
     }
     recompute();
-  }, [rowH, viewH, minWeek, recompute]);
+  }, [rowH, viewH, minWeek, recompute, applyAnchor]);
 
   // Programmatic scroll to an anchor date (today button, arrows, search jump).
   // Fires only on explicit navigation (scrollSeq); geometry changes are handled
@@ -187,13 +205,15 @@ export function MonthGrid({
   useLayoutEffect(() => {
     const el = scrollRef.current;
     if (!el || !scrollKey) return;
-    const w = rowIndexOfDayKey(scrollKey, columns);
     // Land the anchor row above centre rather than pinned to the top edge:
     // the focused day needs a row or two of context before it, and a day at
-    // the very top reads as "nothing came before".
-    const lead = Math.max(0, Math.round((el.clientHeight - rowHRef.current) * 0.4));
-    el.scrollTop = Math.max(0, weekTop(w, minWeek, rowHRef.current) - lead);
-    topWeekRef.current = Math.max(minWeek, minWeek + Math.floor(el.scrollTop / rowHRef.current));
+    // the very top (or bottom) reads as "nothing came before".
+    const w = rowIndexOfDayKey(scrollKey, columns);
+    pendingRowRef.current = w;
+    if (el.clientHeight > 0) {
+      applyAnchor(w);
+      pendingRowRef.current = null;
+    }
     recompute();
   }, [scrollSeq]); // eslint-disable-line
 
@@ -468,6 +488,15 @@ function WeekRow({
     if (lane < MAX_BAND_LANES) visibleBands.push({ ...b, lane });
     else for (let c = b.seg.startCol; c <= b.seg.endCol; c++) bandExtraByCol[c]++;
   }
+  // Lanes are reserved PER COLUMN, not per row: a band or bar on Wednesday
+  // must not push Monday's chips down. Multi-day segments still align across
+  // the columns they actually cover, because their lane index is shared.
+  const bandLanesByCol = new Array(columns).fill(0);
+  for (const b of visibleBands) {
+    for (let c = b.seg.startCol; c <= b.seg.endCol; c++) {
+      bandLanesByCol[c] = Math.max(bandLanesByCol[c], b.lane + 1);
+    }
+  }
   // Rows carrying bands have less chip room; recompute against the real
   // remaining height (never below one lane).
   const cap = Math.min(capacity, Math.max(1, Math.floor((rowH - CELL_HEAD - bandOffset - 4) / chipRow)));
@@ -486,11 +515,24 @@ function WeekRow({
     if (lane < maxBarLanes) visibleBars.push({ ...b, lane });
     else for (let c = b.seg.startCol; c <= b.seg.endCol; c++) extraByCol[c]++;
   }
+  const barLanesByCol = new Array(columns).fill(0);
+  for (const b of visibleBars) {
+    for (let c = b.seg.startCol; c <= b.seg.endCol; c++) {
+      barLanesByCol[c] = Math.max(barLanesByCol[c], b.lane + 1);
+    }
+  }
 
   const cells = keys.map((k, col) => {
     const [y, m, d] = k.split('-').map(Number);
     const singles = byDay.get(k) || [];
-    const room = Math.max(0, cap - chipStartLane);
+    // Chips begin below whatever actually covers THIS day. Bars share one
+    // row-wide top (they span columns), so a day carrying a bar clears the
+    // band block too; a day with only bands clears just its own bands; a day
+    // with neither starts flush under the date number.
+    const chipTop = barLanesByCol[col] > 0
+      ? CELL_HEAD + bandOffset + barLanesByCol[col] * chipRow
+      : CELL_HEAD + bandLanesByCol[col] * bandH;
+    const room = Math.max(0, Math.min(capacity, Math.floor((rowH - chipTop - 4) / chipRow)));
     const overflowFromBars = extraByCol[col] + bandExtraByCol[col];
     const needsMore = singles.length + overflowFromBars > room;
     const shown = needsMore ? Math.max(0, room - 1) : singles.length;
@@ -529,7 +571,7 @@ function WeekRow({
         onPointerDown=${(e) => e.stopPropagation()}
         onClick=${(e) => { e.stopPropagation(); if (quickCreateDay) quickCreateDay(k); }}
       >+</button>
-      <div class="bc-cell-chips" style=${`top:${CELL_HEAD + bandOffset + chipStartLane * chipRow}px`}>
+      <div class="bc-cell-chips" style=${`top:${chipTop}px`}>
         ${singles.slice(0, shown).map((occ) => html`<${EventChip}
           key=${occ.instanceId} occ=${occ} cal=${calendars[occ.calendarId]}
           dimmed=${dimSet && dimSet.has(occ.instanceId)} nowMs=${nowMs}

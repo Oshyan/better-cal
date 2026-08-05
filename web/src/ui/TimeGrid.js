@@ -219,6 +219,23 @@ export function TimeGrid({
   // counter-translate after every render.
   useLayoutEffect(() => { if (infinite) syncTracks(); });
 
+  // The header and all-day lane are counter-translated clones, not the real
+  // horizontal scroller, so a wheel over them hit nothing. Forward both axes
+  // to the scrollers that own them.
+  const onHeaderWheel = useCallback((e) => {
+    if (!infinite) return;
+    const h = hscrollRef.current;
+    const v = scrollRef.current;
+    const dx = e.deltaX || (e.shiftKey ? e.deltaY : 0);
+    if (h && dx) {
+      h.scrollLeft += dx;
+      e.preventDefault();
+    } else if (v && e.deltaY) {
+      v.scrollTop += e.deltaY;
+      e.preventDefault();
+    }
+  }, [infinite]);
+
   // Demand data + report the visible month for the toolbar label.
   useEffect(() => {
     if (!infinite) return;
@@ -347,16 +364,31 @@ export function TimeGrid({
       ? prev : { first: a - V_BEFORE, last: a + V_AFTER }));
   }, [scrollSeq, vstack]); // eslint-disable-line
 
-  // Apply a pending anchor once the window it refers to has rendered.
+  // Apply a pending anchor once the window it refers to has rendered. The pin
+  // is ALWAYS cleared, even if the panel could not be found: a pin left set
+  // silently disables every later scroll check, which reads as "the calendar
+  // stopped scrolling".
   useLayoutEffect(() => {
     if (!vstack) return;
     const pin = vPinRef.current;
     if (!pin) return;
-    if (vScrollTo(pin.dayKey, pin.within)) vPinRef.current = null;
+    vScrollTo(pin.dayKey, pin.within);
+    vPinRef.current = null;
   }, [vstack, vWin.first, vWin.last, vScrollTo]);
 
   // Stack scrolling: report the day at the viewport top (drives the toolbar
   // label) and recenter the window before either edge comes into view.
+  //
+  // The subscription deliberately depends on `vstack` ALONE and reads the
+  // live window and callback through refs. Keying it on the window meant
+  // re-subscribing on every recenter, and one missed re-subscribe left the
+  // listener bound to a node nothing scrolls any more — the calendar simply
+  // stopped tracking, which is what "scrolling stops after a while" was.
+  const vWinRef = useRef(vWin);
+  vWinRef.current = vWin;
+  const onVisibleDayRef = useRef(onVisibleDay);
+  onVisibleDayRef.current = onVisibleDay;
+
   useEffect(() => {
     if (!vstack) return undefined;
     const el = scrollRef.current;
@@ -376,10 +408,11 @@ export function TimeGrid({
       if (!current) return;
       if (current !== vDayRef.current) {
         vDayRef.current = current;
-        if (onVisibleDay) onVisibleDay(current);
+        if (onVisibleDayRef.current) onVisibleDayRef.current(current);
       }
+      const win = vWinRef.current;
       const ed = epochDayOfKey(current);
-      if (ed - vWin.first < V_EDGE || vWin.last - ed < V_EDGE) {
+      if (ed - win.first < V_EDGE || win.last - ed < V_EDGE) {
         vPinRef.current = { dayKey: current, within };
         setVWin({ first: ed - V_BEFORE, last: ed + V_AFTER });
       }
@@ -390,7 +423,7 @@ export function TimeGrid({
     };
     el.addEventListener('scroll', onScroll, { passive: true });
     return () => { el.removeEventListener('scroll', onScroll); cancelAnimationFrame(raf); };
-  }, [vstack, vWin.first, vWin.last, onVisibleDay]);
+  }, [vstack]);
 
   // Stack: demand data for the rendered band.
   useEffect(() => {
@@ -788,13 +821,13 @@ export function TimeGrid({
     : null;
 
   return html`<div class="bc-timegrid${infinite ? ' bc-tg-infinite' : ''}" ref=${rootRef}>
-    <div class="bc-tg-head${single ? ' is-single' : ''}">
+    <div class="bc-tg-head${single ? ' is-single' : ''}" onWheel=${onHeaderWheel}>
       <div class="bc-tg-gutter"></div>
       ${infinite
         ? html`<div class="bc-tg-hclip"><div class="bc-tg-htrack" ref=${headTrackRef} style=${`width:${totalW}px`}>${headCells}</div></div>`
         : headCells}
     </div>
-    ${showAllday && html`<div class="bc-tg-allday${alldayOpen ? '' : ' is-collapsed'}" style=${`height:${(alldayOpen ? Math.max(1, barLaneCount) : 1) * 24 + (barLaneCount > 1 ? 20 : 6)}px`}>
+    ${showAllday && html`<div class="bc-tg-allday${alldayOpen ? '' : ' is-collapsed'}" onWheel=${onHeaderWheel} style=${`height:${(alldayOpen ? Math.max(1, barLaneCount) : 1) * 24 + (barLaneCount > 1 ? 20 : 6)}px`}>
       <div class="bc-tg-gutter bc-tg-allday-label">
         all day
         ${barLaneCount > 1 && html`<button

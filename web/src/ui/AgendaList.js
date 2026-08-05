@@ -22,9 +22,10 @@ import { EventChip } from './EventChip.js';
 import { ThumbIcon, TripBadge, PinIcon, Icon } from './icons.js';
 import { gmapsUrl } from '../lib/maps.js';
 import {
-  buildAgendaGroups, railRanges, headerSuffixes, dayOfSpanLabel,
+  buildAgendaGroups, railRanges, coveringByDay, dayOfSpanLabel,
   AGENDA_ROW_H as ROW_H, AGENDA_HEAD_H as HEAD_H,
 } from './agendarails.js';
+import { withAlpha } from '../lib/color.js';
 
 // One compact segmented group per feed row: triage (interested / going /
 // hide) plus, past a thin divider, thumbs feedback for the trainable
@@ -129,7 +130,7 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
     () => (flat ? [] : railRanges(groups, { colorOf: (occ) => calColorOf(calendars, occ) })),
     [groups, flat, calendars],
   );
-  const suffixes = useMemo(() => (flat ? new Map() : headerSuffixes(groups)), [groups, flat]);
+  const covering = useMemo(() => (flat ? new Map() : coveringByDay(groups)), [groups, flat]);
 
   const totalH = groups.length ? groups[groups.length - 1].top + groups[groups.length - 1].height : 0;
 
@@ -204,20 +205,23 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
           onClick=${openDetail(r.instanceId)}
         ><span class="bc-agenda-rail-line" style=${`background:${r.color}`}></span></div>`;
       })}
-      ${groups.map((g, gi) => {
+      ${groups.map((g) => {
         const visible = g.top + g.height >= visStart && g.top <= visEnd;
-        // Suffixes only on days the span merely PASSES THROUGH. On its start
-        // and end days the event already has a row of its own, and printing
-        // it in the header too was pure duplication.
-        const sfx = g.dayKey !== null ? suffixes.get(g.dayKey) : undefined;
-        const ownRows = new Set(g.rows.map((r) => r.occ.instanceId));
-        const passing = sfx
-          ? { items: sfx.items.filter((occ) => !ownRows.has(occ.instanceId)), more: sfx.more }
-          : undefined;
+        // One low-opacity wash per span covering this day, layered so
+        // overlapping spans blend into a combined tint. A filtered-out span
+        // must not keep tinting the days it crossed.
+        const spans = (g.dayKey !== null ? covering.get(g.dayKey) : null) || [];
+        const washes = spans
+          .filter((occ) => !(dimSet && dimSet.has(occ.instanceId)))
+          .map((occ) => {
+            const c = withAlpha(calColorOf(calendars, occ), hoverId === occ.instanceId ? 0.2 : 0.09);
+            return `linear-gradient(${c}, ${c})`;
+          });
         return html`<section
           key=${g.dayKey === null ? 'match' : g.dayKey}
-          class="bc-agenda-group${g.dayKey === tKey ? ' is-today' : ''}"
-          style=${`top:${g.top}px;height:${g.height}px`}
+          class="bc-agenda-group${g.dayKey === tKey ? ' is-today' : ''}${washes.length ? ' is-spanned' : ''}"
+          style=${`top:${g.top}px;height:${g.height}px`
+            + (washes.length ? `;background-image:${washes.join(',')}` : '')}
         >
           ${g.monthStart && html`<div class="bc-agenda-monthsep"><span>${monthLabelOf(g.dayKey)}</span></div>`}
           ${g.dayKey !== null && html`<h3 class="bc-agenda-day">
@@ -228,16 +232,6 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
               aria-label=${'New event on ' + fmtDayLong(dateOfDayKey(g.dayKey))}
               onClick=${() => onCreateDay(g.dayKey)}
             >+</button>`}
-            ${passing && passing.items.filter((occ) => !(dimSet && dimSet.has(occ.instanceId))).map((occ) => html`<button
-              key=${'sfx:' + occ.instanceId} type="button"
-              class="bc-agenda-daysfx${hoverId === occ.instanceId ? ' is-linked' : ''}"
-              style=${`--sfx-color:${calColorOf(calendars, occ)}`}
-              title=${occ.title || '(untitled)'}
-              onPointerEnter=${() => setHoverId(occ.instanceId)}
-              onPointerLeave=${() => setHoverId(null)}
-              onClick=${openDetail(occ.instanceId)}
-            >${occ.title || '(untitled)'}</button>`)}
-            ${passing && passing.more > 0 && html`<span class="bc-agenda-daysfx-more">+${passing.more} more</span>`}
           </h3>`}
           ${visible && g.rows.map((row) => {
             const occ = row.occ;
@@ -253,9 +247,14 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
             // Multi-day boundaries put "Day i/N" in the gutter (where all-day
             // rows say "all day"), tinted with the calendar colour so the
             // label reads as part of the rail running down the left edge.
+            // A timed span keeps its clock time beside the day counter: the
+            // start row shows when it begins, the end row when it finishes.
+            const spanTime = span && !occ.allDay
+              ? fmtTime(parseISO(start ? occ.start : occ.end))
+              : null;
             const gutter = flat
               ? fmtDayShort(occ) + ' · ' + (occ.allDay ? 'all day' : fmtTime(parseISO(occ.start)))
-              : span ? dayOfSpanLabel(occ, g.dayKey)
+              : span ? dayOfSpanLabel(occ, g.dayKey) + (spanTime ? ' · ' + spanTime : '')
               : occ.allDay ? 'all day'
               : fmtTime(parseISO(occ.start)) + (occ.end ? ' to ' + fmtTime(parseISO(occ.end)) : '');
             const color = calColorOf(calendars, occ);

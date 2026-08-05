@@ -54,6 +54,22 @@ export function RichText({ seed, seedKey, onChange, ariaLabel }) {
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
 
+  // Loading content into the editor fires the same `input` event a keystroke
+  // does, and the editor canonicalises as it goes (an empty description
+  // becomes "<div><br></div>"). Flagging those emissions lets the form tell
+  // "the editor tidied the seed" apart from "the user typed", which is the
+  // difference between a spurious "discard changes?" prompt and a real one.
+  const seedingRef = useRef(false);
+  const seedProgrammatically = (fn) => {
+    seedingRef.current = true;
+    try {
+      fn();
+    } finally {
+      // Cleared after the current task in case the editor defers its event.
+      setTimeout(() => { seedingRef.current = false; }, 0);
+    }
+  };
+
   // Create the editor once per mount.
   useEffect(() => {
     let disposed = false;
@@ -70,11 +86,11 @@ export function RichText({ seed, seedKey, onChange, ariaLabel }) {
         A: editor.hasFormat('A'),
       });
       editor.addEventListener('input', () => {
-        onChangeRef.current(editor.getHTML());
+        onChangeRef.current(editor.getHTML(), { seeded: seedingRef.current });
         readFormats();
       });
       editor.addEventListener('pathChange', readFormats);
-      editor.setHTML(seedHtml(seed));
+      seedProgrammatically(() => editor.setHTML(seedHtml(seed)));
       setReady(true);
     }).catch((e) => {
       // Loud failure: a silently-degraded editor looks like data loss to the
@@ -103,7 +119,7 @@ export function RichText({ seed, seedKey, onChange, ariaLabel }) {
   useEffect(() => {
     if (seededKey.current === seedKey) return;
     seededKey.current = seedKey;
-    if (editorRef.current) editorRef.current.setHTML(seedHtml(seed));
+    if (editorRef.current) seedProgrammatically(() => editorRef.current.setHTML(seedHtml(seed)));
   }, [seedKey]); // eslint-disable-line
 
   const cmd = (fn) => (e) => {

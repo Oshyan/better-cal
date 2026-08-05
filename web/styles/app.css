@@ -333,7 +333,7 @@ button:focus-visible, [tabindex]:focus-visible {
   opacity: 0; transition: opacity 0.12s ease;
 }
 .bc-folder-headrow:hover .bc-folder-tools,
-.bc-folder-headrow:focus-within .bc-folder-tools { opacity: 1; }
+.bc-folder-headrow:has(:focus-visible) .bc-folder-tools { opacity: 1; }
 /* One optical box for every header tool (mode, new, options) so they sit on
    a shared baseline instead of drifting by glyph metrics. */
 .bc-folder-tool {
@@ -351,7 +351,7 @@ button:focus-visible, [tabindex]:focus-visible {
   opacity: 0; transition: opacity 0.12s ease; margin: 0; flex: none;
 }
 .bc-cal-row:hover input[type="checkbox"],
-.bc-cal-row:focus-within input[type="checkbox"] { opacity: 1; }
+.bc-cal-row:has(:focus-visible) input[type="checkbox"] { opacity: 1; }
 @media (pointer: coarse) { .bc-cal-row input[type="checkbox"] { opacity: 1; } }
 /* Two independent signals, two independent channels:
    HIDDEN (unchecked) = dim + a light strikethrough. The rule is drawn at
@@ -377,7 +377,7 @@ button:focus-visible, [tabindex]:focus-visible {
 .bc-health { color: #c9913d; cursor: help; display: inline-flex; align-items: center; }
 .bc-cal-gear { padding: 2px 4px; visibility: hidden; flex: none; }
 .bc-cal-row:hover .bc-cal-gear,
-.bc-cal-row:focus-within .bc-cal-gear,
+.bc-cal-row:has(:focus-visible) .bc-cal-gear,
 .bc-cal-gear.is-open { visibility: visible; }
 .bc-cal-gear.is-open { color: var(--accent); }
 
@@ -820,12 +820,19 @@ body.bc-dragging * { cursor: grabbing !important; }
 /* Revealed on row hover/focus; rows with an active triage state keep it. */
 .bc-agenda-triage { opacity: 0; transition: opacity 0.12s ease; }
 .bc-agenda-row:hover .bc-agenda-triage,
-.bc-agenda-row:focus-within .bc-agenda-triage,
+.bc-agenda-row:has(:focus-visible) .bc-agenda-triage,
 .bc-agenda-triage.has-on { opacity: 1; }
 /* Touch has no hover: keep the cluster visible. */
 @media (pointer: coarse) { .bc-agenda-triage { opacity: 1; } }
 .bc-empty { color: var(--fg-muted); padding: 18px; text-align: center; }
 .bc-agenda-empty { margin-top: 32px; }
+/* Lead-in note when the list opens on a later day than the one the user is
+   anchored to: without it, an agenda that starts three days out reads as if
+   the first days are missing rather than empty. */
+.bc-agenda-leadgap {
+  color: var(--fg-muted); font-size: 12px; font-style: italic;
+  padding: 10px 0 2px;
+}
 
 /* Multi-day rail treatment: one continuous calendar-colored bar per span,
    running from the vertical center of the start row to the vertical center
@@ -1635,7 +1642,7 @@ body.bc-rescheduling { user-select: none; }
   font-size: 10.5px; padding: 2px 6px; flex: none;
   color: var(--fg-muted); opacity: 0; transition: opacity 0.12s ease;
 }
-.bc-cal-row:hover .bc-cal-solo, .bc-cal-row:focus-within .bc-cal-solo,
+.bc-cal-row:hover .bc-cal-solo, .bc-cal-row:has(:focus-visible) .bc-cal-solo,
 .bc-cal-solo.is-on { opacity: 1; }
 .bc-cal-solo.is-on { color: var(--accent); font-weight: 700; }
 @media (pointer: coarse) { .bc-cal-solo { opacity: 1; } }
@@ -2169,7 +2176,7 @@ body.bc-rescheduling { user-select: none; }
 .bc-folder-tools { display: inline-flex; align-items: center; gap: 2px; margin-left: auto; flex: none; }
 .bc-folder-tools .bc-folder-tool { opacity: 0; transition: opacity 0.1s ease; }
 .bc-folder-headrow:hover .bc-folder-tools .bc-folder-tool, .bc-folder-tool:focus-visible,
-.bc-folder-headrow:focus-within .bc-folder-tools .bc-folder-tool { opacity: 1; }
+.bc-folder-headrow:has(:focus-visible) .bc-folder-tools .bc-folder-tool { opacity: 1; }
 @media (pointer: coarse) { .bc-folder-tools .bc-folder-tool { opacity: 1; } }
 
 /* Folder options panel (gear): rename + delete, indented under the header. */

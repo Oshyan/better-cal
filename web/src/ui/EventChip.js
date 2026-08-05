@@ -22,6 +22,15 @@ function calColor(cal) {
   return (cal && cal.color) || DEFAULT_COLOR;
 }
 
+// Tooltip text. The accent ring an is-highlighted event wears is otherwise
+// unexplained — one event outlined and its neighbours not, with nothing on
+// screen saying why — so the tooltip names the cause.
+function chipTitle(occ) {
+  const base = occ.isGroup ? `${occ.title} (${occ.count} similar)` : occ.title;
+  if (occ.highlighted) return `${base}\nHighlighted by one of your filters`;
+  return base;
+}
+
 function stateClasses(occ, dimmed, nowMs) {
   let c = '';
   if (occ.attendance === 'interested') c += ' is-interested';
@@ -104,7 +113,7 @@ export function EventChip({ occ, cal, dimmed, nowMs, showTime = true, seg = null
     onPointerDown=${occ.isGroup ? undefined : onPointerDown}
     onClick=${onClick}
     onDblClick=${onDblClick}
-    title=${occ.isGroup ? `${occ.title} (${occ.count} similar)` : occ.title}
+    title=${chipTitle(occ)}
   >
     <span class="bc-chip-dot" style=${`background:${color}`}></span>
     ${timed && html`<span class="bc-chip-time">${fmtTime(parseISO(occ.start))}</span>`}
@@ -145,7 +154,7 @@ export function EventBar({ occ, cal, seg, dimmed, nowMs, onOpen, onPointerDown, 
         onOpen(occ.instanceId, e.currentTarget.getBoundingClientRect(), trip ? { detail: true } : undefined);
       }
     }}
-    title=${occ.isGroup ? `${occ.title} (${occ.count} similar)` : occ.title}
+    title=${chipTitle(occ)}
   >
     ${!seg.contLeft && edges && html`<span class="bc-bar-handle l" onPointerDown=${(e) => edges('start', e)}></span>`}
     ${!seg.contLeft && (occ.isGroup ? html`<${StackGlyph} />` : html`<${GoingCheck} occ=${occ} />`)}

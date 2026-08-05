@@ -16,7 +16,7 @@
 import { html, useState, useRef, useMemo, useEffect, useCallback } from '../../vendor/index.js';
 import {
   parseISO, fmtTime, dateOfDayKey, fmtDayLong, occDayKey, todayKey,
-  timeState,
+  timeState, addDaysKey, fmtDateShort,
 } from '../lib/dates.js';
 import { EventChip } from './EventChip.js';
 import { ThumbIcon, TripBadge, PinIcon, Icon } from './icons.js';
@@ -104,7 +104,7 @@ function calColorOf(calendars, occ) {
 // scrollKey/scrollSeq: anchor day key + a monotonically bumped sequence — each
 // new seq scrolls the list to the anchor's day group (nearest following group
 // when the exact day has no events).
-export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, scrollKey, scrollSeq, onOpenEvent, onSetAttendance, onFeedback, onCreateDay, onRequestWindow, onVisibleMonthChange, emptyLabel }) {
+export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, scrollKey, scrollSeq, onOpenEvent, onSetAttendance, onFeedback, onCreateDay, onRequestWindow, onVisibleMonthChange, emptyLabel, gapFrom }) {
   const scrollRef = useRef(null);
   const [win, setWin] = useState({ top: 0, height: 800 });
   const flat = sortMode === 'match';
@@ -201,8 +201,24 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
     onVisibleMonthChange({ year: y, month: m });
   }, [topMonth && topMonth.slice(0, 7)]); // eslint-disable-line
 
+  // The list starts at the first day that HAS events, which silently skips
+  // empty days at the front — opening on "Saturday, August 8" when today is
+  // the 5th reads at a glance like the 5th through 7th are missing rather
+  // than empty. Name the gap so the jump is obviously deliberate.
+  const leadGap = (() => {
+    if (flat || !gapFrom || groups.length === 0) return null;
+    const first = groups[0].dayKey;
+    if (!first || first <= gapFrom) return null;
+    const lastEmpty = addDaysKey(first, -1);
+    const f = (k) => fmtDateShort(dateOfDayKey(k));
+    return gapFrom === lastEmpty
+      ? `No events ${f(gapFrom)}`
+      : `No events ${f(gapFrom)} – ${f(lastEmpty)}`;
+  })();
+
   return html`<div class="bc-agenda" ref=${scrollRef} onScroll=${onScroll}>
     ${groups.length === 0 && html`<div class="bc-empty bc-agenda-empty">${emptyLabel || 'No events in this range'}</div>`}
+    ${leadGap && html`<div class="bc-agenda-leadgap">${leadGap}</div>`}
     <div class="bc-agenda-spacer" style=${`height:${totalH}px`}>
       ${washes.map((r) => {
         if (r.topPx > visEnd || r.topPx + r.heightPx < visStart) return null;

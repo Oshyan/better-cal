@@ -1746,23 +1746,30 @@ body.bc-rescheduling { user-select: none; }
    inner falloff belongs to no other state, survives the month cell's
    overflow clip like any other inset shadow, and leaves the ring free for
    hover to use normally. */
-/* --hl is set per event by whichever highlight filter matched; unset filters
-   fall back to the accent. One variable so the glow, its hover composition
-   and the now-ring pairing all read the same colour. */
-.is-highlighted {
-  --hl-glow: color-mix(in srgb, var(--hl, var(--accent)) 62%, transparent);
-  box-shadow: inset 0 0 5px -1px var(--hl-glow);
-  filter: saturate(1.15);
+/* Highlight filter treatment: the title is underlined in the filter's colour
+   (--hl, set per event by whichever filter matched; unset falls back to the
+   accent).
+
+   It underlines the TITLE, not the event box, and that is the whole point:
+   a timed event is a transparent row — dot, time, title, no fill and no
+   border — so every box-level treatment (ring, inset glow, wash) either has
+   no surface to sit on or invents a rectangle around text that has none.
+   The title is the one thing every shape has, so one rule covers the
+   transparent row, the tinted all-day pill and the solid bars and blocks
+   alike, and it composes with hover, dimming and the active-now ring for
+   free because it never touches box-shadow or background. */
+.is-highlighted .bc-chip-title {
+  text-decoration: underline;
+  text-decoration-color: var(--hl, var(--accent));
+  text-decoration-thickness: 2px;
+  text-underline-offset: 2px;
+  /* Descenders must not punch holes in a 2px rule at this size. */
+  text-decoration-skip-ink: none;
 }
-/* Hover keeps its own grey ring and the glow stays underneath it, so the two
-   states read together instead of one replacing the other. */
-.bc-chip.is-highlighted:hover {
-  box-shadow: 0 0 0 1px var(--border-strong), inset 0 0 5px -1px var(--hl-glow);
-}
-:is(.bc-bar, .bc-block).is-highlighted:hover {
-  box-shadow:
-    inset 0 0 0 1.5px color-mix(in srgb, var(--fg) 34%, transparent),
-    inset 0 0 5px -1px var(--hl-glow);
+/* Solid-filled shapes carry white text on the calendar colour; the raw
+   filter colour goes muddy against it, so lift it toward white. */
+:is(.bc-bar, .bc-block).is-highlighted .bc-chip-title {
+  text-decoration-color: color-mix(in srgb, var(--hl, var(--accent)) 72%, white);
 }
 /* While the toolbar type-to-filter is active (.is-page-filtering on the app
    root, wired in App.js), every still-visible event gets the same highlight
@@ -1840,19 +1847,15 @@ body.bc-rescheduling { user-select: none; }
 .bc-agenda-row.is-past .bc-agenda-loc { opacity: 0.55; }
 
 /* Now = "happening": inset gold ring (inset so month-cell overflow clipping
-   never cuts it off), clearly distinct from the accent .is-highlighted ring.
+   never cuts it off). The only ring an event box wears, now that filter
+   highlighting lives on the title instead.
    Scoped like is-past: agenda rows carry is-now too, for the time column. */
 :is(.bc-chip, .bc-bar, .bc-block).is-now {
   box-shadow: inset 0 0 0 1.5px var(--active-gold);
 }
-/* Active + filter-highlighted: the gold ring keeps the edge (that is the
-   state you need to spot at a glance) and the accent glow sits behind it.
-   Two different shapes, so neither has to give up its meaning. */
-:is(.bc-chip, .bc-bar, .bc-block).is-now.is-highlighted {
-  box-shadow:
-    inset 0 0 0 1.5px var(--active-gold),
-    inset 0 0 5px -1px var(--hl-glow);
-}
+/* Active + filter-highlighted needs no special rule any more: the gold ring
+   is on the box, the highlight underline is on the title, so they simply
+   coexist. */
 /* The toolbar type-to-filter ring (higher specificity) would otherwise mask
    the gold ring; give still-visible active events the same double ring. */
 .is-page-filtering :is(.bc-chip, .bc-bar, .bc-block).is-now:not(.is-page-hidden) {

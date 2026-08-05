@@ -220,6 +220,10 @@ final class Events
                     $occ['dimmed'] = true;
                 } elseif ($disposition === 'highlight') {
                     $occ['highlighted'] = true;
+                    // Which filter won decides the glow colour; keyword and
+                    // regex filters answer first, then prompt filters.
+                    $occ['highlightColor'] = Filters::highlightColorFor($row, $activeFilters)
+                        ?? Filters::promptHighlightColorFor($row, $promptCtx['filters'], $promptCtx['failed']);
                 }
                 $kept[] = $occ;
             }
@@ -244,6 +248,9 @@ final class Events
                 }
                 if (!empty($occ['highlighted'])) {
                     $serialized['highlighted'] = true;
+                    if (!empty($occ['highlightColor'])) {
+                        $serialized['highlightColor'] = $occ['highlightColor'];
+                    }
                 }
                 return $serialized;
             },

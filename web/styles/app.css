@@ -1746,21 +1746,23 @@ body.bc-rescheduling { user-select: none; }
    inner falloff belongs to no other state, survives the month cell's
    overflow clip like any other inset shadow, and leaves the ring free for
    hover to use normally. */
+/* --hl is set per event by whichever highlight filter matched; unset filters
+   fall back to the accent. One variable so the glow, its hover composition
+   and the now-ring pairing all read the same colour. */
 .is-highlighted {
-  box-shadow: inset 0 0 7px -1px color-mix(in srgb, var(--accent) 62%, transparent);
+  --hl-glow: color-mix(in srgb, var(--hl, var(--accent)) 62%, transparent);
+  box-shadow: inset 0 0 5px -1px var(--hl-glow);
   filter: saturate(1.15);
 }
 /* Hover keeps its own grey ring and the glow stays underneath it, so the two
    states read together instead of one replacing the other. */
 .bc-chip.is-highlighted:hover {
-  box-shadow:
-    0 0 0 1px var(--border-strong),
-    inset 0 0 7px -1px color-mix(in srgb, var(--accent) 62%, transparent);
+  box-shadow: 0 0 0 1px var(--border-strong), inset 0 0 5px -1px var(--hl-glow);
 }
 :is(.bc-bar, .bc-block).is-highlighted:hover {
   box-shadow:
     inset 0 0 0 1.5px color-mix(in srgb, var(--fg) 34%, transparent),
-    inset 0 0 7px -1px color-mix(in srgb, var(--accent) 62%, transparent);
+    inset 0 0 5px -1px var(--hl-glow);
 }
 /* While the toolbar type-to-filter is active (.is-page-filtering on the app
    root, wired in App.js), every still-visible event gets the same highlight
@@ -1849,7 +1851,7 @@ body.bc-rescheduling { user-select: none; }
 :is(.bc-chip, .bc-bar, .bc-block).is-now.is-highlighted {
   box-shadow:
     inset 0 0 0 1.5px var(--active-gold),
-    inset 0 0 7px -1px color-mix(in srgb, var(--accent) 62%, transparent);
+    inset 0 0 5px -1px var(--hl-glow);
 }
 /* The toolbar type-to-filter ring (higher specificity) would otherwise mask
    the gold ring; give still-visible active events the same double ring. */
@@ -2198,6 +2200,23 @@ body.bc-rescheduling { user-select: none; }
 /* A control that HIDES rows cannot itself hide: with only-active on, the way
    back has to be visible without hunting for it. */
 .bc-folder-tools .bc-activeonly.is-on { opacity: 1; color: var(--accent); }
+
+/* Highlight-colour picker in the filter form; only rendered for the
+   highlight action. Swatches are the shared calendar palette. */
+.bc-hlcolor { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; }
+.bc-hlcolor-swatch {
+  width: 18px; height: 18px; border-radius: 50%; padding: 0;
+  border: 1px solid color-mix(in srgb, var(--fg) 22%, transparent);
+  background: var(--sw); cursor: pointer;
+}
+.bc-hlcolor-swatch.is-default {
+  background: var(--accent);
+  border-style: dashed;
+}
+.bc-hlcolor-swatch.is-sel {
+  box-shadow: 0 0 0 2px var(--bg), 0 0 0 3.5px var(--fg-muted);
+}
+.bc-hlcolor-field { min-width: 210px; }
 
 /* Folder options panel (gear): rename + delete, indented under the header. */
 .bc-folder-options {

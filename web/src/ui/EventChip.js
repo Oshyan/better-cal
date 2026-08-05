@@ -25,6 +25,12 @@ function calColor(cal) {
 // Tooltip text. The accent ring an is-highlighted event wears is otherwise
 // unexplained — one event outlined and its neighbours not, with nothing on
 // screen saying why — so the tooltip names the cause.
+// A highlight filter may name its own colour; the glow reads --hl and falls
+// back to the accent when no filter chose one.
+function hlVar(occ) {
+  return occ.highlighted && occ.highlightColor ? `;--hl:${occ.highlightColor}` : '';
+}
+
 function chipTitle(occ) {
   const base = occ.isGroup ? `${occ.title} (${occ.count} similar)` : occ.title;
   if (occ.highlighted) return `${base}\nHighlighted by one of your filters`;
@@ -108,7 +114,7 @@ export function EventChip({ occ, cal, dimmed, nowMs, showTime = true, seg = null
   return html`<button
     type="button"
     class="bc-chip${dotStyle ? ' is-dotstyle' : ''}${seg && seg.contLeft ? ' cont-l' : ''}${seg && seg.contRight ? ' cont-r' : ''}${stateClasses(occ, dimmed, nowMs)}"
-    style=${style}
+    style=${style + hlVar(occ)}
     data-instance=${occ.instanceId}
     onPointerDown=${occ.isGroup ? undefined : onPointerDown}
     onClick=${onClick}
@@ -141,7 +147,7 @@ export function EventBar({ occ, cal, seg, dimmed, nowMs, onOpen, onPointerDown, 
   const edges = occ.isGroup || trip ? null : onEdgePointerDown;
   return html`<div
     class="bc-bar${stateClasses(occ, dimmed, nowMs)}${seg.contLeft ? ' cont-l' : ''}${seg.contRight ? ' cont-r' : ''}"
-    style=${style}
+    style=${style + hlVar(occ)}
     data-instance=${occ.instanceId}
     role="button"
     tabindex="0"
@@ -187,7 +193,7 @@ export function EventBlock({ occ, cal, rect, dimmed, nowMs, onOpen, onPointerDow
   const edges = occ.isGroup || trip ? null : onEdgePointerDown;
   return html`<div
     class="bc-block${stateClasses(occ, dimmed, nowMs)}"
-    style=${`top:${rect.top}px;height:${rect.height}px;left:${rect.leftPct}%;width:${rect.widthPct}%;${rect.z ? `z-index:${rect.z};` : ''}${bg}`}
+    style=${`top:${rect.top}px;height:${rect.height}px;left:${rect.leftPct}%;width:${rect.widthPct}%;${rect.z ? `z-index:${rect.z};` : ''}${bg}${hlVar(occ)}`}
     data-instance=${occ.instanceId}
     role="button"
     tabindex="0"

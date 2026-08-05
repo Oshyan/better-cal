@@ -13,6 +13,7 @@ import { html, useState, useEffect } from '../../vendor/index.js';
 import { useStore, state, toast, shallowEq } from './store.js';
 import { api, refreshWindow } from './api.js';
 import { PageShell, EmptyState } from './PageShell.js';
+import { PALETTE } from '../lib/color.js';
 
 const FIELD_OPTIONS = ['title', 'description', 'location', 'tags'];
 // Default selection mirrors the server default: tags is opt-in.
@@ -34,6 +35,7 @@ function FilterForm({ calendars, folders, initial, inline, busy, onSave, onCance
     : { ...ALL_FIELDS }));
   const [prompt, setPrompt] = useState(initial && initial.type === 'prompt' ? (initial.config.prompt || '') : '');
   const [negativePrompt, setNegativePrompt] = useState(initial && initial.type === 'prompt' ? (initial.config.negativePrompt || '') : '');
+  const [color, setColor] = useState((initial && initial.config && initial.config.color) || '');
 
   const isPrompt = type === 'prompt';
   const canSubmit = isPrompt ? prompt.trim() : pattern.trim();
@@ -43,6 +45,9 @@ function FilterForm({ calendars, folders, initial, inline, busy, onSave, onCance
     const config = isPrompt
       ? { prompt, ...(negativePrompt.trim() ? { negativePrompt } : {}) }
       : { pattern, fields: FIELD_OPTIONS.filter((f) => fields[f]) };
+    // Only meaningful for highlight, but kept on the object whatever the
+    // action is so flipping to Dim and back does not lose the choice.
+    if (color) config.color = color;
     const body = { scope, type, action, config };
     if (scope === 'calendar') body.scopeId = Number(scopeId || (calendars[0] && calendars[0].id));
     if (scope === 'folder') body.scopeId = Number(scopeId || (folders[0] && folders[0].id));
@@ -121,6 +126,22 @@ function FilterForm({ calendars, folders, initial, inline, busy, onSave, onCance
           <option value="highlight">Highlight matching events</option>
         </select>
       </label>
+      ${action === 'highlight' && html`<label class="bc-field bc-hlcolor-field">
+        <span>Highlight colour</span>
+        <div class="bc-hlcolor" role="radiogroup" aria-label="Highlight colour">
+          <button
+            type="button" role="radio" aria-checked=${!color}
+            class="bc-hlcolor-swatch is-default${!color ? ' is-sel' : ''}"
+            title="Default (accent)" onClick=${() => setColor('')}
+          ></button>
+          ${PALETTE.map((c) => html`<button
+            key=${c} type="button" role="radio" aria-checked=${color === c}
+            class="bc-hlcolor-swatch${color === c ? ' is-sel' : ''}"
+            style=${`--sw:${c}`} title=${c} aria-label=${'Highlight colour ' + c}
+            onClick=${() => setColor(c)}
+          ></button>`)}
+        </div>
+      </label>`}
       <div class="bc-field bc-form-actions">
         <span aria-hidden="true"> </span>
         <div class="bc-form-btnrow">

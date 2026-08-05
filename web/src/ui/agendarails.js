@@ -13,6 +13,7 @@ import { epochDayOfKey, startMs } from '../lib/dates.js';
 
 export const AGENDA_ROW_H = 36;
 export const AGENDA_HEAD_H = 40;
+export const AGENDA_MONTH_SEP_H = 30;
 export const MAX_RAIL_LANES = 3;
 
 // Inclusive day count of an occurrence's span (1 for single-day).
@@ -64,8 +65,9 @@ export function buildAgendaGroups(occurrences, opts = {}) {
     }
   }
   const keys = [...byDay.keys()].sort();
+  const sepH = opts.sepH ?? AGENDA_MONTH_SEP_H;
   let offset = 0;
-  return keys.map((k) => {
+  return keys.map((k, i) => {
     const b = byDay.get(k);
     b.ends.sort(chronological);
     const merged = [
@@ -73,8 +75,12 @@ export function buildAgendaGroups(occurrences, opts = {}) {
       ...b.normals.map((occ) => ({ kind: 'normal', occ })),
     ].sort((x, y) => chronological(x.occ, y.occ));
     const rows = [...merged, ...b.ends.map((occ) => ({ kind: 'end', occ }))];
-    const height = headH + rows.length * rowH;
-    const g = { dayKey: k, rows, top: offset, height };
+    // A month separator is a real band inside the group that opens the month,
+    // not an overlay: its height has to be in the layout or it draws on top
+    // of the previous day's last row.
+    const monthStart = i > 0 && keys[i - 1].slice(0, 7) !== k.slice(0, 7);
+    const height = headH + rows.length * rowH + (monthStart ? sepH : 0);
+    const g = { dayKey: k, rows, top: offset, height, monthStart };
     offset += height;
     return g;
   });
@@ -109,8 +115,11 @@ export function railRanges(groups, opts = {}) {
       // of the end pill. Anything shorter visibly stops mid-pill because chip
       // backgrounds are translucent.
       const pillInset = (rowH - 20) / 2;
-      const topPx = g.top + headH + i * rowH + pillInset;
-      const bottomPx = eg.top + headH + ei * rowH + (rowH - pillInset);
+      // Groups that open a month carry the separator band above their header,
+      // so their rows start that much lower.
+      const sepH = opts.sepH ?? AGENDA_MONTH_SEP_H;
+      const topPx = g.top + (g.monthStart ? sepH : 0) + headH + i * rowH + pillInset;
+      const bottomPx = eg.top + (eg.monthStart ? sepH : 0) + headH + ei * rowH + (rowH - pillInset);
       spans.push({ occ, topPx, heightPx: bottomPx - topPx });
     });
   }

@@ -29,6 +29,16 @@ final class Filters
     private const STRENGTH = ['hide' => 3, 'dim' => 2, 'highlight' => 1];
     /** Fields a keyword/regex filter may match against. */
     public const FIELDS = ['title', 'description', 'location', 'tags'];
+    /**
+     * Curated highlight colours. A closed set rather than a free hex field:
+     * the highlight is a glow drawn over a tinted chip, so an arbitrary
+     * colour can land unreadable in one theme while looking fine in the
+     * other. Mirrors web/src/lib/color.js PALETTE.
+     */
+    public const HIGHLIGHT_COLORS = [
+        '#5b7fd4', '#c95d5d', '#4f9d69', '#c98c3d', '#8e6cc0',
+        '#3d9dc9', '#c9569b', '#6b8e23', '#b0713a', '#5d6dc9',
+    ];
     /** Default when config.fields is absent; tags is opt-in. */
     public const DEFAULT_FIELDS = ['title', 'description', 'location'];
     private const MAX_PATTERN_CHARS = 500;
@@ -223,6 +233,7 @@ final class Filters
             $filters[] = [
                 'id' => (int) $row['id'],
                 'action' => (string) $row['action'],
+                'color' => (json_decode((string) $row['config_json'], true)['color'] ?? null),
                 'calendarIds' => $this->scopeCalendarIds($row),
             ];
         }
@@ -385,6 +396,53 @@ final class Filters
     }
 
     /**
+     * The colour a highlighted row should glow in: the first matching enabled
+     * highlight filter that names one. Separate from disposition() because
+     * that returns the winning ACTION and several callers depend on it being
+     * a plain string; null means "no colour chosen", i.e. the accent.
+     */
+    public static function highlightColorFor(array $row, array $filters): ?string
+    {
+        foreach ($filters as $filter) {
+            if (($filter['action'] ?? '') !== 'highlight') {
+                continue;
+            }
+            if ($filter['calendarIds'] !== null && !isset($filter['calendarIds'][(int) ($row['calendar_id'] ?? 0)])) {
+                continue;
+            }
+            $color = $filter['config']['color'] ?? null;
+            if ($color !== null && self::evaluate($row, $filter)) {
+                return (string) $color;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Same, for prompt filters: their verdicts are pre-fetched, so matching
+     * means "this event is in the filter's failed set".
+     *
+     * @param list<array{id:int,action:string,color?:?string,calendarIds:?array<int,true>}> $promptFilters
+     * @param array<int,array<int,true>> $failed filterId => set of failing event ids
+     */
+    public static function promptHighlightColorFor(array $row, array $promptFilters, array $failed): ?string
+    {
+        $eventId = (int) ($row['id'] ?? 0);
+        foreach ($promptFilters as $filter) {
+            if (($filter['action'] ?? '') !== 'highlight' || empty($filter['color'])) {
+                continue;
+            }
+            if ($filter['calendarIds'] !== null && !isset($filter['calendarIds'][(int) ($row['calendar_id'] ?? 0)])) {
+                continue;
+            }
+            if (isset($failed[$filter['id']][$eventId])) {
+                return (string) $filter['color'];
+            }
+        }
+        return null;
+    }
+
+    /**
      * Pure prompt-filter disposition for one event row given pre-fetched
      * verdicts (see promptFilterContext). Same precedence as disposition():
      * hide wins outright, then dim, then highlight; null when every filter
@@ -457,7 +515,30 @@ final class Filters
         if ($type === 'regex' && @preg_match(self::delimit($pattern), '') === false) {
             throw HttpError::badRequest('Invalid regular expression', 'filter_invalid_regex');
         }
-        return ['pattern' => $pattern, 'fields' => $fields];
+        $out = ['pattern' => $pattern, 'fields' => $fields];
+        $color = self::highlightColor($config);
+        if ($color !== null) {
+            $out['color'] = $color;
+        }
+        return $out;
+    }
+
+    /**
+     * config.color for a highlight filter: null when absent (the client falls
+     * back to the accent), otherwise one of HIGHLIGHT_COLORS. Stored for any
+     * action so switching a filter to highlight and back does not lose the
+     * choice, but only ever read when the action is highlight.
+     */
+    private static function highlightColor(array $config): ?string
+    {
+        if (!isset($config['color']) || $config['color'] === '' || $config['color'] === null) {
+            return null;
+        }
+        $color = strtolower(trim((string) $config['color']));
+        if (!in_array($color, self::HIGHLIGHT_COLORS, true)) {
+            throw HttpError::badRequest('config.color must be one of the highlight palette colours');
+        }
+        return $color;
     }
 
     /** @return array{prompt:string,negativePrompt?:string,threshold?:float} */
@@ -471,6 +552,10 @@ final class Filters
             throw HttpError::badRequest('config.prompt is too long (max ' . self::MAX_PROMPT_CHARS . ' chars)');
         }
         $out = ['prompt' => $prompt];
+        $color = self::highlightColor($config);
+        if ($color !== null) {
+            $out['color'] = $color;
+        }
         $negative = trim((string) ($config['negativePrompt'] ?? ''));
         if ($negative !== '') {
             if (mb_strlen($negative) > self::MAX_PROMPT_CHARS) {

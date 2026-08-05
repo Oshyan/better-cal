@@ -138,19 +138,19 @@ function LooseModeButton() {
   />`;
 }
 
-// Display-only: hides unchecked rows from the list without changing a single
-// calendar's visibility. It sits in the All-calendars header because that is
-// the longest list, but it applies to every section — hence the tooltip, and
-// hence the button staying lit for as long as rows are being hidden.
+// Display-only: hides unchecked rows without changing a single calendar's
+// visibility. Scoped to the section it sits in — a control in one header that
+// silently reordered the sections above it was disorienting, and it read as
+// odd that a global switch lived inside one group.
 function ActiveOnlyButton() {
   const on = useStore((s) => !!s.settings.sidebarActiveOnly);
   return html`<button
     type="button" class="bc-icon-btn bc-folder-tool bc-activeonly${on ? ' is-on' : ''}"
     aria-pressed=${on}
-    aria-label=${on ? 'List every row again' : 'List only active rows'}
+    aria-label=${on ? 'List every calendar in this group' : 'List only active calendars in this group'}
     title=${on
-      ? 'Listing only active rows in every section — click to list them all again'
-      : 'List only active rows, in every section. Changes what the list shows, not which calendars are on.'}
+      ? 'Listing only active calendars here — click to list them all again'
+      : 'List only the active calendars in this group. Changes what the list shows, not which calendars are on.'}
     onClick=${() => setSidebarActiveOnly(!on)}
   ><${Icon} name="activeOnly" size=${13} /></button>`;
 }
@@ -310,14 +310,15 @@ export function Sidebar({ open, collapsed, onClose }) {
     set({ collapsedFolders: { ...collapsedFolders, [id]: !collapsedFolders[id] } });
   };
 
-  // "Only active" drops unchecked rows from the LIST. The row whose gear is
-  // open stays regardless: switching a calendar off from its own settings
-  // panel would otherwise yank the panel out from under the pointer.
-  const listed = (cals) => (activeOnly
+  // "Only active" drops unchecked rows from the LIST, and only in the group
+  // whose header carries the button. The row whose gear is open stays
+  // regardless: switching a calendar off from its own settings panel would
+  // otherwise yank the panel out from under the pointer.
+  const listed = (cals, scoped) => (activeOnly && scoped
     ? cals.filter((c) => c.visible || openCalId === c.id)
     : cals);
 
-  const rows = (cals) => listed(cals).map((c) => html`<${CalendarRow}
+  const rows = (cals, scoped) => listed(cals, scoped).map((c) => html`<${CalendarRow}
     key=${c.id} cal=${c} folders=${folders}
     open=${openCalId === c.id} onGear=${toggleGear}
     soloed=${solo && solo.calId === c.id}
@@ -356,7 +357,7 @@ export function Sidebar({ open, collapsed, onClose }) {
             <${LooseModeButton} />
           </span>
         </div>`}
-        ${(byFolder.length === 0 || !collapsedAllCals) && rows(loose)}
+        ${(byFolder.length === 0 || !collapsedAllCals) && rows(loose, true)}
       </section>
       ${people.length > 0 && html`<section class="bc-folder">
         <div class="bc-folder-headrow">
@@ -374,7 +375,7 @@ export function Sidebar({ open, collapsed, onClose }) {
             ><${Icon} name="plus" size=${13} /></button>
           </span>
         </div>
-        ${!collapsedPeople && people.filter((p) => !activeOnly || p.showOnCalendar).map((p) => html`<div key=${p.id} class="bc-cal-item">
+        ${!collapsedPeople && people.map((p) => html`<div key=${p.id} class="bc-cal-item">
           <div class="bc-cal-row${p.currentSpan && p.currentSpan.kind === 'away' ? ' is-person-away' : ''}${p.showOnCalendar ? '' : ' is-off'}">
             <span class="bc-cal-label">
               <input

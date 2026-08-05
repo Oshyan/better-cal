@@ -7,6 +7,7 @@ import { html, useRef, useEffect } from '../../vendor/index.js';
 import { useStore, set } from './store.js';
 import { trapFocus } from '../ui/DayExpand.js';
 import { HOTKEYS, HOTKEY_GROUPS } from './hotkeys.js';
+import { Icon } from '../ui/icons.js';
 
 export function ShortcutsSheet() {
   const open = useStore((s) => s.shortcutsOpen);
@@ -28,7 +29,7 @@ export function ShortcutsSheet() {
     <div class="bc-shortcuts" ref=${panelRef} role="dialog" aria-modal="true" aria-label="Keyboard shortcuts" tabindex="-1">
       <div class="bc-shortcuts-head">
         <h2>Keyboard shortcuts</h2>
-        <button type="button" class="bc-icon-btn" aria-label="Close" onClick=${close}>✕</button>
+        <button type="button" class="bc-icon-btn" aria-label="Close" onClick=${close}><${Icon} name="close" size=${15} /></button>
       </div>
       <div class="bc-shortcuts-grid">
         ${HOTKEY_GROUPS.map((g) => html`<section key=${g} class="bc-sc-group">

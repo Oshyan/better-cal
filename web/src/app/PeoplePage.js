@@ -132,7 +132,7 @@ function PersonAvailability({ person }) {
       <span class="bc-badge bc-away-pill is-${span.kind}">${span.kind}</span>
       <span class="bc-person-availrange">${fmtSpanRange(span)}</span>
       ${span.note && html`<span class="bc-person-availnote">${span.note}</span>`}
-      <button type="button" class="bc-icon-btn bc-trip-x" title="Remove span" aria-label="Remove span" onClick=${() => remove(span)}>✕</button>
+      <button type="button" class="bc-icon-btn bc-trip-x" title="Remove span" aria-label="Remove span" onClick=${() => remove(span)}><${Icon} name="close" size=${12} /></button>
     </div>`)}
     <form class="bc-person-availform" onSubmit=${submit}>
       <select value=${kind} onChange=${(e) => setKind(e.target.value)} aria-label="Kind">

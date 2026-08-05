@@ -29,6 +29,7 @@ import {
 } from './monthmath.js';
 import { assignLanes } from './layout.js';
 import { EventChip, EventBar, TripBand } from './EventChip.js';
+import { Icon } from './icons.js';
 import { startPointerDrag, cloneAsGhost } from './DragController.js';
 import { normalizeDayRange, dayRangeDraft } from '../lib/quickcreate.js';
 
@@ -564,13 +565,13 @@ function WeekRow({
         title="Show this day's events here"
         onPointerDown=${(e) => e.stopPropagation()}
         onClick=${(e) => { e.stopPropagation(); if (onExpandDay) onExpandDay(k); }}
-      ><span class="bc-headstrip-glyph" aria-hidden="true">⌄</span></button>
+      ><span class="bc-headstrip-glyph" aria-hidden="true"><${Icon} name="chevronDown" size=${13} /></span></button>
       <button
         type="button" class="bc-cell-add" aria-label=${'New event on ' + k}
         title="New event"
         onPointerDown=${(e) => e.stopPropagation()}
         onClick=${(e) => { e.stopPropagation(); if (quickCreateDay) quickCreateDay(k); }}
-      >+</button>
+      ><${Icon} name="plus" size=${13} /></button>
       <div class="bc-cell-chips" style=${`top:${chipTop}px`}>
         ${singles.slice(0, shown).map((occ) => html`<${EventChip}
           key=${occ.instanceId} occ=${occ} cal=${calendars[occ.calendarId]}

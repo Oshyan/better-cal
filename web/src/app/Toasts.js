@@ -4,6 +4,7 @@
 import { html } from '../../vendor/index.js';
 import { useStore, dismissToast } from './store.js';
 import { undo } from './api.js';
+import { Icon } from '../ui/icons.js';
 
 export function Toasts() {
   const toasts = useStore((s) => s.toasts);
@@ -15,7 +16,7 @@ export function Toasts() {
       ${t.actionLabel && html`<button type="button" class="bc-toast-undo" onClick=${() => { dismissToast(t.id); if (t.onAction) t.onAction(); }}>${t.actionLabel}</button>`}
       ${t.dismissLabel
         ? html`<button type="button" class="bc-toast-undo bc-toast-keep" onClick=${() => dismissToast(t.id)}>${t.dismissLabel}</button>`
-        : html`<button type="button" class="bc-icon-btn" aria-label="Dismiss" onClick=${() => dismissToast(t.id)}>✕</button>`}
+        : html`<button type="button" class="bc-icon-btn" aria-label="Dismiss" onClick=${() => dismissToast(t.id)}><${Icon} name="close" size=${13} /></button>`}
     </div>`)}
   </div>`;
 }

@@ -10,6 +10,7 @@ import { jumpToDate } from './actions.js';
 import { trapFocus } from '../ui/DayExpand.js';
 import { parseJumpText } from '../lib/jumpparse.js';
 import { monthWeeks, stepMonthOf, weekdayHeads } from '../lib/minimonth.js';
+import { Icon } from '../ui/icons.js';
 import {
   todayKey, dateOfDayKey, pad,
   fmtMonthYear, fmtDayLong, fmtMonthShort,
@@ -76,7 +77,7 @@ export function JumpPopover() {
         onKeyDown=${onKeyDown}
         aria-label="Jump to date"
       />
-      <button type="button" class="bc-icon-btn bc-jump-close" aria-label="Close" onClick=${() => set({ jumpOpen: false })}>✕</button>
+      <button type="button" class="bc-icon-btn bc-jump-close" aria-label="Close" onClick=${() => set({ jumpOpen: false })}><${Icon} name="close" size=${14} /></button>
     </div>
     <div class="bc-jump-preview" aria-live="polite">
       ${text.trim()
@@ -86,14 +87,14 @@ export function JumpPopover() {
 
     <div class="bc-jump-head">
       <button type="button" class="bc-icon-btn bc-jump-step" aria-label="Previous year" onClick=${() => stepYear(-1)}>«</button>
-      <button type="button" class="bc-icon-btn bc-jump-step" aria-label="Previous month" onClick=${() => stepMonth(-1)}>‹</button>
+      <button type="button" class="bc-icon-btn bc-jump-step" aria-label="Previous month" onClick=${() => stepMonth(-1)}><${Icon} name="chevronLeft" size=${14} /></button>
       <button
         type="button" class="bc-jump-title"
         aria-expanded=${yearMode}
         title=${yearMode ? 'Back to days' : 'Pick a month'}
         onClick=${() => setYearMode(!yearMode)}
       >${fmtMonthYear(dateOfDayKey(monthPrefix + '-01'))}</button>
-      <button type="button" class="bc-icon-btn bc-jump-step" aria-label="Next month" onClick=${() => stepMonth(1)}>›</button>
+      <button type="button" class="bc-icon-btn bc-jump-step" aria-label="Next month" onClick=${() => stepMonth(1)}><${Icon} name="chevronRight" size=${14} /></button>
       <button type="button" class="bc-icon-btn bc-jump-step" aria-label="Next year" onClick=${() => stepYear(1)}>»</button>
     </div>
 

@@ -112,8 +112,8 @@ export function Toolbar({ onToggleSidebar }) {
     <span class="bc-brand"><span class="bc-brand-icon"><${Icon} name="brand" size=${21} /></span><span class="bc-brand-name">Better-Cal</span></span>
     <button type="button" class="bc-btn" onClick=${goToday}>Today</button>
     <div class="bc-toolbar-nav">
-      <button type="button" class="bc-icon-btn bc-nav-btn" aria-label=${'Previous ' + unit} title=${'Previous ' + unit} onClick=${() => stepAnchor(-1)}>‹</button>
-      <button type="button" class="bc-icon-btn bc-nav-btn" aria-label=${'Next ' + unit} title=${'Next ' + unit} onClick=${() => stepAnchor(1)}>›</button>
+      <button type="button" class="bc-icon-btn bc-nav-btn" aria-label=${'Previous ' + unit} title=${'Previous ' + unit} onClick=${() => stepAnchor(-1)}><${Icon} name="chevronLeft" size=${15} /></button>
+      <button type="button" class="bc-icon-btn bc-nav-btn" aria-label=${'Next ' + unit} title=${'Next ' + unit} onClick=${() => stepAnchor(1)}><${Icon} name="chevronRight" size=${15} /></button>
       <button
         type="button" class="bc-toolbar-month bc-toolbar-date"
         aria-haspopup="dialog" aria-expanded=${jumpOpen}
@@ -134,8 +134,8 @@ export function Toolbar({ onToggleSidebar }) {
     />
     <${ViewMenu} view=${view} narrow=${narrow} />
     <button type="button" class="bc-icon-btn" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)" onClick=${() => set({ shortcutsOpen: true })}><${Icon} name="keyboard" size=${16} /></button>
-    <button type="button" class="bc-icon-btn" aria-label="Search" title="Search ( / )" onClick=${() => set({ searchOpen: true })}>${'🔍'}</button>
-    <button type="button" class="bc-icon-btn" aria-label="Quick add" title="Quick add: type it in plain language (c)" onClick=${() => set({ quickAddOpen: true })}>${'⚡'}</button>
+    <button type="button" class="bc-icon-btn" aria-label="Search" title="Search ( / )" onClick=${() => set({ searchOpen: true })}><${Icon} name="search" size=${16} /></button>
+    <button type="button" class="bc-icon-btn bc-qa-btn" aria-label="Quick add" title="Quick add: type it in plain language (c)" onClick=${() => set({ quickAddOpen: true })}><${Icon} name="quickadd" size=${16} /></button>
     <${NewMenu} />
   </header>`;
 }
@@ -169,7 +169,7 @@ function NewMenu() {
       type="button" class="bc-btn bc-btn-primary bc-newmenu-caret"
       aria-label="More things to create" aria-expanded=${open} aria-haspopup="menu"
       onClick=${() => setOpen(!open)}
-    >▾</button>
+    ><${Icon} name="chevronDown" size=${11} /></button>
     ${open && html`<div class="bc-newmenu-drop" role="menu">
       ${items.map(([label, fn]) => html`<button key=${label} type="button" role="menuitem" class="bc-newmenu-item" onClick=${go(fn)}>${label}</button>`)}
     </div>`}

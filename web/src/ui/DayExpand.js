@@ -6,6 +6,7 @@ import { html, useRef, useEffect } from '../../vendor/index.js';
 import { dateOfDayKey, fmtDayLong, parseISO, fmtTime, epochDayOfKey, byStart } from '../lib/dates.js';
 import { EventChip } from './EventChip.js';
 import { occurrenceDaySpan } from './monthmath.js';
+import { Icon } from './icons.js';
 
 export const MOBILE_QUERY = '(max-width: 640px)';
 
@@ -68,7 +69,7 @@ export function DayExpand({ dayKey, anchorRect, occurrences, calendars, dimSet, 
     >
       <div class="bc-dayexpand-head">
         <span class="bc-dayexpand-title">${fmtDayLong(d)}</span>
-        <button type="button" class="bc-icon-btn" aria-label="Close" onClick=${onClose}>${'✕'}</button>
+        <button type="button" class="bc-icon-btn" aria-label="Close" onClick=${onClose}><${Icon} name="close" size=${14} /></button>
       </div>
       <div class="bc-dayexpand-list">
         ${sorted.length === 0 && html`<div class="bc-empty">No events this day</div>`}
@@ -95,7 +96,7 @@ export function DayExpand({ dayKey, anchorRect, occurrences, calendars, dimSet, 
               type="button" class="bc-icon-btn bc-dayexpand-open"
               title="Open details" aria-label=${'Open details for ' + (occ.title || 'event')}
               onClick=${() => onOpenDetail(occ.instanceId)}
-            >↗</button>`}
+            ><${Icon} name="arrowUpRight" size=${13} /></button>`}
           </div>`;
         })}
       </div>

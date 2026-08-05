@@ -121,7 +121,7 @@ export function SearchOverlay() {
           onKeyDown=${onKeyDown}
           aria-label="Search all events"
         />
-        <button type="button" class="bc-icon-btn bc-search-close" aria-label="Close" onClick=${() => set({ searchOpen: false })}>✕</button>
+        <button type="button" class="bc-icon-btn bc-search-close" aria-label="Close" onClick=${() => set({ searchOpen: false })}><${Icon} name="close" size=${15} /></button>
       </div>
       ${userTags && userTags.length > 0 && html`<div class="bc-search-tags" role="group" aria-label="Search by tag">
         ${userTags.map((t) => html`<button

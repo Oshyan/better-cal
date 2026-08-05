@@ -45,7 +45,7 @@ function healthBadge(cal) {
   const tip = status === 'error'
     ? 'Feed error: ' + (error || 'unknown') + (lastPolledAt ? ' (last poll ' + lastPolledAt + ')' : '')
     : 'Feed is stale' + (lastPolledAt ? ' (last poll ' + lastPolledAt + ')' : '');
-  return html`<span class="bc-health" role="img" aria-label=${tip} title=${tip}>⚠</span>`;
+  return html`<span class="bc-health" role="img" aria-label=${tip} title=${tip}><${Icon} name="warning" size=${12} /></span>`;
 }
 
 function CalendarRow({ cal, folders, open, onGear, soloed, onSolo }) {
@@ -69,7 +69,7 @@ function CalendarRow({ cal, folders, open, onGear, soloed, onSolo }) {
         aria-pressed=${soloed}
         title=${soloed ? 'Showing only this calendar. Click to restore.' : 'Show only this calendar'}
         onClick=${(e) => { onSolo(cal); e.currentTarget.blur(); }}
-      >${soloed ? 'Only ✓' : 'Only'}</button>
+      >${soloed ? html`Only <${Icon} name="check" size=${10} />` : 'Only'}</button>
       <button
         type="button"
         class="bc-icon-btn bc-cal-gear${open ? ' is-open' : ''}"
@@ -121,7 +121,7 @@ function ModeMenu({ mode, tip, ariaName, customDisabled, onPick }) {
         title=${m === 'custom' && customDisabled ? 'No custom selection saved yet — toggle individual checkboxes to make one' : ''}
         class="bc-ov-item${mode === m ? ' is-sel' : ''}"
         onClick=${() => { setOpen(false); if (m !== mode) onPick(m); }}
-      ><span class="bc-ov-check" aria-hidden="true">${mode === m ? '✓' : ''}</span><${Icon} name=${MODE_ICONS[m]} size=${12} />${MODE_LABELS[m]}</button>`)}
+      ><span class="bc-ov-check" aria-hidden="true">${mode === m ? html`<${Icon} name="check" size=${11} />` : ''}</span><${Icon} name=${MODE_ICONS[m]} size=${12} />${MODE_LABELS[m]}</button>`)}
     </div>`}
   </div>`;
 }
@@ -290,7 +290,7 @@ export function Sidebar({ open, collapsed, onClose }) {
   return html`<aside class="bc-sidebar${open ? ' is-open' : ''}${collapsed ? ' is-collapsed' : ''}">
     ${onClose && html`<div class="bc-sidebar-mobilehead">
       <span class="bc-manage-head">Calendars</span>
-      <button type="button" class="bc-icon-btn" aria-label="Close sidebar" onClick=${onClose}>✕</button>
+      <button type="button" class="bc-icon-btn" aria-label="Close sidebar" onClick=${onClose}><${Icon} name="close" size=${15} /></button>
     </div>`}
     <div class="bc-sidebar-scroll">
       <${MiniMonth} />
@@ -358,7 +358,7 @@ export function Sidebar({ open, collapsed, onClose }) {
               aria-pressed=${peopleSolo && peopleSolo.personId === p.id}
               title=${peopleSolo && peopleSolo.personId === p.id ? 'Showing only this person. Click to restore.' : "Show only this person's spans"}
               onClick=${(e) => { if (peopleSolo && peopleSolo.personId === p.id) exitPeopleSolo(); else enterPeopleSolo(p); e.currentTarget.blur(); }}
-            >${peopleSolo && peopleSolo.personId === p.id ? 'Only ✓' : 'Only'}</button>
+            >${peopleSolo && peopleSolo.personId === p.id ? html`Only <${Icon} name="check" size=${10} />` : 'Only'}</button>
           </div>
         </div>`)}
       </section>`}

@@ -10,6 +10,7 @@
 import { html } from '../../vendor/index.js';
 import { contrastText, withAlpha, DEFAULT_COLOR } from '../lib/color.js';
 import { parseISO, fmtTime, timeState } from '../lib/dates.js';
+import { Icon } from './icons.js';
 
 // Bail out of custom click handling when modifier keys are pressed so
 // browser-native behaviors are never hijacked.
@@ -52,12 +53,12 @@ export function NewPill() {
 // Solid check glyph before the title on events marked going.
 function GoingCheck({ occ }) {
   if (occ.attendance !== 'going') return null;
-  return html`<span class="bc-chip-check" aria-label="going">✓</span>`;
+  return html`<span class="bc-chip-check" aria-label="going"><${Icon} name="check" size=${11} /></span>`;
 }
 
 // Small stack glyph marking a near-duplicate group chip.
 function StackGlyph() {
-  return html`<span class="bc-stack-glyph" aria-hidden="true">⧉</span>`;
+  return html`<span class="bc-stack-glyph" aria-hidden="true"><${Icon} name="stack" size=${11} /></span>`;
 }
 
 function openHandlers(occ, onOpen) {

@@ -560,9 +560,21 @@ button:focus-visible, [tabindex]:focus-visible {
   background: var(--tint, transparent);
 }
 /* Timed events are quiet rows (dot + time + title, GCal-style); all-day
-   chips keep the tinted fill. Hover restores a neutral hit target. */
+   chips keep the tinted fill. */
 .bc-chip.is-dotstyle { background: transparent; }
-.bc-chip.is-dotstyle:hover { background: var(--bg-inset); }
+/* ONE hover response for every event, in every view: the pill knocks its own
+   background out to a neutral inset and takes a grey ring. Hover used to mean
+   three different things — a timed chip greyed, an all-day chip did nothing,
+   and a multi-day row cleared its whole row's wash while ringing the pill in
+   the calendar colour. The highlight belongs to the pill, never to the row
+   behind it. */
+.bc-chip:hover {
+  background: var(--bg-inset);
+  box-shadow: 0 0 0 1px var(--border-strong);
+}
+/* Solid-filled elements (month bars, time-grid blocks) keep their colour —
+   it is the only thing identifying the calendar — and take the same ring. */
+.bc-bar:hover { box-shadow: 0 0 0 1px var(--border-strong); }
 .bc-chip-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
 .bc-chip-time { color: var(--fg-muted); font-variant-numeric: tabular-nums; flex: none; font-size: 10.5px; }
 /* In month cells the title wins the space fight: pill collapses to the dot glow, time hides when the cell is tight */
@@ -634,7 +646,7 @@ button:focus-visible, [tabindex]:focus-visible {
   /* Hairline of page background so cascaded (overlapping) blocks separate. */
   box-shadow: 0 0 0 1px var(--bg);
 }
-.bc-block:hover { z-index: 30 !important; }
+.bc-block:hover { z-index: 30 !important; box-shadow: 0 0 0 1px var(--border-strong); }
 .bc-block-line { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .bc-block-time, .bc-block-loc { font-size: 10.5px; opacity: 0.85; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bc-block-handle { position: absolute; left: 0; right: 0; height: 6px; cursor: ns-resize; }
@@ -2319,16 +2331,12 @@ body.bc-rescheduling { user-select: none; }
   width: 158px; box-sizing: border-box; white-space: nowrap;
   overflow: hidden; text-overflow: ellipsis;
 }
-/* A span's rail, its boundary rows and its pass-through header chips all
-   light up together, whichever one the pointer is on. */
-.bc-agenda-row.is-linked { background: var(--bg-inset); border-radius: 6px; }
+/* A span's rail, wash and Day i/N labels light up together, whichever one
+   the pointer is on. The row itself is NOT knocked out: clearing the wash
+   under a hovered row punched a hole in the very band it was meant to
+   highlight. The pill gets the standard hover ring like every other event. */
 .bc-agenda-row.is-linked .bc-agenda-time.is-span { background: color-mix(in srgb, var(--span-color) 26%, transparent); }
 .bc-agenda-rail.is-linked .bc-agenda-rail-line { opacity: 1; }
-/* The linked row's chip lights up too: highlighting the row and the Day i/N
-   label while leaving the event name plain read as a half-finished hover. */
-.bc-agenda-row.is-linked .bc-chip {
-  box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--span-color, var(--accent)) 60%, transparent);
-}
 .bc-agenda-daysfx.is-linked { text-decoration: underline; }
 
 /* Locations are links now: a video icon for call URLs, a pin for places. */

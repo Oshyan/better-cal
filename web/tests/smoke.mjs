@@ -5,7 +5,7 @@ import {
   parseISO, toISOWithOffset, dayKeyOf, dateOfDayKey, epochDayOfKey,
   keyOfEpochDay, addDaysKey, diffDaysKey, weekIndexOfKey, firstEpochDayOfWeek,
   dayKeysOfWeek, startOfWeekKey, setWeekStart, getWeekStart, setTimeFormat, fmtTime,
-  fmtMonthShort, timeState,
+  fmtMonthShort, timeState, startMs, byStart,
 } from '../src/lib/dates.js';
 import { layoutOverlaps, assignLanes, rangesOverlap } from '../src/ui/layout.js';
 import {
@@ -1023,6 +1023,26 @@ assert('contrast on dark bg is white', contrastText('#1c2a4a') === '#ffffff');
 assert('contrast on light bg is dark', contrastText('#f2e9c9') === '#1a1a1a');
 eq('withAlpha', withAlpha('#ff0000', 0.5), 'rgba(255,0,0,0.5)');
 assert('parseHex shorthand', JSON.stringify(parseHex('#abc')) === JSON.stringify({ r: 170, g: 187, b: 204 }));
+
+console.log('--- chronological ordering across timezone offsets ---');
+
+// Occurrence start strings carry each event's OWN offset, so an imported
+// UTC-tzid event ("+00:00") and a local one ("-07:00") cannot be compared as
+// strings: "17:00:00+00:00" sorts after "12:30:00-07:00" while actually
+// being two and a half hours earlier. This is what put a 10 AM event at the
+// bottom of the day-expand list.
+{
+  const utcTen = { start: '2026-08-18T17:00:00+00:00', title: 'Aquarium' };     // 10:00 local
+  const localNoon = { start: '2026-08-18T12:30:00-07:00', title: 'Cleaners' };  // 12:30 local
+  const localTwo = { start: '2026-08-18T14:00:00-07:00', title: 'Weeklies' };   // 14:00 local
+  assert('naive string compare gets it wrong', utcTen.start > localNoon.start);
+  assert('startMs orders by instant', startMs(utcTen) < startMs(localNoon));
+  eq(
+    'byStart sorts mixed offsets chronologically',
+    [localTwo, localNoon, utcTen].sort(byStart).map((o) => o.title).join(','),
+    'Aquarium,Cleaners,Weeklies',
+  );
+}
 
 console.log('');
 console.log(passed + ' passed, ' + failed + ' failed');

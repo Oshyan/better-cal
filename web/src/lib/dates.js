@@ -16,6 +16,19 @@ export function parseISO(s) {
   return new Date(s);
 }
 
+// Chronological comparator for occurrences. Start strings carry each event's
+// OWN timezone offset (an imported UTC-tzid event serializes "+00:00" while
+// a local one serializes "-07:00"), so comparing them as strings orders
+// 10 AM after 12:30 PM. Always compare instants.
+export function startMs(occ) {
+  const t = new Date(occ.start).getTime();
+  return Number.isNaN(t) ? 0 : t;
+}
+
+export function byStart(a, b) {
+  return startMs(a) - startMs(b);
+}
+
 // Format a Date as ISO8601 with the local timezone offset:
 // 2026-07-30T14:30:00-07:00
 export function toISOWithOffset(d) {

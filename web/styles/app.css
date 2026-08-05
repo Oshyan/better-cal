@@ -161,7 +161,7 @@ button:focus-visible, [tabindex]:focus-visible {
 .bc-views { position: relative; }
 .bc-views-btn { display: inline-flex; align-items: center; gap: 6px; max-width: 170px; }
 .bc-views-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.bc-views-caret { color: var(--fg-muted); font-size: 10px; flex: none; }
+.bc-views-caret { color: var(--fg-muted); flex: none; display: inline-flex; align-items: center; }
 .bc-views-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none; display: inline-block; }
 .bc-views-pop {
   position: absolute; left: 0; top: calc(100% + 6px); z-index: 71;
@@ -297,20 +297,19 @@ button:focus-visible, [tabindex]:focus-visible {
   color: var(--fg-muted); transition: transform 0.14s ease;
 }
 .bc-folder-caret.is-closed { transform: rotate(-90deg); }
-/* Enclosure: folder members indent behind a soft rail. */
-.bc-folder-body { margin-left: 8px; padding-left: 9px; border-left: 1.5px solid var(--border); }
+/* The rotating chevron carries the enclosure on its own; members stay flush
+   with every other calendar row so folders and "All calendars" align. */
+.bc-folder-body { margin: 0; padding: 0; }
 .bc-folder-static { cursor: default; }
 .bc-folder-headrow { display: flex; align-items: center; gap: 2px; min-width: 0; }
 .bc-folder-headrow .bc-folder-head { flex: 1; min-width: 0; }
 .bc-folder-icon { display: inline-flex; flex: none; }
 .bc-folder-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.bc-folder-mode {
-  display: inline-flex; align-items: center; gap: 3px;
-  background: none; border: 1px solid var(--border-strong); border-radius: 9px;
-  font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.3px;
-  color: var(--fg-muted); padding: 0 7px; line-height: 15px; flex: none;
-}
-.bc-folder-mode:hover { border-color: var(--accent); color: var(--accent); }
+/* Visibility mode: an icon trigger (filled / struck / half circle) sized
+   like the row's other tools, always visible since it carries state. */
+.bc-folder-mode { flex: none; color: var(--fg-muted); }
+.bc-folder-mode:hover { color: var(--accent); }
+.bc-folder-mode.is-off { color: var(--fg-muted); opacity: 0.7; }
 .bc-folder-mode svg { flex: none; }
 /* Tools keep their space at rest (opacity reveal, like bc-cal-solo) so the
    mode control never shifts when hover surfaces them. */
@@ -320,7 +319,12 @@ button:focus-visible, [tabindex]:focus-visible {
 }
 .bc-folder-headrow:hover .bc-folder-tools,
 .bc-folder-headrow:focus-within .bc-folder-tools { opacity: 1; }
-.bc-folder-tool { padding: 2px 4px; font-size: 11px; }
+/* One optical box for every header tool (mode, new, options) so they sit on
+   a shared baseline instead of drifting by glyph metrics. */
+.bc-folder-tool {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 20px; padding: 0; font-size: 11px; line-height: 1;
+}
 .bc-cal-item { min-width: 0; }
 .bc-cal-row { display: flex; align-items: center; gap: 4px; padding: 2px 0 2px 4px; border-radius: 6px; }
 .bc-cal-row:hover { background: var(--bg-inset); }
@@ -664,11 +668,17 @@ body.bc-dragging * { cursor: grabbing !important; }
 }
 .bc-tg-allday { display: flex; border-bottom: 1px solid var(--border); background: var(--bg-raised); position: relative; scrollbar-gutter: stable; }
 .bc-tg-allday.is-collapsed { overflow: hidden; }
-.bc-tg-allday-label { font-size: 10px; color: var(--fg-muted); text-align: right; padding: 4px 6px 0 0; text-transform: uppercase; }
+.bc-tg-allday-label {
+  font-size: 10px; color: var(--fg-muted); text-align: right;
+  padding: 3px 6px 0 0; text-transform: uppercase;
+  display: flex; flex-direction: column; align-items: stretch;
+}
 .bc-allday-toggle {
-  display: block; margin-left: auto; margin-top: 1px;
-  background: none; border: none; padding: 0 6px 0 0;
-  font-size: 10px; color: var(--fg-muted); line-height: 1.2; cursor: pointer;
+  display: flex; align-items: center; justify-content: flex-end; gap: 2px;
+  width: 100%; height: 17px; margin-top: 2px;
+  background: none; border: none; padding: 0 5px 0 0;
+  font-size: 10px; font-weight: 600; color: var(--fg-muted); line-height: 1; cursor: pointer;
+  white-space: nowrap;
 }
 .bc-allday-toggle:hover { color: var(--accent); }
 .bc-tg-allday-lane { flex: 1; position: relative; }
@@ -851,8 +861,21 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-pop-where { color: var(--fg-muted); display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
 .bc-pop-meta { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 12.5px; }
 .bc-pop-tags { color: var(--accent); }
-.bc-pop-desc { color: var(--fg-muted); font-size: 12.5px; max-height: 90px; overflow-y: auto; white-space: pre-wrap; }
+/* Description preview: clamped to three lines with a fade, never its own
+   scroll region (the detail view is where long text belongs). */
+.bc-pop-descwrap { position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+.bc-pop-desc {
+  color: var(--fg-muted); font-size: 12.5px; white-space: pre-wrap;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3;
+  overflow: hidden; max-width: 100%;
+}
 .bc-pop-desc-rich { white-space: normal; }
+.bc-pop-desc-rich * { margin: 0; }
+.bc-pop-more {
+  background: none; border: none; padding: 0; font-size: 12px;
+  color: var(--accent); cursor: pointer;
+}
+.bc-pop-more:hover { text-decoration: underline; }
 .bc-pop-desc a { color: var(--accent); }
 .bc-pop-url { color: var(--accent); font-size: 12.5px; }
 /* One line at the popover's 360px width for local events (Open, Reschedule,
@@ -1396,11 +1419,19 @@ body.bc-dragging * { cursor: grabbing !important; }
   color: var(--fg-muted); flex: none; white-space: nowrap;
 }
 .bc-resched-hint { color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.bc-resched-cancel { margin-left: auto; flex: none; }
+/* The way out of a modal-ish mode has to be unmissable: filled danger
+   button, not a quiet secondary one. */
+.bc-resched-cancel {
+  margin-left: auto; flex: none;
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--danger); border-color: var(--danger); color: #fff;
+  font-weight: 600;
+}
+.bc-resched-cancel:hover { background: var(--danger); filter: brightness(1.1); }
 .bc-resched-cancel kbd {
-  font-family: var(--mono); font-size: 10px; color: var(--fg-muted);
-  border: 1px solid var(--border-strong); border-radius: 4px;
-  padding: 0 4px; margin-left: 4px;
+  font-family: var(--mono); font-size: 10px; color: #fff;
+  border: 1px solid color-mix(in srgb, #fff 55%, transparent); border-radius: 4px;
+  padding: 0 4px;
 }
 
 body.bc-rescheduling { user-select: none; }
@@ -1454,6 +1485,12 @@ body.bc-rescheduling { user-select: none; }
 @media (max-width: 800px) {
   .bc-strip { width: 72px; }
   .bc-resched-hint { display: none; }
+  /* Narrow screens: the label truncates before the escape hatch does, and
+     Cancel gets a full tap target on its own. */
+  .bc-resched-banner { gap: 8px; padding: 6px 10px; }
+  .bc-resched-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .bc-resched-cancel { padding: 6px 14px; }
+  .bc-resched-cancel kbd { display: none; }
 }
 
 /* --- responsive -------------------------------------------------------------------------- */
@@ -2047,12 +2084,10 @@ body.bc-rescheduling { user-select: none; }
 
 /* Hover-revealed "+" on section headers; gear follows the same reveal. */
 .bc-folder-tools { display: inline-flex; align-items: center; gap: 2px; margin-left: auto; flex: none; }
-.bc-folder-tools .bc-folder-tool { opacity: 0; transition: opacity 0.1s ease; padding: 2px 5px; }
-.bc-folder-headrow:hover .bc-folder-tool, .bc-folder-tool:focus-visible,
-.bc-folder-headrow:focus-within .bc-folder-tool { opacity: 1; }
+.bc-folder-tools .bc-folder-tool { opacity: 0; transition: opacity 0.1s ease; }
+.bc-folder-headrow:hover .bc-folder-tools .bc-folder-tool, .bc-folder-tool:focus-visible,
+.bc-folder-headrow:focus-within .bc-folder-tools .bc-folder-tool { opacity: 1; }
 @media (pointer: coarse) { .bc-folder-tools .bc-folder-tool { opacity: 1; } }
-.bc-head-plus { font-size: 14px; line-height: 1; color: var(--fg-muted); }
-.bc-head-plus:hover { color: var(--fg); }
 
 /* Folder options panel (gear): rename + delete, indented under the header. */
 .bc-folder-options {
@@ -2174,3 +2209,40 @@ body.bc-rescheduling { user-select: none; }
   .bc-activity-when { width: auto; }
   .bc-activity-summary { flex-basis: 100%; order: 3; }
 }
+
+/* --- day view: vertical day stack ------------------------------------------ */
+
+/* Scrolling past midnight continues into the next day. Each day is a panel
+   with a sticky dated header; a gap plus that header is the divider (a
+   single hairline reads as just another hour line at this density). */
+.bc-tg-vstacked { display: flex; flex-direction: column; min-height: 0; }
+.bc-tg-vdays { position: relative; }
+.bc-tg-vday + .bc-tg-vday { margin-top: 14px; }
+.bc-tg-vday { position: relative; }
+.bc-tg-vday::before {
+  content: ""; position: absolute; left: 0; right: 0; top: -8px; height: 2px;
+  background: var(--border-strong);
+}
+.bc-tg-vday:first-child::before { display: none; }
+.bc-tg-vday-head {
+  position: sticky; top: 0; z-index: 8;
+  display: flex; align-items: center; gap: 10px;
+  padding: 4px 8px 4px 12px; min-height: 30px;
+  background: var(--bg-raised);
+  border-bottom: 1px solid var(--border);
+}
+.bc-tg-vday-head.is-today { background: color-mix(in srgb, var(--today) 10%, var(--bg-raised)); }
+.bc-tg-vday-date {
+  display: inline-flex; align-items: baseline; gap: 7px; flex: none;
+  background: none; border: none; border-radius: 6px; padding: 2px 6px; cursor: pointer;
+}
+.bc-tg-vday-date:hover { background: var(--bg-inset); }
+.bc-tg-vday-head.is-today .bc-tg-dom {
+  background: var(--today); color: var(--accent-fg); border-radius: 50%;
+}
+.bc-tg-vday-month { font-size: 11px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.4px; }
+/* All-day bars ride in the header, wrapping rather than growing a lane. */
+.bc-tg-vday-allday { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; gap: 3px; align-items: center; min-height: 20px; }
+.bc-tg-vday-allday .bc-bar { width: auto; max-width: 100%; height: 20px; }
+.bc-tg-vday-body { display: flex; position: relative; height: 1152px; }
+.bc-tg-vday-body .bc-tg-col { border-right: none; }

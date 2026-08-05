@@ -8,6 +8,7 @@
 // A group is dimmed (server dim flag) only when every member is dimmed.
 
 import { occurrenceDaySpan } from './monthmath.js';
+import { startMs } from '../lib/dates.js';
 
 // Title base: strip one trailing parenthetical (and surrounding whitespace).
 // A title that is nothing but a parenthetical keeps its original form.
@@ -52,7 +53,7 @@ export function groupOccurrences(occurrences, groupFlags) {
     if (members.length < 2) continue;
     const sorted = [...members].sort((a, b) => {
       if (a.allDay !== b.allDay) return a.allDay ? -1 : 1;
-      if (a.start !== b.start) return a.start < b.start ? -1 : 1;
+      if (startMs(a) !== startMs(b)) return startMs(a) - startMs(b);
       return (a.title || '') < (b.title || '') ? -1 : 1;
     });
     const first = sorted[0];

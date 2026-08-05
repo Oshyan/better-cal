@@ -10,7 +10,7 @@ import { describeRrule } from './EventDetail.js';
 import { isMobile, trapFocus, MOBILE_QUERY } from '../ui/DayExpand.js';
 import { ThumbIcon, PinIcon, LinkIcon, Icon } from '../ui/icons.js';
 import {
-  parseISO, dateOfDayKey, fmtRange, toInputValue, fromInputValue, toISOWithOffset,
+  parseISO, dateOfDayKey, fmtRange, toInputValue, fromInputValue, toISOWithOffset, occDayKey,
 } from '../lib/dates.js';
 import { fmtReminder } from '../lib/reminders.js';
 import { stripToText, hasHtml, sanitizeHtml } from '../lib/richtext.js';
@@ -19,12 +19,30 @@ import { gmapsUrl } from '../lib/maps.js';
 const GAP = 10;
 const WIDTH = 360;
 
+// Anchor placement. The rect is first clipped to the viewport: multi-day
+// bars and week-spanning segments routinely start off-screen, and anchoring
+// to their true (negative) left threw the popover to the far edge, nowhere
+// near the part the user clicked. Wide anchors (long bars) get the popover
+// below their visible span rather than flipped to one side, which reads as
+// arbitrary when the anchor is most of the row.
 function place(anchorRect) {
   const h = 300; // estimate; clamped below anyway
-  let left = anchorRect.right + GAP;
-  if (left + WIDTH > window.innerWidth - GAP) left = anchorRect.left - GAP - WIDTH; // flip left
-  left = Math.max(GAP, Math.min(left, window.innerWidth - GAP - WIDTH));
-  let top = Math.max(GAP, Math.min(anchorRect.top, window.innerHeight - GAP - h));
+  const vw = window.innerWidth;
+  const left0 = Math.max(GAP, anchorRect.left);
+  const right0 = Math.min(vw - GAP, anchorRect.right);
+  const wide = right0 - left0 > vw * 0.4;
+
+  let left;
+  if (wide) {
+    left = left0;
+  } else {
+    left = right0 + GAP;
+    if (left + WIDTH > vw - GAP) left = left0 - GAP - WIDTH; // flip left
+  }
+  left = Math.max(GAP, Math.min(left, vw - GAP - WIDTH));
+
+  let top = wide ? anchorRect.bottom + GAP : anchorRect.top;
+  top = Math.max(GAP, Math.min(top, window.innerHeight - GAP - h));
   return { left, top };
 }
 
@@ -82,14 +100,18 @@ export function EventPopover() {
   // Mobile sheet only: same-day prev/next in the header row, sharing the
   // detail view's list builder. Navigating swaps the popover's occurrence.
   // The desktop popover stays anchored to its chip and is unchanged.
+  // The browsed day is pinned once and carried through navigation, so
+  // stepping onto a multi-day event never re-derives the day from that
+  // event's start and jumps the list to another date.
+  const navDay = popover.dayKey || occDayKey(occ);
   let nav = null;
   if (mobile) {
-    const list = sameDayList(occ);
+    const list = sameDayList(occ, navDay);
     nav = { list, index: list.findIndex((o) => o.instanceId === occ.instanceId) };
   }
   const goSheet = (idx) => {
     const target = nav && nav.list[idx];
-    if (target) set({ popover: { ...popover, instanceId: target.instanceId } });
+    if (target) set({ popover: { ...popover, instanceId: target.instanceId, dayKey: navDay } });
   };
 
   const saveTime = async (startVal, endVal) => {
@@ -169,13 +191,21 @@ export function EventPopover() {
         ${occ.tags && occ.tags.length > 0 && html`<span class="bc-pop-tags">${occ.tags.map((t) => '#' + t).join(' ')}</span>`}
       </div>`}
       ${occ.description && (() => {
-        // Rich descriptions render rich here too (sanitized, height-capped
-        // by CSS); plain text keeps the 280-char preview.
-        if (hasHtml(occ.description)) {
-          return html`<div class="bc-pop-desc bc-pop-desc-rich bc-rich" dangerouslySetInnerHTML=${{ __html: sanitizeHtml(occ.description) }}></div>`;
-        }
-        const text = stripToText(occ.description);
-        return text && html`<div class="bc-pop-desc">${text.length > 280 ? text.slice(0, 280) + '…' : text}</div>`;
+        // Preview only: the popover is a summary card, so the description is
+        // line-clamped with a "More" link into the detail view. It never
+        // scrolls internally — a scrollbar inside a hover card is a trap.
+        const rich = hasHtml(occ.description);
+        const text = rich ? '' : stripToText(occ.description);
+        if (!rich && !text) return null;
+        const long = rich ? true : text.length > 160;
+        return html`<div class="bc-pop-descwrap">
+          ${rich
+            ? html`<div class="bc-pop-desc bc-pop-desc-rich bc-rich" dangerouslySetInnerHTML=${{ __html: sanitizeHtml(occ.description) }}></div>`
+            : html`<div class="bc-pop-desc">${text}</div>`}
+          ${long && html`<button
+            type="button" class="bc-pop-more" onClick=${() => openDetail(occ.instanceId)}
+          >More</button>`}
+        </div>`;
       })()}
       ${occ.url && html`<a class="bc-pop-url" href=${occ.url} target="_blank" rel="noopener">Event link ↗</a>`}
       <div class="bc-pop-calline" title=${'Calendar: ' + ((cal && cal.name) || 'Calendar')}>

@@ -20,7 +20,7 @@ import { html, useState, useRef, useMemo, useEffect, useLayoutEffect, useCallbac
 import {
   keyOfEpochDay, epochDayOfKey, weekIndexOfKey,
   dayKeysOfWeek, dateOfDayKey, addDaysDate, parseISO, toISOWithOffset,
-  todayKey, fmtMonthShort, fmtWeekdayShort, getWeekStart,
+  todayKey, fmtMonthShort, fmtWeekdayShort, getWeekStart, byStart,
 } from '../lib/dates.js';
 import {
   visibleWeekRange, weekTop, totalHeight, occurrenceDaySpan, rowSpanSegments,
@@ -86,7 +86,7 @@ function indexOccurrences(occurrences, columns) {
       }
     }
   }
-  for (const list of byDay.values()) list.sort((a, b) => a.start < b.start ? -1 : 1);
+  for (const list of byDay.values()) list.sort(byStart);
   return { byDay, barsByRow, bandsByRow };
 }
 
@@ -188,8 +188,12 @@ export function MonthGrid({
     const el = scrollRef.current;
     if (!el || !scrollKey) return;
     const w = rowIndexOfDayKey(scrollKey, columns);
-    el.scrollTop = weekTop(w, minWeek, rowHRef.current);
-    topWeekRef.current = w;
+    // Land the anchor row above centre rather than pinned to the top edge:
+    // the focused day needs a row or two of context before it, and a day at
+    // the very top reads as "nothing came before".
+    const lead = Math.max(0, Math.round((el.clientHeight - rowHRef.current) * 0.4));
+    el.scrollTop = Math.max(0, weekTop(w, minWeek, rowHRef.current) - lead);
+    topWeekRef.current = Math.max(minWeek, minWeek + Math.floor(el.scrollTop / rowHRef.current));
     recompute();
   }, [scrollSeq]); // eslint-disable-line
 

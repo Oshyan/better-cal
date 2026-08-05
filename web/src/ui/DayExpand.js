@@ -3,8 +3,9 @@
 // while open.
 
 import { html, useRef, useEffect } from '../../vendor/index.js';
-import { dateOfDayKey, fmtDayLong, parseISO, fmtTime } from '../lib/dates.js';
-import { EventChip } from './EventChip.js';
+import { dateOfDayKey, fmtDayLong, parseISO, fmtTime, epochDayOfKey, byStart } from '../lib/dates.js';
+import { EventChip, EventBar } from './EventChip.js';
+import { occurrenceDaySpan } from './monthmath.js';
 
 export const MOBILE_QUERY = '(max-width: 640px)';
 
@@ -38,9 +39,10 @@ export function DayExpand({ dayKey, anchorRect, occurrences, calendars, dimSet, 
   }, [onClose]);
 
   const d = dateOfDayKey(dayKey);
+  const ed = epochDayOfKey(dayKey);
   const sorted = [...occurrences].sort((a, b) => {
     if (a.allDay !== b.allDay) return a.allDay ? -1 : 1;
-    return a.start < b.start ? -1 : 1;
+    return byStart(a, b);
   });
 
   const mobile = isMobile();
@@ -70,19 +72,38 @@ export function DayExpand({ dayKey, anchorRect, occurrences, calendars, dimSet, 
       </div>
       <div class="bc-dayexpand-list">
         ${sorted.length === 0 && html`<div class="bc-empty">No events this day</div>`}
-        ${sorted.map((occ) => html`<div key=${occ.instanceId} class="bc-dayexpand-row">
-          <span class="bc-dayexpand-time">${occ.allDay ? 'all day' : fmtTime(parseISO(occ.start))}</span>
-          <${EventChip}
-            occ=${occ} cal=${calendars[occ.calendarId]} showTime=${false}
-            dimmed=${dimSet && dimSet.has(occ.instanceId)} nowMs=${nowMs}
-            onOpen=${onOpenEvent}
-          />
-          ${onOpenDetail && !occ.isGroup && html`<button
-            type="button" class="bc-icon-btn bc-dayexpand-open"
-            title="Open details" aria-label=${'Open details for ' + (occ.title || 'event')}
-            onClick=${() => onOpenDetail(occ.instanceId)}
-          >↗</button>`}
-        </div>`)}
+        ${sorted.map((occ) => {
+          // All-day and multi-day events render as filled bars whose ends are
+          // angled where the event continues past this day — in a single-day
+          // list that arrow is the only cue that it started earlier or runs
+          // later. Boxes stay flush left (the angle is a clip, not an inset),
+          // so single-day and continuing bars line up.
+          const span = occurrenceDaySpan(occ);
+          const bar = occ.allDay || span.startKey !== span.endKey;
+          const seg = bar
+            ? { contLeft: epochDayOfKey(span.startKey) < ed, contRight: epochDayOfKey(span.endKey) > ed }
+            : null;
+          const openOpts = { dayKey };
+          return html`<div key=${occ.instanceId} class="bc-dayexpand-row">
+            <span class="bc-dayexpand-time">${occ.allDay ? 'all day' : fmtTime(parseISO(occ.start))}</span>
+            ${bar
+              ? html`<${EventBar}
+                  occ=${occ} cal=${calendars[occ.calendarId]} seg=${seg}
+                  dimmed=${dimSet && dimSet.has(occ.instanceId)} nowMs=${nowMs}
+                  onOpen=${(id, rect) => onOpenEvent && onOpenEvent(id, rect, openOpts)}
+                />`
+              : html`<${EventChip}
+                  occ=${occ} cal=${calendars[occ.calendarId]} showTime=${false}
+                  dimmed=${dimSet && dimSet.has(occ.instanceId)} nowMs=${nowMs}
+                  onOpen=${(id, rect) => onOpenEvent && onOpenEvent(id, rect, openOpts)}
+                />`}
+            ${onOpenDetail && !occ.isGroup && html`<button
+              type="button" class="bc-icon-btn bc-dayexpand-open"
+              title="Open details" aria-label=${'Open details for ' + (occ.title || 'event')}
+              onClick=${() => onOpenDetail(occ.instanceId)}
+            >↗</button>`}
+          </div>`;
+        })}
       </div>
     </div>
   </div>`;

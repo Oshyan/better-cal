@@ -5,7 +5,7 @@
 import { occurrenceDaySpan, rowSpanSegments } from './monthmath.js';
 import {
   epochDayOfKey, keyOfEpochDay, dateOfDayKey, addDaysKey, addDaysDate,
-  toISOWithOffset, parseISO,
+  toISOWithOffset, parseISO, startMs,
 } from '../lib/dates.js';
 import { dayRangeLabel } from '../lib/quickcreate.js';
 
@@ -41,7 +41,7 @@ export function spansOverlapOrAbut(aStartKey, aEndKey, bStartKey, bEndKey, slack
 // Chip/bar-style chronological order: all-day first, then by start.
 function chronological(a, b) {
   if (!!a.allDay !== !!b.allDay) return a.allDay ? -1 : 1;
-  if (a.start !== b.start) return a.start < b.start ? -1 : 1;
+  if (startMs(a) !== startMs(b)) return startMs(a) - startMs(b);
   return (a.title || '') < (b.title || '') ? -1 : 1;
 }
 

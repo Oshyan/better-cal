@@ -9,7 +9,7 @@
 // the rail alone carries continuity across them.
 
 import { occurrenceDaySpan } from './monthmath.js';
-import { epochDayOfKey } from '../lib/dates.js';
+import { epochDayOfKey, startMs } from '../lib/dates.js';
 
 export const AGENDA_ROW_H = 36;
 export const AGENDA_HEAD_H = 40;
@@ -33,7 +33,7 @@ export function dayOfSpanLabel(occ, dayKey) {
 // start (matches the historical agenda sort).
 function chronological(a, b) {
   if (a.allDay !== b.allDay) return a.allDay ? -1 : 1;
-  return a.start < b.start ? -1 : 1;
+  return startMs(a) - startMs(b);
 }
 
 // Day groups for the agenda, including synthesized boundary-day groups.

@@ -264,18 +264,10 @@ export function App() {
     return dim;
   }, [occurrences, s.filterText]);
 
-  // Window demand for day and agenda views (month and the infinite week
-  // drive their own via scroll).
+  // Window demand for the agenda view (month, the infinite week, and the day
+  // stack all drive their own from scroll position).
   useEffect(() => {
-    if (s.view === 'day') {
-      const start = s.anchor;
-      loadWindow(
-        toISOWithOffset(dateOfDayKey(addDaysKey(start, -1))),
-        toISOWithOffset(dateOfDayKey(addDaysKey(start, 2))),
-      );
-      const [y, m] = start.split('-').map(Number);
-      set({ visibleMonth: { year: y, month: m } });
-    } else if (s.view === 'agenda') {
+    if (s.view === 'agenda') {
       // Anchor-aware window: follow the anchor (navigation/jump) rather than
       // always loading today-forward; "show past" widens the lookback.
       const from = addDaysKey(s.anchor, s.agendaShowPast ? -365 : -90);
@@ -305,8 +297,11 @@ export function App() {
       set({ groupPopover: { group, anchorRect }, popover: null });
       return;
     }
+    // dayKey (passed by the day-expand list) pins prev/next navigation to
+    // the day being browsed rather than each event's own start day.
+    const dayKey = opts && opts.dayKey;
     if (opts && opts.detail) {
-      openDetail(instanceId);
+      set({ detail: { instanceId, dayKey }, popover: null, groupPopover: null, expandedDay: null });
       return;
     }
     // Clicking the event whose popover is already open dismisses it (a
@@ -314,12 +309,18 @@ export function App() {
     // close it from inside the grid).
     set((st) => (st.popover && st.popover.instanceId === instanceId
       ? { popover: null }
-      : { popover: { instanceId, anchorRect } }));
+      : { popover: { instanceId, anchorRect, dayKey } }));
   }, []);
   const onOpenDetail = useCallback((instanceId) => openDetail(instanceId), []);
   // Day-number clicks (month grid, week header) go to that day's Day view.
   const onOpenDay = useCallback((dayKey) => {
     set({ view: 'day', anchor: dayKey, scrollSeq: state.scrollSeq + 1 });
+  }, []);
+  // Day view scrolled to a different day: follow it in the toolbar label and
+  // mini-month WITHOUT bumping scrollSeq, which would yank the scroll back.
+  const onVisibleDay = useCallback((dayKey) => {
+    const [y, m] = dayKey.split('-').map(Number);
+    set((st) => (st.anchor === dayKey ? {} : { anchor: dayKey, visibleMonth: { year: y, month: m } }));
   }, []);
   const onExpandDay = useCallback((dayKey) => {
     const cell = document.querySelector(`[data-day="${dayKey}"]`);
@@ -429,14 +430,20 @@ export function App() {
       onOpenDay=${onOpenDay}
     />`;
   } else if (s.view === 'day') {
-    const days = [s.anchor];
+    // Day view is a vertical stack: scrolling past midnight continues into
+    // the next day, so it never remounts per day (the anchor scrolls).
     view = html`<${TimeGrid}
-      key=${s.view + ':' + days[0]}
-      days=${days}
+      key="day"
+      vstack=${true}
+      days=${[s.anchor]}
       occurrences=${occurrences}
       calendars=${calMeta}
       dimSet=${dimSet}
       nowMs=${nowMs}
+      scrollKey=${s.anchor}
+      scrollSeq=${s.scrollSeq}
+      onRequestWindow=${onRequestWindow}
+      onVisibleDay=${onVisibleDay}
       onCreateRange=${onCreateRange}
       onMoveEvent=${moveEvent}
       onResizeEvent=${resizeEvent}

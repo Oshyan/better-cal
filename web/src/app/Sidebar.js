@@ -87,6 +87,10 @@ function CalendarRow({ cal, folders, open, onGear, soloed, onSolo }) {
 // button proved a trap — from None the next stop was Custom, which can be a
 // no-op, wedging the cycle; a menu lets any mode be picked directly).
 const MODE_LABELS = { all: 'All', none: 'None', custom: 'Custom' };
+// Icon per mode: filled circle (all on), struck circle (all off), half-filled
+// (custom). An icon trigger at the same size as the row's other tools keeps
+// the header compact and leaves the width for long folder names.
+const MODE_ICONS = { all: 'visAll', none: 'visNone', custom: 'mixed' };
 
 function ModeMenu({ mode, tip, ariaName, customDisabled, onPick }) {
   const [open, setOpen] = useState(false);
@@ -103,12 +107,12 @@ function ModeMenu({ mode, tip, ariaName, customDisabled, onPick }) {
 
   return html`<div class="bc-ov bc-modemenu" ref=${rootRef}>
     <button
-      type="button" class="bc-folder-mode"
-      title=${tip}
+      type="button" class="bc-icon-btn bc-folder-tool bc-folder-mode${mode === 'none' ? ' is-off' : ''}"
+      title=${MODE_LABELS[mode] + ' — ' + tip}
       aria-label=${ariaName + ': ' + MODE_LABELS[mode]}
       aria-haspopup="menu" aria-expanded=${open}
       onClick=${() => setOpen(!open)}
-    >${mode === 'custom' && html`<${Icon} name="mixed" size=${9} />`}${MODE_LABELS[mode]}<span class="bc-ov-caret" aria-hidden="true">▾</span></button>
+    ><${Icon} name=${MODE_ICONS[mode]} size=${13} /></button>
     ${open && html`<div class="bc-ov-menu" role="menu" aria-label=${ariaName}>
       ${['all', 'none', 'custom'].map((m) => html`<button
         key=${m} type="button" role="menuitemradio"
@@ -117,7 +121,7 @@ function ModeMenu({ mode, tip, ariaName, customDisabled, onPick }) {
         title=${m === 'custom' && customDisabled ? 'No custom selection saved yet — toggle individual checkboxes to make one' : ''}
         class="bc-ov-item${mode === m ? ' is-sel' : ''}"
         onClick=${() => { setOpen(false); if (m !== mode) onPick(m); }}
-      ><span class="bc-ov-check" aria-hidden="true">${mode === m ? '✓' : ''}</span>${MODE_LABELS[m]}</button>`)}
+      ><span class="bc-ov-check" aria-hidden="true">${mode === m ? '✓' : ''}</span><${Icon} name=${MODE_ICONS[m]} size=${12} />${MODE_LABELS[m]}</button>`)}
     </div>`}
   </div>`;
 }
@@ -188,10 +192,10 @@ function FolderHead({ folder, cals, collapsed, onToggleCollapse }) {
       ${cals.length > 0 && html`<${FolderModeButton} folder=${folder} />`}
       <span class="bc-folder-tools">
         <button
-          type="button" class="bc-icon-btn bc-folder-tool bc-head-plus"
+          type="button" class="bc-icon-btn bc-folder-tool"
           aria-label=${'New calendar in ' + folder.name} title="New calendar in this folder"
           onClick=${() => set({ createDrawer: { kind: 'calendar', folderId: folder.id } })}
-        >+</button>
+        ><${Icon} name="plus" size=${13} /></button>
         <button
           type="button" class="bc-icon-btn bc-folder-tool"
           aria-label=${'Options for folder ' + folder.name} aria-expanded=${options}
@@ -307,10 +311,10 @@ export function Sidebar({ open, collapsed, onClose }) {
           ><span class="bc-folder-caret${collapsedAllCals ? ' is-closed' : ''}"><${Icon} name="chevronDown" size=${13} /></span>All calendars</button>
           <span class="bc-folder-tools">
             <button
-              type="button" class="bc-icon-btn bc-folder-tool bc-head-plus"
+              type="button" class="bc-icon-btn bc-folder-tool"
               aria-label="New calendar" title="New calendar"
               onClick=${() => set({ createDrawer: { kind: 'calendar' } })}
-            >+</button>
+            ><${Icon} name="plus" size=${13} /></button>
           </span>
         </div>`}
         ${(byFolder.length === 0 || !collapsedAllCals) && rows(loose)}
@@ -325,10 +329,10 @@ export function Sidebar({ open, collapsed, onClose }) {
           <${PeopleModeButton} />
           <span class="bc-folder-tools">
             <button
-              type="button" class="bc-icon-btn bc-folder-tool bc-head-plus"
+              type="button" class="bc-icon-btn bc-folder-tool"
               aria-label="New person" title="New person"
               onClick=${() => set({ createDrawer: { kind: 'person' } })}
-            >+</button>
+            ><${Icon} name="plus" size=${13} /></button>
           </span>
         </div>
         ${!collapsedPeople && people.map((p) => html`<div key=${p.id} class="bc-cal-item">

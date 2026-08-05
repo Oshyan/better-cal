@@ -26,7 +26,7 @@ Month, 3-week, 2-week, week, day, and agenda views. Multiple color-coded calenda
 
 ### Views and navigation
 
-- Month, 3-week, 2-week, week, day, and agenda views (right-aligned view dropdown that never shifts with the date label), with infinite scroll in the month slot and horizontal week scrolling, ISO week numbers in the month gutter, and stable prev/next chevrons for rapid stepping.
+- Month, 3-week, 2-week, week, day, and agenda views (right-aligned view dropdown that never shifts with the date label), with infinite scroll in the month slot, horizontal week scrolling, and day-to-day vertical scrolling in the day view, plus ISO week numbers in the month gutter and stable prev/next chevrons for rapid stepping.
 - GCal-informed event rendering: all-day events are filled bars (with angled ends where they continue past the visible row), timed events are quiet dot + time rows, so density stays readable.
 - Day numbers open the day view; the strip beside them expands the day in place; a hover + creates an event. Week and day headers click through to the day view too.
 - Collapsible sidebar (persisted), hover-revealed visibility checkboxes with dimmed hidden calendars, and a collapsible all-day lane in day/week views.

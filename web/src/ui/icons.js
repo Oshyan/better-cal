@@ -75,14 +75,15 @@ export function Icon({ name, size = 15 }) {
     visAll: html`<circle cx="8" cy="8" r="5.2" fill="currentColor" stroke="none" />`,
     visNone: html`<circle cx="8" cy="8" r="5.2" />
       <path d="M4.3 11.7l7.4-7.4" />`,
-    // Reschedule: a calendar page holding one event (the dot) with an arrow
-    // carrying it out to another date. Deliberately NOT a clock-with-arrow —
-    // that shape is the universal "history/recent" mark and collides with the
-    // Activity icon — and not plain move arrows, which mean drag-anything.
-    reschedule: html`<rect x="1.8" y="3.2" width="9" height="9" rx="1.4" />
-      <path d="M1.8 6.3h9M4.2 1.9v2.6M8.4 1.9v2.6" />
-      <circle cx="5" cy="9.2" r="1.05" fill="currentColor" stroke="none" />
-      <path d="M7.2 13.3h6.3M11.5 11.5l2 1.8-2 1.8" />`,
+    // Reschedule: a full-size calendar with the move arrow INSIDE its body.
+    // An arrow alongside the page collided with the calendar's own bottom
+    // border at 14px and turned to mush; inside, it sits in clear space and
+    // the arrow carries its own slightly heavier stroke. Deliberately not a
+    // clock-with-arrow (that reads as history, and is the Activity mark) nor
+    // plain move arrows (which mean drag-anything).
+    reschedule: html`<rect x="1.7" y="3" width="12.6" height="11.3" rx="1.8" />
+      <path d="M1.7 6.4h12.6M5 1.7v2.6M11 1.7v2.6" />
+      <path d="M4.9 10.4h5.9M8.7 8.1l2.5 2.3-2.5 2.3" stroke-width="1.6" />`,
     pencil: html`<path d="M9.6 3.6l2.8 2.8M3.2 10l6.9-6.9c.4-.4 1-.4 1.4 0l1.4 1.4c.4.4.4 1 0 1.4L6 12.8l-3.5.7z" />`,
     trash: html`<path d="M2.5 4h11M6.5 4V2.8c0-.4.3-.8.8-.8h1.4c.5 0 .8.4.8.8V4M4 4l.7 9.4c0 .5.4.8.8.8h5c.4 0 .8-.3.8-.8L12 4M6.5 7v4M9.5 7v4" />`,
     arrowLeft: html`<path d="M13.5 8h-10M7.3 3.8L3.1 8l4.2 4.2" />`,

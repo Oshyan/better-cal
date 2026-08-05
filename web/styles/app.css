@@ -845,9 +845,11 @@ body.bc-dragging * { cursor: grabbing !important; }
   transition: filter 0.12s ease;
 }
 .bc-agenda-wash.is-linked { filter: saturate(1.5) brightness(0.97); }
-/* Rows and rails sit above the wash. */
-.bc-agenda-group, .bc-agenda-rail { position: relative; z-index: 1; }
-.bc-agenda-group { position: absolute; }
+/* Groups and rails sit above the wash. Both are absolutely positioned and
+   MUST stay that way — giving a rail position:relative drops it into normal
+   flow, where rails stack instead of overlapping and every one after the
+   first is shoved down, away from the event it belongs to. */
+.bc-agenda-group, .bc-agenda-rail { position: absolute; z-index: 1; }
 
 /* --- overlays: day expand, popover, sheets ------------------------------------- */
 

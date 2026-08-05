@@ -27,7 +27,9 @@ Month, 3-week, 2-week, week, day, and agenda views. Multiple color-coded calenda
 ### Views and navigation
 
 - Month, 3-week, 2-week, week, day, and agenda views (right-aligned view dropdown that never shifts with the date label), with infinite scroll in the month slot, horizontal week scrolling, and day-to-day vertical scrolling in the day view, plus ISO week numbers in the month gutter and stable prev/next chevrons for rapid stepping.
-- GCal-informed event rendering: all-day events are filled bars (with angled ends where they continue past the visible row), timed events are quiet dot + time rows, so density stays readable.
+- GCal-informed event rendering: all-day events are filled bars (with angled ends where they continue past the visible row or day), timed events are quiet dot + time rows, so density stays readable.
+- Overlapping events in day and week views cascade at full opacity rather than shrinking into translucent slivers, and hovering brings any one of them to the front — so every title stays readable, including the ones underneath.
+- Sidebar state is legible at a glance: hidden calendars and people are dimmed with a light strikethrough, while an away person is italic (a distinct channel, so "away" never looks like "hidden").
 - Day numbers open the day view; the strip beside them expands the day in place; a hover + creates an event. Week and day headers click through to the day view too.
 - Collapsible sidebar (persisted), hover-revealed visibility checkboxes with dimmed hidden calendars, and a collapsible all-day lane in day/week views.
 - Mobile-aware overview: a 3-day ribbon replaces the month grid on narrow screens (configurable).

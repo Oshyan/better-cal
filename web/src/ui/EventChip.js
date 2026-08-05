@@ -80,7 +80,10 @@ function openHandlers(occ, onOpen) {
 // Compact chip for month cells and agenda rows.
 // props: occ, cal, dimmed, nowMs, showTime,
 //        onOpen(instanceId, anchorRect, opts?), onPointerDown
-export function EventChip({ occ, cal, dimmed, nowMs, showTime = true, onOpen, onPointerDown }) {
+// `seg` is optional and only used by list contexts (the day-expand panel):
+// {contLeft, contRight} angles the matching end to show the event continues
+// beyond the day being listed.
+export function EventChip({ occ, cal, dimmed, nowMs, showTime = true, seg = null, onOpen, onPointerDown }) {
   const color = calColor(cal);
   const interested = occ.attendance === 'interested';
   // GCal semantics: all-day (and group) chips are filled with the calendar
@@ -94,7 +97,7 @@ export function EventChip({ occ, cal, dimmed, nowMs, showTime = true, onOpen, on
   const { onClick, onDblClick } = openHandlers(occ, onOpen);
   return html`<button
     type="button"
-    class="bc-chip${dotStyle ? ' is-dotstyle' : ''}${stateClasses(occ, dimmed, nowMs)}"
+    class="bc-chip${dotStyle ? ' is-dotstyle' : ''}${seg && seg.contLeft ? ' cont-l' : ''}${seg && seg.contRight ? ' cont-r' : ''}${stateClasses(occ, dimmed, nowMs)}"
     style=${style}
     data-instance=${occ.instanceId}
     onPointerDown=${occ.isGroup ? undefined : onPointerDown}
@@ -162,7 +165,10 @@ export function EventBlock({ occ, cal, rect, dimmed, nowMs, onOpen, onPointerDow
     ? `border:1.5px solid ${color};color:var(--fg);background:${withAlpha(color, 0.1)}`
     : interested
       ? `border:1.5px solid ${color};color:${color};background:var(--bg-raised)`
-      : `background:${withAlpha(color, 0.85)};color:${contrastText(color)};border-left:3px solid ${color}`;
+      // Opaque, not translucent: cascaded blocks overlap, and a see-through
+      // fill let the block underneath bleed through so neither title was
+      // readable. Hover raises one to the front when you need the other.
+      : `background:${color};color:${contrastText(color)};border-left:3px solid ${color}`;
   const s = parseISO(occ.start);
   const e = parseISO(occ.end);
   const showMeta = rect.height > 34 && !occ.isGroup;

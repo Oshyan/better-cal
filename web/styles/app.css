@@ -338,9 +338,21 @@ button:focus-visible, [tabindex]:focus-visible {
 .bc-cal-row:hover input[type="checkbox"],
 .bc-cal-row:focus-within input[type="checkbox"] { opacity: 1; }
 @media (pointer: coarse) { .bc-cal-row input[type="checkbox"] { opacity: 1; } }
-.bc-cal-row.is-off .bc-cal-name { color: var(--fg-muted); }
-.bc-cal-row.is-off .bc-cal-dot { opacity: 0.35; }
-.bc-cal-row.is-off .bc-person-namebtn { color: var(--fg-muted); }
+/* Two independent signals, two independent channels:
+   HIDDEN (unchecked) = dim + a light strikethrough. The rule is drawn at
+   ~40% of the text color so it reads as "switched off" without fighting
+   legibility, and it is the same treatment for calendars and people.
+   AWAY (a fact about the person, not a visibility state) = italic only, so
+   a visible-but-away person never looks half-hidden. */
+.bc-cal-row.is-off .bc-cal-label { opacity: 0.6; }
+.bc-cal-row.is-off .bc-cal-name,
+.bc-cal-row.is-off .bc-person-namebtn {
+  color: var(--fg-muted);
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
+  text-decoration-thickness: 1px;
+}
+.bc-cal-row.is-off .bc-cal-dot { opacity: 0.3; }
 .bc-cal-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; display: inline-block; }
 /* Subscribed feeds render hollow (2px ring of the calendar color, transparent
    center) vs the solid fill of local calendars; the inline style carries the
@@ -832,7 +844,21 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-dayexpand-list { overflow-y: auto; overscroll-behavior: contain; padding: 6px 10px 10px; }
 .bc-dayexpand-row { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
 .bc-dayexpand-time { width: 64px; flex: none; font-size: 11.5px; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
-.bc-dayexpand-row .bc-chip { width: auto; flex: 1; }
+/* All-day rows fill the panel width regardless of title length and get a
+   roomier box; the angled continuation ends need padding so the arrow never
+   crowds the text. */
+.bc-dayexpand-row .bc-chip { width: auto; flex: 1; height: 24px; border-radius: 6px; }
+.bc-dayexpand-row .bc-chip.cont-l {
+  clip-path: polygon(9px 0, 100% 0, 100% 100%, 9px 100%, 0 50%);
+  padding-left: 14px; border-top-left-radius: 0; border-bottom-left-radius: 0;
+}
+.bc-dayexpand-row .bc-chip.cont-r {
+  clip-path: polygon(0 0, calc(100% - 9px) 0, 100% 50%, calc(100% - 9px) 100%, 0 100%);
+  padding-right: 16px; border-top-right-radius: 0; border-bottom-right-radius: 0;
+}
+.bc-dayexpand-row .bc-chip.cont-l.cont-r {
+  clip-path: polygon(9px 0, calc(100% - 9px) 0, 100% 50%, calc(100% - 9px) 100%, 9px 100%, 0 50%);
+}
 .bc-dayexpand-open { flex: none; padding: 2px 6px; font-size: 12px; }
 
 .bc-popover {
@@ -2047,7 +2073,10 @@ body.bc-rescheduling { user-select: none; }
 /* --- availability (docs/design-availability.md; append-only section) -------- */
 
 /* Sidebar People folder: away people dim; kind pill. */
-.bc-cal-row.is-person-away .bc-cal-name, .bc-cal-row.is-person-away .bc-badge { opacity: 0.55; }
+/* Away: italic + the away pill. Never dimmed — dimming is reserved for
+   hidden rows, and an away person you are still showing is not hidden. */
+.bc-cal-row.is-person-away .bc-cal-name,
+.bc-cal-row.is-person-away .bc-person-namebtn { font-style: italic; }
 .bc-person-namebtn {
   background: none; border: none; padding: 0; font: inherit; color: inherit;
   cursor: pointer; text-align: left; min-width: 0;
@@ -2241,8 +2270,14 @@ body.bc-rescheduling { user-select: none; }
   background: var(--today); color: var(--accent-fg); border-radius: 50%;
 }
 .bc-tg-vday-month { font-size: 11px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.4px; }
-/* All-day bars ride in the header, wrapping rather than growing a lane. */
+/* All-day bars ride in the header, capped at a few rows: the overflow button
+   opens the full day list rather than letting the header swallow the view. */
 .bc-tg-vday-allday { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; gap: 3px; align-items: center; min-height: 20px; }
-.bc-tg-vday-allday .bc-bar { width: auto; max-width: 100%; height: 20px; }
+.bc-tg-vday-allday .bc-bar { width: auto; max-width: min(100%, 320px); height: 20px; }
+.bc-vday-more {
+  flex: none; background: var(--bg-inset); border: 1px solid var(--border-strong);
+  border-radius: 5px; padding: 1px 8px; font-size: 11px; color: var(--fg-muted); cursor: pointer;
+}
+.bc-vday-more:hover { color: var(--accent); border-color: var(--accent); }
 .bc-tg-vday-body { display: flex; position: relative; height: 1152px; }
 .bc-tg-vday-body .bc-tg-col { border-right: none; }

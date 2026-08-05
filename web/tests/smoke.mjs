@@ -964,6 +964,34 @@ eq('two-day start/end split',
 eq('two-day rail spans row centers',
   railRanges(twoDay).map((r) => [r.topPx, r.heightPx]), [[48, 96]]);
 
+// Month separators are part of the layout, not an overlay drawn on top of
+// the previous day's rows: the group that opens a month is taller by the
+// separator band and everything after it shifts down by the same amount.
+{
+  const ev = (id, start, end) => ({
+    instanceId: id, calendarId: 1, title: id, start, end, allDay: false,
+  });
+  const across = buildAgendaGroups([
+    ev('jul', '2026-07-31T10:00:00-07:00', '2026-07-31T11:00:00-07:00'),
+    ev('aug', '2026-08-01T10:00:00-07:00', '2026-08-01T11:00:00-07:00'),
+    ev('aug2', '2026-08-02T10:00:00-07:00', '2026-08-02T11:00:00-07:00'),
+  ]);
+  eq('month start flagged only on the first group of a month',
+    across.map((g) => !!g.monthStart), [false, true, false]);
+  // 40 head + 36 row = 76 per plain group; the August 1 group adds the 30px band.
+  eq('month separator height is in the layout',
+    across.map((g) => [g.top, g.height]), [[0, 76], [76, 106], [182, 76]]);
+
+  // A span crossing the boundary keeps its rail aligned to the shifted rows.
+  const spanning = buildAgendaGroups([
+    { instanceId: 's', calendarId: 1, title: 's', allDay: true,
+      start: '2026-07-31T00:00:00+00:00', end: '2026-08-02T00:00:00+00:00' },
+  ]);
+  const rail = railRanges(spanning)[0];
+  // End group starts at 76 and opens August, so its row sits 30px lower.
+  eq('rail end clears the separator band', Math.round(rail.topPx + rail.heightPx), 76 + 30 + 40 + 28);
+}
+
 // Single-day events never produce end markers.
 assert('single-day has no markers',
   buildAgendaGroups([railSingle]).every((g) => g.rows.every((r) => r.kind === 'normal')));

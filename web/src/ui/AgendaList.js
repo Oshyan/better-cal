@@ -188,7 +188,6 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
 
   return html`<div class="bc-agenda" ref=${scrollRef} onScroll=${onScroll}>
     ${groups.length === 0 && html`<div class="bc-empty bc-agenda-empty">${emptyLabel || 'No events in this range'}</div>`}
-    ${topMonth && html`<div class="bc-agenda-monthbar">${monthLabelOf(topMonth)}</div>`}
     <div class="bc-agenda-spacer" style=${`height:${totalH}px`}>
       ${rails.map((r) => {
         if (r.topPx > visEnd || r.topPx + r.heightPx < visStart) return null;
@@ -215,18 +214,12 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
         const passing = sfx
           ? { items: sfx.items.filter((occ) => !ownRows.has(occ.instanceId)), more: sfx.more }
           : undefined;
-        const prev = gi > 0 ? groups[gi - 1] : null;
-        const newMonth = !flat && g.dayKey
-          && (!prev || !prev.dayKey || prev.dayKey.slice(0, 7) !== g.dayKey.slice(0, 7));
-        return html`<${'div'} key=${'wrap:' + (g.dayKey || 'match')}>
-        ${newMonth && prev && html`<div class="bc-agenda-monthsep" style=${`top:${g.top}px`}>
-          <span>${monthLabelOf(g.dayKey)}</span>
-        </div>`}
-        <section
+        return html`<section
           key=${g.dayKey === null ? 'match' : g.dayKey}
           class="bc-agenda-group${g.dayKey === tKey ? ' is-today' : ''}"
           style=${`top:${g.top}px;height:${g.height}px`}
         >
+          ${g.monthStart && html`<div class="bc-agenda-monthsep"><span>${monthLabelOf(g.dayKey)}</span></div>`}
           ${g.dayKey !== null && html`<h3 class="bc-agenda-day">
             ${fmtDayLong(dateOfDayKey(g.dayKey))}
             ${onCreateDay && html`<button
@@ -238,13 +231,13 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
             ${passing && passing.items.filter((occ) => !(dimSet && dimSet.has(occ.instanceId))).map((occ) => html`<button
               key=${'sfx:' + occ.instanceId} type="button"
               class="bc-agenda-daysfx${hoverId === occ.instanceId ? ' is-linked' : ''}"
-              style=${`color:${calColorOf(calendars, occ)}`}
+              style=${`--sfx-color:${calColorOf(calendars, occ)}`}
               title=${occ.title || '(untitled)'}
               onPointerEnter=${() => setHoverId(occ.instanceId)}
               onPointerLeave=${() => setHoverId(null)}
               onClick=${openDetail(occ.instanceId)}
-            > · ${occ.title || '(untitled)'}</button>`)}
-            ${passing && passing.more > 0 && html`<span class="bc-agenda-daysfx-more"> · +${passing.more} more</span>`}
+            >${occ.title || '(untitled)'}</button>`)}
+            ${passing && passing.more > 0 && html`<span class="bc-agenda-daysfx-more">+${passing.more} more</span>`}
           </h3>`}
           ${visible && g.rows.map((row) => {
             const occ = row.occ;
@@ -292,8 +285,7 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
             ${!end && occ.location && html`<${AgendaLocation} location=${occ.location} lat=${occ.locationLat} lng=${occ.locationLng} />`}
           </div>`;
           })}
-        </section>
-        <//>`;
+        </section>`;
       })}
     </div>
   </div>`;

@@ -36,7 +36,7 @@ import {
   candidateTrips, attachableInSpan, extendTripSpan,
 } from '../src/ui/trips.js';
 import {
-  buildAgendaGroups, railRanges, headerSuffixes, spanDayCount, dayOfSpanLabel,
+  buildAgendaGroups, railRanges, coveringByDay, spanDayCount, dayOfSpanLabel,
 } from '../src/ui/agendarails.js';
 import { hasHtml, stripToText, isEmptyHtml } from '../src/lib/richtext.js';
 import { batteryTipApplies, BATTERY_TIP_BODY, BATTERY_TIP_TITLE } from '../src/lib/batterytip.js';
@@ -1034,15 +1034,15 @@ const sequential = railRanges(buildAgendaGroups([
 ]));
 eq('sequential rails share lane 0', sequential.map((r) => r.lane), [0, 0]);
 
-// Header suffixes: every covered day (inclusive) names the span; max 2 items
-// then an overflow count; uncovered days stay absent.
-const sfx = headerSuffixes(railGroups);
-eq('suffix on start day', sfx.get('2026-06-01').items.map((o) => o.instanceId), ['rt1']);
-eq('suffix on covered middle day', sfx.get('2026-06-02').items.map((o) => o.instanceId), ['rt1', 'rm1']);
-eq('suffix on end day', sfx.get('2026-06-04').items.map((o) => o.instanceId), ['rt1']);
-const sfxMany = headerSuffixes(stackedGroups);
-eq('suffix overflow count', [sfxMany.get('2026-06-01').items.length, sfxMany.get('2026-06-01').more], [2, 2]);
-assert('no suffix map entries without spans', headerSuffixes(buildAgendaGroups([railSingle])).size === 0);
+// Day washes: every covered day (boundaries included) lists the spans that
+// cross it, so the agenda can layer one tint per span; days outside every
+// span stay absent, and no cap applies (tints blend rather than overflow).
+const cov = coveringByDay(railGroups);
+eq('wash on start day', cov.get('2026-06-01').map((o) => o.instanceId), ['rt1']);
+eq('wash on covered middle day', cov.get('2026-06-02').map((o) => o.instanceId), ['rt1', 'rm1']);
+eq('wash on end day', cov.get('2026-06-04').map((o) => o.instanceId), ['rt1']);
+eq('overlapping spans all wash the same day', coveringByDay(stackedGroups).get('2026-06-01').length, 4);
+assert('no wash entries without spans', coveringByDay(buildAgendaGroups([railSingle])).size === 0);
 
 console.log('--- color utils ---');
 

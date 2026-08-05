@@ -145,27 +145,29 @@ export function railRanges(groups, opts = {}) {
   return out;
 }
 
-// Header suffixes: for each group whose day falls inside a multi-day span
-// (inclusive of both boundary days), the first `max` covering occurrences
-// plus an overflow count. Returns Map dayKey -> {items: [occ], more: K}.
-export function headerSuffixes(groups, opts = {}) {
-  const max = opts.max ?? 2;
-  const multi = [];
+// Every multi-day span covering each day, boundaries included. The agenda
+// paints one low-opacity wash per covering span across the whole day block,
+// so a span reads as a continuous stretch of tinted days rather than a name
+// repeated in every header; overlapping spans layer, and their colours blend.
+// Returns Map dayKey -> [occ], in span-start order.
+export function coveringByDay(groups) {
+  const spans = [];
   for (const g of groups) {
     for (const r of g.rows) {
       if (r.kind !== 'start') continue;
       const { startKey, endKey } = occurrenceDaySpan(r.occ);
-      multi.push({ occ: r.occ, s: epochDayOfKey(startKey), e: epochDayOfKey(endKey) });
+      spans.push({ occ: r.occ, s: epochDayOfKey(startKey), e: epochDayOfKey(endKey) });
     }
   }
   const out = new Map();
-  if (multi.length === 0) return out;
-  multi.sort((a, b) => a.s - b.s || chronological(a.occ, b.occ));
+  if (spans.length === 0) return out;
+  spans.sort((a, b) => a.s - b.s || chronological(a.occ, b.occ));
   for (const g of groups) {
+    if (!g.dayKey) continue;
     const ed = epochDayOfKey(g.dayKey);
-    const covering = multi.filter((m) => m.s <= ed && ed <= m.e).map((m) => m.occ);
-    if (covering.length === 0) continue;
-    out.set(g.dayKey, { items: covering.slice(0, max), more: Math.max(0, covering.length - max) });
+    const covering = spans.filter((m) => m.s <= ed && ed <= m.e).map((m) => m.occ);
+    if (covering.length > 0) out.set(g.dayKey, covering);
   }
   return out;
 }
+

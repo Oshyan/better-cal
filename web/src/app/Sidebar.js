@@ -12,8 +12,9 @@ import {
   toggleCalendarVisible, createFolder, deleteFolder,
   folderMode, setFolderVisibilityMode, ALL_GROUP_ID, setSidebarActiveOnly,
   togglePersonVisible, enterPeopleSolo, exitPeopleSolo,
-  peopleVisibilityMode, setPeopleVisibilityMode,
+  peopleVisibilityMode, setPeopleVisibilityMode, linkPersonToEvent,
 } from './actions.js';
+import { startPointerDrag, externalDropTarget, setDropRowHighlight } from '../ui/DragController.js';
 import { CalendarSettings } from './CalendarSettings.js';
 import { MiniMonth } from './MiniMonth.js';
 import { PALETTE } from '../lib/color.js';
@@ -50,8 +51,13 @@ function healthBadge(cal) {
 }
 
 function CalendarRow({ cal, folders, open, onGear, soloed, onSolo, filedIn }) {
+  // data-drop-cal marks writable calendars as drag targets: dropping an event
+  // here moves it onto this calendar (feeds are read-only, so no attribute).
   return html`<div class="bc-cal-item">
-    <div class="bc-cal-row${cal.visible ? '' : ' is-off'}">
+    <div
+      class="bc-cal-row${cal.visible ? '' : ' is-off'}"
+      data-drop-cal=${cal.kind === 'subscribed' ? undefined : cal.id}
+    >
       <label class="bc-cal-label" title=${cal.name}>
         <input
           type="checkbox"
@@ -288,6 +294,39 @@ export function Sidebar({ open, collapsed, onClose }) {
 
   const toggleGear = (key) => setOpenGear(openGear === key ? null : key);
 
+  // Drag a person out of the sidebar and drop them on an event chip to link
+  // them to that event. The 4px lift threshold keeps plain clicks (toggle,
+  // name, Only) working; interactive children never start a drag at all.
+  const dragPersonStart = (p, ev) => {
+    if (ev.target.closest('input, button, a')) return;
+    if (ev.pointerType === 'touch') return; // sidebar scroll wins on touch
+    let ext = null;
+    const linkable = (iid) => {
+      if (String(iid).startsWith('avail:')) return false;
+      const occ = state.occ.get(iid);
+      if (!occ || (occ.people || []).includes(p.name)) return false;
+      const cal = state.calendars.find((c) => c.id === occ.calendarId);
+      return !cal || cal.kind !== 'subscribed'; // feed events are read-only
+    };
+    startPointerDrag(ev, {
+      makeGhost: () => {
+        const g = document.createElement('div');
+        g.className = 'bc-drag-personpill';
+        g.textContent = p.name;
+        return g;
+      },
+      onMove: (pt) => {
+        ext = externalDropTarget(pt, { instance: linkable });
+        setDropRowHighlight(ext ? ext.el : null);
+      },
+      onDrop: () => {
+        setDropRowHighlight(null);
+        if (ext) linkPersonToEvent(state.occ.get(ext.instanceId), p.name);
+      },
+      onCancel: () => setDropRowHighlight(null),
+    });
+  };
+
   const enterSolo = async (cal) => {
     const prev = solo ? solo.prev : state.calendars.map((c) => [c.id, c.visible]);
     setSolo({ calId: cal.id, prev });
@@ -387,7 +426,12 @@ export function Sidebar({ open, collapsed, onClose }) {
           </span>
         </div>
         ${!collapsedPeople && people.map((p) => html`<div key=${p.id} class="bc-cal-item">
-          <div class="bc-cal-row${p.currentSpan && p.currentSpan.kind === 'away' ? ' is-person-away' : ''}${p.showOnCalendar ? '' : ' is-off'}">
+          <div
+            class="bc-cal-row${p.currentSpan && p.currentSpan.kind === 'away' ? ' is-person-away' : ''}${p.showOnCalendar ? '' : ' is-off'}"
+            data-drop-person=${p.id}
+            data-person-name=${p.name}
+            onPointerDown=${(e) => dragPersonStart(p, e)}
+          >
             <span class="bc-cal-label">
               <input
                 type="checkbox"
@@ -401,7 +445,7 @@ export function Sidebar({ open, collapsed, onClose }) {
                 title=${(p.currentSpan ? p.name + ' is ' + p.currentSpan.kind + ' now. ' : '') + 'Open in People'}
                 onClick=${() => set({ route: 'people', peopleFocus: p.name })}
               >${p.name}</button>
-              ${p.currentSpan && html`<span class="bc-badge bc-away-pill">${p.currentSpan.kind}</span>`}
+              ${p.currentSpan && html`<span class="bc-badge bc-away-pill is-${p.currentSpan.kind}">${p.currentSpan.kind}</span>`}
             </span>
             <button
               type="button"

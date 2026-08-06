@@ -56,6 +56,11 @@ final class PeopleController
         return Response::json($this->people->addSpan((int) $req->user['id'], (int) $params['id'], $req->body), 201);
     }
 
+    public function patchSpan(Request $req, array $params): Response
+    {
+        return Response::json($this->people->updateSpan((int) $req->user['id'], (int) $params['id'], (int) $params['spanId'], $req->body));
+    }
+
     public function deleteSpan(Request $req, array $params): Response
     {
         $this->people->deleteSpan((int) $req->user['id'], (int) $params['id'], (int) $params['spanId']);

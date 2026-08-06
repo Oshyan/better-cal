@@ -91,6 +91,7 @@ export const state = {
 
   quickAddOpen: false,
   paletteOpen: false, // command palette (Cmd/Ctrl-K)
+  dropChoice: null,  // {x, y, title, options: [{label, value}], cb} — chip at a drop point
   searchOpen: false,
   jumpOpen: false,   // jump-to-date popover (toolbar date label / g)
   shortcutsOpen: false, // keyboard shortcuts cheat sheet (?)

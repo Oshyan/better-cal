@@ -138,6 +138,7 @@ function PersonAvailability({ person }) {
       <select value=${kind} onChange=${(e) => setKind(e.target.value)} aria-label="Kind">
         <option value="away">Away</option>
         <option value="busy">Busy</option>
+        <option value="here">Here</option>
       </select>
       <input type="date" value=${startDate} required onInput=${(e) => setStartDate(e.target.value)} aria-label="First day" />
       <span>to</span>

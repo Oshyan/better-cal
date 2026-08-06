@@ -30,7 +30,7 @@ import {
 import { assignLanes } from './layout.js';
 import { EventChip, EventBar, TripBand } from './EventChip.js';
 import { Icon } from './icons.js';
-import { startPointerDrag, cloneAsGhost } from './DragController.js';
+import { startPointerDrag, cloneAsGhost, externalDropTarget, setDropRowHighlight } from './DragController.js';
 import { normalizeDayRange, dayRangeDraft } from '../lib/quickcreate.js';
 
 const WEEK_SPAN = 522; // weeks either side of today (~10 years)
@@ -116,6 +116,7 @@ export function MonthGrid({
   scrollKey, scrollSeq = 0, dimSet, nowMs,
   onRequestWindow, onVisibleMonthChange, onOpenEvent, onExpandDay, onOpenDay,
   onCreateRange, onMoveEvent, onResizeEvent,
+  onMoveSpan, onMoveTrip, onDropToCalendar, onDropToPerson, onDropToTrip,
 }) {
   const scrollRef = useRef(null);
   const [viewH, setViewH] = useState(600);
@@ -335,9 +336,29 @@ export function MonthGrid({
     }
   }, []);
 
+  // instanceId -> occurrence, for resolving drop targets (trip bands).
+  const occByIdRef = useRef(new Map());
+  occByIdRef.current = useMemo(() => new Map(occurrences.map((o) => [o.instanceId, o])), [occurrences]);
+
   const dragMoveOcc = useCallback((occ, ev) => {
     ev.stopPropagation();
     const src = ev.currentTarget;
+    const isAvail = !!occ.availKind;
+    const isTrip = !!occ.isContainer && !isAvail;
+    // Plain events can also land on sidebar rows and trip bands; bands
+    // themselves only reposition. Feed events are read-only content-wise, so
+    // they can neither change calendar nor take people.
+    const draggedCal = calendars[occ.calendarId];
+    const isFeed = !!draggedCal && draggedCal.kind === 'subscribed';
+    const extKinds = (!isAvail && !isTrip) ? {
+      cal: !isFeed ? (id) => id !== occ.calendarId : false,
+      person: !isFeed,
+      instance: (iid) => {
+        if (iid === occ.instanceId || String(iid).startsWith('avail:')) return false;
+        const t = occByIdRef.current.get(iid);
+        return !!(t && t.isContainer && !t.availKind);
+      },
+    } : null;
     const { startKey, endKey } = occurrenceDaySpan(occ);
     const spanDays = epochDayOfKey(endKey) - epochDayOfKey(startKey);
     const grabKey = dayKeyAtPoint({ x: ev.clientX, y: ev.clientY }) || startKey;
@@ -346,6 +367,17 @@ export function MonthGrid({
       makeGhost: () => cloneAsGhost(src),
       scrollEl: scrollRef.current,
       onMove: (pt) => {
+        if (extKinds) {
+          const ext = externalDropTarget(pt, extKinds);
+          dropRef.current.ext = ext;
+          if (ext) {
+            setDropRowHighlight(ext.el);
+            highlightDays([]);
+            dropRef.current.key = null;
+            return;
+          }
+          setDropRowHighlight(null);
+        }
         const k = dayKeyAtPoint(pt);
         if (!k) return;
         const newStart = epochDayOfKey(k) - grabOffset;
@@ -354,19 +386,41 @@ export function MonthGrid({
         dropRef.current.key = keyOfEpochDay(newStart);
         highlightDays(keys);
       },
-      onDrop: () => {
-        const target = dropRef.current.key;
+      onDrop: (pt) => {
+        const ext = dropRef.current.ext;
+        dropRef.current.ext = null;
+        setDropRowHighlight(null);
         highlightDays([]);
+        if (ext) {
+          if (ext.kind === 'cal' && onDropToCalendar) onDropToCalendar(occ, ext.id);
+          else if (ext.kind === 'person' && onDropToPerson) onDropToPerson(occ, ext.name);
+          else if (ext.kind === 'instance' && onDropToTrip) {
+            const tripOcc = occByIdRef.current.get(ext.instanceId);
+            if (tripOcc) onDropToTrip(occ, tripOcc);
+          }
+          return;
+        }
+        const target = dropRef.current.key;
         if (!target) return;
         const delta = epochDayOfKey(target) - epochDayOfKey(startKey);
         if (delta === 0) return;
+        if (isAvail) {
+          if (onMoveSpan) onMoveSpan({ spanId: occ.spanId, deltaDays: delta });
+          return;
+        }
+        if (isTrip) {
+          // The choice (trip only / trip + events) is the caller's UI; hand
+          // over the drop point so the chip lands where the pointer was.
+          if (onMoveTrip) onMoveTrip({ occ, deltaDays: delta, at: pt });
+          return;
+        }
         const s = addDaysDate(parseISO(occ.start), delta);
         const e = addDaysDate(parseISO(occ.end), delta);
         if (onMoveEvent) onMoveEvent({ instanceId: occ.instanceId, newStart: toISOWithOffset(s), newEnd: toISOWithOffset(e) });
       },
-      onCancel: () => highlightDays([]),
+      onCancel: () => { setDropRowHighlight(null); dropRef.current.ext = null; highlightDays([]); },
     });
-  }, [dayKeyAtPoint, highlightDays, onMoveEvent]);
+  }, [dayKeyAtPoint, highlightDays, onMoveEvent, onMoveSpan, onMoveTrip, onDropToCalendar, onDropToPerson, onDropToTrip, calendars]);
 
   const dragResizeOcc = useCallback((occ, edge, ev) => {
     ev.stopPropagation();
@@ -678,6 +732,7 @@ function WeekRow({
             occ=${occ} cal=${calendars[occ.calendarId]} seg=${seg}
             dimmed=${dimSet && dimSet.has(occ.instanceId)} nowMs=${nowMs}
             onOpen=${onOpenEvent}
+            onPointerDown=${(e) => dragMoveOcc(occ, e)}
           />
         </div>`)}
       </div>`}

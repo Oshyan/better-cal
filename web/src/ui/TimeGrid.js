@@ -24,7 +24,7 @@ import { layoutOverlaps, assignLanes } from './layout.js';
 import { occurrenceDaySpan, isWeekendEpochDay } from './monthmath.js';
 import { EventBlock, EventBar } from './EventChip.js';
 import { Icon } from './icons.js';
-import { startPointerDrag, cloneAsGhost } from './DragController.js';
+import { startPointerDrag, cloneAsGhost, externalDropTarget, setDropRowHighlight } from './DragController.js';
 import {
   dayRangeDraft, allDayRangeDraft, dragCreateMode, normalizeDayRange,
 } from '../lib/quickcreate.js';
@@ -77,6 +77,7 @@ export function TimeGrid({
   infinite = false, vstack = false, scrollKey, scrollSeq = 0,
   onRequestWindow, onVisibleMonthChange, onVisibleDay,
   onCreateRange, onMoveEvent, onResizeEvent, onOpenEvent, onOpenDay, onExpandDay,
+  onDropToCalendar, onDropToPerson,
 }) {
   const rootRef = useRef(null);
   const scrollRef = useRef(null);  // vertical time scroller
@@ -606,6 +607,12 @@ export function TimeGrid({
     if (!grab) return;
     const grabOffset = grab.min - minutesOfDay(s0);
     let target = null;
+    let ext = null;
+    // Sidebar rows accept drops here too (recategorize / link a person);
+    // feed events are read-only content-wise, so neither applies to them.
+    const draggedCal = calendars[occ.calendarId];
+    const isFeed = !!draggedCal && draggedCal.kind === 'subscribed';
+    const extKinds = !isFeed ? { cal: (id) => id !== occ.calendarId, person: true } : null;
     startPointerDrag(ev, {
       makeGhost: () => cloneAsGhost(src),
       ghostOffset: { x: 10, y: -8 },
@@ -613,6 +620,16 @@ export function TimeGrid({
       hScrollEl: infinite ? hscrollRef.current : null,
       onLift: () => src.classList.add('is-drag-source'),
       onMove: (pt) => {
+        if (extKinds) {
+          ext = externalDropTarget(pt, extKinds);
+          if (ext) {
+            setDropRowHighlight(ext.el);
+            hidePreview(previewRef);
+            target = null;
+            return;
+          }
+          setDropRowHighlight(null);
+        }
         const slot = pointToSlot(pt);
         if (!slot) return;
         const startMin = Math.max(0, Math.min(MINUTES_DAY - durMin, snapMin(slot.min - grabOffset)));
@@ -622,15 +639,21 @@ export function TimeGrid({
       onDrop: () => {
         src.classList.remove('is-drag-source');
         hidePreview(previewRef);
+        setDropRowHighlight(null);
+        if (ext) {
+          if (ext.kind === 'cal' && onDropToCalendar) onDropToCalendar(occ, ext.id);
+          else if (ext.kind === 'person' && onDropToPerson) onDropToPerson(occ, ext.name);
+          return;
+        }
         if (!target || !onMoveEvent) return;
         const ns = dateAt(target.dayKey, target.startMin);
         const ne = new Date(ns.getTime() + durMin * 60000);
         if (ns.getTime() === s0.getTime()) return;
         onMoveEvent({ instanceId: occ.instanceId, newStart: toISOWithOffset(ns), newEnd: toISOWithOffset(ne) });
       },
-      onCancel: () => { src.classList.remove('is-drag-source'); hidePreview(previewRef); },
+      onCancel: () => { src.classList.remove('is-drag-source'); hidePreview(previewRef); setDropRowHighlight(null); },
     });
-  }, [pointToSlot, infinite, previewGeom, onMoveEvent]);
+  }, [pointToSlot, infinite, previewGeom, onMoveEvent, onDropToCalendar, onDropToPerson, calendars]);
 
   const dragResize = useCallback((occ, edge, ev) => {
     ev.stopPropagation();

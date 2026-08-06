@@ -170,6 +170,7 @@ final class Feeds
                         'calendar_id' => $calendarId,
                         'uid' => $ev['uid'],
                         'source' => 'feed',
+                        'created_via' => 'feed',
                     ]);
                     if ($ev['recurrence_instance_utc'] === null) {
                         $masterIdByUid[(string) $ev['uid']] = $id;

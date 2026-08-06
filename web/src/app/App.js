@@ -6,6 +6,7 @@ import { loadWindow, api, refreshWindow, loadPeople } from './api.js';
 import {
   moveEvent, resizeEvent, triageAttendance, sendFeedback, exitReschedule,
   jumpToDate, openDetail, effectiveOverviewMode,
+  moveAvailabilitySpan, moveTrip, moveEventToCalendar, linkPersonToEvent, attachToTrip,
 } from './actions.js';
 import { groupOccurrences, itemMatchesFilter } from '../ui/grouping.js';
 import { sortByMatch } from '../lib/rank.js';
@@ -74,6 +75,7 @@ export function App() {
       expandedDay: st.expandedDay, agendaShowPast: st.agendaShowPast,
       agendaSort: st.agendaSort,
       reschedule: st.reschedule,
+      dropChoice: st.dropChoice,
       visibleMonth: st.reschedule ? st.visibleMonth : null,
       overviewMode: st.settings.overviewMode,
       nowMinute: st.nowMinute,
@@ -241,6 +243,8 @@ export function App() {
     const endKey = dayKeyOf(endDate);
     return {
       instanceId: 'avail:' + sp.id,
+      spanId: sp.id,
+      personId: sp.personId,
       eventId: null,
       calendarId: null,
       title: sp.name + ' ' + sp.kind + (sp.note ? ' — ' + sp.note : ''),
@@ -299,6 +303,29 @@ export function App() {
       set({ visibleMonth: { year: y, month: m } });
     }
   }, [s.view, s.anchor, s.agendaShowPast]);
+
+  // Drag-and-drop drop handlers (Wave 11). All of them route through actions
+  // that toast with undo; the trip move asks first because silently dragging
+  // every linked event along is sometimes right and sometimes very wrong.
+  const onMoveSpan = useCallback(({ spanId, deltaDays }) => { moveAvailabilitySpan(spanId, deltaDays); }, []);
+  const onMoveTrip = useCallback(({ occ, deltaDays, at }) => {
+    set({
+      dropChoice: {
+        x: at.x,
+        y: at.y,
+        title: 'Move "' + (occ.title || 'trip') + '"',
+        options: [
+          { label: 'Trip only', value: 'only' },
+          { label: 'Trip + events', value: 'members' },
+          { label: 'Cancel', value: null },
+        ],
+        cb: (v) => { if (v) moveTrip(occ, deltaDays, v === 'members'); },
+      },
+    });
+  }, []);
+  const onDropToCalendar = useCallback((occ, calendarId) => { moveEventToCalendar(occ, calendarId); }, []);
+  const onDropToPerson = useCallback((occ, name) => { linkPersonToEvent(occ, name); }, []);
+  const onDropToTrip = useCallback((occ, tripOcc) => { attachToTrip(tripOcc, occ); }, []);
 
   const onRequestWindow = useCallback(({ start, end }) => { loadWindow(start, end); }, []);
   const onVisibleMonthChange = useCallback((vm) => {
@@ -429,6 +456,11 @@ export function App() {
       onCreateRange=${onCreateRange}
       onMoveEvent=${moveEvent}
       onResizeEvent=${resizeEvent}
+      onMoveSpan=${onMoveSpan}
+      onMoveTrip=${onMoveTrip}
+      onDropToCalendar=${onDropToCalendar}
+      onDropToPerson=${onDropToPerson}
+      onDropToTrip=${onDropToTrip}
     />`;
   } else if (s.view === 'week') {
     // Week is a horizontally infinite day track: no remount on navigation,
@@ -449,6 +481,8 @@ export function App() {
       onResizeEvent=${resizeEvent}
       onOpenEvent=${onOpenEvent}
       onOpenDay=${onOpenDay}
+      onDropToCalendar=${onDropToCalendar}
+      onDropToPerson=${onDropToPerson}
     />`;
   } else if (s.view === 'day') {
     // Day view is a vertical stack: scrolling past midnight continues into
@@ -470,6 +504,8 @@ export function App() {
       onMoveEvent=${moveEvent}
       onResizeEvent=${resizeEvent}
       onOpenEvent=${onOpenEvent}
+      onDropToCalendar=${onDropToCalendar}
+      onDropToPerson=${onDropToPerson}
     />`;
   } else {
     // "Show past" filtering keys off the same minute tick as the dim styling,
@@ -570,6 +606,7 @@ export function App() {
     <${CreateDrawer} />
     <${SearchOverlay} />
     <${ShortcutsSheet} /><${CommandPalette} />
+    ${s.dropChoice && html`<${DropChoiceChip} choice=${s.dropChoice} />`}
     ${reschedActive && html`<${RescheduleOverlay}
       occ=${reschedOcc}
       cal=${calMeta[reschedOcc.calendarId]}
@@ -577,5 +614,33 @@ export function App() {
       onExit=${exitReschedule}
     />`}
     <${Toasts} />
+  </div>`;
+}
+
+// A tiny decision chip pinned at a drop point (trip move: with or without its
+// events). Escape or any outside press dismisses without acting.
+function DropChoiceChip({ choice }) {
+  const rootRef = useRef(null);
+  useEffect(() => {
+    const dismiss = () => set({ dropChoice: null });
+    const onDoc = (e) => { if (rootRef.current && !rootRef.current.contains(e.target)) dismiss(); };
+    const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); dismiss(); } };
+    document.addEventListener('pointerdown', onDoc, true);
+    document.addEventListener('keydown', onKey, true);
+    return () => {
+      document.removeEventListener('pointerdown', onDoc, true);
+      document.removeEventListener('keydown', onKey, true);
+    };
+  }, []);
+  // Clamped so a drop near the viewport edge keeps the chip fully on-screen.
+  const x = Math.max(8, Math.min(choice.x, window.innerWidth - 300));
+  const y = Math.max(8, Math.min(choice.y, window.innerHeight - 56));
+  return html`<div class="bc-dropchoice" ref=${rootRef} style=${'left:' + x + 'px;top:' + y + 'px'} role="dialog" aria-label=${choice.title}>
+    <span class="bc-dropchoice-title">${choice.title}</span>
+    ${choice.options.map((o) => html`<button
+      key=${String(o.value)} type="button"
+      class="bc-btn${o.value ? ' bc-btn-primary' : ''}"
+      onClick=${() => { set({ dropChoice: null }); choice.cb(o.value); }}
+    >${o.label}</button>`)}
   </div>`;
 }

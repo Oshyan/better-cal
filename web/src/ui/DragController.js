@@ -173,6 +173,51 @@ function edgeSpeed(depth) {
   return Math.min(EDGE_MAX_SPEED, 2 + (depth / EDGE_ZONE) * EDGE_MAX_SPEED);
 }
 
+// --- external drop targets ---------------------------------------------------
+// Hit-test non-grid drop targets under the pointer: sidebar calendar rows
+// ([data-drop-cal]), sidebar person rows ([data-drop-person]), and rendered
+// occurrences ([data-instance] — chips, bars, trip bands). The drag ghost is
+// pointer-events:none, so elementFromPoint sees through it. Each kind in
+// `kinds` is either falsy (skip), true (accept all), or a validator taking
+// the target's id and returning whether it is a live target for THIS drag.
+export function externalDropTarget(pt, kinds) {
+  const el = document.elementFromPoint(pt.x, pt.y);
+  if (!el) return null;
+  if (kinds.cal) {
+    const row = el.closest('[data-drop-cal]');
+    if (row) {
+      const id = Number(row.dataset.dropCal);
+      if (kinds.cal === true || kinds.cal(id)) return { kind: 'cal', el: row, id };
+    }
+  }
+  if (kinds.person) {
+    const row = el.closest('[data-drop-person]');
+    if (row) {
+      const id = Number(row.dataset.dropPerson);
+      const name = row.dataset.personName || '';
+      if (kinds.person === true || kinds.person(id)) return { kind: 'person', el: row, id, name };
+    }
+  }
+  if (kinds.instance) {
+    const chip = el.closest('[data-instance]');
+    if (chip) {
+      const instanceId = chip.dataset.instance;
+      if (kinds.instance === true || kinds.instance(instanceId)) return { kind: 'instance', el: chip, instanceId };
+    }
+  }
+  return null;
+}
+
+// One highlighted drop row at a time, managed imperatively so hover tracking
+// never re-renders the tree mid-drag.
+let highlightedRow = null;
+export function setDropRowHighlight(el) {
+  if (highlightedRow === el) return;
+  if (highlightedRow) highlightedRow.classList.remove('bc-drop-row');
+  highlightedRow = el || null;
+  if (highlightedRow) highlightedRow.classList.add('bc-drop-row');
+}
+
 // Clone an element for use as a drag ghost, preserving its rendered size.
 // The source may carry inline layout styles from its positioned parent
 // (.bc-block sets top/left within its day column); cloned as-is they would

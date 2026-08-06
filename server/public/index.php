@@ -179,6 +179,7 @@ function bc_handle_api(Request $request, array $cfg): void
         $router->add('GET', "$base/people/:id/events", [$peopleController, 'events']);
         $router->add('GET', "$base/people/:id/availability", [$peopleController, 'spans']);
         $router->add('POST', "$base/people/:id/availability", [$peopleController, 'addSpan']);
+        $router->add('PATCH', "$base/people/:id/availability/:spanId", [$peopleController, 'patchSpan']);
         $router->add('DELETE', "$base/people/:id/availability/:spanId", [$peopleController, 'deleteSpan']);
         $router->add('GET', "$base/availability", [$peopleController, 'window']);
         $router->add('GET', "$base/availability/check", [$peopleController, 'check']);

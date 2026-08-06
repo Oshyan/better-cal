@@ -10,7 +10,7 @@ import { useStore, set, state, toast, shallowEq } from './store.js';
 import { api, loadCalendars } from './api.js';
 import {
   toggleCalendarVisible, createFolder, deleteFolder,
-  folderMode, setFolderVisibilityMode, LOOSE_FOLDER_ID, setSidebarActiveOnly,
+  folderMode, setFolderVisibilityMode, ALL_GROUP_ID, setSidebarActiveOnly,
   togglePersonVisible, enterPeopleSolo, exitPeopleSolo,
   peopleVisibilityMode, setPeopleVisibilityMode,
 } from './actions.js';
@@ -48,7 +48,7 @@ function healthBadge(cal) {
   return html`<span class="bc-health" role="img" aria-label=${tip} title=${tip}><${Icon} name="warning" size=${12} /></span>`;
 }
 
-function CalendarRow({ cal, folders, open, onGear, soloed, onSolo }) {
+function CalendarRow({ cal, folders, open, onGear, soloed, onSolo, filedIn }) {
   return html`<div class="bc-cal-item">
     <div class="bc-cal-row${cal.visible ? '' : ' is-off'}">
       <label class="bc-cal-label" title=${cal.name}>
@@ -61,6 +61,11 @@ function CalendarRow({ cal, folders, open, onGear, soloed, onSolo }) {
         <${CalDot} cal=${cal} />
         <span class="bc-cal-name">${cal.name}</span>
       </label>
+      ${filedIn && filedIn.length > 0 && html`<span
+        class="bc-cal-filed" role="img"
+        aria-label=${'Also in ' + filedIn.join(', ')}
+        title=${'Also listed in ' + filedIn.join(', ')}
+      ><${Icon} name="folder" size=${11} /></span>`}
       ${healthBadge(cal)}
       <button
         type="button"
@@ -76,10 +81,10 @@ function CalendarRow({ cal, folders, open, onGear, soloed, onSolo }) {
         aria-label=${'Settings for ' + cal.name}
         aria-expanded=${open}
         title="Calendar settings"
-        onClick=${() => onGear(cal.id)}
+        onClick=${() => onGear()}
       ><${Icon} name="settings" size=${13} /></button>
     </div>
-    ${open && html`<${CalendarSettings} cal=${cal} folders=${folders} onClose=${() => onGear(null)} />`}
+    ${open && html`<${CalendarSettings} cal=${cal} folders=${folders} onClose=${() => onGear()} />`}
   </div>`;
 }
 
@@ -126,15 +131,16 @@ function ModeMenu({ mode, tip, ariaName, customDisabled, onPick }) {
   </div>`;
 }
 
-// The same control for the unfoldered group. It governs exactly the calendars
-// that section lists, so All / None / Custom there means what it says.
-function LooseModeButton() {
+// The same control for the All group. It governs exactly the calendars that
+// section lists — which is now every one of them — so All / None / Custom
+// there means what it says.
+function AllModeButton() {
   return html`<${ModeMenu}
-    mode=${folderMode(LOOSE_FOLDER_ID)}
-    tip="Visibility for calendars not in a folder: All shows every one, None hides them all, Custom is your own selection."
-    ariaName="Visibility for calendars not in a folder"
+    mode=${folderMode(ALL_GROUP_ID)}
+    tip="Visibility for every calendar: All shows them all, None hides them all, Custom is your own selection."
+    ariaName="Visibility for every calendar"
     customDisabled=${false}
-    onPick=${(m) => setFolderVisibilityMode(LOOSE_FOLDER_ID, m)}
+    onPick=${(m) => setFolderVisibilityMode(ALL_GROUP_ID, m)}
   />`;
 }
 
@@ -280,10 +286,13 @@ export function Sidebar({ open, collapsed, onClose }) {
     }),
     shallowEq,
   );
-  const [openCalId, setOpenCalId] = useState(null);
+  // A calendar filed in a folder is listed twice — once under its folder and
+  // once in All calendars — so the open gear is keyed by SECTION as well as
+  // id; keying by id alone opened both copies of the settings panel at once.
+  const [openGear, setOpenGear] = useState(null); // "<section>:<calendarId>"
   const [solo, setSolo] = useState(null); // {calId, prev: [[id, visible], ...]}
 
-  const toggleGear = (id) => setOpenCalId(openCalId === id ? null : id);
+  const toggleGear = (key) => setOpenGear(openGear === key ? null : key);
 
   const enterSolo = async (cal) => {
     const prev = solo ? solo.prev : state.calendars.map((c) => [c.id, c.visible]);
@@ -298,13 +307,19 @@ export function Sidebar({ open, collapsed, onClose }) {
   };
   const soloCal = solo ? calendars.find((c) => c.id === solo.calId) : null;
 
-  const inFolder = new Set();
-  const byFolder = folders.map((f) => {
-    const cals = calendars.filter((c) => (c.folderIds || []).includes(f.id));
-    for (const c of cals) inFolder.add(c.id);
-    return { folder: f, cals };
-  });
-  const loose = calendars.filter((c) => !inFolder.has(c.id));
+  const byFolder = folders.map((f) => ({
+    folder: f,
+    cals: calendars.filter((c) => (c.folderIds || []).includes(f.id)),
+  }));
+  // "All calendars" means all of them. A calendar filed in a folder is listed
+  // in both places on purpose: this section doubles as the management surface
+  // (every row carries its own gear), so having to remember which folder a
+  // calendar lives in just to reach its settings was the friction. The
+  // duplicate rows share one visible flag, so their checkboxes never diverge;
+  // a folder glyph on the right marks the ones that appear above as well.
+  const folderNamesOf = (cal) => folders
+    .filter((f) => (cal.folderIds || []).includes(f.id))
+    .map((f) => f.name);
 
   const toggleFolder = (id) => {
     set({ collapsedFolders: { ...collapsedFolders, [id]: !collapsedFolders[id] } });
@@ -314,13 +329,15 @@ export function Sidebar({ open, collapsed, onClose }) {
   // whose header carries the button. The row whose gear is open stays
   // regardless: switching a calendar off from its own settings panel would
   // otherwise yank the panel out from under the pointer.
-  const listed = (cals, scoped) => (activeOnly && scoped
-    ? cals.filter((c) => c.visible || openCalId === c.id)
+  const listed = (cals, section) => (activeOnly && section === 'all'
+    ? cals.filter((c) => c.visible || openGear === 'all:' + c.id)
     : cals);
 
-  const rows = (cals, scoped) => listed(cals, scoped).map((c) => html`<${CalendarRow}
+  const rows = (cals, section) => listed(cals, section).map((c) => html`<${CalendarRow}
     key=${c.id} cal=${c} folders=${folders}
-    open=${openCalId === c.id} onGear=${toggleGear}
+    open=${openGear === section + ':' + c.id}
+    onGear=${() => toggleGear(section + ':' + c.id)}
+    filedIn=${section === 'all' ? folderNamesOf(c) : null}
     soloed=${solo && solo.calId === c.id}
     onSolo=${(cal) => (solo && solo.calId === cal.id ? exitSolo() : enterSolo(cal))}
   />`);
@@ -338,7 +355,7 @@ export function Sidebar({ open, collapsed, onClose }) {
           collapsed=${!!collapsedFolders[folder.id]}
           onToggleCollapse=${() => toggleFolder(folder.id)}
         />
-        ${!collapsedFolders[folder.id] && html`<div class="bc-folder-body">${rows(cals)}</div>`}
+        ${!collapsedFolders[folder.id] && html`<div class="bc-folder-body">${rows(cals, 'f' + folder.id)}</div>`}
       </section>`)}
       <section class="bc-folder">
         ${byFolder.length > 0 && html`<div class="bc-folder-headrow">
@@ -354,10 +371,10 @@ export function Sidebar({ open, collapsed, onClose }) {
               onClick=${() => set({ createDrawer: { kind: 'calendar' } })}
             ><${Icon} name="plus" size=${13} /></button>
             <${ActiveOnlyButton} />
-            <${LooseModeButton} />
+            <${AllModeButton} />
           </span>
         </div>`}
-        ${(byFolder.length === 0 || !collapsedAllCals) && rows(loose, true)}
+        ${(byFolder.length === 0 || !collapsedAllCals) && rows(calendars, 'all')}
       </section>
       ${people.length > 0 && html`<section class="bc-folder">
         <div class="bc-folder-headrow">

@@ -2204,6 +2204,14 @@ body.bc-rescheduling { user-select: none; }
    back has to be visible without hunting for it. */
 .bc-folder-tools .bc-activeonly.is-on { opacity: 1; color: var(--accent); }
 
+/* Folder mark on an All-calendars row: this calendar is also listed above,
+   under a folder of its own. Quiet — it is an orientation cue, not an
+   action — and it sits before the hover-revealed tools so it never shifts
+   them. */
+.bc-cal-filed { display: inline-flex; align-items: center; color: var(--fg-muted); opacity: 0.55; flex: none; }
+.bc-cal-row:hover .bc-cal-filed { opacity: 0.8; }
+.bc-cal-row.is-off .bc-cal-filed { opacity: 0.3; }
+
 /* Highlight-colour picker in the filter form; only rendered for the
    highlight action. Swatches are the shared calendar palette. */
 .bc-hlcolor { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; }

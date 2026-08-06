@@ -197,6 +197,67 @@ final class Recurrence
     }
 
     /**
+     * How many whole rule periods DTSTART can move forward without leaving the
+     * window's first occurrence behind — or 0 when the rule is not one we can
+     * safely skip through.
+     *
+     * sabre's EventIterator only walks forward: fastForward() steps one
+     * occurrence at a time from DTSTART until it reaches the target. For a
+     * daily series begun seven years ago that is ~2,500 iterations on every
+     * request, and it grows by one a day forever. Measured on real data, that
+     * walk was 86% of expansion time and expansion was 87% of the whole events
+     * query.
+     *
+     * Moving DTSTART by a WHOLE multiple of the rule's period preserves the
+     * rule's phase exactly, so the instants sabre then generates are identical
+     * — this trades no correctness for the speedup. Deliberately conservative:
+     *
+     *  - Only DAILY and WEEKLY. MONTHLY/YEARLY iterate at most ~12 times a
+     *    year, so their walk is already cheap (measured: 105 monthly masters
+     *    cost 40ms total), and month arithmetic has end-of-month traps.
+     *  - Never with COUNT: the rule means "N occurrences from DTSTART", so
+     *    moving DTSTART would silently change which instances exist. UNTIL is
+     *    an absolute bound and is unaffected.
+     *  - WEEKLY moves in whole INTERVAL-week blocks, which keeps every BYDAY
+     *    position and the WKST-relative phase intact.
+     *  - Lands at or BEFORE the target, never past it, and leaves the last
+     *    partial period for sabre. Being approximately close is enough; the
+     *    remaining walk is a handful of steps.
+     *
+     * @return int periods to advance (0 = leave DTSTART alone)
+     */
+    public static function skippablePeriods(string $rrule, \DateTimeImmutable $dtStart, \DateTimeImmutable $target): int
+    {
+        if ($target <= $dtStart) {
+            return 0;
+        }
+        $parts = [];
+        foreach (explode(';', strtoupper($rrule)) as $bit) {
+            $kv = explode('=', $bit, 2);
+            if (count($kv) === 2) {
+                $parts[$kv[0]] = $kv[1];
+            }
+        }
+        if (isset($parts['COUNT'])) {
+            return 0;
+        }
+        $freq = $parts['FREQ'] ?? '';
+        if ($freq !== 'DAILY' && $freq !== 'WEEKLY') {
+            return 0;
+        }
+        $interval = max(1, (int) ($parts['INTERVAL'] ?? 1));
+        $daysPerPeriod = ($freq === 'WEEKLY' ? 7 : 1) * $interval;
+
+        // Whole days between the two, floored — computed on calendar dates so
+        // a DST shift inside the span cannot round the count down by one.
+        $days = (int) $dtStart->setTime(0, 0)->diff($target->setTime(0, 0))->format('%a');
+        $periods = intdiv($days, $daysPerPeriod);
+        // Give back one period as slack, so rounding can never overshoot the
+        // first in-window occurrence.
+        return max(0, $periods - 1);
+    }
+
+    /**
      * Default expander: sabre/vobject EventIterator, DTSTART in the event tzid.
      *
      * @return list<array{start:\DateTimeImmutable,end:\DateTimeImmutable}>
@@ -211,6 +272,21 @@ final class Recurrence
         $start = Time::fromDb((string) $master['start_utc'])->setTimezone($tz);
         $end = Time::fromDb((string) $master['end_utc'])->setTimezone($tz);
         $uid = (string) ($master['uid'] ?? 'bettercal-expand');
+
+        // Start the iterator near the window instead of at the series origin,
+        // where that is provably equivalent (see skippablePeriods). Both ends
+        // move together so the duration is untouched, and the arithmetic runs
+        // in the event's own zone so wall-clock time survives DST.
+        $rrule = (string) $master['rrule'];
+        $skip = self::skippablePeriods($rrule, $start, $winStart->setTimezone($tz));
+        if ($skip > 0) {
+            $freq = str_contains(strtoupper($rrule), 'FREQ=WEEKLY') ? 'WEEKLY' : 'DAILY';
+            preg_match('/INTERVAL=(\d+)/', strtoupper($rrule), $m);
+            $interval = max(1, (int) ($m[1] ?? 1));
+            $shift = new \DateInterval('P' . ($skip * $interval * ($freq === 'WEEKLY' ? 7 : 1)) . 'D');
+            $start = $start->add($shift);
+            $end = $end->add($shift);
+        }
 
         $vcal = new \Sabre\VObject\Component\VCalendar();
         $vevent = $vcal->add('VEVENT', ['UID' => $uid]);

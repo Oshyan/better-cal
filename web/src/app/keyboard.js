@@ -30,7 +30,10 @@ function isFeedOcc(occ) {
   return cal ? cal.kind === 'subscribed' : occ.source === 'feed';
 }
 
-const handlers = {
+// Exported so the command palette runs these exact functions rather than a
+// parallel copy of them — a palette entry and its keyboard shortcut can then
+// never disagree about what the action does.
+export const handlers = {
   today: goToday,
   jump: () => set({ jumpOpen: true }),
   prevDay: () => navigate(-1),
@@ -83,6 +86,7 @@ const handlers = {
     return true;
   },
   shortcuts: () => set({ shortcutsOpen: true }),
+  palette: () => set({ paletteOpen: !state.paletteOpen }),
   escape: () => closeOverlays(), // dispatched before the typing guard below
 };
 
@@ -92,8 +96,16 @@ export function installKeyboard() {
       if (handlers.escape()) e.preventDefault();
       return;
     }
-    if (isTyping() || e.metaKey || e.ctrlKey || e.altKey) return;
-    const entry = HOTKEYS.find((h) => h.keys.includes(e.key));
+    // Cmd/Ctrl bindings, and unlike every other one they must work while
+    // typing — that is the point of a palette. Checked before both guards.
+    if ((e.metaKey || e.ctrlKey) && !e.altKey) {
+      const mod = HOTKEYS.find((h) => h.mod && h.keys.includes(e.key.toLowerCase()));
+      const runMod = mod && handlers[mod.id];
+      if (runMod && runMod(e) !== false) e.preventDefault();
+      return;
+    }
+    if (isTyping() || e.altKey) return;
+    const entry = HOTKEYS.find((h) => !h.mod && h.keys.includes(e.key));
     if (!entry) return;
     const run = handlers[entry.id];
     if (!run) return;

@@ -41,6 +41,8 @@ import {
 } from '../src/ui/agendarails.js';
 import { hasHtml, stripToText, isEmptyHtml } from '../src/lib/richtext.js';
 import { batteryTipApplies, BATTERY_TIP_BODY, BATTERY_TIP_TITLE } from '../src/lib/batterytip.js';
+import { fuzzyScore, rankByFuzzy } from '../src/lib/fuzzy.js';
+import { STATIC_COMMANDS, COMMAND_GROUPS, MANAGE_ITEMS, VIEW_LABELS } from '../src/app/commanddefs.js';
 
 let passed = 0;
 let failed = 0;
@@ -651,6 +653,81 @@ assert('hotkeys: every group is used', HOTKEY_GROUPS.every((g) => HOTKEYS.some((
 assert('hotkeys: cheat sheet binding exists', HOTKEYS.some((h) => h.keys.includes('?')));
 assert('hotkeys: display overrides are string arrays', HOTKEYS.every((h) =>
   h.display === undefined || (Array.isArray(h.display) && h.display.every((k) => typeof k === 'string'))));
+
+console.log('--- command palette: fuzzy matching ---');
+
+assert('fuzzy: empty query matches everything', fuzzyScore('Go to today', '') === 0);
+assert('fuzzy: no match returns -1', fuzzyScore('Go to today', 'zzz') === -1);
+assert('fuzzy: substring matches', fuzzyScore('Show all calendars', 'calendars') > 0);
+assert('fuzzy: case insensitive', fuzzyScore('Show all calendars', 'CALEND') > 0);
+assert('fuzzy: initials match as subsequence', fuzzyScore('Month view', 'mv') > 0);
+assert('fuzzy: spaces in query are ignored', fuzzyScore('Month view', 'm v') > 0);
+// A contiguous name beats scattered letters, so typing more of what you mean
+// never demotes it below an accidental subsequence hit.
+assert('fuzzy: substring outranks subsequence',
+  fuzzyScore('Keyboard shortcuts', 'shortcuts') > fuzzyScore('Show all calendars', 'shortcuts'));
+assert('fuzzy: word start outranks mid-word',
+  fuzzyScore('Go to today', 'today') > fuzzyScore('Yesterdays', 'today'));
+
+const fuzzRanked = rankByFuzzy(
+  [{ label: 'Settings' }, { label: 'Search all events' }, { label: 'Saved views' }],
+  'sea',
+  (c) => [c.label],
+);
+eq('fuzzy: best match ranks first', fuzzRanked[0].label, 'Search all events');
+eq('fuzzy: non-matches are dropped',
+  rankByFuzzy([{ label: 'Settings' }, { label: 'People' }], 'zzq', (c) => [c.label]).length, 0);
+eq('fuzzy: ties keep input order',
+  rankByFuzzy([{ label: 'aX' }, { label: 'aY' }], 'a', (c) => [c.label]).map((c) => c.label), ['aX', 'aY']);
+
+// The FR's headline case: a name lives in the label and the synonym lives in
+// the keywords, so no single field holds the whole query. Before token-wise
+// matching this returned nothing and Enter fell through to quick add.
+const palCmds = [
+  { label: 'Ada Lovelace is away\u2026', keywords: 'gone out ooo vacation availability', group: 'People' },
+  { label: 'Ada Lovelace is busy\u2026', keywords: 'unavailable availability', group: 'People' },
+  { label: 'Show calendar: Personal', keywords: null, group: 'Calendars' },
+  { label: 'Month view', keywords: null, group: 'Views' },
+];
+const palFields = (c) => [c.label, c.keywords, c.group];
+eq('fuzzy: "<person> gone" finds the away command',
+  rankByFuzzy(palCmds, 'ada gone', palFields).map((c) => c.label), ['Ada Lovelace is away\u2026']);
+eq('fuzzy: a bare synonym lists the away command',
+  rankByFuzzy(palCmds, 'gone', palFields)[0].label, 'Ada Lovelace is away\u2026');
+eq('fuzzy: "<person> busy" picks busy over away',
+  rankByFuzzy(palCmds, 'ada busy', palFields)[0].label, 'Ada Lovelace is busy\u2026');
+assert('fuzzy: every token must match somewhere',
+  rankByFuzzy(palCmds, 'ada zzzq', palFields).length === 0);
+eq('fuzzy: a command name still outranks a token spread',
+  rankByFuzzy(palCmds, 'month view', palFields)[0].label, 'Month view');
+
+console.log('--- command palette: definitions ---');
+
+// The palette names hotkey ids rather than restating what those keys do. If
+// a hotkey is renamed or dropped, the palette entry must fail loudly here
+// rather than silently going dead at runtime.
+const hotkeyIds = new Set(HOTKEYS.map((h) => h.id));
+assert('commands: every hotkey reference resolves',
+  STATIC_COMMANDS.every((c) => !c.hotkey || hotkeyIds.has(c.hotkey)));
+eq('commands: ids are unique', new Set(STATIC_COMMANDS.map((c) => c.id)).size, STATIC_COMMANDS.length);
+assert('commands: every entry has a label and group',
+  STATIC_COMMANDS.every((c) => typeof c.label === 'string' && c.label.length > 0 && COMMAND_GROUPS.includes(c.group)));
+assert('commands: needs gates are known contexts',
+  STATIC_COMMANDS.every((c) => c.needs === undefined || c.needs === 'occ' || c.needs === 'popover'));
+assert('commands: prompting entries are labelled with an ellipsis',
+  STATIC_COMMANDS.every((c) => !c.prompt || c.label.endsWith('\u2026')));
+assert('commands: the palette itself has a hotkey', hotkeyIds.has('palette'));
+// A modifier binding must say so, or the plain dispatch would silently
+// reserve its bare key (a lone "k" doing nothing forever).
+assert('hotkeys: mod entries declare a display override',
+  HOTKEYS.filter((h) => h.mod).every((h) => Array.isArray(h.display) && h.display.length > 0));
+assert('hotkeys: the palette binding is mod-gated',
+  HOTKEYS.find((h) => h.id === 'palette').mod === true);
+assert('commands: manage items are [route, label] pairs',
+  MANAGE_ITEMS.length > 0 && MANAGE_ITEMS.every((r) => Array.isArray(r) && r.length === 2 && r.every((x) => typeof x === 'string')));
+eq('commands: manage routes are unique', new Set(MANAGE_ITEMS.map((r) => r[0])).size, MANAGE_ITEMS.length);
+assert('commands: every view id has a label',
+  ['month', 'weeks3', 'weeks2', 'week', 'day', 'agenda'].every((v) => typeof VIEW_LABELS[v] === 'string'));
 
 console.log('--- time format setting ---');
 

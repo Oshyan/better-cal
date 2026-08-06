@@ -17,6 +17,7 @@ import {
 import { CalendarSettings } from './CalendarSettings.js';
 import { MiniMonth } from './MiniMonth.js';
 import { PALETTE } from '../lib/color.js';
+import { MANAGE_ITEMS } from './commanddefs.js';
 import { Icon, CalDot } from '../ui/icons.js';
 
 // Solo ("show only this calendar"): transient, session-scoped. Entering solo
@@ -264,15 +265,8 @@ function AddMenu() {
   </div>`;
 }
 
-const MANAGE_ITEMS = [
-  ['settings', 'Settings'],
-  ['organize', 'Calendars & folders'],
-  ['people', 'People'],
-  ['activity', 'Activity'],
-  ['outfeeds', 'Outbound feeds'],
-  ['filters', 'Filters'],
-  ['views', 'Saved views'],
-];
+// MANAGE_ITEMS lives in commanddefs.js so the sidebar footer and the
+// command palette offer exactly the same pages.
 
 export function Sidebar({ open, collapsed, onClose }) {
   const { calendars, folders, collapsedFolders, route, people, collapsedAllCals, collapsedPeople, peopleSolo, activeOnly } = useStore(

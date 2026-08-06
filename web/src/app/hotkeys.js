@@ -3,8 +3,10 @@
 // can never drift from the real bindings. Pure data (no imports) so the
 // smoke test loads it in Node.
 //
-// Entry shape: {id, keys:[...e.key values], label, group, display?:[...]}
+// Entry shape: {id, keys:[...e.key values], label, group, display?:[...], mod?}
 // display overrides how the keys render in the sheet (arrows, ranges).
+// mod:true means the binding requires Cmd/Ctrl, so the plain dispatch skips
+// it and the bare key stays free.
 
 export const HOTKEY_GROUPS = ['Navigation', 'Views', 'Events', 'Overlays'];
 
@@ -32,6 +34,7 @@ export const HOTKEYS = [
   { id: 'detailNext', keys: [']'], label: 'Next event that day (detail open)', group: 'Events' },
 
   // Overlays
+  { id: 'palette', keys: ['k'], mod: true, display: ['⌘/Ctrl', 'K'], label: 'Command palette', group: 'Overlays' },
   { id: 'search', keys: ['/'], label: 'Search all events', group: 'Overlays' },
   { id: 'filter', keys: ['f'], label: 'Filter visible events', group: 'Overlays' },
   { id: 'shortcuts', keys: ['?'], label: 'Keyboard shortcuts', group: 'Overlays' },

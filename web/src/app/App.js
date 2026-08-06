@@ -31,6 +31,7 @@ import { EditorDrawer } from './EditorDrawer.js';
 import { CreateDrawer } from './CreateDrawer.js';
 import { SearchOverlay } from './SearchOverlay.js';
 import { ShortcutsSheet } from './ShortcutsSheet.js';
+import { CommandPalette } from './CommandPalette.js';
 import { Toasts } from './Toasts.js';
 import { Login } from './Login.js';
 import { OutfeedsPage } from './OutfeedsPage.js';
@@ -381,25 +382,25 @@ export function App() {
     return html`<${Login} />`;
   }
   if (s.route === 'organize') {
-    return html`<div class="bc-app"><${OrganizePage} /><${CreateDrawer} /><${ShortcutsSheet} /><${Toasts} /></div>`;
+    return html`<div class="bc-app"><${OrganizePage} /><${CreateDrawer} /><${ShortcutsSheet} /><${CommandPalette} /><${Toasts} /></div>`;
   }
   if (s.route === 'outfeeds') {
-    return html`<div class="bc-app"><${OutfeedsPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${Toasts} /></div>`;
+    return html`<div class="bc-app"><${OutfeedsPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${CommandPalette} /><${Toasts} /></div>`;
   }
   if (s.route === 'filters') {
-    return html`<div class="bc-app"><${FiltersPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${Toasts} /></div>`;
+    return html`<div class="bc-app"><${FiltersPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${CommandPalette} /><${Toasts} /></div>`;
   }
   if (s.route === 'views') {
-    return html`<div class="bc-app"><${SavedViewsPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${Toasts} /></div>`;
+    return html`<div class="bc-app"><${SavedViewsPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${CommandPalette} /><${Toasts} /></div>`;
   }
   if (s.route === 'settings') {
-    return html`<div class="bc-app"><${SettingsPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${Toasts} /></div>`;
+    return html`<div class="bc-app"><${SettingsPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${CommandPalette} /><${Toasts} /></div>`;
   }
   if (s.route === 'people') {
-    return html`<div class="bc-app"><${PeoplePage} /><${CreateDrawer} /><${ShortcutsSheet} /><${Toasts} /></div>`;
+    return html`<div class="bc-app"><${PeoplePage} /><${CreateDrawer} /><${ShortcutsSheet} /><${CommandPalette} /><${Toasts} /></div>`;
   }
   if (s.route === 'activity') {
-    return html`<div class="bc-app"><${ActivityPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${Toasts} /></div>`;
+    return html`<div class="bc-app"><${ActivityPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${CommandPalette} /><${Toasts} /></div>`;
   }
 
   let view = null;
@@ -568,7 +569,7 @@ export function App() {
     <${EditorDrawer} />
     <${CreateDrawer} />
     <${SearchOverlay} />
-    <${ShortcutsSheet} />
+    <${ShortcutsSheet} /><${CommandPalette} />
     ${reschedActive && html`<${RescheduleOverlay}
       occ=${reschedOcc}
       cal=${calMeta[reschedOcc.calendarId]}

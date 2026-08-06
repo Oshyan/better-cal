@@ -90,6 +90,7 @@ export const state = {
   route: 'calendar', // calendar | organize | outfeeds | filters | views | settings
 
   quickAddOpen: false,
+  paletteOpen: false, // command palette (Cmd/Ctrl-K)
   searchOpen: false,
   jumpOpen: false,   // jump-to-date popover (toolbar date label / g)
   shortcutsOpen: false, // keyboard shortcuts cheat sheet (?)

@@ -2345,6 +2345,17 @@ body.bc-rescheduling { user-select: none; }
 .bc-activity-undonetag { margin-left: 6px; font-size: 10.5px; color: var(--fg-muted); border: 1px solid var(--border-strong); border-radius: 999px; padding: 0 6px; }
 .bc-activity-row.is-undone .bc-activity-summary { text-decoration: line-through; color: var(--fg-muted); }
 .bc-activity-row.is-undone .bc-activity-undonetag { text-decoration: none; display: inline-block; }
+/* A blocked tamper attempt (refused iMIP) is not an ordinary log line — it
+   should read as something that needs a look, so it keeps a danger edge. */
+.bc-activity-row.is-refused { border-left: 2px solid var(--danger); padding-left: 8px; }
+/* The sender address is the whole point of a refusal line — never ellipsis it
+   away the way a long list of imported titles can be. */
+.bc-activity-row.is-refused .bc-activity-detail { white-space: normal; overflow: visible; text-overflow: clip; }
+.bc-activity-blockedtag {
+  margin-left: 6px; font-size: 10.5px; color: var(--danger);
+  border: 1px solid color-mix(in srgb, var(--danger) 55%, transparent);
+  border-radius: 999px; padding: 0 6px;
+}
 .bc-activity-actions { flex: none; display: flex; align-items: center; gap: 4px; }
 .bc-activity-actions .bc-btn { padding: 1px 9px; font-size: 12px; }
 .bc-activity-more { margin-top: 12px; }

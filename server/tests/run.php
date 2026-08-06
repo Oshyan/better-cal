@@ -360,6 +360,28 @@ checkEq('imip sequence', 2, $imip['events'][0]['invite']['sequence']);
 checkEq('imip garbage -> null', null, MailIngest::parseImip('not an ics'));
 }
 
+// iMIP forgery/replay guard (BC-07/08/09). An iMIP message is unauthenticated
+// mail; the organizer bound when the invite was first accepted is what later
+// REQUEST/CANCEL messages must match, or anyone who learns a UID can cancel or
+// rewrite the owner's meeting.
+$bound = ['organizer' => ['email' => 'alice@example.com'], 'sequence' => 2];
+$may = static fn(?array $stored, array $in, string $from) => MailIngest::imipMayMutate($stored, $in, $from);
+
+check('imip same organizer may update', $may($bound, ['organizer' => ['email' => 'alice@example.com'], 'sequence' => 3], 'mailer@corp.example')[0]);
+check('imip organizer case/name insensitive', $may($bound, ['organizer' => ['email' => 'ALICE@Example.com'], 'sequence' => 2], '')[0]);
+check('imip trusted sender covers relayed body', $may($bound, ['organizer' => ['email' => 'bob@evil.test'], 'sequence' => 3], 'Alice <alice@example.com>')[0]);
+check('imip mailto: prefix normalizes', $may($bound, ['organizer' => ['email' => 'mailto:alice@example.com'], 'sequence' => 2], '')[0]);
+
+checkEq('imip forged cancel refused', 'organizer mismatch', $may($bound, ['organizer' => ['email' => 'mallory@evil.test'], 'sequence' => 9], 'mallory@evil.test')[1]);
+checkEq('imip no-organizer message refused', 'organizer mismatch', $may($bound, ['sequence' => 3], 'mallory@evil.test')[1]);
+checkEq('imip stale sequence refused', 'stale sequence', $may($bound, ['organizer' => ['email' => 'alice@example.com'], 'sequence' => 1], '')[1]);
+check('imip equal sequence allowed', $may($bound, ['organizer' => ['email' => 'alice@example.com'], 'sequence' => 2], '')[0]);
+
+// UID collision with a local event that never carried an invite: fail closed
+// rather than letting unauthenticated mail take ownership of it (BC-08).
+checkEq('imip unbound local uid refused', 'no organizer bound to this event', $may(null, ['organizer' => ['email' => 'alice@example.com'], 'sequence' => 1], 'alice@example.com')[1]);
+checkEq('imip empty stored organizer refused', 'no organizer bound to this event', $may(['organizer' => null, 'sequence' => 0], ['organizer' => ['email' => 'x@y.test']], 'x@y.test')[1]);
+
 $ldHtml = '<html><body><script type="application/ld+json">'
     . json_encode(['@context' => 'https://schema.org', '@type' => 'Event', 'name' => 'Concert Night',
         'startDate' => '2026-09-12T19:30:00-07:00', 'endDate' => '2026-09-12T22:00:00-07:00',

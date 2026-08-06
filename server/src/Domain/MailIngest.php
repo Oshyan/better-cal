@@ -292,9 +292,14 @@ final class MailIngest
                 continue;
             }
             foreach ($imip['events'] as $ev) {
-                $outcome = ActivityContext::with('mail:imip', fn() => $this->applyImipEvent($userId, $imip['method'], $ev, $tz));
+                $outcome = ActivityContext::with('mail:imip', fn() => $this->applyImipEvent($userId, $imip['method'], $ev, $tz, (string) ($msg['from'] ?? '')));
                 if ($outcome !== null) {
-                    return ['tier' => 'imip', 'outcome' => $outcome[0], 'eventId' => $outcome[1], 'error' => null];
+                    return [
+                        'tier' => 'imip',
+                        'outcome' => $outcome[0],
+                        'eventId' => $outcome[1],
+                        'error' => $outcome[2] ?? null,
+                    ];
                 }
             }
         }
@@ -362,17 +367,124 @@ final class MailIngest
         return ['tier' => 'none', 'outcome' => 'skipped', 'eventId' => null, 'error' => null];
     }
 
-    /** @return array{0:string,1:?int}|null [outcome, eventId] */
-    private function applyImipEvent(int $userId, string $method, array $ev, string $tz): ?array
+    /**
+     * Normalised mail identity for comparison: lowercased address, angle
+     * brackets and display name stripped. "Alice <A@Example.COM>" and
+     * "a@example.com" are the same organizer.
+     */
+    private static function addrKey(mixed $addr): string
+    {
+        $s = is_string($addr) ? $addr : '';
+        if (preg_match('/<([^>]+)>/', $s, $m) === 1) {
+            $s = $m[1];
+        }
+        $s = strtolower(trim($s));
+        return str_starts_with($s, 'mailto:') ? substr($s, 7) : $s;
+    }
+
+    /**
+     * May this message mutate this existing event?
+     *
+     * An iMIP message is an unauthenticated email. Anyone who learns a UID —
+     * which every genuine participant already has, since it travels in the
+     * invitation — could otherwise cancel or rewrite the owner's event just by
+     * sending mail to the ingest address, and the owner would see no trace: a
+     * cancelled meeting looks the same as one that was never accepted.
+     *
+     * So the organizer recorded when the invitation was FIRST accepted becomes
+     * the trusted identity for that UID, and later REQUEST/CANCEL messages must
+     * match it. Two things are compared, and either satisfies the check, since
+     * mailing lists and calendaring services legitimately send on an
+     * organizer's behalf:
+     *
+     *   - the ORGANIZER inside the iCalendar body, and
+     *   - the envelope sender of the mail carrying it.
+     *
+     * @param array<string,mixed>|null $stored decoded invite_json of the event
+     * @return array{0:bool,1:string} [allowed, reason]
+     */
+    public static function imipMayMutate(?array $stored, array $incoming, string $fromAddr): array
+    {
+        $trusted = self::addrKey($stored['organizer']['email'] ?? null);
+        // No organizer was ever recorded (an event created locally, or by an
+        // older ingest). Nothing to authenticate against, so treat the UID as
+        // unowned rather than inventing trust for it.
+        if ($trusted === '') {
+            return [false, 'no organizer bound to this event'];
+        }
+
+        $claimed = self::addrKey($incoming['organizer']['email'] ?? null);
+        $sender = self::addrKey($fromAddr);
+        if ($claimed !== $trusted && $sender !== $trusted) {
+            return [false, 'organizer mismatch'];
+        }
+
+        // Replay: a message with a lower SEQUENCE describes an older state of
+        // the meeting. Message-ID dedup does not catch this, because a stale
+        // body can be resent with a fresh Message-ID.
+        $storedSeq = isset($stored['sequence']) ? (int) $stored['sequence'] : 0;
+        $incomingSeq = isset($incoming['sequence']) ? (int) $incoming['sequence'] : 0;
+        if ($incomingSeq < $storedSeq) {
+            return [false, 'stale sequence'];
+        }
+
+        return [true, ''];
+    }
+
+    /** @return array{0:string,1:?int,2?:string}|null [outcome, eventId, reason] */
+    private function applyImipEvent(int $userId, string $method, array $ev, string $tz, string $fromAddr = ''): ?array
     {
         $uid = (string) ($ev['uid'] ?? '');
         if ($uid === '') {
             return null;
         }
         $existing = $this->db->one(
-            'SELECT id, calendar_id FROM events WHERE user_id = ? AND uid = ? AND deleted_at IS NULL AND recurrence_parent_id IS NULL',
+            'SELECT id, calendar_id, title, invite_json FROM events WHERE user_id = ? AND uid = ? AND deleted_at IS NULL AND recurrence_parent_id IS NULL',
             [$userId, $uid]
         );
+
+        // Anything that would MUTATE an event the owner already has must prove
+        // it comes from that event's organizer. Creating a new event from an
+        // unknown UID stays open — that is what an invitation is.
+        if ($existing !== null) {
+            $storedInvite = is_string($existing['invite_json'] ?? null)
+                ? json_decode((string) $existing['invite_json'], true)
+                : null;
+            $incoming = is_array($ev['invite'] ?? null) ? $ev['invite'] : [];
+            [$allowed, $why] = self::imipMayMutate(
+                is_array($storedInvite) ? $storedInvite : null,
+                $incoming,
+                $fromAddr
+            );
+            if (!$allowed) {
+                // Refused, not silently dropped. Two records, because they have
+                // different readers: mail_ingest is the per-message log (reason
+                // in `error`; `outcome` is only VARCHAR(32)), and the activity
+                // feed is where the owner actually looks — a blocked attempt to
+                // cancel their meeting should not live only in worker stdout.
+                (new Undo($this->db))->record(
+                    $userId,
+                    'event',
+                    (int) $existing['id'],
+                    'refuse',
+                    null,
+                    null,
+                    // Reason stays out of the summary so the row reads on one
+                    // line like every other; it lands in the detail line below.
+                    'Blocked an emailed ' . ($method === 'CANCEL' ? 'cancellation of' : 'change to')
+                        . ' "' . (string) $existing['title'] . '"',
+                    [
+                        'reason' => $why,
+                        'method' => $method,
+                        'uid' => $uid,
+                        'from' => $fromAddr,
+                        'claimedOrganizer' => $incoming['organizer']['email'] ?? null,
+                        'boundOrganizer' => is_array($storedInvite) ? ($storedInvite['organizer']['email'] ?? null) : null,
+                    ]
+                );
+                return ['refused', (int) $existing['id'], $why];
+            }
+        }
 
         if ($method === 'CANCEL') {
             if ($existing === null) {

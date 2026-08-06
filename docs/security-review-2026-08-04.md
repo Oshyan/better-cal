@@ -110,6 +110,8 @@ Local developer-only availability failures, operator-only footguns, duplicate wr
 
 ### BC-07 — Forged iMIP CANCEL mutates an existing event by UID without organizer authentication
 
+> **FIXED 2026-08-06** — see "Fixed: iMIP forgery and replay" below.
+
 - Severity: **Medium (P2)**.
 - Confidence: High.
 - Candidates: `candidate-ce953eac5599277c` (canonical); broad duplicates `candidate-994dcf60340e2e95`, `candidate-18cdc53f86bb04b4`, `candidate-2a974cf3bc1633da`, and `candidate-b203ff52ff896b1d` also cover BC-08.
@@ -122,6 +124,8 @@ Local developer-only availability failures, operator-only footguns, duplicate wr
 
 ### BC-08 — Forged iMIP REQUEST overwrites a non-recurring local event by UID
 
+> **FIXED 2026-08-06** — see "Fixed: iMIP forgery and replay" below.
+
 - Severity: **Medium (P2)**.
 - Confidence: High.
 - Candidates: `candidate-6cb01aa6087e5e8d` (canonical); the same four broad iMIP candidates listed under BC-07 are duplicate umbrellas.
@@ -131,6 +135,8 @@ Local developer-only availability failures, operator-only footguns, duplicate wr
 - Fix: apply the same persisted organizer and mail-authentication binding as BC-07; never let unauthenticated iMIP silently take ownership of an unrelated local UID collision.
 
 ### BC-09 — Stale iMIP SEQUENCE values can replay older updates and cancellations
+
+> **FIXED 2026-08-06** — see "Fixed: iMIP forgery and replay" below.
 
 - Severity: **Medium (P2)**.
 - Confidence: High.
@@ -446,3 +452,33 @@ Every input row is explicitly closed below.
 4. BC-07 through BC-10: bind iMIP identity/sequence and cap mail materialization.
 5. BC-14 through BC-16: linearize ICS folding, clamp event spans, and use safe structural ICS serialization.
 6. BC-05/BC-06 and remaining bounded-input issues.
+
+## Fixed: iMIP forgery and replay (BC-07, BC-08, BC-09) — 2026-08-06
+
+An iMIP message is unauthenticated email. Before this change, anything that knew an event's UID could cancel or rewrite that event by mailing the ingest address, and the owner would see nothing: a cancelled meeting looks exactly like one that was never accepted. UID knowledge is a low bar, since the UID travels in the invitation to every genuine participant.
+
+The organizer recorded when an invitation is first accepted is now the trusted identity for that UID. `MailIngest::imipMayMutate()` gates every mutation of an existing event on it, and refuses when:
+
+- the message's `ORGANIZER` and its envelope sender both fail to match the bound organizer (either one matching is accepted, because mailing lists and calendaring services legitimately send on an organizer's behalf), or
+- the incoming `SEQUENCE` is lower than the stored one, which is a replayed older state that Message-ID dedup cannot catch, since a stale body can be resent under a fresh Message-ID, or
+- no organizer was ever bound to the event. This is the UID-collision case in BC-08: a local event that never carried an invitation is not something unauthenticated mail gets to take ownership of. It fails closed.
+
+Creating a new event from an unknown UID is still open. That is what an invitation is.
+
+Refusals are recorded twice, for two different readers: `mail_ingest` keeps the per-message row with the reason in `error`, and the activity feed gets a log-only `refuse` entry (migration `012`) carrying the reason, the sender, and the organizer on file. Nothing is mutated, so these rows have no snapshot and are never undoable. They exist so a blocked tamper attempt is visible where the owner actually looks, rather than only in worker stdout.
+
+### Residual risk: no inbound authentication verdict is available
+
+The review's fix note says to match "authenticated mail identity where available". On this deployment it is not available. The ingest mailbox is MXroute, and inspection of real delivered messages found **no `Authentication-Results` header** on any of them — only `X-Spam-Status`, plus an `ARC-Authentication-Results` that Google stamped before forwarding, reading `arc=none`. So there is no inbound verdict to consult and a check for one would be dead code here.
+
+That is deliberate on MXroute's part, not an oversight: they [do not act on ARC](https://blog.mxroute.com/arc-the-trust-me-bro-of-email-authentication), on the grounds that trust is not transitive and there is no universal trust network that would say which forwarders deserve to be believed. Their argument applies to us too. A stamped verdict is an intermediary's assertion, so consuming one would move the trust boundary rather than close it. Any real fix has to verify signatures against the message we actually hold.
+
+What this means concretely: the bar rises from "know the UID" to "know the UID **and** know or spoof the organizer's address". Both the `From` header and the body `ORGANIZER` are attacker-controlled under plain SMTP, so a determined attacker who learns the organizer address can still pass the check. That is a real limit, not a solved problem.
+
+The complete fix is verifying DKIM in-process against the organizer's domain, on the raw message, trusting no intermediary's claim about it. Tracked separately.
+
+### Verification
+
+Ten unit checks in `server/tests/run.php` cover the pure predicate: address normalisation (case, display name, `mailto:`), trusted-sender relay, forged organizer, missing organizer, stale and equal sequence, and both unbound-event cases.
+
+Twenty assertions were run end to end against the deployed code and the production database, exercising the real `ingestMessage` path with generated messages: a genuine REQUEST creates and binds the organizer; a forged CANCEL is refused and the event stays uncancelled; a forged REQUEST is refused with title and start unchanged; both refusals appear in the activity feed with the correct source, summary, sender, and no snapshot; a stale SEQUENCE from the real organizer is refused; and the legitimate organizer can still update and cancel. The probe created and removed its own rows by exact id.

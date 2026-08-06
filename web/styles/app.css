@@ -2205,12 +2205,17 @@ body.bc-rescheduling { user-select: none; }
 .bc-folder-tools .bc-activeonly.is-on { opacity: 1; color: var(--accent); }
 
 /* Folder mark on an All-calendars row: this calendar is also listed above,
-   under a folder of its own. Quiet — it is an orientation cue, not an
-   action — and it sits before the hover-revealed tools so it never shifts
-   them. */
-.bc-cal-filed { display: inline-flex; align-items: center; color: var(--fg-muted); opacity: 0.55; flex: none; }
-.bc-cal-row:hover .bc-cal-filed { opacity: 0.8; }
-.bc-cal-row.is-off .bc-cal-filed { opacity: 0.3; }
+   under a folder of its own. It rides directly after the name rather than
+   in a column of its own — parked at the row's right edge it read as one of
+   the hover tools, which it is not. The negative margin eats most of the
+   label's 7px gap so it sits against the text (or against the ellipsis, when
+   a long name truncates). Dimming for a switched-off row comes from the
+   label, so there is no separate is-off rule to compound with it. */
+.bc-cal-filed {
+  display: inline-flex; align-items: center; flex: none;
+  color: var(--fg-muted); opacity: 0.55; margin-left: -3px;
+}
+.bc-cal-row:hover .bc-cal-filed { opacity: 0.85; }
 
 /* Highlight-colour picker in the filter form; only rendered for the
    highlight action. Swatches are the shared calendar palette. */

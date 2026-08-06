@@ -60,8 +60,32 @@ function fullYear(raw) {
   return raw.length <= 2 ? 2000 + y : y;
 }
 
+// Forms that name a whole month or year rather than a day. Shared with
+// jumpGranularity below so the two can never disagree about which is which.
+const YEAR_ONLY = /^\d{4}$/;
+const BARE_WORD = /^(?:(?:next|this) )?([a-z]+)$/;
+const MONTH_YEAR = /^([a-z]+) (\d{4})$/;
+
+function normalize(text) {
+  return String(text || '').trim().toLowerCase().replace(/\s+/g, ' ').replace(/,/g, '');
+}
+
+// How much of a date the text actually pinned down: 'day' | 'month' | 'year'.
+// A request for a whole month should frame that month rather than land on its
+// first day — see jumpAnchorFor in actions.js.
+export function jumpGranularity(text) {
+  const t = normalize(text);
+  if (!t) return 'day';
+  if (YEAR_ONLY.test(t)) return 'year';
+  const bare = t.match(BARE_WORD);
+  if (bare) return wordIndex(bare[1], MONTH_NAMES) != null ? 'month' : 'day';
+  const my = t.match(MONTH_YEAR);
+  if (my && wordIndex(my[1], MONTH_NAMES) != null) return 'month';
+  return 'day';
+}
+
 export function parseJumpText(text, baseKey) {
-  const t = String(text || '').trim().toLowerCase().replace(/\s+/g, ' ').replace(/,/g, '');
+  const t = normalize(text);
   if (!t || !baseKey) return null;
   const baseEd = epochDayOfKey(baseKey);
   const baseYear = Number(baseKey.slice(0, 4));
@@ -74,7 +98,7 @@ export function parseJumpText(text, baseKey) {
   let m = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
   if (m) return validKey(Number(m[1]), Number(m[2]), Number(m[3]));
 
-  if (/^\d{4}$/.test(t)) return validKey(Number(t), 1, 1);
+  if (YEAR_ONLY.test(t)) return validKey(Number(t), 1, 1);
 
   m = t.match(/^(\d{1,2})[/.](\d{1,2})(?:[/.](\d{2}|\d{4}))?$/);
   if (m) {
@@ -86,7 +110,7 @@ export function parseJumpText(text, baseKey) {
 
   // Word-based forms.
   // "next tuesday" / "this tuesday" / "tuesday"
-  m = t.match(/^(?:(?:next|this) )?([a-z]+)$/);
+  m = t.match(BARE_WORD);
   if (m) {
     const wd = wordIndex(m[1], WEEKDAY_NAMES);
     if (wd != null) {
@@ -104,7 +128,7 @@ export function parseJumpText(text, baseKey) {
   }
 
   // "june 2027"
-  m = t.match(/^([a-z]+) (\d{4})$/);
+  m = t.match(MONTH_YEAR);
   if (m) {
     const mo = wordIndex(m[1], MONTH_NAMES);
     if (mo != null) return validKey(Number(m[2]), mo + 1, 1);

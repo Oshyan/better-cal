@@ -18,7 +18,7 @@ import {
 import { contrastText, withAlpha, parseHex } from '../src/lib/color.js';
 import { baseTitle, groupOccurrences, itemMatchesFilter, isGroupId } from '../src/ui/grouping.js';
 import { sortByMatch } from '../src/lib/rank.js';
-import { parseJumpText } from '../src/lib/jumpparse.js';
+import { parseJumpText, jumpGranularity } from '../src/lib/jumpparse.js';
 import { monthWeeks, stepMonthOf } from '../src/lib/minimonth.js';
 import {
   normalizeDayRange, dayRangeDraft, dayRangeLabel, timeRangeLabel, chipPosition,
@@ -503,6 +503,22 @@ eq('jump: weekday', parseJumpText('tuesday', JB), '2026-08-04');
 eq('jump: next weekday', parseJumpText('next tuesday', JB), '2026-08-04');
 eq('jump: same weekday means a week out', parseJumpText('friday', JB), '2026-08-07');
 eq('jump: weekday prefix', parseJumpText('tue', JB), '2026-08-04');
+
+// Granularity: how much of a date the text pinned down. A whole-month
+// request frames the month in the grid views instead of landing on its 1st,
+// which is also what keeps the toolbar label naming the month you asked for.
+eq('gran: bare month', jumpGranularity('june'), 'month');
+eq('gran: month prefix', jumpGranularity('jun'), 'month');
+eq('gran: month + year', jumpGranularity('june 2027'), 'month');
+eq('gran: month + year, comma and case', jumpGranularity('June, 2027'), 'month');
+eq('gran: bare year', jumpGranularity('2027'), 'year');
+eq('gran: month + day is a day', jumpGranularity('june 5'), 'day');
+eq('gran: m/d is a day', jumpGranularity('8/15'), 'day');
+eq('gran: ISO is a day', jumpGranularity('2027-06-15'), 'day');
+eq('gran: weekday is a day', jumpGranularity('next tuesday'), 'day');
+eq('gran: today is a day', jumpGranularity('today'), 'day');
+eq('gran: gibberish is a day', jumpGranularity('fnord'), 'day');
+eq('gran: empty is a day', jumpGranularity('   '), 'day');
 
 // Garbage in, null out.
 eq('jump: gibberish', parseJumpText('fnord', JB), null);

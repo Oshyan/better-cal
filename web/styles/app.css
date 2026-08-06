@@ -1277,7 +1277,9 @@ body.bc-dragging * { cursor: grabbing !important; }
   background: none; border: none; padding: 5px 14px; text-align: left;
 }
 .bc-palette-row.is-selected { background: var(--bg-inset); }
-.bc-palette-dotgap { flex: none; width: 9px; }
+/* Leading slot: icon, calendar dot, or empty. Fixed width so labels align
+   across all three; muted so icons read as wayfinding, not content. */
+.bc-palette-lead { flex: none; width: 17px; display: inline-flex; align-items: center; justify-content: center; color: var(--fg-muted); }
 .bc-palette-label { font-size: 13.5px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bc-palette-hint { flex: none; color: var(--fg-muted); font-size: 11.5px; }
 .bc-palette-keys { margin-left: auto; display: inline-flex; gap: 3px; flex: none; }
@@ -1286,8 +1288,6 @@ body.bc-dragging * { cursor: grabbing !important; }
   background: var(--bg-inset); border: 1px solid var(--border-strong);
   border-bottom-width: 2px; border-radius: 4px; padding: 0 5px;
 }
-/* Without this the hint sits flush against the shortcut on rows that have both. */
-.bc-palette-hint + .bc-palette-keys { margin-left: 8px; }
 .bc-palette-trim { padding: 8px 14px; font-size: 11.5px; color: var(--fg-muted); }
 
 /* --- shortcuts cheat sheet ---------------------------------------------------------- */

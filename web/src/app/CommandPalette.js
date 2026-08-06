@@ -87,6 +87,7 @@ export function CommandPalette() {
       id: 'goto:' + dateKey,
       label: 'Go to ' + fmtDateFull(dateOfDayKey(dateKey)),
       group: 'Go to',
+      icon: 'calendar',
       run: () => { jumpToDate(jumpAnchorFor(dateKey, jumpGranularity(text))); return true; },
     });
   }
@@ -99,6 +100,7 @@ export function CommandPalette() {
     id: 'quickadd:fallback',
     label: 'Quick add: ' + text,
     group: 'Create anyway',
+    icon: 'quickadd',
     hint: 'opens a preview',
     run: () => { quickAddFallback(text); return false; }, // it closes the palette itself
   } : null;
@@ -214,7 +216,9 @@ export function CommandPalette() {
               onClick=${() => choose(row)}
               onMouseEnter=${() => setSel(i)}
             >
-              ${row.color ? html`<${CalDot} color=${row.color} />` : html`<span class="bc-palette-dotgap" />`}
+              <span class="bc-palette-lead">
+                ${row.icon ? html`<${Icon} name=${row.icon} size=${14} />` : (row.color ? html`<${CalDot} color=${row.color} />` : null)}
+              </span>
               <span class="bc-palette-label">${row.label}</span>
               ${row.hint && html`<span class="bc-palette-hint">${row.hint}</span>`}
               ${row.prompt && html`<span class="bc-palette-hint">needs a date</span>`}

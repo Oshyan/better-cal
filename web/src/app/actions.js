@@ -712,14 +712,15 @@ export function folderMode(folderId) {
   return (entry && entry.mode) || 'custom';
 }
 
-// The unfoldered group ("All calendars" in the sidebar) behaves like a folder
-// for visibility purposes but has no row in the folders table, so it gets a
-// reserved key of its own in folderVisibility.
-export const LOOSE_FOLDER_ID = 'loose';
+// The "All calendars" group behaves like a folder for visibility purposes but
+// has no row in the folders table, so it gets a reserved key of its own in
+// folderVisibility. It covers EVERY calendar, matching what that section
+// lists — including the ones also filed in a folder.
+export const ALL_GROUP_ID = 'loose'; // stored key kept for saved preferences
 
 function folderCalendars(folderId) {
-  return folderId === LOOSE_FOLDER_ID
-    ? state.calendars.filter((c) => !c.folderIds || c.folderIds.length === 0)
+  return folderId === ALL_GROUP_ID
+    ? state.calendars.slice()
     : state.calendars.filter((c) => (c.folderIds || []).includes(folderId));
 }
 
@@ -735,9 +736,8 @@ function persistFolderVisibility(next) {
 // flips that folder to custom; toggles in custom mode update the remembered
 // set. Called with the calendar's pre-toggle object, after the store flip.
 function noteFolderCustomToggle(cal) {
-  const ids = (!cal.folderIds || cal.folderIds.length === 0)
-    ? [LOOSE_FOLDER_ID]
-    : cal.folderIds;
+  // Every calendar belongs to the All group, plus any folders it is filed in.
+  const ids = [ALL_GROUP_ID, ...(cal.folderIds || [])];
   const next = { ...state.folderVisibility };
   for (const fid of ids) {
     const visibleIds = folderCalendars(fid).filter((c) => c.visible).map((c) => c.id);
@@ -775,7 +775,19 @@ export function setFolderVisibilityMode(folderId, mode) {
     const flip = new Map(changed.map((c) => [c.id, !c.visible]));
     set({ calendars: state.calendars.map((c) => (flip.has(c.id) ? { ...c, visible: flip.get(c.id) } : c)) });
   }
-  persistFolderVisibility({ ...state.folderVisibility, [folderId]: nextEntry });
+  const nextVis = { ...state.folderVisibility, [folderId]: nextEntry };
+  // The All group covers calendars that also live in folders, so a change
+  // here moves rows those folders' own buttons are reporting on. Carry the
+  // mode down rather than leaving a folder button claiming "All" over
+  // calendars this just switched off.
+  if (folderId === ALL_GROUP_ID) {
+    for (const f of state.folders) {
+      const inF = folderCalendars(f.id);
+      if (inF.length === 0) continue;
+      nextVis[f.id] = { mode, custom: inF.filter((c) => wantVisible(c)).map((c) => c.id) };
+    }
+  }
+  persistFolderVisibility(nextVis);
 
   // Persist the flag flips; on failure reload to resync rather than tracking
   // per-calendar rollbacks across a batch.

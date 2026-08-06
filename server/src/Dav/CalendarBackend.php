@@ -296,6 +296,7 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
                     'calendar_id' => $calendarId,
                     'uid' => $uid,
                     'source' => 'local',
+                    'created_via' => 'caldav',
                     'created_at' => $now,
                     'updated_at' => $now,
                 ]);
@@ -316,6 +317,7 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
                         'calendar_id' => $calendarId,
                         'uid' => $uid,
                         'source' => 'local',
+                        'created_via' => 'caldav',
                         'created_at' => $now,
                         'updated_at' => $now,
                     ]);

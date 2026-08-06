@@ -127,6 +127,7 @@ final class CalendarsController
                 $id = $this->db->insert('events', [
                     'user_id' => $userId,
                     'calendar_id' => $calendarId,
+                    'created_via' => 'import',
                     'uid' => $ev['uid'],
                     'title' => $ev['title'],
                     'description' => $ev['description'],

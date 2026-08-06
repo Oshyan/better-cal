@@ -6,7 +6,7 @@ import {
 } from './store.js';
 import { api, refreshWindow, undo, loadCalendars, loadPeople } from './api.js';
 import { adoptSettings } from './settings.js';
-import { localTz, todayKey, addDaysKey, occDayKey, epochDayOfKey, startMs, pad } from '../lib/dates.js';
+import { localTz, todayKey, addDaysKey, occDayKey, epochDayOfKey, startMs, pad, parseISO, toISOWithOffset, addDaysDate } from '../lib/dates.js';
 import { occurrenceDaySpan } from '../ui/monthmath.js';
 import { extendTripSpan } from '../ui/trips.js';
 
@@ -514,6 +514,79 @@ export async function quickAddCreate(fields) {
     if (occ.instanceId) jumpToDate(occDayKey(occ), occ.instanceId);
   }
   return occ;
+}
+
+// --- drag-and-drop targets ----------------------------------------------------
+
+// Drop an event on a sidebar calendar row: recategorize. Calendar membership
+// is a series-level fact, so recurring events always move whole ('all').
+export async function moveEventToCalendar(occ, calendarId) {
+  const cal = state.calendars.find((c) => c.id === calendarId);
+  if (!cal || cal.kind === 'subscribed' || occ.calendarId === calendarId) return;
+  try {
+    const body = { calendarId };
+    if (occ.recurring) { body.scope = 'all'; body.instanceStart = occ.start; }
+    await api('/events/' + occ.eventId, { method: 'PATCH', body });
+    toast('Moved "' + (occ.title || 'event') + '" to ' + cal.name, { undoable: true });
+    refreshWindow();
+  } catch (e) {
+    toast('Move failed: ' + e.message, { error: true });
+  }
+}
+
+// Link a person to an event (drop either onto the other). personNames is a
+// full-replace field, so append to what the occurrence already carries.
+export async function linkPersonToEvent(occ, personName) {
+  const names = Array.isArray(occ.people) ? occ.people : [];
+  if (names.includes(personName)) {
+    toast(personName + ' is already on this event');
+    return;
+  }
+  try {
+    const body = { personNames: [...names, personName] };
+    if (occ.recurring) { body.scope = 'all'; body.instanceStart = occ.start; }
+    await api('/events/' + occ.eventId, { method: 'PATCH', body });
+    toast('Added ' + personName + ' to "' + (occ.title || 'event') + '"', { undoable: true });
+    refreshWindow();
+  } catch (e) {
+    toast('Link failed: ' + e.message, { error: true });
+  }
+}
+
+// Drag an availability band to another day: shift the underlying span by
+// whole days, keeping its times and length.
+export async function moveAvailabilitySpan(spanId, deltaDays) {
+  const sp = state.availSpans.find((x) => x.id === spanId);
+  if (!sp || !deltaDays) return;
+  const shift = (iso) => toISOWithOffset(addDaysDate(parseISO(iso), deltaDays));
+  try {
+    await api('/people/' + sp.personId + '/availability/' + spanId, {
+      method: 'PATCH',
+      body: { start: shift(sp.start), end: shift(sp.end) },
+    });
+    toast('Moved ' + sp.name + "'s " + sp.kind + ' span', { undoable: true });
+    set({ availSeq: state.availSeq + 1 });
+  } catch (e) {
+    toast('Move failed: ' + e.message, { error: true });
+  }
+}
+
+// Drag a trip band: shift the container, optionally carrying every linked
+// member with it (server-side, atomic, one undo entry — the client only sees
+// members inside its loaded window, so it must not do the loop itself).
+export async function moveTrip(occ, deltaDays, withMembers) {
+  if (!deltaDays) return;
+  const newStart = toISOWithOffset(addDaysDate(parseISO(occ.start), deltaDays));
+  const newEnd = toISOWithOffset(addDaysDate(parseISO(occ.end), deltaDays));
+  try {
+    const body = { start: newStart, end: newEnd };
+    if (withMembers) body.moveMembers = true;
+    await api('/events/' + occ.eventId, { method: 'PATCH', body });
+    toast(withMembers ? 'Trip and its events moved' : 'Trip moved', { undoable: true });
+    refreshWindow();
+  } catch (e) {
+    toast('Move failed: ' + e.message, { error: true });
+  }
 }
 
 // --- saved views --------------------------------------------------------------

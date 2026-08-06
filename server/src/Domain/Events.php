@@ -361,6 +361,7 @@ final class Events
                 : null,
             'status' => $this->statusOrDefault($in['status'] ?? null),
             'source' => 'local',
+            'created_via' => ActivityContext::get(),
             'created_at' => Time::nowDb(),
             'updated_at' => Time::nowDb(),
         ];
@@ -425,11 +426,74 @@ final class Events
             }
         }
 
+        // Dragging a trip band can move the whole trip: shift every linked
+        // member by the same offset, atomically, in ONE undo entry. Done
+        // server-side because the client only sees members inside its loaded
+        // window; a client-side loop would silently strand the rest.
+        if (
+            !empty($in['moveMembers'])
+            && (int) ($event['is_container'] ?? 0) === 1
+            && isset($in['start'])
+        ) {
+            $this->moveContainerWithMembers($userId, $event, $in);
+            return;
+        }
+
         match ($scope) {
             'this' => $this->patchThis($userId, $event, $in),
             'following' => $this->patchFollowing($userId, $event, $in),
             'all' => $this->patchAll($userId, $event, $in),
         };
+    }
+
+    /** Shift a container and all its members by the container's start delta. */
+    private function moveContainerWithMembers(int $userId, array $event, array $in): void
+    {
+        $id = (int) $event['id'];
+        $fields = $this->columnPatch($event, $in);
+        $deltaSec = isset($fields['start_utc'])
+            ? Time::fromDb((string) $fields['start_utc'])->getTimestamp() - Time::fromDb((string) $event['start_utc'])->getTimestamp()
+            : 0;
+
+        $members = $this->db->all(
+            'SELECT e.* FROM events e JOIN event_links l ON l.event_id = e.id
+             WHERE l.container_id = ? AND e.user_id = ? AND e.deleted_at IS NULL',
+            [$id, $userId]
+        );
+
+        $beforeRows = array_merge([$event], $members);
+        $this->db->tx(function () use ($id, $fields, $members, $deltaSec): void {
+            if ($fields !== []) {
+                $this->db->update('events', $fields + ['updated_at' => Time::nowDb()], 'id = ?', [$id]);
+            }
+            if ($deltaSec !== 0) {
+                foreach ($members as $m) {
+                    $this->db->update('events', [
+                        'start_utc' => Time::toDb(Time::fromDb((string) $m['start_utc'])->modify(($deltaSec >= 0 ? '+' : '') . $deltaSec . ' seconds')),
+                        'end_utc' => Time::toDb(Time::fromDb((string) $m['end_utc'])->modify(($deltaSec >= 0 ? '+' : '') . $deltaSec . ' seconds')),
+                        'updated_at' => Time::nowDb(),
+                    ], 'id = ?', [(int) $m['id']]);
+                }
+            }
+        });
+
+        $afterRows = [$this->get($userId, $id)];
+        foreach ($members as $m) {
+            $afterRows[] = $this->get($userId, (int) $m['id']);
+        }
+        $this->undo->record(
+            $userId,
+            'event',
+            $id,
+            'update',
+            ['events' => $beforeRows],
+            ['events' => $afterRows],
+            'Moved trip \'' . (string) $event['title'] . '\' and ' . count($members) . ' event' . (count($members) === 1 ? '' : 's')
+        );
+        ChangeLog::record($this->db, (int) $event['calendar_id'], (string) $event['uid'], ChangeLog::OP_MODIFY);
+        foreach ($members as $m) {
+            ChangeLog::record($this->db, (int) $m['calendar_id'], (string) $m['uid'], ChangeLog::OP_MODIFY);
+        }
     }
 
     private function patchAll(int $userId, array $event, array $in): void
@@ -497,6 +561,11 @@ final class Events
         $override['recurrence_instance_utc'] = $instanceUtc;
         $override['rrule'] = null;
         $override['exdates_json'] = null;
+        // The override row is created NOW by whoever is editing this instance,
+        // not by whatever created the master; otherwise splitting one instance
+        // of a feed/agent series mints a fresh created_at under an automated
+        // via and the "new" pill appears on the user's own edit.
+        $override['created_via'] = ActivityContext::get();
         $override['start_utc'] = Time::toDb($instStart);
         $override['end_utc'] = Time::toDb($instStart->add(new \DateInterval('PT' . $duration . 'S')));
         $override = array_merge($override, $this->columnPatch($override, $in, $instanceUtc, forOverride: true));
@@ -519,6 +588,7 @@ final class Events
 
         $newMaster = $this->copyForChild($master);
         $newMaster['uid'] = Ids::ulid();
+        $newMaster['created_via'] = ActivityContext::get(); // the splitter, not the original creator
         $newMaster['start_utc'] = Time::toDb($instStart);
         $newMaster['end_utc'] = Time::toDb($instStart->add(new \DateInterval('PT' . $duration . 'S')));
         $newMaster['rrule'] = $this->stripCount((string) $master['rrule']);
@@ -807,22 +877,39 @@ final class Events
     }
 
     /**
-     * "New" means it recently appeared on YOUR calendar. A feed's initial
-     * import is not new (everything would light up); only events that show up
-     * in a poll after the subscription settles (5 min grace) count.
+     * "New" means it recently ARRIVED on your calendar without you putting it
+     * there: a feed poll, mail ingest, an agent writing through the API, an
+     * import. Your own creations (web, quick add, your phone via CalDAV) are
+     * never new — you were there. The check is source-based (created_via,
+     * stamped at insert) so nothing an event does later can change it; the
+     * old formula compared created_at against the CURRENT calendar's
+     * initial-load window, which meant moving an event out of a young
+     * calendar stripped its bulk suppression and resurrected the pill.
      */
     private function isNew(array $row, \DateTimeImmutable $createdAt): bool
     {
-        if ($createdAt <= Time::nowUtc()->sub(new \DateInterval('PT' . self::NEW_WINDOW_HOURS . 'H'))) {
+        return self::isNewFor(
+            (string) ($row['created_via'] ?? 'web'),
+            $createdAt,
+            $this->calendarCreatedAt((int) $row['calendar_id']),
+            Time::nowUtc()
+        );
+    }
+
+    /** Pure form of the "new" rule, unit-tested in server/tests/run.php. */
+    public static function isNewFor(string $via, \DateTimeImmutable $createdAt, ?\DateTimeImmutable $calCreated, \DateTimeImmutable $now): bool
+    {
+        // Only automated arrivals qualify.
+        if ($via !== 'feed' && $via !== 'api' && $via !== 'import' && !str_starts_with($via, 'mail:') && !str_starts_with($via, 'plugin:')) {
+            return false;
+        }
+        if ($createdAt <= $now->sub(new \DateInterval('PT' . self::NEW_WINDOW_HOURS . 'H'))) {
             return false;
         }
         // Bulk population is never "new": a feed's first poll and a Takeout
         // import both create thousands of rows at once, and marking them all
-        // new makes the badge meaningless (it was on nearly every event for
-        // two days after the migration). Anything written within the
-        // calendar's own first minutes is part of that initial load,
-        // whatever its source.
-        $calCreated = $this->calendarCreatedAt((int) $row['calendar_id']);
+        // new makes the badge meaningless. Anything written within the
+        // calendar's own first minutes is part of that initial load.
         return $calCreated === null || $createdAt > $calCreated->add(new \DateInterval('PT5M'));
     }
 

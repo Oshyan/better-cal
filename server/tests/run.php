@@ -360,6 +360,27 @@ checkEq('imip sequence', 2, $imip['events'][0]['invite']['sequence']);
 checkEq('imip garbage -> null', null, MailIngest::parseImip('not an ics'));
 }
 
+// isNew: source-based arrival rule (pure). The pill marks automated arrivals
+// only; the user's own creations never wear it, and nothing that happens to an
+// event later (calendar moves included) can change the verdict.
+use BetterCal\Domain\Events;
+
+$nowN = new DateTimeImmutable('2026-08-06T12:00:00Z');
+$freshN = $nowN->sub(new DateInterval('PT1H'));
+$oldCal = $nowN->sub(new DateInterval('P30D'));
+$youngCal = $nowN->sub(new DateInterval('PT2M'));
+
+check('isNew: fresh feed arrival is new', Events::isNewFor('feed', $freshN, $oldCal, $nowN));
+check('isNew: fresh api arrival is new', Events::isNewFor('api', $freshN, $oldCal, $nowN));
+check('isNew: fresh mail invite is new', Events::isNewFor('mail:imip', $freshN, $oldCal, $nowN));
+check('isNew: user-created is never new', !Events::isNewFor('web', $freshN, $oldCal, $nowN));
+check('isNew: quick add is never new', !Events::isNewFor('quickadd', $freshN, $oldCal, $nowN));
+check('isNew: own phone via caldav is never new', !Events::isNewFor('caldav', $freshN, $oldCal, $nowN));
+check('isNew: stale feed arrival is not new', !Events::isNewFor('feed', $nowN->sub(new DateInterval('PT25H')), $oldCal, $nowN));
+check('isNew: initial bulk load is not new', !Events::isNewFor('feed', $freshN, $freshN->sub(new DateInterval('PT2M')), $nowN));
+check('isNew: import after settle is new', Events::isNewFor('import', $freshN, $oldCal, $nowN));
+check('isNew: unknown via is never new', !Events::isNewFor('mystery', $freshN, $oldCal, $nowN));
+
 // iMIP forgery/replay guard (BC-07/08/09). An iMIP message is unauthenticated
 // mail; the organizer bound when the invite was first accepted is what later
 // REQUEST/CANCEL messages must match, or anyone who learns a UID can cancel or
@@ -478,6 +499,10 @@ checkEq('qa away intent kind', 'away', $ai['kind']);
 checkEq('qa away intent rest', 'Aug 10 to 15', $ai['rest']);
 checkEq('qa away intent full name', 'Virginia Miller', QuickAdd::awayIntent('Virginia Miller will be out next week')['name']);
 checkEq('qa busy stays busy', 'busy', QuickAdd::awayIntent('Sam is busy Friday')['kind']);
+checkEq('qa here maps to here', 'here', QuickAdd::awayIntent('Ada is here next week')['kind']);
+checkEq('qa in town maps to here', 'here', QuickAdd::awayIntent('Marcus in town Aug 10-15')['kind']);
+checkEq('qa visiting maps to here', 'here', QuickAdd::awayIntent('Virginia is visiting Friday')['kind']);
+checkEq('qa back maps to here', 'here', QuickAdd::awayIntent('John is back Monday')['kind']);
 checkEq('qa traveling means away', 'away', QuickAdd::awayIntent('Ada traveling Sep 1-5')['kind']);
 checkEq('qa bare gone form parses', 'Sam', QuickAdd::awayIntent('Sam gone Tuesday to Friday')['name']);
 checkEq('qa event text with digits is not an intent', null, QuickAdd::awayIntent('Checkout 3pm gone wrong'));

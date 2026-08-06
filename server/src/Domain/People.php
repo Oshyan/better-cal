@@ -19,7 +19,9 @@ final class People
     public const MAX_NAME = 160;
     public const MAX_NOTES = 10000;
     public const MAX_SPAN_NOTE = 500;
-    public const KINDS = ['away', 'busy'];
+    // 'here' marks presence — a visiting friend, someone back in town — the
+    // inverse statement of away, useful for the same planning glance.
+    public const KINDS = ['away', 'busy', 'here'];
 
     public function __construct(private readonly Db $db)
     {
@@ -185,6 +187,49 @@ final class People
             'Marked ' . (string) $person['name'] . ' ' . $kind . ' (' . $start->format('M j') . ')'
         );
         return self::spanRow($row);
+    }
+
+    /**
+     * Reposition or rekind an existing span (calendar band drag). Only the
+     * provided fields change.
+     *
+     * @param array{start?:mixed,end?:mixed,kind?:mixed} $in
+     */
+    public function updateSpan(int $userId, int $personId, int $spanId, array $in): array
+    {
+        $person = $this->requirePerson($userId, $personId);
+        $row = $this->db->one('SELECT * FROM availability WHERE id = ? AND person_id = ?', [$spanId, $personId]);
+        if ($row === null) {
+            throw HttpError::notFound('No such availability span');
+        }
+        $start = isset($in['start']) ? self::instant($in['start'], 'start') : Time::fromDb((string) $row['start_utc']);
+        $end = isset($in['end']) ? self::instant($in['end'], 'end') : Time::fromDb((string) $row['end_utc']);
+        if ($end <= $start) {
+            throw HttpError::badRequest('end must be after start');
+        }
+        $fields = [
+            'start_utc' => $start->format('Y-m-d H:i:s'),
+            'end_utc' => $end->format('Y-m-d H:i:s'),
+        ];
+        if (isset($in['kind'])) {
+            if (!is_string($in['kind']) || !in_array($in['kind'], self::KINDS, true)) {
+                throw HttpError::badRequest('kind must be one of ' . implode('/', self::KINDS));
+            }
+            $fields['kind'] = $in['kind'];
+        }
+        $this->db->update('availability', $fields, 'id = ?', [$spanId]);
+        $after = $this->db->one('SELECT * FROM availability WHERE id = ?', [$spanId]);
+        (new Undo($this->db))->record(
+            $userId,
+            'availability',
+            $spanId,
+            'update',
+            ['availability' => [$row]],
+            ['availability' => [$after]],
+            'Moved ' . (string) ($fields['kind'] ?? $row['kind']) . ' span for ' . (string) $person['name']
+                . ' (' . $start->format('M j') . ')'
+        );
+        return self::spanRow($after);
     }
 
     public function deleteSpan(int $userId, int $personId, int $spanId): void

@@ -224,11 +224,12 @@ export function EventBlock({ occ, cal, rect, dimmed, nowMs, onOpen, onPointerDow
 // and above the cell background. The inline style carries the calendar tint
 // plus the stronger 2px top edge. Not draggable in v1; click or Enter opens
 // the trip detail. The title labels each row's segment, small and truncated.
-export function TripBand({ occ, cal, seg, dimmed, nowMs, onOpen }) {
+export function TripBand({ occ, cal, seg, dimmed, nowMs, onOpen, onPointerDown }) {
   // Availability pseudo-occurrences carry no calendar: away is a neutral
-  // slate, busy a warm amber, both distinct from any calendar color.
+  // slate, busy a warm amber, here a present green — all distinct from any
+  // calendar color.
   const color = occ.availKind
-    ? (occ.availKind === 'away' ? '#8b93a4' : '#d19a38')
+    ? (occ.availKind === 'away' ? '#8b93a4' : occ.availKind === 'busy' ? '#d19a38' : '#3f9d6e')
     : calColor(cal);
   const open = (e) => {
     if (hasModifier(e)) return;
@@ -244,6 +245,7 @@ export function TripBand({ occ, cal, seg, dimmed, nowMs, onOpen }) {
     role="button"
     tabindex="0"
     title=${occ.title || '(untitled)'}
+    onPointerDown=${onPointerDown}
     onClick=${open}
     onKeyDown=${(e) => {
       if ((e.key === 'Enter' || e.key === ' ') && onOpen) {

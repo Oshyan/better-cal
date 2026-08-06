@@ -41,7 +41,7 @@ final class QuickAdd
     public static function awayIntent(string $text): ?array
     {
         if (preg_match(
-            '/^\s*(.{1,80}?)\s+(?:is|will\s+be|)\s*\b(away|busy|out|gone|traveling|travelling|on\s+vacation|ooo)\b\s*(.*)$/i',
+            '/^\s*(.{1,80}?)\s+(?:is|will\s+be|)\s*\b(away|busy|out|gone|traveling|travelling|on\s+vacation|ooo|here|visiting|in\s+town|back)\b\s*(.*)$/i',
             trim($text),
             $m
         ) !== 1) {
@@ -51,9 +51,12 @@ final class QuickAdd
         if ($name === '' || preg_match('/^[\p{L}][\p{L}\'\-. ]*$/u', $name) !== 1) {
             return null; // names only; "Checkout gone wrong 3pm" stays an event
         }
+        $word = strtolower(preg_replace('/\s+/', ' ', $m[2]));
+        $kind = $word === 'busy' ? 'busy'
+            : (in_array($word, ['here', 'visiting', 'in town', 'back'], true) ? 'here' : 'away');
         return [
             'name' => $name,
-            'kind' => strtolower($m[2]) === 'busy' ? 'busy' : 'away',
+            'kind' => $kind,
             'rest' => trim($m[3]),
         ];
     }

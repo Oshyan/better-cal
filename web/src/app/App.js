@@ -211,6 +211,7 @@ export function App() {
   // selector above is reschedule-gated and unsuitable here).
   const visMonthKey = useStore((st) => (st.visibleMonth ? st.visibleMonth.year * 100 + st.visibleMonth.month : 0));
   const anyPersonVisible = s.calendars && state.people.some((p) => p.showOnCalendar);
+  const availKeyRef = useRef(null);
   useEffect(() => {
     if (!anyPersonVisible) {
       if (state.availSpans.length > 0) set({ availSpans: [] });
@@ -219,9 +220,16 @@ export function App() {
     const vm = state.visibleMonth || { year: Number(todayKey().slice(0, 4)), month: Number(todayKey().slice(5, 7)) };
     const start = new Date(vm.year, vm.month - 1 - 1, 1);
     const end = new Date(vm.year, vm.month - 1 + 2, 1);
+    const key = toISOWithOffset(start) + '|' + toISOWithOffset(end) + '|' + availSeq;
+    // At boot this effect runs twice for the same months: once when people
+    // finish loading, then again when the grid reports the month it settled
+    // on — which is usually the month we had already guessed from today.
+    // Skip the repeat rather than paying a second round trip for it.
+    if (availKeyRef.current === key) return;
+    availKeyRef.current = key;
     api('/availability?' + new URLSearchParams({ start: toISOWithOffset(start), end: toISOWithOffset(end) }))
       .then((d) => set({ availSpans: d.spans || [] }))
-      .catch(() => {});
+      .catch(() => { availKeyRef.current = null; }); // let a failure retry
   }, [anyPersonVisible, visMonthKey, availSeq]); // eslint-disable-line
 
   const availOccs = useMemo(() => availSpans.map((sp) => {

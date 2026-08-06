@@ -13,11 +13,20 @@ import {
 async function boot() {
   let authed = false;
   try {
+    // /me first and alone: it establishes the session, the CSRF token every
+    // later write needs, and the settings that decide which view and window
+    // the app opens on.
     await fetchMe();
-    await loadCalendars();
-    await loadSavedViews().catch(() => { /* views are non-critical at boot */ });
-    loadConfig(); // fire-and-forget; map tiles fall back to OSM meanwhile
-    loadPeople().catch(() => { /* people are non-critical at boot */ });
+    // Everything after it is independent — each was awaited in turn purely by
+    // habit, which cost a full round trip per call (~85ms each) before the app
+    // could render. Only calendars genuinely gate first paint: without them
+    // events would draw in placeholder colours.
+    await Promise.all([
+      loadCalendars(),
+      loadSavedViews().catch(() => { /* views are non-critical at boot */ }),
+      loadConfig().catch(() => { /* map tiles fall back to OSM */ }),
+      loadPeople().catch(() => { /* people are non-critical at boot */ }),
+    ]);
     authed = true;
   } catch (e) {
     // 401 already flipped authed=false; anything else lands on login too.

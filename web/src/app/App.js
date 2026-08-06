@@ -44,10 +44,15 @@ import { OrganizePage } from './OrganizePage.js';
 const MONTH_ROWS = { month: 6, weeks3: 3, weeks2: 2 };
 // Rows the month view will hold on screen before it starts squashing row
 // height. Six is a month's worst case, not its usual one, so a short window
-// clips the sixth rather than compressing every day cell to fit it — the grid
-// scrolls continuously, so the clipped row is one scroll away. The multiweek
-// views have no floor of their own: their row count IS the view.
-const MONTH_MIN_ROWS = { month: 5 };
+// clips down rather than compressing every day cell — the grid scrolls
+// continuously, so a clipped row is one scroll away while a squashed row
+// hides events on every day at once.
+//
+// Four, not five: the grid is willing to give up two rows before it gives up
+// height, and four rows is still more calendar than the 3-week view we ship
+// deliberately. The multiweek views have no floor of their own — their row
+// count IS the view.
+const MONTH_MIN_ROWS = { month: 4 };
 // Below this calendar-area width (px) the 7-column month grid is cramped
 // enough that the 3-day ribbon takes over automatically on desktop.
 const VIEW_AREA_MIN = 560;

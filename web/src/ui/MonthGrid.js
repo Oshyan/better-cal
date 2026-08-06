@@ -38,9 +38,18 @@ const CHIP_ROW = 22;   // px per chip/bar lane
 const CHIP_ROW_MOBILE = 15; // compact single-line pills at <=600px
 const MOBILE_LANES = 3;     // pill lanes per day on mobile 7-col, then dots + "+N"
 const CELL_HEAD = 24;  // px reserved for the day number row
-// Events a day cell should hold before "+N more" takes over. Sets the row
-// height the grid refuses to squash below while it still has rows to clip.
-const COMFORT_CHIPS = 4;
+// Events a day cell should hold before "+N more" takes over. THE tuning knob
+// for how the grid gives way as the window shrinks: it is the row height the
+// grid refuses to squash below while it still has a row it could clip
+// instead. Higher means rows hold their height longer and the sixth row goes
+// sooner — which is the priority, since a squashed row hides events on every
+// day at once while a clipped row hides nothing (it is one scroll away).
+//
+// Seven events puts the crossover at a ~1090px scroller: a tall window still
+// shows six rows, and everything below that trades the sixth row away before
+// it starts shrinking the other five. At four events the crossover sat near
+// 700px, which left a wide band squashing rows for no benefit.
+const COMFORT_CHIPS = 7;
 const GUTTER_W = 44;   // px month-label gutter
 const MOBILE_QUERY = '(max-width: 600px)';
 const BAND_H = 16;        // px per trip backdrop band lane (desktop)

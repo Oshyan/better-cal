@@ -38,6 +38,9 @@ const CHIP_ROW = 22;   // px per chip/bar lane
 const CHIP_ROW_MOBILE = 15; // compact single-line pills at <=600px
 const MOBILE_LANES = 3;     // pill lanes per day on mobile 7-col, then dots + "+N"
 const CELL_HEAD = 24;  // px reserved for the day number row
+// Events a day cell should hold before "+N more" takes over. Sets the row
+// height the grid refuses to squash below while it still has rows to clip.
+const COMFORT_CHIPS = 4;
 const GUTTER_W = 44;   // px month-label gutter
 const MOBILE_QUERY = '(max-width: 600px)';
 const BAND_H = 16;        // px per trip backdrop band lane (desktop)
@@ -100,7 +103,8 @@ function isoWeekOfDate(d) {
 }
 
 export function MonthGrid({
-  occurrences, calendars, visibleRows = 6, columns = 7, scrollKey, scrollSeq = 0, dimSet, nowMs,
+  occurrences, calendars, visibleRows = 6, minRows = visibleRows, columns = 7,
+  scrollKey, scrollSeq = 0, dimSet, nowMs,
   onRequestWindow, onVisibleMonthChange, onOpenEvent, onExpandDay, onOpenDay,
   onCreateRange, onMoveEvent, onResizeEvent,
 }) {
@@ -112,11 +116,6 @@ export function MonthGrid({
   const centerRow = useMemo(() => rowIndexOfDayKey(todayKey(), columns), [columns]);
   const minWeek = centerRow - rowSpan;
   const maxWeek = centerRow + rowSpan;
-  const rowH = Math.max(64, Math.floor(viewH / visibleRows));
-  // Read by settleAnchor, which runs inside effects that must compare against
-  // the height THIS render's rowH came from, not a stale closure's.
-  const viewHRef = useRef(viewH);
-  viewHRef.current = viewH;
 
   // Mobile month cells render every event as a compact text pill (same shape
   // for timed and all-day) in tighter lanes; overflow becomes dots + "+N".
@@ -128,6 +127,34 @@ export function MonthGrid({
     return () => mq.removeEventListener('change', onChange);
   }, []);
   const chipRow = mobile ? CHIP_ROW_MOBILE : CHIP_ROW;
+
+  // Row height. Dividing the viewport by visibleRows unconditionally meant a
+  // short window squashed every row to fit six — and six is a month's WORST
+  // case, not its usual one. At 600px that left three events per day before
+  // "+N more" took over, on a grid where the typical month needs five rows.
+  //
+  // This grid is not paginated by month: it is a continuous week ribbon with
+  // its own scroll, and the toolbar names the dominant month rather than
+  // framing one. So a row that does not fit is one scroll away, not lost, and
+  // holding row height is worth more than fitting the sixth row.
+  //
+  // Three bands, continuous and never growing as the window shrinks:
+  //   tall   — all visibleRows fit at a comfortable height, so use it
+  //   medium — hold the comfortable height and let rows clip
+  //   short  — compress, but keep minRows on screen, down to a hard floor
+  // A view whose row count IS its definition (2 weeks, 3 weeks) passes
+  // minRows === visibleRows, which collapses the middle band and leaves the
+  // original behaviour exactly.
+  const comfortH = CELL_HEAD + COMFORT_CHIPS * chipRow + 4;
+  const fitAll = Math.floor(viewH / visibleRows);
+  const rowH = fitAll >= comfortH
+    ? fitAll
+    : (viewH >= minRows * comfortH ? comfortH : Math.max(64, Math.floor(viewH / minRows)));
+
+  // Read by settleAnchor, which runs inside effects that must compare against
+  // the height THIS render's rowH came from, not a stale closure's.
+  const viewHRef = useRef(viewH);
+  viewHRef.current = viewH;
 
   const idx = useMemo(() => indexOccurrences(occurrences, columns), [occurrences, columns]);
 

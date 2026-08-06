@@ -60,12 +60,12 @@ function CalendarRow({ cal, folders, open, onGear, soloed, onSolo, filedIn }) {
         />
         <${CalDot} cal=${cal} />
         <span class="bc-cal-name">${cal.name}</span>
+        ${filedIn && filedIn.length > 0 && html`<span
+          class="bc-cal-filed" role="img"
+          aria-label=${'Also in ' + filedIn.join(', ')}
+          title=${'Also listed in ' + filedIn.join(', ')}
+        ><${Icon} name="folder" size=${11} /></span>`}
       </label>
-      ${filedIn && filedIn.length > 0 && html`<span
-        class="bc-cal-filed" role="img"
-        aria-label=${'Also in ' + filedIn.join(', ')}
-        title=${'Also listed in ' + filedIn.join(', ')}
-      ><${Icon} name="folder" size=${11} /></span>`}
       ${healthBadge(cal)}
       <button
         type="button"

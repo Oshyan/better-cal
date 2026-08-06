@@ -142,6 +142,27 @@ export function Icon({ name, size = 15 }) {
     // Small calendar page: binding rings + top rule. Marks calendar names.
     calendar: html`<rect x="2.2" y="3.4" width="11.6" height="10.4" rx="1.4" />
       <path d="M2.2 6.6h11.6M5.4 1.8v3M10.6 1.8v3" />`,
+    // Calendar page with a filled dot: "go to today". The dot is the mark;
+    // rings are dropped so it stays clean at palette size (14px).
+    today: html`<rect x="2.2" y="3.4" width="11.6" height="10.4" rx="1.4" />
+      <path d="M2.2 6.6h11.6" />
+      <circle cx="8" cy="10.2" r="1.5" fill="currentColor" stroke="none" />`,
+    // View glyphs: one outer page, different internal divisions. Month is a
+    // grid, week is columns, the multi-week strips are row bands, day is a
+    // single tall column, agenda is a dotted list. Same family on purpose so
+    // the palette's Views group reads as variations of one object.
+    viewMonth: html`<rect x="2.2" y="3" width="11.6" height="11" rx="1.4" />
+      <path d="M6.1 3v11M9.9 3v11M2.2 8.5h11.6" />`,
+    viewWeek: html`<rect x="2.2" y="3" width="11.6" height="11" rx="1.4" />
+      <path d="M6.1 3v11M9.9 3v11" />`,
+    viewWeeks3: html`<rect x="2.2" y="3" width="11.6" height="11" rx="1.4" />
+      <path d="M2.2 6.7h11.6M2.2 10.3h11.6" />`,
+    viewWeeks2: html`<rect x="2.2" y="3" width="11.6" height="11" rx="1.4" />
+      <path d="M2.2 8.5h11.6" />`,
+    viewDay: html`<rect x="5.2" y="2.6" width="5.6" height="11.2" rx="1.2" />
+      <path d="M5.2 5.4h5.6" />`,
+    viewAgenda: html`<path d="M5.6 4.2h8M5.6 8h8M5.6 11.8h8" />
+      <path d="M2.5 4.2h.01M2.5 8h.01M2.5 11.8h.01" />`,
     // Two heads-and-shoulders for the People page.
     people: html`<circle cx="5.6" cy="5.6" r="2.3" />
       <path d="M1.8 13.2c0-2.1 1.7-3.8 3.8-3.8s3.8 1.7 3.8 3.8" />

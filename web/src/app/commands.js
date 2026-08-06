@@ -9,7 +9,7 @@
 
 import { state, set, toast } from './store.js';
 import { handlers } from './keyboard.js';
-import { STATIC_COMMANDS, MANAGE_ITEMS, VIEW_LABELS } from './commanddefs.js';
+import { STATIC_COMMANDS, MANAGE_ITEMS, VIEW_LABELS, VIEW_ICONS } from './commanddefs.js';
 import { HOTKEYS } from './hotkeys.js';
 import {
   VIEWS, setView, rosterViews, applySavedView, toggleCalendarVisible, jumpToDate,
@@ -65,6 +65,7 @@ export function buildCommands() {
       id: def.id,
       label: def.label,
       group: def.group,
+      icon: def.icon,
       keywords: def.keywords,
       keys: def.hotkey ? keysFor(def.hotkey) : null,
     };
@@ -102,18 +103,21 @@ export function buildCommands() {
       id: 'view:' + v,
       label: (VIEW_LABELS[v] || v) + ' view',
       group: 'Views',
+      icon: VIEW_ICONS[v],
       hint: state.view === v ? 'current' : null,
       run: () => setView(v),
     });
   }
 
-  // Saved views.
+  // Saved views. Labelled as what they ARE; picking one obviously applies
+  // it, so the label does not need a verb. 'apply' stays matchable.
   for (const v of state.savedViews || []) {
     out.push({
       id: 'sview:' + v.id,
-      label: 'Apply view: ' + v.name,
+      label: 'Saved view: ' + v.name,
       group: 'Views',
-      keywords: 'saved',
+      icon: 'views',
+      keywords: 'saved apply',
       run: () => { applySavedView(v); set({ route: 'calendar' }); },
     });
   }
@@ -138,6 +142,7 @@ export function buildCommands() {
       id: 'away:' + p.id,
       label: p.name + ' is away…',
       group: 'People',
+      icon: 'people',
       keywords: 'gone out ooo vacation availability',
       prompt: {
         label: p.name + ' is away',
@@ -149,6 +154,7 @@ export function buildCommands() {
       id: 'busy:' + p.id,
       label: p.name + ' is busy…',
       group: 'People',
+      icon: 'people',
       keywords: 'unavailable availability',
       prompt: {
         label: p.name + ' is busy',
@@ -164,6 +170,7 @@ export function buildCommands() {
       id: 'route:' + route,
       label: label,
       group: 'Manage',
+      icon: route, // Icon maps 'organize' to the folder glyph, same as the sidebar
       keywords: 'open page manage',
       staysOnPage: true,
       run: () => set({ route, popover: null, detail: null }),

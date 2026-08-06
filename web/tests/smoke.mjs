@@ -42,7 +42,7 @@ import {
 import { hasHtml, stripToText, isEmptyHtml } from '../src/lib/richtext.js';
 import { batteryTipApplies, BATTERY_TIP_BODY, BATTERY_TIP_TITLE } from '../src/lib/batterytip.js';
 import { fuzzyScore, rankByFuzzy } from '../src/lib/fuzzy.js';
-import { STATIC_COMMANDS, COMMAND_GROUPS, MANAGE_ITEMS, VIEW_LABELS } from '../src/app/commanddefs.js';
+import { STATIC_COMMANDS, COMMAND_GROUPS, MANAGE_ITEMS, VIEW_LABELS, VIEW_ICONS } from '../src/app/commanddefs.js';
 
 let passed = 0;
 let failed = 0;
@@ -728,6 +728,10 @@ assert('commands: manage items are [route, label] pairs',
 eq('commands: manage routes are unique', new Set(MANAGE_ITEMS.map((r) => r[0])).size, MANAGE_ITEMS.length);
 assert('commands: every view id has a label',
   ['month', 'weeks3', 'weeks2', 'week', 'day', 'agenda'].every((v) => typeof VIEW_LABELS[v] === 'string'));
+assert('commands: every static entry carries an icon',
+  STATIC_COMMANDS.every((c) => typeof c.icon === 'string' && c.icon.length > 0));
+assert('commands: every view id has an icon',
+  ['month', 'weeks3', 'weeks2', 'week', 'day', 'agenda'].every((v) => typeof VIEW_ICONS[v] === 'string'));
 
 console.log('--- time format setting ---');
 

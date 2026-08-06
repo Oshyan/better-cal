@@ -189,9 +189,18 @@ export function MonthGrid({
     if (!el) return;
     const g = geomRef.current;
     const r = visibleWeekRange(el.scrollTop, el.clientHeight, g.rowH, g.minWeek, g.maxWeek, 3);
-    r.top = Math.max(g.minWeek, Math.min(g.maxWeek, g.minWeek + Math.floor(el.scrollTop / g.rowH)));
+    const exact = el.scrollTop / g.rowH;
+    r.top = Math.max(g.minWeek, Math.min(g.maxWeek, g.minWeek + Math.floor(exact)));
+    // How much of that top row is scrolled off, 0..1. The month label samples
+    // rows from r.top, and a row that is 90% above the fold should not get an
+    // equal vote in deciding which month you are looking at — with tall rows
+    // that one stale row was enough to keep naming the previous month, which
+    // in turn made the Next-month button appear to do nothing (it steps from
+    // the reported month, so it kept recomputing the month already on screen).
+    r.topOffset = exact - Math.floor(exact);
     topWeekRef.current = r.top;
-    setRange((prev) => (prev.first === r.first && prev.last === r.last && prev.top === r.top ? prev : r));
+    setRange((prev) => (prev.first === r.first && prev.last === r.last && prev.top === r.top
+      && Math.abs((prev.topOffset ?? 0) - r.topOffset) < 0.1 ? prev : r));
   }, []);
 
   // Scroll handling via rAF throttle.
@@ -278,7 +287,15 @@ export function MonthGrid({
       // Dominant month over the WHOLE visible window, not just the top row:
       // with the tail of an old month as the top row, the window is mostly
       // the next month and the toolbar/mini-month should say so.
-      const top = range.top != null ? range.top : range.first;
+      //
+      // Start from the first row that is at least half on screen. Counting a
+      // row that is 90% scrolled off gave the outgoing month a full vote, and
+      // once rows grew tall enough that only ~4 fit, that single phantom row
+      // could carry the count — the label kept naming the previous month, and
+      // Next-month (which steps from the reported month) recomputed the month
+      // already on screen and appeared to do nothing at all.
+      const topRaw = range.top != null ? range.top : range.first;
+      const top = Math.min(range.last, topRaw + ((range.topOffset ?? 0) > 0.5 ? 1 : 0));
       const rows = Math.min(
         Math.max(1, Math.round(viewH / rowH)), // rows the viewport shows
         range.last - top + 1,                  // never beyond rendered rows
@@ -290,7 +307,7 @@ export function MonthGrid({
       const end = dateOfDayKey(keyOfEpochDay(firstEpochDayOfRow(range.last + 1, columns) + 28));
       onRequestWindow({ start: toISOWithOffset(start), end: toISOWithOffset(end) });
     }
-  }, [range.first, range.last, range.top, columns, viewH, rowH]);
+  }, [range.first, range.last, range.top, range.topOffset, columns, viewH, rowH]);
 
   // --- drag helpers ---------------------------------------------------------
 

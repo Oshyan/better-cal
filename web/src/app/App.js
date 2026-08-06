@@ -42,6 +42,12 @@ import { ActivityPage } from './ActivityPage.js';
 import { OrganizePage } from './OrganizePage.js';
 
 const MONTH_ROWS = { month: 6, weeks3: 3, weeks2: 2 };
+// Rows the month view will hold on screen before it starts squashing row
+// height. Six is a month's worst case, not its usual one, so a short window
+// clips the sixth rather than compressing every day cell to fit it — the grid
+// scrolls continuously, so the clipped row is one scroll away. The multiweek
+// views have no floor of their own: their row count IS the view.
+const MONTH_MIN_ROWS = { month: 5 };
 // Below this calendar-area width (px) the 7-column month grid is cramped
 // enough that the 3-day ribbon takes over automatically on desktop.
 const VIEW_AREA_MIN = 560;
@@ -396,6 +402,7 @@ export function App() {
       calendars=${calMeta}
       columns=${columns}
       visibleRows=${ribbon ? 5 : MONTH_ROWS[s.view]}
+      minRows=${ribbon ? 5 : MONTH_MIN_ROWS[s.view] || MONTH_ROWS[s.view]}
       scrollKey=${s.anchor}
       scrollSeq=${s.scrollSeq}
       dimSet=${dimSet}

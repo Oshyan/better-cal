@@ -20,6 +20,7 @@ import { baseTitle, groupOccurrences, itemMatchesFilter, isGroupId } from '../sr
 import { sortByMatch } from '../src/lib/rank.js';
 import { parseJumpText, jumpGranularity } from '../src/lib/jumpparse.js';
 import { monthWeeks, stepMonthOf } from '../src/lib/minimonth.js';
+import { missingRanges } from '../src/app/store.js';
 import {
   normalizeDayRange, dayRangeDraft, dayRangeLabel, timeRangeLabel, chipPosition,
   dragCreateMode, allDayRangeDraft,
@@ -1091,6 +1092,40 @@ console.log('--- chronological ordering across timezone offsets ---');
     [localTwo, localNoon, utcTen].sort(byStart).map((o) => o.title).join(','),
     'Aquarium,Cleaners,Weeklies',
   );
+}
+
+// --- window gap arithmetic (GH #14) ----------------------------------------
+// Scrolling asks for a window re-centred on the viewport, so each demand
+// overlaps the last by most of its width. Fetching only the remainder is what
+// stops a fling queueing a dozen multi-thousand-occurrence responses, so the
+// subtraction has to be exactly right: too little and events silently never
+// load, too much and the overlap problem comes straight back.
+{
+  const r = (start, end) => ({ start, end });
+  const fmt = (gaps) => gaps.map((g) => g.start + '-' + g.end).join(',');
+
+  eq('gaps: nothing held yet returns the whole span', fmt(missingRanges(0, 100, [])), '0-100');
+  eq('gaps: fully covered returns nothing', fmt(missingRanges(10, 90, [r(0, 100)])), '');
+  eq('gaps: exactly covered returns nothing', fmt(missingRanges(0, 100, [r(0, 100)])), '');
+  eq('gaps: overlap on the left', fmt(missingRanges(50, 150, [r(0, 100)])), '100-150');
+  eq('gaps: overlap on the right', fmt(missingRanges(0, 100, [r(50, 200)])), '0-50');
+  eq('gaps: hole in the middle', fmt(missingRanges(0, 100, [r(0, 30), r(70, 100)])), '30-70');
+  eq('gaps: two holes', fmt(missingRanges(0, 100, [r(20, 40), r(60, 80)])), '0-20,40-60,80-100');
+  eq('gaps: unsorted input still works', fmt(missingRanges(0, 100, [r(60, 80), r(20, 40)])), '0-20,40-60,80-100');
+  eq('gaps: ranges outside the ask are ignored', fmt(missingRanges(50, 60, [r(0, 10), r(90, 100)])), '50-60');
+  eq('gaps: touching ranges leave no sliver', fmt(missingRanges(0, 100, [r(0, 50), r(50, 100)])), '');
+  eq('gaps: nested ranges collapse', fmt(missingRanges(0, 100, [r(0, 80), r(20, 40)])), '80-100');
+  eq('gaps: empty span asks for nothing', fmt(missingRanges(50, 50, [])), '');
+  eq('gaps: inverted span asks for nothing', fmt(missingRanges(80, 20, [])), '');
+
+  // The case from the bug: a five-month window stepped by one month should
+  // ask for one month, not five.
+  const MONTH = 30 * 86400000;
+  const held = [r(0, 5 * MONTH)];
+  const stepped = missingRanges(MONTH, 6 * MONTH, held);
+  eq('gaps: stepping a 5-month window asks for 1 month', stepped.length, 1);
+  assert('gaps: and that month is the new tail',
+    stepped[0].start === 5 * MONTH && stepped[0].end === 6 * MONTH);
 }
 
 console.log('');

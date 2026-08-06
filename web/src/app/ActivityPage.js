@@ -134,7 +134,7 @@ export function ActivityPage() {
     ${entries === null && html`<p class="bc-page-note">Loading…</p>`}
     ${entries !== null && entries.length === 0 && html`<${EmptyState} text=${q || sel ? 'Nothing matches these filters.' : 'No activity yet — changes you or your automations make will appear here.'} />`}
     ${entries !== null && entries.length > 0 && html`<ul class="bc-activity-list">
-      ${entries.map((en) => html`<li key=${en.id} class="bc-activity-row${en.undone ? ' is-undone' : ''}">
+      ${entries.map((en) => html`<li key=${en.id} class="bc-activity-row${en.undone ? ' is-undone' : ''}${en.op === 'refuse' ? ' is-refused' : ''}">
         <span class="bc-activity-when" title=${en.at}>${fmtWhen(en.at)}</span>
         <span class="bc-activity-badge is-${en.source.startsWith('mail:') ? 'mail' : en.source}">${sourceLabel(en.source)}</span>
         <span class="bc-activity-summary">
@@ -142,6 +142,13 @@ export function ActivityPage() {
             ? html`<button type="button" class="bc-activity-link" onClick=${() => jump(en)}>${en.summary}</button>`
             : en.summary}
           ${en.undone && html`<span class="bc-activity-undonetag">undone</span>`}
+          ${en.op === 'refuse' && html`<span class="bc-activity-blockedtag">blocked</span>`}
+          ${en.op === 'refuse' && en.details
+            && html`<span class="bc-activity-detail">${[
+              en.details.reason,
+              en.details.from && 'sender ' + en.details.from,
+              en.details.boundOrganizer && 'organizer on file ' + en.details.boundOrganizer,
+            ].filter(Boolean).join(' · ')}</span>`}
           ${en.details && en.details.addedTitles && en.details.addedTitles.length > 0
             && html`<span class="bc-activity-detail">${en.details.addedTitles.join(', ')}</span>`}
         </span>

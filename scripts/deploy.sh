@@ -13,6 +13,9 @@ HEALTH_URL="https://cal.oshyan.com/api/v1/health"
 # SKIP_TESTS=1 only when deliberately shipping a known-red tree.
 if [ "${SKIP_TESTS:-0}" != "1" ]; then
   echo "== pre-flight tests =="
+  # The modulepreload block is generated from the import graph; a stale one
+  # would quietly send the browser back to discovering modules level by level.
+  node "${ROOT_DIR}/scripts/gen-preload.mjs" --check
   node --experimental-vm-modules "${ROOT_DIR}/web/tests/static.mjs" 2>/dev/null | tail -1
   node "${ROOT_DIR}/web/tests/smoke.mjs" 2>/dev/null | tail -1
   php "${ROOT_DIR}/server/tests/run.php" | tail -1

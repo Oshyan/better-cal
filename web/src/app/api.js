@@ -2,7 +2,8 @@
 // 401 -> login, and monotonic request ids for window loads and search so
 // out-of-order responses never render.
 
-import { state, set, mergeWindow, rangeCovered, toast } from './store.js';
+import { state, set, mergeWindow, missingRanges, toast } from './store.js';
+import { toISOWithOffset } from '../lib/dates.js';
 import { adoptSettings } from './settings.js';
 
 const BASE = '/api/v1';
@@ -105,16 +106,11 @@ export async function loadSavedViews() {
 
 let windowReqId = 0;
 let lastWindow = null;
-// Ranges currently in flight. rangeCovered only knows about ranges that have
-// already LANDED, so a virtualized view settling its scroll position would
-// fire two near-identical multi-month queries back to back and pay for both
-// (measured: 800ms + 879ms racing on a cold load). A request whose range is
-// already inside an in-flight one is redundant by definition.
+// Ranges currently in flight. loadedRanges only knows about ranges that have
+// already LANDED, so in-flight spans are fed to missingRanges alongside them —
+// otherwise a view settling its scroll fires near-identical queries back to
+// back and pays for both (measured: 800ms + 879ms racing on a cold load).
 const inFlight = [];
-
-function coveredInFlight(s, e) {
-  return inFlight.some((r) => r.start <= s && r.end >= e);
-}
 
 // A wider request makes a narrower one in flight pointless: its response is
 // discarded by the windowReqId check anyway, so letting it run just costs a
@@ -127,21 +123,21 @@ function abortSubsumed(s, e) {
   }
 }
 
-export async function loadWindow(startISO, endISO, { force = false } = {}) {
-  lastWindow = { start: startISO, end: endISO };
-  if (!force && rangeCovered(startISO, endISO)) return;
-  const s = new Date(startISO).getTime();
-  const e = new Date(endISO).getTime();
-  if (!force && coveredInFlight(s, e)) return;
-  abortSubsumed(s, e);
-  const id = ++windowReqId;
+const iso = (ms) => toISOWithOffset(new Date(ms));
+
+// Fetch one contiguous gap. Kept separate from loadWindow so the caller can
+// issue several concurrently without any of them cancelling the others — they
+// cover disjoint spans, so none is stale with respect to the rest.
+async function fetchRange(s, e) {
   const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
   const entry = { start: s, end: e, ctrl };
   inFlight.push(entry);
-  const params = new URLSearchParams({ start: startISO, end: endISO });
+  const startISO = iso(s);
+  const endISO = iso(e);
   try {
-    const data = await api('/events?' + params.toString(), { signal: ctrl ? ctrl.signal : undefined });
-    if (id !== windowReqId) return; // stale response: a newer request superseded it
+    const data = await api('/events?' + new URLSearchParams({ start: startISO, end: endISO }), {
+      signal: ctrl ? ctrl.signal : undefined,
+    });
     mergeWindow(startISO, endISO, data.events || []);
   } catch (err) {
     if (!err || err.code !== 'aborted') throw err;
@@ -149,6 +145,30 @@ export async function loadWindow(startISO, endISO, { force = false } = {}) {
     const i = inFlight.indexOf(entry);
     if (i >= 0) inFlight.splice(i, 1);
   }
+}
+
+export async function loadWindow(startISO, endISO, { force = false } = {}) {
+  lastWindow = { start: startISO, end: endISO };
+  const s = new Date(startISO).getTime();
+  const e = new Date(endISO).getTime();
+  if (force) {
+    abortSubsumed(s, e);
+    windowReqId++;
+    await fetchRange(s, e);
+    return;
+  }
+  // Ask only for what is not already held or on its way. Scrolling requests a
+  // whole window re-centred on the viewport, so each demand overlaps the last
+  // by most of its width; sending the overlap again meant a fling queued a
+  // dozen multi-thousand-occurrence responses, and merging them starved the
+  // frame loop badly enough that requestAnimationFrame stopped firing (#14).
+  // The gap is normally a single month.
+  const gaps = missingRanges(s, e, [
+    ...state.loadedRanges,
+    ...inFlight.map((r) => ({ start: r.start, end: r.end })),
+  ]);
+  if (gaps.length === 0) return;
+  await Promise.all(gaps.map((g) => fetchRange(g.start, g.end)));
 }
 
 // Refetch the most recently requested window (after mutations/undo).

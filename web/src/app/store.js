@@ -171,6 +171,33 @@ export function rangeCovered(startISO, endISO) {
   return state.loadedRanges.some((r) => r.start <= s && r.end >= e);
 }
 
+/**
+ * The parts of [s, e) not already covered by `have` (ms epochs).
+ *
+ * Scrolling asks for a fresh window centred on wherever the viewport landed,
+ * so consecutive demands overlap almost completely — a five-month window
+ * shifted by one month is 80% of what we just fetched. Asking only for the
+ * gap turns each of those into roughly a single month, which is what keeps a
+ * fling from queueing a dozen multi-thousand-occurrence responses and
+ * starving the frame loop (GH #14).
+ *
+ * Pure and exported for tests: `have` is any list of {start, end}, and the
+ * result is the ascending, non-overlapping remainder.
+ */
+export function missingRanges(s, e, have) {
+  if (!(e > s)) return [];
+  const sorted = [...have].filter((r) => r.end > s && r.start < e).sort((a, b) => a.start - b.start);
+  const gaps = [];
+  let cursor = s;
+  for (const r of sorted) {
+    if (r.start > cursor) gaps.push({ start: cursor, end: Math.min(r.start, e) });
+    cursor = Math.max(cursor, r.end);
+    if (cursor >= e) break;
+  }
+  if (cursor < e) gaps.push({ start: cursor, end: e });
+  return gaps;
+}
+
 function mergeRanges(ranges) {
   const sorted = [...ranges].sort((a, b) => a.start - b.start);
   const out = [];

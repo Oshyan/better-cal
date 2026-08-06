@@ -81,6 +81,23 @@ export function stepAnchor(dir) {
   set({ anchor: y + '-' + pad(m) + '-01', scrollSeq: state.scrollSeq + 1 });
 }
 
+// Where a jump should actually land, given how much of a date was asked for.
+//
+// Asking for a whole month and landing on its 1st frames the month badly: the
+// grid centres the anchor's ROW, so the 1st sitting mid-view means most of
+// what you see is the month before, and the toolbar label — which reports the
+// dominant month across the visible rows — can legitimately name that earlier
+// month. Anchoring mid-month instead frames the requested month and makes the
+// label agree, because now it genuinely is the dominant one.
+//
+// Only for the grid views. In day/week/agenda "June" means the start of June,
+// not the middle of it.
+export function jumpAnchorFor(dayKey, granularity) {
+  if (granularity !== 'month' && granularity !== 'year') return dayKey;
+  if (!['month', 'weeks3', 'weeks2'].includes(state.view)) return dayKey;
+  return dayKey.slice(0, 8) + '15';
+}
+
 export function jumpToDate(dayKey, flashId) {
   set({
     anchor: dayKey,

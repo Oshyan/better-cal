@@ -6,9 +6,9 @@
 
 import { html, useState, useRef, useEffect } from '../../vendor/index.js';
 import { useStore, set, state } from './store.js';
-import { jumpToDate } from './actions.js';
+import { jumpToDate, jumpAnchorFor } from './actions.js';
 import { trapFocus } from '../ui/DayExpand.js';
-import { parseJumpText } from '../lib/jumpparse.js';
+import { parseJumpText, jumpGranularity } from '../lib/jumpparse.js';
 import { monthWeeks, stepMonthOf, weekdayHeads } from '../lib/minimonth.js';
 import { Icon } from '../ui/icons.js';
 import {
@@ -23,6 +23,19 @@ export function JumpPopover() {
   const [yearMode, setYearMode] = useState(false);
   const panelRef = useRef(null);
   const inputRef = useRef(null);
+  const focusedRef = useRef(false);
+
+  // Focus the input once per open, AFTER the panel exists. The open effect
+  // cannot do it directly: it is what sets `disp`, and the render before that
+  // returns null, so on the first open of a session inputRef is still empty
+  // when the effect runs and the focus call was silently skipped. Unfocused,
+  // the typing then fell through to the global hotkey handler — which is how
+  // a jump could end up entering text in the toolbar's filter box instead.
+  useEffect(() => {
+    if (!open || !disp || focusedRef.current || !inputRef.current) return;
+    inputRef.current.focus();
+    focusedRef.current = true;
+  });
 
   useEffect(() => {
     if (!open) return undefined;
@@ -32,7 +45,7 @@ export function JumpPopover() {
     setDisp(vm
       ? { year: vm.year, month: vm.month }
       : { year: Number(state.anchor.slice(0, 4)), month: Number(state.anchor.slice(5, 7)) });
-    if (inputRef.current) inputRef.current.focus();
+    focusedRef.current = false;
     const onDoc = (e) => {
       if (panelRef.current && !panelRef.current.contains(e.target) &&
           !e.target.closest('.bc-toolbar-date')) set({ jumpOpen: false });
@@ -51,16 +64,18 @@ export function JumpPopover() {
   const tKey = todayKey();
   const parsed = text.trim() ? parseJumpText(text, tKey) : null;
 
-  const go = (dayKey) => {
+  // A typed month ("june 2027") frames that month; a day picked off the grid
+  // is always exactly that day, whatever the text says.
+  const go = (dayKey, fromText) => {
     set({ jumpOpen: false });
-    jumpToDate(dayKey);
+    jumpToDate(fromText ? jumpAnchorFor(dayKey, jumpGranularity(text)) : dayKey);
   };
 
   const stepMonth = (n) => setDisp(stepMonthOf(disp.year, disp.month, n));
   const stepYear = (n) => setDisp({ year: disp.year + n, month: disp.month });
 
   const onKeyDown = (e) => {
-    if (e.key === 'Enter' && parsed) { e.preventDefault(); go(parsed); }
+    if (e.key === 'Enter' && parsed) { e.preventDefault(); go(parsed, true); }
   };
 
   const weeks = monthWeeks(disp.year, disp.month);

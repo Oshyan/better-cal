@@ -2200,6 +2200,10 @@ checkEq(
 );
 
 // ---------------------------------------------------------------------------
+// The bundled plugins' own pure logic (parsers, interval maths, date maths).
+require __DIR__ . '/plugins.php';
+
+// ---------------------------------------------------------------------------
 
 $pass = $GLOBALS['__pass'];
 $fail = $GLOBALS['__fail'];

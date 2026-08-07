@@ -7,6 +7,15 @@ APP_DIR="/home/bettercal/app"
 DOCROOT="/home/bettercal/htdocs/cal.oshyan.com"
 HEALTH_URL="https://cal.oshyan.com/api/v1/health"
 
+# Production deploys ship main. Feature branches go to the dev instance via
+# scripts/deploy-dev.sh (cal.oshyan.com:9443); FORCE_BRANCH=1 overrides for
+# the rare deliberate exception.
+BRANCH="$(git -C "${ROOT_DIR}" branch --show-current)"
+if [ "${BRANCH}" != "main" ] && [ "${FORCE_BRANCH:-0}" != "1" ]; then
+  echo "Refusing to deploy branch '${BRANCH}' to production. Use scripts/deploy-dev.sh, or FORCE_BRANCH=1." >&2
+  exit 1
+fi
+
 # Pre-flight gate. Every live break so far (blank app from a stray import, a
 # dead "+ New" button, a frozen agenda) was a broken reference that a test run
 # would have caught — but deploy never ran the tests. It does now. Set

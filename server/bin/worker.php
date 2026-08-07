@@ -22,11 +22,15 @@ use BetterCal\Infra\LlmGateway;
 use BetterCal\Infra\PushSender;
 use BetterCal\Support\Time;
 
-const WORKER_LOCK = 'bettercal_worker';
 const MAX_RUNTIME_SECONDS = 50;
 
 $cfg = config();
 $db = new Db($cfg['db']);
+// GET_LOCK is server-global in MySQL, not per-database: namespace the lock by
+// the database name so the dev instance's worker and production's can never
+// block each other while sharing one MySQL server.
+preg_match('/dbname=([^;]+)/', (string) $cfg['db']['dsn'], $lockM);
+define('WORKER_LOCK', 'bettercal_worker:' . ($lockM[1] ?? 'default'));
 $queue = new JobQueue($db);
 $feeds = new Feeds($db, $queue);
 $llm = new LlmGateway($cfg);

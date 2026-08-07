@@ -466,6 +466,47 @@ check('manifest: bad decoration icon fails install', Plugins::manifestErrors(arr
     'decoration' => ['icon' => 'not-an-icon', 'color' => '#5b8dd9'],
 ])) !== []);
 
+// Plugin-supplied icons are PATH DATA, never markup: the host builds the <svg>
+// shell, so there is no element to carry a script or an external reference.
+// The grammar is the whole defence, so probe its edges.
+check('iconPath: a plain path validates',
+    Plugins::iconPathError('M3 8.6a4.4 4.4 0 0 1 4.4 4.4M3 4.6') === null);
+check('iconPath: absent is fine', Plugins::iconPathError(null) === null);
+check('iconPath: must start with a moveto', Plugins::iconPathError('L3 4 L5 6') !== null);
+check('iconPath: markup is refused', Plugins::iconPathError('M0 0"/><script>alert(1)</script>') !== null);
+check('iconPath: an element is refused', Plugins::iconPathError('M0 0 <foreignObject>') !== null);
+check('iconPath: a url() reference is refused', Plugins::iconPathError('M0 0 url(#x)') !== null);
+check('iconPath: an xlink href is refused', Plugins::iconPathError('M0 0 xlink:href="http://x"') !== null);
+check('iconPath: an entity is refused', Plugins::iconPathError('M0 0 &#60;svg&#62;') !== null);
+check('iconPath: quotes are refused', Plugins::iconPathError('M0 0 "') !== null);
+check('iconPath: scientific notation survives', Plugins::iconPathError('M1e2 2.5e-3 L4 4') === null);
+check('iconPath: arcs and curves survive',
+    Plugins::iconPathError('M8 1A7 7 0 1 1 8 15C4 15 1 12 1 8Z') === null);
+check('iconPath: over-long path refused',
+    Plugins::iconPathError('M' . str_repeat('1 2 ', 600)) !== null);
+check('manifest: a valid iconPath installs', Plugins::manifestErrors(array_merge($goodMan, [
+    'decoration' => ['iconPath' => 'M2 8 L8 2 L14 8'],
+])) === []);
+check('manifest: a hostile iconPath fails install', Plugins::manifestErrors(array_merge($goodMan, [
+    'decoration' => ['iconPath' => 'M0 0"><script>x</script>'],
+])) !== []);
+
+// Declared dependencies between plugins (tier 1).
+check('manifest: requires accepts a list of ids',
+    Plugins::manifestErrors(array_merge($goodMan, ['requires' => ['open-meteo']])) === []);
+check('manifest: optional accepts a list of ids',
+    Plugins::manifestErrors(array_merge($goodMan, ['optional' => ['tides', 'open-meteo']])) === []);
+// The fixture's own id is "weather", so this also proves the self-check covers
+// `optional` and not just `requires`.
+check('manifest: a plugin cannot optionally depend on itself',
+    Plugins::manifestErrors(array_merge($goodMan, ['optional' => ['weather']])) !== []);
+check('manifest: requires refuses a non-list',
+    Plugins::manifestErrors(array_merge($goodMan, ['requires' => 'open-meteo'])) !== []);
+check('manifest: requires refuses a bad id',
+    Plugins::manifestErrors(array_merge($goodMan, ['requires' => ['Not An Id']])) !== []);
+check('manifest: a plugin cannot require itself',
+    Plugins::manifestErrors(array_merge($goodMan, ['requires' => [$goodMan['id']]])) !== []);
+
 // SSRF policy: the refusal list.
 foreach (['127.0.0.1', '10.1.2.3', '172.16.0.9', '192.168.1.1', '169.254.169.254', '100.64.0.1', '0.0.0.0', '::1', 'fe80::1', 'fd00::1', '::ffff:127.0.0.1', 'not-an-ip'] as $bad) {
     check('http policy refuses ' . $bad, HttpClient::isForbiddenIp($bad));

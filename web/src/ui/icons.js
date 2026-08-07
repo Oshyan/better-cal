@@ -20,14 +20,14 @@ export function ThumbIcon({ dir = 'up', size = 13 }) {
 // feeds render hollow (2px ring of the calendar color, transparent center)
 // with a "Subscribed feed" tooltip. One shared treatment for every surface
 // that shows a calendar dot.
-export function CalDot({ cal, color, icon }) {
+export function CalDot({ cal, color, deco }) {
   const c = (cal && cal.color) || color || '#888';
   const feed = cal && cal.kind === 'subscribed';
   // A plugin that declared a decoration icon shows it in place of the dot, in
   // the calendar's own color: same slot, same size, more information.
-  if (icon) {
+  if (deco && (deco.icon || deco.iconPath)) {
     return html`<span class="bc-cal-dot is-icon" style=${`color:${c}`} title="Provided by a plugin">
-      <${PluginGlyph} icon=${icon} size=${12} />
+      <${PluginGlyph} icon=${deco.icon} iconPath=${deco.iconPath} size=${12} />
     </span>`;
   }
   return feed
@@ -222,7 +222,20 @@ export function LinkIcon({ size = 12 }) {
 // or a literal glyph the author supplied (an emoji). The server refuses an
 // identifier-shaped value that is not in the set, so anything non-alphanumeric
 // arriving here is meant to be rendered as text.
-export function PluginGlyph({ icon, size = 11 }) {
+export function PluginGlyph({ icon, iconPath, size = 11 }) {
+  // A plugin may ship its own icon as PATH DATA. The host builds the <svg>
+  // around it — plugins never supply markup — so there is no element that could
+  // carry a script, a foreignObject or an external reference, and the viewBox
+  // clips anything drawn outside the 16x16 box. The server validates the string
+  // against the SVG path grammar at install, so it holds nothing but commands
+  // and numbers by the time it reaches here.
+  if (iconPath) {
+    return html`<svg
+      viewBox="0 0 16 16" width=${size} height=${size} aria-hidden="true"
+      fill="none" stroke="currentColor" stroke-width="1.5"
+      stroke-linecap="round" stroke-linejoin="round"
+    ><path d=${iconPath} /></svg>`;
+  }
   if (!icon) return null;
   return /^[a-zA-Z][a-zA-Z0-9_-]*$/.test(icon)
     ? html`<${Icon} name=${icon} size=${size} />`

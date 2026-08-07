@@ -444,11 +444,162 @@ final class PluginHost
         $this->db->run('DELETE FROM plugin_kv WHERE plugin_id = ? AND k = ?', [$this->pluginId, $key]);
     }
 
+    // ---- plugin interop: presence and published data ---------------------
+
+    /**
+     * Is another plugin installed AND enabled right now?
+     *
+     * The point of this is optional dependency: a planner can fold in weather
+     * when a weather plugin is present and simply say less when it is not,
+     * without duplicating that plugin's work or hard-failing without it.
+     * A hard dependency belongs in the manifest's `requires` instead, which the
+     * host refuses to enable without.
+     */
+    public function hasPlugin(string $pluginId): bool
+    {
+        return (int) ($this->db->scalar(
+            'SELECT COUNT(*) FROM plugins WHERE id = ? AND enabled = 1',
+            [$pluginId]
+        ) ?? 0) > 0;
+    }
+
+    /**
+     * Publish one of your kv values for other plugins to read, optionally
+     * expiring. This is the whole of cross-plugin sharing and it is data-only
+     * on purpose: no plugin ever executes inside another's job, so there is no
+     * budget to attribute, no exception to propagate across a boundary, and no
+     * permission to inherit.
+     *
+     * What you publish is a public contract. Version the key (`normals.v1`)
+     * rather than changing a shape consumers already read.
+     */
+    public function publish(string $key, mixed $value, ?int $ttlSeconds = null): void
+    {
+        $expires = $ttlSeconds === null
+            ? null
+            : Time::toDb((new \DateTimeImmutable('@' . (time() + max(1, $ttlSeconds))))->setTimezone(new \DateTimeZone('UTC')));
+        $this->db->run(
+            'INSERT INTO plugin_kv (plugin_id, k, v_json, is_public, expires_at) VALUES (?, ?, ?, 1, ?)
+             ON DUPLICATE KEY UPDATE v_json = VALUES(v_json), is_public = 1, expires_at = VALUES(expires_at)',
+            [$this->pluginId, mb_substr($key, 0, 160), json_encode($value, JSON_INVALID_UTF8_SUBSTITUTE), $expires]
+        );
+    }
+
+    /** Stop publishing a key. The value stays as your own private kv entry. */
+    public function unpublish(string $key): void
+    {
+        $this->db->run(
+            'UPDATE plugin_kv SET is_public = 0, expires_at = NULL WHERE plugin_id = ? AND k = ?',
+            [$this->pluginId, $key]
+        );
+    }
+
+    /**
+     * Read another plugin's published value. Null when the plugin is absent or
+     * disabled, the key was never published, or it has expired — all
+     * indistinguishable on purpose, because the correct response to every one
+     * of them is the same: do without it.
+     */
+    public function readPublished(string $pluginId, string $key): mixed
+    {
+        if (!$this->hasPlugin($pluginId)) {
+            return null;
+        }
+        $raw = $this->db->scalar(
+            'SELECT v_json FROM plugin_kv
+             WHERE plugin_id = ? AND k = ? AND is_public = 1
+               AND (expires_at IS NULL OR expires_at > ?)',
+            [$pluginId, $key, Time::nowDb()]
+        );
+        return is_string($raw) ? json_decode($raw, true) : null;
+    }
+
+    /**
+     * What a plugin currently offers: `[key => updatedAt]`, so a consumer can
+     * discover a provider's surface instead of guessing key names.
+     */
+    public function publishedKeys(string $pluginId): array
+    {
+        if (!$this->hasPlugin($pluginId)) {
+            return [];
+        }
+        $rows = $this->db->all(
+            'SELECT k, updated_at FROM plugin_kv
+             WHERE plugin_id = ? AND is_public = 1 AND (expires_at IS NULL OR expires_at > ?)
+             ORDER BY k',
+            [$pluginId, Time::nowDb()]
+        );
+        $out = [];
+        foreach ($rows as $r) {
+            $out[(string) $r['k']] = Time::iso(Time::fromDb((string) $r['updated_at']));
+        }
+        return $out;
+    }
+
     // ---- network --------------------------------------------------------
 
     public function http(): HttpClient
     {
         return $this->http;
+    }
+
+    /**
+     * GET through the same policied client, but served from a cache shared by
+     * every plugin and keyed by the exact URL.
+     *
+     * This is the honest answer to "two plugins want the same upstream data".
+     * A weather plugin and a trip planner asking Open-Meteo for the same
+     * coordinates should pay for one fetch, and the expensive part of that
+     * sharing is the request, not the parsing. Keeping the cache in the host
+     * rather than in a provider plugin means there is no dependency to declare,
+     * no load order, and nothing that breaks when a plugin is disabled.
+     *
+     * A hit costs nothing against your request budget. A miss is an ordinary
+     * fetch and is billed normally. Errors are never cached.
+     *
+     * @return array{status:int,body:string,cached:bool}
+     */
+    public function httpCached(string $url, int $ttlSeconds = 3600): array
+    {
+        $hash = hash('sha256', $url);
+        $now = Time::nowDb();
+        $row = $this->db->one(
+            'SELECT status, body FROM http_cache WHERE url_hash = ? AND expires_at > ?',
+            [$hash, $now]
+        );
+        if ($row !== null) {
+            return ['status' => (int) $row['status'], 'body' => (string) $row['body'], 'cached' => true];
+        }
+        $r = $this->http->get($url);
+        // Only success is worth keeping: caching a 500 turns one bad minute
+        // upstream into an hour of failure for every plugin.
+        if ($r['status'] >= 200 && $r['status'] < 300) {
+            $expires = Time::toDb(
+                (new \DateTimeImmutable('@' . (time() + max(1, $ttlSeconds))))->setTimezone(new \DateTimeZone('UTC'))
+            );
+            $this->db->run(
+                'INSERT INTO http_cache (url_hash, url, status, body, fetched_at, expires_at)
+                 VALUES (?, ?, ?, ?, ?, ?)
+                 ON DUPLICATE KEY UPDATE status = VALUES(status), body = VALUES(body),
+                   fetched_at = VALUES(fetched_at), expires_at = VALUES(expires_at)',
+                [$hash, mb_substr($url, 0, 2048), $r['status'], $r['body'], $now, $expires]
+            );
+        }
+        return ['status' => $r['status'], 'body' => $r['body'], 'cached' => false];
+    }
+
+    /** httpCached + JSON decode. Throws on non-2xx or unparseable JSON. */
+    public function getJsonCached(string $url, int $ttlSeconds = 3600): array
+    {
+        $r = $this->httpCached($url, $ttlSeconds);
+        if ($r['status'] < 200 || $r['status'] >= 300) {
+            throw new \RuntimeException('HTTP ' . $r['status'] . ' from ' . parse_url($url, PHP_URL_HOST));
+        }
+        $data = json_decode($r['body'], true);
+        if (!is_array($data)) {
+            throw new \RuntimeException('Non-JSON response from ' . parse_url($url, PHP_URL_HOST));
+        }
+        return $data;
     }
 
     // ---- location -------------------------------------------------------

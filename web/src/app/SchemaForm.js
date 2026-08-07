@@ -1,7 +1,8 @@
 // Declarative settings renderer for plugin manifests (docs/plugins/prd-v1.md).
 // The HOST renders every control from the schema — plugins ship data, never
 // markup — so styling, accessibility, and sanitisation stay in one place.
-// Field types: text, number, select, toggle, location (PlaceInput), person.
+// Field types: text, textarea, number, select, toggle, location (PlaceInput),
+// person.
 
 import { html, useState } from '../../vendor/index.js';
 import { PlaceInput } from './PlaceInput.js';
@@ -44,9 +45,19 @@ function Field({ field, value, onChange }) {
         <option value="">(none)</option>
         ${people.map((p) => html`<option key=${p.id} value=${p.name}>${p.name}</option>`)}
       </select>`;
+    case 'textarea':
+      // The schema has no list type, so list-shaped settings (one item per
+      // line) live here. A single-line input for a ten-line wishlist is why
+      // authors were splitting one setting across four fields.
+      return html`<textarea
+        class="bc-schema-input bc-schema-area" rows=${field.rows || 6}
+        maxLength=${field.maxLength || 10000}
+        value=${value ?? ''}
+        onInput=${(e) => onChange(e.target.value)}
+      ></textarea>`;
     default:
       return html`<input
-        type="text" class="bc-schema-input"
+        type="text" class="bc-schema-input" maxLength=${field.maxLength || 500}
         value=${value ?? ''}
         onInput=${(e) => onChange(e.target.value)}
       />`;

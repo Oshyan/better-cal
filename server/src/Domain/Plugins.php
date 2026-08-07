@@ -24,7 +24,9 @@ final class Plugins
     public const HOST_VERSION = '0.1.0';
     public const FAILURE_DISABLE_THRESHOLD = 5;
     public const RANGE_RESPONSE_CAP = 500; // per plugin per window request
-    private const FIELD_TYPES = ['text', 'number', 'select', 'toggle', 'location', 'person'];
+    private const FIELD_TYPES = ['text', 'textarea', 'number', 'select', 'toggle', 'location', 'person'];
+    public const TEXT_MAX = 500;       // single-line
+    public const TEXTAREA_MAX = 10000; // list-shaped settings live here
     /** Declarative chip animations a plugin may request (host-provided CSS). */
     public const ANIMATIONS = ['none', 'pulse', 'shimmer'];
 
@@ -99,6 +101,13 @@ final class Plugins
                 }
                 if (($f['type'] ?? null) === 'select' && (!isset($f['options']) || !is_array($f['options']) || $f['options'] === [])) {
                     $errs[] = $section . '.' . $f['key'] . ': select needs options';
+                }
+                // A default longer than its own field could never be re-saved
+                // by the user once they edited it, so refuse it at install.
+                if (in_array($f['type'] ?? null, ['text', 'textarea'], true)
+                    && is_string($f['default'] ?? null)
+                    && mb_strlen($f['default']) > self::textLimit($f)) {
+                    $errs[] = $section . '.' . $f['key'] . ': default exceeds its own ' . self::textLimit($f) . '-character limit';
                 }
             }
         }
@@ -223,6 +232,9 @@ final class Plugins
             'ranges' => (int) $this->db->one('SELECT COUNT(*) c FROM plugin_ranges WHERE plugin_id = ?', [$id])['c'],
             'warnings' => (int) $this->db->one('SELECT COUNT(*) c FROM plugin_warnings WHERE plugin_id = ? AND dismissed_at IS NULL', [$id])['c'],
             'kv' => (int) $this->db->one('SELECT COUNT(*) c FROM plugin_kv WHERE plugin_id = ?', [$id])['c'],
+            // Uninstall purges these too; the receipt used to omit them, so an
+            // open proposal disappeared without ever being counted.
+            'proposals' => (int) $this->db->one("SELECT COUNT(*) c FROM plugin_proposals WHERE plugin_id = ? AND status = 'open'", [$id])['c'],
         ];
     }
 
@@ -285,6 +297,24 @@ final class Plugins
         foreach (['plugin_ranges', 'plugin_warnings', 'plugin_runs', 'plugin_kv', 'event_plugin_data', 'plugin_proposals'] as $t) {
             $this->db->run("DELETE FROM {$t} WHERE plugin_id = ?", [$id]);
         }
+        // Per-calendar settings live inside each calendar's settings_json under
+        // plugins.<id>, so they survived uninstall and reappeared, still set,
+        // if the plugin was ever installed again.
+        $withSettings = $this->db->all(
+            "SELECT id, settings_json FROM calendars WHERE user_id = ? AND settings_json IS NOT NULL",
+            [$userId]
+        );
+        foreach ($withSettings as $row) {
+            $cfg = json_decode((string) $row['settings_json'], true);
+            if (!is_array($cfg) || !isset($cfg['plugins'][$id])) {
+                continue;
+            }
+            unset($cfg['plugins'][$id]);
+            if (($cfg['plugins'] ?? null) === []) {
+                unset($cfg['plugins']);
+            }
+            $this->db->run('UPDATE calendars SET settings_json = ? WHERE id = ?', [json_encode($cfg), (int) $row['id']]);
+        }
         $this->db->run('DELETE FROM plugins WHERE id = ?', [$id]);
         ActivityContext::with('plugin:' . $id, function () use ($userId, $id, $impact, $deleteCalendars): void {
             (new Undo($this->db))->record(
@@ -309,6 +339,19 @@ final class Plugins
      *
      * @return array{0:array<string,mixed>,1:array<string,string>}
      */
+    /**
+     * Character ceiling for one text-ish field. A `textarea` may raise its own
+     * limit via `maxLength`, because the settings schema has no list type and
+     * list-shaped settings (a wishlist, a rule set) have to live in one field.
+     */
+    public static function textLimit(array $field): int
+    {
+        $isArea = ($field['type'] ?? 'text') === 'textarea';
+        $ceiling = $isArea ? self::TEXTAREA_MAX : self::TEXT_MAX;
+        $asked = isset($field['maxLength']) ? (int) $field['maxLength'] : $ceiling;
+        return max(1, min($asked, $ceiling));
+    }
+
     public static function validateAgainstSchema(array $schema, array $values): array
     {
         $clean = [];
@@ -319,6 +362,13 @@ final class Plugins
                 continue;
             }
             $v = $values[$k];
+            // null means "clear this key" for every type, matching the
+            // documented setEventData(null) behaviour. Coercing it per-type
+            // used to turn a clear into an empty string or a false.
+            if ($v === null) {
+                $clean[$k] = null;
+                continue;
+            }
             switch ($f['type']) {
                 case 'number':
                     if (!is_numeric($v)) {
@@ -349,24 +399,50 @@ final class Plugins
                     }
                     break;
                 case 'location':
-                    // {name, lat, lng} from the place picker, or null to clear.
-                    if ($v === null) {
-                        $clean[$k] = null;
-                    } elseif (is_array($v) && is_numeric($v['lat'] ?? null) && is_numeric($v['lng'] ?? null)) {
-                        $clean[$k] = [
-                            'name' => mb_substr((string) ($v['name'] ?? ''), 0, 200),
-                            'lat' => (float) $v['lat'],
-                            'lng' => (float) $v['lng'],
-                        ];
-                    } else {
+                    // {name, lat, lng} from the place picker.
+                    if (!is_array($v) || !is_numeric($v['lat'] ?? null) || !is_numeric($v['lng'] ?? null)) {
                         $errs[$k] = 'must be a place (name + coordinates)';
+                        break;
                     }
+                    $lat = (float) $v['lat'];
+                    $lng = (float) $v['lng'];
+                    // Coordinates were accepted unchecked, so lat 991 stored
+                    // fine and only failed much later inside a plugin's maths.
+                    if ($lat < -90.0 || $lat > 90.0 || $lng < -180.0 || $lng > 180.0) {
+                        $errs[$k] = 'coordinates out of range (lat -90..90, lng -180..180)';
+                        break;
+                    }
+                    $clean[$k] = [
+                        'name' => mb_substr((string) ($v['name'] ?? ''), 0, 200),
+                        'lat' => $lat,
+                        'lng' => $lng,
+                    ];
                     break;
                 case 'person':
-                    $clean[$k] = $v === null ? null : mb_substr((string) $v, 0, 120);
+                    if (!is_scalar($v)) {
+                        $errs[$k] = 'must be text';
+                        break;
+                    }
+                    $clean[$k] = mb_substr((string) $v, 0, 120);
                     break;
-                default: // text
-                    $clean[$k] = mb_substr((string) $v, 0, 500);
+                default: // text, textarea
+                    // (string) on an array yields the literal "Array", so a
+                    // structured value sent to a text field used to store that
+                    // word instead of being refused.
+                    if (!is_scalar($v)) {
+                        $errs[$k] = 'must be text';
+                        break;
+                    }
+                    // Truncating silently returned 200 with a shortened value,
+                    // so an over-long setting looked saved and the plugin then
+                    // ran on partial data. Refuse it instead, and let a
+                    // list-shaped field ask for the room it needs.
+                    $max = self::textLimit($f);
+                    if (mb_strlen((string) $v) > $max) {
+                        $errs[$k] = 'must be ' . $max . ' characters or fewer';
+                        break;
+                    }
+                    $clean[$k] = (string) $v;
             }
         }
         return [$clean, $errs];

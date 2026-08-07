@@ -2561,6 +2561,8 @@ body.bc-rescheduling { user-select: none; }
 .bc-schema-field { display: flex; align-items: center; gap: 10px; }
 .bc-schema-label { flex: none; width: 190px; font-size: 12.5px; color: var(--fg-muted); }
 .bc-schema-input { font-size: 13px; padding: 3px 8px; max-width: 260px; }
+/* List-shaped settings need room to read as a list, not a 260px slot. */
+.bc-schema-area { max-width: 460px; width: 100%; resize: vertical; line-height: 1.45; font-family: inherit; }
 .bc-schema-toggle span { font-size: 12.5px; color: var(--fg-muted); }
 .bc-schema-actions { display: flex; justify-content: flex-end; }
 .bc-calset-plugin { border-top: 1px solid var(--border); padding-top: 8px; margin-top: 8px; }

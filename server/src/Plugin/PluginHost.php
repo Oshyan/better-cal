@@ -373,6 +373,21 @@ final class PluginHost
         return $proposals->upsert($this->userId, $this->pluginId, $proposal);
     }
 
+    /**
+     * Retract one of this plugin's still-open proposals. Returns true if one
+     * was removed. Decided proposals are untouched.
+     */
+    public function withdrawProposal(string $sourceKey): bool
+    {
+        $this->requirePermission('propose');
+        $proposals = new Proposals(
+            $this->db,
+            $this->eventsDomain(),
+            new Trips($this->db, new Undo($this->db))
+        );
+        return $proposals->withdraw($this->userId, $this->pluginId, $sourceKey);
+    }
+
     /** This plugin's proposals, so a re-run can see what it already offered. */
     public function myProposals(?string $status = 'open'): array
     {

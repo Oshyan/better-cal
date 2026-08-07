@@ -37,7 +37,7 @@ Practically: do your fetching, computing, and writing in `runJob`. Everything th
 - `jobs[].interval` is an ISO 8601 duration (`PT3H`, `PT12H`, `P1D`). Staleness is judged from the last run, so a failing job still waits its interval.
 - `settings` / `calendarSettings` / `eventSettings` are declarative field schemas the host renders — at plugin scope (ops page), per calendar (calendar gear panel), and per event (event detail view).
 - `decoration` is optional: `{icon, color, animation}` where animation is `none`, `pulse`, or `shimmer`.
-- `settings` / `calendarSettings` / `eventSettings` field details: Field types: `text`, `number` (`min`/`max`), `select` (`options`), `toggle`, `location` (place picker → `{name, lat, lng}`), `person` (name string). Every field may have a `default`.
+- `settings` / `calendarSettings` / `eventSettings` field details: Field types: `text` (500 chars), `textarea` (multi-line, 10000 chars, `rows`), `number` (`min`/`max`), `select` (`options`), `toggle`, `location` (place picker → `{name, lat, lng}`, coordinates range-checked), `person` (name string). Every field may have a `default`. `text` and `textarea` accept `maxLength` to lower their own ceiling; `textarea` may also raise it up to 10000. **There is no list field type** — a list-shaped setting goes in a `textarea`, one item per line.
 
 ## Code (`Plugin.php`)
 
@@ -115,6 +115,7 @@ The window is **not capped** — it returns every occurrence in the range you as
 - `llmJson(string $prompt, array $schemaHint = []): ?array` — ask the model for JSON. **Returns null when unconfigured or on failure, indistinguishably** — always have a deterministic fallback. Requires `llm`.
 - `propose(array $proposal): array` — offer a plan (below). Requires `propose`.
 - `myProposals(?string $status = 'open'): array` — `[{sourceKey, status}]`, so a re-run can see what it already offered.
+- `withdrawProposal(string $sourceKey): bool` — retract one of your still-open proposals. Decided ones are untouched. Requires `propose`.
 - `runId(): ?string` — the id grouping this run's mutations.
 - `timezone(): DateTimeZone` — **the user's** zone. Use this for any local time you build; `date_default_timezone_get()` is the server's zone and may be a continent away.
 
@@ -128,11 +129,11 @@ The output methods sanitize and clamp silently. Plan for it rather than discover
 | `replaceRanges` | drops a `color` that is not `#rrggbb`, `label` → 200 chars, `sourceKey` → 160, whole array capped at 2000 |
 | `replaceWarnings` | array capped at 500, `message` → 500 chars, `fix` → 300; `severity` accepts only `info` or `warn` (anything else becomes `warn`) |
 | `setEventData` | key → 120 chars; passing `null` deletes the key |
-| **saving settings** | a `text` value → **500 chars**, `person` → 120, `location.name` → 200. The save returns 200 and echoes the truncated value, so an over-long setting looks accepted and your job then runs on partial data. Manifest `default`s are *not* truncated, so a plugin can ship a default its user can never re-save unchanged. |
+| **saving settings** | `person` → 120 chars, `location.name` → 200. Over-long `text`/`textarea`, non-scalar values, and out-of-range coordinates are **refused with a 400**, not silently coerced — a manifest whose `default` overflows its own field is refused at install for the same reason. |
 
 **`validateSettings($values)` receives only the keys being saved**, not the effective settings — the host merges your `$clean` over what is stored afterward. A rule like `if (!isset($values['location'])) return ['location' => 'required'];` therefore makes every other single-field save fail on a field the user never touched, and cross-field rules never fire on a partial save. Validate present keys only; enforce "required" in `runJob`, where you can see the merged result from `settings()`.
 
-There is no list or multi-line field type. A setting that is naturally a list has to be smuggled through `text` (one item per line), and the 500-char cap applies to the whole thing.
+**Renaming or removing a settings key strands whatever the user had stored under it.** `settings()` only returns keys your current manifest declares, so a value under a dropped key becomes unreachable while still sitting in the database. If you reshape your settings, read the old keys for a version or two and write the merged result back before you drop them.
 
 Two lifetime rules that differ from each other:
 
@@ -179,7 +180,9 @@ Enforced plan rules — breaking one throws out of `propose()`, which fails the 
 
 A plan event takes `{title, start, end?, allDay?, location?, description?, calendarId?}`. **`allDay` defaults to false**, so a date-only `start` like `'2026-09-05'` becomes a *timed* midnight-to-midnight event rather than an all-day one — unlike `syncEvents`, which infers all-day from the date shape. Pass `allDay => true` explicitly.
 
-**There is no way to withdraw a proposal.** The only lever is `sourceKey`: re-proposing replaces your own *open* proposal, and silently no-ops on a decided one. That makes both obvious key strategies wrong on their own — a key derived from the answer (`trip-2026-11-02`) leaves a stale open proposal behind every time the answer moves, while a fixed key (`next-trip`) is silenced forever by a single rejection. What works is a **generation counter in `kvSet`**: keep one key like `plan-g3`, bump the generation when the user rejects, and keep your own record of what each generation offered, because `myProposals()` returns only `{sourceKey, status}` and no content. Every plugin that proposes will need some version of this.
+`withdrawProposal(string $sourceKey): bool` retracts one of your own **open** proposals, returning true if it removed one. Decided proposals are left alone: an accepted plan is on the calendar and a rejection is the user's answer, and neither is yours to erase. Use it when your answer moves — a plugin that proposed a weekend which is no longer free should take the suggestion back rather than leave the user to dismiss it.
+
+That still leaves the `sourceKey` question. Re-proposing replaces your own open proposal and silently no-ops on a decided one, so a key derived from the answer (`trip-2026-11-02`) accumulates stale proposals unless you withdraw them, while a fixed key (`next-trip`) is silenced forever by one rejection. The pattern that works: a **generation counter in `kvSet`** — keep one key like `plan-g3`, bump the generation when the user rejects, and keep your own record of what each generation offered, because `myProposals()` returns only `{sourceKey, status}` and no content.
 
 **Statuses are `open`, `accepted`, `rejected`** — plus one transition worth planning for: undoing an accepted proposal returns it to `open`, so a key you had stood down on can come back. `myProposals($status)` returns `[{sourceKey, status}]`; pass `null` for all of them. Re-proposing the same `sourceKey` replaces an **open** proposal in place, but on a proposal the user already decided `propose()` **silently no-ops and returns the old one** — so check `myProposals(null)` first and skip decided keys, or a daily job will spend a model call every day re-proposing a day the user already rejected.
 
@@ -208,7 +211,7 @@ Everything else is unwrapped to its text content — including **headings**, so 
 - **Enable** schedules your jobs; the first run lands on the next worker tick (~1 min) or immediately via "Run now".
 - **Circuit breaker**: 5 consecutive failed/timed-out runs auto-disable the plugin with the reason shown on the ops page. A successful run resets it.
 - **A run is not a transaction.** Throwing part-way through `runJob` marks the run failed but does **not** roll back what you already wrote — ranges, warnings, events, KV and proposals from the first half all persist. This matters most for the "have I already announced this?" fingerprint the `notify()` note below recommends: write it on the **last** line of the job, after the side effect it guards, or a later throw permanently suppresses a notification that never actually went out.
-- **Uninstall** always purges your ranges, warnings, runs, proposals, and KV. Owned calendars are either deleted (with events) or archived (hidden local calendars, events kept) — the user chooses. Per-calendar settings you declared are left behind on each calendar.
+- **Uninstall** always purges your ranges, warnings, runs, proposals, per-calendar settings, and KV, and the receipt counts each. Owned calendars are either deleted (with events) or archived (hidden local calendars, events kept) — the user chooses.
 - **Plugins cannot see or call each other.** There is no cross-plugin API: you cannot ask the Weather plugin for a forecast or read another plugin's KV. You can see other plugins' *output* only where it lands in shared surfaces — their calendars appear in `calendars()` and their events in `eventsWindow()`. If you need data another plugin also fetches, fetch it yourself.
 
 ## Trust

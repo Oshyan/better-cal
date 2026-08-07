@@ -1143,6 +1143,18 @@ check('geo hash is 64 hex chars', preg_match('/^[0-9a-f]{64}$/', Geocode::queryH
 check('geo hash differs across bias regions', Geocode::queryHash('SFO', 37.77, -122.42) !== Geocode::queryHash('SFO', 55.68, 12.57));
 checkEq('geo hash stable within a bias cell', Geocode::queryHash('SFO', 37.61, -122.38), Geocode::queryHash('SFO', 37.77, -122.42));
 check('geo hash unbiased differs from biased', Geocode::queryHash('SFO') !== Geocode::queryHash('SFO', 37.77, -122.42));
+// PluginHost::geocode() shipped broken for the whole of v1/v2: it indexed
+// lookup()'s answer as $hits[0], but lookup() returns a single {lat,lng,display}
+// map with no key 0, so every plugin geocode silently returned null. Two
+// independent plugin authors hit it. Pin the return shape so the list/map
+// confusion cannot come back.
+$geoShape = Geocode::mapResponse(['features' => [[
+    'geometry' => ['coordinates' => [-122.513625, 37.780252]],
+    'properties' => ['name' => 'Sutro Baths', 'city' => 'San Francisco', 'country' => 'United States'],
+]]]);
+check('geo lookup answers a map, not a hit list', !array_is_list($geoShape));
+check('geo lookup map has no index 0 to read', !isset($geoShape[0]));
+check('geo lookup map carries lat/lng directly', isset($geoShape['lat'], $geoShape['lng']));
 checkEq('geo bias cell rounds to integer degrees', '38,-122', Geocode::biasCell(37.77, -122.42));
 checkEq('geo bias cell none without bias', 'none', Geocode::biasCell(null, null));
 check('geo airport code: SFO', Geocode::isAirportCode('SFO'));

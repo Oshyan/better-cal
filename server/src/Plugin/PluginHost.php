@@ -438,12 +438,25 @@ final class PluginHost
 
     // ---- location -------------------------------------------------------
 
-    /** Geocode a place query via the host's geocoder (cached). */
-    public function geocode(string $query): ?array
+    /**
+     * Geocode a place query via the host's geocoder (cached).
+     *
+     * Returns ['lat'=>float,'lng'=>float,'display'=>string], or null when the
+     * place is not found or the provider is unreachable.
+     *
+     * Pass biasLat/biasLng to disambiguate. Without a bias the provider ranks
+     * globally, so a bare venue name lands wherever the best string match is —
+     * "Greens Restaurant Fort Mason" resolves to Toronto. Plugins that geocode
+     * user-typed place names should bias toward the region they mean.
+     */
+    public function geocode(string $query, ?float $biasLat = null, ?float $biasLng = null): ?array
     {
         try {
-            $hits = (new Geocode($this->db))->lookup($query);
-            return $hits[0] ?? null;
+            // lookup() answers a single {lat,lng,display} map, not a hit list,
+            // and signals "not found" by nulling the fields rather than by
+            // returning empty. Indexing it like a list yields null every time.
+            $hit = (new Geocode($this->db))->lookup($query, $biasLat, $biasLng);
+            return isset($hit['lat'], $hit['lng']) ? $hit : null;
         } catch (\Throwable $e) {
             $this->log('geocode failed: ' . $e->getMessage());
             return null;

@@ -52,7 +52,12 @@ use BetterCal\Plugin\PluginInterface;
 return new class implements PluginInterface {
     public function validateSettings(array $values): array {
         // Return {key: error}. Empty = accept. Runs synchronously on save.
-        if (($values['location'] ?? null) === null) return ['location' => 'required'];
+        // $values holds ONLY the keys being saved right now — not the merged
+        // result. Validate a field when it is present and leave it alone when
+        // it is not, or single-field saves will fail on untouched fields.
+        if (array_key_exists('units', $values) && !in_array($values['units'], ['F', 'C'], true)) {
+            return ['units' => 'must be F or C'];
+        }
         return [];
     }
 
@@ -71,11 +76,11 @@ return new class implements PluginInterface {
 - `settings(): array` — plugin-scope values (stored over manifest defaults).
 - `calendarSettings(int $calendarId): array` — per-calendar values for your plugin.
 - `calendars(): array` — the user's calendars (`id`, `name`, `kind`, `visible`).
-- `http(): HttpClient` — `get($url)` / `getJson($url)`. Refuses private/loopback/link-local/metadata addresses (resolved before connect, pinned against DNS rebind), caps at 5 MB / 20 s / 3 redirects, and enforces a per-run request budget.
-- `geocode(string $query): ?array` — the host geocoder (cached).
+- `http(): HttpClient` — `get($url)` / `getJson($url)`. Refuses private/loopback/link-local/metadata addresses (resolved before connect, pinned against DNS rebind), caps at 5 MB / 20 s / 3 redirects, and allows **60 requests per run** (each redirect hop spends one). Note that three requests at the permitted 20 s each already exceed the 60 s run budget, so the wall clock binds long before the request count does.
+- `geocode(string $query, ?float $biasLat = null, ?float $biasLng = null): ?array` — the host geocoder (cached). Returns `{lat, lng, display}`, or **null when the place is not found or the provider is unreachable** — the two are indistinguishable, so treat null as "no answer", not "no such place". Without a bias the provider ranks globally and a bare venue name lands wherever the best string match is: "Greens Restaurant Fort Mason" resolves to Toronto. A bias helps when the right place is *somewhere* in the provider's candidates, but it only reranks that list — it cannot conjure a venue the provider does not hold, and it will then pick the nearest wrong answer instead of the far one. Treat any geocode of a user-typed venue name as a guess: check the `display` string you get back before acting on the coordinates, and prefer a full street address as the query.
 - `ensureCalendar(name, color): int` — find-or-create a calendar YOU own.
 - `syncEvents(calId, events): [added, updated, removed]` — feed-style upsert by `sourceKey` into an owned calendar; disappeared keys are deleted. Event: `{sourceKey, title, start, end?, allDay?, description?, location?}`. `start`/`end` are `YYYY-MM-DD` for all-day (end exclusive) or ISO instants.
-- `replaceRanges(ranges): int` — wholesale-replace your overlay bands. Range: `{sourceKey, start, end, label?, color?, detailHtml?}`.
+- `replaceRanges(ranges): int` — wholesale-replace your overlay bands. Range: `{sourceKey, start, end, label?, color?, detailHtml?}`. You may write up to 2000, but **any single window request returns at most 500 per plugin** (with a `truncated` flag the client reads), so ranges past that are stored and never seen. If you are producing more than a few hundred bands, narrow what you emit rather than relying on the write cap.
 - `replaceWarnings(warnings): int` — wholesale-replace your findings. Warning: `{message, severity?, eventId?, fix?}`.
 - `eventsWindow(startIso, endIso): array` — read the user's occurrences through the real pipeline (for audits). Worker-side only. **Read the semantics below before doing day math with these.**
 - `kvGet/kvSet/kvDelete` — namespaced storage that survives between runs; dropped on uninstall.
@@ -94,6 +99,8 @@ Three things about the timestamps that will bite you otherwise:
 - **`start`/`end` carry each EVENT'S OWN timezone offset**, not UTC and not a viewer's zone. Never compare them as strings — `"...T09:00:00-07:00"` sorts before `"...T10:00:00-04:00"` lexically but is the *later* instant. Sort by parsed instant (`strtotime`, `DateTimeImmutable`).
 - **All-day occurrences come back as `YYYY-MM-DDT00:00:00+00:00`** — a literal calendar date pinned at `+00:00`, not an instant. Do **not** timezone-convert it; converting slides Saturday into Friday west of UTC. Its `end` is exclusive.
 - `lat`/`lng` are renamed from the event's `locationLat`/`locationLng`, and are null unless the event has resolved coordinates.
+
+The window is **not capped** — it returns every occurrence in the range you ask for, the same set the calendar itself renders. Ask for the narrowest range you can, since a year-wide window on a busy calendar is several thousand occurrences and you are spending the 60 s run budget to expand them.
 
 **The window includes plugin-owned calendars.** Anything judging "is this day free?" must skip `kind === 'plugin'` from `calendars()`, or the Weather plugin's one-all-day-event-per-day makes every day look occupied. Consider also offering a `calendarSettings` toggle so the user can exclude their own chore or task calendars — recurring all-day chores are all-day events too, and they are not what "this day is taken" means.
 
@@ -121,6 +128,11 @@ The output methods sanitize and clamp silently. Plan for it rather than discover
 | `replaceRanges` | drops a `color` that is not `#rrggbb`, `label` → 200 chars, `sourceKey` → 160, whole array capped at 2000 |
 | `replaceWarnings` | array capped at 500, `message` → 500 chars, `fix` → 300; `severity` accepts only `info` or `warn` (anything else becomes `warn`) |
 | `setEventData` | key → 120 chars; passing `null` deletes the key |
+| **saving settings** | a `text` value → **500 chars**, `person` → 120, `location.name` → 200. The save returns 200 and echoes the truncated value, so an over-long setting looks accepted and your job then runs on partial data. Manifest `default`s are *not* truncated, so a plugin can ship a default its user can never re-save unchanged. |
+
+**`validateSettings($values)` receives only the keys being saved**, not the effective settings — the host merges your `$clean` over what is stored afterward. A rule like `if (!isset($values['location'])) return ['location' => 'required'];` therefore makes every other single-field save fail on a field the user never touched, and cross-field rules never fire on a partial save. Validate present keys only; enforce "required" in `runJob`, where you can see the merged result from `settings()`.
+
+There is no list or multi-line field type. A setting that is naturally a list has to be smuggled through `text` (one item per line), and the 500-char cap applies to the whole thing.
 
 Two lifetime rules that differ from each other:
 
@@ -165,13 +177,25 @@ Enforced plan rules — breaking one throws out of `propose()`, which fails the 
 - `trip`, if present, needs `title`, `start`, and `end`. It is always created all-day and as a container.
 - Events land on the user's default local calendar unless you pass `calendarId`.
 
-**Statuses are `open`, `accepted`, `rejected`.** `myProposals($status)` returns `[{sourceKey, status}]`; pass `null` for all of them. Re-proposing the same `sourceKey` replaces an **open** proposal in place, but on a proposal the user already decided `propose()` **silently no-ops and returns the old one** — so check `myProposals(null)` first and skip decided keys, or a daily job will spend a model call every day re-proposing a day the user already rejected.
+A plan event takes `{title, start, end?, allDay?, location?, description?, calendarId?}`. **`allDay` defaults to false**, so a date-only `start` like `'2026-09-05'` becomes a *timed* midnight-to-midnight event rather than an all-day one — unlike `syncEvents`, which infers all-day from the date shape. Pass `allDay => true` explicitly.
+
+**There is no way to withdraw a proposal.** The only lever is `sourceKey`: re-proposing replaces your own *open* proposal, and silently no-ops on a decided one. That makes both obvious key strategies wrong on their own — a key derived from the answer (`trip-2026-11-02`) leaves a stale open proposal behind every time the answer moves, while a fixed key (`next-trip`) is silenced forever by a single rejection. What works is a **generation counter in `kvSet`**: keep one key like `plan-g3`, bump the generation when the user rejects, and keep your own record of what each generation offered, because `myProposals()` returns only `{sourceKey, status}` and no content. Every plugin that proposes will need some version of this.
+
+**Statuses are `open`, `accepted`, `rejected`** — plus one transition worth planning for: undoing an accepted proposal returns it to `open`, so a key you had stood down on can come back. `myProposals($status)` returns `[{sourceKey, status}]`; pass `null` for all of them. Re-proposing the same `sourceKey` replaces an **open** proposal in place, but on a proposal the user already decided `propose()` **silently no-ops and returns the old one** — so check `myProposals(null)` first and skip decided keys, or a daily job will spend a model call every day re-proposing a day the user already rejected.
 
 `myProposals()` deliberately returns no content, so "has anything actually changed since I last proposed?" is yours to answer — keep a fingerprint of your inputs in `kvSet` and compare before doing expensive work.
 
 `notify()` does **not** dedupe. A job on a 6-hour interval that keeps finding the same conflict will notify every run; track what you already said in `kvSet` and stay quiet.
 
-All text you pass through `syncEvents`, `replaceRanges`, or `replaceWarnings` is sanitized by the host (the same allowlist as event descriptions), server-side at write and again client-side at render. You ship data, never markup — `detailHtml` is the one rich field and it is sanitized both ways.
+All text you pass through `syncEvents`, `replaceRanges`, or `replaceWarnings` is sanitized by the host, server-side at write and again client-side at render. You ship data, never markup — `detailHtml` and `rationaleHtml` are the rich fields and they are sanitized both ways.
+
+The allowlist is exactly these tags:
+
+```
+p  br  b  strong  i  em  u  a  ul  ol  li  div
+```
+
+Everything else is unwrapped to its text content — including **headings**, so `<h4>` section titles collapse your carefully structured card into one wall of prose, and **tables**, so a `<table>` becomes a run of concatenated cell text. Use `<div>` + `<b>` for headings and `<ul>` for anything tabular. **Every attribute is dropped except `href` on `<a>`**, and only absolute `http(s)` URLs survive: a relative href has its anchor unwrapped, so a plugin cannot link inward to the event that caused its own finding. Use the `eventId` field on a warning for that instead.
 
 ## Output shapes
 
@@ -183,7 +207,9 @@ All text you pass through `syncEvents`, `replaceRanges`, or `replaceWarnings` is
 
 - **Enable** schedules your jobs; the first run lands on the next worker tick (~1 min) or immediately via "Run now".
 - **Circuit breaker**: 5 consecutive failed/timed-out runs auto-disable the plugin with the reason shown on the ops page. A successful run resets it.
-- **Uninstall** always purges your ranges, warnings, runs, and KV. Owned calendars are either deleted (with events) or archived (hidden local calendars, events kept) — the user chooses.
+- **A run is not a transaction.** Throwing part-way through `runJob` marks the run failed but does **not** roll back what you already wrote — ranges, warnings, events, KV and proposals from the first half all persist. This matters most for the "have I already announced this?" fingerprint the `notify()` note below recommends: write it on the **last** line of the job, after the side effect it guards, or a later throw permanently suppresses a notification that never actually went out.
+- **Uninstall** always purges your ranges, warnings, runs, proposals, and KV. Owned calendars are either deleted (with events) or archived (hidden local calendars, events kept) — the user chooses. Per-calendar settings you declared are left behind on each calendar.
+- **Plugins cannot see or call each other.** There is no cross-plugin API: you cannot ask the Weather plugin for a forecast or read another plugin's KV. You can see other plugins' *output* only where it lands in shared surfaces — their calendars appear in `calendars()` and their events in `eventsWindow()`. If you need data another plugin also fetches, fetch it yourself.
 
 ## Trust
 

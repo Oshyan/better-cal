@@ -300,6 +300,7 @@ export function App() {
           calendarId: null,
           pluginId: pid,
           pluginColor: r.color || (decoBy[pid] && decoBy[pid].color) || null,
+          pluginIcon: (decoBy[pid] && decoBy[pid].icon) || null,
           pluginAnim: (decoBy[pid] && decoBy[pid].animation) || null,
           detailHtml: r.detailHtml || null,
           rangeStart: r.start,

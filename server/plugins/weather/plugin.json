@@ -4,11 +4,43 @@
   "version": "0.1.0",
   "minHost": "0.1.0",
   "description": "Daily forecast on your calendar via Open-Meteo (free, no API key). One all-day event per day with conditions and high/low; severe-weather days raise warnings.",
-  "permissions": ["http", "events:write", "warnings"],
-  "jobs": [{ "id": "refresh", "interval": "PT3H" }],
+  "permissions": [
+    "http",
+    "events:write",
+    "warnings"
+  ],
+  "jobs": [
+    {
+      "id": "refresh",
+      "interval": "PT3H"
+    }
+  ],
   "settings": [
-    { "key": "location", "type": "location", "label": "Forecast location" },
-    { "key": "units", "type": "select", "label": "Units", "options": ["F", "C"], "default": "F" },
-    { "key": "days", "type": "number", "label": "Forecast days", "min": 1, "max": 14, "default": 10 }
-  ]
+    {
+      "key": "location",
+      "type": "location",
+      "label": "Forecast location"
+    },
+    {
+      "key": "units",
+      "type": "select",
+      "label": "Units",
+      "options": [
+        "F",
+        "C"
+      ],
+      "default": "F"
+    },
+    {
+      "key": "days",
+      "type": "number",
+      "label": "Forecast days",
+      "min": 1,
+      "max": 14,
+      "default": 10
+    }
+  ],
+  "decoration": {
+    "icon": "⛅"
+  }
 }

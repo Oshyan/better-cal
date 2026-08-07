@@ -20,7 +20,7 @@
     }
   ],
   "decoration": {
-    "icon": "map-pin",
+    "icon": "star",
     "color": "#8a6fd4",
     "animation": "none"
   },

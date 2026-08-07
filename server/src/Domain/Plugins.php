@@ -30,6 +30,49 @@ final class Plugins
     /** Declarative chip animations a plugin may request (host-provided CSS). */
     public const ANIMATIONS = ['none', 'pulse', 'shimmer'];
 
+    /**
+     * The host icon set a plugin's `decoration.icon` may name. Mirrors the keys
+     * in web/src/ui/icons.js; a test asserts the two stay in step, because a
+     * silently-unrenderable icon name is exactly the failure this validation
+     * exists to prevent.
+     */
+    public const ICON_NAMES = [
+        'settings', 'outfeeds', 'filters', 'plus', 'search', 'quickadd', 'close',
+        'chevronLeft', 'chevronRight', 'chevronUp', 'arrowUpRight', 'check', 'star',
+        'video', 'warning', 'stack', 'menu', 'chevronDown', 'brand', 'activity',
+        'views', 'folder', 'mixed', 'visAll', 'visNone', 'reschedule', 'pencil',
+        'trash', 'arrowLeft', 'note', 'keyboard', 'expand', 'bell', 'activeOnly',
+        'lock', 'unlock', 'calendar', 'today', 'viewMonth', 'viewWeek',
+        'viewWeeks3', 'viewWeeks2', 'viewDay', 'viewAgenda', 'plugins',
+        'proposals', 'people', 'trip',
+    ];
+
+    /**
+     * Validate a decoration icon: either a name from the host set, or a literal
+     * glyph (an emoji). Anything shaped like an identifier is treated as a name
+     * and must exist, so "map-pin" fails loudly instead of rendering nothing.
+     *
+     * Returns null when valid, else the reason.
+     */
+    public static function iconError(mixed $icon): ?string
+    {
+        if ($icon === null) {
+            return null;
+        }
+        if (!is_string($icon) || trim($icon) === '') {
+            return 'must be a host icon name or a single glyph';
+        }
+        $icon = trim($icon);
+        if (preg_match('/^[a-zA-Z][a-zA-Z0-9_-]*$/', $icon) === 1) {
+            return in_array($icon, self::ICON_NAMES, true)
+                ? null
+                : 'is not a host icon: ' . $icon . ' (see docs/plugins/authoring.md for the set)';
+        }
+        // A literal glyph. Allow ZWJ sequences and variation selectors, but not
+        // a whole label smuggled in as "text".
+        return mb_strlen($icon) <= 8 ? null : 'glyph is too long';
+    }
+
     public function __construct(
         private readonly Db $db,
         private readonly ?string $pluginsDir = null,
@@ -115,8 +158,14 @@ final class Plugins
             $d = $m['decoration'];
             if (!is_array($d)) {
                 $errs[] = 'decoration must be an object';
-            } elseif (isset($d['animation']) && !in_array($d['animation'], self::ANIMATIONS, true)) {
-                $errs[] = 'decoration.animation must be one of ' . implode('/', self::ANIMATIONS);
+            } else {
+                if (isset($d['animation']) && !in_array($d['animation'], self::ANIMATIONS, true)) {
+                    $errs[] = 'decoration.animation must be one of ' . implode('/', self::ANIMATIONS);
+                }
+                $iconErr = self::iconError($d['icon'] ?? null);
+                if ($iconErr !== null) {
+                    $errs[] = 'decoration.icon ' . $iconErr;
+                }
             }
         }
         return $errs;

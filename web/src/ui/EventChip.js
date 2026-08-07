@@ -10,7 +10,7 @@
 import { html } from '../../vendor/index.js';
 import { contrastText, withAlpha, DEFAULT_COLOR } from '../lib/color.js';
 import { parseISO, fmtTime, timeState } from '../lib/dates.js';
-import { Icon } from './icons.js';
+import { Icon, PluginGlyph } from './icons.js';
 
 // Bail out of custom click handling when modifier keys are pressed so
 // browser-native behaviors are never hijacked.
@@ -255,6 +255,7 @@ export function TripBand({ occ, cal, seg, dimmed, nowMs, onOpen, onPointerDown, 
     }}
   >
     ${!seg.contLeft && onEdgePointerDown && html`<span class="bc-bar-handle l" onPointerDown=${(e) => { e.stopPropagation(); onEdgePointerDown('start', e); }}></span>`}
+    ${occ.pluginIcon && !seg.contLeft && html`<span class="bc-band-icon">${PluginGlyph({ icon: occ.pluginIcon })}</span>`}
     <span class="bc-band-label">${seg.contLeft ? '‹ ' : ''}${occ.title || '(untitled)'}</span>
     ${!seg.contRight && onEdgePointerDown && html`<span class="bc-bar-handle r" onPointerDown=${(e) => { e.stopPropagation(); onEdgePointerDown('end', e); }}></span>`}
   </div>`;

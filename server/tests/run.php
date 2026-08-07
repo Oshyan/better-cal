@@ -443,6 +443,29 @@ check('plugin manifest: textarea type accepted', Plugins::manifestErrors(array_m
     'settings' => [['key' => 'list', 'label' => 'List', 'type' => 'textarea']],
 ])) === []);
 
+// decoration.icon: names are validated server-side against a list that has to
+// mirror the frontend's icon set. Read the real icons.js and compare, so the
+// two cannot drift into "valid name, renders nothing".
+$iconsJs = (string) file_get_contents(dirname(__DIR__, 2) . '/web/src/ui/icons.js');
+$iconBody = explode('const body = {', $iconsJs, 2)[1] ?? '';
+preg_match_all('/^    ([a-zA-Z][a-zA-Z0-9_-]*):/m', $iconBody, $mIcons);
+$jsIcons = $mIcons[1];
+sort($jsIcons);
+$phpIcons = Plugins::ICON_NAMES;
+sort($phpIcons);
+checkEq('icon set: PHP allowlist matches icons.js', $jsIcons, $phpIcons);
+
+check('icon: a host name validates', Plugins::iconError('calendar') === null);
+check('icon: an unknown name is refused', Plugins::iconError('map-pin') !== null);
+check('icon: emoji passes through', Plugins::iconError('🌊') === null);
+check('icon: ZWJ emoji sequence passes', Plugins::iconError('👩‍🚀') === null);
+check('icon: a smuggled label is refused', Plugins::iconError('a whole sentence of text') !== null);
+check('icon: absent is fine', Plugins::iconError(null) === null);
+check('icon: empty string is refused', Plugins::iconError('  ') !== null);
+check('manifest: bad decoration icon fails install', Plugins::manifestErrors(array_merge($goodMan, [
+    'decoration' => ['icon' => 'not-an-icon', 'color' => '#5b8dd9'],
+])) !== []);
+
 // SSRF policy: the refusal list.
 foreach (['127.0.0.1', '10.1.2.3', '172.16.0.9', '192.168.1.1', '169.254.169.254', '100.64.0.1', '0.0.0.0', '::1', 'fe80::1', 'fd00::1', '::ffff:127.0.0.1', 'not-an-ip'] as $bad) {
     check('http policy refuses ' . $bad, HttpClient::isForbiddenIp($bad));

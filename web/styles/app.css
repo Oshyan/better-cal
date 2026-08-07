@@ -2574,6 +2574,9 @@ body.bc-rescheduling { user-select: none; }
   position: fixed; z-index: 95; width: 320px; max-width: 92vw;
   background: var(--bg-raised); border: 1px solid var(--border-strong);
   border-radius: 8px; box-shadow: var(--shadow); padding: 10px 12px;
+  /* A plugin's detailHtml is author-controlled and can be arbitrarily long, so
+     the card caps its own height and scrolls rather than running off-screen. */
+  max-height: calc(100vh - 16px); overflow-y: auto;
 }
 .bc-plugincard-head { display: flex; align-items: center; gap: 7px; }
 .bc-plugincard-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); flex: none; }

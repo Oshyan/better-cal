@@ -1,6 +1,6 @@
 // App root: routes between views, wires bettercal-ui to the store and API.
 
-import { html, useState, useMemo, useRef, useEffect, useCallback } from '../../vendor/index.js';
+import { html, useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback } from '../../vendor/index.js';
 import { useStore, set, state, calendarMeta, shallowEq } from './store.js';
 import { loadWindow, api, refreshWindow, loadPeople } from './api.js';
 import {
@@ -791,6 +791,20 @@ function PluginRangeCard({ card }) {
       document.removeEventListener('keydown', onKey, true);
     };
   }, []);
+  // The x axis was clamped to the viewport from the start; y was not, so a band
+  // low on the screen opened a card that ran off the bottom — and because the
+  // card is position:fixed, the overflow was unreachable rather than merely
+  // ugly. Measure after layout and, when there is no room below the anchor,
+  // flip above it; if it fits neither way, clamp and let the body scroll.
+  useLayoutEffect(() => {
+    const el = rootRef.current;
+    if (!el || !anchorRect) return;
+    const margin = 8;
+    const h = el.offsetHeight;
+    if (anchorRect.bottom + 6 + h <= window.innerHeight - margin) return; // fits below
+    const above = anchorRect.top - 6 - h;
+    el.style.top = (above >= margin ? above : Math.max(margin, window.innerHeight - margin - h)) + 'px';
+  }, [card]);
   const { occ, anchorRect } = card;
   const x = Math.max(8, Math.min(anchorRect ? anchorRect.left : 100, window.innerWidth - 340));
   const y = Math.max(8, (anchorRect ? anchorRect.bottom + 6 : 100));

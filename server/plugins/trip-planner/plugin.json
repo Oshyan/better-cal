@@ -1,0 +1,150 @@
+{
+  "id": "trip-planner",
+  "name": "Trip Planner",
+  "version": "0.1.0",
+  "minHost": "0.1.0",
+  "description": "Finds the stretches where you are genuinely free for a longer trip, checks the destination's real climate normals for those exact dates, and PROPOSES the best window. Nothing reaches your calendar unless you press Accept.",
+  "permissions": [
+    "http",
+    "geocode",
+    "ranges",
+    "warnings",
+    "propose",
+    "llm",
+    "notify"
+  ],
+  "jobs": [
+    {
+      "id": "plan",
+      "interval": "PT12H"
+    }
+  ],
+  "settings": [
+    {
+      "key": "idea",
+      "type": "text",
+      "label": "Trip idea, in your own words",
+      "default": ""
+    },
+    {
+      "key": "destination",
+      "type": "location",
+      "label": "Destination (used when the sentence above is blank or unreadable)"
+    },
+    {
+      "key": "minDays",
+      "type": "number",
+      "label": "Shortest trip worth proposing (days)",
+      "min": 1,
+      "max": 90,
+      "default": 14
+    },
+    {
+      "key": "maxDays",
+      "type": "number",
+      "label": "Longest trip you would take (days)",
+      "min": 1,
+      "max": 120,
+      "default": 21
+    },
+    {
+      "key": "horizonDays",
+      "type": "number",
+      "label": "How far ahead to look (days)",
+      "min": 14,
+      "max": 365,
+      "default": 120
+    },
+    {
+      "key": "earliestDays",
+      "type": "number",
+      "label": "Earliest departure (days from today)",
+      "min": 0,
+      "max": 180,
+      "default": 10
+    },
+    {
+      "key": "bufferDays",
+      "type": "number",
+      "label": "Clear days wanted either side of the trip",
+      "min": 0,
+      "max": 5,
+      "default": 1
+    },
+    {
+      "key": "shortEventMinutes",
+      "type": "number",
+      "label": "Timed events shorter than this are reschedulable, not blocking (minutes)",
+      "min": 0,
+      "max": 720,
+      "default": 240
+    },
+    {
+      "key": "recurringBlocks",
+      "type": "toggle",
+      "label": "Treat recurring events as hard blockers too",
+      "default": false
+    },
+    {
+      "key": "units",
+      "type": "select",
+      "label": "Units",
+      "options": [
+        "F",
+        "C"
+      ],
+      "default": "F"
+    },
+    {
+      "key": "candidates",
+      "type": "number",
+      "label": "How many windows to draw on the calendar",
+      "min": 1,
+      "max": 8,
+      "default": 3
+    },
+    {
+      "key": "bandColor",
+      "type": "text",
+      "label": "Band colour (hex)",
+      "default": "#3f9d6b"
+    },
+    {
+      "key": "makeProposal",
+      "type": "toggle",
+      "label": "Offer the best window as a proposal I can accept",
+      "default": true
+    },
+    {
+      "key": "notifyOnNew",
+      "type": "toggle",
+      "label": "Notify me when the best window changes",
+      "default": true
+    },
+    {
+      "key": "debug",
+      "type": "toggle",
+      "label": "Show internal diagnostics as info warnings",
+      "default": false
+    }
+  ],
+  "calendarSettings": [
+    {
+      "key": "travel",
+      "type": "select",
+      "label": "For travel planning, this calendar",
+      "options": [
+        "Auto",
+        "Blocks travel",
+        "Soft conflict only",
+        "Ignore"
+      ],
+      "default": "Auto"
+    }
+  ],
+  "decoration": {
+    "icon": "plane",
+    "color": "#3f9d6b",
+    "animation": "none"
+  }
+}

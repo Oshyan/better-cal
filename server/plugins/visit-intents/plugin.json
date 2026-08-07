@@ -1,0 +1,160 @@
+{
+  "id": "visit-intents",
+  "name": "Visit Intents",
+  "version": "0.1.0",
+  "minHost": "0.1.0",
+  "description": "Places you mean to go. Finds stretches where you are genuinely free and the place is actually open, and draws them on the calendar as opportunities. Links out to booking; never books anything.",
+  "permissions": [
+    "http",
+    "ranges",
+    "warnings",
+    "geocode",
+    "notify",
+    "llm",
+    "propose"
+  ],
+  "jobs": [
+    {
+      "id": "scan",
+      "interval": "PT6H"
+    }
+  ],
+  "decoration": {
+    "icon": "map-pin",
+    "color": "#8a6fd4",
+    "animation": "none"
+  },
+  "settings": [
+    {
+      "key": "wishlist",
+      "type": "text",
+      "label": "Places I mean to visit — one per line: Name | Where | minutes | hours | before:YYYY-MM-DD | url:…",
+      "default": "Zuni Cafe | 1658 Market St, San Francisco CA | 120 | Tu-Su 11:30-22:00 | url:https://zunicafe.com | note:Order the roast chicken as you sit down, it takes an hour\nSFMOMA | 151 3rd St, San Francisco CA | 150 | We-Mo 10:00-17:00; Th 10:00-20:00 | before:2026-09-07 | url:https://www.sfmoma.org/visit/ | note:Big show comes down early September"
+    },
+    {
+      "key": "wishlist2",
+      "type": "text",
+      "label": "…more places (each box holds 500 characters, so the list is split across four)",
+      "default": "Swan Oyster Depot | 1517 Polk St, San Francisco CA | 75 | Mo-Sa 10:30-17:30 | url:https://swanoysterdepot.us | note:Counter only, eighteen stools, go off-peak or queue\nHeath Ceramics Factory | 400 Gate 5 Rd, Sausalito CA | 60 | Mo-Su 10:00-17:00 | url:https://www.heathceramics.com/pages/sausalito"
+    },
+    {
+      "key": "wishlist3",
+      "type": "text",
+      "label": "…more places",
+      "default": "Berkeley Rose Garden | 1200 Euclid Ave, Berkeley CA | 60 | 24/7 | url:https://www.berkeleyca.gov | note:Best an hour before sunset\nGrand Lake Farmers Market | Splash Pad Park, Oakland CA | 60 | Sa 09:00-14:00 | url:https://agriculturalinstitute.org\nFort Point | Fort Point, Presidio, San Francisco CA | 90 | Fr-Su 10:00-17:00 | url:https://www.nps.gov/fopo | note:Loud and cold, dress for it"
+    },
+    {
+      "key": "wishlist4",
+      "type": "text",
+      "label": "…more places",
+      "default": "Tartine Manufactory | 595 Alabama St, San Francisco CA | 75 | | url:https://tartinebakery.com\nSutro Baths ruins | 1004 Point Lobos Ave, San Francisco CA | 60 | open every day from sunrise until sunset | url:https://www.nps.gov/goga"
+    },
+    {
+      "key": "horizonDays",
+      "type": "number",
+      "label": "Days ahead to look",
+      "min": 3,
+      "max": 60,
+      "default": 21
+    },
+    {
+      "key": "dayStart",
+      "type": "number",
+      "label": "Earliest hour I would head out",
+      "min": 0,
+      "max": 23,
+      "default": 9
+    },
+    {
+      "key": "dayEnd",
+      "type": "number",
+      "label": "Latest hour I would still be out",
+      "min": 1,
+      "max": 24,
+      "default": 21
+    },
+    {
+      "key": "minLeadHours",
+      "type": "number",
+      "label": "Ignore openings sooner than this (hours notice)",
+      "min": 0,
+      "max": 168,
+      "default": 12
+    },
+    {
+      "key": "bufferMinutes",
+      "type": "number",
+      "label": "Breathing room around existing events (minutes)",
+      "min": 0,
+      "max": 120,
+      "default": 30
+    },
+    {
+      "key": "maxPerPlace",
+      "type": "number",
+      "label": "Most opportunities to show per place",
+      "min": 1,
+      "max": 10,
+      "default": 2
+    },
+    {
+      "key": "allDayPolicy",
+      "type": "select",
+      "label": "Treat all-day events as time away",
+      "options": [
+        "away",
+        "all",
+        "none"
+      ],
+      "default": "away"
+    },
+    {
+      "key": "weekendsOnly",
+      "type": "toggle",
+      "label": "Only suggest weekends",
+      "default": false
+    },
+    {
+      "key": "color",
+      "type": "text",
+      "label": "Band color (hex)",
+      "default": "#8a6fd4"
+    },
+    {
+      "key": "proposeTop",
+      "type": "number",
+      "label": "Also offer this many as one-click plans",
+      "min": 0,
+      "max": 5,
+      "default": 1
+    },
+    {
+      "key": "lookupHours",
+      "type": "toggle",
+      "label": "Look up missing hours from OpenStreetMap",
+      "default": true
+    },
+    {
+      "key": "notifyNew",
+      "type": "toggle",
+      "label": "Notify me when a genuinely new opportunity appears",
+      "default": true
+    }
+  ],
+  "calendarSettings": [
+    {
+      "key": "ignore",
+      "type": "toggle",
+      "label": "Ignore this calendar when judging whether I am free",
+      "default": false
+    }
+  ],
+  "eventSettings": [
+    {
+      "key": "notBusy",
+      "type": "toggle",
+      "label": "This event does not really block my time",
+      "default": false
+    }
+  ]
+}

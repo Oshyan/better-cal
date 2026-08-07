@@ -26,9 +26,16 @@ final class HttpClient
 
     private int $used = 0;
 
+    /**
+     * Limits are per-instance so core callers can adopt the SSRF policy without
+     * inheriting the plugin-shaped ceilings: an ICS subscription is legitimately
+     * far larger than any plugin's API response.
+     */
     public function __construct(
         private readonly int $requestBudget = 60,
         private readonly string $userAgent = 'Better-Cal/0.1 (+https://cal.oshyan.com)',
+        private readonly int $maxBytes = self::MAX_BYTES,
+        private readonly int $maxRedirects = self::MAX_REDIRECTS,
     ) {
     }
 
@@ -84,7 +91,7 @@ final class HttpClient
      */
     public function get(string $url, array $headers = []): array
     {
-        for ($hop = 0; $hop <= self::MAX_REDIRECTS; $hop++) {
+        for ($hop = 0; $hop <= $this->maxRedirects; $hop++) {
             if ($this->used >= $this->requestBudget) {
                 throw new \RuntimeException('HTTP request budget exhausted (' . $this->requestBudget . ')');
             }
@@ -118,9 +125,9 @@ final class HttpClient
                 CURLOPT_HTTPHEADER => array_merge(['Accept-Encoding: gzip'], $headers),
                 CURLOPT_ENCODING => '',
                 CURLOPT_RESOLVE => [$host . ':' . $port . ':' . $ips[0]],
-                CURLOPT_WRITEFUNCTION => static function ($c, string $chunk) use (&$body): int {
+                CURLOPT_WRITEFUNCTION => function ($c, string $chunk) use (&$body): int {
                     $body .= $chunk;
-                    if (strlen($body) > self::MAX_BYTES) {
+                    if (strlen($body) > $this->maxBytes) {
                         return 0; // abort transfer: response too large
                     }
                     return strlen($chunk);
@@ -132,8 +139,8 @@ final class HttpClient
             $err = curl_errno($ch) !== 0 ? curl_error($ch) : null;
             curl_close($ch);
 
-            if (strlen($body) > self::MAX_BYTES) {
-                throw new \RuntimeException('Response exceeded ' . (self::MAX_BYTES / 1048576) . ' MB cap');
+            if (strlen($body) > $this->maxBytes) {
+                throw new \RuntimeException('Response exceeded ' . round($this->maxBytes / 1048576, 1) . ' MB cap');
             }
             if ($err !== null && $status === 0) {
                 throw new \RuntimeException('HTTP error for ' . $host . ': ' . $err);

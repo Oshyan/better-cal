@@ -451,6 +451,28 @@ foreach (['8.8.8.8', '140.82.112.3', '2606:4700:4700::1111', '100.128.0.1'] as $
     check('http policy allows ' . $ok, !HttpClient::isForbiddenIp($ok));
 }
 
+// GH #21: feed fetching used raw cURL with FOLLOWLOCATION and no address
+// check, so a subscription URL could be walked to an internal address. It goes
+// through the policied client now — assert the refusal reaches the feed path
+// rather than trusting that the client is merely imported.
+$feeds = new BetterCal\Domain\Feeds(new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]));
+foreach (['http://127.0.0.1/evil.ics', 'https://169.254.169.254/latest/meta-data', 'http://[::1]/x.ics'] as $bad) {
+    $refused = false;
+    try {
+        $feeds->fetch($bad);
+    } catch (\RuntimeException $e) {
+        $refused = str_contains($e->getMessage(), 'Refused') || str_contains($e->getMessage(), 'Feed fetch failed');
+    }
+    check('feed fetch refuses internal target ' . $bad, $refused);
+}
+$rejectedScheme = false;
+try {
+    $feeds->fetch('file:///etc/passwd');
+} catch (\RuntimeException $e) {
+    $rejectedScheme = true;
+}
+check('feed fetch refuses non-http scheme', $rejectedScheme);
+
 // Plugin v2 + proposals: pure validation.
 use BetterCal\Domain\Proposals;
 

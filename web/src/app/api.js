@@ -94,6 +94,15 @@ export async function loadPeople() {
   return data;
 }
 
+// --- plugins ---------------------------------------------------------------
+
+export async function loadPlugins() {
+  try {
+    const data = await api('/plugins');
+    set({ plugins: data.plugins || [] });
+  } catch (e) { /* the ops page retries on open */ }
+}
+
 // --- saved views -----------------------------------------------------------
 
 export async function loadSavedViews() {

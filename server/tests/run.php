@@ -360,6 +360,52 @@ checkEq('imip sequence', 2, $imip['events'][0]['invite']['sequence']);
 checkEq('imip garbage -> null', null, MailIngest::parseImip('not an ics'));
 }
 
+// Plugin system (docs/plugins/prd-v1.md): pure pieces.
+use BetterCal\Domain\Plugins;
+use BetterCal\Infra\HttpClient;
+
+// Manifest validation.
+$goodMan = ['id' => 'weather', 'name' => 'Weather', 'version' => '0.1.0',
+    'permissions' => ['http', 'events:write'], 'jobs' => [['id' => 'refresh', 'interval' => 'PT3H']],
+    'settings' => [['key' => 'units', 'label' => 'Units', 'type' => 'select', 'options' => ['F', 'C']]]];
+checkEq('plugin manifest: valid passes', [], Plugins::manifestErrors($goodMan));
+check('plugin manifest: bad id caught', Plugins::manifestErrors(['id' => 'Bad_Id', 'name' => 'x', 'version' => '1.0.0']) !== []);
+check('plugin manifest: bad interval caught', in_array('job refresh: interval must be an ISO 8601 duration (e.g. PT3H)',
+    Plugins::manifestErrors($goodMan === [] ? [] : array_merge($goodMan, ['jobs' => [['id' => 'refresh', 'interval' => '3h']]])), true));
+check('plugin manifest: unknown permission caught', in_array('unknown permission: mail',
+    Plugins::manifestErrors(array_merge($goodMan, ['permissions' => ['mail']])), true));
+check('plugin manifest: select without options caught',
+    Plugins::manifestErrors(array_merge($goodMan, ['settings' => [['key' => 'u', 'label' => 'U', 'type' => 'select']]])) !== []);
+check('plugin manifest: future minHost refused',
+    Plugins::manifestErrors(array_merge($goodMan, ['minHost' => '9.0.0'])) !== []);
+
+// Settings schema validation.
+$schema = [
+    ['key' => 'days', 'type' => 'number', 'min' => 1, 'max' => 14],
+    ['key' => 'units', 'type' => 'select', 'options' => ['F', 'C']],
+    ['key' => 'on', 'type' => 'toggle'],
+    ['key' => 'loc', 'type' => 'location'],
+    ['key' => 'note', 'type' => 'text'],
+];
+[$cv, $ce] = Plugins::validateAgainstSchema($schema, ['days' => 10, 'units' => 'C', 'on' => 'true', 'loc' => ['name' => 'SF', 'lat' => 37.77, 'lng' => -122.42], 'note' => 'hi']);
+checkEq('plugin settings: clean pass has no errors', [], $ce);
+checkEq('plugin settings: toggle coerces', true, $cv['on']);
+checkEq('plugin settings: number kept numeric', 10, $cv['days']);
+[$cv2, $ce2] = Plugins::validateAgainstSchema($schema, ['days' => 99, 'units' => 'K', 'loc' => ['name' => 'x']]);
+check('plugin settings: max enforced', isset($ce2['days']));
+check('plugin settings: select enforced', isset($ce2['units']));
+check('plugin settings: location needs coords', isset($ce2['loc']));
+[$cv3, ] = Plugins::validateAgainstSchema($schema, ['loc' => null]);
+check('plugin settings: location clearable', array_key_exists('loc', $cv3) && $cv3['loc'] === null);
+
+// SSRF policy: the refusal list.
+foreach (['127.0.0.1', '10.1.2.3', '172.16.0.9', '192.168.1.1', '169.254.169.254', '100.64.0.1', '0.0.0.0', '::1', 'fe80::1', 'fd00::1', '::ffff:127.0.0.1', 'not-an-ip'] as $bad) {
+    check('http policy refuses ' . $bad, HttpClient::isForbiddenIp($bad));
+}
+foreach (['8.8.8.8', '140.82.112.3', '2606:4700:4700::1111', '100.128.0.1'] as $ok) {
+    check('http policy allows ' . $ok, !HttpClient::isForbiddenIp($ok));
+}
+
 // isNew: source-based arrival rule (pure). The pill marks automated arrivals
 // only; the user's own creations never wear it, and nothing that happens to an
 // event later (calendar moves included) can change the verdict.

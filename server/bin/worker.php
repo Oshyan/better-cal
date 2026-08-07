@@ -43,6 +43,7 @@ $labels = new BetterCal\Domain\Labels($db);
 $filters = new BetterCal\Domain\Filters($db, $undo, $queue);
 $trips = new BetterCal\Domain\Trips($db, $undo);
 $eventsDomain = new BetterCal\Domain\Events($db, new Recurrence(), $undo, $labels, $filters, $trips);
+$pluginsDomain = new BetterCal\Domain\Plugins($db);
 
 $locked = $db->scalar('SELECT GET_LOCK(?, 0)', [WORKER_LOCK]);
 if ((int) $locked !== 1) {
@@ -107,6 +108,16 @@ try {
                     echo bc_ts() . ' reminder_scan sent=' . $result['sent'] . ' failed=' . $result['failed']
                         . ' emailed=' . ($result['emailed'] ?? 0) . "\n";
                     break;
+                case 'plugin_job':
+                    // Plugin code runs ONLY here (and in explicit settings
+                    // validation): budgeted, health-recorded, circuit-broken.
+                    $payload = json_decode((string) $job['payload_json'], true) ?: [];
+                    $uidP = (int) ($db->scalar('SELECT id FROM users ORDER BY id LIMIT 1') ?? 0);
+                    $r = $pluginsDomain->runJob($uidP, (string) ($payload['plugin'] ?? ''), (string) ($payload['job'] ?? ''));
+                    echo bc_ts() . ' plugin_job ' . ($payload['plugin'] ?? '?') . '/' . ($payload['job'] ?? '?')
+                        . ' outcome=' . $r['outcome'] . (isset($r['durationMs']) ? ' ' . $r['durationMs'] . 'ms' : '')
+                        . ($r['error'] !== null ? ' error=' . $r['error'] : '') . "\n";
+                    break;
                 case 'activity_prune':
                     $result = (new BetterCal\Domain\Activity($db))->prune();
                     echo bc_ts() . ' activity_prune cleared=' . $result['snapshotsCleared']
@@ -161,6 +172,16 @@ function bc_enqueue_recurring(Db $db, JobQueue $queue): void
     bc_enqueue_if_stale($db, $queue, 'mail_ingest', 'PT2M');
     // Activity retention: snapshots kept 7 days, log rows 90 (docs/api-contract.md).
     bc_enqueue_if_stale($db, $queue, 'activity_prune', 'P1D');
+
+    // Plugin jobs: manifests declare intervals; staleness is judged from
+    // plugin_runs (a failing job still respects its interval). Cap per tick.
+    $duePlugin = array_slice((new BetterCal\Domain\Plugins($db))->dueJobs(), 0, 4);
+    foreach ($duePlugin as $dj) {
+        $hash = 'plugin:' . $dj['plugin'] . ':' . $dj['job'];
+        if (!$queue->hasPendingWithHash('plugin_job', $hash)) {
+            $queue->enqueue('plugin_job', ['plugin' => $dj['plugin'], 'job' => $dj['job'], 'hash' => $hash]);
+        }
+    }
 }
 
 function bc_enqueue_if_stale(Db $db, JobQueue $queue, string $type, string $interval): void

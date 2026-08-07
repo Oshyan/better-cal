@@ -2532,3 +2532,56 @@ body.bc-rescheduling { user-select: none; }
   background: color-mix(in srgb, var(--accent) 6%, transparent);
   pointer-events: none;
 }
+
+/* --- plugin system ------------------------------------------------------------------ */
+
+/* Ops page cards */
+.bc-plugin-card { border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 14px; margin-bottom: 10px; }
+.bc-plugin-card.is-off { opacity: 0.75; }
+.bc-plugin-head { display: flex; align-items: center; gap: 10px; }
+.bc-plugin-title { display: flex; align-items: baseline; gap: 8px; min-width: 0; flex-wrap: wrap; }
+.bc-plugin-name { font-weight: 700; font-size: 14px; }
+.bc-plugin-version { color: var(--fg-muted); font-size: 11.5px; }
+.bc-plugin-perm {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px;
+  border: 1px solid var(--border-strong); border-radius: 999px; padding: 0 6px; color: var(--fg-muted);
+}
+.bc-plugin-tools { margin-left: auto; display: flex; align-items: center; gap: 6px; flex: none; }
+.bc-plugin-desc { margin: 6px 0 0; font-size: 12.5px; color: var(--fg-muted); }
+.bc-plugin-errors { margin-top: 6px; font-size: 12px; color: var(--danger); display: flex; flex-direction: column; gap: 2px; }
+.bc-plugin-status { display: flex; align-items: center; gap: 12px; margin-top: 8px; font-size: 12px; color: var(--fg-muted); flex-wrap: wrap; }
+.bc-plugin-run.is-error, .bc-plugin-run.is-timeout { color: var(--danger); }
+.bc-plugin-counts { display: inline-flex; gap: 10px; }
+.bc-plugin-warnlist { margin: 8px 0 0; padding-left: 18px; font-size: 12.5px; display: flex; flex-direction: column; gap: 3px; }
+.bc-plugin-warnlist .is-info { color: var(--fg-muted); }
+.bc-plugin-fix { color: var(--fg-muted); }
+
+/* Declarative settings form (plugin scope + calendar scope) */
+.bc-schema-form { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--border); padding-top: 10px; }
+.bc-schema-field { display: flex; align-items: center; gap: 10px; }
+.bc-schema-label { flex: none; width: 190px; font-size: 12.5px; color: var(--fg-muted); }
+.bc-schema-input { font-size: 13px; padding: 3px 8px; max-width: 260px; }
+.bc-schema-toggle span { font-size: 12.5px; color: var(--fg-muted); }
+.bc-schema-actions { display: flex; justify-content: flex-end; }
+.bc-calset-plugin { border-top: 1px solid var(--border); padding-top: 8px; margin-top: 8px; }
+.bc-calset-pluginhead { font-size: 12px; font-weight: 700; color: var(--fg-muted); display: inline-flex; align-items: center; gap: 5px; }
+
+/* Plugin overlay bands: solid-tint variant distinct from availability's dash */
+.bc-band.is-pluginband { cursor: pointer; }
+
+/* Range info card */
+.bc-plugincard {
+  position: fixed; z-index: 95; width: 320px; max-width: 92vw;
+  background: var(--bg-raised); border: 1px solid var(--border-strong);
+  border-radius: 8px; box-shadow: var(--shadow); padding: 10px 12px;
+}
+.bc-plugincard-head { display: flex; align-items: center; gap: 7px; }
+.bc-plugincard-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); flex: none; }
+.bc-plugincard-title { font-weight: 700; font-size: 13.5px; min-width: 0; }
+.bc-plugincard-plugin { margin-left: auto; font-size: 10.5px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.4px; }
+.bc-plugincard-when { margin-top: 3px; font-size: 12px; color: var(--fg-muted); }
+.bc-plugincard-body { margin-top: 6px; font-size: 12.5px; }
+.bc-plugincard-body p { margin: 0 0 4px; }
+
+/* Activity badge for plugin sources */
+.bc-activity-badge.is-plugin { color: #2e8b8b; border-color: color-mix(in srgb, #2e8b8b 55%, transparent); }

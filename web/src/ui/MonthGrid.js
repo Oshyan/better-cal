@@ -341,6 +341,7 @@ export function MonthGrid({
   occByIdRef.current = useMemo(() => new Map(occurrences.map((o) => [o.instanceId, o])), [occurrences]);
 
   const dragMoveOcc = useCallback((occ, ev) => {
+    if (String(occ.instanceId).startsWith('plg:')) return; // plugin bands are job-owned
     ev.stopPropagation();
     const src = ev.currentTarget;
     const isAvail = !!occ.availKind;
@@ -435,6 +436,7 @@ export function MonthGrid({
   }, [dayKeyAtPoint, highlightDays, onMoveEvent, onMoveSpan, onMoveTrip, onDropToCalendar, onDropToPerson, onDropToTrip, calendars]);
 
   const dragResizeOcc = useCallback((occ, edge, ev) => {
+    if (String(occ.instanceId).startsWith('plg:')) return; // plugin bands are job-owned
     ev.stopPropagation();
     const { startKey, endKey } = occurrenceDaySpan(occ);
     startPointerDrag(ev, {

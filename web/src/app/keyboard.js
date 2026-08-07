@@ -26,8 +26,9 @@ function focusedOcc() {
 }
 
 function isFeedOcc(occ) {
+  // Feed AND plugin calendars are read-only content: no edit/delete hotkeys.
   const cal = state.calendars.find((c) => c.id === occ.calendarId);
-  return cal ? cal.kind === 'subscribed' : occ.source === 'feed';
+  return cal ? (cal.kind === 'subscribed' || cal.kind === 'plugin') : occ.source === 'feed';
 }
 
 // Exported so the command palette runs these exact functions rather than a

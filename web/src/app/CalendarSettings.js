@@ -7,8 +7,10 @@
 import { html, useState } from '../../vendor/index.js';
 import { updateCalendar, refreshCalendar, deleteCalendar } from './actions.js';
 import { api, loadCalendars } from './api.js';
-import { toast } from './store.js';
+import { state, toast } from './store.js';
 import { parseHex, PALETTE } from '../lib/color.js';
+import { SchemaForm } from './SchemaForm.js';
+import { Icon } from '../ui/icons.js';
 
 // Preset grid: the app palette plus teal and slate to round out 12.
 const SWATCHES = [...PALETTE, '#3aa695', '#708090'];
@@ -176,6 +178,26 @@ export function CalendarSettings({ cal, folders, onClose }) {
         }}
       >Adopt as local calendar</button>
     </div>`}
+
+    ${state.plugins.filter((pl) => pl.enabled && pl.calendarSettingsSchema.length > 0).map((pl) => html`<div key=${pl.id} class="bc-calset-plugin">
+      <span class="bc-calset-pluginhead"><${Icon} name="plugins" size=${12} /> ${pl.name}</span>
+      <${SchemaForm}
+        schema=${pl.calendarSettingsSchema}
+        values=${(cal.pluginSettings && cal.pluginSettings[pl.id]) || {}}
+        saveLabel="Save"
+        onSave=${async (draft) => {
+          try {
+            await api('/plugins/' + pl.id + '/calendar-settings/' + cal.id, { method: 'PATCH', body: draft });
+            toast(pl.name + ' settings saved for ' + cal.name);
+            await loadCalendars();
+            return true;
+          } catch (e) {
+            toast(e.message || 'Save failed', { error: true });
+            return false;
+          }
+        }}
+      />
+    </div>`)}
 
     <div class="bc-calset-danger">
       ${confirmDelete

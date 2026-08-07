@@ -14,6 +14,7 @@ export function Toasts() {
       <span>${t.text}</span>
       ${t.undoable && html`<button type="button" class="bc-toast-undo" onClick=${async () => { dismissToast(t.id); await undo(); }}>Undo</button>`}
       ${t.actionLabel && html`<button type="button" class="bc-toast-undo" onClick=${() => { dismissToast(t.id); if (t.onAction) t.onAction(); }}>${t.actionLabel}</button>`}
+      ${t.actions && t.actions.map((a) => html`<button key=${a.label} type="button" class="bc-toast-undo" onClick=${() => { dismissToast(t.id); a.run(); }}>${a.label}</button>`)}
       ${t.dismissLabel
         ? html`<button type="button" class="bc-toast-undo bc-toast-keep" onClick=${() => dismissToast(t.id)}>${t.dismissLabel}</button>`
         : html`<button type="button" class="bc-icon-btn" aria-label="Dismiss" onClick=${() => dismissToast(t.id)}><${Icon} name="close" size=${13} /></button>`}

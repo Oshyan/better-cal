@@ -295,10 +295,11 @@ export function Sidebar({ open, collapsed, onClose }) {
   const toggleGear = (key) => setOpenGear(openGear === key ? null : key);
 
   // Drag a person out of the sidebar and drop them on an event chip to link
-  // them to that event. The 4px lift threshold keeps plain clicks (toggle,
-  // name, Only) working; interactive children never start a drag at all.
+  // them to that event. The 4px lift threshold keeps plain clicks working
+  // everywhere — including on the name button, which is the most natural
+  // thing to grab — so only the checkbox keeps its native press behavior.
   const dragPersonStart = (p, ev) => {
-    if (ev.target.closest('input, button, a')) return;
+    if (ev.target.closest('input')) return;
     if (ev.pointerType === 'touch') return; // sidebar scroll wins on touch
     let ext = null;
     const linkable = (iid) => {
@@ -319,9 +320,27 @@ export function Sidebar({ open, collapsed, onClose }) {
         ext = externalDropTarget(pt, { instance: linkable });
         setDropRowHighlight(ext ? ext.el : null);
       },
-      onDrop: () => {
+      onDrop: (pt) => {
         setDropRowHighlight(null);
-        if (ext) linkPersonToEvent(state.occ.get(ext.instanceId), p.name);
+        if (!ext) return;
+        const occ = state.occ.get(ext.instanceId);
+        if (occ && occ.recurring) {
+          // Repeating event: ask which occurrences take the person.
+          set({
+            dropChoice: {
+              x: pt.x, y: pt.y, title: 'Repeating event',
+              options: [
+                { label: 'This event', value: 'this' },
+                { label: 'This + following', value: 'following' },
+                { label: 'All events', value: 'all' },
+                { label: 'Cancel', value: null },
+              ],
+              cb: (v) => { if (v) linkPersonToEvent(occ, p.name, v); },
+            },
+          });
+          return;
+        }
+        linkPersonToEvent(occ, p.name);
       },
       onCancel: () => setDropRowHighlight(null),
     });

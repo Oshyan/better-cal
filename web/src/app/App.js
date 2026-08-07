@@ -7,6 +7,7 @@ import {
   moveEvent, resizeEvent, triageAttendance, sendFeedback, exitReschedule,
   jumpToDate, openDetail, effectiveOverviewMode,
   moveAvailabilitySpan, moveTrip, moveEventToCalendar, linkPersonToEvent, attachToTrip,
+  resizeAvailabilitySpanDays,
 } from './actions.js';
 import { groupOccurrences, itemMatchesFilter } from '../ui/grouping.js';
 import { sortByMatch } from '../lib/rank.js';
@@ -324,8 +325,59 @@ export function App() {
     });
   }, []);
   const onDropToCalendar = useCallback((occ, calendarId) => { moveEventToCalendar(occ, calendarId); }, []);
-  const onDropToPerson = useCallback((occ, name) => { linkPersonToEvent(occ, name); }, []);
   const onDropToTrip = useCallback((occ, tripOcc) => { attachToTrip(tripOcc, occ); }, []);
+
+  // GCal-style scope chip for direct manipulation of repeating events: every
+  // drag that would silently edit "this occurrence" asks which occurrences it
+  // means, at the drop point. The editor keeps its own scope select.
+  const promptScopeAt = useCallback((at, cb) => {
+    set({
+      dropChoice: {
+        x: at.x, y: at.y, title: 'Repeating event',
+        options: [
+          { label: 'This event', value: 'this' },
+          { label: 'This + following', value: 'following' },
+          { label: 'All events', value: 'all' },
+          { label: 'Cancel', value: null },
+        ],
+        cb: (v) => { if (v) cb(v); },
+      },
+    });
+  }, []);
+
+  const onDropToPerson = useCallback((occ, name, at) => {
+    if (occ.recurring && at) { promptScopeAt(at, (scope) => linkPersonToEvent(occ, name, scope)); return; }
+    linkPersonToEvent(occ, name);
+  }, [promptScopeAt]);
+
+  const onMoveEventW = useCallback((p) => {
+    const occ = state.occ.get(p.instanceId);
+    if (occ && occ.recurring && p.at) { promptScopeAt(p.at, (scope) => moveEvent({ ...p, scope })); return; }
+    moveEvent(p);
+  }, [promptScopeAt]);
+
+  const onResizeEventW = useCallback((p) => {
+    // Availability bands resize through their span endpoint: shift only the
+    // dragged edge by whole days, preserving the span's times.
+    if (String(p.instanceId).startsWith('avail:')) {
+      const spanId = Number(String(p.instanceId).slice(6));
+      const sp = state.availSpans.find((x) => x.id === spanId);
+      if (!sp) return;
+      // All-day drags report literal day keys; span instants are real ISO.
+      const dayOf = (v) => epochDayOfKey(/^\d{4}-\d{2}-\d{2}$/.test(String(v)) ? String(v) : dayKeyOf(parseISO(v)));
+      // The pseudo-occurrence's end is inclusive-day; the drag reports an
+      // exclusive end, so compare each against its own convention.
+      const startDelta = p.edge === 'start' ? dayOf(p.newStart) - dayOf(sp.start) : 0;
+      const endDelta = p.edge === 'end'
+        ? dayOf(p.newEnd) - epochDayOfKey(dayKeyOf(new Date(parseISO(sp.end).getTime() - 60000))) - 1
+        : 0;
+      resizeAvailabilitySpanDays(spanId, startDelta, endDelta);
+      return;
+    }
+    const occ = state.occ.get(p.instanceId);
+    if (occ && occ.recurring && p.at) { promptScopeAt(p.at, (scope) => resizeEvent({ ...p, scope })); return; }
+    resizeEvent(p);
+  }, [promptScopeAt]);
 
   const onRequestWindow = useCallback(({ start, end }) => { loadWindow(start, end); }, []);
   const onVisibleMonthChange = useCallback((vm) => {
@@ -454,8 +506,8 @@ export function App() {
       onExpandDay=${onExpandDay}
       onOpenDay=${onOpenDay}
       onCreateRange=${onCreateRange}
-      onMoveEvent=${moveEvent}
-      onResizeEvent=${resizeEvent}
+      onMoveEvent=${onMoveEventW}
+      onResizeEvent=${onResizeEventW}
       onMoveSpan=${onMoveSpan}
       onMoveTrip=${onMoveTrip}
       onDropToCalendar=${onDropToCalendar}
@@ -477,8 +529,8 @@ export function App() {
       onRequestWindow=${onRequestWindow}
       onVisibleMonthChange=${onVisibleMonthChange}
       onCreateRange=${onCreateRange}
-      onMoveEvent=${moveEvent}
-      onResizeEvent=${resizeEvent}
+      onMoveEvent=${onMoveEventW}
+      onResizeEvent=${onResizeEventW}
       onOpenEvent=${onOpenEvent}
       onOpenDay=${onOpenDay}
       onDropToCalendar=${onDropToCalendar}
@@ -501,8 +553,8 @@ export function App() {
       onVisibleDay=${onVisibleDay}
       onExpandDay=${onExpandDay}
       onCreateRange=${onCreateRange}
-      onMoveEvent=${moveEvent}
-      onResizeEvent=${resizeEvent}
+      onMoveEvent=${onMoveEventW}
+      onResizeEvent=${onResizeEventW}
       onOpenEvent=${onOpenEvent}
       onDropToCalendar=${onDropToCalendar}
       onDropToPerson=${onDropToPerson}

@@ -69,6 +69,29 @@ export function buildCommands() {
       keywords: def.keywords,
       keys: def.hotkey ? keysFor(def.hotkey) : null,
     };
+    if (def.id === 'newPerson') {
+      cmd.prompt = {
+        label: 'New person',
+        hint: 'needs a name',
+        placeholder: 'Name',
+        run: async (name) => {
+          const n = String(name || '').trim();
+          if (!n) return false;
+          try {
+            const r = await api('/people', { method: 'POST', body: { name: n } });
+            toast(r && r.created === false ? n + ' already exists' : 'Added ' + n, { undoable: r ? r.created !== false : true });
+            await loadPeople();
+            return true;
+          } catch (e) {
+            toast('Could not add: ' + e.message, { error: true });
+            return false;
+          }
+        },
+      };
+      cmd.staysOnPage = true; // creating a person is not a calendar-surface action
+      out.push(cmd);
+      continue;
+    }
     if (def.id === 'goDate') {
       cmd.prompt = {
         label: 'Go to',

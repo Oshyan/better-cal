@@ -224,7 +224,7 @@ export function EventBlock({ occ, cal, rect, dimmed, nowMs, onOpen, onPointerDow
 // and above the cell background. The inline style carries the calendar tint
 // plus the stronger 2px top edge. Not draggable in v1; click or Enter opens
 // the trip detail. The title labels each row's segment, small and truncated.
-export function TripBand({ occ, cal, seg, dimmed, nowMs, onOpen, onPointerDown }) {
+export function TripBand({ occ, cal, seg, dimmed, nowMs, onOpen, onPointerDown, onEdgePointerDown }) {
   // Availability pseudo-occurrences carry no calendar: away is a neutral
   // slate, busy a warm amber, here a present green — all distinct from any
   // calendar color.
@@ -254,6 +254,8 @@ export function TripBand({ occ, cal, seg, dimmed, nowMs, onOpen, onPointerDown }
       }
     }}
   >
+    ${!seg.contLeft && onEdgePointerDown && html`<span class="bc-bar-handle l" onPointerDown=${(e) => { e.stopPropagation(); onEdgePointerDown('start', e); }}></span>`}
     <span class="bc-band-label">${seg.contLeft ? '‹ ' : ''}${occ.title || '(untitled)'}</span>
+    ${!seg.contRight && onEdgePointerDown && html`<span class="bc-bar-handle r" onPointerDown=${(e) => { e.stopPropagation(); onEdgePointerDown('end', e); }}></span>`}
   </div>`;
 }

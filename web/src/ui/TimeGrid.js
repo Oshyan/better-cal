@@ -636,20 +636,20 @@ export function TimeGrid({
         target = { dayKey: slot.dayKey, startMin };
         showPreview(previewRef, previewGeom(), target.dayKey, startMin, durMin);
       },
-      onDrop: () => {
+      onDrop: (pt) => {
         src.classList.remove('is-drag-source');
         hidePreview(previewRef);
         setDropRowHighlight(null);
         if (ext) {
           if (ext.kind === 'cal' && onDropToCalendar) onDropToCalendar(occ, ext.id);
-          else if (ext.kind === 'person' && onDropToPerson) onDropToPerson(occ, ext.name);
+          else if (ext.kind === 'person' && onDropToPerson) onDropToPerson(occ, ext.name, pt);
           return;
         }
         if (!target || !onMoveEvent) return;
         const ns = dateAt(target.dayKey, target.startMin);
         const ne = new Date(ns.getTime() + durMin * 60000);
         if (ns.getTime() === s0.getTime()) return;
-        onMoveEvent({ instanceId: occ.instanceId, newStart: toISOWithOffset(ns), newEnd: toISOWithOffset(ne) });
+        onMoveEvent({ instanceId: occ.instanceId, newStart: toISOWithOffset(ns), newEnd: toISOWithOffset(ne), at: pt });
       },
       onCancel: () => { src.classList.remove('is-drag-source'); hidePreview(previewRef); setDropRowHighlight(null); },
     });
@@ -675,7 +675,7 @@ export function TimeGrid({
         result = { sMin, eMin };
         showPreview(previewRef, previewGeom(), dayKey, sMin, eMin - sMin);
       },
-      onDrop: () => {
+      onDrop: (pt) => {
         hidePreview(previewRef);
         if (!result || !onResizeEvent) return;
         onResizeEvent({
@@ -683,6 +683,7 @@ export function TimeGrid({
           newStart: toISOWithOffset(dateAt(dayKey, result.sMin)),
           newEnd: toISOWithOffset(dateAt(dayKey, result.eMin)),
           edge,
+          at: pt,
         });
       },
       onCancel: () => hidePreview(previewRef),

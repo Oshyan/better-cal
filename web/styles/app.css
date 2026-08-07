@@ -2570,6 +2570,13 @@ body.bc-rescheduling { user-select: none; }
 
 /* Plugin overlay bands: solid-tint variant distinct from availability's dash */
 .bc-band.is-pluginband { cursor: pointer; }
+/* A plugin's decoration icon rides the band at label weight: it identifies the
+   source at a glance without competing with the label for the eye. */
+.bc-band-icon { display: inline-flex; align-items: center; flex: none; margin-right: 4px; opacity: 0.85; }
+/* Icon-in-place-of-dot: same 9px slot the dot occupies, so calendar names stay
+   aligned whether a row shows a dot, a feed ring, or a plugin glyph. */
+.bc-cal-dot.is-icon { background: none; border: 0; display: inline-flex; align-items: center; justify-content: center; }
+.bc-glyph { font-size: 11px; line-height: 1; }
 
 /* Range info card */
 .bc-plugincard {

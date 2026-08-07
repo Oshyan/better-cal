@@ -50,6 +50,15 @@ function healthBadge(cal) {
   return html`<span class="bc-health" role="img" aria-label=${tip} title=${tip}><${Icon} name="warning" size=${12} /></span>`;
 }
 
+// A plugin-owned calendar wears its plugin's declared decoration icon. Read
+// from the loaded plugin list rather than the calendar payload, so the icon
+// tracks the manifest without a schema field to keep in sync.
+function pluginIconFor(cal) {
+  if (!cal || !cal.pluginId) return null;
+  const pl = (state.plugins || []).find((p) => p.id === cal.pluginId);
+  return (pl && pl.decoration && pl.decoration.icon) || null;
+}
+
 function CalendarRow({ cal, folders, open, onGear, soloed, onSolo, filedIn }) {
   // data-drop-cal marks writable calendars as drag targets: dropping an event
   // here moves it onto this calendar (feeds are read-only, so no attribute).
@@ -65,7 +74,7 @@ function CalendarRow({ cal, folders, open, onGear, soloed, onSolo, filedIn }) {
           onChange=${() => toggleCalendarVisible(cal)}
           aria-label=${'Toggle ' + cal.name}
         />
-        <${CalDot} cal=${cal} />
+        <${CalDot} cal=${cal} icon=${pluginIconFor(cal)} />
         <span class="bc-cal-name">${cal.name}</span>
         ${filedIn && filedIn.length > 0 && html`<span
           class="bc-cal-filed" role="img"

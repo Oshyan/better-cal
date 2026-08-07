@@ -71,6 +71,6 @@
     }
   ],
   "decoration": {
-    "icon": "🚗"
+    "iconPath": "M2 13 C7 13 6 4 11 4 M9 2 L11.5 4 L9 6"
   }
 }

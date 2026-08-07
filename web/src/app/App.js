@@ -301,6 +301,7 @@ export function App() {
           pluginId: pid,
           pluginColor: r.color || (decoBy[pid] && decoBy[pid].color) || null,
           pluginIcon: (decoBy[pid] && decoBy[pid].icon) || null,
+          pluginIconPath: (decoBy[pid] && decoBy[pid].iconPath) || null,
           pluginAnim: (decoBy[pid] && decoBy[pid].animation) || null,
           detailHtml: r.detailHtml || null,
           rangeStart: r.start,

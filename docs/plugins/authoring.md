@@ -37,6 +37,7 @@ Practically: do your fetching, computing, and writing in `runJob`. Everything th
 - `jobs[].interval` is an ISO 8601 duration (`PT3H`, `PT12H`, `P1D`). Staleness is judged from the last run, so a failing job still waits its interval.
 - `settings` / `calendarSettings` / `eventSettings` are declarative field schemas the host renders — at plugin scope (ops page), per calendar (calendar gear panel), and per event (event detail view).
 - `decoration` is optional: `{icon, color, animation}` where animation is `none`, `pulse`, or `shimmer`. `icon` is **either** a name from the host icon set **or** a single emoji (`"⛅"`, `"🌊"`). A value shaped like an identifier is treated as a host icon name and **refused at install if it does not exist**, so a plausible guess like `"map-pin"` fails loudly rather than rendering nothing. The set is: `settings outfeeds filters plus search quickadd close chevronLeft chevronRight chevronUp arrowUpRight check star video warning stack menu chevronDown brand activity views folder mixed visAll visNone reschedule pencil trash arrowLeft note keyboard expand bell activeOnly lock unlock calendar today viewMonth viewWeek viewWeeks3 viewWeeks2 viewDay viewAgenda plugins proposals people trip`. If none fits, use an emoji. The icon appears on your overlay bands and in place of the colour dot on your calendar's sidebar row.
+- `decoration.iconPath` ships **your own icon as SVG path data** when neither a host name nor an emoji will do: `{"iconPath": "M2 8 L8 2 L14 8"}`. You supply only the `d` string; the host builds the `<svg>` around it with its own 16x16 viewBox, sizing and `currentColor` stroke. You never supply markup, so there is no element to carry a script, a `foreignObject`, or an external reference. The string may contain only path commands (`MmLlHhVvCcSsQqTtAaZz`), digits, `.,-+eE` and whitespace, must begin with a moveto, and is capped at 2000 characters; anything else is refused at install. `iconPath` wins over `icon` when both are given.
 - `settings` / `calendarSettings` / `eventSettings` field details: Field types: `text` (500 chars), `textarea` (multi-line, 10000 chars, `rows`), `number` (`min`/`max`), `select` (`options`), `toggle`, `location` (place picker → `{name, lat, lng}`, coordinates range-checked), `person` (name string). Every field may have a `default`. `text` and `textarea` accept `maxLength` to lower their own ceiling; `textarea` may also raise it up to 10000. **There is no list field type** — a list-shaped setting goes in a `textarea`, one item per line.
 
 ## Code (`Plugin.php`)
@@ -84,6 +85,8 @@ return new class implements PluginInterface {
 - `replaceWarnings(warnings): int` — wholesale-replace your findings. Warning: `{message, severity?, eventId?, fix?}`.
 - `eventsWindow(startIso, endIso): array` — read the user's occurrences through the real pipeline (for audits). Worker-side only. **Read the semantics below before doing day math with these.**
 - `kvGet/kvSet/kvDelete` — namespaced storage that survives between runs; dropped on uninstall.
+- `hasPlugin(id)` / `publish(key, value, ttl?)` / `readPublished(pluginId, key)` / `publishedKeys(pluginId)` / `unpublish(key)` — see "Working with other plugins".
+- `httpCached(url, ttl)` / `getJsonCached(url, ttl)` — policied GET through a cache shared by every plugin.
 - `log(msg)` / `budgetRemaining()` / `overBudget()` — the 60 s soft budget; long loops should check and stop.
 
 ### What `eventsWindow()` returns
@@ -150,6 +153,37 @@ Declare `eventSettings` in the manifest and the host renders those controls in t
 
 **This data rides the event-detail fetch, never the events window.** That is deliberate and load-bearing: the window serves thousands of occurrences at ~793 bytes each, and per-event plugin data on that path would undo the entire payload budget. There is no API to put anything on the window.
 
+### Working with other plugins
+
+Three things exist, and they are deliberately all data rather than control.
+
+**Know whether another plugin is there.** `hasPlugin(string $id): bool` is true when that plugin is installed *and* enabled. This is how you build an optional dependency: fold in what a weather plugin publishes when one is present, say less when it is not, and never duplicate its work or hard-fail without it.
+
+**Declare a dependency in the manifest.** `"requires": ["open-meteo"]` is enforced: the host refuses to enable your plugin until every id listed is installed and enabled, and says which one is missing. `"optional": ["weather"]` is disclosure only, shown on the ops page so a user can see what your plugin would use if they added it. A plugin cannot depend on itself, and both are lists of plugin ids.
+
+**Publish data for others to read.**
+
+```php
+$host->publish('normals.v1', $normals, 86400 * 30);   // key, value, optional TTL seconds
+$host->readPublished('weather', 'normals.v1');        // null if absent, disabled, or expired
+$host->publishedKeys('weather');                      // [key => lastUpdatedIso], to discover a surface
+$host->unpublish('normals.v1');                       // stays yours, stops being public
+```
+
+`publish` marks one of your own kv entries readable by any other enabled plugin; everything else in your kv stays private. `readPublished` returns null when the plugin is absent, disabled, never published that key, or the value expired — indistinguishable on purpose, because the right response to all four is the same: do without it.
+
+**What you publish is a public contract.** Version the key (`normals.v1`) instead of changing a shape other plugins already read, since you cannot see who depends on you.
+
+**Sharing a fetch is a separate problem, and the host solves it.** If two plugins want the same upstream data, the expensive part is the request, not the parsing:
+
+```php
+$data = $host->getJsonCached('https://archive-api.open-meteo.com/…', 86400 * 30);
+```
+
+`httpCached(url, ttl)` / `getJsonCached(url, ttl)` go through the same SSRF-safe client but hit a cache **shared by every plugin**, keyed by the exact URL. A hit costs nothing against your request budget; a miss is billed normally; non-2xx is never cached. Two plugins asking Open-Meteo for the same coordinates pay for one fetch, with no dependency to declare and nothing that breaks when one of them is disabled.
+
+There is deliberately **no way for one plugin to call another's code**. If you find yourself wanting that, publish the answer instead.
+
 ### Proposals (C11)
 
 For anything that suggests a plan rather than performing it. Generating a proposal **never touches the calendar** — only the user pressing Accept does, and acceptance materializes the whole plan atomically under one run id, so undoing it reverses everything at once.
@@ -212,7 +246,7 @@ Everything else is unwrapped to its text content — including **headings**, so 
 - **Circuit breaker**: 5 consecutive failed/timed-out runs auto-disable the plugin with the reason shown on the ops page. A successful run resets it.
 - **A run is not a transaction.** Throwing part-way through `runJob` marks the run failed but does **not** roll back what you already wrote — ranges, warnings, events, KV and proposals from the first half all persist. This matters most for the "have I already announced this?" fingerprint the `notify()` note below recommends: write it on the **last** line of the job, after the side effect it guards, or a later throw permanently suppresses a notification that never actually went out.
 - **Uninstall** always purges your ranges, warnings, runs, proposals, per-calendar settings, and KV, and the receipt counts each. Owned calendars are either deleted (with events) or archived (hidden local calendars, events kept) — the user chooses.
-- **Plugins cannot see or call each other.** There is no cross-plugin API: you cannot ask the Weather plugin for a forecast or read another plugin's KV. You can see other plugins' *output* only where it lands in shared surfaces — their calendars appear in `calendars()` and their events in `eventsWindow()`. If you need data another plugin also fetches, fetch it yourself.
+- **No plugin ever executes inside another's job.** Plugins share *data*, never control: there is no way to call another plugin's code. That is what keeps the model simple — no budget to attribute across a boundary, no exception to propagate, no permission to inherit, and no load order. See "Working with other plugins" below for what you can do.
 
 ## Trust
 

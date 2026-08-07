@@ -876,6 +876,10 @@ return new class implements PluginInterface {
             $d = json_decode($cached, true);
             if (is_array($d) && isset($d['at'], $d['md']) && (time() - (int)$d['at']) < self::NORMALS_TTL) {
                 $this->diag[] = 'normals: cache hit (' . count($d['md']) . ' calendar days)';
+                // Republish on the cached path too. Publishing only after a
+                // fresh fetch meant the offer vanished for a month at a time,
+                // exactly when our own cache was serving us well.
+                $this->publishNormals($host, $place, $d);
                 return $d;
             }
         }
@@ -891,7 +895,10 @@ return new class implements PluginInterface {
         );
 
         try {
-            $j = $host->http()->getJson($url);
+            // Shared cache, not our own: a weather or environment plugin asking
+            // Open-Meteo for these same coordinates pays for one fetch between
+            // us. Normals move once a year, so a month is a conservative TTL.
+            $j = $host->getJsonCached($url, 86400 * 30);
         } catch (Throwable $e) {
             $this->diag[] = 'archive fetch threw: ' . get_class($e) . ': ' . $e->getMessage();
             $warnings[] = [
@@ -951,8 +958,25 @@ return new class implements PluginInterface {
         $out = ['at' => time(), 'years' => [$startY, $endY], 'md' => $md,
                 'src' => 'Open-Meteo ERA5 archive'];
         $this->kvPut($host, $key, json_encode($out));
+        $this->publishNormals($host, $place, $out);
         $this->diag[] = sprintf('normals: fetched %d daily rows %d-%d, %d calendar days derived', $n, $startY, $endY, count($md));
         return $out;
+    }
+
+    /**
+     * Offer our derived climate normals to any other plugin, keyed by rounded
+     * coordinates so a weather or environment plugin can look up the same spot.
+     * The key is versioned because a published shape is a public contract: we
+     * cannot see who reads it, so it changes by adding normals.v2, never by
+     * altering normals.v1 underneath them.
+     */
+    private function publishNormals(PluginHost $host, array $place, array $normals): void
+    {
+        $host->publish(
+            sprintf('normals.v1.%.2f,%.2f', $place['lat'], $place['lng']),
+            $normals,
+            86400 * 30
+        );
     }
 
     private function mean(array $a): float

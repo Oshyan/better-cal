@@ -54,6 +54,45 @@ final class Plugins
      *
      * Returns null when valid, else the reason.
      */
+    /** Longest SVG path a plugin may ship, in characters. */
+    public const ICON_PATH_MAX = 2000;
+
+    /**
+     * Validate a plugin-supplied icon as SVG PATH DATA, never as markup.
+     *
+     * A plugin ships the `d` string and the host builds the <svg> around it
+     * with its own viewBox, sizing and currentColor stroke. That keeps the
+     * architecture's "declarative only, plugins ship data and never markup"
+     * rule intact: there is no element to carry a <script>, a <foreignObject>,
+     * an xlink:href, or an external reference, because the plugin never
+     * supplies an element. The grammar below is the entire SVG path alphabet
+     * plus numbers, so anything else — including angle brackets, quotes,
+     * ampersands and parentheses — cannot survive.
+     *
+     * The coordinate space is a 16x16 box, matching the host icon set; the
+     * viewBox clips anything drawn outside it.
+     */
+    public static function iconPathError(mixed $path): ?string
+    {
+        if ($path === null) {
+            return null;
+        }
+        if (!is_string($path) || trim($path) === '') {
+            return 'must be an SVG path string';
+        }
+        $path = trim($path);
+        if (strlen($path) > self::ICON_PATH_MAX) {
+            return 'is longer than ' . self::ICON_PATH_MAX . ' characters';
+        }
+        if (preg_match('/^[MmLlHhVvCcSsQqTtAaZz0-9,.\-+eE\s]+$/', $path) !== 1) {
+            return 'may contain only SVG path commands and numbers';
+        }
+        if (preg_match('/^[Mm]/', $path) !== 1) {
+            return 'must begin with a moveto (M or m)';
+        }
+        return null;
+    }
+
     public static function iconError(mixed $icon): ?string
     {
         if ($icon === null) {
@@ -133,6 +172,26 @@ final class Plugins
                 }
             }
         }
+        // Declared dependencies on other plugins. `requires` is enforced at
+        // enable time; `optional` is disclosure, for a plugin that degrades
+        // gracefully (uses another's published data when present, does its own
+        // work when not).
+        foreach (['requires', 'optional'] as $rel) {
+            if (!isset($m[$rel])) {
+                continue;
+            }
+            if (!is_array($m[$rel]) || !array_is_list($m[$rel])) {
+                $errs[] = $rel . ' must be a list of plugin ids';
+                continue;
+            }
+            foreach ($m[$rel] as $dep) {
+                if (!is_string($dep) || preg_match('/^[a-z0-9]+(-[a-z0-9]+)*$/', $dep) !== 1) {
+                    $errs[] = $rel . ': "' . (is_string($dep) ? $dep : gettype($dep)) . '" is not a plugin id';
+                } elseif ($dep === ($m['id'] ?? null)) {
+                    $errs[] = $rel . ': a plugin cannot depend on itself';
+                }
+            }
+        }
         foreach (['settings', 'calendarSettings', 'eventSettings'] as $section) {
             foreach (($m[$section] ?? []) as $f) {
                 if (!is_array($f) || !is_string($f['key'] ?? null) || !is_string($f['label'] ?? null)) {
@@ -165,6 +224,10 @@ final class Plugins
                 $iconErr = self::iconError($d['icon'] ?? null);
                 if ($iconErr !== null) {
                     $errs[] = 'decoration.icon ' . $iconErr;
+                }
+                $pathErr = self::iconPathError($d['iconPath'] ?? null);
+                if ($pathErr !== null) {
+                    $errs[] = 'decoration.iconPath ' . $pathErr;
                 }
             }
         }
@@ -237,6 +300,11 @@ final class Plugins
                 'calendarSettingsSchema' => array_values($m['calendarSettings'] ?? []),
                 'eventSettingsSchema' => array_values($m['eventSettings'] ?? []),
                 'decoration' => is_array($m['decoration'] ?? null) ? $m['decoration'] : null,
+                'requires' => array_values($m['requires'] ?? []),
+                'optional' => array_values($m['optional'] ?? []),
+                // Shown on the ops page so an unmet dependency reads as a
+                // reason rather than as a mysterious refusal to enable.
+                'unmetRequires' => $this->unmetRequirements($id),
                 'errors' => $p['errors'],
                 'installed' => $st !== null,
                 'enabled' => $st !== null && (int) $st['enabled'] === 1,
@@ -302,11 +370,62 @@ final class Plugins
 
     // ---- lifecycle ------------------------------------------------------
 
+    /**
+     * Which of this plugin's declared `requires` are not usable right now.
+     * Returns [id => reason]; empty means the dependency set is satisfied.
+     */
+    public function unmetRequirements(string $id): array
+    {
+        $m = $this->manifest($id);
+        $unmet = [];
+        foreach (($m['requires'] ?? []) as $dep) {
+            $dep = (string) $dep;
+            if ($this->manifest($dep) === null) {
+                $unmet[$dep] = 'not installed';
+                continue;
+            }
+            $row = $this->db->one('SELECT enabled FROM plugins WHERE id = ?', [$dep]);
+            if ($row === null || (int) $row['enabled'] !== 1) {
+                $unmet[$dep] = 'installed but not enabled';
+            }
+        }
+        return $unmet;
+    }
+
+    /** Enabled plugins that declare a `requires` on $id. */
+    public function dependentsOf(string $id): array
+    {
+        $enabled = [];
+        foreach ($this->db->all('SELECT id FROM plugins WHERE enabled = 1') as $r) {
+            $enabled[(string) $r['id']] = true;
+        }
+        $out = [];
+        foreach ($this->scan() as $p) {
+            $pid = (string) $p['id'];
+            if (isset($enabled[$pid]) && in_array($id, $p['manifest']['requires'] ?? [], true)) {
+                $out[] = $pid;
+            }
+        }
+        return $out;
+    }
+
     public function enable(string $id): void
     {
         $m = $this->manifest($id);
         if ($m === null) {
             throw HttpError::badRequest('Unknown or invalid plugin: ' . $id);
+        }
+        // A plugin that declared a hard dependency should refuse to start
+        // rather than fail its first run in a way the user has to decode.
+        $unmet = $this->unmetRequirements($id);
+        if ($unmet !== []) {
+            $parts = [];
+            foreach ($unmet as $dep => $why) {
+                $parts[] = $dep . ' (' . $why . ')';
+            }
+            throw HttpError::badRequest(
+                $m['name'] . ' requires ' . implode(', ', $parts) . '. Enable it first.'
+            );
         }
         $this->db->run(
             'INSERT INTO plugins (id, version, enabled, consecutive_failures, disabled_reason)

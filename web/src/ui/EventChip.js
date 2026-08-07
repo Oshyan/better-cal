@@ -255,7 +255,8 @@ export function TripBand({ occ, cal, seg, dimmed, nowMs, onOpen, onPointerDown, 
     }}
   >
     ${!seg.contLeft && onEdgePointerDown && html`<span class="bc-bar-handle l" onPointerDown=${(e) => { e.stopPropagation(); onEdgePointerDown('start', e); }}></span>`}
-    ${occ.pluginIcon && !seg.contLeft && html`<span class="bc-band-icon">${PluginGlyph({ icon: occ.pluginIcon })}</span>`}
+    ${(occ.pluginIcon || occ.pluginIconPath) && !seg.contLeft && html`<span class="bc-band-icon"
+      >${PluginGlyph({ icon: occ.pluginIcon, iconPath: occ.pluginIconPath })}</span>`}
     <span class="bc-band-label">${seg.contLeft ? '‹ ' : ''}${occ.title || '(untitled)'}</span>
     ${!seg.contRight && onEdgePointerDown && html`<span class="bc-bar-handle r" onPointerDown=${(e) => { e.stopPropagation(); onEdgePointerDown('end', e); }}></span>`}
   </div>`;

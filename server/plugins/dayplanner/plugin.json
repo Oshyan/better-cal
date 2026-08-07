@@ -1,0 +1,56 @@
+{
+  "id": "dayplanner",
+  "name": "Day Planner",
+  "version": "0.1.0",
+  "minHost": "0.1.0",
+  "description": "Spots the soonest genuinely open weekend day and PROPOSES a simple outing for it. Proposals only: nothing reaches your calendar unless you press Accept.",
+  "permissions": [
+    "propose",
+    "llm",
+    "people"
+  ],
+  "jobs": [
+    {
+      "id": "plan",
+      "interval": "P1D"
+    }
+  ],
+  "settings": [
+    {
+      "key": "horizonDays",
+      "type": "number",
+      "label": "Days ahead to look",
+      "min": 7,
+      "max": 60,
+      "default": 21
+    },
+    {
+      "key": "busyThreshold",
+      "type": "number",
+      "label": "Skip days with this many timed events (or more)",
+      "min": 0,
+      "max": 10,
+      "default": 2
+    },
+    {
+      "key": "weekdaysToo",
+      "type": "toggle",
+      "label": "Consider weekdays too, not just weekends",
+      "default": false
+    },
+    {
+      "key": "area",
+      "type": "text",
+      "label": "Area or city for ideas",
+      "default": ""
+    }
+  ],
+  "calendarSettings": [
+    {
+      "key": "ignore",
+      "type": "toggle",
+      "label": "Ignore this calendar when judging whether a day is free",
+      "default": false
+    }
+  ]
+}

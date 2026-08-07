@@ -5,11 +5,20 @@ declare(strict_types=1);
 namespace BetterCal\Plugin;
 
 use BetterCal\Domain\ActivityContext;
+use BetterCal\Domain\Events;
+use BetterCal\Domain\Filters;
 use BetterCal\Domain\Geocode;
+use BetterCal\Domain\Labels;
+use BetterCal\Domain\Proposals;
+use BetterCal\Domain\Recurrence;
 use BetterCal\Domain\Sanitize;
+use BetterCal\Domain\Trips;
 use BetterCal\Domain\Undo;
 use BetterCal\Infra\Db;
 use BetterCal\Infra\HttpClient;
+use BetterCal\Infra\JobQueue;
+use BetterCal\Infra\LlmGateway;
+use BetterCal\Infra\Notifier;
 use BetterCal\Support\Time;
 
 /**
@@ -36,8 +45,32 @@ final class PluginHost
         private readonly int $userId,
         private readonly HttpClient $http,
         private readonly array $manifest,
+        private readonly array $cfg = [],
+        private readonly ?string $runId = null,
     ) {
         $this->startedAt = microtime(true);
+    }
+
+    /**
+     * Capability gate. Permissions are declared in the manifest and shown on
+     * the ops page; for the capabilities that reach OUTSIDE the plugin's own
+     * data (notifying the user, spending LLM budget, reading the people
+     * directory) the declaration is also enforced here, so a plugin cannot
+     * quietly use a power it never disclosed.
+     */
+    private function requirePermission(string $perm): void
+    {
+        if (!in_array($perm, $this->manifest['permissions'] ?? [], true)) {
+            throw new \RuntimeException(
+                "Plugin '{$this->pluginId}' used the '{$perm}' capability without declaring it in plugin.json"
+            );
+        }
+    }
+
+    /** The id grouping every mutation this run makes (undo-as-a-batch). */
+    public function runId(): ?string
+    {
+        return $this->runId;
     }
 
     // ---- run bookkeeping ------------------------------------------------
@@ -95,6 +128,43 @@ final class PluginHost
         return $out;
     }
 
+    /**
+     * The USER's timezone, not the server's. Plugins that build local times
+     * (a 9 AM outing, a leave-by clock) must use this: date_default_timezone
+     * is whatever the host machine happens to be set to, which is how a plan
+     * for "Saturday morning" ends up an ocean away from Saturday morning.
+     */
+    public function timezone(): \DateTimeZone
+    {
+        $raw = $this->db->scalar('SELECT settings_json FROM users WHERE id = ?', [$this->userId]);
+        $settings = is_string($raw) ? (json_decode($raw, true) ?: []) : [];
+        $tz = is_string($settings['tz'] ?? null) && $settings['tz'] !== '' ? $settings['tz'] : null;
+        // No stored setting (the client knows its zone from the browser and
+        // never had to tell the server). The events themselves do know: take
+        // the zone the user's own recent events are written in. Falling back
+        // to the server's zone instead would put a Bay Area user's "Saturday
+        // morning" in Berlin.
+        if ($tz === null) {
+            // UTC is excluded from the vote: a Takeout import writes thousands
+            // of rows as UTC, which means "unknown", not "this user lives in
+            // Greenwich". Plugin calendars are excluded for the same reason —
+            // they are written by machines, in UTC, and would outvote the user.
+            $tz = $this->db->scalar(
+                "SELECT e.tzid FROM events e JOIN calendars c ON c.id = e.calendar_id
+                 WHERE e.user_id = ? AND e.deleted_at IS NULL AND e.tzid <> '' AND e.tzid <> 'UTC'
+                   AND c.kind <> 'plugin'
+                 GROUP BY e.tzid ORDER BY COUNT(*) DESC LIMIT 1",
+                [$this->userId]
+            );
+            $tz = is_string($tz) && $tz !== '' ? $tz : null;
+        }
+        try {
+            return new \DateTimeZone($tz ?? date_default_timezone_get());
+        } catch (\Throwable) {
+            return new \DateTimeZone('UTC');
+        }
+    }
+
     /** @return list<array{id:int,name:string,kind:string,visible:bool}> the user's calendars */
     public function calendars(): array
     {
@@ -117,16 +187,7 @@ final class PluginHost
      */
     public function eventsWindow(string $startIso, string $endIso): array
     {
-        $undo = new Undo($this->db);
-        $events = new \BetterCal\Domain\Events(
-            $this->db,
-            new \BetterCal\Domain\Recurrence(),
-            $undo,
-            new \BetterCal\Domain\Labels($this->db),
-            new \BetterCal\Domain\Filters($this->db, $undo, new \BetterCal\Infra\JobQueue($this->db)),
-            new \BetterCal\Domain\Trips($this->db, $undo),
-        );
-        $occs = $events->window(
+        $occs = $this->eventsDomain()->window(
             $this->userId,
             Time::parseIso($startIso),
             Time::parseIso($endIso),
@@ -147,6 +208,199 @@ final class PluginHost
             'isContainer' => $o['isContainer'] ?? false,
             'recurring' => $o['recurring'] ?? false,
         ], $occs);
+    }
+
+    // ---- per-event data (C7) --------------------------------------------
+
+    /**
+     * Keyed values attached to one event. These ride the DETAIL fetch, never
+     * the events window — the window is 793 bytes/occurrence over thousands of
+     * occurrences, and per-event plugin data on that path would undo the whole
+     * payload budget. Read them here (worker side) or let the client fetch
+     * them when the user opens an event.
+     *
+     * @return array<string,mixed>
+     */
+    public function eventData(int $eventId): array
+    {
+        $out = [];
+        foreach ($this->db->all(
+            'SELECT k, v_json FROM event_plugin_data WHERE event_id = ? AND plugin_id = ?',
+            [$eventId, $this->pluginId]
+        ) as $r) {
+            $out[(string) $r['k']] = json_decode((string) $r['v_json'], true);
+        }
+        return $out;
+    }
+
+    public function setEventData(int $eventId, string $key, mixed $value): void
+    {
+        // Only for events the user owns; a plugin cannot annotate rows that
+        // are not on this calendar account.
+        $own = $this->db->one('SELECT id FROM events WHERE id = ? AND user_id = ?', [$eventId, $this->userId]);
+        if ($own === null) {
+            throw new \RuntimeException('setEventData: unknown event ' . $eventId);
+        }
+        if ($value === null) {
+            $this->db->run(
+                'DELETE FROM event_plugin_data WHERE event_id = ? AND plugin_id = ? AND k = ?',
+                [$eventId, $this->pluginId, $key]
+            );
+            return;
+        }
+        $this->db->run(
+            'INSERT INTO event_plugin_data (event_id, plugin_id, k, v_json) VALUES (?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE v_json = VALUES(v_json)',
+            [$eventId, $this->pluginId, mb_substr($key, 0, 120), json_encode($value, JSON_INVALID_UTF8_SUBSTITUTE)]
+        );
+    }
+
+    /**
+     * Every event carrying a given key, for batch work (an audit that only
+     * cares about annotated events shouldn't walk the whole calendar).
+     *
+     * @return array<int,mixed> event id => value
+     */
+    public function eventsWithData(string $key): array
+    {
+        $out = [];
+        foreach ($this->db->all(
+            'SELECT d.event_id, d.v_json FROM event_plugin_data d
+             JOIN events e ON e.id = d.event_id AND e.user_id = ? AND e.deleted_at IS NULL
+             WHERE d.plugin_id = ? AND d.k = ?',
+            [$this->userId, $this->pluginId, $key]
+        ) as $r) {
+            $out[(int) $r['event_id']] = json_decode((string) $r['v_json'], true);
+        }
+        return $out;
+    }
+
+    // ---- people + availability (read-only) -------------------------------
+
+    /** @return list<array{id:int,name:string}> */
+    public function people(): array
+    {
+        $this->requirePermission('people');
+        return array_map(
+            static fn($r) => ['id' => (int) $r['id'], 'name' => (string) $r['name']],
+            $this->db->all('SELECT id, name FROM people WHERE user_id = ? ORDER BY name', [$this->userId])
+        );
+    }
+
+    /**
+     * Availability spans overlapping a window, for planners that need to know
+     * who is around.
+     *
+     * @return list<array{personId:int,name:string,kind:string,start:string,end:string}>
+     */
+    public function availability(string $startIso, string $endIso): array
+    {
+        $this->requirePermission('people');
+        $rows = $this->db->all(
+            'SELECT a.person_id, a.start_utc, a.end_utc, a.kind, p.name
+             FROM availability a JOIN people p ON p.id = a.person_id
+             WHERE p.user_id = ? AND a.start_utc < ? AND a.end_utc > ?
+             ORDER BY a.start_utc',
+            [$this->userId, Time::toDb(Time::parseIso($endIso)), Time::toDb(Time::parseIso($startIso))]
+        );
+        return array_map(static fn($r) => [
+            'personId' => (int) $r['person_id'],
+            'name' => (string) $r['name'],
+            'kind' => (string) $r['kind'],
+            'start' => Time::iso(Time::fromDb((string) $r['start_utc'])),
+            'end' => Time::iso(Time::fromDb((string) $r['end_utc'])),
+        ], $rows);
+    }
+
+    // ---- notifications (C17) ---------------------------------------------
+
+    /**
+     * Notify the user now, through their configured channel. Silent when no
+     * channel is configured — a plugin should not crash because push is off.
+     *
+     * @return array{push:int,email:bool}
+     */
+    public function notify(string $title, string $body, string $url = '/'): array
+    {
+        $this->requirePermission('notify');
+        return (new Notifier($this->db, $this->cfg))->send(
+            $this->userId,
+            $title,
+            $body,
+            $url,
+            'plugin:' . $this->pluginId
+        );
+    }
+
+    // ---- LLM (C18) --------------------------------------------------------
+
+    /**
+     * Ask the model for JSON. Returns null when unconfigured OR when the call
+     * fails — indistinguishable on purpose, because a plugin must behave the
+     * same either way: fall back to something deterministic.
+     *
+     * @param array<string,mixed> $schemaHint
+     */
+    public function llmJson(string $prompt, array $schemaHint = []): ?array
+    {
+        $this->requirePermission('llm');
+        $gateway = new LlmGateway($this->cfg);
+        if (!$gateway->isConfigured()) {
+            $this->log('llm not configured; using fallback');
+            return null;
+        }
+        return $gateway->completeJson($prompt, $schemaHint);
+    }
+
+    // ---- proposals (C11) --------------------------------------------------
+
+    /**
+     * Offer a plan for the user to accept or reject. Nothing is written to the
+     * calendar here — that is the entire point. Re-running replaces your own
+     * open proposal with the same sourceKey; one the user already decided is
+     * left alone.
+     *
+     * @param array{sourceKey:string,title:string,summary?:string,rationaleHtml?:string,plan:array} $proposal
+     */
+    public function propose(array $proposal): array
+    {
+        $this->requirePermission('propose');
+        $proposals = new Proposals(
+            $this->db,
+            $this->eventsDomain(),
+            new Trips($this->db, new Undo($this->db))
+        );
+        return $proposals->upsert($this->userId, $this->pluginId, $proposal);
+    }
+
+    /** This plugin's proposals, so a re-run can see what it already offered. */
+    public function myProposals(?string $status = 'open'): array
+    {
+        $this->requirePermission('propose');
+        $sql = 'SELECT source_key, status FROM plugin_proposals WHERE plugin_id = ? AND user_id = ?';
+        $params = [$this->pluginId, $this->userId];
+        if ($status !== null && $status !== 'all') {
+            $sql .= ' AND status = ?';
+            $params[] = $status;
+        }
+        return array_map(
+            static fn($r) => ['sourceKey' => (string) $r['source_key'], 'status' => (string) $r['status']],
+            $this->db->all($sql, $params)
+        );
+    }
+
+    /** The fully-wired Events domain (audit reads, proposal materialization). */
+    private function eventsDomain(): Events
+    {
+        $undo = new Undo($this->db);
+        return new Events(
+            $this->db,
+            new Recurrence(),
+            $undo,
+            new Labels($this->db),
+            new Filters($this->db, $undo, new JobQueue($this->db)),
+            new Trips($this->db, $undo),
+        );
     }
 
     // ---- storage --------------------------------------------------------

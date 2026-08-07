@@ -2,8 +2,9 @@
 
 import { html, render } from '../../vendor/index.js';
 import { App } from './App.js';
-import { set, toast } from './store.js';
-import { fetchMe, loadCalendars, loadSavedViews, loadConfig, loadPeople, loadPlugins, api } from './api.js';
+import { set, state, toast } from './store.js';
+import { saveSetting } from './actions.js';
+import { fetchMe, loadCalendars, loadSavedViews, loadConfig, loadPeople, loadPlugins, loadProposalCount, api } from './api.js';
 import { localTz } from '../lib/dates.js';
 import { handleEventLink } from './push.js';
 import {
@@ -27,6 +28,10 @@ async function boot() {
       loadConfig().catch(() => { /* map tiles fall back to OSM */ }),
       loadPeople().catch(() => { /* people are non-critical at boot */ }),
       loadPlugins(), // ops listing feeds the sidebar layer toggles; own catch inside
+      loadProposalCount(),
+      // Tell the server our timezone once. The browser has always known it;
+      // worker-side code (plugins building local times) had no way to.
+      (state.settings.tz ? Promise.resolve() : saveSetting('tz', localTz()).catch(() => {})),
     ]);
     authed = true;
   } catch (e) {

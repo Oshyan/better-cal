@@ -9,6 +9,7 @@ use BetterCal\Infra\Db;
 use BetterCal\Infra\HttpClient;
 use BetterCal\Plugin\PluginHost;
 use BetterCal\Plugin\PluginInterface;
+use BetterCal\Support\Ids;
 use BetterCal\Support\Time;
 
 /**
@@ -24,10 +25,13 @@ final class Plugins
     public const FAILURE_DISABLE_THRESHOLD = 5;
     public const RANGE_RESPONSE_CAP = 500; // per plugin per window request
     private const FIELD_TYPES = ['text', 'number', 'select', 'toggle', 'location', 'person'];
+    /** Declarative chip animations a plugin may request (host-provided CSS). */
+    public const ANIMATIONS = ['none', 'pulse', 'shimmer'];
 
     public function __construct(
         private readonly Db $db,
         private readonly ?string $pluginsDir = null,
+        private readonly array $cfg = [],
     ) {
     }
 
@@ -64,7 +68,7 @@ final class Plugins
             $errs[] = 'requires host >= ' . $m['minHost'] . ' (this is ' . self::HOST_VERSION . ')';
         }
         foreach (($m['permissions'] ?? []) as $p) {
-            if (!in_array($p, ['http', 'events:write', 'ranges', 'warnings', 'geocode'], true)) {
+            if (!in_array($p, ['http', 'events:write', 'ranges', 'warnings', 'geocode', 'people', 'notify', 'llm', 'propose'], true)) {
                 $errs[] = 'unknown permission: ' . (is_string($p) ? $p : gettype($p));
             }
         }
@@ -84,7 +88,7 @@ final class Plugins
                 }
             }
         }
-        foreach (['settings', 'calendarSettings'] as $section) {
+        foreach (['settings', 'calendarSettings', 'eventSettings'] as $section) {
             foreach (($m[$section] ?? []) as $f) {
                 if (!is_array($f) || !is_string($f['key'] ?? null) || !is_string($f['label'] ?? null)) {
                     $errs[] = $section . ': each field needs key + label';
@@ -96,6 +100,14 @@ final class Plugins
                 if (($f['type'] ?? null) === 'select' && (!isset($f['options']) || !is_array($f['options']) || $f['options'] === [])) {
                     $errs[] = $section . '.' . $f['key'] . ': select needs options';
                 }
+            }
+        }
+        if (isset($m['decoration'])) {
+            $d = $m['decoration'];
+            if (!is_array($d)) {
+                $errs[] = 'decoration must be an object';
+            } elseif (isset($d['animation']) && !in_array($d['animation'], self::ANIMATIONS, true)) {
+                $errs[] = 'decoration.animation must be one of ' . implode('/', self::ANIMATIONS);
             }
         }
         return $errs;
@@ -165,6 +177,8 @@ final class Plugins
                 'jobs' => array_values($m['jobs'] ?? []),
                 'settingsSchema' => array_values($m['settings'] ?? []),
                 'calendarSettingsSchema' => array_values($m['calendarSettings'] ?? []),
+                'eventSettingsSchema' => array_values($m['eventSettings'] ?? []),
+                'decoration' => is_array($m['decoration'] ?? null) ? $m['decoration'] : null,
                 'errors' => $p['errors'],
                 'installed' => $st !== null,
                 'enabled' => $st !== null && (int) $st['enabled'] === 1,
@@ -177,6 +191,14 @@ final class Plugins
                     'durationMs' => $lastRun['duration_ms'] !== null ? (int) $lastRun['duration_ms'] : null,
                     'outcome' => (string) $lastRun['outcome'],
                     'logTail' => (string) ($lastRun['log_tail'] ?? ''),
+                    'runId' => $lastRun['run_id'] !== null ? (string) $lastRun['run_id'] : null,
+                    // How many undoable mutations that run made: the ops page
+                    // only offers "Undo this run" when there is something to
+                    // undo (most runs are idempotent syncs that changed nothing).
+                    'undoableMutations' => $lastRun['run_id'] === null ? 0 : (int) $this->db->one(
+                        'SELECT COUNT(*) c FROM mutations WHERE run_id = ? AND undone = 0 AND before_json IS NOT NULL',
+                        [(string) $lastRun['run_id']]
+                    )['c'],
                 ],
                 'counts' => $this->impact($userId, $id),
             ];
@@ -260,7 +282,7 @@ final class Plugins
                 );
             }
         }
-        foreach (['plugin_ranges', 'plugin_warnings', 'plugin_runs', 'plugin_kv'] as $t) {
+        foreach (['plugin_ranges', 'plugin_warnings', 'plugin_runs', 'plugin_kv', 'event_plugin_data', 'plugin_proposals'] as $t) {
             $this->db->run("DELETE FROM {$t} WHERE plugin_id = ?", [$id]);
         }
         $this->db->run('DELETE FROM plugins WHERE id = ?', [$id]);
@@ -430,13 +452,16 @@ final class Plugins
         if ($instance === null) {
             return ['outcome' => 'error', 'error' => 'Plugin.php missing or does not return a PluginInterface'];
         }
-        $host = new PluginHost($this->db, $id, $userId, new HttpClient(), $m);
+        $runId = Ids::ulid();
+        $host = new PluginHost($this->db, $id, $userId, new HttpClient(), $m, $this->cfg, $runId);
         $t0 = microtime(true);
         $startedAt = Time::nowDb();
         $outcome = 'ok';
         $error = null;
         try {
-            ActivityContext::with('plugin:' . $id, fn() => $instance->runJob($host, $jobId));
+            // Every mutation this run makes carries $runId, so the ops page can
+            // offer one "Undo this run" that reverses the batch in one act.
+            ActivityContext::withRun('plugin:' . $id, $runId, fn() => $instance->runJob($host, $jobId));
             if ($host->overBudget()) {
                 $outcome = 'timeout';
                 $error = 'exceeded ' . PluginHost::RUN_BUDGET_SECONDS . 's soft budget';
@@ -449,6 +474,7 @@ final class Plugins
         $this->db->insert('plugin_runs', [
             'plugin_id' => $id,
             'job_id' => $jobId,
+            'run_id' => $runId,
             'started_at' => $startedAt,
             'duration_ms' => $ms,
             'outcome' => $outcome,
@@ -465,7 +491,7 @@ final class Plugins
                 $this->disable($id, 'auto-disabled after ' . $fails . ' consecutive failures (' . $error . ')');
             }
         }
-        return ['outcome' => $outcome, 'error' => $error, 'durationMs' => $ms];
+        return ['outcome' => $outcome, 'error' => $error, 'durationMs' => $ms, 'runId' => $runId];
     }
 
     /**

@@ -167,6 +167,9 @@ export function Icon({ name, size = 15 }) {
     plugins: html`<path d="M5.6 2.2v3M10.4 2.2v3" />
       <path d="M4 5.2h8v2.6a4 4 0 0 1-8 0z" />
       <path d="M8 11.8v2" />`,
+    // Suggestion: a lamp with rays — something offered, not yet decided.
+    proposals: html`<path d="M8 1.8a4.2 4.2 0 0 0-2.4 7.6c.5.4.8 1 .8 1.6v.4h3.2v-.4c0-.6.3-1.2.8-1.6A4.2 4.2 0 0 0 8 1.8z" />
+      <path d="M6.4 13.4h3.2M7 14.9h2" />`,
     // Two heads-and-shoulders for the People page.
     people: html`<circle cx="5.6" cy="5.6" r="2.3" />
       <path d="M1.8 13.2c0-2.1 1.7-3.8 3.8-3.8s3.8 1.7 3.8 3.8" />

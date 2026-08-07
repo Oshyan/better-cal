@@ -93,8 +93,10 @@ function bc_handle_api(Request $request, array $cfg): void
         $settingsController = new Controllers\SettingsController($settings);
         $geocodeController = new Controllers\GeocodeController($geocode, $placeSearch);
         $peopleController = new Controllers\PeopleController($people, $events);
-        $pluginsDomain = new Domain\Plugins($db);
-        $pluginsController = new Controllers\PluginsController($pluginsDomain, $jobQueue);
+        $pluginsDomain = new Domain\Plugins($db, null, $cfg);
+        $proposalsDomain = new Domain\Proposals($db, $events, $trips);
+        $pluginsController = new Controllers\PluginsController($pluginsDomain, $jobQueue, $proposalsDomain, $undo, $db);
+        $proposalsController = new Controllers\ProposalsController($proposalsDomain);
         $configController = new Controllers\ConfigController($settings, $cfg);
         $pushController = new Controllers\PushController($pushSubscriptions, $pushSender, $emailSender);
         $healthController = new Controllers\HealthController($db, $cfg);
@@ -196,6 +198,18 @@ function bc_handle_api(Request $request, array $cfg): void
         $router->add('PATCH', "$base/plugins/:id/calendar-settings/:calendarId", [$pluginsController, 'saveCalendarSettings']);
         $router->add('POST', "$base/plugins/:id/run", [$pluginsController, 'runNow']);
         $router->add('GET', "$base/plugins/:id/warnings", [$pluginsController, 'warnings']);
+        $router->add('POST', "$base/plugins/runs/:runId/undo", [$pluginsController, 'undoRun']);
+
+        // Per-event plugin data (C7/C8): fetched when an event is OPENED,
+        // deliberately never part of the events-window payload.
+        $router->add('GET', "$base/events/:id/plugin-data", [$pluginsController, 'eventData']);
+        $router->add('PATCH', "$base/events/:id/plugin-data/:pluginId", [$pluginsController, 'saveEventData']);
+
+        // Proposals (C11): a plugin suggests, the user decides.
+        $router->add('GET', "$base/proposals", [$proposalsController, 'index']);
+        $router->add('POST', "$base/proposals/:id/accept", [$proposalsController, 'accept']);
+        $router->add('POST', "$base/proposals/:id/reject", [$proposalsController, 'reject']);
+        $router->add('POST', "$base/proposals/:id/undo", [$proposalsController, 'undoAccept']);
 
         $router->add('GET', "$base/geocode", [$geocodeController, 'lookup']);
         $router->add('GET', "$base/geocode/search", [$geocodeController, 'search']);

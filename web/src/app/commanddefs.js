@@ -44,6 +44,7 @@ export const MANAGE_ITEMS = [
   ['organize', 'Calendars & folders'],
   ['people', 'People'],
   ['activity', 'Activity'],
+  ['plugins', 'Plugins'],
   ['outfeeds', 'Outbound feeds'],
   ['filters', 'Filters'],
   ['views', 'Saved views'],

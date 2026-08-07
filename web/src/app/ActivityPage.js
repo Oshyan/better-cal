@@ -21,12 +21,14 @@ const SOURCES = [
   ['feed', 'Feeds', 'auto'],
   ['mail', 'Email', 'auto'],
   ['import', 'Import', 'auto'],
+  ['plugin', 'Plugins', 'auto'],
 ];
 const GROUPS = { manual: SOURCES.filter((s) => s[2] === 'manual').map((s) => s[0]),
   auto: SOURCES.filter((s) => s[2] === 'auto').map((s) => s[0]) };
 
 function sourceLabel(source) {
   if (source.startsWith('mail:')) return 'Email · ' + source.slice(5);
+  if (source.startsWith('plugin:')) return 'Plugin · ' + source.slice(7);
   const row = SOURCES.find(([k]) => k === source);
   return row ? row[1] : source;
 }
@@ -136,7 +138,7 @@ export function ActivityPage() {
     ${entries !== null && entries.length > 0 && html`<ul class="bc-activity-list">
       ${entries.map((en) => html`<li key=${en.id} class="bc-activity-row${en.undone ? ' is-undone' : ''}${en.op === 'refuse' ? ' is-refused' : ''}">
         <span class="bc-activity-when" title=${en.at}>${fmtWhen(en.at)}</span>
-        <span class="bc-activity-badge is-${en.source.startsWith('mail:') ? 'mail' : en.source}">${sourceLabel(en.source)}</span>
+        <span class="bc-activity-badge is-${en.source.startsWith('mail:') ? 'mail' : (en.source.startsWith('plugin:') ? 'plugin' : en.source)}">${sourceLabel(en.source)}</span>
         <span class="bc-activity-summary">
           ${en.entity === 'event' && !en.undone && en.op !== 'delete'
             ? html`<button type="button" class="bc-activity-link" onClick=${() => jump(en)}>${en.summary}</button>`

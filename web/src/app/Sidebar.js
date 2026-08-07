@@ -12,7 +12,7 @@ import {
   toggleCalendarVisible, createFolder, deleteFolder,
   folderMode, setFolderVisibilityMode, ALL_GROUP_ID, setSidebarActiveOnly,
   togglePersonVisible, enterPeopleSolo, exitPeopleSolo,
-  peopleVisibilityMode, setPeopleVisibilityMode, linkPersonToEvent,
+  peopleVisibilityMode, setPeopleVisibilityMode, linkPersonToEvent, saveSetting,
 } from './actions.js';
 import { startPointerDrag, externalDropTarget, setDropRowHighlight } from '../ui/DragController.js';
 import { CalendarSettings } from './CalendarSettings.js';
@@ -275,12 +275,13 @@ function AddMenu() {
 // command palette offer exactly the same pages.
 
 export function Sidebar({ open, collapsed, onClose }) {
-  const { calendars, folders, collapsedFolders, route, people, collapsedAllCals, collapsedPeople, peopleSolo, activeOnly } = useStore(
+  const { calendars, folders, collapsedFolders, route, people, collapsedAllCals, collapsedPeople, peopleSolo, activeOnly, plugins, pluginHidden } = useStore(
     (s) => ({
       calendars: s.calendars, folders: s.folders,
       collapsedFolders: s.collapsedFolders, route: s.route,
       folderVisibility: s.folderVisibility,
       people: s.people, collapsedAllCals: s.collapsedAllCals,
+      plugins: s.plugins, pluginHidden: s.settings.pluginHidden || {},
       collapsedPeople: s.collapsedPeople, peopleSolo: s.peopleSolo,
       activeOnly: !!s.settings.sidebarActiveOnly,
     }),
@@ -293,6 +294,14 @@ export function Sidebar({ open, collapsed, onClose }) {
   const [solo, setSolo] = useState(null); // {calId, prev: [[id, visible], ...]}
 
   const toggleGear = (key) => setOpenGear(openGear === key ? null : key);
+
+  // Enabled plugins that contribute overlay bands get a visibility row; the
+  // toggle is a persisted setting so it survives reloads.
+  const layerPlugins = (plugins || []).filter((pl) => pl.enabled && (pl.permissions || []).includes('ranges'));
+  const togglePluginLayer = (id) => {
+    saveSetting('pluginHidden', { ...(state.settings.pluginHidden || {}), [id]: !pluginHidden[id] });
+    set({ pluginSeq: state.pluginSeq + 1 });
+  };
 
   // Drag a person out of the sidebar and drop them on an event chip to link
   // them to that event. The 4px lift threshold keeps plain clicks working
@@ -473,6 +482,25 @@ export function Sidebar({ open, collapsed, onClose }) {
               title=${peopleSolo && peopleSolo.personId === p.id ? 'Showing only this person. Click to restore.' : "Show only this person's spans"}
               onClick=${(e) => { if (peopleSolo && peopleSolo.personId === p.id) exitPeopleSolo(); else enterPeopleSolo(p); e.currentTarget.blur(); }}
             >${peopleSolo && peopleSolo.personId === p.id ? html`Only <${Icon} name="check" size=${10} />` : 'Only'}</button>
+          </div>
+        </div>`)}
+      </section>`}
+      ${layerPlugins.length > 0 && html`<section class="bc-folder" aria-label="Plugin layers">
+        <div class="bc-folder-head">
+          <span class="bc-folder-name"><${Icon} name="plugins" size=${13} /> Plugins</span>
+        </div>
+        ${layerPlugins.map((pl) => html`<div key=${pl.id} class="bc-cal-item">
+          <div class="bc-cal-row${pluginHidden[pl.id] ? ' is-off' : ''}">
+            <label class="bc-cal-label" title=${pl.name + ' overlay bands'}>
+              <input
+                type="checkbox"
+                checked=${!pluginHidden[pl.id]}
+                onChange=${() => togglePluginLayer(pl.id)}
+                aria-label=${'Show ' + pl.name + ' bands on the calendar'}
+              />
+              <span class="bc-cal-name">${pl.name}</span>
+            </label>
+            <button type="button" class="bc-icon-btn" title="Plugin settings" onClick=${() => set({ route: 'plugins' })}><${Icon} name="settings" size=${13} /></button>
           </div>
         </div>`)}
       </section>`}

@@ -43,6 +43,8 @@ import { SettingsPage } from './SettingsPage.js';
 import { PeoplePage } from './PeoplePage.js';
 import { ActivityPage } from './ActivityPage.js';
 import { OrganizePage } from './OrganizePage.js';
+import { PluginsPage } from './PluginsPage.js';
+import { sanitizeHtml } from '../lib/richtext.js';
 
 const MONTH_ROWS = { month: 6, weeks3: 3, weeks2: 2 };
 // Rows the month view will hold on screen before it starts squashing row
@@ -77,6 +79,7 @@ export function App() {
       agendaSort: st.agendaSort,
       reschedule: st.reschedule,
       dropChoice: st.dropChoice,
+      pluginCard: st.pluginCard,
       visibleMonth: st.reschedule ? st.visibleMonth : null,
       overviewMode: st.settings.overviewMode,
       nowMinute: st.nowMinute,
@@ -260,10 +263,68 @@ export function App() {
       source: 'local',
     };
   }), [availSpans]);
+  // Plugin overlay ranges: job-written rows fetched per visible month window
+  // (same shape as availability). Hidden layers are dropped client-side so a
+  // toggle is instant; the fetch itself is one indexed query.
+  const pluginRanges = useStore((st) => st.pluginRanges);
+  const pluginSeq = useStore((st) => st.pluginSeq);
+  const pluginHidden = useStore((st) => st.settings.pluginHidden);
+  const plugRangeKeyRef = useRef(null);
+  useEffect(() => {
+    if (!visMonthKey) return;
+    const y = Math.floor(visMonthKey / 100);
+    const m = visMonthKey % 100;
+    const start = new Date(y, m - 1 - 1, 1);
+    const end = new Date(y, m - 1 + 2, 1);
+    const key = toISOWithOffset(start) + '|' + toISOWithOffset(end) + '|' + pluginSeq;
+    if (plugRangeKeyRef.current === key) return;
+    plugRangeKeyRef.current = key;
+    api('/plugins/ranges?' + new URLSearchParams({ start: toISOWithOffset(start), end: toISOWithOffset(end) }))
+      .then((d) => set({ pluginRanges: d.plugins || {} }))
+      .catch(() => { plugRangeKeyRef.current = null; });
+  }, [visMonthKey, pluginSeq]);
+
+  const pluginOccs = useMemo(() => {
+    const out = [];
+    for (const [pid, entry] of Object.entries(pluginRanges)) {
+      if (pluginHidden && pluginHidden[pid]) continue;
+      for (const r of entry.ranges || []) {
+        const startKey = dayKeyOf(parseISO(r.start));
+        const endKey = dayKeyOf(new Date(parseISO(r.end).getTime() - 60000));
+        out.push({
+          instanceId: 'plg:' + pid + ':' + r.id,
+          eventId: null,
+          calendarId: null,
+          pluginId: pid,
+          pluginColor: r.color || null,
+          detailHtml: r.detailHtml || null,
+          rangeStart: r.start,
+          rangeEnd: r.end,
+          title: r.label,
+          isContainer: true,
+          allDay: true,
+          start: startKey + 'T00:00:00+00:00',
+          end: (endKey >= startKey ? endKey : startKey) + 'T00:00:00+00:00',
+          attendance: 'none',
+          status: 'confirmed',
+          source: 'local',
+        });
+      }
+    }
+    return out;
+  }, [pluginRanges, pluginHidden]);
+
   const occurrencesWithAvail = useMemo(
-    () => (availOccs.length > 0 ? [...occurrences, ...availOccs] : occurrences),
-    [occurrences, availOccs],
+    () => {
+      const extra = [...availOccs, ...pluginOccs];
+      return extra.length > 0 ? [...occurrences, ...extra] : occurrences;
+    },
+    [occurrences, availOccs, pluginOccs],
   );
+
+  // Stable-callback mirror of the merged occurrence list (plugin cards).
+  const occurrencesRef = useRef([]);
+  occurrencesRef.current = occurrencesWithAvail;
 
   // Group lookup for click routing (onOpenEvent has a stable identity, so it
   // reads the current map through a ref).
@@ -385,6 +446,12 @@ export function App() {
       ? {} : { visibleMonth: vm }));
   }, []);
   const onOpenEvent = useCallback((instanceId, anchorRect, opts) => {
+    // Plugin bands open a host-rendered info card (sanitized detail HTML).
+    if (String(instanceId).startsWith('plg:')) {
+      const occ = occurrencesRef.current.find((o) => o.instanceId === instanceId);
+      if (occ) set({ pluginCard: { occ, anchorRect } });
+      return;
+    }
     // Availability bands are people, not events: land on their People entry.
     if (String(instanceId).startsWith('avail:')) {
       const span = state.availSpans.find((sp) => 'avail:' + sp.id === instanceId);
@@ -477,6 +544,9 @@ export function App() {
   }
   if (s.route === 'people') {
     return html`<div class="bc-app"><${PeoplePage} /><${CreateDrawer} /><${ShortcutsSheet} /><${CommandPalette} /><${Toasts} /></div>`;
+  }
+  if (s.route === 'plugins') {
+    return html`<div class="bc-app"><${PluginsPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${CommandPalette} /><${Toasts} /></div>`;
   }
   if (s.route === 'activity') {
     return html`<div class="bc-app"><${ActivityPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${CommandPalette} /><${Toasts} /></div>`;
@@ -659,6 +729,7 @@ export function App() {
     <${SearchOverlay} />
     <${ShortcutsSheet} /><${CommandPalette} />
     ${s.dropChoice && html`<${DropChoiceChip} choice=${s.dropChoice} />`}
+    ${s.pluginCard && html`<${PluginRangeCard} card=${s.pluginCard} />`}
     ${reschedActive && html`<${RescheduleOverlay}
       occ=${reschedOcc}
       cal=${calMeta[reschedOcc.calendarId]}
@@ -694,5 +765,42 @@ function DropChoiceChip({ choice }) {
       class="bc-btn${o.value ? ' bc-btn-primary' : ''}"
       onClick=${() => { set({ dropChoice: null }); choice.cb(o.value); }}
     >${o.label}</button>`)}
+  </div>`;
+}
+
+// Info card for a plugin band: label, span, and the plugin's sanitized
+// detail HTML (server-sanitized at write time, client-sanitized again at
+// render — same belt-and-suspenders as event descriptions).
+function PluginRangeCard({ card }) {
+  const rootRef = useRef(null);
+  useEffect(() => {
+    const dismiss = () => set({ pluginCard: null });
+    const onDoc = (e) => { if (rootRef.current && !rootRef.current.contains(e.target)) dismiss(); };
+    const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); dismiss(); } };
+    document.addEventListener('pointerdown', onDoc, true);
+    document.addEventListener('keydown', onKey, true);
+    return () => {
+      document.removeEventListener('pointerdown', onDoc, true);
+      document.removeEventListener('keydown', onKey, true);
+    };
+  }, []);
+  const { occ, anchorRect } = card;
+  const x = Math.max(8, Math.min(anchorRect ? anchorRect.left : 100, window.innerWidth - 340));
+  const y = Math.max(8, (anchorRect ? anchorRect.bottom + 6 : 100));
+  const spanStart = new Date(occ.rangeStart);
+  const spanEnd = new Date(occ.rangeEnd);
+  const sameDay = spanStart.toDateString() === spanEnd.toDateString();
+  const fmtD = (d) => d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  const fmtT = (d) => d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  return html`<div class="bc-plugincard" ref=${rootRef} style=${'left:' + x + 'px;top:' + y + 'px'} role="dialog" aria-label=${occ.title}>
+    <div class="bc-plugincard-head">
+      <span class="bc-plugincard-dot" style=${occ.pluginColor ? 'background:' + occ.pluginColor : ''}></span>
+      <span class="bc-plugincard-title">${occ.title}</span>
+      <span class="bc-plugincard-plugin">${occ.pluginId}</span>
+    </div>
+    <div class="bc-plugincard-when">
+      ${fmtD(spanStart)} ${fmtT(spanStart)}${sameDay ? ' – ' + fmtT(spanEnd) : ' – ' + fmtD(spanEnd) + ' ' + fmtT(spanEnd)}
+    </div>
+    ${occ.detailHtml && html`<div class="bc-plugincard-body bc-rich" dangerouslySetInnerHTML=${{ __html: sanitizeHtml(occ.detailHtml) }}></div>`}
   </div>`;
 }

@@ -163,6 +163,10 @@ export function Icon({ name, size = 15 }) {
       <path d="M5.2 5.4h5.6" />`,
     viewAgenda: html`<path d="M5.6 4.2h8M5.6 8h8M5.6 11.8h8" />
       <path d="M2.5 4.2h.01M2.5 8h.01M2.5 11.8h.01" />`,
+    // Power plug: prongs, socket body, cord. The Plugins page.
+    plugins: html`<path d="M5.6 2.2v3M10.4 2.2v3" />
+      <path d="M4 5.2h8v2.6a4 4 0 0 1-8 0z" />
+      <path d="M8 11.8v2" />`,
     // Two heads-and-shoulders for the People page.
     people: html`<circle cx="5.6" cy="5.6" r="2.3" />
       <path d="M1.8 13.2c0-2.1 1.7-3.8 3.8-3.8s3.8 1.7 3.8 3.8" />

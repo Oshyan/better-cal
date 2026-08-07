@@ -230,14 +230,14 @@ export function TripBand({ occ, cal, seg, dimmed, nowMs, onOpen, onPointerDown, 
   // calendar color.
   const color = occ.availKind
     ? (occ.availKind === 'away' ? '#8b93a4' : occ.availKind === 'busy' ? '#d19a38' : '#3f9d6e')
-    : calColor(cal);
+    : (occ.pluginColor || calColor(cal));
   const open = (e) => {
     if (hasModifier(e)) return;
     e.stopPropagation();
     if (onOpen) onOpen(occ.instanceId, e.currentTarget.getBoundingClientRect(), { detail: true });
   };
   return html`<div
-    class="bc-band${occ.availKind ? ' is-avail' : ''}${stateClasses(occ, dimmed, nowMs)}${seg.contLeft ? ' cont-l' : ''}${seg.contRight ? ' cont-r' : ''}"
+    class="bc-band${occ.availKind ? ' is-avail' : ''}${occ.pluginId ? ' is-pluginband' : ''}${stateClasses(occ, dimmed, nowMs)}${seg.contLeft ? ' cont-l' : ''}${seg.contRight ? ' cont-r' : ''}"
     style=${occ.availKind
       ? `background:${withAlpha(color, 0.09)};border-top:2px dashed ${withAlpha(color, 0.45)};color:${withAlpha(color, 0.9)}`
       : `background:${withAlpha(color, 0.13)};box-shadow:inset 0 2px 0 ${color}`}

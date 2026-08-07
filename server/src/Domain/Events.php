@@ -326,6 +326,9 @@ final class Events
         if ($calendar['kind'] === 'subscribed') {
             throw HttpError::forbidden('feed_readonly', 'Cannot create events on a subscribed calendar');
         }
+        if (($calendar['kind'] ?? '') === 'plugin' && !str_starts_with(ActivityContext::get(), 'plugin:')) {
+            throw HttpError::forbidden('plugin_readonly', 'This calendar is managed by a plugin');
+        }
 
         $tzid = isset($in['tzid']) ? Time::normalizeTzid((string) $in['tzid']) : 'America/Los_Angeles';
         $allDay = filter_var($in['allDay'] ?? false, FILTER_VALIDATE_BOOL);
@@ -392,6 +395,10 @@ final class Events
         if ($event['source'] === 'feed' && $editKeys !== []) {
             throw HttpError::forbidden('feed_readonly', 'Feed events are read-only except attendance, tags and reminders');
         }
+        if (($this->calendarMeta((int) $event['calendar_id'])['kind'] ?? '') === 'plugin' && $editKeys !== []
+            && !str_starts_with(ActivityContext::get(), 'plugin:')) {
+            throw HttpError::forbidden('plugin_readonly', 'Plugin events are read-only except attendance, tags and reminders');
+        }
 
         // Clearing the trip flag requires an empty trip: members would
         // otherwise dangle pointing at a non-container.
@@ -423,6 +430,9 @@ final class Events
             }
             if ($calendar['kind'] === 'subscribed') {
                 throw HttpError::forbidden('feed_readonly', 'Cannot move events onto a subscribed calendar');
+            }
+            if ($calendar['kind'] === 'plugin') {
+                throw HttpError::forbidden('plugin_readonly', 'Cannot move events onto a plugin-managed calendar');
             }
         }
 
@@ -654,6 +664,10 @@ final class Events
         $event = $this->get($userId, $id);
         if ($event['source'] === 'feed') {
             throw HttpError::forbidden('feed_readonly', 'Feed events cannot be deleted; hide them instead');
+        }
+        if (($this->calendarMeta((int) $event['calendar_id'])['kind'] ?? '') === 'plugin'
+            && !str_starts_with(ActivityContext::get(), 'plugin:')) {
+            throw HttpError::forbidden('plugin_readonly', 'Plugin events are managed by their plugin; hide the calendar instead');
         }
 
         // Deleting an override row directly = deleting that one occurrence.

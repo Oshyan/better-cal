@@ -93,6 +93,8 @@ function bc_handle_api(Request $request, array $cfg): void
         $settingsController = new Controllers\SettingsController($settings);
         $geocodeController = new Controllers\GeocodeController($geocode, $placeSearch);
         $peopleController = new Controllers\PeopleController($people, $events);
+        $pluginsDomain = new Domain\Plugins($db);
+        $pluginsController = new Controllers\PluginsController($pluginsDomain, $jobQueue);
         $configController = new Controllers\ConfigController($settings, $cfg);
         $pushController = new Controllers\PushController($pushSubscriptions, $pushSender, $emailSender);
         $healthController = new Controllers\HealthController($db, $cfg);
@@ -183,6 +185,17 @@ function bc_handle_api(Request $request, array $cfg): void
         $router->add('DELETE', "$base/people/:id/availability/:spanId", [$peopleController, 'deleteSpan']);
         $router->add('GET', "$base/availability", [$peopleController, 'window']);
         $router->add('GET', "$base/availability/check", [$peopleController, 'check']);
+
+        // Plugin system (docs/plugins/prd-v1.md): ops + job-written reads.
+        $router->add('GET', "$base/plugins", [$pluginsController, 'index']);
+        $router->add('GET', "$base/plugins/ranges", [$pluginsController, 'ranges']);
+        $router->add('POST', "$base/plugins/:id/enable", [$pluginsController, 'enable']);
+        $router->add('POST', "$base/plugins/:id/disable", [$pluginsController, 'disable']);
+        $router->add('POST', "$base/plugins/:id/uninstall", [$pluginsController, 'uninstall']);
+        $router->add('PATCH', "$base/plugins/:id/settings", [$pluginsController, 'saveSettings']);
+        $router->add('PATCH', "$base/plugins/:id/calendar-settings/:calendarId", [$pluginsController, 'saveCalendarSettings']);
+        $router->add('POST', "$base/plugins/:id/run", [$pluginsController, 'runNow']);
+        $router->add('GET', "$base/plugins/:id/warnings", [$pluginsController, 'warnings']);
 
         $router->add('GET', "$base/geocode", [$geocodeController, 'lookup']);
         $router->add('GET', "$base/geocode/search", [$geocodeController, 'search']);

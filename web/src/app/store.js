@@ -31,8 +31,11 @@ export const state = {
   pendingImportFile: null, // File handed over by the OS (PWA file_handlers)
   peopleSolo: null,   // {personId, saved: {id: bool}} while "only this person" is active
   peopleVisCustom: null, // remembered per-person selection for the Custom visibility mode
-  availSpans: [],     // visible people's availability spans for the loaded window
-  availSeq: 0,        // bumped on span/visibility changes to refetch availSpans
+  availSpans: [],
+  plugins: [],        // ops listing from GET /plugins
+  pluginRanges: {},   // plugin id -> {truncated, ranges: [...]} for the loaded window
+  pluginSeq: 0,       // bump to force a plugin ranges/list refetch
+  availSeq: 0,        // visible people's availability spans refetch trigger        // bumped on span/visibility changes to refetch availSpans
 
   // User settings (contract defaults until /me or /settings answers).
   // overviewMode null = unset: the device default applies (3day when the
@@ -41,6 +44,7 @@ export const state = {
     defaultView: 'month', weekStart: 'sun', timeFormat: '12',
     defaultCalendarId: null, theme: 'system', nlParseMode: 'smart',
     sidebarActiveOnly: false,
+    pluginHidden: {},
     overviewMode: null,
     reminderTimed: [{ minutes: 10 }], reminderAllDay: [{ daysBefore: 1, time: '18:00' }],
     homeLat: null, homeLng: null, homeLabel: null,
@@ -92,6 +96,7 @@ export const state = {
   quickAddOpen: false,
   paletteOpen: false, // command palette (Cmd/Ctrl-K)
   dropChoice: null,  // {x, y, title, options: [{label, value}], cb} — chip at a drop point
+  pluginCard: null,  // {occ, anchorRect} — plugin band info card
   searchOpen: false,
   jumpOpen: false,   // jump-to-date popover (toolbar date label / g)
   shortcutsOpen: false, // keyboard shortcuts cheat sheet (?)

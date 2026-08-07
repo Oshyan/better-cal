@@ -393,7 +393,7 @@ export function MonthGrid({
         highlightDays([]);
         if (ext) {
           if (ext.kind === 'cal' && onDropToCalendar) onDropToCalendar(occ, ext.id);
-          else if (ext.kind === 'person' && onDropToPerson) onDropToPerson(occ, ext.name);
+          else if (ext.kind === 'person' && onDropToPerson) onDropToPerson(occ, ext.name, pt);
           else if (ext.kind === 'instance' && onDropToTrip) {
             const tripOcc = occByIdRef.current.get(ext.instanceId);
             if (tripOcc) onDropToTrip(occ, tripOcc);
@@ -414,9 +414,21 @@ export function MonthGrid({
           if (onMoveTrip) onMoveTrip({ occ, deltaDays: delta, at: pt });
           return;
         }
-        const s = addDaysDate(parseISO(occ.start), delta);
-        const e = addDaysDate(parseISO(occ.end), delta);
-        if (onMoveEvent) onMoveEvent({ instanceId: occ.instanceId, newStart: toISOWithOffset(s), newEnd: toISOWithOffset(e) });
+        // All-day occurrences are literal dates at +00:00; shifting them
+        // through a local Date loses a day west of UTC (parse lands the
+        // evening before, and the server floors the literal date). Day math
+        // stays day math.
+        let newStart;
+        let newEnd;
+        if (occ.allDay) {
+          newStart = keyOfEpochDay(epochDayOfKey(startKey) + delta);
+          newEnd = keyOfEpochDay(epochDayOfKey(endKey) + 1 + delta); // exclusive
+        } else {
+          newStart = toISOWithOffset(addDaysDate(parseISO(occ.start), delta));
+          newEnd = toISOWithOffset(addDaysDate(parseISO(occ.end), delta));
+        }
+        // `at` lets the caller raise the repeating-scope chip at the pointer.
+        if (onMoveEvent) onMoveEvent({ instanceId: occ.instanceId, newStart, newEnd, at: pt });
       },
       onCancel: () => { setDropRowHighlight(null); dropRef.current.ext = null; highlightDays([]); },
     });
@@ -438,29 +450,45 @@ export function MonthGrid({
         for (let i = a; i <= b; i++) keys.push(keyOfEpochDay(i));
         highlightDays(keys);
       },
-      onDrop: () => {
+      onDrop: (pt) => {
         const target = dropRef.current.key;
         highlightDays([]);
         if (!target) return;
+        // All-day: pure day-key arithmetic, sent as literal dates — routing
+        // these through a local Date shifted the UNTOUCHED edge back a day
+        // west of UTC (the +00:00 date parses to the prior local evening and
+        // the server floors the literal date).
+        if (occ.allDay) {
+          let sKey = startKey;
+          let eKeyIncl = endKey;
+          if (edge === 'end') eKeyIncl = keyOfEpochDay(Math.max(epochDayOfKey(target), epochDayOfKey(startKey)));
+          else sKey = keyOfEpochDay(Math.min(epochDayOfKey(target), epochDayOfKey(endKey)));
+          if (onResizeEvent) {
+            onResizeEvent({
+              instanceId: occ.instanceId,
+              newStart: sKey,
+              newEnd: keyOfEpochDay(epochDayOfKey(eKeyIncl) + 1), // exclusive
+              edge,
+              at: pt,
+            });
+          }
+          return;
+        }
         const s0 = parseISO(occ.start);
         const e0 = parseISO(occ.end);
         let s = s0, e = e0;
         if (edge === 'end') {
           const day = Math.max(epochDayOfKey(target), epochDayOfKey(startKey));
           const base = dateOfDayKey(keyOfEpochDay(day));
-          e = occ.allDay
-            ? addDaysDate(base, 1)
-            : new Date(base.getFullYear(), base.getMonth(), base.getDate(), e0.getHours(), e0.getMinutes());
+          e = new Date(base.getFullYear(), base.getMonth(), base.getDate(), e0.getHours(), e0.getMinutes());
           if (e <= s) e = new Date(s.getTime() + 30 * 60000);
         } else {
           const day = Math.min(epochDayOfKey(target), epochDayOfKey(endKey));
           const base = dateOfDayKey(keyOfEpochDay(day));
-          s = occ.allDay
-            ? base
-            : new Date(base.getFullYear(), base.getMonth(), base.getDate(), s0.getHours(), s0.getMinutes());
+          s = new Date(base.getFullYear(), base.getMonth(), base.getDate(), s0.getHours(), s0.getMinutes());
           if (s >= e) s = new Date(e.getTime() - 30 * 60000);
         }
-        if (onResizeEvent) onResizeEvent({ instanceId: occ.instanceId, newStart: toISOWithOffset(s), newEnd: toISOWithOffset(e), edge });
+        if (onResizeEvent) onResizeEvent({ instanceId: occ.instanceId, newStart: toISOWithOffset(s), newEnd: toISOWithOffset(e), edge, at: pt });
       },
       onCancel: () => highlightDays([]),
     });
@@ -733,6 +761,7 @@ function WeekRow({
             dimmed=${dimSet && dimSet.has(occ.instanceId)} nowMs=${nowMs}
             onOpen=${onOpenEvent}
             onPointerDown=${(e) => dragMoveOcc(occ, e)}
+            onEdgePointerDown=${(edge, e) => dragResizeOcc(occ, edge, e)}
           />
         </div>`)}
       </div>`}

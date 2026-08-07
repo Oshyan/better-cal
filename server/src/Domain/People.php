@@ -140,7 +140,9 @@ final class People
         }
         $notes = isset($in['notes']) && is_string($in['notes']) && trim($in['notes']) !== ''
             ? mb_substr(trim($in['notes']), 0, self::MAX_NOTES) : null;
-        $id = $this->db->insert('people', ['user_id' => $userId, 'name' => $name, 'notes' => $notes]);
+        // Visible by default: a person you just added is a person you meant
+        // to see; hiding is the deliberate act, not the starting state.
+        $id = $this->db->insert('people', ['user_id' => $userId, 'name' => $name, 'notes' => $notes, 'show_on_calendar' => 1]);
         return ['id' => $id, 'name' => $name, 'notes' => $notes, 'created' => true];
     }
 

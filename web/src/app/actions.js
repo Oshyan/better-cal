@@ -209,46 +209,85 @@ export function exitReschedule() {
 
 // --- event mutations --------------------------------------------------------
 
-function scopeFields(occ) {
-  // Recurring edits from direct manipulation always target this occurrence.
-  // instanceStart is the occurrence's own start value (never derived from
-  // the opaque instanceId).
-  return occ.recurring ? { scope: 'this', instanceStart: occ.start } : {};
+function scopeFields(occ, scope) {
+  // Recurring edits from direct manipulation target this occurrence unless a
+  // scope chip chose otherwise. instanceStart is the occurrence's own start
+  // value (never derived from the opaque instanceId).
+  return occ.recurring ? { scope: scope || 'this', instanceStart: occ.start } : {};
 }
 
-export async function moveEvent({ instanceId, newStart, newEnd }) {
+// After a move/resize lands, an event that now sits entirely outside its
+// trip's span deserves a nudge: it silently stays attached otherwise, and
+// both readings ("the trip runs longer than I thought" and "this left the
+// trip") are common enough that neither should be assumed.
+function maybePromptTripExit(occ, newStart, newEnd) {
+  const link = occ.containers && occ.containers[0];
+  if (!link) return;
+  const trip = [...state.occ.values()].find((o) => o.isContainer && o.eventId === link.eventId);
+  if (!trip) return;
+  const s = parseISO(newStart).getTime();
+  const e = parseISO(newEnd).getTime();
+  const ts = parseISO(trip.start).getTime();
+  const te = parseISO(trip.end).getTime();
+  if (e > ts && s < te) return; // still overlaps the trip
+  toast('"' + (occ.title || 'Event') + '" is now outside trip "' + (trip.title || '') + '"', {
+    duration: 12000,
+    actions: [
+      {
+        label: 'Extend trip',
+        run: () => {
+          const ext = extendTripSpan(trip, { ...occ, start: newStart, end: newEnd });
+          if (!ext) return;
+          api('/events/' + trip.eventId, { method: 'PATCH', body: { start: ext.start, end: ext.end } })
+            .then(() => { toast('Trip extended', { undoable: true }); refreshWindow(); })
+            .catch((err) => toast('Extend failed: ' + err.message, { error: true }));
+        },
+      },
+      { label: 'Remove from trip', run: () => detachFromTrip(trip.eventId, occ) },
+    ],
+    dismissLabel: 'Keep',
+  });
+}
+
+export async function moveEvent({ instanceId, newStart, newEnd, scope }) {
   const occ = state.occ.get(instanceId);
-  if (!occ) return;
+  if (!occ) return false;
   const before = patchOccurrence(instanceId, { start: newStart, end: newEnd, _optimistic: true });
   try {
     await api('/events/' + occ.eventId, {
       method: 'PATCH',
-      body: { start: newStart, end: newEnd, ...scopeFields(occ) },
+      body: { start: newStart, end: newEnd, ...scopeFields(occ, scope) },
     });
     patchOccurrence(instanceId, { _optimistic: false });
     toast('Event moved', { undoable: true });
     refreshWindow();
+    maybePromptTripExit(occ, newStart, newEnd);
+    return true;
   } catch (e) {
     restoreOccurrence(instanceId, before);
     toast('Move failed: ' + e.message, { error: true });
+    return false;
   }
 }
 
-export async function resizeEvent({ instanceId, newStart, newEnd }) {
+export async function resizeEvent({ instanceId, newStart, newEnd, scope }) {
   const occ = state.occ.get(instanceId);
-  if (!occ) return;
+  if (!occ) return false;
   const before = patchOccurrence(instanceId, { start: newStart, end: newEnd, _optimistic: true });
   try {
     await api('/events/' + occ.eventId, {
       method: 'PATCH',
-      body: { start: newStart, end: newEnd, ...scopeFields(occ) },
+      body: { start: newStart, end: newEnd, ...scopeFields(occ, scope) },
     });
     patchOccurrence(instanceId, { _optimistic: false });
     toast('Event resized', { undoable: true });
     refreshWindow();
+    maybePromptTripExit(occ, newStart, newEnd);
+    return true;
   } catch (e) {
     restoreOccurrence(instanceId, before);
     toast('Resize failed: ' + e.message, { error: true });
+    return false;
   }
 }
 
@@ -536,7 +575,7 @@ export async function moveEventToCalendar(occ, calendarId) {
 
 // Link a person to an event (drop either onto the other). personNames is a
 // full-replace field, so append to what the occurrence already carries.
-export async function linkPersonToEvent(occ, personName) {
+export async function linkPersonToEvent(occ, personName, scope) {
   const names = Array.isArray(occ.people) ? occ.people : [];
   if (names.includes(personName)) {
     toast(personName + ' is already on this event');
@@ -544,12 +583,30 @@ export async function linkPersonToEvent(occ, personName) {
   }
   try {
     const body = { personNames: [...names, personName] };
-    if (occ.recurring) { body.scope = 'all'; body.instanceStart = occ.start; }
+    if (occ.recurring) { body.scope = scope || 'all'; body.instanceStart = occ.start; }
     await api('/events/' + occ.eventId, { method: 'PATCH', body });
     toast('Added ' + personName + ' to "' + (occ.title || 'event') + '"', { undoable: true });
     refreshWindow();
   } catch (e) {
     toast('Link failed: ' + e.message, { error: true });
+  }
+}
+
+// Resize an availability band from either end: shift just that edge of the
+// underlying span by whole days, preserving its time of day.
+export async function resizeAvailabilitySpanDays(spanId, startDeltaDays, endDeltaDays) {
+  const sp = state.availSpans.find((x) => x.id === spanId);
+  if (!sp || (!startDeltaDays && !endDeltaDays)) return;
+  const shift = (iso, d) => toISOWithOffset(addDaysDate(parseISO(iso), d));
+  try {
+    await api('/people/' + sp.personId + '/availability/' + spanId, {
+      method: 'PATCH',
+      body: { start: shift(sp.start, startDeltaDays || 0), end: shift(sp.end, endDeltaDays || 0) },
+    });
+    toast('Adjusted ' + sp.name + "'s " + sp.kind + ' span', { undoable: true });
+    set({ availSeq: state.availSeq + 1 });
+  } catch (e) {
+    toast('Resize failed: ' + e.message, { error: true });
   }
 }
 

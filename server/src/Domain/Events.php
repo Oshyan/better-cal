@@ -546,6 +546,9 @@ final class Events
                 if (array_key_exists('tagNames', $in) && is_array($in['tagNames'])) {
                     $this->labels->setEventTags($userId, (int) $existing['id'], $in['tagNames']);
                 }
+                if (array_key_exists('personNames', $in) && is_array($in['personNames'])) {
+                    $this->labels->setEventPeople($userId, (int) $existing['id'], $in['personNames']);
+                }
             });
             $after = $this->get($userId, (int) $existing['id']);
             $this->undo->record($userId, 'event', (int) $existing['id'], 'update', ['events' => [$existing]], ['events' => [$after]]);
@@ -570,7 +573,28 @@ final class Events
         $override['end_utc'] = Time::toDb($instStart->add(new \DateInterval('PT' . $duration . 'S')));
         $override = array_merge($override, $this->columnPatch($override, $in, $instanceUtc, forOverride: true));
 
-        $newId = $this->db->tx(fn(): int => $this->db->insert('events', $override));
+        $newId = $this->db->tx(function () use ($override, $masterId, $userId, $in): int {
+            $id = $this->db->insert('events', $override);
+            // The override represents the same event on one day, so it starts
+            // with the master's tags and people; explicit patch values then
+            // replace them (this is what lets "add person to this occurrence
+            // only" work at all — links are keyed by row id).
+            $this->db->run(
+                'INSERT IGNORE INTO event_tags (event_id, tag_id) SELECT ?, tag_id FROM event_tags WHERE event_id = ?',
+                [$id, $masterId]
+            );
+            $this->db->run(
+                'INSERT IGNORE INTO event_people (event_id, person_id) SELECT ?, person_id FROM event_people WHERE event_id = ?',
+                [$id, $masterId]
+            );
+            if (array_key_exists('tagNames', $in) && is_array($in['tagNames'])) {
+                $this->labels->setEventTags($userId, $id, $in['tagNames']);
+            }
+            if (array_key_exists('personNames', $in) && is_array($in['personNames'])) {
+                $this->labels->setEventPeople($userId, $id, $in['personNames']);
+            }
+            return $id;
+        });
         $created = $this->get($userId, $newId);
         $this->undo->record($userId, 'event', $masterId, 'update', ['events' => [$master]], ['events' => [$master, $created]]);
         ChangeLog::record($this->db, (int) $master['calendar_id'], (string) $master['uid'], ChangeLog::OP_MODIFY);

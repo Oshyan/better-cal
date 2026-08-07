@@ -221,7 +221,7 @@ export function CommandPalette() {
               </span>
               <span class="bc-palette-label">${row.label}</span>
               ${row.hint && html`<span class="bc-palette-hint">${row.hint}</span>`}
-              ${row.prompt && html`<span class="bc-palette-hint">needs a date</span>`}
+              ${row.prompt && html`<span class="bc-palette-hint">${row.prompt.hint || 'needs a date'}</span>`}
               ${row.keys && html`<span class="bc-palette-keys">
                 ${row.keys.map((k) => html`<kbd key=${k}>${keyCap(k)}</kbd>`)}
               </span>`}

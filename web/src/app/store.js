@@ -256,6 +256,9 @@ export function toast(text, opts = {}) {
       error: !!opts.error,
       actionLabel: opts.actionLabel || null,
       onAction: opts.onAction || null,
+      // Multiple choices in one toast: [{label, run}]. Rendered before the
+      // dismiss control; each dismisses the toast, then runs.
+      actions: Array.isArray(opts.actions) ? opts.actions : null,
       dismissLabel: opts.dismissLabel || null,
     }],
   });

@@ -236,10 +236,15 @@ export function TripDetail({ occ }) {
 // --- trip row on the event side ---------------------------------------------
 
 // props: occ (a non-container occurrence, local or feed).
-export function TripRow({ occ }) {
+export function TripRow({ occ: occProp }) {
   useStore((s) => s.occVersion); // candidates and containers live in the cache
   const [other, setOther] = useState(false);
   const [query, setQuery] = useState('');
+
+  // The editor holds the occurrence it opened with; after an attach the
+  // refreshed cache carries the new containers while the prop still says
+  // none, which blanked the select right after picking a trip. Read live.
+  const occ = state.occ.get(occProp.instanceId) || occProp;
 
   const current = occ.containers && occ.containers.length > 0 ? occ.containers[0] : null;
   const all = [...state.occ.values()];

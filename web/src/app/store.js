@@ -35,6 +35,7 @@ export const state = {
   plugins: [],        // ops listing from GET /plugins
   pluginRanges: {},   // plugin id -> {truncated, ranges: [...]} for the loaded window
   pluginSeq: 0,       // bump to force a plugin ranges/list refetch
+  proposalCount: 0,   // open proposals awaiting a decision (sidebar badge)
   availSeq: 0,        // visible people's availability spans refetch trigger        // bumped on span/visibility changes to refetch availSpans
 
   // User settings (contract defaults until /me or /settings answers).

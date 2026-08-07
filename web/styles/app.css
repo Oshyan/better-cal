@@ -2585,3 +2585,65 @@ body.bc-rescheduling { user-select: none; }
 
 /* Activity badge for plugin sources */
 .bc-activity-badge.is-plugin { color: #2e8b8b; border-color: color-mix(in srgb, #2e8b8b 55%, transparent); }
+
+/* --- plugin system v2 ---------------------------------------------------------------- */
+
+/* Per-event plugin data in the detail view */
+.bc-epd .bc-detail-label { display: inline-flex; align-items: center; gap: 5px; }
+.bc-epd-computed { display: flex; flex-direction: column; gap: 2px; margin-bottom: 4px; }
+.bc-epd-row { display: flex; align-items: baseline; gap: 8px; font-size: 12.5px; }
+.bc-epd-key { color: var(--fg-muted); min-width: 76px; text-transform: capitalize; }
+.bc-epd-pair { margin-right: 10px; }
+.bc-epd-k { color: var(--fg-muted); }
+.bc-epd .bc-schema-form { border-top: none; padding-top: 4px; margin-top: 2px; }
+.bc-epd .bc-schema-label { width: 120px; }
+
+/* Proposals */
+.bc-proposal { border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 14px; margin-bottom: 10px; }
+.bc-proposal.is-accepted { opacity: 0.8; border-color: color-mix(in srgb, #3f9d6e 45%, var(--border)); }
+.bc-proposal.is-rejected { opacity: 0.6; }
+.bc-proposal-head { display: flex; align-items: center; gap: 8px; }
+.bc-proposal-toggle { background: none; border: none; display: flex; align-items: center; gap: 6px; padding: 0; text-align: left; min-width: 0; }
+.bc-proposal-caret { display: inline-flex; transition: transform 0.12s ease; }
+.bc-proposal-caret.is-closed { transform: rotate(-90deg); }
+.bc-proposal-title { font-weight: 700; font-size: 14px; }
+.bc-proposal-plugin { margin-left: auto; font-size: 10.5px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.4px; }
+.bc-proposal-badge { font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px; }
+.bc-proposal-badge.is-accepted { color: #2d7a52; border-color: color-mix(in srgb, #3f9d6e 55%, transparent); background: #3f9d6e18; }
+.bc-proposal-summary { margin: 4px 0 0; font-size: 12.5px; color: var(--fg-muted); }
+.bc-proposal-body { margin-top: 8px; }
+.bc-proposal-why { font-size: 12.5px; margin-bottom: 6px; }
+.bc-proposal-why p { margin: 0 0 4px; }
+.bc-proposal-trip { font-size: 12.5px; font-weight: 600; display: inline-flex; align-items: center; gap: 5px; margin-bottom: 4px; }
+.bc-proposal-list { list-style: none; margin: 0 0 10px; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.bc-proposal-item { display: flex; align-items: baseline; gap: 10px; font-size: 12.5px; }
+.bc-proposal-when { flex: none; width: 190px; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+.bc-proposal-what { font-weight: 600; }
+.bc-proposal-where { color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bc-proposal-actions { display: flex; gap: 8px; }
+/* Inline chips: the activity page's filter row stacks because it leads with a
+   full-width search input, which this page does not have. */
+.bc-proposal-filters { display: flex; gap: 6px; margin-bottom: 14px; }
+
+/* Manage-row count badge (open proposals) */
+.bc-manage-badge {
+  margin-left: auto; min-width: 17px; height: 17px; padding: 0 5px;
+  border-radius: 999px; background: var(--accent); color: #fff;
+  font-size: 10.5px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center;
+}
+
+/* Declarative chip decorations (manifest decoration.animation). Both are
+   slow and low-contrast on purpose: a calendar that pulses at you is worse
+   than one that does not, so these mark "live" without demanding attention. */
+@keyframes bc-plugin-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.62; } }
+@keyframes bc-plugin-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+.bc-chip.is-anim-pulse, .bc-bar.is-anim-pulse, .bc-band.is-anim-pulse { animation: bc-plugin-pulse 2.4s ease-in-out infinite; }
+.bc-chip.is-anim-shimmer, .bc-bar.is-anim-shimmer, .bc-band.is-anim-shimmer {
+  background-image: linear-gradient(90deg, transparent 20%, rgba(255, 255, 255, 0.22) 50%, transparent 80%);
+  background-size: 200% 100%;
+  animation: bc-plugin-shimmer 3.5s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .bc-chip.is-anim-pulse, .bc-bar.is-anim-pulse, .bc-band.is-anim-pulse,
+  .bc-chip.is-anim-shimmer, .bc-bar.is-anim-shimmer, .bc-band.is-anim-shimmer { animation: none; }
+}

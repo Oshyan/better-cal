@@ -51,6 +51,7 @@ final class Undo
                 'before_json' => $beforeTables === null ? null : json_encode(['tables' => $beforeTables], JSON_INVALID_UTF8_SUBSTITUTE),
                 'after_json' => $afterTables === null ? null : json_encode(['tables' => $afterTables], JSON_INVALID_UTF8_SUBSTITUTE),
                 'source' => ActivityContext::get(),
+                'run_id' => ActivityContext::runId(),
                 'summary' => mb_substr($summary ?? self::defaultSummary($entity, $op, $beforeTables, $afterTables), 0, 300),
                 'details_json' => $details === null ? null : json_encode($details, JSON_INVALID_UTF8_SUBSTITUTE),
             ]);
@@ -142,6 +143,32 @@ final class Undo
             }
         }
         return $this->apply($mutation);
+    }
+
+    /**
+     * Undo every mutation a plugin run made, newest first. Forced per entry:
+     * within one run a later mutation legitimately supersedes an earlier one,
+     * which the stale-undo guard would otherwise refuse.
+     *
+     * @return array{undone:int,skipped:int}
+     */
+    public function undoRun(int $userId, string $runId): array
+    {
+        $rows = $this->db->all(
+            'SELECT id FROM mutations WHERE user_id = ? AND run_id = ? AND undone = 0 ORDER BY id DESC',
+            [$userId, $runId]
+        );
+        $undone = 0;
+        $skipped = 0;
+        foreach ($rows as $row) {
+            try {
+                $this->undoById($userId, (int) $row['id'], true);
+                $undone++;
+            } catch (\Throwable) {
+                $skipped++; // log-only entries and already-undone rows
+            }
+        }
+        return ['undone' => $undone, 'skipped' => $skipped];
     }
 
     /** @return array{entity:string,op:string} */

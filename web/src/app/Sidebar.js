@@ -275,13 +275,14 @@ function AddMenu() {
 // command palette offer exactly the same pages.
 
 export function Sidebar({ open, collapsed, onClose }) {
-  const { calendars, folders, collapsedFolders, route, people, collapsedAllCals, collapsedPeople, peopleSolo, activeOnly, plugins, pluginHidden } = useStore(
+  const { calendars, folders, collapsedFolders, route, people, collapsedAllCals, collapsedPeople, peopleSolo, activeOnly, plugins, pluginHidden, proposalCount } = useStore(
     (s) => ({
       calendars: s.calendars, folders: s.folders,
       collapsedFolders: s.collapsedFolders, route: s.route,
       folderVisibility: s.folderVisibility,
       people: s.people, collapsedAllCals: s.collapsedAllCals,
       plugins: s.plugins, pluginHidden: s.settings.pluginHidden || {},
+      proposalCount: s.proposalCount,
       collapsedPeople: s.collapsedPeople, peopleSolo: s.peopleSolo,
       activeOnly: !!s.settings.sidebarActiveOnly,
     }),
@@ -517,7 +518,8 @@ export function Sidebar({ open, collapsed, onClose }) {
         class="bc-manage-item${route === r ? ' is-active' : ''}"
         aria-current=${route === r ? 'page' : 'false'}
         onClick=${() => set({ route: r })}
-      ><${Icon} name=${r} /><span>${label}</span></button>`)}
+      ><${Icon} name=${r} /><span>${label}</span>${r === 'proposals' && proposalCount > 0
+        && html`<span class="bc-manage-badge" aria-label=${proposalCount + ' awaiting a decision'}>${proposalCount}</span>`}</button>`)}
     </footer>
   </aside>`;
 }

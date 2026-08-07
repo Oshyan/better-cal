@@ -406,6 +406,33 @@ foreach (['8.8.8.8', '140.82.112.3', '2606:4700:4700::1111', '100.128.0.1'] as $
     check('http policy allows ' . $ok, !HttpClient::isForbiddenIp($ok));
 }
 
+// Plugin v2 + proposals: pure validation.
+use BetterCal\Domain\Proposals;
+
+// Proposal plan shape.
+$goodPlan = ['events' => [['title' => 'Dinner', 'start' => '2026-09-01T19:00:00-07:00']]];
+checkEq('proposal plan: minimal valid', [], Proposals::planErrors($goodPlan));
+check('proposal plan: empty events rejected', Proposals::planErrors(['events' => []]) !== []);
+check('proposal plan: missing title caught', in_array('events[0].title is required', Proposals::planErrors(['events' => [['start' => 'x']]]), true));
+check('proposal plan: missing start caught', in_array('events[0].start is required', Proposals::planErrors(['events' => [['title' => 'x']]]), true));
+check('proposal plan: trip needs title', Proposals::planErrors($goodPlan + ['trip' => ['start' => 'a', 'end' => 'b']]) !== []);
+checkEq('proposal plan: trip valid', [], Proposals::planErrors($goodPlan + ['trip' => ['title' => 'T', 'start' => '2026-09-01', 'end' => '2026-09-04']]));
+check('proposal plan: oversized batch rejected', Proposals::planErrors(['events' => array_fill(0, 51, ['title' => 't', 'start' => 's'])]) !== []);
+check('proposal plan: non-object rejected', Proposals::planErrors('nope') !== []);
+
+// v2 permissions and manifest sections.
+$v2Man = ['id' => 'planner', 'name' => 'Planner', 'version' => '0.1.0',
+    'permissions' => ['propose', 'llm', 'notify', 'people'],
+    'jobs' => [['id' => 'plan', 'interval' => 'P1D']],
+    'eventSettings' => [['key' => 'mode', 'label' => 'Mode', 'type' => 'select', 'options' => ['a', 'b']]]];
+checkEq('manifest: v2 permissions accepted', [], Plugins::manifestErrors($v2Man));
+check('manifest: eventSettings validated like other schemas',
+    Plugins::manifestErrors(array_merge($v2Man, ['eventSettings' => [['key' => 'x', 'label' => 'X', 'type' => 'bogus']]])) !== []);
+check('manifest: bad animation caught',
+    Plugins::manifestErrors(array_merge($v2Man, ['decoration' => ['animation' => 'disco']])) !== []);
+checkEq('manifest: valid animation accepted', [],
+    Plugins::manifestErrors(array_merge($v2Man, ['decoration' => ['icon' => 'trip', 'animation' => 'pulse']])));
+
 // isNew: source-based arrival rule (pure). The pill marks automated arrivals
 // only; the user's own creations never wear it, and nothing that happens to an
 // event later (calendar moves included) can change the verdict.

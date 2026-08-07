@@ -101,6 +101,14 @@ function PluginRow({ p }) {
       ${lr
         ? html`<span class=${'bc-plugin-run is-' + lr.outcome} title=${lr.logTail}>${lr.outcome === 'ok' ? 'Last run' : 'Last run ' + lr.outcome} · ${lr.job} · ${fmtAgo(lr.at)}${lr.durationMs != null ? ' · ' + lr.durationMs + ' ms' : ''}</span>`
         : html`<span class="bc-plugin-run">No runs yet — queued for the next worker tick</span>`}
+      ${lr && lr.runId && lr.undoableMutations > 0 && html`<button
+        type="button" class="bc-link-btn" disabled=${busy}
+        title=${'Reverse all ' + lr.undoableMutations + ' change(s) this run made'}
+        onClick=${() => act(
+          () => api('/plugins/runs/' + lr.runId + '/undo', { method: 'POST' }),
+          'Run undone',
+        )}
+      >Undo this run (${lr.undoableMutations})</button>`}
       <span class="bc-plugin-counts">
         ${p.counts.events > 0 && html`<span>${p.counts.events} events</span>`}
         ${p.counts.ranges > 0 && html`<span>${p.counts.ranges} bands</span>`}

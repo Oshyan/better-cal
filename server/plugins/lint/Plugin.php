@@ -59,7 +59,11 @@ return new class implements PluginInterface {
         // 1. Impossible back-to-back travel: consecutive located events with a
         // gap too short for the straight-line distance (generous 40 km/h).
         $located = array_values(array_filter($occs, static fn($o) => !$o['allDay'] && $o['lat'] !== null && $o['lng'] !== null));
-        usort($located, static fn($a, $b) => strcmp((string) $a['start'], (string) $b['start']));
+        // Sort by INSTANT, not by string: occurrence timestamps carry each
+        // event's own tz offset, so "2026-09-01T09:00:00-07:00" and
+        // "2026-09-01T10:00:00-04:00" are the same moment and lexical order
+        // is simply wrong across zones.
+        usort($located, static fn($a, $b) => strtotime((string) $a['start']) <=> strtotime((string) $b['start']));
         for ($i = 1; $i < count($located); $i++) {
             $prev = $located[$i - 1];
             $cur = $located[$i];

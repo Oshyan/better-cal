@@ -44,6 +44,7 @@ import { PeoplePage } from './PeoplePage.js';
 import { ActivityPage } from './ActivityPage.js';
 import { OrganizePage } from './OrganizePage.js';
 import { PluginsPage } from './PluginsPage.js';
+import { ProposalsPage } from './ProposalsPage.js';
 import { sanitizeHtml } from '../lib/richtext.js';
 
 const MONTH_ROWS = { month: 6, weeks3: 3, weeks2: 2 };
@@ -286,6 +287,8 @@ export function App() {
 
   const pluginOccs = useMemo(() => {
     const out = [];
+    const decoBy = {};
+    for (const pl of (state.plugins || [])) if (pl.decoration) decoBy[pl.id] = pl.decoration;
     for (const [pid, entry] of Object.entries(pluginRanges)) {
       if (pluginHidden && pluginHidden[pid]) continue;
       for (const r of entry.ranges || []) {
@@ -296,7 +299,8 @@ export function App() {
           eventId: null,
           calendarId: null,
           pluginId: pid,
-          pluginColor: r.color || null,
+          pluginColor: r.color || (decoBy[pid] && decoBy[pid].color) || null,
+          pluginAnim: (decoBy[pid] && decoBy[pid].animation) || null,
           detailHtml: r.detailHtml || null,
           rangeStart: r.start,
           rangeEnd: r.end,
@@ -544,6 +548,9 @@ export function App() {
   }
   if (s.route === 'people') {
     return html`<div class="bc-app"><${PeoplePage} /><${CreateDrawer} /><${ShortcutsSheet} /><${CommandPalette} /><${Toasts} /></div>`;
+  }
+  if (s.route === 'proposals') {
+    return html`<div class="bc-app"><${ProposalsPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${CommandPalette} /><${Toasts} /></div>`;
   }
   if (s.route === 'plugins') {
     return html`<div class="bc-app"><${PluginsPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${CommandPalette} /><${Toasts} /></div>`;

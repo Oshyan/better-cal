@@ -141,6 +141,23 @@ final class Proposals
         return array_map($this->serialize(...), $this->db->all($sql, $params));
     }
 
+    /**
+     * Retract a still-open proposal by source key. Decided proposals are left
+     * alone: an accepted plan is on the calendar and a rejection is the user's
+     * answer, neither of which a plugin may erase.
+     *
+     * Without this a plugin had no way to say "never mind", so every shift in
+     * its answer stranded an open proposal the user had to dismiss by hand.
+     */
+    public function withdraw(int $userId, string $pluginId, string $sourceKey): bool
+    {
+        return $this->db->run(
+            "DELETE FROM plugin_proposals
+             WHERE user_id = ? AND plugin_id = ? AND source_key = ? AND status = 'open'",
+            [$userId, $pluginId, mb_substr($sourceKey, 0, 160)]
+        )->rowCount() > 0;
+    }
+
     public function reject(int $userId, int $id): array
     {
         $p = $this->require($userId, $id);

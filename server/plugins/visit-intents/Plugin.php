@@ -24,13 +24,11 @@ return new class implements PluginInterface {
     private const MAX_PER_DAY = 3;
 
     /**
-     * The host silently truncates a `text` setting to 500 characters on save
-     * (verified: 501 in, 500 out, HTTP 200, no error). There is no multi-line
-     * or list field type, so the wishlist is split across four boxes and
-     * stitched back together here. Ugly, and entirely the cap's fault.
+     * The wishlist lives in one `textarea` field, one place per line. The
+     * trailing keys are the old four-box layout from when `text` was the only
+     * string type and capped at 500 characters; they are still read so an
+     * install predating the textarea keeps its list.
      */
-    private const SETTING_TEXT_CAP = 500;
-
     private const WISHLIST_KEYS = ['wishlist', 'wishlist2', 'wishlist3', 'wishlist4'];
 
     // ------------------------------------------------------------------ settings
@@ -54,14 +52,8 @@ return new class implements PluginInterface {
             if ($raw === '') {
                 continue;   // an empty continuation box is normal
             }
-            if (mb_strlen($raw) > self::SETTING_TEXT_CAP) {
-                // The host truncates to 500 silently. Refuse instead, so the
-                // user finds out now rather than by losing half their list.
-                $errors[$k] = 'Too long by ' . (mb_strlen($raw) - self::SETTING_TEXT_CAP)
-                    . ' characters — this box holds ' . self::SETTING_TEXT_CAP
-                    . '. Move the overflow to the next box.';
-                continue;
-            }
+            // Length is the host's business now: it refuses an over-long value
+            // outright rather than truncating it, and reports the limit.
             $parsed = $this->parseWishlist($raw);
             if (!$parsed['places']) {
                 $first = $parsed['errors'][0] ?? 'no usable lines';

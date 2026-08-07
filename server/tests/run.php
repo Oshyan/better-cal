@@ -398,6 +398,51 @@ check('plugin settings: location needs coords', isset($ce2['loc']));
 [$cv3, ] = Plugins::validateAgainstSchema($schema, ['loc' => null]);
 check('plugin settings: location clearable', array_key_exists('loc', $cv3) && $cv3['loc'] === null);
 
+// Over-long text used to be truncated silently behind a 200, so a setting
+// looked saved and the plugin then ran on a fraction of it. Refuse instead.
+[, $ceLong] = Plugins::validateAgainstSchema($schema, ['note' => str_repeat('a', 501)]);
+check('plugin settings: over-long text refused, not truncated', isset($ceLong['note']));
+[$cvEdge, $ceEdge] = Plugins::validateAgainstSchema($schema, ['note' => str_repeat('a', 500)]);
+check('plugin settings: text at the limit still saves', $ceEdge === [] && mb_strlen($cvEdge['note']) === 500);
+
+// textarea exists because the schema has no list type; it may raise its own
+// ceiling so a wishlist need not be split across four fields.
+$areaSchema = [['key' => 'list', 'type' => 'textarea', 'maxLength' => 4000]];
+[$cvA, $ceA] = Plugins::validateAgainstSchema($areaSchema, ['list' => str_repeat('b', 4000)]);
+check('plugin settings: textarea honours a raised maxLength', $ceA === [] && mb_strlen($cvA['list']) === 4000);
+[, $ceA2] = Plugins::validateAgainstSchema($areaSchema, ['list' => str_repeat('b', 4001)]);
+check('plugin settings: textarea still refuses past its maxLength', isset($ceA2['list']));
+checkEq('plugin settings: textarea ceiling clamps a greedy maxLength', Plugins::TEXTAREA_MAX,
+    Plugins::textLimit(['type' => 'textarea', 'maxLength' => 999999]));
+checkEq('plugin settings: plain text cannot raise its own ceiling', Plugins::TEXT_MAX,
+    Plugins::textLimit(['type' => 'text', 'maxLength' => 999999]));
+
+// null means "clear" for every type, matching setEventData(null). Coercion
+// used to turn a clear into '' for text and false for a toggle.
+[$cvNull, ] = Plugins::validateAgainstSchema($schema, ['note' => null, 'on' => null, 'days' => null]);
+check('plugin settings: null clears text', array_key_exists('note', $cvNull) && $cvNull['note'] === null);
+check('plugin settings: null clears toggle', array_key_exists('on', $cvNull) && $cvNull['on'] === null);
+check('plugin settings: null clears number', array_key_exists('days', $cvNull) && $cvNull['days'] === null);
+
+// Coordinates were accepted unchecked, so lat 991 stored fine.
+[, $ceGeo] = Plugins::validateAgainstSchema($schema, ['loc' => ['name' => 'nowhere', 'lat' => 991, 'lng' => -122.4]]);
+check('plugin settings: out-of-range latitude refused', isset($ceGeo['loc']));
+[, $ceGeo2] = Plugins::validateAgainstSchema($schema, ['loc' => ['name' => 'nowhere', 'lat' => 37.7, 'lng' => 900]]);
+check('plugin settings: out-of-range longitude refused', isset($ceGeo2['loc']));
+
+// (string) on an array is the literal "Array", so a structured value sent to a
+// text field silently stored that word.
+[, $ceArr] = Plugins::validateAgainstSchema($schema, ['note' => ['lat' => 1, 'lng' => 2]]);
+check('plugin settings: non-scalar refused by text field', isset($ceArr['note']));
+
+// A default longer than its own field could never be re-saved once edited.
+check('plugin manifest: over-long text default refused', Plugins::manifestErrors(array_merge($goodMan, [
+    'settings' => [['key' => 'note', 'label' => 'Note', 'type' => 'text', 'default' => str_repeat('a', 501)]],
+])) !== []);
+check('plugin manifest: textarea type accepted', Plugins::manifestErrors(array_merge($goodMan, [
+    'settings' => [['key' => 'list', 'label' => 'List', 'type' => 'textarea']],
+])) === []);
+
 // SSRF policy: the refusal list.
 foreach (['127.0.0.1', '10.1.2.3', '172.16.0.9', '192.168.1.1', '169.254.169.254', '100.64.0.1', '0.0.0.0', '::1', 'fe80::1', 'fd00::1', '::ffff:127.0.0.1', 'not-an-ip'] as $bad) {
     check('http policy refuses ' . $bad, HttpClient::isForbiddenIp($bad));

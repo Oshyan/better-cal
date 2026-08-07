@@ -164,8 +164,15 @@ final class PluginsController
     /** Overlay ranges for the window: an indexed read of job-written rows. */
     public function ranges(Request $req): Response
     {
-        $start = Time::parseIso((string) ($req->query['start'] ?? ''));
-        $end = Time::parseIso((string) ($req->query['end'] ?? ''));
+        // parseIso throws InvalidArgumentException on a missing or malformed
+        // value, which surfaced as a 500 rather than telling the caller what
+        // was wrong with their request.
+        try {
+            $start = Time::parseIso((string) ($req->query['start'] ?? ''));
+            $end = Time::parseIso((string) ($req->query['end'] ?? ''));
+        } catch (\InvalidArgumentException $e) {
+            throw HttpError::badRequest('start and end are required ISO timestamps');
+        }
         if ($end <= $start) {
             throw HttpError::badRequest('end must be after start');
         }

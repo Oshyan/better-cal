@@ -7,13 +7,14 @@ namespace BetterCal\Domain;
 use BetterCal\Dav\ChangeLog;
 use BetterCal\Http\HttpError;
 use BetterCal\Infra\Db;
+use BetterCal\Infra\HttpClient;
 use BetterCal\Infra\JobQueue;
 use BetterCal\Support\Time;
 
 /** ICS feed subscription: fetch, parse, and sync by (calendar_id, uid). */
 final class Feeds
 {
-    private const FETCH_TIMEOUT = 20;
+    // Timeouts now come from HttpClient (5s connect / 20s total).
     private const MAX_BYTES = 20 * 1024 * 1024;
 
     public function __construct(private readonly Db $db, private readonly ?JobQueue $queue = null)
@@ -66,33 +67,33 @@ final class Feeds
         if (!preg_match('#^https?://#i', $url)) {
             throw new \RuntimeException('Feed URL must be http(s) or webcal');
         }
-        $ch = curl_init($url);
-        if ($ch === false) {
-            throw new \RuntimeException('Could not initialize fetch');
+        // GH #21: this used to be raw cURL with CURLOPT_FOLLOWLOCATION and no
+        // address check, so a subscription URL — which the user supplies and an
+        // upstream server can redirect at will — could be walked to 127.0.0.1
+        // or the cloud metadata endpoint. HttpClient resolves before connecting,
+        // refuses private/loopback/link-local/metadata addresses, pins cURL to
+        // the vetted IP against DNS rebind, and re-vets every redirect hop.
+        // Feed-shaped limits, not plugin-shaped ones: an ICS subscription is
+        // legitimately large, and redirect chains through calendar providers are
+        // common enough to want more than the default three.
+        $http = new HttpClient(
+            requestBudget: 8,
+            userAgent: 'Better-Cal/0.1 (+ics-subscriber)',
+            maxBytes: self::MAX_BYTES,
+            maxRedirects: 5,
+        );
+        try {
+            $r = $http->get($url);
+        } catch (\RuntimeException $e) {
+            throw new \RuntimeException('Feed fetch failed: ' . $e->getMessage(), 0, $e);
         }
-        curl_setopt_array($ch, [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_FOLLOWLOCATION => true,
-            CURLOPT_MAXREDIRS => 5,
-            CURLOPT_TIMEOUT => self::FETCH_TIMEOUT,
-            CURLOPT_CONNECTTIMEOUT => 10,
-            CURLOPT_USERAGENT => 'Better-Cal/0.1 (+ics-subscriber)',
-            CURLOPT_PROTOCOLS => CURLPROTO_HTTP | CURLPROTO_HTTPS,
-            CURLOPT_REDIR_PROTOCOLS => CURLPROTO_HTTP | CURLPROTO_HTTPS,
-            CURLOPT_MAXFILESIZE => self::MAX_BYTES,
-        ]);
-        $body = curl_exec($ch);
-        $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
-        $err = curl_error($ch);
-        curl_close($ch);
-        if (!is_string($body) || $body === '') {
-            throw new \RuntimeException('Feed fetch failed: ' . ($err ?: 'empty response'));
-        }
+        $body = $r['body'];
+        $status = $r['status'];
         if ($status >= 400) {
             throw new \RuntimeException("Feed fetch failed: HTTP $status");
         }
-        if (strlen($body) > self::MAX_BYTES) {
-            throw new \RuntimeException('Feed too large');
+        if ($body === '') {
+            throw new \RuntimeException('Feed fetch failed: empty response');
         }
         if (!str_contains($body, 'BEGIN:VCALENDAR')) {
             throw new \RuntimeException('Response is not an ICS calendar');

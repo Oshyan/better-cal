@@ -149,17 +149,6 @@ return new class implements PluginInterface {
             $place['name'], $minDays, $maxDays, $horizon, $intentSrc
         ));
 
-        if ($this->regionGuess !== null) {
-            $warnings[] = [
-                'message'  => sprintf(
-                    'You said "%s", which is a region rather than a place with a weather station, so the climate figures below are for %s - a point inside it, not a specific destination. Pick a town or city in the Destination field if that is not close enough.',
-                    $this->regionGuess, $place['name']
-                ),
-                'severity' => 'info',
-                'fix'      => 'Manage -> Plugins -> Trip Planner -> Destination',
-            ];
-        }
-
         // ---- 2. What is actually on the calendar? --------------------- //
         $today       = $now->format('Y-m-d');
         $searchStart = $this->addDays($today, $earliest);
@@ -179,6 +168,28 @@ return new class implements PluginInterface {
 
         // ---- 3. Climate normals for the destination ------------------- //
         $normals = $this->normals($host, $place, $warnings);
+
+        // Naming a region gets you a region's answer, which is usually fine:
+        // most centroids land at ordinary elevation. It is worth saying out loud
+        // only because a few do not — Hawaii's is 2,282 m up Mauna Loa, which is
+        // why its normals read like a mountain rather than a beach. Quoting the
+        // elevation turns a baffling number into an obvious one. Note this
+        // changes nothing about WHICH window is chosen: every candidate is
+        // scored at the same coordinates, so a cold baseline shifts them all
+        // equally.
+        if ($this->regionGuess !== null) {
+            $elev = $normals['elev'] ?? null;
+            $warnings[] = [
+                'message'  => sprintf(
+                    'You said "%s", which is a region rather than somewhere with its own weather, so the climate figures below are for %s - one point inside it%s. The dates it picks are unaffected; only these numbers are. Name a town or city in the Destination field for figures you can pack for.',
+                    $this->regionGuess,
+                    $place['name'],
+                    $elev !== null ? sprintf(', at %s m elevation', number_format($elev)) : ''
+                ),
+                'severity' => 'info',
+                'fix'      => 'Manage -> Plugins -> Trip Planner -> Destination',
+            ];
+        }
 
         // ---- 4. Candidate windows ------------------------------------- //
         $dates = $this->dateRange($searchStart, $searchEnd);
@@ -915,7 +926,11 @@ return new class implements PluginInterface {
             ];
         }
 
+        // The archive reports the elevation of the grid cell it answered from.
+        // Free with the response, and the one number that explains a surprising
+        // result: a region's centroid can sit thousands of metres up a mountain.
         $out = ['at' => time(), 'years' => [$startY, $endY], 'md' => $md,
+                'elev' => isset($j['elevation']) && is_numeric($j['elevation']) ? (int) round((float) $j['elevation']) : null,
                 'src' => 'Open-Meteo ERA5 archive'];
         $this->kvPut($host, $key, json_encode($out));
         $this->publishNormals($host, $place, $out);

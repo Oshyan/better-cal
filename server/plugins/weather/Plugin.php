@@ -53,7 +53,10 @@ return new class implements PluginInterface {
         }
         $unitParam = ($s['units'] ?? 'F') === 'C' ? 'celsius' : 'fahrenheit';
         $days = max(1, min(14, (int) ($s['days'] ?? 10)));
-        $data = $host->http()->getJson(
+        // Shared cache, TTL matched to this plugin's PT3H job interval: it can
+        // never serve a forecast staler than our own refresh cadence, and a
+        // second plugin wanting this same forecast pays nothing.
+        $data = $host->getJsonCached(
             'https://api.open-meteo.com/v1/forecast?' . http_build_query([
                 'latitude' => $loc['lat'],
                 'longitude' => $loc['lng'],

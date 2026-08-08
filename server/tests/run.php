@@ -1288,6 +1288,75 @@ check('geo lookup map has no index 0 to read', !isset($geoShape[0]));
 check('geo lookup map carries lat/lng directly', isset($geoShape['lat'], $geoShape['lng']));
 checkEq('geo bias cell rounds to integer degrees', '38,-122', Geocode::biasCell(37.77, -122.42));
 checkEq('geo bias cell none without bias', 'none', Geocode::biasCell(null, null));
+// Picking among same-named places. The primary provider orders "Lisbon" as
+// eight American towns; significance ranking has to reach past them, without
+// disturbing addresses and venues, where the provider's own order is right.
+$feat = static fn(string $name, string $key, string $value): array => [
+    'geometry' => ['coordinates' => [1.0, 2.0]],
+    'properties' => ['name' => $name, 'osm_key' => $key, 'osm_value' => $value],
+];
+$lisbons = ['features' => [
+    $feat('Lisbon', 'place', 'town'),
+    $feat('Lisbon', 'place', 'village'),
+    $feat('Lisbon', 'place', 'city'),
+    $feat('Lisbon', 'place', 'hamlet'),
+]];
+checkEq('geo pick: the city wins among same-named places', 'city',
+    Geocode::pickFeature($lisbons, 'Lisbon')['properties']['osm_value']);
+checkEq('geo pick: matching is case and space insensitive', 'city',
+    Geocode::pickFeature($lisbons, '  lisbon ')['properties']['osm_value']);
+// A city outranks a county of the same name: someone typing "Florence" means
+// the city, not the county wrapped around a different one.
+checkEq('geo pick: city outranks county', 'city', Geocode::pickFeature(['features' => [
+    $feat('Florence', 'place', 'county'), $feat('Florence', 'place', 'city'),
+]], 'Florence')['properties']['osm_value']);
+// No exact-name candidate: an address or venue. Provider order must stand.
+checkEq('geo pick: address keeps provider order', 'Zuni Café', Geocode::pickFeature(['features' => [
+    $feat('Zuni Café', 'amenity', 'restaurant'), $feat('Market Street', 'highway', 'secondary'),
+]], '1658 Market St, San Francisco')['properties']['name']);
+check('geo pick: empty feature list yields null', Geocode::pickFeature(['features' => []], 'x') === null);
+check('geo pick: junk payload yields null', Geocode::pickFeature('nonsense', 'x') === null);
+
+// When to ask a second provider. Narrow on purpose.
+check('geo doubt: a town invites a second opinion',
+    Geocode::shouldConsultSecondary($feat('Lisbon', 'place', 'town')));
+check('geo doubt: a city invites one too (small US "cities" outrank capitals)',
+    Geocode::shouldConsultSecondary($feat('Florence', 'place', 'city')));
+check('geo doubt: a state does not',
+    !Geocode::shouldConsultSecondary($feat('Hawaii', 'place', 'state')));
+check('geo doubt: a country does not',
+    !Geocode::shouldConsultSecondary($feat('Portugal', 'place', 'country')));
+check('geo doubt: a venue never does',
+    !Geocode::shouldConsultSecondary($feat('Zuni Café', 'amenity', 'restaurant')));
+check('geo doubt: a street never does',
+    !Geocode::shouldConsultSecondary($feat('Market Street', 'highway', 'secondary')));
+check('geo doubt: nothing found invites one', Geocode::shouldConsultSecondary(null));
+
+// The secondary may only override with a genuinely major place, which is what
+// stops it replacing a correct "Hawaii, United States" with a Guatemalan village.
+checkEq('geo secondary: a major city overrides', 'Lisbon, Lisbon District, Portugal',
+    Geocode::secondaryOverride(['results' => [
+        ['name' => 'Lisbon', 'admin1' => 'Lisbon District', 'country' => 'Portugal',
+         'latitude' => 38.72, 'longitude' => -9.14, 'population' => 517802],
+    ]])['display']);
+check('geo secondary: a small place does not override',
+    Geocode::secondaryOverride(['results' => [
+        ['name' => 'Hawaii', 'country' => 'Guatemala', 'latitude' => 14.0, 'longitude' => -90.8],
+    ]]) === null);
+check('geo secondary: a sub-threshold population does not override',
+    Geocode::secondaryOverride(['results' => [
+        ['name' => 'Kailua-Kona', 'country' => 'United States',
+         'latitude' => 19.6, 'longitude' => -156.0, 'population' => 11975],
+    ]]) === null);
+check('geo secondary: it skips small hits to find a major one',
+    Geocode::secondaryOverride(['results' => [
+        ['name' => 'Small', 'latitude' => 1, 'longitude' => 1, 'population' => 200],
+        ['name' => 'Munich', 'admin1' => 'Bavaria', 'country' => 'Germany',
+         'latitude' => 48.1, 'longitude' => 11.6, 'population' => 1260391],
+    ]])['display'] === 'Munich, Bavaria, Germany');
+check('geo secondary: junk yields null', Geocode::secondaryOverride('nope') === null);
+check('geo secondary: no results yields null', Geocode::secondaryOverride(['results' => []]) === null);
+
 check('geo airport code: SFO', Geocode::isAirportCode('SFO'));
 check('geo airport code: trims whitespace', Geocode::isAirportCode(' KOA '));
 check('geo airport code: lowercase is not one', !Geocode::isAirportCode('sfo'));
@@ -1319,11 +1388,17 @@ checkEq('geo map garbage -> null', null, Geocode::mapResponse('garbage'));
 checkEq('geo map missing coordinates -> null', null, Geocode::mapResponse(['features' => [['properties' => ['name' => 'X']]]]));
 checkEq('geo map non-numeric coordinates -> null', null, Geocode::mapResponse(['features' => [['geometry' => ['coordinates' => ['a', 'b']]]]]));
 
-checkEq('geo negative cache row -> all-null result', ['lat' => null, 'lng' => null, 'display' => null], Geocode::resultFromRow(['lat' => null, 'lng' => null, 'display' => null]));
+checkEq('geo negative cache row -> all-null result', ['lat' => null, 'lng' => null, 'display' => null, 'kind' => null], Geocode::resultFromRow(['lat' => null, 'lng' => null, 'display' => null]));
 checkEq(
     'geo positive cache row round-trips',
-    ['lat' => 37.7739, 'lng' => -122.4216, 'display' => 'Zuni Cafe'],
-    Geocode::resultFromRow(['lat' => '37.7739', 'lng' => '-122.4216', 'display' => 'Zuni Cafe'])
+    ['lat' => 37.7739, 'lng' => -122.4216, 'display' => 'Zuni Cafe', 'kind' => 'restaurant'],
+    Geocode::resultFromRow(['lat' => '37.7739', 'lng' => '-122.4216', 'display' => 'Zuni Cafe', 'kind' => 'restaurant'])
+);
+// A row cached before the kind column existed still round-trips, as null.
+checkEq(
+    'geo pre-kind cache row round-trips with a null kind',
+    ['lat' => 1.0, 'lng' => 2.0, 'display' => 'Somewhere', 'kind' => null],
+    Geocode::resultFromRow(['lat' => '1.0', 'lng' => '2.0', 'display' => 'Somewhere'])
 );
 
 // ---------------------------------------------------------------------------

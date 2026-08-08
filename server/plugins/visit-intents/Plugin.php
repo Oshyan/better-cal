@@ -929,7 +929,10 @@ return new class implements PluginInterface {
         }
 
         try {
-            $json = $host->http()->getJson('https://overpass-api.de/api/interpreter?data=' . rawurlencode($ql));
+            // Shared cache. Opening hours in OSM change on the order of
+            // months, and Overpass is slow and rate-limited, so a day is both
+            // safe and a real saving over the PT6H scan interval.
+            $json = $host->getJsonCached('https://overpass-api.de/api/interpreter?data=' . rawurlencode($ql), 86400);
         } catch (\Throwable $e) {
             $host->log('overpass failed for ' . $p['name'] . ': ' . mb_substr($e->getMessage(), 0, 140));
             return null;

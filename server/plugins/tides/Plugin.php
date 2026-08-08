@@ -30,7 +30,9 @@ return new class implements PluginInterface {
         $days = max(1, min(30, (int) ($s['days'] ?? 14)));
         $begin = gmdate('Ymd');
         $end = gmdate('Ymd', time() + $days * 86400);
-        $data = $host->http()->getJson(
+        // Shared cache, TTL matched to this plugin's PT12H job interval.
+        // Tide tables are published well ahead, so this is conservative.
+        $data = $host->getJsonCached(
             'https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?' . http_build_query([
                 'product' => 'predictions',
                 'application' => 'better-cal',

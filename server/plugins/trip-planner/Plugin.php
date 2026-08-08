@@ -48,6 +48,9 @@ return new class implements PluginInterface {
     /** Set when a destination had to be inferred from a region name rather than found outright. */
     private ?string $regionGuess = null;
 
+    /** Geocoder result kinds that describe an area rather than a destination. */
+    private const REGION_KINDS = ['state', 'region', 'province', 'county', 'country', 'district'];
+
     /** The current year in the USER's zone, not the server's. */
     private string $thisYear = '1970';
 
@@ -149,7 +152,7 @@ return new class implements PluginInterface {
         if ($this->regionGuess !== null) {
             $warnings[] = [
                 'message'  => sprintf(
-                    'You said "%s", which is a region rather than a place with a weather station, so the climate figures below are for %s - the largest town found inside it. Pick a specific spot in the Destination field if that is not close enough.',
+                    'You said "%s", which is a region rather than a place with a weather station, so the climate figures below are for %s - a point inside it, not a specific destination. Pick a town or city in the Destination field if that is not close enough.',
                     $this->regionGuess, $place['name']
                 ),
                 'severity' => 'info',
@@ -583,80 +586,37 @@ return new class implements PluginInterface {
         return null;
     }
 
+    /**
+     * One geocoder, the host's.
+     *
+     * This used to fall back to its own Open-Meteo geocoding call with its own
+     * result ranking, because host geocode() returned null on every query — a
+     * host bug, not a shortcoming of the host geocoder. With that fixed, and
+     * with the significance ranking and secondary-provider lookup that lived
+     * here now living in the host where every plugin and the calendar itself
+     * benefit, a second geocoder in here would just be a second set of answers
+     * to keep consistent.
+     */
     private function geocode(PluginHost $host, string $q): ?array
     {
         try {
             $r = $host->geocode($q);
             $this->diag[] = 'host geocode(' . $q . ') -> ' . substr(json_encode($r) ?: 'null', 0, 200);
             if ($this->isPlace($r)) {
-                $name = (string)($r['name'] ?? $q);
+                $name = (string)($r['display'] ?? $r['name'] ?? $q);
+                // A region has no weather station, so climate figures for it are
+                // figures for a point somewhere inside it. Say so rather than
+                // quietly presenting a centroid as if it were a destination.
+                if (in_array((string)($r['kind'] ?? ''), self::REGION_KINDS, true)) {
+                    $this->regionGuess = $q;
+                }
                 return ['name' => $name, 'short' => $this->shortName($name),
                         'lat' => (float)$r['lat'], 'lng' => (float)$r['lng'], 'via' => 'host geocoder'];
             }
         } catch (Throwable $e) {
             $this->diag[] = 'host geocode threw: ' . get_class($e) . ': ' . $e->getMessage();
         }
-
-        try {
-            $j = $host->http()->getJson(
-                'https://geocoding-api.open-meteo.com/v1/search?count=10&language=en&format=json&name='
-                . rawurlencode($q)
-            );
-            $r = $this->bestGeoHit($j['results'] ?? [], $q);
-            if ($r !== null) {
-                $bits = array_filter([$r['name'] ?? null, $r['admin1'] ?? null, $r['country'] ?? null]);
-                $name = implode(', ', $bits);
-                return ['name' => $name, 'short' => $this->shortName($name),
-                        'lat' => (float)$r['latitude'], 'lng' => (float)$r['longitude'],
-                        'via' => 'Open-Meteo geocoder'];
-            }
-        } catch (Throwable $e) {
-            $this->diag[] = 'open-meteo geocode threw: ' . get_class($e) . ': ' . $e->getMessage();
-        }
         return null;
-    }
-
-    /**
-     * "Hawaii" geocodes first to a village of 1,300 people in Guatemala. Rank by
-     * how administratively important the hit is and how many people live there,
-     * not by whatever the API happened to put first.
-     */
-    private function bestGeoHit($results, string $q): ?array
-    {
-        if (!is_array($results) || !$results) { return null; }
-
-        // "Hawaii" is a state, and this geocoder only holds settlements, so the
-        // literal top hit is a village in Guatemala. If the query names a region
-        // or country that some results sit inside, plan for the biggest town in
-        // it instead.
-        $inRegion = [];
-        foreach ($results as $r) {
-            if (!is_array($r)) { continue; }
-            if (strcasecmp(trim((string)($r['admin1'] ?? '')), trim($q)) === 0
-                || strcasecmp(trim((string)($r['country'] ?? '')), trim($q)) === 0) {
-                $inRegion[] = $r;
-            }
-        }
-        if (count($inRegion) >= 2) {
-            $this->diag[] = '"' . $q . '" looks like a region (' . count($inRegion) . ' hits inside it); using its largest town';
-            $this->regionGuess = $q;
-            $results = $inRegion;
-        }
-
-        $rank = ['PCLI' => 6, 'ADM1' => 5, 'ADM2' => 3, 'PPLC' => 5, 'PPLA' => 4, 'PPLA2' => 3, 'PPL' => 1];
-        $best = null; $bestScore = -1.0;
-        foreach ($results as $r) {
-            if (!is_array($r) || !isset($r['latitude'], $r['longitude'])) { continue; }
-            $score  = 0.5 * (float)($rank[(string)($r['feature_code'] ?? '')] ?? 0);
-            $score += 2.0 * min(6.0, log10(max(1, (int)($r['population'] ?? 1))));
-            if (strcasecmp(trim((string)($r['name'] ?? '')), trim($q)) === 0) { $score += 1.0; }
-            if ($score > $bestScore) { $bestScore = $score; $best = $r; }
-        }
-        if ($best !== null) {
-            $this->diag[] = 'geocode "' . $q . '" -> ' . ($best['name'] ?? '?') . ', ' . ($best['country'] ?? '?')
-                . ' (' . ($best['feature_code'] ?? '?') . ', pop ' . ($best['population'] ?? 0) . ')';
-        }
-        return $best;
     }
 
     private function shortName(string $n): string

@@ -36,6 +36,8 @@ final class Settings
         // Sidebar list density: hide unchecked calendars/people from the list
         // itself. Purely a display preference; it never changes visibility.
         'sidebarActiveOnly' => false,
+        'pluginHidden' => [],
+        'tz' => null,
         // Global default reminders; effective-reminder resolution falls back
         // to these when neither the event nor its calendar overrides them.
         'reminderTimed' => [['minutes' => 10]],
@@ -89,6 +91,42 @@ final class Settings
     // ---- Pure helpers (unit-tested, no DB) -----------------------------
 
     /** @return array<string,mixed> known keys only, defaults filled in */
+    /**
+     * The user's IANA timezone. The browser has always known it; nothing ever
+     * told the SERVER, which left worker-side code (plugins especially) with
+     * no way to build a correct local time. The client posts it at boot.
+     */
+    private static function tzid(mixed $value): ?string
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+        if (!is_string($value)) {
+            throw HttpError::badRequest('tz must be an IANA timezone name');
+        }
+        try {
+            new \DateTimeZone($value);
+        } catch (\Throwable) {
+            throw HttpError::badRequest('Unknown timezone: ' . $value);
+        }
+        return $value;
+    }
+
+    /** {pluginId: bool} — which plugins' overlay bands are hidden. */
+    private static function pluginHidden(mixed $value): array
+    {
+        if (!is_array($value)) {
+            throw HttpError::badRequest('pluginHidden must be an object');
+        }
+        $out = [];
+        foreach ($value as $k => $v) {
+            if (is_string($k) && preg_match('/^[a-z][a-z0-9-]{1,63}$/', $k) === 1) {
+                $out[$k] = (bool) $v;
+            }
+        }
+        return $out;
+    }
+
     public static function withDefaults(array $stored): array
     {
         $out = self::DEFAULTS;
@@ -123,6 +161,8 @@ final class Settings
                 'defaultCalendarId' => self::calendarId($value),
                 'folderVisibility' => self::folderVisibility($value),
                 'sidebarActiveOnly' => self::bool($key, $value),
+                'pluginHidden' => self::pluginHidden($value),
+                'tz' => self::tzid($value),
                 'reminderTimed' => Reminders::validateTimedList($value),
                 'reminderAllDay' => Reminders::validateAllDayList($value),
                 'homeLat' => self::coordinate($key, $value, 90.0),

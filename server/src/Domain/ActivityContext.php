@@ -16,6 +16,8 @@ namespace BetterCal\Domain;
 final class ActivityContext
 {
     private static string $source = 'web';
+    /** Groups every mutation one plugin run makes, so it can be undone as a batch. */
+    private static ?string $runId = null;
 
     public static function set(string $source): void
     {
@@ -25,6 +27,26 @@ final class ActivityContext
     public static function get(): string
     {
         return self::$source;
+    }
+
+    public static function runId(): ?string
+    {
+        return self::$runId;
+    }
+
+    /** Run $fn tagged with a run id (plus a source), restoring both after. */
+    public static function withRun(string $source, string $runId, callable $fn): mixed
+    {
+        $prevSource = self::$source;
+        $prevRun = self::$runId;
+        self::$source = $source;
+        self::$runId = $runId;
+        try {
+            return $fn();
+        } finally {
+            self::$source = $prevSource;
+            self::$runId = $prevRun;
+        }
     }
 
     /** Run $fn under a temporary source, restoring the previous one after. */

@@ -94,6 +94,22 @@ export async function loadPeople() {
   return data;
 }
 
+// --- plugins ---------------------------------------------------------------
+
+export async function loadPlugins() {
+  try {
+    const data = await api('/plugins');
+    set({ plugins: data.plugins || [] });
+  } catch (e) { /* the ops page retries on open */ }
+}
+
+export async function loadProposalCount() {
+  try {
+    const d = await api('/proposals?status=open');
+    set({ proposalCount: (d.proposals || []).length });
+  } catch (e) { /* the page shows the real list */ }
+}
+
 // --- saved views -----------------------------------------------------------
 
 export async function loadSavedViews() {

@@ -1,0 +1,76 @@
+{
+  "id": "travel",
+  "name": "Travel Time",
+  "version": "0.1.0",
+  "minHost": "0.1.0",
+  "description": "Leave-by shadow bands before events you have to travel to, and warnings when back-to-back events are too far apart to make.",
+  "permissions": [
+    "ranges",
+    "warnings",
+    "notify"
+  ],
+  "jobs": [
+    {
+      "id": "scan",
+      "interval": "PT6H"
+    }
+  ],
+  "settings": [
+    {
+      "key": "defaultMode",
+      "type": "select",
+      "label": "Default travel mode",
+      "options": [
+        "walk",
+        "bike",
+        "drive",
+        "transit"
+      ],
+      "default": "drive"
+    },
+    {
+      "key": "buffer",
+      "type": "number",
+      "label": "Door-to-door buffer added to every trip (minutes)",
+      "min": 0,
+      "max": 60,
+      "default": 5
+    },
+    {
+      "key": "minKm",
+      "type": "number",
+      "label": "Shortest trip worth a band (km)",
+      "min": 0,
+      "max": 100,
+      "default": 2
+    },
+    {
+      "key": "color",
+      "type": "text",
+      "label": "Band color (hex)",
+      "default": "#c96f8f"
+    },
+    {
+      "key": "notifyImpossible",
+      "type": "toggle",
+      "label": "Notify when an impossible trip is within 24 hours",
+      "default": true
+    }
+  ],
+  "eventSettings": [
+    {
+      "key": "mode",
+      "type": "select",
+      "label": "How you get to this event",
+      "options": [
+        "walk",
+        "bike",
+        "drive",
+        "transit"
+      ]
+    }
+  ],
+  "decoration": {
+    "iconPath": "M2 13 C7 13 6 4 11 4 M9 2 L11.5 4 L9 6"
+  }
+}

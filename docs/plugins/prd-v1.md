@@ -78,7 +78,7 @@ server/plugins/weather/
   "calendarSettings": [
     { "key": "location", "type": "location", "label": "Forecast location" }
   ],
-  "decoration": { "icon": "weather", "color": "#5b8dd9" }
+  "decoration": { "icon": "⛅", "color": "#5b8dd9" }
 }
 ```
 

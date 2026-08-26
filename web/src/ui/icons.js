@@ -20,9 +20,16 @@ export function ThumbIcon({ dir = 'up', size = 13 }) {
 // feeds render hollow (2px ring of the calendar color, transparent center)
 // with a "Subscribed feed" tooltip. One shared treatment for every surface
 // that shows a calendar dot.
-export function CalDot({ cal, color }) {
+export function CalDot({ cal, color, deco }) {
   const c = (cal && cal.color) || color || '#888';
   const feed = cal && cal.kind === 'subscribed';
+  // A plugin that declared a decoration icon shows it in place of the dot, in
+  // the calendar's own color: same slot, same size, more information.
+  if (deco && (deco.icon || deco.iconPath)) {
+    return html`<span class="bc-cal-dot is-icon" style=${`color:${c}`} title="Provided by a plugin">
+      <${PluginGlyph} icon=${deco.icon} iconPath=${deco.iconPath} size=${12} />
+    </span>`;
+  }
   return feed
     ? html`<span class="bc-cal-dot is-feed" title="Subscribed feed" style=${`border-color:${c}`}></span>`
     : html`<span class="bc-cal-dot" style=${`background:${c}`}></span>`;
@@ -163,6 +170,13 @@ export function Icon({ name, size = 15 }) {
       <path d="M5.2 5.4h5.6" />`,
     viewAgenda: html`<path d="M5.6 4.2h8M5.6 8h8M5.6 11.8h8" />
       <path d="M2.5 4.2h.01M2.5 8h.01M2.5 11.8h.01" />`,
+    // Power plug: prongs, socket body, cord. The Plugins page.
+    plugins: html`<path d="M5.6 2.2v3M10.4 2.2v3" />
+      <path d="M4 5.2h8v2.6a4 4 0 0 1-8 0z" />
+      <path d="M8 11.8v2" />`,
+    // Suggestion: a lamp with rays — something offered, not yet decided.
+    proposals: html`<path d="M8 1.8a4.2 4.2 0 0 0-2.4 7.6c.5.4.8 1 .8 1.6v.4h3.2v-.4c0-.6.3-1.2.8-1.6A4.2 4.2 0 0 0 8 1.8z" />
+      <path d="M6.4 13.4h3.2M7 14.9h2" />`,
     // Two heads-and-shoulders for the People page.
     people: html`<circle cx="5.6" cy="5.6" r="2.3" />
       <path d="M1.8 13.2c0-2.1 1.7-3.8 3.8-3.8s3.8 1.7 3.8 3.8" />
@@ -202,6 +216,30 @@ export function LinkIcon({ size = 12 }) {
   ><path d="M6.5 9.5l3-3" />
     <path d="M7.6 4.6l1.1-1.1a2.4 2.4 0 0 1 3.4 3.4l-1.1 1.1" />
     <path d="M8.4 11.4l-1.1 1.1a2.4 2.4 0 0 1-3.4-3.4l1.1-1.1" /></svg>`;
+}
+
+// A plugin's declared decoration.icon: either a name from the host set above,
+// or a literal glyph the author supplied (an emoji). The server refuses an
+// identifier-shaped value that is not in the set, so anything non-alphanumeric
+// arriving here is meant to be rendered as text.
+export function PluginGlyph({ icon, iconPath, size = 11 }) {
+  // A plugin may ship its own icon as PATH DATA. The host builds the <svg>
+  // around it — plugins never supply markup — so there is no element that could
+  // carry a script, a foreignObject or an external reference, and the viewBox
+  // clips anything drawn outside the 16x16 box. The server validates the string
+  // against the SVG path grammar at install, so it holds nothing but commands
+  // and numbers by the time it reaches here.
+  if (iconPath) {
+    return html`<svg
+      viewBox="0 0 16 16" width=${size} height=${size} aria-hidden="true"
+      fill="none" stroke="currentColor" stroke-width="1.5"
+      stroke-linecap="round" stroke-linejoin="round"
+    ><path d=${iconPath} /></svg>`;
+  }
+  if (!icon) return null;
+  return /^[a-zA-Z][a-zA-Z0-9_-]*$/.test(icon)
+    ? html`<${Icon} name=${icon} size=${size} />`
+    : html`<span class="bc-glyph">${icon}</span>`;
 }
 
 // Trip badge: suitcase glyph plus label in one quiet accent-tinted pill (the

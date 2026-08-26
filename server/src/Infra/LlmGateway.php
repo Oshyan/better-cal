@@ -205,6 +205,29 @@ final class LlmGateway
     }
 
     /** POST to Gemini and decode the forced-JSON reply; null on any failure. */
+    /**
+     * Generic JSON completion for plugins (permission 'llm'). The model is
+     * asked for JSON and the decoded object is returned; null on any failure,
+     * matching every other method here — plugins must have a deterministic
+     * fallback, never a hard dependency on the model answering.
+     *
+     * @param array<string,mixed> $schemaHint optional response-shape hint
+     */
+    public function completeJson(string $prompt, array $schemaHint = [], int $timeoutSeconds = self::BATCH_TIMEOUT_SECONDS): ?array
+    {
+        if (!$this->isConfigured()) {
+            return null;
+        }
+        $instruction = $prompt;
+        if ($schemaHint !== []) {
+            $instruction .= "\n\nRespond with JSON only, matching this shape:\n" . json_encode($schemaHint);
+        }
+        return $this->generate([
+            'contents' => [['parts' => [['text' => $instruction]]]],
+            'generationConfig' => ['responseMimeType' => 'application/json'],
+        ], $timeoutSeconds);
+    }
+
     private function generate(array $body, int $timeoutSeconds = self::TIMEOUT_SECONDS): ?array
     {
         $url = sprintf(self::ENDPOINT, rawurlencode($this->cfg['gemini']['model']));

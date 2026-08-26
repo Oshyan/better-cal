@@ -69,6 +69,37 @@ final class Events
         return $this->calMeta[$calendarId] ?? null;
     }
 
+    /** @var array<int,string> user id => tzid, memoized per request */
+    private array $userTz = [];
+
+    /**
+     * The user's own timezone: their stored setting (the client posts it at
+     * boot), else the most common non-UTC tzid already on their calendars,
+     * else UTC. Never a hardcoded region.
+     */
+    private function userTzid(int $userId): string
+    {
+        if (isset($this->userTz[$userId])) {
+            return $this->userTz[$userId];
+        }
+        $raw = $this->db->scalar('SELECT settings_json FROM users WHERE id = ?', [$userId]);
+        $settings = is_string($raw) ? (json_decode($raw, true) ?: []) : [];
+        $tz = is_string($settings['tz'] ?? null) && $settings['tz'] !== '' ? $settings['tz'] : null;
+        if ($tz === null) {
+            // UTC is excluded: a bulk import writes thousands of rows as UTC,
+            // which means "unknown", not a place anyone lives.
+            $guess = $this->db->scalar(
+                "SELECT e.tzid FROM events e JOIN calendars c ON c.id = e.calendar_id
+                 WHERE e.user_id = ? AND e.deleted_at IS NULL AND e.tzid <> '' AND e.tzid <> 'UTC'
+                   AND c.kind <> 'plugin'
+                 GROUP BY e.tzid ORDER BY COUNT(*) DESC LIMIT 1",
+                [$userId]
+            );
+            $tz = is_string($guess) && $guess !== '' ? $guess : 'UTC';
+        }
+        return $this->userTz[$userId] = Time::normalizeTzid($tz);
+    }
+
     private function calendarCreatedAt(int $calendarId): ?\DateTimeImmutable
     {
         return $this->calendarMeta($calendarId)['createdAt'] ?? null;
@@ -326,8 +357,18 @@ final class Events
         if ($calendar['kind'] === 'subscribed') {
             throw HttpError::forbidden('feed_readonly', 'Cannot create events on a subscribed calendar');
         }
+        if (($calendar['kind'] ?? '') === 'plugin' && !str_starts_with(ActivityContext::get(), 'plugin:')) {
+            throw HttpError::forbidden('plugin_readonly', 'This calendar is managed by a plugin');
+        }
 
-        $tzid = isset($in['tzid']) ? Time::normalizeTzid((string) $in['tzid']) : 'America/Los_Angeles';
+        // No tzid supplied (a server-side creator: an accepted proposal, an
+        // agent call). Fall back to the USER's zone rather than a constant —
+        // hardcoding Pacific here silently stamps every such event with the
+        // wrong zone for anyone who does not live there, which changes how
+        // all-day events and recurrences are interpreted.
+        $tzid = isset($in['tzid'])
+            ? Time::normalizeTzid((string) $in['tzid'])
+            : $this->userTzid($userId);
         $allDay = filter_var($in['allDay'] ?? false, FILTER_VALIDATE_BOOL);
         [$startUtc, $endUtc] = $this->parseTimes($in, $allDay, $tzid, null);
 
@@ -392,6 +433,10 @@ final class Events
         if ($event['source'] === 'feed' && $editKeys !== []) {
             throw HttpError::forbidden('feed_readonly', 'Feed events are read-only except attendance, tags and reminders');
         }
+        if (($this->calendarMeta((int) $event['calendar_id'])['kind'] ?? '') === 'plugin' && $editKeys !== []
+            && !str_starts_with(ActivityContext::get(), 'plugin:')) {
+            throw HttpError::forbidden('plugin_readonly', 'Plugin events are read-only except attendance, tags and reminders');
+        }
 
         // Clearing the trip flag requires an empty trip: members would
         // otherwise dangle pointing at a non-container.
@@ -423,6 +468,9 @@ final class Events
             }
             if ($calendar['kind'] === 'subscribed') {
                 throw HttpError::forbidden('feed_readonly', 'Cannot move events onto a subscribed calendar');
+            }
+            if ($calendar['kind'] === 'plugin') {
+                throw HttpError::forbidden('plugin_readonly', 'Cannot move events onto a plugin-managed calendar');
             }
         }
 
@@ -654,6 +702,10 @@ final class Events
         $event = $this->get($userId, $id);
         if ($event['source'] === 'feed') {
             throw HttpError::forbidden('feed_readonly', 'Feed events cannot be deleted; hide them instead');
+        }
+        if (($this->calendarMeta((int) $event['calendar_id'])['kind'] ?? '') === 'plugin'
+            && !str_starts_with(ActivityContext::get(), 'plugin:')) {
+            throw HttpError::forbidden('plugin_readonly', 'Plugin events are managed by their plugin; hide the calendar instead');
         }
 
         // Deleting an override row directly = deleting that one occurrence.

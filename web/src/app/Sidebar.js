@@ -12,7 +12,7 @@ import {
   toggleCalendarVisible, createFolder, deleteFolder,
   folderMode, setFolderVisibilityMode, ALL_GROUP_ID, setSidebarActiveOnly,
   togglePersonVisible, enterPeopleSolo, exitPeopleSolo,
-  peopleVisibilityMode, setPeopleVisibilityMode, linkPersonToEvent,
+  peopleVisibilityMode, setPeopleVisibilityMode, linkPersonToEvent, saveSetting,
 } from './actions.js';
 import { startPointerDrag, externalDropTarget, setDropRowHighlight } from '../ui/DragController.js';
 import { CalendarSettings } from './CalendarSettings.js';
@@ -50,6 +50,15 @@ function healthBadge(cal) {
   return html`<span class="bc-health" role="img" aria-label=${tip} title=${tip}><${Icon} name="warning" size=${12} /></span>`;
 }
 
+// A plugin-owned calendar wears its plugin's declared decoration. Read from the
+// loaded plugin list rather than the calendar payload, so it tracks the
+// manifest without a schema field to keep in sync.
+function pluginDecoFor(cal) {
+  if (!cal || !cal.pluginId) return null;
+  const pl = (state.plugins || []).find((p) => p.id === cal.pluginId);
+  return (pl && pl.decoration) || null;
+}
+
 function CalendarRow({ cal, folders, open, onGear, soloed, onSolo, filedIn }) {
   // data-drop-cal marks writable calendars as drag targets: dropping an event
   // here moves it onto this calendar (feeds are read-only, so no attribute).
@@ -65,7 +74,7 @@ function CalendarRow({ cal, folders, open, onGear, soloed, onSolo, filedIn }) {
           onChange=${() => toggleCalendarVisible(cal)}
           aria-label=${'Toggle ' + cal.name}
         />
-        <${CalDot} cal=${cal} />
+        <${CalDot} cal=${cal} deco=${pluginDecoFor(cal)} />
         <span class="bc-cal-name">${cal.name}</span>
         ${filedIn && filedIn.length > 0 && html`<span
           class="bc-cal-filed" role="img"
@@ -275,12 +284,14 @@ function AddMenu() {
 // command palette offer exactly the same pages.
 
 export function Sidebar({ open, collapsed, onClose }) {
-  const { calendars, folders, collapsedFolders, route, people, collapsedAllCals, collapsedPeople, peopleSolo, activeOnly } = useStore(
+  const { calendars, folders, collapsedFolders, route, people, collapsedAllCals, collapsedPeople, peopleSolo, activeOnly, plugins, pluginHidden, proposalCount } = useStore(
     (s) => ({
       calendars: s.calendars, folders: s.folders,
       collapsedFolders: s.collapsedFolders, route: s.route,
       folderVisibility: s.folderVisibility,
       people: s.people, collapsedAllCals: s.collapsedAllCals,
+      plugins: s.plugins, pluginHidden: s.settings.pluginHidden || {},
+      proposalCount: s.proposalCount,
       collapsedPeople: s.collapsedPeople, peopleSolo: s.peopleSolo,
       activeOnly: !!s.settings.sidebarActiveOnly,
     }),
@@ -293,6 +304,14 @@ export function Sidebar({ open, collapsed, onClose }) {
   const [solo, setSolo] = useState(null); // {calId, prev: [[id, visible], ...]}
 
   const toggleGear = (key) => setOpenGear(openGear === key ? null : key);
+
+  // Enabled plugins that contribute overlay bands get a visibility row; the
+  // toggle is a persisted setting so it survives reloads.
+  const layerPlugins = (plugins || []).filter((pl) => pl.enabled && (pl.permissions || []).includes('ranges'));
+  const togglePluginLayer = (id) => {
+    saveSetting('pluginHidden', { ...(state.settings.pluginHidden || {}), [id]: !pluginHidden[id] });
+    set({ pluginSeq: state.pluginSeq + 1 });
+  };
 
   // Drag a person out of the sidebar and drop them on an event chip to link
   // them to that event. The 4px lift threshold keeps plain clicks working
@@ -476,6 +495,25 @@ export function Sidebar({ open, collapsed, onClose }) {
           </div>
         </div>`)}
       </section>`}
+      ${layerPlugins.length > 0 && html`<section class="bc-folder" aria-label="Plugin layers">
+        <div class="bc-folder-head">
+          <span class="bc-folder-name"><${Icon} name="plugins" size=${13} /> Plugins</span>
+        </div>
+        ${layerPlugins.map((pl) => html`<div key=${pl.id} class="bc-cal-item">
+          <div class="bc-cal-row${pluginHidden[pl.id] ? ' is-off' : ''}">
+            <label class="bc-cal-label" title=${pl.name + ' overlay bands'}>
+              <input
+                type="checkbox"
+                checked=${!pluginHidden[pl.id]}
+                onChange=${() => togglePluginLayer(pl.id)}
+                aria-label=${'Show ' + pl.name + ' bands on the calendar'}
+              />
+              <span class="bc-cal-name">${pl.name}</span>
+            </label>
+            <button type="button" class="bc-icon-btn" title="Plugin settings" onClick=${() => set({ route: 'plugins' })}><${Icon} name="settings" size=${13} /></button>
+          </div>
+        </div>`)}
+      </section>`}
       <${AddMenu} />
       ${soloCal && html`<div class="bc-solo-banner" role="status">
         Showing only <strong>${soloCal.name}</strong>
@@ -489,7 +527,8 @@ export function Sidebar({ open, collapsed, onClose }) {
         class="bc-manage-item${route === r ? ' is-active' : ''}"
         aria-current=${route === r ? 'page' : 'false'}
         onClick=${() => set({ route: r })}
-      ><${Icon} name=${r} /><span>${label}</span></button>`)}
+      ><${Icon} name=${r} /><span>${label}</span>${r === 'proposals' && proposalCount > 0
+        && html`<span class="bc-manage-badge" aria-label=${proposalCount + ' awaiting a decision'}>${proposalCount}</span>`}</button>`)}
     </footer>
   </aside>`;
 }

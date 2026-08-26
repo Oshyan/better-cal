@@ -248,6 +248,8 @@ final class Calendars
             'name' => (string) $c['name'],
             'color' => (string) $c['color'],
             'kind' => (string) $c['kind'],
+            'pluginId' => isset($c['plugin_id']) && $c['plugin_id'] !== null ? (string) $c['plugin_id'] : null,
+            'pluginSettings' => self::pluginSettingsFor($c['settings_json'] !== null ? (string) $c['settings_json'] : null),
             'sourceUrl' => $c['source_url'] !== null ? (string) $c['source_url'] : null,
             'visible' => (int) $c['visible'] === 1,
             'position' => (int) $c['position'],
@@ -296,6 +298,13 @@ final class Calendars
      * events by default; local calendars do not). Grouping itself is client-
      * side; the server only persists the preference.
      */
+    /** settings_json.plugins verbatim (per-plugin calendar-scope values). */
+    private static function pluginSettingsFor(?string $settingsJson): array
+    {
+        $s = is_string($settingsJson) ? (json_decode($settingsJson, true) ?: []) : [];
+        return is_array($s['plugins'] ?? null) ? $s['plugins'] : [];
+    }
+
     public static function groupSimilarFor(?string $settingsJson, string $kind): bool
     {
         $settings = $settingsJson !== null && $settingsJson !== '' ? json_decode($settingsJson, true) : null;

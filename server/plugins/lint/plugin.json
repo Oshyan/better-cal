@@ -1,0 +1,59 @@
+{
+  "id": "lint",
+  "name": "Calendar Lint",
+  "version": "0.1.0",
+  "minHost": "0.1.0",
+  "description": "Daily audit of the next 30 days: impossible back-to-back travel, events outside your preferred hours, and suspected duplicates. Warnings only; nothing is changed.",
+  "permissions": [
+    "warnings"
+  ],
+  "jobs": [
+    {
+      "id": "audit",
+      "interval": "P1D"
+    }
+  ],
+  "settings": [
+    {
+      "key": "prefStart",
+      "type": "number",
+      "label": "Preferred day starts (hour)",
+      "min": 0,
+      "max": 12,
+      "default": 8
+    },
+    {
+      "key": "prefEnd",
+      "type": "number",
+      "label": "Preferred day ends (hour)",
+      "min": 12,
+      "max": 24,
+      "default": 22
+    },
+    {
+      "key": "maxKm",
+      "type": "number",
+      "label": "Back-to-back distance limit (km)",
+      "min": 1,
+      "max": 200,
+      "default": 30
+    },
+    {
+      "key": "checkDupes",
+      "type": "toggle",
+      "label": "Flag suspected duplicates",
+      "default": true
+    }
+  ],
+  "calendarSettings": [
+    {
+      "key": "exclude",
+      "type": "toggle",
+      "label": "Skip this calendar in lint audits",
+      "default": false
+    }
+  ],
+  "decoration": {
+    "icon": "warning"
+  }
+}

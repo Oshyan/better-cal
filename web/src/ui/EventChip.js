@@ -10,7 +10,7 @@
 import { html } from '../../vendor/index.js';
 import { contrastText, withAlpha, DEFAULT_COLOR } from '../lib/color.js';
 import { parseISO, fmtTime, timeState } from '../lib/dates.js';
-import { Icon } from './icons.js';
+import { Icon, PluginGlyph } from './icons.js';
 
 // Bail out of custom click handling when modifier keys are pressed so
 // browser-native behaviors are never hijacked.
@@ -230,14 +230,14 @@ export function TripBand({ occ, cal, seg, dimmed, nowMs, onOpen, onPointerDown, 
   // calendar color.
   const color = occ.availKind
     ? (occ.availKind === 'away' ? '#8b93a4' : occ.availKind === 'busy' ? '#d19a38' : '#3f9d6e')
-    : calColor(cal);
+    : (occ.pluginColor || calColor(cal));
   const open = (e) => {
     if (hasModifier(e)) return;
     e.stopPropagation();
     if (onOpen) onOpen(occ.instanceId, e.currentTarget.getBoundingClientRect(), { detail: true });
   };
   return html`<div
-    class="bc-band${occ.availKind ? ' is-avail' : ''}${stateClasses(occ, dimmed, nowMs)}${seg.contLeft ? ' cont-l' : ''}${seg.contRight ? ' cont-r' : ''}"
+    class="bc-band${occ.availKind ? ' is-avail' : ''}${occ.pluginId ? ' is-pluginband' : ''}${occ.pluginAnim && occ.pluginAnim !== 'none' ? ' is-anim-' + occ.pluginAnim : ''}${stateClasses(occ, dimmed, nowMs)}${seg.contLeft ? ' cont-l' : ''}${seg.contRight ? ' cont-r' : ''}"
     style=${occ.availKind
       ? `background:${withAlpha(color, 0.09)};border-top:2px dashed ${withAlpha(color, 0.45)};color:${withAlpha(color, 0.9)}`
       : `background:${withAlpha(color, 0.13)};box-shadow:inset 0 2px 0 ${color}`}
@@ -255,6 +255,8 @@ export function TripBand({ occ, cal, seg, dimmed, nowMs, onOpen, onPointerDown, 
     }}
   >
     ${!seg.contLeft && onEdgePointerDown && html`<span class="bc-bar-handle l" onPointerDown=${(e) => { e.stopPropagation(); onEdgePointerDown('start', e); }}></span>`}
+    ${(occ.pluginIcon || occ.pluginIconPath) && !seg.contLeft && html`<span class="bc-band-icon"
+      >${PluginGlyph({ icon: occ.pluginIcon, iconPath: occ.pluginIconPath })}</span>`}
     <span class="bc-band-label">${seg.contLeft ? '‹ ' : ''}${occ.title || '(untitled)'}</span>
     ${!seg.contRight && onEdgePointerDown && html`<span class="bc-bar-handle r" onPointerDown=${(e) => { e.stopPropagation(); onEdgePointerDown('end', e); }}></span>`}
   </div>`;

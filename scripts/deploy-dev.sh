@@ -6,6 +6,25 @@ set -euo pipefail
 # install — own directory (/home/bettercal/dev), own database (bettercal_dev),
 # own .env — sharing only the host, the TLS certificate, and the PHP-FPM pool.
 #
+# PORT 9443 IS CLOSED AT THE FIREWALL by default, so the URL above will time out
+# until you reopen it. That is deliberate: dev serves a CLONE of production —
+# real events, real people, real tokens — behind the SAME session secret as
+# prod, so a prod cookie authenticates on it. An internet-facing second door to
+# all of that is not worth leaving open between branches.
+#
+# Open it only while you are actually testing, and close it again after:
+#   hcloud firewall add-rule cloudpanel-prod --direction in --protocol tcp \
+#     --port 9443 --source-ips 0.0.0.0/0 --source-ips ::/0
+#   hcloud firewall delete-rule cloudpanel-prod --direction in --protocol tcp \
+#     --port 9443 --source-ips 0.0.0.0/0 --source-ips ::/0
+#
+# Better still, scope it to your own address the way port 8443 already is,
+# rather than to 0.0.0.0/0.
+#
+# Everything else survives closure: the code, the database and the vhost stay
+# in place (~42 MB total), nothing is scheduled against dev (the worker cron
+# points only at prod), so a closed dev costs nothing and revives instantly.
+#
 # Isolation properties worth knowing:
 #   - Mail ingest, reminder email, RSVP SMTP, and Web Push are OFF in dev by
 #     construction: its .env simply omits the SMTP/RSVP/VAPID variables, and

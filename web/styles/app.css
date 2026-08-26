@@ -2532,3 +2532,130 @@ body.bc-rescheduling { user-select: none; }
   background: color-mix(in srgb, var(--accent) 6%, transparent);
   pointer-events: none;
 }
+
+/* --- plugin system ------------------------------------------------------------------ */
+
+/* Ops page cards */
+.bc-plugin-card { border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 14px; margin-bottom: 10px; }
+.bc-plugin-card.is-off { opacity: 0.75; }
+.bc-plugin-head { display: flex; align-items: center; gap: 10px; }
+.bc-plugin-title { display: flex; align-items: baseline; gap: 8px; min-width: 0; flex-wrap: wrap; }
+.bc-plugin-name { font-weight: 700; font-size: 14px; }
+.bc-plugin-version { color: var(--fg-muted); font-size: 11.5px; }
+.bc-plugin-perm {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px;
+  border: 1px solid var(--border-strong); border-radius: 999px; padding: 0 6px; color: var(--fg-muted);
+}
+.bc-plugin-tools { margin-left: auto; display: flex; align-items: center; gap: 6px; flex: none; }
+.bc-plugin-desc { margin: 6px 0 0; font-size: 12.5px; color: var(--fg-muted); }
+.bc-plugin-errors { margin-top: 6px; font-size: 12px; color: var(--danger); display: flex; flex-direction: column; gap: 2px; }
+.bc-plugin-status { display: flex; align-items: center; gap: 12px; margin-top: 8px; font-size: 12px; color: var(--fg-muted); flex-wrap: wrap; }
+.bc-plugin-run.is-error, .bc-plugin-run.is-timeout { color: var(--danger); }
+.bc-plugin-counts { display: inline-flex; gap: 10px; }
+.bc-plugin-warnlist { margin: 8px 0 0; padding-left: 18px; font-size: 12.5px; display: flex; flex-direction: column; gap: 3px; }
+.bc-plugin-warnlist .is-info { color: var(--fg-muted); }
+.bc-plugin-fix { color: var(--fg-muted); }
+
+/* Declarative settings form (plugin scope + calendar scope) */
+.bc-schema-form { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--border); padding-top: 10px; }
+.bc-schema-field { display: flex; align-items: center; gap: 10px; }
+.bc-schema-label { flex: none; width: 190px; font-size: 12.5px; color: var(--fg-muted); }
+.bc-schema-input { font-size: 13px; padding: 3px 8px; max-width: 260px; }
+/* List-shaped settings need room to read as a list, not a 260px slot. */
+.bc-schema-area { max-width: 460px; width: 100%; resize: vertical; line-height: 1.45; font-family: inherit; }
+.bc-schema-toggle span { font-size: 12.5px; color: var(--fg-muted); }
+.bc-schema-actions { display: flex; justify-content: flex-end; }
+.bc-calset-plugin { border-top: 1px solid var(--border); padding-top: 8px; margin-top: 8px; }
+.bc-calset-pluginhead { font-size: 12px; font-weight: 700; color: var(--fg-muted); display: inline-flex; align-items: center; gap: 5px; }
+
+/* Plugin overlay bands: solid-tint variant distinct from availability's dash */
+.bc-band.is-pluginband { cursor: pointer; }
+/* A plugin's decoration icon rides the band at label weight: it identifies the
+   source at a glance without competing with the label for the eye. */
+.bc-band-icon { display: inline-flex; align-items: center; flex: none; margin-right: 4px; opacity: 0.85; }
+/* Icon-in-place-of-dot: same 9px slot the dot occupies, so calendar names stay
+   aligned whether a row shows a dot, a feed ring, or a plugin glyph. */
+.bc-cal-dot.is-icon { background: none; border: 0; display: inline-flex; align-items: center; justify-content: center; }
+.bc-glyph { font-size: 11px; line-height: 1; }
+
+/* Range info card */
+.bc-plugincard {
+  position: fixed; z-index: 95; width: 320px; max-width: 92vw;
+  background: var(--bg-raised); border: 1px solid var(--border-strong);
+  border-radius: 8px; box-shadow: var(--shadow); padding: 10px 12px;
+  /* A plugin's detailHtml is author-controlled and can be arbitrarily long, so
+     the card caps its own height and scrolls rather than running off-screen. */
+  max-height: calc(100vh - 16px); overflow-y: auto;
+}
+.bc-plugincard-head { display: flex; align-items: center; gap: 7px; }
+.bc-plugincard-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); flex: none; }
+.bc-plugincard-title { font-weight: 700; font-size: 13.5px; min-width: 0; }
+.bc-plugincard-plugin { margin-left: auto; font-size: 10.5px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.4px; }
+.bc-plugincard-when { margin-top: 3px; font-size: 12px; color: var(--fg-muted); }
+.bc-plugincard-body { margin-top: 6px; font-size: 12.5px; }
+.bc-plugincard-body p { margin: 0 0 4px; }
+
+/* Activity badge for plugin sources */
+.bc-activity-badge.is-plugin { color: #2e8b8b; border-color: color-mix(in srgb, #2e8b8b 55%, transparent); }
+
+/* --- plugin system v2 ---------------------------------------------------------------- */
+
+/* Per-event plugin data in the detail view */
+.bc-epd .bc-detail-label { display: inline-flex; align-items: center; gap: 5px; }
+.bc-epd-computed { display: flex; flex-direction: column; gap: 2px; margin-bottom: 4px; }
+.bc-epd-row { display: flex; align-items: baseline; gap: 8px; font-size: 12.5px; }
+.bc-epd-key { color: var(--fg-muted); min-width: 76px; text-transform: capitalize; }
+.bc-epd-pair { margin-right: 10px; }
+.bc-epd-k { color: var(--fg-muted); }
+.bc-epd .bc-schema-form { border-top: none; padding-top: 4px; margin-top: 2px; }
+.bc-epd .bc-schema-label { width: 120px; }
+
+/* Proposals */
+.bc-proposal { border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 14px; margin-bottom: 10px; }
+.bc-proposal.is-accepted { opacity: 0.8; border-color: color-mix(in srgb, #3f9d6e 45%, var(--border)); }
+.bc-proposal.is-rejected { opacity: 0.6; }
+.bc-proposal-head { display: flex; align-items: center; gap: 8px; }
+.bc-proposal-toggle { background: none; border: none; display: flex; align-items: center; gap: 6px; padding: 0; text-align: left; min-width: 0; }
+.bc-proposal-caret { display: inline-flex; transition: transform 0.12s ease; }
+.bc-proposal-caret.is-closed { transform: rotate(-90deg); }
+.bc-proposal-title { font-weight: 700; font-size: 14px; }
+.bc-proposal-plugin { margin-left: auto; font-size: 10.5px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.4px; }
+.bc-proposal-badge { font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px; }
+.bc-proposal-badge.is-accepted { color: #2d7a52; border-color: color-mix(in srgb, #3f9d6e 55%, transparent); background: #3f9d6e18; }
+.bc-proposal-summary { margin: 4px 0 0; font-size: 12.5px; color: var(--fg-muted); }
+.bc-proposal-body { margin-top: 8px; }
+.bc-proposal-why { font-size: 12.5px; margin-bottom: 6px; }
+.bc-proposal-why p { margin: 0 0 4px; }
+.bc-proposal-trip { font-size: 12.5px; font-weight: 600; display: inline-flex; align-items: center; gap: 5px; margin-bottom: 4px; }
+.bc-proposal-list { list-style: none; margin: 0 0 10px; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.bc-proposal-item { display: flex; align-items: baseline; gap: 10px; font-size: 12.5px; }
+.bc-proposal-when { flex: none; width: 190px; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+.bc-proposal-what { font-weight: 600; }
+.bc-proposal-where { color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bc-proposal-actions { display: flex; gap: 8px; }
+/* Inline chips: the activity page's filter row stacks because it leads with a
+   full-width search input, which this page does not have. */
+.bc-proposal-filters { display: flex; gap: 6px; margin-bottom: 14px; }
+
+/* Manage-row count badge (open proposals) */
+.bc-manage-badge {
+  margin-left: auto; min-width: 17px; height: 17px; padding: 0 5px;
+  border-radius: 999px; background: var(--accent); color: #fff;
+  font-size: 10.5px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center;
+}
+
+/* Declarative chip decorations (manifest decoration.animation). Both are
+   slow and low-contrast on purpose: a calendar that pulses at you is worse
+   than one that does not, so these mark "live" without demanding attention. */
+@keyframes bc-plugin-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.62; } }
+@keyframes bc-plugin-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+.bc-chip.is-anim-pulse, .bc-bar.is-anim-pulse, .bc-band.is-anim-pulse { animation: bc-plugin-pulse 2.4s ease-in-out infinite; }
+.bc-chip.is-anim-shimmer, .bc-bar.is-anim-shimmer, .bc-band.is-anim-shimmer {
+  background-image: linear-gradient(90deg, transparent 20%, rgba(255, 255, 255, 0.22) 50%, transparent 80%);
+  background-size: 200% 100%;
+  animation: bc-plugin-shimmer 3.5s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .bc-chip.is-anim-pulse, .bc-bar.is-anim-pulse, .bc-band.is-anim-pulse,
+  .bc-chip.is-anim-shimmer, .bc-bar.is-anim-shimmer, .bc-band.is-anim-shimmer { animation: none; }
+}

@@ -16,6 +16,7 @@ import {
 } from '../lib/dates.js';
 import { fmtReminder } from '../lib/reminders.js';
 import { hasHtml, sanitizeHtml } from '../lib/richtext.js';
+import { EventPluginData } from './EventPluginData.js';
 import { gmapsUrl } from '../lib/maps.js';
 
 // --- recurrence in words ----------------------------------------------------
@@ -389,6 +390,7 @@ export function EventDetail() {
           </span>`}
           ${occ.tags && occ.tags.length > 0 && html`<span class="bc-pop-tags">${occ.tags.map((t) => '#' + t).join(' ')}</span>`}
         </div>`}
+        <${EventPluginData} eventId=${occ.eventId} readOnly=${isFeed} />
         ${isFeed && cal && html`<div class="bc-detail-section bc-detail-source">
           <div class="bc-detail-label">Source</div>
           ${cal.sourceUrl

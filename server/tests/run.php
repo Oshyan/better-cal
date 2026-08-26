@@ -360,6 +360,210 @@ checkEq('imip sequence', 2, $imip['events'][0]['invite']['sequence']);
 checkEq('imip garbage -> null', null, MailIngest::parseImip('not an ics'));
 }
 
+// Plugin system (docs/plugins/prd-v1.md): pure pieces.
+use BetterCal\Domain\Plugins;
+use BetterCal\Infra\HttpClient;
+
+// Manifest validation.
+$goodMan = ['id' => 'weather', 'name' => 'Weather', 'version' => '0.1.0',
+    'permissions' => ['http', 'events:write'], 'jobs' => [['id' => 'refresh', 'interval' => 'PT3H']],
+    'settings' => [['key' => 'units', 'label' => 'Units', 'type' => 'select', 'options' => ['F', 'C']]]];
+checkEq('plugin manifest: valid passes', [], Plugins::manifestErrors($goodMan));
+check('plugin manifest: bad id caught', Plugins::manifestErrors(['id' => 'Bad_Id', 'name' => 'x', 'version' => '1.0.0']) !== []);
+check('plugin manifest: bad interval caught', in_array('job refresh: interval must be an ISO 8601 duration (e.g. PT3H)',
+    Plugins::manifestErrors($goodMan === [] ? [] : array_merge($goodMan, ['jobs' => [['id' => 'refresh', 'interval' => '3h']]])), true));
+check('plugin manifest: unknown permission caught', in_array('unknown permission: mail',
+    Plugins::manifestErrors(array_merge($goodMan, ['permissions' => ['mail']])), true));
+check('plugin manifest: select without options caught',
+    Plugins::manifestErrors(array_merge($goodMan, ['settings' => [['key' => 'u', 'label' => 'U', 'type' => 'select']]])) !== []);
+check('plugin manifest: future minHost refused',
+    Plugins::manifestErrors(array_merge($goodMan, ['minHost' => '9.0.0'])) !== []);
+
+// Settings schema validation.
+$schema = [
+    ['key' => 'days', 'type' => 'number', 'min' => 1, 'max' => 14],
+    ['key' => 'units', 'type' => 'select', 'options' => ['F', 'C']],
+    ['key' => 'on', 'type' => 'toggle'],
+    ['key' => 'loc', 'type' => 'location'],
+    ['key' => 'note', 'type' => 'text'],
+];
+[$cv, $ce] = Plugins::validateAgainstSchema($schema, ['days' => 10, 'units' => 'C', 'on' => 'true', 'loc' => ['name' => 'SF', 'lat' => 37.77, 'lng' => -122.42], 'note' => 'hi']);
+checkEq('plugin settings: clean pass has no errors', [], $ce);
+checkEq('plugin settings: toggle coerces', true, $cv['on']);
+checkEq('plugin settings: number kept numeric', 10, $cv['days']);
+[$cv2, $ce2] = Plugins::validateAgainstSchema($schema, ['days' => 99, 'units' => 'K', 'loc' => ['name' => 'x']]);
+check('plugin settings: max enforced', isset($ce2['days']));
+check('plugin settings: select enforced', isset($ce2['units']));
+check('plugin settings: location needs coords', isset($ce2['loc']));
+[$cv3, ] = Plugins::validateAgainstSchema($schema, ['loc' => null]);
+check('plugin settings: location clearable', array_key_exists('loc', $cv3) && $cv3['loc'] === null);
+
+// Over-long text used to be truncated silently behind a 200, so a setting
+// looked saved and the plugin then ran on a fraction of it. Refuse instead.
+[, $ceLong] = Plugins::validateAgainstSchema($schema, ['note' => str_repeat('a', 501)]);
+check('plugin settings: over-long text refused, not truncated', isset($ceLong['note']));
+[$cvEdge, $ceEdge] = Plugins::validateAgainstSchema($schema, ['note' => str_repeat('a', 500)]);
+check('plugin settings: text at the limit still saves', $ceEdge === [] && mb_strlen($cvEdge['note']) === 500);
+
+// textarea exists because the schema has no list type; it may raise its own
+// ceiling so a wishlist need not be split across four fields.
+$areaSchema = [['key' => 'list', 'type' => 'textarea', 'maxLength' => 4000]];
+[$cvA, $ceA] = Plugins::validateAgainstSchema($areaSchema, ['list' => str_repeat('b', 4000)]);
+check('plugin settings: textarea honours a raised maxLength', $ceA === [] && mb_strlen($cvA['list']) === 4000);
+[, $ceA2] = Plugins::validateAgainstSchema($areaSchema, ['list' => str_repeat('b', 4001)]);
+check('plugin settings: textarea still refuses past its maxLength', isset($ceA2['list']));
+checkEq('plugin settings: textarea ceiling clamps a greedy maxLength', Plugins::TEXTAREA_MAX,
+    Plugins::textLimit(['type' => 'textarea', 'maxLength' => 999999]));
+checkEq('plugin settings: plain text cannot raise its own ceiling', Plugins::TEXT_MAX,
+    Plugins::textLimit(['type' => 'text', 'maxLength' => 999999]));
+
+// null means "clear" for every type, matching setEventData(null). Coercion
+// used to turn a clear into '' for text and false for a toggle.
+[$cvNull, ] = Plugins::validateAgainstSchema($schema, ['note' => null, 'on' => null, 'days' => null]);
+check('plugin settings: null clears text', array_key_exists('note', $cvNull) && $cvNull['note'] === null);
+check('plugin settings: null clears toggle', array_key_exists('on', $cvNull) && $cvNull['on'] === null);
+check('plugin settings: null clears number', array_key_exists('days', $cvNull) && $cvNull['days'] === null);
+
+// Coordinates were accepted unchecked, so lat 991 stored fine.
+[, $ceGeo] = Plugins::validateAgainstSchema($schema, ['loc' => ['name' => 'nowhere', 'lat' => 991, 'lng' => -122.4]]);
+check('plugin settings: out-of-range latitude refused', isset($ceGeo['loc']));
+[, $ceGeo2] = Plugins::validateAgainstSchema($schema, ['loc' => ['name' => 'nowhere', 'lat' => 37.7, 'lng' => 900]]);
+check('plugin settings: out-of-range longitude refused', isset($ceGeo2['loc']));
+
+// (string) on an array is the literal "Array", so a structured value sent to a
+// text field silently stored that word.
+[, $ceArr] = Plugins::validateAgainstSchema($schema, ['note' => ['lat' => 1, 'lng' => 2]]);
+check('plugin settings: non-scalar refused by text field', isset($ceArr['note']));
+
+// A default longer than its own field could never be re-saved once edited.
+check('plugin manifest: over-long text default refused', Plugins::manifestErrors(array_merge($goodMan, [
+    'settings' => [['key' => 'note', 'label' => 'Note', 'type' => 'text', 'default' => str_repeat('a', 501)]],
+])) !== []);
+check('plugin manifest: textarea type accepted', Plugins::manifestErrors(array_merge($goodMan, [
+    'settings' => [['key' => 'list', 'label' => 'List', 'type' => 'textarea']],
+])) === []);
+
+// decoration.icon: names are validated server-side against a list that has to
+// mirror the frontend's icon set. Read the real icons.js and compare, so the
+// two cannot drift into "valid name, renders nothing".
+$iconsJs = (string) file_get_contents(dirname(__DIR__, 2) . '/web/src/ui/icons.js');
+$iconBody = explode('const body = {', $iconsJs, 2)[1] ?? '';
+preg_match_all('/^    ([a-zA-Z][a-zA-Z0-9_-]*):/m', $iconBody, $mIcons);
+$jsIcons = $mIcons[1];
+sort($jsIcons);
+$phpIcons = Plugins::ICON_NAMES;
+sort($phpIcons);
+checkEq('icon set: PHP allowlist matches icons.js', $jsIcons, $phpIcons);
+
+check('icon: a host name validates', Plugins::iconError('calendar') === null);
+check('icon: an unknown name is refused', Plugins::iconError('map-pin') !== null);
+check('icon: emoji passes through', Plugins::iconError('🌊') === null);
+check('icon: ZWJ emoji sequence passes', Plugins::iconError('👩‍🚀') === null);
+check('icon: a smuggled label is refused', Plugins::iconError('a whole sentence of text') !== null);
+check('icon: absent is fine', Plugins::iconError(null) === null);
+check('icon: empty string is refused', Plugins::iconError('  ') !== null);
+check('manifest: bad decoration icon fails install', Plugins::manifestErrors(array_merge($goodMan, [
+    'decoration' => ['icon' => 'not-an-icon', 'color' => '#5b8dd9'],
+])) !== []);
+
+// Plugin-supplied icons are PATH DATA, never markup: the host builds the <svg>
+// shell, so there is no element to carry a script or an external reference.
+// The grammar is the whole defence, so probe its edges.
+check('iconPath: a plain path validates',
+    Plugins::iconPathError('M3 8.6a4.4 4.4 0 0 1 4.4 4.4M3 4.6') === null);
+check('iconPath: absent is fine', Plugins::iconPathError(null) === null);
+check('iconPath: must start with a moveto', Plugins::iconPathError('L3 4 L5 6') !== null);
+check('iconPath: markup is refused', Plugins::iconPathError('M0 0"/><script>alert(1)</script>') !== null);
+check('iconPath: an element is refused', Plugins::iconPathError('M0 0 <foreignObject>') !== null);
+check('iconPath: a url() reference is refused', Plugins::iconPathError('M0 0 url(#x)') !== null);
+check('iconPath: an xlink href is refused', Plugins::iconPathError('M0 0 xlink:href="http://x"') !== null);
+check('iconPath: an entity is refused', Plugins::iconPathError('M0 0 &#60;svg&#62;') !== null);
+check('iconPath: quotes are refused', Plugins::iconPathError('M0 0 "') !== null);
+check('iconPath: scientific notation survives', Plugins::iconPathError('M1e2 2.5e-3 L4 4') === null);
+check('iconPath: arcs and curves survive',
+    Plugins::iconPathError('M8 1A7 7 0 1 1 8 15C4 15 1 12 1 8Z') === null);
+check('iconPath: over-long path refused',
+    Plugins::iconPathError('M' . str_repeat('1 2 ', 600)) !== null);
+check('manifest: a valid iconPath installs', Plugins::manifestErrors(array_merge($goodMan, [
+    'decoration' => ['iconPath' => 'M2 8 L8 2 L14 8'],
+])) === []);
+check('manifest: a hostile iconPath fails install', Plugins::manifestErrors(array_merge($goodMan, [
+    'decoration' => ['iconPath' => 'M0 0"><script>x</script>'],
+])) !== []);
+
+// Declared dependencies between plugins (tier 1).
+check('manifest: requires accepts a list of ids',
+    Plugins::manifestErrors(array_merge($goodMan, ['requires' => ['open-meteo']])) === []);
+check('manifest: optional accepts a list of ids',
+    Plugins::manifestErrors(array_merge($goodMan, ['optional' => ['tides', 'open-meteo']])) === []);
+// The fixture's own id is "weather", so this also proves the self-check covers
+// `optional` and not just `requires`.
+check('manifest: a plugin cannot optionally depend on itself',
+    Plugins::manifestErrors(array_merge($goodMan, ['optional' => ['weather']])) !== []);
+check('manifest: requires refuses a non-list',
+    Plugins::manifestErrors(array_merge($goodMan, ['requires' => 'open-meteo'])) !== []);
+check('manifest: requires refuses a bad id',
+    Plugins::manifestErrors(array_merge($goodMan, ['requires' => ['Not An Id']])) !== []);
+check('manifest: a plugin cannot require itself',
+    Plugins::manifestErrors(array_merge($goodMan, ['requires' => [$goodMan['id']]])) !== []);
+
+// SSRF policy: the refusal list.
+foreach (['127.0.0.1', '10.1.2.3', '172.16.0.9', '192.168.1.1', '169.254.169.254', '100.64.0.1', '0.0.0.0', '::1', 'fe80::1', 'fd00::1', '::ffff:127.0.0.1', 'not-an-ip'] as $bad) {
+    check('http policy refuses ' . $bad, HttpClient::isForbiddenIp($bad));
+}
+foreach (['8.8.8.8', '140.82.112.3', '2606:4700:4700::1111', '100.128.0.1'] as $ok) {
+    check('http policy allows ' . $ok, !HttpClient::isForbiddenIp($ok));
+}
+
+// GH #21: feed fetching used raw cURL with FOLLOWLOCATION and no address
+// check, so a subscription URL could be walked to an internal address. It goes
+// through the policied client now — assert the refusal reaches the feed path
+// rather than trusting that the client is merely imported.
+$feeds = new BetterCal\Domain\Feeds(new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]));
+foreach (['http://127.0.0.1/evil.ics', 'https://169.254.169.254/latest/meta-data', 'http://[::1]/x.ics'] as $bad) {
+    $refused = false;
+    try {
+        $feeds->fetch($bad);
+    } catch (\RuntimeException $e) {
+        $refused = str_contains($e->getMessage(), 'Refused') || str_contains($e->getMessage(), 'Feed fetch failed');
+    }
+    check('feed fetch refuses internal target ' . $bad, $refused);
+}
+$rejectedScheme = false;
+try {
+    $feeds->fetch('file:///etc/passwd');
+} catch (\RuntimeException $e) {
+    $rejectedScheme = true;
+}
+check('feed fetch refuses non-http scheme', $rejectedScheme);
+
+// Plugin v2 + proposals: pure validation.
+use BetterCal\Domain\Proposals;
+
+// Proposal plan shape.
+$goodPlan = ['events' => [['title' => 'Dinner', 'start' => '2026-09-01T19:00:00-07:00']]];
+checkEq('proposal plan: minimal valid', [], Proposals::planErrors($goodPlan));
+check('proposal plan: empty events rejected', Proposals::planErrors(['events' => []]) !== []);
+check('proposal plan: missing title caught', in_array('events[0].title is required', Proposals::planErrors(['events' => [['start' => 'x']]]), true));
+check('proposal plan: missing start caught', in_array('events[0].start is required', Proposals::planErrors(['events' => [['title' => 'x']]]), true));
+check('proposal plan: trip needs title', Proposals::planErrors($goodPlan + ['trip' => ['start' => 'a', 'end' => 'b']]) !== []);
+checkEq('proposal plan: trip valid', [], Proposals::planErrors($goodPlan + ['trip' => ['title' => 'T', 'start' => '2026-09-01', 'end' => '2026-09-04']]));
+check('proposal plan: oversized batch rejected', Proposals::planErrors(['events' => array_fill(0, 51, ['title' => 't', 'start' => 's'])]) !== []);
+check('proposal plan: non-object rejected', Proposals::planErrors('nope') !== []);
+
+// v2 permissions and manifest sections.
+$v2Man = ['id' => 'planner', 'name' => 'Planner', 'version' => '0.1.0',
+    'permissions' => ['propose', 'llm', 'notify', 'people'],
+    'jobs' => [['id' => 'plan', 'interval' => 'P1D']],
+    'eventSettings' => [['key' => 'mode', 'label' => 'Mode', 'type' => 'select', 'options' => ['a', 'b']]]];
+checkEq('manifest: v2 permissions accepted', [], Plugins::manifestErrors($v2Man));
+check('manifest: eventSettings validated like other schemas',
+    Plugins::manifestErrors(array_merge($v2Man, ['eventSettings' => [['key' => 'x', 'label' => 'X', 'type' => 'bogus']]])) !== []);
+check('manifest: bad animation caught',
+    Plugins::manifestErrors(array_merge($v2Man, ['decoration' => ['animation' => 'disco']])) !== []);
+checkEq('manifest: valid animation accepted', [],
+    Plugins::manifestErrors(array_merge($v2Man, ['decoration' => ['icon' => 'trip', 'animation' => 'pulse']])));
+
 // isNew: source-based arrival rule (pure). The pill marks automated arrivals
 // only; the user's own creations never wear it, and nothing that happens to an
 // event later (calendar moves included) can change the verdict.
@@ -1070,8 +1274,89 @@ check('geo hash is 64 hex chars', preg_match('/^[0-9a-f]{64}$/', Geocode::queryH
 check('geo hash differs across bias regions', Geocode::queryHash('SFO', 37.77, -122.42) !== Geocode::queryHash('SFO', 55.68, 12.57));
 checkEq('geo hash stable within a bias cell', Geocode::queryHash('SFO', 37.61, -122.38), Geocode::queryHash('SFO', 37.77, -122.42));
 check('geo hash unbiased differs from biased', Geocode::queryHash('SFO') !== Geocode::queryHash('SFO', 37.77, -122.42));
+// PluginHost::geocode() shipped broken for the whole of v1/v2: it indexed
+// lookup()'s answer as $hits[0], but lookup() returns a single {lat,lng,display}
+// map with no key 0, so every plugin geocode silently returned null. Two
+// independent plugin authors hit it. Pin the return shape so the list/map
+// confusion cannot come back.
+$geoShape = Geocode::mapResponse(['features' => [[
+    'geometry' => ['coordinates' => [-122.513625, 37.780252]],
+    'properties' => ['name' => 'Sutro Baths', 'city' => 'San Francisco', 'country' => 'United States'],
+]]]);
+check('geo lookup answers a map, not a hit list', !array_is_list($geoShape));
+check('geo lookup map has no index 0 to read', !isset($geoShape[0]));
+check('geo lookup map carries lat/lng directly', isset($geoShape['lat'], $geoShape['lng']));
 checkEq('geo bias cell rounds to integer degrees', '38,-122', Geocode::biasCell(37.77, -122.42));
 checkEq('geo bias cell none without bias', 'none', Geocode::biasCell(null, null));
+// Picking among same-named places. The primary provider orders "Lisbon" as
+// eight American towns; significance ranking has to reach past them, without
+// disturbing addresses and venues, where the provider's own order is right.
+$feat = static fn(string $name, string $key, string $value): array => [
+    'geometry' => ['coordinates' => [1.0, 2.0]],
+    'properties' => ['name' => $name, 'osm_key' => $key, 'osm_value' => $value],
+];
+$lisbons = ['features' => [
+    $feat('Lisbon', 'place', 'town'),
+    $feat('Lisbon', 'place', 'village'),
+    $feat('Lisbon', 'place', 'city'),
+    $feat('Lisbon', 'place', 'hamlet'),
+]];
+checkEq('geo pick: the city wins among same-named places', 'city',
+    Geocode::pickFeature($lisbons, 'Lisbon')['properties']['osm_value']);
+checkEq('geo pick: matching is case and space insensitive', 'city',
+    Geocode::pickFeature($lisbons, '  lisbon ')['properties']['osm_value']);
+// A city outranks a county of the same name: someone typing "Florence" means
+// the city, not the county wrapped around a different one.
+checkEq('geo pick: city outranks county', 'city', Geocode::pickFeature(['features' => [
+    $feat('Florence', 'place', 'county'), $feat('Florence', 'place', 'city'),
+]], 'Florence')['properties']['osm_value']);
+// No exact-name candidate: an address or venue. Provider order must stand.
+checkEq('geo pick: address keeps provider order', 'Zuni Café', Geocode::pickFeature(['features' => [
+    $feat('Zuni Café', 'amenity', 'restaurant'), $feat('Market Street', 'highway', 'secondary'),
+]], '1658 Market St, San Francisco')['properties']['name']);
+check('geo pick: empty feature list yields null', Geocode::pickFeature(['features' => []], 'x') === null);
+check('geo pick: junk payload yields null', Geocode::pickFeature('nonsense', 'x') === null);
+
+// When to ask a second provider. Narrow on purpose.
+check('geo doubt: a town invites a second opinion',
+    Geocode::shouldConsultSecondary($feat('Lisbon', 'place', 'town')));
+check('geo doubt: a city invites one too (small US "cities" outrank capitals)',
+    Geocode::shouldConsultSecondary($feat('Florence', 'place', 'city')));
+check('geo doubt: a state does not',
+    !Geocode::shouldConsultSecondary($feat('Hawaii', 'place', 'state')));
+check('geo doubt: a country does not',
+    !Geocode::shouldConsultSecondary($feat('Portugal', 'place', 'country')));
+check('geo doubt: a venue never does',
+    !Geocode::shouldConsultSecondary($feat('Zuni Café', 'amenity', 'restaurant')));
+check('geo doubt: a street never does',
+    !Geocode::shouldConsultSecondary($feat('Market Street', 'highway', 'secondary')));
+check('geo doubt: nothing found invites one', Geocode::shouldConsultSecondary(null));
+
+// The secondary may only override with a genuinely major place, which is what
+// stops it replacing a correct "Hawaii, United States" with a Guatemalan village.
+checkEq('geo secondary: a major city overrides', 'Lisbon, Lisbon District, Portugal',
+    Geocode::secondaryOverride(['results' => [
+        ['name' => 'Lisbon', 'admin1' => 'Lisbon District', 'country' => 'Portugal',
+         'latitude' => 38.72, 'longitude' => -9.14, 'population' => 517802],
+    ]])['display']);
+check('geo secondary: a small place does not override',
+    Geocode::secondaryOverride(['results' => [
+        ['name' => 'Hawaii', 'country' => 'Guatemala', 'latitude' => 14.0, 'longitude' => -90.8],
+    ]]) === null);
+check('geo secondary: a sub-threshold population does not override',
+    Geocode::secondaryOverride(['results' => [
+        ['name' => 'Kailua-Kona', 'country' => 'United States',
+         'latitude' => 19.6, 'longitude' => -156.0, 'population' => 11975],
+    ]]) === null);
+check('geo secondary: it skips small hits to find a major one',
+    Geocode::secondaryOverride(['results' => [
+        ['name' => 'Small', 'latitude' => 1, 'longitude' => 1, 'population' => 200],
+        ['name' => 'Munich', 'admin1' => 'Bavaria', 'country' => 'Germany',
+         'latitude' => 48.1, 'longitude' => 11.6, 'population' => 1260391],
+    ]])['display'] === 'Munich, Bavaria, Germany');
+check('geo secondary: junk yields null', Geocode::secondaryOverride('nope') === null);
+check('geo secondary: no results yields null', Geocode::secondaryOverride(['results' => []]) === null);
+
 check('geo airport code: SFO', Geocode::isAirportCode('SFO'));
 check('geo airport code: trims whitespace', Geocode::isAirportCode(' KOA '));
 check('geo airport code: lowercase is not one', !Geocode::isAirportCode('sfo'));
@@ -1103,11 +1388,17 @@ checkEq('geo map garbage -> null', null, Geocode::mapResponse('garbage'));
 checkEq('geo map missing coordinates -> null', null, Geocode::mapResponse(['features' => [['properties' => ['name' => 'X']]]]));
 checkEq('geo map non-numeric coordinates -> null', null, Geocode::mapResponse(['features' => [['geometry' => ['coordinates' => ['a', 'b']]]]]));
 
-checkEq('geo negative cache row -> all-null result', ['lat' => null, 'lng' => null, 'display' => null], Geocode::resultFromRow(['lat' => null, 'lng' => null, 'display' => null]));
+checkEq('geo negative cache row -> all-null result', ['lat' => null, 'lng' => null, 'display' => null, 'kind' => null], Geocode::resultFromRow(['lat' => null, 'lng' => null, 'display' => null]));
 checkEq(
     'geo positive cache row round-trips',
-    ['lat' => 37.7739, 'lng' => -122.4216, 'display' => 'Zuni Cafe'],
-    Geocode::resultFromRow(['lat' => '37.7739', 'lng' => '-122.4216', 'display' => 'Zuni Cafe'])
+    ['lat' => 37.7739, 'lng' => -122.4216, 'display' => 'Zuni Cafe', 'kind' => 'restaurant'],
+    Geocode::resultFromRow(['lat' => '37.7739', 'lng' => '-122.4216', 'display' => 'Zuni Cafe', 'kind' => 'restaurant'])
+);
+// A row cached before the kind column existed still round-trips, as null.
+checkEq(
+    'geo pre-kind cache row round-trips with a null kind',
+    ['lat' => 1.0, 'lng' => 2.0, 'display' => 'Somewhere', 'kind' => null],
+    Geocode::resultFromRow(['lat' => '1.0', 'lng' => '2.0', 'display' => 'Somewhere'])
 );
 
 // ---------------------------------------------------------------------------
@@ -2023,6 +2314,10 @@ checkEq(
     "Added saved view 'Focus'",
     Undo::defaultSummary('saved_view', 'create', null, ['saved_views' => [['name' => 'Focus']]])
 );
+
+// ---------------------------------------------------------------------------
+// The bundled plugins' own pure logic (parsers, interval maths, date maths).
+require __DIR__ . '/plugins.php';
 
 // ---------------------------------------------------------------------------
 

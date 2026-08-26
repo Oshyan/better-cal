@@ -1,0 +1,49 @@
+{
+  "id": "tides",
+  "name": "Tides",
+  "version": "0.1.0",
+  "minHost": "0.1.0",
+  "description": "NOAA tide predictions (US stations, no API key): high/low tide events plus daylight low-tide window bands. Find your station id at tidesandcurrents.noaa.gov.",
+  "permissions": [
+    "http",
+    "events:write",
+    "ranges"
+  ],
+  "jobs": [
+    {
+      "id": "refresh",
+      "interval": "PT12H"
+    }
+  ],
+  "settings": [
+    {
+      "key": "station",
+      "type": "text",
+      "label": "NOAA station id",
+      "default": "9414290"
+    },
+    {
+      "key": "stationName",
+      "type": "text",
+      "label": "Station name (label only)",
+      "default": "San Francisco"
+    },
+    {
+      "key": "days",
+      "type": "number",
+      "label": "Days ahead",
+      "min": 1,
+      "max": 30,
+      "default": 14
+    },
+    {
+      "key": "daylightBands",
+      "type": "toggle",
+      "label": "Show daylight low-tide bands",
+      "default": true
+    }
+  ],
+  "decoration": {
+    "iconPath": "M1 6 C3 4 5 8 8 6 C11 4 13 8 15 6 M1 11 C3 9 5 13 8 11 C11 9 13 13 15 11"
+  }
+}

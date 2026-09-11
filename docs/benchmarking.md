@@ -131,6 +131,16 @@ from a Bay Area client at ~81ms RTT. Conditions stated because they matter.
 | payload | 793 bytes/occurrence | ~30% of it detail-only fields (see #15) |
 | brotli ratio | 15x | 2.8 MB → 188 KB on a 5-month window |
 
+"Todoist on" is doing more work in those conditions than it looks. That
+calendar is a fossil of a 2019-2020 write-through sync whose 147 recurrence
+masters carry neither UNTIL nor COUNT, so it expands forever and supplies
+about **95% of every month's occurrences** (~700 of ~730, checked across
+2026-09, 2026-10, 2027-06 and 2030-01; see #49). These figures are therefore
+a recurrence-expansion benchmark far more than a mixed-workload one, which is
+useful — expansion is the dominant phase at 105ms of the 167ms — but it does
+mean occurrence counts here are not a typical user's, and anything tuned
+against per-day density is being tuned against the wrong distribution.
+
 If a number here moves by more than about 30%, something changed — check the
 measurement before concluding it was the code.
 

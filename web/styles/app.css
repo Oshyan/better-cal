@@ -1150,6 +1150,9 @@ body.bc-dragging * { cursor: grabbing !important; }
 }
 .bc-qchip-title { font-weight: 600; }
 .bc-qchip-fallback { border-style: dashed; color: var(--fg-muted); }
+/* A parsed name that isn't in the directory yet: dashed like the editor's
+   proposed chip, because it lands in the same confirmation. */
+.bc-qchip-newperson { border-style: dashed; color: var(--fg-muted); }
 /* Structured strip: date, start/end time (or all day), calendar. Live-filled
    from the parse (bc-nl-applied flash), always directly editable. */
 .bc-quickadd-strip {
@@ -1204,6 +1207,9 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-field > span { font-size: 11.5px; font-weight: 600; color: var(--fg-muted); }
 .bc-field-row { display: flex; align-items: flex-end; gap: 8px; flex-wrap: wrap; }
 .bc-field.grow { flex: 1; min-width: 140px; }
+/* A field that needs the full row for a moment (People, while it asks whether
+   an unrecognised name should become a person). Its neighbours wrap below. */
+.bc-field-row > .bc-field-claims-row { flex-basis: 100%; }
 .bc-check { display: inline-flex; align-items: center; gap: 5px; }
 .bc-num { width: 58px; }
 .bc-lock-btn {
@@ -2145,6 +2151,8 @@ body.bc-rescheduling { user-select: none; }
 /* --- people (directory + editor chip input; append-only section) ------------ */
 
 /* Editor chip input: chips and the entry input share one bordered "field". */
+/* Holds the chip row plus the "add this person?" confirmation beneath it. */
+.bc-peoplein-wrap { display: flex; flex-direction: column; }
 .bc-peoplein {
   display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
   border: 1px solid var(--border); border-radius: var(--radius);
@@ -2177,6 +2185,26 @@ body.bc-rescheduling { user-select: none; }
   font-size: 13px; color: var(--fg); cursor: pointer;
 }
 .bc-peoplein-opt.is-active { background: var(--bg-inset); }
+/* A proposed person: a name the NL parse pulled out of the title, or one typed
+   that matches nobody. Dashed and muted so it reads as "not real yet" —
+   nothing is created until the confirm row below is answered. */
+.bc-peoplein-chip.is-proposed {
+  background: none; border-style: dashed; border-color: var(--border-strong);
+  color: var(--fg-muted); padding-left: 5px;
+}
+.bc-peoplein-confirm {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin-top: 5px; font-size: 12.5px; color: var(--fg-muted);
+}
+.bc-peoplein-mk, .bc-peoplein-no {
+  border-radius: 6px; padding: 2px 9px; font-size: 12.5px;
+  line-height: 1.5; cursor: pointer;
+}
+.bc-peoplein-mk { background: var(--bg-raised); border: 1px solid var(--border-strong); color: var(--fg); }
+.bc-peoplein-mk:hover:not(:disabled) { background: var(--bg-inset); }
+.bc-peoplein-mk:disabled { opacity: .6; cursor: default; }
+.bc-peoplein-no { background: none; border: none; color: var(--fg-muted); }
+.bc-peoplein-no:hover { color: var(--fg); }
 
 /* Popover "With ..." line. */
 .bc-pop-people { color: var(--fg-muted); font-size: 12.5px; }

@@ -18,6 +18,10 @@ import {
 
 const hm = (d) => pad(d.getHours()) + ':' + pad(d.getMinutes());
 
+// Directory lookup for a parsed name, case-insensitive like the server's.
+const knownPerson = (name) =>
+  state.people.find((p) => p.name.toLowerCase() === String(name).trim().toLowerCase());
+
 // Next full hour (rolling into tomorrow near midnight) as the default slot.
 function defaultForm() {
   const s = new Date();
@@ -260,6 +264,17 @@ export function QuickAdd() {
     const range = buildRange(f, d, touchedRef.current.has('dateKey'));
     if (!title || !range || f.calendarId == null) { setBusy(false); return; }
     const location = (f.location || '').trim() || (d && d.location) || null;
+    // A name the parse found that matches nobody is a decision, not a detail:
+    // creating the person here would do it silently, and dropping the name
+    // would lose it. Hand the whole draft to the editor, which asks. Names
+    // already in the directory link by id and keep the one-keystroke path.
+    const parsed = (d && d.personNames) || [];
+    if (parsed.some((n) => !knownPerson(n))) {
+      setBusy(false);
+      openFullEditor();
+      toast('New name in there — confirm who they are before saving');
+      return;
+    }
     await quickAddCreate({
       title,
       calendarId: Number(f.calendarId),
@@ -269,7 +284,7 @@ export function QuickAdd() {
       location,
       locationLat: location && f.locationLat != null ? f.locationLat : null,
       locationLng: location && f.locationLng != null ? f.locationLng : null,
-      ...(d && d.personNames && d.personNames.length ? { personNames: d.personNames } : {}),
+      ...(parsed.length ? { personIds: parsed.map((n) => knownPerson(n).id) } : {}),
     });
     setBusy(false);
   };
@@ -308,6 +323,9 @@ export function QuickAdd() {
           locationLat: (form.location || '').trim() ? form.locationLat : null,
           locationLng: (form.location || '').trim() ? form.locationLng : null,
           calendarId: form.calendarId != null ? Number(form.calendarId) : undefined,
+          // Carry the parsed people across; the editor resolves them to chips
+          // and asks about any that aren't in the directory yet.
+          personNames: (draft && draft.personNames) || [],
         },
         nlText: touchedRef.current.size === 0 ? text : '',
       },
@@ -338,7 +356,11 @@ export function QuickAdd() {
       ${draft && draft.intent !== 'availability' && html`<div class="bc-quickadd-preview">
         <span class="bc-qchip bc-qchip-title">${draft.title || '(untitled)'}</span>
         ${draft.location && html`<span class="bc-qchip">@ ${draft.location}</span>`}
-        ${draft.personNames && draft.personNames.map((n) => html`<span key=${n} class="bc-qchip">with ${n}</span>`)}
+        ${draft.personNames && draft.personNames.map((n) => html`<span
+          key=${n}
+          class=${'bc-qchip' + (knownPerson(n) ? '' : ' bc-qchip-newperson')}
+          title=${knownPerson(n) ? 'In your people' : 'Not in your people yet — you will be asked'}
+        >with ${n}</span>`)}
         ${draft.source === 'fallback' && html`<span class="bc-qchip bc-qchip-fallback" title="Parsed without the language model">basic parse</span>`}
       </div>`}
       ${(!draft || draft.intent !== 'availability') && html`<div class="bc-quickadd-strip">

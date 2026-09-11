@@ -6,7 +6,7 @@
 // with a brief flash on the fields it touched. Fields stay fully editable.
 
 import { html, useState, useEffect, useRef } from '../../vendor/index.js';
-import { useStore, set, state } from './store.js';
+import { useStore, set, state, toast } from './store.js';
 import { createEvent, updateEvent, deleteEvent, quickAddParse, attachToTrip, defaultTargetCalendarId } from './actions.js';
 import { api, loadPeople } from './api.js';
 import { TripRow } from './Trips.js';
@@ -26,6 +26,21 @@ import {
 } from '../lib/reminders.js';
 
 const BYDAY = [['MO', 'Mon'], ['TU', 'Tue'], ['WE', 'Wed'], ['TH', 'Thu'], ['FR', 'Fri'], ['SA', 'Sat'], ['SU', 'Sun']];
+
+// Occurrence payloads and NL drafts carry people as plain names; the editor
+// works in {id, name} chips so it can save by id. Resolve each name against the
+// directory (loaded before first paint, so this is reliable). A name that
+// matches nobody becomes a proposal with a null id — PeopleInput asks before
+// anything is created, and submit refuses to guess.
+function toPeopleChips(names) {
+  return (names || [])
+    .map((n) => String(n == null ? '' : n).trim())
+    .filter((name) => name !== '')
+    .map((name) => {
+      const hit = state.people.find((p) => p.name.toLowerCase() === name.toLowerCase());
+      return hit ? { id: hit.id, name: hit.name } : { id: null, name };
+    });
+}
 
 function buildRrule(r) {
   if (!r || r.freq === 'none') return null;
@@ -103,7 +118,7 @@ export function EditorDrawer() {
         touched.push('location');
       }
       if (d.personNames && d.personNames.length) {
-        nf.people = d.personNames;
+        nf.people = toPeopleChips(d.personNames);
         touched.push('people');
       }
       return nf;
@@ -175,7 +190,7 @@ export function EditorDrawer() {
   const [availWarn, setAvailWarn] = useState([]);
   const availTimer = useRef(0);
   const availReq = useRef(0);
-  const warnPeople = form ? (form.people || []) : [];
+  const warnPeople = form ? (form.people || []).map((c) => c.name) : [];
   const warnStart = form ? form.start : '';
   const warnEnd = form ? form.end : '';
   useEffect(() => {
@@ -223,7 +238,7 @@ export function EditorDrawer() {
       url: occ ? (occ.url || '') : '',
       description: occ ? (occ.description || '') : (draft.description || ''),
       tags: occ && occ.tags ? occ.tags.join(', ') : '',
-      people: occ ? (occ.people || []) : (draft.personNames || []),
+      people: toPeopleChips(occ ? (occ.people || []) : (draft.personNames || [])),
       rrule: parseRrule(occ
         ? (occ.recurring ? (occ.rrule || editor.rrule || '') : '')
         : (draft.rrule || '')),
@@ -303,6 +318,17 @@ export function EditorDrawer() {
     const s = fromInputValue(form.start);
     const en = fromInputValue(form.end);
     if (isNaN(s) || isNaN(en) || en <= s) return;
+    // A name nobody has confirmed as a person yet. Saving would have to either
+    // invent the person or drop the name silently; ask instead. The People
+    // field already shows the prompt, so just point at it.
+    const unconfirmed = form.people.find((c) => c.id == null);
+    if (unconfirmed) {
+      toast(`Add ${unconfirmed.name} to your people, or remove the name, before saving`);
+      setNlFlash(new Set(['people']));
+      clearTimeout(flashTimer.current);
+      flashTimer.current = setTimeout(() => setNlFlash(null), 1400);
+      return;
+    }
     const fields = {
       title: form.title,
       calendarId: Number(form.calendarId),
@@ -317,7 +343,11 @@ export function EditorDrawer() {
       url: form.url || null,
       description: isEmptyHtml(form.description) ? null : form.description,
       tagNames: form.tags.split(',').map((t) => t.trim()).filter(Boolean),
-      personNames: form.people,
+      // Ids, never names: a name-keyed save can't tell a new person from a
+      // stale copy of a renamed one, and resolves that ambiguity by creating a
+      // duplicate. Proposed chips (id null) are blocked above, so every chip
+      // here is a directory person the user confirmed.
+      personIds: form.people.map((c) => c.id),
       rrule: buildRrule(form.rrule),
     };
     // Only send reminders when the override actually changed, so unrelated
@@ -344,7 +374,7 @@ export function EditorDrawer() {
     if (ok) {
       // New people linked via this save should appear in the sidebar folder
       // and autocomplete right away.
-      if ((fields.personNames || []).length > 0) loadPeople().catch(() => {});
+      if ((fields.personIds || []).length > 0) loadPeople().catch(() => {});
       set({ editor: null, editorDirty: false });
     }
   };
@@ -465,7 +495,9 @@ export function EditorDrawer() {
       </div>
 
       <div class="bc-field-row">
-        <div class=${'bc-field grow' + (nlFlash && nlFlash.has('people') ? ' bc-nl-applied' : '')}>
+        <div class=${'bc-field grow'
+          + (form.people.some((c) => c.id == null) ? ' bc-field-claims-row' : '')
+          + (nlFlash && nlFlash.has('people') ? ' bc-nl-applied' : '')}>
           <span>People</span>
           <${PeopleInput}
             value=${form.people}

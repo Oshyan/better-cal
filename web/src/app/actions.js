@@ -575,14 +575,25 @@ export async function moveEventToCalendar(occ, calendarId) {
 
 // Link a person to an event (drop either onto the other). personNames is a
 // full-replace field, so append to what the occurrence already carries.
-export async function linkPersonToEvent(occ, personName, scope) {
+export async function linkPersonToEvent(occ, person, scope) {
   const names = Array.isArray(occ.people) ? occ.people : [];
+  const personName = typeof person === 'string' ? person : person.name;
   if (names.includes(personName)) {
     toast(personName + ' is already on this event');
     return;
   }
+  // Send ids, not names: setting people by name would recreate any of this
+  // event's existing names that have since been renamed, as a duplicate person.
+  // occ.people is display text, so map it back through the directory.
+  const byName = new Map(state.people.map((p) => [p.name.toLowerCase(), p.id]));
+  const ids = names.map((n) => byName.get(n.toLowerCase())).filter((id) => id != null);
+  const addId = typeof person === 'string' ? byName.get(personName.toLowerCase()) : person.id;
+  if (addId == null) {
+    toast('Could not find ' + personName + ' in your people', { error: true });
+    return;
+  }
   try {
-    const body = { personNames: [...names, personName] };
+    const body = { personIds: [...ids, addId] };
     if (occ.recurring) { body.scope = scope || 'all'; body.instanceStart = occ.start; }
     await api('/events/' + occ.eventId, { method: 'PATCH', body });
     toast('Added ' + personName + ' to "' + (occ.title || 'event') + '"', { undoable: true });

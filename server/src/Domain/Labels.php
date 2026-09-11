@@ -51,12 +51,77 @@ final class Labels
         }
     }
 
-    public function setEventPeople(int $userId, int $eventId, array $names): void
+    /**
+     * Ids from $ids that actually belong to $userId, in the order given.
+     * Anything else is dropped rather than trusted — a person id is supplied
+     * by the client, so it is an assertion to check, not a fact.
+     *
+     * @param list<mixed> $ids
+     * @return list<int>
+     */
+    public function ownedPersonIds(int $userId, array $ids): array
+    {
+        $wanted = [];
+        foreach ($ids as $id) {
+            if (is_int($id) || (is_string($id) && ctype_digit($id))) {
+                $wanted[] = (int) $id;
+            }
+        }
+        $wanted = array_values(array_unique(array_filter($wanted, static fn(int $i): bool => $i > 0)));
+        if ($wanted === []) {
+            return [];
+        }
+        [$in, $params] = Db::in($wanted);
+        $owned = array_map(
+            static fn(array $r): int => (int) $r['id'],
+            $this->db->all("SELECT id FROM people WHERE user_id = ? AND id IN $in", [$userId, ...$params])
+        );
+        // Preserve the caller's order; $owned is only a membership test.
+        return array_values(array_filter($wanted, static fn(int $i): bool => in_array($i, $owned, true)));
+    }
+
+    /**
+     * Names that match no existing person, so an interactive caller can offer
+     * to create them instead of creating them silently. Comparison matches
+     * personIds(): trimmed, and case-insensitive via the column collation.
+     *
+     * @param list<string> $names
+     * @return list<string>
+     */
+    public function unknownPersonNames(int $userId, array $names): array
+    {
+        $unknown = [];
+        foreach ($names as $name) {
+            $name = mb_substr(trim((string) $name), 0, 160);
+            if ($name === '') {
+                continue;
+            }
+            if ($this->db->scalar('SELECT id FROM people WHERE user_id = ? AND name = ?', [$userId, $name]) === null) {
+                $unknown[] = $name;
+            }
+        }
+        return array_values(array_unique($unknown));
+    }
+
+    /** Replace an event's people links wholesale. @param list<int> $personIds */
+    public function replaceEventPeople(int $eventId, array $personIds): void
     {
         $this->db->run('DELETE FROM event_people WHERE event_id = ?', [$eventId]);
-        foreach ($this->personIds($userId, $names) as $personId) {
+        foreach ($personIds as $personId) {
             $this->db->run('INSERT IGNORE INTO event_people (event_id, person_id) VALUES (?, ?)', [$eventId, $personId]);
         }
+    }
+
+    /**
+     * Link by name, creating people that don't exist yet. This is the right
+     * behaviour only where there is nobody to ask — ICS import, mail ingest,
+     * API clients. Interactive saves send ids (see Events::applyPeoplePatch),
+     * because a name-keyed save turns any stale client name into a brand-new
+     * duplicate person the moment someone is renamed.
+     */
+    public function setEventPeople(int $userId, int $eventId, array $names): void
+    {
+        $this->replaceEventPeople($eventId, $this->personIds($userId, $names));
     }
 
     /** @param list<int> $eventIds @return array{tags:array<int,list<string>>,people:array<int,list<string>>} */

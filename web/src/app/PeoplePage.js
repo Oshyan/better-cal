@@ -7,7 +7,7 @@
 
 import { html, useState, useEffect } from '../../vendor/index.js';
 import { useStore, set, state, toast } from './store.js';
-import { api, loadPeople } from './api.js';
+import { api, loadPeople, refreshWindow } from './api.js';
 import { jumpToDate, openDetail, addAvailabilitySpan, deleteAvailabilitySpan } from './actions.js';
 import { PageShell, EmptyState } from './PageShell.js';
 import { CalDot, Icon } from '../ui/icons.js';
@@ -186,6 +186,10 @@ export function PeoplePage() {
       await api('/people/' + p.id, { method: 'PATCH', body: { name: trimmed } });
       toast(merged ? `Merged into ${trimmed}` : 'Renamed');
       loadPeople();
+      // Occurrences carry people as names, so every cached event still shows
+      // the old one. Pull the window again rather than leaving the calendar
+      // asserting a name that no longer exists.
+      refreshWindow();
     } catch (err) {
       toast(err.message || 'Rename failed');
     }
@@ -209,6 +213,7 @@ export function PeoplePage() {
       await api('/people/' + p.id, { method: 'DELETE' });
       toast(`Removed ${p.name} (events kept)`);
       loadPeople();
+      refreshWindow(); // their name is still on every cached occurrence
     } catch (err) {
       toast(err.message || 'Delete failed');
     }

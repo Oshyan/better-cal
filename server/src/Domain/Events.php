@@ -412,9 +412,7 @@ final class Events
             if (!empty($in['tagNames']) && is_array($in['tagNames'])) {
                 $this->labels->setEventTags($userId, $id, $in['tagNames']);
             }
-            if (!empty($in['personNames']) && is_array($in['personNames'])) {
-                $this->labels->setEventPeople($userId, $id, $in['personNames']);
-            }
+            $this->applyPeoplePatch($userId, $id, $in);
             return $id;
         });
 
@@ -558,9 +556,7 @@ final class Events
             if (array_key_exists('tagNames', $in) && is_array($in['tagNames'])) {
                 $this->labels->setEventTags($userId, $id, $in['tagNames']);
             }
-            if (array_key_exists('personNames', $in) && is_array($in['personNames'])) {
-                $this->labels->setEventPeople($userId, $id, $in['personNames']);
-            }
+            $this->applyPeoplePatch($userId, $id, $in);
         });
 
         $after = $this->get($userId, $id);
@@ -594,9 +590,7 @@ final class Events
                 if (array_key_exists('tagNames', $in) && is_array($in['tagNames'])) {
                     $this->labels->setEventTags($userId, (int) $existing['id'], $in['tagNames']);
                 }
-                if (array_key_exists('personNames', $in) && is_array($in['personNames'])) {
-                    $this->labels->setEventPeople($userId, (int) $existing['id'], $in['personNames']);
-                }
+                $this->applyPeoplePatch($userId, (int) $existing['id'], $in);
             });
             $after = $this->get($userId, (int) $existing['id']);
             $this->undo->record($userId, 'event', (int) $existing['id'], 'update', ['events' => [$existing]], ['events' => [$after]]);
@@ -638,9 +632,7 @@ final class Events
             if (array_key_exists('tagNames', $in) && is_array($in['tagNames'])) {
                 $this->labels->setEventTags($userId, $id, $in['tagNames']);
             }
-            if (array_key_exists('personNames', $in) && is_array($in['personNames'])) {
-                $this->labels->setEventPeople($userId, $id, $in['personNames']);
-            }
+            $this->applyPeoplePatch($userId, $id, $in);
             return $id;
         });
         $created = $this->get($userId, $newId);
@@ -990,6 +982,35 @@ final class Events
     }
 
     // ---- Helpers ------------------------------------------------------
+
+    /**
+     * Apply an event's people patch, if the payload carries one at all.
+     *
+     * `personIds` is the authoritative, id-keyed form and is what the editor
+     * sends. `personNames` upserts by name and stays for the callers with
+     * nobody to prompt: ICS import, mail ingest, quick-add's own create, API
+     * clients. When both arrive they union, so a client may pass known ids
+     * alongside a genuinely new name.
+     *
+     * Why ids matter: a name-keyed save cannot tell "this is a new person"
+     * from "my copy of this person's name is out of date". Rename someone in
+     * the People manager, then save an event the client still believes is
+     * linked to the old name, and the old name comes back as a second,
+     * freshly created person while the real link is dropped.
+     */
+    private function applyPeoplePatch(int $userId, int $eventId, array $in): void
+    {
+        $hasIds = array_key_exists('personIds', $in) && is_array($in['personIds']);
+        $hasNames = array_key_exists('personNames', $in) && is_array($in['personNames']);
+        if (!$hasIds && !$hasNames) {
+            return;
+        }
+        $ids = $hasIds ? $this->labels->ownedPersonIds($userId, $in['personIds']) : [];
+        if ($hasNames) {
+            $ids = array_merge($ids, $this->labels->personIds($userId, $in['personNames']));
+        }
+        $this->labels->replaceEventPeople($eventId, array_values(array_unique($ids)));
+    }
 
     /** Map API patch fields onto event columns; only returns changed columns. */
     private function columnPatch(array $current, array $in, ?string $fallbackInstance = null, bool $forOverride = false): array

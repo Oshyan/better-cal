@@ -354,12 +354,12 @@ export function Sidebar({ open, collapsed, onClose }) {
                 { label: 'All events', value: 'all' },
                 { label: 'Cancel', value: null },
               ],
-              cb: (v) => { if (v) linkPersonToEvent(occ, p.name, v); },
+              cb: (v) => { if (v) linkPersonToEvent(occ, p, v); },
             },
           });
           return;
         }
-        linkPersonToEvent(occ, p.name);
+        linkPersonToEvent(occ, p);
       },
       onCancel: () => setDropRowHighlight(null),
     });

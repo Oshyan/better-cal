@@ -581,7 +581,13 @@ final class Events
         );
 
         if ($existing !== null) {
-            $fields = $this->columnPatch($existing, $in, $instanceUtc);
+            // forOverride: an instance row can no more carry the series RRULE
+            // or become a trip than a freshly split one can. Without it, the
+            // editor (which always sends the series rrule it seeded from) was
+            // stamping FREQ=... onto an imported moved instance on every edit.
+            // Inert to expansion (masters are selected by parent IS NULL) but
+            // wrong on the row, and a trap for anything reading rrule.
+            $fields = $this->columnPatch($existing, $in, $instanceUtc, forOverride: true);
             $this->db->tx(function () use ($existing, $userId, $fields, $in): void {
                 if ($fields !== []) {
                     $fields['updated_at'] = Time::nowDb();

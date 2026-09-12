@@ -2316,6 +2316,35 @@ checkEq(
 );
 
 // ---------------------------------------------------------------------------
+// columnPatch's forOverride gate. An instance override row must never take
+// the series RRULE or the trip flag from a patch payload, because the editor
+// always sends the rrule it seeded from; the existing-override branch of
+// patchThis once forgot the flag and stamped FREQ=... onto a moved instance.
+// columnPatch reads only $current/$in and static helpers unless `status` is
+// sent, so it is callable on an Events built without its constructor.
+{
+    $events = (new ReflectionClass(\BetterCal\Domain\Events::class))->newInstanceWithoutConstructor();
+    $columnPatch = static fn(array $current, array $in, bool $forOverride): array =>
+        (new ReflectionMethod($events, 'columnPatch'))->invokeArgs($events, [$current, $in, null, $forOverride]);
+    $override = [
+        'tzid' => 'America/Los_Angeles', 'all_day' => 0,
+        'start_utc' => '2026-09-11 17:00:00', 'end_utc' => '2026-09-11 18:00:00',
+        'rrule' => null, 'recurrence_parent_id' => 16563, 'recurrence_instance_utc' => '2026-09-15 19:30:00',
+    ];
+    $payload = [
+        'start' => '2026-09-11T12:00:00-07:00', 'end' => '2026-09-11T13:00:00-07:00',
+        'rrule' => 'FREQ=WEEKLY;INTERVAL=2;BYDAY=TU', 'isContainer' => true, 'title' => 'Cleaners',
+    ];
+    $fields = $columnPatch($override, $payload, true);
+    check('override patch: series rrule is not written onto the instance row', !array_key_exists('rrule', $fields), json_encode($fields));
+    check('override patch: the trip flag is not written onto the instance row', !array_key_exists('is_container', $fields));
+    checkEq('override patch: the move itself still lands', '2026-09-11 19:00:00', $fields['start_utc'] ?? null);
+    checkEq('override patch: title still lands', 'Cleaners', $fields['title'] ?? null);
+    $master = $columnPatch($override, $payload, false);
+    checkEq('master patch: the same payload does set rrule on a non-override', 'FREQ=WEEKLY;INTERVAL=2;BYDAY=TU', $master['rrule'] ?? null);
+}
+
+// ---------------------------------------------------------------------------
 // The bundled plugins' own pure logic (parsers, interval maths, date maths).
 require __DIR__ . '/plugins.php';
 

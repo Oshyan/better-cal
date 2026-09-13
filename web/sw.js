@@ -16,7 +16,7 @@
 // could start, which on a 450 ms link was nine seconds of a blank page.
 
 // @generated-shell:start (scripts/gen-preload.mjs)
-const VERSION = 'bc-2c370ada9139';
+const VERSION = 'bc-72203e584d25';
 const SHELL = [
   '/',
   '/assets/styles/app.css',

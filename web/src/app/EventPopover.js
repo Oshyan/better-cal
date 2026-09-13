@@ -5,6 +5,7 @@
 
 import { html, useState, useRef, useEffect } from '../../vendor/index.js';
 import { useStore, set, state } from './store.js';
+import { ensureFullOccurrence } from './api.js';
 import { updateEvent, deleteEvent, triageAttendance, sendFeedback, enterReschedule, openDetail, sameDayList, openTripByEventId } from './actions.js';
 import { describeRrule } from './EventDetail.js';
 import { isMobile, trapFocus, MOBILE_QUERY } from '../ui/DayExpand.js';
@@ -53,6 +54,14 @@ export function EventPopover() {
   const occ = popover ? state.occ.get(popover.instanceId) : null;
   const panelRef = useRef(null);
   const [editingTime, setEditingTime] = useState(false);
+
+  // Opens instantly from the cached occurrence; description, cadence and
+  // reminders arrive a round trip later from the single-event record (#15).
+  // This is also the prefetch for the editor: an Edit from here finds the
+  // record already merged and opens without waiting.
+  useEffect(() => {
+    if (popover) ensureFullOccurrence(popover.instanceId);
+  }, [popover && popover.instanceId]); // eslint-disable-line
 
   useEffect(() => {
     setEditingTime(false);

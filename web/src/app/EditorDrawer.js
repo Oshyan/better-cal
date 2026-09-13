@@ -8,7 +8,7 @@
 import { html, useState, useEffect, useRef } from '../../vendor/index.js';
 import { useStore, set, state, toast } from './store.js';
 import { createEvent, updateEvent, deleteEvent, quickAddParse, attachToTrip, defaultTargetCalendarId } from './actions.js';
-import { api, loadPeople } from './api.js';
+import { api, loadPeople, ensureFullOccurrence } from './api.js';
 import { TripRow } from './Trips.js';
 import { trapFocus } from '../ui/DayExpand.js';
 import { PlaceInput, pickFillText } from './PlaceInput.js';
@@ -214,6 +214,22 @@ export function EditorDrawer() {
   useEffect(() => {
     if (!editor) { setForm(null); return; }
     const occ = editor.occ;
+    // The window carries the grid's fields only; description, cadence,
+    // reminders and zone seed from the single-event record (#15). Fetch it
+    // BEFORE seeding rather than seeding partial and re-seeding when it
+    // lands: that would flip fields under the user's cursor and move the
+    // dirty baseline. Opened from the popover or detail view the record is
+    // already merged and this is a no-op. If the fetch fails (offline), seed
+    // from what the window had, once, rather than never opening.
+    if (occ && !occ.full && !occ._detailFailed) {
+      setForm(null);
+      let alive = true;
+      ensureFullOccurrence(occ.instanceId).then((full) => {
+        if (!alive || state.editor !== editor) return;
+        set({ editor: { ...editor, occ: full && full.full ? full : { ...occ, _detailFailed: true } } });
+      });
+      return () => { alive = false; };
+    }
     const draft = editor.draft || {};
     // All-day occurrences carry literal dates at +00:00; parsing them as
     // instants would land a day early west of UTC (saving then actually

@@ -128,7 +128,7 @@ from a Bay Area client at ~81ms RTT. Conditions stated because they matter.
 | — modules finished | ~370ms | 61 modules, modulepreload generated |
 | month scroll | 16.6ms median frame | 0 frames >32ms, 1500x800, Todoist on |
 | month step (next/prev) | 16-28ms | |
-| payload | 793 bytes/occurrence | ~30% of it detail-only fields (see #15) |
+| payload | 348 bytes/occurrence | list shape after #15 (was 793: uid, timestamps, reminders, rrule, description, tzid moved to the single-event record; nulls and empty lists omitted). Single record fetched on open: ~400ms on a transatlantic link, dominated by RTT |
 | brotli ratio | 15x | 2.8 MB → 188 KB on a 5-month window |
 
 "Todoist on" is doing more work in those conditions than it looks. That

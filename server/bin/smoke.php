@@ -62,8 +62,10 @@ try {
                 throw new \RuntimeException("window occurrence is missing '$k'");
             }
         }
-        if (array_key_exists('uid', $o)) {
-            throw new \RuntimeException('window occurrence carries uid (list shape regressed)');
+        foreach (['uid', 'createdAt', 'updatedAt', 'reminders', 'reminderSource', 'rrule', 'description', 'tzid'] as $k) {
+            if (array_key_exists($k, $o)) {
+                throw new \RuntimeException("window occurrence carries '$k' (list shape regressed)");
+            }
         }
         json_encode($occ, JSON_THROW_ON_ERROR);
     }
@@ -77,8 +79,10 @@ try {
     $row = $db->one('SELECT * FROM events WHERE user_id = ? AND deleted_at IS NULL ORDER BY id DESC LIMIT 1', [$userId]);
     if ($row !== null) {
         $single = $events->serializeSingle($row);
-        if (!array_key_exists('uid', $single)) {
-            throw new \RuntimeException('single record is missing uid (full shape regressed)');
+        foreach (['uid', 'createdAt', 'updatedAt', 'reminders', 'reminderSource', 'tzid'] as $k) {
+            if (!array_key_exists($k, $single)) {
+                throw new \RuntimeException("single record is missing '$k' (full shape regressed)");
+            }
         }
         json_encode($single, JSON_THROW_ON_ERROR);
     }

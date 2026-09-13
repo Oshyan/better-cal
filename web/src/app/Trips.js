@@ -17,11 +17,12 @@ import {
 } from './actions.js';
 import { trapFocus } from '../ui/DayExpand.js';
 import { CalDot, TripBadge, LinkIcon, Icon } from '../ui/icons.js';
+import { DurationSuffix } from '../ui/EventChip.js';
 import { tripSpan, tripSpanLabel, candidateTrips, attachableInSpan } from '../ui/trips.js';
 import {
   parseISO, dateOfDayKey, addDaysDate, toISOWithOffset, occDayKey, fmtTime,
 } from '../lib/dates.js';
-import { dayRangeDraft } from '../lib/quickcreate.js';
+import { dayRangeDraft, dayRangeLabel } from '../lib/quickcreate.js';
 import { gmapsUrl } from '../lib/maps.js';
 
 // "Jun 3 · 9:00 AM" / "Jun 3 · all day" for member and picker rows.
@@ -138,7 +139,9 @@ export function TripDetail({ occ }) {
             ${(cal && cal.name) || 'Calendar'}
           </span>
         </div>
-        <div class="bc-detail-when">${tripSpanLabel(occ)}</div>
+        <div class="bc-detail-when">
+          <span class="bc-date-duration">${dayRangeLabel(span.startKey, span.endKey)} <${DurationSuffix} occ=${occ} expanded /></span>
+        </div>
         ${occ.location && html`<div class="bc-detail-section">
           <div class="bc-detail-locline">
             ${occ.location}

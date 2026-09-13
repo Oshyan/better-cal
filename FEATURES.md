@@ -6,7 +6,7 @@ Better-Cal is a self-hosted calendar built to replace Google Calendar outright: 
 
 Month, 3-week, 2-week, week, day, and agenda views. Multiple color-coded calendars with show/hide. Drag to create, move, and resize events. All-day and multi-day events. Full recurrence (rules, exceptions, "this event / all events" edits). Reminders with push and email delivery. ICS calendar subscriptions, file import, and export feeds. Fast search. Timezone-aware events. Keyboard shortcuts. Light/dark/system theme. Installable mobile PWA. If Google Calendar does it day-to-day, Better-Cal does it.
 
-Multi-day events show their total duration beside the title on every visible segment, including trip bands and agenda entries. Labels use exact days, exact whole weeks, or `1mo` for 28–31 days (including 28); other lengths never round to weeks or months. Pop-ups, details, and date editors show the exact duration. All-day events count calendar dates; timed events qualify at 24 elapsed hours and retain remaining hours/minutes/seconds. Labels update from dates without changing the saved title.
+Multi-day events show their total duration beside the title on every visible segment, including trip bands and agenda entries. Labels use exact days, exact whole weeks, or `1mo` for 28–31 days (including 28); other lengths never round to weeks or months. Event and trip details place the same duration beside the dates with a middle dot, spelling out units except `mo`; tooltips and screen-reader labels give the exact duration, as do date editors. All-day events count calendar dates; timed events qualify at 24 elapsed hours and retain remaining hours/minutes/seconds. Labels update from dates without changing the saved title.
 
 ## What sets it apart
 

@@ -81,4 +81,9 @@ EOF
 
 echo "== smoke =="
 sleep 1
-curl -fsS --max-time 10 "${HEALTH_URL}" && echo && echo "Deploy OK"
+# /health proves PHP and the database answer. The server-side smoke proves the
+# events window, the single-event record and the calendars listing actually
+# serialise against the real data: a serializer refactor once 500ed the window
+# while this script printed "Deploy OK" under a green /health.
+curl -fsS --max-time 10 "${HEALTH_URL}" && echo
+ssh "${REMOTE}" "sudo -u bettercal php ${APP_DIR}/server/bin/smoke.php" && echo "Deploy OK"

@@ -54,12 +54,25 @@ async function boot() {
     // map are as fast as later ones. Skipped when the browser says the user
     // wants to save data.
     installHoverPrefetch();
-    const idle = window.requestIdleCallback || ((fn) => setTimeout(fn, 2500));
-    idle(() => {
-      if (navigator.connection && navigator.connection.saveData) return;
-      preloadRichText().catch(() => {});
-      loadLeaflet().catch(() => {});
-    }, { timeout: 8000 });
+    // "Idle" to requestIdleCallback means the CPU, not the network: on a
+    // slow link it fired the moment the events window started downloading
+    // and the scripts competed with it for the same 1 Mbps. So: only after
+    // the first window has landed, a beat later, and never on a link the
+    // browser itself calls 2g/3g or where the user asked to save data.
+    const conn = navigator.connection || {};
+    const slowLink = conn.saveData || /(^|-)2g$|^3g$/.test(conn.effectiveType || '');
+    if (!slowLink) {
+      const idle = window.requestIdleCallback || ((fn) => setTimeout(fn, 2500));
+      const whenWindowLanded = () => new Promise((resolve) => {
+        if (state.loadedRanges.length > 0) { resolve(); return; }
+        const t = setInterval(() => { if (state.loadedRanges.length > 0) { clearInterval(t); resolve(); } }, 500);
+        setTimeout(() => { clearInterval(t); resolve(); }, 15000); // give up waiting, not preloading
+      });
+      whenWindowLanded().then(() => setTimeout(() => idle(() => {
+        preloadRichText().catch(() => {});
+        loadLeaflet().catch(() => {});
+      }, { timeout: 8000 }), 2000));
+    }
   }
 }
 

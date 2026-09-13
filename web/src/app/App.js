@@ -35,6 +35,7 @@ import { SearchOverlay } from './SearchOverlay.js';
 import { ShortcutsSheet } from './ShortcutsSheet.js';
 import { CommandPalette } from './CommandPalette.js';
 import { Toasts } from './Toasts.js';
+import { SystemBanner } from './system.js';
 import { Login } from './Login.js';
 import { OutfeedsPage } from './OutfeedsPage.js';
 import { FiltersPage } from './FiltersPage.js';
@@ -534,31 +535,31 @@ export function App() {
     return html`<${Login} />`;
   }
   if (s.route === 'organize') {
-    return html`<div class="bc-app"><${OrganizePage} /><${CreateDrawer} /><${ShortcutsSheet} /><${CommandPalette} /><${Toasts} /></div>`;
+    return html`<div class="bc-app"><${OrganizePage} /><${CreateDrawer} /><${ShortcutsSheet} /><${CommandPalette} /><${SystemBanner} /><${Toasts} /></div>`;
   }
   if (s.route === 'outfeeds') {
-    return html`<div class="bc-app"><${OutfeedsPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${CommandPalette} /><${Toasts} /></div>`;
+    return html`<div class="bc-app"><${OutfeedsPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${CommandPalette} /><${SystemBanner} /><${Toasts} /></div>`;
   }
   if (s.route === 'filters') {
-    return html`<div class="bc-app"><${FiltersPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${CommandPalette} /><${Toasts} /></div>`;
+    return html`<div class="bc-app"><${FiltersPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${CommandPalette} /><${SystemBanner} /><${Toasts} /></div>`;
   }
   if (s.route === 'views') {
-    return html`<div class="bc-app"><${SavedViewsPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${CommandPalette} /><${Toasts} /></div>`;
+    return html`<div class="bc-app"><${SavedViewsPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${CommandPalette} /><${SystemBanner} /><${Toasts} /></div>`;
   }
   if (s.route === 'settings') {
-    return html`<div class="bc-app"><${SettingsPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${CommandPalette} /><${Toasts} /></div>`;
+    return html`<div class="bc-app"><${SettingsPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${CommandPalette} /><${SystemBanner} /><${Toasts} /></div>`;
   }
   if (s.route === 'people') {
-    return html`<div class="bc-app"><${PeoplePage} /><${CreateDrawer} /><${ShortcutsSheet} /><${CommandPalette} /><${Toasts} /></div>`;
+    return html`<div class="bc-app"><${PeoplePage} /><${CreateDrawer} /><${ShortcutsSheet} /><${CommandPalette} /><${SystemBanner} /><${Toasts} /></div>`;
   }
   if (s.route === 'proposals') {
-    return html`<div class="bc-app"><${ProposalsPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${CommandPalette} /><${Toasts} /></div>`;
+    return html`<div class="bc-app"><${ProposalsPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${CommandPalette} /><${SystemBanner} /><${Toasts} /></div>`;
   }
   if (s.route === 'plugins') {
-    return html`<div class="bc-app"><${PluginsPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${CommandPalette} /><${Toasts} /></div>`;
+    return html`<div class="bc-app"><${PluginsPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${CommandPalette} /><${SystemBanner} /><${Toasts} /></div>`;
   }
   if (s.route === 'activity') {
-    return html`<div class="bc-app"><${ActivityPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${CommandPalette} /><${Toasts} /></div>`;
+    return html`<div class="bc-app"><${ActivityPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${CommandPalette} /><${SystemBanner} /><${Toasts} /></div>`;
   }
 
   let view = null;
@@ -745,7 +746,7 @@ export function App() {
       onDropConfirmed=${onReschedMove}
       onExit=${exitReschedule}
     />`}
-    <${Toasts} />
+    <${SystemBanner} /><${Toasts} />
   </div>`;
 }
 

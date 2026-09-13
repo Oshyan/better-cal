@@ -96,6 +96,25 @@ final class PushSubscriptions
         return $out;
     }
 
+    /**
+     * A human name for a subscription, from the push service its endpoint
+     * points at plus when it was added. There is nothing else to go on: the
+     * browser never tells the server what device it is. Pure.
+     */
+    public static function labelFor(array $sub): string
+    {
+        $host = (string) (parse_url((string) ($sub['endpoint'] ?? ''), PHP_URL_HOST) ?? '');
+        $kind = match (true) {
+            str_contains($host, 'push.apple.com') => 'Safari / Apple device',
+            str_contains($host, 'fcm.googleapis.com'), str_contains($host, 'android.googleapis.com') => 'Chrome / Android',
+            str_contains($host, 'mozilla.com') => 'Firefox',
+            str_contains($host, 'notify.windows.com') => 'Edge / Windows',
+            default => ($host !== '' ? $host : 'unknown push service'),
+        };
+        $added = isset($sub['created_at']) ? substr((string) $sub['created_at'], 0, 10) : '';
+        return 'Reminders to ' . $kind . ($added !== '' ? " (added $added)" : '');
+    }
+
     public function recordSuccess(int $id): void
     {
         $this->db->run(

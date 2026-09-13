@@ -5,7 +5,8 @@
 
 import { html, useState, useEffect } from '../../vendor/index.js';
 import { useStore, toast, shallowEq } from './store.js';
-import { api, logout } from './api.js';
+import { api, logout, loadSystemHealth } from './api.js';
+import { fmtSince } from '../lib/since.js';
 import { adoptSettings } from './settings.js';
 import { saveSetting } from './actions.js';
 import { PageShell } from './PageShell.js';
@@ -58,6 +59,44 @@ function Seg({ value, options, onChange, label }) {
       onClick=${() => value !== v && onChange(v)}
     >${l}</button>`)}
   </span>`;
+}
+
+// Is background work working. One row per subject: the worker's job types
+// (system-wide), each subscribed feed, each device reminders go to. Failing
+// rows first. Transitions are also in Activity under "System", and a streak
+// that lasts earns one email; this is the "right now" view.
+function SystemSection() {
+  const health = useStore((s) => s.systemHealth);
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => { loadSystemHealth().finally(() => setLoaded(true)); }, []);
+  const rows = (health && health.rows) || [];
+  const failing = rows.filter((r) => r.status === 'failing');
+  const alerts = health && health.emailAlerts;
+  const when = (iso) => (iso ? new Date(iso).toLocaleString() : '');
+  return html`<section class="bc-set-section">
+    <h2 class="bc-set-h">System</h2>
+    <${Row} label="Background work" hint=${!loaded ? 'Checking…' : (rows.length === 0 ? 'Nothing has reported yet; the worker fills this in as jobs run.'
+      : (failing.length === 0 ? 'Everything that has reported is working.' : failing.length + ' failing'))}>
+      ${rows.length > 0 && html`<table class="bc-sys-table">
+        <thead><tr><th>What</th><th>Status</th><th>Last OK</th><th>Detail</th></tr></thead>
+        <tbody>${rows.map((r) => html`<tr key=${r.subject} class=${r.status === 'failing' ? 'is-failing' : ''}>
+          <td>${r.label}</td>
+          <td>${r.status === 'failing'
+            ? html`<span class="bc-sys-bad">failing since ${fmtSince(r.firstFailedAt)} (${r.consecutiveFailures}×)</span>`
+            : html`<span class="bc-sys-ok">ok</span>`}</td>
+          <td title=${when(r.lastOkAt)}>${r.lastOkAt ? fmtSince(r.lastOkAt) : 'never'}</td>
+          <td class="bc-sys-err" title=${r.lastError || ''}>${r.status === 'failing' && r.lastError ? r.lastError : ''}${r.alertedAt ? html` <span class="bc-badge">emailed ${fmtSince(r.alertedAt)}</span>` : ''}</td>
+        </tr>`)}</tbody>
+      </table>`}
+    <//>
+    <${Row} label="Failure emails" hint=${alerts && alerts.configured
+      ? 'One email when something has been failing long enough to be real (jobs: 1 hour and 3 failures; feeds: a day; a device: 6 hours), one when it recovers, never one per failure.'
+      : 'Off: email is not configured on this server (BETTERCAL_SMTP_HOST and BETTERCAL_SMTP_FROM). Failures still show here and in Activity.'}>
+      ${alerts && alerts.configured && html`<span class="bc-set-value">
+        Your feeds and devices: ${alerts.accountTo}${alerts.systemTo !== alerts.accountTo ? html`<br />System-wide: ${alerts.systemTo}` : html`<br />System-wide: same address (set BETTERCAL_ALERT_EMAIL to change)`}
+      </span>`}
+    <//>
+  </section>`;
 }
 
 function Row({ label, hint, children }) {
@@ -395,6 +434,8 @@ export function SettingsPage() {
     <${LocationSection} settings=${settings} config=${config} />
 
     <${NotificationsSection} settings=${settings} user=${user} />
+
+    <${SystemSection} />
 
     <section class="bc-set-section">
       <h2 class="bc-set-h">Quick add</h2>

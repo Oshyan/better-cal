@@ -21,6 +21,7 @@ use BetterCal\Domain\QuickAdd;
 use BetterCal\Domain\Ranking;
 use BetterCal\Domain\Recurrence;
 use BetterCal\Domain\Settings;
+use BetterCal\Domain\SystemHealth;
 use BetterCal\Http\HttpError;
 use BetterCal\Http\Router;
 use BetterCal\Infra\LlmGateway;
@@ -2317,6 +2318,35 @@ checkEq(
 );
 
 // ---------------------------------------------------------------------------
+// System health: when a failing streak earns an email, and the words used.
+{
+    $now = new DateTimeImmutable('2026-09-13 12:00:00', new DateTimeZone('UTC'));
+    $row = static fn(array $o = []): array => $o + [
+        'subject' => 'job:filter_eval', 'kind' => 'job', 'label' => 'Prompt filter evaluation', 'status' => 'failing',
+        'first_failed_at' => '2026-09-13 10:00:00', 'consecutive_failures' => 5, 'alerted_at' => null, 'last_error' => 'LLM 401',
+    ];
+    check('alert: job failing 2h with 5 failures is due', SystemHealth::shouldAlert($row(), $now));
+    check('alert: job failing 30m is not yet due', !SystemHealth::shouldAlert($row(['first_failed_at' => '2026-09-13 11:30:00']), $now));
+    check('alert: job failing 2h but only twice is not due', !SystemHealth::shouldAlert($row(['consecutive_failures' => 2]), $now));
+    check('alert: a working row is never due', !SystemHealth::shouldAlert($row(['status' => 'ok']), $now));
+    check('alert: already emailed an hour ago is not due again', !SystemHealth::shouldAlert($row(['alerted_at' => '2026-09-13 11:00:00']), $now));
+    check('alert: already emailed yesterday is due again', SystemHealth::shouldAlert($row(['alerted_at' => '2026-09-12 11:00:00']), $now));
+    check('alert: a feed failing 6h is not due (a day)', !SystemHealth::shouldAlert($row(['kind' => 'feed', 'first_failed_at' => '2026-09-13 06:00:00']), $now));
+    check('alert: a feed failing 25h is due', SystemHealth::shouldAlert($row(['kind' => 'feed', 'first_failed_at' => '2026-09-12 11:00:00']), $now));
+    check('alert: a device failing 7h is due regardless of count', SystemHealth::shouldAlert($row(['kind' => 'push', 'first_failed_at' => '2026-09-13 05:00:00', 'consecutive_failures' => 1]), $now));
+    checkEq('streak words: hours and minutes', '5 failures over 2h 0m', SystemHealth::describeStreak($row(), '2026-09-13 12:00:00'));
+    checkEq('streak words: days', '30 failures over 1d 6h', SystemHealth::describeStreak($row(['consecutive_failures' => 30, 'first_failed_at' => '2026-09-12 06:00:00']), '2026-09-13 12:00:00'));
+    $mail = SystemHealth::buildFailureEmail([$row()], $now, new DateTimeZone('America/Los_Angeles'), 'https://cal.example');
+    checkEq('failure email: subject names the one thing', 'Better-Cal: Prompt filter evaluation has been failing', $mail['subject']);
+    check('failure email: times read as a person would say them, in their zone', str_contains($mail['text'], 'Sun, Sep 13, 2026 at 3:00 AM PDT'), $mail['text']);
+    check('failure email: says it is one per streak', str_contains($mail['text'], 'one email per failing streak'));
+    $two = SystemHealth::buildFailureEmail([$row(), $row(['subject' => 'feed:31', 'kind' => 'feed', 'label' => 'Feed: Luma'])], $now, new DateTimeZone('UTC'), '');
+    checkEq('failure email: several things, counted', 'Better-Cal: 2 things have been failing', $two['subject']);
+    checkEq('device label: apple push', 'Reminders to Safari / Apple device (added 2026-09-01)', \BetterCal\Domain\PushSubscriptions::labelFor(['endpoint' => 'https://web.push.apple.com/QAbc', 'created_at' => '2026-09-01 10:00:00']));
+    checkEq('device label: fcm', 'Reminders to Chrome / Android (added 2026-09-01)', \BetterCal\Domain\PushSubscriptions::labelFor(['endpoint' => 'https://fcm.googleapis.com/fcm/send/x', 'created_at' => '2026-09-01 10:00:00']));
+}
+
+// ---------------------------------------------------------------------------
 // Geocode plausibility guard: a free-text description whose best match lies
 // far from the bias is a bad guess, not an answer. Addresses and names pass.
 {
@@ -2340,6 +2370,10 @@ checkEq(
     $tzBias = GeocodeSweep::biasFor(['homeLat' => null, 'homeLng' => null], 'America/Los_Angeles');
     check('sweep bias: falls back to the event zone centroid', $tzBias[0] !== null && $tzBias[1] !== null && $tzBias[1] < -100, json_encode($tzBias));
     checkEq('sweep bias: nothing known means no bias', [null, null], GeocodeSweep::biasFor([], null));
+    check('sweep: a URL is not an address', GeocodeSweep::isUrlLocation('https://luma.com/max0yr6g'));
+    check('sweep: a www link is not an address', GeocodeSweep::isUrlLocation('www.zoom.us/j/123'));
+    check('sweep: an address containing a link is still an address', !GeocodeSweep::isUrlLocation('Mox, 1680 Mission St (map: https://x.y)'));
+    check('sweep: a plain address is an address', !GeocodeSweep::isUrlLocation('15 Calton Hill, Edinburgh'));
 }
 
 // ---------------------------------------------------------------------------

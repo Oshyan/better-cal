@@ -363,7 +363,7 @@ export function EventDetail() {
             >Google Maps <${Icon} name="arrowUpRight" size=${10} /></a>
           </div>
           ${showMap && html`<${MiniMap} lat=${geo.lat} lng=${geo.lng} location=${occ.location} />`}
-          ${!showMap && ((geo && geo.status === 'none') || (occ.geocodedAt && occ.locationLat == null)) && html`<div class="bc-detail-geonote">
+          ${!showMap && !/^(https?:\/\/|www\.)\S+$/i.test(occ.location.trim()) && ((geo && geo.status === 'none') || (occ.geocodedAt && occ.locationLat == null)) && html`<div class="bc-detail-geonote">
             Couldn't place this address on a map. Editing the location to something more specific (a street address, or "place, city") will fix it.
           </div>`}
         </div>`}

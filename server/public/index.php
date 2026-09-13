@@ -99,6 +99,7 @@ function bc_handle_api(Request $request, array $cfg): void
         $proposalsController = new Controllers\ProposalsController($proposalsDomain);
         $configController = new Controllers\ConfigController($settings, $cfg);
         $pushController = new Controllers\PushController($pushSubscriptions, $pushSender, $emailSender);
+        $systemController = new Controllers\SystemController(new Domain\SystemHealth($db), $pushSubscriptions, $emailSender, $cfg);
         $healthController = new Controllers\HealthController($db, $cfg);
 
         $router = new Router();
@@ -234,6 +235,8 @@ function bc_handle_api(Request $request, array $cfg): void
         $router->add('GET', "$base/push/status", [$pushController, 'status']);
         $router->add('POST', "$base/push/subscribe", [$pushController, 'subscribe']);
         $router->add('POST', "$base/push/unsubscribe", [$pushController, 'unsubscribe']);
+        // Is background work working: the Settings panel and boot notices.
+        $router->add('GET', "$base/system/health", [$systemController, 'health']);
         $router->add('POST', "$base/push/test", [$pushController, 'test']);
         $router->add('POST', "$base/push/test-email", [$pushController, 'testEmail']);
 

@@ -21,6 +21,21 @@ export function fetchPushStatus() {
   return api('/push/status');
 }
 
+// This browser's own push endpoint, or null. The health payload names push
+// rows by endpoint; matching against this is how the app knows a failing
+// device is THE device it is running on, which is the only case worth a
+// banner rather than a line in Settings.
+export async function currentPushEndpoint() {
+  try {
+    if (!pushSupported()) return null;
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    return sub ? sub.endpoint : null;
+  } catch {
+    return null;
+  }
+}
+
 // Standard VAPID application server key conversion.
 function urlBase64ToUint8Array(base64String) {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4);

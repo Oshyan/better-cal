@@ -110,6 +110,21 @@ export async function loadProposalCount() {
   } catch (e) { /* the page shows the real list */ }
 }
 
+// --- system health ---------------------------------------------------------
+
+// Is background work working: feeds, reminders to each device, the worker's
+// job types. Loaded at boot for the one-time notices and the device banner,
+// refreshed when the Settings page opens.
+export async function loadSystemHealth() {
+  try {
+    const d = await api('/system/health');
+    set({ systemHealth: d || null });
+    return d;
+  } catch (e) {
+    return null; // the panel says it could not load; nothing else depends on it
+  }
+}
+
 // --- saved views -----------------------------------------------------------
 
 export async function loadSavedViews() {

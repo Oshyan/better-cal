@@ -101,6 +101,49 @@ final class EmailSender
     }
 
     /**
+     * Send one plain message (system alerts). Same transport and the same
+     * never-throw contract as reminders: false and a log line on failure.
+     */
+    public function sendPlain(string $toEmail, string $subject, string $text, ?string $html = null): bool
+    {
+        if (!$this->isConfigured() || !class_exists(\PHPMailer\PHPMailer\PHPMailer::class)) {
+            return false;
+        }
+        $smtp = $this->cfg['smtp'];
+        try {
+            $mail = new \PHPMailer\PHPMailer\PHPMailer(true);
+            $mail->isSMTP();
+            $mail->Host = (string) $smtp['host'];
+            $mail->Port = (int) ($smtp['port'] ?? 587);
+            $mail->SMTPSecure = $mail->Port === 465
+                ? \PHPMailer\PHPMailer\PHPMailer::ENCRYPTION_SMTPS
+                : \PHPMailer\PHPMailer\PHPMailer::ENCRYPTION_STARTTLS;
+            if (($smtp['user'] ?? '') !== '') {
+                $mail->SMTPAuth = true;
+                $mail->Username = (string) $smtp['user'];
+                $mail->Password = (string) ($smtp['pass'] ?? '');
+            }
+            $mail->CharSet = \PHPMailer\PHPMailer\PHPMailer::CHARSET_UTF8;
+            $mail->setFrom((string) $smtp['from'], self::FROM_NAME);
+            $mail->addAddress($toEmail);
+            $mail->Subject = $subject;
+            if ($html !== null) {
+                $mail->isHTML(true);
+                $mail->Body = $html;
+                $mail->AltBody = $text;
+            } else {
+                $mail->isHTML(false);
+                $mail->Body = $text;
+            }
+            $mail->send();
+            return true;
+        } catch (\Throwable $e) {
+            error_log('alert email error: ' . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
      * Send an iMIP REPLY (RSVP) to an organizer. Prefers the dedicated
      * rsvp_smtp profile (e.g. Gmail with an app password, so the reply comes
      * from the address that was actually invited); falls back to the main

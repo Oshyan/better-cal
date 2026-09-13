@@ -128,6 +128,9 @@ export function closeOverlays() {
     if (state.editor && state.editorDirty) {
       discardEditorWithUndo();
     }
+    // Quick add says "Esc to cancel" and means it: a dismissed line must not
+    // come back at the next boot (drafts.js restores whatever is still saved).
+    if (state.quickAddOpen) clearQuickAddText();
     set({
       popover: null, detail: null, groupPopover: null, editor: null, expandedDay: null,
       searchOpen: false, quickAddOpen: false, jumpOpen: false, shortcutsOpen: false,

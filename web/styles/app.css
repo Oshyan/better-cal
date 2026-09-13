@@ -17,9 +17,24 @@
   --accent-fg: #ffffff;
   --danger: #c34a4a;
   --today: #5b7fd4;
+  /* Semantic colours that used to be literals. Each has a dark twin below:
+     the same hue, lifted so it still reads on a dark ground. */
+  --warn: #c9913d;       /* feed health, busy, quick add */
+  --warn-strong: #b8850f;
+  --ok: #3f9d6e;
+  --now: #d33d3d;        /* the current-time line */
+  --on-solid: #ffffff;   /* text on a solid accent/danger fill */
+  --scrim: rgba(10, 12, 18, 0.3);
+  /* Activity sources. */
+  --src-feed: #4ca777;
+  --src-mail: #c96f8f;
+  --src-api: #d4a03c;
+  --src-import: #7a6fd4;
+  --src-plugin: #2e8b8b;
   --shadow: 0 6px 24px rgba(20, 26, 40, 0.14);
   --radius: 8px;
   --chip-h: 20px;
+  color-scheme: light;
 }
 
 /* Dark palette follows the OS unless the theme setting pins light/dark:
@@ -36,7 +51,20 @@
     --border: #2c3038;
     --border-strong: #3d424c;
     --accent: #7593dd;
+    --danger: #e06a6a;
+    --today: #7593dd;
+    --warn: #e8b53c;
+    --warn-strong: #f0c555;
+    --ok: #5cbf8a;
+    --now: #ff6060;
+    --scrim: rgba(0, 0, 0, 0.55);
+    --src-feed: #62c48f;
+    --src-mail: #e08aa8;
+    --src-api: #e6b555;
+    --src-import: #9c92e8;
+    --src-plugin: #4fb3b3;
     --shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+    color-scheme: dark;
   }
 }
 
@@ -50,7 +78,20 @@
   --border: #2c3038;
   --border-strong: #3d424c;
   --accent: #7593dd;
+  --danger: #e06a6a;
+  --today: #7593dd;
+  --warn: #e8b53c;
+  --warn-strong: #f0c555;
+  --ok: #5cbf8a;
+  --now: #ff6060;
+  --scrim: rgba(0, 0, 0, 0.55);
+  --src-feed: #62c48f;
+  --src-mail: #e08aa8;
+  --src-api: #e6b555;
+  --src-import: #9c92e8;
+  --src-plugin: #4fb3b3;
   --shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -161,16 +202,12 @@ button:focus-visible, [tabindex]:focus-visible {
 .bc-icon-btn:hover { background: var(--bg-inset); color: var(--fg); }
 /* Quick add is the one toolbar action with colour: it is the fastest way in
    and worth spotting without hunting. Amber, with a soft glow on hover. */
-.bc-qa-btn { color: #c8931a; }
+.bc-qa-btn { color: var(--warn); }
 .bc-qa-btn:hover {
-  color: #b8850f;
-  background: color-mix(in srgb, #c8931a 14%, transparent);
-  filter: drop-shadow(0 0 3px color-mix(in srgb, #c8931a 55%, transparent));
+  color: var(--warn-strong);
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+  filter: drop-shadow(0 0 3px color-mix(in srgb, var(--warn) 55%, transparent));
 }
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .bc-qa-btn { color: #e8b53c; }
-}
-:root[data-theme="dark"] .bc-qa-btn { color: #e8b53c; }
 .bc-link-btn { background: none; border: none; color: var(--accent); padding: 3px 4px; text-align: left; }
 .bc-link-btn:hover { text-decoration: underline; }
 
@@ -423,7 +460,7 @@ button:focus-visible, [tabindex]:focus-visible {
    ring color. One treatment for every surface that shows a calendar dot. */
 .bc-cal-dot.is-feed { background: transparent; border: 2px solid currentColor; }
 .bc-cal-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.bc-health { color: #c9913d; cursor: help; display: inline-flex; align-items: center; }
+.bc-health { color: var(--warn); cursor: help; display: inline-flex; align-items: center; }
 .bc-cal-gear { padding: 2px 4px; visibility: hidden; flex: none; }
 .bc-cal-row:hover .bc-cal-gear,
 .bc-cal-row:has(:focus-visible) .bc-cal-gear,
@@ -839,11 +876,11 @@ body.bc-dragging * { cursor: grabbing !important; }
 }
 .bc-nowline {
   position: absolute; left: 0; right: 0; height: 2px;
-  background: #d33d3d; z-index: 5; pointer-events: none;
+  background: var(--now); z-index: 5; pointer-events: none;
 }
 .bc-nowline-dot {
   position: absolute; left: -4px; top: -3px; width: 8px; height: 8px;
-  border-radius: 50%; background: #d33d3d;
+  border-radius: 50%; background: var(--now);
 }
 .bc-tg-preview {
   position: absolute; z-index: 6; pointer-events: none;
@@ -970,7 +1007,7 @@ body.bc-dragging * { cursor: grabbing !important; }
 
 /* --- overlays: day expand, popover, sheets ------------------------------------- */
 
-.bc-overlay { position: fixed; inset: 0; z-index: 60; background: rgba(10, 12, 18, 0.25); }
+.bc-overlay { position: fixed; inset: 0; z-index: 60; background: var(--scrim); }
 .bc-dayexpand {
   position: fixed; background: var(--bg-raised); border: 1px solid var(--border);
   border-radius: var(--radius); box-shadow: var(--shadow);
@@ -1112,7 +1149,7 @@ body.bc-dragging * { cursor: grabbing !important; }
 
 .bc-detail-overlay {
   display: flex; align-items: center; justify-content: center;
-  z-index: 74; padding: 24px 16px; background: rgba(10, 12, 18, 0.35);
+  z-index: 74; padding: 24px 16px; background: var(--scrim);
 }
 .bc-detail {
   width: 560px; max-width: 100%; max-height: min(84vh, 720px);
@@ -1198,6 +1235,17 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-sys-bad { color: var(--danger); font-weight: 600; }
 .bc-sys-err { color: var(--fg-muted); max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bc-map-wrap { position: relative; margin-top: 6px; }
+/* Leaflet ships a white attribution strip and light-grey tile gaps; both
+   follow the theme here (the tiles themselves switch style, lib/maps.js). */
+.leaflet-container { background: var(--bg-inset); font-family: var(--font); }
+.leaflet-container .leaflet-control-attribution {
+  background: color-mix(in srgb, var(--bg-raised) 82%, transparent); color: var(--fg-muted);
+}
+.leaflet-container .leaflet-control-attribution a { color: var(--accent); }
+.leaflet-container .leaflet-bar { border: 1px solid var(--border-strong); box-shadow: var(--shadow); }
+.leaflet-container .leaflet-bar a { background: var(--bg-raised); color: var(--fg); border-bottom-color: var(--border); }
+.leaflet-container .leaflet-bar a:hover { background: var(--bg-inset); color: var(--fg); }
+.leaflet-container .leaflet-bar a.leaflet-disabled { background: var(--bg-inset); color: var(--fg-muted); }
 .bc-map {
   height: 200px; border-radius: 6px; border: 1px solid var(--border);
   overflow: hidden; background: var(--bg-inset);
@@ -1263,7 +1311,7 @@ body.bc-dragging * { cursor: grabbing !important; }
 
 /* --- editor drawer --------------------------------------------------------------- */
 
-.bc-drawer-backdrop { position: fixed; inset: 0; z-index: 75; background: rgba(10, 12, 18, 0.3); }
+.bc-drawer-backdrop { position: fixed; inset: 0; z-index: 75; background: var(--scrim); }
 .bc-drawer {
   position: fixed; top: 0; right: 0; bottom: 0; width: 420px; max-width: 94vw;
   z-index: 76;
@@ -1452,7 +1500,7 @@ body.bc-dragging * { cursor: grabbing !important; }
   background: var(--fg); color: var(--bg);
   border-radius: 8px; padding: 8px 8px 8px 14px; box-shadow: var(--shadow);
 }
-.bc-toast.is-error { background: var(--danger); color: #fff; }
+.bc-toast.is-error { background: var(--danger); color: var(--on-solid); }
 .bc-toast .bc-icon-btn { color: inherit; opacity: 0.7; }
 .bc-toast-undo {
   background: none; border: none; color: inherit;
@@ -1677,13 +1725,13 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-resched-cancel {
   margin-left: auto; flex: none;
   display: inline-flex; align-items: center; gap: 6px;
-  background: var(--danger); border-color: var(--danger); color: #fff;
+  background: var(--danger); border-color: var(--danger); color: var(--on-solid);
   font-weight: 600;
 }
 .bc-resched-cancel:hover { background: var(--danger); filter: brightness(1.1); }
 .bc-resched-cancel kbd {
-  font-family: var(--mono); font-size: 10px; color: #fff;
-  border: 1px solid color-mix(in srgb, #fff 55%, transparent); border-radius: 4px;
+  font-family: var(--mono); font-size: 10px; color: var(--on-solid);
+  border: 1px solid color-mix(in srgb, var(--on-solid) 55%, transparent); border-radius: 4px;
   padding: 0 4px;
 }
 
@@ -1796,7 +1844,7 @@ body.bc-rescheduling { user-select: none; }
 @media (max-width: 800px) {
   .bc-sidebar-scrim {
     display: block; position: fixed; inset: 0; z-index: 49;
-    background: rgba(10, 12, 18, 0.35);
+    background: var(--scrim);
   }
   .bc-sidebar-mobilehead {
     display: flex; align-items: center; justify-content: space-between;
@@ -2357,9 +2405,9 @@ body.bc-rescheduling { user-select: none; }
 }
 .bc-person-namebtn:hover { text-decoration: underline; }
 .bc-away-pill { text-transform: uppercase; font-size: 8.5px; letter-spacing: 0.4px; }
-.bc-away-pill.is-away { background: #8b93a422; color: #6b7484; border: 1px solid #8b93a455; }
-.bc-away-pill.is-busy { background: #d19a3822; color: #a4762a; border: 1px solid #d19a3855; }
-.bc-away-pill.is-here { background: #3f9d6e22; color: #2d7a52; border: 1px solid #3f9d6e55; }
+.bc-away-pill.is-away { background: color-mix(in srgb, var(--fg-muted) 13%, transparent); color: var(--fg-muted); border: 1px solid color-mix(in srgb, var(--fg-muted) 35%, transparent); }
+.bc-away-pill.is-busy { background: color-mix(in srgb, var(--warn) 13%, transparent); color: var(--warn-strong); border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent); }
+.bc-away-pill.is-here { background: color-mix(in srgb, var(--ok) 13%, transparent); color: var(--ok); border: 1px solid color-mix(in srgb, var(--ok) 35%, transparent); }
 
 /* Availability bands: soft dashed top edge (inline style carries the
    reduced-alpha color) distinguishes them from trip bands. */
@@ -2369,8 +2417,8 @@ body.bc-rescheduling { user-select: none; }
 /* Editor scheduling assist. */
 .bc-avail-warn {
   display: flex; flex-direction: column; gap: 2px;
-  color: #a4762a; font-size: 12.5px;
-  background: #d19a3814; border: 1px solid #d19a3844; border-radius: var(--radius);
+  color: var(--warn-strong); font-size: 12.5px;
+  background: color-mix(in srgb, var(--warn) 8%, transparent); border: 1px solid color-mix(in srgb, var(--warn) 27%, transparent); border-radius: var(--radius);
   padding: 5px 9px;
 }
 .bc-avail-warn span { display: flex; align-items: center; gap: 5px; }
@@ -2524,10 +2572,10 @@ body.bc-rescheduling { user-select: none; }
   border: 1px solid var(--border-strong); color: var(--fg-muted); white-space: nowrap;
 }
 .bc-activity-badge.is-web, .bc-activity-badge.is-quickadd { border-color: color-mix(in srgb, var(--accent) 55%, transparent); color: var(--accent); }
-.bc-activity-badge.is-feed { color: #4ca777; border-color: color-mix(in srgb, #4ca777 55%, transparent); }
-.bc-activity-badge.is-mail, .bc-activity-badge.is-rsvp { color: #c96f8f; border-color: color-mix(in srgb, #c96f8f 55%, transparent); }
-.bc-activity-badge.is-api { color: #d4a03c; border-color: color-mix(in srgb, #d4a03c 55%, transparent); }
-.bc-activity-badge.is-import, .bc-activity-badge.is-caldav { color: #7a6fd4; border-color: color-mix(in srgb, #7a6fd4 55%, transparent); }
+.bc-activity-badge.is-feed { color: var(--src-feed); border-color: color-mix(in srgb, var(--src-feed) 55%, transparent); }
+.bc-activity-badge.is-mail, .bc-activity-badge.is-rsvp { color: var(--src-mail); border-color: color-mix(in srgb, var(--src-mail) 55%, transparent); }
+.bc-activity-badge.is-api { color: var(--src-api); border-color: color-mix(in srgb, var(--src-api) 55%, transparent); }
+.bc-activity-badge.is-import, .bc-activity-badge.is-caldav { color: var(--src-import); border-color: color-mix(in srgb, var(--src-import) 55%, transparent); }
 .bc-activity-summary { flex: 1 1 auto; min-width: 0; }
 .bc-activity-link {
   background: none; border: none; padding: 0; font: inherit; color: inherit;
@@ -2716,7 +2764,7 @@ body.bc-rescheduling { user-select: none; }
 .bc-plugincard-body p { margin: 0 0 4px; }
 
 /* Activity badge for plugin sources */
-.bc-activity-badge.is-plugin { color: #2e8b8b; border-color: color-mix(in srgb, #2e8b8b 55%, transparent); }
+.bc-activity-badge.is-plugin { color: var(--src-plugin); border-color: color-mix(in srgb, var(--src-plugin) 55%, transparent); }
 
 /* --- plugin system v2 ---------------------------------------------------------------- */
 
@@ -2732,7 +2780,7 @@ body.bc-rescheduling { user-select: none; }
 
 /* Proposals */
 .bc-proposal { border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 14px; margin-bottom: 10px; }
-.bc-proposal.is-accepted { opacity: 0.8; border-color: color-mix(in srgb, #3f9d6e 45%, var(--border)); }
+.bc-proposal.is-accepted { opacity: 0.8; border-color: color-mix(in srgb, var(--ok) 45%, var(--border)); }
 .bc-proposal.is-rejected { opacity: 0.6; }
 .bc-proposal-head { display: flex; align-items: center; gap: 8px; }
 .bc-proposal-toggle { background: none; border: none; display: flex; align-items: center; gap: 6px; padding: 0; text-align: left; min-width: 0; }
@@ -2741,7 +2789,7 @@ body.bc-rescheduling { user-select: none; }
 .bc-proposal-title { font-weight: 700; font-size: 14px; }
 .bc-proposal-plugin { margin-left: auto; font-size: 10.5px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.4px; }
 .bc-proposal-badge { font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px; }
-.bc-proposal-badge.is-accepted { color: #2d7a52; border-color: color-mix(in srgb, #3f9d6e 55%, transparent); background: #3f9d6e18; }
+.bc-proposal-badge.is-accepted { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 55%, transparent); background: color-mix(in srgb, var(--ok) 9%, transparent); }
 .bc-proposal-summary { margin: 4px 0 0; font-size: 12.5px; color: var(--fg-muted); }
 .bc-proposal-body { margin-top: 8px; }
 .bc-proposal-why { font-size: 12.5px; margin-bottom: 6px; }

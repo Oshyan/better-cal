@@ -226,6 +226,13 @@ export function MonthGrid({
   // once the geometry settles is what keeps the anchor day mid-view instead
   // of wherever the stale height put it.
   const pendingRowRef = useRef(null);
+  // True once the scroller has been positioned on an anchor at least once.
+  // Before that, scrollTop is 0, which is the grid's EARLIEST week (~10 years
+  // back), and any range computed from it is garbage. On a mount where the
+  // scroller has no height yet, the navigation effect cannot apply the anchor
+  // but still recomputes, and the demand effect below dutifully requested a
+  // window from 2016 on the boot critical path before asking for today.
+  const anchoredRef = useRef(false);
   const applyAnchor = useCallback((row) => {
     const el = scrollRef.current;
     if (!el) return;
@@ -233,6 +240,7 @@ export function MonthGrid({
     const lead = Math.max(0, Math.round((h - rowHRef.current) * 0.4));
     el.scrollTop = Math.max(0, weekTop(row, minWeek, rowHRef.current) - lead);
     topWeekRef.current = Math.max(minWeek, minWeek + Math.floor(el.scrollTop / rowHRef.current));
+    anchoredRef.current = true;
   }, [minWeek]);
 
   // An anchor is only SETTLED once the box we positioned against is the same
@@ -284,6 +292,13 @@ export function MonthGrid({
   // Report visible month + demand data for the visible window.
   useEffect(() => {
     if (range.last <= range.first) return;
+    // A range computed before the anchor was ever applied describes the top
+    // of the scroll span, not anything the user is looking at. Neither name
+    // that month nor fetch it; the anchor's own recompute re-runs this effect
+    // with a real range moments later. (applyAnchor sets anchoredRef; it runs
+    // from the navigation effect once the scroller has height, and from the
+    // geometry effect whenever an anchor is still pending.)
+    if (!anchoredRef.current) return;
     if (onVisibleMonthChange) {
       // Dominant month over the WHOLE visible window, not just the top row:
       // with the tail of an old month as the top row, the window is mostly

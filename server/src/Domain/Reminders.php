@@ -39,6 +39,8 @@ final class Reminders
     private const NOTIFIED_RETENTION = 'P7D';
     private const FAILING_SUBSCRIPTION_TTL = 'P3D';
 
+    private readonly SystemHealth $health;
+
     public function __construct(
         private readonly Db $db,
         private readonly PushSubscriptions $subscriptions,
@@ -46,6 +48,7 @@ final class Reminders
         private readonly EmailSender $email,
         private readonly Recurrence $recurrence,
     ) {
+        $this->health = new SystemHealth($db);
     }
 
     // ---- Pure: validation ---------------------------------------------
@@ -307,13 +310,26 @@ final class Reminders
                         // or dozing), drop it rather than arriving hours stale.
                         $result = $this->sender->send($sub, $due['payload'], 900);
                         $outcomes[] = $result;
+                        $device = PushSubscriptions::labelFor($sub);
                         if ($result === PushSender::OK) {
                             $this->subscriptions->recordSuccess((int) $sub['id']);
+                            $this->health->recordOk('push:' . $sub['id'], 'push', $userId, $device);
                             $sent++;
                         } else {
                             if ($result === PushSender::GONE) {
                                 $this->subscriptions->recordFailure((int) $sub['id']);
                             }
+                            // Every failure counts here, not only 'gone': a
+                            // device that never gets its reminders because the
+                            // push service keeps answering 5xx used to be a
+                            // counter and an error_log line.
+                            $this->health->recordFailure(
+                                'push:' . $sub['id'],
+                                'push',
+                                $userId,
+                                $device,
+                                $result === PushSender::GONE ? 'subscription expired or revoked by the browser' : 'push service did not accept the message'
+                            );
                             $failed++;
                         }
                     }

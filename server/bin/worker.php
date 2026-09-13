@@ -45,6 +45,22 @@ $trips = new BetterCal\Domain\Trips($db, $undo);
 $eventsDomain = new BetterCal\Domain\Events($db, new Recurrence(), $undo, $labels, $filters, $trips);
 $pluginsDomain = new BetterCal\Domain\Plugins($db);
 $geocodeSweep = new BetterCal\Domain\GeocodeSweep($db, new BetterCal\Domain\Geocode($db), new BetterCal\Domain\Settings($db));
+$systemHealth = new BetterCal\Domain\SystemHealth($db);
+$emailSender = new EmailSender($cfg);
+
+// Job types reported to system_health at the job level, with the label a
+// person sees. feed_poll is reported per calendar by Feeds::poll and
+// plugin_job per plugin by the plugin runner, so neither is listed: one bad
+// feed must not read as "feed polling is broken".
+const HEALTH_JOB_LABELS = [
+    'filter_eval' => 'Prompt filter evaluation',
+    'rank_events' => 'Event ranking',
+    'mail_ingest' => 'Mail ingest',
+    'reminder_scan' => 'Reminder scan',
+    'activity_prune' => 'Activity retention',
+    'geocode_sweep' => 'Geocoding',
+    'system_alerts' => 'Alert emails',
+];
 
 $locked = $db->scalar('SELECT GET_LOCK(?, 0)', [WORKER_LOCK]);
 if ((int) $locked !== 1) {
@@ -119,6 +135,13 @@ try {
                         . ' outcome=' . $r['outcome'] . (isset($r['durationMs']) ? ' ' . $r['durationMs'] . 'ms' : '')
                         . ($r['error'] !== null ? ' error=' . $r['error'] : '') . "\n";
                     break;
+                case 'system_alerts':
+                    $r = $systemHealth->sweepAlerts($emailSender, $cfg['alert_email'] ?? null);
+                    if ($r['failureEmails'] + $r['recoveryEmails'] > 0 || $r['skipped'] !== null) {
+                        echo bc_ts() . " system_alerts failure_emails={$r['failureEmails']} recovery_emails={$r['recoveryEmails']}"
+                            . ($r['skipped'] !== null ? " skipped={$r['skipped']}" : '') . "\n";
+                    }
+                    break;
                 case 'geocode_sweep':
                     if ($geocodeSweep->hasCandidates()) {
                         $r = $geocodeSweep->run();
@@ -135,8 +158,14 @@ try {
                     throw new \RuntimeException('Unknown job type: ' . $job['type']);
             }
             $queue->markDone((int) $job['id']);
+            if (isset(HEALTH_JOB_LABELS[(string) $job['type']])) {
+                $systemHealth->recordOk('job:' . $job['type'], 'job', null, HEALTH_JOB_LABELS[(string) $job['type']]);
+            }
         } catch (\Throwable $e) {
             $queue->markFailed($job, $e->getMessage());
+            if (isset(HEALTH_JOB_LABELS[(string) $job['type']])) {
+                $systemHealth->recordFailure('job:' . $job['type'], 'job', null, HEALTH_JOB_LABELS[(string) $job['type']], $e->getMessage());
+            }
             fwrite(STDERR, bc_ts() . ' job ' . $job['id'] . ' (' . $job['type'] . ') failed: ' . $e->getMessage() . "\n");
         }
     }
@@ -183,6 +212,10 @@ function bc_enqueue_recurring(Db $db, JobQueue $queue): void
     // Coordinates for anything with an address and none yet, upcoming first.
     // Every tick; the job itself is a no-op when there is nothing to place.
     bc_enqueue_if_stale($db, $queue, 'geocode_sweep', 'PT50S');
+    // Alert emails: ten minutes, so a broken SMTP is one failed attempt per
+    // ten minutes rather than per minute. The decision of WHAT to email is
+    // SystemHealth::shouldAlert; this is only how often it is asked.
+    bc_enqueue_if_stale($db, $queue, 'system_alerts', 'PT10M');
 
     // Plugin jobs: manifests declare intervals; staleness is judged from
     // plugin_runs (a failing job still respects its interval). Cap per tick.

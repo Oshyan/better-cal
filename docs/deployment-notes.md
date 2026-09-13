@@ -41,6 +41,10 @@ Rationale: nginx serves static assets directly (via the `server/public/assets` -
 
 Three layers cooperate: nginx headers above; the service worker (`web/sw.js`) is network-first with forced revalidation for app files, cache-first for vendor; `web/index.html` references entry assets with a `?v=N` query, bumped only when a stale-HTTP-cache escape hatch is needed (historical: v=2 broke clients that had cached the original long-max-age headers).
 
+## Failure alerts
+
+Background work reports into `system_health` (one row per job type, feed, and push device). Transitions land in Activity under "System"; the current state is on Settings → System. When SMTP is configured (`BETTERCAL_SMTP_HOST` / `BETTERCAL_SMTP_FROM`), a streak that lasts earns one email and one on recovery, never one per failure. Per-user subjects (a feed, a device) go to that user's account email; system-wide ones (a job type) go to `BETTERCAL_ALERT_EMAIL`, else to the first user. The alert job runs every ten minutes so a broken SMTP is one failed attempt per ten minutes. Thresholds live in `SystemHealth` (`JOB_ALERT_AFTER` 1h + 3 failures, `FEED_ALERT_AFTER` 1 day, `PUSH_ALERT_AFTER` 6h, `REALERT_AFTER` 1 day).
+
 ## Credentials
 
 Local file `.credentials` (gitignored, chmod 600) holds: site user password, DB password, app login (calendar@oshyan.com), and an API bearer token named `claude-code`. The Gemini key lives only in the server `.env` (sourced originally from LogAssistant's key file).

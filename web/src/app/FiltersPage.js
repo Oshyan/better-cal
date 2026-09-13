@@ -14,6 +14,7 @@ import { useStore, state, toast, shallowEq } from './store.js';
 import { api, refreshWindow } from './api.js';
 import { PageShell, EmptyState } from './PageShell.js';
 import { PALETTE } from '../lib/color.js';
+import { fmtSince } from '../lib/since.js';
 
 const FIELD_OPTIONS = ['title', 'description', 'location', 'tags'];
 // Default selection mirrors the server default: tags is opt-in.
@@ -161,6 +162,7 @@ export function FiltersPage() {
     (s) => ({ calendars: s.calendars, folders: s.folders }),
     shallowEq,
   );
+  const health = useStore((s) => s.systemHealth);
   const [filters, setFilters] = useState(null);
   const [editingId, setEditingId] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -257,10 +259,14 @@ export function FiltersPage() {
     if (el) el.focus();
   };
 
+  const evalFailing = ((health && health.rows) || []).find((r) => r.subject === 'job:filter_eval' && r.status === 'failing');
   return html`<${PageShell}
     title="Filters"
     note="Filters hide, dim, or highlight matching events everywhere: in every view and in search."
   >
+    ${evalFailing && html`<div class="bc-syswarn" role="alert">
+      Prompt filters are not being evaluated (failing since ${fmtSince(evalFailing.firstFailedAt)}${evalFailing.lastError ? ': ' + evalFailing.lastError : ''}). Keyword filters still apply; events a prompt filter would hide may be showing.
+    </div>`}
     <${FilterForm}
       key=${'create' + createSeq}
       calendars=${calendars} folders=${folders}

@@ -70,6 +70,11 @@ function config(): array
             'pass' => $env('BETTERCAL_SMTP_PASS'),
             'from' => $env('BETTERCAL_SMTP_FROM'),
         ],
+        // Where system-wide failure emails go (a job type that keeps failing,
+        // as opposed to one user's feed or device, which go to that user).
+        // Empty means the first user, who on a self-hosted install is the
+        // operator. Needs the SMTP block above to do anything.
+        'alert_email' => $env('BETTERCAL_ALERT_EMAIL', ''),
         'imap' => [
             // Mailbox the ingest worker polls for forwarded invites
             // (docs/email-ingest.md). Defaults reuse the SMTP mailbox

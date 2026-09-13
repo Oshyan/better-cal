@@ -4,7 +4,8 @@ import { html, render } from '../../vendor/index.js';
 import { App } from './App.js';
 import { set, state, toast } from './store.js';
 import { saveSetting } from './actions.js';
-import { fetchMe, loadCalendars, loadSavedViews, loadConfig, loadPeople, loadPlugins, loadProposalCount, api } from './api.js';
+import { fetchMe, loadCalendars, loadSavedViews, loadConfig, loadPeople, loadPlugins, loadProposalCount, loadSystemHealth, api } from './api.js';
+import { announceSystemHealth } from './system.js';
 import { localTz } from '../lib/dates.js';
 import { handleEventLink } from './push.js';
 import {
@@ -27,6 +28,7 @@ async function boot() {
       loadSavedViews().catch(() => { /* views are non-critical at boot */ }),
       loadConfig().catch(() => { /* map tiles fall back to OSM */ }),
       loadPeople().catch(() => { /* people are non-critical at boot */ }),
+      loadSystemHealth(), // own catch inside; feeds the boot notices and the device banner
       loadPlugins(), // ops listing feeds the sidebar layer toggles; own catch inside
       loadProposalCount(),
       // Tell the server our timezone once. The browser has always known it;
@@ -42,6 +44,8 @@ async function boot() {
     // Notification deep link (/?event=instanceId): open that event's detail.
     handleEventLink().catch(() => { /* best-effort */ });
     handleDeepPaths().catch(() => { /* best-effort */ });
+    // One-time notices for failures that change what the calendar shows.
+    announceSystemHealth();
   }
 }
 

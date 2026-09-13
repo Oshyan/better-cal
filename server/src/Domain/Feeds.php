@@ -38,6 +38,7 @@ final class Feeds
                 'last_poll_error' => null,
             ], 'id = ?', [$calendarId]);
             $this->recordStats($calendarId, count($parsed));
+            (new SystemHealth($this->db))->recordOk('feed:' . $calendarId, 'feed', (int) $calendar['user_id'], 'Feed: ' . (string) $calendar['name']);
             // New/updated feed events need background prompt-filter evaluation
             // and rank scoring (mirrors the ChangeLog hook: fired per poll).
             if ($count > 0 && $this->queue !== null) {
@@ -58,6 +59,9 @@ final class Feeds
                 'last_poll_status' => 'error',
                 'last_poll_error' => mb_substr($e->getMessage(), 0, 2000),
             ], 'id = ?', [$calendarId]);
+            // The badge says "error" while you look; this gives it a since-when,
+            // a history, and eventually an email if it stays that way.
+            (new SystemHealth($this->db))->recordFailure('feed:' . $calendarId, 'feed', (int) $calendar['user_id'], 'Feed: ' . (string) $calendar['name'], $e->getMessage());
             throw $e;
         }
     }

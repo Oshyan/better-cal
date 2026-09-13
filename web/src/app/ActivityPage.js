@@ -22,6 +22,7 @@ const SOURCES = [
   ['mail', 'Email', 'auto'],
   ['import', 'Import', 'auto'],
   ['geocode', 'Geocoding', 'auto'],
+  ['system', 'System', 'auto'],
   ['plugin', 'Plugins', 'auto'],
 ];
 const GROUPS = { manual: SOURCES.filter((s) => s[2] === 'manual').map((s) => s[0]),

@@ -1122,6 +1122,32 @@ body.bc-dragging * { cursor: grabbing !important; }
 /* Shown in place of the map when the address could not be geocoded, so an
    address with no map reads as a known limitation rather than a bug. */
 .bc-detail-geonote { font-size: 12px; color: var(--fg-muted); margin-top: 2px; }
+
+/* --- system health ------------------------------------------------------- */
+/* The one persistent banner the app has: reminders cannot reach THIS device.
+   Sits above the page content; everything else about failures lives on the
+   Settings page and in Activity. */
+.bc-sysbanner {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 8px 14px; font-size: 13px;
+  background: color-mix(in srgb, var(--danger) 12%, var(--bg));
+  border-bottom: 1px solid color-mix(in srgb, var(--danger) 40%, var(--border));
+  color: var(--fg);
+}
+.bc-sysbanner > span { flex: 1; min-width: 200px; }
+/* In-page warning (Filters page while prompt evaluation is failing). */
+.bc-syswarn {
+  padding: 8px 12px; margin: 0 0 12px; font-size: 13px; border-radius: 6px;
+  background: color-mix(in srgb, var(--danger) 10%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--danger) 35%, var(--border));
+}
+.bc-sys-table { border-collapse: collapse; font-size: 12.5px; width: 100%; max-width: 720px; }
+.bc-sys-table th { text-align: left; font-weight: 600; color: var(--fg-muted); padding: 2px 10px 4px 0; }
+.bc-sys-table td { padding: 3px 10px 3px 0; border-top: 1px solid var(--border); vertical-align: top; }
+.bc-sys-table tr.is-failing td { background: color-mix(in srgb, var(--danger) 6%, transparent); }
+.bc-sys-ok { color: var(--fg-muted); }
+.bc-sys-bad { color: var(--danger); font-weight: 600; }
+.bc-sys-err { color: var(--fg-muted); max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bc-map-wrap { position: relative; margin-top: 6px; }
 .bc-map {
   height: 200px; border-radius: 6px; border: 1px solid var(--border);

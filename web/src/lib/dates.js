@@ -117,6 +117,45 @@ export function diffDaysKey(a, b) {
   return epochDayOfKey(a) - epochDayOfKey(b);
 }
 
+// Total duration of one occurrence, never of a clipped grid segment or a
+// recurrence series. All-day dates have an exclusive end and ignore offsets;
+// timed events measure elapsed time, including DST and timezone changes.
+// Short events and synthetic groups have no multi-day duration decoration.
+export function eventDuration(occ) {
+  if (!occ || occ.isGroup || !occ.start || !occ.end) return null;
+  let seconds;
+  if (occ.allDay) {
+    const startKey = occ.start.slice(0, 10);
+    const endKey = occ.end.slice(0, 10);
+    const validKey = (key) => /^\d{4}-\d{2}-\d{2}$/.test(key)
+      && Number.isFinite(epochDayOfKey(key))
+      && keyOfEpochDay(epochDayOfKey(key)) === key;
+    if (!validKey(startKey) || !validKey(endKey)) return null;
+    const days = diffDaysKey(endKey, startKey);
+    if (days < 2) return null;
+    seconds = days * 86400;
+  } else {
+    seconds = (parseISO(occ.end) - parseISO(occ.start)) / 1000;
+    if (!Number.isFinite(seconds) || seconds < 86400) return null;
+  }
+
+  const days = Math.floor(seconds / 86400);
+  let rest = seconds % 86400;
+  const parts = [[days, 'd', 'day']];
+  for (const [size, short, word] of [[3600, 'h', 'hour'], [60, 'm', 'minute'], [1, 's', 'second']]) {
+    const n = size === 1 ? Number(rest.toFixed(3)) : Math.floor(rest / size);
+    if (n) parts.push([n, short, word]);
+    rest %= size;
+  }
+  // Month shorthand deliberately wins over 4w at 28 days. Other spans only
+  // use weeks when exact; no rounding, decimals, or mixed weeks and days.
+  const compact = seconds % 86400 === 0
+    ? (days >= 28 && days <= 31 ? '1mo' : days % 7 === 0 ? `${days / 7}w` : `${days}d`)
+    : parts.map(([n, short]) => `${n}${short}`).join(' ');
+  const exact = parts.map(([n, , word]) => `${n} ${word}${n === 1 ? '' : 's'}`).join(', ');
+  return { compact, exact };
+}
+
 // Add days to a Date preserving wall-clock time (DST-safe for calendar moves).
 export function addDaysDate(d, n) {
   const r = new Date(d);

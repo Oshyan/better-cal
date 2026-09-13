@@ -5,7 +5,7 @@ import {
   parseISO, toISOWithOffset, dayKeyOf, dateOfDayKey, epochDayOfKey,
   keyOfEpochDay, addDaysKey, diffDaysKey, weekIndexOfKey, firstEpochDayOfWeek,
   dayKeysOfWeek, startOfWeekKey, setWeekStart, getWeekStart, setTimeFormat, fmtTime,
-  fmtMonthShort, timeState, startMs, byStart,
+  fmtMonthShort, timeState, startMs, byStart, eventDuration,
 } from '../src/lib/dates.js';
 import { layoutOverlaps, assignLanes, rangesOverlap } from '../src/ui/layout.js';
 import {
@@ -78,6 +78,55 @@ eq('dayKey round-trip', dayKeyOf(dateOfDayKey('2026-03-08')), '2026-03-08'); // 
 // 5. Epoch day math is timezone-proof integer arithmetic.
 eq('epochDay of 1970-01-01', epochDayOfKey('1970-01-01'), 0);
 eq('keyOfEpochDay inverse', keyOfEpochDay(epochDayOfKey('2026-07-30')), '2026-07-30');
+
+console.log('--- multi-day duration ---');
+const durationOcc = (days, start = '2026-09-01') => ({
+  title: 'Trip', allDay: true, start: start + 'T00:00:00+00:00',
+  end: addDaysKey(start, days) + 'T00:00:00+00:00',
+});
+for (const [days, compact] of [[2, '2d'], [6, '6d'], [7, '1w'], [10, '10d'],
+  [14, '2w'], [21, '3w'], [25, '25d'], [27, '27d'], [28, '1mo'],
+  [29, '1mo'], [30, '1mo'], [31, '1mo'], [32, '32d'], [35, '5w'], [56, '8w'], [60, '60d']]) {
+  eq(`duration ${days} days`, eventDuration(durationOcc(days)), { compact, exact: `${days} days` });
+}
+for (const start of ['2026-03-07', '2026-10-31', '2028-02-28', '2026-12-31']) {
+  eq(`all-day duration ignores DST and month/year boundaries: ${start}`,
+    eventDuration(durationOcc(3, start)), { compact: '3d', exact: '3 days' });
+}
+eq('all-day duration reads literal dates despite opposing offsets', eventDuration({
+  allDay: true, start: '2026-09-01T00:00:00+14:00', end: '2026-09-04T00:00:00-12:00',
+}), { compact: '3d', exact: '3 days' });
+for (const occ of [null, {}, durationOcc(0), durationOcc(1), durationOcc(-2),
+  { ...durationOcc(3), isGroup: true }, { ...durationOcc(3), end: null },
+  { ...durationOcc(3), start: 'invalid' }, { ...durationOcc(3), start: '2026-02-30' },
+  { start: 'invalid', end: '2026-09-04T00:00:00Z' },
+  { start: '2026-09-01T22:00:00Z', end: '2026-09-02T02:00:00Z' },
+  { start: '2026-03-07T12:00:00-08:00', end: '2026-03-08T12:00:00-07:00' }]) {
+  eq('short, invalid or synthetic occurrence has no duration suffix', eventDuration(occ), null);
+}
+eq('timed duration preserves hours/minutes/seconds', eventDuration({
+  start: '2026-09-01T12:00:00Z', end: '2026-09-03T18:30:15Z',
+}), { compact: '2d 6h 30m 15s', exact: '2 days, 6 hours, 30 minutes, 15 seconds' });
+eq('timed exact week', eventDuration({ start: '2026-09-01T12:00:00Z', end: '2026-09-08T12:00:00Z' }),
+  { compact: '1w', exact: '7 days' });
+eq('timed DST fall-back counts the extra elapsed hour', eventDuration({
+  start: '2026-10-31T12:00:00-07:00', end: '2026-11-01T12:00:00-08:00',
+}), { compact: '1d 1h', exact: '1 day, 1 hour' });
+eq('timed timezone changes compare instants', eventDuration({
+  start: '2026-09-01T12:00:00+02:00', end: '2026-09-02T12:00:00-07:00',
+}), { compact: '1d 9h', exact: '1 day, 9 hours' });
+const recurringTrip = { ...durationOcc(21), recurring: true, rrule: 'FREQ=YEARLY' };
+eq('recurrence measures this occurrence only', eventDuration(recurringTrip).compact, '3w');
+eq('edited recurrence exception uses its own end', eventDuration({ ...recurringTrip, end: '2026-09-11' }).compact, '10d');
+eq('timed duration starts at exactly 24 hours', eventDuration({
+  start: '2026-09-01T12:00:00Z', end: '2026-09-02T12:00:00Z',
+}), { compact: '1d', exact: '1 day' });
+eq('timed partial month retains its hours', eventDuration({
+  start: '2026-09-01T12:00:00Z', end: '2026-09-29T18:00:00Z',
+}), { compact: '28d 6h', exact: '28 days, 6 hours' });
+assert('timed trip details use elapsed duration rather than touched dates', tripSpanLabel({
+  start: '2026-09-01T12:00:00Z', end: '2026-09-03T18:00:00Z',
+}).endsWith(', 2 days, 6 hours'));
 
 console.log('--- day/week math ---');
 

@@ -10,7 +10,7 @@ import { describeRrule } from './EventDetail.js';
 import { isMobile, trapFocus, MOBILE_QUERY } from '../ui/DayExpand.js';
 import { ThumbIcon, PinIcon, LinkIcon, Icon } from '../ui/icons.js';
 import {
-  parseISO, dateOfDayKey, fmtRange, toInputValue, fromInputValue, toISOWithOffset, occDayKey,
+  parseISO, dateOfDayKey, fmtRange, eventDuration, toInputValue, fromInputValue, toISOWithOffset, occDayKey,
 } from '../lib/dates.js';
 import { fmtReminder } from '../lib/reminders.js';
 import { stripToText, hasHtml, sanitizeHtml } from '../lib/richtext.js';
@@ -48,6 +48,7 @@ function place(anchorRect) {
 
 export function EventPopover() {
   const popover = useStore((s) => s.popover);
+  useStore((s) => s.occVersion);
   const occ = popover ? state.occ.get(popover.instanceId) : null;
   const panelRef = useRef(null);
   const [editingTime, setEditingTime] = useState(false);
@@ -124,6 +125,7 @@ export function EventPopover() {
 
   // All-day occurrences carry literal dates at +00:00; anchor them to local
   // midnight for display so the date never shifts across timezones.
+  const duration = eventDuration(occ);
   const s = occ.allDay ? dateOfDayKey(occ.start.slice(0, 10)) : parseISO(occ.start);
   const e = occ.allDay ? dateOfDayKey(occ.end.slice(0, 10)) : parseISO(occ.end);
 
@@ -165,9 +167,10 @@ export function EventPopover() {
         onClick=${() => { set({ popover: null }); openTripByEventId(occ.containers[0].eventId); }}
       ><${LinkIcon} size=${12} /> Part of: ${occ.containers[0].title}</button>`}
       ${editingTime
-        ? html`<${TimeEditor} start=${s} end=${e} onSave=${saveTime} onCancel=${() => setEditingTime(false)} />`
+        ? html`<${TimeEditor} start=${s} end=${e} allDay=${occ.allDay} onSave=${saveTime} onCancel=${() => setEditingTime(false)} />`
         : html`<div class="bc-pop-when" onClick=${() => !isFeed && setEditingTime(true)} title=${isFeed ? '' : 'Click to edit time'}>
             ${fmtRange(s, e, occ.allDay)}
+            ${duration && html`<span class="bc-duration-exact">${duration.exact} total</span>`}
             ${occ.recurring && html`<span class="bc-pop-recur">${describeRrule(occ.rrule)}</span>`}
           </div>`}
       ${occ.reminders && occ.reminders.length > 0 && html`<div class="bc-pop-rem">
@@ -236,13 +239,15 @@ export function EventPopover() {
   </div>`;
 }
 
-function TimeEditor({ start, end, onSave, onCancel }) {
+function TimeEditor({ start, end, allDay, onSave, onCancel }) {
   const [sv, setSv] = useState(toInputValue(start));
   const [ev, setEv] = useState(toInputValue(end));
+  const duration = eventDuration({ start: sv, end: ev, allDay });
   return html`<div class="bc-pop-timeedit">
     <input type="datetime-local" value=${sv} onInput=${(x) => setSv(x.target.value)} aria-label="Start" />
     <span>to</span>
     <input type="datetime-local" value=${ev} onInput=${(x) => setEv(x.target.value)} aria-label="End" />
+    ${duration && html`<span class="bc-duration-exact">${duration.exact} total</span>`}
     <button type="button" class="bc-btn bc-btn-primary" onClick=${() => onSave(sv, ev)}>Save</button>
     <button type="button" class="bc-btn" onClick=${onCancel}>Cancel</button>
   </div>`;

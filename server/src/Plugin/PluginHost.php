@@ -214,10 +214,10 @@ final class PluginHost
 
     /**
      * Keyed values attached to one event. These ride the DETAIL fetch, never
-     * the events window — the window is 793 bytes/occurrence over thousands of
-     * occurrences, and per-event plugin data on that path would undo the whole
-     * payload budget. Read them here (worker side) or let the client fetch
-     * them when the user opens an event.
+     * the events window — the window is ~348 bytes/occurrence (after #15) over
+     * thousands of occurrences, and unbounded per-event plugin data on that
+     * path would undo that. Read them here (worker side) or let the client
+     * fetch them when the user opens an event. A capped channel is #51.
      *
      * @return array<string,mixed>
      */

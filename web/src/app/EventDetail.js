@@ -6,7 +6,7 @@
 
 import { html, useState, useRef, useMemo, useEffect } from '../../vendor/index.js';
 import { useStore, set, state, patchOccurrence } from './store.js';
-import { api } from './api.js';
+import { api, ensureFullOccurrence } from './api.js';
 import { deleteEvent, triageAttendance, sendFeedback, enterReschedule, sameDayList, openTripByEventId, rsvpEvent } from './actions.js';
 import { TripDetail } from './Trips.js';
 import { trapFocus } from '../ui/DayExpand.js';
@@ -208,6 +208,14 @@ export function EventDetail() {
   const panelRef = useRef(null);
   const [geo, setGeo] = useState(null); // {status:'loading'|'ok'|'none', lat?, lng?}
 
+  // Description, cadence, reminders and timestamps ride the single-event
+  // record, not the window (#15). Ask for it on open; it merges into the
+  // cached occurrence and this re-renders on occVersion. Until it lands the
+  // view shows what the grid had, which is everything above the fold.
+  useEffect(() => {
+    if (detail) ensureFullOccurrence(detail.instanceId);
+  }, [detail && detail.instanceId]); // eslint-disable-line
+
   // Focus trap while open; Esc is handled by the global keyboard map.
   useEffect(() => {
     const onKey = (e) => {
@@ -398,10 +406,10 @@ export function EventDetail() {
             ? html`<a href=${cal.sourceUrl} target="_blank" rel="noopener noreferrer">${cal.name} <${Icon} name="arrowUpRight" size=${10} /></a>`
             : html`<span>${cal.name}</span>`}
         </div>`}
-        <div class="bc-detail-meta">
+        ${occ.createdAt && html`<div class="bc-detail-meta">
           Added ${fmtDateFull(parseISO(occ.createdAt))} ${fmtTime(parseISO(occ.createdAt))}
           ${occ.updatedAt !== occ.createdAt && html` · Updated ${fmtDateFull(parseISO(occ.updatedAt))} ${fmtTime(parseISO(occ.updatedAt))}`}
-        </div>
+        </div>`}
         ${isFeed && html`<div class="bc-detail-actions">
           ${occ.url && html`<a class="bc-btn bc-detail-openlink" href=${occ.url} target="_blank" rel="noopener noreferrer">Open original link <${Icon} name="arrowUpRight" size=${11} /></a>`}
           <div class="bc-seg" role="group" aria-label="Attendance">

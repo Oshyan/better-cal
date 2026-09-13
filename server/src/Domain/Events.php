@@ -903,16 +903,37 @@ final class Events
      */
     private function serialize(array $row, \DateTimeImmutable $startUtc, \DateTimeImmutable $endUtc, array $links, bool $full = false): array
     {
-        $out = $this->serializeFields($row, $startUtc, $endUtc, $links);
+        $out = $this->serializeFields($row, $startUtc, $endUtc, $links, $full);
         if ($full) {
             return $out;
         }
-        unset($out['uid']);
-        return array_filter($out, static fn($v): bool => $v !== null);
+        // The list shape: what the grid draws. Everything the detail view,
+        // the popover and the editor need beyond this rides the single-event
+        // fetch on open (#15). Nulls and empty lists are omitted; a missing
+        // key reads as null / [] on every client surface.
+        foreach (self::DETAIL_ONLY as $k) {
+            unset($out[$k]);
+        }
+        return array_filter($out, static fn($v): bool => $v !== null && $v !== []);
     }
 
-    /** @param array{tags:array<int,list<string>>,people:array<int,list<string>>,containers:array<int,list<array{eventId:int,title:string}>>} $links */
-    private function serializeFields(array $row, \DateTimeImmutable $startUtc, \DateTimeImmutable $endUtc, array $links): array
+    /**
+     * Fields only the single-event record carries. Measured per occurrence
+     * before removal: uid 76, reminders 43, createdAt 39, updatedAt 39,
+     * rrule 35, tzid 28, reminderSource 26, description 21 — a third of the
+     * row, none of it read by anything that draws a grid.
+     */
+    private const DETAIL_ONLY = ['uid', 'createdAt', 'updatedAt', 'reminders', 'reminderSource', 'rrule', 'description', 'tzid'];
+
+    /**
+     * Beyond bytes, the list shape skips work: effective reminders need the
+     * calendar's defaults and the user's globals per row, and an override's
+     * rrule is a lookup of its parent per row — an N+1 the window used to pay
+     * for a field nothing on the window read.
+     *
+     * @param array{tags:array<int,list<string>>,people:array<int,list<string>>,containers:array<int,list<array{eventId:int,title:string}>>} $links
+     */
+    private function serializeFields(array $row, \DateTimeImmutable $startUtc, \DateTimeImmutable $endUtc, array $links, bool $full): array
     {
         $id = (int) $row['id'];
         $tzid = (string) $row['tzid'];
@@ -922,16 +943,26 @@ final class Events
             $style = is_array($row['style_json']) ? $row['style_json'] : json_decode((string) $row['style_json'], true);
         }
         $createdAt = Time::fromDb((string) $row['created_at']);
-        $calMeta = $this->calendarMeta((int) $row['calendar_id']);
-        $globals = $this->reminderDefaultsForUser((int) $row['user_id']);
-        [$reminders, $reminderSource] = Reminders::effective(
-            Reminders::decode($row['reminders_json'] ?? null),
-            $calMeta['reminderDefaults'] ?? null,
-            $globals['timed'],
-            $globals['allDay'],
-            (int) $row['all_day'] === 1,
-            $calMeta['kind'] ?? 'local'
-        );
+        $reminders = [];
+        $reminderSource = null;
+        $rrule = null;
+        if ($full) {
+            $calMeta = $this->calendarMeta((int) $row['calendar_id']);
+            $globals = $this->reminderDefaultsForUser((int) $row['user_id']);
+            [$reminders, $reminderSource] = Reminders::effective(
+                Reminders::decode($row['reminders_json'] ?? null),
+                $calMeta['reminderDefaults'] ?? null,
+                $globals['timed'],
+                $globals['allDay'],
+                (int) $row['all_day'] === 1,
+                $calMeta['kind'] ?? 'local'
+            );
+            // Overrides carry no rrule of their own; surface the parent's so
+            // clients can always describe the cadence, not just "repeats".
+            $rrule = !empty($row['rrule'])
+                ? (string) $row['rrule']
+                : (!empty($row['recurrence_parent_id']) ? $this->parentRrule((int) $row['recurrence_parent_id']) : null);
+        }
         return [
             'instanceId' => Recurrence::instanceId($id, $startUtc),
             'eventId' => $id,
@@ -955,11 +986,7 @@ final class Events
             'allDay' => (int) $row['all_day'] === 1,
             'tzid' => $tzid,
             'recurring' => !empty($row['rrule']) || !empty($row['recurrence_parent_id']),
-            // Overrides carry no rrule of their own; surface the parent's so
-            // clients can always describe the cadence, not just "repeats".
-            'rrule' => !empty($row['rrule'])
-                ? (string) $row['rrule']
-                : (!empty($row['recurrence_parent_id']) ? $this->parentRrule((int) $row['recurrence_parent_id']) : null),
+            'rrule' => $rrule,
             'source' => (string) $row['source'],
             'attendance' => (string) $row['attendance'],
             'status' => (string) $row['status'],

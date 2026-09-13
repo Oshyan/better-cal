@@ -153,7 +153,7 @@ Budget note: `llmJson()` allows up to 45 s against the 60 s run budget, so **two
 
 Declare `eventSettings` in the manifest and the host renders those controls in the event detail view; the user's answers land in `event_plugin_data` under your plugin id and are readable via `eventData()`. Your job can also write values there itself (a computed travel time, say) and the detail view will show them.
 
-**This data rides the event-detail fetch, never the events window.** That is deliberate and load-bearing: the window serves thousands of occurrences at ~793 bytes each, and per-event plugin data on that path would undo the entire payload budget. There is no API to put anything on the window.
+**This data rides the event-detail fetch, never the events window.** That is deliberate and load-bearing: the window serves thousands of occurrences at ~348 bytes each (down from 793 after #15, which moved everything the grid does not draw onto the single-event record), and unbounded per-event plugin data on that path would undo that. There is no API to put anything on the window today; whether a small, host-capped per-occurrence channel should exist is #51.
 
 ### Working with other plugins
 

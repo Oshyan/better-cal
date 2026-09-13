@@ -2,7 +2,7 @@
 // 401 -> login, and monotonic request ids for window loads and search so
 // out-of-order responses never render.
 
-import { state, set, mergeWindow, missingRanges, toast } from './store.js';
+import { state, set, mergeWindow, missingRanges, patchOccurrence, toast } from './store.js';
 import { toISOWithOffset } from '../lib/dates.js';
 import { adoptSettings } from './settings.js';
 
@@ -185,6 +185,40 @@ export async function loadWindow(startISO, endISO, { force = false } = {}) {
   ]);
   if (gaps.length === 0) return;
   await Promise.all(gaps.map((g) => fetchRange(g.start, g.end)));
+}
+
+// The window carries what the grid draws. Description, cadence, reminders,
+// timestamps and the like ride the single-event record instead (#15), so a
+// surface that shows them asks for the record on open and merges the missing
+// fields into the cached occurrence, where every consumer reads from. The
+// record is the ROW's serialization: for a recurring instance its start/end
+// are the master's, so only the detail-only fields are merged, never the
+// occurrence's own identity or times. A window refresh replaces the cached
+// occurrence with the list shape again, which is why `full` lives on it.
+const DETAIL_FIELDS = ['description', 'rrule', 'reminders', 'reminderSource', 'createdAt', 'updatedAt', 'tzid', 'uid', 'url', 'location', 'locationLat', 'locationLng', 'invite', 'styleJson'];
+const detailInFlight = new Map(); // instanceId -> Promise, so a popover then editor open shares one fetch
+
+export function ensureFullOccurrence(instanceId) {
+  const occ = state.occ.get(instanceId);
+  if (!occ) return Promise.resolve(null);
+  if (occ.full) return Promise.resolve(occ);
+  if (detailInFlight.has(instanceId)) return detailInFlight.get(instanceId);
+  const p = api('/events/' + occ.eventId + '/occurrence')
+    .then((d) => {
+      const rec = (d && d.occurrence) || {};
+      const patch = { full: true };
+      for (const k of DETAIL_FIELDS) if (k in rec) patch[k] = rec[k];
+      patchOccurrence(instanceId, patch);
+      return state.occ.get(instanceId);
+    })
+    .catch(() => {
+      // Offline or gone: the surface shows what the window had. Not marking
+      // full, so the next open tries again.
+      return state.occ.get(instanceId) || null;
+    })
+    .finally(() => detailInFlight.delete(instanceId));
+  detailInFlight.set(instanceId, p);
+  return p;
 }
 
 // Refetch the most recently requested window (after mutations/undo).

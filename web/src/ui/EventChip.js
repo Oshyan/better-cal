@@ -9,7 +9,7 @@
 
 import { html } from '../../vendor/index.js';
 import { contrastText, withAlpha, DEFAULT_COLOR } from '../lib/color.js';
-import { parseISO, fmtTime, timeState } from '../lib/dates.js';
+import { parseISO, fmtTime, timeState, eventDuration } from '../lib/dates.js';
 import { Icon, PluginGlyph } from './icons.js';
 
 // Bail out of custom click handling when modifier keys are pressed so
@@ -32,7 +32,9 @@ function hlVar(occ) {
 }
 
 function chipTitle(occ) {
-  const base = occ.isGroup ? `${occ.title} (${occ.count} similar)` : occ.title;
+  const duration = eventDuration(occ);
+  const base = occ.isGroup ? `${occ.title} (${occ.count} similar)`
+    : (occ.title || '(untitled)') + (duration ? `\n${duration.exact} total` : '');
   if (occ.highlighted) return `${base}\nHighlighted by one of your filters`;
   return base;
 }
@@ -59,6 +61,13 @@ function stateClasses(occ, dimmed, nowMs) {
   // the filter text is non-empty (the `dimmed` prop carries that flag).
   if (dimmed) c += ' is-page-hidden';
   return c;
+}
+
+function DurationSuffix({ occ }) {
+  const duration = eventDuration(occ);
+  if (!duration) return null;
+  return html`<span class="bc-event-duration" role="img" aria-label=${duration.exact + ' total'}
+    ><span aria-hidden="true">· ${duration.compact}</span></span>`;
 }
 
 export function NewPill() {
@@ -125,6 +134,7 @@ export function EventChip({ occ, cal, dimmed, nowMs, showTime = true, seg = null
     ${timed && html`<span class="bc-chip-time">${fmtTime(parseISO(occ.start))}</span>`}
     ${occ.isGroup ? html`<${StackGlyph} />` : html`<${GoingCheck} occ=${occ} />`}
     <span class="bc-chip-title">${occ.title || '(untitled)'}${occ.isGroup ? ` · ${occ.count}` : ''}</span>
+    <${DurationSuffix} occ=${occ} />
     ${occ.isNew && !occ.isGroup && html`<${NewPill} />`}
   </button>`;
 }
@@ -165,6 +175,7 @@ export function EventBar({ occ, cal, seg, dimmed, nowMs, onOpen, onPointerDown, 
     ${!seg.contLeft && edges && html`<span class="bc-bar-handle l" onPointerDown=${(e) => edges('start', e)}></span>`}
     ${!seg.contLeft && (occ.isGroup ? html`<${StackGlyph} />` : html`<${GoingCheck} occ=${occ} />`)}
     <span class="bc-chip-title">${occ.title || '(untitled)'}${occ.isGroup ? ` · ${occ.count}` : ''}</span>
+    <${DurationSuffix} occ=${occ} />
     ${occ.isNew && !occ.isGroup && !seg.contLeft && html`<${NewPill} />`}
     ${!seg.contRight && edges && html`<span class="bc-bar-handle r" onPointerDown=${(e) => edges('end', e)}></span>`}
   </div>`;
@@ -193,6 +204,7 @@ export function EventBlock({ occ, cal, rect, dimmed, nowMs, onOpen, onPointerDow
   const edges = occ.isGroup || trip ? null : onEdgePointerDown;
   return html`<div
     class="bc-block${stateClasses(occ, dimmed, nowMs)}"
+    title=${chipTitle(occ)}
     style=${`top:${rect.top}px;height:${rect.height}px;left:${rect.leftPct}%;width:${rect.widthPct}%;${rect.z ? `z-index:${rect.z};` : ''}${bg}${hlVar(occ)}`}
     data-instance=${occ.instanceId}
     role="button"
@@ -211,6 +223,7 @@ export function EventBlock({ occ, cal, rect, dimmed, nowMs, onOpen, onPointerDow
     <span class="bc-block-line">
       ${occ.isGroup ? html`<${StackGlyph} />` : html`<${GoingCheck} occ=${occ} />`}
       <span class="bc-chip-title">${occ.title || '(untitled)'}${occ.isGroup ? ` · ${occ.count}` : ''}</span>
+      <${DurationSuffix} occ=${occ} />
       ${occ.isNew && !occ.isGroup && html`<${NewPill} />`}
     </span>
     ${showMeta && html`<span class="bc-block-time">${fmtTime(s)} to ${fmtTime(e)}</span>`}
@@ -244,7 +257,7 @@ export function TripBand({ occ, cal, seg, dimmed, nowMs, onOpen, onPointerDown, 
     data-instance=${occ.instanceId}
     role="button"
     tabindex="0"
-    title=${occ.title || '(untitled)'}
+    title=${occ.availKind || occ.pluginId ? (occ.title || '(untitled)') : chipTitle(occ)}
     onPointerDown=${onPointerDown}
     onClick=${open}
     onKeyDown=${(e) => {
@@ -258,6 +271,7 @@ export function TripBand({ occ, cal, seg, dimmed, nowMs, onOpen, onPointerDown, 
     ${(occ.pluginIcon || occ.pluginIconPath) && !seg.contLeft && html`<span class="bc-band-icon"
       >${PluginGlyph({ icon: occ.pluginIcon, iconPath: occ.pluginIconPath })}</span>`}
     <span class="bc-band-label">${seg.contLeft ? '‹ ' : ''}${occ.title || '(untitled)'}</span>
+    ${!occ.availKind && !occ.pluginId && html`<${DurationSuffix} occ=${occ} />`}
     ${!seg.contRight && onEdgePointerDown && html`<span class="bc-bar-handle r" onPointerDown=${(e) => { e.stopPropagation(); onEdgePointerDown('end', e); }}></span>`}
   </div>`;
 }

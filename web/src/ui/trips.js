@@ -5,7 +5,7 @@
 import { occurrenceDaySpan, rowSpanSegments } from './monthmath.js';
 import {
   epochDayOfKey, keyOfEpochDay, dateOfDayKey, addDaysKey, addDaysDate,
-  toISOWithOffset, parseISO, startMs,
+  toISOWithOffset, parseISO, startMs, eventDuration,
 } from '../lib/dates.js';
 import { dayRangeLabel } from '../lib/quickcreate.js';
 
@@ -18,7 +18,8 @@ export function tripSpan(occ) {
 // "Jun 1 to 12, 12 days" (single day: "Jun 1, 1 day").
 export function tripSpanLabel(occ) {
   const { startKey, endKey, days } = tripSpan(occ);
-  return dayRangeLabel(startKey, endKey) + ', ' + days + (days === 1 ? ' day' : ' days');
+  const duration = eventDuration(occ);
+  return dayRangeLabel(startKey, endKey) + ', ' + (duration ? duration.exact : days + (days === 1 ? ' day' : ' days'));
 }
 
 // Per-row segments for the month/ribbon backdrop band. Deliberately the same

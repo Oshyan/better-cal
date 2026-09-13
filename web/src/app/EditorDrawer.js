@@ -18,7 +18,7 @@ import { Icon } from '../ui/icons.js';
 import { isEmptyHtml } from '../lib/richtext.js';
 import {
   parseISO, toInputValue, fromInputValue, toISOWithOffset, addDaysDate, pad, localTz,
-  dateOfDayKey,
+  dateOfDayKey, eventDuration,
 } from '../lib/dates.js';
 import {
   TIMED_CHOICES, ALLDAY_CHOICES, REMINDER_UNITS, fmtOffsetMinutes, fmtReminder,
@@ -380,6 +380,7 @@ export function EditorDrawer() {
   };
 
   const r = form.rrule;
+  const duration = eventDuration(form);
 
   // --- reminders row --------------------------------------------------------
   const selectedCal = state.calendars.find((c) => c.id === Number(form.calendarId));
@@ -464,6 +465,7 @@ export function EditorDrawer() {
           <span>All day</span>
         </label>
       </div>
+      <div class="bc-duration-exact" role="status">${duration ? duration.exact + ' total' : ''}</div>
 
       <div class="bc-field-row">
         <label class=${'bc-field grow' + (nlFlash && nlFlash.has('location') ? ' bc-nl-applied' : '')}>

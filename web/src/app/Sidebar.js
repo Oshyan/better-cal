@@ -40,13 +40,21 @@ async function applyVisibilityMap(entries) {
   }
 }
 
+// Three things can be wrong with a feed and they want different reactions:
+// the fetch failed (error), the fetch worked but came back with nothing where
+// there used to be something (emptied — how expired tokens fail, silently),
+// or nothing has changed in a long while and nothing is coming up (stale).
+// A feed that is simply empty, and always has been, is not a problem and
+// gets no badge; the settings line says "no events yet".
 function healthBadge(cal) {
   if (cal.kind !== 'subscribed' || !cal.health) return null;
-  const { status, stale, error, lastPolledAt } = cal.health;
-  if (status !== 'error' && !stale) return null;
-  const tip = status === 'error'
-    ? 'Feed error: ' + (error || 'unknown') + (lastPolledAt ? ' (last poll ' + lastPolledAt + ')' : '')
-    : 'Feed is stale' + (lastPolledAt ? ' (last poll ' + lastPolledAt + ')' : '');
+  const { status, content, error, lastPolledAt } = cal.health;
+  const when = lastPolledAt ? ' (last poll ' + lastPolledAt + ')' : '';
+  let tip = null;
+  if (status === 'error') tip = 'Feed error: ' + (error || 'unknown') + when;
+  else if (content === 'emptied') tip = 'Feed came back empty; it had events before. The source may have broken or revoked access' + when;
+  else if (content === 'stale') tip = 'Feed is stale: nothing has changed for a while and nothing is upcoming' + when;
+  if (!tip) return null;
   return html`<span class="bc-health" role="img" aria-label=${tip} title=${tip}><${Icon} name="warning" size=${12} /></span>`;
 }
 

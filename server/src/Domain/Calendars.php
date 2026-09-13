@@ -27,7 +27,7 @@ final class Calendars
         $calIds = array_map(static fn($c) => (int) $c['id'], $calendars);
         $folderIdsByCal = [];
         $tagNamesByCal = [];
-        $recentRawByCal = [];
+        $feedFactsByCal = [];
         if ($calIds !== []) {
             [$in, $params] = Db::in($calIds);
             foreach ($this->db->all("SELECT calendar_id, folder_id FROM calendar_folders WHERE calendar_id IN $in", $params) as $row) {
@@ -36,14 +36,8 @@ final class Calendars
             foreach ($this->db->all("SELECT ct.calendar_id, t.name FROM calendar_tags ct JOIN tags t ON t.id = ct.tag_id WHERE ct.calendar_id IN $in ORDER BY t.name", $params) as $row) {
                 $tagNamesByCal[(int) $row['calendar_id']][] = (string) $row['name'];
             }
-            foreach ($this->db->all(
-                "SELECT c.id, COALESCE(SUM(fs.raw_count), 0) AS recent_raw
-                 FROM calendars c LEFT JOIN feed_stats fs
-                   ON fs.calendar_id = c.id AND fs.poll_date >= DATE_SUB(CURDATE(), INTERVAL c.stale_after_days DAY)
-                 WHERE c.id IN $in GROUP BY c.id",
-                $params
-            ) as $row) {
-                $recentRawByCal[(int) $row['id']] = (int) $row['recent_raw'];
+            foreach ($this->db->all(self::feedFactsSql($in), $params) as $row) {
+                $feedFactsByCal[(int) $row['id']] = self::feedFacts($row);
             }
         }
 
@@ -53,7 +47,7 @@ final class Calendars
                     $c,
                     $folderIdsByCal[(int) $c['id']] ?? [],
                     $tagNamesByCal[(int) $c['id']] ?? [],
-                    $recentRawByCal[(int) $c['id']] ?? 0
+                    $feedFactsByCal[(int) $c['id']] ?? self::NO_FEED_FACTS
                 ),
                 $calendars
             ),
@@ -231,18 +225,91 @@ final class Calendars
             static fn($r) => (string) $r['name'],
             $this->db->all('SELECT t.name FROM calendar_tags ct JOIN tags t ON t.id = ct.tag_id WHERE ct.calendar_id = ? ORDER BY t.name', [$id])
         );
-        $recentRaw = (int) ($this->db->scalar(
-            'SELECT COALESCE(SUM(raw_count), 0) FROM feed_stats WHERE calendar_id = ? AND poll_date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)',
-            [$id, (int) $row['stale_after_days']]
-        ) ?? 0);
-        return $this->serialize($row, $folderIds, $tagNames, $recentRaw);
+        [$in, $params] = Db::in([$id]);
+        $factsRow = $this->db->one(self::feedFactsSql($in), $params);
+        return $this->serialize($row, $folderIds, $tagNames, $factsRow !== null ? self::feedFacts($factsRow) : self::NO_FEED_FACTS);
     }
 
-    private function serialize(array $c, array $folderIds, array $tagNames, int $recentRaw): array
+    // ---- Feed health --------------------------------------------------
+
+    /** @var array{lastRaw:int,everRaw:int,hasUpcoming:bool} */
+    private const NO_FEED_FACTS = ['lastRaw' => 0, 'everRaw' => 0, 'hasUpcoming' => false];
+
+    /**
+     * Per-calendar facts the content verdict needs, in one query over a set
+     * of ids: the VEVENT count of the LATEST poll (feed_stats is written only
+     * on success, so an erroring poll leaves it alone), the largest count ever
+     * seen (was there ever anything to lose?), and whether anything is still
+     * ahead — an unexpired instance, an unbounded rule, or a rule whose UNTIL
+     * has not passed. COUNT-bounded rules are treated as upcoming; erring on
+     * "active" is the right side to err on for a warning badge.
+     */
+    private static function feedFactsSql(string $in): string
+    {
+        return "SELECT c.id,
+                  COALESCE((SELECT fs.raw_count FROM feed_stats fs WHERE fs.calendar_id = c.id
+                            ORDER BY fs.poll_date DESC LIMIT 1), 0) AS last_raw,
+                  COALESCE((SELECT MAX(fs2.raw_count) FROM feed_stats fs2 WHERE fs2.calendar_id = c.id), 0) AS ever_raw,
+                  EXISTS(SELECT 1 FROM events e WHERE e.calendar_id = c.id AND e.deleted_at IS NULL
+                         AND (e.end_utc >= UTC_TIMESTAMP()
+                              OR (e.rrule IS NOT NULL AND (e.rrule NOT LIKE '%UNTIL=%'
+                                  OR SUBSTRING_INDEX(SUBSTRING_INDEX(e.rrule, 'UNTIL=', -1), ';', 1)
+                                     >= DATE_FORMAT(UTC_TIMESTAMP(), '%Y%m%d'))))) AS has_upcoming
+                FROM calendars c WHERE c.id IN $in";
+    }
+
+    /** @return array{lastRaw:int,everRaw:int,hasUpcoming:bool} */
+    private static function feedFacts(array $row): array
+    {
+        return [
+            'lastRaw' => (int) $row['last_raw'],
+            'everRaw' => (int) $row['ever_raw'],
+            'hasUpcoming' => (int) $row['has_upcoming'] === 1,
+        ];
+    }
+
+    /**
+     * What the last successful fetch of a feed looked like. Deliberately NOT
+     * "is something wrong": three different things can be, and they want
+     * different reactions, so they are reported apart.
+     *
+     *   active   has events, or changed recently, or has something upcoming
+     *   empty    no events and never had any — a fresh or quiet feed; fine
+     *   emptied  no events now, but earlier polls had some — how expired
+     *            tokens and broken sources fail, since they keep returning a
+     *            valid, empty calendar; louder than an error, and previously
+     *            invisible
+     *   stale    unchanged for stale_after_days (since last observed change,
+     *            or since subscription if never observed) AND nothing upcoming
+     *
+     * Fetch failure is status's job and is not folded in here. Local calendars
+     * and never-polled feeds are simply active. Pure: testable without a DB.
+     */
+    public static function contentState(array $c, int $lastRaw, int $everRaw, bool $hasUpcoming, \DateTimeImmutable $now): string
+    {
+        if (($c['kind'] ?? '') !== 'subscribed' || ($c['last_polled_at'] ?? null) === null) {
+            return 'active';
+        }
+        if (($c['last_poll_status'] ?? '') === 'error') {
+            return 'active';
+        }
+        if ($lastRaw === 0) {
+            return $everRaw > 0 ? 'emptied' : 'empty';
+        }
+        if ($hasUpcoming) {
+            return 'active';
+        }
+        $since = Time::fromDb((string) (($c['content_changed_at'] ?? null) ?: $c['created_at']));
+        $days = max(1, (int) ($c['stale_after_days'] ?? 60));
+        return $since->add(new \DateInterval('P' . $days . 'D')) <= $now ? 'stale' : 'active';
+    }
+
+    /** @param array{lastRaw:int,everRaw:int,hasUpcoming:bool} $feed */
+    private function serialize(array $c, array $folderIds, array $tagNames, array $feed): array
     {
         $subscribed = $c['kind'] === 'subscribed';
-        $stale = $subscribed && $c['last_polled_at'] !== null
-            && ($c['last_poll_status'] === 'error' || $recentRaw === 0);
+        $content = self::contentState($c, $feed['lastRaw'], $feed['everRaw'], $feed['hasUpcoming'], Time::nowUtc());
+        $stale = $content === 'stale';
         return [
             'id' => (int) $c['id'],
             'name' => (string) $c['name'],
@@ -268,6 +335,8 @@ final class Calendars
                 'lastPolledAt' => $c['last_polled_at'] !== null ? Time::dbToIso((string) $c['last_polled_at']) : null,
                 'status' => (string) $c['last_poll_status'],
                 'error' => $c['last_poll_error'] !== null ? (string) $c['last_poll_error'] : null,
+                'content' => $content,
+                'eventCount' => $subscribed ? $feed['lastRaw'] : null,
                 'stale' => $stale,
             ],
         ];

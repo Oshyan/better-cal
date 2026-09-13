@@ -6,6 +6,8 @@
 import { html, useState, useRef, useEffect } from '../../vendor/index.js';
 import { useStore, set, state } from './store.js';
 import { ensureFullOccurrence } from './api.js';
+import { prefetchMap } from './prefetch.js';
+import { Skeleton } from './PageShell.js';
 import { updateEvent, deleteEvent, triageAttendance, sendFeedback, enterReschedule, openDetail, sameDayList, openTripByEventId } from './actions.js';
 import { describeRrule } from './EventDetail.js';
 import { isMobile, trapFocus, MOBILE_QUERY } from '../ui/DayExpand.js';
@@ -60,7 +62,9 @@ export function EventPopover() {
   // This is also the prefetch for the editor: an Edit from here finds the
   // record already merged and opens without waiting.
   useEffect(() => {
-    if (popover) ensureFullOccurrence(popover.instanceId);
+    if (!popover) return;
+    ensureFullOccurrence(popover.instanceId);
+    prefetchMap(state.occ.get(popover.instanceId)); // the detail view's map, warmed now
   }, [popover && popover.instanceId]); // eslint-disable-line
 
   useEffect(() => {
@@ -181,7 +185,10 @@ export function EventPopover() {
             <span class="bc-date-duration">${fmtRange(s, e, occ.allDay)} <${DurationSuffix} occ=${occ} expanded /></span>
             ${occ.recurring && html`<span class="bc-pop-recur">${describeRrule(occ.rrule)}</span>`}
           </div>`}
-      ${occ.reminders && occ.reminders.length > 0 && html`<div class="bc-pop-rem">
+      ${!occ.full && occ.hasReminders && !occ.reminders && html`<div class="bc-pop-rem bc-pop-skel">
+        <${Icon} name="bell" size=${12} /><${Skeleton} rows=${1} compact=${true} />
+      </div>`}
+      ${occ.reminders && occ.reminders.length > 0 && html`<div class=${'bc-pop-rem' + (occ.full ? ' bc-late' : '')}>
         <${Icon} name="bell" size=${12} />${occ.reminders.map(fmtReminder).join(', ')}
       </div>`}
       ${occ.location && html`<div class="bc-pop-where">
@@ -201,6 +208,9 @@ export function EventPopover() {
         </span>`}
         ${occ.tags && occ.tags.length > 0 && html`<span class="bc-pop-tags">${occ.tags.map((t) => '#' + t).join(' ')}</span>`}
       </div>`}
+      ${!occ.full && occ.hasDescription && !occ.description && html`<div class="bc-pop-descwrap bc-pop-skel">
+        <${Skeleton} rows=${2} compact=${true} />
+      </div>`}
       ${occ.description && (() => {
         // Preview only: the popover is a summary card, so the description is
         // line-clamped with a "More" link into the detail view. It never
@@ -209,7 +219,7 @@ export function EventPopover() {
         const text = rich ? '' : stripToText(occ.description);
         if (!rich && !text) return null;
         const long = rich ? true : text.length > 160;
-        return html`<div class="bc-pop-descwrap">
+        return html`<div class=${'bc-pop-descwrap' + (occ.full ? ' bc-late' : '')}>
           ${rich
             ? html`<div class="bc-pop-desc bc-pop-desc-rich bc-rich" dangerouslySetInnerHTML=${{ __html: sanitizeHtml(occ.description) }}></div>`
             : html`<div class="bc-pop-desc">${text}</div>`}

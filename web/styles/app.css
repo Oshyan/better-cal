@@ -91,7 +91,44 @@ button:focus-visible, [tabindex]:focus-visible {
 .bc-app { display: flex; flex-direction: column; height: 100%; overflow-x: clip; }
 .bc-main { display: flex; flex: 1; min-height: 0; }
 .bc-view { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
-.bc-boot { display: grid; place-items: center; height: 100%; color: var(--fg-muted); }
+/* --- boot shell ---------------------------------------------------------- */
+/* Painted before /me answers: the frame the app will have, so the first ~1s
+   reads as "loading into place" rather than a blank page with one word. */
+.bc-boot { display: grid; grid-template-rows: 48px 1fr; height: 100%; color: var(--fg-muted); }
+.bc-boot-bar { border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 12px; padding: 0 14px; }
+.bc-boot-body { display: grid; grid-template-columns: 200px 1fr; min-height: 0; }
+.bc-boot-side { border-right: 1px solid var(--border); padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+.bc-boot-grid { display: grid; grid-template-columns: repeat(7, 1fr); grid-auto-rows: 1fr; }
+.bc-boot-grid > div { border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.bc-boot-grid > div:nth-child(7n) { border-right: none; }
+
+/* --- skeletons ----------------------------------------------------------- */
+@keyframes bc-shimmer { from { background-position: -200% 0; } to { background-position: 200% 0; } }
+.bc-skel { display: flex; flex-direction: column; gap: 9px; padding: 6px 0; }
+.bc-skel.is-compact { gap: 6px; padding: 2px 0; }
+.bc-skel-line, .bc-boot-bar > i, .bc-boot-side > i {
+  display: block; height: 11px; border-radius: 5px;
+  background: linear-gradient(90deg, var(--bg-inset) 25%, color-mix(in srgb, var(--bg-inset) 50%, var(--bg)) 50%, var(--bg-inset) 75%);
+  background-size: 200% 100%; animation: bc-shimmer 1.4s linear infinite;
+}
+.bc-skel.is-compact .bc-skel-line { height: 9px; }
+.bc-boot-bar > i { width: 90px; height: 14px; }
+.bc-boot-bar > i:first-child { width: 120px; }
+.bc-boot-side > i { width: 70%; }
+/* Late-arriving content (the record behind a popover or detail view) fades
+   in rather than popping, and the rows it fills were reserved by skeletons. */
+@keyframes bc-fadein { from { opacity: 0; } to { opacity: 1; } }
+.bc-late { animation: bc-fadein .18s ease-out; }
+.bc-pop-skel { padding: 2px 0 4px; }
+/* Static map first: an image the size of the map, the address over a shimmer
+   while it loads, and the interactive map only on request. */
+.bc-map-img { display: block; width: 100%; height: 200px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border); }
+.bc-map-ph {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 12px; text-align: center; font-size: 12.5px; color: var(--fg-muted); border-radius: 6px;
+  background: linear-gradient(90deg, var(--bg-inset) 25%, color-mix(in srgb, var(--bg-inset) 50%, var(--bg)) 50%, var(--bg-inset) 75%);
+  background-size: 200% 100%; animation: bc-shimmer 1.4s linear infinite;
+}
 
 /* --- buttons ------------------------------------------------------------- */
 

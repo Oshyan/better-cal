@@ -9,7 +9,7 @@ import { html, useState, useEffect } from '../../vendor/index.js';
 import { useStore, set, state, toast } from './store.js';
 import { api, loadPeople, refreshWindow } from './api.js';
 import { jumpToDate, openDetail, addAvailabilitySpan, deleteAvailabilitySpan } from './actions.js';
-import { PageShell, EmptyState } from './PageShell.js';
+import { PageShell, EmptyState, Skeleton } from './PageShell.js';
 import { CalDot, Icon } from '../ui/icons.js';
 import { parseISO, occDayKey, fmtTime, dateOfDayKey, toISOWithOffset } from '../lib/dates.js';
 
@@ -73,7 +73,7 @@ function PersonEvents({ personId }) {
   </div>`;
 
   return html`<div class="bc-person-events">
-    ${list === null && html`<div class="bc-trip-loading">Loading events</div>`}
+    ${list === null && html`<${Skeleton} rows=${3} compact=${true} />`}
     ${list !== null && list.length === 0 && html`<div class="bc-trip-empty">No events with this person</div>`}
     ${list !== null && rows('Upcoming', upcoming)}
     ${list !== null && rows('Past', past)}
@@ -126,7 +126,7 @@ function PersonAvailability({ person }) {
   };
 
   return html`<div class="bc-person-avail">
-    ${spans === null && html`<div class="bc-trip-loading">Loading availability</div>`}
+    ${spans === null && html`<${Skeleton} rows=${2} compact=${true} />`}
     ${spans !== null && spans.length === 0 && html`<div class="bc-trip-empty">No away or busy spans yet</div>`}
     ${spans !== null && spans.map((span) => html`<div key=${span.id} class="bc-person-availrow">
       <span class="bc-badge bc-away-pill is-${span.kind}">${span.kind}</span>

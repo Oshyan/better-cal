@@ -18,7 +18,8 @@ import {
 import { fmtReminder } from '../lib/reminders.js';
 import { hasHtml, sanitizeHtml } from '../lib/richtext.js';
 import { EventPluginData } from './EventPluginData.js';
-import { gmapsUrl } from '../lib/maps.js';
+import { gmapsUrl, staticMapUrl } from '../lib/maps.js';
+import { Skeleton } from './PageShell.js';
 
 // --- recurrence in words ----------------------------------------------------
 
@@ -96,7 +97,7 @@ function linkify(text) {
 // --- leaflet loader (vendored UMD; script tag, no bare imports) -------------
 
 let leafletPromise = null;
-function loadLeaflet() {
+export function loadLeaflet() {
   if (window.L) return Promise.resolve(window.L);
   if (!leafletPromise) {
     leafletPromise = new Promise((resolve, reject) => {
@@ -114,12 +115,25 @@ function loadLeaflet() {
   return leafletPromise;
 }
 
+// Static image first, interactive map on request. The image is one cacheable
+// request that paints in a round trip (and the popover has usually warmed it
+// already); Leaflet, its stylesheet, map init and a screen of tiles only
+// happen when someone clicks to zoom or pan, or if the image fails. While
+// the image loads, the box shows the address over a shimmer rather than
+// flat grey, which read as broken.
 function MiniMap({ lat, lng, location }) {
   const elRef = useRef(null);
   const mapRef = useRef(null);
   const [interactive, setInteractive] = useState(false);
+  const [img, setImg] = useState('loading'); // 'loading' | 'ok' | 'error'
+  const imgUrl = staticMapUrl(lat, lng, {
+    maptilerKey: state.config && state.config.maptilerKey,
+    style: state.settings && state.settings.mapStyle,
+  });
+  const wantLeaflet = interactive || img === 'error' || !imgUrl;
 
   useEffect(() => {
+    if (!wantLeaflet) return undefined;
     let disposed = false;
     loadLeaflet().then((L) => {
       if (disposed || !elRef.current) return;
@@ -167,6 +181,7 @@ function MiniMap({ lat, lng, location }) {
       });
       L.marker([lat, lng], { icon, title: location || '' }).addTo(map);
       mapRef.current = map;
+      if (interactive) enableOn(map, L);
     }).catch(() => { /* no map is a fine map */ });
     return () => {
       disposed = true;
@@ -175,28 +190,37 @@ function MiniMap({ lat, lng, location }) {
         mapRef.current = null;
       }
     };
-  }, [lat, lng]);
+  }, [lat, lng, wantLeaflet]); // eslint-disable-line
 
   const enable = () => {
-    const map = mapRef.current;
-    if (map && window.L) {
-      map.dragging.enable();
-      map.scrollWheelZoom.enable();
-      map.touchZoom.enable();
-      map.doubleClickZoom.enable();
-      map.boxZoom.enable();
-      map.keyboard.enable();
-      map.addControl(window.L.control.zoom({ position: 'topright' }));
-    }
     setInteractive(true);
+    const map = mapRef.current;
+    if (map && window.L) enableOn(map, window.L);
   };
 
   return html`<div class="bc-map-wrap">
-    <div class="bc-map" ref=${elRef}></div>
+    ${wantLeaflet
+      ? html`<div class="bc-map" ref=${elRef}></div>`
+      : html`<img
+          class="bc-map-img" src=${imgUrl} alt=${'Map of ' + (location || 'the location')}
+          decoding="async" referrerpolicy="origin"
+          onLoad=${() => setImg('ok')} onError=${() => setImg('error')}
+        />`}
+    ${!wantLeaflet && img === 'loading' && html`<div class="bc-map-ph"><${PinIcon} size=${12} />${location || 'Loading map'}</div>`}
     ${!interactive && html`<button type="button" class="bc-map-cover" onClick=${enable}>
       <span>Click to zoom and pan</span>
     </button>`}
   </div>`;
+}
+
+function enableOn(map, L) {
+  map.dragging.enable();
+  map.scrollWheelZoom.enable();
+  map.touchZoom.enable();
+  map.doubleClickZoom.enable();
+  map.boxZoom.enable();
+  map.keyboard.enable();
+  map.addControl(L.control.zoom({ position: 'topright' }));
 }
 
 // --- detail view ------------------------------------------------------------
@@ -367,7 +391,11 @@ export function EventDetail() {
             Couldn't place this address on a map. Editing the location to something more specific (a street address, or "place, city") will fix it.
           </div>`}
         </div>`}
-        ${occ.description && html`<div class="bc-detail-section">
+        ${!occ.full && occ.hasDescription && !occ.description && html`<div class="bc-detail-section">
+          <div class="bc-detail-label">Description</div>
+          <${Skeleton} rows=${3} compact=${true} />
+        </div>`}
+        ${occ.description && html`<div class=${'bc-detail-section' + (occ.full ? ' bc-late' : '')}>
           <div class="bc-detail-label">Description</div>
           ${hasHtml(occ.description)
             // Rich descriptions render as HTML, allowlist-sanitized client-side

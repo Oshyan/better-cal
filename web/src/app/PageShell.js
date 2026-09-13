@@ -20,6 +20,16 @@ export function PageShell({ title, note, children }) {
   </div>`;
 }
 
+// Loading placeholder shaped like what is coming: a few shimmering lines of
+// varying width. Same wall time as "Loading…", read differently: text says
+// "wait", a shape says "almost".
+export function Skeleton({ rows = 3, compact = false }) {
+  const widths = [72, 88, 60, 80, 66, 90];
+  return html`<div class=${'bc-skel' + (compact ? ' is-compact' : '')} aria-busy="true" aria-label="Loading">
+    ${Array.from({ length: rows }, (_, i) => html`<div key=${i} class="bc-skel-line" style=${`width:${widths[i % widths.length]}%`}></div>`)}
+  </div>`;
+}
+
 // Designed empty state: one sentence of what this is plus an optional action.
 export function EmptyState({ text, actionLabel, onAction }) {
   return html`<div class="bc-emptystate">

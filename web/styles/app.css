@@ -1237,11 +1237,13 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-map-wrap { position: relative; margin-top: 6px; }
 /* Leaflet ships a white attribution strip and light-grey tile gaps; both
    follow the theme here (the tiles themselves switch style, lib/maps.js). */
-.leaflet-container { background: var(--bg-inset); font-family: var(--font); }
-.leaflet-container .leaflet-control-attribution {
+/* leaflet.css is injected after this sheet and uses the same two-class
+   selector, so these carry one more to win. */
+.bc-map-wrap .leaflet-container { background: var(--bg-inset); font-family: var(--font); }
+.bc-map-wrap .leaflet-container .leaflet-control-attribution {
   background: color-mix(in srgb, var(--bg-raised) 82%, transparent); color: var(--fg-muted);
 }
-.leaflet-container .leaflet-control-attribution a { color: var(--accent); }
+.bc-map-wrap .leaflet-container .leaflet-control-attribution a { color: var(--accent); }
 .leaflet-container .leaflet-bar { border: 1px solid var(--border-strong); box-shadow: var(--shadow); }
 .leaflet-container .leaflet-bar a { background: var(--bg-raised); color: var(--fg); border-bottom-color: var(--border); }
 .leaflet-container .leaflet-bar a:hover { background: var(--bg-inset); color: var(--fg); }

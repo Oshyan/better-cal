@@ -242,6 +242,10 @@ final class Feeds
         $addedCount = count($addedTitles);
         $updatedCount = count($updatedEventIds);
         if ($addedCount + $updatedCount + $removedCount > 0) {
+            // The publisher touched something. This is what "stale" is judged
+            // against: not whether the feed HAS events (a dead feed keeps
+            // serving its old ones forever) but when it last changed any.
+            $this->db->update('calendars', ['content_changed_at' => Time::nowDb()], 'id = ?', [$calendarId]);
             $parts = [];
             if ($addedCount > 0) {
                 $parts[] = $addedCount . ' added';

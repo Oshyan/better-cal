@@ -2316,6 +2316,34 @@ checkEq(
 );
 
 // ---------------------------------------------------------------------------
+// Feed content state. Three independent answers, not one boolean: a feed that
+// is empty and always was is fine; one that WENT empty is how expired tokens
+// fail (a valid, empty calendar); stale means the publisher has not changed
+// anything for the threshold AND nothing is upcoming. Error is status's job.
+{
+    $now = new DateTimeImmutable('2026-09-13 12:00:00', new DateTimeZone('UTC'));
+    $sub = static fn(array $over = []): array => $over + [
+        'kind' => 'subscribed', 'last_polled_at' => '2026-09-13 11:00:00', 'last_poll_status' => 'ok',
+        'created_at' => '2026-01-01 00:00:00', 'content_changed_at' => '2026-09-01 00:00:00', 'stale_after_days' => 60,
+    ];
+    $st = static fn(array $c, int $lastRaw, int $everRaw, bool $upcoming) => Calendars::contentState($c, $lastRaw, $everRaw, $upcoming, $now);
+
+    checkEq('content: local calendars are simply active', 'active', $st(['kind' => 'local'] + $sub(), 0, 0, false));
+    checkEq('content: never polled is active (status says never)', 'active', $st($sub(['last_polled_at' => null]), 0, 0, false));
+    checkEq('content: fresh empty feed is empty, not stale', 'empty', $st($sub(['created_at' => '2026-09-13 10:00:00', 'content_changed_at' => null]), 0, 0, false));
+    checkEq('content: long-empty feed is still just empty', 'empty', $st($sub(['content_changed_at' => null]), 0, 0, false));
+    checkEq('content: feed that had events and now has none is emptied', 'emptied', $st($sub(), 0, 73, false));
+    checkEq('content: events present and changed recently is active', 'active', $st($sub(), 50, 73, false));
+    checkEq('content: unchanged past threshold but has upcoming is active', 'active', $st($sub(['content_changed_at' => '2026-05-01 00:00:00']), 50, 50, true));
+    checkEq('content: unchanged past threshold and nothing upcoming is stale', 'stale', $st($sub(['content_changed_at' => '2026-05-01 00:00:00']), 50, 50, false));
+    checkEq('content: never seen to change dates from subscription, not epoch', 'active', $st($sub(['created_at' => '2026-09-01 00:00:00', 'content_changed_at' => null]), 50, 50, false));
+    checkEq('content: never seen to change, subscribed long ago, nothing upcoming is stale', 'stale', $st($sub(['created_at' => '2026-01-01 00:00:00', 'content_changed_at' => null]), 50, 50, false));
+    checkEq('content: exactly at threshold counts as stale', 'stale', $st($sub(['content_changed_at' => '2026-07-15 12:00:00']), 50, 50, false));
+    checkEq('content: one second inside threshold is active', 'active', $st($sub(['content_changed_at' => '2026-07-15 12:00:01']), 50, 50, false));
+    checkEq('content: an erroring poll does not invent a content verdict', 'active', $st($sub(['last_poll_status' => 'error']), 50, 50, false));
+}
+
+// ---------------------------------------------------------------------------
 // columnPatch's forOverride gate. An instance override row must never take
 // the series RRULE or the trip flag from a patch payload, because the editor
 // always sends the rrule it seeded from; the existing-override branch of

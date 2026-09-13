@@ -34,8 +34,10 @@ function pollStatusLine(cal) {
   if (!h.lastPolledAt) return 'Not polled yet';
   let line = 'Last poll ' + h.lastPolledAt;
   if (h.status === 'error') line += ' (error: ' + (h.error || 'unknown') + ')';
-  else if (h.stale) line += ' (stale)';
-  else line += ' (ok)';
+  else if (h.content === 'emptied') line += ' (came back empty; had events before)';
+  else if (h.content === 'stale') line += ' (stale: unchanged for a while, nothing upcoming)';
+  else if (h.content === 'empty') line += ' (ok, no events yet)';
+  else line += ' (ok' + (h.eventCount != null ? ', ' + h.eventCount + ' events' : '') + ')';
   return line;
 }
 

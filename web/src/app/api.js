@@ -2,7 +2,7 @@
 // 401 -> login, and monotonic request ids for window loads and search so
 // out-of-order responses never render.
 
-import { state, set, mergeWindow, missingRanges, patchOccurrence, toast } from './store.js';
+import { state, set, mergeWindow, missingRanges, patchOccurrence, invalidateRecords, toast } from './store.js';
 import { toISOWithOffset } from '../lib/dates.js';
 import { adoptSettings } from './settings.js';
 
@@ -268,6 +268,7 @@ export async function undo() {
   try {
     const data = await api('/undo', { method: 'POST' });
     toast('Undone: ' + (data.undone ? data.undone.op + ' ' + data.undone.entity : 'last change'));
+    invalidateRecords(); // could have been any event's record
     await refreshWindow();
     return true;
   } catch (e) {

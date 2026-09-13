@@ -3,7 +3,7 @@
 import { html, useState, useEffect } from '../../vendor/index.js';
 import { useStore, state, toast } from './store.js';
 import { api } from './api.js';
-import { PageShell, EmptyState } from './PageShell.js';
+import { PageShell, EmptyState, Skeleton } from './PageShell.js';
 
 export function OutfeedsPage() {
   const [feeds, setFeeds] = useState(null);
@@ -119,7 +119,7 @@ export function OutfeedsPage() {
       </div>
     </form>
 
-    ${feeds === null && html`<div class="bc-empty">Loading feeds</div>`}
+    ${feeds === null && html`<${Skeleton} rows=${3} />`}
     ${feeds !== null && feeds.length === 0 && html`<${EmptyState}
       text="No outbound feeds yet. A feed lets Google Calendar, Apple Calendar, or any other app subscribe to your Better-Cal events."
       actionLabel="Create your first feed" onAction=${focusForm}

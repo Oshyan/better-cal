@@ -12,7 +12,7 @@
 import { html, useState, useEffect } from '../../vendor/index.js';
 import { useStore, state, toast, shallowEq } from './store.js';
 import { api, refreshWindow } from './api.js';
-import { PageShell, EmptyState } from './PageShell.js';
+import { PageShell, EmptyState, Skeleton } from './PageShell.js';
 import { PALETTE } from '../lib/color.js';
 import { fmtSince } from '../lib/since.js';
 
@@ -273,7 +273,7 @@ export function FiltersPage() {
       busy=${busy} onSave=${create}
     />
 
-    ${filters === null && html`<div class="bc-empty">Loading filters</div>`}
+    ${filters === null && html`<${Skeleton} rows=${4} />`}
     ${filters !== null && filters.length === 0 && html`<${EmptyState}
       text="No filters yet. A filter hides, dims, or highlights events that match a keyword, a regex, or a plain-language description."
       actionLabel="Create your first filter" onAction=${focusForm}

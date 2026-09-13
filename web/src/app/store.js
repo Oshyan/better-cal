@@ -161,15 +161,53 @@ export function shallowEq(a, b) {
 
 // --- occurrence cache helpers ----------------------------------------------
 
+// The fields the single-event record adds to a list occurrence, kept across
+// window refreshes so an event you opened five minutes ago opens instantly
+// again. Same list as api.js DETAIL_FIELDS; `full` marks the merge.
+const RECORD_FIELDS = ['description', 'rrule', 'reminders', 'reminderSource', 'createdAt', 'updatedAt', 'tzid', 'uid', 'url', 'location', 'locationLat', 'locationLng', 'invite', 'styleJson'];
+
+// Forget fetched record fields: for one event (after editing it), or for all
+// of them (undo, or the change cursor moved: something changed and it could
+// be any of them). The next open refetches; until then the list shape is
+// shown, which is exactly what a first open shows.
+export function invalidateRecords(eventId = null) {
+  for (const [id, occ] of state.occ) {
+    if (occ.full && (eventId === null || occ.eventId === eventId)) {
+      const next = { ...occ };
+      delete next.full;
+      for (const k of RECORD_FIELDS) if (k in next && !(k in LIST_KEEP)) delete next[k];
+      state.occ.set(id, next);
+    }
+  }
+}
+// Record fields that ALSO ride the list shape (when non-null); dropping them
+// on invalidate would blank a location the list itself supplied.
+const LIST_KEEP = { url: 1, location: 1, locationLat: 1, locationLng: 1, invite: 1, styleJson: 1 };
+
 export function mergeWindow(startISO, endISO, events) {
   const s = new Date(startISO).getTime();
   const e = new Date(endISO).getTime();
-  // Drop cached occurrences whose start falls in the window, then reinsert.
+  // Drop cached occurrences whose start falls in the window, then reinsert,
+  // carrying fetched record fields over from the previous copy (invalidate
+  // first when the refresh follows an edit of that event, see actions.js).
+  const prior = new Map();
   for (const [id, occ] of state.occ) {
     const t = new Date(occ.start).getTime();
-    if (t >= s && t < e && !occ._optimistic) state.occ.delete(id);
+    if (t >= s && t < e && !occ._optimistic) {
+      if (occ.full) prior.set(id, occ);
+      state.occ.delete(id);
+    }
   }
-  for (const ev of events) state.occ.set(ev.instanceId, ev);
+  for (const ev of events) {
+    const p = prior.get(ev.instanceId);
+    if (p) {
+      const merged = { ...ev, full: true };
+      for (const k of RECORD_FIELDS) if (k in p && !(k in ev)) merged[k] = p[k];
+      state.occ.set(ev.instanceId, merged);
+    } else {
+      state.occ.set(ev.instanceId, ev);
+    }
+  }
   state.loadedRanges = mergeRanges([...state.loadedRanges, { start: s, end: e }]);
   set({ occVersion: state.occVersion + 1 });
 }

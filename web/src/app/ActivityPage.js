@@ -7,7 +7,7 @@ import { state, set, toast, insertOccurrence } from './store.js';
 import { api, refreshWindow } from './api.js';
 import { jumpToDate, openDetail } from './actions.js';
 import { occDayKey } from '../lib/dates.js';
-import { PageShell, EmptyState } from './PageShell.js';
+import { PageShell, EmptyState, Skeleton } from './PageShell.js';
 import { Icon } from '../ui/icons.js';
 
 // Source key -> label + manual/automated group. mail:* tiers collapse into
@@ -135,7 +135,7 @@ export function ActivityPage() {
       </div>
     </div>
 
-    ${entries === null && html`<p class="bc-page-note">Loading…</p>`}
+    ${entries === null && html`<${Skeleton} rows=${6} />`}
     ${entries !== null && entries.length === 0 && html`<${EmptyState} text=${q || sel ? 'Nothing matches these filters.' : 'No activity yet — changes you or your automations make will appear here.'} />`}
     ${entries !== null && entries.length > 0 && html`<ul class="bc-activity-list">
       ${entries.map((en) => html`<li key=${en.id} class="bc-activity-row${en.undone ? ' is-undone' : ''}${en.op === 'refuse' ? ' is-refused' : ''}">

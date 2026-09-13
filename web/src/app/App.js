@@ -1,7 +1,7 @@
 // App root: routes between views, wires bettercal-ui to the store and API.
 
 import { html, useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback } from '../../vendor/index.js';
-import { useStore, set, state, calendarMeta, shallowEq } from './store.js';
+import { useStore, set, state, calendarMeta, shallowEq, invalidateRecords } from './store.js';
 import { loadWindow, api, refreshWindow, loadPeople } from './api.js';
 import {
   moveEvent, resizeEvent, triageAttendance, sendFeedback, exitReschedule,
@@ -135,6 +135,7 @@ export function App() {
         const d = await api('/changes/cursor');
         if (!stopped && d && d.cursor) {
           if (cursor !== null && d.cursor !== cursor) {
+            invalidateRecords(); // something changed somewhere; fetched records may be stale
             refreshWindow();
             loadPeople().catch(() => {});
             set({ availSeq: state.availSeq + 1 });
@@ -529,7 +530,15 @@ export function App() {
   const onJumpMonth = useCallback((firstKey) => jumpToDate(firstKey), []);
 
   if (!s.booted) {
-    return html`<div class="bc-boot">Loading</div>`;
+    // The frame the app will have, painted before /me answers, so the first
+    // second reads as loading into place rather than a word on a blank page.
+    return html`<div class="bc-boot" aria-busy="true" aria-label="Loading">
+      <div class="bc-boot-bar"><i></i><i></i><i></i></div>
+      <div class="bc-boot-body">
+        <div class="bc-boot-side"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+        <div class="bc-boot-grid">${Array.from({ length: 35 }, (_, i) => html`<div key=${i}></div>`)}</div>
+      </div>
+    </div>`;
   }
   if (!s.authed) {
     return html`<${Login} />`;

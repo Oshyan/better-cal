@@ -36,6 +36,12 @@ function loadSquire() {
   return squirePromise;
 }
 
+// Warm the editor's scripts at idle so the first editor open does not wait
+// on two script loads. Same promise the component uses on mount.
+export function preloadRichText() {
+  return loadSquire();
+}
+
 function seedHtml(seed) {
   if (!seed) return '';
   return hasHtml(seed) ? sanitizeHtml(seed) : textToHtml(seed);

@@ -2,7 +2,7 @@
 
 import {
   state, set, toast, patchOccurrence, restoreOccurrence,
-  removeOccurrencesOfEvent, mergeWindow,
+  removeOccurrencesOfEvent, mergeWindow, invalidateRecords,
 } from './store.js';
 import { api, refreshWindow, undo, loadCalendars, loadPeople } from './api.js';
 import { adoptSettings } from './settings.js';
@@ -340,6 +340,7 @@ export async function updateEvent(occ, fields, scope) {
   try {
     await api('/events/' + occ.eventId, { method: 'PATCH', body });
     toast('Event updated', { undoable: true });
+    invalidateRecords(occ.eventId); // its description/reminders/rule may be what changed
     await refreshWindow();
     return true;
   } catch (e) {

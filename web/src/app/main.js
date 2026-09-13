@@ -6,6 +6,9 @@ import { set, state, toast } from './store.js';
 import { saveSetting } from './actions.js';
 import { fetchMe, loadCalendars, loadSavedViews, loadConfig, loadPeople, loadPlugins, loadProposalCount, loadSystemHealth, api } from './api.js';
 import { announceSystemHealth } from './system.js';
+import { installHoverPrefetch } from './prefetch.js';
+import { preloadRichText } from './RichText.js';
+import { loadLeaflet } from './EventDetail.js';
 import { localTz } from '../lib/dates.js';
 import { handleEventLink } from './push.js';
 import {
@@ -46,6 +49,17 @@ async function boot() {
     handleDeepPaths().catch(() => { /* best-effort */ });
     // One-time notices for failures that change what the calendar shows.
     announceSystemHealth();
+    // Prefetch on intent (hover/focus on a chip), and warm the two lazily
+    // loaded scripts at idle so the FIRST editor and the FIRST interactive
+    // map are as fast as later ones. Skipped when the browser says the user
+    // wants to save data.
+    installHoverPrefetch();
+    const idle = window.requestIdleCallback || ((fn) => setTimeout(fn, 2500));
+    idle(() => {
+      if (navigator.connection && navigator.connection.saveData) return;
+      preloadRichText().catch(() => {});
+      loadLeaflet().catch(() => {});
+    }, { timeout: 8000 });
   }
 }
 

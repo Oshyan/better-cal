@@ -7,7 +7,7 @@
 import { html, useState, useEffect } from '../../vendor/index.js';
 import { state, set, toast, useStore } from './store.js';
 import { api, refreshWindow, loadCalendars } from './api.js';
-import { PageShell, EmptyState } from './PageShell.js';
+import { PageShell, EmptyState, Skeleton } from './PageShell.js';
 import { Icon } from '../ui/icons.js';
 import { SchemaForm } from './SchemaForm.js';
 
@@ -150,7 +150,7 @@ export function PluginsPage() {
     title="Plugins"
     note="Plugins run in the background worker and contribute events, calendar bands, and warnings. Drop a plugin folder into server/plugins/ and it appears here."
   >
-    ${!loaded && html`<p class="bc-page-note">Loading…</p>`}
+    ${!loaded && html`<${Skeleton} rows=${5} />`}
     ${loaded && plugins.length === 0 && html`<${EmptyState} text="No plugins found in server/plugins/." />`}
     ${plugins.map((p) => html`<${PluginRow} key=${p.id} p=${p} />`)}
   </${PageShell}>`;

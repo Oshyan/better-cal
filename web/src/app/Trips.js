@@ -12,6 +12,7 @@
 import { html, useState, useRef, useEffect } from '../../vendor/index.js';
 import { useStore, set, state, insertOccurrence, toast } from './store.js';
 import { api, loadWindow } from './api.js';
+import { Skeleton } from './PageShell.js';
 import {
   openDetail, attachToTrip, detachFromTrip, deleteTripOnly, deleteTripAndMembers,
 } from './actions.js';
@@ -154,7 +155,7 @@ export function TripDetail({ occ }) {
 
         <div class="bc-detail-section">
           <div class="bc-detail-label">Events${links.status === 'ok' && members.length > 0 ? ' (' + members.length + ')' : ''}</div>
-          ${links.status === 'loading' && html`<div class="bc-trip-loading">Loading events</div>`}
+          ${links.status === 'loading' && html`<${Skeleton} rows=${3} compact=${true} />`}
           ${links.status === 'error' && html`<div class="bc-trip-loading">
             Could not load this trip's events
             <button type="button" class="bc-link-btn" onClick=${() => setRetrySeq(retrySeq + 1)}>Retry</button>

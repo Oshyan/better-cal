@@ -8,7 +8,7 @@
 import { html, useState, useEffect } from '../../vendor/index.js';
 import { set, toast, useStore } from './store.js';
 import { api, refreshWindow } from './api.js';
-import { PageShell, EmptyState } from './PageShell.js';
+import { PageShell, EmptyState, Skeleton } from './PageShell.js';
 import { Icon } from '../ui/icons.js';
 import { sanitizeHtml } from '../lib/richtext.js';
 import { parseISO, fmtDateFull, fmtTime } from '../lib/dates.js';
@@ -105,7 +105,7 @@ export function ProposalsPage() {
       <button type="button" class="bc-srcchip${showDecided ? '' : ' is-on'}" onClick=${() => setShowDecided(false)}>Open</button>
       <button type="button" class="bc-srcchip${showDecided ? ' is-on' : ''}" onClick=${() => setShowDecided(true)}>All</button>
     </div>
-    ${proposals === null && html`<p class="bc-page-note">Loading…</p>`}
+    ${proposals === null && html`<${Skeleton} rows=${4} />`}
     ${proposals !== null && proposals.length === 0 && html`<${EmptyState}
       text=${showDecided ? 'No proposals yet.' : 'Nothing waiting on you. Plugins that suggest plans will put them here.'}
     />`}

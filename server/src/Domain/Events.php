@@ -905,6 +905,7 @@ final class Events
     {
         $out = $this->serializeFields($row, $startUtc, $endUtc, $links, $full);
         if ($full) {
+            unset($out['hasReminders'], $out['hasDescription']); // the record carries the real things
             return $out;
         }
         // The list shape: what the grid draws. Everything the detail view,
@@ -943,22 +944,25 @@ final class Events
             $style = is_array($row['style_json']) ? $row['style_json'] : json_decode((string) $row['style_json'], true);
         }
         $createdAt = Time::fromDb((string) $row['created_at']);
-        $reminders = [];
-        $reminderSource = null;
+        // Effective reminders are computed for both shapes: the list needs
+        // only the bit (hasReminders, so the popover can reserve the row
+        // before the record arrives) and the inputs are cached per calendar
+        // and per user, so the per-row cost is the pure merge.
+        $calMeta = $this->calendarMeta((int) $row['calendar_id']);
+        $globals = $this->reminderDefaultsForUser((int) $row['user_id']);
+        [$reminders, $reminderSource] = Reminders::effective(
+            Reminders::decode($row['reminders_json'] ?? null),
+            $calMeta['reminderDefaults'] ?? null,
+            $globals['timed'],
+            $globals['allDay'],
+            (int) $row['all_day'] === 1,
+            $calMeta['kind'] ?? 'local'
+        );
         $rrule = null;
         if ($full) {
-            $calMeta = $this->calendarMeta((int) $row['calendar_id']);
-            $globals = $this->reminderDefaultsForUser((int) $row['user_id']);
-            [$reminders, $reminderSource] = Reminders::effective(
-                Reminders::decode($row['reminders_json'] ?? null),
-                $calMeta['reminderDefaults'] ?? null,
-                $globals['timed'],
-                $globals['allDay'],
-                (int) $row['all_day'] === 1,
-                $calMeta['kind'] ?? 'local'
-            );
             // Overrides carry no rrule of their own; surface the parent's so
             // clients can always describe the cadence, not just "repeats".
+            // A lookup per override row, which is why it is record-only.
             $rrule = !empty($row['rrule'])
                 ? (string) $row['rrule']
                 : (!empty($row['recurrence_parent_id']) ? $this->parentRrule((int) $row['recurrence_parent_id']) : null);
@@ -996,6 +1000,13 @@ final class Events
             'status' => (string) $row['status'],
             'score' => isset($row['score']) && $row['score'] !== null ? (float) $row['score'] : null,
             'reminders' => $reminders,
+            // List-shape bits, sent only when true (null is omitted): they let
+            // the popover draw a correctly sized skeleton for the rows the
+            // record will fill in, so a late description expands a reserved
+            // space instead of pushing everything below it. ~18 bytes per
+            // occurrence on average, the one payload cost of the polish pass.
+            'hasReminders' => $reminders !== [] ? true : null,
+            'hasDescription' => ($row['description'] !== null && $row['description'] !== '') ? true : null,
             'reminderSource' => $reminderSource,
             'tags' => $links['tags'][$id] ?? [],
             'people' => $links['people'][$id] ?? [],

@@ -9,6 +9,7 @@ import { updateEvent, deleteEvent, triageAttendance, sendFeedback, enterReschedu
 import { describeRrule } from './EventDetail.js';
 import { isMobile, trapFocus, MOBILE_QUERY } from '../ui/DayExpand.js';
 import { ThumbIcon, PinIcon, LinkIcon, Icon } from '../ui/icons.js';
+import { DurationSuffix } from '../ui/EventChip.js';
 import {
   parseISO, dateOfDayKey, fmtRange, eventDuration, toInputValue, fromInputValue, toISOWithOffset, occDayKey,
 } from '../lib/dates.js';
@@ -125,7 +126,6 @@ export function EventPopover() {
 
   // All-day occurrences carry literal dates at +00:00; anchor them to local
   // midnight for display so the date never shifts across timezones.
-  const duration = eventDuration(occ);
   const s = occ.allDay ? dateOfDayKey(occ.start.slice(0, 10)) : parseISO(occ.start);
   const e = occ.allDay ? dateOfDayKey(occ.end.slice(0, 10)) : parseISO(occ.end);
 
@@ -169,8 +169,7 @@ export function EventPopover() {
       ${editingTime
         ? html`<${TimeEditor} start=${s} end=${e} allDay=${occ.allDay} onSave=${saveTime} onCancel=${() => setEditingTime(false)} />`
         : html`<div class="bc-pop-when" onClick=${() => !isFeed && setEditingTime(true)} title=${isFeed ? '' : 'Click to edit time'}>
-            ${fmtRange(s, e, occ.allDay)}
-            ${duration && html`<span class="bc-duration-exact">${duration.exact} total</span>`}
+            <span class="bc-date-duration">${fmtRange(s, e, occ.allDay)} <${DurationSuffix} occ=${occ} expanded /></span>
             ${occ.recurring && html`<span class="bc-pop-recur">${describeRrule(occ.rrule)}</span>`}
           </div>`}
       ${occ.reminders && occ.reminders.length > 0 && html`<div class="bc-pop-rem">

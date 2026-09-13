@@ -63,11 +63,19 @@ function stateClasses(occ, dimmed, nowMs) {
   return c;
 }
 
-function DurationSuffix({ occ }) {
+const DURATION_UNITS = { w: 'week', d: 'day', h: 'hour', m: 'minute', s: 'second' };
+
+export function DurationSuffix({ occ, expanded = false }) {
   const duration = eventDuration(occ);
   if (!duration) return null;
-  return html`<span class="bc-event-duration" role="img" aria-label=${duration.exact + ' total'}
-    ><span aria-hidden="true">· ${duration.compact}</span></span>`;
+  // Details have room to spell out units; months retain the shared 1mo
+  // shorthand. The exact day count stays available even for weeks/months.
+  const label = expanded
+    ? duration.compact.replace(/(\d+(?:\.\d+)?)([wdhms])\b/g,
+      (_, n, unit) => `${n} ${DURATION_UNITS[unit]}${Number(n) === 1 ? '' : 's'}`)
+    : duration.compact;
+  return html`<span class="bc-event-duration" role="img" aria-label=${duration.exact + ' total'} title=${duration.exact + ' total'}
+    ><span aria-hidden="true">· ${label}</span></span>`;
 }
 
 export function NewPill() {

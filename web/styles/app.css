@@ -595,6 +595,7 @@ button:focus-visible, [tabindex]:focus-visible {
 }
 .bc-cell .bc-chip:has(.bc-event-duration) .bc-chip-title { flex: 0 1 auto; }
 .bc-band .bc-event-duration { margin-left: 4px; font-size: 10px; color: var(--fg); }
+.bc-date-duration .bc-event-duration { color: var(--fg-muted); }
 .bc-duration-exact { display: block; font-size: 11.5px; color: var(--fg-muted); font-weight: 400; }
 .bc-duration-exact:empty { display: none; }
 .bc-chip.is-interested { border-style: dashed; }

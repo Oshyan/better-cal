@@ -11,8 +11,9 @@ import { deleteEvent, triageAttendance, sendFeedback, enterReschedule, sameDayLi
 import { TripDetail } from './Trips.js';
 import { trapFocus } from '../ui/DayExpand.js';
 import { ThumbIcon, CalDot, PinIcon, LinkIcon, Icon } from '../ui/icons.js';
+import { DurationSuffix } from '../ui/EventChip.js';
 import {
-  parseISO, dateOfDayKey, fmtRange, eventDuration, fmtDateFull, fmtTime, occDayKey,
+  parseISO, dateOfDayKey, fmtRange, fmtDateFull, fmtTime, occDayKey,
 } from '../lib/dates.js';
 import { fmtReminder } from '../lib/reminders.js';
 import { hasHtml, sanitizeHtml } from '../lib/richtext.js';
@@ -287,7 +288,6 @@ export function EventDetail() {
   const isFeed = cal ? cal.kind === 'subscribed' : occ.source === 'feed';
   const color = (cal && cal.color) || '#888';
 
-  const duration = eventDuration(occ);
   const s = occ.allDay ? dateOfDayKey(occ.start.slice(0, 10)) : parseISO(occ.start);
   const e = occ.allDay ? dateOfDayKey(occ.end.slice(0, 10)) : parseISO(occ.end);
 
@@ -337,8 +337,7 @@ export function EventDetail() {
             <${CalDot} cal=${cal} color=${color} />
             ${(cal && cal.name) || 'Calendar'}
           </span>
-          ${fmtRange(s, e, occ.allDay)}
-          ${duration && html`<span class="bc-duration-exact">${duration.exact} total</span>`}
+          <span class="bc-date-duration">${fmtRange(s, e, occ.allDay)} <${DurationSuffix} occ=${occ} expanded /></span>
           ${occ.recurring && html`<span class="bc-detail-recur">${describeRrule(occ.rrule)}</span>`}
           ${occ.reminders && occ.reminders.length > 0 && html`<span
             class="bc-bell" role="img" aria-label="Has reminders"

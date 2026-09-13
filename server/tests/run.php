@@ -13,6 +13,7 @@ use BetterCal\Domain\ApiTokens;
 use BetterCal\Domain\Calendars;
 use BetterCal\Domain\FallbackParser;
 use BetterCal\Domain\Geocode;
+use BetterCal\Domain\GeocodeSweep;
 use BetterCal\Domain\Filters;
 use BetterCal\Domain\Ics;
 use BetterCal\Domain\PromptEval;
@@ -2314,6 +2315,17 @@ checkEq(
     "Added saved view 'Focus'",
     Undo::defaultSummary('saved_view', 'create', null, ['saved_views' => [['name' => 'Focus']]])
 );
+
+// ---------------------------------------------------------------------------
+// Geocode sweep: the pure parts. Grouping key and bias precedence.
+{
+    checkEq('sweep key: whitespace collapsed and case folded', 'pillar point harbor, half moon bay', GeocodeSweep::normalizeLocation("  Pillar   Point\tHarbor, Half Moon Bay \n"));
+    checkEq('sweep key: same address, different spacing, one group', GeocodeSweep::normalizeLocation('15 Calton Hill, Edinburgh'), GeocodeSweep::normalizeLocation('15  Calton Hill,  EDINBURGH'));
+    checkEq('sweep bias: home location wins', [37.8, -122.27], GeocodeSweep::biasFor(['homeLat' => 37.8, 'homeLng' => -122.27, 'tz' => 'Europe/London'], 'Asia/Tokyo'));
+    $tzBias = GeocodeSweep::biasFor(['homeLat' => null, 'homeLng' => null], 'America/Los_Angeles');
+    check('sweep bias: falls back to the event zone centroid', $tzBias[0] !== null && $tzBias[1] !== null && $tzBias[1] < -100, json_encode($tzBias));
+    checkEq('sweep bias: nothing known means no bias', [null, null], GeocodeSweep::biasFor([], null));
+}
 
 // ---------------------------------------------------------------------------
 // Feed content state. Three independent answers, not one boolean: a feed that

@@ -341,6 +341,24 @@ final class Geocode
      *
      * @return array{lat: float|null, lng: float|null, display: string|null}
      */
+    /**
+     * Whether lookup() would answer from the cache. The background sweep
+     * throttles only real network calls, and tells a definitive "could not
+     * place" (cached, with null coordinates) from a transport failure (cache
+     * still empty afterwards) by asking this before and after.
+     */
+    public function cached(string $q, ?float $biasLat = null, ?float $biasLng = null): bool
+    {
+        $normalized = self::normalize($q);
+        if ($normalized === '') {
+            return true; // nothing to fetch either way
+        }
+        return $this->db->scalar(
+            'SELECT 1 FROM geocode_cache WHERE query_hash = ?',
+            [self::queryHash($normalized, $biasLat, $biasLng)]
+        ) !== null;
+    }
+
     public function lookup(string $q, ?float $biasLat = null, ?float $biasLng = null): array
     {
         $normalized = self::normalize($q);

@@ -273,7 +273,7 @@ final class Events
 
         return array_map(
             function (array $occ) use ($links): array {
-                $serialized = $this->serialize($occ['row'], $occ['start'], $occ['end'], $links);
+                $serialized = $this->serialize($occ['row'], $occ['start'], $occ['end'], $links, full: false);
                 if (!empty($occ['dimmed'])) {
                     $serialized['dimmed'] = true;
                 }
@@ -859,28 +859,60 @@ final class Events
 
     // ---- Serialization ------------------------------------------------
 
-    /** Serialize an event row into an occurrence (fetching its own labels). */
+    /**
+     * Serialize ONE event row as the full record (fetching its own labels).
+     * This is the detail shape: what the editor, the detail view and API
+     * clients get when they ask for a specific event, and what a create
+     * returns. It carries everything, uid included.
+     */
     public function serializeSingle(array $row): array
     {
         $links = $this->labels->forEvents([(int) $row['id']]);
         $links['containers'] = $this->trips->containersFor([(int) $row['id']]);
-        return $this->serialize($row, Time::fromDb((string) $row['start_utc']), Time::fromDb((string) $row['end_utc']), $links);
+        return $this->serialize($row, Time::fromDb((string) $row['start_utc']), Time::fromDb((string) $row['end_utc']), $links, full: true);
     }
 
-    /** @param list<array> $rows @return list<array> */
+    /**
+     * Serialize many rows as grid occurrences: the window, search results,
+     * a person's events, a trip's members. This shape is what thousands of
+     * rows travel as, so it carries what the grid draws and nothing it does
+     * not (#15). `uid` is dropped — no client surface reads it — and null
+     * fields are omitted rather than sent as `"key":null`; consumers treat a
+     * missing key as null, which every reader already did.
+     *
+     * @param list<array> $rows @return list<array>
+     */
     public function serializeRows(array $rows): array
     {
         $ids = array_map(static fn($r) => (int) $r['id'], $rows);
         $links = $this->labels->forEvents($ids);
         $links['containers'] = $this->trips->containersFor($ids);
         return array_map(
-            fn(array $row) => $this->serialize($row, Time::fromDb((string) $row['start_utc']), Time::fromDb((string) $row['end_utc']), $links),
+            fn(array $row) => $this->serialize($row, Time::fromDb((string) $row['start_utc']), Time::fromDb((string) $row['end_utc']), $links, full: false),
             $rows
         );
     }
 
+    /**
+     * Measured cost of what this trims, one-month window, 725 occurrences,
+     * 793 bytes each before: `uid` 76 bytes/occurrence (9.6%); a null field
+     * costs its key plus `:null,` on every row it is absent from, and
+     * description alone is null on 98% of them.
+     *
+     * @param array{tags:array<int,list<string>>,people:array<int,list<string>>,containers:array<int,list<array{eventId:int,title:string}>>} $links
+     */
+    private function serialize(array $row, \DateTimeImmutable $startUtc, \DateTimeImmutable $endUtc, array $links, bool $full = false): array
+    {
+        $out = $this->serializeFields($row, $startUtc, $endUtc, $links);
+        if ($full) {
+            return $out;
+        }
+        unset($out['uid']);
+        return array_filter($out, static fn($v): bool => $v !== null);
+    }
+
     /** @param array{tags:array<int,list<string>>,people:array<int,list<string>>,containers:array<int,list<array{eventId:int,title:string}>>} $links */
-    private function serialize(array $row, \DateTimeImmutable $startUtc, \DateTimeImmutable $endUtc, array $links): array
+    private function serializeFields(array $row, \DateTimeImmutable $startUtc, \DateTimeImmutable $endUtc, array $links): array
     {
         $id = (int) $row['id'];
         $tzid = (string) $row['tzid'];

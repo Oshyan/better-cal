@@ -545,7 +545,7 @@ export function Sidebar({ open, collapsed, onClose }) {
         type="button" class="bc-folder-head bc-manage-head"
         aria-expanded=${!manageCollapsed}
         onClick=${toggleManage}
-      ><span class="bc-folder-caret${manageCollapsed ? ' is-closed' : ''}"><${Icon} name="chevronDown" size=${13} /></span>Manage${manageCollapsed && proposalCount > 0
+      ><span class="bc-folder-caret bc-caret-vertical"><${Icon} name=${manageCollapsed ? 'chevronUp' : 'chevronDown'} size=${13} /></span>Manage${manageCollapsed && proposalCount > 0
         && html`<span class="bc-manage-badge" aria-label=${proposalCount + ' proposals awaiting a decision'}>${proposalCount}</span>`}</button>
       ${!manageCollapsed && MANAGE_ITEMS.map(([r, label]) => html`<button
         key=${r} type="button"

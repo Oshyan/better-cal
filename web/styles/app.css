@@ -349,6 +349,10 @@ button:focus-visible, [tabindex]:focus-visible {
   color: var(--fg-muted); transition: transform 0.14s ease;
 }
 .bc-folder-caret.is-closed { transform: rotate(-90deg); }
+/* A group anchored at the bottom (Manage) opens UPWARD, so its caret says
+   up when folded and down when open, rather than the right/down of groups
+   that open downward. The icon swaps; nothing rotates. */
+.bc-folder-caret.bc-caret-vertical { transform: none; }
 /* The rotating chevron carries the enclosure on its own; members stay flush
    with every other calendar row so folders and "All calendars" align. */
 .bc-folder-body { margin: 0; padding: 0; }

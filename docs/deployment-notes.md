@@ -39,7 +39,7 @@ Rationale: nginx serves static assets directly (via the `server/public/assets` -
 
 ## Cache strategy summary
 
-Three layers cooperate: nginx headers above; the service worker (`web/sw.js`) is network-first with forced revalidation for app files, cache-first for vendor; `web/index.html` references entry assets with a `?v=N` query, bumped only when a stale-HTTP-cache escape hatch is needed (historical: v=2 broke clients that had cached the original long-max-age headers).
+Three layers cooperate: nginx headers above; the service worker (`web/sw.js`) is **cache-first for the whole app shell** (document, styles, every module, vendor), keyed to a `VERSION` that `scripts/gen-preload.mjs` derives from a content hash of every shell file, so a deploy that changes anything gets a new version and a deploy that changes nothing invalidates nothing; API GETs stay network-first. `deploy.sh` runs the generator in write mode before rsync, so the shipped worker is always self-consistent without anyone remembering to bump anything (`deploy-dev.sh` keeps `--check` as its gate). The browser re-fetches `sw.js` on every navigation (nginx: `no-cache`), installs a new version alongside the old, precaches the new shell bypassing the HTTP cache, activates, deletes the old cache, and tells open pages, which show a "Reload to get the latest" toast; until they reload they keep running the consistent set they loaded. `web/index.html`'s `?v=N` on entry assets is now only a stale-HTTP-cache escape hatch (historical: v=2 broke clients that had cached the original long-max-age headers); the worker matches shell entries ignoring the query.
 
 ## Failure alerts
 

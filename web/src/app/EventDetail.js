@@ -115,16 +115,20 @@ export function loadLeaflet() {
   return leafletPromise;
 }
 
-// Static image first, interactive map on request. The image is one cacheable
-// request that paints in a round trip (and the popover has usually warmed it
-// already); Leaflet, its stylesheet, map init and a screen of tiles only
-// happen when someone clicks to zoom or pan, or if the image fails. While
-// the image loads, the box shows the address over a shimmer rather than
-// flat grey, which read as broken.
+// On a fine pointer the interactive map mounts immediately (Leaflet is in
+// the shell cache and warmed at idle). On touch, first paint is a mosaic of
+// the same tiles the map would fetch, behind tap-to-activate; Leaflet loads
+// only then, or if a tile fails. While tiles load, the box shows the address
+// over a shimmer rather than flat grey, which read as broken.
 function MiniMap({ lat, lng, location }) {
   const elRef = useRef(null);
   const mapRef = useRef(null);
-  const [interactive, setInteractive] = useState(false);
+  // Desktop gets the live map straight away: a wheel over it zooms the map,
+  // which is what pointing at a map and scrolling means, and nothing under
+  // the detail card scrolls anyway. Touch keeps the tile mosaic behind a
+  // tap-to-activate, where a live map really does capture the gestures a
+  // person needs to move the card.
+  const [interactive, setInteractive] = useState(() => !state.coarsePointer);
   // First paint is a mosaic of the same tiles the interactive map uses (see
   // lib/maps.js); 'ok' once every tile has loaded, 'error' if any fails, in
   // which case Leaflet takes over as it would on click.

@@ -341,6 +341,41 @@ final class Geocode
      *
      * @return array{lat: float|null, lng: float|null, display: string|null}
      */
+    /** Beyond this from the bias, a free-text venue description is not trusted. */
+    public const IMPLAUSIBLE_KM = 1500.0;
+
+    /**
+     * Kinds that name a place outright. A bare "Tokyo" or "Lake Tahoe" is
+     * allowed to be far away; the guard is for descriptions, not names.
+     */
+    private const PLACE_LEVEL = ['country', 'state', 'region', 'province', 'city', 'municipality', 'town', 'island', 'national_park', 'park', 'airport'];
+
+    /**
+     * Should a biased lookup's best answer be thrown away as a bad guess?
+     *
+     * True only when all three hold: the query reads as a free-text
+     * description rather than an address or a name (no comma, four or more
+     * words), the answer is not itself a place-level feature, and it lies
+     * further than IMPLAUSIBLE_KM from the bias. Addresses ("15 Calton Hill,
+     * Edinburgh") and names ("Heathrow Terminal 5") pass untouched; a long
+     * comma-less description of somewhere genuinely distant is the known
+     * false negative, and it surfaces as "couldn't place" rather than as a
+     * silent wrong pin. Pure, unit-tested.
+     */
+    public static function implausible(string $normalized, ?string $kind, float $distanceKm): bool
+    {
+        if ($distanceKm <= self::IMPLAUSIBLE_KM) {
+            return false;
+        }
+        if (str_contains($normalized, ',')) {
+            return false;
+        }
+        if (count(preg_split('/\s+/u', trim($normalized)) ?: []) < 4) {
+            return false;
+        }
+        return !in_array((string) $kind, self::PLACE_LEVEL, true);
+    }
+
     /**
      * Whether lookup() would answer from the cache. The background sweep
      * throttles only real network calls, and tells a definitive "could not
@@ -398,7 +433,20 @@ final class Geocode
                     'lat' => (float) $top['lat'],
                     'lng' => (float) $top['lng'],
                     'display' => (string) $top['display'],
+                    'kind' => isset($top['kind']) ? (string) $top['kind'] : null,
                 ];
+                // A wrong pin is worse than no pin. "A Temple Mansion in
+                // Oakland's Ivy Hill" came back as Oakland County, Michigan,
+                // 3,300 km from home; treat that as unplaced (cached as a
+                // miss, so the sweep retries in a month) and let the event
+                // say so, rather than draw a confident map of the wrong state.
+                if ($mapped !== null && self::implausible(
+                    $normalized,
+                    $mapped['kind'],
+                    PlaceSearch::distanceKm($biasLat, $biasLng, $mapped['lat'], $mapped['lng'])
+                )) {
+                    $mapped = null;
+                }
             } else {
                 $mapped = self::mapResponse($decoded, $normalized);
                 // Photon indexes places under their local name, so an English

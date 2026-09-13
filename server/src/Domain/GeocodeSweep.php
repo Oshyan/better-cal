@@ -42,10 +42,15 @@ final class GeocodeSweep
     ) {
     }
 
-    /** Grouping key for "the same address": whitespace-collapsed, case-folded. */
+    /**
+     * Grouping key for "the same address": whitespace-collapsed, case-folded,
+     * typographic quotes folded to ASCII. Two feeds wrote "Oakland's" and
+     * "Oakland’s" for one venue and it cost two lookups.
+     */
     public static function normalizeLocation(string $location): string
     {
-        return mb_strtolower(trim((string) preg_replace('/\s+/u', ' ', $location)));
+        $s = str_replace(['’', '‘', '“', '”'], ["'", "'", '"', '"'], $location);
+        return mb_strtolower(trim((string) preg_replace('/\s+/u', ' ', $s)));
     }
 
     /**
@@ -109,6 +114,7 @@ final class GeocodeSweep
         }
 
         $settingsByUser = [];
+        $gaveUp = []; // userId => [firstEventId, [address, ...]]
         foreach ($groups as $g) {
             if (microtime(true) - $t0 > $budgetSeconds) {
                 break;
@@ -147,11 +153,28 @@ final class GeocodeSweep
             } else {
                 $this->db->run("UPDATE events SET geocoded_at = ? WHERE id IN $in", [Time::nowDb(), ...$params]);
                 $stats['unplaced'] += count($g['ids']);
+                $gaveUp[$g['userId']] ??= [$g['ids'][0], []];
+                $gaveUp[$g['userId']][1][] = $g['location'];
             }
 
             if (!$cached) {
                 usleep(self::THROTTLE_US);
             }
+        }
+
+        // Say so where the user will see it. One log-only Activity entry per
+        // user per run listing the addresses given up on; otherwise "could
+        // not place" lives only in a column and a worker log line, and an
+        // event quietly has no map for a month.
+        foreach ($gaveUp as $userId => [$eventId, $addresses]) {
+            $shown = array_slice($addresses, 0, 5);
+            $more = count($addresses) - count($shown);
+            $summary = "Couldn't place " . count($addresses) . ' address' . (count($addresses) === 1 ? '' : 'es')
+                . ' on the map: ' . implode('; ', array_map(static fn(string $a): string => mb_substr($a, 0, 60), $shown))
+                . ($more > 0 ? "; and $more more" : '');
+            ActivityContext::with('geocode', function () use ($userId, $eventId, $summary, $addresses): void {
+                (new Undo($this->db))->record((int) $userId, 'event', (int) $eventId, 'update', null, null, $summary, ['addresses' => array_slice($addresses, 0, 50)]);
+            });
         }
 
         $stats['seconds'] = round(microtime(true) - $t0, 2);

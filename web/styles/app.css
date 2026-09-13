@@ -1119,6 +1119,9 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-detail-openlink { text-decoration: none; display: inline-flex; align-items: center; }
 
 /* Mini-map: fixed height, inert until clicked, marker + OSM link. */
+/* Shown in place of the map when the address could not be geocoded, so an
+   address with no map reads as a known limitation rather than a bug. */
+.bc-detail-geonote { font-size: 12px; color: var(--fg-muted); margin-top: 2px; }
 .bc-map-wrap { position: relative; margin-top: 6px; }
 .bc-map {
   height: 200px; border-radius: 6px; border: 1px solid var(--border);

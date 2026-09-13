@@ -923,7 +923,7 @@ final class Events
      * rrule 35, tzid 28, reminderSource 26, description 21 — a third of the
      * row, none of it read by anything that draws a grid.
      */
-    private const DETAIL_ONLY = ['uid', 'createdAt', 'updatedAt', 'reminders', 'reminderSource', 'rrule', 'description', 'tzid'];
+    private const DETAIL_ONLY = ['uid', 'createdAt', 'updatedAt', 'reminders', 'reminderSource', 'rrule', 'description', 'tzid', 'geocodedAt'];
 
     /**
      * Beyond bytes, the list shape skips work: effective reminders need the
@@ -973,6 +973,10 @@ final class Events
             'location' => $row['location'] !== null ? (string) $row['location'] : null,
             'locationLat' => isset($row['location_lat']) ? (float) $row['location_lat'] : null,
             'locationLng' => isset($row['location_lng']) ? (float) $row['location_lng'] : null,
+            // When the sweep last tried to place this address. Set with no
+            // coordinates means "tried and could not", which the detail view
+            // says out loud instead of showing an address with no map.
+            'geocodedAt' => !empty($row['geocoded_at']) ? Time::iso(Time::fromDb((string) $row['geocoded_at'])) : null,
             'url' => $row['url'] !== null ? (string) $row['url'] : null,
             // All-day events are calendar dates, not instants: serialize the date
             // in the event's own zone at a fixed +00:00 midnight so clients can

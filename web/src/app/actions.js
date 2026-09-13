@@ -6,6 +6,7 @@ import {
 } from './store.js';
 import { api, refreshWindow, undo, loadCalendars, loadPeople } from './api.js';
 import { adoptSettings } from './settings.js';
+import { discardEditorWithUndo, clearQuickAddText } from './drafts.js';
 import { localTz, todayKey, addDaysKey, occDayKey, epochDayOfKey, startMs, pad, parseISO, toISOWithOffset, addDaysDate } from '../lib/dates.js';
 import { occurrenceDaySpan } from '../ui/monthmath.js';
 import { extendTripSpan } from '../ui/trips.js';
@@ -122,10 +123,10 @@ export function closeOverlays() {
   if (state.popover || state.detail || state.groupPopover || state.editor || state.expandedDay ||
       state.searchOpen || state.quickAddOpen || state.jumpOpen || state.shortcutsOpen ||
       state.createDrawer) {
-    // An editor with entered data confirms before discarding (the drawer
-    // keeps state.editorDirty current).
-    if (state.editor && state.editorDirty && !window.confirm('Discard this event? Entered details will be lost.')) {
-      return true; // consumed the Esc, kept the editor
+    // An editor with entered data closes like anything else; the draft is
+    // durable and the toast's Undo puts it back. No dialog to read.
+    if (state.editor && state.editorDirty) {
+      discardEditorWithUndo();
     }
     set({
       popover: null, detail: null, groupPopover: null, editor: null, expandedDay: null,
@@ -550,6 +551,7 @@ export async function quickAddParse(text) {
 export async function quickAddCreate(fields) {
   const occ = await createEvent(fields);
   if (occ) {
+    clearQuickAddText();
     set({ quickAddOpen: false });
     if (occ.instanceId) jumpToDate(occDayKey(occ), occ.instanceId);
   }

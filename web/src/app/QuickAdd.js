@@ -11,6 +11,7 @@ import { html, useState, useRef, useEffect } from '../../vendor/index.js';
 import { useStore, set, state, toast } from './store.js';
 import { quickAddParse, quickAddCreate, defaultTargetCalendarId } from './actions.js';
 import { api, loadPeople } from './api.js';
+import { saveQuickAddText, clearQuickAddText } from './drafts.js';
 import { PlaceInput, pickFillText } from './PlaceInput.js';
 import {
   parseISO, dayKeyOf, dateOfDayKey, addDaysKey, toISOWithOffset, pad, localTz,
@@ -103,6 +104,9 @@ function fmtAvailRange(d) {
 export function QuickAdd() {
   const open = useStore((s) => s.quickAddOpen);
   const [text, setText] = useState('');
+  // Typed text is durable across a reload (drafts.js); cleared on create,
+  // cancel, or hand-off to the editor.
+  useEffect(() => { saveQuickAddText(text); }, [text]);
   const [draft, setDraft] = useState(null);
   const [form, setForm] = useState(defaultForm);
   const [flash, setFlash] = useState(null); // Set of strip field names, or null
@@ -125,7 +129,7 @@ export function QuickAdd() {
   useEffect(() => {
     if (!open) return undefined;
     const onDoc = (e) => {
-      if (cardRef.current && !cardRef.current.contains(e.target)) set({ quickAddOpen: false });
+      if (cardRef.current && !cardRef.current.contains(e.target)) { clearQuickAddText(); set({ quickAddOpen: false }); }
     };
     document.addEventListener('pointerdown', onDoc, true);
     return () => document.removeEventListener('pointerdown', onDoc, true);
@@ -250,6 +254,7 @@ export function QuickAdd() {
           method: 'POST',
           body: { start: d.start, end: d.end, kind: d.kind },
         });
+        clearQuickAddText();
         set({ availSeq: state.availSeq + 1, quickAddOpen: false });
         toast(d.personName + ' marked ' + d.kind);
         loadPeople().catch(() => {});
@@ -301,6 +306,7 @@ export function QuickAdd() {
 
   const cancel = () => {
     clearTimeout(timerRef.current);
+    clearQuickAddText();
     set({ quickAddOpen: false });
   };
 
@@ -309,6 +315,7 @@ export function QuickAdd() {
   // the user's manual edits.
   const openFullEditor = () => {
     clearTimeout(timerRef.current);
+    clearQuickAddText(); // the text now lives in the editor's draft
     const range = buildRange(form, draft, touchedRef.current.has('dateKey'));
     set({
       quickAddOpen: false,

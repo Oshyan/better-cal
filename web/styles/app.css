@@ -1462,6 +1462,8 @@ body.bc-dragging * { cursor: grabbing !important; }
 /* --- login, pages --------------------------------------------------------------------- */
 
 .bc-login-wrap { display: grid; place-items: center; height: 100%; }
+.bc-login-pw { display: flex; align-items: center; gap: 8px; }
+.bc-login-pw input { flex: 1; min-width: 0; }
 .bc-login {
   width: 320px; background: var(--bg-raised); border: 1px solid var(--border);
   border-radius: var(--radius); box-shadow: var(--shadow);

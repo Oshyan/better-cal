@@ -7,6 +7,7 @@ import { saveSetting } from './actions.js';
 import { fetchMe, loadCalendars, loadSavedViews, loadConfig, loadPeople, loadPlugins, loadProposalCount, loadSystemHealth, api } from './api.js';
 import { announceSystemHealth } from './system.js';
 import { installHoverPrefetch } from './prefetch.js';
+import { armQuietReload, restoreDraftsAfterBoot, installActivityTracking } from './drafts.js';
 import { preloadRichText } from './RichText.js';
 import { loadLeaflet } from './EventDetail.js';
 import { localTz } from '../lib/dates.js';
@@ -49,6 +50,10 @@ async function boot() {
     handleDeepPaths().catch(() => { /* best-effort */ });
     // One-time notices for failures that change what the calendar shows.
     announceSystemHealth();
+    // Whatever was in progress when the page last unloaded comes back:
+    // an editor with its form, or quick add with its text.
+    installActivityTracking();
+    restoreDraftsAfterBoot();
     // Prefetch on intent (hover/focus on a chip), and warm the two lazily
     // loaded scripts at idle so the FIRST editor and the FIRST interactive
     // map are as fast as later ones. Skipped when the browser says the user
@@ -165,17 +170,11 @@ if (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches
 
 if ('serviceWorker' in navigator) {
   // A new version installed and activated behind this page (its cache is
-  // the new one; this page still runs what it loaded). Offer the reload;
-  // never do it uninvited, someone may be mid-edit.
-  let announced = false;
+  // the new one; this page still runs what it loaded). Apply it at the next
+  // quiet moment. Drafts are durable, so nothing typed is lost; the reload
+  // waits for the tab to be hidden or for input to pause (drafts.js).
   navigator.serviceWorker.addEventListener('message', (e) => {
-    if (!e.data || e.data.type !== 'sw-updated' || announced) return;
-    announced = true;
-    toast('Better-Cal was updated. Reload to get the latest version.', {
-      actionLabel: 'Reload',
-      onAction: () => location.reload(),
-      duration: 60000,
-    });
+    if (e.data && e.data.type === 'sw-updated') armQuietReload();
   });
   window.addEventListener('load', () => {
     // Prefer root scope; fall back to the /assets/ path (scope-limited)

@@ -6,6 +6,10 @@ import { login, loadCalendars, loadConfig } from './api.js';
 export function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  // Visible by default. Masking protects against someone reading over your
+  // shoulder, which is rare; it costs everyone typos they cannot see, every
+  // time. Hide is one click away for the shared-screen moment.
+  const [shown, setShown] = useState(true);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -32,7 +36,10 @@ export function Login() {
       </label>
       <label class="bc-field">
         <span>Password</span>
-        <input type="password" value=${password} onInput=${(e) => setPassword(e.target.value)} required autocomplete="current-password" />
+        <span class="bc-login-pw">
+          <input type=${shown ? 'text' : 'password'} value=${password} onInput=${(e) => setPassword(e.target.value)} required autocomplete="current-password" />
+          <button type="button" class="bc-link-btn" onClick=${() => setShown(!shown)} aria-pressed=${!shown}>${shown ? 'Hide' : 'Show'}</button>
+        </span>
       </label>
       ${error && html`<div class="bc-login-error" role="alert">${error}</div>`}
       <button type="submit" class="bc-btn bc-btn-primary" disabled=${busy}>${busy ? 'Signing in' : 'Sign in'}</button>

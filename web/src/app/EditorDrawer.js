@@ -9,6 +9,7 @@ import { html, useState, useEffect, useRef } from '../../vendor/index.js';
 import { useStore, set, state, toast } from './store.js';
 import { createEvent, updateEvent, deleteEvent, quickAddParse, attachToTrip, defaultTargetCalendarId } from './actions.js';
 import { api, loadPeople, ensureFullOccurrence } from './api.js';
+import { saveEditorDraft, clearEditorDraft, discardEditorWithUndo } from './drafts.js';
 import { TripRow } from './Trips.js';
 import { trapFocus } from '../ui/DayExpand.js';
 import { PlaceInput, pickFillText } from './PlaceInput.js';
@@ -175,13 +176,17 @@ export function EditorDrawer() {
     setForm((f) => (f && f.description !== htmlValue ? { ...f, description: htmlValue } : f));
   };
 
-  // Keep state.editorDirty current so every close path (✕, backdrop, Cancel,
-  // global Esc) can confirm before discarding entered data.
+  // Keep state.editorDirty current, and keep a dirty form durable: written
+  // to sessionStorage as it changes, cleared when it is not dirty, saved, or
+  // deliberately dropped. That is what lets closing be undoable and a
+  // version reload be safe (drafts.js).
   useEffect(() => {
     if (!form || initialSnapRef.current == null) return;
     const dirty = JSON.stringify(form) !== initialSnapRef.current
       || (nlText || '').trim() !== ((editor && editor.nlText) || '').trim();
     if (dirty !== state.editorDirty) set({ editorDirty: dirty });
+    if (dirty) saveEditorDraft({ editor, form, nlText, initialSnap: initialSnapRef.current });
+    else clearEditorDraft();
   }, [form, nlText]); // eslint-disable-line
 
   // Scheduling assist (docs/design-availability.md §4): when the event's
@@ -270,10 +275,17 @@ export function EditorDrawer() {
     setForm(initial);
     initialSnapRef.current = JSON.stringify(initial);
     set({ editorDirty: false });
+    // Putting a draft back (Undo after a close, or after a reload): the form
+    // as it was, against the ORIGINAL baseline so it is still dirty.
+    if (editor.restore && editor.restore.form) {
+      setForm(editor.restore.form);
+      if (editor.restore.initialSnap) initialSnapRef.current = editor.restore.initialSnap;
+      set({ editorDirty: true });
+    }
     setScope('this');
     setDurationLock(true);
     setRemCustom(null);
-    setNlText(editor.nlText || '');
+    setNlText((editor.restore && editor.restore.nlText) || editor.nlText || '');
     setNlFlash(null);
     nlReq.current++; // void any in-flight parse from a previous open
     // Transferred from quick add: re-parse the carried text once so the form
@@ -301,7 +313,7 @@ export function EditorDrawer() {
   // discard-confirm on every close path, including the global Esc (which
   // reads state.editorDirty in closeOverlays).
   const requestClose = () => {
-    if (state.editorDirty && !window.confirm('Discard this event? Entered details will be lost.')) return;
+    if (state.editorDirty) { discardEditorWithUndo(); return; }
     set({ editor: null, editorDirty: false });
   };
 
@@ -391,6 +403,7 @@ export function EditorDrawer() {
       // New people linked via this save should appear in the sidebar folder
       // and autocomplete right away.
       if ((fields.personIds || []).length > 0) loadPeople().catch(() => {});
+      clearEditorDraft();
       set({ editor: null, editorDirty: false });
     }
   };

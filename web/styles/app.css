@@ -122,7 +122,15 @@ button:focus-visible, [tabindex]:focus-visible {
 .bc-pop-skel { padding: 2px 0 4px; }
 /* Static map first: an image the size of the map, the address over a shimmer
    while it loads, and the interactive map only on request. */
-.bc-map-img { display: block; width: 100%; height: 200px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border); }
+/* Tile mosaic: a fixed logical canvas centred in whatever width the panel
+   has, clipped to the box; tiles and the pin are positioned by lib/maps.js. */
+.bc-map-mosaic {
+  position: relative; width: 100%; height: 200px; overflow: hidden;
+  border-radius: 6px; border: 1px solid var(--border); background: var(--bg-inset);
+}
+.bc-map-mosaic-inner { position: absolute; left: 50%; top: 0; }
+.bc-map-mosaic-inner img { position: absolute; width: 256px; height: 256px; display: block; }
+.bc-map-mosaic-inner img.bc-map-pin { width: 25px; height: 41px; }
 .bc-map-ph {
   position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 6px;
   padding: 12px; text-align: center; font-size: 12.5px; color: var(--fg-muted); border-radius: 6px;

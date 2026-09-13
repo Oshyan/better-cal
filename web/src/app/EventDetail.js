@@ -18,7 +18,7 @@ import {
 import { fmtReminder } from '../lib/reminders.js';
 import { hasHtml, sanitizeHtml } from '../lib/richtext.js';
 import { EventPluginData } from './EventPluginData.js';
-import { gmapsUrl, staticMapUrl } from '../lib/maps.js';
+import { gmapsUrl, mapMosaic } from '../lib/maps.js';
 import { Skeleton } from './PageShell.js';
 
 // --- recurrence in words ----------------------------------------------------
@@ -125,12 +125,18 @@ function MiniMap({ lat, lng, location }) {
   const elRef = useRef(null);
   const mapRef = useRef(null);
   const [interactive, setInteractive] = useState(false);
+  // First paint is a mosaic of the same tiles the interactive map uses (see
+  // lib/maps.js); 'ok' once every tile has loaded, 'error' if any fails, in
+  // which case Leaflet takes over as it would on click.
   const [img, setImg] = useState('loading'); // 'loading' | 'ok' | 'error'
-  const imgUrl = staticMapUrl(lat, lng, {
+  const loadedRef = useRef(0);
+  const mosaic = mapMosaic(lat, lng, {
     maptilerKey: state.config && state.config.maptilerKey,
     style: state.settings && state.settings.mapStyle,
+    retina: (window.devicePixelRatio || 1) > 1,
   });
-  const wantLeaflet = interactive || img === 'error' || !imgUrl;
+  const wantLeaflet = interactive || img === 'error' || !mosaic;
+  const tileLoaded = () => { if (mosaic && ++loadedRef.current >= mosaic.tiles.length) setImg('ok'); };
 
   useEffect(() => {
     if (!wantLeaflet) return undefined;
@@ -201,11 +207,16 @@ function MiniMap({ lat, lng, location }) {
   return html`<div class="bc-map-wrap">
     ${wantLeaflet
       ? html`<div class="bc-map" ref=${elRef}></div>`
-      : html`<img
-          class="bc-map-img" src=${imgUrl} alt=${'Map of ' + (location || 'the location')}
-          decoding="async" referrerpolicy="origin"
-          onLoad=${() => setImg('ok')} onError=${() => setImg('error')}
-        />`}
+      : html`<div class="bc-map-mosaic" role="img" aria-label=${'Map of ' + (location || 'the location')}>
+          <div class="bc-map-mosaic-inner" style=${`width:${mosaic.width}px;height:${mosaic.height}px;margin-left:${-mosaic.width / 2}px`}>
+            ${mosaic.tiles.map((t) => html`<img
+              key=${t.url} src=${t.url} alt="" decoding="async" referrerpolicy="origin"
+              style=${`left:${t.left}px;top:${t.top}px`}
+              onLoad=${tileLoaded} onError=${() => setImg('error')}
+            />`)}
+            <img class="bc-map-pin" src="/assets/vendor/leaflet/images/marker-icon-2x.png" alt="" style=${`left:${mosaic.pin.left}px;top:${mosaic.pin.top}px`} />
+          </div>
+        </div>`}
     ${!wantLeaflet && img === 'loading' && html`<div class="bc-map-ph"><${PinIcon} size=${12} />${location || 'Loading map'}</div>`}
     ${!interactive && html`<button type="button" class="bc-map-cover" onClick=${enable}>
       <span>Click to zoom and pan</span>

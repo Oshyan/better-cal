@@ -16,6 +16,7 @@ import {
   dayKeysOfRow, isWeekendEpochDay, dominantMonthOfRow, dominantMonthOfRows,
 } from '../src/ui/monthmath.js';
 import { contrastText, withAlpha, parseHex } from '../src/lib/color.js';
+import { mapMosaic } from '../src/lib/maps.js';
 import { baseTitle, groupOccurrences, itemMatchesFilter, isGroupId } from '../src/ui/grouping.js';
 import { sortByMatch } from '../src/lib/rank.js';
 import { parseJumpText, jumpGranularity } from '../src/lib/jumpparse.js';
@@ -1256,6 +1257,24 @@ console.log('--- chronological ordering across timezone offsets ---');
   eq('gaps: stepping a 5-month window asks for 1 month', stepped.length, 1);
   assert('gaps: and that month is the new tail',
     stepped[0].start === 5 * MONTH && stepped[0].end === 6 * MONTH);
+}
+
+{
+  // Tile mosaic maths. At zoom 1 the world is a 2x2 grid of 256px tiles, so
+  // lat 0 / lng 0 sits at pixel (256, 256): the corner shared by all four.
+  // A 512x256 box centred there spans x 0..512 and y 128..384, so it needs
+  // all four tiles, the top row drawn 128px above the box.
+  const m = mapMosaic(0, 0, { width: 512, height: 256, zoom: 1, retina: false });
+  eq('mosaic: four tiles cover a box on the zoom-1 origin', m.tiles.length, 4);
+  eq('mosaic: first tile is (0,0) drawn 128px above the box', m.tiles[0].top, -128);
+  eq('mosaic: first tile is at the left edge', m.tiles[0].left, 0);
+  assert('mosaic: tile url carries z/x/y', m.tiles[0].url.endsWith('/1/0/0.png'));
+  eq('mosaic: pin sits at the centre, anchored bottom-middle', JSON.stringify(m.pin), JSON.stringify({ left: 512 / 2 - 12, top: 256 / 2 - 41 }));
+  const r = mapMosaic(37.5, -122.47, { width: 640, height: 200, zoom: 15 });
+  assert('mosaic: a real point at zoom 15 needs 3-4 columns and 1-2 rows', r.tiles.length >= 3 && r.tiles.length <= 8);
+  assert('mosaic: retina tiles by default', r.tiles[0].url.includes('@2x'));
+  assert('mosaic: MapTiler when a key is given', mapMosaic(0, 0, { zoom: 1, maptilerKey: 'k', style: 'streets-v2' }).tiles[0].url.startsWith('https://api.maptiler.com/maps/streets-v2/1/'));
+  eq('mosaic: no coordinates, no mosaic', mapMosaic(null, null), null);
 }
 
 console.log('');

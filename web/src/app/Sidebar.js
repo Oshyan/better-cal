@@ -292,6 +292,18 @@ function AddMenu() {
 // command palette offer exactly the same pages.
 
 export function Sidebar({ open, collapsed, onClose }) {
+  // The Manage group is admin and configuration, visited rarely, so it
+  // starts folded and stays how you left it. Proposals is the exception
+  // (an inbox, not admin): its count rides the folded header so nothing
+  // waiting on a decision is ever out of sight.
+  const [manageCollapsed, setManageCollapsed] = useState(() => {
+    try { return localStorage.getItem('bc-manage-collapsed') !== '0'; } catch { return true; }
+  });
+  const toggleManage = () => {
+    const next = !manageCollapsed;
+    setManageCollapsed(next);
+    try { localStorage.setItem('bc-manage-collapsed', next ? '1' : '0'); } catch { /* private mode */ }
+  };
   const { calendars, folders, collapsedFolders, route, people, collapsedAllCals, collapsedPeople, peopleSolo, activeOnly, plugins, pluginHidden, proposalCount } = useStore(
     (s) => ({
       calendars: s.calendars, folders: s.folders,
@@ -529,8 +541,13 @@ export function Sidebar({ open, collapsed, onClose }) {
       </div>`}
     </div>
     <footer class="bc-sidebar-foot">
-      <div class="bc-manage-head">Manage</div>
-      ${MANAGE_ITEMS.map(([r, label]) => html`<button
+      <button
+        type="button" class="bc-folder-head bc-manage-head"
+        aria-expanded=${!manageCollapsed}
+        onClick=${toggleManage}
+      ><span class="bc-folder-caret${manageCollapsed ? ' is-closed' : ''}"><${Icon} name="chevronDown" size=${13} /></span>Manage${manageCollapsed && proposalCount > 0
+        && html`<span class="bc-manage-badge" aria-label=${proposalCount + ' proposals awaiting a decision'}>${proposalCount}</span>`}</button>
+      ${!manageCollapsed && MANAGE_ITEMS.map(([r, label]) => html`<button
         key=${r} type="button"
         class="bc-manage-item${route === r ? ' is-active' : ''}"
         aria-current=${route === r ? 'page' : 'false'}

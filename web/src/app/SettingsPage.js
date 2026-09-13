@@ -435,8 +435,6 @@ export function SettingsPage() {
 
     <${NotificationsSection} settings=${settings} user=${user} />
 
-    <${SystemSection} />
-
     <section class="bc-set-section">
       <h2 class="bc-set-h">Quick add</h2>
       <${Row} label="Natural language parsing" hint=${NL_HINTS[settings.nlParseMode] || ''}>
@@ -462,5 +460,7 @@ export function SettingsPage() {
         <span class="bc-set-value">CalDAV clients (Apple Calendar, DAVx5, Thunderbird) can sync at <code>/dav</code> on this server.</span>
       <//>
     </section>
+
+    <${SystemSection} />
   <//>`;
 }

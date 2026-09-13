@@ -188,6 +188,13 @@ final class PlaceSearch
                 'lng' => $lng,
                 'display' => $display,
                 'city' => $city !== '' ? $city : null,
+                // Photon's feature type ('city', 'street', 'house', ...; 'other'
+                // for most POIs, in which case the OSM value names it). The
+                // plausibility guard exempts place-level kinds from the
+                // distance check, so a bare "Tokyo" may be far away.
+                'kind' => (isset($props['type']) && $props['type'] !== 'other')
+                    ? (string) $props['type']
+                    : (isset($props['osm_value']) ? (string) $props['osm_value'] : null),
                 'distanceKm' => $distance,
                 'far' => $distance !== null && $distance > self::FAR_KM,
             ];

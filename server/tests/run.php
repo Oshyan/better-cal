@@ -2317,10 +2317,25 @@ checkEq(
 );
 
 // ---------------------------------------------------------------------------
+// Geocode plausibility guard: a free-text description whose best match lies
+// far from the bias is a bad guess, not an answer. Addresses and names pass.
+{
+    check('implausible: long description, far, not a place-level kind', Geocode::implausible("a temple mansion in oakland's ivy hill", 'locality', 3300.0));
+    check('implausible: near is always fine', !Geocode::implausible("a temple mansion in oakland's ivy hill", 'locality', 12.0));
+    check('implausible: an address with a comma may be anywhere', !Geocode::implausible('15 calton hill, edinburgh, eh1 3bj', 'house', 8300.0));
+    check('implausible: a short name may be anywhere', !Geocode::implausible('heathrow terminal 5', 'building', 8600.0));
+    check('implausible: a bare place name may be anywhere', !Geocode::implausible('tokyo', 'city', 8300.0));
+    check('implausible: a long name that IS a place-level kind is allowed', !Geocode::implausible('hawaii volcanoes national park hawaii', 'national_park', 3800.0));
+    check('implausible: exactly the threshold is not beyond it', !Geocode::implausible('some long description of a venue', 'locality', 1500.0));
+    check('implausible: unknown kind counts as not place-level', Geocode::implausible('some long description of a venue', null, 1501.0));
+}
+
+// ---------------------------------------------------------------------------
 // Geocode sweep: the pure parts. Grouping key and bias precedence.
 {
     checkEq('sweep key: whitespace collapsed and case folded', 'pillar point harbor, half moon bay', GeocodeSweep::normalizeLocation("  Pillar   Point\tHarbor, Half Moon Bay \n"));
     checkEq('sweep key: same address, different spacing, one group', GeocodeSweep::normalizeLocation('15 Calton Hill, Edinburgh'), GeocodeSweep::normalizeLocation('15  Calton Hill,  EDINBURGH'));
+    checkEq('sweep key: curly and straight apostrophes are one address', GeocodeSweep::normalizeLocation("A Temple Mansion in Oakland’s Ivy Hill"), GeocodeSweep::normalizeLocation("a temple mansion in oakland's ivy hill"));
     checkEq('sweep bias: home location wins', [37.8, -122.27], GeocodeSweep::biasFor(['homeLat' => 37.8, 'homeLng' => -122.27, 'tz' => 'Europe/London'], 'Asia/Tokyo'));
     $tzBias = GeocodeSweep::biasFor(['homeLat' => null, 'homeLng' => null], 'America/Los_Angeles');
     check('sweep bias: falls back to the event zone centroid', $tzBias[0] !== null && $tzBias[1] !== null && $tzBias[1] < -100, json_encode($tzBias));

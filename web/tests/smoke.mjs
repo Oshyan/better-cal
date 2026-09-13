@@ -15,8 +15,8 @@ import {
   rowSpanSegments, rowIndexOfEpochDay, rowIndexOfDayKey, firstEpochDayOfRow,
   dayKeysOfRow, isWeekendEpochDay, dominantMonthOfRow, dominantMonthOfRows,
 } from '../src/ui/monthmath.js';
-import { contrastText, withAlpha, parseHex } from '../src/lib/color.js';
-import { mapMosaic } from '../src/lib/maps.js';
+import { contrastText, withAlpha, parseHex, inkColor, luminance } from '../src/lib/color.js';
+import { mapMosaic, stadiaStyle, mapTilerStyle } from '../src/lib/maps.js';
 import { baseTitle, groupOccurrences, itemMatchesFilter, isGroupId } from '../src/ui/grouping.js';
 import { sortByMatch } from '../src/lib/rank.js';
 import { parseJumpText, jumpGranularity } from '../src/lib/jumpparse.js';
@@ -1203,6 +1203,13 @@ console.log('--- color utils ---');
 assert('contrast on dark bg is white', contrastText('#1c2a4a') === '#ffffff');
 assert('contrast on light bg is dark', contrastText('#f2e9c9') === '#1a1a1a');
 eq('withAlpha', withAlpha('#ff0000', 0.5), 'rgba(255,0,0,0.5)');
+// Ink: a dark calendar colour lifts on a dark ground until it reads; light
+// ground and light colours pass through untouched.
+eq('ink: light ground leaves the colour alone', inkColor('#1c2a4a', false), '#1c2a4a');
+assert('ink: dark colour lifts on a dark ground', luminance(inkColor('#1c2a4a', true)) >= 0.28);
+assert('ink: lifted colour keeps its hue (blue stays bluest)', (() => { const c = parseHex(inkColor('#1c2a4a', true)); return c.b > c.r && c.b > c.g; })());
+eq('ink: a readable colour is untouched on dark', inkColor('#c98c3d', true), '#c98c3d');
+eq('ink: garbage passes through', inkColor('nope', true), 'nope');
 assert('parseHex shorthand', JSON.stringify(parseHex('#abc')) === JSON.stringify({ r: 170, g: 187, b: 204 }));
 
 console.log('--- chronological ordering across timezone offsets ---');
@@ -1275,6 +1282,14 @@ console.log('--- chronological ordering across timezone offsets ---');
   assert('mosaic: retina tiles by default', r.tiles[0].url.includes('@2x'));
   assert('mosaic: MapTiler when a key is given', mapMosaic(0, 0, { zoom: 1, maptilerKey: 'k', style: 'streets-v2' }).tiles[0].url.startsWith('https://api.maptiler.com/maps/streets-v2/1/'));
   eq('mosaic: no coordinates, no mosaic', mapMosaic(null, null), null);
+  // Tiles follow the theme: Stadia's dark style, MapTiler's dark twin where
+  // one exists, the same style where it does not.
+  assert('mosaic: dark ground picks the dark Stadia style', mapMosaic(0, 0, { zoom: 1, dark: true }).tiles[0].url.includes('/tiles/alidade_smooth_dark/'));
+  eq('map style: stadia light', stadiaStyle(false), 'outdoors');
+  eq('map style: maptiler dark twin', mapTilerStyle('streets-v2', true), 'streets-v2-dark');
+  eq('map style: maptiler already dark', mapTilerStyle('streets-v2-dark', true), 'streets-v2-dark');
+  eq('map style: maptiler style without a twin stays', mapTilerStyle('topo-v2', true), 'topo-v2');
+  eq('map style: maptiler default on light', mapTilerStyle(null, false), 'streets-v2');
 }
 
 console.log('');

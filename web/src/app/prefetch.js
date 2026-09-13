@@ -35,6 +35,7 @@ export function prefetchMap(occ) {
     maptilerKey: state.config && state.config.maptilerKey,
     style: state.settings && state.settings.mapStyle,
     retina: (window.devicePixelRatio || 1) > 1,
+    dark: state.darkMode,
   });
   if (!mosaic) return;
   for (const t of mosaic.tiles) {

@@ -17,6 +17,7 @@ import {
   parseISO, dateOfDayKey, fmtRange, eventDuration, toInputValue, fromInputValue, toISOWithOffset, occDayKey,
 } from '../lib/dates.js';
 import { fmtReminder } from '../lib/reminders.js';
+import { ink } from '../lib/color.js';
 import { stripToText, hasHtml, sanitizeHtml } from '../lib/richtext.js';
 import { gmapsUrl } from '../lib/maps.js';
 
@@ -230,7 +231,7 @@ export function EventPopover() {
       })()}
       ${occ.url && html`<a class="bc-pop-url" href=${occ.url} target="_blank" rel="noopener">Event link <${Icon} name="arrowUpRight" size=${10} /></a>`}
       <div class="bc-pop-calline" title=${'Calendar: ' + ((cal && cal.name) || 'Calendar')}>
-        <span class="bc-pop-calicon" style=${`color:${(cal && cal.color) || '#888'}`}><${Icon} name="calendar" size=${12} /></span>
+        <span class="bc-pop-calicon" style=${`color:${ink((cal && cal.color) || '#888')}`}><${Icon} name="calendar" size=${12} /></span>
         ${(cal && cal.name) || 'Calendar'}
       </div>
       ${isFeed && html`<div class="bc-pop-actions">

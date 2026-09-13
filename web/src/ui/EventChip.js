@@ -8,7 +8,7 @@
 // onOpen(instanceId, rect, {detail: true}).
 
 import { html } from '../../vendor/index.js';
-import { contrastText, withAlpha, DEFAULT_COLOR } from '../lib/color.js';
+import { contrastText, withAlpha, ink, DEFAULT_COLOR } from '../lib/color.js';
 import { parseISO, fmtTime, timeState, eventDuration } from '../lib/dates.js';
 import { Icon, PluginGlyph } from './icons.js';
 
@@ -124,7 +124,7 @@ export function EventChip({ occ, cal, dimmed, nowMs, showTime = true, seg = null
   // CSS variable so the mobile pill layout can re-fill dot chips.
   const dotStyle = !occ.allDay && !occ.isGroup && !interested;
   const style = interested
-    ? `border-color:${color};color:${color};background:transparent`
+    ? `border-color:${ink(color)};color:${ink(color)};background:transparent`
     : `--tint:${withAlpha(color, 0.16)};color:var(--fg)`;
   const timed = !occ.allDay && showTime && !occ.isGroup;
   const { onClick, onDblClick } = openHandlers(occ, onOpen);
@@ -159,7 +159,7 @@ export function EventBar({ occ, cal, seg, dimmed, nowMs, onOpen, onPointerDown, 
   const style = trip
     ? `border:1.5px solid ${color};color:var(--fg);background:${withAlpha(color, 0.1)}`
     : interested
-      ? `border:1px solid ${color};color:${color};background:transparent`
+      ? `border:1px solid ${ink(color)};color:${ink(color)};background:transparent`
       : `background:${color};color:${contrastText(color)}`;
   const { onClick, onDblClick } = openHandlers(occ, onOpen);
   const edges = occ.isGroup || trip ? null : onEdgePointerDown;
@@ -199,7 +199,7 @@ export function EventBlock({ occ, cal, rect, dimmed, nowMs, onOpen, onPointerDow
   const bg = trip
     ? `border:1.5px solid ${color};color:var(--fg);background:${withAlpha(color, 0.1)}`
     : interested
-      ? `border:1.5px solid ${color};color:${color};background:var(--bg-raised)`
+      ? `border:1.5px solid ${ink(color)};color:${ink(color)};background:var(--bg-raised)`
       // Opaque, not translucent: cascaded blocks overlap, and a see-through
       // fill let the block underneath bleed through so neither title was
       // readable. Hover raises one to the front when you need the other.
@@ -260,7 +260,7 @@ export function TripBand({ occ, cal, seg, dimmed, nowMs, onOpen, onPointerDown, 
   return html`<div
     class="bc-band${occ.availKind ? ' is-avail' : ''}${occ.pluginId ? ' is-pluginband' : ''}${occ.pluginAnim && occ.pluginAnim !== 'none' ? ' is-anim-' + occ.pluginAnim : ''}${stateClasses(occ, dimmed, nowMs)}${seg.contLeft ? ' cont-l' : ''}${seg.contRight ? ' cont-r' : ''}"
     style=${occ.availKind
-      ? `background:${withAlpha(color, 0.09)};border-top:2px dashed ${withAlpha(color, 0.45)};color:${withAlpha(color, 0.9)}`
+      ? `background:${withAlpha(color, 0.09)};border-top:2px dashed ${withAlpha(color, 0.45)};color:${withAlpha(ink(color), 0.9)}`
       : `background:${withAlpha(color, 0.13)};box-shadow:inset 0 2px 0 ${color}`}
     data-instance=${occ.instanceId}
     role="button"

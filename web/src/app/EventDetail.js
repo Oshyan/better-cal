@@ -18,7 +18,7 @@ import {
 import { fmtReminder } from '../lib/reminders.js';
 import { hasHtml, sanitizeHtml } from '../lib/richtext.js';
 import { EventPluginData } from './EventPluginData.js';
-import { gmapsUrl, mapMosaic } from '../lib/maps.js';
+import { gmapsUrl, mapMosaic, stadiaStyle, mapTilerStyle } from '../lib/maps.js';
 import { Skeleton } from './PageShell.js';
 
 // --- recurrence in words ----------------------------------------------------
@@ -134,10 +134,12 @@ function MiniMap({ lat, lng, location }) {
   // which case Leaflet takes over as it would on click.
   const [img, setImg] = useState('loading'); // 'loading' | 'ok' | 'error'
   const loadedRef = useRef(0);
+  const dark = state.darkMode;
   const mosaic = mapMosaic(lat, lng, {
     maptilerKey: state.config && state.config.maptilerKey,
     style: state.settings && state.settings.mapStyle,
     retina: (window.devicePixelRatio || 1) > 1,
+    dark,
   });
   const wantLeaflet = interactive || img === 'error' || !mosaic;
   const tileLoaded = () => { if (mosaic && ++loadedRef.current >= mosaic.tiles.length) setImg('ok'); };
@@ -163,7 +165,7 @@ function MiniMap({ lat, lng, location }) {
       // (legacy option, kept for self-hosters); plain OSM as last resort.
       const maptilerKey = state.config && state.config.maptilerKey;
       if (maptilerKey) {
-        const style = (state.settings && state.settings.mapStyle) || 'streets-v2';
+        const style = mapTilerStyle(state.settings && state.settings.mapStyle, dark);
         L.tileLayer(
           'https://api.maptiler.com/maps/' + style + '/{z}/{x}/{y}@2x.png?key=' + encodeURIComponent(maptilerKey),
           {
@@ -172,7 +174,7 @@ function MiniMap({ lat, lng, location }) {
           }
         ).addTo(map);
       } else {
-        L.tileLayer('https://tiles.stadiamaps.com/tiles/outdoors/{z}/{x}/{y}{r}.png', {
+        L.tileLayer('https://tiles.stadiamaps.com/tiles/' + stadiaStyle(dark) + '/{z}/{x}/{y}{r}.png', {
           maxZoom: 19,
           // Stadia authorizes by request domain; the site's Referrer-Policy
           // (same-origin) would strip it from cross-origin tile requests and
@@ -200,7 +202,7 @@ function MiniMap({ lat, lng, location }) {
         mapRef.current = null;
       }
     };
-  }, [lat, lng, wantLeaflet]); // eslint-disable-line
+  }, [lat, lng, wantLeaflet, dark]); // eslint-disable-line
 
   const enable = () => {
     setInteractive(true);

@@ -51,7 +51,7 @@ if [ "${SKIP_TESTS:-0}" != "1" ]; then
   echo "== pre-flight tests =="
   node "${ROOT_DIR}/scripts/gen-preload.mjs" --check
   node --experimental-vm-modules "${ROOT_DIR}/web/tests/static.mjs" 2>/dev/null | tail -1
-  node "${ROOT_DIR}/web/tests/smoke.mjs" 2>/dev/null | tail -1
+  TZ=America/Los_Angeles node "${ROOT_DIR}/web/tests/smoke.mjs" 2>/dev/null | tail -1
   php "${ROOT_DIR}/server/tests/run.php" | tail -1
 fi
 

@@ -70,6 +70,12 @@ export const state = {
     ? window.matchMedia('(max-width: 800px)').matches : false,
   coarsePointer: typeof window !== 'undefined' && window.matchMedia
     ? window.matchMedia('(pointer: coarse)').matches : false,
+  // What is actually showing, light or dark: the theme setting when pinned,
+  // else the OS. settings.js keeps it current; the parts that pick colours
+  // outside CSS (map tiles, calendar colour used as ink) read it.
+  darkMode: typeof document !== 'undefined' && (document.documentElement.dataset.theme === 'dark'
+    || (document.documentElement.dataset.theme !== 'light' && !!window.matchMedia
+      && window.matchMedia('(prefers-color-scheme: dark)').matches)),
   // Responsive fallback flag: true when the calendar view area itself (not
   // the window) is too narrow for the 7-column month grid. Fed by a
   // ResizeObserver in App; on desktop it flips the month slot to the 3-day

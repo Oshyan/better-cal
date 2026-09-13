@@ -13,7 +13,20 @@
 // Web Mercator, slippy-tile scheme: tile x = (lng+180)/360 * 2^z, tile y
 // from the Mercator projection of latitude; 256 CSS px per tile at any
 // device ratio (the @2x file is the same footprint, twice the pixels).
-export function mapMosaic(lat, lng, { width = 640, height = 200, zoom = 15, maptilerKey = null, style = null, retina = true } = {}) {
+// Tile styles per ground. Stadia's dark style is the one that pairs with
+// Outdoors in weight; MapTiler publishes dark twins for some styles and
+// none for others (topo, satellite), which stay as they are.
+export function stadiaStyle(dark) {
+  return dark ? 'alidade_smooth_dark' : 'outdoors';
+}
+const MAPTILER_DARK_TWINS = ['streets-v2', 'basic-v2', 'bright-v2', 'dataviz'];
+export function mapTilerStyle(style, dark) {
+  const base = style || 'streets-v2';
+  if (!dark || base.endsWith('-dark') || !MAPTILER_DARK_TWINS.includes(base)) return base;
+  return base + '-dark';
+}
+
+export function mapMosaic(lat, lng, { width = 640, height = 200, zoom = 15, maptilerKey = null, style = null, retina = true, dark = false } = {}) {
   if (lat == null || lng == null) return null;
   const n = 2 ** zoom;
   const latRad = (Number(lat) * Math.PI) / 180;
@@ -26,9 +39,9 @@ export function mapMosaic(lat, lng, { width = 640, height = 200, zoom = 15, mapt
   const url = (x, y) => {
     const wx = ((x % n) + n) % n;
     if (maptilerKey) {
-      return `https://api.maptiler.com/maps/${encodeURIComponent(style || 'streets-v2')}/${zoom}/${wx}/${y}${retina ? '@2x' : ''}.png?key=${encodeURIComponent(maptilerKey)}`;
+      return `https://api.maptiler.com/maps/${encodeURIComponent(mapTilerStyle(style, dark))}/${zoom}/${wx}/${y}${retina ? '@2x' : ''}.png?key=${encodeURIComponent(maptilerKey)}`;
     }
-    return `https://tiles.stadiamaps.com/tiles/outdoors/${zoom}/${wx}/${y}${retina ? '@2x' : ''}.png`;
+    return `https://tiles.stadiamaps.com/tiles/${stadiaStyle(dark)}/${zoom}/${wx}/${y}${retina ? '@2x' : ''}.png`;
   };
   const tiles = [];
   for (let ty = Math.floor(originY / 256); ty <= Math.floor((originY + height - 1) / 256); ty++) {

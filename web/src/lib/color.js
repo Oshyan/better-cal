@@ -34,6 +34,34 @@ export function withAlpha(hex, alpha) {
   return 'rgba(' + c.r + ',' + c.g + ',' + c.b + ',' + alpha + ')';
 }
 
+// A calendar colour used as ink (text, an outline) rather than as a fill.
+// Fills carry their own contrast text; ink sits on the page, and on a dark
+// ground a dark calendar colour (olive, slate, navy) disappears into it.
+// Lift it toward white until it reads; light colours pass through.
+export function inkColor(hex, dark) {
+  if (!dark) return hex;
+  const c = parseHex(hex);
+  if (!c) return hex;
+  let out = hex;
+  for (let t = 0.1; luminance(out) < 0.28 && t <= 0.9; t += 0.1) {
+    out = '#' + [c.r, c.g, c.b]
+      .map((v) => Math.round(v + (255 - v) * t).toString(16).padStart(2, '0')).join('');
+  }
+  return out;
+}
+
+// The ground currently showing, read from the document so UI components
+// need no store import: the theme attribute when pinned, else the OS.
+const DARK_MQ = typeof window !== 'undefined' && window.matchMedia
+  ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+export function darkGround() {
+  const t = typeof document !== 'undefined' ? document.documentElement.dataset.theme : null;
+  return t === 'dark' || (t !== 'light' && !!(DARK_MQ && DARK_MQ.matches));
+}
+export function ink(hex) {
+  return inkColor(hex, darkGround());
+}
+
 export const DEFAULT_COLOR = '#5b7fd4';
 
 export const PALETTE = [

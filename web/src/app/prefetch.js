@@ -14,7 +14,7 @@
 
 import { state } from './store.js';
 import { ensureFullOccurrence } from './api.js';
-import { staticMapUrl } from '../lib/maps.js';
+import { mapMosaic } from '../lib/maps.js';
 
 const INTENT_MS = 120;
 const MAX_INFLIGHT = 2;
@@ -28,18 +28,23 @@ function saveData() {
   return !!(c && c.saveData);
 }
 
-// Warm the browser's image cache with the map the detail view will show.
+// Warm the browser's image cache with the tiles the detail view will show.
 export function prefetchMap(occ) {
   if (!occ || occ.locationLat == null || occ.locationLng == null) return;
-  const url = staticMapUrl(occ.locationLat, occ.locationLng, {
+  const mosaic = mapMosaic(occ.locationLat, occ.locationLng, {
     maptilerKey: state.config && state.config.maptilerKey,
     style: state.settings && state.settings.mapStyle,
+    retina: (window.devicePixelRatio || 1) > 1,
   });
-  if (!url || warmedMaps.has(url)) return;
-  warmedMaps.add(url);
-  const img = new Image();
-  img.decoding = 'async';
-  img.src = url;
+  if (!mosaic) return;
+  for (const t of mosaic.tiles) {
+    if (warmedMaps.has(t.url)) continue;
+    warmedMaps.add(t.url);
+    const img = new Image();
+    img.decoding = 'async';
+    img.referrerPolicy = 'origin';
+    img.src = t.url;
+  }
 }
 
 function fire(instanceId) {

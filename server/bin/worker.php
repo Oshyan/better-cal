@@ -44,6 +44,7 @@ $filters = new BetterCal\Domain\Filters($db, $undo, $queue);
 $trips = new BetterCal\Domain\Trips($db, $undo);
 $eventsDomain = new BetterCal\Domain\Events($db, new Recurrence(), $undo, $labels, $filters, $trips);
 $pluginsDomain = new BetterCal\Domain\Plugins($db);
+$geocodeSweep = new BetterCal\Domain\GeocodeSweep($db, new BetterCal\Domain\Geocode($db), new BetterCal\Domain\Settings($db));
 
 $locked = $db->scalar('SELECT GET_LOCK(?, 0)', [WORKER_LOCK]);
 if ((int) $locked !== 1) {
@@ -118,6 +119,13 @@ try {
                         . ' outcome=' . $r['outcome'] . (isset($r['durationMs']) ? ' ' . $r['durationMs'] . 'ms' : '')
                         . ($r['error'] !== null ? ' error=' . $r['error'] : '') . "\n";
                     break;
+                case 'geocode_sweep':
+                    if ($geocodeSweep->hasCandidates()) {
+                        $r = $geocodeSweep->run();
+                        echo bc_ts() . " geocode_sweep groups={$r['groups']} lookups={$r['lookups']} resolved={$r['resolved']}"
+                            . " unplaced={$r['unplaced']}" . ($r['transient'] ? ' transient=1' : '') . " in {$r['seconds']}s\n";
+                    }
+                    break;
                 case 'activity_prune':
                     $result = (new BetterCal\Domain\Activity($db))->prune();
                     echo bc_ts() . ' activity_prune cleared=' . $result['snapshotsCleared']
@@ -172,6 +180,9 @@ function bc_enqueue_recurring(Db $db, JobQueue $queue): void
     bc_enqueue_if_stale($db, $queue, 'mail_ingest', 'PT2M');
     // Activity retention: snapshots kept 7 days, log rows 90 (docs/api-contract.md).
     bc_enqueue_if_stale($db, $queue, 'activity_prune', 'P1D');
+    // Coordinates for anything with an address and none yet, upcoming first.
+    // Every tick; the job itself is a no-op when there is nothing to place.
+    bc_enqueue_if_stale($db, $queue, 'geocode_sweep', 'PT50S');
 
     // Plugin jobs: manifests declare intervals; staleness is judged from
     // plugin_runs (a failing job still respects its interval). Cap per tick.

@@ -41,6 +41,9 @@ final class Feeds
             // New/updated feed events need background prompt-filter evaluation
             // and rank scoring (mirrors the ChangeLog hook: fired per poll).
             if ($count > 0 && $this->queue !== null) {
+                if (!$this->queue->hasPending('geocode_sweep')) {
+                    $this->queue->enqueue('geocode_sweep', []);
+                }
                 if (!$this->queue->hasPending('filter_eval')) {
                     $this->queue->enqueue('filter_eval', []);
                 }
@@ -197,6 +200,13 @@ final class Feeds
                     $changed['deleted_at'] = null;
                 }
                 if ($changed !== []) {
+                    // A new address means the old coordinates are wrong;
+                    // the geocode sweep re-resolves within the minute.
+                    if (array_key_exists('location', $changed)) {
+                        $changed['location_lat'] = null;
+                        $changed['location_lng'] = null;
+                        $changed['geocoded_at'] = null;
+                    }
                     $changed['updated_at'] = Time::nowDb();
                     $this->db->update('events', $changed, 'id = ?', [(int) $current['id']]);
                     $changedUids[(string) $current['uid']] = true;

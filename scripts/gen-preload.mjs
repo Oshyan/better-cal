@@ -11,11 +11,20 @@
 // stops mattering. Generated rather than hand-listed so it cannot go stale —
 // deploy.sh runs this before rsync and fails if the result is not committed.
 //
+// It also derives the service worker's shell list and VERSION from the same
+// graph plus a content hash of everything in it (web/sw.js, between the
+// @generated markers). The worker serves shell assets cache-first, so the
+// ONLY thing that invalidates a client's cache is a new VERSION; deriving it
+// from content means a deploy can never forget to bump it, and an unchanged
+// deploy never invalidates for nothing. deploy.sh runs this in write mode
+// before rsync; --check is for the dev gate and CI.
+//
 //   node scripts/gen-preload.mjs [--check]
 
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { resolve, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const webDir = resolve(root, 'web');
@@ -68,17 +77,68 @@ const block = [
 
 const html = readFileSync(indexPath, 'utf8');
 const hasBlock = html.includes(START);
-const next = hasBlock
-  ? html.replace(new RegExp(`${START.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s\\S]*?${END.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`), block)
+const esc = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const nextHtml = hasBlock
+  ? html.replace(new RegExp(`${esc(START)}[\\s\\S]*?${esc(END)}`), block)
   : html.replace('</head>', `${block}\n</head>`);
 
+// --- service worker: shell list + content-derived VERSION -------------------
+// Everything a cold start or an offline open needs. The module graph, the
+// stylesheet, the document, the PWA bits, and the two lazily loaded vendor
+// libraries with their assets (not in the graph: they load via <script>).
+const swPath = resolve(webDir, 'sw.js');
+const SW_START = '// @generated-shell:start (scripts/gen-preload.mjs)';
+const SW_END = '// @generated-shell:end';
+const EXTRA = [
+  '/', '/assets/styles/app.css', '/assets/manifest.webmanifest',
+  '/assets/icons/icon.svg', '/assets/icons/icon-maskable.svg', '/assets/icons/icon-192.png', '/assets/icons/icon-512.png',
+  '/assets/vendor/leaflet/leaflet.js', '/assets/vendor/leaflet/leaflet.css',
+  '/assets/vendor/leaflet/images/marker-icon.png', '/assets/vendor/leaflet/images/marker-icon-2x.png', '/assets/vendor/leaflet/images/marker-shadow.png',
+  '/assets/vendor/squire/purify.min.js', '/assets/vendor/squire/squire-raw.js',
+];
+const allModules = graph(entry).map((f) => '/assets/' + relative(webDir, f).split('\\').join('/'));
+const shell = [...EXTRA, ...allModules.filter((u) => !EXTRA.includes(u))];
+const localPath = (u) => (u === '/' ? indexPath : resolve(webDir, u.replace(/^\/assets\//, '')));
+const missing = shell.filter((u) => !existsSync(localPath(u)));
+if (missing.length) {
+  console.error('shell entries missing on disk: ' + missing.join(', '));
+  process.exit(1);
+}
+const swSrc = readFileSync(swPath, 'utf8');
+const swBody = swSrc.replace(new RegExp(`${esc(SW_START)}[\\s\\S]*?${esc(SW_END)}`), '');
+const hash = createHash('sha256');
+hash.update(nextHtml);
+for (const u of shell) if (u !== '/') hash.update(readFileSync(localPath(u)));
+hash.update(swBody);
+const version = 'bc-' + hash.digest('hex').slice(0, 12);
+const swBlock = [
+  SW_START,
+  `const VERSION = '${version}';`,
+  'const SHELL = [',
+  ...shell.map((u) => `  '${u}',`),
+  '];',
+  SW_END,
+].join('\n');
+const nextSw = swSrc.includes(SW_START)
+  ? swSrc.replace(new RegExp(`${esc(SW_START)}[\\s\\S]*?${esc(SW_END)}`), swBlock)
+  : null;
+if (nextSw === null) {
+  console.error('web/sw.js has no @generated-shell markers');
+  process.exit(1);
+}
+
 if (process.argv.includes('--check')) {
-  if (next !== html) {
+  if (nextHtml !== html) {
     console.error(`index.html preload block is stale (${modules.length} modules). Run: node scripts/gen-preload.mjs`);
     process.exit(1);
   }
-  console.log(`preload block current (${modules.length} modules)`);
+  if (nextSw !== swSrc) {
+    console.error(`sw.js shell/version is stale (${version}). Run: node scripts/gen-preload.mjs`);
+    process.exit(1);
+  }
+  console.log(`preload block current (${modules.length} modules); sw ${version} current (${shell.length} shell entries)`);
 } else {
-  writeFileSync(indexPath, next);
-  console.log(`wrote ${modules.length} modulepreload links into web/index.html`);
+  writeFileSync(indexPath, nextHtml);
+  writeFileSync(swPath, nextSw);
+  console.log(`wrote ${modules.length} modulepreload links into web/index.html; sw.js ${version} (${shell.length} shell entries)`);
 }

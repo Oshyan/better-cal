@@ -164,6 +164,19 @@ if (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches
 }
 
 if ('serviceWorker' in navigator) {
+  // A new version installed and activated behind this page (its cache is
+  // the new one; this page still runs what it loaded). Offer the reload;
+  // never do it uninvited, someone may be mid-edit.
+  let announced = false;
+  navigator.serviceWorker.addEventListener('message', (e) => {
+    if (!e.data || e.data.type !== 'sw-updated' || announced) return;
+    announced = true;
+    toast('Better-Cal was updated. Reload to get the latest version.', {
+      actionLabel: 'Reload',
+      onAction: () => location.reload(),
+      duration: 60000,
+    });
+  });
   window.addEventListener('load', () => {
     // Prefer root scope; fall back to the /assets/ path (scope-limited)
     // if the server does not alias /sw.js.

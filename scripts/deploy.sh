@@ -20,11 +20,17 @@ fi
 # dead "+ New" button, a frozen agenda) was a broken reference that a test run
 # would have caught — but deploy never ran the tests. It does now. Set
 # SKIP_TESTS=1 only when deliberately shipping a known-red tree.
+# Always, even when tests are skipped: the modulepreload block is generated
+# from the import graph (a stale one quietly sends the browser back to
+# discovering modules level by level), and the service worker's VERSION and
+# shell list are derived from a content hash of every shell file. Running it
+# here, in write mode, means what ships is self-consistent whether or not
+# anyone remembered to regenerate; the dev deploy keeps --check as its gate.
+echo "== generated assets =="
+node "${ROOT_DIR}/scripts/gen-preload.mjs"
+
 if [ "${SKIP_TESTS:-0}" != "1" ]; then
   echo "== pre-flight tests =="
-  # The modulepreload block is generated from the import graph; a stale one
-  # would quietly send the browser back to discovering modules level by level.
-  node "${ROOT_DIR}/scripts/gen-preload.mjs" --check
   node --experimental-vm-modules "${ROOT_DIR}/web/tests/static.mjs" 2>/dev/null | tail -1
   node "${ROOT_DIR}/web/tests/smoke.mjs" 2>/dev/null | tail -1
   php "${ROOT_DIR}/server/tests/run.php" | tail -1

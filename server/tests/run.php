@@ -2439,6 +2439,23 @@ require __DIR__ . '/plugins.php';
 
 // ---------------------------------------------------------------------------
 
+// --- Activity retention -------------------------------------------------------
+// Db::run returns the statement; prune must report row counts, not statements
+// (the worker prints them, and the daily job failed on that until it was
+// caught by the system health alert).
+{
+    $adb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $adb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, created_at TEXT, before_json TEXT, after_json TEXT)');
+    $adb->run("INSERT INTO mutations (created_at, before_json, after_json) VALUES
+        (datetime('now', '-100 days'), '{}', NULL),
+        (datetime('now', '-10 days'), NULL, '{}'),
+        (datetime('now', '-1 hour'), '{}', '{}')");
+    $pruned = (new BetterCal\Domain\Activity($adb))->prune();
+    checkEq('prune: snapshots older than 7 days cleared (count, not statement)', 2, $pruned['snapshotsCleared']);
+    checkEq('prune: rows older than 90 days deleted', 1, $pruned['deleted']);
+    checkEq('prune: recent rows untouched', 2, (int) $adb->one('SELECT COUNT(*) AS n FROM mutations')['n']);
+}
+
 $pass = $GLOBALS['__pass'];
 $fail = $GLOBALS['__fail'];
 echo "\n$pass passed, $fail failed\n";

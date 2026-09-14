@@ -20,7 +20,10 @@ final class Db
                 \PDO::ATTR_DEFAULT_FETCH_MODE => \PDO::FETCH_ASSOC,
                 \PDO::ATTR_STRINGIFY_FETCHES => false,
             ]);
-            $this->pdo->exec("SET time_zone = '+00:00'");
+            // MySQL-only; tests run domain code against in-memory SQLite.
+            if ($this->pdo->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'mysql') {
+                $this->pdo->exec("SET time_zone = '+00:00'");
+            }
         }
         return $this->pdo;
     }

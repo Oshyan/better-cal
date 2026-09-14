@@ -238,7 +238,7 @@ final class People
     {
         $person = $this->requirePerson($userId, $personId);
         $row = $this->db->one('SELECT * FROM availability WHERE id = ? AND person_id = ?', [$spanId, $personId]);
-        $count = $this->db->run('DELETE FROM availability WHERE id = ? AND person_id = ?', [$spanId, $personId]);
+        $count = $this->db->run('DELETE FROM availability WHERE id = ? AND person_id = ?', [$spanId, $personId])->rowCount();
         if ($count === 0) {
             throw HttpError::notFound('No such availability span');
         }
@@ -374,7 +374,7 @@ final class People
     /** Remove a person and their event links (events themselves untouched). */
     public function delete(int $userId, int $id): void
     {
-        $count = $this->db->run('DELETE FROM people WHERE id = ? AND user_id = ?', [$id, $userId]);
+        $count = $this->db->run('DELETE FROM people WHERE id = ? AND user_id = ?', [$id, $userId])->rowCount();
         if ($count === 0) {
             throw HttpError::notFound('No such person');
         }

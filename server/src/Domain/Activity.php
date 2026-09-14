@@ -125,8 +125,8 @@ final class Activity
             'UPDATE mutations SET before_json = NULL, after_json = NULL
              WHERE created_at < ? AND (before_json IS NOT NULL OR after_json IS NOT NULL)',
             [$undoCut]
-        );
-        $deleted = $this->db->run('DELETE FROM mutations WHERE created_at < ?', [$logCut]);
+        )->rowCount();
+        $deleted = $this->db->run('DELETE FROM mutations WHERE created_at < ?', [$logCut])->rowCount();
         return ['snapshotsCleared' => $cleared, 'deleted' => $deleted];
     }
 }

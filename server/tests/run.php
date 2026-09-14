@@ -2456,6 +2456,29 @@ require __DIR__ . '/plugins.php';
     checkEq('prune: recent rows untouched', 2, (int) $adb->one('SELECT COUNT(*) AS n FROM mutations')['n']);
 }
 
+// --- Job queue: stalled jobs -------------------------------------------------
+// A worker that dies mid-job leaves the row 'running' forever (production had
+// one from July 31). Reaping treats it as a failed attempt: retried with
+// backoff, or failed for good once attempts are spent.
+{
+    $qdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $qdb->run('CREATE TABLE jobs (id INTEGER PRIMARY KEY, type TEXT, payload_json TEXT, run_after TEXT, attempts INTEGER, status TEXT, last_error TEXT, created_at TEXT, updated_at TEXT)');
+    $old = BetterCal\Support\Time::toDb(BetterCal\Support\Time::nowUtc()->sub(new \DateInterval('PT2H')));
+    $fresh = BetterCal\Support\Time::toDb(BetterCal\Support\Time::nowUtc());
+    $qdb->run("INSERT INTO jobs (id, type, payload_json, run_after, attempts, status, last_error, created_at, updated_at) VALUES
+        (1, 'filter_eval', '{}', ?, 1, 'running', NULL, ?, ?),
+        (2, 'feed_poll', '{}', ?, 5, 'running', NULL, ?, ?),
+        (3, 'mail_ingest', '{}', ?, 1, 'running', NULL, ?, ?),
+        (4, 'rank_events', '{}', ?, 1, 'pending', NULL, ?, ?)", [$old, $old, $old, $old, $old, $old, $fresh, $fresh, $fresh, $old, $old, $old]);
+    $queue = new BetterCal\Infra\JobQueue($qdb);
+    checkEq('reap: the two stalled jobs are reaped, the live and pending ones are not', [1, 2], $queue->reapStalled(30));
+    checkEq('reap: first-attempt stall goes back to pending with backoff', 'pending', $qdb->scalar('SELECT status FROM jobs WHERE id = 1'));
+    check('reap: the reason is recorded', str_contains((string) $qdb->scalar('SELECT last_error FROM jobs WHERE id = 1'), 'stalled'));
+    checkEq('reap: out of attempts fails for good', 'failed', $qdb->scalar('SELECT status FROM jobs WHERE id = 2'));
+    checkEq('reap: a job still within its window is left running', 'running', $qdb->scalar('SELECT status FROM jobs WHERE id = 3'));
+    check('reap: nothing left to reap on the second pass', $queue->reapStalled(30) === []);
+}
+
 $pass = $GLOBALS['__pass'];
 $fail = $GLOBALS['__fail'];
 echo "\n$pass passed, $fail failed\n";

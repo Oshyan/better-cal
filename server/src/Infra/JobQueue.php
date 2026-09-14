@@ -92,6 +92,28 @@ final class JobQueue
         );
     }
 
+    /**
+     * A job left 'running' by a worker that died mid-job (killed at deploy,
+     * out of memory, host reboot) would otherwise stay running forever: it
+     * never re-runs, and hasPending() keeps answering yes for its type, so
+     * nothing enqueues a fresh one either. Anything running longer than the
+     * worker itself may live gets the same treatment as a thrown failure:
+     * retried with backoff, failed for good after MAX_ATTEMPTS.
+     *
+     * @return list<int> the ids reaped
+     */
+    public function reapStalled(int $minutes = 30): array
+    {
+        $cut = Time::toDb(Time::nowUtc()->sub(new \DateInterval('PT' . $minutes . 'M')));
+        $stalled = $this->db->all("SELECT * FROM jobs WHERE status = 'running' AND updated_at < ?", [$cut]);
+        $ids = [];
+        foreach ($stalled as $job) {
+            $this->markFailed($job, 'stalled: still running after ' . $minutes . ' minutes; the worker probably died');
+            $ids[] = (int) $job['id'];
+        }
+        return $ids;
+    }
+
     /** Prune finished jobs older than a week. */
     public function prune(): void
     {

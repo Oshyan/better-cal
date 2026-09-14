@@ -69,6 +69,9 @@ if ((int) $locked !== 1) {
 
 $started = time();
 try {
+    foreach ($queue->reapStalled() as $stalledId) {
+        echo bc_ts() . " job $stalledId reaped: stuck in running, retried or failed\n";
+    }
     bc_enqueue_due_polls($db, $queue);
     bc_enqueue_recurring($db, $queue);
 

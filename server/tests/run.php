@@ -2479,6 +2479,33 @@ require __DIR__ . '/plugins.php';
     check('reap: nothing left to reap on the second pass', $queue->reapStalled(30) === []);
 }
 
+// --- System health: journaling threshold -------------------------------------
+// One failed fetch is weather; the Activity entry comes on the second
+// consecutive failure and the recovery entry only after such a streak.
+{
+    $hdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $hdb->run('CREATE TABLE system_health (subject TEXT PRIMARY KEY, kind TEXT, user_id INTEGER, label TEXT, status TEXT DEFAULT "ok", first_failed_at TEXT, last_failed_at TEXT, last_ok_at TEXT, consecutive_failures INTEGER DEFAULT 0, last_error TEXT, alerted_at TEXT)');
+    $hdb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT)');
+    $health = new SystemHealth($hdb);
+    $entries = fn(): array => array_column($hdb->all('SELECT summary FROM mutations ORDER BY id'), 'summary');
+    $health->recordOk('feed:9', 'feed', 1, 'Feed: Hangs');
+    $health->recordFailure('feed:9', 'feed', 1, 'Feed: Hangs', 'HTTP 404');
+    checkEq('health: one failure is not journaled', [], $entries());
+    $health->recordOk('feed:9', 'feed', 1, 'Feed: Hangs');
+    checkEq('health: recovery from a blip is not journaled either', [], $entries());
+    checkEq('health: the blip is still in the table', 'ok', $hdb->scalar('SELECT status FROM system_health WHERE subject = ?', ['feed:9']));
+    $health->recordFailure('feed:9', 'feed', 1, 'Feed: Hangs', 'HTTP 404');
+    $health->recordFailure('feed:9', 'feed', 1, 'Feed: Hangs', 'HTTP 404');
+    checkEq('health: the second consecutive failure is journaled once', ['Feed: Hangs started failing: HTTP 404'], $entries());
+    $health->recordFailure('feed:9', 'feed', 1, 'Feed: Hangs', 'HTTP 404');
+    checkEq('health: a third failure adds nothing', 1, count($entries()));
+    checkEq('health: streak counted', 3, (int) $hdb->scalar('SELECT consecutive_failures FROM system_health WHERE subject = ?', ['feed:9']));
+    $health->recordOk('feed:9', 'feed', 1, 'Feed: Hangs');
+    check('health: recovery after a real streak is journaled', str_starts_with($entries()[1] ?? '', 'Feed: Hangs recovered after 3 failures'));
+    $health->recordFailure('feed:10', 'feed', 1, 'Feed: New', 'timeout');
+    checkEq('health: a brand-new subject failing once is not journaled', 2, count($entries()));
+}
+
 $pass = $GLOBALS['__pass'];
 $fail = $GLOBALS['__fail'];
 echo "\n$pass passed, $fail failed\n";

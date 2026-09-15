@@ -43,7 +43,7 @@ Three layers cooperate: nginx headers above; the service worker (`web/sw.js`) is
 
 ## Failure alerts
 
-Background work reports into `system_health` (one row per job type, feed, and push device). Transitions land in Activity under "System"; the current state is on Settings → System. When SMTP is configured (`BETTERCAL_SMTP_HOST` / `BETTERCAL_SMTP_FROM`), a streak that lasts earns one email and one on recovery, never one per failure. Per-user subjects (a feed, a device) go to that user's account email; system-wide ones (a job type) go to `BETTERCAL_ALERT_EMAIL`, else to the first user. The alert job runs every ten minutes so a broken SMTP is one failed attempt per ten minutes. Thresholds live in `SystemHealth` (`JOB_ALERT_AFTER` 1h + 3 failures, `FEED_ALERT_AFTER` 1 day, `PUSH_ALERT_AFTER` 6h, `REALERT_AFTER` 1 day).
+Background work reports into `system_health` (one row per job type, feed, and push device). A streak lands in Activity under "System" once it has reached two consecutive failures (`JOURNAL_AFTER`), and its recovery after that; a single failed fetch shows on Settings → System and counts toward the email thresholds, but is not history. When SMTP is configured (`BETTERCAL_SMTP_HOST` / `BETTERCAL_SMTP_FROM`), a streak that lasts earns one email and one on recovery, never one per failure. Per-user subjects (a feed, a device) go to that user's account email; system-wide ones (a job type) go to `BETTERCAL_ALERT_EMAIL`, else to the first user. The alert job runs every ten minutes so a broken SMTP is one failed attempt per ten minutes. Thresholds live in `SystemHealth` (`JOB_ALERT_AFTER` 1h + 3 failures, `FEED_ALERT_AFTER` 1 day, `PUSH_ALERT_AFTER` 6h, `REALERT_AFTER` 1 day).
 
 ## Credentials
 

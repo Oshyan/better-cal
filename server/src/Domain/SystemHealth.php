@@ -15,10 +15,13 @@ use BetterCal\Support\Time;
  *
  * Subjects: 'job:<type>' (system-wide), 'feed:<calendarId>' and
  * 'push:<subscriptionId>' (per user). Callers report every outcome; this
- * class notices the moments that matter — the first failure after success
- * and the first success after failure — and writes exactly one Activity
- * entry for each. A failing streak that persists past a per-kind threshold
+ * class notices the moments that matter — a failing streak that has proved
+ * itself (JOURNAL_AFTER consecutive failures; one bad fetch is weather, not
+ * news) and the first success after such a streak — and writes exactly one
+ * Activity entry for each. A streak that persists past a per-kind threshold
  * earns one email, and one more when it recovers; never one per failure.
+ * A single blip still lands in the table (Settings, System) and still
+ * counts toward the email thresholds; it just does not become history.
  *
  * Who gets emailed: per-user subjects go to that user's account email;
  * system-wide subjects go to BETTERCAL_ALERT_EMAIL when set, else to the
@@ -27,6 +30,8 @@ use BetterCal\Support\Time;
 final class SystemHealth
 {
     /** A job must have failed this many times in a row AND for this long. */
+    /** Consecutive failures before a streak is journaled to Activity. */
+    public const JOURNAL_AFTER = 2;
     public const JOB_MIN_FAILURES = 3;
     public const JOB_ALERT_AFTER = 'PT1H';
     /** Feeds poll hourly; a day of errors is a source that is really gone. */
@@ -56,20 +61,22 @@ final class SystemHealth
                 'status' => 'failing', 'first_failed_at' => $now, 'last_failed_at' => $now,
                 'consecutive_failures' => 1, 'last_error' => $error,
             ]);
-            $this->journal($userId, "$label started failing: $error");
             return true;
         }
         $transition = $row['status'] !== 'failing';
+        $streak = $transition ? 1 : (int) $row['consecutive_failures'] + 1;
         $this->db->update('system_health', [
             'label' => mb_substr($label, 0, 160),
             'status' => 'failing',
             'first_failed_at' => $transition ? $now : $row['first_failed_at'],
             'last_failed_at' => $now,
-            'consecutive_failures' => $transition ? 1 : (int) $row['consecutive_failures'] + 1,
+            'consecutive_failures' => $streak,
             'last_error' => $error,
             'alerted_at' => $transition ? null : $row['alerted_at'],
         ], 'subject = ?', [$subject]);
-        if ($transition) {
+        // Journaled once, the moment the streak proves itself; a flaky
+        // upstream that fails one fetch in thirty never reaches Activity.
+        if ($streak === self::JOURNAL_AFTER) {
             $this->journal($userId, "$label started failing: $error");
         }
         return $transition;
@@ -88,6 +95,8 @@ final class SystemHealth
             return false;
         }
         $recovered = $row['status'] === 'failing';
+        // A recovery is only news if the failure was.
+        $journaled = $recovered && (int) $row['consecutive_failures'] >= self::JOURNAL_AFTER;
         // alerted_at survives recovery on purpose: the alert job reads it to
         // know a failure email went out and a recovery email is owed, then
         // clears it.
@@ -97,7 +106,7 @@ final class SystemHealth
             'last_ok_at' => $now,
             'consecutive_failures' => 0,
         ], 'subject = ?', [$subject]);
-        if ($recovered) {
+        if ($journaled) {
             $this->journal($userId, "$label recovered after " . self::describeStreak($row, $now));
         }
         return $recovered;

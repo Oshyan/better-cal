@@ -12,6 +12,12 @@ Live environment facts that are not encoded in scripts, recorded 2026-07-31.
 - DNS: Hetzner DNS zone oshyan.com, record `cal` A 87.99.150.92 (managed via `hcloud zone rrset`).
 - TLS: Let's Encrypt via `clpctl lets-encrypt:install:certificate --domainName=cal.oshyan.com`.
 
+## Request path and client addresses (checked 2026-09-17)
+
+CloudPanel runs two nginx servers per site. The public one (443) proxies `location /` to an inner one on `127.0.0.1:8080`, which hands PHP requests to PHP-FPM on `127.0.0.1:19002`; `/dav` and `/assets` are served from the public one directly. PHP still sees the visitor's real address rather than `127.0.0.1`, because the public server sends `X-Real-IP` and the global `/etc/nginx/nginx.conf` applies the `real_ip` module for `127.0.0.1`. So `BETTERCAL_TRUSTED_PROXIES` stays empty here.
+
+Known weakness, not fixed yet: that same global file (shared by all 27 sites on the box) also has `set_real_ip_from 0.0.0.0/0;`, so nginx accepts an `X-Real-IP` header from any visitor. Verified: a forged header was counted as the client address by the sign-in limiter. Removing that one line (keep `127.0.0.1` and the private ranges), then `nginx -t && systemctl reload nginx`, closes it. It is a host-wide change, so it needs a deliberate decision; CloudPanel updates may also put the line back.
+
 ## nginx vhost customizations
 
 The CloudPanel vhost `/etc/nginx/sites-enabled/cal.oshyan.com.conf` was hand-edited (CloudPanel may regenerate it if site settings change in the panel; re-apply if assets start 404ing or caching wrong):

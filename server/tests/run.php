@@ -2751,6 +2751,143 @@ require __DIR__ . '/plugins.php';
     }
 }
 
+// --- Work budgets and ICS correctness (BC-10 to BC-16) --------------------------
+{
+    $L = BetterCal\Support\Limits::class;
+
+    // BC-14: folding by offset. Same output as the old cut-and-copy version for
+    // every width and for multi-byte text, and linear in the length.
+    $oldFold = static function (string $line): string {
+        if (strlen($line) <= 75) {
+            return $line;
+        }
+        $out = [];
+        $width = 75;
+        while (strlen($line) > $width) {
+            $cut = $width;
+            while ($cut > 1 && (ord($line[$cut]) & 0xC0) === 0x80) {
+                $cut--;
+            }
+            $out[] = substr($line, 0, $cut);
+            $line = substr($line, $cut);
+            $width = 74;
+        }
+        $out[] = $line;
+        return implode("\r\n ", $out);
+    };
+    $samples = [str_repeat('a', 75), str_repeat('a', 76), str_repeat('a', 149), str_repeat('a', 150), str_repeat('a', 1000),
+        'DESCRIPTION:' . str_repeat('héllo wörld ', 40), 'SUMMARY:' . str_repeat('日本語のテキスト', 30), 'X:' . str_repeat('😀', 60)];
+    $same = true;
+    foreach ($samples as $s) {
+        $same = $same && Ics::fold($s) === $oldFold($s);
+    }
+    check('fold: byte-for-byte the same output as before, incl. multi-byte text', $same);
+    $allValid = true;
+    foreach ($samples as $s) {
+        foreach (explode("\r\n ", Ics::fold($s)) as $i => $piece) {
+            $allValid = $allValid && strlen($piece) <= ($i === 0 ? 75 : 74) && mb_check_encoding($piece, 'UTF-8');
+        }
+        $allValid = $allValid && Ics::unfold(Ics::fold($s)) === $s;
+    }
+    check('fold: every piece fits, is valid UTF-8, and unfolds back to the input', $allValid);
+    $big = 'DESCRIPTION:' . str_repeat('x', 1048576);
+    $t = hrtime(true);
+    Ics::fold($big);
+    $ms = (hrtime(true) - $t) / 1e6;
+    check('fold: 1 MiB folds in linear time (was 117 ms; allow 40)', $ms < 40, round($ms, 1) . ' ms');
+
+    // BC-16: nothing structural can carry a line break out of an export.
+    checkEq('structural: CR/LF and other controls are removed', 'abcX-BC-INJECTED:1', Ics::structural("abc\r\nX-BC-INJECTED:1"));
+    checkEq('structural: tab, NUL, DEL too', 'abc', Ics::structural("a\tb\x00c\x7F"));
+    checkEq('structural: ordinary ids and URLs are untouched', 'https://example.com/a?b=c&d=é#f', Ics::structural('https://example.com/a?b=c&d=é#f'));
+    checkEq('uid: cleaned and bounded', 'abcX-BC-INJECTED:1', Ics::uidOrNew("  abc\nX-BC-INJECTED:1 "));
+    check('uid: nothing usable left means a fresh one, never an empty uid', strlen(Ics::uidOrNew("\r\n")) > 10);
+    $exported = Ics::buildObject([[
+        'uid' => "evil\r\nX-BC-INJECTED:1", 'title' => 'T', 'start_utc' => '2026-10-01 10:00:00', 'end_utc' => '2026-10-01 11:00:00',
+        'all_day' => 0, 'tzid' => 'UTC', 'status' => 'confirmed', 'url' => "https://x.example/\r\nATTENDEE:mailto:a@b.c", 'rrule' => "FREQ=DAILY\r\nX-EVIL:1",
+    ]]);
+    check('export: a stored UID/URL/RRULE with a newline cannot add a property line (rows from before the fix)',
+        preg_match('/^(X-BC-INJECTED|ATTENDEE|X-EVIL)/m', $exported) === 0);
+    check('export: the values are still there, on their own lines', str_contains($exported, "UID:evilX-BC-INJECTED:1\r\n") && str_contains($exported, "URL:https://x.example/ATTENDEE:mailto:a@b.c\r\n"));
+    checkEq('clip: cuts by characters, not bytes', 'héll', Ics::clip('héllo', 4));
+    checkEq('clip: leaves short text alone', 'héllo', Ics::clip('héllo', 5));
+
+    // BC-12/13/10: decided on the raw text, before any parser runs.
+    $cal = static fn(int $n): string => "BEGIN:VCALENDAR\r\n" . str_repeat("BEGIN:VEVENT\r\nUID:x\r\nEND:VEVENT\r\n", $n) . "END:VCALENDAR\r\n";
+    checkEq('budget: within both limits', null, Ics::budgetProblem($cal(10), 100000, 10));
+    check('budget: one event over', str_contains((string) Ics::budgetProblem($cal(11), 100000, 10), '11 events, over the limit of 10'));
+    check('budget: bytes over, said in MiB', str_contains((string) Ics::budgetProblem(str_repeat('x', 3 * 1048576), 2 * 1048576, 10), '3 MiB, over the 2 MiB limit'));
+    checkEq('budget: counts VEVENT openings in any case, with trailing space', 2,
+        (int) preg_match_all('/^BEGIN:VEVENT[ \t]*\r?$/mi', "begin:vevent \r\nEND:VEVENT\r\nBEGIN:VEVENT\nEND:VEVENT\n"));
+    checkEq('budget: nested components and text mentioning it do not count', null,
+        Ics::budgetProblem("BEGIN:VEVENT\r\nDESCRIPTION:see BEGIN:VEVENT in the docs\r\nBEGIN:VALARM\r\nEND:VALARM\r\nEND:VEVENT\r\n", 1000, 1));
+    checkEq('mail: a calendar-sized "invitation" is not parsed at all', null, MailIngest::parseImip($cal($L::get('MAIL_ICS_EVENTS') + 1)));
+
+    // Limits: one block, overridable, and a typo cannot zero a limit.
+    $L::reset();
+    checkEq('limits: default', 1048576, $L::get('DAV_OBJECT_BYTES'));
+    $L::configure(['DAV_OBJECT_BYTES' => '2097152', 'IMPORT_EVENTS' => '0', 'REGEX_EVALS' => 'lots', 'NOT_A_LIMIT' => '5']);
+    checkEq('limits: a valid override applies', 2097152, $L::get('DAV_OBJECT_BYTES'));
+    checkEq('limits: zero is ignored, not applied', 20000, $L::get('IMPORT_EVENTS'));
+    checkEq('limits: garbage is ignored', 20000, $L::get('REGEX_EVALS'));
+    $L::reset();
+    checkEq('limits: ini sizes', [268435456, 131072, 1073741824, 0, 0], array_map($L::iniBytes(...), ['256M', '128K', '1G', '-1', 'plenty']));
+    checkEq('import budget: plenty of memory means the configured cap', 20000, $L::importEventBudget('2G', 50 * 1048576));
+    checkEq('import budget: unlimited memory means the configured cap', 20000, $L::importEventBudget('-1', 50 * 1048576));
+    checkEq('import budget: a 128M PHP can hold about 8,000 parsed events', intdiv(128 * 1048576 - 16 * 1048576 - 16 * 1048576, 12288), $L::importEventBudget('128M', 16 * 1048576));
+    checkEq('import budget: never below a usable floor', 100, $L::importEventBudget('32M', 31 * 1048576));
+
+    // BC-11: a careless pattern meets text written for it.
+    Filters::resetRegexBudget();
+    $evil = ['type' => 'regex', 'config' => ['pattern' => '(a+)+$', 'fields' => ['title']]];
+    $t = hrtime(true);
+    $hit = Filters::evaluate(['title' => str_repeat('a', 40) . '!'], $evil);
+    $firstMs = (hrtime(true) - $t) / 1e6;
+    check('regex: a catastrophic match gives up instead of hanging, and counts as no match', $hit === false && $firstMs < 1500, round($firstMs) . ' ms');
+    $t = hrtime(true);
+    for ($i = 0; $i < 200; $i++) {
+        Filters::evaluate(['title' => str_repeat('a', 40) . '!'], $evil);
+    }
+    check('regex: the pattern that gave up is not tried again this run', (hrtime(true) - $t) / 1e6 < 50);
+    check('regex: other patterns still work after one gave up', Filters::evaluate(['title' => 'Team standup'], ['type' => 'regex', 'config' => ['pattern' => 'stand.?up', 'fields' => ['title']]]));
+    checkEq('regex: PHP\'s own limits are restored after each match', [ini_get('pcre.backtrack_limit'), ini_get('pcre.jit')], (static function () {
+        $before = [ini_get('pcre.backtrack_limit'), ini_get('pcre.jit')];
+        Filters::evaluate(['title' => 'x'], ['type' => 'regex', 'config' => ['pattern' => 'x', 'fields' => ['title']]]);
+        return $before;
+    })());
+    Filters::resetRegexBudget();
+    $L::configure(['REGEX_EVALS' => 5]);
+    $plain = ['type' => 'regex', 'config' => ['pattern' => 'dinner', 'fields' => ['title']]];
+    $hits = 0;
+    for ($i = 0; $i < 8; $i++) {
+        $hits += Filters::evaluate(['title' => 'dinner'], $plain) ? 1 : 0;
+    }
+    checkEq('regex: past the run\'s budget, regex filters stop matching (fail open)', 5, $hits);
+    check('regex: keyword filters are not part of that budget', Filters::evaluate(['title' => 'dinner'], ['type' => 'keyword', 'config' => ['pattern' => 'dinner', 'fields' => ['title']]]));
+    $L::reset();
+    Filters::resetRegexBudget();
+
+    // BC-10: a message is recorded as started before its body is touched.
+    $mdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $mdb->run('CREATE TABLE mail_ingest (id INTEGER PRIMARY KEY, message_id TEXT UNIQUE, subject TEXT, from_addr TEXT, tier TEXT, outcome TEXT NOT NULL, event_id INTEGER, error TEXT, processed_at TEXT DEFAULT CURRENT_TIMESTAMP)');
+    $mdb->run('CREATE TABLE review_items (id INTEGER PRIMARY KEY)');
+    $mail = new MailIngest($mdb, (new ReflectionClass(Events::class))->newInstanceWithoutConstructor(), null);
+    $env = ['messageId' => 'poison@example.test', 'subject' => 'Huge', 'from' => 'x@example.test'];
+    check('mail: a new message may begin', $mail->begin($env));
+    checkEq('mail: it is logged as started before anything is parsed', 'started', $mdb->scalar("SELECT outcome FROM mail_ingest WHERE message_id = 'poison@example.test'"));
+    check('mail: after a crash, the next run refuses to walk into it again', $mail->begin($env) === false);
+    $mail->abort('poison@example.test');
+    check('mail: a retryable failure forgets the start, so it IS retried', $mail->begin($env));
+    $r = $mail->ingestMessage(1, $env + ['icsParts' => [], 'html' => null, 'text' => null, 'oversize' => 9000000], 'UTC');
+    checkEq('mail: an oversize message is skipped and says why', ['skipped', 'message too large to ingest (9,000,000 bytes)'], [$r['outcome'], $r['error']]);
+    checkEq('mail: the started row becomes the outcome, not a second row', ['skipped', 1],
+        [$mdb->scalar("SELECT outcome FROM mail_ingest WHERE message_id = 'poison@example.test'"), (int) $mdb->scalar('SELECT COUNT(*) FROM mail_ingest')]);
+    checkEq('mail: a finished message is a duplicate next time', 'duplicate', $mail->ingestMessage(1, $env + ['icsParts' => [], 'html' => null, 'text' => null], 'UTC')['error']);
+    check('mail: and may not begin again', $mail->begin($env) === false);
+    $direct = $mail->ingestMessage(1, ['messageId' => 'direct@example.test', 'subject' => 'No begin', 'from' => 'y@example.test', 'icsParts' => [], 'html' => null, 'text' => 'hello'], 'UTC');
+    checkEq('mail: callers that never call begin() still get a log row', 1, (int) $mdb->scalar("SELECT COUNT(*) FROM mail_ingest WHERE message_id = 'direct@example.test'"));
+}
+
 // --- Sign-in throttle (BC-05/BC-06, issue #20) ----------------------------------
 {
     $cip = BetterCal\Support\ClientIp::class;

@@ -8,6 +8,7 @@ use BetterCal\Domain\Ics;
 use BetterCal\Domain\Trips;
 use BetterCal\Domain\Undo;
 use BetterCal\Infra\Db;
+use BetterCal\Support\Limits;
 use BetterCal\Support\Time;
 use Sabre\CalDAV\Backend\AbstractBackend;
 use Sabre\CalDAV\Backend\SyncSupport;
@@ -58,6 +59,13 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
                 '{http://calendarserver.org/ns/}getctag' => 'http://sabre.io/ns/sync/' . $token,
                 '{http://sabredav.org/ns}sync-token' => $token,
                 '{' . CalDAVPlugin::NS_CALDAV . '}supported-calendar-component-set' => new SupportedCalendarComponentSet(['VEVENT']),
+                // RFC 4791 5.2.5: the size putObject enforces, published so a
+                // client can know it instead of finding out by 403. (The cap on
+                // overrides has no standard property: CALDAV:max-instances means
+                // how many occurrences a series may generate, which is not
+                // limited here, and advertising it could make a strict client
+                // refuse an ordinary "repeats forever" event.)
+                '{' . CalDAVPlugin::NS_CALDAV . '}max-resource-size' => (string) Limits::get('DAV_OBJECT_BYTES'),
             ];
             if ($row['kind'] === 'subscribed') {
                 $info['{http://sabredav.org/ns}read-only'] = true;
@@ -249,6 +257,15 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
     {
         $calendar = $this->calendarRow($calendarId);
         $this->assertWritable($calendar);
+
+        // Bounded BEFORE parsing: one object may carry any number of
+        // RECURRENCE-ID overrides, and each becomes parser memory and then a row
+        // written inside one transaction (BC-13). An event with its overrides
+        // is small; a megabyte or 500 overrides is not an event.
+        $problem = Ics::budgetProblem($calendarData, Limits::get('DAV_OBJECT_BYTES'), Limits::get('DAV_OVERRIDES') + 1);
+        if ($problem !== null) {
+            throw new Forbidden(str_replace('calendar file', 'calendar object', $problem) . ' (CALDAV:max-resource-size)');
+        }
 
         $parsed = Ics::parse($calendarData);
         $masters = array_values(array_filter($parsed, static fn(array $p): bool => $p['recurrence_instance_utc'] === null));

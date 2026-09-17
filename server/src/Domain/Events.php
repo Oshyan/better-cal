@@ -8,6 +8,7 @@ use BetterCal\Dav\ChangeLog;
 use BetterCal\Http\HttpError;
 use BetterCal\Infra\Db;
 use BetterCal\Support\Ids;
+use BetterCal\Support\Limits;
 use BetterCal\Support\Time;
 
 final class Events
@@ -382,15 +383,15 @@ final class Events
             'calendar_id' => $calendarId,
             // Callers with an external identity (mail ingest iMIP) pass uid so
             // updates and cancellations can find the event again.
-            'uid' => is_string($in['uid'] ?? null) && trim($in['uid']) !== ''
-                ? mb_substr(trim($in['uid']), 0, 255)
-                : Ids::ulid(),
+            // Control characters never enter a UID or URL: both are written to
+            // feeds and CalDAV unescaped, where a newline is a new property.
+            'uid' => Ics::uidOrNew(is_string($in['uid'] ?? null) ? $in['uid'] : ''),
             'title' => mb_substr(trim((string) ($in['title'] ?? '')), 0, 500),
-            'description' => isset($in['description']) ? Sanitize::description((string) $in['description']) : null,
+            'description' => isset($in['description']) ? Sanitize::description(Ics::clip((string) $in['description'], Limits::get('DESCRIPTION_CHARS'))) : null,
             'location' => isset($in['location']) ? mb_substr((string) $in['location'], 0, 500) : null,
             'location_lat' => self::coordOrNull($in, 'locationLat'),
             'location_lng' => self::coordOrNull($in, 'locationLng'),
-            'url' => isset($in['url']) ? (string) $in['url'] : null,
+            'url' => isset($in['url']) ? self::cleanUrl((string) $in['url']) : null,
             'start_utc' => $startUtc,
             'end_utc' => $endUtc,
             'all_day' => $allDay ? 1 : 0,
@@ -1147,7 +1148,10 @@ final class Events
                     $fields[$col] = mb_substr($fields[$col], 0, 500);
                 }
                 if ($col === 'description' && $fields[$col] !== null) {
-                    $fields[$col] = Sanitize::description($fields[$col]);
+                    $fields[$col] = Sanitize::description(Ics::clip($fields[$col], Limits::get('DESCRIPTION_CHARS')));
+                }
+                if ($col === 'url' && $fields[$col] !== null) {
+                    $fields[$col] = self::cleanUrl($fields[$col]);
                 }
             }
         }
@@ -1285,6 +1289,13 @@ final class Events
             $out[] = $k . '=' . $v;
         }
         return implode(';', $out);
+    }
+
+    /** A URL as stored: no control characters (it is exported unescaped), bounded, null when nothing is left. */
+    private static function cleanUrl(string $url): ?string
+    {
+        $url = Ics::clip(Ics::structural(trim($url)), Limits::get('URL_CHARS'));
+        return $url !== '' ? $url : null;
     }
 
     private function statusOrDefault(mixed $status): string

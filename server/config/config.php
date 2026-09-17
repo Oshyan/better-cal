@@ -118,5 +118,16 @@ function config(): array
         'version' => '0.1.0',
         'app_root' => $appRoot,
     ];
+
+    // Work budgets (Support\Limits): BETTERCAL_LIMIT_<NAME> overrides a default.
+    $limits = [];
+    foreach (\BetterCal\Support\Limits::names() as $name) {
+        $value = $env('BETTERCAL_LIMIT_' . $name);
+        if ($value !== '') {
+            $limits[$name] = $value;
+        }
+    }
+    \BetterCal\Support\Limits::configure($limits);
+
     return $cfg;
 }

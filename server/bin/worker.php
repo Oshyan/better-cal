@@ -112,7 +112,10 @@ try {
                         $tzSettings = is_string($tzRow) ? (json_decode($tzRow, true) ?: []) : [];
                         $tz = is_string($tzSettings['tz'] ?? null) && $tzSettings['tz'] !== '' ? $tzSettings['tz'] : 'UTC';
                         $done = 0;
-                        foreach ($fetcher->fetchUnseen(10) as $msg) {
+                        // begin/abort: a message is recorded as started before its
+                        // body is downloaded, so one that crashes the worker is not
+                        // walked into again on the next run (see MailFetcher).
+                        foreach ($fetcher->fetchUnseen(10, $ingest->begin(...), $ingest->abort(...)) as $msg) {
                             $r = $ingest->ingestMessage($uid, $msg, $tz);
                             // A held change waits for a decision, and the
                             // owner is not looking at the queue: tell them. One

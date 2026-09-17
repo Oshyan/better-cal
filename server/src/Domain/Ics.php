@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace BetterCal\Domain;
 
+use BetterCal\Support\Limits;
 use BetterCal\Support\Time;
 
 /**
@@ -41,25 +42,90 @@ final class Ics
         return $out;
     }
 
-    /** Fold a content line at 75 octets, never splitting a UTF-8 sequence. */
+    /**
+     * Fold a content line at 75 octets, never splitting a UTF-8 sequence.
+     *
+     * Walks the line by OFFSET. The earlier version cut the head off and kept
+     * `substr($line, $cut)` as the new line, which copies the whole remaining
+     * tail on every 75-octet step: quadratic, measured at 117 ms for a 1 MiB
+     * description, paid again on every feed and CalDAV export of that event
+     * (BC-14). Each octet is now copied once.
+     */
     public static function fold(string $line): string
     {
-        if (strlen($line) <= self::FOLD_WIDTH) {
+        $len = strlen($line);
+        if ($len <= self::FOLD_WIDTH) {
             return $line;
         }
         $out = [];
+        $pos = 0;
         $width = self::FOLD_WIDTH;
-        while (strlen($line) > $width) {
-            $cut = $width;
-            while ($cut > 1 && (ord($line[$cut]) & 0xC0) === 0x80) {
+        while ($len - $pos > $width) {
+            $cut = $pos + $width;
+            // Back off a continuation byte (10xxxxxx) so a character stays whole.
+            while ($cut > $pos + 1 && (ord($line[$cut]) & 0xC0) === 0x80) {
                 $cut--;
             }
-            $out[] = substr($line, 0, $cut);
-            $line = substr($line, $cut);
+            $out[] = substr($line, $pos, $cut - $pos);
+            $pos = $cut;
             $width = self::FOLD_WIDTH - 1; // continuation lines lose one octet to the leading space
         }
-        $out[] = $line;
+        $out[] = substr($line, $pos);
         return implode("\r\n ", $out);
+    }
+
+    /**
+     * A value for a property that is NOT text-escaped (UID, URL, RRULE): every
+     * control character removed, above all CR and LF.
+     *
+     * Text properties go through escape(), which turns a newline into the two
+     * characters "\n". UID and URL were written raw, and a parser unescapes
+     * "\n" in an incoming UID into a real newline, so an event named
+     * "abc\nX-INJECTED:1" came back out of a feed or CalDAV export as an extra
+     * property line Better-Cal never modelled (BC-16). Applied when such a
+     * value comes in AND when it goes out, so rows stored before this are
+     * covered too.
+     */
+    public static function structural(string $value): string
+    {
+        return (string) preg_replace('/[\x00-\x1F\x7F]+/', '', $value);
+    }
+
+    /**
+     * Why this calendar file is too much to parse, or null. Checked on the raw
+     * text BEFORE a parser materializes anything, because the parser is where
+     * the cost is: 3,000 tiny events in 329 KB became a 24 MiB object graph
+     * (BC-12). Counts VEVENT openings; nested components do not start with it.
+     */
+    public static function budgetProblem(string $ics, int $maxBytes, int $maxEvents): ?string
+    {
+        $bytes = strlen($ics);
+        if ($bytes > $maxBytes) {
+            return 'The calendar file is ' . self::mib($bytes) . ', over the ' . self::mib($maxBytes) . ' limit';
+        }
+        $events = preg_match_all('/^BEGIN:VEVENT[ \t]*\r?$/mi', $ics);
+        if ($events > $maxEvents) {
+            return 'The calendar file holds ' . number_format((int) $events) . ' events, over the limit of ' . number_format($maxEvents);
+        }
+        return null;
+    }
+
+    /** The incoming UID made safe and bounded, or a fresh one when nothing usable is left. */
+    public static function uidOrNew(string $uid): string
+    {
+        $uid = substr(self::structural(trim($uid)), 0, 255);
+        return $uid !== '' ? $uid : \BetterCal\Support\Ids::ulid();
+    }
+
+    /** Cut to $max characters without splitting one. */
+    public static function clip(string $text, int $max): string
+    {
+        return mb_strlen($text) > $max ? mb_substr($text, 0, $max) : $text;
+    }
+
+    private static function mib(int $bytes): string
+    {
+        return rtrim(rtrim(number_format($bytes / 1048576, 1), '0'), '.') . ' MiB';
     }
 
     public static function unfold(string $ics): string
@@ -122,7 +188,7 @@ final class Ics
         $allDay = (int) ($ev['all_day'] ?? 0) === 1;
         $tz = Time::zone($ev['tzid'] ?? null);
         $out = "BEGIN:VEVENT\r\n";
-        $out .= self::line('UID', (string) $ev['uid']);
+        $out .= self::line('UID', self::structural((string) $ev['uid']));
         $out .= self::line('DTSTAMP', $stamp);
         if ($allDay) {
             $start = Time::fromDb((string) $ev['start_utc'])->setTimezone($tz);
@@ -137,7 +203,7 @@ final class Ics
             $out .= self::line('RECURRENCE-ID', Time::fromDb((string) $ev['recurrence_instance_utc'])->format('Ymd\THis\Z'));
         }
         if (!empty($ev['rrule'])) {
-            $out .= self::line('RRULE', (string) $ev['rrule']);
+            $out .= self::line('RRULE', self::structural((string) $ev['rrule']));
         }
         $exdates = [];
         if (!empty($ev['exdates_json'])) {
@@ -167,7 +233,7 @@ final class Ics
             $out .= self::line('LOCATION', self::escape((string) $ev['location']));
         }
         if (!empty($ev['url'])) {
-            $out .= self::line('URL', (string) $ev['url']);
+            $out .= self::line('URL', self::structural((string) $ev['url']));
         }
         // Trip relationships (RFC 5545 RELATED-TO): containers list member
         // uids as RELTYPE=CHILD, members list container uids as
@@ -376,11 +442,16 @@ final class Ics
         $reminders = array_map(static fn(int $m): array => ['minutes' => $m], array_keys($reminders));
 
         return [
-            'uid' => isset($vevent->UID) ? substr((string) $vevent->UID, 0, 255) : \BetterCal\Support\Ids::ulid(),
+            // UID and URL are structural: control characters (a parser hands us
+            // "\n" in a UID as a real newline) are dropped on the way IN, see
+            // structural(). An empty result is no UID at all.
+            'uid' => self::uidOrNew(isset($vevent->UID) ? (string) $vevent->UID : ''),
             'title' => mb_substr((string) ($vevent->SUMMARY ?? ''), 0, 500),
-            'description' => isset($vevent->DESCRIPTION) ? (string) $vevent->DESCRIPTION : null,
+            // Long fields are cut, not refused: one absurd event in a feed must
+            // not stop the rest of it syncing (Limits::DESCRIPTION_CHARS).
+            'description' => isset($vevent->DESCRIPTION) ? self::clip((string) $vevent->DESCRIPTION, Limits::get('DESCRIPTION_CHARS')) : null,
             'location' => isset($vevent->LOCATION) ? mb_substr((string) $vevent->LOCATION, 0, 500) : null,
-            'url' => isset($vevent->URL) ? (string) $vevent->URL : null,
+            'url' => isset($vevent->URL) ? (self::clip(self::structural((string) $vevent->URL), Limits::get('URL_CHARS')) ?: null) : null,
             'start_utc' => $start->format(Time::DB),
             'end_utc' => $end->format(Time::DB),
             'all_day' => $allDay ? 1 : 0,

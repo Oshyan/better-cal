@@ -24,6 +24,7 @@ import {
 } from '../lib/dates.js';
 import {
   visibleWeekRange, weekTop, totalHeight, occurrenceDaySpan, rowSpanSegments, shiftOccurrenceDays,
+  spanRowCount, rowSegmentAt, clampDayRange, LONG_SPAN_ROWS,
   rowIndexOfDayKey, firstEpochDayOfRow, dayKeysOfRow, isWeekendEpochDay,
   monthStartsInRange, dominantMonthOfRows,
 } from './monthmath.js';
@@ -76,15 +77,26 @@ function indexOccurrences(occurrences, columns) {
   const byDay = new Map();
   const barsByRow = new Map();
   const bandsByRow = new Map();
+  // Spans too long to pre-segment (monthmath LONG_SPAN_ROWS): one record each,
+  // segmented per drawn row by rowEntries() below.
+  const longBars = [];
+  const longBands = [];
+  const place = (byRow, long, occ, startKey, endKey) => {
+    if (spanRowCount(startKey, endKey, columns) > LONG_SPAN_ROWS) {
+      long.push({ occ, startKey, endKey });
+      return;
+    }
+    for (const seg of rowSpanSegments(startKey, endKey, columns)) {
+      let list = byRow.get(seg.rowIndex);
+      if (!list) byRow.set(seg.rowIndex, (list = []));
+      list.push({ occ, seg });
+    }
+  };
   for (const occ of occurrences) {
     if (occ.attendance === 'hidden') continue;
     const { startKey, endKey } = occurrenceDaySpan(occ);
     if (occ.isContainer) {
-      for (const seg of rowSpanSegments(startKey, endKey, columns)) {
-        let list = bandsByRow.get(seg.rowIndex);
-        if (!list) bandsByRow.set(seg.rowIndex, (list = []));
-        list.push({ occ, seg });
-      }
+      place(bandsByRow, longBands, occ, startKey, endKey);
       continue;
     }
     if (startKey === endKey && !occ.allDay) {
@@ -92,15 +104,30 @@ function indexOccurrences(occurrences, columns) {
       if (!list) byDay.set(startKey, (list = []));
       list.push(occ);
     } else {
-      for (const seg of rowSpanSegments(startKey, endKey, columns)) {
-        let list = barsByRow.get(seg.rowIndex);
-        if (!list) barsByRow.set(seg.rowIndex, (list = []));
-        list.push({ occ, seg });
-      }
+      place(barsByRow, longBars, occ, startKey, endKey);
     }
   }
   for (const list of byDay.values()) list.sort(byStart);
-  return { byDay, barsByRow, bandsByRow };
+  return { byDay, barsByRow, bandsByRow, longBars, longBands, rowCache: new Map() };
+}
+
+// What one row draws: its pre-segmented entries plus the segment of any very
+// long span that reaches it. Cached per index and row so the array keeps its
+// identity between renders (the row component is memoized on it); the cache
+// dies with the index, which is rebuilt whenever the occurrences change.
+function rowEntries(idx, kind, wi, columns) {
+  const byRow = kind === 'bars' ? idx.barsByRow : idx.bandsByRow;
+  const long = kind === 'bars' ? idx.longBars : idx.longBands;
+  if (long.length === 0) return byRow.get(wi);
+  const key = kind + ':' + wi;
+  if (idx.rowCache.has(key)) return idx.rowCache.get(key);
+  let out = byRow.get(wi);
+  for (const l of long) {
+    const seg = rowSegmentAt(l.startKey, l.endKey, wi, columns);
+    if (seg) out = [...(out || []), { occ: l.occ, seg }];
+  }
+  idx.rowCache.set(key, out);
+  return out;
 }
 
 // ISO 8601 week number (GCal's gutter numbering). Thursday-anchored.
@@ -340,6 +367,20 @@ export function MonthGrid({
     return keyOfEpochDay(firstEpochDayOfRow(wi, columns) + col);
   }, [minWeek, maxWeek, rowH, columns]);
 
+  // The day keys of [a..b] that have a cell on screen. Drag highlighting used
+  // to build a key, and run a DOM query, for EVERY day of the span being
+  // dragged: a multi-century event meant hundreds of thousands per pointer
+  // move (BC-15). Only rendered rows have cells, so only they are walked.
+  const rangeRef = useRef(range);
+  rangeRef.current = range;
+  const renderedDayKeys = useCallback((a, b) => {
+    const r = rangeRef.current;
+    const clamped = clampDayRange(a, b, firstEpochDayOfRow(r.first - 1, columns), firstEpochDayOfRow(r.last + 2, columns) - 1);
+    const keys = [];
+    if (clamped) for (let i = clamped[0]; i <= clamped[1]; i++) keys.push(keyOfEpochDay(i));
+    return keys;
+  }, [columns]);
+
   const highlightDays = useCallback((keys) => {
     for (const e of dropRef.current.els) e.classList.remove('bc-drop-target');
     dropRef.current.els = [];
@@ -397,10 +438,8 @@ export function MonthGrid({
         const k = dayKeyAtPoint(pt);
         if (!k) return;
         const newStart = epochDayOfKey(k) - grabOffset;
-        const keys = [];
-        for (let i = 0; i <= spanDays; i++) keys.push(keyOfEpochDay(newStart + i));
         dropRef.current.key = keyOfEpochDay(newStart);
-        highlightDays(keys);
+        highlightDays(renderedDayKeys(newStart, newStart + spanDays));
       },
       onDrop: (pt) => {
         const ext = dropRef.current.ext;
@@ -438,7 +477,7 @@ export function MonthGrid({
       },
       onCancel: () => { setDropRowHighlight(null); dropRef.current.ext = null; highlightDays([]); },
     });
-  }, [dayKeyAtPoint, highlightDays, onMoveEvent, onMoveSpan, onMoveTrip, onDropToCalendar, onDropToPerson, onDropToTrip, calendars]);
+  }, [dayKeyAtPoint, highlightDays, renderedDayKeys, onMoveEvent, onMoveSpan, onMoveTrip, onDropToCalendar, onDropToPerson, onDropToTrip, calendars]);
 
   const dragResizeOcc = useCallback((occ, edge, ev) => {
     if (String(occ.instanceId).startsWith('plg:')) return; // plugin bands are job-owned
@@ -453,9 +492,7 @@ export function MonthGrid({
         dropRef.current.key = k;
         const a = edge === 'end' ? epochDayOfKey(startKey) : Math.min(epochDayOfKey(k), epochDayOfKey(endKey));
         const b = edge === 'end' ? Math.max(epochDayOfKey(k), epochDayOfKey(startKey)) : epochDayOfKey(endKey);
-        const keys = [];
-        for (let i = a; i <= b; i++) keys.push(keyOfEpochDay(i));
-        highlightDays(keys);
+        highlightDays(renderedDayKeys(a, b));
       },
       onDrop: (pt) => {
         const target = dropRef.current.key;
@@ -499,7 +536,7 @@ export function MonthGrid({
       },
       onCancel: () => highlightDays([]),
     });
-  }, [dayKeyAtPoint, highlightDays, onResizeEvent]);
+  }, [dayKeyAtPoint, highlightDays, renderedDayKeys, onResizeEvent]);
 
   // Drag across cells selects a day range; on release the confirm chip
   // appears at the pointer (Create opens the editor, Cancel dismisses).
@@ -516,9 +553,7 @@ export function MonthGrid({
         const a = Math.min(epochDayOfKey(originKey), epochDayOfKey(k));
         const b = Math.max(epochDayOfKey(originKey), epochDayOfKey(k));
         dropRef.current.key = k;
-        const keys = [];
-        for (let i = a; i <= b; i++) keys.push(keyOfEpochDay(i));
-        highlightDays(keys);
+        highlightDays(renderedDayKeys(a, b));
       },
       onDrop: () => {
         highlightDays([]);
@@ -530,7 +565,7 @@ export function MonthGrid({
       },
       onCancel: () => highlightDays([]),
     });
-  }, [dayKeyAtPoint, highlightDays, onCreateRange]);
+  }, [dayKeyAtPoint, highlightDays, renderedDayKeys, onCreateRange]);
 
   // Plain click (mouse) or tap (touch) on empty cell space: straight into
   // the editor for that day. Real drags never reach here (the drag
@@ -561,7 +596,7 @@ export function MonthGrid({
     weeks.push(html`<${WeekRow}
       key=${wi} weekIndex=${wi} columns=${columns} ribbon=${ribbon}
       top=${weekTop(wi, minWeek, rowH)} rowH=${rowH}
-      byDay=${idx.byDay} bars=${idx.barsByRow.get(wi)} bands=${idx.bandsByRow.get(wi)} calendars=${calendars}
+      byDay=${idx.byDay} bars=${rowEntries(idx, 'bars', wi, columns)} bands=${rowEntries(idx, 'bands', wi, columns)} calendars=${calendars}
       capacity=${capacity} chipRow=${chipRow} mobile=${mobile} todayKey=${tKey} dimSet=${dimSet} nowMs=${nowMs}
       sel=${sel}
       onOpenEvent=${onOpenEvent} onExpandDay=${onExpandDay} onOpenDay=${onOpenDay}

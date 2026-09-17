@@ -81,7 +81,9 @@ function bc_handle_api(Request $request, array $cfg): void
         $people = new Domain\People($db);
         $quickAdd = new Domain\QuickAdd($db, new LlmGateway($cfg), $events, $settings, $people);
 
-        $authController = new Controllers\AuthController($auth);
+        $throttle = new \BetterCal\Infra\Throttle($db);
+        $loginGuard = new Domain\LoginGuard($throttle, $cfg['auth']['trusted_proxies'], $cfg['auth']['max_failures'], $db);
+        $authController = new Controllers\AuthController($auth, $loginGuard);
         $calendarsController = new Controllers\CalendarsController($db, $calendars, $feeds);
         $foldersController = new Controllers\FoldersController($folders);
         $eventsController = new Controllers\EventsController($events, $trips, new Domain\MailIngest($db, $events));
@@ -100,7 +102,7 @@ function bc_handle_api(Request $request, array $cfg): void
         $proposalsController = new Controllers\ProposalsController($proposalsDomain);
         $reviewController = new Controllers\ReviewController(new Domain\ReviewQueue($db, $events), $proposalsDomain);
         $configController = new Controllers\ConfigController($settings, $cfg);
-        $pushController = new Controllers\PushController($pushSubscriptions, $pushSender, $emailSender);
+        $pushController = new Controllers\PushController($pushSubscriptions, $pushSender, $emailSender, $throttle);
         $systemController = new Controllers\SystemController(new Domain\SystemHealth($db), $pushSubscriptions, $emailSender, $cfg);
         $healthController = new Controllers\HealthController($db, $cfg);
 

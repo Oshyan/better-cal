@@ -11,6 +11,7 @@ use BetterCal\Http\Request;
 use BetterCal\Http\Response;
 use BetterCal\Infra\EmailSender;
 use BetterCal\Infra\PushSender;
+use BetterCal\Infra\Throttle;
 
 final class PushController
 {
@@ -18,7 +19,32 @@ final class PushController
         private readonly PushSubscriptions $subscriptions,
         private readonly PushSender $sender,
         private readonly EmailSender $email,
+        private readonly ?Throttle $throttle = null,
     ) {
+    }
+
+    /** A handful of test sends is plenty to see that delivery works. */
+    private const TEST_SENDS = 5;
+    private const TEST_WINDOW = 600;
+
+    /**
+     * "Send a test" reaches an address the caller chose (notifyEmail is any
+     * syntactically valid address) with the server's own SMTP identity, as
+     * often as it is called: a way to mail-bomb a stranger and burn the
+     * sender's reputation (BC-19). Five per ten minutes, per account, across
+     * both test buttons.
+     */
+    private function limitTestSends(Request $req): void
+    {
+        if ($this->throttle === null) {
+            return;
+        }
+        $bucket = 'test-send:user:' . (int) $req->user['id'];
+        $wait = $this->throttle->retryAfter($bucket, self::TEST_SENDS, self::TEST_WINDOW);
+        if ($wait > 0) {
+            throw new HttpError('too_many_requests', 'That is enough tests for now. Try again in ' . max(1, (int) ceil($wait / 60)) . ' minute(s).', 429);
+        }
+        $this->throttle->hit($bucket);
     }
 
     /** GET /push/key: the VAPID public key the client subscribes with. */
@@ -61,6 +87,7 @@ final class PushController
         if ($subs === []) {
             throw HttpError::badRequest('No push subscription for this account; enable notifications first', 'no_subscription');
         }
+        $this->limitTestSends($req);
         $payload = [
             'title' => 'Better-Cal test notification',
             'body' => 'Push notifications are working.',
@@ -94,6 +121,7 @@ final class PushController
                 501
             );
         }
+        $this->limitTestSends($req);
         $stored = is_string($req->user['settings_json'] ?? null)
             ? json_decode((string) $req->user['settings_json'], true)
             : null;

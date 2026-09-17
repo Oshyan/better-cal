@@ -12,6 +12,8 @@ final class Auth
 {
     public const COOKIE = 'bc_session';
     public const TTL_DAYS = 180;
+    /** A valid bcrypt hash of nothing in particular, verified against when the account does not exist. */
+    public const DUMMY_HASH = '$2y$10$usesomesillystringfore7hnbRJHxXVLeakoG8K30oukPsA.ztMG';
 
     public function __construct(private readonly Db $db, private readonly array $cfg)
     {
@@ -21,7 +23,13 @@ final class Auth
     public function login(string $email, string $password): ?array
     {
         $user = $this->db->one('SELECT * FROM users WHERE email = ?', [trim($email)]);
-        if ($user === null || !password_verify($password, (string) $user['password_hash'])) {
+        if ($user === null) {
+            // Spend the same time as a real check, so "no such account" and
+            // "wrong password" cannot be told apart by how fast the answer comes.
+            password_verify($password, self::DUMMY_HASH);
+            return null;
+        }
+        if (!password_verify($password, (string) $user['password_hash'])) {
             return null;
         }
         if (password_needs_rehash((string) $user['password_hash'], PASSWORD_DEFAULT)) {

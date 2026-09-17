@@ -61,6 +61,8 @@ const mock = createServer((req, res) => {
       });
     } else if (req.method === 'GET' && path === '/api/v1/events') {
       respond(200, { events: [{ instanceId: '42:20260801T190000Z', eventId: 42, title: 'Dinner' }] });
+    } else if (req.method === 'PATCH' && path.startsWith('/api/v1/events/')) {
+      respond(200, { eventId: 42, title: entry.body.title ?? 'Dinner' });
     } else if (req.method === 'DELETE' && path.startsWith('/api/v1/events/')) {
       respond(200, { ok: true });
     } else {
@@ -191,6 +193,40 @@ async function main() {
   checkEq('list_events auth header', `Bearer ${FAKE_TOKEN}`, listSeen.headers.authorization);
   const listedPayload = JSON.parse(listed.result?.content?.[0]?.text ?? 'null');
   checkEq('list_events maps events array', 1, listedPayload?.events?.length);
+
+  // ---- update_event: declared keys only, numeric path ----------------------
+  received.length = 0;
+  const updated = await rpc('tools/call', { name: 'update_event', arguments: { id: 42, title: 'Renamed', scope: 'all' } });
+  check('update_event not isError', updated.result?.isError !== true && updated.error === undefined);
+  checkEq('update_event path', '/api/v1/events/42', received[0]?.url);
+  checkEq('update_event body excludes id', { title: 'Renamed', scope: 'all' }, received[0]?.body);
+
+  // ---- BC-03: an event tool must not reach any other route -----------------
+  // The id is a path segment and fetch() resolves "../", so a string id would
+  // let an event-only delegation PATCH /settings or DELETE a calendar with the
+  // PAT attached. Every one of these must be refused before any request leaves.
+  received.length = 0;
+  for (const [label, name, args] of [
+    ['traversal id on update', 'update_event', { id: '../settings', title: 'x' }],
+    ['traversal id on delete', 'delete_event', { id: '../calendars/17' }],
+    ['traversal id on attendance', 'set_attendance', { id: '42/../../settings', attendance: 'going' }],
+    ['numeric-string id', 'delete_event', { id: '42' }],
+    ['zero id', 'delete_event', { id: 0 }],
+    ['negative id', 'delete_event', { id: -1 }],
+    ['fractional id', 'delete_event', { id: 1.5 }],
+    ['unsafe-integer id', 'delete_event', { id: 2 ** 53 }],
+    ['undeclared key on update', 'update_event', { id: 42, settings: { theme: 'dark' } }],
+    ['undeclared key on create', 'create_event', { calendarId: 1, title: 't', start: 's', end: 'e', userId: 2 }],
+    ['wrong type', 'update_event', { id: 42, allDay: 'yes' }],
+    ['enum violation', 'set_attendance', { id: 42, attendance: 'owner' }],
+    ['missing required', 'create_event', { title: 't' }],
+    ['non-integer array item', 'list_events', { start: 's', end: 'e', calendars: [1, '2,3&x=1'] }],
+    ['arguments not an object', 'undo', ['x']],
+  ]) {
+    const res = await rpc('tools/call', { name, arguments: args });
+    checkEq(`${label}: rejected as invalid params`, -32602, res.error?.code);
+  }
+  checkEq('invalid arguments never reach the API', 0, received.length);
 
   // ---- API error maps to isError tool result ------------------------------
   const errored = await rpc('tools/call', { name: 'undo', arguments: {} });

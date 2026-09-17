@@ -8,7 +8,7 @@ import { api, refreshWindow, undo, loadCalendars, loadPeople } from './api.js';
 import { adoptSettings } from './settings.js';
 import { discardEditorWithUndo, clearQuickAddText } from './drafts.js';
 import { localTz, todayKey, addDaysKey, occDayKey, epochDayOfKey, startMs, pad, parseISO, toISOWithOffset, addDaysDate } from '../lib/dates.js';
-import { occurrenceDaySpan } from '../ui/monthmath.js';
+import { occurrenceDaySpan, shiftOccurrenceDays } from '../ui/monthmath.js';
 import { extendTripSpan } from '../ui/trips.js';
 
 export const VIEWS = ['month', 'weeks3', 'weeks2', 'week', 'day', 'agenda'];
@@ -650,8 +650,8 @@ export async function moveAvailabilitySpan(spanId, deltaDays) {
 // members inside its loaded window, so it must not do the loop itself).
 export async function moveTrip(occ, deltaDays, withMembers) {
   if (!deltaDays) return;
-  const newStart = toISOWithOffset(addDaysDate(parseISO(occ.start), deltaDays));
-  const newEnd = toISOWithOffset(addDaysDate(parseISO(occ.end), deltaDays));
+  // Trips are usually all-day, where a move is date arithmetic, never a Date.
+  const { newStart, newEnd } = shiftOccurrenceDays(occ, deltaDays);
   try {
     const body = { start: newStart, end: newEnd };
     if (withMembers) body.moveMembers = true;

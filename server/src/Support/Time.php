@@ -44,6 +44,55 @@ final class Time
         return self::zone($tzid)->getName();
     }
 
+    /**
+     * An all-day boundary as the UTC instant of midnight, in the event's zone,
+     * of the calendar date WRITTEN in the string.
+     *
+     * An all-day event is a date, not an instant, so the date portion is read
+     * literally and any time or offset after it is ignored. Converting the
+     * instant into the event's zone first (the old behaviour) moved the event
+     * a day whenever the sender's offset and the event's zone disagreed:
+     * "2026-06-02T00:00:00+01:00" from a browser in Lisbon is June 1 in Los
+     * Angeles, and the server's own serialization ("…T00:00:00+00:00") echoed
+     * back by an API client was the previous day anywhere west of UTC.
+     *
+     * This is the write-side twin of the serializer, which already emits the
+     * literal date, so a read followed by a write is now the identity in every
+     * zone.
+     *
+     * Three shapes arrive:
+     *   "2026-06-02"                  a date: what current clients send.
+     *   "2026-06-02T00:00:00+01:00"   midnight somewhere: the date is literal,
+     *                                 whatever the offset (a browser's local
+     *                                 midnight, or our own +00:00 echoed back).
+     *   "2026-06-02T19:00:00-07:00"   a time of day (a timed event being made
+     *                                 all-day): the sender's own date, June 2.
+     *
+     * One legacy exception to the last: clients from before this fix moved
+     * all-day events by pushing our "+00:00 midnight" through a local Date,
+     * producing e.g. "2026-06-01T17:00:00-07:00" to mean June 2. Those always
+     * sit on a UTC midnight (give or take the hour a DST change inside the
+     * shift costs), so an instant within an hour of one is read as that UTC
+     * date. Tabs opened before the deploy keep sending it until they reload;
+     * the branch can go once no such client can exist.
+     */
+    public static function parseAllDay(string $iso, ?string $tzid): \DateTimeImmutable
+    {
+        $iso = trim($iso);
+        if (preg_match('/^(\d{4})-(\d{2})-(\d{2})(?:$|[T ](\d{2}):(\d{2}))/', $iso, $m) !== 1 || !checkdate((int) $m[2], (int) $m[3], (int) $m[1])) {
+            throw new \InvalidArgumentException('invalid all-day date: ' . $iso);
+        }
+        $date = "$m[1]-$m[2]-$m[3]";
+        if (isset($m[4]) && ($m[4] !== '00' || $m[5] !== '00')) {
+            $instant = self::parseIso($iso, $tzid);
+            $nearestUtcMidnight = $instant->add(new \DateInterval('PT12H'))->setTime(0, 0);
+            if (abs($instant->getTimestamp() - $nearestUtcMidnight->getTimestamp()) <= 3600) {
+                $date = $nearestUtcMidnight->format('Y-m-d');
+            }
+        }
+        return (new \DateTimeImmutable($date . ' 00:00:00', self::zone($tzid)))->setTimezone(self::utc());
+    }
+
     /** Parse an ISO8601 string (with or without offset) into a UTC instant. */
     public static function parseIso(string $iso, ?string $assumeTzid = null): \DateTimeImmutable
     {

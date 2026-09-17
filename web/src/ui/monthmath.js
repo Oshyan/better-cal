@@ -167,12 +167,32 @@ export function miniMonthGrid(year, month) {
 // Day-cell drop resolution: move the occurrence so its first grid day becomes
 // targetKey, preserving time-of-day and duration (multi-day events keep their
 // length; the drop sets the START day). Mirrors the MonthGrid drag-move math.
+// Move an occurrence by whole days; the ONE place that knows all-day events
+// are dates and timed events are instants.
+//
+// All-day: pure day-key arithmetic, sent as bare dates ("2026-06-03", end
+// exclusive). Their serialized start is "<date>T00:00:00+00:00", and pushing
+// that through a local Date lands on the evening before anywhere west of UTC:
+// from Los Angeles a move to June 3 went out as "2026-06-02T17:00:00-07:00".
+// Timed: local wall-clock math, so the time of day survives a DST change.
+export function shiftOccurrenceDays(occ, deltaDays) {
+  if (occ.allDay) {
+    const { startKey, endKey } = occurrenceDaySpan(occ);
+    return {
+      newStart: keyOfEpochDay(epochDayOfKey(startKey) + deltaDays),
+      newEnd: keyOfEpochDay(epochDayOfKey(endKey) + 1 + deltaDays), // exclusive
+    };
+  }
+  return {
+    newStart: toISOWithOffset(addDaysDate(parseISO(occ.start), deltaDays)),
+    newEnd: toISOWithOffset(addDaysDate(parseISO(occ.end), deltaDays)),
+  };
+}
+
 export function dayDropDates(occ, targetKey) {
   const { startKey } = occurrenceDaySpan(occ);
   const delta = epochDayOfKey(targetKey) - epochDayOfKey(startKey);
-  const s = addDaysDate(parseISO(occ.start), delta);
-  const e = addDaysDate(parseISO(occ.end), delta);
-  return { newStart: toISOWithOffset(s), newEnd: toISOWithOffset(e), delta };
+  return { ...shiftOccurrenceDays(occ, delta), delta };
 }
 
 // Time-slot drop resolution (week/day views): snap the pointer minute to 15,

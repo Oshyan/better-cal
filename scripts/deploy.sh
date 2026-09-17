@@ -32,9 +32,14 @@ node "${ROOT_DIR}/scripts/gen-preload.mjs"
 if [ "${SKIP_TESTS:-0}" != "1" ]; then
   echo "== pre-flight tests =="
   node --experimental-vm-modules "${ROOT_DIR}/web/tests/static.mjs" 2>/dev/null | tail -1
-  # Fixtures are written in Pacific time (-07:00 offsets, "today" maths); the
-  # suite is only meaningful in that zone, wherever the laptop happens to be.
-  TZ=America/Los_Angeles node "${ROOT_DIR}/web/tests/smoke.mjs" 2>/dev/null | tail -1
+  # The frontend works in the viewer's zone, so the suite runs in several: west
+  # and east of UTC, UTC itself, a half-hour offset, and a southern-hemisphere
+  # DST zone past +12. It used to pass only in Pacific time, which hid all-day
+  # events moving a day for anyone east of their event's zone.
+  for zone in America/Los_Angeles UTC Europe/Berlin Asia/Kolkata Pacific/Auckland; do
+    printf '%-20s ' "${zone}"
+    TZ="${zone}" node "${ROOT_DIR}/web/tests/smoke.mjs" 2>/dev/null | tail -1
+  done
   php "${ROOT_DIR}/server/tests/run.php" | tail -1
 fi
 

@@ -8,6 +8,7 @@ use BetterCal\Http\HttpError;
 use BetterCal\Http\Request;
 use BetterCal\Http\Response;
 use BetterCal\Http\Router;
+use BetterCal\Http\StaticFiles;
 use BetterCal\Infra\Db;
 use BetterCal\Infra\JobQueue;
 use BetterCal\Infra\LlmGateway;
@@ -323,10 +324,7 @@ function bc_handle_static(Request $request): void
             Response::text('Not found', 'text/plain; charset=utf-8', 404)->send();
             return;
         }
-        $noCache = str_ends_with($full, 'sw.js');
-        Response::file($full, bc_mime($full), [
-            'Cache-Control' => $noCache ? 'no-cache' : 'public, max-age=3600',
-        ])->send();
+        bc_send_static($request, $full, bc_mime($full), StaticFiles::cacheControl($relative));
         return;
     }
 
@@ -336,7 +334,24 @@ function bc_handle_static(Request $request): void
         Response::text('Better-Cal backend is running; frontend not deployed yet.', 'text/plain; charset=utf-8', 200)->send();
         return;
     }
-    Response::file($index, 'text/html; charset=utf-8', ['Cache-Control' => 'no-cache'])->send();
+    bc_send_static($request, $index, 'text/html; charset=utf-8', StaticFiles::cacheControl('index.html'));
+}
+
+/**
+ * Send a frontend file with the app's own cache policy (Http\StaticFiles), so
+ * behaviour does not depend on which web server sits in front or how it was
+ * configured. "no-cache" files carry an ETag and answer a matching
+ * If-None-Match with 304, which is what makes revalidating on every load cheap.
+ */
+function bc_send_static(Request $request, string $full, string $mime, string $cacheControl): void
+{
+    $etag = StaticFiles::etag((int) filesize($full), (int) filemtime($full));
+    $headers = ['Cache-Control' => $cacheControl, 'ETag' => $etag];
+    if (StaticFiles::matches($request->header('If-None-Match'), $etag)) {
+        Response::notModified($headers)->send();
+        return;
+    }
+    Response::file($full, $mime, $headers)->send();
 }
 
 function bc_mime(string $path): string

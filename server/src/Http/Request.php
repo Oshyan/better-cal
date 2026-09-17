@@ -34,6 +34,16 @@ final class Request
                 $headers[strtolower(str_replace('_', '-', substr($key, 5)))] = (string) $value;
             }
         }
+        // Apache running PHP as CGI/FPM does not pass Authorization through as
+        // HTTP_AUTHORIZATION; the usual rewrite that restores it lands under a
+        // REDIRECT_ prefix. Without this, API tokens silently stop working on
+        // Apache while cookies keep working, which is a confusing way to fail.
+        if (!isset($headers['authorization'])) {
+            $auth = $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_REDIRECT_HTTP_AUTHORIZATION'] ?? null;
+            if (is_string($auth) && $auth !== '') {
+                $headers['authorization'] = $auth;
+            }
+        }
         if (isset($_SERVER['CONTENT_TYPE'])) {
             $headers['content-type'] = (string) $_SERVER['CONTENT_TYPE'];
         }

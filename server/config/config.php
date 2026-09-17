@@ -60,6 +60,13 @@ function config(): array
             'private' => $env('BETTERCAL_VAPID_PRIVATE'),
             'subject' => $env('BETTERCAL_VAPID_SUBJECT'),
         ],
+        'push' => [
+            // Push endpoints must belong to a known browser push service
+            // (PushSender::DEFAULT_PUSH_HOSTS). List extra hosts here, comma
+            // separated, only if your users' browser hands out endpoints on a
+            // different one; each entry also matches its subdomains.
+            'extra_hosts' => array_values(array_filter(array_map('trim', explode(',', $env('BETTERCAL_PUSH_EXTRA_HOSTS'))), static fn(string $h): bool => $h !== '')),
+        ],
         'smtp' => [
             // Optional SMTP relay for reminder emails; host + from are the
             // minimum, user/pass only when the relay requires auth. Email

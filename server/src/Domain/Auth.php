@@ -48,6 +48,34 @@ final class Auth
         }
     }
 
+    /**
+     * Change a user's password and end every session that was opened under the
+     * old one, atomically.
+     *
+     * A password reset is what an owner does when they suspect someone else is
+     * in. Sessions last TTL_DAYS and resolve() only checks hash and expiry, so
+     * without this the intruder's cookie keeps working for months after the
+     * reset, and a live session can mint itself a fresh API token.
+     *
+     * API tokens are revoked only on request: they are separately issued
+     * credentials (CalDAV clients, the MCP server) and a routine password
+     * change should not silently break every device. After a compromise, pass
+     * $revokeTokens and re-issue them.
+     *
+     * @return array{sessions:int,tokens:int} how many of each were revoked
+     */
+    public function setPassword(int $userId, string $password, bool $revokeTokens = false): array
+    {
+        return $this->db->tx(function () use ($userId, $password, $revokeTokens): array {
+            $this->db->run('UPDATE users SET password_hash = ? WHERE id = ?', [password_hash($password, PASSWORD_DEFAULT), $userId]);
+            $sessions = $this->db->run('DELETE FROM sessions WHERE user_id = ?', [$userId])->rowCount();
+            $tokens = $revokeTokens
+                ? $this->db->run('DELETE FROM api_tokens WHERE user_id = ?', [$userId])->rowCount()
+                : 0;
+            return ['sessions' => $sessions, 'tokens' => $tokens];
+        });
+    }
+
     /** @return ?array{user:array,csrf:string} */
     public function resolve(?string $token): ?array
     {

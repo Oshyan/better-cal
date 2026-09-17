@@ -6,6 +6,7 @@ namespace BetterCal\Domain;
 
 use BetterCal\Http\HttpError;
 use BetterCal\Infra\Db;
+use BetterCal\Infra\PushSender;
 use BetterCal\Support\Time;
 
 /**
@@ -16,7 +17,8 @@ use BetterCal\Support\Time;
  */
 final class PushSubscriptions
 {
-    public function __construct(private readonly Db $db)
+    /** @param list<string> $extraPushHosts operator-allowed push hosts beyond PushSender::DEFAULT_PUSH_HOSTS */
+    public function __construct(private readonly Db $db, private readonly array $extraPushHosts = [])
     {
     }
 
@@ -28,13 +30,22 @@ final class PushSubscriptions
     /**
      * Validate a PushSubscription JSON payload {endpoint, keys:{p256dh, auth}}.
      *
+     * The endpoint is a URL this server will later POST to, so it must belong
+     * to a known push service (PushSender::endpointProblem), not merely be
+     * https.
+     *
+     * @param list<string> $extraPushHosts
      * @return array{endpoint:string, p256dh:string, auth:string}
      */
-    public static function validate(array $in): array
+    public static function validate(array $in, array $extraPushHosts = []): array
     {
         $endpoint = trim((string) ($in['endpoint'] ?? ''));
-        if ($endpoint === '' || !str_starts_with($endpoint, 'https://') || strlen($endpoint) > 2000) {
+        if ($endpoint === '' || strlen($endpoint) > 2000) {
             throw HttpError::badRequest('endpoint must be an https push endpoint URL', 'invalid_subscription');
+        }
+        $problem = PushSender::endpointProblem($endpoint, $extraPushHosts);
+        if ($problem !== null) {
+            throw HttpError::badRequest($problem, 'invalid_subscription');
         }
         $keys = $in['keys'] ?? null;
         if (!is_array($keys)) {
@@ -53,7 +64,7 @@ final class PushSubscriptions
     /** Upsert by endpoint hash; re-subscribing clears any failing state. */
     public function subscribe(int $userId, array $in): void
     {
-        $sub = self::validate($in);
+        $sub = self::validate($in, $this->extraPushHosts);
         $this->db->run(
             'INSERT INTO push_subscriptions (user_id, endpoint, endpoint_hash, p256dh, auth, last_used_at)
              VALUES (?, ?, ?, ?, ?, NULL) AS new_row

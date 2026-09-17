@@ -37,6 +37,12 @@ final class Response
         return new self($status, ['Content-Type' => $contentType] + $headers, $body);
     }
 
+    /** 304: the validators and cache policy again, no body and no Content-Type. */
+    public static function notModified(array $headers = []): self
+    {
+        return new self(304, $headers);
+    }
+
     public static function file(string $path, string $mime, array $headers = []): self
     {
         return new self(200, ['Content-Type' => $mime] + $headers, '', $path);

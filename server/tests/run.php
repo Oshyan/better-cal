@@ -1783,6 +1783,28 @@ checkEq('rem fire allday minutes before midnight', '2026-08-07 01:00:00',
     Time::toDb(Reminders::fireAt(['minutes' => 360], $allDayLa, true, 'America/Los_Angeles')));
 checkEq('rem fire garbage entry null', null, Reminders::fireAt(['bogus' => true], $startUtc, false, 'UTC'));
 
+// With a Home zone, all-day reminder TIMES are on the owner's clock while the
+// DATE still comes from the event. The case that mattered: an all-day event
+// imported as UTC (Aug 7 = 2026-08-07 00:00Z) used to remind "the day before
+// at 18:00" at 18:00 UTC, which is 11 AM for an owner in California.
+$allDayUtc = Time::fromDb('2026-08-07 00:00:00');
+checkEq('rem fire allday UTC event, no home zone: event clock (old behaviour kept)', '2026-08-06 18:00:00',
+    Time::toDb(Reminders::fireAt(['daysBefore' => 1, 'time' => '18:00'], $allDayUtc, true, 'UTC')));
+checkEq('rem fire allday UTC event, LA home: 18:00 in LA the day before', '2026-08-07 01:00:00',
+    Time::toDb(Reminders::fireAt(['daysBefore' => 1, 'time' => '18:00'], $allDayUtc, true, 'UTC', 'America/Los_Angeles')));
+checkEq('rem fire allday UTC event, LA home: same day 09:00 in LA', '2026-08-07 16:00:00',
+    Time::toDb(Reminders::fireAt(['daysBefore' => 0, 'time' => '09:00'], $allDayUtc, true, 'UTC', 'America/Los_Angeles')));
+checkEq('rem fire allday UTC event, LA home: {minutes} counts back from LA midnight', '2026-08-07 01:00:00',
+    Time::toDb(Reminders::fireAt(['minutes' => 360], $allDayUtc, true, 'UTC', 'America/Los_Angeles')));
+checkEq('rem fire allday LA event, LA home: unchanged', '2026-08-07 01:00:00',
+    Time::toDb(Reminders::fireAt(['daysBefore' => 1, 'time' => '18:00'], $allDayLa, true, 'America/Los_Angeles', 'America/Los_Angeles')));
+checkEq('rem fire allday Tokyo event, LA home: Aug 7 is still the date, the clock is LA', '2026-08-07 01:00:00',
+    Time::toDb(Reminders::fireAt(['daysBefore' => 1, 'time' => '18:00'], Time::fromDb('2026-08-06 15:00:00'), true, 'Asia/Tokyo', 'America/Los_Angeles')));
+checkEq('rem fire timed event ignores the home zone', '2026-07-31 02:50:00',
+    Time::toDb(Reminders::fireAt(['minutes' => 10], Time::fromDb('2026-07-31 03:00:00'), false, 'UTC', 'America/Los_Angeles')));
+checkEq('rem fire allday, empty home zone falls back to the event clock', '2026-08-06 18:00:00',
+    Time::toDb(Reminders::fireAt(['daysBefore' => 1, 'time' => '18:00'], $allDayUtc, true, 'UTC', '')));
+
 // Dedup key format: eventId:occurrenceStartUtc:offsetMinutes.
 checkEq('rem instance key format', '42:20260807T190000Z:10', Reminders::instanceKey(42, $startUtc, 10));
 
@@ -2558,6 +2580,96 @@ require __DIR__ . '/plugins.php';
     check('health: recovery after a real streak is journaled', str_starts_with($entries()[1] ?? '', 'Feed: Hangs recovered after 3 failures'));
     $health->recordFailure('feed:10', 'feed', 1, 'Feed: New', 'timeout');
     checkEq('health: a brand-new subject failing once is not journaled', 2, count($entries()));
+}
+
+// --- Web-server neutrality ------------------------------------------------------
+// Cache policy belongs to the app, not to one nginx vhost: whichever server is
+// in front, and however it is configured, the browser gets the same answer.
+{
+    $sf = BetterCal\Http\StaticFiles::class;
+    checkEq('static: the service worker is never cached blind', 'no-cache', $sf::cacheControl('sw.js'));
+    checkEq('static: the document revalidates', 'no-cache', $sf::cacheControl('index.html'));
+    checkEq('static: app modules revalidate', 'no-cache', $sf::cacheControl('src/app/main.js'));
+    checkEq('static: styles revalidate', 'no-cache', $sf::cacheControl('styles/app.css'));
+    checkEq('static: vendor files cache for 30 days, immutable', 'public, max-age=2592000, immutable', $sf::cacheControl('vendor/preact.module.js'));
+    checkEq('static: a leading slash changes nothing', 'public, max-age=2592000, immutable', $sf::cacheControl('/vendor/leaflet/leaflet.js'));
+    checkEq('static: "vendor" elsewhere in the path is not vendor/', 'no-cache', $sf::cacheControl('src/vendor/x.js'));
+    $tag = $sf::etag(1234, 1789000000);
+    check('static: etag is a weak validator', str_starts_with($tag, 'W/"') && str_ends_with($tag, '"'));
+    check('static: etag changes with size', $tag !== $sf::etag(1235, 1789000000));
+    check('static: etag changes with mtime', $tag !== $sf::etag(1234, 1789000001));
+    check('static: If-None-Match with the same tag matches', $sf::matches($tag, $tag));
+    check('static: matches inside a list', $sf::matches('"abc", ' . $tag . ', "def"', $tag));
+    check('static: weak and strong forms compare equal', $sf::matches(substr($tag, 2), $tag));
+    check('static: * matches', $sf::matches('*', $tag));
+    check('static: a different tag does not match', !$sf::matches('W/"1-2"', $tag));
+    check('static: no header, no match', !$sf::matches(null, $tag) && !$sf::matches('', $tag));
+
+    // Apache + PHP-FPM hands Authorization over under a REDIRECT_ prefix (or
+    // not at all); API tokens must not depend on which server is in front.
+    $serverBackup = $_SERVER;
+    $_SERVER = ['REQUEST_METHOD' => 'GET', 'REQUEST_URI' => '/api/v1/me', 'REDIRECT_HTTP_AUTHORIZATION' => 'Bearer bc_x'];
+    checkEq('request: Authorization restored from REDIRECT_HTTP_AUTHORIZATION', 'Bearer bc_x', BetterCal\Http\Request::fromGlobals()->header('Authorization'));
+    $_SERVER = ['REQUEST_METHOD' => 'GET', 'REQUEST_URI' => '/api/v1/me', 'HTTP_AUTHORIZATION' => 'Bearer real', 'REDIRECT_HTTP_AUTHORIZATION' => 'Bearer other'];
+    checkEq('request: a real Authorization header wins', 'Bearer real', BetterCal\Http\Request::fromGlobals()->header('Authorization'));
+    $_SERVER = ['REQUEST_METHOD' => 'GET', 'REQUEST_URI' => '/api/v1/me'];
+    checkEq('request: no Authorization anywhere is null', null, BetterCal\Http\Request::fromGlobals()->header('Authorization'));
+    $_SERVER = $serverBackup;
+}
+
+// --- All-day boundaries are dates, not instants --------------------------------
+// The server used to convert the sent instant into the event's zone and floor
+// it, so the stored date depended on where the BROWSER was: "June 2" edited
+// from UTC+1 onto a Pacific (or UTC) event became June 1, and the server's own
+// "+00:00 midnight" serialization echoed back by an API client lost a day
+// anywhere west of UTC. The date written is the date meant, in every zone.
+{
+    $day = static fn(string $iso, string $tzid): string => Time::parseAllDay($iso, $tzid)->setTimezone(Time::zone($tzid))->format('Y-m-d H:i');
+    foreach (['America/Los_Angeles', 'UTC', 'Europe/Lisbon', 'Asia/Tokyo', 'Pacific/Auckland', 'Asia/Kolkata'] as $eventTz) {
+        foreach ([
+            'bare date' => '2026-06-02',
+            'browser midnight, Pacific' => '2026-06-02T00:00:00-07:00',
+            'browser midnight, UTC+1 (the travelling case)' => '2026-06-02T00:00:00+01:00',
+            'browser midnight, Tokyo' => '2026-06-02T00:00:00+09:00',
+            'browser midnight, Auckland' => '2026-06-02T00:00:00+12:00',
+            'browser midnight, half-hour zone' => '2026-06-02T00:00:00+05:30',
+            'our own serialization echoed back' => '2026-06-02T00:00:00+00:00',
+            'Zulu' => '2026-06-02T00:00:00Z',
+            'no seconds' => '2026-06-02T00:00+01:00',
+            'a time of day (timed event made all-day)' => '2026-06-02T19:00:00-07:00',
+            'a time of day, late evening far east' => '2026-06-02T23:30:00+12:00',
+        ] as $label => $sent) {
+            checkEq("all-day: $label -> June 2 midnight in $eventTz", '2026-06-02 00:00', $day($sent, $eventTz));
+        }
+    }
+    // Legacy clients: "+00:00 midnight" pushed through a local Date. Tabs that
+    // were open across the deploy still send these, and they mean the UTC date.
+    foreach ([
+        'Pacific summer' => '2026-06-01T17:00:00-07:00',
+        'Pacific winter' => '2026-01-01T16:00:00-08:00',
+        'Berlin' => '2026-06-02T02:00:00+02:00',
+        'Tokyo' => '2026-06-02T09:00:00+09:00',
+        'Kolkata' => '2026-06-02T05:30:00+05:30',
+    ] as $label => $sent) {
+        $expected = str_starts_with($sent, '2026-01') ? '2026-01-02 00:00' : '2026-06-02 00:00';
+        checkEq("all-day legacy shift ($label) still lands on the intended date", $expected, $day($sent, 'UTC'));
+        checkEq("all-day legacy shift ($label), Pacific-zoned event", $expected, $day($sent, 'America/Los_Angeles'));
+    }
+    // A shift that crossed a DST change is an hour off the UTC midnight it means.
+    checkEq('all-day legacy shift across spring-forward (23:00Z)', '2026-03-10 00:00', $day('2026-03-09T16:00:00-07:00', 'UTC'));
+    checkEq('all-day legacy shift across fall-back (01:00Z)', '2026-11-03 00:00', $day('2026-11-02T17:00:00-08:00', 'UTC'));
+    // Stored instant is midnight in the EVENT's zone.
+    checkEq('all-day: Pacific event stored at 07:00Z in summer', '2026-06-02 07:00:00', Time::toDb(Time::parseAllDay('2026-06-02', 'America/Los_Angeles')));
+    checkEq('all-day: Pacific event stored at 08:00Z in winter', '2026-01-02 08:00:00', Time::toDb(Time::parseAllDay('2026-01-02', 'America/Los_Angeles')));
+    checkEq('all-day: UTC event stored at 00:00Z', '2026-06-02 00:00:00', Time::toDb(Time::parseAllDay('2026-06-02T00:00:00+01:00', 'UTC')));
+    foreach (['', 'tomorrow', '2026-13-01', '2026-02-30', '06/02/2026', '2026-06-02x'] as $garbage) {
+        try {
+            Time::parseAllDay($garbage, 'UTC');
+            check("all-day: '$garbage' is rejected", false);
+        } catch (\InvalidArgumentException) {
+            check("all-day: '$garbage' is rejected", true);
+        }
+    }
 }
 
 // --- Password reset ends the sessions opened under the old password (BC-21) ---

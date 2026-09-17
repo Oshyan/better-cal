@@ -11,7 +11,7 @@ import { layoutOverlaps, assignLanes, rangesOverlap } from '../src/ui/layout.js'
 import {
   visibleWeekRange, weekTop, totalHeight, segmentSpan, occurrenceDaySpan,
   monthStartsInRange, dominantMonthOfWeek, isMultiDay,
-  monthsAround, miniMonthGrid, dayDropDates, timeDropDates,
+  monthsAround, miniMonthGrid, dayDropDates, timeDropDates, shiftOccurrenceDays,
   rowSpanSegments, rowIndexOfEpochDay, rowIndexOfDayKey, firstEpochDayOfRow,
   dayKeysOfRow, isWeekendEpochDay, dominantMonthOfRow, dominantMonthOfRows,
 } from '../src/ui/monthmath.js';
@@ -350,6 +350,30 @@ eq('dayDropDates timed', dayDropDates(occTimed, '2026-08-12'),
 const occMulti = { start: localISO(2026, 8, 3, 9, 0), end: localISO(2026, 8, 6, 17, 0), allDay: false };
 eq('dayDropDates multi-day keeps length', dayDropDates(occMulti, '2026-09-01'),
   { newStart: localISO(2026, 9, 1, 9, 0), newEnd: localISO(2026, 9, 4, 17, 0), delta: 29 });
+
+// All-day moves are date arithmetic and go out as bare dates. They used to be
+// pushed through a local Date: from Los Angeles a move to Aug 12 was sent as
+// "2026-08-11T17:00:00-07:00", which the server read as Aug 11. Identical in
+// every zone is the point, so this runs under the deploy's whole zone matrix.
+const occAllDay = { start: '2026-08-03T00:00:00+00:00', end: '2026-08-04T00:00:00+00:00', allDay: true };
+eq('dayDropDates all-day sends bare dates, exclusive end', dayDropDates(occAllDay, '2026-08-12'),
+  { newStart: '2026-08-12', newEnd: '2026-08-13', delta: 9 });
+const occAllDayMulti = { start: '2026-08-03T00:00:00+00:00', end: '2026-08-07T00:00:00+00:00', allDay: true };
+eq('shiftOccurrenceDays all-day multi-day keeps its length', shiftOccurrenceDays(occAllDayMulti, -5),
+  { newStart: '2026-07-29', newEnd: '2026-08-02' });
+eq('shiftOccurrenceDays all-day across a DST change (US, Nov 1)', shiftOccurrenceDays(
+  { start: '2026-10-30T00:00:00+00:00', end: '2026-10-31T00:00:00+00:00', allDay: true }, 3),
+  { newStart: '2026-11-02', newEnd: '2026-11-03' });
+eq('shiftOccurrenceDays all-day across a year boundary', shiftOccurrenceDays(
+  { start: '2026-12-31T00:00:00+00:00', end: '2027-01-01T00:00:00+00:00', allDay: true }, 1),
+  { newStart: '2027-01-01', newEnd: '2027-01-02' });
+eq('shiftOccurrenceDays timed keeps the local time of day', shiftOccurrenceDays(occTimed, 9),
+  { newStart: localISO(2026, 8, 12, 14, 30), newEnd: localISO(2026, 8, 12, 16, 0) });
+// What is sent must read back as the same day: the bare date, parsed the way
+// occurrenceDaySpan parses a server all-day string, is the target day.
+eq('all-day bare date round-trips through occurrenceDaySpan',
+  occurrenceDaySpan({ allDay: true, start: '2026-08-12', end: '2026-08-13' }),
+  { startKey: '2026-08-12', endKey: '2026-08-12' });
 
 // timeDropDates snaps the pointer minute to 15 and keeps the duration.
 eq('timeDropDates snaps to 15', timeDropDates(occTimed, '2026-08-12', 611), // 10:11 -> 10:15
@@ -1000,7 +1024,11 @@ assert('spans beyond the slack do not abut', !spansOverlapOrAbut('2026-06-01', '
 
 // Candidate trips for an event: overlapping/abutting containers only,
 // deduped by eventId; the event itself and far-away trips never qualify.
-const flightOut = { eventId: 2, allDay: false, start: '2026-05-31T08:00:00-07:00', end: '2026-05-31T11:00:00-07:00' };
+// Timed fixtures from here on are LOCAL wall-clock times (localISO), like the
+// occurrences the app itself handles: the code under test works in the
+// viewer's zone, so a fixture with a fixed "-07:00" is only the day and hour
+// it claims to be in Pacific time, and these sections failed everywhere else.
+const flightOut = { eventId: 2, allDay: false, start: localISO(2026, 5, 31, 8, 0), end: localISO(2026, 5, 31, 11, 0) };
 const farTrip = {
   eventId: 3, instanceId: 't3', isContainer: true, allDay: true,
   start: '2026-07-01T00:00:00+00:00', end: '2026-07-05T00:00:00+00:00',
@@ -1011,9 +1039,9 @@ eq('candidateTrips abutting flight finds the trip once',
 
 // attachableInSpan: overlapping non-containers only; outside, hidden and
 // container occurrences drop out.
-const inside = { eventId: 4, allDay: false, start: '2026-06-03T09:00:00-07:00', end: '2026-06-03T10:00:00-07:00' };
-const outside = { eventId: 5, allDay: false, start: '2026-06-20T09:00:00-07:00', end: '2026-06-20T10:00:00-07:00' };
-const hiddenOcc = { eventId: 6, attendance: 'hidden', allDay: false, start: '2026-06-04T09:00:00-07:00', end: '2026-06-04T10:00:00-07:00' };
+const inside = { eventId: 4, allDay: false, start: localISO(2026, 6, 3, 9, 0), end: localISO(2026, 6, 3, 10, 0) };
+const outside = { eventId: 5, allDay: false, start: localISO(2026, 6, 20, 9, 0), end: localISO(2026, 6, 20, 10, 0) };
+const hiddenOcc = { eventId: 6, attendance: 'hidden', allDay: false, start: localISO(2026, 6, 4, 9, 0), end: localISO(2026, 6, 4, 10, 0) };
 eq('attachableInSpan filters to overlapping non-containers',
   attachableInSpan(trip, [inside, outside, hiddenOcc, farTrip, trip]).map((o) => o.eventId),
   [4]);
@@ -1021,7 +1049,7 @@ eq('attachableInSpan filters to overlapping non-containers',
 // Span extension: a member inside the span changes nothing.
 eq('extendTripSpan no-op inside the span', extendTripSpan(trip, inside), null);
 // A member after the end grows the exclusive all-day end to cover it.
-const lateEvent = { eventId: 7, allDay: false, start: '2026-06-14T09:00:00-07:00', end: '2026-06-14T10:00:00-07:00' };
+const lateEvent = { eventId: 7, allDay: false, start: localISO(2026, 6, 14, 9, 0), end: localISO(2026, 6, 14, 10, 0) };
 const grown = extendTripSpan(trip, lateEvent);
 assert('extendTripSpan keeps the start', grown.start.slice(0, 10) === '2026-06-01');
 assert('extendTripSpan exclusive end covers the late member', grown.end.slice(0, 10) === '2026-06-15');
@@ -1031,7 +1059,7 @@ eq('extendTripSpan earlier start', extendTripSpan(trip, earlyEvent).start.slice(
 // Timed trips keep their times of day on the new boundary days.
 const timedTrip = {
   eventId: 10, isContainer: true, allDay: false,
-  start: '2026-06-01T10:00:00-07:00', end: '2026-06-02T18:00:00-07:00',
+  start: localISO(2026, 6, 1, 10, 0), end: localISO(2026, 6, 2, 18, 0),
 };
 const timedGrown = extendTripSpan(timedTrip, lateEvent);
 assert('extendTripSpan timed keeps the end time of day',
@@ -1048,11 +1076,11 @@ const railTrip = {
 };
 const railTimed = {
   instanceId: 'rm1', calendarId: 'c2', title: 'Offsite',
-  allDay: false, start: '2026-06-02T09:00:00-07:00', end: '2026-06-03T17:00:00-07:00',
+  allDay: false, start: localISO(2026, 6, 2, 9, 0), end: localISO(2026, 6, 3, 17, 0),
 };
 const railSingle = {
   instanceId: 'rs1', calendarId: 'c1', title: 'Dentist',
-  allDay: false, start: '2026-06-02T11:00:00-07:00', end: '2026-06-02T12:00:00-07:00',
+  allDay: false, start: localISO(2026, 6, 2, 11, 0), end: localISO(2026, 6, 2, 12, 0),
 };
 const railAllDaySingle = {
   instanceId: 'ra1', calendarId: 'c1', title: 'Holiday',
@@ -1086,7 +1114,7 @@ eq('end marker day rows', railGroups[3].rows.map((r) => r.kind + ':' + r.occ.ins
 // last day) and the rail extends down past them to the end pill.
 const endDayMix = buildAgendaGroups([railTrip, {
   instanceId: 'rx1', calendarId: 'c1', title: 'Flight home',
-  allDay: false, start: '2026-06-04T11:00:00-07:00', end: '2026-06-04T12:00:00-07:00',
+  allDay: false, start: localISO(2026, 6, 4, 11, 0), end: localISO(2026, 6, 4, 12, 0),
 }]);
 eq('end day: marker sorts last',
   endDayMix[endDayMix.length - 1].rows.map((r) => r.kind + ':' + r.occ.instanceId),
@@ -1120,9 +1148,9 @@ eq('two-day rail spans row centers',
     instanceId: id, calendarId: 1, title: id, start, end, allDay: false,
   });
   const across = buildAgendaGroups([
-    ev('jul', '2026-07-31T10:00:00-07:00', '2026-07-31T11:00:00-07:00'),
-    ev('aug', '2026-08-01T10:00:00-07:00', '2026-08-01T11:00:00-07:00'),
-    ev('aug2', '2026-08-02T10:00:00-07:00', '2026-08-02T11:00:00-07:00'),
+    ev('jul', localISO(2026, 7, 31, 10, 0), localISO(2026, 7, 31, 11, 0)),
+    ev('aug', localISO(2026, 8, 1, 10, 0), localISO(2026, 8, 1, 11, 0)),
+    ev('aug2', localISO(2026, 8, 2, 10, 0), localISO(2026, 8, 2, 11, 0)),
   ]);
   eq('month start flagged only on the first group of a month',
     across.map((g) => !!g.monthStart), [false, true, false]);
@@ -1290,6 +1318,30 @@ console.log('--- chronological ordering across timezone offsets ---');
   eq('map style: maptiler already dark', mapTilerStyle('streets-v2-dark', true), 'streets-v2-dark');
   eq('map style: maptiler style without a twin stays', mapTilerStyle('topo-v2', true), 'topo-v2');
   eq('map style: maptiler default on light', mapTilerStyle(null, false), 'streets-v2');
+}
+
+// --- Home zone vs device zone -------------------------------------------------
+{
+  const { tzOffsetMinutes, tzOffsetLabel, tzCity, sameClock } = await import('../src/lib/dates.js');
+  const summer = new Date('2026-07-01T12:00:00Z');
+  const winter = new Date('2026-01-15T12:00:00Z');
+  eq('tz offset: LA summer', tzOffsetMinutes('America/Los_Angeles', summer), -420);
+  eq('tz offset: LA winter', tzOffsetMinutes('America/Los_Angeles', winter), -480);
+  eq('tz offset: UTC', tzOffsetMinutes('UTC', summer), 0);
+  eq('tz offset: half-hour zone', tzOffsetMinutes('Asia/Kolkata', summer), 330);
+  eq('tz offset: 45-minute zone', tzOffsetMinutes('Asia/Kathmandu', summer), 345);
+  eq('tz offset: unknown zone is null, not a guess', tzOffsetMinutes('Mars/Olympus_Mons', summer), null);
+  eq('tz label: negative whole hours', tzOffsetLabel('America/Los_Angeles', summer), 'UTC-7');
+  eq('tz label: half hour', tzOffsetLabel('Asia/Kolkata', summer), 'UTC+5:30');
+  eq('tz label: UTC', tzOffsetLabel('UTC', summer), 'UTC');
+  eq('tz city', tzCity('America/Argentina/Buenos_Aires'), 'Buenos Aires');
+  assert('same clock: identical names', sameClock('America/Los_Angeles', 'America/Los_Angeles', summer));
+  assert('same clock: Vancouver keeps Los Angeles time all year (no notice)', sameClock('America/Los_Angeles', 'America/Vancouver', summer));
+  assert('same clock: Lisbon is not Los Angeles', !sameClock('America/Los_Angeles', 'Europe/Lisbon', summer));
+  // Phoenix matches Los Angeles in summer only; agreeing today is not enough.
+  assert('same clock: Phoenix differs from LA once DST ends', !sameClock('America/Los_Angeles', 'America/Phoenix', summer));
+  assert('same clock: nothing stored means nothing to announce', sameClock(null, 'Europe/Lisbon', summer));
+  assert('same clock: an unknown zone is not announced', sameClock('Mars/Olympus_Mons', 'Europe/Lisbon', summer));
 }
 
 // --- Service worker: the API cache must not outlive the session (BC-04) -------

@@ -12,12 +12,13 @@ A self-hosted calendar built to fully replace Google Calendar: everything GCal d
 
 ## Docs
 
+- [Installing](docs/install.md): requirements, steps, and web server setup for Nginx (tested) and Apache (untested)
 - [Architecture](docs/architecture.md)
 - [API contract](docs/api-contract.md) and [agent API](docs/agent-api.md)
 - [CalDAV](docs/caldav.md)
 - [Email ingest](docs/email-ingest.md)
 - [Migration from Google Calendar](docs/migration.md)
-- [Deployment notes](docs/deployment-notes.md)
+- [Deployment notes](docs/deployment-notes.md): facts about the one production install (cal.oshyan.com), not general guidance
 - [Roadmap](docs/roadmap.md)
 
 ## Configuration
@@ -27,5 +28,5 @@ Copy [`.env.example`](.env.example) to `.env` in the app root and fill it in. It
 ## Development
 
 - Deploy: `./scripts/deploy.sh` (rsync, composer, migrations, smoke check).
-- Tests: `php server/tests/run.php` (server, pure PHP), `TZ=America/Los_Angeles node web/tests/smoke.mjs` (frontend logic; fixtures are written in Pacific time), `node --experimental-vm-modules web/tests/static.mjs` (module graph), `node tools/mcp/test.mjs` (MCP server).
+- Tests: `php server/tests/run.php` (server, pure PHP), `node web/tests/smoke.mjs` (frontend logic; passes in any time zone, and the deploy scripts run it under five), `node --experimental-vm-modules web/tests/static.mjs` (module graph), `node tools/mcp/test.mjs` (MCP server).
 - Chrome extension (redirects Google Calendar add-links): `extension/`.

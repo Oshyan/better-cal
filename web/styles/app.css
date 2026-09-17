@@ -1507,6 +1507,7 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-toast-undo {
   background: none; border: none; color: inherit;
   font-weight: 700; text-decoration: underline; padding: 2px 4px;
+  white-space: nowrap; flex: none; /* the message wraps, the choices do not */
 }
 
 /* --- login, pages --------------------------------------------------------------------- */
@@ -1629,7 +1630,9 @@ body.bc-dragging * { cursor: grabbing !important; }
 }
 .bc-set-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 8px 0; }
 .bc-set-label { width: 170px; flex: none; font-weight: 600; }
-.bc-set-control { display: inline-flex; align-items: center; gap: 10px; flex-wrap: wrap; min-width: 0; }
+/* Takes the width left beside the label and wraps INSIDE it, so a long control
+   (a select plus a note plus a button) never drops below its own label. */
+.bc-set-control { display: flex; flex: 1 1 0; min-width: 0; align-items: center; gap: 10px; flex-wrap: wrap; }
 .bc-set-value { color: var(--fg); }
 .bc-set-value code { font-family: var(--mono); background: var(--bg-inset); border-radius: 4px; padding: 0 4px; }
 .bc-set-away { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--fg-muted); }

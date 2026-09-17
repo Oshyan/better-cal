@@ -1,6 +1,8 @@
 .credentials
 .env
 .env.*
+!.env.example
+.mcp.json
 node_modules/
 vendor/
 .DS_Store

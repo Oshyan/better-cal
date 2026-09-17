@@ -58,6 +58,65 @@ function pick(obj, keys) {
   return out;
 }
 
+// An id becomes a URL path segment, and fetch() normalizes dot segments while
+// the PAT rides along: "../settings" as an event id would turn an event tool
+// into a settings tool. argErrors() already refuses anything but a positive
+// safe integer; this re-checks at the point of use so a future tool that
+// forgets the schema constraint still cannot build a path out of a string.
+function idSegment(id) {
+  if (!Number.isSafeInteger(id) || id < 1) throw new Error('id must be a positive integer');
+  return encodeURIComponent(String(id));
+}
+
+// ---------------------------------------------------------------------------
+// Argument validation
+// ---------------------------------------------------------------------------
+
+// Validates tools/call arguments against the tool's own inputSchema, for the
+// JSON Schema subset the tools below actually use (object / string / integer /
+// boolean / array-of, enum, minimum, required). Undeclared keys are refused
+// rather than dropped: a caller sending a field the tool does not model is
+// either confused or probing, and both deserve an error, not a silent forward.
+// Returns a list of problems; empty means valid.
+function valueErrors(name, value, schema) {
+  switch (schema.type) {
+    case 'string':
+      if (typeof value !== 'string') return [`${name} must be a string`];
+      break;
+    case 'boolean':
+      if (typeof value !== 'boolean') return [`${name} must be a boolean`];
+      break;
+    case 'integer':
+      if (!Number.isSafeInteger(value)) return [`${name} must be an integer`];
+      if (schema.minimum !== undefined && value < schema.minimum) return [`${name} must be >= ${schema.minimum}`];
+      break;
+    case 'array':
+      if (!Array.isArray(value)) return [`${name} must be an array`];
+      return value.flatMap((v, i) => valueErrors(`${name}[${i}]`, v, schema.items ?? {}));
+    default:
+      break;
+  }
+  if (schema.enum && !schema.enum.includes(value)) return [`${name} must be one of: ${schema.enum.join(', ')}`];
+  return [];
+}
+
+function argErrors(args, schema) {
+  if (args === null || typeof args !== 'object' || Array.isArray(args)) return ['arguments must be an object'];
+  const props = schema.properties ?? {};
+  const errs = [];
+  for (const key of schema.required ?? []) {
+    if (args[key] === undefined) errs.push(`${key} is required`);
+  }
+  for (const [key, value] of Object.entries(args)) {
+    if (!Object.hasOwn(props, key)) {
+      errs.push(`${key} is not a parameter of this tool`);
+    } else if (value !== undefined) {
+      errs.push(...valueErrors(key, value, props[key]));
+    }
+  }
+  return errs;
+}
+
 // ---------------------------------------------------------------------------
 // Tools
 // ---------------------------------------------------------------------------
@@ -72,6 +131,10 @@ const INSTANCE_START = {
   type: 'string',
   description: `Occurrence start (${ISO}) identifying which instance, for scope "this"/"following". Use the occurrence's "start" field from list_events.`,
 };
+// minimum: 1 matters beyond tidiness: the id is interpolated into the request
+// path (see idSegment).
+const EVENT_ID ={ type: 'integer', minimum: 1, description: 'Numeric eventId (from an occurrence, not the instanceId)' };
+const EVENT_PATCH_KEYS = ['title', 'start', 'end', 'allDay', 'location', 'description', 'rrule', 'calendarId', 'tzid', 'url', 'scope', 'instanceStart'];
 
 const TOOLS = [
   {
@@ -163,7 +226,7 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        id: { type: 'integer', description: 'Numeric eventId (from an occurrence, not the instanceId)' },
+        id: EVENT_ID,
         title: { type: 'string' },
         start: { type: 'string', description: ISO },
         end: { type: 'string', description: ISO },
@@ -179,10 +242,7 @@ const TOOLS = [
       },
       required: ['id'],
     },
-    handler: (a) => {
-      const { id, ...patch } = a;
-      return api('PATCH', `/events/${id}`, { body: patch });
-    },
+    handler: (a) => api('PATCH', `/events/${idSegment(a.id)}`, { body: pick(a, EVENT_PATCH_KEYS) }),
   },
   {
     name: 'delete_event',
@@ -190,13 +250,13 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        id: { type: 'integer' },
+        id: EVENT_ID,
         scope: SCOPE,
         instanceStart: INSTANCE_START,
       },
       required: ['id'],
     },
-    handler: (a) => api('DELETE', `/events/${a.id}`, { body: pick(a, ['scope', 'instanceStart']) }),
+    handler: (a) => api('DELETE', `/events/${idSegment(a.id)}`, { body: pick(a, ['scope', 'instanceStart']) }),
   },
   {
     name: 'set_attendance',
@@ -204,12 +264,12 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        id: { type: 'integer' },
+        id: EVENT_ID,
         attendance: { type: 'string', enum: ['none', 'interested', 'going', 'hidden'] },
       },
       required: ['id', 'attendance'],
     },
-    handler: (a) => api('POST', `/events/${a.id}/attendance`, { body: { attendance: a.attendance } }),
+    handler: (a) => api('POST', `/events/${idSegment(a.id)}/attendance`, { body: { attendance: a.attendance } }),
   },
   {
     name: 'list_calendars',
@@ -267,8 +327,14 @@ async function handleRequest(msg) {
         replyError(id, -32602, `Unknown tool: ${params?.name}`);
         return;
       }
+      const args = params?.arguments ?? {};
+      const problems = argErrors(args, tool.inputSchema);
+      if (problems.length > 0) {
+        replyError(id, -32602, `Invalid arguments for ${tool.name}: ${problems.join('; ')}`);
+        return;
+      }
       try {
-        const result = await tool.handler(params?.arguments ?? {});
+        const result = await tool.handler(args);
         reply(id, { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] });
       } catch (err) {
         reply(id, { content: [{ type: 'text', text: String(err?.message ?? err) }], isError: true });

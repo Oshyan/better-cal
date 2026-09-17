@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "better-cal": {
+      "command": "node",
+      "args": ["/path/to/better-cal/tools/mcp/server.mjs"],
+      "env": {
+        "BETTERCAL_URL": "${BETTERCAL_URL}",
+        "BETTERCAL_TOKEN": "${BETTERCAL_TOKEN}"
+      }
+    }
+  }
+}

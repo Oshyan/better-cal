@@ -19,7 +19,7 @@ import { Icon } from '../ui/icons.js';
 import { isEmptyHtml } from '../lib/richtext.js';
 import {
   parseISO, toInputValue, fromInputValue, toISOWithOffset, addDaysDate, pad, localTz,
-  dateOfDayKey, eventDuration, instantFromWallTime, sameClock, tzCity, tzOffsetLabel, zoneOptions, fmtRange,
+  dateOfDayKey, eventDuration, instantFromWallTime, wallTimeInZone, sameClock, tzCity, tzOffsetLabel, zoneOptions, fmtRange,
 } from '../lib/dates.js';
 import {
   TIMED_CHOICES, ALLDAY_CHOICES, REMINDER_UNITS, fmtOffsetMinutes, fmtReminder,
@@ -116,9 +116,12 @@ function ZoneControl({ form, occ, onPick }) {
       ? html`<select class="bc-zone-select" aria-label="Time zone" value=${tz} onChange=${(e) => onPick(e.target.value)}>
           ${zones.map(([z, label]) => html`<option key=${z} value=${z}>${label}</option>`)}
         </select>`
-      : html`<button type="button" class="bc-link-btn bc-zone-btn" title=${title} onClick=${() => setOpen(true)}>
-          ${tzCity(tz)} time${stored ? ' · stored as ' + tzCity(stored) : ''}
-        </button>`}
+      : html`<button type="button" class="bc-link-btn bc-zone-btn" title=${title} onClick=${() => setOpen(true)}>${tzCity(tz)} time</button>
+          ${stored && html`<button
+            type="button" class="bc-link-btn bc-zone-btn"
+            title=${'This event is stored in ' + tzCity(stored) + ' time (' + tzOffsetLabel(stored) + '). Switch the fields to that clock; the event does not move.'}
+            onClick=${() => { setOpen(true); onPick(stored); }}
+          >edit in ${tzCity(stored)} time</button>`}`}
     ${here && html`<span class="bc-zone-here">= ${here}</span>`}
   </span>`;
 }
@@ -363,6 +366,20 @@ export function EditorDrawer() {
   const occ = editor.occ;
   const upd = (patch) => setForm((f) => ({ ...f, ...patch }));
 
+  // Picking a zone normally keeps the typed clock time ("3 PM", now in New
+  // York). The exception is picking the zone this event is ALREADY stored in
+  // while the fields still show this device's clock: that means "let me edit
+  // it in its own zone", so the moment is kept and the fields switch to that
+  // zone's reading. Otherwise reopening "6:44 PM New York" in London and
+  // re-picking New York would turn 11:44 PM London into 11:44 PM New York.
+  const pickZone = (z) => setForm((f) => {
+    const own = occ && occ.tzid === z && !f.tzTouched && !f.allDay;
+    if (!own) return { ...f, tz: z, tzTouched: true };
+    const [s, en] = formInstants(f);
+    if (isNaN(s) || isNaN(en)) return { ...f, tz: z, tzTouched: true };
+    return { ...f, tz: z, tzTouched: true, start: wallTimeInZone(s, z), end: wallTimeInZone(en, z) };
+  });
+
   // Dirty tracking: any change to the form (or typed NL text) arms a
   // discard-confirm on every close path, including the global Esc (which
   // reads state.editorDirty in closeOverlays).
@@ -553,7 +570,7 @@ export function EditorDrawer() {
       </div>
       <div class="bc-duration-exact" role="status">
         ${duration ? html`<span>${duration.exact} total</span>` : ''}
-        ${!form.allDay && html`<${ZoneControl} form=${form} occ=${occ} onPick=${(z) => upd({ tz: z, tzTouched: true })} />`}
+        ${!form.allDay && html`<${ZoneControl} form=${form} occ=${occ} onPick=${pickZone} />`}
       </div>
 
       <div class="bc-field-row">

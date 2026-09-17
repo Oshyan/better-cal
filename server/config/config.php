@@ -60,6 +60,19 @@ function config(): array
             'private' => $env('BETTERCAL_VAPID_PRIVATE'),
             'subject' => $env('BETTERCAL_VAPID_SUBJECT'),
         ],
+        'auth' => [
+            // Password guessing is limited per source address (Domain\LoginGuard).
+            // By default the app assumes it is NOT behind a proxy and uses the
+            // connecting address; X-Forwarded-For is ignored because anyone can
+            // send it. Only if a reverse proxy or load balancer on ANOTHER
+            // address connects to PHP, list its IPs or CIDR ranges here (comma
+            // separated) so the real client address is read from the header.
+            // A web server on the same machine passing requests to PHP-FPM is
+            // not such a proxy: it already hands PHP the client's address.
+            'trusted_proxies' => array_values(array_filter(array_map('trim', explode(',', $env('BETTERCAL_TRUSTED_PROXIES'))), static fn(string $p): bool => $p !== '')),
+            // Failed password attempts allowed per source per 15 minutes.
+            'max_failures' => max(1, (int) $env('BETTERCAL_LOGIN_MAX_FAILURES', '10')),
+        ],
         'push' => [
             // Push endpoints must belong to a known browser push service
             // (PushSender::DEFAULT_PUSH_HOSTS). List extra hosts here, comma

@@ -48,6 +48,11 @@ final class Response
         return new self(200, ['Content-Type' => $mime] + $headers, '', $path);
     }
 
+    public function withHeader(string $name, string $value): self
+    {
+        return new self($this->status, [$name => $value] + $this->headers, $this->body, $this->filePath, $this->cookies);
+    }
+
     public function withCookie(string $name, string $value, array $options): self
     {
         $cookies = $this->cookies;

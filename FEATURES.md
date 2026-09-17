@@ -137,3 +137,4 @@ Multi-day events show their total duration beside the title on every visible seg
 - Your data is ordinary SQL you can query, back up, and take with you.
 - LLM features are optional, provider-keyed, and degrade gracefully; the deterministic paths always work without them.
 - Single-user by design today, hardened with session auth, CSRF protection, and scoped API tokens.
+- Password guessing is limited per network address across the login form and CalDAV together, without ever locking the account: an attacker cannot lock you out of your own calendar, and addresses you have signed in from keep working while others are being refused. Blocks show up in Activity.

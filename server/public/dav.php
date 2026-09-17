@@ -39,7 +39,9 @@ $server = new \Sabre\DAV\Server([
 ]);
 $server->setBaseUri($baseUri);
 
-$server->addPlugin(new \Sabre\DAV\Auth\Plugin(new AuthBackend($db)));
+// CalDAV sign-in shares the login form's limits on password guessing.
+$loginGuard = new \BetterCal\Domain\LoginGuard(new \BetterCal\Infra\Throttle($db), $cfg['auth']['trusted_proxies'], $cfg['auth']['max_failures'], $db);
+$server->addPlugin(new \Sabre\DAV\Auth\Plugin(new AuthBackend($db, $loginGuard)));
 $server->addPlugin(new \Sabre\CalDAV\Plugin());
 $server->addPlugin(new \Sabre\DAV\Sync\Plugin());
 

@@ -2751,6 +2751,100 @@ require __DIR__ . '/plugins.php';
     }
 }
 
+// --- Sign-in throttle (BC-05/BC-06, issue #20) ----------------------------------
+{
+    $cip = BetterCal\Support\ClientIp::class;
+    // Default: not behind a proxy. The header is attacker-controlled and ignored.
+    checkEq('client ip: the peer address, by default', '203.0.113.7', $cip::resolve(['REMOTE_ADDR' => '203.0.113.7']));
+    checkEq('client ip: X-Forwarded-For is ignored unless the peer is a trusted proxy', '203.0.113.7',
+        $cip::resolve(['REMOTE_ADDR' => '203.0.113.7', 'HTTP_X_FORWARDED_FOR' => '198.51.100.1']));
+    checkEq('client ip: an untrusted peer cannot claim to be someone else even when proxies are configured', '203.0.113.7',
+        $cip::resolve(['REMOTE_ADDR' => '203.0.113.7', 'HTTP_X_FORWARDED_FOR' => '198.51.100.1'], ['10.0.0.0/8']));
+    // Behind a trusted proxy: read from the RIGHT. The left is what the client typed.
+    checkEq('client ip: behind a trusted proxy, the address the proxy saw', '198.51.100.1',
+        $cip::resolve(['REMOTE_ADDR' => '10.0.0.5', 'HTTP_X_FORWARDED_FOR' => '198.51.100.1'], ['10.0.0.0/8']));
+    checkEq('client ip: a spoofed leftmost entry is not believed', '198.51.100.1',
+        $cip::resolve(['REMOTE_ADDR' => '10.0.0.5', 'HTTP_X_FORWARDED_FOR' => '1.2.3.4, 198.51.100.1'], ['10.0.0.0/8']));
+    checkEq('client ip: a chain of trusted proxies is walked through', '198.51.100.1',
+        $cip::resolve(['REMOTE_ADDR' => '10.0.0.5', 'HTTP_X_FORWARDED_FOR' => '6.6.6.6, 198.51.100.1, 10.0.0.9'], ['10.0.0.0/8']));
+    checkEq('client ip: garbage in the chain falls back to the peer', '10.0.0.5',
+        $cip::resolve(['REMOTE_ADDR' => '10.0.0.5', 'HTTP_X_FORWARDED_FOR' => '198.51.100.1, not-an-ip'], ['10.0.0.0/8']));
+    checkEq('client ip: trusted proxy but no header is the proxy itself', '10.0.0.5', $cip::resolve(['REMOTE_ADDR' => '10.0.0.5'], ['10.0.0.5']));
+    checkEq('client ip: ports and brackets are stripped', ['198.51.100.1', '2001:db8::1'], [$cip::normalize('198.51.100.1:443'), $cip::normalize('[2001:DB8::1]:443')]);
+    checkEq('client ip: IPv4-mapped IPv6 is the IPv4 address', '198.51.100.1', $cip::normalize('::ffff:198.51.100.1'));
+    checkEq('client ip: nothing usable is "unknown", never an empty bucket', 'unknown', $cip::resolve([]));
+    check('cidr: inside', $cip::inRange('10.20.30.40', '10.0.0.0/8'));
+    check('cidr: outside', !$cip::inRange('11.0.0.1', '10.0.0.0/8'));
+    check('cidr: a non-octet boundary', $cip::inRange('172.20.1.1', '172.16.0.0/12') && !$cip::inRange('172.32.0.1', '172.16.0.0/12'));
+    check('cidr: a bare address is an exact match', $cip::inRange('10.0.0.5', '10.0.0.5') && !$cip::inRange('10.0.0.6', '10.0.0.5'));
+    check('cidr: IPv6', $cip::inRange('2001:db8:1::9', '2001:db8::/32') && !$cip::inRange('2001:db9::1', '2001:db8::/32'));
+    check('cidr: families never match each other', !$cip::inRange('10.0.0.1', '::/0'));
+    check('cidr: a malformed prefix allows nothing, not everything', !$cip::inRange('10.0.0.1', '10.0.0.0/abc') && !$cip::inRange('10.0.0.1', '10.0.0.0/99') && !$cip::inRange('10.0.0.1', ''));
+    checkEq('bucket: one IPv4 address', '203.0.113.7', $cip::bucket('203.0.113.7'));
+    checkEq('bucket: an IPv6 source is its /64', '2001:db8:1:2::/64', $cip::bucket('2001:db8:1:2:aaaa:bbbb:cccc:dddd'));
+    checkEq('bucket: two hosts in one /64 are one source', $cip::bucket('2001:db8:1:2::1'), $cip::bucket('2001:db8:1:2:ffff::9'));
+
+    $tdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $tdb->run('CREATE TABLE rate_events (id INTEGER PRIMARY KEY, bucket TEXT, created_at TEXT)');
+    $tdb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT)');
+    $tdb->run("INSERT INTO users (id, email) VALUES (1, 'owner@example.com')");
+    $tdb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT)');
+    $throttle = new BetterCal\Infra\Throttle($tdb);
+    $t0 = Time::parseIso('2026-09-17T12:00:00+00:00');
+    $at = static fn(int $sec) => $t0->add(new DateInterval('PT' . $sec . 'S'));
+    foreach ([0, 10, 20] as $s) {
+        $throttle->hit('b', $at($s));
+    }
+    checkEq('throttle: counts inside the window', 3, $throttle->count('b', 60, $at(30)));
+    checkEq('throttle: old events fall out', 1, $throttle->count('b', 60, $at(75)));
+    checkEq('throttle: under the limit, no wait', 0, $throttle->retryAfter('b', 4, 60, $at(30)));
+    checkEq('throttle: at the limit, wait until the oldest counted event leaves', 30, $throttle->retryAfter('b', 3, 60, $at(30)));
+    checkEq('throttle: other buckets are separate', 0, $throttle->count('c', 60, $at(30)));
+    $throttle->clear('b');
+    checkEq('throttle: clear', 0, $throttle->count('b', 60, $at(30)));
+    checkEq('throttle: a missing table never blocks anyone', [0, 0], (static function () {
+        $broken = new BetterCal\Infra\Throttle(new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]));
+        $broken->hit('x');
+        return [$broken->count('x', 60), $broken->retryAfter('x', 1, 60)];
+    })());
+
+    $guard = new BetterCal\Domain\LoginGuard($throttle, [], 3, $tdb);
+    $bad = '203.0.113.7';
+    checkEq('guard: a fresh source may try', 0, $guard->retryAfter($bad, $at(100)));
+    $guard->failed($bad, 'web', $at(100));
+    $guard->failed($bad, 'caldav', $at(110));
+    checkEq('guard: still allowed below the limit', 0, $guard->retryAfter($bad, $at(115)));
+    $guard->failed($bad, 'web', $at(120));
+    check('guard: blocked at the limit, across BOTH doors', $guard->retryAfter($bad, $at(121)) > 0);
+    checkEq('guard: for the rest of the window', 100 + BetterCal\Domain\LoginGuard::WINDOW - 121, $guard->retryAfter($bad, $at(121)));
+    checkEq('guard: another source is unaffected', 0, $guard->retryAfter('198.51.100.9', $at(121)));
+    checkEq('guard: allowed again once the window rolls on', 0, $guard->retryAfter($bad, $at(100 + BetterCal\Domain\LoginGuard::WINDOW + 1)));
+    checkEq('guard: the block is journaled once, naming the source', ['Blocked sign-in attempts from 203.0.113.7 after 3 wrong passwords (web)'],
+        array_column($tdb->all("SELECT summary FROM mutations WHERE op = 'refuse'"), 'summary'));
+    // A typo or two, then the right password: clean slate.
+    $home = '192.0.2.10';
+    $guard->failed($home, 'web', $at(200));
+    $guard->failed($home, 'web', $at(205));
+    $guard->recordSuccess($home, $at(210));
+    $guard->failed($home, 'web', $at(215));
+    $guard->failed($home, 'web', $at(216));
+    checkEq('guard: a success wipes that source\'s earlier failures', 0, $guard->retryAfter($home, $at(217)));
+    check('guard: and makes the source known', $guard->isKnown($home, $at(217)) && !$guard->isKnown($bad, $at(217)));
+    $guard->recordSuccess($home, $at(300));
+    $guard->recordSuccess($home, $at(301));
+    checkEq('guard: a syncing CalDAV client does not add a row per request', 1, (int) $tdb->scalar("SELECT COUNT(*) FROM rate_events WHERE bucket = 'auth-ok:ip:192.0.2.10'"));
+    // Distributed guessing: many sources, a couple of tries each, never
+    // reaching the per-source limit. The overall limit closes the door to
+    // strangers, and the owner's usual address still gets in.
+    for ($i = 0; $i < BetterCal\Domain\LoginGuard::GLOBAL_MAX; $i++) {
+        $guard->failed('198.18.' . intdiv($i, 250) . '.' . ($i % 250), 'web', $at(400 + $i));
+    }
+    check('guard: a never-seen source is refused while the attack lasts', $guard->retryAfter('198.19.0.1', $at(500)) > 0);
+    checkEq('guard: the owner\'s known address is not locked out by it', 0, $guard->retryAfter($home, $at(500)));
+    checkEq('guard: strangers are allowed again when it subsides', 0, $guard->retryAfter('198.19.0.1', $at(400 + BetterCal\Domain\LoginGuard::GLOBAL_MAX + BetterCal\Domain\LoginGuard::WINDOW + 1)));
+    checkEq('guard: source comes from the request, IPv6 as its /64', '2001:db8:1:2::/64', $guard->source(['REMOTE_ADDR' => '2001:db8:1:2::77']));
+}
+
 // --- Password reset ends the sessions opened under the old password (BC-21) ---
 // A reset is the owner's response to "someone else may be in". Sessions last
 // 180 days and resolve() checks only hash + expiry, so the intruder's cookie

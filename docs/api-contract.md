@@ -3,7 +3,7 @@
 Base path `/api/v1`. JSON everywhere. Auth: `bc_session` cookie; non-GET requires `X-CSRF` header. Alternative: `Authorization: Bearer bc_...` personal access token (CSRF-exempt; see Tokens). Errors: `{"error":{"code","message"}}`.
 
 ## Auth
-- `POST /auth/login` `{email, password}` → `{ok:true}` + sets cookie. 401 on failure.
+- `POST /auth/login` `{email, password}` → `{ok:true}` + sets cookie. 401 `invalid_credentials` on failure (the same answer, in the same time, whether or not the account exists). 429 `too_many_attempts` with a `Retry-After` header and `error.retryAfter` seconds when this network address has sent too many wrong passwords: by default 10 in 15 minutes (`BETTERCAL_LOGIN_MAX_FAILURES`), counted together with CalDAV Basic-auth failures, which answer 429 the same way. The account is never locked. When failures from all addresses pass 60 in 15 minutes, addresses that have not signed in successfully in the last 30 days are refused until it subsides; known ones are not. A blocked attempt is refused before the password is looked at. The client address is the connecting peer unless `BETTERCAL_TRUSTED_PROXIES` lists it (then the rightmost untrusted `X-Forwarded-For` entry); IPv6 sources count per /64.
 - `POST /auth/logout` → `{ok:true}`.
 - `GET /me` → `{user:{id,email,displayName,settings}, csrf}` or 401. (`csrf` is null under bearer auth.) `settings` is the same merged object returned by `GET /settings` (stored values over defaults).
 
@@ -114,7 +114,7 @@ Server config: VAPID keys in `.env` (`BETTERCAL_VAPID_PUBLIC`, `BETTERCAL_VAPID_
 - `POST /push/subscribe` `{endpoint, keys:{p256dh, auth}}` → `{ok:true}` (upsert by endpoint; re-subscribing clears failure state).
 - `POST /push/unsubscribe` `{endpoint}` → `{ok:true}`.
 - `POST /push/test` → `{ok, sent, failed}`; 400 `push_not_configured` / `no_subscription`.
-- `POST /push/test-email` → `{ok:true, to}` (test reminder email to the account address); 501 `email_not_configured` when SMTP is not set up, 400 `email_send_failed` when the relay rejects the send.
+- `POST /push/test-email` → `{ok:true, to}` (test reminder email to the account address); 501 `email_not_configured` when SMTP is not set up, 400 `email_send_failed` when the relay rejects the send. The two test endpoints share a limit of 5 sends per 10 minutes per account; past it they answer 429 `too_many_requests`.
 - Failure handling: gone endpoints (404/410) mark `failing_since`; subscriptions failing for 3+ days are deleted by the worker.
 
 ## Settings

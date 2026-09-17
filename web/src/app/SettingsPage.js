@@ -292,7 +292,7 @@ function NotificationsSection({ settings, user }) {
         <span class="bc-set-hint">before start</span>
       </span>`}
     <//>
-    <${Row} label="Default reminder (all-day events)" hint="Fires at the chosen time in the event's timezone. Custom accepts up to 4 weeks ahead.">
+    <${Row} label="Default reminder (all-day events)" hint="Fires at the chosen time on your Home time zone's clock, wherever the event was created. Custom accepts up to 4 weeks ahead.">
       <select aria-label="Default reminder day for all-day events"
         value=${allDayCustomActive ? 'custom' : (allDayDays === null ? '' : String(allDayDays))}
         onChange=${(e) => onAllDaySelect(e.target.value)}>

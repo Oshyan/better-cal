@@ -55,6 +55,15 @@ final class ReviewController
                 ] : [],
             ];
         }
+        // An invitation can be waiting for a reply AND have a change held: two
+        // decisions, two items. The reply card says so, because until the change
+        // is decided it shows the time and place as they stand on the calendar.
+        $changing = [];
+        foreach ($items as $held) {
+            if ($held['status'] === 'open' && $held['eventId'] !== null) {
+                $changing[(int) $held['eventId']] = true;
+            }
+        }
         foreach ($this->queue->invitationsAwaitingReply($userId) as $inv) {
             $who = (string) (($inv['organizer']['name'] ?? '') ?: ($inv['organizer']['email'] ?? ''));
             $items[] = [
@@ -62,7 +71,8 @@ final class ReviewController
                 'kind' => 'rsvp',
                 'status' => 'open',
                 'title' => $inv['title'],
-                'summary' => $who !== '' ? "Invitation from $who. You have not replied." : 'You have not replied to this invitation.',
+                'summary' => ($who !== '' ? "Invitation from $who. You have not replied." : 'You have not replied to this invitation.')
+                    . (isset($changing[(int) $inv['eventId']]) ? ' The organizer has since sent a change, listed separately; this shows the details as they stand.' : ''),
                 'createdAt' => $inv['createdAt'],
                 'eventId' => $inv['eventId'],
                 'detail' => $inv,

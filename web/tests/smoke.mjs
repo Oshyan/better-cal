@@ -1344,6 +1344,49 @@ console.log('--- chronological ordering across timezone offsets ---');
   assert('same clock: an unknown zone is not announced', sameClock('Mars/Olympus_Mons', 'Europe/Lisbon', summer));
 }
 
+// --- Per-event time zone: a wall-clock reading in a named zone ------------------
+// The editor takes "3:00 PM" plus a picked zone. These must not depend on the
+// zone the test (or the browser) runs in, which is the whole point.
+{
+  const { instantFromWallTime, wallTimeInZone, zoneOptions, zoneNote } = await import('../src/lib/dates.js');
+  const utc = (d) => d.toISOString().slice(0, 16) + 'Z';
+  eq('zone: 3 PM New York in summer', utc(instantFromWallTime('2026-06-04T15:00', 'America/New_York')), '2026-06-04T19:00Z');
+  eq('zone: 3 PM New York in winter', utc(instantFromWallTime('2026-01-15T15:00', 'America/New_York')), '2026-01-15T20:00Z');
+  eq('zone: half-hour offset', utc(instantFromWallTime('2026-06-04T09:00', 'Asia/Kolkata')), '2026-06-04T03:30Z');
+  eq('zone: east of the date line lands on the previous UTC day', utc(instantFromWallTime('2026-06-04T08:00', 'Pacific/Auckland')), '2026-06-03T20:00Z');
+  eq('zone: UTC is the identity', utc(instantFromWallTime('2026-06-04T15:00', 'UTC')), '2026-06-04T15:00Z');
+  // The offset must be read at the RIGHT instant: the evening of the US
+  // fall-back day is already on winter time, the morning before it is not.
+  eq('zone: evening after fall-back uses the winter offset', utc(instantFromWallTime('2026-11-01T20:00', 'America/Los_Angeles')), '2026-11-02T04:00Z');
+  eq('zone: just before fall-back uses the summer offset', utc(instantFromWallTime('2026-11-01T00:30', 'America/Los_Angeles')), '2026-11-01T07:30Z');
+  eq('zone: a time inside the spring-forward gap moves an hour later', utc(instantFromWallTime('2026-03-08T02:30', 'America/Los_Angeles')), '2026-03-08T10:30Z');
+  assert('zone: an unknown zone is NaN, never a silent guess', isNaN(instantFromWallTime('2026-06-04T15:00', 'Mars/Olympus_Mons')));
+  assert('zone: a malformed value is NaN', isNaN(instantFromWallTime('next tuesday', 'UTC')));
+  eq('zone: wall time in New York', wallTimeInZone(new Date('2026-06-04T19:00:00Z'), 'America/New_York'), '2026-06-04T15:00');
+  eq('zone: wall time crosses the date line', wallTimeInZone(new Date('2026-06-03T20:00:00Z'), 'Pacific/Auckland'), '2026-06-04T08:00');
+  for (const tz of ['America/Los_Angeles', 'Europe/London', 'Asia/Kolkata', 'Pacific/Auckland', 'America/St_Johns']) {
+    eq('zone: wall -> instant -> wall round-trips in ' + tz, wallTimeInZone(instantFromWallTime('2026-08-20T18:45', tz), tz), '2026-08-20T18:45');
+  }
+  const opts = zoneOptions(['Mars/Olympus_Mons']);
+  // India is listed as Asia/Calcutta or Asia/Kolkata depending on the runtime's ICU.
+  assert('zone options: includes UTC and real zones, labelled with an offset',
+    opts.some(([z, l]) => z === 'Asia/Tokyo' && l === 'Asia/Tokyo (UTC+9)')
+    && opts.some(([z, l]) => /^Asia\/(Kolkata|Calcutta)$/.test(z) && l.endsWith('(UTC+5:30)'))
+    && opts.some(([z]) => z === 'UTC'));
+  assert('zone options: a zone the runtime does not list is still offered', opts.some(([z]) => z === 'Mars/Olympus_Mons'));
+  assert('zone options: sorted by zone id', opts.every(([z], i) => i === 0 || opts[i - 1][0].localeCompare(z) <= 0));
+  // The detail view's note: only for a timed event whose zone keeps a different
+  // clock from this device, and never for UTC (what imports write for "unknown").
+  const device = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const far = device === 'Asia/Tokyo' || device === 'Asia/Seoul' ? 'America/New_York' : 'Asia/Tokyo';
+  const timed = { allDay: false, start: '2026-06-04T19:00:00+00:00', end: '2026-06-04T20:00:00+00:00' };
+  assert('zone note: names the city for a far zone', zoneNote({ ...timed, tzid: far }).endsWith(' in ' + far.split('/')[1].replace('_', ' ')));
+  eq('zone note: none for an event in this device\'s zone', zoneNote({ ...timed, tzid: device }), '');
+  eq('zone note: none for UTC (unknown, not a place)', zoneNote({ ...timed, tzid: 'UTC' }), '');
+  eq('zone note: none for all-day events', zoneNote({ ...timed, allDay: true, tzid: far }), '');
+  eq('zone note: none without a zone', zoneNote(timed), '');
+}
+
 // --- Service worker: the API cache must not outlive the session (BC-04) -------
 // Runs the REAL web/sw.js in a sandbox with a fake CacheStorage and network.
 // Before the fix: sign out, go offline, and /api/v1/me still answered 200 from

@@ -11,7 +11,7 @@ import { adoptSettings } from './settings.js';
 import { saveSetting } from './actions.js';
 import { PageShell } from './PageShell.js';
 import { PlaceInput, pickFillText } from './PlaceInput.js';
-import { localTz, sameClock, tzOffsetLabel, tzCity } from '../lib/dates.js';
+import { localTz, sameClock, tzOffsetLabel, tzCity, zoneOptions } from '../lib/dates.js';
 import {
   permissionState, pushSupported, fetchPushStatus, enablePush, disablePush,
   sendTestNotification, sendTestEmail,
@@ -114,15 +114,7 @@ function Row({ label, hint, children }) {
 const TZ_HINT = 'The clock for all-day reminders, and the zone of events created for you by email, plugins and the API. What you see on screen always follows the device you are using.';
 function HomeTimezoneRow({ tz, onChange }) {
   const device = localTz();
-  // Labels are memoized with the list: each offset costs an Intl formatter,
-  // and there are ~420 zones.
-  const zones = useMemo(() => {
-    let all = [];
-    try { all = Intl.supportedValuesOf('timeZone'); } catch { /* older browser: offer what we know */ }
-    const now = new Date();
-    return [...new Set([tz, device, ...all].filter(Boolean))].sort()
-      .map((z) => [z, z.replace(/_/g, ' ') + ' (' + tzOffsetLabel(z, now) + ')']);
-  }, [tz, device]);
+  const zones = useMemo(() => zoneOptions([tz, device]), [tz, device]);
   const away = !sameClock(tz, device);
   return html`<${Row} label="Home time zone" hint=${TZ_HINT}>
     <select value=${tz || device} aria-label="Home time zone" onChange=${(e) => onChange(e.target.value)}>

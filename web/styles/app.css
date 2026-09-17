@@ -684,6 +684,12 @@ button:focus-visible, [tabindex]:focus-visible {
 .bc-date-duration .bc-event-duration { color: var(--fg-muted); }
 .bc-duration-exact { display: block; font-size: 11.5px; color: var(--fg-muted); font-weight: 400; }
 .bc-duration-exact:empty { display: none; }
+/* In the editor the duration line also carries the time zone control. */
+div.bc-duration-exact { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.bc-zone { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.bc-zone-btn { font-size: inherit; padding: 0; }
+.bc-zone-select { font-size: 12px; max-width: 250px; padding: 1px 4px; }
+.bc-zone-here { color: var(--fg); }
 .bc-chip.is-interested { border-style: dashed; }
 .bc-chip-check { flex: none; display: inline-flex; align-items: center; }
 .is-cancelled .bc-chip-title, .bc-pop-title.is-cancelled { text-decoration: line-through; opacity: 0.75; }
@@ -1188,6 +1194,7 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-maplink { font-size: 12px; color: var(--accent); text-decoration: none; white-space: nowrap; }
 .bc-maplink:hover { text-decoration: underline; }
 .bc-detail-recur { color: var(--fg-muted); font-size: 12.5px; }
+.bc-detail-zone { color: var(--fg-muted); font-size: 12.5px; }
 .bc-detail-section { display: flex; flex-direction: column; gap: 3px; }
 .bc-detail-label {
   font-size: 10.5px; font-weight: 700; text-transform: uppercase;

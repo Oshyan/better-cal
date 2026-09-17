@@ -13,7 +13,7 @@ import { trapFocus } from '../ui/DayExpand.js';
 import { ThumbIcon, CalDot, PinIcon, LinkIcon, Icon } from '../ui/icons.js';
 import { DurationSuffix } from '../ui/EventChip.js';
 import {
-  parseISO, dateOfDayKey, fmtRange, fmtDateFull, fmtTime, occDayKey,
+  parseISO, dateOfDayKey, fmtRange, fmtDateFull, fmtTime, occDayKey, zoneNote,
 } from '../lib/dates.js';
 import { fmtReminder } from '../lib/reminders.js';
 import { hasHtml, sanitizeHtml } from '../lib/richtext.js';
@@ -387,6 +387,7 @@ export function EventDetail() {
             ${(cal && cal.name) || 'Calendar'}
           </span>
           <span class="bc-date-duration">${fmtRange(s, e, occ.allDay)} <${DurationSuffix} occ=${occ} expanded /></span>
+          ${zoneNote(occ) && html`<span class="bc-detail-zone" title=${'This event is in ' + occ.tzid.replace(/_/g, ' ') + ' time. The first time shown is on this device\'s clock.'}>${zoneNote(occ)}</span>`}
           ${occ.recurring && html`<span class="bc-detail-recur">${describeRrule(occ.rrule)}</span>`}
           ${occ.reminders && occ.reminders.length > 0 && html`<span
             class="bc-bell" role="img" aria-label="Has reminders"

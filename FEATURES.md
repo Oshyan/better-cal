@@ -50,6 +50,7 @@ Multi-day events show their total duration beside the title on every visible seg
 - Drag-create opens the editor pre-filled; drag and resize existing events to reschedule.
 - Dedicated reschedule mode (press `r` or the clock icon): the event becomes a pointer-following ghost, you scroll or jump anywhere on the calendar (months or years away), and click to drop it. Recurring events move this occurrence only.
 - Full editor: rich text descriptions, location with geocoded place search (biased to your home area), people, tags, per-event reminders, recurrence editor, calendar picker, trip membership.
+- Per-event time zone: enter a time as it reads somewhere else ("3 PM New York" from a laptop in London). The editor shows what that is on your device before you save, the detail view shows both clocks afterwards, and a repeating event keeps its time in its own zone across DST changes. All-day events are dates and stay on the same day in every zone.
 - Dirty-state confirmation so entered details are never silently lost.
 - Event detail view with mini-map, prev/next same-day navigation, and inline action icon bar.
 - Undo toast after destructive actions, backed by the same journal as the activity log.
@@ -118,6 +119,7 @@ Multi-day events show their total duration beside the title on every visible seg
 - Per-event, per-calendar, and global default reminders with a clear precedence chain.
 - Web Push to any installed PWA or browser, email delivery, or both, including a push-with-email-fallback mode for unreachable devices.
 - Timed and all-day reminder defaults are separately configurable (e.g. all-day events remind the evening before).
+- A Home time zone setting: all-day reminders fire on your home clock whatever zone an event was imported or created in, and the app tells you once when the device you are on keeps a different clock.
 - Test buttons for both channels in Settings.
 
 ### Sync, API, and integrations

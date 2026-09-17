@@ -1292,6 +1292,128 @@ console.log('--- chronological ordering across timezone offsets ---');
   eq('map style: maptiler default on light', mapTilerStyle(null, false), 'streets-v2');
 }
 
+// --- Service worker: the API cache must not outlive the session (BC-04) -------
+// Runs the REAL web/sw.js in a sandbox with a fake CacheStorage and network.
+// Before the fix: sign out, go offline, and /api/v1/me still answered 200 from
+// cache with the CSRF token, so the app booted as if signed in.
+{
+  const { readFileSync } = await import('node:fs');
+  const vm = await import('node:vm');
+  const swSource = readFileSync(new URL('../sw.js', import.meta.url), 'utf8');
+
+  const makeWorker = () => {
+    const stores = new Map(); // cache name -> Map(url -> Response)
+    const keyOf = (r) => (typeof r === 'string' ? r : r.url);
+    const caches = {
+      keys: async () => [...stores.keys()],
+      delete: async (name) => stores.delete(name),
+      open: async (name) => {
+        if (!stores.has(name)) stores.set(name, new Map());
+        const m = stores.get(name);
+        return { put: async (req, res) => { m.set(keyOf(req), res); } };
+      },
+      match: async (req) => {
+        for (const m of stores.values()) if (m.has(keyOf(req))) return m.get(keyOf(req)).clone();
+        return undefined;
+      },
+    };
+    const handlers = {};
+    const net = { respond: null }; // set per test: (url) => Response | Promise<Response>, or throws for offline
+    const sandbox = {
+      self: { addEventListener: (type, fn) => { handlers[type] = fn; }, skipWaiting: async () => {}, clients: { claim: async () => {}, matchAll: async () => [] }, registration: {}, location: { origin: 'https://cal.example.com' } },
+      caches,
+      clients: { matchAll: async () => [], openWindow: async () => {} },
+      location: { origin: 'https://cal.example.com' },
+      fetch: async (req) => net.respond(keyOf(req)),
+      Response, Request, URL, Promise, JSON, setTimeout, clearTimeout,
+    };
+    vm.runInNewContext(swSource, sandbox);
+    const get = (path) => new Promise((resolve) => {
+      const request = new Request('https://cal.example.com' + path);
+      handlers.fetch({ request, respondWith: (p) => resolve(p) });
+    });
+    const message = async (data) => {
+      let done = Promise.resolve();
+      handlers.message({ data, waitUntil: (p) => { done = p; } });
+      await done;
+    };
+    const settle = () => new Promise((r) => setTimeout(r, 5)); // let the un-awaited cache write land
+    return { stores, net, get, message, settle };
+  };
+  const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+  const offline = () => { throw new TypeError('Failed to fetch'); };
+  const apiCached = (w) => [...w.stores.entries()].filter(([k]) => k.endsWith('-api')).reduce((n, [, m]) => n + m.size, 0);
+
+  // Baseline: the offline calendar still works while signed in.
+  {
+    const w = makeWorker();
+    w.net.respond = () => json({ user: { email: 'owner@example.com' }, csrf: 'SECRET-CSRF' });
+    await w.get('/api/v1/me');
+    await w.settle();
+    eq('sw: a signed-in API response is cached', apiCached(w), 1);
+    w.net.respond = offline;
+    const res = await w.get('/api/v1/me');
+    eq('sw: signed in and offline, the cache still answers (offline calendar kept)', res.status, 200);
+  }
+
+  // The finding itself.
+  {
+    const w = makeWorker();
+    w.net.respond = () => json({ user: { email: 'owner@example.com' }, csrf: 'SECRET-CSRF' });
+    await w.get('/api/v1/me');
+    await w.get('/api/v1/events?start=a&end=b');
+    await w.settle();
+    eq('sw: two private responses cached before sign-out', apiCached(w), 2);
+    await w.message({ type: 'purge-api' });
+    eq('sw: sign-out purge empties the API cache', apiCached(w), 0);
+    w.net.respond = offline;
+    const me = await w.get('/api/v1/me');
+    eq('sw: after sign-out, offline /me is NOT answered from cache', me.status, 503);
+    assert('sw: and carries no private data', !(await me.text()).includes('SECRET-CSRF'));
+    eq('sw: after sign-out, offline events are not answered either', (await w.get('/api/v1/events?start=a&end=b')).status, 503);
+  }
+
+  // A 401 means the session is gone (expired, or revoked by a password reset).
+  {
+    const w = makeWorker();
+    w.net.respond = () => json({ events: [{ title: 'Private dinner' }] });
+    await w.get('/api/v1/events?start=a&end=b');
+    await w.settle();
+    w.net.respond = () => json({ error: { code: 'unauthorized' } }, 401);
+    const res = await w.get('/api/v1/me');
+    eq('sw: the 401 itself still reaches the page', res.status, 401);
+    eq('sw: a 401 purges everything cached under the dead session', apiCached(w), 0);
+  }
+
+  // The race a plain delete leaves open: a response in flight at sign-out.
+  {
+    const w = makeWorker();
+    let release;
+    w.net.respond = () => new Promise((r) => { release = () => r(json({ events: [{ title: 'Private dinner' }] })); });
+    const pending = w.get('/api/v1/events?start=a&end=b');
+    await w.message({ type: 'purge-api' });
+    release();
+    await pending;
+    await w.settle();
+    eq('sw: a response that was in flight at sign-out is not cached afterwards', apiCached(w), 0);
+    w.net.respond = () => json({ events: [] });
+    await w.get('/api/v1/events?start=a&end=b');
+    await w.settle();
+    eq('sw: caching resumes for the next session', apiCached(w), 1);
+  }
+
+  // The shell is not private and must survive, or signing out breaks offline load.
+  {
+    const w = makeWorker();
+    w.net.respond = () => new Response('body{}', { status: 200 });
+    await w.get('/assets/styles/app.css');
+    await w.settle();
+    await w.message({ type: 'purge-api' });
+    assert('sw: the purge leaves the app shell cache alone', [...w.stores.keys()].some((k) => k.endsWith('-shell') && w.stores.get(k).size === 1));
+    assert('sw: unrelated messages are ignored', await w.message({ type: 'something-else' }).then(() => true));
+  }
+}
+
 console.log('');
 console.log(passed + ' passed, ' + failed + ' failed');
 if (failed > 0) process.exit(1);

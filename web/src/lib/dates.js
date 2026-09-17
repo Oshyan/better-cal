@@ -242,6 +242,51 @@ export function localTz() {
   return Intl.DateTimeFormat().resolvedOptions().timeZone;
 }
 
+// --- Home zone vs this device's zone ----------------------------------------
+// The screen always follows the device. settings.tz is the owner's HOME zone,
+// which the server uses where there is no device to ask: the clock all-day
+// reminders fire on, and the zone of events created for them by email ingest,
+// plugins and API calls. The two differ whenever the owner travels.
+
+// Minutes east of UTC for an IANA zone at an instant; null for an unknown zone.
+export function tzOffsetMinutes(tz, at = new Date()) {
+  try {
+    const name = new Intl.DateTimeFormat('en-US', { timeZone: tz, timeZoneName: 'longOffset' })
+      .formatToParts(at).find((p) => p.type === 'timeZoneName').value; // "GMT-07:00", or "GMT" for UTC
+    const m = /GMT([+-])(\d{1,2})(?::?(\d{2}))?/.exec(name);
+    if (!m) return 0;
+    return (m[1] === '-' ? -1 : 1) * (Number(m[2]) * 60 + Number(m[3] || 0));
+  } catch {
+    return null;
+  }
+}
+
+// "UTC-7", "UTC+5:30", "UTC".
+export function tzOffsetLabel(tz, at = new Date()) {
+  const off = tzOffsetMinutes(tz, at);
+  if (off == null) return '';
+  if (off === 0) return 'UTC';
+  const abs = Math.abs(off);
+  return 'UTC' + (off < 0 ? '-' : '+') + Math.floor(abs / 60) + (abs % 60 ? ':' + pad(abs % 60) : '');
+}
+
+// "America/Los_Angeles" -> "Los Angeles". The city is what people recognize.
+export function tzCity(tz) {
+  return String(tz || '').split('/').pop().replace(/_/g, ' ');
+}
+
+// Do two zones keep the same clock? Names alone over-report: a browser in
+// Vancouver or Tijuana says so, and is on Los Angeles time all year. Compared
+// now and half a year on, so zones that agree only until a DST change differ.
+export function sameClock(a, b, at = new Date()) {
+  if (!a || !b || a === b) return true;
+  const later = new Date(at.getTime() + 182 * 86400000);
+  const oa = [tzOffsetMinutes(a, at), tzOffsetMinutes(a, later)];
+  const ob = [tzOffsetMinutes(b, at), tzOffsetMinutes(b, later)];
+  if (oa.includes(null) || ob.includes(null)) return true; // unknown zone: nothing useful to say
+  return oa[0] === ob[0] && oa[1] === ob[1];
+}
+
 // Range like "7:00 - 8:30 PM" or "Jul 3 - Jul 5" for the popover.
 export function fmtRange(start, end, allDay) {
   const sk = dayKeyOf(start);

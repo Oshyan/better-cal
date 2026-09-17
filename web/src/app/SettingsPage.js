@@ -3,7 +3,7 @@
 // theme; nlParseMode is enforced server-side in /quickadd). Plus account
 // (sign out) and about (version, CalDAV pointer).
 
-import { html, useState, useEffect } from '../../vendor/index.js';
+import { html, useState, useEffect, useMemo } from '../../vendor/index.js';
 import { useStore, toast, shallowEq } from './store.js';
 import { api, logout, loadSystemHealth } from './api.js';
 import { fmtSince } from '../lib/since.js';
@@ -11,7 +11,7 @@ import { adoptSettings } from './settings.js';
 import { saveSetting } from './actions.js';
 import { PageShell } from './PageShell.js';
 import { PlaceInput, pickFillText } from './PlaceInput.js';
-import { localTz } from '../lib/dates.js';
+import { localTz, sameClock, tzOffsetLabel, tzCity } from '../lib/dates.js';
 import {
   permissionState, pushSupported, fetchPushStatus, enablePush, disablePush,
   sendTestNotification, sendTestEmail,
@@ -105,6 +105,34 @@ function Row({ label, hint, children }) {
     <span class="bc-set-control">${children}</span>
     ${hint && html`<span class="bc-set-hint">${hint}</span>`}
   </div>`;
+}
+
+// Home time zone. What is on screen always follows the device; this is the
+// zone the SERVER uses where there is no device to ask (the hint says which).
+// When the device is on a different clock the row says so and offers the
+// one-click change, because that is the moment the distinction matters.
+const TZ_HINT = 'The clock for all-day reminders, and the zone of events created for you by email, plugins and the API. What you see on screen always follows the device you are using.';
+function HomeTimezoneRow({ tz, onChange }) {
+  const device = localTz();
+  // Labels are memoized with the list: each offset costs an Intl formatter,
+  // and there are ~420 zones.
+  const zones = useMemo(() => {
+    let all = [];
+    try { all = Intl.supportedValuesOf('timeZone'); } catch { /* older browser: offer what we know */ }
+    const now = new Date();
+    return [...new Set([tz, device, ...all].filter(Boolean))].sort()
+      .map((z) => [z, z.replace(/_/g, ' ') + ' (' + tzOffsetLabel(z, now) + ')']);
+  }, [tz, device]);
+  const away = !sameClock(tz, device);
+  return html`<${Row} label="Home time zone" hint=${TZ_HINT}>
+    <select value=${tz || device} aria-label="Home time zone" onChange=${(e) => onChange(e.target.value)}>
+      ${zones.map(([z, label]) => html`<option key=${z} value=${z}>${label}</option>`)}
+    </select>
+    ${away && html`<span class="bc-set-away">
+      This device is on ${tzCity(device)} time (${tzOffsetLabel(device)})
+      <button type="button" class="bc-btn" onClick=${() => onChange(device)}>Make ${tzCity(device)} Home</button>
+    </span>`}
+  <//>`;
 }
 
 // Notifications: Web Push status + enable/disable/test, delivery channel
@@ -429,6 +457,7 @@ export function SettingsPage() {
           ${localCals.map((c) => html`<option key=${c.id} value=${String(c.id)}>${c.name}</option>`)}
         </select>
       <//>
+      <${HomeTimezoneRow} tz=${settings.tz} onChange=${save('tz')} />
     </section>
 
     <${LocationSection} settings=${settings} config=${config} />

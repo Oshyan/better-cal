@@ -13,7 +13,7 @@ use BetterCal\Support\Time;
 /**
  * Reminders: validation of per-event overrides and default shapes, the
  * effective-reminder resolution chain (event > calendar > global), fire-time
- * math (all-day daysBefore/time in the event's tzid), sent-reminder dedup
+ * math (all-day daysBefore/time on the owner's Home-zone clock), sent-reminder dedup
  * keys, and the minutely reminder_scan worker job that sends Web Push.
  *
  * Shapes:
@@ -24,7 +24,8 @@ use BetterCal\Support\Time;
  *   default (user settings reminderTimed/reminderAllDay):
  *   timed entries {"minutes": int}, all-day entries {"daysBefore": int,
  *   "time": "HH:MM"} (fire daysBefore days before the event date at that
- *   local time in the event's tzid).
+ *   time in the owner's Home zone, settings.tz; the event's own zone only
+ *   when no Home zone is stored).
  */
 final class Reminders
 {
@@ -195,22 +196,33 @@ final class Reminders
      *
      * - {minutes}: minutes before the occurrence start instant. For all-day
      *   events "start" is local midnight of the event date in its tzid.
-     * - {daysBefore, time}: daysBefore days before the event's local date, at
-     *   the given wall-clock time, in the event's tzid (all-day defaults).
+     * - {daysBefore, time}: daysBefore days before the event's date, at the
+     *   given wall-clock time on the owner's Home clock ($homeTzid); the
+     *   event's own zone when no Home zone is known (all-day defaults).
      */
-    public static function fireAt(array $entry, \DateTimeImmutable $startUtc, bool $allDay, string $tzid): ?\DateTimeImmutable
+    public static function fireAt(array $entry, \DateTimeImmutable $startUtc, bool $allDay, string $tzid, ?string $homeTzid = null): ?\DateTimeImmutable
     {
         $tz = Time::zone($tzid);
+        // An all-day event is a DATE, read in the event's zone; but "6 PM the
+        // day before" is a time on the OWNER's clock, so it is taken in their
+        // Home zone (settings.tz). Using the event's zone for both meant every
+        // all-day event imported as UTC (thousands, from a Google export)
+        // reminded at 18:00 UTC, which is 11 AM in California. Without a Home
+        // zone the event's own zone is the best guess left.
+        $local = $startUtc->setTimezone($tz);
+        if ($allDay && $homeTzid !== null && $homeTzid !== '') {
+            $local = new \DateTimeImmutable($local->format('Y-m-d') . ' 00:00:00', Time::zone($homeTzid));
+        }
         if (isset($entry['daysBefore'], $entry['time'])) {
             [$h, $m] = array_map('intval', explode(':', (string) $entry['time']));
-            return $startUtc->setTimezone($tz)
+            return $local
                 ->sub(new \DateInterval('P' . max(0, (int) $entry['daysBefore']) . 'D'))
                 ->setTime($h, $m)
                 ->setTimezone(Time::utc());
         }
         if (isset($entry['minutes']) && is_numeric($entry['minutes'])) {
             $anchor = $allDay
-                ? $startUtc->setTimezone($tz)->setTime(0, 0)->setTimezone(Time::utc())
+                ? $local->setTime(0, 0)->setTimezone(Time::utc())
                 : $startUtc;
             $m = (int) $entry['minutes'];
             return $m === 0 ? $anchor : $anchor->sub(new \DateInterval('PT' . $m . 'M'));
@@ -373,6 +385,8 @@ final class Reminders
         $userSettings = Settings::withDefaults(is_array($stored) ? $stored : []);
         $globalTimed = is_array($userSettings['reminderTimed'] ?? null) ? $userSettings['reminderTimed'] : [];
         $globalAllDay = is_array($userSettings['reminderAllDay'] ?? null) ? $userSettings['reminderAllDay'] : [];
+        // The owner's Home zone: the clock all-day reminder times are read on.
+        $homeTzid = is_string($userSettings['tz'] ?? null) && $userSettings['tz'] !== '' ? $userSettings['tz'] : null;
 
         // Masters + standalone events whose occurrences can start in the
         // window (mirrors Events::window's selection, without user filters).
@@ -402,7 +416,7 @@ final class Reminders
             $seenParents[(int) $master['id']] = true;
             $occs = $this->recurrence->expand($master, $ovByParent[(int) $master['id']] ?? [], $winStart, $winEnd);
             foreach ($occs as $occ) {
-                $this->collectDue($occ['row'], $occ['start'], $calendars, $globalTimed, $globalAllDay, $now, $grace, $due);
+                $this->collectDue($occ['row'], $occ['start'], $calendars, $globalTimed, $globalAllDay, $now, $grace, $due, $homeTzid);
             }
         }
         // Overrides in-window whose master was not selected (series otherwise
@@ -414,7 +428,7 @@ final class Reminders
             foreach ($ovs as $ov) {
                 $ovStart = Time::fromDb((string) $ov['start_utc']);
                 if ($ovStart < $winEnd && Time::fromDb((string) $ov['end_utc']) > $winStart) {
-                    $this->collectDue($ov, $ovStart, $calendars, $globalTimed, $globalAllDay, $now, $grace, $due);
+                    $this->collectDue($ov, $ovStart, $calendars, $globalTimed, $globalAllDay, $now, $grace, $due, $homeTzid);
                 }
             }
         }
@@ -431,6 +445,7 @@ final class Reminders
         \DateTimeImmutable $now,
         \DateTimeImmutable $grace,
         array &$due,
+        ?string $homeTzid = null,
     ): void {
         $calendarId = (int) $row['calendar_id'];
         $cal = $calendars[$calendarId] ?? ['kind' => 'local', 'defaults' => null];
@@ -444,7 +459,7 @@ final class Reminders
             $cal['kind']
         );
         foreach ($entries as $entry) {
-            $fire = self::fireAt(is_array($entry) ? $entry : [], $startUtc, $allDay, (string) $row['tzid']);
+            $fire = self::fireAt(is_array($entry) ? $entry : [], $startUtc, $allDay, (string) $row['tzid'], $homeTzid);
             if ($fire === null || $fire > $now || $fire <= $grace) {
                 continue;
             }

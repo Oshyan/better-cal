@@ -1629,9 +1629,10 @@ body.bc-dragging * { cursor: grabbing !important; }
 }
 .bc-set-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 8px 0; }
 .bc-set-label { width: 170px; flex: none; font-weight: 600; }
-.bc-set-control { display: inline-flex; align-items: center; gap: 10px; }
+.bc-set-control { display: inline-flex; align-items: center; gap: 10px; flex-wrap: wrap; min-width: 0; }
 .bc-set-value { color: var(--fg); }
 .bc-set-value code { font-family: var(--mono); background: var(--bg-inset); border-radius: 4px; padding: 0 4px; }
+.bc-set-away { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--fg-muted); }
 .bc-set-hint { flex-basis: 100%; margin-left: 182px; color: var(--fg-muted); font-size: 12px; }
 
 @media (max-width: 640px) {

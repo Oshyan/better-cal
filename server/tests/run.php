@@ -1963,8 +1963,10 @@ checkEq('push validate endpoint kept', 'https://fcm.googleapis.com/fcm/send/abc1
 checkEq('push validate keys kept', ['BPk9_dh-key_', 'authtok='], [$psub['p256dh'], $psub['auth']]);
 foreach ([
     ['endpoint' => 'http://insecure.example/x', 'keys' => ['p256dh' => 'a', 'auth' => 'b']],
-    ['endpoint' => 'https://ok.example/x'],
-    ['endpoint' => 'https://ok.example/x', 'keys' => ['p256dh' => 'bad key!', 'auth' => 'b']],
+    ['endpoint' => 'https://fcm.googleapis.com/fcm/send/x'],
+    ['endpoint' => 'https://fcm.googleapis.com/fcm/send/x', 'keys' => ['p256dh' => 'bad key!', 'auth' => 'b']],
+    // BC-02: well-formed keys, https, but not a push service.
+    ['endpoint' => 'https://internal.corp.example/admin', 'keys' => ['p256dh' => 'a', 'auth' => 'b']],
 ] as $bad) {
     try {
         PushSubscriptions::validate($bad);
@@ -1972,6 +1974,58 @@ foreach ([
     } catch (HttpError $e) {
         checkEq('push validate bad subscription code', 'invalid_subscription', $e->errorCode);
     }
+}
+
+// BC-02: the endpoint is a client-supplied URL the server later POSTs to, so
+// it has to be a real push service, not just https.
+foreach ([
+    'https://fcm.googleapis.com/fcm/send/abc',
+    'https://updates.push.services.mozilla.com/wpush/v2/abc',
+    'https://web.push.apple.com/QAbc',
+    'https://wns2-by3p.notify.windows.com/w/?token=abc',
+    'https://FCM.GoogleAPIs.com/fcm/send/abc',
+    'https://fcm.googleapis.com:443/fcm/send/abc',
+] as $okEndpoint) {
+    checkEq("push endpoint allowed: $okEndpoint", null, BetterCal\Infra\PushSender::endpointProblem($okEndpoint));
+}
+foreach ([
+    'plain http' => 'http://fcm.googleapis.com/fcm/send/abc',
+    'arbitrary https host' => 'https://attacker.example/collect',
+    'loopback' => 'https://127.0.0.1/x',
+    'internal name' => 'https://intranet/x',
+    'cloud metadata' => 'https://169.254.169.254/latest/meta-data/',
+    'suffix lookalike' => 'https://evilfcm.googleapis.com.attacker.example/x',
+    'prefix lookalike (no dot boundary)' => 'https://notfcm.googleapis.com.example/x',
+    'allowed name as a subdomain label of another domain' => 'https://fcm.googleapis.com.attacker.example/x',
+    'userinfo disguising the real host' => 'https://fcm.googleapis.com@attacker.example/x',
+    'credentials on an allowed host' => 'https://user:pw@fcm.googleapis.com/x',
+    'non-default port' => 'https://fcm.googleapis.com:8443/x',
+    'no host' => 'https:///x',
+    'not a url' => 'fcm.googleapis.com/fcm/send/abc',
+    'empty' => '',
+] as $label => $badEndpoint) {
+    check("push endpoint refused: $label", BetterCal\Infra\PushSender::endpointProblem($badEndpoint) !== null);
+}
+// Operator override: additive, subdomain-matching, and nothing else gets in with it.
+checkEq('push extra host allowed', null, BetterCal\Infra\PushSender::endpointProblem('https://push.selfhosted.example/abc', ['push.selfhosted.example']));
+checkEq('push extra host matches subdomains', null, BetterCal\Infra\PushSender::endpointProblem('https://eu.push.selfhosted.example/abc', [' Push.SelfHosted.example. ']));
+check('push extra host does not open other hosts', BetterCal\Infra\PushSender::endpointProblem('https://attacker.example/x', ['push.selfhosted.example']) !== null);
+check('push blank extra host entry allows nothing', BetterCal\Infra\PushSender::endpointProblem('https://attacker.example/x', ['', '  ', '.']) !== null);
+checkEq('push defaults still allowed alongside extras', null, BetterCal\Infra\PushSender::endpointProblem('https://web.push.apple.com/QAbc', ['push.selfhosted.example']));
+// Send-time enforcement covers rows stored before the policy existed: refused
+// before the library (or the network) is touched, and reported as ERROR so the
+// device shows as failing rather than being pruned.
+{
+    // The log line is what tells "refused by policy" apart from any other
+    // ERROR (without vendor/ the library path would also end in ERROR).
+    $pushLog = (string) tempnam(sys_get_temp_dir(), 'bcpush');
+    $prevLog = ini_set('error_log', $pushLog);
+    $outcome = (new BetterCal\Infra\PushSender(['vapid' => ['public' => 'x', 'private' => 'y'], 'push' => ['extra_hosts' => []]]))
+        ->send(['endpoint' => 'https://127.0.0.1/x', 'p256dh' => 'a', 'auth' => 'b'], ['title' => 't']);
+    ini_set('error_log', $prevLog === false ? '' : $prevLog);
+    checkEq('push send: a stored non-push endpoint is an ERROR', BetterCal\Infra\PushSender::ERROR, $outcome);
+    check('push send: refused by policy, before the library is touched', str_contains((string) file_get_contents($pushLog), 'push send refused: 127.0.0.1 is not a recognized push service'));
+    @unlink($pushLog);
 }
 checkEq('push endpoint hash is sha256', hash('sha256', 'https://x.example/e'), PushSubscriptions::endpointHash('https://x.example/e'));
 
@@ -2504,6 +2558,40 @@ require __DIR__ . '/plugins.php';
     check('health: recovery after a real streak is journaled', str_starts_with($entries()[1] ?? '', 'Feed: Hangs recovered after 3 failures'));
     $health->recordFailure('feed:10', 'feed', 1, 'Feed: New', 'timeout');
     checkEq('health: a brand-new subject failing once is not journaled', 2, count($entries()));
+}
+
+// --- Password reset ends the sessions opened under the old password (BC-21) ---
+// A reset is the owner's response to "someone else may be in". Sessions last
+// 180 days and resolve() checks only hash + expiry, so the intruder's cookie
+// used to survive the reset and could mint a fresh API token.
+{
+    $pdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $pdb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, password_hash TEXT, display_name TEXT, settings_json TEXT)');
+    $pdb->run('CREATE TABLE sessions (token_hash TEXT PRIMARY KEY, user_id INTEGER, csrf TEXT, expires_at TEXT, last_seen_at TEXT DEFAULT CURRENT_TIMESTAMP)');
+    $pdb->run('CREATE TABLE api_tokens (id INTEGER PRIMARY KEY, user_id INTEGER, token_hash TEXT)');
+    $pdb->run("INSERT INTO users (id, email, password_hash, display_name) VALUES (1, 'owner@example.com', ?, 'Owner'), (2, 'other@example.com', ?, 'Other')", [
+        password_hash('old-password', PASSWORD_DEFAULT),
+        password_hash('other-password', PASSWORD_DEFAULT),
+    ]);
+    $pdb->run("INSERT INTO api_tokens (user_id, token_hash) VALUES (1, 'a'), (1, 'b'), (2, 'c')");
+    $pauth = new BetterCal\Domain\Auth($pdb, ['base_url' => 'https://cal.example.com']);
+    $stolen = $pauth->login('owner@example.com', 'old-password');
+    $mine = $pauth->login('owner@example.com', 'old-password');
+    $bystander = $pauth->login('other@example.com', 'other-password');
+    check('reset: sessions resolve before the reset', $pauth->resolve($stolen['token']) !== null && $pauth->resolve($mine['token']) !== null);
+
+    $revoked = $pauth->setPassword(1, 'new-password');
+    checkEq('reset: both of the owner\'s sessions are reported revoked', ['sessions' => 2, 'tokens' => 0], $revoked);
+    check('reset: a session opened under the old password no longer resolves', $pauth->resolve($stolen['token']) === null);
+    check('reset: the owner\'s own old session is ended too', $pauth->resolve($mine['token']) === null);
+    check('reset: another user\'s session is untouched', $pauth->resolve($bystander['token']) !== null);
+    check('reset: the old password stops working', $pauth->login('owner@example.com', 'old-password') === null);
+    check('reset: the new password works', $pauth->login('owner@example.com', 'new-password') !== null);
+    checkEq('reset: API tokens survive a routine reset', 2, (int) $pdb->scalar('SELECT COUNT(*) FROM api_tokens WHERE user_id = 1'));
+
+    $revoked = $pauth->setPassword(1, 'newer-password', true);
+    checkEq('reset --revoke-tokens: the session from the last login and both tokens go', ['sessions' => 1, 'tokens' => 2], $revoked);
+    checkEq('reset --revoke-tokens: another user\'s token is untouched', 1, (int) $pdb->scalar('SELECT COUNT(*) FROM api_tokens WHERE user_id = 2'));
 }
 
 $pass = $GLOBALS['__pass'];

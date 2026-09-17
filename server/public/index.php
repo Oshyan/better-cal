@@ -74,7 +74,7 @@ function bc_handle_api(Request $request, array $cfg): void
         $settings = new Domain\Settings($db);
         $geocode = new Domain\Geocode($db);
         $placeSearch = new Domain\PlaceSearch();
-        $pushSubscriptions = new Domain\PushSubscriptions($db);
+        $pushSubscriptions = new Domain\PushSubscriptions($db, $cfg['push']['extra_hosts']);
         $pushSender = new \BetterCal\Infra\PushSender($cfg);
         $emailSender = new \BetterCal\Infra\EmailSender($cfg);
         $people = new Domain\People($db);

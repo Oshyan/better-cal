@@ -20,8 +20,12 @@ A self-hosted calendar built to fully replace Google Calendar: everything GCal d
 - [Deployment notes](docs/deployment-notes.md)
 - [Roadmap](docs/roadmap.md)
 
+## Configuration
+
+Copy [`.env.example`](.env.example) to `.env` in the app root and fill it in. It lists every setting the server reads, with what each is for; only the database, base URL and session secret are required. Create the account with `php server/bin/seed.php --email=... --password=...`. Running it again for an existing account resets the password and signs every browser out; add `--revoke-tokens` after a suspected compromise to also revoke all API tokens.
+
 ## Development
 
 - Deploy: `./scripts/deploy.sh` (rsync, composer, migrations, smoke check).
-- Tests: `php server/tests/run.php` (server, pure PHP) and `node web/tests/smoke.mjs` (frontend).
+- Tests: `php server/tests/run.php` (server, pure PHP), `TZ=America/Los_Angeles node web/tests/smoke.mjs` (frontend logic; fixtures are written in Pacific time), `node --experimental-vm-modules web/tests/static.mjs` (module graph), `node tools/mcp/test.mjs` (MCP server).
 - Chrome extension (redirects Google Calendar add-links): `extension/`.

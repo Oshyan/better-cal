@@ -10,7 +10,7 @@ import { installHoverPrefetch } from './prefetch.js';
 import { armQuietReload, restoreDraftsAfterBoot, installActivityTracking } from './drafts.js';
 import { preloadRichText } from './RichText.js';
 import { loadLeaflet } from './EventDetail.js';
-import { localTz } from '../lib/dates.js';
+import { localTz, sameClock, tzCity, tzOffsetLabel } from '../lib/dates.js';
 import { handleEventLink } from './push.js';
 import {
   BATTERY_TIP_BODY, shouldShowInstallTip, markInstallTipShown,
@@ -50,6 +50,7 @@ async function boot() {
     handleDeepPaths().catch(() => { /* best-effort */ });
     // One-time notices for failures that change what the calendar shows.
     announceSystemHealth();
+    announceAwayFromHome();
     // Whatever was in progress when the page last unloaded comes back:
     // an editor with its form, or quick add with its text.
     installActivityTracking();
@@ -79,6 +80,32 @@ async function boot() {
       }, { timeout: 8000 }), 2000));
     }
   }
+}
+
+// The screen follows this device's clock; settings.tz is the owner's Home zone,
+// which the server uses for all-day reminder times and for events created on
+// their behalf. When the two differ (travel, or a new device elsewhere) say so
+// once per pairing, with the one-tap change: silently keeping Home is right for
+// a trip and wrong for a move, and only the owner knows which this is.
+const TZ_NOTICE_KEY = 'bc-tz-notice';
+function announceAwayFromHome() {
+  const home = state.settings.tz;
+  const device = localTz();
+  if (!home || sameClock(home, device)) return;
+  const pairing = home + '|' + device;
+  try {
+    if (localStorage.getItem(TZ_NOTICE_KEY) === pairing) return;
+    localStorage.setItem(TZ_NOTICE_KEY, pairing);
+  } catch { /* private mode: the notice simply shows each load */ }
+  toast(
+    'This device is on ' + tzCity(device) + ' time (' + tzOffsetLabel(device) + '). Home is still ' + tzCity(home)
+      + ' (' + tzOffsetLabel(home) + '): all-day reminders follow Home. Times on screen follow this device.',
+    {
+      duration: 20000,
+      actions: [{ label: 'Make ' + tzCity(device) + ' Home', run: () => saveSetting('tz', device) }],
+      dismissLabel: 'Keep ' + tzCity(home),
+    },
+  );
 }
 
 // Deep-link entry paths (all serve the SPA shell; the path carries intent):

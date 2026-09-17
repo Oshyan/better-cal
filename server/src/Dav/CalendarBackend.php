@@ -59,13 +59,13 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
                 '{http://calendarserver.org/ns/}getctag' => 'http://sabre.io/ns/sync/' . $token,
                 '{http://sabredav.org/ns}sync-token' => $token,
                 '{' . CalDAVPlugin::NS_CALDAV . '}supported-calendar-component-set' => new SupportedCalendarComponentSet(['VEVENT']),
-                // RFC 4791 5.2.5: the size putObject enforces, published so a
-                // client can know it instead of finding out by 403. (The cap on
-                // overrides has no standard property: CALDAV:max-instances means
-                // how many occurrences a series may generate, which is not
-                // limited here, and advertising it could make a strict client
-                // refuse an ordinary "repeats forever" event.)
-                '{' . CalDAVPlugin::NS_CALDAV . '}max-resource-size' => (string) Limits::get('DAV_OBJECT_BYTES'),
+                // The object size putObject enforces is advertised to clients as
+                // CALDAV:max-resource-size by Dav\SizedCalDavPlugin (the stock plugin
+                // answers that property itself, so it cannot be set from here).
+                // The cap on overrides has no standard property: max-instances
+                // means how many occurrences a series may generate, which is not
+                // limited, and advertising it could make a strict client refuse
+                // an ordinary "repeats forever" event.
             ];
             if ($row['kind'] === 'subscribed') {
                 $info['{http://sabredav.org/ns}read-only'] = true;

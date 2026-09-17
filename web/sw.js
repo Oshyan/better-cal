@@ -9,14 +9,16 @@
 // - a new version, once active, tells open pages so they can offer a reload;
 //   until they do they keep running what they loaded, which is always a
 //   consistent set.
-// - API GETs: network-first with a 5s timeout falling back to cache.
+// - API GETs: network-first with a 5s timeout falling back to cache. That
+//   cache is private data and is purged on sign-out and on any 401 (see
+//   "Private API cache" below).
 //
 // Why cache-first: unbundled modules are ~75 requests. Network-first with
 // forced revalidation made every one of them a round trip before the app
 // could start, which on a 450 ms link was nine seconds of a blank page.
 
 // @generated-shell:start (scripts/gen-preload.mjs)
-const VERSION = 'bc-72203e584d25';
+const VERSION = 'bc-f3deed286b80';
 const SHELL = [
   '/',
   '/assets/styles/app.css',
@@ -140,18 +142,51 @@ self.addEventListener('activate', (event) => {
   })());
 });
 
+// --- Private API cache --------------------------------------------------------
+// API responses are the signed-in account's data (events, people, /me with its
+// CSRF token, feed URLs that are capabilities). They are cached so the calendar
+// opens offline, and that cache must not outlive the session: before this, a
+// signed-out browser still answered /api/v1/me with 200 offline and the app
+// booted as if authenticated (BC-04).
+//
+// Purged on: the page's 'purge-api' message (sign out), and any 401 from the
+// API (session expired, revoked by a password reset, or ended elsewhere).
+//
+// apiEpoch closes the race a plain delete leaves open: a request already in
+// flight when the purge happens would otherwise be cached a moment after it.
+// Each request remembers the epoch it started under and only caches its
+// response if no purge happened since.
+let apiEpoch = 0;
+
+async function purgeApiCache() {
+  apiEpoch++;
+  const keys = await caches.keys();
+  await Promise.all(keys.filter((k) => k.endsWith('-api')).map((k) => caches.delete(k)));
+}
+
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'purge-api') event.waitUntil(purgeApiCache());
+});
+
 function networkFirstWithTimeout(request, cacheName, timeoutMs) {
   return new Promise((resolve) => {
     let settled = false;
+    const epoch = apiEpoch;
     const timer = timeoutMs ? setTimeout(async () => {
       const cached = await caches.match(request);
       if (cached && !settled) { settled = true; resolve(cached); }
     }, timeoutMs) : null;
     fetch(request).then(async (res) => {
       if (timer) clearTimeout(timer);
-      if (res.ok) {
-        const cache = await caches.open(cacheName);
-        cache.put(request, res.clone());
+      if (res.status === 401) {
+        await purgeApiCache();
+      } else if (res.ok && epoch === apiEpoch) {
+        const copy = res.clone();
+        caches.open(cacheName).then(async (cache) => {
+          await cache.put(request, copy);
+          // A purge that landed while this was being written wins.
+          if (epoch !== apiEpoch) await purgeApiCache();
+        }).catch(() => { /* quota or storage error: just not cached */ });
       }
       if (!settled) { settled = true; resolve(res); }
     }).catch(async () => {

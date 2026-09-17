@@ -5,6 +5,7 @@
 import { state, set, mergeWindow, missingRanges, patchOccurrence, invalidateRecords, toast } from './store.js';
 import { toISOWithOffset } from '../lib/dates.js';
 import { adoptSettings } from './settings.js';
+import { clearEditorDraft, clearQuickAddText } from './drafts.js';
 
 const BASE = '/api/v1';
 
@@ -34,6 +35,10 @@ export async function api(path, { method = 'GET', body, formData, signal } = {})
     throw new ApiError('network', 'Network error', 0);
   }
   if (res.status === 401) {
+    // The session is gone (expired, revoked by a password reset, or signed
+    // out elsewhere), so this browser no longer has any claim to the data it
+    // cached under it.
+    purgePrivateCaches();
     set({ authed: false, user: null });
     throw new ApiError('unauthorized', 'Signed out', 401);
   }
@@ -62,8 +67,42 @@ export async function login(email, password) {
   return fetchMe();
 }
 
+// The service worker's cache of API responses is private to the signed-in
+// account: events, people, /me with its CSRF token, feed URLs that are
+// themselves capabilities. Signing out has to mean that data is no longer readable here; before this,
+// the cache outlived the session and an offline boot rendered the old /me as
+// if still signed in (BC-04).
+//
+// Two routes on purpose. The message lets the worker also discard responses
+// still in flight, which would otherwise be cached a moment AFTER the delete.
+// The direct delete covers a page the worker does not control yet (first load,
+// hard refresh). Never throws: a failed purge must not block signing out.
+export async function purgePrivateCaches() {
+  try {
+    const sw = typeof navigator !== 'undefined' && navigator.serviceWorker;
+    if (sw && sw.controller) sw.controller.postMessage({ type: 'purge-api' });
+  } catch { /* no worker: the direct delete below is the whole job */ }
+  try {
+    if (typeof caches !== 'undefined') {
+      const keys = await caches.keys();
+      await Promise.all(keys.filter((k) => k.endsWith('-api')).map((k) => caches.delete(k)));
+    }
+  } catch { /* storage unavailable (private mode): nothing was cached either */ }
+}
+
 export async function logout() {
-  await api('/auth/logout', { method: 'POST' });
+  try {
+    await api('/auth/logout', { method: 'POST' });
+  } finally {
+    // Even when the request fails (offline), clear what is stored locally:
+    // that is the half of signing out this device can always do. The caller
+    // still sees the error, because the server session is NOT ended.
+    await purgePrivateCaches();
+    // Unsaved drafts go too, but only here: a session that merely EXPIRED
+    // mid-edit (the 401 path) must not cost the owner what they were typing.
+    clearEditorDraft();
+    clearQuickAddText();
+  }
   set({ authed: false, user: null, csrf: null });
 }
 

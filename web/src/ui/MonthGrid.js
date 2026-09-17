@@ -23,7 +23,7 @@ import {
   todayKey, fmtMonthShort, fmtWeekdayShort, getWeekStart, byStart,
 } from '../lib/dates.js';
 import {
-  visibleWeekRange, weekTop, totalHeight, occurrenceDaySpan, rowSpanSegments,
+  visibleWeekRange, weekTop, totalHeight, occurrenceDaySpan, rowSpanSegments, shiftOccurrenceDays,
   rowIndexOfDayKey, firstEpochDayOfRow, dayKeysOfRow, isWeekendEpochDay,
   monthStartsInRange, dominantMonthOfRows,
 } from './monthmath.js';
@@ -430,19 +430,9 @@ export function MonthGrid({
           if (onMoveTrip) onMoveTrip({ occ, deltaDays: delta, at: pt });
           return;
         }
-        // All-day occurrences are literal dates at +00:00; shifting them
-        // through a local Date loses a day west of UTC (parse lands the
-        // evening before, and the server floors the literal date). Day math
-        // stays day math.
-        let newStart;
-        let newEnd;
-        if (occ.allDay) {
-          newStart = keyOfEpochDay(epochDayOfKey(startKey) + delta);
-          newEnd = keyOfEpochDay(epochDayOfKey(endKey) + 1 + delta); // exclusive
-        } else {
-          newStart = toISOWithOffset(addDaysDate(parseISO(occ.start), delta));
-          newEnd = toISOWithOffset(addDaysDate(parseISO(occ.end), delta));
-        }
+        // All-day stays day math, timed stays wall-clock math: see
+        // shiftOccurrenceDays.
+        const { newStart, newEnd } = shiftOccurrenceDays(occ, delta);
         // `at` lets the caller raise the repeating-scope chip at the pointer.
         if (onMoveEvent) onMoveEvent({ instanceId: occ.instanceId, newStart, newEnd, at: pt });
       },

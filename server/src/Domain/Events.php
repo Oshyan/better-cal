@@ -1110,15 +1110,24 @@ final class Events
         if (isset($in['start']) || isset($in['end'])) {
             $curStart = Time::fromDb((string) $current['start_utc']);
             $curEnd = Time::fromDb((string) $current['end_utc']);
-            $newStart = isset($in['start']) ? Time::parseIso((string) $in['start'], $tzid) : $curStart;
-            $newEnd = isset($in['end']) ? Time::parseIso((string) $in['end'], $tzid) : $curEnd;
             if ($allDay) {
+                // A SENT boundary is a date and is read literally
+                // (Time::parseAllDay). A boundary that was not sent is the
+                // stored instant, floored to its date in the event's zone:
+                // that is what turns a timed event into an all-day one.
                 $tz = Time::zone($tzid);
-                $newStart = $newStart->setTimezone($tz)->setTime(0, 0)->setTimezone(Time::utc());
-                $newEnd = $newEnd->setTimezone($tz)->setTime(0, 0)->setTimezone(Time::utc());
+                $newStart = isset($in['start'])
+                    ? self::allDayBoundary((string) $in['start'], $tzid)
+                    : $curStart->setTimezone($tz)->setTime(0, 0)->setTimezone(Time::utc());
+                $newEnd = isset($in['end'])
+                    ? self::allDayBoundary((string) $in['end'], $tzid)
+                    : $curEnd->setTimezone($tz)->setTime(0, 0)->setTimezone(Time::utc());
                 if ($newEnd <= $newStart) {
-                    $newEnd = $newStart->add(new \DateInterval('P1D'));
+                    $newEnd = self::nextMidnight($newStart, $tzid);
                 }
+            } else {
+                $newStart = isset($in['start']) ? Time::parseIso((string) $in['start'], $tzid) : $curStart;
+                $newEnd = isset($in['end']) ? Time::parseIso((string) $in['end'], $tzid) : $curEnd;
             }
             if ($newEnd <= $newStart) {
                 throw HttpError::badRequest('end must be after start');
@@ -1193,17 +1202,16 @@ final class Events
         if (!isset($in['start'])) {
             throw HttpError::badRequest('start is required');
         }
-        $start = Time::parseIso((string) $in['start'], $tzid);
-        $end = isset($in['end']) ? Time::parseIso((string) $in['end'], $tzid) : null;
         if ($allDay) {
-            $tz = Time::zone($tzid);
-            $start = $start->setTimezone($tz)->setTime(0, 0)->setTimezone(Time::utc());
-            $end = $end?->setTimezone($tz)->setTime(0, 0)->setTimezone(Time::utc());
+            // Dates, not instants: see Time::parseAllDay.
+            $start = self::allDayBoundary((string) $in['start'], $tzid);
+            $end = isset($in['end']) ? self::allDayBoundary((string) $in['end'], $tzid) : null;
             if ($end === null || $end <= $start) {
-                $end = $start->add(new \DateInterval('P1D'));
+                $end = self::nextMidnight($start, $tzid);
             }
         } else {
-            $end ??= $start->add(new \DateInterval('PT1H'));
+            $start = Time::parseIso((string) $in['start'], $tzid);
+            $end = isset($in['end']) ? Time::parseIso((string) $in['end'], $tzid) : $start->add(new \DateInterval('PT1H'));
         }
         if ($end <= $start) {
             throw HttpError::badRequest('end must be after start');
@@ -1211,11 +1219,34 @@ final class Events
         return [Time::toDb($start), Time::toDb($end)];
     }
 
+    /** An all-day boundary from a request, as a 400 rather than a 500 when malformed. */
+    private static function allDayBoundary(string $iso, string $tzid): \DateTimeImmutable
+    {
+        try {
+            return Time::parseAllDay($iso, $tzid);
+        } catch (\InvalidArgumentException $e) {
+            throw HttpError::badRequest($e->getMessage());
+        }
+    }
+
+    /** The midnight after this one in the event's zone (not +24h: DST days are 23 or 25 hours). */
+    private static function nextMidnight(\DateTimeImmutable $utc, string $tzid): \DateTimeImmutable
+    {
+        return $utc->setTimezone(Time::zone($tzid))->modify('+1 day')->setTime(0, 0)->setTimezone(Time::utc());
+    }
+
     private function requireInstance(array $in, array $master): string
     {
         $raw = $in['instanceStart'] ?? null;
         if ($raw === null || $raw === '') {
             throw HttpError::badRequest('instanceStart is required for this scope');
+        }
+        // An all-day occurrence is named by its date. Its serialized start is
+        // "<date>T00:00:00+00:00", which as an INSTANT is only the occurrence
+        // for a series stored in UTC; for a series in any other zone it named
+        // no occurrence at all.
+        if ((int) ($master['all_day'] ?? 0) === 1) {
+            return Time::toDb(self::allDayBoundary((string) $raw, (string) $master['tzid']));
         }
         return Time::toDb(Time::parseIso((string) $raw, (string) $master['tzid']));
     }

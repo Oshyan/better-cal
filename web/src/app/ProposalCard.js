@@ -1,21 +1,23 @@
-// Proposals (C11): what a plugin suggests, and your decision.
+// A plugin proposal (C11) as a card on the Review page: what a plugin
+// suggests, and your decision.
 //
-// The contract that makes this worth having is visible in the UI: nothing on
-// this page has touched your calendar. A planner can re-run hourly and revise
-// its suggestions; only Accept writes, and accepting materializes the whole
-// plan at once — so Undo puts it all back, not half of it.
+// The contract that makes this worth having is visible in the UI: nothing a
+// proposal describes has touched your calendar. A planner can re-run hourly
+// and revise its suggestions; only Accept writes, and accepting materializes
+// the whole plan at once, so Undo puts it all back, not half of it.
 
-import { html, useState, useEffect } from '../../vendor/index.js';
-import { set, toast, useStore } from './store.js';
+import { html, useState } from '../../vendor/index.js';
+import { toast } from './store.js';
 import { api, refreshWindow } from './api.js';
-import { PageShell, EmptyState, Skeleton } from './PageShell.js';
 import { Icon } from '../ui/icons.js';
 import { sanitizeHtml } from '../lib/richtext.js';
-import { parseISO, fmtDateFull, fmtTime } from '../lib/dates.js';
+import { parseISO, dateOfDayKey, fmtDateFull, fmtTime } from '../lib/dates.js';
 
 function planLine(ev) {
-  const s = parseISO(ev.start);
   const allDay = String(ev.start).length === 10 || ev.allDay;
+  // An all-day start is a date: parsed as an instant it is UTC midnight, which
+  // is the evening before anywhere west of UTC.
+  const s = allDay ? dateOfDayKey(String(ev.start).slice(0, 10)) : parseISO(ev.start);
   return html`<li class="bc-proposal-item">
     <span class="bc-proposal-when">${fmtDateFull(s)}${allDay ? '' : ' ' + fmtTime(s)}</span>
     <span class="bc-proposal-what">${ev.title}</span>
@@ -23,7 +25,7 @@ function planLine(ev) {
   </li>`;
 }
 
-function ProposalCard({ p, onChanged }) {
+export function ProposalCard({ p, onChanged }) {
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState(true);
   const plan = p.plan || {};
@@ -51,7 +53,7 @@ function ProposalCard({ p, onChanged }) {
       + (r.created?.tripId ? ' as a trip' : ''),
   );
   const reject = () => act('/reject', 'Dismissed');
-  const undo = () => act('/undo', 'Put back — the proposal is open again');
+  const undo = () => act('/undo', 'Put back. The proposal is open again');
 
   return html`<div class="bc-proposal${p.status !== 'open' ? ' is-' + p.status : ''}">
     <div class="bc-proposal-head">
@@ -75,40 +77,8 @@ function ProposalCard({ p, onChanged }) {
           </button>
           <button type="button" class="bc-btn" disabled=${busy} onClick=${reject}>Dismiss</button>
         `}
-        ${p.status === 'accepted' && html`<button type="button" class="bc-btn" disabled=${busy} onClick=${undo}>Undo — remove these again</button>`}
+        ${p.status === 'accepted' && html`<button type="button" class="bc-btn" disabled=${busy} onClick=${undo}>Undo, remove these again</button>`}
       </div>
     </div>`}
   </div>`;
-}
-
-export function ProposalsPage() {
-  const [proposals, setProposals] = useState(null);
-  const [showDecided, setShowDecided] = useState(false);
-
-  const load = async () => {
-    try {
-      const d = await api('/proposals?status=' + (showDecided ? 'all' : 'open'));
-      setProposals(d.proposals || []);
-      set({ proposalCount: (d.proposals || []).filter((p) => p.status === 'open').length });
-    } catch (e) {
-      toast('Load failed: ' + e.message, { error: true });
-      setProposals([]);
-    }
-  };
-  useEffect(() => { load(); }, [showDecided]);
-
-  return html`<${PageShell}
-    title="Proposals"
-    note="Suggestions from your plugins. Nothing here is on your calendar yet — accepting adds it all at once, and undo removes it all at once."
-  >
-    <div class="bc-proposal-filters">
-      <button type="button" class="bc-srcchip${showDecided ? '' : ' is-on'}" onClick=${() => setShowDecided(false)}>Open</button>
-      <button type="button" class="bc-srcchip${showDecided ? ' is-on' : ''}" onClick=${() => setShowDecided(true)}>All</button>
-    </div>
-    ${proposals === null && html`<${Skeleton} rows=${4} />`}
-    ${proposals !== null && proposals.length === 0 && html`<${EmptyState}
-      text=${showDecided ? 'No proposals yet.' : 'Nothing waiting on you. Plugins that suggest plans will put them here.'}
-    />`}
-    ${(proposals || []).map((p) => html`<${ProposalCard} key=${p.id} p=${p} onChanged=${load} />`)}
-  </${PageShell}>`;
 }

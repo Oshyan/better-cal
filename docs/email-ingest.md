@@ -2,13 +2,25 @@
 
 The worker polls the **calendar@oshyan.com** mailbox (IMAP, every ~2 minutes) and turns messages into events on a local **Invitations** calendar, mirroring Gmail's own server-side behavior with a three-tier ladder:
 
-1. **iMIP** — a `text/calendar` part or `.ics` attachment. Authoritative: `METHOD:REQUEST` creates or updates by UID (so reschedules amend in place), `METHOD:CANCEL` marks the event cancelled. Organizer, attendees, and sequence land in `events.invite_json`.
+1. **iMIP** — a `text/calendar` part or `.ics` attachment. A `METHOD:REQUEST` with a UID you do not have yet becomes an event. Organizer, attendees, and sequence land in `events.invite_json`. A REQUEST or `METHOD:CANCEL` for an invitation you ALREADY have is never applied on arrival: it is **held in the Review queue** (see below) until you accept or dismiss it.
 2. **schema.org markup** — JSON-LD `Event` / `*Reservation` blocks embedded in HTML by Eventbrite, Luma, airlines, OpenTable, etc. Deterministic, no ML.
 3. **LLM extraction** — Gemini over subject+text, only when tiers 1–2 found nothing **and** the subject looks eventish (invite/confirm/ticket/registration/rsvp/booking/reservation/event). Keeps ordinary mail off the calendar.
 
 Every processed message id is logged in `mail_ingest` (tier, outcome, event id) — nothing ingests twice; malformed messages are marked seen and skipped.
 
+## Changes and cancellations wait for you
+
+Email is not authenticated. The only thing tying a later message to the original invitation is the organizer's address, and a sender writes that. So a message that would change or cancel an event already on your calendar goes through three gates:
+
+1. **Refused outright** (logged in Activity as "Blocked an emailed change to ..."): the organizer or sender address does not match the organizer recorded when the invitation first arrived; the event never carried an invitation at all (a UID collision with one of your own events); the `SEQUENCE` is lower than the one already applied; or the event is cancelled and the `SEQUENCE` is not higher (an older REQUEST replayed after a CANCEL).
+2. **Nothing to decide** (outcome `unchanged`): it passes, but changes nothing you can see, such as a re-send or an attendee-list update.
+3. **Held** (outcome `held`): everything else. It appears on the **Review** page with what it would change (old value, new value), you get one notification per meeting, and your calendar is untouched. Accept applies it as an ordinary edit, so it shows in Activity and can be undone, and records the new `SEQUENCE`, for cancellations too. Dismiss keeps your version and is logged. A newer change for the same meeting replaces an older one still waiting, and an item whose event you delete closes itself.
+
+In-process DKIM verification (issue #25) could later let changes from a verifiably aligned organizer domain skip the queue. It cannot replace the queue, because forwarded mail routinely breaks DKIM and would have to fall back to the address match.
+
 ## RSVP
+
+Invitations you have not answered also appear on the Review page, with Accept / Maybe / Decline inline.
 
 Ingested invitations show an RSVP row (Accept / Maybe / Decline) in the event detail view. `POST /api/v1/events/:id/rsvp {answer}` records `myPartstat` and emails an iMIP `REPLY` to the organizer.
 

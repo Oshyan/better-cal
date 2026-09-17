@@ -278,6 +278,43 @@ const TOOLS = [
     handler: () => api('GET', '/calendars'),
   },
   {
+    name: 'list_review',
+    description: 'The Review queue: everything waiting on the owner\'s decision. Kinds: invite_change (an organizer emailed a change or cancellation to an invitation already on the calendar; it is HELD, not applied, and detail.diff says what it would change), rsvp (an invitation not answered yet), proposal (a plan a plugin suggests). Each item has a key and its available actions.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        status: { type: 'string', enum: ['open', 'all'], description: 'open (default): only what is waiting; all: include decided items' },
+      },
+    },
+    handler: (a) => api('GET', '/review', { query: { status: a.status } }),
+  },
+  {
+    name: 'decide_review',
+    description: 'Act on one Review item: pass its key and one of ITS action names, both exactly as list_review returned them (e.g. accept / dismiss for invite_change and proposal; accepted / tentative / declined for rsvp). Accepting an invite_change applies the organizer\'s change to the calendar; dismissing keeps the calendar as it is. Decisions about the owner\'s calendar should reflect what the owner asked for.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        key: { type: 'string', description: 'Item key from list_review, e.g. "invite_change:12" or "rsvp:4410"' },
+        action: { type: 'string', description: 'One of the item\'s action names from list_review' },
+      },
+      required: ['key', 'action'],
+    },
+    // The request path is never built from the caller's input: the item and
+    // the action are looked up in the server's own list and the path used is
+    // the one the server put there. An unknown key or action goes nowhere.
+    handler: async (a) => {
+      const { items = [] } = await api('GET', '/review', { query: { status: 'all' } });
+      const item = items.find((i) => i.key === a.key);
+      if (!item) throw new Error(`No Review item with key ${JSON.stringify(a.key)}`);
+      const action = (item.actions || []).find((x) => x.name === a.action);
+      if (!action) {
+        const names = (item.actions || []).map((x) => x.name).join(', ') || 'none (already decided)';
+        throw new Error(`Item ${a.key} has no action ${JSON.stringify(a.action)}; available: ${names}`);
+      }
+      return api(action.method || 'POST', action.path, { body: action.body ?? {} });
+    },
+  },
+  {
     name: 'undo',
     description: 'Undo the most recent mutating change (create/update/delete) made by this user.',
     inputSchema: { type: 'object', properties: {} },

@@ -101,7 +101,8 @@ Multi-day events show their total duration beside the title on every visible seg
 - Dedicated ingest mailbox polled every 2 minutes; forward or filter-forward event emails to it.
 - Tiered extraction ladder: iMIP invite parsing, schema.org JSON-LD, embedded add-to-Google links (which survive forwarding), then a hardened LLM pass over flattened HTML.
 - Forward-preamble stripping and date-evidence guards so a forward timestamp can never become the event date and no event is invented without one.
-- iMIP invites upsert by UID: updates and cancellations track the organizer's changes.
+- A Review queue instead of silent changes: when an organizer emails a change or a cancellation for something already on your calendar, it waits for you with a from/to view of exactly what would change. Email is not authenticated, so nothing an email says can move or cancel your event until you accept it; accepting is an ordinary, undoable edit. Forged organizers and replayed old versions are refused outright and logged.
+- One inbox for every decision: held invitation changes, invitations you have not answered (reply inline), and plans your plugins suggest, with a count in the sidebar and a notification when something arrives. Agents get the same list, each item carrying its own actions.
 - RSVP buttons send real iMIP replies via your own SMTP (e.g. your Gmail), so responses come from you.
 - Ingested events carry the invitation panel (organizer, attendees, your status) and land on an Invitations calendar.
 - Per-message ingest log with tier and outcome for debugging.

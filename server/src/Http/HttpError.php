@@ -33,4 +33,10 @@ class HttpError extends \RuntimeException
     {
         return new self($code, $message, 404);
     }
+
+    /** The request was fine; the thing it acts on is no longer in a state that allows it. */
+    public static function conflict(string $code, string $message): self
+    {
+        return new self($code, $message, 409);
+    }
 }

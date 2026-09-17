@@ -61,6 +61,22 @@ const mock = createServer((req, res) => {
       });
     } else if (req.method === 'GET' && path === '/api/v1/events') {
       respond(200, { events: [{ instanceId: '42:20260801T190000Z', eventId: 42, title: 'Dinner' }] });
+    } else if (req.method === 'GET' && path === '/api/v1/review') {
+      respond(200, {
+        count: 2,
+        items: [
+          { key: 'invite_change:12', kind: 'invite_change', status: 'open', title: 'Planning dinner', actions: [
+            { name: 'accept', label: 'Accept change', method: 'POST', path: '/review/invite-changes/12/accept' },
+            { name: 'dismiss', label: 'Dismiss', method: 'POST', path: '/review/invite-changes/12/dismiss' },
+          ] },
+          { key: 'rsvp:4410', kind: 'rsvp', status: 'open', title: 'Offsite', actions: [
+            { name: 'accepted', label: 'Accept', method: 'POST', path: '/events/4410/rsvp', body: { answer: 'accepted' } },
+          ] },
+          { key: 'invite_change:9', kind: 'invite_change', status: 'dismissed', title: 'Old', actions: [] },
+        ],
+      });
+    } else if (req.method === 'POST' && (path === '/api/v1/review/invite-changes/12/accept' || path === '/api/v1/events/4410/rsvp')) {
+      respond(200, { ok: true });
     } else if (req.method === 'PATCH' && path.startsWith('/api/v1/events/')) {
       respond(200, { eventId: 42, title: entry.body.title ?? 'Dinner' });
     } else if (req.method === 'DELETE' && path.startsWith('/api/v1/events/')) {
@@ -130,9 +146,11 @@ async function main() {
   const names = (list.result?.tools ?? []).map((t) => t.name).sort();
   checkEq('tools/list names', [
     'create_event',
+    'decide_review',
     'delete_event',
     'list_calendars',
     'list_events',
+    'list_review',
     'quick_add',
     'search_events',
     'set_attendance',
@@ -227,6 +245,36 @@ async function main() {
     checkEq(`${label}: rejected as invalid params`, -32602, res.error?.code);
   }
   checkEq('invalid arguments never reach the API', 0, received.length);
+
+  // ---- Review queue: read it, and act only through the server's own actions --
+  received.length = 0;
+  const review = await rpc('tools/call', { name: 'list_review', arguments: {} });
+  checkEq('list_review path', '/api/v1/review', received[0]?.url);
+  checkEq('list_review maps items', 3, JSON.parse(review.result?.content?.[0]?.text ?? '{}').items?.length);
+
+  received.length = 0;
+  const decided = await rpc('tools/call', { name: 'decide_review', arguments: { key: 'invite_change:12', action: 'accept' } });
+  check('decide_review accept not isError', decided.result?.isError !== true);
+  checkEq('decide_review looks the item up, then posts the SERVER\'s path',
+    ['GET /api/v1/review?status=all', 'POST /api/v1/review/invite-changes/12/accept'], received.map((r) => r.method + ' ' + r.url));
+
+  received.length = 0;
+  await rpc('tools/call', { name: 'decide_review', arguments: { key: 'rsvp:4410', action: 'accepted' } });
+  checkEq('decide_review sends the action\'s own body', { answer: 'accepted' }, received[1]?.body);
+
+  // Nothing the caller types becomes a path: an unknown key or action is an
+  // error after the lookup, and no second request is made.
+  for (const [label, args] of [
+    ['a path as the key', { key: '../settings', action: 'accept' }],
+    ['a path as the action', { key: 'invite_change:12', action: '../../calendars/17' }],
+    ['an action the item does not offer', { key: 'rsvp:4410', action: 'dismiss' }],
+    ['an already decided item', { key: 'invite_change:9', action: 'accept' }],
+  ]) {
+    received.length = 0;
+    const res = await rpc('tools/call', { name: 'decide_review', arguments: args });
+    checkEq(`decide_review refuses ${label}`, true, res.result?.isError);
+    checkEq(`decide_review ${label}: only the lookup was made`, ['GET'], received.map((r) => r.method));
+  }
 
   // ---- API error maps to isError tool result ------------------------------
   const errored = await rpc('tools/call', { name: 'undo', arguments: {} });

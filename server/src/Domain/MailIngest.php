@@ -37,7 +37,11 @@ final class MailIngest
         private readonly Events $events,
         private readonly ?LlmGateway $llm = null,
     ) {
+        $this->review = new ReviewQueue($db, $events);
     }
+
+    /** Where emailed changes to events the owner already has wait for a decision. */
+    private readonly ReviewQueue $review;
 
     // ---- Pure helpers (unit-tested, no I/O) ----------------------------
 
@@ -403,7 +407,7 @@ final class MailIngest
      * @param array<string,mixed>|null $stored decoded invite_json of the event
      * @return array{0:bool,1:string} [allowed, reason]
      */
-    public static function imipMayMutate(?array $stored, array $incoming, string $fromAddr): array
+    public static function imipMayMutate(?array $stored, array $incoming, string $fromAddr, string $eventStatus = 'confirmed'): array
     {
         $trusted = self::addrKey($stored['organizer']['email'] ?? null);
         // No organizer was ever recorded (an event created locally, or by an
@@ -427,6 +431,16 @@ final class MailIngest
         if ($incomingSeq < $storedSeq) {
             return [false, 'stale sequence'];
         }
+        // A cancellation is the end of a sequence number: anything carrying the
+        // SAME number was written before it. Without this, a REQUEST captured
+        // earlier could be replayed after the CANCEL and rewrite the cancelled
+        // event (BC-09). Re-issuing a cancelled meeting takes a higher number,
+        // which is what organizers' software sends. For a live event an equal
+        // number stays acceptable: some calendars resend small edits without
+        // bumping it, and the owner now sees and decides every such change.
+        if ($eventStatus === 'cancelled' && $incomingSeq <= $storedSeq) {
+            return [false, 'stale sequence (event already cancelled)'];
+        }
 
         return [true, ''];
     }
@@ -439,7 +453,7 @@ final class MailIngest
             return null;
         }
         $existing = $this->db->one(
-            'SELECT id, calendar_id, title, invite_json FROM events WHERE user_id = ? AND uid = ? AND deleted_at IS NULL AND recurrence_parent_id IS NULL',
+            'SELECT * FROM events WHERE user_id = ? AND uid = ? AND deleted_at IS NULL AND recurrence_parent_id IS NULL',
             [$userId, $uid]
         );
 
@@ -454,7 +468,8 @@ final class MailIngest
             [$allowed, $why] = self::imipMayMutate(
                 is_array($storedInvite) ? $storedInvite : null,
                 $incoming,
-                $fromAddr
+                $fromAddr,
+                (string) ($existing['status'] ?? 'confirmed')
             );
             if (!$allowed) {
                 // Refused, not silently dropped. Two records, because they have
@@ -486,13 +501,17 @@ final class MailIngest
             }
         }
 
+        // From here on, a message about an event the owner ALREADY HAS never
+        // touches the calendar. Passing the organizer check above only means
+        // the addresses match, and a sender writes those (BC-07); so the change
+        // waits in the Review queue, showing what it would do, until the owner
+        // accepts it. ReviewQueue::accept applies it then, through Events::patch.
         if ($method === 'CANCEL') {
             if ($existing === null) {
                 return ['skipped', null];
             }
-            $this->db->run("UPDATE events SET status = 'cancelled' WHERE id = ?", [(int) $existing['id']]);
-            \BetterCal\Dav\ChangeLog::record($this->db, (int) $existing['calendar_id'], $uid, \BetterCal\Dav\ChangeLog::OP_MODIFY);
-            return ['cancelled', (int) $existing['id']];
+            $held = $this->review->holdInviteChange($userId, $existing, $uid, 'CANCEL', [], $ev['invite'] ?? null, $fromAddr);
+            return [$held === null ? 'unchanged' : 'held', (int) $existing['id']];
         }
 
         $startUtc = new \DateTimeImmutable((string) $ev['start_utc'], Time::utc());
@@ -511,15 +530,14 @@ final class MailIngest
         ];
 
         if ($existing !== null) {
-            $this->events->patch($userId, (int) $existing['id'], $fields);
-            $this->storeInvite((int) $existing['id'], $ev['invite'] ?? null, true);
-            return ['updated', (int) $existing['id']];
+            $held = $this->review->holdInviteChange($userId, $existing, $uid, 'REQUEST', $fields, $ev['invite'] ?? null, $fromAddr);
+            return [$held === null ? 'unchanged' : 'held', (int) $existing['id']];
         }
 
         $calendarId = $this->inviteCalendarId($userId);
         $occurrence = $this->events->create($userId, $fields + ['calendarId' => $calendarId, 'uid' => $uid]);
         $eventId = (int) $occurrence['eventId'];
-        $this->storeInvite($eventId, $ev['invite'] ?? null, false);
+        self::storeInvite($this->db, $eventId, $ev['invite'] ?? null, false);
         return ['created', $eventId];
     }
 
@@ -564,7 +582,7 @@ final class MailIngest
             'description' => $draft['description'] ?? null,
         ]);
         $eventId = (int) $occurrence['eventId'];
-        $this->storeInvite($eventId, [
+        self::storeInvite($this->db, $eventId, [
             'method' => $tier,
             'organizer' => ['email' => strtolower($msg['from']), 'name' => null],
             'attendees' => [],
@@ -574,19 +592,26 @@ final class MailIngest
         return $eventId;
     }
 
-    private function storeInvite(int $eventId, ?array $invite, bool $keepPartstat): void
+    /**
+     * Record the invitation block on an event. Its `sequence` is the replay
+     * watermark imipMayMutate compares against, so this runs for EVERY accepted
+     * message, a CANCEL included (BC-09: a cancellation that did not advance it
+     * left the door open to an older REQUEST). Static because the Review queue
+     * applies held changes and must store the block exactly the same way.
+     */
+    public static function storeInvite(Db $db, int $eventId, ?array $invite, bool $keepPartstat): void
     {
         if ($invite === null) {
             return;
         }
         if ($keepPartstat) {
-            $prev = $this->db->scalar('SELECT invite_json FROM events WHERE id = ?', [$eventId]);
+            $prev = $db->scalar('SELECT invite_json FROM events WHERE id = ?', [$eventId]);
             $prevInvite = is_string($prev) ? json_decode($prev, true) : null;
             if (is_array($prevInvite) && isset($prevInvite['myPartstat'])) {
                 $invite['myPartstat'] = $prevInvite['myPartstat'];
             }
         }
-        $this->db->run('UPDATE events SET invite_json = ? WHERE id = ?', [json_encode($invite), $eventId]);
+        $db->run('UPDATE events SET invite_json = ? WHERE id = ?', [json_encode($invite), $eventId]);
     }
 
     /** Find-or-create the local "Invitations" calendar. */

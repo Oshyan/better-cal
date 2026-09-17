@@ -4,7 +4,7 @@ import { html, render } from '../../vendor/index.js';
 import { App } from './App.js';
 import { set, state, toast } from './store.js';
 import { saveSetting } from './actions.js';
-import { fetchMe, loadCalendars, loadSavedViews, loadConfig, loadPeople, loadPlugins, loadProposalCount, loadSystemHealth, api } from './api.js';
+import { fetchMe, loadCalendars, loadSavedViews, loadConfig, loadPeople, loadPlugins, loadReviewCount, loadSystemHealth, api } from './api.js';
 import { announceSystemHealth } from './system.js';
 import { installHoverPrefetch } from './prefetch.js';
 import { armQuietReload, restoreDraftsAfterBoot, installActivityTracking } from './drafts.js';
@@ -34,7 +34,7 @@ async function boot() {
       loadPeople().catch(() => { /* people are non-critical at boot */ }),
       loadSystemHealth(), // own catch inside; feeds the boot notices and the device banner
       loadPlugins(), // ops listing feeds the sidebar layer toggles; own catch inside
-      loadProposalCount(),
+      loadReviewCount(),
       // Tell the server our timezone once. The browser has always known it;
       // worker-side code (plugins building local times) had no way to.
       (state.settings.tz ? Promise.resolve() : saveSetting('tz', localTz()).catch(() => {})),
@@ -112,6 +112,7 @@ function announceAwayFromHome() {
 //   /add?<gcal template params>  -> editor prefilled (extension redirect target)
 //   /subscribe?url=<ics|webcal>  -> subscribe drawer prefilled
 //   /import                      -> import drawer (file arrives via launchQueue)
+//   /review                      -> the Review queue (held-change notification target)
 //   /share?url=&text=&title=     -> Web Share Target: route by content
 async function handleDeepPaths() {
   const path = location.pathname;
@@ -149,6 +150,9 @@ async function handleDeepPaths() {
     openSubscribe(params.get('url') || '');
   } else if (path === '/import') {
     set({ createDrawer: { kind: 'import' } });
+  } else if (path === '/review') {
+    // Where the "an organizer changed ..." notification lands.
+    set({ route: 'review' });
   } else if (path === '/share') {
     const shared = [params.get('url'), params.get('text'), params.get('title')]
       .filter(Boolean).join(' ').trim();

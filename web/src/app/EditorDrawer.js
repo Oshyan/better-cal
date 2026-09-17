@@ -5,7 +5,7 @@
 // via /quickadd (400ms) and live-fills title/start/end/allDay/location below,
 // with a brief flash on the fields it touched. Fields stay fully editable.
 
-import { html, useState, useEffect, useRef } from '../../vendor/index.js';
+import { html, useState, useEffect, useRef, useMemo } from '../../vendor/index.js';
 import { useStore, set, state, toast } from './store.js';
 import { createEvent, updateEvent, deleteEvent, quickAddParse, attachToTrip, defaultTargetCalendarId } from './actions.js';
 import { api, loadPeople, ensureFullOccurrence } from './api.js';
@@ -19,7 +19,7 @@ import { Icon } from '../ui/icons.js';
 import { isEmptyHtml } from '../lib/richtext.js';
 import {
   parseISO, toInputValue, fromInputValue, toISOWithOffset, addDaysDate, pad, localTz,
-  dateOfDayKey, eventDuration,
+  dateOfDayKey, eventDuration, instantFromWallTime, sameClock, tzCity, tzOffsetLabel, zoneOptions, fmtRange,
 } from '../lib/dates.js';
 import {
   TIMED_CHOICES, ALLDAY_CHOICES, REMINDER_UNITS, fmtOffsetMinutes, fmtReminder,
@@ -73,6 +73,54 @@ function parseRrule(rrule) {
   }
   if (r.freq !== 'none' && r.ends === 'until' && !r.until) r.ends = 'never';
   return r;
+}
+
+// Start and End as instants. The fields are wall-clock readings; they are read
+// on this device's clock unless the owner picked a zone (form.tzTouched), in
+// which case "3:00 PM" means 3:00 PM there. Untouched stays on the exact old
+// path, so drafts saved before the zone picker existed behave as they did.
+function formInstants(form) {
+  if (form.tzTouched && form.tz && !form.allDay) {
+    return [instantFromWallTime(form.start, form.tz), instantFromWallTime(form.end, form.tz)];
+  }
+  return [fromInputValue(form.start), fromInputValue(form.end)];
+}
+
+// The quiet zone control on the duration line. A link until clicked, because
+// almost every event is in the zone you are sitting in and a 420-entry select
+// on every editor open would be noise (and costs a formatter per entry).
+// Picking a zone keeps the typed clock time and changes the instant, the way
+// Google Calendar does: you type "3:00 PM", pick New York, and mean 3 PM there.
+// The line then says what that is on this device, so the consequence is never
+// a surprise.
+function ZoneControl({ form, occ, onPick }) {
+  const [open, setOpen] = useState(false);
+  const device = localTz();
+  const tz = form.tz || device;
+  const zones = useMemo(() => (open ? zoneOptions([tz, device, occ && occ.tzid]) : []), [open, tz, device, occ]);
+  const elsewhere = form.tzTouched && !sameClock(tz, device);
+  let here = '';
+  if (elsewhere) {
+    const [s, en] = formInstants(form);
+    if (!isNaN(s) && !isNaN(en)) here = fmtRange(s, en, false) + ' on this device (' + tzCity(device) + ')';
+  }
+  // A stored zone that keeps a different clock from this device, e.g. an event
+  // made at home, opened while travelling. UTC is what imports write when the
+  // zone is unknown, so it is not worth announcing.
+  const stored = occ && occ.tzid && occ.tzid !== 'UTC' && !form.tzTouched && !sameClock(occ.tzid, device) ? occ.tzid : null;
+  const title = stored
+    ? 'Times are shown on this device\'s clock. This event is stored in ' + tzCity(stored) + ' time (' + tzOffsetLabel(stored) + '), which is the clock it repeats on. Pick a zone to enter the time as it reads there.'
+    : 'Pick a zone to enter the time as it reads there, for example a flight or a call in another city.';
+  return html`<span class="bc-zone">
+    ${open
+      ? html`<select class="bc-zone-select" aria-label="Time zone" value=${tz} onChange=${(e) => onPick(e.target.value)}>
+          ${zones.map(([z, label]) => html`<option key=${z} value=${z}>${label}</option>`)}
+        </select>`
+      : html`<button type="button" class="bc-link-btn bc-zone-btn" title=${title} onClick=${() => setOpen(true)}>
+          ${tzCity(tz)} time${stored ? ' · stored as ' + tzCity(stored) : ''}
+        </button>`}
+    ${here && html`<span class="bc-zone-here">= ${here}</span>`}
+  </span>`;
 }
 
 // Smart default: bounded 12 weeks out rather than never-ending.
@@ -250,6 +298,12 @@ export function EditorDrawer() {
       start: toInputValue(start),
       end: toInputValue(end),
       allDay: occ ? !!occ.allDay : !!draft.allDay,
+      // The zone Start and End are read in. It opens as this device's zone,
+      // which is how the fields above are filled, so nothing changes unless
+      // the owner picks another; only then (tzTouched) is it also saved as the
+      // event's zone. An untouched edit never rewrites a stored zone.
+      tz: localTz(),
+      tzTouched: false,
       isContainer: occ ? !!occ.isContainer : !!draft.isContainer,
       location: occ ? (occ.location || '') : (draft.location || ''),
       locationLat: occ ? (occ.locationLat != null ? occ.locationLat : null)
@@ -343,8 +397,7 @@ export function EditorDrawer() {
 
   const submit = async (e) => {
     e.preventDefault();
-    const s = fromInputValue(form.start);
-    const en = fromInputValue(form.end);
+    const [s, en] = formInstants(form);
     if (isNaN(s) || isNaN(en) || en <= s) return;
     // A name nobody has confirmed as a person yet. Saving would have to either
     // invent the person or drop the name silently; ask instead. The People
@@ -378,6 +431,10 @@ export function EditorDrawer() {
       personIds: form.people.map((c) => c.id),
       rrule: buildRrule(form.rrule),
     };
+    // A zone the owner picked becomes the event's own zone: it is what a
+    // repeating event keeps its clock time in across DST changes. All-day
+    // events are dates and have no use for one.
+    if (form.tzTouched && !form.allDay) fields.tzid = form.tz;
     // Only send reminders when the override actually changed, so unrelated
     // edits never clobber an inherited default with a snapshot of it.
     const remNow = form.reminders === null ? null : [...form.reminders].sort((a, b) => a - b).join(',');
@@ -494,7 +551,10 @@ export function EditorDrawer() {
           <span>All day</span>
         </label>
       </div>
-      <div class="bc-duration-exact" role="status">${duration ? duration.exact + ' total' : ''}</div>
+      <div class="bc-duration-exact" role="status">
+        ${duration ? html`<span>${duration.exact} total</span>` : ''}
+        ${!form.allDay && html`<${ZoneControl} form=${form} occ=${occ} onPick=${(z) => upd({ tz: z, tzTouched: true })} />`}
+      </div>
 
       <div class="bc-field-row">
         <label class=${'bc-field grow' + (nlFlash && nlFlash.has('location') ? ' bc-nl-applied' : '')}>

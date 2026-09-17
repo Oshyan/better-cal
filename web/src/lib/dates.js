@@ -275,6 +275,74 @@ export function tzCity(tz) {
   return String(tz || '').split('/').pop().replace(/_/g, ' ');
 }
 
+// [[zone, "America/Los Angeles (UTC-7)"], ...] for a zone <select>: every zone
+// the browser knows plus any passed in (a stored zone an older browser lacks).
+// Built once per session: each label costs an Intl formatter and there are
+// about 420 zones, so callers should not build this per render.
+let zoneOptionCache = null;
+export function zoneOptions(extra = []) {
+  if (!zoneOptionCache) {
+    let all = [];
+    try { all = Intl.supportedValuesOf('timeZone'); } catch { /* older browser: only the extras */ }
+    const now = new Date();
+    zoneOptionCache = new Map([...new Set(['UTC', ...all])].map((z) => [z, z.replace(/_/g, ' ') + ' (' + tzOffsetLabel(z, now) + ')']));
+  }
+  for (const z of extra) {
+    if (z && !zoneOptionCache.has(z)) zoneOptionCache.set(z, z.replace(/_/g, ' ') + ' (' + tzOffsetLabel(z) + ')');
+  }
+  return [...zoneOptionCache.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+}
+
+// --- wall-clock time in a named zone -----------------------------------------
+// A datetime-local value ("2026-06-02T15:00") is a wall-clock reading with no
+// zone. These two say which instant it is when read in a given IANA zone, and
+// the reverse, so the editor can take "3 PM New York" on a laptop in London.
+
+// The instant at which the clock in `tz` reads the given wall time.
+export function instantFromWallTime(value, tz) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(String(value || ''));
+  if (!m) return new Date(NaN);
+  const asUtc = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]);
+  const first = tzOffsetMinutes(tz, new Date(asUtc));
+  if (first == null) return new Date(NaN);
+  // The offset was read at the wrong instant (the wall time taken as UTC), so
+  // read it again at the corrected one and, if it changed, check the answer
+  // that gives. It holds unless the wall time falls in a DST gap and does not
+  // exist; then the first guess stands, which lands an hour later, as every
+  // calendar does (2:30 AM on spring-forward night becomes 3:30).
+  const guess = asUtc - first * 60000;
+  const second = tzOffsetMinutes(tz, new Date(guess));
+  if (second === first) return new Date(guess);
+  const settled = asUtc - second * 60000;
+  return new Date(tzOffsetMinutes(tz, new Date(settled)) === second ? settled : guess);
+}
+
+// The reverse: a datetime-local value for what the clock in `tz` reads at `date`.
+export function wallTimeInZone(date, tz) {
+  const off = tzOffsetMinutes(tz, date);
+  if (off == null || isNaN(date)) return '';
+  const d = new Date(date.getTime() + off * 60000);
+  return d.getUTCFullYear() + '-' + pad(d.getUTCMonth() + 1) + '-' + pad(d.getUTCDate()) +
+    'T' + pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes());
+}
+
+// "Thu, Jun 4, 3:00 PM to 4:00 PM in New York" for a timed event whose own zone
+// keeps a different clock from this device; '' otherwise. UTC is what imports
+// write when the zone is unknown, so it is never announced as a place.
+export function zoneNote(occ) {
+  if (!occ || occ.allDay || !occ.tzid || occ.tzid === 'UTC' || sameClock(occ.tzid, localTz())) return '';
+  // Reuse the local formatters (and the 12/24-hour setting they follow) by
+  // shifting the instant so that the device's clock reads what the zone's does.
+  const inZone = (iso) => {
+    const d = new Date(iso);
+    const off = tzOffsetMinutes(occ.tzid, d);
+    return off == null || isNaN(d) ? null : new Date(d.getTime() + (off + d.getTimezoneOffset()) * 60000);
+  };
+  const s = inZone(occ.start);
+  const e = inZone(occ.end);
+  return s && e ? fmtRange(s, e, false) + ' in ' + tzCity(occ.tzid) : '';
+}
+
 // Do two zones keep the same clock? Names alone over-report: a browser in
 // Vancouver or Tijuana says so, and is on Los Angeles time all year. Compared
 // now and half a year on, so zones that agree only until a DST change differ.

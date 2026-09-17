@@ -18,7 +18,7 @@
 // could start, which on a 450 ms link was nine seconds of a blank page.
 
 // @generated-shell:start (scripts/gen-preload.mjs)
-const VERSION = 'bc-b5bb765ef448';
+const VERSION = 'bc-99d61eaf552a';
 const SHELL = [
   '/',
   '/assets/styles/app.css',
@@ -79,7 +79,7 @@ const SHELL = [
   '/assets/src/app/ActivityPage.js',
   '/assets/src/app/OrganizePage.js',
   '/assets/src/app/PluginsPage.js',
-  '/assets/src/app/ProposalsPage.js',
+  '/assets/src/app/ReviewPage.js',
   '/assets/src/lib/richtext.js',
   '/assets/src/app/settings.js',
   '/assets/src/ui/trips.js',
@@ -107,6 +107,7 @@ const SHELL = [
   '/assets/src/lib/fuzzy.js',
   '/assets/src/lib/jumpparse.js',
   '/assets/src/app/SchemaForm.js',
+  '/assets/src/app/ProposalCard.js',
   '/assets/src/lib/minimonth.js',
 ];
 // @generated-shell:end

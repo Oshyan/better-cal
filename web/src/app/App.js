@@ -45,7 +45,7 @@ import { PeoplePage } from './PeoplePage.js';
 import { ActivityPage } from './ActivityPage.js';
 import { OrganizePage } from './OrganizePage.js';
 import { PluginsPage } from './PluginsPage.js';
-import { ProposalsPage } from './ProposalsPage.js';
+import { ReviewPage } from './ReviewPage.js';
 import { sanitizeHtml } from '../lib/richtext.js';
 
 const MONTH_ROWS = { month: 6, weeks3: 3, weeks2: 2 };
@@ -561,8 +561,8 @@ export function App() {
   if (s.route === 'people') {
     return html`<div class="bc-app"><${PeoplePage} /><${CreateDrawer} /><${ShortcutsSheet} /><${CommandPalette} /><${SystemBanner} /><${Toasts} /></div>`;
   }
-  if (s.route === 'proposals') {
-    return html`<div class="bc-app"><${ProposalsPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${CommandPalette} /><${SystemBanner} /><${Toasts} /></div>`;
+  if (s.route === 'review') {
+    return html`<div class="bc-app"><${ReviewPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${CommandPalette} /><${SystemBanner} /><${Toasts} /></div>`;
   }
   if (s.route === 'plugins') {
     return html`<div class="bc-app"><${PluginsPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${CommandPalette} /><${SystemBanner} /><${Toasts} /></div>`;

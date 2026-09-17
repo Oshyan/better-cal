@@ -142,10 +142,12 @@ export async function loadPlugins() {
   } catch (e) { /* the ops page retries on open */ }
 }
 
-export async function loadProposalCount() {
+// The sidebar badge: how many things are waiting on a decision (held invitation
+// changes, unanswered invitations, open plugin proposals).
+export async function loadReviewCount() {
   try {
-    const d = await api('/proposals?status=open');
-    set({ proposalCount: (d.proposals || []).length });
+    const d = await api('/review/count');
+    set({ reviewCount: d.count || 0 });
   } catch (e) { /* the page shows the real list */ }
 }
 

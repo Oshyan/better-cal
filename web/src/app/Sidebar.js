@@ -293,7 +293,7 @@ function AddMenu() {
 
 export function Sidebar({ open, collapsed, onClose }) {
   // The Manage group is admin and configuration, visited rarely, so it
-  // starts folded and stays how you left it. Proposals is the exception
+  // starts folded and stays how you left it. Review is the exception
   // (an inbox, not admin): its count rides the folded header so nothing
   // waiting on a decision is ever out of sight.
   const [manageCollapsed, setManageCollapsed] = useState(() => {
@@ -304,14 +304,14 @@ export function Sidebar({ open, collapsed, onClose }) {
     setManageCollapsed(next);
     try { localStorage.setItem('bc-manage-collapsed', next ? '1' : '0'); } catch { /* private mode */ }
   };
-  const { calendars, folders, collapsedFolders, route, people, collapsedAllCals, collapsedPeople, peopleSolo, activeOnly, plugins, pluginHidden, proposalCount } = useStore(
+  const { calendars, folders, collapsedFolders, route, people, collapsedAllCals, collapsedPeople, peopleSolo, activeOnly, plugins, pluginHidden, reviewCount } = useStore(
     (s) => ({
       calendars: s.calendars, folders: s.folders,
       collapsedFolders: s.collapsedFolders, route: s.route,
       folderVisibility: s.folderVisibility,
       people: s.people, collapsedAllCals: s.collapsedAllCals,
       plugins: s.plugins, pluginHidden: s.settings.pluginHidden || {},
-      proposalCount: s.proposalCount,
+      reviewCount: s.reviewCount,
       collapsedPeople: s.collapsedPeople, peopleSolo: s.peopleSolo,
       activeOnly: !!s.settings.sidebarActiveOnly,
     }),
@@ -545,15 +545,15 @@ export function Sidebar({ open, collapsed, onClose }) {
         type="button" class="bc-folder-head bc-manage-head"
         aria-expanded=${!manageCollapsed}
         onClick=${toggleManage}
-      ><span class="bc-folder-caret bc-caret-vertical"><${Icon} name=${manageCollapsed ? 'chevronUp' : 'chevronDown'} size=${13} /></span>Manage${manageCollapsed && proposalCount > 0
-        && html`<span class="bc-manage-badge" aria-label=${proposalCount + ' proposals awaiting a decision'}>${proposalCount}</span>`}</button>
+      ><span class="bc-folder-caret bc-caret-vertical"><${Icon} name=${manageCollapsed ? 'chevronUp' : 'chevronDown'} size=${13} /></span>Manage${manageCollapsed && reviewCount > 0
+        && html`<span class="bc-manage-badge" aria-label=${reviewCount + ' waiting on a decision'}>${reviewCount}</span>`}</button>
       ${!manageCollapsed && MANAGE_ITEMS.map(([r, label]) => html`<button
         key=${r} type="button"
         class="bc-manage-item${route === r ? ' is-active' : ''}"
         aria-current=${route === r ? 'page' : 'false'}
         onClick=${() => set({ route: r })}
-      ><${Icon} name=${r} /><span>${label}</span>${r === 'proposals' && proposalCount > 0
-        && html`<span class="bc-manage-badge" aria-label=${proposalCount + ' awaiting a decision'}>${proposalCount}</span>`}</button>`)}
+      ><${Icon} name=${r} /><span>${label}</span>${r === 'review' && reviewCount > 0
+        && html`<span class="bc-manage-badge" aria-label=${reviewCount + ' awaiting a decision'}>${reviewCount}</span>`}</button>`)}
     </footer>
   </aside>`;
 }

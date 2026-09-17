@@ -98,6 +98,7 @@ function bc_handle_api(Request $request, array $cfg): void
         $proposalsDomain = new Domain\Proposals($db, $events, $trips);
         $pluginsController = new Controllers\PluginsController($pluginsDomain, $jobQueue, $proposalsDomain, $undo, $db);
         $proposalsController = new Controllers\ProposalsController($proposalsDomain);
+        $reviewController = new Controllers\ReviewController(new Domain\ReviewQueue($db, $events), $proposalsDomain);
         $configController = new Controllers\ConfigController($settings, $cfg);
         $pushController = new Controllers\PushController($pushSubscriptions, $pushSender, $emailSender);
         $systemController = new Controllers\SystemController(new Domain\SystemHealth($db), $pushSubscriptions, $emailSender, $cfg);
@@ -206,6 +207,12 @@ function bc_handle_api(Request $request, array $cfg): void
         // deliberately never part of the events-window payload.
         $router->add('GET', "$base/events/:id/plugin-data", [$pluginsController, 'eventData']);
         $router->add('PATCH', "$base/events/:id/plugin-data/:pluginId", [$pluginsController, 'saveEventData']);
+
+        // Review queue: everything waiting on the owner's decision, one list.
+        $router->add('GET', "$base/review", [$reviewController, 'index']);
+        $router->add('GET', "$base/review/count", [$reviewController, 'count']);
+        $router->add('POST', "$base/review/invite-changes/:id/accept", [$reviewController, 'acceptInviteChange']);
+        $router->add('POST', "$base/review/invite-changes/:id/dismiss", [$reviewController, 'dismissInviteChange']);
 
         // Proposals (C11): a plugin suggests, the user decides.
         $router->add('GET', "$base/proposals", [$proposalsController, 'index']);

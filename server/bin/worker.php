@@ -114,6 +114,24 @@ try {
                         $done = 0;
                         foreach ($fetcher->fetchUnseen(10) as $msg) {
                             $r = $ingest->ingestMessage($uid, $msg, $tz);
+                            // A held change waits for a decision, and the
+                            // owner is not looking at the queue: tell them. One
+                            // notification per meeting (tag), so an organizer
+                            // who edits three times does not buzz three times.
+                            if ($r['outcome'] === 'held' && $r['eventId'] !== null) {
+                                try {
+                                    $heldTitle = (string) ($db->scalar('SELECT title FROM events WHERE id = ?', [(int) $r['eventId']]) ?? 'an invitation');
+                                    (new \BetterCal\Infra\Notifier($db, $cfg))->send(
+                                        $uid,
+                                        'An organizer changed "' . $heldTitle . '"',
+                                        'Nothing has changed on your calendar yet. Review it to accept or dismiss.',
+                                        '/review',
+                                        'review-' . (int) $r['eventId']
+                                    );
+                                } catch (\Throwable $e) {
+                                    echo bc_ts() . ' mail_ingest notify failed: ' . $e->getMessage() . "\n";
+                                }
+                            }
                             echo bc_ts() . ' mail_ingest msg=' . substr($msg['messageId'], 0, 40)
                                 . ' tier=' . ($r['tier'] ?? '-') . ' outcome=' . $r['outcome'] . "\n";
                             $done++;

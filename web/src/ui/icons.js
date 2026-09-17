@@ -177,6 +177,13 @@ export function Icon({ name, size = 15 }) {
     // Suggestion: a lamp with rays — something offered, not yet decided.
     proposals: html`<path d="M8 1.8a4.2 4.2 0 0 0-2.4 7.6c.5.4.8 1 .8 1.6v.4h3.2v-.4c0-.6.3-1.2.8-1.6A4.2 4.2 0 0 0 8 1.8z" />
       <path d="M6.4 13.4h3.2M7 14.9h2" />`,
+    // Review queue: an inbox tray, things that arrived and wait for a decision.
+    review: html`<path d="M2 9.2l1.9-5.4c.2-.5.6-.8 1.1-.8h6c.5 0 .9.3 1.1.8L14 9.2v3c0 .6-.5 1-1 1H3c-.5 0-1-.4-1-1v-3z" />
+      <path d="M2 9.2h3.4c.3 0 .5.2.6.5.2.8.9 1.4 2 1.4s1.8-.6 2-1.4c.1-.3.3-.5.6-.5H14" />`,
+    // Envelope: an item that arrived by email (invitations and their changes).
+    mail: html`<rect x="2" y="3.4" width="12" height="9.2" rx="1.2" />
+      <path d="M2.4 4.4L8 8.8l5.6-4.4" />`,
+    arrowRight: html`<path d="M2.5 8h10M8.7 3.8L12.9 8l-4.2 4.2" />`,
     // Two heads-and-shoulders for the People page.
     people: html`<circle cx="5.6" cy="5.6" r="2.3" />
       <path d="M1.8 13.2c0-2.1 1.7-3.8 3.8-3.8s3.8 1.7 3.8 3.8" />

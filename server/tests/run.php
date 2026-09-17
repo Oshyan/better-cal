@@ -609,6 +609,85 @@ check('imip equal sequence allowed', $may($bound, ['organizer' => ['email' => 'a
 checkEq('imip unbound local uid refused', 'no organizer bound to this event', $may(null, ['organizer' => ['email' => 'alice@example.com'], 'sequence' => 1], 'alice@example.com')[1]);
 checkEq('imip empty stored organizer refused', 'no organizer bound to this event', $may(['organizer' => null, 'sequence' => 0], ['organizer' => ['email' => 'x@y.test']], 'x@y.test')[1]);
 
+// BC-09: a cancellation ends its sequence number. A REQUEST carrying the same
+// number was written before the cancel and must not rewrite the cancelled event;
+// re-issuing the meeting takes a higher one. A live event still accepts equal.
+$mayWhen = static fn(string $status, int $seq) => MailIngest::imipMayMutate($bound, ['organizer' => ['email' => 'alice@example.com'], 'sequence' => $seq], '', $status);
+checkEq('imip replay after cancel: same sequence refused', 'stale sequence (event already cancelled)', $mayWhen('cancelled', 2)[1]);
+checkEq('imip replay after cancel: lower sequence refused', 'stale sequence', $mayWhen('cancelled', 1)[1]);
+check('imip re-issue after cancel: higher sequence allowed', $mayWhen('cancelled', 3)[0]);
+check('imip live event: equal sequence still allowed', $mayWhen('confirmed', 2)[0]);
+
+// --- Review queue: emailed changes are held, never applied (BC-07) -----------
+{
+    $rq = BetterCal\Domain\ReviewQueue::class;
+    $stored = [
+        'id' => 40, 'title' => 'Planning dinner', 'status' => 'confirmed', 'all_day' => 0, 'tzid' => 'America/Los_Angeles',
+        'start_utc' => '2026-10-02 02:00:00', 'end_utc' => '2026-10-02 04:00:00', // Oct 1, 7-9 PM Pacific
+        'location' => 'Zuni Cafe', 'description' => '<p>Bring the <b>deck</b>.</p>', 'rrule' => null,
+    ];
+    $same = [
+        'title' => 'Planning dinner', 'start' => '2026-10-01T19:00:00-07:00', 'end' => '2026-10-01T21:00:00-07:00',
+        'allDay' => false, 'tzid' => 'America/Los_Angeles', 'location' => 'Zuni Cafe', 'description' => '<p>Bring the <b>deck</b>.</p>', 'rrule' => null,
+    ];
+    checkEq('review diff: a re-send that changes nothing is not a decision', [], $rq::inviteDiff($stored, 'REQUEST', $same));
+    checkEq('review diff: the same instant written in another zone is not a change', [],
+        $rq::inviteDiff($stored, 'REQUEST', ['start' => '2026-10-02T03:00:00+01:00', 'end' => '2026-10-02T05:00:00+01:00'] + $same));
+    $moved = $rq::inviteDiff($stored, 'REQUEST', ['start' => '2026-10-03T19:00:00-07:00', 'end' => '2026-10-03T21:00:00-07:00', 'location' => 'Nopa'] + $same);
+    checkEq('review diff: a moved meeting lists exactly what moved', ['start', 'end', 'location'], array_column($moved, 'field'));
+    checkEq('review diff: shows the stored start in the event\'s own zone', '2026-10-01T19:00:00-07:00', $moved[0]['from']);
+    checkEq('review diff: and the proposed one', '2026-10-03T19:00:00-07:00', $moved[0]['to']);
+    checkEq('review diff: location from -> to', ['Zuni Cafe', 'Nopa'], [$moved[2]['from'], $moved[2]['to']]);
+    $desc = $rq::inviteDiff($stored, 'REQUEST', ['description' => '<p>Bring the   <i>budget</i> instead.</p>'] + $same);
+    checkEq('review diff: description is compared and previewed as plain text', ['Bring the deck.', 'Bring the budget instead.'], [$desc[0]['from'], $desc[0]['to']]);
+    checkEq('review diff: markup-only description edits are not a change', [], $rq::inviteDiff($stored, 'REQUEST', ['description' => '<div>Bring the deck.</div>'] + $same));
+    checkEq('review diff: a cancellation is one line', [['field' => 'status', 'label' => 'Status', 'from' => 'confirmed', 'to' => 'cancelled']], $rq::inviteDiff($stored, 'CANCEL', []));
+    checkEq('review diff: cancelling what is already cancelled is nothing', [], $rq::inviteDiff(['status' => 'cancelled'] + $stored, 'CANCEL', []));
+    checkEq('review diff: a re-issued meeting says it comes back', 'status', array_column($rq::inviteDiff(['status' => 'cancelled'] + $stored, 'REQUEST', $same), 'field')[0] ?? null);
+    $allDayStored = ['all_day' => 1, 'tzid' => 'UTC', 'start_utc' => '2026-10-05 00:00:00', 'end_utc' => '2026-10-06 00:00:00'] + $stored;
+    checkEq('review diff: all-day compares dates, not instants', [],
+        $rq::inviteDiff($allDayStored, 'REQUEST', ['allDay' => true, 'start' => '2026-10-05T00:00:00-07:00', 'end' => '2026-10-06T00:00:00-07:00'] + $same));
+    checkEq('review diff: all-day moved a day', ['2026-10-05', '2026-10-06'], (static function (array $d): array { return [$d[0]['from'], $d[0]['to']]; })(
+        $rq::inviteDiff($allDayStored, 'REQUEST', ['allDay' => true, 'start' => '2026-10-06', 'end' => '2026-10-07'] + $same)));
+
+    // Holding writes ONLY to the queue: there is no events table here at all,
+    // so touching the calendar would be an error, not just a wrong answer.
+    $rdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $rdb->run("CREATE TABLE review_items (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, event_id INTEGER, source_key TEXT, title TEXT, summary TEXT, payload_json TEXT, status TEXT DEFAULT 'open', created_at TEXT DEFAULT CURRENT_TIMESTAMP, decided_at TEXT)");
+    $rdb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT)');
+    $queue = new BetterCal\Domain\ReviewQueue($rdb, (new ReflectionClass(Events::class))->newInstanceWithoutConstructor());
+    $alice = ['organizer' => ['email' => 'alice@example.com', 'name' => 'Alice'], 'sequence' => 3, 'attendees' => []];
+    checkEq('review hold: a no-op message creates no item', null, $queue->holdInviteChange(1, $stored, 'uid-1', 'REQUEST', $same, $alice, 'alice@example.com'));
+    $first = $queue->holdInviteChange(1, $stored, 'uid-1', 'REQUEST', ['location' => 'Nopa'] + $same, $alice, 'alice@example.com');
+    check('review hold: a real change is held', is_int($first) && $first > 0);
+    $second = $queue->holdInviteChange(1, $stored, 'uid-1', 'CANCEL', [], ['sequence' => 4] + $alice, 'alice@example.com');
+    $open = $queue->listFor(1);
+    checkEq('review hold: a newer change for the same meeting replaces the open one', [$second], array_column($open, 'id'));
+    checkEq('review hold: summary names who and what', 'Alice cancelled this.', $open[0]['summary']);
+    checkEq('review hold: another meeting is its own item', 2, count((function () use ($queue, $stored, $same, $alice) {
+        $queue->holdInviteChange(1, ['id' => 41] + $stored, 'uid-2', 'REQUEST', ['title' => 'Planning lunch'] + $same, $alice, 'alice@example.com');
+        return $queue->listFor(1);
+    })()));
+    checkEq('review hold: another user sees none of it', [], $queue->listFor(2));
+    checkEq('review count', 2, $queue->openCount(1));
+    $dismissed = $queue->dismiss(1, $second);
+    checkEq('review dismiss: closes the item', 'dismissed', $dismissed['status']);
+    checkEq('review dismiss: leaves a trace in Activity', 'Dismissed an emailed cancellation of "Planning dinner"', $rdb->scalar("SELECT summary FROM mutations WHERE op = 'refuse'"));
+    try {
+        $queue->dismiss(1, $second);
+        check('review dismiss: deciding twice is refused', false);
+    } catch (HttpError $e) {
+        checkEq('review dismiss: deciding twice is a 409', [409, 'review_decided'], [$e->status, $e->errorCode]);
+    }
+    try {
+        $queue->dismiss(2, $first);
+        check('review: another user cannot decide my item', false);
+    } catch (HttpError $e) {
+        checkEq('review: another user\'s item is a 404, not a 403 (no existence leak)', 404, $e->status);
+    }
+    checkEq('review list all: superseded items stay out, decided ones show', ['open', 'dismissed'], array_column($queue->listFor(1, false), 'status'));
+}
+
 $ldHtml = '<html><body><script type="application/ld+json">'
     . json_encode(['@context' => 'https://schema.org', '@type' => 'Event', 'name' => 'Concert Night',
         'startDate' => '2026-09-12T19:30:00-07:00', 'endDate' => '2026-09-12T22:00:00-07:00',

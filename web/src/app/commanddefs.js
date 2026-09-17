@@ -40,12 +40,12 @@ export const STATIC_COMMANDS = [
 // The Manage pages, shared with the sidebar footer so the two can't drift.
 // [route, label]
 export const MANAGE_ITEMS = [
+  ['review', 'Review'],
   ['settings', 'Settings'],
   ['organize', 'Calendars & folders'],
   ['people', 'People'],
   ['activity', 'Activity'],
   ['plugins', 'Plugins'],
-  ['proposals', 'Proposals'],
   ['outfeeds', 'Outbound feeds'],
   ['filters', 'Filters'],
   ['views', 'Saved views'],

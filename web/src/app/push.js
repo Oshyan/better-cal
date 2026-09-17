@@ -101,7 +101,13 @@ export async function handleEventLink() {
   params.delete('at');
   const rest = params.toString();
   window.history.replaceState(null, '', window.location.pathname + (rest ? '?' + rest : ''));
+  await openOccurrence(instanceId, at);
+}
 
+// Open one occurrence's detail view wherever it is on the calendar: load a
+// window that contains it, then open it. Shared by notification links and by
+// the Review page, whose items are about events that may be months away.
+export async function openOccurrence(instanceId, at) {
   const { broad, tight } = deepLinkWindows(instanceId, at, Date.now());
   try {
     await loadWindow(broad.start, broad.end);

@@ -4,7 +4,7 @@ import {
   state, set, toast, patchOccurrence, restoreOccurrence,
   removeOccurrencesOfEvent, mergeWindow, invalidateRecords,
 } from './store.js';
-import { api, refreshWindow, undo, loadCalendars, loadPeople } from './api.js';
+import { api, refreshWindow, undo, loadCalendars, loadPeople, loadReviewCount } from './api.js';
 import { adoptSettings } from './settings.js';
 import { discardEditorWithUndo, clearQuickAddText } from './drafts.js';
 import { localTz, todayKey, addDaysKey, occDayKey, epochDayOfKey, startMs, pad, parseISO, toISOWithOffset, addDaysDate } from '../lib/dates.js';
@@ -966,6 +966,7 @@ export async function rsvpEvent(occ, answer) {
   try {
     const result = await api('/events/' + occ.eventId + '/rsvp', { method: 'POST', body: { answer } });
     patchOccurrence(occ.instanceId, { invite: { ...occ.invite, myPartstat: result.myPartstat } });
+    loadReviewCount(); // an answered invitation leaves the Review queue
     toast(result.sent
       ? 'RSVP sent to the organizer'
       : 'RSVP recorded (no reply sent — organizer unknown or RSVP mail not configured)');

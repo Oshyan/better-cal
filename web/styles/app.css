@@ -2792,6 +2792,29 @@ body.bc-rescheduling { user-select: none; }
 .bc-epd .bc-schema-label { width: 120px; }
 
 /* Proposals */
+/* Review queue: one compact card per decision. Head and body are single rows
+   (title, when and age; then summary with the actions at the right), and only
+   a held change adds a third block, the from -> to rows. */
+.bc-review-card { border: 1px solid var(--border); border-radius: var(--radius); padding: 9px 14px; margin-bottom: 10px; }
+.bc-review-card.is-decided { opacity: 0.65; }
+.bc-review-head { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.bc-review-kind { flex: none; align-self: center; display: inline-flex; color: var(--fg-muted); }
+.bc-review-title { font-weight: 700; font-size: 14px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+button.bc-review-title { color: var(--fg); padding: 0; }
+.bc-review-when { font-size: 12.5px; color: var(--fg-muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bc-review-age { margin-left: auto; flex: none; font-size: 11.5px; color: var(--fg-muted); }
+.bc-review-body { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 4px; }
+.bc-review-summary { flex: 1 1 260px; min-width: 0; font-size: 12.5px; color: var(--fg-muted); }
+.bc-review-sender { white-space: nowrap; }
+.bc-review-sender::before { content: '· '; }
+.bc-review-actions { display: inline-flex; gap: 8px; flex: none; }
+.bc-review-diff { margin: 8px 0 2px; display: flex; flex-direction: column; gap: 3px; font-size: 12.5px; }
+.bc-review-diffrow { display: flex; align-items: baseline; gap: 10px; }
+.bc-review-diffrow dt { flex: none; width: 84px; color: var(--fg-muted); }
+.bc-review-diffrow dd { margin: 0; min-width: 0; display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.bc-review-from { color: var(--fg-muted); text-decoration: line-through; }
+.bc-review-to { font-weight: 600; }
+
 .bc-proposal { border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 14px; margin-bottom: 10px; }
 .bc-proposal.is-accepted { opacity: 0.8; border-color: color-mix(in srgb, var(--ok) 45%, var(--border)); }
 .bc-proposal.is-rejected { opacity: 0.6; }

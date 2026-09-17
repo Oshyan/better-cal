@@ -1320,6 +1320,35 @@ console.log('--- chronological ordering across timezone offsets ---');
   eq('map style: maptiler default on light', mapTilerStyle(null, false), 'streets-v2');
 }
 
+// --- Very long spans cost nothing until a row is drawn (BC-15) ------------------
+{
+  const { rowSegmentAt, spanRowCount, clampDayRange, LONG_SPAN_ROWS } = await import('../src/ui/monthmath.js');
+  // rowSegmentAt must be indistinguishable from the pre-segmented path, row for
+  // row, or a long event would draw differently from a short one.
+  for (const columns of [7, 3]) {
+    for (const [s, e] of [['2026-06-03', '2026-06-03'], ['2026-05-29', '2026-06-14'], ['2026-01-01', '2027-03-15']]) {
+      const all = rowSpanSegments(s, e, columns);
+      eq(`long span: row count matches segmentation (${columns} cols, ${s}..${e})`, spanRowCount(s, e, columns), all.length);
+      eq(`long span: every row's segment matches (${columns} cols, ${s}..${e})`,
+        all.map((seg) => rowSegmentAt(s, e, seg.rowIndex, columns)), all);
+      eq(`long span: the row before and the row after get nothing (${columns} cols, ${s}..${e})`,
+        [rowSegmentAt(s, e, all[0].rowIndex - 1, columns), rowSegmentAt(s, e, all[all.length - 1].rowIndex + 1, columns)], [null, null]);
+    }
+  }
+  // The attack shape: a thousand years. Deciding it is long, and getting the
+  // segment for a row in the middle, are both arithmetic, not loops.
+  const t0 = Date.now();
+  const rows = spanRowCount('1000-01-01', '2000-01-01', 7);
+  const mid = rowSegmentAt('1000-01-01', '2000-01-01', rowIndexOfDayKey('1500-06-15', 7), 7);
+  assert('long span: a millennium is tens of thousands of rows', rows > 52000 && rows > LONG_SPAN_ROWS);
+  eq('long span: a middle row is a full-width continuation', mid && [mid.startCol, mid.endCol, mid.contLeft, mid.contRight], [0, 6, true, true]);
+  assert('long span: answered without walking it', Date.now() - t0 < 50);
+  eq('long span: an ordinary two-week trip is pre-segmented as before', spanRowCount('2026-06-01', '2026-06-14', 7) <= LONG_SPAN_ROWS, true);
+  eq('clamp: inside', clampDayRange(10, 20, 0, 100), [10, 20]);
+  eq('clamp: cut to the rendered rows at both ends', clampDayRange(-500000, 500000, 20600, 20641), [20600, 20641]);
+  eq('clamp: a span wholly off screen highlights nothing', clampDayRange(10, 20, 30, 40), null);
+}
+
 // --- Home zone vs device zone -------------------------------------------------
 {
   const { tzOffsetMinutes, tzOffsetLabel, tzCity, sameClock } = await import('../src/lib/dates.js');

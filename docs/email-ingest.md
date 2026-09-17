@@ -8,6 +8,8 @@ The worker polls the **calendar@oshyan.com** mailbox (IMAP, every ~2 minutes) an
 
 Every processed message id is logged in `mail_ingest` (tier, outcome, event id) — nothing ingests twice; malformed messages are marked seen and skipped.
 
+Anyone can send mail to the ingest address, so a message is sized before it is trusted. The worker lists unseen mail WITHOUT bodies and asks the server for each size; one over 5 MiB is never downloaded (outcome `skipped`, error "message too large to ingest"). Messages are handled one at a time rather than ten decoded at once, a calendar part over 1 MiB or holding more than 200 events is ignored, and text/HTML is cut to 512 KiB before extraction. A message is logged as `started` and marked seen BEFORE its body is downloaded and parsed: if parsing it kills the worker outright (out of memory cannot be caught), the next run does not walk into the same message again, and the `started` row that is left behind is how such a message shows up afterwards. An ordinary failure (a dropped connection) undoes both, so it is retried. The limits are `BETTERCAL_LIMIT_MAIL_*` in `.env`.
+
 ## Changes and cancellations wait for you
 
 Email is not authenticated. The only thing tying a later message to the original invitation is the organizer's address, and a sender writes that. So a message that would change or cancel an event already on your calendar goes through three gates:

@@ -36,7 +36,8 @@ Auth is HTTP Basic, so it is only safe over TLS. The server is HTTPS-only; never
 
 - **401 Unauthorized:** username must be the exact account email; if using a token, paste the full `bc_...` value (46 chars). Check the token has not been revoked or expired.
 - **Account validates but no calendars appear:** make sure the URL path is `/dav` (some clients silently drop the path). On macOS use the Advanced account type with server path `/dav`.
-- **403 on save:** you edited an event on a subscribed (feed) calendar, which is read-only over CalDAV.
+- **403 on save:** you edited an event on a subscribed (feed) calendar, which is read-only over CalDAV. A 403 whose message mentions `max-resource-size` means the object itself was refused: one event with its changed occurrences may be at most 1 MiB and 500 overrides (`BETTERCAL_LIMIT_DAV_OBJECT_BYTES`, `BETTERCAL_LIMIT_DAV_OVERRIDES`). The size limit is published to clients as `CALDAV:max-resource-size`.
+- **429 Too Many Requests:** this network address sent too many wrong passwords (to CalDAV or the login form; they share a limit). Syncing resumes by itself within 15 minutes. It is a 429 rather than a 401 so the client does not decide the saved password is wrong.
 - **400 "Object URI must be <UID>.ics":** the client PUT a resource whose filename does not match the VEVENT UID. Mainstream clients (Apple, DAVx5, Thunderbird) always match; if you script against the endpoint, name objects `{uid}.ics`.
 - **Sync seems stale:** clients poll; pull-to-refresh (iOS) or force sync (DAVx5) fetches immediately. Server-side feed calendars only update when the hourly poll runs.
 - **Plain HTTP:** Basic auth credentials are only sent over TLS; the server does not serve the DAV endpoint over http.

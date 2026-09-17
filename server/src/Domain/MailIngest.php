@@ -6,6 +6,7 @@ namespace BetterCal\Domain;
 
 use BetterCal\Infra\Db;
 use BetterCal\Infra\LlmGateway;
+use BetterCal\Support\Limits;
 use BetterCal\Support\Time;
 
 /**
@@ -53,6 +54,11 @@ final class MailIngest
      */
     public static function parseImip(string $ics): ?array
     {
+        // An invitation is one meeting, perhaps with a few exceptions. Anything
+        // shaped like a whole calendar is not parsed at all (BC-10).
+        if (Ics::budgetProblem($ics, Limits::get('MAIL_ICS_BYTES'), Limits::get('MAIL_ICS_EVENTS')) !== null) {
+            return null;
+        }
         try {
             $vcal = \Sabre\VObject\Reader::read(
                 $ics,
@@ -71,7 +77,8 @@ final class MailIngest
         }
         $events = [];
         foreach ($vcal->select('VEVENT') as $vevent) {
-            $uid = isset($vevent->UID) ? (string) $vevent->UID : null;
+            // Same cleaning Ics::parse gave the key, or the two never meet.
+            $uid = isset($vevent->UID) ? substr(Ics::structural(trim((string) $vevent->UID)), 0, 255) : null;
             $parsed = $uid !== null && isset($byUid[$uid]) ? $byUid[$uid] : null;
             if ($parsed === null) {
                 continue;
@@ -265,25 +272,82 @@ final class MailIngest
         }
 
         $result = ['tier' => 'none', 'outcome' => 'skipped', 'eventId' => null, 'error' => null];
-        try {
-            $result = $this->runTiers($userId, $msg, $tz);
-        } catch (\Throwable $e) {
-            $result = ['tier' => 'none', 'outcome' => 'error', 'eventId' => null, 'error' => mb_substr($e->getMessage(), 0, 500)];
+        if (isset($msg['oversize'])) {
+            // The fetcher never downloaded it (Limits::MAIL_BYTES). Logged like
+            // any other message so "where did that invite go" has an answer.
+            $result['error'] = 'message too large to ingest (' . number_format((int) $msg['oversize']) . ' bytes)';
+        } else {
+            try {
+                $result = $this->runTiers($userId, $msg, $tz);
+            } catch (\Throwable $e) {
+                $result = ['tier' => 'none', 'outcome' => 'error', 'eventId' => null, 'error' => mb_substr($e->getMessage(), 0, 500)];
+            }
         }
-        $this->db->run(
-            'INSERT IGNORE INTO mail_ingest (message_id, subject, from_addr, tier, outcome, event_id, error)
-             VALUES (?, ?, ?, ?, ?, ?, ?)',
-            [
-                mb_substr($msg['messageId'], 0, 255),
-                mb_substr($msg['subject'], 0, 500),
-                mb_substr($msg['from'], 0, 255),
-                $result['tier'],
-                $result['outcome'],
-                $result['eventId'],
-                $result['error'],
-            ]
-        );
+        $this->finish($msg, $result);
         return $result;
+    }
+
+    public const OUTCOME_STARTED = 'started';
+
+    /**
+     * Record that a message is about to be downloaded and parsed, BEFORE doing
+     * either. If parsing it kills the worker (out of memory cannot be caught),
+     * this row is what stops the next run from walking into the same message:
+     * begin() returns false for a message that was started and never finished,
+     * and the row stays in the log as 'started', which is how a poison message
+     * shows up afterwards. Returns false as well for one already handled.
+     *
+     * @param array{messageId:string,subject:string,from:string} $envelope
+     */
+    public function begin(array $envelope): bool
+    {
+        try {
+            $this->db->insert('mail_ingest', [
+                'message_id' => mb_substr($envelope['messageId'], 0, 255),
+                'subject' => mb_substr($envelope['subject'], 0, 500),
+                'from_addr' => mb_substr($envelope['from'], 0, 255),
+                'outcome' => self::OUTCOME_STARTED,
+            ]);
+            return true;
+        } catch (\PDOException $e) {
+            if ((string) $e->getCode() === '23000') {
+                return false; // the unique message_id: seen before
+            }
+            throw $e;
+        }
+    }
+
+    /** A retryable failure while fetching: forget the 'started' row so the next run tries again. */
+    public function abort(string $messageId): void
+    {
+        $this->db->run('DELETE FROM mail_ingest WHERE message_id = ? AND outcome = ?', [mb_substr($messageId, 0, 255), self::OUTCOME_STARTED]);
+    }
+
+    /** Write the outcome over the 'started' row, or insert it when begin() was not used. */
+    private function finish(array $msg, array $result): void
+    {
+        $id = mb_substr($msg['messageId'], 0, 255);
+        $updated = $this->db->run(
+            'UPDATE mail_ingest SET tier = ?, outcome = ?, event_id = ?, error = ? WHERE message_id = ? AND outcome = ?',
+            [$result['tier'], $result['outcome'], $result['eventId'], $result['error'], $id, self::OUTCOME_STARTED]
+        )->rowCount();
+        if ($updated === 0) {
+            try {
+                $this->db->insert('mail_ingest', [
+                    'message_id' => $id,
+                    'subject' => mb_substr($msg['subject'], 0, 500),
+                    'from_addr' => mb_substr($msg['from'], 0, 255),
+                    'tier' => $result['tier'],
+                    'outcome' => $result['outcome'],
+                    'event_id' => $result['eventId'],
+                    'error' => $result['error'],
+                ]);
+            } catch (\PDOException $e) {
+                if ((string) $e->getCode() !== '23000') {
+                    throw $e; // a duplicate message id is fine: it is logged already
+                }
+            }
+        }
     }
 
     /** @param array{messageId:string,subject:string,from:string,icsParts:list<string>,html:?string,text:?string} $msg */
@@ -729,6 +793,10 @@ final class MailIngest
 
     private function alreadyProcessed(string $messageId): bool
     {
-        return $this->db->scalar('SELECT id FROM mail_ingest WHERE message_id = ?', [mb_substr($messageId, 0, 255)]) !== null;
+        // A 'started' row is this same run's begin(), not a previous outcome.
+        return $this->db->scalar(
+            'SELECT id FROM mail_ingest WHERE message_id = ? AND outcome <> ?',
+            [mb_substr($messageId, 0, 255), self::OUTCOME_STARTED]
+        ) !== null;
     }
 }

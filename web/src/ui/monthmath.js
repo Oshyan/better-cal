@@ -104,6 +104,49 @@ export function rowSpanSegments(startKey, endKey, columns = 7) {
   return segs;
 }
 
+// --- very long spans -----------------------------------------------------------
+// rowSpanSegments makes one object per row the span touches, which is right
+// for a trip or a conference and wrong for an event whose dates are a typo or
+// an attack: a feed event running from the year 1000 to 2000 is 52,000 week
+// rows, allocated up front although perhaps six are ever on screen (BC-15).
+// Spans over LONG_SPAN_ROWS are therefore NOT pre-segmented. The grid keeps
+// one record for them and asks rowSegmentAt() for just the rows it draws.
+
+export const LONG_SPAN_ROWS = 60; // about 14 months of week rows
+
+// How many rows a [startKey..endKey] span touches. O(1).
+export function spanRowCount(startKey, endKey, columns = 7) {
+  const s = epochDayOfKey(startKey);
+  const e = Math.max(s, epochDayOfKey(endKey));
+  return rowIndexOfEpochDay(e, columns) - rowIndexOfEpochDay(s, columns) + 1;
+}
+
+// The one segment of a span that falls in a given row, in exactly the shape
+// rowSpanSegments produces, or null when the span does not reach that row. O(1).
+export function rowSegmentAt(startKey, endKey, rowIndex, columns = 7) {
+  const s = epochDayOfKey(startKey);
+  const e = Math.max(s, epochDayOfKey(endKey));
+  const rowStart = firstEpochDayOfRow(rowIndex, columns);
+  const rowEnd = rowStart + columns - 1;
+  if (e < rowStart || s > rowEnd) return null;
+  return {
+    rowIndex,
+    startCol: Math.max(s, rowStart) - rowStart,
+    endCol: Math.min(e, rowEnd) - rowStart,
+    contLeft: s < rowStart,
+    contRight: e > rowEnd,
+  };
+}
+
+// Clamp an inclusive epoch-day range to another; null when they do not meet.
+// Used so drag highlighting walks the days that are rendered, not every day
+// of the span being dragged.
+export function clampDayRange(a, b, lo, hi) {
+  const from = Math.max(a, lo);
+  const to = Math.min(b, hi);
+  return from <= to ? [from, to] : null;
+}
+
 // Week-row segmentation (columns = 7), kept as the historical shape with
 // weekIndex naming. Delegates to rowSpanSegments.
 export function segmentSpan(startKey, endKey) {

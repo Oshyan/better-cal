@@ -11,6 +11,7 @@ use BetterCal\Http\HttpError;
 use BetterCal\Http\Request;
 use BetterCal\Http\Response;
 use BetterCal\Infra\Db;
+use BetterCal\Support\Limits;
 
 final class CalendarsController
 {
@@ -96,9 +97,27 @@ final class CalendarsController
         if (!is_array($file) || ($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
             throw HttpError::badRequest('Multipart file field "ics" is required');
         }
+        // Size first, from the upload metadata, so an oversized file is never
+        // even read into memory; then the event count, on the raw text, before
+        // the parser turns each one into objects and the loop below into rows
+        // inside one transaction (BC-12).
+        $maxBytes = Limits::get('IMPORT_BYTES');
+        if ((int) ($file['size'] ?? 0) > $maxBytes) {
+            throw new HttpError('import_too_large', 'That file is over the ' . round($maxBytes / 1048576) . ' MiB import limit. Split it, or raise BETTERCAL_LIMIT_IMPORT_BYTES on the server.', 413);
+        }
         $ics = file_get_contents((string) $file['tmp_name']);
         if ($ics === false || !str_contains($ics, 'BEGIN:VCALENDAR')) {
             throw HttpError::badRequest('File is not an ICS calendar', 'invalid_ics');
+        }
+        // The configured cap, or fewer when this PHP process could not hold
+        // that many parsed events: a clear refusal beats an out-of-memory crash.
+        $maxEvents = Limits::importEventBudget();
+        $problem = Ics::budgetProblem($ics, $maxBytes, $maxEvents);
+        if ($problem !== null) {
+            $how = $maxEvents < Limits::get('IMPORT_EVENTS')
+                ? 'This server has memory for about ' . number_format($maxEvents) . ' events at once: split the file, or raise PHP memory_limit.'
+                : 'Split the file, or raise BETTERCAL_LIMIT_IMPORT_EVENTS on the server.';
+            throw new HttpError('import_too_large', $problem . '. ' . $how, 413);
         }
         try {
             $parsed = Ics::parse($ics);

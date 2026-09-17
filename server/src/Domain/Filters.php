@@ -7,6 +7,7 @@ namespace BetterCal\Domain;
 use BetterCal\Http\HttpError;
 use BetterCal\Infra\Db;
 use BetterCal\Infra\JobQueue;
+use BetterCal\Support\Limits;
 
 /**
  * Keyword/regex/prompt filters at global, folder, or calendar scope. Enabled
@@ -354,8 +355,72 @@ final class Filters
     private static function patternHits(string $type, string $pattern, string $value): bool
     {
         return $type === 'regex'
-            ? @preg_match(self::delimit($pattern), $value) === 1
+            ? self::regexHits($pattern, $value)
             : mb_stripos($value, $pattern) !== false;
+    }
+
+    /** Regex evaluations so far in this request or worker run, across all filters. */
+    private static int $regexEvals = 0;
+    /** @var array<string,true> patterns that hit a PCRE limit once and are skipped for the rest of the run */
+    private static array $regexGaveUp = [];
+    private static bool $regexBudgetLogged = false;
+
+    /** Backtracking steps one match may take; PHP's default is ten times this. */
+    private const REGEX_BACKTRACK_LIMIT = '100000';
+
+    /**
+     * One regex filter against one value, inside three bounds (BC-11). The
+     * owner writes the pattern, but the TEXT comes from subscribed feeds and
+     * invitations, and a pattern that is merely careless ("(a+)+$") can be made
+     * to backtrack catastrophically by text chosen for it, once per field per
+     * event per filter, on every calendar load:
+     *
+     * - per match: a lower backtrack limit, with the JIT off for the match,
+     *   because PHP does not apply that limit to JIT-compiled patterns. Scoped
+     *   to the call and restored, so nothing else's regexes are affected.
+     * - per pattern: one that hits the limit is not tried again this run. It
+     *   would hit it again on the next event, and the one after.
+     * - per run: Limits::REGEX_EVALS evaluations in total; past that, regex
+     *   filters stop matching for the rest of the request.
+     *
+     * Giving up means "does not match", so a hide filter fails open (the event
+     * shows) rather than taking the calendar down. It is logged once.
+     */
+    private static function regexHits(string $pattern, string $value): bool
+    {
+        if (isset(self::$regexGaveUp[$pattern])) {
+            return false;
+        }
+        if (++self::$regexEvals > Limits::get('REGEX_EVALS')) {
+            if (!self::$regexBudgetLogged) {
+                self::$regexBudgetLogged = true;
+                error_log('filters: regex evaluation budget (' . Limits::get('REGEX_EVALS') . ') spent; regex filters stop matching for this run');
+            }
+            return false;
+        }
+        $prevLimit = ini_set('pcre.backtrack_limit', self::REGEX_BACKTRACK_LIMIT);
+        $prevJit = ini_set('pcre.jit', '0');
+        $result = @preg_match(self::delimit($pattern), $value);
+        if ($prevLimit !== false) {
+            ini_set('pcre.backtrack_limit', (string) $prevLimit);
+        }
+        if ($prevJit !== false) {
+            ini_set('pcre.jit', (string) $prevJit);
+        }
+        if ($result === false) {
+            self::$regexGaveUp[$pattern] = true;
+            error_log('filters: pattern ' . json_encode(mb_substr($pattern, 0, 80)) . ' hit a PCRE limit (' . preg_last_error_msg() . ') and is skipped for this run');
+            return false;
+        }
+        return $result === 1;
+    }
+
+    /** For tests: a fresh run. */
+    public static function resetRegexBudget(): void
+    {
+        self::$regexEvals = 0;
+        self::$regexGaveUp = [];
+        self::$regexBudgetLogged = false;
     }
 
     /** Does any of the given resolved filters match against the tags field? */

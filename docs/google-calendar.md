@@ -2,7 +2,7 @@
 
 Better-Cal can read calendars through a connected Google account: the ones you own, the ones you subscribe to, and the ones other people have shared with you, including shared-but-not-public calendars that no iCal address can reach (the case that started this, GH #42). A connected calendar is an ordinary subscribed calendar here: it has a colour, lives in folders, shows feed health, and is read-only in this version. Edits still happen in Google; they arrive here within the poll interval (5 minutes by default, one small request per poll).
 
-The write side, where an edit made here goes to Google for calendars you can edit, is planned as a separate step and will ask for a broader scope when it lands (one re-consent).
+The write side, where an edit made here goes to Google for calendars you can edit (write-through: Google stays authoritative, our copy is a cache), is the next step. The scope for it is requested from the start so no account has to re-consent when it lands.
 
 ## One-time setup (the operator)
 
@@ -10,7 +10,7 @@ Google requires each installation to have its own OAuth client. About ten minute
 
 1. Create a project at https://console.cloud.google.com/ (any name, e.g. "Better-Cal").
 2. APIs & Services → Library → enable **Google Calendar API**.
-3. APIs & Services → OAuth consent screen: User type **External**, fill in the app name and your email. Scopes: add `.../auth/calendar.readonly` and `openid`, `email`. Save.
+3. APIs & Services → OAuth consent screen: User type **External**, fill in the app name and your email. Scopes: add `.../auth/calendar.readonly`, `.../auth/calendar.events` (the write side is the next step; asking now spares a re-consent), `openid` and `email`. Save.
 4. Publishing status: click **Publish app** so it is *In production*. It stays unverified (Google shows a warning screen once per account when connecting; click "Advanced", then continue). This matters: in *Testing* status Google expires refresh tokens after seven days and every connected account would need reconnecting weekly.
 5. APIs & Services → Credentials → Create credentials → **OAuth client ID**, type **Web application**. Authorized redirect URI: `https://<your host>/api/v1/google/callback` (must match `BETTERCAL_BASE_URL` exactly, including the scheme).
 6. Put the client id and secret in the server `.env`:
@@ -26,7 +26,7 @@ Until both variables are set, Settings → Google says the connector is not set 
 
 ## Connecting (each user)
 
-Settings → Google → **Connect a Google account**. Google asks for consent (read-only calendar access plus your email address, which is how the account is labelled here), then sends you back. The account then lists every calendar Google shows it, with the access role Google grants; **Add** subscribes one and syncs it right away. Several accounts can be connected.
+Settings → Google → **Connect a Google account**. Google asks for consent (calendar read access, event write access for the next step, plus your email address, which is how the account is labelled here), then sends you back. The account then lists every calendar Google shows it, with the access role Google grants and a kind Google does not state but the calendar id encodes: **Yours** (your primary, or a secondary you own), **Shared with you** (someone else's, shared with you: the shape no iCal address can reach), **Feed copy** (Google's own copy of an ICS subscription, always behind the source; subscribing to the ICS address here directly is fresher), **Google** (holidays, birthdays). **Add** subscribes one and syncs it right away. Several accounts can be connected.
 
 **Disconnect** revokes the token at Google and forgets it. Calendars already subscribed from that account stay, with their events, but stop updating and report "Google account disconnected" as their poll error until you delete them or connect the account again (reconnecting the same email re-attaches them).
 

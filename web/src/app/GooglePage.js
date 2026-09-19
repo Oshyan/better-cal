@@ -93,7 +93,7 @@ export function GooglePage() {
       <span class="bc-set-value">Not set up on this server.</span>
     <//>`}
     ${status && status.configured && html`
-      <${Row} label=${status.accounts.length ? 'Accounts' : 'Account'} hint="Calendars you own, subscribe to, or that others shared with you, read through your Google sign-in. Read-only here for now; edits made in Google arrive within the check interval.">
+      <${Row} label=${status.accounts.length ? 'Accounts' : 'Account'}>
         <div class="bc-google-accounts">
           ${status.accounts.map((a) => html`<div class="bc-google-account" key=${a.id}>
             <span class="bc-google-email">${a.email}</span>
@@ -109,7 +109,8 @@ export function GooglePage() {
       <//>
       ${status.accounts.map((a) => {
         const list = lists[a.id];
-        return html`<${Row} key=${a.id} label=${status.accounts.length > 1 ? a.email : 'Calendars'}>
+        return html`<div class="bc-google-block" key=${a.id}>
+          <h3 class="bc-google-h">${status.accounts.length > 1 ? a.email : 'Calendars'}</h3>
           ${(list === undefined || list === 'loading') && html`<span class="bc-set-value">Asking Google…</span>`}
           ${typeof list === 'string' && list.startsWith('error:') && html`<span class="bc-set-value bc-google-err">${list.slice(6)} <button type="button" class="bc-link-btn" onClick=${() => loadList(a.id)}>Retry</button></span>`}
           ${Array.isArray(list) && list.length === 0 && html`<span class="bc-set-value">Google lists no calendars for this account.</span>`}
@@ -124,7 +125,7 @@ export function GooglePage() {
                 : html`<button type="button" class="bc-link-btn" disabled=${busy === c.id} onClick=${() => add(a, c)}>${busy === c.id ? 'Adding…' : 'Add'}</button>`}</td>
             </tr>`)}</tbody>
           </table>`}
-        <//>`;
+        </div>`;
       })}
     `}
     </section>

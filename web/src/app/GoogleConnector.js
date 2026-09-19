@@ -1,14 +1,13 @@
-// Google Calendar page (docs/google-calendar.md): connect an account, see
-// every calendar Google shows it, add one as a read-only subscribed calendar
-// here. Its own page rather than a Settings section: the calendar list is
-// long and this is a task, not a preference. The consent round trip is a
-// full navigation: /api/v1/google/connect sends the browser to Google, the
-// callback lands on the /google handoff path, which reopens this page.
+// Google Calendar connector (docs/google-calendar.md): connect an account,
+// see every calendar Google shows it, add one as a read-only subscribed
+// calendar here. Lives on Settings, Connections, inline with the other ways
+// in and out. The consent round trip is a full navigation:
+// /api/v1/google/connect sends the browser to Google, the callback lands on
+// the /google handoff path, which reopens that tab.
 
 import { html, useState, useEffect } from '../../vendor/index.js';
 import { useStore, toast } from './store.js';
 import { api, loadCalendars } from './api.js';
-import { PageShell } from './PageShell.js';
 
 function Row({ label, hint, children }) {
   return html`<div class="bc-set-row">
@@ -18,7 +17,7 @@ function Row({ label, hint, children }) {
   </div>`;
 }
 
-export function GooglePage() {
+export function GoogleConnector() {
   const calendars = useStore((s) => s.calendars);
   const [status, setStatus] = useState(null); // {configured, accounts:[{id,email,status,error}]}
   const [lists, setLists] = useState({});      // accountId -> [{id,name,accessRole,primary,color,calendarId}] | 'loading' | 'error'
@@ -86,8 +85,9 @@ export function GooglePage() {
   };
   const localName = (id) => { const c = calendars.find((x) => x.id === id); return c ? c.name : null; };
 
-  return html`<${PageShell} title="Google Calendar" note="Calendars read through a Google account: yours, ones you subscribe to, and ones shared with you, including shared-but-not-public calendars no iCal address can reach. Read-only here for now; edits made in Google arrive within the check interval.">
-    <section class="bc-set-section">
+  return html`<section class="bc-set-section">
+    <h2 class="bc-set-h">Google Calendar</h2>
+    <p class="bc-set-lead">Calendars read through a Google account: yours, ones you subscribe to, and ones shared with you, including shared-but-not-public calendars no iCal address can reach. Read-only here for now; edits made in Google arrive within the check interval.</p>
     ${status === null && html`<${Row} label="Account"><span class="bc-set-value">Loading…</span><//>`}
     ${status && !status.configured && html`<${Row} label="Account" hint="Reading calendars through a Google account needs an OAuth client on this server: BETTERCAL_GOOGLE_CLIENT_ID and _SECRET, see docs/google-calendar.md. Ten minutes, once.">
       <span class="bc-set-value">Not set up on this server.</span>
@@ -128,7 +128,6 @@ export function GooglePage() {
         </div>`;
       })}
     `}
-    </section>
-  <//>`;
+  </section>`;
 }
 

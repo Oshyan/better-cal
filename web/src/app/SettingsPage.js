@@ -10,6 +10,8 @@ import { fmtSince } from '../lib/since.js';
 import { adoptSettings } from './settings.js';
 import { saveSetting } from './actions.js';
 import { PageShell } from './PageShell.js';
+import { GoogleConnector } from './GoogleConnector.js';
+import { OutfeedsSection } from './OutfeedsPage.js';
 import { PlaceInput, pickFillText } from './PlaceInput.js';
 import { localTz, sameClock, tzOffsetLabel, tzCity, zoneOptions } from '../lib/dates.js';
 import {
@@ -574,16 +576,12 @@ export function SettingsPage() {
     ${tab === 'location' && html`<${LocationSection} settings=${settings} config=${config} />`}
 
     ${tab === 'connections' && html`
+    <${GoogleConnector} />
+    <${OutfeedsSection} />
     <section class="bc-set-section">
-      <h2 class="bc-set-h">Connections</h2>
-      <${Row} label="Google Calendar" hint="Calendars read through a Google account, including ones shared with you that no iCal address can reach. Its own page: accounts, the calendar list, what is added.">
-        <button type="button" class="bc-btn" onClick=${() => set({ route: 'google' })}>Open Google Calendar</button>
-      <//>
-      <${Row} label="Outbound feeds" hint="ICS addresses other apps and people can subscribe to; each one is a saved search.">
-        <button type="button" class="bc-btn" onClick=${() => set({ route: 'outfeeds' })}>Open Outbound feeds</button>
-      <//>
-      <${Row} label="Device sync" hint="Username is your account email; the password is your account password or an API key (Account tab).">
-        <span class="bc-set-value">CalDAV clients (Apple Calendar, DAVx5, Thunderbird) can sync at <code>/dav</code> on this server.</span>
+      <h2 class="bc-set-h">Device sync</h2>
+      <${Row} label="CalDAV" hint="Username is your account email; the password is your account password or an API key (Account tab).">
+        <span class="bc-set-value">Apple Calendar, DAVx5, Thunderbird and other CalDAV clients can sync at <code>/dav</code> on this server.</span>
       <//>
     </section>`}
 

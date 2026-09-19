@@ -41,7 +41,6 @@ import { OutfeedsPage } from './OutfeedsPage.js';
 import { FiltersPage } from './FiltersPage.js';
 import { SavedViewsPage } from './SavedViewsPage.js';
 import { SettingsPage } from './SettingsPage.js';
-import { GooglePage } from './GooglePage.js';
 import { PeoplePage } from './PeoplePage.js';
 import { ActivityPage } from './ActivityPage.js';
 import { OrganizePage } from './OrganizePage.js';
@@ -558,9 +557,6 @@ export function App() {
   }
   if (s.route === 'settings') {
     return html`<div class="bc-app"><${SettingsPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${CommandPalette} /><${SystemBanner} /><${Toasts} /></div>`;
-  }
-  if (s.route === 'google') {
-    return html`<div class="bc-app"><${GooglePage} /><${CreateDrawer} /><${ShortcutsSheet} /><${CommandPalette} /><${SystemBanner} /><${Toasts} /></div>`;
   }
   if (s.route === 'people') {
     return html`<div class="bc-app"><${PeoplePage} /><${CreateDrawer} /><${ShortcutsSheet} /><${CommandPalette} /><${SystemBanner} /><${Toasts} /></div>`;

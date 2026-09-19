@@ -46,8 +46,6 @@ export const MANAGE_ITEMS = [
   ['people', 'People'],
   ['activity', 'Activity'],
   ['plugins', 'Plugins'],
-  ['outfeeds', 'Outbound feeds'],
-  ['google', 'Google Calendar'],
   ['filters', 'Filters'],
   ['views', 'Saved views'],
 ];

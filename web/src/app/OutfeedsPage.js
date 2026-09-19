@@ -5,7 +5,7 @@ import { useStore, state, toast } from './store.js';
 import { api } from './api.js';
 import { PageShell, EmptyState, Skeleton } from './PageShell.js';
 
-export function OutfeedsPage() {
+export function OutfeedsSection() {
   const [feeds, setFeeds] = useState(null);
   const [name, setName] = useState('');
   const [scopeType, setScopeType] = useState('all');
@@ -78,10 +78,9 @@ export function OutfeedsPage() {
     if (el) el.focus();
   };
 
-  return html`<${PageShell}
-    title="Outbound feeds"
-    note="Each feed is a private token URL other calendar apps can subscribe to."
-  >
+  return html`<section class="bc-set-section">
+    <h2 class="bc-set-h">Outbound feeds</h2>
+    <p class="bc-set-lead">Each feed is a private token URL other calendar apps and people can subscribe to; what it carries is everything, one calendar, or a saved search.</p>
     <form class="bc-mgmt-form" onSubmit=${create}>
       <div class="bc-form-row">
         <label class="bc-field grow">
@@ -140,5 +139,10 @@ export function OutfeedsPage() {
         </div>
       </div>`)}
     </div>`}
-  <//>`;
+  </section>`;
+}
+
+/** The standalone page (route outfeeds); the section also renders on Settings, Connections. */
+export function OutfeedsPage() {
+  return html`<${PageShell} title="Outbound feeds"><${OutfeedsSection} /><//>`;
 }

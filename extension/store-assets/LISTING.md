@@ -1,6 +1,6 @@
 # Chrome Web Store submission — copy-paste answers
 
-Upload zip: `better-cal-gcal-redirect-1.0.0.zip` (repo root). Screenshot: `extension/store-assets/screenshot-1280x800.png`.
+Upload zip: `better-cal-gcal-redirect-1.1.0.zip` (repo root; build with `cd extension && zip -r ../better-cal-gcal-redirect-<version>.zip manifest.json rules.json icon-128.png README.md`). Screenshot: `extension/store-assets/screenshot-1280x800.png`.
 
 ## Store listing tab
 

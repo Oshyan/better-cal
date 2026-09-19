@@ -9,6 +9,7 @@ const listeners = new Set();
 
 export const state = {
   booted: false,
+  pendingHandoff: null, // a deep link or share that arrived signed out; run after sign-in
   authed: false,
   user: null,
   csrf: null,

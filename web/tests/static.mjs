@@ -66,6 +66,24 @@ for (const file of files) {
   }
 }
 
+// --- 3. deep-link handoff never reaches a request line ---------------------
+// (BC-18) The share target must POST, the worker must answer that POST, and
+// the shell's head script must clear the address before the first <link>.
+{
+  const web = join(root, '..');
+  const manifest = JSON.parse(readFileSync(join(web, 'manifest.webmanifest'), 'utf8'));
+  const check = (ok, msg) => { if (ok) passed++; else fail(msg); };
+  check(manifest.share_target && manifest.share_target.method === 'POST', 'manifest share_target must be POST');
+  const sw = readFileSync(join(web, 'sw.js'), 'utf8');
+  check(/method === 'POST' && url\.pathname === '\/share'/.test(sw), 'sw.js must handle POST /share');
+  const html = readFileSync(join(web, 'index.html'), 'utf8');
+  const cleanup = html.indexOf("sessionStorage.setItem('bc-handoff'");
+  const firstLink = html.indexOf('<link');
+  check(cleanup > 0 && firstLink > cleanup, 'index.html handoff script must run before the first <link>');
+  check(/history\.replaceState\(null,'','\/'\)/.test(html), 'index.html handoff script must rewrite the address to /');
+  check(/<meta name="referrer" content="strict-origin-when-cross-origin">/.test(html), 'index.html must set a referrer policy');
+}
+
 console.log('');
 console.log(passed + ' checks passed, ' + failed + ' failed (' + files.length + ' modules)');
 if (failed > 0) process.exit(1);

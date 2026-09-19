@@ -2,6 +2,8 @@
 
 import { html, useState } from '../../vendor/index.js';
 import { login, loadCalendars, loadConfig } from './api.js';
+import { set, state } from './store.js';
+import { runHandoff } from './handoff.js';
 
 export function Login() {
   const [email, setEmail] = useState('');
@@ -21,6 +23,12 @@ export function Login() {
       await login(email, password);
       await loadCalendars();
       loadConfig(); // fire-and-forget
+      // A share or deep link that arrived while signed out is still owed.
+      const handoff = state.pendingHandoff;
+      if (handoff) {
+        set({ pendingHandoff: null });
+        runHandoff(handoff).catch(() => { /* best-effort */ });
+      }
     } catch (err) {
       setError(err.status === 401 ? 'Wrong email or password' : err.message);
     }

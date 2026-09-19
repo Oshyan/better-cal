@@ -18,7 +18,7 @@
 // could start, which on a 450 ms link was nine seconds of a blank page.
 
 // @generated-shell:start (scripts/gen-preload.mjs)
-const VERSION = 'bc-d6acedc2072d';
+const VERSION = 'bc-65b2a964e173';
 const SHELL = [
   '/',
   '/assets/styles/app.css',
@@ -47,6 +47,7 @@ const SHELL = [
   '/assets/src/app/EventDetail.js',
   '/assets/src/lib/dates.js',
   '/assets/src/app/push.js',
+  '/assets/src/app/handoff.js',
   '/assets/vendor/preact.module.js',
   '/assets/vendor/htm.module.js',
   '/assets/src/ui/grouping.js',
@@ -115,6 +116,10 @@ const SHELL = [
 const SHELL_CACHE = VERSION + '-shell';
 const API_CACHE = VERSION + '-api';
 const API_TIMEOUT_MS = 5000;
+// Unversioned: a share stashed by one worker version must survive the next
+// one activating before the page has collected it.
+const HANDOFF_CACHE = 'bc-handoff';
+const HANDOFF_KEY = '/__handoff';
 
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
@@ -135,7 +140,7 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   event.waitUntil((async () => {
     const keys = await caches.keys();
-    await Promise.all(keys.filter((k) => !k.startsWith(VERSION)).map((k) => caches.delete(k)));
+    await Promise.all(keys.filter((k) => !k.startsWith(VERSION) && k !== HANDOFF_CACHE).map((k) => caches.delete(k)));
     await self.clients.claim();
     // Pages already open loaded the previous version; let them offer a reload.
     const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
@@ -218,6 +223,29 @@ async function cacheFirst(request) {
   return res;
 }
 
+// --- Web Share Target ---------------------------------------------------------
+// The OS share sheet POSTs title/text/url to /share (manifest share_target).
+// A GET target would have put the shared content in the address bar, in the
+// server's access log, and in the Referer of every request the page made
+// before it cleaned up (BC-18). Instead the form body is read here, parked in
+// the handoff cache for the page to collect once (src/app/handoff.js), and the
+// browser is sent to a bare "/". Nothing about the share leaves the device.
+async function shareTarget(request) {
+  try {
+    const form = await request.formData();
+    const params = {};
+    for (const k of ['title', 'text', 'url']) {
+      const v = form.get(k);
+      if (typeof v === 'string' && v) params[k] = v;
+    }
+    const cache = await caches.open(HANDOFF_CACHE);
+    await cache.put(HANDOFF_KEY, new Response(JSON.stringify({ path: '/share', params }), {
+      headers: { 'Content-Type': 'application/json' },
+    }));
+  } catch { /* unreadable body: land in the app with nothing to hand off */ }
+  return Response.redirect('/', 303);
+}
+
 // --- Web Push reminders -----------------------------------------------------
 // The worker sends {title, body, url, tag}; tag replaces earlier notifications
 // for the same occurrence instead of stacking duplicates.
@@ -256,7 +284,12 @@ self.addEventListener('notificationclick', (event) => {
 
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
-  if (event.request.method !== 'GET' || url.origin !== location.origin) return;
+  if (url.origin !== location.origin) return;
+  if (event.request.method === 'POST' && url.pathname === '/share') {
+    event.respondWith(shareTarget(event.request));
+    return;
+  }
+  if (event.request.method !== 'GET') return;
 
   if (url.pathname.startsWith('/api/')) {
     event.respondWith(networkFirstWithTimeout(event.request, API_CACHE, API_TIMEOUT_MS));
@@ -264,7 +297,8 @@ self.addEventListener('fetch', (event) => {
   }
 
   // The document for any app path ('/', '/add', '/subscribe', ...) is the
-  // one cached shell document; deep-link paths are read by the app itself.
+  // one cached shell document; a deep-link path and query are taken off the
+  // address by the shell's head script before anything else loads.
   if (event.request.mode === 'navigate') {
     event.respondWith(cacheFirst(new Request('/')).catch(() => fetch(event.request)));
     return;

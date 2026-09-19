@@ -37,6 +37,238 @@ final class Events
     private array $userReminderDefaults = [];
     /** @var array<int, ?string> recurrence parent id => rrule, memoized per request */
     private array $parentRrules = [];
+    private ?GoogleWriter $googleWriter = null;
+
+    // ---- Google write-through ---------------------------------------------------
+    // A Google calendar the connected account may edit takes writes here, but
+    // Google first: the change goes to the API, and what Google answers with
+    // is materialised locally (GoogleWriter::apply) before the local-only
+    // parts of the same edit (tags, people, reminders, the trip flag,
+    // coordinates) are applied to the resulting row. Activity gets a plain
+    // entry, not an undoable one: an undo would have to be a second write
+    // to Google, and the row is Google's, not a snapshot of ours.
+
+    /** The calendar row when this event lives on a writable Google calendar, else null. */
+    private function googleCalendarFor(int $calendarId): ?array
+    {
+        $calendar = $this->db->one('SELECT * FROM calendars WHERE id = ?', [$calendarId]);
+        return $calendar !== null && GoogleWriter::writable($calendar) ? $calendar : null;
+    }
+
+    private function google(): GoogleWriter
+    {
+        return $this->googleWriter ??= new GoogleWriter($this->db, new GoogleAuth($this->db, config()), new Feeds($this->db, null, config()));
+    }
+
+    private static function requireGoogleId(array $row): string
+    {
+        $id = (string) ($row['google_event_id'] ?? '');
+        if ($id === '') {
+            throw new HttpError('google_unsynced', 'This event has not finished syncing from Google yet; refresh the calendar and try again.', 409);
+        }
+        return $id;
+    }
+
+    /** @return array{0:array,1:array} Google-owned columns and local-only columns */
+    private static function splitGoogleFields(array $fields): array
+    {
+        unset($fields['url']); // Google's event link; not ours to edit
+        $google = array_intersect_key($fields, array_flip(GoogleWriter::GOOGLE_COLUMNS));
+        $local = array_diff_key($fields, $google);
+        return [$google, $local];
+    }
+
+    private function googleJournal(int $userId, string $summary, array $calendar, ?int $eventId = null): void
+    {
+        $this->undo->record($userId, 'event', $eventId ?? 0, 'update', null, null, $summary . " on Google calendar '" . (string) $calendar['name'] . "'");
+    }
+
+    private function googleCreate(int $userId, array $calendar, array $row, array $in): array
+    {
+        $resp = $this->google()->insert($calendar, $row);
+        $this->google()->apply($calendar, [$resp]);
+        $created = $this->google()->rowByGoogleId((int) $calendar['id'], (string) ($resp['id'] ?? ''));
+        if ($created === null) {
+            throw new HttpError('google_write_failed', 'Google accepted the event but it did not come back on the calendar', 502);
+        }
+        $id = (int) $created['id'];
+        $this->db->tx(function () use ($row, $id, $userId, $in): void {
+            [, $local] = self::splitGoogleFields(array_intersect_key($row, array_flip(['reminders_json', 'is_container', 'location_lat', 'location_lng'])));
+            if ($local !== []) {
+                $this->db->update('events', $local, 'id = ?', [$id]);
+            }
+            if (!empty($in['tagNames']) && is_array($in['tagNames'])) {
+                $this->labels->setEventTags($userId, $id, $in['tagNames']);
+            }
+            $this->applyPeoplePatch($userId, $id, $in);
+        });
+        $this->googleJournal($userId, "Created '" . (string) $row['title'] . "'", $calendar, $id);
+        return $this->get($userId, $id);
+    }
+
+    private function googlePatchAll(int $userId, array $calendar, array $event, array $in): void
+    {
+        $id = (int) $event['id'];
+        [$googleFields, $localFields] = self::splitGoogleFields($this->columnPatch($event, $in));
+        if ($googleFields !== []) {
+            $googleId = self::requireGoogleId($event);
+            $resp = $this->google()->patch($calendar, $googleId, GoogleWriter::body(array_merge($event, $googleFields)));
+            $this->google()->apply($calendar, [$resp]);
+        }
+        $this->db->tx(function () use ($id, $userId, $localFields, $in): void {
+            if ($localFields !== []) {
+                $this->db->update('events', $localFields + ['updated_at' => Time::nowDb()], 'id = ?', [$id]);
+            }
+            if (array_key_exists('tagNames', $in) && is_array($in['tagNames'])) {
+                $this->labels->setEventTags($userId, $id, $in['tagNames']);
+            }
+            $this->applyPeoplePatch($userId, $id, $in);
+        });
+        if ($googleFields !== []) {
+            $this->googleJournal($userId, "Updated '" . (string) $event['title'] . "'", $calendar, $id);
+        }
+    }
+
+    private function googlePatchThis(int $userId, array $calendar, array $master, array $in): void
+    {
+        $instanceUtc = $this->requireInstance($in, $master);
+        $masterId = (int) $master['id'];
+        $allDay = (int) $master['all_day'] === 1;
+        $existing = $this->db->one(
+            'SELECT * FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc = ? AND deleted_at IS NULL',
+            [$masterId, $instanceUtc]
+        );
+        if ($existing !== null) {
+            [$googleFields, $localFields] = self::splitGoogleFields($this->columnPatch($existing, $in, $instanceUtc, forOverride: true));
+            if ($googleFields !== []) {
+                $googleId = self::requireGoogleId($existing);
+                $resp = $this->google()->patch($calendar, $googleId, GoogleWriter::body(array_merge($existing, $googleFields)));
+                $this->google()->apply($calendar, [$resp]);
+            }
+            $rowId = (int) $existing['id'];
+        } else {
+            // The occurrence becomes an exception at Google: patch its
+            // instance id with the occurrence as it should now be.
+            $duration = Recurrence::durationSeconds($master);
+            $instStart = Time::fromDb($instanceUtc);
+            $override = $this->copyForChild($master);
+            $override['rrule'] = null;
+            $override['exdates_json'] = null;
+            $override['start_utc'] = Time::toDb($instStart);
+            $override['end_utc'] = Time::toDb($instStart->add(new \DateInterval('PT' . $duration . 'S')));
+            $patch = $this->columnPatch($override, $in, $instanceUtc, forOverride: true);
+            [, $localFields] = self::splitGoogleFields($patch);
+            $override = array_merge($override, $patch);
+            $instanceId = GoogleWriter::instanceId(self::requireGoogleId($master), $instanceUtc, $allDay);
+            $resp = $this->google()->patch($calendar, $instanceId, GoogleWriter::body($override));
+            $this->google()->apply($calendar, [$resp]);
+            $created = $this->google()->rowByGoogleId((int) $calendar['id'], (string) ($resp['id'] ?? $instanceId));
+            if ($created === null) {
+                throw new HttpError('google_write_failed', 'Google accepted the change but the occurrence did not come back', 502);
+            }
+            $rowId = (int) $created['id'];
+            // Same event on one day: it starts with the series' tags and people.
+            $this->db->run('INSERT IGNORE INTO event_tags (event_id, tag_id) SELECT ?, tag_id FROM event_tags WHERE event_id = ?', [$rowId, $masterId]);
+            $this->db->run('INSERT IGNORE INTO event_people (event_id, person_id) SELECT ?, person_id FROM event_people WHERE event_id = ?', [$rowId, $masterId]);
+        }
+        $this->db->tx(function () use ($rowId, $userId, $localFields, $in): void {
+            if ($localFields !== []) {
+                $this->db->update('events', $localFields + ['updated_at' => Time::nowDb()], 'id = ?', [$rowId]);
+            }
+            if (array_key_exists('tagNames', $in) && is_array($in['tagNames'])) {
+                $this->labels->setEventTags($userId, $rowId, $in['tagNames']);
+            }
+            $this->applyPeoplePatch($userId, $rowId, $in);
+        });
+        $this->googleJournal($userId, "Updated one occurrence of '" . (string) $master['title'] . "'", $calendar, $masterId);
+    }
+
+    private function googlePatchFollowing(int $userId, array $calendar, array $master, array $in): void
+    {
+        $instanceUtc = $this->requireInstance($in, $master);
+        $masterId = (int) $master['id'];
+        $instStart = Time::fromDb($instanceUtc);
+        $duration = Recurrence::durationSeconds($master);
+        $allDay = (int) $master['all_day'] === 1;
+        $masterGoogleId = self::requireGoogleId($master);
+
+        // The old series ends before this occurrence; a new one starts here.
+        $oldRrule = Recurrence::setUntil((string) $master['rrule'], Recurrence::splitUntil($instStart), $allDay);
+        $endOld = $this->google()->patch($calendar, $masterGoogleId, [
+            'recurrence' => GoogleWriter::recurrenceLines($oldRrule, $this->decodeExdates($master), $allDay, (string) $master['tzid']),
+        ]);
+
+        $newMaster = $this->copyForChild($master);
+        $newMaster['start_utc'] = Time::toDb($instStart);
+        $newMaster['end_utc'] = Time::toDb($instStart->add(new \DateInterval('PT' . $duration . 'S')));
+        $newMaster['rrule'] = $this->stripCount((string) $master['rrule']);
+        $newMaster['exdates_json'] = $this->exdatesFrom($master, $instanceUtc);
+        $patch = $this->columnPatch($newMaster, $in);
+        [, $localFields] = self::splitGoogleFields($patch);
+        $newMaster = array_merge($newMaster, $patch);
+        if (isset($in['rrule']) && $in['rrule'] !== null && $in['rrule'] !== '') {
+            $newMaster['rrule'] = (string) $in['rrule'];
+        }
+        $created = $this->google()->insert($calendar, $newMaster);
+        $this->google()->apply($calendar, [$endOld, $created]);
+        $row = $this->google()->rowByGoogleId((int) $calendar['id'], (string) ($created['id'] ?? ''));
+        if ($row !== null) {
+            $rowId = (int) $row['id'];
+            $this->db->tx(function () use ($rowId, $userId, $localFields, $in): void {
+                if ($localFields !== []) {
+                    $this->db->update('events', $localFields + ['updated_at' => Time::nowDb()], 'id = ?', [$rowId]);
+                }
+                if (array_key_exists('tagNames', $in) && is_array($in['tagNames'])) {
+                    $this->labels->setEventTags($userId, $rowId, $in['tagNames']);
+                }
+                $this->applyPeoplePatch($userId, $rowId, $in);
+            });
+        }
+        $this->googleJournal($userId, "Changed '" . (string) $master['title'] . "' from " . $instStart->format('M j') . " on", $calendar, $masterId);
+    }
+
+    private function googleDeleteAll(int $userId, array $calendar, array $event): void
+    {
+        $this->google()->delete($calendar, self::requireGoogleId($event));
+        $this->google()->apply($calendar, [], [GoogleWriter::tombstone((string) $event['uid'], null)]);
+        $this->googleJournal($userId, "Deleted '" . (string) $event['title'] . "'", $calendar, (int) $event['id']);
+    }
+
+    private function googleDeleteThis(int $userId, array $calendar, array $master, ?string $instanceStart): void
+    {
+        $instanceUtc = $this->requireInstance(['instanceStart' => $instanceStart], $master);
+        $allDay = (int) $master['all_day'] === 1;
+        $override = $this->db->one(
+            'SELECT * FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc = ? AND deleted_at IS NULL',
+            [(int) $master['id'], $instanceUtc]
+        );
+        $googleId = $override !== null && !empty($override['google_event_id'])
+            ? (string) $override['google_event_id']
+            : GoogleWriter::instanceId(self::requireGoogleId($master), $instanceUtc, $allDay);
+        $this->google()->delete($calendar, $googleId);
+        $this->google()->apply($calendar, [], [GoogleWriter::tombstone((string) $master['uid'], $instanceUtc)]);
+        $this->googleJournal($userId, "Deleted one occurrence of '" . (string) $master['title'] . "'", $calendar, (int) $master['id']);
+    }
+
+    private function googleDeleteFollowing(int $userId, array $calendar, array $master, ?string $instanceStart): void
+    {
+        $instanceUtc = $this->requireInstance(['instanceStart' => $instanceStart], $master);
+        $allDay = (int) $master['all_day'] === 1;
+        $newRrule = Recurrence::setUntil((string) $master['rrule'], Recurrence::splitUntil(Time::fromDb($instanceUtc)), $allDay);
+        $resp = $this->google()->patch($calendar, self::requireGoogleId($master), [
+            'recurrence' => GoogleWriter::recurrenceLines($newRrule, $this->decodeExdates($master), $allDay, (string) $master['tzid']),
+        ]);
+        $this->google()->apply($calendar, [$resp]);
+        $this->googleJournal($userId, "Ended '" . (string) $master['title'] . "' before " . Time::fromDb($instanceUtc)->format('M j'), $calendar, (int) $master['id']);
+    }
+
+    private function googleDeleteOverride(int $userId, array $calendar, array $override): void
+    {
+        $this->google()->delete($calendar, self::requireGoogleId($override));
+        $this->google()->apply($calendar, [], [GoogleWriter::tombstone((string) $override['uid'], (string) $override['recurrence_instance_utc'])]);
+        $this->googleJournal($userId, "Deleted one occurrence of '" . (string) $override['title'] . "'", $calendar, (int) $override['id']);
+    }
+
 
     /** The master's rrule for an override row (null when the parent is gone). */
     private function parentRrule(int $parentId): ?string
@@ -355,7 +587,8 @@ final class Events
         if ($calendar === null) {
             throw HttpError::badRequest('Unknown calendarId');
         }
-        if ($calendar['kind'] === 'subscribed') {
+        $google = $calendar['kind'] === 'subscribed' && GoogleWriter::writable($calendar) ? $calendar : null;
+        if ($calendar['kind'] === 'subscribed' && $google === null) {
             throw HttpError::forbidden('feed_readonly', 'Cannot create events on a subscribed calendar');
         }
         if (($calendar['kind'] ?? '') === 'plugin' && !str_starts_with(ActivityContext::get(), 'plugin:')) {
@@ -408,6 +641,10 @@ final class Events
             'updated_at' => Time::nowDb(),
         ];
 
+        if ($google !== null) {
+            return $this->serializeSingle($this->googleCreate($userId, $google, $row, $in));
+        }
+
         $id = $this->db->tx(function () use ($row, $userId, $in): int {
             $id = $this->db->insert('events', $row);
             if (!empty($in['tagNames']) && is_array($in['tagNames'])) {
@@ -429,8 +666,15 @@ final class Events
         // Reminders are user-local metadata (like tags), so feed events accept
         // them even though their feed-derived content is read-only.
         $editKeys = array_diff(array_keys($in), ['scope', 'instanceStart', 'tagNames', 'reminders']);
-        if ($event['source'] === 'feed' && $editKeys !== []) {
+        $google = $event['source'] === 'feed' ? $this->googleCalendarFor((int) $event['calendar_id']) : null;
+        if ($event['source'] === 'feed' && $editKeys !== [] && $google === null) {
             throw HttpError::forbidden('feed_readonly', 'Feed events are read-only except attendance, tags and reminders');
+        }
+        if ($google !== null && isset($in['calendarId']) && (int) $in['calendarId'] !== (int) $event['calendar_id']) {
+            throw HttpError::forbidden('google_move', 'Events on a Google calendar stay there; create it on the other calendar instead');
+        }
+        if ($google !== null && !empty($in['moveMembers'])) {
+            throw HttpError::forbidden('google_trip_move', 'A trip on a Google calendar moves one event at a time');
         }
         if (($this->calendarMeta((int) $event['calendar_id'])['kind'] ?? '') === 'plugin' && $editKeys !== []
             && !str_starts_with(ActivityContext::get(), 'plugin:')) {
@@ -466,7 +710,10 @@ final class Events
                 throw HttpError::badRequest('Unknown calendarId');
             }
             if ($calendar['kind'] === 'subscribed') {
-                throw HttpError::forbidden('feed_readonly', 'Cannot move events onto a subscribed calendar');
+                throw HttpError::forbidden(
+                    GoogleWriter::writable($calendar) ? 'google_move' : 'feed_readonly',
+                    GoogleWriter::writable($calendar) ? 'Moving an event onto a Google calendar is not supported yet; create it there instead' : 'Cannot move events onto a subscribed calendar'
+                );
             }
             if ($calendar['kind'] === 'plugin') {
                 throw HttpError::forbidden('plugin_readonly', 'Cannot move events onto a plugin-managed calendar');
@@ -486,6 +733,14 @@ final class Events
             return;
         }
 
+        if ($google !== null) {
+            match ($scope) {
+                'this' => $this->googlePatchThis($userId, $google, $event, $in),
+                'following' => $this->googlePatchFollowing($userId, $google, $event, $in),
+                'all' => $this->googlePatchAll($userId, $google, $event, $in),
+            };
+            return;
+        }
         match ($scope) {
             'this' => $this->patchThis($userId, $event, $in),
             'following' => $this->patchFollowing($userId, $event, $in),
@@ -699,7 +954,8 @@ final class Events
     public function deleteEvent(int $userId, int $id, ?string $scope, ?string $instanceStart): void
     {
         $event = $this->get($userId, $id);
-        if ($event['source'] === 'feed') {
+        $google = $event['source'] === 'feed' ? $this->googleCalendarFor((int) $event['calendar_id']) : null;
+        if ($event['source'] === 'feed' && $google === null) {
             throw HttpError::forbidden('feed_readonly', 'Feed events cannot be deleted; hide them instead');
         }
         if (($this->calendarMeta((int) $event['calendar_id'])['kind'] ?? '') === 'plugin'
@@ -709,6 +965,10 @@ final class Events
 
         // Deleting an override row directly = deleting that one occurrence.
         if (!empty($event['recurrence_parent_id'])) {
+            if ($google !== null) {
+                $this->googleDeleteOverride($userId, $google, $event);
+                return;
+            }
             $this->deleteOverrideInstance($userId, $event);
             return;
         }
@@ -723,6 +983,14 @@ final class Events
             $scope = 'all';
         }
 
+        if ($google !== null) {
+            match ($scope) {
+                'this' => $this->googleDeleteThis($userId, $google, $event, $instanceStart),
+                'following' => $this->googleDeleteFollowing($userId, $google, $event, $instanceStart),
+                'all' => $this->googleDeleteAll($userId, $google, $event),
+            };
+            return;
+        }
         match ($scope) {
             'this' => $this->deleteThis($userId, $event, $instanceStart),
             'following' => $this->deleteFollowing($userId, $event, $instanceStart),

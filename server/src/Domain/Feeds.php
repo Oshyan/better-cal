@@ -144,7 +144,7 @@ final class Feeds
      *
      * @param list<array<string,mixed>> $parsed
      */
-    public function sync(array $calendar, array $parsed): int
+    public function sync(array $calendar, array $parsed, bool $journal = true): int
     {
         $calendarId = (int) $calendar['id'];
         $userId = (int) $calendar['user_id'];
@@ -200,6 +200,9 @@ final class Feeds
                         ? ($masterIdByUid[(string) $ev['uid']] ?? null)
                         : null,
                 ];
+                if (array_key_exists('google_event_id', $ev)) {
+                    $columns['google_event_id'] = $ev['google_event_id'];
+                }
 
                 $current = $existingByKey[$key] ?? null;
                 if ($current === null) {
@@ -286,10 +289,12 @@ final class Feeds
         $addedCount = count($addedTitles);
         $updatedCount = count($updatedEventIds);
         if ($addedCount + $updatedCount + $removedCount > 0) {
+            $this->db->update('calendars', ['content_changed_at' => Time::nowDb()], 'id = ?', [$calendarId]);
+        }
+        if ($journal && $addedCount + $updatedCount + $removedCount > 0) {
             // The publisher touched something. This is what "stale" is judged
             // against: not whether the feed HAS events (a dead feed keeps
             // serving its old ones forever) but when it last changed any.
-            $this->db->update('calendars', ['content_changed_at' => Time::nowDb()], 'id = ?', [$calendarId]);
             $parts = [];
             if ($addedCount > 0) {
                 $parts[] = $addedCount . ' added';

@@ -406,9 +406,10 @@ export function MonthGrid({
     // themselves only reposition. Feed events are read-only content-wise, so
     // they can neither change calendar nor take people.
     const draggedCal = calendars[occ.calendarId];
-    const isFeed = !!draggedCal && draggedCal.kind === 'subscribed';
+    const isFeed = !!draggedCal && !draggedCal.editable;
+    const isGoogle = !!draggedCal && draggedCal.provider === 'google';
     const extKinds = (!isAvail && !isTrip) ? {
-      cal: !isFeed ? (id) => id !== occ.calendarId : false,
+      cal: !isFeed && !isGoogle ? (id) => id !== occ.calendarId : false,
       person: !isFeed,
       instance: (iid) => {
         if (iid === occ.instanceId || String(iid).startsWith('avail:')) return false;

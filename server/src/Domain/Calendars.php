@@ -67,7 +67,7 @@ final class Calendars
         return $row;
     }
 
-    /** @param array{accountId:int,calendarId:string}|null $google a Google-backed subscription (provider google) */
+    /** @param array{accountId:int,calendarId:string,accessRole?:string}|null $google a Google-backed subscription (provider google) */
     public function create(int $userId, array $in, string $kind = 'local', ?string $sourceUrl = null, ?array $google = null): array
     {
         $name = trim((string) ($in['name'] ?? ''));
@@ -92,6 +92,7 @@ final class Calendars
                     'provider' => 'google',
                     'google_account_id' => $google['accountId'],
                     'google_calendar_id' => $google['calendarId'],
+                    'google_access_role' => $google['accessRole'] ?? null,
                     'poll_interval_minutes' => 5,
                 ];
             }
@@ -336,6 +337,12 @@ final class Calendars
             // and the client ignores it for them.
             'provider' => (string) ($c['provider'] ?? 'ics'),
             'googleCalendarId' => isset($c['google_calendar_id']) && $c['google_calendar_id'] !== null ? (string) $c['google_calendar_id'] : null,
+            'googleAccessRole' => isset($c['google_access_role']) && $c['google_access_role'] !== null ? (string) $c['google_access_role'] : null,
+            // Whether events on it can be created, edited and deleted here:
+            // local calendars, and Google calendars the connected account may
+            // write to (write-through, GoogleWriter). Feeds and plugin
+            // calendars are content someone else owns.
+            'editable' => $c['kind'] === 'local' || GoogleWriter::writable($c),
             'visible' => (int) $c['visible'] === 1,
             'position' => (int) $c['position'],
             'pollIntervalMinutes' => (int) $c['poll_interval_minutes'],

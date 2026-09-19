@@ -611,8 +611,9 @@ export function TimeGrid({
     // Sidebar rows accept drops here too (recategorize / link a person);
     // feed events are read-only content-wise, so neither applies to them.
     const draggedCal = calendars[occ.calendarId];
-    const isFeed = !!draggedCal && draggedCal.kind === 'subscribed';
-    const extKinds = !isFeed ? { cal: (id) => id !== occ.calendarId, person: true } : null;
+    const isFeed = !!draggedCal && !draggedCal.editable;
+    const isGoogle = !!draggedCal && draggedCal.provider === 'google';
+    const extKinds = !isFeed ? { cal: !isGoogle ? (id) => id !== occ.calendarId : false, person: true } : null;
     startPointerDrag(ev, {
       makeGhost: () => cloneAsGhost(src),
       ghostOffset: { x: 10, y: -8 },

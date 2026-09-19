@@ -104,6 +104,20 @@ final class HttpClient
         return $this->request('POST', $url, array_merge(['Content-Type: application/x-www-form-urlencoded'], $headers), http_build_query($fields));
     }
 
+    /**
+     * A JSON request with any method (POST/PATCH/PUT/DELETE), under the same
+     * policy, no redirects. Returns ['status'=>int,'body'=>string]; the
+     * caller judges the status. Only network failure throws.
+     */
+    public function json(string $method, string $url, ?array $payload, array $headers = []): array
+    {
+        $headers = array_merge(['Accept: application/json'], $headers);
+        if ($payload !== null) {
+            $headers[] = 'Content-Type: application/json';
+        }
+        return $this->request(strtoupper($method), $url, $headers, $payload !== null ? json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) : null);
+    }
+
     private function request(string $method, string $url, array $headers, ?string $body): array
     {
         $maxHops = $method === 'GET' ? $this->maxRedirects : 0;
@@ -133,9 +147,11 @@ final class HttpClient
             $this->used++;
             $ch = curl_init($url);
             $response = '';
-            if ($method === 'POST') {
-                curl_setopt($ch, CURLOPT_POST, true);
-                curl_setopt($ch, CURLOPT_POSTFIELDS, (string) $body);
+            if ($method !== 'GET') {
+                curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);
+                if ($body !== null) {
+                    curl_setopt($ch, CURLOPT_POSTFIELDS, $body);
+                }
             }
             curl_setopt_array($ch, [
                 CURLOPT_FOLLOWLOCATION => false, // redirects re-vetted manually

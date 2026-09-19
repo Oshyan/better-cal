@@ -8,7 +8,13 @@
   <meta name="color-scheme" content="light dark">
   <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f6f7f9">
   <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#16181d">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
   <script>try{var t=localStorage.getItem('bc-theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch(e){}</script>
+  <!-- Deep-link handoff (/add, /subscribe?url=, ...): the path and query move
+       to sessionStorage and the address becomes "/" before the first request
+       below is made, so no asset request or Referer ever carries them
+       (src/app/handoff.js collects them at boot). -->
+  <script>try{if(location.pathname!=='/'){sessionStorage.setItem('bc-handoff',JSON.stringify({path:location.pathname,search:location.search}));history.replaceState(null,'','/')}}catch(e){}</script>
   <link rel="manifest" href="/assets/manifest.webmanifest">
   <link rel="icon" href="/assets/icons/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/assets/icons/icon-192.png">
@@ -26,6 +32,7 @@
   <link rel="modulepreload" href="/assets/src/app/EventDetail.js">
   <link rel="modulepreload" href="/assets/src/lib/dates.js">
   <link rel="modulepreload" href="/assets/src/app/push.js">
+  <link rel="modulepreload" href="/assets/src/app/handoff.js">
   <link rel="modulepreload" href="/assets/vendor/preact.module.js">
   <link rel="modulepreload" href="/assets/vendor/htm.module.js">
   <link rel="modulepreload" href="/assets/src/ui/grouping.js">

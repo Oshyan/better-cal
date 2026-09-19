@@ -307,6 +307,14 @@ function bc_handle_api(Request $request, array $cfg): void
 
 function bc_handle_static(Request $request): void
 {
+    // The Web Share Target posts to /share; the service worker answers that
+    // itself (web/sw.js) and the body never reaches here. Without a
+    // controlling worker the shared content is lost, but the user still lands
+    // in the app rather than on an error.
+    if ($request->method === 'POST' && $request->path === '/share') {
+        Response::text('', 'text/plain; charset=utf-8', 303, ['Location' => '/'])->send();
+        return;
+    }
     if ($request->method !== 'GET' && $request->method !== 'HEAD') {
         Response::error('method_not_allowed', 'Method not allowed', 405)->send();
         return;
@@ -343,7 +351,12 @@ function bc_handle_static(Request $request): void
         Response::text('Better-Cal backend is running; frontend not deployed yet.', 'text/plain; charset=utf-8', 200)->send();
         return;
     }
-    bc_send_static($request, $index, 'text/html; charset=utf-8', StaticFiles::cacheControl('index.html'));
+    // The document's referrer policy (also a <meta> in index.html for a docroot
+    // that serves it statically): cross-origin requests such as map tiles get
+    // the origin only, never the path, so a deep-link URL cannot travel.
+    bc_send_static($request, $index, 'text/html; charset=utf-8', StaticFiles::cacheControl('index.html'), [
+        'Referrer-Policy' => 'strict-origin-when-cross-origin',
+    ]);
 }
 
 /**
@@ -352,10 +365,10 @@ function bc_handle_static(Request $request): void
  * configured. "no-cache" files carry an ETag and answer a matching
  * If-None-Match with 304, which is what makes revalidating on every load cheap.
  */
-function bc_send_static(Request $request, string $full, string $mime, string $cacheControl): void
+function bc_send_static(Request $request, string $full, string $mime, string $cacheControl, array $extraHeaders = []): void
 {
     $etag = StaticFiles::etag((int) filesize($full), (int) filemtime($full));
-    $headers = ['Cache-Control' => $cacheControl, 'ETag' => $etag];
+    $headers = ['Cache-Control' => $cacheControl, 'ETag' => $etag] + $extraHeaders;
     if (StaticFiles::matches($request->header('If-None-Match'), $etag)) {
         Response::notModified($headers)->send();
         return;

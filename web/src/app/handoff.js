@@ -3,7 +3,7 @@
 //   /subscribe?url=<ics|webcal>  -> subscribe drawer prefilled (webcal: handler)
 //   /import                      -> import drawer (file arrives via launchQueue)
 //   /review                      -> the Review queue (held-change notification target)
-//   /google?connected=|error=    -> Settings, Google (OAuth callback landing)
+//   /google?connected=|error=    -> the Google Calendar page (OAuth callback landing)
 //   /share  (POST title/text/url) -> Web Share Target: route by content
 //
 // None of them is read from the address bar. The shell's head script moves a
@@ -83,7 +83,7 @@ export async function runHandoff(handoff) {
     set({ route: 'review' });
   } else if (path === '/google') {
     // Back from Google's consent screen (GoogleController::callback).
-    set({ route: 'settings' });
+    set({ route: 'google' });
     if (params.get('connected')) toast('Connected ' + params.get('connected') + '. Pick the calendars to add below.');
     else if (params.get('error')) toast('Google sign-in failed: ' + params.get('error'), { error: true });
   } else if (path === '/share') {

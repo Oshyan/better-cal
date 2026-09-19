@@ -60,6 +60,9 @@ export function Icon({ name, size = 15 }) {
     outfeeds: html`<path d="M3 8.6a4.4 4.4 0 0 1 4.4 4.4M3 4.6a8.4 8.4 0 0 1 8.4 8.4" />
       <circle cx="3.7" cy="12.3" r="1.1" fill="currentColor" stroke="none" />`,
     filters: html`<path d="M2 3h12l-4.6 5.4V13l-2.8-1.5V8.4z" />`,
+    // A calendar page with a G: the Google connector.
+    google: html`<rect x="2" y="3" width="12" height="11" rx="1.5" /><path d="M2 6.5h12M5.5 1.5v3M10.5 1.5v3" />
+      <path d="M9.6 9.6H8v1.2h1.5a1.6 1.6 0 1 1-.4-1.7" />`,
     // Plus: "new thing here" tools. An SVG (not a text "+") so it shares the
     // gear's optical box and the two align in a row.
     plus: html`<path d="M8 3.4v9.2M3.4 8h9.2" />`,

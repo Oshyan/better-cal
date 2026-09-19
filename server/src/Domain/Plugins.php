@@ -44,7 +44,7 @@ final class Plugins
         'trash', 'arrowLeft', 'note', 'keyboard', 'expand', 'bell', 'activeOnly',
         'lock', 'unlock', 'calendar', 'today', 'viewMonth', 'viewWeek',
         'viewWeeks3', 'viewWeeks2', 'viewDay', 'viewAgenda', 'plugins',
-        'proposals', 'review', 'mail', 'arrowRight', 'people', 'trip',
+        'proposals', 'review', 'mail', 'arrowRight', 'people', 'trip', 'google',
     ];
 
     /**

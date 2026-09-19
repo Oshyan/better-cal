@@ -22,11 +22,11 @@ BETTERCAL_GOOGLE_CLIENT_SECRET=...
 
 `BETTERCAL_SESSION_SECRET` must be set (it already is on any working install): the refresh token is sealed with it (`Infra\Secrets`, libsodium secretbox) before it is stored. Changing the session secret invalidates stored tokens; reconnecting the account is the fix.
 
-Until both variables are set, Settings → Google says the connector is not set up and offers nothing.
+Until both variables are set, the Google Calendar page (Manage → Google Calendar) says the connector is not set up and offers nothing.
 
 ## Connecting (each user)
 
-Settings → Google → **Connect a Google account**. Google asks for consent (calendar read access, event write access for the next step, plus your email address, which is how the account is labelled here), then sends you back. The account then lists every calendar Google shows it, with the access role Google grants and a kind Google does not state but the calendar id encodes: **Yours** (your primary, or a secondary you own), **Shared with you** (someone else's, shared with you: the shape no iCal address can reach), **Feed copy** (Google's own copy of an ICS subscription, always behind the source; subscribing to the ICS address here directly is fresher), **Google** (holidays, birthdays). **Add** subscribes one and syncs it right away. Several accounts can be connected.
+Manage → Google Calendar → **Connect a Google account**. Google asks for consent (calendar read access, event write access for the next step, plus your email address, which is how the account is labelled here), then sends you back. The account then lists every calendar Google shows it, with the access role Google grants and a kind Google does not state but the calendar id encodes: **Yours** (your primary, or a secondary you own), **Shared with you** (someone else's, shared with you: the shape no iCal address can reach), **Feed copy** (Google's own copy of an ICS subscription, always behind the source; subscribing to the ICS address here directly is fresher), **Google** (holidays, birthdays). **Add** subscribes one and syncs it right away. Several accounts can be connected.
 
 **Disconnect** revokes the token at Google and forgets it. Calendars already subscribed from that account stay, with their events, but stop updating and report "Google account disconnected" as their poll error until you delete them or connect the account again (reconnecting the same email re-attaches them).
 

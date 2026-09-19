@@ -1240,6 +1240,14 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-sys-table tr.is-failing td { background: color-mix(in srgb, var(--danger) 6%, transparent); }
 /* API tokens (Settings) */
 .bc-tokens { max-width: 560px; }
+.bc-google-accounts { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.bc-google-account { display: inline-flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.bc-google-email { font-weight: 600; }
+.bc-google-err { color: var(--danger); }
+.bc-google-confirm { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.bc-google-list { max-width: 640px; }
+.bc-google-list .bc-cal-dot { vertical-align: -1px; margin-right: 4px; }
+.bc-google-tag { font-size: 10.5px; color: var(--fg-muted); border: 1px solid var(--border-strong); border-radius: 999px; padding: 0 6px; }
 .bc-tokens-revoke { color: var(--danger); padding: 0; }
 .bc-tokens-new { display: inline-flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .bc-tokens-new input { min-width: 260px; }

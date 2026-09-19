@@ -3016,6 +3016,111 @@ require __DIR__ . '/plugins.php';
     checkEq('reset --revoke-tokens: another user\'s token is untouched', 1, (int) $pdb->scalar('SELECT COUNT(*) FROM api_tokens WHERE user_id = 2'));
 }
 
+// --- Google Calendar connector ------------------------------------------------
+use BetterCal\Domain\GoogleAuth;
+use BetterCal\Domain\GoogleSync;
+use BetterCal\Infra\Secrets;
+
+{
+    // Sealed credentials round-trip and refuse the wrong key.
+    $sealed = Secrets::seal('1//refresh-token', 'secret-a');
+    check('secrets: sealed value is not the plaintext', !str_contains($sealed, 'refresh-token'));
+    checkEq('secrets: opens with the right secret', '1//refresh-token', Secrets::open($sealed, 'secret-a'));
+    $wrong = false;
+    try {
+        Secrets::open($sealed, 'secret-b');
+    } catch (\RuntimeException) {
+        $wrong = true;
+    }
+    check('secrets: wrong secret is refused', $wrong);
+
+    // OAuth state binds the callback to the user and expires.
+    $gcfg = ['session_secret' => 'secret-a', 'base_url' => 'https://cal.example', 'google' => ['client_id' => 'cid', 'client_secret' => 'cs']];
+    $gauth = new GoogleAuth(new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]), $gcfg);
+    $state = $gauth->signState(7, 1_000_000);
+    check('google state: verifies for its user', $gauth->verifyState($state, 7, 1_000_100));
+    check('google state: rejected for another user', !$gauth->verifyState($state, 8, 1_000_100));
+    check('google state: rejected after expiry', !$gauth->verifyState($state, 7, 1_000_000 + 601));
+    check('google state: rejected when tampered', !$gauth->verifyState(substr($state, 0, -2) . 'zz', 7, 1_000_100));
+    check('google auth url: carries scope, offline access and the redirect', (static function () use ($gauth): bool {
+        $u = $gauth->authUrl(7);
+        return str_contains($u, 'calendar.readonly') && str_contains($u, 'access_type=offline') && str_contains($u, rawurlencode('https://cal.example/api/v1/google/callback'));
+    })());
+
+    // Google event resources to the Ics::parse shape.
+    $timed = GoogleSync::toParsed([
+        'id' => 'abc', 'iCalUID' => 'abc@google.com', 'status' => 'confirmed', 'summary' => 'Dinner',
+        'description' => 'Table for four', 'location' => 'Dishoom, Covent Garden', 'htmlLink' => 'https://www.google.com/calendar/event?eid=abc',
+        'start' => ['dateTime' => '2026-09-21T19:00:00+01:00', 'timeZone' => 'Europe/London'],
+        'end' => ['dateTime' => '2026-09-21T21:00:00+01:00', 'timeZone' => 'Europe/London'],
+    ]);
+    checkEq('google->parsed: uid is the iCalUID', 'abc@google.com', $timed['uid']);
+    checkEq('google->parsed: timed start in UTC', '2026-09-21 18:00:00', $timed['start_utc']);
+    checkEq('google->parsed: timed end in UTC', '2026-09-21 20:00:00', $timed['end_utc']);
+    checkEq('google->parsed: tzid from the event', 'Europe/London', $timed['tzid']);
+    checkEq('google->parsed: not all-day', 0, $timed['all_day']);
+    checkEq('google->parsed: event link becomes the url', 'https://www.google.com/calendar/event?eid=abc', $timed['url']);
+    checkEq('google->parsed: no instance for a plain event', null, $timed['recurrence_instance_utc']);
+
+    $allDay = GoogleSync::toParsed([
+        'id' => 'd1', 'iCalUID' => 'd1@google.com', 'summary' => '', 'start' => ['date' => '2026-09-21'], 'end' => ['date' => '2026-09-24'],
+    ]);
+    checkEq('google->parsed: all-day start is midnight UTC like Ics', '2026-09-21 00:00:00', $allDay['start_utc']);
+    checkEq('google->parsed: all-day end is exclusive as given', '2026-09-24 00:00:00', $allDay['end_utc']);
+    checkEq('google->parsed: all-day flag', 1, $allDay['all_day']);
+    checkEq('google->parsed: empty summary gets a title', '(No title)', $allDay['title']);
+
+    $series = GoogleSync::toParsed([
+        'id' => 'r1', 'iCalUID' => 'r1@google.com', 'summary' => 'Standup',
+        'start' => ['dateTime' => '2026-09-21T09:00:00+01:00', 'timeZone' => 'Europe/London'],
+        'end' => ['dateTime' => '2026-09-21T09:15:00+01:00', 'timeZone' => 'Europe/London'],
+        'recurrence' => ['RRULE:FREQ=WEEKLY;BYDAY=MO', 'EXDATE;TZID=Europe/London:20260928T090000,20261005T090000', 'RDATE;VALUE=DATE:20261101'],
+    ]);
+    checkEq('google->parsed: rrule without the prefix', 'FREQ=WEEKLY;BYDAY=MO', $series['rrule']);
+    checkEq('google->parsed: exdates resolved through the TZID to UTC', ['2026-09-28 08:00:00', '2026-10-05 08:00:00'], $series['exdates']);
+
+    $exception = GoogleSync::toParsed([
+        'id' => 'r1_20261012T080000Z', 'iCalUID' => 'r1@google.com', 'summary' => 'Standup (moved)', 'recurringEventId' => 'r1',
+        'originalStartTime' => ['dateTime' => '2026-10-12T09:00:00+01:00', 'timeZone' => 'Europe/London'],
+        'start' => ['dateTime' => '2026-10-12T10:00:00+01:00', 'timeZone' => 'Europe/London'],
+        'end' => ['dateTime' => '2026-10-12T10:15:00+01:00', 'timeZone' => 'Europe/London'],
+    ]);
+    checkEq('google->parsed: exception keeps the series uid', 'r1@google.com', $exception['uid']);
+    checkEq('google->parsed: exception instance is the original start in UTC', '2026-10-12 08:00:00', $exception['recurrence_instance_utc']);
+
+    $tombstone = GoogleSync::toParsed(['id' => 'r1_20261019T080000Z', 'iCalUID' => 'r1@google.com', 'status' => 'cancelled', 'recurringEventId' => 'r1',
+        'originalStartTime' => ['dateTime' => '2026-10-19T09:00:00+01:00']]);
+    check('google->parsed: cancelled instance is a tombstone with its instance', !empty($tombstone['cancelled']) && $tombstone['recurrence_instance_utc'] === '2026-10-19 08:00:00');
+    checkEq('google->parsed: nothing without a uid', null, GoogleSync::toParsed(['status' => 'confirmed']));
+
+    // Incremental merge: changes over a snapshot.
+    $snapshot = [$timed, $series, $exception];
+    $merged = GoogleSync::applyChanges($snapshot, [
+        $tombstone,                                                   // one instance skipped -> EXDATE on the series
+        ['cancelled' => true, 'uid' => 'abc@google.com', 'recurrence_instance_utc' => null], // dinner deleted
+        GoogleSync::toParsed(['id' => 'n1', 'iCalUID' => 'n1@google.com', 'summary' => 'New', 'start' => ['date' => '2026-11-01'], 'end' => ['date' => '2026-11-02']]),
+    ]);
+    $byUid = [];
+    foreach ($merged as $ev) {
+        $byUid[$ev['uid'] . '|' . ($ev['recurrence_instance_utc'] ?? '')] = $ev;
+    }
+    check('merge: deleted event is gone', !isset($byUid['abc@google.com|']));
+    check('merge: new event is present', isset($byUid['n1@google.com|']));
+    check('merge: exception survives', isset($byUid['r1@google.com|2026-10-12 08:00:00']));
+    checkEq('merge: cancelled instance became an EXDATE on the series', ['2026-09-28 08:00:00', '2026-10-05 08:00:00', '2026-10-19 08:00:00'], $byUid['r1@google.com|']['exdates']);
+    $gone = GoogleSync::applyChanges($merged, [['cancelled' => true, 'uid' => 'r1@google.com', 'recurrence_instance_utc' => null]]);
+    check('merge: cancelling the series removes master and exception', count(array_filter($gone, static fn(array $e): bool => $e['uid'] === 'r1@google.com')) === 0);
+
+    // Rows back to the parsed shape (what the incremental merge starts from).
+    $rows = GoogleSync::rowsToParsed([[
+        'uid' => 'r1@google.com', 'title' => 'Standup', 'description' => null, 'location' => null, 'url' => null,
+        'start_utc' => '2026-09-21 08:00:00', 'end_utc' => '2026-09-21 08:15:00', 'all_day' => '0', 'tzid' => 'Europe/London',
+        'rrule' => 'FREQ=WEEKLY;BYDAY=MO', 'exdates_json' => '["2026-09-28 08:00:00"]', 'status' => 'confirmed', 'recurrence_instance_utc' => null,
+    ]]);
+    checkEq('rows->parsed: exdates decoded', ['2026-09-28 08:00:00'], $rows[0]['exdates']);
+    checkEq('rows->parsed: all_day is an int', 0, $rows[0]['all_day']);
+}
+
 $pass = $GLOBALS['__pass'];
 $fail = $GLOBALS['__fail'];
 echo "\n$pass passed, $fail failed\n";

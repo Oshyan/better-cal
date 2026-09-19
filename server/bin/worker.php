@@ -32,7 +32,7 @@ $db = new Db($cfg['db']);
 preg_match('/dbname=([^;]+)/', (string) $cfg['db']['dsn'], $lockM);
 define('WORKER_LOCK', 'bettercal_worker:' . ($lockM[1] ?? 'default'));
 $queue = new JobQueue($db);
-$feeds = new Feeds($db, $queue);
+$feeds = new Feeds($db, $queue, $cfg);
 $llm = new LlmGateway($cfg);
 $promptEval = new PromptEval($db, $llm, $queue);
 $ranking = new Ranking($db, $llm, $queue);
@@ -204,7 +204,7 @@ function bc_enqueue_due_polls(Db $db, JobQueue $queue): void
 {
     $due = $db->all(
         "SELECT id FROM calendars
-         WHERE kind = 'subscribed' AND source_url IS NOT NULL
+         WHERE kind = 'subscribed' AND (source_url IS NOT NULL OR provider = 'google')
            AND (last_polled_at IS NULL
                 OR last_polled_at <= DATE_SUB(?, INTERVAL poll_interval_minutes MINUTE))",
         [Time::nowDb()]

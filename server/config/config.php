@@ -50,6 +50,13 @@ function config(): array
             'model' => $env('BETTERCAL_GEMINI_MODEL', 'gemini-3.6-flash'),
         ],
         'session_secret' => $env('BETTERCAL_SESSION_SECRET'),
+        'google' => [
+            // OAuth client for the Google Calendar connector (docs/google-calendar.md).
+            // Empty means the connector is not set up on this server; the
+            // Settings page says so instead of offering a Connect button.
+            'client_id' => $env('BETTERCAL_GOOGLE_CLIENT_ID'),
+            'client_secret' => $env('BETTERCAL_GOOGLE_CLIENT_SECRET'),
+        ],
         'maptiler' => [
             // Optional MapTiler tile key; when empty the event detail
             // mini-map keeps plain OSM tiles.

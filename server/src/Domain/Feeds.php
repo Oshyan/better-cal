@@ -17,53 +17,83 @@ final class Feeds
     // Timeouts now come from HttpClient (5s connect / 20s total).
     private const MAX_BYTES = 20 * 1024 * 1024;
 
-    public function __construct(private readonly Db $db, private readonly ?JobQueue $queue = null)
-    {
+    public function __construct(
+        private readonly Db $db,
+        private readonly ?JobQueue $queue = null,
+        private readonly ?array $cfg = null,
+    ) {
     }
 
-    /** Force-poll a subscribed calendar now. Returns imported (upserted) count. */
+    /**
+     * Force-poll a subscribed calendar now. Returns imported (upserted) count.
+     * An ICS subscription is fetched and parsed here; a Google calendar goes
+     * through GoogleSync, which produces the same parsed shape. Both share
+     * sync() and the outcome bookkeeping below.
+     */
     public function poll(int $calendarId): int
     {
         $calendar = $this->db->one('SELECT * FROM calendars WHERE id = ?', [$calendarId]);
-        if ($calendar === null || $calendar['kind'] !== 'subscribed' || empty($calendar['source_url'])) {
+        if ($calendar === null || $calendar['kind'] !== 'subscribed') {
+            throw HttpError::badRequest('Calendar is not a feed subscription');
+        }
+        $google = ($calendar['provider'] ?? 'ics') === 'google';
+        if (!$google && empty($calendar['source_url'])) {
             throw HttpError::badRequest('Calendar is not a feed subscription');
         }
         try {
+            if ($google) {
+                $cfg = $this->cfg ?? config();
+                return (new GoogleSync($this->db, new GoogleAuth($this->db, $cfg), $this))->poll($calendar);
+            }
             $ics = $this->fetch((string) $calendar['source_url']);
             $parsed = Ics::parse($ics);
             $count = $this->sync($calendar, $parsed);
-            $this->db->update('calendars', [
-                'last_polled_at' => Time::nowDb(),
-                'last_poll_status' => 'ok',
-                'last_poll_error' => null,
-            ], 'id = ?', [$calendarId]);
-            $this->recordStats($calendarId, count($parsed));
-            (new SystemHealth($this->db))->recordOk('feed:' . $calendarId, 'feed', (int) $calendar['user_id'], 'Feed: ' . (string) $calendar['name']);
-            // New/updated feed events need background prompt-filter evaluation
-            // and rank scoring (mirrors the ChangeLog hook: fired per poll).
-            if ($count > 0 && $this->queue !== null) {
-                if (!$this->queue->hasPending('geocode_sweep')) {
-                    $this->queue->enqueue('geocode_sweep', []);
-                }
-                if (!$this->queue->hasPending('filter_eval')) {
-                    $this->queue->enqueue('filter_eval', []);
-                }
-                if (!$this->queue->hasPending('rank_events')) {
-                    $this->queue->enqueue('rank_events', []);
-                }
-            }
+            $this->pollSucceeded($calendar, count($parsed), $count);
             return $count;
         } catch (\Throwable $e) {
-            $this->db->update('calendars', [
-                'last_polled_at' => Time::nowDb(),
-                'last_poll_status' => 'error',
-                'last_poll_error' => mb_substr($e->getMessage(), 0, 2000),
-            ], 'id = ?', [$calendarId]);
-            // The badge says "error" while you look; this gives it a since-when,
-            // a history, and eventually an email if it stays that way.
-            (new SystemHealth($this->db))->recordFailure('feed:' . $calendarId, 'feed', (int) $calendar['user_id'], 'Feed: ' . (string) $calendar['name'], $e->getMessage());
+            $this->pollFailed($calendar, $e);
             throw $e;
         }
+    }
+
+    /** Bookkeeping for a poll that worked: status, stats, health, follow-up jobs. */
+    public function pollSucceeded(array $calendar, int $rawCount, int $upserts): void
+    {
+        $calendarId = (int) $calendar['id'];
+        $this->db->update('calendars', [
+            'last_polled_at' => Time::nowDb(),
+            'last_poll_status' => 'ok',
+            'last_poll_error' => null,
+        ], 'id = ?', [$calendarId]);
+        $this->recordStats($calendarId, $rawCount);
+        (new SystemHealth($this->db))->recordOk('feed:' . $calendarId, 'feed', (int) $calendar['user_id'], 'Feed: ' . (string) $calendar['name']);
+        // New/updated feed events need background prompt-filter evaluation
+        // and rank scoring (mirrors the ChangeLog hook: fired per poll).
+        if ($upserts > 0 && $this->queue !== null) {
+            if (!$this->queue->hasPending('geocode_sweep')) {
+                $this->queue->enqueue('geocode_sweep', []);
+            }
+            if (!$this->queue->hasPending('filter_eval')) {
+                $this->queue->enqueue('filter_eval', []);
+            }
+            if (!$this->queue->hasPending('rank_events')) {
+                $this->queue->enqueue('rank_events', []);
+            }
+        }
+    }
+
+    /** Bookkeeping for a poll that failed: status with the reason, health streak. */
+    public function pollFailed(array $calendar, \Throwable $e): void
+    {
+        $calendarId = (int) $calendar['id'];
+        $this->db->update('calendars', [
+            'last_polled_at' => Time::nowDb(),
+            'last_poll_status' => 'error',
+            'last_poll_error' => mb_substr($e->getMessage(), 0, 2000),
+        ], 'id = ?', [$calendarId]);
+        // The badge says "error" while you look; this gives it a since-when,
+        // a history, and eventually an email if it stays that way.
+        (new SystemHealth($this->db))->recordFailure('feed:' . $calendarId, 'feed', (int) $calendar['user_id'], 'Feed: ' . (string) $calendar['name'], $e->getMessage());
     }
 
     public function fetch(string $url): string

@@ -91,7 +91,23 @@ final class HttpClient
      */
     public function get(string $url, array $headers = []): array
     {
-        for ($hop = 0; $hop <= $this->maxRedirects; $hop++) {
+        return $this->request('GET', $url, $headers, null);
+    }
+
+    /**
+     * POST a form body under the same policy. Redirects are not followed
+     * for a POST (a token endpoint that redirects is not one to trust).
+     * Returns ['status'=>int,'body'=>string]; only network failure throws.
+     */
+    public function postForm(string $url, array $fields, array $headers = []): array
+    {
+        return $this->request('POST', $url, array_merge(['Content-Type: application/x-www-form-urlencoded'], $headers), http_build_query($fields));
+    }
+
+    private function request(string $method, string $url, array $headers, ?string $body): array
+    {
+        $maxHops = $method === 'GET' ? $this->maxRedirects : 0;
+        for ($hop = 0; $hop <= $maxHops; $hop++) {
             if ($this->used >= $this->requestBudget) {
                 throw new \RuntimeException('HTTP request budget exhausted (' . $this->requestBudget . ')');
             }
@@ -116,7 +132,11 @@ final class HttpClient
 
             $this->used++;
             $ch = curl_init($url);
-            $body = '';
+            $response = '';
+            if ($method === 'POST') {
+                curl_setopt($ch, CURLOPT_POST, true);
+                curl_setopt($ch, CURLOPT_POSTFIELDS, (string) $body);
+            }
             curl_setopt_array($ch, [
                 CURLOPT_FOLLOWLOCATION => false, // redirects re-vetted manually
                 CURLOPT_CONNECTTIMEOUT => self::CONNECT_TIMEOUT,
@@ -125,9 +145,9 @@ final class HttpClient
                 CURLOPT_HTTPHEADER => array_merge(['Accept-Encoding: gzip'], $headers),
                 CURLOPT_ENCODING => '',
                 CURLOPT_RESOLVE => [$host . ':' . $port . ':' . $ips[0]],
-                CURLOPT_WRITEFUNCTION => function ($c, string $chunk) use (&$body): int {
-                    $body .= $chunk;
-                    if (strlen($body) > $this->maxBytes) {
+                CURLOPT_WRITEFUNCTION => function ($c, string $chunk) use (&$response): int {
+                    $response .= $chunk;
+                    if (strlen($response) > $this->maxBytes) {
                         return 0; // abort transfer: response too large
                     }
                     return strlen($chunk);
@@ -139,7 +159,7 @@ final class HttpClient
             $err = curl_errno($ch) !== 0 ? curl_error($ch) : null;
             curl_close($ch);
 
-            if (strlen($body) > $this->maxBytes) {
+            if (strlen($response) > $this->maxBytes) {
                 throw new \RuntimeException('Response exceeded ' . round($this->maxBytes / 1048576, 1) . ' MB cap');
             }
             if ($err !== null && $status === 0) {
@@ -149,7 +169,7 @@ final class HttpClient
                 $url = $redirect; // loop re-runs full policy on the new URL
                 continue;
             }
-            return ['status' => $status, 'body' => $body];
+            return ['status' => $status, 'body' => $response];
         }
         throw new \RuntimeException('Too many redirects');
     }

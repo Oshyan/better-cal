@@ -57,7 +57,7 @@ Background work reports into `system_health` (one row per job type, feed, and pu
 
 ## Credentials
 
-Local file `.credentials` (gitignored, chmod 600) holds: site user password, DB password, app login (calendar@oshyan.com), and an API bearer token named `claude-code`. The Gemini key lives only in the server `.env` (sourced originally from LogAssistant's key file).
+Local file `.credentials` (gitignored, chmod 600) holds: site user password, DB password, app login (calendar@oshyan.com), and an API bearer token named `claude-code`. The Gemini key lives only in the server `.env` (sourced originally from LogAssistant's key file). The Google OAuth client (`BETTERCAL_GOOGLE_CLIENT_ID` / `_SECRET`, see `docs/google-calendar.md`) lives only in the server `.env` too; connected accounts' refresh tokens are in the database, sealed with `BETTERCAL_SESSION_SECRET`.
 
 ## Updates and how you hear about them (2026-09-19)
 

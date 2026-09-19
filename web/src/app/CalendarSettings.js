@@ -128,7 +128,9 @@ export function CalendarSettings({ cal, folders, onClose }) {
 
     ${subscribed && html`<div class="bc-calset-field">
       <span class="bc-calset-label">Source</span>
-      <span class="bc-calset-url" title=${cal.sourceUrl}>${cal.sourceUrl}</span>
+      ${cal.provider === 'google'
+        ? html`<span class="bc-calset-url" title=${cal.googleCalendarId || ''}>Google Calendar, through your connected account (Settings, Google)</span>`
+        : html`<span class="bc-calset-url" title=${cal.sourceUrl}>${cal.sourceUrl}</span>`}
     </div>
     <div class="bc-calset-field">
       <span class="bc-calset-label">Check for updates</span>

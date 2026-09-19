@@ -1,0 +1,67 @@
+{
+  "_comment": "Pinned frontend libraries. Verified by scripts/vendor.mjs --verify (deploy runs it); fetched by --fetch. index.js is ours.",
+  "files": {
+    "preact.module.js": {
+      "package": "preact",
+      "version": "10.29.7",
+      "path": "dist/preact.module.js",
+      "transform": "strip-sourcemap",
+      "sha256": "40776cab8b504ffd5ba436d0ef4448427eb7ca23292d689acd6e6df1594609c0"
+    },
+    "hooks.module.js": {
+      "package": "preact",
+      "version": "10.29.7",
+      "path": "hooks/dist/hooks.module.js",
+      "transform": "strip-sourcemap+preact-import",
+      "sha256": "9e7eff58e0ae604583461eba1344da69a6894eab575eb591c635cc0d3f9ec57d"
+    },
+    "htm.module.js": {
+      "package": "htm",
+      "version": "3.1.1",
+      "path": "dist/htm.module.js",
+      "sha256": "ab33dd3f38059b9be4d5f5350128eefb2356639c4e0bbe9d9e8b3ba75847e9e4"
+    },
+    "squire/squire-raw.js": {
+      "package": "squire-rte",
+      "version": "2.4.8",
+      "path": "dist/squire-raw.js",
+      "sha256": "0f9098c0843c85039bf46022a9bef991f1ae74e3bf50d11baf081feeb5514196"
+    },
+    "squire/purify.min.js": {
+      "package": "dompurify",
+      "version": "3.4.15",
+      "path": "dist/purify.min.js",
+      "sha256": "f263b05369e050fa175d4ecb9c9358eb4253602d510297adfb31df48b2f1c4d5"
+    },
+    "leaflet/leaflet.js": {
+      "package": "leaflet",
+      "version": "1.9.4",
+      "path": "dist/leaflet.js",
+      "sha256": "db49d009c841f5ca34a888c96511ae936fd9f5533e90d8b2c4d57596f4e5641a"
+    },
+    "leaflet/leaflet.css": {
+      "package": "leaflet",
+      "version": "1.9.4",
+      "path": "dist/leaflet.css",
+      "sha256": "a7837102824184820dfa198d1ebcd109ff6d0ff9a2672a074b9a1b4d147d04c6"
+    },
+    "leaflet/images/marker-icon.png": {
+      "package": "leaflet",
+      "version": "1.9.4",
+      "path": "dist/images/marker-icon.png",
+      "sha256": "574c3a5cca85f4114085b6841596d62f00d7c892c7b03f28cbfa301deb1dc437"
+    },
+    "leaflet/images/marker-icon-2x.png": {
+      "package": "leaflet",
+      "version": "1.9.4",
+      "path": "dist/images/marker-icon-2x.png",
+      "sha256": "00179c4c1ee830d3a108412ae0d294f55776cfeb085c60129a39aa6fc4ae2528"
+    },
+    "leaflet/images/marker-shadow.png": {
+      "package": "leaflet",
+      "version": "1.9.4",
+      "path": "dist/images/marker-shadow.png",
+      "sha256": "264f5c640339f042dd729062cfc04c17f8ea0f29882b538e3848ed8f10edb4da"
+    }
+  }
+}

@@ -4,7 +4,7 @@
 !.env.example
 .mcp.json
 node_modules/
-vendor/
+server/vendor/
 .DS_Store
 dist/
 better-cal-gcal-redirect-*.zip

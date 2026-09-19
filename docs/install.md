@@ -23,6 +23,10 @@ Better-Cal is plain PHP and MySQL with a no-build frontend. It should run on any
 
 Updating is: pull, `composer install --no-dev`, `php server/bin/migrate.php`. `scripts/deploy.sh` does this over rsync and ssh for one specific server; treat it as an example, since its host and paths are hardcoded.
 
+## Dependencies and advisories
+
+PHP dependencies are Composer's and pinned in `server/composer.lock`; `composer audit --no-dev --locked` (run from `server/`) checks them against the Packagist advisory database, and the deploy script runs it after every install as a report. The frontend has no package manager: its libraries (Preact, htm, Squire, DOMPurify, Leaflet) are committed under `web/vendor/` and pinned in `web/vendor/manifest.json` with their npm package, version and the sha256 of the shipped file. `node scripts/vendor.mjs --verify` confirms the tree matches the manifest (the deploy script runs this too); to upgrade one, change its version in the manifest, run `node scripts/vendor.mjs --fetch <file>`, review the diff and commit both.
+
 ## How requests are routed
 
 This is all a web server needs to know, and it is the same on any of them:

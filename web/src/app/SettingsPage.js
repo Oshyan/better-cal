@@ -99,6 +99,87 @@ function SystemSection() {
   </section>`;
 }
 
+// API keys: what CalDAV clients, the MCP server and scripts sign in with.
+// Create shows the value exactly once (only its hash is stored); revoke is
+// immediate. Session-only on the server, so a leaked token cannot mint more.
+function TokensSection() {
+  const [tokens, setTokens] = useState(null);
+  const [name, setName] = useState('');
+  const [fresh, setFresh] = useState(null); // {id, name, token}: shown once, until dismissed
+  const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const load = () => api('/tokens').then((d) => setTokens(d.tokens || [])).catch(() => setTokens([]));
+  useEffect(() => { load(); }, []);
+
+  const create = async (e) => {
+    e.preventDefault();
+    if (!name.trim()) return;
+    setBusy(true);
+    try {
+      const d = await api('/tokens', { method: 'POST', body: { name: name.trim() } });
+      setFresh(d);
+      setCopied(false);
+      setName('');
+      await load();
+    } catch (err) {
+      toast('Could not create key: ' + err.message, { error: true });
+    } finally {
+      setBusy(false);
+    }
+  };
+  const revoke = async (t) => {
+    setBusy(true);
+    try {
+      await api('/tokens/' + t.id, { method: 'DELETE' });
+      if (fresh && fresh.id === t.id) setFresh(null);
+      toast('Revoked "' + t.name + '". Anything using it stops working now.');
+      await load();
+    } catch (err) {
+      toast('Could not revoke: ' + err.message, { error: true });
+    } finally {
+      setBusy(false);
+    }
+  };
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(fresh.token);
+      setCopied(true);
+    } catch { /* clipboard blocked: the value is selectable */ }
+  };
+  const when = (iso) => (iso ? fmtSince(iso) : 'never');
+
+  return html`<section class="bc-set-section">
+    <h2 class="bc-set-h">API keys</h2>
+    <${Row} label="Keys" hint="Each key signs in as you: for CalDAV clients (as the password), the MCP server, and scripts. Revoke one and whatever used it stops immediately. A key you no longer recognize is a reason to revoke it.">
+      ${tokens === null && html`<span class="bc-set-value">Loading…</span>`}
+      ${tokens !== null && tokens.length === 0 && html`<span class="bc-set-value">None yet.</span>`}
+      ${tokens !== null && tokens.length > 0 && html`<table class="bc-sys-table bc-tokens">
+        <thead><tr><th>Name</th><th>Created</th><th>Last used</th><th></th></tr></thead>
+        <tbody>${tokens.map((t) => html`<tr key=${t.id}>
+          <td>${t.name}</td>
+          <td title=${new Date(t.createdAt).toLocaleString()}>${when(t.createdAt)}</td>
+          <td title=${t.lastUsedAt ? new Date(t.lastUsedAt).toLocaleString() : ''}>${when(t.lastUsedAt)}</td>
+          <td><button type="button" class="bc-link-btn bc-tokens-revoke" disabled=${busy} onClick=${() => revoke(t)}>Revoke</button></td>
+        </tr>`)}</tbody>
+      </table>`}
+    <//>
+    <${Row} label="New key">
+      <form class="bc-tokens-new" onSubmit=${create}>
+        <input type="text" value=${name} placeholder="What will use it, e.g. Phone CalDAV" maxlength="120" aria-label="Key name" onInput=${(e) => setName(e.target.value)} />
+        <button type="submit" class="bc-btn bc-btn-primary" disabled=${busy || !name.trim()}>Create key</button>
+      </form>
+    <//>
+    ${fresh && html`<${Row} label="" hint="Shown once. It is stored hashed, so it cannot be shown again; if you lose it, revoke it and create another.">
+      <div class="bc-tokens-fresh" role="status">
+        <span>Key for <strong>${fresh.name}</strong>:</span>
+        <code class="bc-tokens-value">${fresh.token}</code>
+        <button type="button" class="bc-btn" onClick=${copy}>${copied ? 'Copied' : 'Copy'}</button>
+        <button type="button" class="bc-link-btn" onClick=${() => setFresh(null)}>Done</button>
+      </div>
+    <//>`}
+  </section>`;
+}
+
 function Row({ label, hint, children }) {
   return html`<div class="bc-set-row">
     <span class="bc-set-label">${label}</span>
@@ -477,10 +558,12 @@ export function SettingsPage() {
       <${Row} label="Version">
         <span class="bc-set-value">${version || 'unknown'}</span>
       <//>
-      <${Row} label="Device sync" hint="Username is your account email; the password is your account password or a personal access token.">
+      <${Row} label="Device sync" hint="Username is your account email; the password is your account password or an API key (below).">
         <span class="bc-set-value">CalDAV clients (Apple Calendar, DAVx5, Thunderbird) can sync at <code>/dav</code> on this server.</span>
       <//>
     </section>
+
+    <${TokensSection} />
 
     <${SystemSection} />
   <//>`;

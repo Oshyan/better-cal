@@ -1,8 +1,8 @@
 # Google Calendar connector
 
-Better-Cal can read calendars through a connected Google account: the ones you own, the ones you subscribe to, and the ones other people have shared with you, including shared-but-not-public calendars that no iCal address can reach (the case that started this, GH #42). A connected calendar is an ordinary subscribed calendar here: it has a colour, lives in folders, shows feed health, and is read-only in this version. Edits still happen in Google; they arrive here within the poll interval (5 minutes by default, one small request per poll).
+Better-Cal can read calendars through a connected Google account: the ones you own, the ones you subscribe to, and the ones other people have shared with you, including shared-but-not-public calendars that no iCal address can reach (the case that started this, GH #42). A connected calendar is an ordinary subscribed calendar here: it has a colour, lives in folders, shows feed health. Edits made in Google arrive here within the poll interval (5 minutes by default, one small request per poll).
 
-The write side, where an edit made here goes to Google for calendars you can edit (write-through: Google stays authoritative, our copy is a cache), is the next step. The scope for it is requested from the start so no account has to re-consent when it lands.
+Where the connected account may edit the calendar (Google's access role `writer` or `owner`: your own calendars, and ones shared with you with "make changes"), events can be created, edited and deleted here too. That is **write-through**, not two-way sync: the change goes to Google first, and what Google answers with is materialised locally through the same path a poll uses, so no local-only version of a Google event ever exists and there is nothing to reconcile. If Google refuses (network, revoked token, a role that changed), the request fails with a clear error and nothing here changes. Calendars the account can only view stay read-only, like any feed.
 
 ## One-time setup (the operator)
 
@@ -29,6 +29,14 @@ Until both variables are set, Settings → Connections says the connector is not
 Settings → Connections → **Connect a Google account**. Google asks for consent (calendar read access, event write access for the next step, plus your email address, which is how the account is labelled here), then sends you back. The account then lists every calendar Google shows it, with the access role Google grants and a kind Google does not state but the calendar id encodes: **Yours** (your primary, or a secondary you own), **Shared with you** (someone else's, shared with you: the shape no iCal address can reach), **Feed copy** (Google's own copy of an ICS subscription, always behind the source; subscribing to the ICS address here directly is fresher), **Google** (holidays, birthdays). **Add** subscribes one and syncs it right away. Several accounts can be connected.
 
 **Disconnect** revokes the token at Google and forgets it. Calendars already subscribed from that account stay, with their events, but stop updating and report "Google account disconnected" as their poll error until you delete them or connect the account again (reconnecting the same email re-attaches them).
+
+## What writes send
+
+Title, description, location, start and end (dates for all-day, RFC 3339 with the time zone otherwise), status, and the recurrence rule with its exceptions. Not sent: attendees (they would mail people), reminders (per-user at Google), colour, the event link. Tags, people, reminders and the trip flag are local metadata on the row and survive polls.
+
+Recurring edits map onto Google the way the local model already works: "this occurrence" patches Google's instance id and comes back as an exception; "this and following" ends the series at Google with `UNTIL` and inserts a new one; deleting one occurrence deletes the instance at Google, which comes back as an `EXDATE`. Moving an event between a Google calendar and any other calendar is refused (create it on the other one instead), and a trip on a Google calendar moves one event at a time.
+
+Activity records each write as a plain entry ("Updated 'Dishoom' on Google calendar 'London'"); there is no Undo for these, since undoing would be a second write to Google against a row that is Google's, not a snapshot of ours.
 
 ## How syncing works
 

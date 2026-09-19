@@ -196,7 +196,7 @@ export function enterReschedule(instanceId) {
   const occ = state.occ.get(instanceId);
   if (!occ) return;
   const cal = state.calendars.find((c) => c.id === occ.calendarId);
-  if (cal && cal.kind === 'subscribed') return;
+  if (cal && !cal.editable) return;
   set({
     reschedule: { instanceId, grabbed: true },
     popover: null,
@@ -567,7 +567,10 @@ export async function quickAddCreate(fields) {
 // is a series-level fact, so recurring events always move whole ('all').
 export async function moveEventToCalendar(occ, calendarId) {
   const cal = state.calendars.find((c) => c.id === calendarId);
-  if (!cal || cal.kind === 'subscribed' || occ.calendarId === calendarId) return;
+  const from = state.calendars.find((c) => c.id === occ.calendarId);
+  // Not onto a feed, and not across the Google boundary in either direction
+  // (a Google event stays Google's; a local one is not copied up).
+  if (!cal || !cal.editable || cal.provider === 'google' || (from && from.provider === 'google') || occ.calendarId === calendarId) return;
   try {
     const body = { calendarId };
     if (occ.recurring) { body.scope = 'all'; body.instanceStart = occ.start; }

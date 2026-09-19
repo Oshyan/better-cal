@@ -109,12 +109,16 @@ final class GoogleController
             throw HttpError::conflict('already_subscribed', 'That calendar is already here');
         }
         $name = trim((string) ($req->str('name') ?? ''));
+        $role = (string) ($req->str('accessRole') ?? 'reader');
+        if (!in_array($role, ['owner', 'writer', 'reader', 'freeBusyReader'], true)) {
+            $role = 'reader';
+        }
         $calendar = $this->calendars->create(
             $userId,
             ['name' => $name !== '' ? $name : $googleCalendarId, 'color' => $req->body['color'] ?? null, 'folderIds' => $req->body['folderIds'] ?? null],
             kind: 'subscribed',
             sourceUrl: null,
-            google: ['accountId' => (int) $account['id'], 'calendarId' => $googleCalendarId],
+            google: ['accountId' => (int) $account['id'], 'calendarId' => $googleCalendarId, 'accessRole' => $role],
         );
         try {
             $this->feeds->poll((int) $calendar['id']);

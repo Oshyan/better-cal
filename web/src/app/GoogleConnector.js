@@ -62,7 +62,7 @@ export function GoogleConnector() {
     setBusy(c.id);
     try {
       const cal = await api('/google/accounts/' + a.id + '/subscribe', {
-        method: 'POST', body: { googleCalendarId: c.id, name: c.name, color: c.color || undefined },
+        method: 'POST', body: { googleCalendarId: c.id, name: c.name, color: c.color || undefined, accessRole: c.accessRole },
       });
       await loadCalendars();
       const n = cal.health && cal.health.eventCount;
@@ -87,7 +87,7 @@ export function GoogleConnector() {
 
   return html`<section class="bc-set-section">
     <h2 class="bc-set-h">Google Calendar</h2>
-    <p class="bc-set-lead">Calendars read through a Google account: yours, ones you subscribe to, and ones shared with you, including shared-but-not-public calendars no iCal address can reach. Read-only here for now; edits made in Google arrive within the check interval.</p>
+    <p class="bc-set-lead">Calendars through a Google account: yours, ones you subscribe to, and ones shared with you, including shared-but-not-public calendars no iCal address can reach. Where the account can edit, so can you here: a change goes to Google first and lands back within a second. Edits made in Google arrive within the check interval.</p>
     ${status === null && html`<${Row} label="Account"><span class="bc-set-value">Loading…</span><//>`}
     ${status && !status.configured && html`<${Row} label="Account" hint="Reading calendars through a Google account needs an OAuth client on this server: BETTERCAL_GOOGLE_CLIENT_ID and _SECRET, see docs/google-calendar.md. Ten minutes, once.">
       <span class="bc-set-value">Not set up on this server.</span>

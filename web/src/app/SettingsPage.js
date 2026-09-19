@@ -503,7 +503,7 @@ export function SettingsPage() {
   }, []);
 
   const save = (key) => (value) => saveSetting(key, value);
-  const localCals = calendars.filter((c) => c.kind === 'local');
+  const localCals = calendars.filter((c) => c.editable);
 
   const signOut = async () => {
     setBusy(true);

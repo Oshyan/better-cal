@@ -109,7 +109,9 @@ export function EventPopover() {
   if (!popover || !occ) return null;
 
   const cal = state.calendars.find((c) => c.id === occ.calendarId);
-  const isFeed = cal && cal.kind === 'subscribed';
+  // Read-only content: a feed, a plugin calendar, a Google calendar the
+  // account can only view. The server's `editable` is the word on it.
+  const isFeed = cal ? !cal.editable : occ.source === 'feed';
   const mobile = isMobile();
   const pos = !mobile && popover.anchorRect ? place(popover.anchorRect) : null;
 

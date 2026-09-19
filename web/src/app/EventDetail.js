@@ -334,7 +334,7 @@ export function EventDetail() {
   if (occ.isContainer) return html`<${TripDetail} occ=${occ} />`;
 
   const cal = state.calendars.find((c) => c.id === occ.calendarId);
-  const isFeed = cal ? cal.kind === 'subscribed' : occ.source === 'feed';
+  const isFeed = cal ? !cal.editable : occ.source === 'feed';
   const color = (cal && cal.color) || '#888';
 
   const s = occ.allDay ? dateOfDayKey(occ.start.slice(0, 10)) : parseISO(occ.start);

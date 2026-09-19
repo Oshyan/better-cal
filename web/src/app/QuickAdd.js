@@ -339,7 +339,7 @@ export function QuickAdd() {
     });
   };
 
-  const localCals = state.calendars.filter((c) => c.kind !== 'subscribed');
+  const localCals = state.calendars.filter((c) => c.editable);
   const flashCls = (f) => (flash && flash.has(f) ? ' bc-nl-applied' : '');
   const canCreate = (!busy && draft && draft.intent === 'availability') || (!busy && !!((draft && draft.title) || text.trim()) &&
     !!buildRange(form, draft, touchedRef.current.has('dateKey')) && form.calendarId != null);

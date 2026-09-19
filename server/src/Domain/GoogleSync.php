@@ -46,6 +46,16 @@ final class GoogleSync
         }
         $access = $this->auth->accessToken($account);
         $googleCalendarId = (string) $calendar['google_calendar_id'];
+        // The access role decides whether writes are allowed (GoogleWriter).
+        // Calendars added before it was recorded learn it on their next poll.
+        if (empty($calendar['google_access_role'])) {
+            foreach ($this->auth->listCalendars($account) as $entry) {
+                if ($entry['id'] === $googleCalendarId) {
+                    $this->db->update('calendars', ['google_access_role' => $entry['accessRole']], 'id = ?', [$calendarId]);
+                    break;
+                }
+            }
+        }
         $syncToken = $calendar['google_sync_token'] !== null ? (string) $calendar['google_sync_token'] : null;
 
         try {
@@ -154,6 +164,9 @@ final class GoogleSync
         if (($item['status'] ?? 'confirmed') === 'cancelled') {
             return ['cancelled' => true, 'uid' => $uid, 'recurrence_instance_utc' => $instance];
         }
+        // Google's own id for the resource: what the API is addressed by when
+        // writing back (an exception's id is the instance id form).
+        $googleId = isset($item['id']) ? (string) $item['id'] : null;
         if (!isset($item['start'])) {
             return null;
         }
@@ -207,6 +220,7 @@ final class GoogleSync
             'status' => $status,
             'recurrence_instance_utc' => $instance,
             'reminders' => [],
+            'google_event_id' => $googleId,
         ];
     }
 
@@ -286,6 +300,7 @@ final class GoogleSync
                 'status' => (string) $r['status'],
                 'recurrence_instance_utc' => $r['recurrence_instance_utc'] !== null ? (string) $r['recurrence_instance_utc'] : null,
                 'reminders' => [],
+                'google_event_id' => isset($r['google_event_id']) && $r['google_event_id'] !== null ? (string) $r['google_event_id'] : null,
             ];
         }
         return $out;

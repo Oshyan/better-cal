@@ -3128,6 +3128,47 @@ use BetterCal\Infra\Secrets;
     checkEq('rows->parsed: all_day is an int', 0, $rows[0]['all_day']);
 }
 
+// --- Google write-through: body shape, instance ids, writability -----------------
+use BetterCal\Domain\GoogleWriter;
+
+{
+    $timed = GoogleWriter::body([
+        'title' => 'Dinner', 'description' => 'Table for four', 'location' => 'Dishoom', 'status' => 'confirmed',
+        'start_utc' => '2026-09-21 18:00:00', 'end_utc' => '2026-09-21 20:00:00', 'all_day' => 0, 'tzid' => 'Europe/London',
+        'rrule' => null, 'exdates_json' => null,
+    ]);
+    checkEq('google body: timed start in the event zone with the zone named', ['dateTime' => '2026-09-21T19:00:00+01:00', 'timeZone' => 'Europe/London'], $timed['start']);
+    checkEq('google body: timed end', ['dateTime' => '2026-09-21T21:00:00+01:00', 'timeZone' => 'Europe/London'], $timed['end']);
+    checkEq('google body: summary/location carried', ['Dinner', 'Dishoom'], [$timed['summary'], $timed['location']]);
+    checkEq('google body: no recurrence is an empty list', [], $timed['recurrence']);
+    check('google body: attendees and reminders are never sent', !isset($timed['attendees']) && !isset($timed['reminders']));
+
+    // All-day rows created here hold midnight in the event zone (07:00 UTC for Pacific); Google wants the date.
+    $allDay = GoogleWriter::body(['title' => 'Yorkshire', 'start_utc' => '2026-09-21 07:00:00', 'end_utc' => '2026-09-25 07:00:00', 'all_day' => 1, 'tzid' => 'America/Los_Angeles']);
+    checkEq('google body: all-day dates from the event zone', [['date' => '2026-09-21'], ['date' => '2026-09-25']], [$allDay['start'], $allDay['end']]);
+    $allDayUtc = GoogleWriter::body(['title' => 'Bath', 'start_utc' => '2026-09-24 00:00:00', 'end_utc' => '2026-09-27 00:00:00', 'all_day' => 1, 'tzid' => 'UTC']);
+    checkEq('google body: all-day dates for a Google-origin row (UTC midnight)', [['date' => '2026-09-24'], ['date' => '2026-09-27']], [$allDayUtc['start'], $allDayUtc['end']]);
+
+    $series = GoogleWriter::body([
+        'title' => 'Standup', 'start_utc' => '2026-09-21 08:00:00', 'end_utc' => '2026-09-21 08:15:00', 'all_day' => 0, 'tzid' => 'Europe/London',
+        'rrule' => 'FREQ=WEEKLY;BYDAY=MO', 'exdates_json' => '["2026-09-28 08:00:00"]', 'status' => 'tentative',
+    ]);
+    checkEq('google body: recurrence carries RRULE and zoned EXDATE', ['RRULE:FREQ=WEEKLY;BYDAY=MO', 'EXDATE;TZID=Europe/London:20260928T090000'], $series['recurrence']);
+    checkEq('google body: tentative survives', 'tentative', $series['status']);
+    checkEq('google recurrence: all-day EXDATE is a date', ['RRULE:FREQ=DAILY', 'EXDATE;VALUE=DATE:20260928'], GoogleWriter::recurrenceLines('FREQ=DAILY', ['2026-09-28 00:00:00'], true, 'UTC'));
+
+    checkEq('google instance id: timed is UTC basic with Z', 'abc123_20261012T080000Z', GoogleWriter::instanceId('abc123', '2026-10-12 08:00:00', false));
+    checkEq('google instance id: all-day is the date', 'abc123_20261012', GoogleWriter::instanceId('abc123', '2026-10-12 00:00:00', true));
+
+    $cal = ['provider' => 'google', 'google_calendar_id' => 'x@group.calendar.google.com', 'google_account_id' => 1, 'google_access_role' => 'writer'];
+    check('google writable: writer role', GoogleWriter::writable($cal));
+    check('google writable: owner role', GoogleWriter::writable(['google_access_role' => 'owner'] + $cal));
+    check('google writable: reader is not', !GoogleWriter::writable(['google_access_role' => 'reader'] + $cal));
+    check('google writable: disconnected account is not', !GoogleWriter::writable(['google_account_id' => null] + $cal));
+    check('google writable: an ICS feed is not', !GoogleWriter::writable(['provider' => 'ics', 'source_url' => 'https://x/y.ics']));
+    checkEq('google tombstone shape', ['cancelled' => true, 'uid' => 'u', 'recurrence_instance_utc' => null], GoogleWriter::tombstone('u', null));
+}
+
 $pass = $GLOBALS['__pass'];
 $fail = $GLOBALS['__fail'];
 echo "\n$pass passed, $fail failed\n";

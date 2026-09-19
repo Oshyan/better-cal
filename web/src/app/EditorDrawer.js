@@ -542,7 +542,7 @@ export function EditorDrawer() {
       <label class="bc-field">
         <span>Calendar</span>
         <select value=${form.calendarId} onChange=${(e) => upd({ calendarId: e.target.value })}>
-          ${state.calendars.filter((c) => c.kind !== 'subscribed').map((c) => html`<option key=${c.id} value=${c.id}>${c.name}</option>`)}
+          ${state.calendars.filter((c) => c.editable).map((c) => html`<option key=${c.id} value=${c.id}>${c.name}</option>`)}
         </select>
       </label>
 

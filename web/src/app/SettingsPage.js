@@ -474,8 +474,8 @@ function LocationSection({ settings, config }) {
 }
 
 // One page, tabs. Each tab is a screen or less; things stop being appended
-// to a scroll. The last tab used comes back next time; /settings/<tab> opens
-// one directly (handoff.js); the System tab is where the boot notices point.
+// to a scroll. It opens on General; /settings/<tab> opens one directly
+// (handoff.js) and the System tab is where the boot notices point.
 export const SETTINGS_TABS = [
   ['general', 'General'],
   ['notifications', 'Notifications'],
@@ -516,10 +516,10 @@ export function SettingsPage() {
   };
 
   const tab = SETTINGS_TABS.some(([id]) => id === settingsTab) ? settingsTab : 'general';
-  const pick = (id) => {
-    try { localStorage.setItem('bc-settings-tab', id); } catch { /* per-browser convenience only */ }
-    set({ settingsTab: id });
-  };
+  const pick = (id) => set({ settingsTab: id });
+  // Leaving the page forgets the tab: coming back means starting at General,
+  // not wherever you happened to be last.
+  useEffect(() => () => set({ settingsTab: 'general' }), []);
 
   return html`<${PageShell} title="Settings" note="Changes are saved as you make them.">
     <div class="bc-tabs" role="tablist" aria-label="Settings sections">

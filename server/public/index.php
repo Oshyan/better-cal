@@ -68,7 +68,8 @@ function bc_handle_api(Request $request, array $cfg): void
         $events = new Domain\Events($db, $recurrence, $undo, $labels, $filters, $trips);
         $calendars = new Domain\Calendars($db, $undo, $labels);
         $folders = new Domain\Folders($db, $undo);
-        $feeds = new Domain\Feeds($db, $jobQueue);
+        $feeds = new Domain\Feeds($db, $jobQueue, $cfg);
+        $googleAuth = new Domain\GoogleAuth($db, $cfg);
         $search = new Domain\Search($db, $labels);
         $savedViews = new Domain\SavedViews($db, $undo);
         $outFeeds = new Domain\OutFeeds($db, $search, $cfg);
@@ -105,6 +106,7 @@ function bc_handle_api(Request $request, array $cfg): void
         $pushController = new Controllers\PushController($pushSubscriptions, $pushSender, $emailSender, $throttle);
         $systemController = new Controllers\SystemController(new Domain\SystemHealth($db), $pushSubscriptions, $emailSender, $cfg);
         $healthController = new Controllers\HealthController($db, $cfg);
+        $googleController = new Controllers\GoogleController($db, $googleAuth, $calendars, $feeds);
 
         $router = new Router();
         $base = '/api/v1';
@@ -247,6 +249,13 @@ function bc_handle_api(Request $request, array $cfg): void
         $router->add('POST', "$base/push/unsubscribe", [$pushController, 'unsubscribe']);
         // Is background work working: the Settings panel and boot notices.
         $router->add('GET', "$base/system/health", [$systemController, 'health']);
+        // Google Calendar connector (docs/google-calendar.md).
+        $router->add('GET', "$base/google/status", [$googleController, 'status']);
+        $router->add('GET', "$base/google/connect", [$googleController, 'connect']);
+        $router->add('GET', "$base/google/callback", [$googleController, 'callback']);
+        $router->add('POST', "$base/google/accounts/:id/disconnect", [$googleController, 'disconnect']);
+        $router->add('GET', "$base/google/accounts/:id/calendars", [$googleController, 'calendars']);
+        $router->add('POST', "$base/google/accounts/:id/subscribe", [$googleController, 'subscribe']);
         $router->add('POST', "$base/push/test", [$pushController, 'test']);
         $router->add('POST', "$base/push/test-email", [$pushController, 'testEmail']);
 

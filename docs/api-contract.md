@@ -16,7 +16,8 @@ Token value: `bc_` + 43 url-safe base64 chars; stored sha256-hashed, shown once 
 - Agent-facing guide: [agent-api.md](agent-api.md); MCP server in `tools/mcp/`.
 
 ## Calendars & structure
-- `GET /calendars` → `{calendars:[{id,name,color,kind,sourceUrl,visible,position,pollIntervalMinutes,staleAfterDays,folderIds:[],tagNames:[],groupSimilar:boolean,reminderDefaults:object|null,health:{lastPolledAt,status,error,content,eventCount,stale:boolean}}], folders:[{id,name,position}], tags:[{id,name}]}`
+- `GET /calendars` → `{calendars:[{id,name,color,kind,provider,sourceUrl,googleCalendarId,visible,position,pollIntervalMinutes,staleAfterDays,folderIds:[],tagNames:[],groupSimilar:boolean,reminderDefaults:object|null,health:{lastPolledAt,status,error,content,eventCount,stale:boolean}}], folders:[{id,name,position}], tags:[{id,name}]}`
+  `provider` is `ics` (an address we fetch; `sourceUrl` set) or `google` (read through a connected Google account; `googleCalendarId` set, `sourceUrl` null). Both are `kind=subscribed` and behave identically everywhere else (read-only, health, folders, refresh).
   Feed `health` separates three independent questions. `status` (`ok|error|never`) + `error`: did the last fetch work. `content`: what the last *successful* fetch looked like — `active` (has events, or changed recently), `empty` (no events, and never had any: a fresh or quiet feed, not a problem), `emptied` (no events now but had some on an earlier poll: how expired tokens and broken sources fail, since they keep returning a valid empty calendar), `stale` (unchanged for `staleAfterDays` since it was last seen to change or since subscription, AND nothing upcoming). `eventCount` is the last successful poll's VEVENT count. `stale` is `content === "stale"` and no longer folds in `status === "error"`. For local calendars `content` is `active` and the rest is null/`never`.
 - `POST /calendars` `{name,color,folderIds?,tagNames?}` → calendar object.
 - `PATCH /calendars/:id` (any of name,color,visible,position,folderIds,tagNames,pollIntervalMinutes,staleAfterDays,groupSimilar,reminderDefaults) → calendar object.
@@ -27,6 +28,15 @@ Token value: `bc_` + 43 url-safe base64 chars; stored sha256-hashed, shown once 
 - `POST /calendars/:id/refresh` → `{ok:true, imported:N}` (force poll now).
 - `POST /calendars/import` multipart file `ics` + `name?` → calendar object + `{imported:N}`. 413 `import_too_large` when the file is over `IMPORT_BYTES` (25 MiB) or holds more events than `IMPORT_EVENTS` (20,000), checked on the raw text before it is parsed; the event cap is lowered to what the PHP process's `memory_limit` can hold, and the message says which limit applied. Descriptions over 65,535 characters and URLs over 2,048 are cut, and control characters never enter a UID or URL (on every ingest path, this one, feeds, CalDAV, mail and `POST`/`PATCH /events` alike). All such budgets live in `server/src/Support/Limits.php` with `BETTERCAL_LIMIT_*` overrides.
 - `POST /folders` `{name}` / `PATCH /folders/:id` / `DELETE /folders/:id`.
+
+## Google Calendar
+Read side of the Google connector (`docs/google-calendar.md`). Consent is a browser round trip, not an XHR.
+- `GET /google/status` → `{configured:boolean, accounts:[{id,email,status:"ok"|"error",error,connectedAt}]}`. `configured` is false until the server has `BETTERCAL_GOOGLE_CLIENT_ID` / `_SECRET`.
+- `GET /google/connect` → 302 to Google's consent screen (read-only calendar scope plus email). Navigate the browser there; the session cookie is what identifies the user.
+- `GET /google/callback?code&state` → 302 to `/google?connected=<email>` or `/google?error=<message>` (a handoff path the client turns into Settings, Google, plus a toast). `state` is HMAC-bound to the signed-in user and expires in 10 minutes. Reconnecting an email that is already connected replaces its token.
+- `POST /google/accounts/:id/disconnect` → `{ok:true}`. Revokes at Google (best effort) and forgets the token; calendars subscribed from it stay and report "Google account disconnected" on their next poll.
+- `GET /google/accounts/:id/calendars` → `{calendars:[{id,name,accessRole,primary,color,calendarId}]}`: Google's calendar list for the account (owned, subscribed, shared with the user), `calendarId` being our calendar id when already subscribed. 502 `google_unavailable` when Google does not answer.
+- `POST /google/accounts/:id/subscribe` `{googleCalendarId,name?,color?,folderIds?}` → calendar object (201), synced immediately; 409 `already_subscribed`. The calendar polls every 5 minutes by default (one sync-token request when nothing changed) and refreshes through `POST /calendars/:id/refresh` like any feed.
 
 ## Events
 - `GET /events?start=ISO&end=ISO&calendars=1,2&q=&includeHidden=0` → `{events:[occurrence...]}`

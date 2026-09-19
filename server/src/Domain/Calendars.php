@@ -67,22 +67,35 @@ final class Calendars
         return $row;
     }
 
-    public function create(int $userId, array $in, string $kind = 'local', ?string $sourceUrl = null): array
+    /** @param array{accountId:int,calendarId:string}|null $google a Google-backed subscription (provider google) */
+    public function create(int $userId, array $in, string $kind = 'local', ?string $sourceUrl = null, ?array $google = null): array
     {
         $name = trim((string) ($in['name'] ?? ''));
         if ($name === '') {
             throw HttpError::badRequest('name is required');
         }
         $position = (int) ($this->db->scalar('SELECT COALESCE(MAX(position), -1) + 1 FROM calendars WHERE user_id = ?', [$userId]) ?? 0);
-        $id = $this->db->tx(function () use ($userId, $in, $name, $kind, $sourceUrl, $position): int {
-            $id = $this->db->insert('calendars', [
+        $id = $this->db->tx(function () use ($userId, $in, $name, $kind, $sourceUrl, $google, $position): int {
+            $row = [
                 'user_id' => $userId,
                 'name' => mb_substr($name, 0, 160),
                 'color' => $this->colorOrDefault($in['color'] ?? null),
                 'kind' => $kind,
                 'source_url' => $sourceUrl,
                 'position' => $position,
-            ]);
+            ];
+            if ($google !== null) {
+                // Incremental sync is one small request when nothing changed,
+                // so a Google calendar can be checked far more often than an
+                // ICS feed is fetched whole.
+                $row += [
+                    'provider' => 'google',
+                    'google_account_id' => $google['accountId'],
+                    'google_calendar_id' => $google['calendarId'],
+                    'poll_interval_minutes' => 5,
+                ];
+            }
+            $id = $this->db->insert('calendars', $row);
             if (!empty($in['folderIds']) && is_array($in['folderIds'])) {
                 $this->setFolders($userId, $id, $in['folderIds']);
             }
@@ -318,6 +331,11 @@ final class Calendars
             'pluginId' => isset($c['plugin_id']) && $c['plugin_id'] !== null ? (string) $c['plugin_id'] : null,
             'pluginSettings' => self::pluginSettingsFor($c['settings_json'] !== null ? (string) $c['settings_json'] : null),
             'sourceUrl' => $c['source_url'] !== null ? (string) $c['source_url'] : null,
+            // ics (an address we fetch) or google (a calendar read through the
+            // user's connected account); local calendars carry ics by default
+            // and the client ignores it for them.
+            'provider' => (string) ($c['provider'] ?? 'ics'),
+            'googleCalendarId' => isset($c['google_calendar_id']) && $c['google_calendar_id'] !== null ? (string) $c['google_calendar_id'] : null,
             'visible' => (int) $c['visible'] === 1,
             'position' => (int) $c['position'],
             'pollIntervalMinutes' => (int) $c['poll_interval_minutes'],

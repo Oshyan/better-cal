@@ -166,6 +166,14 @@ function GoogleSection() {
     }
   };
   const roleLabel = (r) => ({ owner: 'owner', writer: 'can edit', reader: 'can view', freeBusyReader: 'free/busy only' }[r] || r);
+  // Google states a role, not a kind; the server derives the kind from the
+  // calendar id (GoogleAuth::calendarKind) and sorts by it.
+  const KIND = {
+    yours: ['Yours', 'A calendar you own'],
+    shared: ['Shared with you', 'Someone else owns it and shared it with you; the one shape no iCal address can reach'],
+    feed: ['Feed copy', "Google's own copy of an ICS subscription; subscribing to the ICS address here is fresher"],
+    google: ['Google', 'Provided by Google (holidays, birthdays)'],
+  };
   const localName = (id) => { const c = calendars.find((x) => x.id === id); return c ? c.name : null; };
 
   return html`<section class="bc-set-section">
@@ -196,9 +204,10 @@ function GoogleSection() {
           ${typeof list === 'string' && list.startsWith('error:') && html`<span class="bc-set-value bc-google-err">${list.slice(6)} <button type="button" class="bc-link-btn" onClick=${() => loadList(a.id)}>Retry</button></span>`}
           ${Array.isArray(list) && list.length === 0 && html`<span class="bc-set-value">Google lists no calendars for this account.</span>`}
           ${Array.isArray(list) && list.length > 0 && html`<table class="bc-sys-table bc-google-list">
-            <thead><tr><th>Calendar</th><th>Access</th><th></th></tr></thead>
+            <thead><tr><th>Calendar</th><th>Kind</th><th>Access</th><th></th></tr></thead>
             <tbody>${list.map((c) => html`<tr key=${c.id}>
               <td><span class="bc-cal-dot" style=${c.color ? 'background:' + c.color : ''}></span> ${c.name}${c.primary ? html` <span class="bc-google-tag">primary</span>` : ''}</td>
+              <td title=${(KIND[c.kind] || ['', ''])[1]}>${(KIND[c.kind] || [c.kind])[0]}</td>
               <td>${roleLabel(c.accessRole)}</td>
               <td>${c.calendarId
                 ? html`<span class="bc-set-value" title=${'Here as "' + (localName(c.calendarId) || c.name) + '"'}>Added</span>`

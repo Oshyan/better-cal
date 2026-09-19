@@ -3042,10 +3042,17 @@ use BetterCal\Infra\Secrets;
     check('google state: rejected for another user', !$gauth->verifyState($state, 8, 1_000_100));
     check('google state: rejected after expiry', !$gauth->verifyState($state, 7, 1_000_000 + 601));
     check('google state: rejected when tampered', !$gauth->verifyState(substr($state, 0, -2) . 'zz', 7, 1_000_100));
-    check('google auth url: carries scope, offline access and the redirect', (static function () use ($gauth): bool {
+    check('google auth url: carries scopes, offline access and the redirect', (static function () use ($gauth): bool {
         $u = $gauth->authUrl(7);
-        return str_contains($u, 'calendar.readonly') && str_contains($u, 'access_type=offline') && str_contains($u, rawurlencode('https://cal.example/api/v1/google/callback'));
+        return str_contains($u, 'calendar.readonly') && str_contains($u, 'calendar.events') && str_contains($u, 'access_type=offline') && str_contains($u, rawurlencode('https://cal.example/api/v1/google/callback'));
     })());
+    // What kind of calendar each list entry is, from the id and role Google gives.
+    checkEq('google kind: primary is yours', 'yours', GoogleAuth::calendarKind('oshyan@gmail.com', 'owner', true));
+    checkEq('google kind: owned secondary is yours', 'yours', GoogleAuth::calendarKind('abc@group.calendar.google.com', 'owner', false));
+    checkEq('google kind: writer on a secondary is shared', 'shared', GoogleAuth::calendarKind('05bdc@group.calendar.google.com', 'writer', false));
+    checkEq('google kind: someone else primary is shared', 'shared', GoogleAuth::calendarKind('friend@gmail.com', 'reader', false));
+    checkEq('google kind: ICS import is a feed', 'feed', GoogleAuth::calendarKind('xyz@import.calendar.google.com', 'reader', false));
+    checkEq('google kind: holidays are google', 'google', GoogleAuth::calendarKind('en.usa#holiday@group.v.calendar.google.com', 'reader', false));
 
     // Google event resources to the Ics::parse shape.
     $timed = GoogleSync::toParsed([

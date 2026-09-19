@@ -14,14 +14,16 @@ use BetterCal\Support\Time;
  * Google account connection: OAuth consent, token storage, token refresh,
  * and the calendar listing (docs/google-calendar.md, GH #42).
  *
- * Read-only scope on purpose for the read side; the write side (write-through
- * to calendars the user can edit) asks for more when it lands, which costs
- * one re-consent. The refresh token is the only thing kept, sealed with the
- * session secret; access tokens are minted per run and never stored.
+ * Scope: read everything, write events. The write side (write-through to
+ * calendars the user can edit) is the next step and asking for it now
+ * spares every account a re-consent; calendar management (creating or
+ * deleting calendars at Google) is deliberately not requested. The refresh
+ * token is the only thing kept, sealed with the session secret; access
+ * tokens are minted per run and never stored.
  */
 final class GoogleAuth
 {
-    public const SCOPES = 'openid email https://www.googleapis.com/auth/calendar.readonly';
+    public const SCOPES = 'openid email https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events';
     private const AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
     private const TOKEN_URL = 'https://oauth2.googleapis.com/token';
     private const REVOKE_URL = 'https://oauth2.googleapis.com/revoke';
@@ -186,7 +188,12 @@ final class GoogleAuth
      * owns, subscribes to, or has been shared, including the shared-but-not-
      * public ones no ICS address can reach.
      *
-     * @return list<array{id:string,name:string,accessRole:string,primary:bool,color:?string}>
+     * Each entry carries a kind, which Google does not state but the calendar
+     * id encodes: yours (primary, or a secondary you own), shared (someone
+     * else's, shared with you), feed (Google's own copy of an ICS
+     * subscription, always behind the source), google (holidays, birthdays).
+     *
+     * @return list<array{id:string,name:string,accessRole:string,primary:bool,color:?string,kind:string}>
      */
     public function listCalendars(array $account): array
     {
@@ -205,12 +212,29 @@ final class GoogleAuth
                     'accessRole' => (string) ($item['accessRole'] ?? 'reader'),
                     'primary' => !empty($item['primary']),
                     'color' => isset($item['backgroundColor']) ? (string) $item['backgroundColor'] : null,
+                    'kind' => self::calendarKind((string) $item['id'], (string) ($item['accessRole'] ?? 'reader'), !empty($item['primary'])),
                 ];
             }
             $pageToken = isset($data['nextPageToken']) ? (string) $data['nextPageToken'] : null;
         } while ($pageToken !== null);
-        usort($out, static fn(array $a, array $b): int => [$b['primary'], strtolower($a['name'])] <=> [$a['primary'], strtolower($b['name'])]);
+        $order = ['yours' => 0, 'shared' => 1, 'feed' => 2, 'google' => 3];
+        usort($out, static fn(array $a, array $b): int => [$order[$a['kind']], $b['primary'], strtolower($a['name'])] <=> [$order[$b['kind']], $a['primary'], strtolower($b['name'])]);
         return $out;
+    }
+
+    /** Pure; unit-tested. See listCalendars() for what each kind means. */
+    public static function calendarKind(string $id, string $accessRole, bool $primary): string
+    {
+        if ($primary) {
+            return 'yours';
+        }
+        if (str_ends_with($id, '@import.calendar.google.com')) {
+            return 'feed';
+        }
+        if (str_ends_with($id, '@group.v.calendar.google.com')) {
+            return 'google';
+        }
+        return $accessRole === 'owner' ? 'yours' : 'shared';
     }
 
     public static function serializeAccount(array $row): array

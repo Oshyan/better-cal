@@ -32,10 +32,10 @@ Token value: `bc_` + 43 url-safe base64 chars; stored sha256-hashed, shown once 
 ## Google Calendar
 Read side of the Google connector (`docs/google-calendar.md`). Consent is a browser round trip, not an XHR.
 - `GET /google/status` → `{configured:boolean, accounts:[{id,email,status:"ok"|"error",error,connectedAt}]}`. `configured` is false until the server has `BETTERCAL_GOOGLE_CLIENT_ID` / `_SECRET`.
-- `GET /google/connect` → 302 to Google's consent screen (read-only calendar scope plus email). Navigate the browser there; the session cookie is what identifies the user.
+- `GET /google/connect` → 302 to Google's consent screen (calendar read + event write scopes, plus email). Navigate the browser there; the session cookie is what identifies the user.
 - `GET /google/callback?code&state` → 302 to `/google?connected=<email>` or `/google?error=<message>` (a handoff path the client turns into Settings, Google, plus a toast). `state` is HMAC-bound to the signed-in user and expires in 10 minutes. Reconnecting an email that is already connected replaces its token.
 - `POST /google/accounts/:id/disconnect` → `{ok:true}`. Revokes at Google (best effort) and forgets the token; calendars subscribed from it stay and report "Google account disconnected" on their next poll.
-- `GET /google/accounts/:id/calendars` → `{calendars:[{id,name,accessRole,primary,color,calendarId}]}`: Google's calendar list for the account (owned, subscribed, shared with the user), `calendarId` being our calendar id when already subscribed. 502 `google_unavailable` when Google does not answer.
+- `GET /google/accounts/:id/calendars` → `{calendars:[{id,name,accessRole,primary,color,kind,calendarId}]}`: Google's calendar list for the account, sorted by `kind` (`yours` | `shared` | `feed` | `google`, derived from the calendar id and role since Google states only a role), `calendarId` being our calendar id when already subscribed. 502 `google_unavailable` when Google does not answer.
 - `POST /google/accounts/:id/subscribe` `{googleCalendarId,name?,color?,folderIds?}` → calendar object (201), synced immediately; 409 `already_subscribed`. The calendar polls every 5 minutes by default (one sync-token request when nothing changed) and refreshes through `POST /calendars/:id/refresh` like any feed.
 
 ## Events

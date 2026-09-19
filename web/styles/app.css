@@ -1238,6 +1238,13 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-sys-table th { text-align: left; font-weight: 600; color: var(--fg-muted); padding: 2px 10px 4px 0; }
 .bc-sys-table td { padding: 3px 10px 3px 0; border-top: 1px solid var(--border); vertical-align: top; }
 .bc-sys-table tr.is-failing td { background: color-mix(in srgb, var(--danger) 6%, transparent); }
+/* API tokens (Settings) */
+.bc-tokens { max-width: 560px; }
+.bc-tokens-revoke { color: var(--danger); padding: 0; }
+.bc-tokens-new { display: inline-flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.bc-tokens-new input { min-width: 260px; }
+.bc-tokens-fresh { display: inline-flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.bc-tokens-value { font-family: var(--mono); font-size: 12.5px; background: var(--bg-inset); border-radius: 4px; padding: 2px 6px; user-select: all; word-break: break-all; }
 .bc-sys-ok { color: var(--fg-muted); }
 .bc-sys-bad { color: var(--danger); font-weight: 600; }
 .bc-sys-err { color: var(--fg-muted); max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

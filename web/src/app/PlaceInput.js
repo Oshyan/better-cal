@@ -7,14 +7,30 @@
 // fills the text ("Name, City") AND hands back lat/lng so the caller can
 // persist coordinates directly on create/PATCH.
 //
-// Search bias: the user's home location setting when set, else the given
-// timezone's approximate centroid (resolved server-side), else none. Results
-// beyond 500 km of the bias are marked with their region so a match half a
-// world away is identifiable at a glance.
+// Search bias, in order: where this device is, when the browser already
+// lets us know (devicelocation.js, never prompting); the device's time zone
+// when it differs from the home zone (travelling: "The George" should find
+// the pub in London, not a bar in San Francisco); the home location setting;
+// the given time zone. Zone centroids resolve server-side. Results beyond
+// 500 km of the bias are marked with their region so a match half a world
+// away is identifiable at a glance.
 
 import { html, useState, useRef, useEffect } from '../../vendor/index.js';
 import { api } from './api.js';
 import { state } from './store.js';
+import { devicePosition, awayFromHome } from './devicelocation.js';
+import { localTz } from '../lib/dates.js';
+
+/** The bias parameters for a place search right now (exported for Settings to describe). */
+export async function placeBias(tz) {
+  const s = state.settings || {};
+  const here = await devicePosition();
+  if (here) return { lat: here.lat, lng: here.lng, source: 'device' };
+  if (awayFromHome(s.tz)) return { tz: localTz(), source: 'devicetz' };
+  if (s.homeLat != null && s.homeLng != null) return { lat: s.homeLat, lng: s.homeLng, source: 'home' };
+  if (tz) return { tz, source: 'tz' };
+  return { source: 'none' };
+}
 
 const MIN_CHARS = 2;
 const DEBOUNCE_MS = 300;
@@ -52,12 +68,13 @@ export function PlaceInput({
   const runSearch = async (q) => {
     const id = ++reqRef.current;
     const params = new URLSearchParams({ q, limit: '6' });
-    const s = state.settings || {};
-    if (s.homeLat != null && s.homeLng != null) {
-      params.set('lat', String(s.homeLat));
-      params.set('lng', String(s.homeLng));
-    } else if (tz) {
-      params.set('tz', tz);
+    const bias = await placeBias(tz);
+    if (id !== reqRef.current) return; // typed on while the position was read
+    if (bias.lat != null) {
+      params.set('lat', String(bias.lat));
+      params.set('lng', String(bias.lng));
+    } else if (bias.tz) {
+      params.set('tz', bias.tz);
     }
     try {
       const data = await api('/geocode/search?' + params.toString());

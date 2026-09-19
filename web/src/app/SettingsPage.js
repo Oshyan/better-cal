@@ -12,7 +12,8 @@ import { saveSetting } from './actions.js';
 import { PageShell } from './PageShell.js';
 import { GoogleConnector } from './GoogleConnector.js';
 import { OutfeedsSection } from './OutfeedsPage.js';
-import { PlaceInput, pickFillText } from './PlaceInput.js';
+import { PlaceInput, pickFillText, placeBias } from './PlaceInput.js';
+import { allowDeviceLocation, deviceLocationPermission } from './devicelocation.js';
 import { localTz, sameClock, tzOffsetLabel, tzCity, zoneOptions } from '../lib/dates.js';
 import {
   permissionState, pushSupported, fetchPushStatus, enablePush, disablePush,
@@ -437,6 +438,32 @@ function LocationSection({ settings, config }) {
 
   const hasHome = settings.homeLat != null && settings.homeLng != null;
 
+  // What a place search is biased toward right now, and whether the device's
+  // own position can be used (granted) or offered (prompt).
+  const [bias, setBias] = useState(null);
+  const [perm, setPerm] = useState(null);
+  const describeBias = async () => {
+    const b = await placeBias(localTz());
+    setBias(b);
+    setPerm(await deviceLocationPermission());
+  };
+  useEffect(() => { describeBias(); }, [settings.homeLat, settings.homeLng, settings.tz]);
+  const allowDevice = async () => {
+    setLocBusy(true);
+    const p = await allowDeviceLocation();
+    setLocBusy(false);
+    if (!p) { toast('Could not get this device\'s location', { error: true }); return; }
+    toast('Place search now starts from where this device is');
+    describeBias();
+  };
+  const biasText = !bias ? '' : {
+    device: 'where this device is (its location)',
+    devicetz: 'where this device is (' + tzCity(localTz()) + ', from its time zone; allow its location for street-level)',
+    home: 'your home location',
+    tz: 'your home time zone (' + tzCity(localTz()) + ')',
+    none: 'nowhere in particular',
+  }[bias.source];
+
   return html`<section class="bc-set-section">
     <h2 class="bc-set-h">Location and maps</h2>
     <${Row} label="Home location" hint="Biases location search toward your area so nearby places match first.">
@@ -469,6 +496,11 @@ function LocationSection({ settings, config }) {
       >
         ${MAP_STYLES.map(([v, l]) => html`<option key=${v} value=${v}>${l}</option>`)}
       </select>
+    <//>
+    <${Row} label="Place search near" hint="Searches for a place start near where you are: this device's location when the browser allows it, else the region its time zone puts it in when that differs from home, else your home location.">
+      <span class="bc-set-value">${biasText}</span>
+      ${perm !== 'granted' && perm !== 'denied' && html`<button type="button" class="bc-btn" disabled=${locBusy} onClick=${allowDevice}>Allow this device's location</button>`}
+      ${perm === 'denied' && html`<span class="bc-set-value">Location is blocked for this site in the browser.</span>`}
     <//>
   </section>`;
 }

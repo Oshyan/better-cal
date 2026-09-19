@@ -58,3 +58,9 @@ Background work reports into `system_health` (one row per job type, feed, and pu
 ## Credentials
 
 Local file `.credentials` (gitignored, chmod 600) holds: site user password, DB password, app login (calendar@oshyan.com), and an API bearer token named `claude-code`. The Gemini key lives only in the server `.env` (sourced originally from LogAssistant's key file).
+
+## Updates and how you hear about them (2026-09-19)
+
+Nothing on the box tells you about updates by itself: CloudPanel only shows "Update Available" in its web UI footer (and its notification bell, also UI-only), and Ubuntu only in the SSH login banner. CloudPanel's installer also turns Ubuntu's unattended upgrades off (`/etc/apt/apt.conf.d/20auto-upgrades` was `"0"` for both list refresh and upgrades), so nothing applied itself and a CloudPanel release plus ~230 Ubuntu security updates sat unnoticed for months.
+
+Now: package indexes refresh daily. `unattended-upgrades` is configured for Ubuntu security updates only (`52unattended-upgrades-local`: mail to the owner on change, no automatic reboot, and an explicit blacklist for `nginx*`, `libnginx-*`, `php*`, `cloudpanel`, `percona-*`, `docker-*`, `containerd`, `postgresql-*`, which are not in its allowed origins anyway). A dry run showed 172 Ubuntu packages and none from those. It is **armed with `APT::Periodic::Unattended-Upgrade "1"`** in `20auto-upgrades`; it was configured with `"0"` (held) until the first manual update had been done deliberately. The config guard (above) has a warn-only `updates_pending` check that emails when a CloudPanel release or CloudPanel-repo/Percona/Docker packages are waiting; those stay manual on purpose (`clp-update`, then `apt upgrade`).

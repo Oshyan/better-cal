@@ -41,6 +41,8 @@ if [ "${SKIP_TESTS:-0}" != "1" ]; then
     TZ="${zone}" node "${ROOT_DIR}/web/tests/smoke.mjs" 2>/dev/null | tail -1
   done
   php "${ROOT_DIR}/server/tests/run.php" | tail -1
+  # Vendored frontend libraries must be exactly the pinned releases.
+  node "${ROOT_DIR}/scripts/vendor.mjs" --verify | tail -1
 fi
 
 echo "== rsync code =="
@@ -63,6 +65,10 @@ APP_DIR="/home/bettercal/app"
 DOCROOT="/home/bettercal/htdocs/cal.oshyan.com"
 chown -R bettercal:bettercal "${APP_DIR}"
 sudo -u bettercal bash -c "cd ${APP_DIR}/server && composer install --no-dev --quiet --no-interaction"
+# Known advisories against the locked PHP dependencies: reported, not blocking.
+# A finding means "look at it", not "roll back the deploy in progress".
+echo "-- composer audit --"
+sudo -u bettercal bash -c "cd ${APP_DIR}/server && composer audit --no-dev --locked --no-interaction 2>&1 | tail -20" || true
 sudo -u bettercal php "${APP_DIR}/server/bin/migrate.php"
 # Docroot -> app/server/public (replace real dir with symlink once)
 if [ ! -L "${DOCROOT}" ]; then

@@ -101,6 +101,11 @@ export const state = {
   tripLinksSeq: 0,
 
   route: 'calendar', // calendar | organize | outfeeds | filters | views | settings
+  // Settings is one page with tabs; the last one used comes back next time.
+  // Addressable as /settings/<tab> (handoff.js) and by set({settingsTab}).
+  settingsTab: (() => {
+    try { return localStorage.getItem('bc-settings-tab') || 'general'; } catch { return 'general'; }
+  })(),
 
   quickAddOpen: false,
   paletteOpen: false, // command palette (Cmd/Ctrl-K)

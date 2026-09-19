@@ -1647,6 +1647,19 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-emptystate p { margin: 0; color: var(--fg-muted); max-width: 420px; }
 
 /* Settings page sections and rows (inline label + control). */
+.bc-tabs {
+  display: flex; gap: 2px; margin: -6px 0 18px; border-bottom: 1px solid var(--border);
+  overflow-x: auto; scrollbar-width: none;
+}
+.bc-tabs::-webkit-scrollbar { display: none; }
+.bc-tab {
+  background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -1px;
+  padding: 8px 12px; color: var(--fg-muted); font-weight: 600; font-size: 13px; white-space: nowrap;
+  cursor: pointer; border-radius: 0;
+}
+.bc-tab:hover { color: var(--fg); background: color-mix(in srgb, var(--fg) 4%, transparent); }
+.bc-tab.is-active { color: var(--fg); border-bottom-color: var(--accent); }
+.bc-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .bc-set-section { margin: 0 0 22px; }
 .bc-set-h {
   margin: 0 0 4px; padding-bottom: 4px;

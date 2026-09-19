@@ -471,9 +471,22 @@ function LocationSection({ settings, config }) {
   </section>`;
 }
 
+// One page, tabs. Each tab is a screen or less; things stop being appended
+// to a scroll. The last tab used comes back next time; /settings/<tab> opens
+// one directly (handoff.js); the System tab is where the boot notices point.
+export const SETTINGS_TABS = [
+  ['general', 'General'],
+  ['notifications', 'Notifications'],
+  ['location', 'Location & maps'],
+  ['connections', 'Connections'],
+  ['account', 'Account'],
+  ['about', 'About'],
+  ['system', 'System'],
+];
+
 export function SettingsPage() {
-  const { settings, user, calendars, config } = useStore(
-    (s) => ({ settings: s.settings, user: s.user, calendars: s.calendars, config: s.config }),
+  const { settings, user, calendars, config, settingsTab } = useStore(
+    (s) => ({ settings: s.settings, user: s.user, calendars: s.calendars, config: s.config, settingsTab: s.settingsTab }),
     shallowEq,
   );
   const [version, setVersion] = useState(null);
@@ -500,7 +513,23 @@ export function SettingsPage() {
     }
   };
 
+  const tab = SETTINGS_TABS.some(([id]) => id === settingsTab) ? settingsTab : 'general';
+  const pick = (id) => {
+    try { localStorage.setItem('bc-settings-tab', id); } catch { /* per-browser convenience only */ }
+    set({ settingsTab: id });
+  };
+
   return html`<${PageShell} title="Settings" note="Changes are saved as you make them.">
+    <div class="bc-tabs" role="tablist" aria-label="Settings sections">
+      ${SETTINGS_TABS.map(([id, label]) => html`<button
+        key=${id} type="button" role="tab" id=${'bc-settab-' + id}
+        class="bc-tab${tab === id ? ' is-active' : ''}"
+        aria-selected=${tab === id ? 'true' : 'false'}
+        onClick=${() => pick(id)}
+      >${label}</button>`)}
+    </div>
+    <div role="tabpanel" aria-labelledby=${'bc-settab-' + tab}>
+    ${tab === 'general' && html`
     <section class="bc-set-section">
       <h2 class="bc-set-h">General</h2>
       <${Row} label="Default view">
@@ -532,19 +561,33 @@ export function SettingsPage() {
       <//>
       <${HomeTimezoneRow} tz=${settings.tz} onChange=${save('tz')} />
     </section>
-
-    <${LocationSection} settings=${settings} config=${config} />
-
-    <${NotificationsSection} settings=${settings} user=${user} />
-
     <section class="bc-set-section">
       <h2 class="bc-set-h">Quick add</h2>
       <${Row} label="Natural language parsing" hint=${NL_HINTS[settings.nlParseMode] || ''}>
         <${Seg} label="Natural language parsing" value=${settings.nlParseMode}
           options=${[['always', 'Always'], ['smart', 'Smart'], ['never', 'Never']]} onChange=${save('nlParseMode')} />
       <//>
-    </section>
+    </section>`}
 
+    ${tab === 'notifications' && html`<${NotificationsSection} settings=${settings} user=${user} />`}
+
+    ${tab === 'location' && html`<${LocationSection} settings=${settings} config=${config} />`}
+
+    ${tab === 'connections' && html`
+    <section class="bc-set-section">
+      <h2 class="bc-set-h">Connections</h2>
+      <${Row} label="Google Calendar" hint="Calendars read through a Google account, including ones shared with you that no iCal address can reach. Its own page: accounts, the calendar list, what is added.">
+        <button type="button" class="bc-btn" onClick=${() => set({ route: 'google' })}>Open Google Calendar</button>
+      <//>
+      <${Row} label="Outbound feeds" hint="ICS addresses other apps and people can subscribe to; each one is a saved search.">
+        <button type="button" class="bc-btn" onClick=${() => set({ route: 'outfeeds' })}>Open Outbound feeds</button>
+      <//>
+      <${Row} label="Device sync" hint="Username is your account email; the password is your account password or an API key (Account tab).">
+        <span class="bc-set-value">CalDAV clients (Apple Calendar, DAVx5, Thunderbird) can sync at <code>/dav</code> on this server.</span>
+      <//>
+    </section>`}
+
+    ${tab === 'account' && html`
     <section class="bc-set-section">
       <h2 class="bc-set-h">Account</h2>
       <${Row} label="Signed in as">
@@ -552,25 +595,20 @@ export function SettingsPage() {
         <button type="button" class="bc-btn" disabled=${busy} onClick=${signOut}>Sign out</button>
       <//>
     </section>
+    <${TokensSection} />`}
 
+    ${tab === 'about' && html`
     <section class="bc-set-section">
       <h2 class="bc-set-h">About</h2>
       <${Row} label="Version">
         <span class="bc-set-value">${version || 'unknown'}</span>
       <//>
-      <${Row} label="Device sync" hint="Username is your account email; the password is your account password or an API key (below).">
-        <span class="bc-set-value">CalDAV clients (Apple Calendar, DAVx5, Thunderbird) can sync at <code>/dav</code> on this server.</span>
+      <${Row} label="Source" hint="Self-hosted; the code, issues and docs live on GitHub.">
+        <a class="bc-set-value" href="https://github.com/Oshyan/better-cal" target="_blank" rel="noopener">github.com/Oshyan/better-cal</a>
       <//>
-    </section>
+    </section>`}
 
-    <section class="bc-set-section">
-      <h2 class="bc-set-h">Connections</h2>
-      <${Row} label="Google Calendar" hint="Calendars read through a Google account, including ones shared with you that no iCal address can reach. Its own page: accounts, the calendar list, what is added.">
-        <button type="button" class="bc-btn" onClick=${() => set({ route: 'google' })}>Open Google Calendar</button>
-      <//>
-    </section>
-    <${TokensSection} />
-
-    <${SystemSection} />
+    ${tab === 'system' && html`<${SystemSection} />`}
+    </div>
   <//>`;
 }

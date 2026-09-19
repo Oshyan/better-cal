@@ -34,7 +34,7 @@ export function announceSystemHealth() {
   if (feeds.length === 1) {
     toast(feeds[0].label + " hasn't updated since " + fmtSince(feeds[0].firstFailedAt), { error: true });
   } else if (feeds.length > 1) {
-    toast(feeds.length + " feeds haven't updated (oldest since " + fmtSince(feeds[feeds.length - 1].firstFailedAt) + '). See Settings, System.', { error: true });
+    toast(feeds.length + " feeds haven't updated (oldest since " + fmtSince(feeds[feeds.length - 1].firstFailedAt) + '). See Settings, System tab.', { error: true });
   }
 }
 

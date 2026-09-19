@@ -4,6 +4,8 @@
 //   /import                      -> import drawer (file arrives via launchQueue)
 //   /review                      -> the Review queue (held-change notification target)
 //   /google?connected=|error=    -> the Google Calendar page (OAuth callback landing)
+//   /settings[/<tab>]            -> Settings, on that tab (general, notifications,
+//                                   location, connections, account, about, system)
 //   /share  (POST title/text/url) -> Web Share Target: route by content
 //
 // None of them is read from the address bar. The shell's head script moves a
@@ -81,6 +83,9 @@ export async function runHandoff(handoff) {
   } else if (path === '/review') {
     // Where the "an organizer changed ..." notification lands.
     set({ route: 'review' });
+  } else if (path === '/settings' || path.startsWith('/settings/')) {
+    const tab = path.split('/')[2];
+    set(tab ? { route: 'settings', settingsTab: tab } : { route: 'settings' });
   } else if (path === '/google') {
     // Back from Google's consent screen (GoogleController::callback).
     set({ route: 'google' });

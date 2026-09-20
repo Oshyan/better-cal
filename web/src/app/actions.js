@@ -10,6 +10,7 @@ import { discardEditorWithUndo, clearQuickAddText } from './drafts.js';
 import { localTz, todayKey, addDaysKey, occDayKey, epochDayOfKey, startMs, pad, parseISO, toISOWithOffset, addDaysDate } from '../lib/dates.js';
 import { occurrenceDaySpan, shiftOccurrenceDays } from '../ui/monthmath.js';
 import { extendTripSpan } from '../ui/trips.js';
+import { REL_KINDS, showRelFromConfig } from '../lib/relfilter.js';
 
 export const VIEWS = ['month', 'weeks3', 'weeks2', 'week', 'day', 'agenda'];
 
@@ -759,6 +760,10 @@ export function captureViewConfig() {
     visibleCalendarIds: state.calendars.filter((c) => c.visible).map((c) => c.id),
     folderCollapse: { ...state.collapsedFolders },
     filterText: state.filterText,
+    // The Show filter (docs/relationships.md): only the kinds switched off,
+    // so a view saved before the filter existed, or with everything on,
+    // stores nothing and applies as "show all".
+    hideRel: REL_KINDS.filter((k) => state.showRel[k] === false),
     anchor: state.anchor === todayKey() ? 'today' : state.anchor,
   };
 }
@@ -773,11 +778,12 @@ export function viewConfigMatches(config) {
   return cur.viewType === (config.viewType || 'month') &&
     ids(cur.visibleCalendarIds) === ids(config.visibleCalendarIds) &&
     collapse(cur.folderCollapse) === collapse(config.folderCollapse) &&
-    (cur.filterText || '') === (config.filterText || '');
+    (cur.filterText || '') === (config.filterText || '') &&
+    [...cur.hideRel].sort().join(',') === [...(config.hideRel || [])].sort().join(',');
 }
 
 // Apply a saved view to the store: view type, calendar visibility (client
-// state only), folder collapse, filter text, anchor.
+// state only), folder collapse, filter text, the Show filter, anchor.
 export function applySavedView(view) {
   const config = view.config || {};
   let calendars = state.calendars;
@@ -796,10 +802,12 @@ export function applySavedView(view) {
     calendars,
     collapsedFolders: { ...(config.folderCollapse || {}) },
     filterText: config.filterText || '',
+    showRel: showRelFromConfig(config),
     anchor: !config.anchor || config.anchor === 'today' ? todayKey() : config.anchor,
     activeViewId: view.id,
     scrollSeq: state.scrollSeq + 1,
   });
+  try { localStorage.setItem('bc-show-rel', JSON.stringify(showRelFromConfig(config))); } catch { /* per-browser convenience */ }
 }
 
 export async function saveViewAs(name) {

@@ -5,6 +5,16 @@ import { occDayKey, dayKeyOf, parseISO, addDaysKey } from './dates.js';
 
 export const REL_KINDS = ['planned', 'maybe', 'available', 'context'];
 
+/** showRel from a saved view's config: every kind on except those in
+ *  hideRel. A view saved before the filter existed has no hideRel and
+ *  applies as "show all". */
+export function showRelFromConfig(config) {
+  const hide = new Set(Array.isArray(config && config.hideRel) ? config.hideRel : []);
+  const out = {};
+  for (const k of REL_KINDS) out[k] = !hide.has(k);
+  return out;
+}
+
 /** True when the filter lets this occurrence through. Hidden-by-choice rows
  *  (relationship 'hidden') are never "filtered": they are already gone. */
 export function relShown(occ, showRel) {

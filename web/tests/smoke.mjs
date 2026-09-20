@@ -27,7 +27,7 @@ import {
   dragCreateMode, allDayRangeDraft,
 } from '../src/lib/quickcreate.js';
 import { HOTKEYS, HOTKEY_GROUPS } from '../src/app/hotkeys.js';
-import { hiddenDayCounts, relShown } from '../src/lib/relfilter.js';
+import { hiddenDayCounts, relShown, showRelFromConfig } from '../src/lib/relfilter.js';
 import {
   fmtOffsetMinutes, fmtReminder, allDayEntryToMinutes, entryToMinutes,
   normalizeMinutesList, effectiveReminders, toMinutes, fromMinutes,
@@ -1561,6 +1561,9 @@ console.log('');
   eq('hidden days: all-day context covers 22 and 23, not the exclusive 24th', [counts.get('2026-09-22'), counts.get('2026-09-23'), counts.get('2026-09-24')], [1, 1, undefined]);
   eq('hidden days: a timed end at midnight stays on its own day', [counts.get('2026-09-25'), counts.get('2026-09-26')], [1, undefined]);
   eq('hidden days: nothing when every kind is on', hiddenDayCounts(occs, { planned: true, maybe: true, available: true, context: true }).size, 0);
+  eq('saved view: no hideRel means show all', showRelFromConfig({}), { planned: true, maybe: true, available: true, context: true });
+  eq('saved view: hideRel switches those kinds off', showRelFromConfig({ hideRel: ['context', 'available'] }), { planned: true, maybe: true, available: false, context: false });
+  eq('saved view: a view saved before the filter existed shows all', showRelFromConfig(null), { planned: true, maybe: true, available: true, context: true });
 }
 
 console.log(passed + ' passed, ' + failed + ' failed');

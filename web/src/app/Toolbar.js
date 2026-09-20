@@ -100,7 +100,7 @@ function ViewMenu({ view, narrow }) {
 // filter is on, so what is hidden is never a mystery. Hotkeys p / m / a / x
 // toggle each; the palette has each plus "planned only" and "show all".
 const REL_KEY = { planned: 'p', maybe: 'm', available: 'a', context: 'x' };
-function relFilterLabel(showRel) {
+export function relFilterLabel(showRel) {
   const on = REL_ORDER.filter((k) => showRel[k] !== false);
   const off = REL_ORDER.filter((k) => showRel[k] === false);
   if (off.length === 0) return 'Show: all';

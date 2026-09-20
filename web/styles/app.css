@@ -735,7 +735,8 @@ button.bc-hidden-mark { cursor: pointer; }
 .bc-relfilter-drop .bc-ov-item { gap: 8px; }
 .bc-ov-key { margin-left: auto; padding-left: 14px; font: inherit; font-size: 11px; color: var(--fg-muted); }
 .bc-ov-sep { height: 1px; background: var(--border); margin: 4px 2px; }
-@media (max-width: 900px) { .bc-relfilter { display: none; } }
+/* Below the app's mobile breakpoint the Show filter leaves the toolbar; where it goes on a phone is the mobile design review's call. */
+@media (max-width: 600px) { .bc-relfilter { display: none; } }
 .is-cancelled .bc-chip-title, .bc-pop-title.is-cancelled { text-decoration: line-through; opacity: 0.75; }
 /* Dim treatment floor: desaturate + muted foreground instead of pure
    opacity, so dimmed items stay readable (clearly secondary, never

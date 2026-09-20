@@ -85,11 +85,11 @@ export function NewPill() {
   return html`<span class="bc-new-pill" aria-label="recently added">new</span>`;
 }
 
-// A day where the kind filter hid something (App.js hiddenDays): a small
+// A day where the Show filter hid something (App.js hiddenDays): a small
 // hollow ring after the day number in every view, named for the reader, and
-// where the header allows a click, one click shows every kind again.
+// where the header allows a click, one click shows everything again.
 export function HiddenMark({ count, onShow }) {
-  const label = count + (count === 1 ? ' event' : ' events') + ' hidden by the kind filter' + (onShow ? '. Click to show every kind.' : '');
+  const label = count + (count === 1 ? ' event' : ' events') + ' hidden by the Show filter' + (onShow ? '. Click to show all.' : '');
   if (!onShow) return html`<span class="bc-hidden-mark" role="img" aria-label=${label} title=${label}></span>`;
   return html`<button
     type="button" class="bc-hidden-mark" aria-label=${label} title=${label}

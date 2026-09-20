@@ -53,13 +53,13 @@ One thing does travel. On a **Mine** calendar, Maybe is stored as the event's st
 
 On an **Opportunities** calendar the relationship is a private mark on your copy of the event. Feeds and Google polls never overwrite it.
 
-## Filtering by relationship
+## The Show filter
 
-The toolbar has one menu, **All kinds** by default, with a checkbox per relationship. Any combination works and applies to every view. The button reads as the current state ("No context", "Only planned", "Planned + Maybe") and tints when a filter is on. The choice is remembered per browser.
+The toolbar has one menu, **Show: all** by default, with a checkbox per relationship. Any combination works and applies to every view. The button reads as the current state ("Show: no context", "Show: planned only", "Show: planned + maybe") and tints when a filter is on. The choice is remembered per browser.
 
-Hotkeys toggle each kind: **p** planned, **m** maybe, **a** available, **x** context. The command palette has the same four plus "Show only planned" and "Show every kind".
+Hotkeys toggle each kind: **p** planned, **m** maybe, **a** available, **x** context. The command palette has the same four plus "Show only planned" and "Show all".
 
-A day where the filter hid something shows a small hollow ring after its day number, in every view, with the count in its tooltip. In month and agenda views a click on the ring shows every kind again. Nothing disappears silently.
+A day where the filter hid something shows a small hollow ring after its day number, in every view, with the count in its tooltip. In month and agenda views a click on the ring clears the filter. Nothing disappears silently.
 
 ## Why it works this way
 

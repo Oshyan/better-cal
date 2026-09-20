@@ -423,8 +423,45 @@ export async function cycleAttendance(occ) {
 }
 
 // Triage toggle: clicking the active state resets to none.
-export async function triageAttendance(occ, attendance, scope) {
-  return setAttendance(occ, occ.attendance === attendance ? 'none' : attendance, scope);
+// What an event is to me: planned, maybe, available, hidden. On my own
+// calendars this is the event's status (tentative/confirmed), so it goes
+// wherever the event goes (CalDAV, Google); on an opportunities calendar it
+// is the private attendance mark. Returns the relationship set, or null.
+export async function setRelationship(occ, relationship, scope) {
+  const cal = state.calendars.find((c) => c.id === occ.calendarId);
+  const mine = cal ? cal.role === 'mine' : occ.source !== 'feed';
+  const before = patchOccurrence(occ.instanceId, { relationship, attendance: relationship === 'hidden' ? 'hidden' : occ.attendance });
+  try {
+    const body = { relationship };
+    if (occ.recurring) { body.scope = scope || (mine ? 'all' : 'all'); body.instanceStart = occ.start; }
+    await api('/events/' + occ.eventId + '/relationship', { method: 'POST', body });
+    const label = { planned: 'Planned', maybe: 'Maybe', available: 'Available', hidden: 'Hidden' }[relationship] || relationship;
+    const google = mine && googleBacked(occ);
+    toast(relationship === 'hidden' ? 'Hidden' : label + (google ? ' (at Google)' : ''), { undoable: !google });
+    if (relationship === 'hidden' || occ.recurring || mine) refreshWindow();
+    return relationship;
+  } catch (e) {
+    restoreOccurrence(occ.instanceId, before);
+    toast('Failed: ' + e.message, { error: true });
+    return null;
+  }
+}
+
+// The relationship quick filters (toolbar chips, hotkeys, palette).
+export function toggleRel(key) {
+  const next = { ...state.showRel, [key]: !state.showRel[key] };
+  set({ showRel: next });
+  try { localStorage.setItem('bc-show-rel', JSON.stringify(next)); } catch { /* per-browser convenience */ }
+}
+export function showOnlyRel(key) {
+  const next = { planned: false, maybe: false, available: false, context: false, [key]: true };
+  set({ showRel: next });
+  try { localStorage.setItem('bc-show-rel', JSON.stringify(next)); } catch { /* per-browser convenience */ }
+}
+export function showAllRel() {
+  const next = { planned: true, maybe: true, available: true, context: true };
+  set({ showRel: next });
+  try { localStorage.removeItem('bc-show-rel'); } catch { /* per-browser convenience */ }
 }
 
 // scope applies to a series: 'this' gives the occurrence its own row,

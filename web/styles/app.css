@@ -690,8 +690,34 @@ div.bc-duration-exact { display: flex; align-items: center; gap: 10px; flex-wrap
 .bc-zone-btn { font-size: inherit; padding: 0; }
 .bc-zone-select { font-size: 12px; max-width: 250px; padding: 1px 4px; }
 .bc-zone-here { color: var(--fg); }
-.bc-chip.is-interested { border-style: dashed; }
-.bc-chip-check { flex: none; display: inline-flex; align-items: center; }
+/* Relationship (Relationship.js): planned is the norm and looks like any
+   event; maybe is an outline (dashed: the same dash the editor uses for a
+   not-yet-real thing); available is quiet; context is quieter and smaller,
+   information under the day's plans. */
+.bc-chip.is-maybe { border-style: dashed; }
+:is(.bc-bar, .bc-block).is-maybe { border-style: dashed; }
+/* Dot-style chips carry the calendar colour inline, so the quieting lands
+   on the title, which is what the eye reads. */
+.bc-chip.is-available .bc-chip-title { color: var(--fg-muted); }
+.bc-chip.is-available .bc-chip-dot { opacity: 0.55; }
+:is(.bc-bar, .bc-block).is-available { opacity: 0.72; }
+.bc-chip.is-context { font-size: 10.5px; opacity: 0.85; }
+.bc-chip.is-context .bc-chip-title { color: var(--fg-muted); }
+.bc-chip.is-context .bc-chip-dot { width: 5px; height: 5px; opacity: 0.6; }
+.bc-chip.is-context .bc-chip-time { font-size: 10px; }
+:is(.bc-bar, .bc-block).is-context { opacity: 0.55; }
+.bc-rel { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; }
+.bc-rel-label { color: var(--fg-muted); }
+.bc-rel-select { font: inherit; padding: 2px 6px; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--bg-raised); color: var(--fg); }
+.bc-rel-select.is-maybe { border-style: dashed; }
+.bc-rel-select.is-planned { border-color: var(--accent); }
+.bc-relfilter { display: inline-flex; border: 1px solid var(--border-strong); border-radius: 6px; overflow: hidden; margin-right: 6px; }
+.bc-relfilter-btn { background: var(--bg-raised); border: none; border-right: 1px solid var(--border); padding: 3px 8px; font-size: 12px; color: var(--fg-muted); cursor: pointer; }
+.bc-relfilter-btn:last-child { border-right: none; }
+.bc-relfilter-btn.is-on { color: var(--fg); background: color-mix(in srgb, var(--accent) 12%, var(--bg-raised)); }
+.bc-relfilter-btn.is-on.is-maybe { text-decoration: underline dashed; text-underline-offset: 3px; }
+.bc-relfilter-btn:hover { background: var(--bg-inset); color: var(--fg); }
+@media (max-width: 900px) { .bc-relfilter { display: none; } }
 .is-cancelled .bc-chip-title, .bc-pop-title.is-cancelled { text-decoration: line-through; opacity: 0.75; }
 /* Dim treatment floor: desaturate + muted foreground instead of pure
    opacity, so dimmed items stay readable (clearly secondary, never

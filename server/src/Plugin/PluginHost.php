@@ -642,6 +642,7 @@ final class PluginHost
             return (int) $row['id'];
         }
         $id = $this->db->insert('calendars', [
+            'role' => 'context', // injected information, not the person's plans
             'user_id' => $this->userId,
             'name' => mb_substr($name, 0, 160),
             'color' => preg_match('/^#[0-9a-fA-F]{6}$/', $color) === 1 ? $color : '#5b8dd9',

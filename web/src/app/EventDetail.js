@@ -7,9 +7,10 @@
 import { html, useState, useRef, useMemo, useEffect } from '../../vendor/index.js';
 import { useStore, set, state, patchOccurrence } from './store.js';
 import { api, ensureFullOccurrence } from './api.js';
-import { deleteEvent, triageAttendance, setAttendance, sendFeedback, enterReschedule, sameDayList, openTripByEventId, rsvpEvent, googleBacked } from './actions.js';
+import { deleteEvent, setRelationship, sendFeedback, enterReschedule, sameDayList, openTripByEventId, rsvpEvent, googleBacked, GOOGLE_NO_UNDO } from './actions.js';
 import { CopyTo } from './CopyTo.js';
 import { DeleteScope, ScopeChoice } from './DeleteScope.js';
+import { RelationshipControl } from './Relationship.js';
 import { TripDetail } from './Trips.js';
 import { trapFocus } from '../ui/DayExpand.js';
 import { ThumbIcon, CalDot, PinIcon, LinkIcon, Icon } from '../ui/icons.js';
@@ -379,8 +380,8 @@ export function EventDetail() {
       </div>
       ${copyOpen && html`<${CopyTo} occ=${occ} onDone=${() => setCopyOpen(false)} />`}
       ${deletePrompt === occ.instanceId && html`<${DeleteScope} occ=${occ} onDone=${() => set({ deletePrompt: null, detail: null })} onCancel=${() => set({ deletePrompt: null })} />`}
-      ${attendPrompt && attendPrompt.instanceId === occ.instanceId && html`<${ScopeChoice} occ=${occ} verb=${(attendPrompt.attendance === 'none' ? 'Clear ' + attendPrompt.label : attendPrompt.label) + ' for'}
-        onPick=${async (scope) => { const a = attendPrompt.attendance; set({ attendPrompt: null }); const r = await setAttendance(occ, a, scope); if (r === 'hidden') set({ detail: null }); }}
+      ${attendPrompt && attendPrompt.instanceId === occ.instanceId && html`<${ScopeChoice} occ=${occ} verb=${attendPrompt.label + ' for'} note=${cal && cal.role === 'mine' && googleBacked(occ) ? GOOGLE_NO_UNDO : null}
+        onPick=${async (scope) => { const v = attendPrompt.relationship; set({ attendPrompt: null }); const r = await setRelationship(occ, v, scope); if (r === 'hidden') set({ detail: null }); }}
         onCancel=${() => set({ attendPrompt: null })} />`}
       <div class="bc-detail-body">
         <div class="bc-detail-titlerow">
@@ -470,27 +471,16 @@ export function EventDetail() {
           Added ${fmtDateFull(parseISO(occ.createdAt))} ${fmtTime(parseISO(occ.createdAt))}
           ${occ.updatedAt !== occ.createdAt && html` · Updated ${fmtDateFull(parseISO(occ.updatedAt))} ${fmtTime(parseISO(occ.updatedAt))}`}
         </div>`}
-        ${isFeed && html`<div class="bc-detail-actions">
-          ${occ.url && html`<a class="bc-btn bc-detail-openlink" href=${occ.url} target="_blank" rel="noopener noreferrer">Open original link <${Icon} name="arrowUpRight" size=${11} /></a>`}
-          <div class="bc-seg" role="group" aria-label="Attendance" title="Your own note on this event; nobody is notified">
-            ${[['interested', 'Interested'], ['going', 'Going'], ['hidden', 'Hide']].map(([value, label]) => html`<button
-              key=${value} type="button"
-              class="bc-seg-btn${occ.attendance === value ? ' is-active' : ''}"
-              aria-pressed=${occ.attendance === value}
-              onClick=${async () => {
-                if (occ.recurring) { set({ attendPrompt: { instanceId: occ.instanceId, attendance: occ.attendance === value ? 'none' : value, label } }); return; }
-                const result = await triageAttendance(occ, value);
-                if (result === 'hidden') close();
-              }}
-            >${label}</button>`)}
-          </div>
-          <div class="bc-seg" role="group" aria-label="Feedback">
+        ${!(cal && cal.role === 'context') && html`<div class="bc-detail-actions">
+          ${isFeed && occ.url && html`<a class="bc-btn bc-detail-openlink" href=${occ.url} target="_blank" rel="noopener noreferrer">Open original link <${Icon} name="arrowUpRight" size=${11} /></a>`}
+          <${RelationshipControl} occ=${occ} cal=${cal} onHidden=${close} />
+          ${isFeed && html`<div class="bc-seg" role="group" aria-label="Feedback">
             ${[['up', 'More like this'], ['down', 'Less like this']].map(([value, label]) => html`<button
               key=${value} type="button" class="bc-seg-btn bc-seg-icon"
               title=${label} aria-label=${label}
               onClick=${() => sendFeedback(occ, value)}
             ><${ThumbIcon} dir=${value} /></button>`)}
-          </div>
+          </div>`}
         </div>`}
       </div>
     </div>

@@ -33,8 +33,8 @@ import { withAlpha } from '../lib/color.js';
 // desktop (space is reserved so rows never shift), always visible on touch,
 // and kept visible when a triage state is active.
 const TRIAGE_BUTTONS = [
-  ['interested', 'star', 'Interested'],
-  ['going', 'check', 'Going'],
+  ['maybe', 'star', 'Maybe'],
+  ['planned', 'check', 'Planned'],
   ['hidden', 'close', 'Hide'],
 ];
 const FEEDBACK_BUTTONS = [
@@ -43,15 +43,15 @@ const FEEDBACK_BUTTONS = [
 ];
 
 function TriageCluster({ occ, onSetAttendance, onFeedback }) {
-  const hasOn = TRIAGE_BUTTONS.some(([value]) => occ.attendance === value);
+  const hasOn = TRIAGE_BUTTONS.some(([value]) => occ.relationship === value);
   return html`<span
     class="bc-triage bc-agenda-triage${hasOn ? ' has-on' : ''}"
     role="group" aria-label="Triage and feedback"
   >
     ${TRIAGE_BUTTONS.map(([value, iconName, label]) => html`<button
       key=${value} type="button"
-      class="bc-triage-btn${occ.attendance === value ? ' is-on' : ''}"
-      title=${label} aria-label=${label} aria-pressed=${occ.attendance === value}
+      class="bc-triage-btn${occ.relationship === value ? ' is-on' : ''}"
+      title=${label} aria-label=${label} aria-pressed=${occ.relationship === value}
       onClick=${(e) => { e.stopPropagation(); onSetAttendance(occ, value); }}
     ><${Icon} name=${iconName} size=${12} /></button>`)}
     ${onFeedback && html`<span class="bc-triage-sep" aria-hidden="true"></span>`}

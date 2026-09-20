@@ -20,6 +20,71 @@ final class Events
     private const NEW_WINDOW_HOURS = 24;
     private const SCOPES = ['this', 'following', 'all'];
     private const ATTENDANCE = ['none', 'interested', 'going', 'hidden'];
+    /** Relationship words accepted where an attendance is (the stored enum stays as it was). */
+    private const ATTENDANCE_ALIASES = ['planned' => 'going', 'maybe' => 'interested', 'available' => 'none', 'hidden' => 'hidden'];
+
+    /**
+     * What an event is to the person, on every event (docs/design: the
+     * relationship scale). Derived: the calendar's role sets the default and
+     * the row's own marks override it. Pure; unit-tested.
+     *
+     *   context   the calendar is information; never a plan
+     *   hidden    marked hidden (only visible with includeHidden)
+     *   planned   marked going, or on one of my calendars and not tentative
+     *   maybe     marked interested, or on one of my calendars and tentative
+     *   available on an opportunities calendar and not picked
+     */
+    public static function relationship(string $attendance, string $status, string $role): string
+    {
+        if ($role === 'context') {
+            return 'context';
+        }
+        if ($attendance === 'hidden') {
+            return 'hidden';
+        }
+        if ($attendance === 'going') {
+            return 'planned';
+        }
+        if ($attendance === 'interested') {
+            return 'maybe';
+        }
+        if ($role === 'mine') {
+            return $status === 'tentative' ? 'maybe' : 'planned';
+        }
+        return 'available';
+    }
+
+    /**
+     * Set the relationship with the vocabulary the calendar's role allows.
+     * On my own calendar it is the event's status (tentative or confirmed,
+     * which CalDAV clients and Google see too); on an opportunities calendar
+     * it is the private attendance mark. Scope applies to a series as for
+     * any other change.
+     */
+    public function setRelationship(int $userId, int $id, string $relationship, ?string $scope = null, ?string $instanceStart = null): void
+    {
+        $event = $this->get($userId, $id);
+        $role = (string) ($this->calendarMeta((int) $event['calendar_id'])['role'] ?? 'mine');
+        if ($role === 'context') {
+            throw HttpError::badRequest('Events on a context calendar are information, not plans');
+        }
+        if ($role === 'mine') {
+            if (!in_array($relationship, ['planned', 'maybe'], true)) {
+                throw HttpError::badRequest('On your own calendar an event is planned or maybe');
+            }
+            $in = ['status' => $relationship === 'maybe' ? 'tentative' : 'confirmed'];
+            if (!empty($event['rrule']) && empty($event['recurrence_parent_id'])) {
+                $in['scope'] = $scope ?? 'all';
+                $in['instanceStart'] = $instanceStart;
+            }
+            $this->patch($userId, $id, $in);
+            return;
+        }
+        if (!isset(self::ATTENDANCE_ALIASES[$relationship])) {
+            throw HttpError::badRequest('relationship must be planned|maybe|available|hidden');
+        }
+        $this->setAttendance($userId, $id, self::ATTENDANCE_ALIASES[$relationship], $scope, $instanceStart);
+    }
 
     public function __construct(
         private readonly Db $db,
@@ -289,7 +354,7 @@ final class Events
     {
         if ($this->calMeta === null) {
             $this->calMeta = [];
-            foreach ($this->db->all('SELECT id, created_at, kind, settings_json FROM calendars') as $c) {
+            foreach ($this->db->all('SELECT id, created_at, kind, role, settings_json FROM calendars') as $c) {
                 $settings = is_string($c['settings_json'] ?? null)
                     ? json_decode((string) $c['settings_json'], true)
                     : $c['settings_json'];
@@ -299,6 +364,7 @@ final class Events
                 $this->calMeta[(int) $c['id']] = [
                     'createdAt' => Time::fromDb((string) $c['created_at']),
                     'kind' => (string) $c['kind'],
+                    'role' => (string) ($c['role'] ?? 'mine'),
                     'reminderDefaults' => $defaults,
                 ];
             }
@@ -1326,8 +1392,9 @@ final class Events
      */
     public function setAttendance(int $userId, int $id, string $attendance, ?string $scope = null, ?string $instanceStart = null): void
     {
+        $attendance = self::ATTENDANCE_ALIASES[$attendance] ?? $attendance;
         if (!in_array($attendance, self::ATTENDANCE, true)) {
-            throw HttpError::badRequest('attendance must be none|interested|going|hidden');
+            throw HttpError::badRequest('attendance must be none|interested|going|hidden (or planned|maybe|available)');
         }
         $event = $this->get($userId, $id);
         $isMaster = !empty($event['rrule']) && empty($event['recurrence_parent_id']);
@@ -1519,6 +1586,7 @@ final class Events
             'source' => (string) $row['source'],
             'attendance' => (string) $row['attendance'],
             'status' => (string) $row['status'],
+            'relationship' => self::relationship((string) $row['attendance'], (string) $row['status'], (string) ($calMeta['role'] ?? 'mine')),
             'score' => isset($row['score']) && $row['score'] !== null ? (float) $row['score'] : null,
             'reminders' => $reminders,
             // List-shape bits, sent only when true (null is omitted): they let

@@ -4,7 +4,7 @@ import { html, useState, useMemo, useRef, useEffect, useLayoutEffect, useCallbac
 import { useStore, set, state, calendarMeta, shallowEq, invalidateRecords } from './store.js';
 import { loadWindow, api, refreshWindow, loadPeople } from './api.js';
 import {
-  moveEvent, resizeEvent, triageAttendance, sendFeedback, exitReschedule, googleBacked,
+  moveEvent, resizeEvent, sendFeedback, exitReschedule, googleBacked, setRelationship,
   jumpToDate, openDetail, effectiveOverviewMode,
   moveAvailabilitySpan, moveTrip, moveEventToCalendar, linkPersonToEvent, attachToTrip,
   resizeAvailabilitySpanDays,
@@ -201,16 +201,20 @@ export function App() {
 
   // Occurrences on visible calendars, from the cache. Calendars flagged
   // groupSimilar get near-duplicate collapsing (synthetic group items).
+  const showRel = useStore((st) => st.showRel);
   const occurrences = useMemo(() => {
     const visible = new Set(s.calendars.filter((c) => c.visible).map((c) => c.id));
     const out = [];
     for (const occ of state.occ.values()) {
-      if (visible.has(occ.calendarId)) out.push(occ);
+      if (!visible.has(occ.calendarId)) continue;
+      // The relationship quick filter: a kind switched off leaves every view.
+      if (occ.relationship && showRel[occ.relationship] === false) continue;
+      out.push(occ);
     }
     const flags = {};
     for (const c of s.calendars) flags[c.id] = !!c.groupSimilar;
     return groupOccurrences(out, flags);
-  }, [s.occVersion, s.calendars]);
+  }, [s.occVersion, s.calendars, showRel]);
 
   // Availability bands: visible people's away/busy spans for a wide window
   // around the visible month, synthesized into container-shaped pseudo
@@ -698,7 +702,7 @@ export function App() {
         scrollSeq=${s.scrollSeq}
         onVisibleMonthChange=${onVisibleMonthChange}
         onOpenEvent=${onOpenEvent}
-        onSetAttendance=${triageAttendance}
+        onSetAttendance=${(occ, v) => setRelationship(occ, occ.relationship === v ? 'available' : v)}
         onFeedback=${sendFeedback}
         onCreateDay=${(k) => onCreateRange(dayRangeDraft(k, k))}
         emptyLabel=${s.agendaShowPast ? 'No events' : 'No upcoming events'}

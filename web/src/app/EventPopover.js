@@ -8,9 +8,10 @@ import { useStore, set, state } from './store.js';
 import { ensureFullOccurrence } from './api.js';
 import { CopyTo } from './CopyTo.js';
 import { DeleteScope, ScopeChoice } from './DeleteScope.js';
+import { RelationshipControl } from './Relationship.js';
 import { prefetchMap } from './prefetch.js';
 import { Skeleton } from './PageShell.js';
-import { updateEvent, deleteEvent, triageAttendance, setAttendance, sendFeedback, enterReschedule, openDetail, sameDayList, openTripByEventId, googleBacked, GOOGLE_NO_UNDO } from './actions.js';
+import { updateEvent, deleteEvent, setRelationship, sendFeedback, enterReschedule, openDetail, sameDayList, openTripByEventId, googleBacked, GOOGLE_NO_UNDO } from './actions.js';
 import { describeRrule } from './EventDetail.js';
 import { isMobile, trapFocus, MOBILE_QUERY } from '../ui/DayExpand.js';
 import { ThumbIcon, PinIcon, LinkIcon, Icon } from '../ui/icons.js';
@@ -193,8 +194,8 @@ export function EventPopover() {
       ${copyOpen && html`<${CopyTo} occ=${occ} compact onDone=${() => set({ popover: null })} />`}
       ${deletePrompt === occ.instanceId && html`<${DeleteScope} occ=${occ} compact onDone=${() => set({ deletePrompt: null, popover: null })} onCancel=${() => set({ deletePrompt: null })} />`}
       ${timeScope && html`<${ScopeChoice} occ=${occ} verb="New time for" compact note=${googleBacked(occ) ? GOOGLE_NO_UNDO : null} onPick=${(scope) => { const f = timeScope; setTimeScope(null); updateEvent(occ, f, scope); }} onCancel=${() => setTimeScope(null)} />`}
-      ${attendPrompt && attendPrompt.instanceId === occ.instanceId && html`<${ScopeChoice} occ=${occ} verb=${(attendPrompt.attendance === 'none' ? 'Clear ' + attendPrompt.label : attendPrompt.label) + ' for'} compact
-        onPick=${async (scope) => { const a = attendPrompt.attendance; set({ attendPrompt: null }); const r = await setAttendance(occ, a, scope); if (r === 'hidden') set({ popover: null }); }}
+      ${attendPrompt && attendPrompt.instanceId === occ.instanceId && html`<${ScopeChoice} occ=${occ} verb=${attendPrompt.label + ' for'} compact note=${cal && cal.role === 'mine' && googleBacked(occ) ? GOOGLE_NO_UNDO : null}
+        onPick=${async (scope) => { const v = attendPrompt.relationship; set({ attendPrompt: null }); const r = await setRelationship(occ, v, scope); if (r === 'hidden') set({ popover: null }); }}
         onCancel=${() => set({ attendPrompt: null })} />`}
       ${occ.containers && occ.containers.length > 0 && html`<button
         type="button" class="bc-partof" title="Open this trip"
@@ -254,26 +255,15 @@ export function EventPopover() {
         <span class="bc-pop-calicon" style=${`color:${ink((cal && cal.color) || '#888')}`}><${Icon} name="calendar" size=${12} /></span>
         ${(cal && cal.name) || 'Calendar'}
       </div>
-      ${isFeed && html`<div class="bc-pop-actions">
-        <div class="bc-seg" role="group" aria-label="Attendance" title="Your own note on this event; nobody is notified">
-          ${[['interested', 'Interested'], ['going', 'Going'], ['hidden', 'Hide']].map(([value, label]) => html`<button
-            key=${value} type="button"
-            class="bc-seg-btn${occ.attendance === value ? ' is-active' : ''}"
-            aria-pressed=${occ.attendance === value}
-            onClick=${async () => {
-              if (occ.recurring) { set({ attendPrompt: { instanceId: occ.instanceId, attendance: occ.attendance === value ? 'none' : value, label } }); return; }
-              const result = await triageAttendance(occ, value);
-              if (result === 'hidden') set({ popover: null });
-            }}
-          >${label}</button>`)}
-        </div>
-        <div class="bc-seg" role="group" aria-label="Feedback">
+      ${!(cal && cal.role === 'context') && html`<div class="bc-pop-actions">
+        <${RelationshipControl} occ=${occ} cal=${cal} compact onHidden=${() => set({ popover: null })} />
+        ${isFeed && html`<div class="bc-seg" role="group" aria-label="Feedback">
           ${[['up', 'More like this'], ['down', 'Less like this']].map(([value, label]) => html`<button
             key=${value} type="button" class="bc-seg-btn bc-seg-icon"
             title=${label} aria-label=${label}
             onClick=${() => sendFeedback(occ, value)}
           ><${ThumbIcon} dir=${value} /></button>`)}
-        </div>
+        </div>`}
       </div>`}
     </div>
   </div>`;

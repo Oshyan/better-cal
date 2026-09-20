@@ -41,8 +41,11 @@ function chipTitle(occ) {
 
 function stateClasses(occ, dimmed, nowMs) {
   let c = '';
-  if (occ.attendance === 'interested') c += ' is-interested';
-  if (occ.attendance === 'going') c += ' is-going';
+  // Relationship: planned is the norm and carries no mark; maybe is an
+  // outline, available is quiet, context quieter (Relationship.js).
+  if (occ.relationship === 'maybe') c += ' is-maybe';
+  else if (occ.relationship === 'available') c += ' is-available';
+  else if (occ.relationship === 'context') c += ' is-context';
   if (occ.status === 'cancelled') c += ' is-cancelled';
   if (occ.isNew) c += ' is-new';
   if (occ.isGroup) c += ' is-group';
@@ -82,12 +85,6 @@ export function NewPill() {
   return html`<span class="bc-new-pill" aria-label="recently added">new</span>`;
 }
 
-// Solid check glyph before the title on events marked going.
-function GoingCheck({ occ }) {
-  if (occ.attendance !== 'going') return null;
-  return html`<span class="bc-chip-check" aria-label="going"><${Icon} name="check" size=${11} /></span>`;
-}
-
 // Small stack glyph marking a near-duplicate group chip.
 function StackGlyph() {
   return html`<span class="bc-stack-glyph" aria-hidden="true"><${Icon} name="stack" size=${11} /></span>`;
@@ -118,7 +115,7 @@ function openHandlers(occ, onOpen) {
 // beyond the day being listed.
 export function EventChip({ occ, cal, dimmed, nowMs, showTime = true, seg = null, onOpen, onPointerDown }) {
   const color = calColor(cal);
-  const interested = occ.attendance === 'interested';
+  const interested = occ.relationship === 'maybe';
   // GCal semantics: all-day (and group) chips are filled with the calendar
   // tint; timed events are quiet dot + time + title rows. The tint rides a
   // CSS variable so the mobile pill layout can re-fill dot chips.
@@ -140,7 +137,7 @@ export function EventChip({ occ, cal, dimmed, nowMs, showTime = true, seg = null
   >
     <span class="bc-chip-dot" style=${`background:${color}`}></span>
     ${timed && html`<span class="bc-chip-time">${fmtTime(parseISO(occ.start))}</span>`}
-    ${occ.isGroup ? html`<${StackGlyph} />` : html`<${GoingCheck} occ=${occ} />`}
+    ${occ.isGroup && html`<${StackGlyph} />`}
     <span class="bc-chip-title">${occ.title || '(untitled)'}${occ.isGroup ? ` · ${occ.count}` : ''}</span>
     <${DurationSuffix} occ=${occ} />
     ${occ.isNew && !occ.isGroup && html`<${NewPill} />`}
@@ -152,7 +149,7 @@ export function EventChip({ occ, cal, dimmed, nowMs, showTime = true, seg = null
 //        onPointerDown, onEdgePointerDown(edge, ev)
 export function EventBar({ occ, cal, seg, dimmed, nowMs, onOpen, onPointerDown, onEdgePointerDown }) {
   const color = calColor(cal);
-  const interested = occ.attendance === 'interested';
+  const interested = occ.relationship === 'maybe';
   const trip = !!occ.isContainer;
   // Containers get a distinct outlined variant (is-trip): tinted, not solid,
   // and never draggable or resizable in v1.
@@ -181,7 +178,7 @@ export function EventBar({ occ, cal, seg, dimmed, nowMs, onOpen, onPointerDown, 
     title=${chipTitle(occ)}
   >
     ${!seg.contLeft && edges && html`<span class="bc-bar-handle l" onPointerDown=${(e) => edges('start', e)}></span>`}
-    ${!seg.contLeft && (occ.isGroup ? html`<${StackGlyph} />` : html`<${GoingCheck} occ=${occ} />`)}
+    ${!seg.contLeft && occ.isGroup && html`<${StackGlyph} />`}
     <span class="bc-chip-title">${occ.title || '(untitled)'}${occ.isGroup ? ` · ${occ.count}` : ''}</span>
     <${DurationSuffix} occ=${occ} />
     ${occ.isNew && !occ.isGroup && !seg.contLeft && html`<${NewPill} />`}
@@ -194,7 +191,7 @@ export function EventBar({ occ, cal, seg, dimmed, nowMs, onOpen, onPointerDown, 
 //        onOpen, onPointerDown, onEdgePointerDown(edge, ev)
 export function EventBlock({ occ, cal, rect, dimmed, nowMs, onOpen, onPointerDown, onEdgePointerDown }) {
   const color = calColor(cal);
-  const interested = occ.attendance === 'interested';
+  const interested = occ.relationship === 'maybe';
   const trip = !!occ.isContainer;
   const bg = trip
     ? `border:1.5px solid ${color};color:var(--fg);background:${withAlpha(color, 0.1)}`
@@ -229,7 +226,7 @@ export function EventBlock({ occ, cal, rect, dimmed, nowMs, onOpen, onPointerDow
   >
     ${edges && html`<span class="bc-block-handle t" onPointerDown=${(ev) => edges('start', ev)}></span>`}
     <span class="bc-block-line">
-      ${occ.isGroup ? html`<${StackGlyph} />` : html`<${GoingCheck} occ=${occ} />`}
+      ${occ.isGroup && html`<${StackGlyph} />`}
       <span class="bc-chip-title">${occ.title || '(untitled)'}${occ.isGroup ? ` · ${occ.count}` : ''}</span>
       <${DurationSuffix} occ=${occ} />
       ${occ.isNew && !occ.isGroup && html`<${NewPill} />`}

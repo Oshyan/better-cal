@@ -31,12 +31,12 @@ export const STATIC_COMMANDS = [
   { id: 'reschedule', icon: 'reschedule', label: 'Reschedule event', group: 'Event', hotkey: 'reschedule', needs: 'popover', keywords: 'move' },
   { id: 'deleteEvent', icon: 'trash', label: 'Delete event', group: 'Event', hotkey: 'deleteEvent', needs: 'occ', keywords: 'remove' },
 
-  { id: 'relPlanned', icon: 'check', label: 'Show or hide planned events', group: 'Views', hotkey: 'relPlanned', keywords: 'filter kind relationship doing' },
-  { id: 'relMaybe', icon: 'star', label: 'Show or hide maybe events', group: 'Views', hotkey: 'relMaybe', keywords: 'filter kind relationship tentative' },
-  { id: 'relAvailable', icon: 'visAll', label: 'Show or hide available events', group: 'Views', hotkey: 'relAvailable', keywords: 'filter kind relationship opportunities feed' },
-  { id: 'relContext', icon: 'note', label: 'Show or hide context events', group: 'Views', hotkey: 'relContext', keywords: 'filter kind relationship information weather tides' },
+  { id: 'relPlanned', icon: 'check', label: 'Show or hide planned events', group: 'Views', hotkey: 'relPlanned', keywords: 'show filter relationship doing' },
+  { id: 'relMaybe', icon: 'star', label: 'Show or hide maybe events', group: 'Views', hotkey: 'relMaybe', keywords: 'show filter relationship tentative' },
+  { id: 'relAvailable', icon: 'visAll', label: 'Show or hide available events', group: 'Views', hotkey: 'relAvailable', keywords: 'show filter relationship opportunities feed' },
+  { id: 'relContext', icon: 'note', label: 'Show or hide context events', group: 'Views', hotkey: 'relContext', keywords: 'show filter relationship information weather tides' },
   { id: 'relOnlyPlanned', icon: 'check', label: 'Show only planned events', group: 'Views', keywords: 'filter what am I doing plans' },
-  { id: 'relAll', icon: 'visAll', label: 'Show every kind of event', group: 'Views', keywords: 'filter reset all kinds' },
+  { id: 'relAll', icon: 'visAll', label: 'Show all events (clear the Show filter)', group: 'Views', keywords: 'show filter reset every kind' },
   { id: 'calsAll', icon: 'visAll', label: 'Show all calendars', group: 'Calendars', keywords: 'visible every' },
   { id: 'calsNone', icon: 'visNone', label: 'Hide all calendars', group: 'Calendars', keywords: 'none invisible' },
 

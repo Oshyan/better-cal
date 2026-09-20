@@ -93,21 +93,21 @@ function ViewMenu({ view, narrow }) {
   </div>`;
 }
 
-// Which kinds of event the views show (docs/relationships.md): one menu of
-// checkboxes, any combination, applies to every view, remembered. The button
-// reads as the current state ("All kinds", "No context", "Only planned",
-// "Planned + Maybe") and tints when a filter is on, so what is hidden is
-// never a mystery. Hotkeys p / m / a / x toggle each; the palette has each
-// plus "show only planned" and "show every kind".
+// The Show filter (docs/relationships.md): which relationships the views
+// show. One menu of checkboxes, any combination, applies to every view,
+// remembered. The button reads as the current state ("Show: all", "Show: no
+// context", "Show: planned only", "Show: planned + maybe") and tints when a
+// filter is on, so what is hidden is never a mystery. Hotkeys p / m / a / x
+// toggle each; the palette has each plus "planned only" and "show all".
 const REL_KEY = { planned: 'p', maybe: 'm', available: 'a', context: 'x' };
 function relFilterLabel(showRel) {
   const on = REL_ORDER.filter((k) => showRel[k] !== false);
   const off = REL_ORDER.filter((k) => showRel[k] === false);
-  if (off.length === 0) return 'All kinds';
-  if (on.length === 0) return 'Nothing';
-  if (off.length === 1) return 'No ' + REL_LABEL[off[0]].toLowerCase();
-  if (on.length === 1) return 'Only ' + REL_LABEL[on[0]].toLowerCase();
-  return on.map((k) => REL_LABEL[k]).join(' + ');
+  if (off.length === 0) return 'Show: all';
+  if (on.length === 0) return 'Show: nothing';
+  if (off.length === 1) return 'Show: no ' + REL_LABEL[off[0]].toLowerCase();
+  if (on.length === 1) return 'Show: ' + REL_LABEL[on[0]].toLowerCase() + ' only';
+  return 'Show: ' + on.map((k) => REL_LABEL[k].toLowerCase()).join(' + ');
 }
 function RelFilter() {
   const showRel = useStore((s) => s.showRel);
@@ -119,10 +119,10 @@ function RelFilter() {
     <button
       type="button" class=${'bc-btn bc-viewmenu-btn bc-relfilter-btn' + (all ? '' : ' is-active')}
       aria-haspopup="menu" aria-expanded=${open}
-      title="Which kinds of event to show (p, m, a, x toggle each)"
+      title="What to show (p, m, a, x toggle each)"
       onClick=${() => setOpen(!open)}
     >${relFilterLabel(showRel)}<span class="bc-viewmenu-caret" aria-hidden="true"><${Icon} name="chevronDown" size=${11} /></span></button>
-    ${open && html`<div class="bc-ov-menu bc-relfilter-drop" role="menu" aria-label="Kinds of event to show">
+    ${open && html`<div class="bc-ov-menu bc-relfilter-drop" role="menu" aria-label="What to show">
       ${REL_ORDER.map((k) => html`<button
         key=${k} type="button" role="menuitemcheckbox"
         aria-checked=${showRel[k] !== false}
@@ -130,8 +130,8 @@ function RelFilter() {
         onClick=${() => toggleRel(k)}
       ><span class="bc-ov-check" aria-hidden="true">${showRel[k] !== false ? html`<${Icon} name="check" size=${12} />` : ''}</span>${REL_LABEL[k]}<kbd class="bc-ov-key">${REL_KEY[k]}</kbd></button>`)}
       <div class="bc-ov-sep" role="separator"></div>
-      <button type="button" role="menuitem" class="bc-ov-item" onClick=${() => showOnlyRel('planned')}><span class="bc-ov-check"></span>Only planned</button>
-      <button type="button" role="menuitem" class="bc-ov-item" disabled=${all} onClick=${() => showAllRel()}><span class="bc-ov-check"></span>All kinds</button>
+      <button type="button" role="menuitem" class="bc-ov-item" onClick=${() => showOnlyRel('planned')}><span class="bc-ov-check"></span>Planned only</button>
+      <button type="button" role="menuitem" class="bc-ov-item" disabled=${all} onClick=${() => showAllRel()}><span class="bc-ov-check"></span>Show all</button>
     </div>`}
   </div>`;
 }

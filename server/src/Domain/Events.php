@@ -141,7 +141,11 @@ final class Events
         if ($existing !== null) {
             [$googleFields, $localFields] = self::splitGoogleFields($this->columnPatch($existing, $in, $instanceUtc, forOverride: true));
             if ($googleFields !== []) {
-                $googleId = self::requireGoogleId($existing);
+                // A local-only override (attendance, reminders) has no Google
+                // id; the occurrence's instance id addresses it at Google.
+                $googleId = !empty($existing['google_event_id'])
+                    ? (string) $existing['google_event_id']
+                    : GoogleWriter::instanceId(self::requireGoogleId($master), $instanceUtc, $allDay);
                 $resp = $this->google()->patch($calendar, $googleId, GoogleWriter::body(array_merge($existing, $googleFields)));
                 $this->google()->apply($calendar, [$resp]);
             }
@@ -384,7 +388,10 @@ final class Events
         $ovParams = [$userId, ...$inParams, Time::toDb($end), Time::toDb($start)];
         $ovSql = "SELECT * FROM events WHERE user_id = ? AND deleted_at IS NULL AND recurrence_parent_id IS NOT NULL
                   AND (recurrence_parent_id IN $in OR (start_utc < ? AND end_utc > ?))";
-        $ovSql .= $this->windowFilters($ovParams, $calendarIds, null, $includeHidden);
+        // Overrides come regardless of attendance: a hidden override must
+        // still replace its instance (and then drop out below), or the
+        // master's version of that day would show through the hiding.
+        $ovSql .= $this->windowFilters($ovParams, $calendarIds, null, true);
         $overrides = $this->db->all($ovSql, $ovParams);
 
         $ovByParent = [];
@@ -413,6 +420,10 @@ final class Events
                     $expanded[] = ['row' => $ov, 'start' => $ovStart, 'end' => $ovEnd, 'instanceUtc' => Time::toDb($ovStart)];
                 }
             }
+        }
+
+        if (!$includeHidden) {
+            $expanded = array_values(array_filter($expanded, static fn(array $o): bool => (string) ($o['row']['attendance'] ?? 'none') !== 'hidden'));
         }
 
         // Deterministic order: start asc, end desc, title asc (by UTC instant).
@@ -804,6 +815,20 @@ final class Events
             return;
         }
 
+        $targetCalendar = isset($in['calendarId']) ? (int) $in['calendarId'] : null;
+        if ($targetCalendar !== null && $targetCalendar !== (int) $event['calendar_id'] && $google === null) {
+            if (!empty($event['recurrence_parent_id'])) {
+                $this->detachToCalendar($userId, $event, null, $in);
+                return;
+            }
+            if ($isRecurringMaster && $scope === 'this') {
+                $this->detachToCalendar($userId, $event, $this->requireInstance($in, $event), $in);
+                return;
+            }
+            // 'following': patchFollowing splits and the new series takes the
+            // calendar; 'all': patchAll moves the series and its exceptions.
+        }
+
         if ($google !== null) {
             match ($scope) {
                 'this' => $this->googlePatchThis($userId, $google, $event, $in),
@@ -874,11 +899,18 @@ final class Events
         $id = (int) $event['id'];
         $beforeLinks = $this->labels->eventLinkRows($id);
         $fields = $this->columnPatch($event, $in);
+        // A calendar change moves the exceptions too: an override parked on
+        // another calendar than its master is a row nothing can reach.
+        $movesCalendar = isset($fields['calendar_id']) && !empty($event['rrule']);
+        $overridesBefore = $movesCalendar ? $this->db->all('SELECT * FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$id]) : [];
 
-        $this->db->tx(function () use ($id, $userId, $fields, $in): void {
+        $this->db->tx(function () use ($id, $userId, $fields, $in, $movesCalendar): void {
             if ($fields !== []) {
                 $fields['updated_at'] = Time::nowDb();
                 $this->db->update('events', $fields, 'id = ?', [$id]);
+                if ($movesCalendar) {
+                    $this->db->run('UPDATE events SET calendar_id = ? WHERE recurrence_parent_id = ?', [$fields['calendar_id'], $id]);
+                }
             }
             if (array_key_exists('tagNames', $in) && is_array($in['tagNames'])) {
                 $this->labels->setEventTags($userId, $id, $in['tagNames']);
@@ -887,15 +919,136 @@ final class Events
         });
 
         $after = $this->get($userId, $id);
+        $overridesAfter = [];
+        foreach ($overridesBefore as $ov) {
+            $overridesAfter[] = $this->db->one('SELECT * FROM events WHERE id = ?', [(int) $ov['id']]);
+        }
         $this->undo->record(
             $userId,
             'event',
             $id,
             'update',
-            ['events' => [$event]] + $beforeLinks,
-            ['events' => [$after]] + $this->labels->eventLinkRows($id)
+            ['events' => array_merge([$event], $overridesBefore)] + $beforeLinks,
+            ['events' => array_merge([$after], array_values(array_filter($overridesAfter)))] + $this->labels->eventLinkRows($id)
         );
         ChangeLog::recordUpdate($this->db, $event, $after);
+    }
+
+    /**
+     * The override row for one occurrence of a series, creating it from the
+     * master (same content, same tags and people) when there is none. This is
+     * how a per-occurrence attendance or reminder gets a row to live on
+     * without changing anything else about the day.
+     */
+    private function ensureOverride(int $userId, array $master, string $instanceUtc): array
+    {
+        $masterId = (int) $master['id'];
+        $existing = $this->db->one(
+            'SELECT * FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc = ? AND deleted_at IS NULL',
+            [$masterId, $instanceUtc]
+        );
+        if ($existing !== null) {
+            return $existing;
+        }
+        $duration = Recurrence::durationSeconds($master);
+        $instStart = Time::fromDb($instanceUtc);
+        $override = $this->copyForChild($master);
+        $override['recurrence_parent_id'] = $masterId;
+        $override['recurrence_instance_utc'] = $instanceUtc;
+        $override['rrule'] = null;
+        $override['exdates_json'] = null;
+        $override['google_event_id'] = null;
+        $override['created_via'] = ActivityContext::get();
+        $override['start_utc'] = Time::toDb($instStart);
+        $override['end_utc'] = Time::toDb($instStart->add(new \DateInterval('PT' . $duration . 'S')));
+        $newId = $this->db->tx(function () use ($override, $masterId): int {
+            $id = $this->db->insert('events', $override);
+            $this->db->run('INSERT IGNORE INTO event_tags (event_id, tag_id) SELECT ?, tag_id FROM event_tags WHERE event_id = ?', [$id, $masterId]);
+            $this->db->run('INSERT IGNORE INTO event_people (event_id, person_id) SELECT ?, person_id FROM event_people WHERE event_id = ?', [$id, $masterId]);
+            return $id;
+        });
+        return $this->get($userId, $newId);
+    }
+
+    /**
+     * One occurrence leaves its series for another calendar: it becomes a
+     * standalone event there (new identity, same content, tags and people,
+     * plus whatever else the same edit changed) and the series skips that
+     * day. Used for an override row moved on its own, and for a master with
+     * scope 'this'. 'following' is a split (patchFollowing, the new series
+     * takes the calendar) and 'all' moves the series with its exceptions.
+     */
+    private function detachToCalendar(int $userId, array $event, ?string $instanceUtc, array $in): void
+    {
+        if (!empty($event['recurrence_parent_id'])) {
+            $master = $this->db->one('SELECT * FROM events WHERE id = ?', [(int) $event['recurrence_parent_id']]);
+            $instanceUtc = (string) $event['recurrence_instance_utc'];
+            $source = $event;
+        } else {
+            $master = $event;
+            $source = $this->db->one(
+                'SELECT * FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc = ? AND deleted_at IS NULL',
+                [(int) $master['id'], (string) $instanceUtc]
+            );
+            if ($source === null) {
+                $duration = Recurrence::durationSeconds($master);
+                $source = $master;
+                $source['start_utc'] = (string) $instanceUtc;
+                $source['end_utc'] = Time::toDb(Time::fromDb((string) $instanceUtc)->add(new \DateInterval('PT' . $duration . 'S')));
+            }
+        }
+        $existingOverrideId = !empty($source['recurrence_parent_id']) ? (int) $source['id'] : null;
+        $row = $this->copyForChild($source);
+        $row['uid'] = Ids::ulid();
+        $row['recurrence_parent_id'] = null;
+        $row['recurrence_instance_utc'] = null;
+        $row['rrule'] = null;
+        $row['exdates_json'] = null;
+        $row['google_event_id'] = null;
+        $row['source'] = 'local';
+        $row['created_via'] = ActivityContext::get();
+        $row = array_merge($row, $this->columnPatch($row, $in, null, forOverride: true));
+        $copyFromId = $existingOverrideId ?? ($master !== null ? (int) $master['id'] : null);
+
+        $beforeRows = array_values(array_filter([$master, $existingOverrideId !== null ? $source : null]));
+        $newId = $this->db->tx(function () use ($row, $copyFromId, $existingOverrideId, $master, $instanceUtc, $userId, $in): int {
+            $id = $this->db->insert('events', $row);
+            if ($copyFromId !== null) {
+                $this->db->run('INSERT IGNORE INTO event_tags (event_id, tag_id) SELECT ?, tag_id FROM event_tags WHERE event_id = ?', [$id, $copyFromId]);
+                $this->db->run('INSERT IGNORE INTO event_people (event_id, person_id) SELECT ?, person_id FROM event_people WHERE event_id = ?', [$id, $copyFromId]);
+            }
+            if (array_key_exists('tagNames', $in) && is_array($in['tagNames'])) {
+                $this->labels->setEventTags($userId, $id, $in['tagNames']);
+            }
+            $this->applyPeoplePatch($userId, $id, $in);
+            if ($master !== null) {
+                $exdates = $this->decodeExdates($master);
+                if (!in_array((string) $instanceUtc, $exdates, true)) {
+                    $exdates[] = (string) $instanceUtc;
+                }
+                $this->db->update('events', ['exdates_json' => json_encode($exdates), 'updated_at' => Time::nowDb()], 'id = ?', [(int) $master['id']]);
+            }
+            if ($existingOverrideId !== null) {
+                $this->db->run('DELETE FROM events WHERE id = ?', [$existingOverrideId]);
+            }
+            return $id;
+        });
+        $created = $this->get($userId, $newId);
+        $afterRows = [$created];
+        if ($master !== null) {
+            $afterRows[] = $this->db->one('SELECT * FROM events WHERE id = ?', [(int) $master['id']]);
+            ChangeLog::record($this->db, (int) $master['calendar_id'], (string) $master['uid'], ChangeLog::OP_MODIFY);
+        }
+        $this->undo->record(
+            $userId,
+            'event',
+            $newId,
+            'update',
+            ['events' => $beforeRows],
+            ['events' => $afterRows] + $this->labels->eventLinkRows($newId),
+            "Moved one occurrence of '" . (string) $source['title'] . "' to another calendar"
+        );
+        ChangeLog::record($this->db, (int) $created['calendar_id'], (string) $created['uid'], ChangeLog::OP_ADD);
     }
 
     private function patchThis(int $userId, array $master, array $in): void
@@ -973,7 +1126,7 @@ final class Events
         ChangeLog::record($this->db, (int) $master['calendar_id'], (string) $master['uid'], ChangeLog::OP_MODIFY);
     }
 
-    private function patchFollowing(int $userId, array $master, array $in): void
+    private function patchFollowing(int $userId, array $master, array $in): int
     {
         $instanceUtc = $this->requireInstance($in, $master);
         $masterId = (int) $master['id'];
@@ -1020,6 +1173,7 @@ final class Events
         );
         ChangeLog::record($this->db, (int) $master['calendar_id'], (string) $master['uid'], ChangeLog::OP_MODIFY);
         ChangeLog::record($this->db, (int) $created['calendar_id'], (string) $created['uid'], ChangeLog::OP_ADD);
+        return $newId;
     }
 
     public function deleteEvent(int $userId, int $id, ?string $scope, ?string $instanceStart): void
@@ -1162,15 +1316,42 @@ final class Events
         ChangeLog::record($this->db, (int) $override['calendar_id'], (string) $override['uid'], ChangeLog::OP_MODIFY);
     }
 
-    public function setAttendance(int $userId, int $id, string $attendance): void
+    /**
+     * Attendance is per row, so on a series it needs a scope like any other
+     * change: 'this' gives the occurrence a row of its own (an override that
+     * differs only in attendance, so the feed or Google series keeps syncing
+     * around it; Feeds::sync leaves a person's own overrides alone),
+     * 'following' splits the series there, 'all' (or no scope) sets the
+     * master and every override.
+     */
+    public function setAttendance(int $userId, int $id, string $attendance, ?string $scope = null, ?string $instanceStart = null): void
     {
         if (!in_array($attendance, self::ATTENDANCE, true)) {
             throw HttpError::badRequest('attendance must be none|interested|going|hidden');
         }
         $event = $this->get($userId, $id);
-        $this->db->update('events', ['attendance' => $attendance], 'id = ?', [$id]);
-        $after = $this->get($userId, $id);
-        $this->undo->record($userId, 'event', $id, 'update', ['events' => [$event]], ['events' => [$after]]);
+        $isMaster = !empty($event['rrule']) && empty($event['recurrence_parent_id']);
+        $targetId = $id;
+        if ($isMaster && $scope === 'this') {
+            $targetId = (int) $this->ensureOverride($userId, $event, $this->requireInstance(['instanceStart' => $instanceStart], $event))['id'];
+        } elseif ($isMaster && $scope === 'following') {
+            $targetId = $this->patchFollowing($userId, $event, ['instanceStart' => $instanceStart]);
+        }
+        $target = $this->get($userId, $targetId);
+        $beforeRows = [$target];
+        $this->db->tx(function () use ($targetId, $attendance, $isMaster, $scope, $id, &$beforeRows): void {
+            $this->db->update('events', ['attendance' => $attendance], 'id = ?', [$targetId]);
+            if ($isMaster && ($scope === null || $scope === 'all')) {
+                $overrides = $this->db->all('SELECT * FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$id]);
+                $beforeRows = array_merge($beforeRows, $overrides);
+                $this->db->run('UPDATE events SET attendance = ? WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$attendance, $id]);
+            }
+        });
+        $afterRows = [];
+        foreach ($beforeRows as $r) {
+            $afterRows[] = $this->db->one('SELECT * FROM events WHERE id = ?', [(int) $r['id']]);
+        }
+        $this->undo->record($userId, 'event', $targetId, 'update', ['events' => $beforeRows], ['events' => array_values(array_filter($afterRows))]);
         ChangeLog::record($this->db, (int) $event['calendar_id'], (string) $event['uid'], ChangeLog::OP_MODIFY);
 
         // Triage on feed events doubles as ranking training signal (PRD 5.8):

@@ -642,7 +642,7 @@ export function TimeGrid({
         hidePreview(previewRef);
         setDropRowHighlight(null);
         if (ext) {
-          if (ext.kind === 'cal' && onDropToCalendar) onDropToCalendar(occ, ext.id);
+          if (ext.kind === 'cal' && onDropToCalendar) onDropToCalendar(occ, ext.id, pt);
           else if (ext.kind === 'person' && onDropToPerson) onDropToPerson(occ, ext.name, pt);
           return;
         }

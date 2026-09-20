@@ -121,10 +121,16 @@ final class EventsController
 
     public function attendance(Request $req, array $params): Response
     {
+        $scope = $req->str('scope');
+        if ($scope !== null && !in_array($scope, ['this', 'following', 'all'], true)) {
+            throw HttpError::badRequest('scope must be this|following|all');
+        }
         $this->events->setAttendance(
             (int) $req->user['id'],
             (int) $params['id'],
-            (string) ($req->str('attendance') ?? '')
+            (string) ($req->str('attendance') ?? ''),
+            $scope,
+            $req->str('instanceStart')
         );
         return Response::json(['ok' => true]);
     }

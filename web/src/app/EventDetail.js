@@ -7,9 +7,9 @@
 import { html, useState, useRef, useMemo, useEffect } from '../../vendor/index.js';
 import { useStore, set, state, patchOccurrence } from './store.js';
 import { api, ensureFullOccurrence } from './api.js';
-import { deleteEvent, triageAttendance, sendFeedback, enterReschedule, sameDayList, openTripByEventId, rsvpEvent } from './actions.js';
+import { deleteEvent, triageAttendance, setAttendance, sendFeedback, enterReschedule, sameDayList, openTripByEventId, rsvpEvent } from './actions.js';
 import { CopyTo } from './CopyTo.js';
-import { DeleteScope } from './DeleteScope.js';
+import { DeleteScope, ScopeChoice } from './DeleteScope.js';
 import { TripDetail } from './Trips.js';
 import { trapFocus } from '../ui/DayExpand.js';
 import { ThumbIcon, CalDot, PinIcon, LinkIcon, Icon } from '../ui/icons.js';
@@ -248,6 +248,7 @@ export function EventDetail() {
   const detail = useStore((s) => s.detail);
   useStore((s) => s.occVersion);
   const deletePrompt = useStore((s) => s.deletePrompt);
+  const attendPrompt = useStore((s) => s.attendPrompt);
   const occ = detail ? state.occ.get(detail.instanceId) : null;
   const panelRef = useRef(null);
   const [geo, setGeo] = useState(null); // {status:'loading'|'ok'|'none', lat?, lng?}
@@ -378,6 +379,9 @@ export function EventDetail() {
       </div>
       ${copyOpen && html`<${CopyTo} occ=${occ} onDone=${() => setCopyOpen(false)} />`}
       ${deletePrompt === occ.instanceId && html`<${DeleteScope} occ=${occ} onDone=${() => set({ deletePrompt: null, detail: null })} onCancel=${() => set({ deletePrompt: null })} />`}
+      ${attendPrompt && attendPrompt.instanceId === occ.instanceId && html`<${ScopeChoice} occ=${occ} verb=${(attendPrompt.attendance === 'none' ? 'Clear ' + attendPrompt.label : attendPrompt.label) + ' for'}
+        onPick=${async (scope) => { const a = attendPrompt.attendance; set({ attendPrompt: null }); const r = await setAttendance(occ, a, scope); if (r === 'hidden') set({ detail: null }); }}
+        onCancel=${() => set({ attendPrompt: null })} />`}
       <div class="bc-detail-body">
         <div class="bc-detail-titlerow">
           <h2 class="bc-detail-title${occ.status === 'cancelled' ? ' is-cancelled' : ''}">
@@ -474,6 +478,7 @@ export function EventDetail() {
               class="bc-seg-btn${occ.attendance === value ? ' is-active' : ''}"
               aria-pressed=${occ.attendance === value}
               onClick=${async () => {
+                if (occ.recurring) { set({ attendPrompt: { instanceId: occ.instanceId, attendance: occ.attendance === value ? 'none' : value, label } }); return; }
                 const result = await triageAttendance(occ, value);
                 if (result === 'hidden') close();
               }}

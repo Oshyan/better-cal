@@ -259,13 +259,20 @@ final class Feeds
                 $this->db->run("DELETE FROM filter_evals WHERE event_id IN $in", $inParams);
             }
 
-            // Remove events that disappeared from the feed.
+            // Remove events that disappeared from the feed. A per-occurrence
+            // row the PERSON made on a series the feed still carries (going to
+            // this week's meetup, a reminder for one day) is theirs, not the
+            // feed's: it stays as long as its series does.
             foreach ($existingByKey as $key => $row) {
-                if (!isset($seen[$key])) {
-                    $this->db->run('DELETE FROM events WHERE id = ?', [(int) $row['id']]);
-                    $changedUids[(string) $row['uid']] = true;
-                    $removedCount++;
+                if (isset($seen[$key])) {
+                    continue;
                 }
+                if ($row['recurrence_parent_id'] !== null && (string) ($row['created_via'] ?? '') !== 'feed' && isset($seen[$row['uid'] . '|'])) {
+                    continue;
+                }
+                $this->db->run('DELETE FROM events WHERE id = ?', [(int) $row['id']]);
+                $changedUids[(string) $row['uid']] = true;
+                $removedCount++;
             }
         });
 

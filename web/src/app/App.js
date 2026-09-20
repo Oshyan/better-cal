@@ -393,7 +393,6 @@ export function App() {
       },
     });
   }, []);
-  const onDropToCalendar = useCallback((occ, calendarId) => { moveEventToCalendar(occ, calendarId); }, []);
   const onDropToTrip = useCallback((occ, tripOcc) => { attachToTrip(tripOcc, occ); }, []);
 
   // GCal-style scope chip for direct manipulation of repeating events: every
@@ -413,6 +412,11 @@ export function App() {
       },
     });
   }, []);
+
+  const onDropToCalendar = useCallback((occ, calendarId, at) => {
+    if (occ.recurring && at) { promptScopeAt(at, (scope) => moveEventToCalendar(occ, calendarId, scope)); return; }
+    moveEventToCalendar(occ, calendarId);
+  }, [promptScopeAt]);
 
   const onDropToPerson = useCallback((occ, name, at) => {
     if (occ.recurring && at) { promptScopeAt(at, (scope) => linkPersonToEvent(occ, name, scope)); return; }

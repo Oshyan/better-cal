@@ -71,6 +71,11 @@ export const handlers = {
   deleteEvent: () => {
     const occ = focusedOcc();
     if (!occ || isFeedOcc(occ)) return false;
+    if (occ.recurring) {
+      // Which occurrences is a decision (DeleteScope), asked on the open surface.
+      set({ deletePrompt: occ.instanceId });
+      return true;
+    }
     if (window.confirm('Delete "' + (occ.title || 'this event') + '"?')) {
       set({ detail: null });
       deleteEvent(occ);

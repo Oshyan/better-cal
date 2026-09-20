@@ -7,6 +7,7 @@ import { html, useState, useRef, useEffect } from '../../vendor/index.js';
 import { useStore, set, state } from './store.js';
 import { ensureFullOccurrence } from './api.js';
 import { CopyTo } from './CopyTo.js';
+import { DeleteScope } from './DeleteScope.js';
 import { prefetchMap } from './prefetch.js';
 import { Skeleton } from './PageShell.js';
 import { updateEvent, deleteEvent, triageAttendance, sendFeedback, enterReschedule, openDetail, sameDayList, openTripByEventId } from './actions.js';
@@ -55,6 +56,7 @@ function place(anchorRect) {
 export function EventPopover() {
   const popover = useStore((s) => s.popover);
   useStore((s) => s.occVersion);
+  const deletePrompt = useStore((s) => s.deletePrompt);
   const occ = popover ? state.occ.get(popover.instanceId) : null;
   const panelRef = useRef(null);
   const [editingTime, setEditingTime] = useState(false);
@@ -178,12 +180,13 @@ export function EventPopover() {
           <button type="button" class="bc-icon-btn" title="Open full details" aria-label="Open full details" onClick=${() => openDetail(occ.instanceId)}><${Icon} name="expand" size=${14} /></button>
           ${!isFeed && html`<button type="button" class="bc-icon-btn" title="Reschedule (r)" aria-label="Reschedule" onClick=${() => enterReschedule(occ.instanceId)}><${Icon} name="reschedule" size=${14} /></button>`}
           ${!isFeed && html`<button type="button" class="bc-icon-btn" title="Edit" aria-label="Edit" onClick=${() => set({ popover: null, editor: { mode: 'edit', occ } })}><${Icon} name="pencil" size=${14} /></button>`}
-          ${!isFeed && html`<button type="button" class="bc-icon-btn bc-pop-trash" title="Delete" aria-label="Delete" onClick=${() => deleteEvent(occ)}><${Icon} name="trash" size=${14} /></button>`}
+          ${!isFeed && html`<button type="button" class="bc-icon-btn bc-pop-trash" title="Delete" aria-label="Delete" onClick=${() => (occ.recurring ? set({ deletePrompt: occ.instanceId }) : deleteEvent(occ))}><${Icon} name="trash" size=${14} /></button>`}
           <button type="button" class=${'bc-icon-btn' + (copyOpen ? ' is-active' : '')} title="Copy to another calendar" aria-label="Copy to another calendar" aria-expanded=${copyOpen} onClick=${() => setCopyOpen(!copyOpen)}><${Icon} name="stack" size=${14} /></button>
           <button type="button" class="bc-icon-btn" aria-label="Close" onClick=${() => set({ popover: null })}><${Icon} name="close" size=${14} /></button>
         </span>
       </div>
       ${copyOpen && html`<${CopyTo} occ=${occ} compact onDone=${() => set({ popover: null })} />`}
+      ${deletePrompt === occ.instanceId && html`<${DeleteScope} occ=${occ} compact onDone=${() => set({ deletePrompt: null, popover: null })} onCancel=${() => set({ deletePrompt: null })} />`}
       ${occ.containers && occ.containers.length > 0 && html`<button
         type="button" class="bc-partof" title="Open this trip"
         onClick=${() => { set({ popover: null }); openTripByEventId(occ.containers[0].eventId); }}

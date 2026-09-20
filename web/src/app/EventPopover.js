@@ -58,6 +58,9 @@ export function EventPopover() {
   const occ = popover ? state.occ.get(popover.instanceId) : null;
   const panelRef = useRef(null);
   const [editingTime, setEditingTime] = useState(false);
+  // Hooks stay above the early return below: a hook after it would shift
+  // slots between renders and read another hook's state.
+  const [copyOpen, setCopyOpen] = useState(false);
 
   // Opens instantly from the cached occurrence; description, cadence and
   // reminders arrive a round trip later from the single-event record (#15).
@@ -113,7 +116,6 @@ export function EventPopover() {
   // Read-only content: a feed, a plugin calendar, a Google calendar the
   // account can only view. The server's `editable` is the word on it.
   const isFeed = cal ? !cal.editable : occ.source === 'feed';
-  const [copyOpen, setCopyOpen] = useState(false);
   const mobile = isMobile();
   const pos = !mobile && popover.anchorRect ? place(popover.anchorRect) : null;
 

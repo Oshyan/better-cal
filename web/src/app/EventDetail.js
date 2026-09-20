@@ -249,6 +249,7 @@ export function EventDetail() {
   const occ = detail ? state.occ.get(detail.instanceId) : null;
   const panelRef = useRef(null);
   const [geo, setGeo] = useState(null); // {status:'loading'|'ok'|'none', lat?, lng?}
+  const [copyOpen, setCopyOpen] = useState(false); // above the early returns: hook order
 
   // Description, cadence, reminders and timestamps ride the single-event
   // record, not the window (#15). Ask for it on open; it merges into the
@@ -336,7 +337,6 @@ export function EventDetail() {
 
   const cal = state.calendars.find((c) => c.id === occ.calendarId);
   const isFeed = cal ? !cal.editable : occ.source === 'feed';
-  const [copyOpen, setCopyOpen] = useState(false);
   const color = (cal && cal.color) || '#888';
 
   const s = occ.allDay ? dateOfDayKey(occ.start.slice(0, 10)) : parseISO(occ.start);

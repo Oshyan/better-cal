@@ -401,7 +401,7 @@ export function App() {
   const promptScopeAt = useCallback((at, cb, occ) => {
     set({
       dropChoice: {
-        x: at.x, y: at.y, title: occ && googleBacked(occ) ? 'Repeating event (goes to Google; no undo here)' : 'Repeating event',
+        x: at.x, y: at.y, title: occ && googleBacked(occ) ? "Repeating event (goes to Google; can't be undone)" : 'Repeating event',
         options: [
           { label: 'This event', value: 'this' },
           { label: 'This + following', value: 'following' },

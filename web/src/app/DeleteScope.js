@@ -32,7 +32,7 @@ export function DeleteScope({ occ, onDone, onCancel, compact }) {
     // Only reached for a Google event: everything else deletes at once with
     // Undo, but this one cannot be undone, so it is asked first.
     return html`<div class=${'bc-delscope' + (compact ? ' is-compact' : '')} role="group" aria-label="Confirm delete">
-      <span class="bc-delscope-q">Delete at Google? <span class="bc-delscope-note">No undo here.</span></span>
+      <span class="bc-delscope-q">Delete at Google? <span class="bc-delscope-note">Can't be undone.</span></span>
       <button type="button" class="bc-btn bc-btn-danger" onClick=${() => run(undefined)}>Delete</button>
       <button type="button" class="bc-link-btn" onClick=${onCancel}>Cancel</button>
     </div>`;

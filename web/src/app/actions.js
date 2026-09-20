@@ -221,7 +221,7 @@ export function googleBacked(occ) {
   const cal = state.calendars.find((c) => c.id === occ.calendarId);
   return !!(cal && cal.provider === 'google');
 }
-export const GOOGLE_NO_UNDO = 'Goes to Google; no undo here';
+export const GOOGLE_NO_UNDO = "Goes to Google; can't be undone";
 
 function scopeFields(occ, scope) {
   // Recurring edits from direct manipulation target this occurrence unless a

@@ -808,9 +808,23 @@ final class Events
         return $this->create($userId, $in);
     }
 
+    /**
+     * Does this patch move the event to another calendar? Editors send the
+     * whole form, calendar included, so a calendarId equal to the event's own
+     * is not a move and must not trip the move refusals (a time edit on a
+     * Google calendar once did).
+     */
+    public static function isCalendarChange(array $event, array $in): bool
+    {
+        return isset($in['calendarId']) && (int) $in['calendarId'] !== (int) $event['calendar_id'];
+    }
+
     public function patch(int $userId, int $id, array $in): void
     {
         $event = $this->get($userId, $id);
+        if (isset($in['calendarId']) && !self::isCalendarChange($event, $in)) {
+            unset($in['calendarId']);
+        }
         // Reminders are user-local metadata (like tags), so feed events accept
         // them even though their feed-derived content is read-only.
         $editKeys = array_diff(array_keys($in), ['scope', 'instanceStart', 'tagNames', 'reminders']);
@@ -818,7 +832,7 @@ final class Events
         if ($event['source'] === 'feed' && $editKeys !== [] && $google === null) {
             throw HttpError::forbidden('feed_readonly', 'Feed events are read-only except attendance, tags and reminders');
         }
-        if ($google !== null && isset($in['calendarId']) && (int) $in['calendarId'] !== (int) $event['calendar_id']) {
+        if ($google !== null && self::isCalendarChange($event, $in)) {
             throw HttpError::forbidden('google_move', 'Events on a Google calendar stay there; create it on the other calendar instead');
         }
         if ($google !== null && !empty($in['moveMembers'])) {

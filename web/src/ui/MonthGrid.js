@@ -29,7 +29,7 @@ import {
   monthStartsInRange, dominantMonthOfRows,
 } from './monthmath.js';
 import { assignLanes } from './layout.js';
-import { EventChip, EventBar, TripBand } from './EventChip.js';
+import { EventChip, EventBar, TripBand, HiddenMark } from './EventChip.js';
 import { Icon } from './icons.js';
 import { startPointerDrag, cloneAsGhost, externalDropTarget, setDropRowHighlight } from './DragController.js';
 import { normalizeDayRange, dayRangeDraft } from '../lib/quickcreate.js';
@@ -147,6 +147,7 @@ export function MonthGrid({
   onRequestWindow, onVisibleMonthChange, onOpenEvent, onExpandDay, onOpenDay,
   onCreateRange, onMoveEvent, onResizeEvent,
   onMoveSpan, onMoveTrip, onDropToCalendar, onDropToPerson, onDropToTrip,
+  hiddenDays, onShowHidden,
 }) {
   const scrollRef = useRef(null);
   const [viewH, setViewH] = useState(600);
@@ -601,6 +602,7 @@ export function MonthGrid({
       key=${wi} weekIndex=${wi} columns=${columns} ribbon=${ribbon}
       top=${weekTop(wi, minWeek, rowH)} rowH=${rowH}
       byDay=${idx.byDay} bars=${rowEntries(idx, 'bars', wi, columns)} bands=${rowEntries(idx, 'bands', wi, columns)} calendars=${calendars}
+      hiddenDays=${hiddenDays} onShowHidden=${onShowHidden}
       capacity=${capacity} chipRow=${chipRow} mobile=${mobile} todayKey=${tKey} dimSet=${dimSet} nowMs=${nowMs}
       sel=${sel}
       onOpenEvent=${onOpenEvent} onExpandDay=${onExpandDay} onOpenDay=${onOpenDay}
@@ -663,7 +665,7 @@ export function MonthGrid({
 function WeekRow({
   weekIndex, columns, ribbon, top, rowH, byDay, bars, bands, calendars, capacity, chipRow, mobile,
   todayKey: tKey, dimSet, nowMs, sel, onOpenEvent, onExpandDay, onOpenDay, dragMoveOcc, dragResizeOcc, dragCreate,
-  cellClickSelect, quickCreateDay,
+  cellClickSelect, quickCreateDay, hiddenDays, onShowHidden,
 }) {
   const keys = dayKeysOfRow(weekIndex, columns);
   // Week-of-year in the gutter (7-col rows only): taken from the row's
@@ -758,6 +760,7 @@ function WeekRow({
         onPointerDown=${(e) => e.stopPropagation()}
         onClick=${(e) => { e.stopPropagation(); if (onOpenDay) onOpenDay(k); else if (onExpandDay) onExpandDay(k); }}
       >${label}</button>
+      ${hiddenDays && hiddenDays.get(k) && html`<${HiddenMark} count=${hiddenDays.get(k)} onShow=${onShowHidden} />`}
       <button
         type="button" class="bc-cell-headstrip" aria-label=${'List events on ' + k}
         title="Show this day's events here"

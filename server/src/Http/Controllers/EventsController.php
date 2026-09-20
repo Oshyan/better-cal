@@ -59,6 +59,25 @@ final class EventsController
         return Response::json($occurrence, 201);
     }
 
+    /** POST /events/:id/copy {calendarId, scope?: this|all, instanceStart?} -> the new event's occurrence */
+    public function copy(Request $req, array $params): Response
+    {
+        $calendarId = (int) ($req->body['calendarId'] ?? 0);
+        if ($calendarId <= 0) {
+            throw HttpError::badRequest('calendarId is required');
+        }
+        $scope = (string) ($req->str('scope') ?? 'all');
+        if (!in_array($scope, ['this', 'all'], true)) {
+            throw HttpError::badRequest('scope must be this|all');
+        }
+        try {
+            $occurrence = $this->events->copyTo((int) $req->user['id'], (int) $params['id'], $calendarId, $scope, $req->str('instanceStart'));
+        } catch (\InvalidArgumentException $e) {
+            throw HttpError::badRequest($e->getMessage());
+        }
+        return Response::json($occurrence, 201);
+    }
+
     public function patch(Request $req, array $params): Response
     {
         try {

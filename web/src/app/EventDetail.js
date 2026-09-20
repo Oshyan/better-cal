@@ -8,6 +8,7 @@ import { html, useState, useRef, useMemo, useEffect } from '../../vendor/index.j
 import { useStore, set, state, patchOccurrence } from './store.js';
 import { api, ensureFullOccurrence } from './api.js';
 import { deleteEvent, triageAttendance, sendFeedback, enterReschedule, sameDayList, openTripByEventId, rsvpEvent } from './actions.js';
+import { CopyTo } from './CopyTo.js';
 import { TripDetail } from './Trips.js';
 import { trapFocus } from '../ui/DayExpand.js';
 import { ThumbIcon, CalDot, PinIcon, LinkIcon, Icon } from '../ui/icons.js';
@@ -335,6 +336,7 @@ export function EventDetail() {
 
   const cal = state.calendars.find((c) => c.id === occ.calendarId);
   const isFeed = cal ? !cal.editable : occ.source === 'feed';
+  const [copyOpen, setCopyOpen] = useState(false);
   const color = (cal && cal.color) || '#888';
 
   const s = occ.allDay ? dateOfDayKey(occ.start.slice(0, 10)) : parseISO(occ.start);
@@ -368,9 +370,11 @@ export function EventDetail() {
           ${!isFeed && html`<button type="button" class="bc-icon-btn" title="Reschedule (r)" aria-label="Reschedule" onClick=${() => enterReschedule(occ.instanceId)}><${Icon} name="reschedule" size=${15} /></button>`}
           ${!isFeed && html`<button type="button" class="bc-icon-btn" title="Edit (e)" aria-label="Edit" onClick=${() => set({ detail: null, editor: { mode: 'edit', occ } })}><${Icon} name="pencil" size=${15} /></button>`}
           ${!isFeed && html`<button type="button" class="bc-icon-btn bc-pop-trash" title="Delete" aria-label="Delete" onClick=${() => { set({ detail: null }); deleteEvent(occ); }}><${Icon} name="trash" size=${15} /></button>`}
+          <button type="button" class=${'bc-icon-btn' + (copyOpen ? ' is-active' : '')} title="Copy to another calendar" aria-label="Copy to another calendar" aria-expanded=${copyOpen} onClick=${() => setCopyOpen(!copyOpen)}><${Icon} name="stack" size=${15} /></button>
           <button type="button" class="bc-icon-btn" aria-label="Close" onClick=${close}><${Icon} name="close" size=${15} /></button>
         </span>
       </div>
+      ${copyOpen && html`<${CopyTo} occ=${occ} onDone=${() => setCopyOpen(false)} />`}
       <div class="bc-detail-body">
         <div class="bc-detail-titlerow">
           <h2 class="bc-detail-title${occ.status === 'cancelled' ? ' is-cancelled' : ''}">

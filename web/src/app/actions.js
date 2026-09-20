@@ -379,6 +379,24 @@ export async function deleteEvent(occ, scope) {
   }
 }
 
+// Copy an event (or one occurrence of a series) onto another calendar as a
+// new event; the original stays. Returns true when it worked.
+export async function copyEventTo(occ, calendarId, scope) {
+  const cal = state.calendars.find((c) => c.id === calendarId);
+  if (!cal || !cal.editable) return false;
+  try {
+    const body = { calendarId, scope: occ.recurring ? (scope || 'all') : 'all' };
+    if (occ.recurring && body.scope === 'this') body.instanceStart = occ.start;
+    const created = await api('/events/' + occ.eventId + '/copy', { method: 'POST', body });
+    toast('Copied "' + (created.title || occ.title) + '" to ' + cal.name + (cal.provider === 'google' ? ' (and Google)' : ''), { duration: 4000 });
+    refreshWindow();
+    return true;
+  } catch (e) {
+    toast('Copy failed: ' + e.message, { error: true });
+    return false;
+  }
+}
+
 const ATTENDANCE_CYCLE = ['none', 'interested', 'going', 'hidden'];
 const ATTENDANCE_TOASTS = {
   none: 'Attendance cleared',

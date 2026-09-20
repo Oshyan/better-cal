@@ -630,6 +630,10 @@ final class Events
             'all_day' => $allDay ? 1 : 0,
             'tzid' => $tzid,
             'rrule' => $rrule,
+            // Only a copy of a series carries these in; the editor never sends them.
+            'exdates_json' => $rrule !== null && !empty($in['exdates']) && is_array($in['exdates'])
+                ? json_encode(array_values(array_filter(array_map('strval', $in['exdates']), static fn(string $d): bool => preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $d) === 1)))
+                : null,
             'is_container' => filter_var($in['isContainer'] ?? false, FILTER_VALIDATE_BOOL) ? 1 : 0,
             'reminders_json' => array_key_exists('reminders', $in)
                 ? self::encodeReminders(Reminders::validateEventReminders($in['reminders']))
@@ -658,6 +662,73 @@ final class Events
         $this->undo->record($userId, 'event', $id, 'create', null, ['events' => [$created]] + $this->labels->eventLinkRows($id));
         ChangeLog::record($this->db, (int) $created['calendar_id'], (string) $created['uid'], ChangeLog::OP_ADD);
         return $this->serializeSingle($created);
+    }
+
+    /**
+     * Copy an event, or one occurrence of a series, onto another calendar as
+     * a new event: same content, recurrence (whole series, with its skipped
+     * dates), tags, people, reminders and coordinates; a fresh identity, and
+     * no Google event link (that pointed at the original). Goes through
+     * create(), so a target on a writable Google calendar is written through
+     * and a target that cannot take events is refused the same way. This is
+     * also how something crosses the Google boundary: copy, then delete the
+     * original if a move was meant.
+     */
+    public function copyTo(int $userId, int $id, int $targetCalendarId, string $scope = 'all', ?string $instanceStart = null): array
+    {
+        $event = $this->get($userId, $id);
+        if ($targetCalendarId === (int) $event['calendar_id']) {
+            throw HttpError::badRequest('That is the calendar it is already on');
+        }
+        $source = $event;
+        $series = !empty($event['rrule']) && empty($event['recurrence_parent_id']);
+        if ($series && $scope === 'this') {
+            // One occurrence becomes a plain event: the override for that day
+            // if there is one, else the master's content at the instance time.
+            $instanceUtc = $this->requireInstance(['instanceStart' => $instanceStart], $event);
+            $override = $this->db->one(
+                'SELECT * FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc = ? AND deleted_at IS NULL',
+                [(int) $event['id'], $instanceUtc]
+            );
+            if ($override !== null) {
+                $source = $override;
+            } else {
+                $duration = Recurrence::durationSeconds($event);
+                $source['start_utc'] = $instanceUtc;
+                $source['end_utc'] = Time::toDb(Time::fromDb($instanceUtc)->add(new \DateInterval('PT' . $duration . 'S')));
+            }
+            $series = false;
+        }
+        $links = $this->labels->forEvents([(int) $source['id']]);
+        $personIds = array_map(static fn(array $r): int => (int) $r['person_id'], $this->db->all('SELECT person_id FROM event_people WHERE event_id = ?', [(int) $source['id']]));
+        $tzid = (string) $source['tzid'];
+        $in = [
+            'calendarId' => $targetCalendarId,
+            'title' => (string) $source['title'],
+            'description' => $source['description'],
+            'location' => $source['location'],
+            'locationLat' => $source['location_lat'],
+            'locationLng' => $source['location_lng'],
+            'start' => Time::dbToIso((string) $source['start_utc'], $tzid),
+            'end' => Time::dbToIso((string) $source['end_utc'], $tzid),
+            'allDay' => (int) $source['all_day'] === 1,
+            'tzid' => $tzid,
+            'status' => (string) $source['status'],
+            'tagNames' => $links['tags'][(int) $source['id']] ?? [],
+            'personIds' => $personIds,
+        ];
+        $reminders = Reminders::decode($source['reminders_json'] ?? null);
+        if ($reminders !== null) {
+            $in['reminders'] = $reminders;
+        }
+        if ($series) {
+            $in['rrule'] = (string) $event['rrule'];
+            $in['exdates'] = $this->decodeExdates($event);
+        }
+        if ($event['source'] === 'local' && !empty($source['url'])) {
+            $in['url'] = (string) $source['url'];
+        }
+        return $this->create($userId, $in);
     }
 
     public function patch(int $userId, int $id, array $in): void

@@ -132,6 +132,7 @@ function bc_handle_api(Request $request, array $cfg): void
         $router->add('POST', "$base/events", [$eventsController, 'create']);
         $router->add('PATCH', "$base/events/:id", [$eventsController, 'patch']);
         $router->add('DELETE', "$base/events/:id", [$eventsController, 'delete']);
+        $router->add('POST', "$base/events/:id/copy", [$eventsController, 'copy']);
         $router->add('GET', "$base/events/:id/links", [$eventsController, 'links']);
         $router->add('POST', "$base/events/:id/links", [$eventsController, 'attachLink']);
         $router->add('DELETE', "$base/events/:id/links/:eventId", [$eventsController, 'detachLink']);

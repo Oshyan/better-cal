@@ -55,7 +55,7 @@ On an **Opportunities** calendar the relationship is a private mark on your copy
 
 ## The Show filter
 
-The toolbar has one menu, **Show: all** by default, with a checkbox per relationship. Any combination works and applies to every view. The button reads as the current state ("Show: no context", "Show: planned only", "Show: planned + maybe") and tints when a filter is on. The choice is remembered per browser.
+The toolbar has one menu, **Show: all** by default, with a checkbox per relationship. Any combination works and applies to every view. The button reads as the current state ("Show: no context", "Show: planned only", "Show: planned + maybe") and tints when a filter is on. The choice is remembered per browser, and a saved view captures it along with the text filter and visible calendars, so "only planned, work calendars" can be one saved mode.
 
 Hotkeys toggle each kind: **p** planned, **m** maybe, **a** available, **x** context. The command palette has the same four plus "Show only planned" and "Show all".
 

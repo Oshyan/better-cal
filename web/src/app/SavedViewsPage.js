@@ -4,6 +4,8 @@
 import { html, useState } from '../../vendor/index.js';
 import { useStore, set } from './store.js';
 import { applySavedView, updateSavedView, deleteSavedView } from './actions.js';
+import { relFilterLabel } from './Toolbar.js';
+import { showRelFromConfig } from '../lib/relfilter.js';
 import { PageShell, EmptyState } from './PageShell.js';
 
 const VIEW_TYPE_LABELS = {
@@ -32,12 +34,14 @@ export function SavedViewsPage() {
       parts.push(c.visibleCalendarIds.length + ' calendar' + (c.visibleCalendarIds.length === 1 ? '' : 's'));
     }
     if (c.filterText) parts.push('filter "' + c.filterText + '"');
+    // The Show filter, in the same words the toolbar button uses.
+    if (Array.isArray(c.hideRel) && c.hideRel.length > 0) parts.push(relFilterLabel(showRelFromConfig(c)).toLowerCase());
     return parts;
   };
 
   return html`<${PageShell}
     title="Saved views"
-    note="A saved view captures view type, visible calendars, folder collapse and filter text."
+    note="A saved view captures view type, visible calendars, folder collapse, filter text and the Show filter."
   >
     ${savedViews.length === 0 && html`<${EmptyState}
       text="No saved views yet. Set up the calendar the way you like, then use the views menu in the toolbar to save it as a reusable mode."

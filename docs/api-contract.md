@@ -156,7 +156,7 @@ User preferences stored in `users.settings_json`. The server stores and validate
 | `mapStyle` | `streets-v2`\|`dataviz`\|`outdoor-v2`\|`bright-v2` | `streets-v2` | MapTiler raster style for the event detail mini-map; only used when the server has `BETTERCAL_MAPTILER_KEY` configured (see `GET /config`) |
 
 ## Saved views
-Named snapshots of client view state; `config` is client-defined: `{viewType, visibleCalendarIds, folderCollapse, filterText, anchor:"today"|dayKey}`.
+Named snapshots of client view state; `config` is client-defined: `{viewType, visibleCalendarIds, folderCollapse, filterText, hideRel, anchor:"today"|dayKey}`. `hideRel` lists the relationships the Show filter switches off (`planned|maybe|available|context`); absent or empty means show all.
 - `GET /views` → `{views:[{id, name, config, position}]}`.
 - `POST /views` `{name, config}` → view (201).
 - `PATCH /views/:id` `{name?, config?, position?}` → view.

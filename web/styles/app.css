@@ -1060,6 +1060,11 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-pop-iconrow .bc-icon-btn { padding: 3px 5px; color: var(--fg-muted); }
 .bc-pop-iconrow .bc-icon-btn:hover { color: var(--fg); }
 .bc-pop-iconrow .bc-pop-trash:hover { color: var(--danger, #c33); }
+.bc-pop-iconrow .bc-icon-btn.is-active { background: var(--bg-inset); color: var(--fg); }
+.bc-copyto { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 6px 12px 2px; }
+.bc-copyto.is-compact { padding: 4px 12px 0; }
+.bc-copyto select { max-width: 220px; }
+.bc-copyto-note { color: var(--fg-muted); font-size: 12px; }
 .bc-pop-recur { color: var(--fg-muted); font-size: 12px; margin-left: 8px; }
 .bc-pop-rem { display: flex; align-items: center; gap: 5px; color: var(--fg-muted); font-size: 12.5px; }
 .bc-pop-calline { display: flex; align-items: center; gap: 5px; color: var(--fg-muted); font-size: 12.5px; }

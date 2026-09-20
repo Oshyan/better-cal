@@ -18,7 +18,7 @@
 // could start, which on a 450 ms link was nine seconds of a blank page.
 
 // @generated-shell:start (scripts/gen-preload.mjs)
-const VERSION = 'bc-4aa157315a0b';
+const VERSION = 'bc-59549bd7ed17';
 const SHELL = [
   '/',
   '/assets/styles/app.css',
@@ -86,6 +86,7 @@ const SHELL = [
   '/assets/src/ui/trips.js',
   '/assets/src/lib/since.js',
   '/assets/src/lib/maps.js',
+  '/assets/src/app/CopyTo.js',
   '/assets/src/app/Trips.js',
   '/assets/src/ui/icons.js',
   '/assets/src/ui/EventChip.js',

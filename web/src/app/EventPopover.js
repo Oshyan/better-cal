@@ -6,6 +6,7 @@
 import { html, useState, useRef, useEffect } from '../../vendor/index.js';
 import { useStore, set, state } from './store.js';
 import { ensureFullOccurrence } from './api.js';
+import { CopyTo } from './CopyTo.js';
 import { prefetchMap } from './prefetch.js';
 import { Skeleton } from './PageShell.js';
 import { updateEvent, deleteEvent, triageAttendance, sendFeedback, enterReschedule, openDetail, sameDayList, openTripByEventId } from './actions.js';
@@ -112,6 +113,7 @@ export function EventPopover() {
   // Read-only content: a feed, a plugin calendar, a Google calendar the
   // account can only view. The server's `editable` is the word on it.
   const isFeed = cal ? !cal.editable : occ.source === 'feed';
+  const [copyOpen, setCopyOpen] = useState(false);
   const mobile = isMobile();
   const pos = !mobile && popover.anchorRect ? place(popover.anchorRect) : null;
 
@@ -175,9 +177,11 @@ export function EventPopover() {
           ${!isFeed && html`<button type="button" class="bc-icon-btn" title="Reschedule (r)" aria-label="Reschedule" onClick=${() => enterReschedule(occ.instanceId)}><${Icon} name="reschedule" size=${14} /></button>`}
           ${!isFeed && html`<button type="button" class="bc-icon-btn" title="Edit" aria-label="Edit" onClick=${() => set({ popover: null, editor: { mode: 'edit', occ } })}><${Icon} name="pencil" size=${14} /></button>`}
           ${!isFeed && html`<button type="button" class="bc-icon-btn bc-pop-trash" title="Delete" aria-label="Delete" onClick=${() => deleteEvent(occ)}><${Icon} name="trash" size=${14} /></button>`}
+          <button type="button" class=${'bc-icon-btn' + (copyOpen ? ' is-active' : '')} title="Copy to another calendar" aria-label="Copy to another calendar" aria-expanded=${copyOpen} onClick=${() => setCopyOpen(!copyOpen)}><${Icon} name="stack" size=${14} /></button>
           <button type="button" class="bc-icon-btn" aria-label="Close" onClick=${() => set({ popover: null })}><${Icon} name="close" size=${14} /></button>
         </span>
       </div>
+      ${copyOpen && html`<${CopyTo} occ=${occ} compact onDone=${() => set({ popover: null })} />`}
       ${occ.containers && occ.containers.length > 0 && html`<button
         type="button" class="bc-partof" title="Open this trip"
         onClick=${() => { set({ popover: null }); openTripByEventId(occ.containers[0].eventId); }}

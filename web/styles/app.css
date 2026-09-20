@@ -1065,6 +1065,7 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-delscope.is-compact { padding: 4px 12px 0; }
 .bc-delscope-q { font-size: 12.5px; color: var(--fg-muted); flex-basis: 100%; }
 .bc-delscope-series { color: var(--fg); }
+.bc-delscope-note { color: var(--warn-strong); }
 .bc-copyto { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 6px 12px 2px; }
 .bc-copyto.is-compact { padding: 4px 12px 0; }
 .bc-copyto select { max-width: 220px; }

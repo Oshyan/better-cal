@@ -7,7 +7,7 @@
 import { html, useState, useRef, useMemo, useEffect } from '../../vendor/index.js';
 import { useStore, set, state, patchOccurrence } from './store.js';
 import { api, ensureFullOccurrence } from './api.js';
-import { deleteEvent, triageAttendance, setAttendance, sendFeedback, enterReschedule, sameDayList, openTripByEventId, rsvpEvent } from './actions.js';
+import { deleteEvent, triageAttendance, setAttendance, sendFeedback, enterReschedule, sameDayList, openTripByEventId, rsvpEvent, googleBacked } from './actions.js';
 import { CopyTo } from './CopyTo.js';
 import { DeleteScope, ScopeChoice } from './DeleteScope.js';
 import { TripDetail } from './Trips.js';
@@ -372,7 +372,7 @@ export function EventDetail() {
         <span class="bc-pop-iconrow" role="group" aria-label="Event actions">
           ${!isFeed && html`<button type="button" class="bc-icon-btn" title="Reschedule (r)" aria-label="Reschedule" onClick=${() => enterReschedule(occ.instanceId)}><${Icon} name="reschedule" size=${15} /></button>`}
           ${!isFeed && html`<button type="button" class="bc-icon-btn" title="Edit (e)" aria-label="Edit" onClick=${() => set({ detail: null, editor: { mode: 'edit', occ } })}><${Icon} name="pencil" size=${15} /></button>`}
-          ${!isFeed && html`<button type="button" class="bc-icon-btn bc-pop-trash" title="Delete" aria-label="Delete" onClick=${() => (occ.recurring ? set({ deletePrompt: occ.instanceId }) : (set({ detail: null }), deleteEvent(occ)))}><${Icon} name="trash" size=${15} /></button>`}
+          ${!isFeed && html`<button type="button" class="bc-icon-btn bc-pop-trash" title="Delete" aria-label="Delete" onClick=${() => (occ.recurring || googleBacked(occ) ? set({ deletePrompt: occ.instanceId }) : (set({ detail: null }), deleteEvent(occ)))}><${Icon} name="trash" size=${15} /></button>`}
           <button type="button" class=${'bc-icon-btn' + (copyOpen ? ' is-active' : '')} title="Copy to another calendar" aria-label="Copy to another calendar" aria-expanded=${copyOpen} onClick=${() => setCopyOpen(!copyOpen)}><${Icon} name="stack" size=${15} /></button>
           <button type="button" class="bc-icon-btn" aria-label="Close" onClick=${close}><${Icon} name="close" size=${15} /></button>
         </span>
@@ -472,7 +472,7 @@ export function EventDetail() {
         </div>`}
         ${isFeed && html`<div class="bc-detail-actions">
           ${occ.url && html`<a class="bc-btn bc-detail-openlink" href=${occ.url} target="_blank" rel="noopener noreferrer">Open original link <${Icon} name="arrowUpRight" size=${11} /></a>`}
-          <div class="bc-seg" role="group" aria-label="Attendance">
+          <div class="bc-seg" role="group" aria-label="Attendance" title="Your own note on this event; nobody is notified">
             ${[['interested', 'Interested'], ['going', 'Going'], ['hidden', 'Hide']].map(([value, label]) => html`<button
               key=${value} type="button"
               class="bc-seg-btn${occ.attendance === value ? ' is-active' : ''}"

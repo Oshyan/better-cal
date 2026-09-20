@@ -132,7 +132,7 @@ export function closeOverlays() {
     // come back at the next boot (drafts.js restores whatever is still saved).
     if (state.quickAddOpen) clearQuickAddText();
     set({
-      popover: null, detail: null, groupPopover: null, editor: null, expandedDay: null,
+      popover: null, detail: null, groupPopover: null, editor: null, expandedDay: null, deletePrompt: null,
       searchOpen: false, quickAddOpen: false, jumpOpen: false, shortcutsOpen: false,
       editorDirty: false, createDrawer: null,
     });

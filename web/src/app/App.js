@@ -522,11 +522,17 @@ export function App() {
     return { year: y, month: m };
   }, [resched]);
 
-  const onReschedMove = useCallback(({ instanceId, newStart, newEnd, targetKey }) => {
+  const onReschedMove = useCallback(({ instanceId, newStart, newEnd, targetKey, x, y }) => {
     exitReschedule();
-    moveEvent({ instanceId, newStart, newEnd });
-    jumpToDate(targetKey, instanceId); // return the view to where the event now is
-  }, []);
+    const occ = state.occ.get(instanceId);
+    const land = (scope) => {
+      moveEvent({ instanceId, newStart, newEnd, scope });
+      jumpToDate(targetKey, instanceId); // return the view to where the event now is
+    };
+    // A series asks which occurrences, at the confirm chip, like a grid drop.
+    if (occ && occ.recurring && x != null) { promptScopeAt({ x, y }, land); return; }
+    land(undefined);
+  }, [promptScopeAt]);
   const onJumpMonth = useCallback((firstKey) => jumpToDate(firstKey), []);
 
   if (!s.booted) {

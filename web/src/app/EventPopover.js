@@ -7,7 +7,7 @@ import { html, useState, useRef, useEffect } from '../../vendor/index.js';
 import { useStore, set, state } from './store.js';
 import { ensureFullOccurrence } from './api.js';
 import { CopyTo } from './CopyTo.js';
-import { DeleteScope } from './DeleteScope.js';
+import { DeleteScope, ScopeChoice } from './DeleteScope.js';
 import { prefetchMap } from './prefetch.js';
 import { Skeleton } from './PageShell.js';
 import { updateEvent, deleteEvent, triageAttendance, sendFeedback, enterReschedule, openDetail, sameDayList, openTripByEventId } from './actions.js';
@@ -63,6 +63,7 @@ export function EventPopover() {
   // Hooks stay above the early return below: a hook after it would shift
   // slots between renders and read another hook's state.
   const [copyOpen, setCopyOpen] = useState(false);
+  const [timeScope, setTimeScope] = useState(null); // {start, end} awaiting a scope for a series
 
   // Opens instantly from the cached occurrence; description, cadence and
   // reminders arrive a round trip later from the single-event record (#15).
@@ -143,7 +144,10 @@ export function EventPopover() {
     const e = fromInputValue(endVal);
     if (isNaN(s) || isNaN(e) || e <= s) return;
     setEditingTime(false);
-    await updateEvent(occ, { start: toISOWithOffset(s), end: toISOWithOffset(e) });
+    const fields = { start: toISOWithOffset(s), end: toISOWithOffset(e) };
+    // A series asks which occurrences the new time is for (ScopeChoice below).
+    if (occ.recurring) { setTimeScope(fields); return; }
+    await updateEvent(occ, fields);
   };
 
   // All-day occurrences carry literal dates at +00:00; anchor them to local
@@ -187,6 +191,7 @@ export function EventPopover() {
       </div>
       ${copyOpen && html`<${CopyTo} occ=${occ} compact onDone=${() => set({ popover: null })} />`}
       ${deletePrompt === occ.instanceId && html`<${DeleteScope} occ=${occ} compact onDone=${() => set({ deletePrompt: null, popover: null })} onCancel=${() => set({ deletePrompt: null })} />`}
+      ${timeScope && html`<${ScopeChoice} occ=${occ} verb="New time for" compact onPick=${(scope) => { const f = timeScope; setTimeScope(null); updateEvent(occ, f, scope); }} onCancel=${() => setTimeScope(null)} />`}
       ${occ.containers && occ.containers.length > 0 && html`<button
         type="button" class="bc-partof" title="Open this trip"
         onClick=${() => { set({ popover: null }); openTripByEventId(occ.containers[0].eventId); }}

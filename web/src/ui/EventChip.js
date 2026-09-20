@@ -85,6 +85,19 @@ export function NewPill() {
   return html`<span class="bc-new-pill" aria-label="recently added">new</span>`;
 }
 
+// A day where the kind filter hid something (App.js hiddenDays): a small
+// hollow ring after the day number in every view, named for the reader, and
+// where the header allows a click, one click shows every kind again.
+export function HiddenMark({ count, onShow }) {
+  const label = count + (count === 1 ? ' event' : ' events') + ' hidden by the kind filter' + (onShow ? '. Click to show every kind.' : '');
+  if (!onShow) return html`<span class="bc-hidden-mark" role="img" aria-label=${label} title=${label}></span>`;
+  return html`<button
+    type="button" class="bc-hidden-mark" aria-label=${label} title=${label}
+    onPointerDown=${(e) => e.stopPropagation()}
+    onClick=${(e) => { e.stopPropagation(); onShow(); }}
+  ></button>`;
+}
+
 // Small stack glyph marking a near-duplicate group chip.
 function StackGlyph() {
   return html`<span class="bc-stack-glyph" aria-hidden="true"><${Icon} name="stack" size=${11} /></span>`;
@@ -135,7 +148,9 @@ export function EventChip({ occ, cal, dimmed, nowMs, showTime = true, seg = null
     onDblClick=${onDblClick}
     title=${chipTitle(occ)}
   >
-    <span class="bc-chip-dot" style=${`background:${color}`}></span>
+    ${occ.relationship === 'context'
+      ? html`<span class="bc-ctx-glyph" style=${`border-color:${color}`}></span>`
+      : html`<span class="bc-chip-dot" style=${`background:${color}`}></span>`}
     ${timed && html`<span class="bc-chip-time">${fmtTime(parseISO(occ.start))}</span>`}
     ${occ.isGroup && html`<${StackGlyph} />`}
     <span class="bc-chip-title">${occ.title || '(untitled)'}${occ.isGroup ? ` · ${occ.count}` : ''}</span>
@@ -179,6 +194,7 @@ export function EventBar({ occ, cal, seg, dimmed, nowMs, onOpen, onPointerDown, 
   >
     ${!seg.contLeft && edges && html`<span class="bc-bar-handle l" onPointerDown=${(e) => edges('start', e)}></span>`}
     ${!seg.contLeft && occ.isGroup && html`<${StackGlyph} />`}
+    ${!seg.contLeft && occ.relationship === 'context' && html`<span class="bc-ctx-glyph"></span>`}
     <span class="bc-chip-title">${occ.title || '(untitled)'}${occ.isGroup ? ` · ${occ.count}` : ''}</span>
     <${DurationSuffix} occ=${occ} />
     ${occ.isNew && !occ.isGroup && !seg.contLeft && html`<${NewPill} />`}
@@ -227,6 +243,7 @@ export function EventBlock({ occ, cal, rect, dimmed, nowMs, onOpen, onPointerDow
     ${edges && html`<span class="bc-block-handle t" onPointerDown=${(ev) => edges('start', ev)}></span>`}
     <span class="bc-block-line">
       ${occ.isGroup && html`<${StackGlyph} />`}
+      ${occ.relationship === 'context' && html`<span class="bc-ctx-glyph"></span>`}
       <span class="bc-chip-title">${occ.title || '(untitled)'}${occ.isGroup ? ` · ${occ.count}` : ''}</span>
       <${DurationSuffix} occ=${occ} />
       ${occ.isNew && !occ.isGroup && html`<${NewPill} />`}

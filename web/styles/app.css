@@ -701,22 +701,40 @@ div.bc-duration-exact { display: flex; align-items: center; gap: 10px; flex-wrap
 .bc-chip.is-available .bc-chip-title { color: var(--fg-muted); }
 .bc-chip.is-available .bc-chip-dot { opacity: 0.55; }
 :is(.bc-bar, .bc-block).is-available { opacity: 0.72; }
-.bc-chip.is-context { font-size: 10.5px; opacity: 0.85; }
+/* Context is information, not a plan: it recedes exactly as the past does
+   (one "not in play" treatment, not two near-misses), reads in italic, and
+   its anchor is a different shape from an event's dot: a hollow rounded
+   square in the calendar's colour. Hover restores, as for the past. */
+:is(.bc-chip, .bc-bar, .bc-block).is-context { opacity: 0.55; filter: saturate(0.5); transition: opacity 0.12s ease, filter 0.12s ease; }
+:is(.bc-chip, .bc-bar, .bc-block).is-context:hover,
+:is(.bc-chip, .bc-bar, .bc-block).is-context:focus-visible { opacity: 1; filter: none; }
+:is(.bc-chip, .bc-bar, .bc-block).is-context .bc-chip-title { font-style: italic; }
 .bc-chip.is-context .bc-chip-title { color: var(--fg-muted); }
-.bc-chip.is-context .bc-chip-dot { width: 5px; height: 5px; opacity: 0.6; }
-.bc-chip.is-context .bc-chip-time { font-size: 10px; }
-:is(.bc-bar, .bc-block).is-context { opacity: 0.55; }
+.bc-ctx-glyph { width: 8px; height: 8px; border-radius: 2px; border: 1.5px solid currentColor; box-sizing: border-box; flex: none; opacity: 0.9; }
+:is(.bc-bar, .bc-block) .bc-ctx-glyph { margin-right: 4px; }
+.bc-block .bc-ctx-glyph { display: inline-block; vertical-align: -1px; }
+/* A day where the kind filter hid something: a small hollow ring after the
+   day number (every view), named in its title; where it can be a button, a
+   click shows every kind again. */
+.bc-hidden-mark {
+  display: inline-block; width: 8px; height: 8px; border-radius: 50%; box-sizing: border-box;
+  border: 1.5px solid var(--fg-muted); background: none; padding: 0; margin-left: 3px;
+  vertical-align: middle; opacity: 0.75; cursor: help; position: relative; z-index: 2;
+}
+button.bc-hidden-mark { cursor: pointer; }
+.bc-hidden-mark:hover { border-color: var(--accent); opacity: 1; }
+.bc-tg-head-day .bc-hidden-mark { margin: 0; }
+.bc-agenda-day .bc-hidden-mark { margin-left: 6px; vertical-align: 1px; }
 .bc-rel { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; }
 .bc-rel-label { color: var(--fg-muted); }
 .bc-rel-select { font: inherit; padding: 2px 6px; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--bg-raised); color: var(--fg); }
 .bc-rel-select.is-maybe { border-style: dashed; }
 .bc-rel-select.is-planned { border-color: var(--accent); }
-.bc-relfilter { display: inline-flex; border: 1px solid var(--border-strong); border-radius: 6px; overflow: hidden; margin-right: 6px; }
-.bc-relfilter-btn { background: var(--bg-raised); border: none; border-right: 1px solid var(--border); padding: 3px 8px; font-size: 12px; color: var(--fg-muted); cursor: pointer; }
-.bc-relfilter-btn:last-child { border-right: none; }
-.bc-relfilter-btn.is-on { color: var(--fg); background: color-mix(in srgb, var(--accent) 12%, var(--bg-raised)); }
-.bc-relfilter-btn.is-on.is-maybe { text-decoration: underline dashed; text-underline-offset: 3px; }
-.bc-relfilter-btn:hover { background: var(--bg-inset); color: var(--fg); }
+.bc-relfilter-btn.is-active { background: color-mix(in srgb, var(--accent) 12%, var(--bg-raised)); border-color: color-mix(in srgb, var(--accent) 45%, var(--border-strong)); color: var(--fg); }
+.bc-relfilter-drop { min-width: 168px; }
+.bc-relfilter-drop .bc-ov-item { gap: 8px; }
+.bc-ov-key { margin-left: auto; padding-left: 14px; font: inherit; font-size: 11px; color: var(--fg-muted); }
+.bc-ov-sep { height: 1px; background: var(--border); margin: 4px 2px; }
 @media (max-width: 900px) { .bc-relfilter { display: none; } }
 .is-cancelled .bc-chip-title, .bc-pop-title.is-cancelled { text-decoration: line-through; opacity: 0.75; }
 /* Dim treatment floor: desaturate + muted foreground instead of pure

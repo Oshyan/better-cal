@@ -18,7 +18,7 @@
 // could start, which on a 450 ms link was nine seconds of a blank page.
 
 // @generated-shell:start (scripts/gen-preload.mjs)
-const VERSION = 'bc-0eb5c1d806c9';
+const VERSION = 'bc-3eea45961dc9';
 const SHELL = [
   '/',
   '/assets/styles/app.css',
@@ -50,6 +50,7 @@ const SHELL = [
   '/assets/src/app/handoff.js',
   '/assets/vendor/preact.module.js',
   '/assets/vendor/htm.module.js',
+  '/assets/src/lib/relfilter.js',
   '/assets/src/ui/grouping.js',
   '/assets/src/lib/rank.js',
   '/assets/src/app/keyboard.js',

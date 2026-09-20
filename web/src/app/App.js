@@ -3,8 +3,9 @@
 import { html, useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback } from '../../vendor/index.js';
 import { useStore, set, state, calendarMeta, shallowEq, invalidateRecords } from './store.js';
 import { loadWindow, api, refreshWindow, loadPeople } from './api.js';
+import { hiddenDayCounts } from '../lib/relfilter.js';
 import {
-  moveEvent, resizeEvent, sendFeedback, exitReschedule, googleBacked, setRelationship,
+  moveEvent, resizeEvent, sendFeedback, exitReschedule, googleBacked, setRelationship, showAllRel,
   jumpToDate, openDetail, effectiveOverviewMode,
   moveAvailabilitySpan, moveTrip, moveEventToCalendar, linkPersonToEvent, attachToTrip,
   resizeAvailabilitySpanDays,
@@ -214,6 +215,14 @@ export function App() {
     const flags = {};
     for (const c of s.calendars) flags[c.id] = !!c.groupSimilar;
     return groupOccurrences(out, flags);
+  }, [s.occVersion, s.calendars, showRel]);
+  // Days where the kind filter hid something: every view marks them, so a
+  // filtered view never loses things silently (docs/relationships.md).
+  const hiddenDays = useMemo(() => {
+    const visible = new Set(s.calendars.filter((c) => c.visible).map((c) => c.id));
+    const occs = [];
+    for (const occ of state.occ.values()) if (visible.has(occ.calendarId)) occs.push(occ);
+    return hiddenDayCounts(occs, showRel);
   }, [s.occVersion, s.calendars, showRel]);
 
   // Availability bands: visible people's away/busy spans for a wide window
@@ -595,6 +604,7 @@ export function App() {
     view = html`<${MonthGrid}
       key=${'grid' + columns}
       occurrences=${occurrencesWithAvail}
+      hiddenDays=${hiddenDays} onShowHidden=${showAllRel}
       calendars=${calMeta}
       columns=${columns}
       visibleRows=${ribbon ? 5 : MONTH_ROWS[s.view]}
@@ -624,6 +634,7 @@ export function App() {
       key="week"
       infinite=${true}
       occurrences=${occurrences}
+      hiddenDays=${hiddenDays}
       calendars=${calMeta}
       dimSet=${dimSet}
       nowMs=${nowMs}
@@ -647,6 +658,7 @@ export function App() {
       vstack=${true}
       days=${[s.anchor]}
       occurrences=${occurrences}
+      hiddenDays=${hiddenDays}
       calendars=${calMeta}
       dimSet=${dimSet}
       nowMs=${nowMs}
@@ -694,6 +706,7 @@ export function App() {
       </div>
       <${AgendaList}
         occurrences=${agendaOccs}
+        hiddenDays=${hiddenDays} onShowHidden=${showAllRel}
         calendars=${calMeta}
         dimSet=${dimSet}
         nowMs=${nowMs}

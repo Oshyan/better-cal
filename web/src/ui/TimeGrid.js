@@ -22,7 +22,7 @@ import {
 } from '../lib/dates.js';
 import { layoutOverlaps, assignLanes } from './layout.js';
 import { occurrenceDaySpan, isWeekendEpochDay } from './monthmath.js';
-import { EventBlock, EventBar } from './EventChip.js';
+import { EventBlock, EventBar, HiddenMark } from './EventChip.js';
 import { Icon } from './icons.js';
 import { startPointerDrag, cloneAsGhost, externalDropTarget, setDropRowHighlight } from './DragController.js';
 import {
@@ -77,7 +77,7 @@ export function TimeGrid({
   infinite = false, vstack = false, scrollKey, scrollSeq = 0,
   onRequestWindow, onVisibleMonthChange, onVisibleDay,
   onCreateRange, onMoveEvent, onResizeEvent, onOpenEvent, onOpenDay, onExpandDay,
-  onDropToCalendar, onDropToPerson,
+  onDropToCalendar, onDropToPerson, hiddenDays,
 }) {
   const rootRef = useRef(null);
   const scrollRef = useRef(null);  // vertical time scroller
@@ -733,6 +733,7 @@ export function TimeGrid({
     >
       <span class="bc-tg-dow">${fmtWeekdayShort(d)}</span>
       <span class="bc-tg-dom">${d.getDate()}</span>
+      ${hiddenDays && hiddenDays.get(k) && html`<${HiddenMark} count=${hiddenDays.get(k)} />`}
       ${infinite && d.getDate() === 1 && html`<span class="bc-tg-month-tag">${fmtMonthShort(d)}</span>`}
     </button>`;
   });

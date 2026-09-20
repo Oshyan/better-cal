@@ -9,11 +9,10 @@
 
 import { html, useState, useRef, useEffect } from '../../vendor/index.js';
 import { useStore, set, shallowEq } from './store.js';
-import { setView, goToday, stepAnchor, setOverviewMode, effectiveOverviewMode } from './actions.js';
+import { setView, goToday, stepAnchor, setOverviewMode, effectiveOverviewMode, toggleRel, showOnlyRel, showAllRel } from './actions.js';
 import { fmtMonthYear, fmtDayLong, dateOfDayKey } from '../lib/dates.js';
 import { ViewSwitcher } from './ViewSwitcher.js';
 import { REL_LABEL, REL_ORDER } from './Relationship.js';
-import { toggleRel } from './actions.js';
 import { Icon } from '../ui/icons.js';
 import { JumpPopover } from './JumpPopover.js';
 
@@ -39,11 +38,8 @@ const STEP_UNITS = {
 };
 
 // Current-view dropdown, right-aligned so the label's width never moves it.
-function ViewMenu({ view, narrow }) {
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef(null);
-  const mode = effectiveOverviewMode();
-
+// A toolbar menu closes on a click outside it or Escape.
+function useDismiss(open, setOpen, rootRef) {
   useEffect(() => {
     if (!open) return undefined;
     const onDoc = (e) => {
@@ -59,6 +55,13 @@ function ViewMenu({ view, narrow }) {
       document.removeEventListener('keydown', onKey, true);
     };
   }, [open]);
+}
+
+function ViewMenu({ view, narrow }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef(null);
+  const mode = effectiveOverviewMode();
+  useDismiss(open, setOpen, rootRef);
 
   const items = narrow ? MOBILE_VIEWS : DESKTOP_VIEWS;
   const currentKey = narrow && view === 'month' ? 'month:' + mode : view;
@@ -90,23 +93,48 @@ function ViewMenu({ view, narrow }) {
   </div>`;
 }
 
-// Which relationships the views show: Planned, Maybe, Available, Context.
-// Toggles, not modes: any combination, applies to every view, remembered.
-// Hotkeys p / m / a / x; the palette has each plus "show only planned".
+// Which kinds of event the views show (docs/relationships.md): one menu of
+// checkboxes, any combination, applies to every view, remembered. The button
+// reads as the current state ("All kinds", "No context", "Only planned",
+// "Planned + Maybe") and tints when a filter is on, so what is hidden is
+// never a mystery. Hotkeys p / m / a / x toggle each; the palette has each
+// plus "show only planned" and "show every kind".
+const REL_KEY = { planned: 'p', maybe: 'm', available: 'a', context: 'x' };
+function relFilterLabel(showRel) {
+  const on = REL_ORDER.filter((k) => showRel[k] !== false);
+  const off = REL_ORDER.filter((k) => showRel[k] === false);
+  if (off.length === 0) return 'All kinds';
+  if (on.length === 0) return 'Nothing';
+  if (off.length === 1) return 'No ' + REL_LABEL[off[0]].toLowerCase();
+  if (on.length === 1) return 'Only ' + REL_LABEL[on[0]].toLowerCase();
+  return on.map((k) => REL_LABEL[k]).join(' + ');
+}
 function RelFilter() {
   const showRel = useStore((s) => s.showRel);
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef(null);
+  useDismiss(open, setOpen, rootRef);
   const all = REL_ORDER.every((k) => showRel[k] !== false);
-  return html`<div class=${'bc-relfilter' + (all ? ' is-all' : '')} role="group" aria-label="Show which kinds of event">
-    ${REL_ORDER.map((k) => html`<button
-      key=${k} type="button"
-      class=${'bc-relfilter-btn is-' + k + (showRel[k] === false ? '' : ' is-on')}
-      aria-pressed=${showRel[k] !== false}
-      title=${(showRel[k] === false ? 'Show ' : 'Hide ') + REL_LABEL[k].toLowerCase() + ' events (' + REL_KEY[k] + ')'}
-      onClick=${() => toggleRel(k)}
-    >${REL_LABEL[k]}</button>`)}
+  return html`<div class="bc-ov bc-relfilter" ref=${rootRef}>
+    <button
+      type="button" class=${'bc-btn bc-viewmenu-btn bc-relfilter-btn' + (all ? '' : ' is-active')}
+      aria-haspopup="menu" aria-expanded=${open}
+      title="Which kinds of event to show (p, m, a, x toggle each)"
+      onClick=${() => setOpen(!open)}
+    >${relFilterLabel(showRel)}<span class="bc-viewmenu-caret" aria-hidden="true"><${Icon} name="chevronDown" size=${11} /></span></button>
+    ${open && html`<div class="bc-ov-menu bc-relfilter-drop" role="menu" aria-label="Kinds of event to show">
+      ${REL_ORDER.map((k) => html`<button
+        key=${k} type="button" role="menuitemcheckbox"
+        aria-checked=${showRel[k] !== false}
+        class=${'bc-ov-item' + (showRel[k] !== false ? ' is-sel' : '')}
+        onClick=${() => toggleRel(k)}
+      ><span class="bc-ov-check" aria-hidden="true">${showRel[k] !== false ? html`<${Icon} name="check" size=${12} />` : ''}</span>${REL_LABEL[k]}<kbd class="bc-ov-key">${REL_KEY[k]}</kbd></button>`)}
+      <div class="bc-ov-sep" role="separator"></div>
+      <button type="button" role="menuitem" class="bc-ov-item" onClick=${() => showOnlyRel('planned')}><span class="bc-ov-check"></span>Only planned</button>
+      <button type="button" role="menuitem" class="bc-ov-item" disabled=${all} onClick=${() => showAllRel()}><span class="bc-ov-check"></span>All kinds</button>
+    </div>`}
   </div>`;
 }
-const REL_KEY = { planned: 'p', maybe: 'm', available: 'a', context: 'x' };
 
 export function Toolbar({ onToggleSidebar }) {
   const { view, anchor, visibleMonth, filterText, jumpOpen, narrow } = useStore(

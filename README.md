@@ -15,6 +15,7 @@ A self-hosted calendar built to fully replace Google Calendar: everything GCal d
 - [Installing](docs/install.md): requirements, steps, and web server setup for Nginx (tested) and Apache (untested)
 - [Architecture](docs/architecture.md)
 - [API contract](docs/api-contract.md) and [agent API](docs/agent-api.md)
+- [Calendar roles and event relationships](docs/relationships.md): planned, maybe, available, context; what a calendar is to you and what that makes its events
 - [CalDAV](docs/caldav.md)
 - [Email ingest](docs/email-ingest.md)
 - [Migration from Google Calendar](docs/migration.md)

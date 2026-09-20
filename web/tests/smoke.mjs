@@ -27,6 +27,7 @@ import {
   dragCreateMode, allDayRangeDraft,
 } from '../src/lib/quickcreate.js';
 import { HOTKEYS, HOTKEY_GROUPS } from '../src/app/hotkeys.js';
+import { hiddenDayCounts, relShown } from '../src/lib/relfilter.js';
 import {
   fmtOffsetMinutes, fmtReminder, allDayEntryToMinutes, entryToMinutes,
   normalizeMinutesList, effectiveReminders, toMinutes, fromMinutes,
@@ -1539,5 +1540,28 @@ console.log('--- chronological ordering across timezone offsets ---');
 }
 
 console.log('');
+
+// --- relationship filter: hidden-by-filter day counts ------------------------
+{
+  const showRel = { planned: true, maybe: true, available: false, context: false };
+  // Local wall-clock instants, so the suite reads the same in every zone it runs under.
+  const at = (d, h) => new Date(2026, 8, d, h).toISOString();
+  const occs = [
+    { instanceId: 'a', relationship: 'planned', allDay: false, start: at(21, 10), end: at(21, 11) },
+    { instanceId: 'b', relationship: 'available', allDay: false, start: at(21, 18), end: at(21, 19) },
+    { instanceId: 'c', relationship: 'context', allDay: true, start: '2026-09-22', end: '2026-09-24' },
+    { instanceId: 'd', relationship: 'context', allDay: false, start: at(25, 22), end: at(26, 0) },
+    { instanceId: 'e', relationship: 'hidden', allDay: false, start: at(27, 10), end: at(27, 11) },
+  ];
+  assert('relShown: kinds switched on pass', relShown(occs[0], showRel));
+  assert('relShown: kinds switched off do not', !relShown(occs[1], showRel));
+  assert('relShown: hidden-by-choice is not a filter matter', relShown(occs[4], showRel));
+  const counts = hiddenDayCounts(occs, showRel);
+  eq('hidden days: one timed available on the 21st', counts.get('2026-09-21'), 1);
+  eq('hidden days: all-day context covers 22 and 23, not the exclusive 24th', [counts.get('2026-09-22'), counts.get('2026-09-23'), counts.get('2026-09-24')], [1, 1, undefined]);
+  eq('hidden days: a timed end at midnight stays on its own day', [counts.get('2026-09-25'), counts.get('2026-09-26')], [1, undefined]);
+  eq('hidden days: nothing when every kind is on', hiddenDayCounts(occs, { planned: true, maybe: true, available: true, context: true }).size, 0);
+}
+
 console.log(passed + ' passed, ' + failed + ' failed');
 if (failed > 0) process.exit(1);

@@ -18,7 +18,7 @@ import {
   parseISO, fmtTime, dateOfDayKey, fmtDayLong, occDayKey, todayKey,
   timeState, addDaysKey, fmtDateShort,
 } from '../lib/dates.js';
-import { EventChip } from './EventChip.js';
+import { EventChip, HiddenMark } from './EventChip.js';
 import { ThumbIcon, TripBadge, PinIcon, Icon } from './icons.js';
 import { gmapsUrl } from '../lib/maps.js';
 import {
@@ -104,7 +104,7 @@ function calColorOf(calendars, occ) {
 // scrollKey/scrollSeq: anchor day key + a monotonically bumped sequence — each
 // new seq scrolls the list to the anchor's day group (nearest following group
 // when the exact day has no events).
-export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, scrollKey, scrollSeq, onOpenEvent, onSetAttendance, onFeedback, onCreateDay, onRequestWindow, onVisibleMonthChange, emptyLabel, gapFrom }) {
+export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, scrollKey, scrollSeq, onOpenEvent, onSetAttendance, onFeedback, onCreateDay, onRequestWindow, onVisibleMonthChange, emptyLabel, gapFrom, hiddenDays, onShowHidden }) {
   const scrollRef = useRef(null);
   const [win, setWin] = useState({ top: 0, height: 800 });
   const flat = sortMode === 'match';
@@ -296,6 +296,7 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
           ${g.monthStart && html`<div class="bc-agenda-monthsep"><span>${monthLabelOf(g.dayKey)}</span></div>`}
           ${g.dayKey !== null && html`<h3 class="bc-agenda-day">
             ${fmtDayLong(dateOfDayKey(g.dayKey))}
+            ${hiddenDays && hiddenDays.get(g.dayKey) && html`<${HiddenMark} count=${hiddenDays.get(g.dayKey)} onShow=${onShowHidden} />`}
             ${onCreateDay && html`<button
               type="button" class="bc-agenda-dayadd"
               title=${'New event on ' + fmtDayLong(dateOfDayKey(g.dayKey))}

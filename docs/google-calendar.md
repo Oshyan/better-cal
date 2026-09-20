@@ -6,14 +6,15 @@ Where the connected account may edit the calendar (Google's access role `writer`
 
 ## One-time setup (the operator)
 
-Google requires each installation to have its own OAuth client. About ten minutes, once.
+Google requires each installation to have its own OAuth client. About ten minutes, once. The console changes its layout often; as of September 2026 OAuth lives under **Google Auth Platform** (Overview, Branding, Audience, Clients, Data Access, Verification Center) rather than the old "OAuth consent screen" page.
 
-1. Create a project at https://console.cloud.google.com/ (any name, e.g. "Better-Cal").
-2. APIs & Services → Library → enable **Google Calendar API**.
-3. APIs & Services → OAuth consent screen: User type **External**, fill in the app name and your email. Scopes: add `.../auth/calendar.readonly`, `.../auth/calendar.events` (the write side is the next step; asking now spares a re-consent), `openid` and `email`. Save.
-4. Publishing status: click **Publish app** so it is *In production*. It stays unverified (Google shows a warning screen once per account when connecting; click "Advanced", then continue). This matters: in *Testing* status Google expires refresh tokens after seven days and every connected account would need reconnecting weekly.
-5. APIs & Services → Credentials → Create credentials → **OAuth client ID**, type **Web application**. Authorized redirect URI: `https://<your host>/api/v1/google/callback` (must match `BETTERCAL_BASE_URL` exactly, including the scheme).
-6. Put the client id and secret in the server `.env`:
+1. Pick or create a project at https://console.cloud.google.com/ (any existing project of yours works; one that already has an OAuth setup saves the branding step).
+2. **APIs & Services → Library** → search "Google Calendar API" → **Enable**. Do this first: the scope picker only lists enabled APIs.
+3. **Google Auth Platform → Branding**: app name, support email, developer contact. Save.
+4. **Google Auth Platform → Audience**: User type **External**; then **Publish app** so the publishing status reads *In production*. It stays unverified (Google shows a warning once per account when connecting: "Advanced", then "Go to <app>"). This matters: in *Testing* status Google expires refresh tokens after seven days and every connected account would need reconnecting weekly.
+5. **Google Auth Platform → Data Access → Add or remove scopes**: filter "Google Calendar API" and tick `.../auth/calendar.readonly` and `.../auth/calendar.events`; `openid` and `.../auth/userinfo.email` from the top of the list. Update, Save. (The request itself carries the scopes, so this is what the consent screen describes; an unverified app works without it, but it is a minute.)
+6. **Google Auth Platform → Clients → Create client**: Application type **Web application**, any name. Under **Authorized redirect URIs** add `https://<your host>/api/v1/google/callback` (must match `BETTERCAL_BASE_URL` exactly, including the scheme; no JavaScript origins needed). Create, then copy the **Client ID** and the **Client secret** (shown once; there is a download button).
+7. 6. Put the client id and secret in the server `.env`:
 
 ```
 BETTERCAL_GOOGLE_CLIENT_ID=....apps.googleusercontent.com

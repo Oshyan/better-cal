@@ -765,7 +765,7 @@ function WeekRow({
         >${label}</button>
         ${hiddenDays && hiddenDays.get(k) && html`<${HiddenMark} count=${hiddenDays.get(k)} onShow=${onShowHidden} />`}
         ${ctxByDay && ctxByDay.get(k) && html`<${ContextStrip}
-          occs=${ctxByDay.get(k)} calendars=${calendars} max=${mobile ? 2 : 3}
+          occs=${ctxByDay.get(k)} calendars=${calendars} max=${mobile || columns >= 7 ? 2 : 4}
           onOpen=${onOpenEvent} onMore=${() => { if (onExpandDay) onExpandDay(k); }}
         />`}
       </div>

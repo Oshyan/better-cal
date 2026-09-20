@@ -317,6 +317,8 @@ export function toast(text, opts = {}) {
     toasts: [...state.toasts, {
       id, text,
       undoable: !!opts.undoable,
+      // Shown where Undo would be, for a write that has no undo (Google).
+      note: opts.note || null,
       error: !!opts.error,
       actionLabel: opts.actionLabel || null,
       onAction: opts.onAction || null,

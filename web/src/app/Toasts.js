@@ -13,6 +13,7 @@ export function Toasts() {
     ${toasts.map((t) => html`<div key=${t.id} class="bc-toast${t.error ? ' is-error' : ''}">
       <span>${t.text}</span>
       ${t.undoable && html`<button type="button" class="bc-toast-undo" onClick=${async () => { dismissToast(t.id); await undo(); }}>Undo</button>`}
+      ${!t.undoable && t.note && html`<span class="bc-toast-note">${t.note}</span>`}
       ${t.actionLabel && html`<button type="button" class="bc-toast-undo" onClick=${() => { dismissToast(t.id); if (t.onAction) t.onAction(); }}>${t.actionLabel}</button>`}
       ${t.actions && t.actions.map((a) => html`<button key=${a.label} type="button" class="bc-toast-undo" onClick=${() => { dismissToast(t.id); a.run(); }}>${a.label}</button>`)}
       ${t.dismissLabel

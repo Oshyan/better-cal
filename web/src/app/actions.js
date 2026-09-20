@@ -222,6 +222,11 @@ export function googleBacked(occ) {
   return !!(cal && cal.provider === 'google');
 }
 export const GOOGLE_NO_UNDO = "Goes to Google; can't be undone";
+export const NO_UNDO = "Can't be undone";
+export function googleCalendar(calendarId) {
+  const cal = state.calendars.find((c) => c.id === calendarId);
+  return !!(cal && cal.provider === 'google');
+}
 
 function scopeFields(occ, scope) {
   // Recurring edits from direct manipulation target this occurrence unless a
@@ -273,7 +278,7 @@ export async function moveEvent({ instanceId, newStart, newEnd, scope }) {
       body: { start: newStart, end: newEnd, ...scopeFields(occ, scope) },
     });
     patchOccurrence(instanceId, { _optimistic: false });
-    toast(googleBacked(occ) ? 'Event moved at Google' : 'Event moved', { undoable: !googleBacked(occ) });
+    toast(googleBacked(occ) ? 'Event moved at Google' : 'Event moved', { undoable: !googleBacked(occ), note: NO_UNDO });
     refreshWindow();
     maybePromptTripExit(occ, newStart, newEnd);
     return true;
@@ -294,7 +299,7 @@ export async function resizeEvent({ instanceId, newStart, newEnd, scope }) {
       body: { start: newStart, end: newEnd, ...scopeFields(occ, scope) },
     });
     patchOccurrence(instanceId, { _optimistic: false });
-    toast(googleBacked(occ) ? 'Event resized at Google' : 'Event resized', { undoable: !googleBacked(occ) });
+    toast(googleBacked(occ) ? 'Event resized at Google' : 'Event resized', { undoable: !googleBacked(occ), note: NO_UNDO });
     refreshWindow();
     maybePromptTripExit(occ, newStart, newEnd);
     return true;
@@ -334,6 +339,9 @@ export async function createEvent(fields) {
         actionLabel: 'Show it',
         onAction: () => toggleCalendarVisible(cal),
       });
+    } else if (cal && cal.provider === 'google') {
+      // Created at Google through the connector: no local snapshot to undo to.
+      toast('Event created at Google', { note: NO_UNDO });
     } else {
       toast('Event created', { undoable: true });
     }
@@ -355,7 +363,7 @@ export async function updateEvent(occ, fields, scope) {
     await api('/events/' + occ.eventId, { method: 'PATCH', body });
     // Tags, people, reminders and attendance are local even on a Google event; only content edits go to Google.
     const wentToGoogle = googleBacked(occ) && Object.keys(fields).some((k) => !['tagNames', 'personIds', 'personNames', 'reminders'].includes(k));
-    toast(wentToGoogle ? 'Event updated at Google' : 'Event updated', { undoable: !wentToGoogle });
+    toast(wentToGoogle ? 'Event updated at Google' : 'Event updated', { undoable: !wentToGoogle, note: NO_UNDO });
     invalidateRecords(occ.eventId); // its description/reminders/rule may be what changed
     await refreshWindow();
     return true;
@@ -382,7 +390,7 @@ export async function deleteEvent(occ, scope) {
   try {
     const body = occ.recurring ? { scope: scope || 'this', instanceStart: occ.start } : {};
     await api('/events/' + occ.eventId, { method: 'DELETE', body });
-    toast(googleBacked(occ) ? 'Event deleted at Google' : 'Event deleted', { undoable: !googleBacked(occ) });
+    toast(googleBacked(occ) ? 'Event deleted at Google' : 'Event deleted', { undoable: !googleBacked(occ), note: NO_UNDO });
     refreshWindow();
   } catch (e) {
     for (const r of removed) state.occ.set(r.instanceId, r);
@@ -400,7 +408,7 @@ export async function copyEventTo(occ, calendarId, scope) {
     const body = { calendarId, scope: occ.recurring ? (scope || 'all') : 'all' };
     if (occ.recurring && body.scope === 'this') body.instanceStart = occ.start;
     const created = await api('/events/' + occ.eventId + '/copy', { method: 'POST', body });
-    toast('Copied "' + (created.title || occ.title) + '" to ' + cal.name + (cal.provider === 'google' ? ' (and Google)' : ''), { duration: 4000, undoable: cal.provider !== 'google' });
+    toast('Copied "' + (created.title || occ.title) + '" to ' + cal.name + (cal.provider === 'google' ? ' (and Google)' : ''), { duration: 4000, undoable: cal.provider !== 'google', note: NO_UNDO });
     refreshWindow();
     return true;
   } catch (e) {
@@ -437,7 +445,7 @@ export async function setRelationship(occ, relationship, scope) {
     await api('/events/' + occ.eventId + '/relationship', { method: 'POST', body });
     const label = { planned: 'Planned', maybe: 'Maybe', available: 'Available', hidden: 'Hidden' }[relationship] || relationship;
     const google = mine && googleBacked(occ);
-    toast(relationship === 'hidden' ? 'Hidden' : label + (google ? ' (at Google)' : ''), { undoable: !google });
+    toast(relationship === 'hidden' ? 'Hidden' : label + (google ? ' (at Google)' : ''), { undoable: !google, note: NO_UNDO });
     if (relationship === 'hidden' || occ.recurring || mine) refreshWindow();
     return relationship;
   } catch (e) {

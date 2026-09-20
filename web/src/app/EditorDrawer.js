@@ -7,7 +7,7 @@
 
 import { html, useState, useEffect, useRef, useMemo } from '../../vendor/index.js';
 import { useStore, set, state, toast } from './store.js';
-import { createEvent, updateEvent, deleteEvent, quickAddParse, attachToTrip, defaultTargetCalendarId } from './actions.js';
+import { createEvent, updateEvent, deleteEvent, quickAddParse, attachToTrip, defaultTargetCalendarId, googleCalendar } from './actions.js';
 import { api, loadPeople, ensureFullOccurrence } from './api.js';
 import { saveEditorDraft, clearEditorDraft, discardEditorWithUndo } from './drafts.js';
 import { TripRow } from './Trips.js';
@@ -715,6 +715,7 @@ export function EditorDrawer() {
 
       <div class="bc-drawer-actions">
         <button type="submit" class="bc-btn bc-btn-primary">${occ ? 'Save' : 'Create'}</button>
+        ${googleCalendar(Number(form.calendarId)) && html`<span class="bc-drawer-note" title="This calendar lives at Google. Better-Cal writes straight through and cannot restore the previous version.">${occ ? 'Saves' : 'Creates'} at Google; can't be undone</span>`}
         ${occ && html`<button type="button" class="bc-btn bc-btn-danger" onClick=${() => deleteEvent(occ, scope)}>Delete</button>`}
         <button type="button" class="bc-btn" onClick=${requestClose}>Cancel</button>
       </div>

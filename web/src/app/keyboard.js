@@ -7,7 +7,7 @@
 import { state, set } from './store.js';
 import {
   rosterViews, setView, cycleView, goToday, navigate, closeOverlays,
-  enterReschedule, openDetail, deleteEvent, stepDetailSameDay, googleBacked,
+  enterReschedule, openDetail, deleteEvent, stepDetailSameDay, googleBacked, toggleRel,
 } from './actions.js';
 import { HOTKEYS } from './hotkeys.js';
 
@@ -88,6 +88,10 @@ export const handlers = {
   },
   detailPrev: () => (state.detail ? (stepDetailSameDay(-1), true) : false),
   detailNext: () => (state.detail ? (stepDetailSameDay(1), true) : false),
+  relPlanned: () => { toggleRel('planned'); return true; },
+  relMaybe: () => { toggleRel('maybe'); return true; },
+  relAvailable: () => { toggleRel('available'); return true; },
+  relContext: () => { toggleRel('context'); return true; },
   search: () => set({ searchOpen: true }),
   filter: () => {
     const el = document.querySelector('.bc-filter-input');

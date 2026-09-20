@@ -21,6 +21,10 @@ export const HOTKEYS = [
 
   // Views
   { id: 'cycleView', keys: ['v'], label: 'Cycle through views', group: 'Views' },
+  { id: 'relPlanned', keys: ['p'], label: 'Show or hide planned events', group: 'Views' },
+  { id: 'relMaybe', keys: ['m'], label: 'Show or hide maybe events', group: 'Views' },
+  { id: 'relAvailable', keys: ['a'], label: 'Show or hide available events', group: 'Views' },
+  { id: 'relContext', keys: ['x'], label: 'Show or hide context (information) events', group: 'Views' },
   { id: 'setView', keys: ['1', '2', '3', '4', '5', '6'], display: ['1-6'], label: 'Views in switcher order', group: 'Views' },
 
   // Events

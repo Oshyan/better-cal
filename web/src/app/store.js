@@ -114,6 +114,12 @@ export const state = {
   jumpOpen: false,   // jump-to-date popover (toolbar date label / g)
   shortcutsOpen: false, // keyboard shortcuts cheat sheet (?)
   popover: null,     // {instanceId, anchorRect}
+  // Which relationships the views show (Relationship.js): a quick filter that
+  // applies to every view, remembered per browser. Off = that kind is hidden.
+  showRel: (() => {
+    const all = { planned: true, maybe: true, available: true, context: true };
+    try { return { ...all, ...(JSON.parse(localStorage.getItem('bc-show-rel') || '{}')) }; } catch { return all; }
+  })(),
   deletePrompt: null, // instanceId of a recurring occurrence whose delete is asking which scope (DeleteScope)
   attendPrompt: null, // {instanceId, attendance} for a recurring occurrence whose triage is asking which scope
   detail: null,      // {instanceId} full event detail view (modal/sheet)

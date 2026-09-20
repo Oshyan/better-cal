@@ -107,7 +107,10 @@ function indexOccurrences(occurrences, columns) {
       place(barsByRow, longBars, occ, startKey, endKey);
     }
   }
-  for (const list of byDay.values()) list.sort(byStart);
+  // Context (information) sits under the day's plans and is the first to
+  // fold into "+N more"; within a kind, by start.
+  const relWeight = (o) => (o.relationship === 'context' ? 2 : o.relationship === 'available' ? 1 : 0);
+  for (const list of byDay.values()) list.sort((a, b) => (relWeight(a) - relWeight(b)) || byStart(a, b));
   return { byDay, barsByRow, bandsByRow, longBars, longBands, rowCache: new Map() };
 }
 

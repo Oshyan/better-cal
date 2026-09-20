@@ -12,7 +12,7 @@ import { handlers } from './keyboard.js';
 import { STATIC_COMMANDS, MANAGE_ITEMS, VIEW_LABELS, VIEW_ICONS } from './commanddefs.js';
 import { HOTKEYS } from './hotkeys.js';
 import {
-  VIEWS, setView, rosterViews, applySavedView, toggleCalendarVisible, jumpToDate,
+  VIEWS, setView, rosterViews, applySavedView, toggleCalendarVisible, jumpToDate, showOnlyRel, showAllRel,
   jumpAnchorFor,
 } from './actions.js';
 import { api, loadPeople } from './api.js';
@@ -103,6 +103,10 @@ export function buildCommands() {
           return true;
         },
       };
+    } else if (def.id === 'relOnlyPlanned') {
+      cmd.run = () => showOnlyRel('planned');
+    } else if (def.id === 'relAll') {
+      cmd.run = () => showAllRel();
     } else if (def.id === 'calsAll' || def.id === 'calsNone') {
       const want = def.id === 'calsAll';
       cmd.run = () => {

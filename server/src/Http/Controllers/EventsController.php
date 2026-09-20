@@ -119,6 +119,23 @@ final class EventsController
         return Response::json($result);
     }
 
+    /** POST /events/:id/relationship {relationship, scope?, instanceStart?} -> {ok:true} */
+    public function relationship(Request $req, array $params): Response
+    {
+        $scope = $req->str('scope');
+        if ($scope !== null && !in_array($scope, ['this', 'following', 'all'], true)) {
+            throw HttpError::badRequest('scope must be this|following|all');
+        }
+        $this->events->setRelationship(
+            (int) $req->user['id'],
+            (int) $params['id'],
+            (string) ($req->str('relationship') ?? ''),
+            $scope,
+            $req->str('instanceStart')
+        );
+        return Response::json(['ok' => true]);
+    }
+
     public function attendance(Request $req, array $params): Response
     {
         $scope = $req->str('scope');

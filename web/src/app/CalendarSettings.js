@@ -126,6 +126,14 @@ export function CalendarSettings({ cal, folders, onClose }) {
       </div>
     </div>`}
 
+    <div class="bc-calset-field">
+      <span class="bc-calset-label">What this calendar is</span>
+      <select aria-label="Calendar role" value=${cal.role || 'mine'} onChange=${(e) => updateCalendar(cal, { role: e.target.value })}>
+        <option value="mine">Mine: things I do (planned unless marked maybe)</option>
+        <option value="opportunities">Opportunities: things I could do (available until I pick)</option>
+        <option value="context">Context: information (sunset, tides, someone's schedule)</option>
+      </select>
+    </div>
     ${subscribed && html`<div class="bc-calset-field">
       <span class="bc-calset-label">Source</span>
       ${cal.provider === 'google'

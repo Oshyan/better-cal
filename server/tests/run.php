@@ -3169,6 +3169,19 @@ use BetterCal\Domain\GoogleWriter;
     checkEq('google tombstone shape', ['cancelled' => true, 'uid' => 'u', 'recurrence_instance_utc' => null], GoogleWriter::tombstone('u', null));
 }
 
+// --- Relationship: the calendar's role sets the default, the row's marks override ---
+{
+    $rel = [BetterCal\Domain\Events::class, 'relationship'];
+    checkEq('rel: my confirmed event is planned', 'planned', $rel('none', 'confirmed', 'mine'));
+    checkEq('rel: my tentative event is maybe', 'maybe', $rel('none', 'tentative', 'mine'));
+    checkEq('rel: an opportunity untouched is available', 'available', $rel('none', 'confirmed', 'opportunities'));
+    checkEq('rel: an opportunity marked interested is maybe', 'maybe', $rel('interested', 'confirmed', 'opportunities'));
+    checkEq('rel: an opportunity marked going is planned', 'planned', $rel('going', 'confirmed', 'opportunities'));
+    checkEq('rel: hidden wins over tentative', 'hidden', $rel('hidden', 'tentative', 'mine'));
+    checkEq('rel: context is context whatever the marks', 'context', $rel('going', 'tentative', 'context'));
+    checkEq('rel: a going mark on my calendar is planned', 'planned', $rel('going', 'tentative', 'mine'));
+}
+
 $pass = $GLOBALS['__pass'];
 $fail = $GLOBALS['__fail'];
 echo "\n$pass passed, $fail failed\n";

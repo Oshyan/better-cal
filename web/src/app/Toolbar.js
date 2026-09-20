@@ -12,6 +12,8 @@ import { useStore, set, shallowEq } from './store.js';
 import { setView, goToday, stepAnchor, setOverviewMode, effectiveOverviewMode } from './actions.js';
 import { fmtMonthYear, fmtDayLong, dateOfDayKey } from '../lib/dates.js';
 import { ViewSwitcher } from './ViewSwitcher.js';
+import { REL_LABEL, REL_ORDER } from './Relationship.js';
+import { toggleRel } from './actions.js';
 import { Icon } from '../ui/icons.js';
 import { JumpPopover } from './JumpPopover.js';
 
@@ -88,6 +90,24 @@ function ViewMenu({ view, narrow }) {
   </div>`;
 }
 
+// Which relationships the views show: Planned, Maybe, Available, Context.
+// Toggles, not modes: any combination, applies to every view, remembered.
+// Hotkeys p / m / a / x; the palette has each plus "show only planned".
+function RelFilter() {
+  const showRel = useStore((s) => s.showRel);
+  const all = REL_ORDER.every((k) => showRel[k] !== false);
+  return html`<div class=${'bc-relfilter' + (all ? ' is-all' : '')} role="group" aria-label="Show which kinds of event">
+    ${REL_ORDER.map((k) => html`<button
+      key=${k} type="button"
+      class=${'bc-relfilter-btn is-' + k + (showRel[k] === false ? '' : ' is-on')}
+      aria-pressed=${showRel[k] !== false}
+      title=${(showRel[k] === false ? 'Show ' : 'Hide ') + REL_LABEL[k].toLowerCase() + ' events (' + REL_KEY[k] + ')'}
+      onClick=${() => toggleRel(k)}
+    >${REL_LABEL[k]}</button>`)}
+  </div>`;
+}
+const REL_KEY = { planned: 'p', maybe: 'm', available: 'a', context: 'x' };
+
 export function Toolbar({ onToggleSidebar }) {
   const { view, anchor, visibleMonth, filterText, jumpOpen, narrow } = useStore(
     (s) => ({
@@ -132,6 +152,7 @@ export function Toolbar({ onToggleSidebar }) {
       value=${filterText}
       onInput=${(e) => set({ filterText: e.target.value })}
     />
+    <${RelFilter} />
     <${ViewMenu} view=${view} narrow=${narrow} />
     <button type="button" class="bc-icon-btn" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)" onClick=${() => set({ shortcutsOpen: true })}><${Icon} name="keyboard" size=${16} /></button>
     <button type="button" class="bc-icon-btn" aria-label="Search" title="Search ( / )" onClick=${() => set({ searchOpen: true })}><${Icon} name="search" size=${16} /></button>

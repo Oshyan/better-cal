@@ -62,7 +62,8 @@ final class GoogleWriter
             'summary' => (string) ($row['title'] ?? ''),
             'description' => (string) ($row['description'] ?? ''),
             'location' => (string) ($row['location'] ?? ''),
-            'status' => in_array((string) ($row['status'] ?? 'confirmed'), ['confirmed', 'tentative'], true) ? (string) $row['status'] : 'confirmed',
+            // tentative ↔ "maybe" on my calendar (Events::relationship); Google shows it hatched
+            'status' => (string) ($row['status'] ?? '') === 'tentative' ? 'tentative' : 'confirmed',
         ];
         if ($allDay) {
             $body['start'] = ['date' => $start->format('Y-m-d')];

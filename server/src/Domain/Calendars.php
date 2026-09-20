@@ -10,6 +10,8 @@ use BetterCal\Support\Time;
 
 final class Calendars
 {
+    public const ROLES = ['mine', 'opportunities', 'context'];
+
     public function __construct(
         private readonly Db $db,
         private readonly Undo $undo,
@@ -83,6 +85,9 @@ final class Calendars
                 'kind' => $kind,
                 'source_url' => $sourceUrl,
                 'position' => $position,
+                // What the calendar is to the person (migration 026): things I
+                // do, things I could do, or information. Changeable later.
+                'role' => in_array($in['role'] ?? null, self::ROLES, true) ? $in['role'] : ($kind === 'subscribed' ? 'opportunities' : 'mine'),
             ];
             if ($google !== null) {
                 // Incremental sync is one small request when nothing changed,
@@ -138,6 +143,12 @@ final class Calendars
         }
         if (array_key_exists('position', $in)) {
             $fields['position'] = (int) $in['position'];
+        }
+        if (array_key_exists('role', $in)) {
+            if (!in_array($in['role'], self::ROLES, true)) {
+                throw HttpError::badRequest('role must be mine|opportunities|context');
+            }
+            $fields['role'] = (string) $in['role'];
         }
         if (array_key_exists('pollIntervalMinutes', $in)) {
             $fields['poll_interval_minutes'] = max(5, (int) $in['pollIntervalMinutes']);
@@ -336,6 +347,9 @@ final class Calendars
             // user's connected account); local calendars carry ics by default
             // and the client ignores it for them.
             'provider' => (string) ($c['provider'] ?? 'ics'),
+            // mine: events are planned unless marked maybe; opportunities:
+            // available until picked; context: information, drawn quietly.
+            'role' => (string) ($c['role'] ?? 'mine'),
             'googleCalendarId' => isset($c['google_calendar_id']) && $c['google_calendar_id'] !== null ? (string) $c['google_calendar_id'] : null,
             'googleAccessRole' => isset($c['google_access_role']) && $c['google_access_role'] !== null ? (string) $c['google_access_role'] : null,
             // Whether events on it can be created, edited and deleted here:

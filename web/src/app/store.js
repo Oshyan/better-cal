@@ -115,6 +115,7 @@ export const state = {
   shortcutsOpen: false, // keyboard shortcuts cheat sheet (?)
   popover: null,     // {instanceId, anchorRect}
   deletePrompt: null, // instanceId of a recurring occurrence whose delete is asking which scope (DeleteScope)
+  attendPrompt: null, // {instanceId, attendance} for a recurring occurrence whose triage is asking which scope
   detail: null,      // {instanceId} full event detail view (modal/sheet)
   groupPopover: null, // {group, anchorRect} near-duplicate group list
   editor: null,      // {mode, occ?, draft}

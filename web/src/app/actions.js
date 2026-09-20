@@ -132,7 +132,7 @@ export function closeOverlays() {
     // come back at the next boot (drafts.js restores whatever is still saved).
     if (state.quickAddOpen) clearQuickAddText();
     set({
-      popover: null, detail: null, groupPopover: null, editor: null, expandedDay: null, deletePrompt: null,
+      popover: null, detail: null, groupPopover: null, editor: null, expandedDay: null, deletePrompt: null, attendPrompt: null,
       searchOpen: false, quickAddOpen: false, jumpOpen: false, shortcutsOpen: false,
       editorDirty: false, createDrawer: null,
     });
@@ -411,18 +411,23 @@ export async function cycleAttendance(occ) {
 }
 
 // Triage toggle: clicking the active state resets to none.
-export async function triageAttendance(occ, attendance) {
-  return setAttendance(occ, occ.attendance === attendance ? 'none' : attendance);
+export async function triageAttendance(occ, attendance, scope) {
+  return setAttendance(occ, occ.attendance === attendance ? 'none' : attendance, scope);
 }
 
-export async function setAttendance(occ, attendance) {
+// scope applies to a series: 'this' gives the occurrence its own row,
+// 'following' splits the series, 'all' (default) is the whole series.
+export async function setAttendance(occ, attendance, scope) {
   const before = patchOccurrence(occ.instanceId, { attendance });
   try {
-    await api('/events/' + occ.eventId + '/attendance', { method: 'POST', body: { attendance } });
+    const body = { attendance };
+    if (occ.recurring) { body.scope = scope || 'all'; body.instanceStart = occ.start; }
+    await api('/events/' + occ.eventId + '/attendance', { method: 'POST', body });
     toast(ATTENDANCE_TOASTS[attendance] || 'Attendance updated', { undoable: true });
-    // Hidden events leave the window payload on the next fetch; refresh so
-    // the cache agrees with the server (undo refreshes again to restore).
-    if (attendance === 'hidden') refreshWindow();
+    // Hidden events leave the window payload on the next fetch, and a series
+    // answer changes more than this one occurrence; refresh so the cache
+    // agrees with the server (undo refreshes again to restore).
+    if (attendance === 'hidden' || occ.recurring) refreshWindow();
     return attendance;
   } catch (e) {
     restoreOccurrence(occ.instanceId, before);
@@ -583,7 +588,9 @@ export async function quickAddCreate(fields) {
 
 // Drop an event on a sidebar calendar row: recategorize. Calendar membership
 // is a series-level fact, so recurring events always move whole ('all').
-export async function moveEventToCalendar(occ, calendarId) {
+// scope on a series: 'this' detaches the occurrence as its own event on the
+// target, 'following' splits the series there, 'all' moves the series.
+export async function moveEventToCalendar(occ, calendarId, scope) {
   const cal = state.calendars.find((c) => c.id === calendarId);
   const from = state.calendars.find((c) => c.id === occ.calendarId);
   // Not onto a feed, and not across the Google boundary in either direction
@@ -591,9 +598,10 @@ export async function moveEventToCalendar(occ, calendarId) {
   if (!cal || !cal.editable || cal.provider === 'google' || (from && from.provider === 'google') || occ.calendarId === calendarId) return;
   try {
     const body = { calendarId };
-    if (occ.recurring) { body.scope = 'all'; body.instanceStart = occ.start; }
+    if (occ.recurring) { body.scope = scope || 'all'; body.instanceStart = occ.start; }
     await api('/events/' + occ.eventId, { method: 'PATCH', body });
-    toast('Moved "' + (occ.title || 'event') + '" to ' + cal.name, { undoable: true });
+    const what = occ.recurring && body.scope === 'this' ? 'this occurrence of "' : occ.recurring && body.scope === 'following' ? 'the rest of "' : '"';
+    toast('Moved ' + what + (occ.title || 'event') + '" to ' + cal.name, { undoable: true });
     refreshWindow();
   } catch (e) {
     toast('Move failed: ' + e.message, { error: true });

@@ -448,7 +448,7 @@ export function MonthGrid({
         setDropRowHighlight(null);
         highlightDays([]);
         if (ext) {
-          if (ext.kind === 'cal' && onDropToCalendar) onDropToCalendar(occ, ext.id);
+          if (ext.kind === 'cal' && onDropToCalendar) onDropToCalendar(occ, ext.id, pt);
           else if (ext.kind === 'person' && onDropToPerson) onDropToPerson(occ, ext.name, pt);
           else if (ext.kind === 'instance' && onDropToTrip) {
             const tripOcc = occByIdRef.current.get(ext.instanceId);

@@ -10,7 +10,7 @@ import { CopyTo } from './CopyTo.js';
 import { DeleteScope, ScopeChoice } from './DeleteScope.js';
 import { prefetchMap } from './prefetch.js';
 import { Skeleton } from './PageShell.js';
-import { updateEvent, deleteEvent, triageAttendance, sendFeedback, enterReschedule, openDetail, sameDayList, openTripByEventId } from './actions.js';
+import { updateEvent, deleteEvent, triageAttendance, setAttendance, sendFeedback, enterReschedule, openDetail, sameDayList, openTripByEventId } from './actions.js';
 import { describeRrule } from './EventDetail.js';
 import { isMobile, trapFocus, MOBILE_QUERY } from '../ui/DayExpand.js';
 import { ThumbIcon, PinIcon, LinkIcon, Icon } from '../ui/icons.js';
@@ -57,6 +57,7 @@ export function EventPopover() {
   const popover = useStore((s) => s.popover);
   useStore((s) => s.occVersion);
   const deletePrompt = useStore((s) => s.deletePrompt);
+  const attendPrompt = useStore((s) => s.attendPrompt);
   const occ = popover ? state.occ.get(popover.instanceId) : null;
   const panelRef = useRef(null);
   const [editingTime, setEditingTime] = useState(false);
@@ -192,6 +193,9 @@ export function EventPopover() {
       ${copyOpen && html`<${CopyTo} occ=${occ} compact onDone=${() => set({ popover: null })} />`}
       ${deletePrompt === occ.instanceId && html`<${DeleteScope} occ=${occ} compact onDone=${() => set({ deletePrompt: null, popover: null })} onCancel=${() => set({ deletePrompt: null })} />`}
       ${timeScope && html`<${ScopeChoice} occ=${occ} verb="New time for" compact onPick=${(scope) => { const f = timeScope; setTimeScope(null); updateEvent(occ, f, scope); }} onCancel=${() => setTimeScope(null)} />`}
+      ${attendPrompt && attendPrompt.instanceId === occ.instanceId && html`<${ScopeChoice} occ=${occ} verb=${(attendPrompt.attendance === 'none' ? 'Clear ' + attendPrompt.label : attendPrompt.label) + ' for'} compact
+        onPick=${async (scope) => { const a = attendPrompt.attendance; set({ attendPrompt: null }); const r = await setAttendance(occ, a, scope); if (r === 'hidden') set({ popover: null }); }}
+        onCancel=${() => set({ attendPrompt: null })} />`}
       ${occ.containers && occ.containers.length > 0 && html`<button
         type="button" class="bc-partof" title="Open this trip"
         onClick=${() => { set({ popover: null }); openTripByEventId(occ.containers[0].eventId); }}
@@ -257,6 +261,7 @@ export function EventPopover() {
             class="bc-seg-btn${occ.attendance === value ? ' is-active' : ''}"
             aria-pressed=${occ.attendance === value}
             onClick=${async () => {
+              if (occ.recurring) { set({ attendPrompt: { instanceId: occ.instanceId, attendance: occ.attendance === value ? 'none' : value, label } }); return; }
               const result = await triageAttendance(occ, value);
               if (result === 'hidden') set({ popover: null });
             }}

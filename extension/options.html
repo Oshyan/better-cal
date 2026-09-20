@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Better-Cal redirect</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font: 14px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 16px; width: 360px; }
+    h1 { font-size: 15px; margin: 0 0 6px; }
+    p { margin: 0 0 12px; opacity: 0.8; }
+    label { display: block; font-weight: 600; margin-bottom: 4px; }
+    input { width: 100%; box-sizing: border-box; font: inherit; padding: 6px 8px; border: 1px solid #8884; border-radius: 6px; }
+    .row { display: flex; gap: 8px; align-items: center; margin-top: 10px; }
+    button { font: inherit; padding: 6px 12px; border-radius: 6px; border: 1px solid #8886; background: transparent; cursor: pointer; }
+    button.primary { background: #5b7fd4; color: #fff; border-color: #5b7fd4; }
+    #status { margin-top: 10px; font-size: 13px; }
+    #status.ok { color: #3f9d6e; }
+    #status.err { color: #c34a4a; }
+    code { font-size: 12.5px; }
+  </style>
+</head>
+<body>
+  <h1>Where is your Better-Cal?</h1>
+  <p>"Add to Google Calendar" links will open the event editor there instead, pre-filled. Nothing is redirected until an address is set.</p>
+  <label for="origin">Better-Cal address</label>
+  <input id="origin" type="url" placeholder="https://cal.example.com" autocomplete="off" spellcheck="false">
+  <div class="row">
+    <button id="save" class="primary" type="button">Save</button>
+    <button id="clear" type="button">Stop redirecting</button>
+  </div>
+  <div id="status" aria-live="polite"></div>
+  <script src="rules.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>

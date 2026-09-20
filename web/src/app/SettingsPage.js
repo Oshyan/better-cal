@@ -10,6 +10,7 @@ import { fmtSince } from '../lib/since.js';
 import { adoptSettings } from './settings.js';
 import { saveSetting } from './actions.js';
 import { PageShell } from './PageShell.js';
+import { Icon } from '../ui/icons.js';
 import { GoogleConnector } from './GoogleConnector.js';
 import { OutfeedsSection } from './OutfeedsPage.js';
 import { PlaceInput, pickFillText, placeBias } from './PlaceInput.js';
@@ -105,6 +106,33 @@ function SystemSection() {
 // API keys: what CalDAV clients, the MCP server and scripts sign in with.
 // Create shows the value exactly once (only its hash is stored); revoke is
 // immediate. Session-only on the server, so a leaked token cannot mint more.
+// The Chrome extension that sends "Add to Google Calendar" links here. It
+// is generic (any instance) and asks for the address once; this row hands
+// the address over so nobody has to type it.
+const EXTENSION_STORE_URL = 'https://chromewebstore.google.com/detail/djlgegfeedifkamchpfhkcdjohdchijn';
+function ExtensionSection() {
+  const origin = window.location.origin;
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(origin);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch { /* clipboard blocked: the value is selectable */ }
+  };
+  return html`<section class="bc-set-section">
+    <h2 class="bc-set-h">Browser extension</h2>
+    <${Row} label="Add-to-calendar links" hint="Works in Chrome, Edge, Brave and Vivaldi (and on Android in Firefox or Kiwi). It rewrites the link at the network layer: no page access, nothing read. Until an address is set it does nothing.">
+      <span class="bc-set-value">Sends every "Add to Google Calendar" button on the web (Luma, Eventbrite, Meetup, event sites) to the editor here, pre-filled.
+        <a href=${EXTENSION_STORE_URL} target="_blank" rel="noopener">Get the extension <${Icon} name="arrowUpRight" size=${10} /></a></span>
+    <//>
+    <${Row} label="Your address" hint="Paste this into the extension's options (it opens on install).">
+      <code class="bc-tokens-value">${origin}</code>
+      <button type="button" class="bc-btn" onClick=${copy}>${copied ? 'Copied' : 'Copy'}</button>
+    <//>
+  </section>`;
+}
+
 function TokensSection() {
   const [tokens, setTokens] = useState(null);
   const [name, setName] = useState('');
@@ -615,7 +643,8 @@ export function SettingsPage() {
       <${Row} label="CalDAV" hint="Username is your account email; the password is your account password or an API key (Account tab).">
         <span class="bc-set-value">Apple Calendar, DAVx5, Thunderbird and other CalDAV clients can sync at <code>/dav</code> on this server.</span>
       <//>
-    </section>`}
+    </section>
+    <${ExtensionSection} />`}
 
     ${tab === 'account' && html`
     <section class="bc-set-section">

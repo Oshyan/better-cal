@@ -3169,6 +3169,14 @@ use BetterCal\Domain\GoogleWriter;
     checkEq('google tombstone shape', ['cancelled' => true, 'uid' => 'u', 'recurrence_instance_utc' => null], GoogleWriter::tombstone('u', null));
 }
 
+// --- A patch that names the event's own calendar is not a move ---
+{
+    $ev = ['calendar_id' => 41];
+    check('calendar change: same id is not a move', !BetterCal\Domain\Events::isCalendarChange($ev, ['calendarId' => '41', 'start' => '2026-09-22T10:00:00+01:00']));
+    check('calendar change: no id is not a move', !BetterCal\Domain\Events::isCalendarChange($ev, ['start' => '2026-09-22T10:00:00+01:00']));
+    check('calendar change: another id is', BetterCal\Domain\Events::isCalendarChange($ev, ['calendarId' => 24]));
+}
+
 // --- Relationship: the calendar's role sets the default, the row's marks override ---
 {
     $rel = [BetterCal\Domain\Events::class, 'relationship'];

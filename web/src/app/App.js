@@ -4,7 +4,7 @@ import { html, useState, useMemo, useRef, useEffect, useLayoutEffect, useCallbac
 import { useStore, set, state, calendarMeta, shallowEq, invalidateRecords } from './store.js';
 import { loadWindow, api, refreshWindow, loadPeople } from './api.js';
 import {
-  moveEvent, resizeEvent, triageAttendance, sendFeedback, exitReschedule,
+  moveEvent, resizeEvent, triageAttendance, sendFeedback, exitReschedule, googleBacked,
   jumpToDate, openDetail, effectiveOverviewMode,
   moveAvailabilitySpan, moveTrip, moveEventToCalendar, linkPersonToEvent, attachToTrip,
   resizeAvailabilitySpanDays,
@@ -398,10 +398,10 @@ export function App() {
   // GCal-style scope chip for direct manipulation of repeating events: every
   // drag that would silently edit "this occurrence" asks which occurrences it
   // means, at the drop point. The editor keeps its own scope select.
-  const promptScopeAt = useCallback((at, cb) => {
+  const promptScopeAt = useCallback((at, cb, occ) => {
     set({
       dropChoice: {
-        x: at.x, y: at.y, title: 'Repeating event',
+        x: at.x, y: at.y, title: occ && googleBacked(occ) ? 'Repeating event (goes to Google; no undo here)' : 'Repeating event',
         options: [
           { label: 'This event', value: 'this' },
           { label: 'This + following', value: 'following' },
@@ -425,7 +425,7 @@ export function App() {
 
   const onMoveEventW = useCallback((p) => {
     const occ = state.occ.get(p.instanceId);
-    if (occ && occ.recurring && p.at) { promptScopeAt(p.at, (scope) => moveEvent({ ...p, scope })); return; }
+    if (occ && occ.recurring && p.at) { promptScopeAt(p.at, (scope) => moveEvent({ ...p, scope }), occ); return; }
     moveEvent(p);
   }, [promptScopeAt]);
 
@@ -448,7 +448,7 @@ export function App() {
       return;
     }
     const occ = state.occ.get(p.instanceId);
-    if (occ && occ.recurring && p.at) { promptScopeAt(p.at, (scope) => resizeEvent({ ...p, scope })); return; }
+    if (occ && occ.recurring && p.at) { promptScopeAt(p.at, (scope) => resizeEvent({ ...p, scope }), occ); return; }
     resizeEvent(p);
   }, [promptScopeAt]);
 
@@ -534,7 +534,7 @@ export function App() {
       jumpToDate(targetKey, instanceId); // return the view to where the event now is
     };
     // A series asks which occurrences, at the confirm chip, like a grid drop.
-    if (occ && occ.recurring && x != null) { promptScopeAt({ x, y }, land); return; }
+    if (occ && occ.recurring && x != null) { promptScopeAt({ x, y }, land, occ); return; }
     land(undefined);
   }, [promptScopeAt]);
   const onJumpMonth = useCallback((firstKey) => jumpToDate(firstKey), []);

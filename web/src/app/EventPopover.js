@@ -10,7 +10,7 @@ import { CopyTo } from './CopyTo.js';
 import { DeleteScope, ScopeChoice } from './DeleteScope.js';
 import { prefetchMap } from './prefetch.js';
 import { Skeleton } from './PageShell.js';
-import { updateEvent, deleteEvent, triageAttendance, setAttendance, sendFeedback, enterReschedule, openDetail, sameDayList, openTripByEventId } from './actions.js';
+import { updateEvent, deleteEvent, triageAttendance, setAttendance, sendFeedback, enterReschedule, openDetail, sameDayList, openTripByEventId, googleBacked, GOOGLE_NO_UNDO } from './actions.js';
 import { describeRrule } from './EventDetail.js';
 import { isMobile, trapFocus, MOBILE_QUERY } from '../ui/DayExpand.js';
 import { ThumbIcon, PinIcon, LinkIcon, Icon } from '../ui/icons.js';
@@ -185,14 +185,14 @@ export function EventPopover() {
           <button type="button" class="bc-icon-btn" title="Open full details" aria-label="Open full details" onClick=${() => openDetail(occ.instanceId)}><${Icon} name="expand" size=${14} /></button>
           ${!isFeed && html`<button type="button" class="bc-icon-btn" title="Reschedule (r)" aria-label="Reschedule" onClick=${() => enterReschedule(occ.instanceId)}><${Icon} name="reschedule" size=${14} /></button>`}
           ${!isFeed && html`<button type="button" class="bc-icon-btn" title="Edit" aria-label="Edit" onClick=${() => set({ popover: null, editor: { mode: 'edit', occ } })}><${Icon} name="pencil" size=${14} /></button>`}
-          ${!isFeed && html`<button type="button" class="bc-icon-btn bc-pop-trash" title="Delete" aria-label="Delete" onClick=${() => (occ.recurring ? set({ deletePrompt: occ.instanceId }) : deleteEvent(occ))}><${Icon} name="trash" size=${14} /></button>`}
+          ${!isFeed && html`<button type="button" class="bc-icon-btn bc-pop-trash" title="Delete" aria-label="Delete" onClick=${() => (occ.recurring || googleBacked(occ) ? set({ deletePrompt: occ.instanceId }) : deleteEvent(occ))}><${Icon} name="trash" size=${14} /></button>`}
           <button type="button" class=${'bc-icon-btn' + (copyOpen ? ' is-active' : '')} title="Copy to another calendar" aria-label="Copy to another calendar" aria-expanded=${copyOpen} onClick=${() => setCopyOpen(!copyOpen)}><${Icon} name="stack" size=${14} /></button>
           <button type="button" class="bc-icon-btn" aria-label="Close" onClick=${() => set({ popover: null })}><${Icon} name="close" size=${14} /></button>
         </span>
       </div>
       ${copyOpen && html`<${CopyTo} occ=${occ} compact onDone=${() => set({ popover: null })} />`}
       ${deletePrompt === occ.instanceId && html`<${DeleteScope} occ=${occ} compact onDone=${() => set({ deletePrompt: null, popover: null })} onCancel=${() => set({ deletePrompt: null })} />`}
-      ${timeScope && html`<${ScopeChoice} occ=${occ} verb="New time for" compact onPick=${(scope) => { const f = timeScope; setTimeScope(null); updateEvent(occ, f, scope); }} onCancel=${() => setTimeScope(null)} />`}
+      ${timeScope && html`<${ScopeChoice} occ=${occ} verb="New time for" compact note=${googleBacked(occ) ? GOOGLE_NO_UNDO : null} onPick=${(scope) => { const f = timeScope; setTimeScope(null); updateEvent(occ, f, scope); }} onCancel=${() => setTimeScope(null)} />`}
       ${attendPrompt && attendPrompt.instanceId === occ.instanceId && html`<${ScopeChoice} occ=${occ} verb=${(attendPrompt.attendance === 'none' ? 'Clear ' + attendPrompt.label : attendPrompt.label) + ' for'} compact
         onPick=${async (scope) => { const a = attendPrompt.attendance; set({ attendPrompt: null }); const r = await setAttendance(occ, a, scope); if (r === 'hidden') set({ popover: null }); }}
         onCancel=${() => set({ attendPrompt: null })} />`}
@@ -255,7 +255,7 @@ export function EventPopover() {
         ${(cal && cal.name) || 'Calendar'}
       </div>
       ${isFeed && html`<div class="bc-pop-actions">
-        <div class="bc-seg" role="group" aria-label="Attendance">
+        <div class="bc-seg" role="group" aria-label="Attendance" title="Your own note on this event; nobody is notified">
           ${[['interested', 'Interested'], ['going', 'Going'], ['hidden', 'Hide']].map(([value, label]) => html`<button
             key=${value} type="button"
             class="bc-seg-btn${occ.attendance === value ? ' is-active' : ''}"

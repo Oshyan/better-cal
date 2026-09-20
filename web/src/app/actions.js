@@ -213,6 +213,16 @@ export function exitReschedule() {
 
 // --- event mutations --------------------------------------------------------
 
+// A write to an event on a Google calendar goes to Google and lands back
+// from Google's answer; there is no local snapshot to undo to, and the
+// global Undo would skip it and revert something ELSE. So those toasts say
+// where the change went and do not offer Undo (server: Events::googleJournal).
+export function googleBacked(occ) {
+  const cal = state.calendars.find((c) => c.id === occ.calendarId);
+  return !!(cal && cal.provider === 'google');
+}
+export const GOOGLE_NO_UNDO = 'Goes to Google; no undo here';
+
 function scopeFields(occ, scope) {
   // Recurring edits from direct manipulation target this occurrence unless a
   // scope chip chose otherwise. instanceStart is the occurrence's own start
@@ -263,7 +273,7 @@ export async function moveEvent({ instanceId, newStart, newEnd, scope }) {
       body: { start: newStart, end: newEnd, ...scopeFields(occ, scope) },
     });
     patchOccurrence(instanceId, { _optimistic: false });
-    toast('Event moved', { undoable: true });
+    toast(googleBacked(occ) ? 'Event moved at Google' : 'Event moved', { undoable: !googleBacked(occ) });
     refreshWindow();
     maybePromptTripExit(occ, newStart, newEnd);
     return true;
@@ -284,7 +294,7 @@ export async function resizeEvent({ instanceId, newStart, newEnd, scope }) {
       body: { start: newStart, end: newEnd, ...scopeFields(occ, scope) },
     });
     patchOccurrence(instanceId, { _optimistic: false });
-    toast('Event resized', { undoable: true });
+    toast(googleBacked(occ) ? 'Event resized at Google' : 'Event resized', { undoable: !googleBacked(occ) });
     refreshWindow();
     maybePromptTripExit(occ, newStart, newEnd);
     return true;
@@ -343,7 +353,9 @@ export async function updateEvent(occ, fields, scope) {
   }
   try {
     await api('/events/' + occ.eventId, { method: 'PATCH', body });
-    toast('Event updated', { undoable: true });
+    // Tags, people, reminders and attendance are local even on a Google event; only content edits go to Google.
+    const wentToGoogle = googleBacked(occ) && Object.keys(fields).some((k) => !['tagNames', 'personIds', 'personNames', 'reminders'].includes(k));
+    toast(wentToGoogle ? 'Event updated at Google' : 'Event updated', { undoable: !wentToGoogle });
     invalidateRecords(occ.eventId); // its description/reminders/rule may be what changed
     await refreshWindow();
     return true;
@@ -370,7 +382,7 @@ export async function deleteEvent(occ, scope) {
   try {
     const body = occ.recurring ? { scope: scope || 'this', instanceStart: occ.start } : {};
     await api('/events/' + occ.eventId, { method: 'DELETE', body });
-    toast('Event deleted', { undoable: true });
+    toast(googleBacked(occ) ? 'Event deleted at Google' : 'Event deleted', { undoable: !googleBacked(occ) });
     refreshWindow();
   } catch (e) {
     for (const r of removed) state.occ.set(r.instanceId, r);
@@ -388,7 +400,7 @@ export async function copyEventTo(occ, calendarId, scope) {
     const body = { calendarId, scope: occ.recurring ? (scope || 'all') : 'all' };
     if (occ.recurring && body.scope === 'this') body.instanceStart = occ.start;
     const created = await api('/events/' + occ.eventId + '/copy', { method: 'POST', body });
-    toast('Copied "' + (created.title || occ.title) + '" to ' + cal.name + (cal.provider === 'google' ? ' (and Google)' : ''), { duration: 4000 });
+    toast('Copied "' + (created.title || occ.title) + '" to ' + cal.name + (cal.provider === 'google' ? ' (and Google)' : ''), { duration: 4000, undoable: cal.provider !== 'google' });
     refreshWindow();
     return true;
   } catch (e) {

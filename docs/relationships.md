@@ -11,7 +11,7 @@ This page explains both, what they look like, how to change them, and what leave
 | **Planned** | I am doing this. | The normal look. No mark at all. |
 | **Maybe** | Tentative. I might do this. | Dashed outline. |
 | **Available** | An opportunity I have not picked up. | Quiet: muted title, normal size. |
-| **Context** | Information, not a plan. Sunset, tides, holidays, a friend's schedule. | Faded like the past, italic, with a hollow rounded square instead of a dot. Sorts under the day's plans and is the first thing to fold into "+N more". |
+| **Context** | Information, not a plan. Sunset, tides, holidays, a friend's schedule. | Never a chip. Small tokens in the day's header (month cell, week column, day panel, agenda heading), italic with a hollow rounded square in the calendar's colour; a timed context event is a dashed hairline at its minute on the timeline. See "Where context is drawn". |
 | **Hidden** | I do not want to see this. | Not drawn. |
 
 Planned is the default for your own calendars. Available is the default for things you subscribe to. Context is never chosen per event: it is what a whole calendar is.
@@ -61,11 +61,20 @@ Hotkeys toggle each kind: **p** planned, **m** maybe, **a** available, **x** con
 
 A day where the filter hid something shows a small hollow ring after its day number, in every view, with the count in its tooltip. In month and agenda views a click on the ring clears the filter. Nothing disappears silently.
 
+## Where context is drawn
+
+Context is consulted, not attended: the weather, the AQI, when the sun sets, whether the tide is low at a useful hour. That is the first thing to read about a day and something you come back to, so it lives where the day is named rather than in the list of things to do.
+
+- **Month**: up to three tokens beside the day number ("72/58 fog", "AQI 54", "Sunset 7:10p"), then "+N" which opens the day. A token is the event's title with a source prefix dropped ("Oakland, CA: 72/58 fog" reads "72/58 fog"); hover for the full title, click for the event. Context never takes a chip slot, so a day full of information still shows all its plans.
+- **Week and day**: all-day context as tokens in the column header; a timed context event is a dashed hairline at its minute with a small label, never a block. Sunset at 7:10 is a moment, not a forty-minute appointment.
+- **Agenda**: the day's tokens ride on the day heading.
+- Plugins can give their context events an icon; feed-provided context uses the hollow square in the calendar's colour.
+
 ## Why it works this way
 
 - **What am I actually doing?** is the question a calendar exists to answer. With feeds and shared calendars it stopped being answerable at a glance. Roles and relationships make "only planned" one keystroke.
 - **Maybe is a real state.** Not a reply to someone, not a private note in a title: a status that survives sync and that other clients understand.
-- **Information should not look like plans.** Sunset and tides are useful on the day and noise in the month. Context recedes, sorts last, and folds first.
+- **Information should not look like plans.** Sunset and tides are the first thing to read about a day and noise in the list of things to do. Context lives in the day's header and on the timeline as moments, and never spends an event slot.
 - **A default is not a decision.** The role gives every event a sensible relationship the moment a calendar is added; you only touch the events that differ.
 
 ## For integrators

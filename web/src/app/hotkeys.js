@@ -26,6 +26,7 @@ export const HOTKEYS = [
   { id: 'relAvailable', keys: ['a'], label: 'Show or hide available events', group: 'Views' },
   { id: 'relContext', keys: ['x'], label: 'Show or hide context (information) events', group: 'Views' },
   { id: 'setView', keys: ['1', '2', '3', '4', '5', '6'], display: ['1-6'], label: 'Views in switcher order', group: 'Views' },
+  { id: 'defaultView', keys: ['0'], label: 'Default view (reset filters, month, today)', group: 'Views' },
 
   // Events
   { id: 'quickAdd', keys: ['c'], label: 'Quick add (plain language)', group: 'Events' },

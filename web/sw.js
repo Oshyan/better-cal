@@ -18,7 +18,7 @@
 // could start, which on a 450 ms link was nine seconds of a blank page.
 
 // @generated-shell:start (scripts/gen-preload.mjs)
-const VERSION = 'bc-23fe77061686';
+const VERSION = 'bc-e3b64dd6e8f6';
 const SHELL = [
   '/',
   '/assets/styles/app.css',
@@ -99,6 +99,8 @@ const SHELL = [
   '/assets/src/lib/deeplink.js',
   '/assets/src/app/hotkeys.js',
   '/assets/src/ui/layout.js',
+  '/assets/src/ui/ContextStrip.js',
+  '/assets/src/lib/context.js',
   '/assets/src/ui/DragController.js',
   '/assets/src/lib/color.js',
   '/assets/src/app/ViewSwitcher.js',

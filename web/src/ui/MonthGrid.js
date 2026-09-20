@@ -30,6 +30,8 @@ import {
 } from './monthmath.js';
 import { assignLanes } from './layout.js';
 import { EventChip, EventBar, TripBand, HiddenMark } from './EventChip.js';
+import { ContextStrip } from './ContextStrip.js';
+import { contextByDay, isContext } from '../lib/context.js';
 import { Icon } from './icons.js';
 import { startPointerDrag, cloneAsGhost, externalDropTarget, setDropRowHighlight } from './DragController.js';
 import { normalizeDayRange, dayRangeDraft } from '../lib/quickcreate.js';
@@ -94,6 +96,9 @@ function indexOccurrences(occurrences, columns) {
   };
   for (const occ of occurrences) {
     if (occ.attendance === 'hidden') continue;
+    // Context is drawn in the day's head as tokens (ContextStrip), never as
+    // a chip or bar, so it costs the day no event slots.
+    if (isContext(occ)) continue;
     const { startKey, endKey } = occurrenceDaySpan(occ);
     if (occ.isContainer) {
       place(bandsByRow, longBands, occ, startKey, endKey);
@@ -107,11 +112,8 @@ function indexOccurrences(occurrences, columns) {
       place(barsByRow, longBars, occ, startKey, endKey);
     }
   }
-  // Context (information) sits under the day's plans and is the first to
-  // fold into "+N more"; within a kind, by start.
-  const relWeight = (o) => (o.relationship === 'context' ? 2 : o.relationship === 'available' ? 1 : 0);
-  for (const list of byDay.values()) list.sort((a, b) => (relWeight(a) - relWeight(b)) || byStart(a, b));
-  return { byDay, barsByRow, bandsByRow, longBars, longBands, rowCache: new Map() };
+  for (const list of byDay.values()) list.sort(byStart);
+  return { byDay, barsByRow, bandsByRow, longBars, longBands, ctxByDay: contextByDay(occurrences), rowCache: new Map() };
 }
 
 // What one row draws: its pre-segmented entries plus the segment of any very
@@ -602,7 +604,7 @@ export function MonthGrid({
       key=${wi} weekIndex=${wi} columns=${columns} ribbon=${ribbon}
       top=${weekTop(wi, minWeek, rowH)} rowH=${rowH}
       byDay=${idx.byDay} bars=${rowEntries(idx, 'bars', wi, columns)} bands=${rowEntries(idx, 'bands', wi, columns)} calendars=${calendars}
-      hiddenDays=${hiddenDays} onShowHidden=${onShowHidden}
+      hiddenDays=${hiddenDays} onShowHidden=${onShowHidden} ctxByDay=${idx.ctxByDay}
       capacity=${capacity} chipRow=${chipRow} mobile=${mobile} todayKey=${tKey} dimSet=${dimSet} nowMs=${nowMs}
       sel=${sel}
       onOpenEvent=${onOpenEvent} onExpandDay=${onExpandDay} onOpenDay=${onOpenDay}
@@ -665,7 +667,7 @@ export function MonthGrid({
 function WeekRow({
   weekIndex, columns, ribbon, top, rowH, byDay, bars, bands, calendars, capacity, chipRow, mobile,
   todayKey: tKey, dimSet, nowMs, sel, onOpenEvent, onExpandDay, onOpenDay, dragMoveOcc, dragResizeOcc, dragCreate,
-  cellClickSelect, quickCreateDay, hiddenDays, onShowHidden,
+  cellClickSelect, quickCreateDay, hiddenDays, onShowHidden, ctxByDay,
 }) {
   const keys = dayKeysOfRow(weekIndex, columns);
   // Week-of-year in the gutter (7-col rows only): taken from the row's
@@ -754,13 +756,19 @@ function WeekRow({
       onPointerDown=${dragCreate}
       onClick=${cellClickSelect}
     >
-      <button
-        type="button" class="bc-daynum" aria-label=${'Open day view for ' + k}
-        title="Open day view"
-        onPointerDown=${(e) => e.stopPropagation()}
-        onClick=${(e) => { e.stopPropagation(); if (onOpenDay) onOpenDay(k); else if (onExpandDay) onExpandDay(k); }}
-      >${label}</button>
-      ${hiddenDays && hiddenDays.get(k) && html`<${HiddenMark} count=${hiddenDays.get(k)} onShow=${onShowHidden} />`}
+      <div class="bc-cell-head">
+        <button
+          type="button" class="bc-daynum" aria-label=${'Open day view for ' + k}
+          title="Open day view"
+          onPointerDown=${(e) => e.stopPropagation()}
+          onClick=${(e) => { e.stopPropagation(); if (onOpenDay) onOpenDay(k); else if (onExpandDay) onExpandDay(k); }}
+        >${label}</button>
+        ${hiddenDays && hiddenDays.get(k) && html`<${HiddenMark} count=${hiddenDays.get(k)} onShow=${onShowHidden} />`}
+        ${ctxByDay && ctxByDay.get(k) && html`<${ContextStrip}
+          occs=${ctxByDay.get(k)} calendars=${calendars} max=${mobile ? 2 : 3}
+          onOpen=${onOpenEvent} onMore=${() => { if (onExpandDay) onExpandDay(k); }}
+        />`}
+      </div>
       <button
         type="button" class="bc-cell-headstrip" aria-label=${'List events on ' + k}
         title="Show this day's events here"

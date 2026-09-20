@@ -6,7 +6,7 @@
 import { html, useState, useRef, useEffect } from '../../vendor/index.js';
 import { useStore, set, shallowEq } from './store.js';
 import {
-  applySavedView, saveViewAs, updateSavedView, viewConfigMatches, captureViewConfig,
+  applySavedView, saveViewAs, updateSavedView, viewConfigMatches, captureViewConfig, applyDefaultView,
 } from './actions.js';
 import { trapFocus } from '../ui/DayExpand.js';
 import { Icon } from '../ui/icons.js';
@@ -14,7 +14,7 @@ import { Icon } from '../ui/icons.js';
 export function ViewSwitcher() {
   const s = useStore(
     (st) => ({
-      savedViews: st.savedViews, activeViewId: st.activeViewId,
+      savedViews: st.savedViews, activeViewId: st.activeViewId, defaultViewId: st.settings && st.settings.defaultViewId,
       view: st.view, calendars: st.calendars,
       collapsedFolders: st.collapsedFolders, filterText: st.filterText,
     }),
@@ -63,12 +63,12 @@ export function ViewSwitcher() {
   const confirmSave = async () => {
     const target = pendingView;
     if (active) await updateSavedView(active, { config: captureViewConfig() });
-    if (target) applySavedView(target);
+    if (target) (target.isDefault ? applyDefaultView() : applySavedView(target));
     close();
   };
 
   const confirmDiscard = () => {
-    if (pendingView) applySavedView(pendingView);
+    if (pendingView) (pendingView.isDefault ? applyDefaultView() : applySavedView(pendingView));
     close();
   };
 
@@ -96,6 +96,11 @@ export function ViewSwitcher() {
       <span class="bc-views-caret" aria-hidden="true"><${Icon} name="chevronDown" size=${12} /></span>
     </button>
     ${open && html`<div class="bc-views-pop" ref=${panelRef} role="dialog" aria-label="Saved views">
+      <button type="button" class="bc-views-item bc-views-default" title="Month, today, no filters (0). Mark a saved view as default in Manage views." onClick=${() => { if (active && modified) { setPendingView({ id: null, isDefault: true }); return; } applyDefaultView(); close(); }}>
+        <span class="bc-views-label">Default view${(() => { const d = s.savedViews.find((v) => v.id === s.defaultViewId); return d ? ': ' + d.name : ''; })()}</span>
+        <kbd class="bc-ov-key">0</kbd>
+      </button>
+      <div class="bc-views-sep"></div>
       ${s.savedViews.length === 0 && html`<div class="bc-views-empty">No saved views yet</div>`}
       ${s.savedViews.map((v) => html`<button
         key=${v.id} type="button"

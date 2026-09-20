@@ -711,6 +711,36 @@ div.bc-duration-exact { display: flex; align-items: center; gap: 10px; flex-wrap
 :is(.bc-chip, .bc-bar, .bc-block).is-context .bc-chip-title { font-style: italic; }
 .bc-chip.is-context .bc-chip-title { color: var(--fg-muted); }
 .bc-ctx-glyph { width: 8px; height: 8px; border-radius: 2px; border: 1.5px solid currentColor; box-sizing: border-box; flex: none; opacity: 0.9; }
+/* The context strip (ui/ContextStrip.js): the day's information as small
+   tokens beside the day number, where the header had empty room, so a day's
+   weather, AQI and sunset are the first thing read and cost no event slot.
+   Timed context is a moment on the timeline: a dashed hairline, not a block. */
+.bc-ctxstrip { display: inline-flex; align-items: center; gap: 2px; min-width: 0; overflow: hidden; }
+.bc-ctx-token {
+  display: inline-flex; align-items: center; gap: 3px; flex: none;
+  font-size: 10.5px; line-height: 1; font-style: italic; font-weight: 400; color: var(--fg-muted);
+  padding: 3px 4px; border-radius: 4px; white-space: nowrap; cursor: pointer;
+}
+.bc-ctx-token:hover, .bc-ctx-token:focus-visible { background: var(--bg-inset); color: var(--fg); }
+.bc-ctx-token .bc-ctx-glyph { width: 7px; height: 7px; }
+.bc-ctx-token-time { font-style: normal; font-variant-numeric: tabular-nums; opacity: 0.8; }
+.bc-ctx-more { flex: none; font-size: 10px; color: var(--fg-muted); padding: 3px 3px; border-radius: 4px; cursor: pointer; }
+.bc-ctx-more:hover { background: var(--bg-inset); color: var(--fg); }
+.bc-cell-head { position: relative; z-index: 2; display: flex; align-items: center; gap: 2px; height: 24px; padding-right: 24px; overflow: hidden; pointer-events: none; }
+.bc-cell-head > * { pointer-events: auto; }
+.bc-tg-head-day .bc-ctxstrip { margin-left: 2px; }
+.bc-tg-vday-head .bc-ctxstrip { margin-left: 6px; }
+.bc-agenda-day .bc-ctxstrip { margin-left: 10px; vertical-align: middle; }
+.bc-ctx-mark { position: absolute; left: 0; right: 0; height: 0; z-index: 3; pointer-events: none; }
+.bc-ctx-mark-line { position: absolute; left: 0; right: 0; top: 0; border-top: 1px dashed var(--fg-muted); opacity: 0.55; }
+.bc-ctx-mark-label {
+  position: absolute; right: 2px; top: -7px; pointer-events: auto; cursor: pointer;
+  font-size: 9.5px; font-style: italic; line-height: 1; color: var(--fg-muted);
+  background: var(--bg); padding: 2px 3px; border-radius: 3px; white-space: nowrap;
+}
+.bc-ctx-mark-label:hover, .bc-ctx-mark-label:focus-visible { color: var(--fg); background: var(--bg-inset); }
+.bc-tg-col.is-today .bc-ctx-mark-label, .bc-tg-col.is-weekend .bc-ctx-mark-label { background: transparent; }
+.bc-badge.is-accent { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
 :is(.bc-bar, .bc-block) .bc-ctx-glyph { margin-right: 4px; }
 .bc-block .bc-ctx-glyph { display: inline-block; vertical-align: -1px; }
 /* A day where the kind filter hid something: a small hollow ring after the

@@ -3,7 +3,7 @@
 
 import { html, useState } from '../../vendor/index.js';
 import { useStore, set } from './store.js';
-import { applySavedView, updateSavedView, deleteSavedView } from './actions.js';
+import { applySavedView, updateSavedView, deleteSavedView, saveSetting } from './actions.js';
 import { relFilterLabel } from './Toolbar.js';
 import { showRelFromConfig } from '../lib/relfilter.js';
 import { PageShell, EmptyState } from './PageShell.js';
@@ -15,6 +15,7 @@ const VIEW_TYPE_LABELS = {
 
 export function SavedViewsPage() {
   const savedViews = useStore((s) => s.savedViews);
+  const defaultViewId = useStore((s) => s.settings && s.settings.defaultViewId);
   const [editingId, setEditingId] = useState(null);
   const [name, setName] = useState('');
 
@@ -41,7 +42,7 @@ export function SavedViewsPage() {
 
   return html`<${PageShell}
     title="Saved views"
-    note="A saved view captures view type, visible calendars, folder collapse, filter text and the Show filter."
+    note="A saved view captures view type, visible calendars, folder collapse, filter text and the Show filter. Default view (0, first in the Saved views menu) applies the view marked default, or with none marked: month, today, no filters."
   >
     ${savedViews.length === 0 && html`<${EmptyState}
       text="No saved views yet. Set up the calendar the way you like, then use the views menu in the toolbar to save it as a reusable mode."
@@ -58,12 +59,16 @@ export function SavedViewsPage() {
           : html`<div class="bc-card-main">
               <div class="bc-card-badges">
                 <strong class="bc-card-title">${v.name}</strong>
+                ${v.id === defaultViewId && html`<span class="bc-badge is-accent" title="What Default view (0) applies">default</span>`}
                 ${summarize(v).map((p, i) => html`<span key=${i} class="bc-badge">${p}</span>`)}
               </div>
             </div>`}
         <div class="bc-card-actions">
           <button type="button" class="bc-btn bc-btn-primary" onClick=${() => { applySavedView(v); set({ route: 'calendar' }); }}>Apply</button>
           <button type="button" class="bc-btn" onClick=${() => startRename(v)}>Rename</button>
+          ${v.id === defaultViewId
+            ? html`<button type="button" class="bc-btn" title="Default view (0) goes back to month, today, no filters" onClick=${() => saveSetting('defaultViewId', null)}>Clear default</button>`
+            : html`<button type="button" class="bc-btn" title="Default view (0) applies this view" onClick=${() => saveSetting('defaultViewId', v.id)}>Make default</button>`}
           <button type="button" class="bc-btn bc-btn-danger" onClick=${() => deleteSavedView(v)}>Delete</button>
         </div>
       </div>`)}

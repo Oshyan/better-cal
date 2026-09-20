@@ -28,6 +28,7 @@ import {
 } from '../src/lib/quickcreate.js';
 import { HOTKEYS, HOTKEY_GROUPS } from '../src/app/hotkeys.js';
 import { hiddenDayCounts, relShown, showRelFromConfig } from '../src/lib/relfilter.js';
+import { contextLabel, contextTitle, contextByDay, withoutContext } from '../src/lib/context.js';
 import {
   fmtOffsetMinutes, fmtReminder, allDayEntryToMinutes, entryToMinutes,
   normalizeMinutesList, effectiveReminders, toMinutes, fromMinutes,
@@ -1564,6 +1565,26 @@ console.log('');
   eq('saved view: no hideRel means show all', showRelFromConfig({}), { planned: true, maybe: true, available: true, context: true });
   eq('saved view: hideRel switches those kinds off', showRelFromConfig({ hideRel: ['context', 'available'] }), { planned: true, maybe: true, available: false, context: false });
   eq('saved view: a view saved before the filter existed shows all', showRelFromConfig(null), { planned: true, maybe: true, available: true, context: true });
+}
+
+// --- context tokens: what the day's header says --------------------------------
+{
+  const at = (d, h, m = 0) => new Date(2026, 8, d, h, m).toISOString();
+  const weather = { instanceId: 'w', relationship: 'context', allDay: true, start: '2026-09-20', end: '2026-09-21', title: 'Oakland, CA: 72/58 fog' };
+  const aqi = { instanceId: 'q', relationship: 'context', allDay: true, start: '2026-09-20', end: '2026-09-21', title: 'Oakland, CA: AQI 54 (Moderate)' };
+  const sunset = { instanceId: 's', relationship: 'context', allDay: false, start: at(20, 19, 10), end: at(20, 19, 20), title: 'Sunset' };
+  const away = { instanceId: 'a', relationship: 'context', allDay: true, start: '2026-09-19', end: '2026-09-22', title: 'Rider in LA' };
+  const plan = { instanceId: 'p', relationship: 'planned', allDay: false, start: at(20, 10), end: at(20, 11), title: 'Dentist' };
+  eq('context label: drops a source prefix', contextLabel(weather), { text: '72/58 fog', time: null });
+  eq('context label: clips long text', contextLabel(aqi).text, 'AQI 54 (Moder…');
+  eq('context label: a moment carries its time', contextLabel(sunset), { text: 'Sunset', time: '7:10p' });
+  eq('context label: no prefix, no change', contextLabel(away).text, 'Rider in LA');
+  assert('context title: a brief moment shows one time, no range', contextTitle(sunset).startsWith('Sunset · ') && !contextTitle(sunset).includes(' to '));
+  const byDay = contextByDay([weather, aqi, sunset, away, plan]);
+  eq('context by day: all-day first, then moments by time; spans cover each day', byDay.get('2026-09-20').map((o) => o.instanceId), ['a', 'w', 'q', 's']);
+  eq('context by day: the span reaches its last day and not the exclusive end', [byDay.has('2026-09-21'), byDay.has('2026-09-22')], [true, false]);
+  eq('context by day: plans are not context', byDay.get('2026-09-20').some((o) => o.instanceId === 'p'), false);
+  eq('withoutContext: leaves only the plans', withoutContext([weather, sunset, plan]).map((o) => o.instanceId), ['p']);
 }
 
 console.log(passed + ' passed, ' + failed + ' failed');

@@ -31,6 +31,7 @@ export const STATIC_COMMANDS = [
   { id: 'reschedule', icon: 'reschedule', label: 'Reschedule event', group: 'Event', hotkey: 'reschedule', needs: 'popover', keywords: 'move' },
   { id: 'deleteEvent', icon: 'trash', label: 'Delete event', group: 'Event', hotkey: 'deleteEvent', needs: 'occ', keywords: 'remove' },
 
+  { id: 'defaultView', icon: 'visAll', label: 'Default view', group: 'Views', hotkey: 'defaultView', keywords: 'reset clear filters home saved view' },
   { id: 'relPlanned', icon: 'check', label: 'Show or hide planned events', group: 'Views', hotkey: 'relPlanned', keywords: 'show filter relationship doing' },
   { id: 'relMaybe', icon: 'star', label: 'Show or hide maybe events', group: 'Views', hotkey: 'relMaybe', keywords: 'show filter relationship tentative' },
   { id: 'relAvailable', icon: 'visAll', label: 'Show or hide available events', group: 'Views', hotkey: 'relAvailable', keywords: 'show filter relationship opportunities feed' },

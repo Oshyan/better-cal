@@ -728,7 +728,8 @@ div.bc-duration-exact { display: flex; align-items: center; gap: 10px; flex-wrap
 .bc-ctx-more:hover { background: var(--bg-inset); color: var(--fg); }
 .bc-cell-head { position: relative; z-index: 2; display: flex; align-items: center; gap: 2px; height: 24px; padding-right: 24px; overflow: hidden; pointer-events: none; }
 .bc-cell-head > * { pointer-events: auto; }
-.bc-tg-head-day .bc-ctxstrip { margin-left: 2px; }
+.bc-tg-head-day { overflow: hidden; }
+.bc-tg-head-day .bc-ctxstrip { margin-left: 2px; flex: 0 1 auto; }
 .bc-tg-vday-head .bc-ctxstrip { margin-left: 6px; }
 .bc-agenda-day .bc-ctxstrip { margin-left: 10px; vertical-align: middle; }
 .bc-ctx-mark { position: absolute; left: 0; right: 0; height: 0; z-index: 3; pointer-events: none; }

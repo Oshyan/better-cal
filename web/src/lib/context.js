@@ -29,6 +29,9 @@ export function contextLabel(occ, max = 14) {
   let t = (occ.title || '').trim();
   const i = t.indexOf(': ');
   if (i > 0 && i <= 24 && i < t.length - 2) t = t.slice(i + 2);
+  // A trailing parenthetical ("AQI 54 (Moderate)") is the first thing to go
+  // when there is no room: "AQI 54" beats "AQI 54 (Mod…".
+  if (t.length > max) t = t.replace(/\s*\([^)]*\)\s*$/, '');
   if (occ.allDay) return { text: clip(t, max), time: null };
   return { text: clip(t, Math.max(6, max - 4)), time: compactTime(parseISO(occ.start)) };
 }

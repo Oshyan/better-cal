@@ -1495,6 +1495,8 @@ checkEq('set other defaults filled in', 'smart', $merged['nlParseMode']);
 checkEq('set validate weekStart', ['weekStart' => 'mon'], Settings::validate(['weekStart' => 'mon']));
 checkEq('set validate numeric timeFormat', ['timeFormat' => '24'], Settings::validate(['timeFormat' => 24]));
 checkEq('set validate defaultView', ['defaultView' => 'agenda'], Settings::validate(['defaultView' => 'agenda']));
+checkEq('set validate defaultViewId', ['defaultViewId' => 5], Settings::validate(['defaultViewId' => '5']));
+checkEq('set validate defaultViewId null', ['defaultViewId' => null], Settings::validate(['defaultViewId' => null]));
 checkEq('set validate nlParseMode', ['nlParseMode' => 'never'], Settings::validate(['nlParseMode' => 'never']));
 checkEq('set validate overviewMode 3day', ['overviewMode' => '3day'], Settings::validate(['overviewMode' => '3day']));
 checkEq('set validate overviewMode month', ['overviewMode' => 'month'], Settings::validate(['overviewMode' => 'month']));

@@ -17,6 +17,7 @@ final class Settings
 {
     public const DEFAULTS = [
         'defaultView' => 'month',
+        'defaultViewId' => null, // a saved view that "Default view" (0) applies; null = the built-in reset
         'weekStart' => 'sun',
         'timeFormat' => '12',
         'defaultCalendarId' => null,
@@ -77,6 +78,12 @@ final class Settings
             );
             if ($owned === null) {
                 throw HttpError::badRequest('defaultCalendarId must reference one of your local calendars');
+            }
+        }
+        if (isset($updates['defaultViewId'])) {
+            $owned = $this->db->scalar('SELECT id FROM saved_views WHERE id = ? AND user_id = ?', [$updates['defaultViewId'], $userId]);
+            if ($owned === null) {
+                throw HttpError::badRequest('defaultViewId must reference one of your saved views');
             }
         }
         $raw = $this->db->scalar('SELECT settings_json FROM users WHERE id = ?', [$userId]);
@@ -159,6 +166,7 @@ final class Settings
                 'notifyEmail' => self::email($key, $value),
                 'overviewMode' => self::enum($key, $value, ['month', '3day']),
                 'defaultCalendarId' => self::calendarId($value),
+                'defaultViewId' => self::positiveIntOrNull($key, $value),
                 'folderVisibility' => self::folderVisibility($value),
                 'sidebarActiveOnly' => self::bool($key, $value),
                 'pluginHidden' => self::pluginHidden($value),
@@ -283,6 +291,17 @@ final class Settings
             $out[(string) $folderId] = ['mode' => $mode, 'custom' => $ids];
         }
         return $out;
+    }
+
+    private static function positiveIntOrNull(string $key, mixed $value): ?int
+    {
+        if ($value === null) {
+            return null;
+        }
+        if (!is_numeric($value) || (int) $value <= 0) {
+            throw HttpError::badRequest("$key must be a positive integer or null");
+        }
+        return (int) $value;
     }
 
     private static function calendarId(mixed $value): ?int

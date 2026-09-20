@@ -140,6 +140,7 @@ User preferences stored in `users.settings_json`. The server stores and validate
 | Key | Values | Default | Notes |
 |---|---|---|---|
 | `defaultView` | `month`\|`multiweek`\|`week`\|`day`\|`agenda` | `month` | view opened on load |
+| `defaultViewId` | saved view id or null | `null` | what "Default view" (hotkey 0) applies; must be one of the user's saved views; null means the built-in reset (month, today, no text filter, every kind shown, calendar visibility untouched) |
 | `weekStart` | `mon`\|`sun` | `sun` | first day of week in grids |
 | `timeFormat` | `"12"`\|`"24"` | `"12"` | accepted as string or number, stored/returned as string |
 | `defaultCalendarId` | id of an owned `local` calendar, or `null` | `null` | validated for ownership + kind; `null` clears |

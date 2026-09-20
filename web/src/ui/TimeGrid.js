@@ -23,6 +23,8 @@ import {
 import { layoutOverlaps, assignLanes } from './layout.js';
 import { occurrenceDaySpan, isWeekendEpochDay } from './monthmath.js';
 import { EventBlock, EventBar, HiddenMark } from './EventChip.js';
+import { ContextStrip, ContextMark } from './ContextStrip.js';
+import { contextByDay, isContext } from '../lib/context.js';
 import { Icon } from './icons.js';
 import { startPointerDrag, cloneAsGhost, externalDropTarget, setDropRowHighlight } from './DragController.js';
 import {
@@ -280,14 +282,14 @@ export function TimeGrid({
 
   // Split occurrences into all-day-lane items and per-day timed items,
   // clamped to the rendered day window.
-  const { allDayBars, timedByDay } = useMemo(() => {
+  const { allDayBars, timedByDay, ctxByDay } = useMemo(() => {
     const dayIdx = new Map(days.map((k, i) => [k, i]));
     const firstDay = days.length ? epochDayOfKey(days[0]) : 0;
     const lastDay = days.length ? epochDayOfKey(days[days.length - 1]) : -1;
     const bars = [];
     const timed = days.map(() => []);
     for (const occ of occurrences) {
-      if (occ.attendance === 'hidden') continue;
+      if (occ.attendance === 'hidden' || isContext(occ)) continue; // context: head tokens and moments, below
       const { startKey, endKey } = occurrenceDaySpan(occ);
       const s = epochDayOfKey(startKey), e = epochDayOfKey(endKey);
       if (e < firstDay || s > lastDay) continue;
@@ -300,7 +302,7 @@ export function TimeGrid({
         if (i != null) timed[i].push(occ);
       }
     }
-    return { allDayBars: bars, timedByDay: timed };
+    return { allDayBars: bars, timedByDay: timed, ctxByDay: contextByDay(occurrences) };
   }, [occurrences, days]);
 
   // Vertical stack: every day owns its all-day bars, angled where the event
@@ -311,7 +313,7 @@ export function TimeGrid({
       const ed = epochDayOfKey(k);
       const out = [];
       for (const occ of occurrences) {
-        if (occ.attendance === 'hidden') continue;
+        if (occ.attendance === 'hidden' || isContext(occ)) continue;
         const { startKey, endKey } = occurrenceDaySpan(occ);
         if (!occ.allDay && startKey === endKey) continue;
         const s = epochDayOfKey(startKey);
@@ -735,6 +737,7 @@ export function TimeGrid({
       <span class="bc-tg-dom">${d.getDate()}</span>
       ${hiddenDays && hiddenDays.get(k) && html`<${HiddenMark} count=${hiddenDays.get(k)} />`}
       ${infinite && d.getDate() === 1 && html`<span class="bc-tg-month-tag">${fmtMonthShort(d)}</span>`}
+      ${ctxByDay.get(k) && html`<${ContextStrip} occs=${ctxByDay.get(k).filter((o) => o.allDay)} calendars=${calendars} max=${4} onOpen=${onOpenEvent} />`}
     </button>`;
   });
 
@@ -784,6 +787,10 @@ export function TimeGrid({
         onEdgePointerDown=${(edge, e) => dragResize(item.occ, edge, e)}
       />`;
     })}
+    ${(ctxByDay.get(k) || []).filter((o) => !o.allDay).map((occ) => html`<${ContextMark}
+      key=${occ.instanceId} occ=${occ} cal=${calendars[occ.calendarId]}
+      top=${(minutesOfDay(parseISO(occ.start)) / 60) * HOUR_H} onOpen=${onOpenEvent}
+    />`)}
     ${draft && draft.dayKey === k && html`<div
       class="bc-tg-draft"
       style=${`top:${(draft.startMin / 60) * HOUR_H}px;height:${((draft.endMin - draft.startMin) / 60) * HOUR_H}px`}
@@ -816,6 +823,7 @@ export function TimeGrid({
                   <span class="bc-tg-dom">${d.getDate()}</span>
                   <span class="bc-tg-vday-month">${fmtMonthShort(d)}</span>
                 </button>
+                ${ctxByDay.get(k) && html`<${ContextStrip} occs=${ctxByDay.get(k).filter((o) => o.allDay)} calendars=${calendars} onOpen=${onOpenEvent} />`}
                 <div
                   class="bc-tg-vday-allday"
                   onClick=${(ev) => {

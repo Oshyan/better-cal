@@ -810,6 +810,17 @@ export function applySavedView(view) {
   try { localStorage.setItem('bc-show-rel', JSON.stringify(showRelFromConfig(config))); } catch { /* per-browser convenience */ }
 }
 
+// "Default view" (hotkey 0, first item of the Saved views menu): the saved
+// view marked as default in Saved views, or, with none marked, the built-in
+// reset: month, today, no text filter, every kind shown. Calendar
+// visibility is left alone (it is the sidebar's state, not a filter).
+export function applyDefaultView() {
+  const id = state.settings && state.settings.defaultViewId;
+  const view = id ? state.savedViews.find((v) => v.id === id) : null;
+  if (view) { applySavedView(view); return; }
+  applySavedView({ id: null, config: { viewType: 'month', filterText: '', hideRel: [], anchor: 'today' } });
+}
+
 export async function saveViewAs(name) {
   try {
     const view = await api('/views', { method: 'POST', body: { name, config: captureViewConfig() } });

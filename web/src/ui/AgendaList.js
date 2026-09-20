@@ -19,6 +19,8 @@ import {
   timeState, addDaysKey, fmtDateShort,
 } from '../lib/dates.js';
 import { EventChip, HiddenMark } from './EventChip.js';
+import { ContextStrip } from './ContextStrip.js';
+import { contextByDay, withoutContext } from '../lib/context.js';
 import { ThumbIcon, TripBadge, PinIcon, Icon } from './icons.js';
 import { gmapsUrl } from '../lib/maps.js';
 import {
@@ -124,6 +126,9 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
     linkedRef.current = [...els];
   }, []);
 
+  // The day's context (weather, sunset, tides) rides on its heading: the
+  // first thing to read for a day, and never a row in the list.
+  const ctxByDay = useMemo(() => contextByDay(occurrences), [occurrences]);
   const groups = useMemo(() => {
     if (flat) {
       // Match order: one flat section preserving the caller's ranked order.
@@ -132,7 +137,7 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
         .map((occ) => ({ kind: 'normal', occ }));
       return rows.length === 0 ? [] : [{ dayKey: null, rows, top: 0, height: rows.length * ROW_H }];
     }
-    return buildAgendaGroups(occurrences);
+    return buildAgendaGroups(withoutContext(occurrences));
   }, [occurrences, flat]);
 
   // Rails and header suffixes only exist in day-grouped mode; match mode
@@ -297,6 +302,7 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
           ${g.dayKey !== null && html`<h3 class="bc-agenda-day">
             ${fmtDayLong(dateOfDayKey(g.dayKey))}
             ${hiddenDays && hiddenDays.get(g.dayKey) && html`<${HiddenMark} count=${hiddenDays.get(g.dayKey)} onShow=${onShowHidden} />`}
+            ${ctxByDay.get(g.dayKey) && html`<${ContextStrip} occs=${ctxByDay.get(g.dayKey)} calendars=${calendars} onOpen=${onOpenEvent} />`}
             ${onCreateDay && html`<button
               type="button" class="bc-agenda-dayadd"
               title=${'New event on ' + fmtDayLong(dateOfDayKey(g.dayKey))}

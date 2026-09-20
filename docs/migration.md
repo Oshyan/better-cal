@@ -25,5 +25,5 @@ For daily-driving Better-Cal *before* committing:
 ### After the move
 
 - Invites: set up the Gmail forward filter (docs/email-ingest.md) so invitations sent to your Gmail keep landing in Better-Cal.
-- GCal links on the web: the Chrome extension (extension/README.md) redirects "Add to Google Calendar" buttons to Better-Cal; on mobile, share the link to the installed PWA or paste it into quick add.
+- GCal links on the web: the Chrome extension (extension/README.md; Settings → Connections links it and shows the address to paste into its options) redirects "Add to Google Calendar" buttons to Better-Cal; on mobile, share the link to the installed PWA or paste it into quick add.
 - Leave the GCal calendars in place but stop looking at them; delete whenever confidence is total.

@@ -211,8 +211,16 @@ final class Calendars
         if ((string) $row['kind'] !== 'subscribed') {
             throw HttpError::badRequest('Only subscribed calendars can be adopted');
         }
+        // Adopting a Google calendar makes it wholly ours: the link to Google
+        // goes too, so it stops polling AND stops writing through. The
+        // events keep their Google ids as history; nothing reads them once
+        // the calendar has no provider. This is the final step of a
+        // migration (docs/migration.md).
         $this->db->run(
-            "UPDATE calendars SET kind = 'local', source_url = NULL, last_poll_status = 'never', last_poll_error = NULL WHERE id = ?",
+            "UPDATE calendars SET kind = 'local', provider = 'ics', source_url = NULL, google_calendar_id = NULL,
+                google_access_role = NULL, google_sync_token = NULL, google_account_id = NULL,
+                role = CASE WHEN role = 'opportunities' THEN 'mine' ELSE role END,
+                last_poll_status = 'never', last_poll_error = NULL WHERE id = ?",
             [$id]
         );
         $this->db->run("UPDATE events SET source = 'local' WHERE calendar_id = ?", [$id]);

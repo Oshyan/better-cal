@@ -482,3 +482,7 @@ The complete fix is verifying DKIM in-process against the organizer's domain, on
 Ten unit checks in `server/tests/run.php` cover the pure predicate: address normalisation (case, display name, `mailto:`), trusted-sender relay, forged organizer, missing organizer, stale and equal sequence, and both unbound-event cases.
 
 Twenty assertions were run end to end against the deployed code and the production database, exercising the real `ingestMessage` path with generated messages: a genuine REQUEST creates and binds the organizer; a forged CANCEL is refused and the event stays uncancelled; a forged REQUEST is refused with title and start unchanged; both refusals appear in the activity feed with the correct source, summary, sender, and no snapshot; a stale SEQUENCE from the real organizer is refused; and the legitimate organizer can still update and cancel. The probe created and removed its own rows by exact id.
+
+## Fixed: IATA generator (BC-20) — 2026-09-22
+
+`tools/gen-iata.py` now drops rows whose coordinates are not finite or not within latitude/longitude range, and runs `php -l` on the generated table before it can be committed. Verified with a poisoned CSV carrying NaN, infinity and an out-of-range latitude: the table parses and contains only the valid row.

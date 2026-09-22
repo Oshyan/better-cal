@@ -63,6 +63,8 @@ export function ContextStrip({ occs, calendars, max = Infinity, onOpen, onMore }
 /** A timed context event on the timeline: a dashed hairline at its minute with a small label, never a block. */
 export function ContextMark({ occ, cal, top, onOpen }) {
   const tk = contextToken(occ, cal, 18);
+  // At hairline size the horizon glyphs turn to mud; the plain sun reads.
+  if (tk.icon === 'sunrise' || tk.icon === 'sunset') tk.icon = 'sun';
   const color = (cal && cal.color) || 'var(--fg-muted)';
   return html`<div class="bc-ctx-mark" style=${`top:${top}px`}>
     <span class="bc-ctx-mark-line" style=${`border-color:${color}`}></span>
@@ -71,6 +73,6 @@ export function ContextMark({ occ, cal, top, onOpen }) {
       onPointerDown=${(e) => e.stopPropagation()}
       onClick=${(e) => open(onOpen, occ, e)}
       onKeyDown=${(e) => keyOpen(onOpen, occ, e)}
-    ><${TokenIcon} token=${tk} cal=${cal} size=${9} />${tk.text && html`<span class="bc-ctx-token-text">${tk.text}</span>`}${tk.time && html`<span class="bc-ctx-token-time">${tk.time}${tk.zone ? ' ' + tk.zone : ''}</span>`}</span>
+    ><${TokenIcon} token=${tk} cal=${cal} size=${11} />${tk.text && html`<span class="bc-ctx-token-text">${tk.text}</span>`}${tk.time && html`<span class="bc-ctx-token-time">${tk.time}${tk.zone ? ' ' + tk.zone : ''}</span>`}</span>
   </div>`;
 }

@@ -25,7 +25,7 @@ export function TokenIcon({ token, cal, size = 10 }) {
 
 // Tokens are spans with the button role: a header is often itself a button
 // (week column, day panel), and buttons cannot nest.
-function Token({ occ, cal, onOpen }) {
+function Token({ occ, cal, onOpen, zone = true }) {
   const tk = contextToken(occ, cal);
   return html`<span
     role="button" tabindex="0" class="bc-ctx-token" title=${contextTitle(occ)}
@@ -35,7 +35,7 @@ function Token({ occ, cal, onOpen }) {
   >
     <${TokenIcon} token=${tk} cal=${cal} />
     ${tk.text && html`<span class="bc-ctx-token-text">${tk.text}</span>`}
-    ${tk.time && html`<span class="bc-ctx-token-time">${tk.time}${tk.zone ? ' ' + tk.zone : ''}</span>`}
+    ${tk.time && html`<span class="bc-ctx-token-time">${tk.time}${zone && tk.zone ? ' ' + tk.zone : ''}</span>`}
   </span>`;
 }
 
@@ -44,12 +44,12 @@ function Token({ occ, cal, onOpen }) {
  * occs: this day's context (lib/context.js contextByDay). max: tokens
  * before "+N"; onMore opens the day.
  */
-export function ContextStrip({ occs, calendars, max = Infinity, onOpen, onMore }) {
+export function ContextStrip({ occs, calendars, max = Infinity, onOpen, onMore, zone = true }) {
   if (!occs || occs.length === 0) return null;
   const shown = occs.slice(0, max);
   const rest = occs.length - shown.length;
   return html`<span class="bc-ctxstrip" role="list" aria-label="Context for this day">
-    ${shown.map((occ) => html`<${Token} key=${occ.instanceId} occ=${occ} cal=${calendars && calendars[occ.calendarId]} onOpen=${onOpen} />`)}
+    ${shown.map((occ) => html`<${Token} key=${occ.instanceId} occ=${occ} cal=${calendars && calendars[occ.calendarId]} onOpen=${onOpen} zone=${zone} />`)}
     ${rest > 0 && html`<span
       role="button" tabindex="0" class="bc-ctx-more"
       title=${occs.slice(max).map((o) => contextTitle(o)).join('\n')}

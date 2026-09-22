@@ -246,6 +246,8 @@ Conclusion: no design tradeoffs need to be made now for mobile. API-first + PWA 
 
 ## 8. Implementation Plan
 
+> **Historical.** This section is the plan as written before building started, kept for the record. Milestones 1 through 5 and most of "Later" have shipped; `FEATURES.md` describes what exists and the GitHub issues hold what is next.
+
 > **Status 2026-07-31:** Milestones 1-3 are built, deployed to https://cal.oshyan.com, and live-tested end to end (month/multi-week infinite scroll, week/day/agenda, quick-add with Gemini parsing, drag create/move/resize, search, undo, ICS import/subscribe/outbound feeds, feed health, PWA, mobile layout). Agent access (5.18c) shipped early: bearer tokens plus an MCP server in `tools/mcp/`. Phase 2 work (triage, filters, saved views) in progress. Known issues queued: all-day date anchoring across timezones, initial-import "new" pill noise.
 
 Recent experience (full Discourse calendar plugin with custom UI in days) sets the calibration: these are aggressive but genuine estimates for AI-assisted development with subagents, assuming roughly full-time focus bursts.
@@ -275,5 +277,5 @@ Dogfooding is the test plan: the milestone 3 gate forces real usage early, and e
 
 ## 10. Deployment Target
 
-- Host: Oshyan's Hetzner box (CloudPanel), deployed as `cal.oshyan.com` (DNS via hcloud / Hetzner DNS).
-- The implementing agent has hcloud CLI and server access; deploys and live-tests its own work end to end.
+- Any LAMP-style host: PHP 8.3+, MySQL 8, nginx or Apache, cron. `docs/install.md` is the guide; `scripts/deploy.sh` ships to the host named in `scripts/deploy.env`.
+- The reference install is the author's own single-server box, and every change is deployed there and used for real before it is considered done.

@@ -48,6 +48,7 @@ const WEATHER = [
   ['storm', /thunder|storm|lightning/i],
   ['snow', /snow|sleet|flurr|blizzard|ice/i],
   ['rain', /rain|shower|drizzle|wet/i],
+  ['air', /wind|breez|gust/i],
   ['cloud', /fog|mist|haze|cloud|overcast|smok/i],
   ['sun', /sun|clear|fair/i],
 ];
@@ -62,10 +63,12 @@ function recognize(bare, cal) {
   if (/\bhigh tide\b/i.test(bare)) return { icon: 'tideHigh', text: bare.replace(/\bhigh tide\b:?\s*/i, '').trim() };
   if (/\blow tide\b/i.test(bare)) return { icon: 'tideLow', text: bare.replace(/\blow tide\b:?\s*/i, '').trim() };
   if (/\b(full|new) moon\b|moonrise|moonset/i.test(bare)) return { icon: 'moon', text: bare.replace(/\bmoon\b/i, '').trim() };
-  if ((m = bare.match(/^(-?\d{1,3})°?\s*\/\s*(-?\d{1,3})°?\s*(.*)$/))) {
-    const words = m[3] || '';
+  if ((m = bare.match(/^(~?)(-?\d{1,3})°?\s*\/\s*(-?\d{1,3})°?\s*(.*)$/))) {
+    // "72/58 fog", "~80/58 avg" (a long-range normal): the pair is the value,
+    // the words pick the icon, a thermometer when they name no weather.
+    const words = m[4] || '';
     const icon = (WEATHER.find(([, re]) => re.test(words)) || ['thermometer'])[0];
-    return { icon, text: m[1] + '/' + m[2] };
+    return { icon, text: m[1] + m[2] + '/' + m[3] };
   }
   if (cal && /holiday/i.test(cal.name || '')) return { icon: 'flag', text: bare };
   return null;

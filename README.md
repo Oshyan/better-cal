@@ -6,6 +6,8 @@ A self-hosted calendar built to fully replace Google Calendar: everything GCal d
 
 **[Full feature list → FEATURES.md](FEATURES.md)**
 
+![Month view with the command palette open: go to a date, create, switch views, toggle calendars, all from the keyboard](docs/screenshots/command-palette.webp)
+
 ## What this is, and isn't
 
 Better-Cal is built for one person's daily use and runs their real calendar every day. It is single-user by design: one login, one owner, everyone else reaches it through CalDAV, shared feeds and invitations. It is developed in the open because there is no reason not to, not because it is a product. There is no support commitment, no roadmap promise and no compatibility guarantee between versions, though migrations are always provided. Issues and pull requests are welcome; expect honest answers about what will and will not be taken on.

@@ -4,6 +4,10 @@ A self-hosted calendar built to fully replace Google Calendar: everything GCal d
 
 **[Full feature list → FEATURES.md](FEATURES.md)**
 
+## What this is, and isn't
+
+Better-Cal is built for one person's daily use and runs their real calendar every day. It is single-user by design: one login, one owner, everyone else reaches it through CalDAV, shared feeds and invitations. It is developed in the open because there is no reason not to, not because it is a product. There is no support commitment, no roadmap promise and no compatibility guarantee between versions, though migrations are always provided. Issues and pull requests are welcome; expect honest answers about what will and will not be taken on.
+
 ## License
 
 MIT, see [LICENSE](LICENSE). Use it, fork it, host it, sell it. If you build something on it, a link back to this repo is appreciated but not required.

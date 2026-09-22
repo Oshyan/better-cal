@@ -1,0 +1,11 @@
+# gitleaks configuration: `gitleaks git .` scans the full history.
+# The only hit is a documentation placeholder: docs/caldav.md shows a curl
+# example with the token spelled `bc_...`, which is not a token.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Documentation placeholders, never real credentials"
+regexes = [
+  '''bc_\.\.\.''',
+]

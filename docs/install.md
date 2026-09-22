@@ -21,7 +21,7 @@ Better-Cal is plain PHP and MySQL with a no-build frontend. It should run on any
 7. Add the worker to cron, as the user that owns the files: `* * * * * php /srv/better-cal/server/bin/worker.php >> /srv/better-cal/worker.log 2>&1`. It polls feeds, ingests mail, sends reminders and prunes old data. Settings, System shows whether each job is healthy.
 8. Optional: `php server/bin/vapid.php --generate` and put the keys in `.env` to enable push reminders.
 
-Updating is: pull, `composer install --no-dev`, `php server/bin/migrate.php`. `scripts/deploy.sh` does this over rsync and ssh for one specific server; treat it as an example, since its host and paths are hardcoded.
+Updating is: pull, `composer install --no-dev`, `php server/bin/migrate.php`. `scripts/deploy.sh` does this over rsync and ssh, runs every test suite first, and refuses to ship a red tree: copy `scripts/deploy.env.example` to `scripts/deploy.env`, fill in the host and paths, and run it. It assumes a Debian-style host with sudo, composer and cron; `scripts/deploy-dev.sh` ships any branch to a second, isolated install on the same host.
 
 ## Dependencies and advisories
 

@@ -45,6 +45,8 @@ final class Plugins
         'lock', 'unlock', 'calendar', 'today', 'viewMonth', 'viewWeek',
         'viewWeeks3', 'viewWeeks2', 'viewDay', 'viewAgenda', 'plugins',
         'proposals', 'review', 'mail', 'arrowRight', 'people', 'trip', 'google',
+        // Information icons, for context events (a plugin sets one per event).
+        'sun', 'sunrise', 'sunset', 'air', 'tideHigh', 'tideLow', 'cloud', 'rain', 'snow', 'storm', 'thermometer', 'moon', 'flag',
     ];
 
     /**

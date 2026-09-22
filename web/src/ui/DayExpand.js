@@ -7,6 +7,8 @@ import { dateOfDayKey, fmtDayLong, parseISO, fmtTime, epochDayOfKey, byStart } f
 import { EventChip } from './EventChip.js';
 import { occurrenceDaySpan } from './monthmath.js';
 import { Icon } from './icons.js';
+import { TokenIcon } from './ContextStrip.js';
+import { isContext, contextToken, contextText, contextTitle } from '../lib/context.js';
 
 export const MOBILE_QUERY = '(max-width: 640px)';
 
@@ -41,7 +43,13 @@ export function DayExpand({ dayKey, anchorRect, occurrences, calendars, dimSet, 
 
   const d = dateOfDayKey(dayKey);
   const ed = epochDayOfKey(dayKey);
-  const sorted = [...occurrences].sort((a, b) => {
+  // Context (weather, sunset, tides) sits in its own section on top: the
+  // state of the day first, then what is planned.
+  const ctx = occurrences.filter(isContext).sort((a, b) => {
+    if (a.allDay !== b.allDay) return a.allDay ? -1 : 1;
+    return byStart(a, b);
+  });
+  const sorted = occurrences.filter((o) => !isContext(o)).sort((a, b) => {
     if (a.allDay !== b.allDay) return a.allDay ? -1 : 1;
     return byStart(a, b);
   });
@@ -53,7 +61,7 @@ export function DayExpand({ dayKey, anchorRect, occurrences, calendars, dimSet, 
     // appears when the day genuinely cannot fit on screen.
     const w = Math.max(280, Math.min(380, anchorRect.width * 2));
     const maxH = Math.round(window.innerHeight * 0.85);
-    const h = Math.min(maxH, 64 + sorted.length * 34 + 40);
+    const h = Math.min(maxH, 64 + sorted.length * 34 + 40 + (ctx.length ? 14 + ctx.length * 26 : 0));
     const p = anchorPanel(anchorRect, w, h);
     style = `left:${p.left}px;top:${p.top}px;width:${w}px;max-height:${maxH}px`;
   }
@@ -72,7 +80,21 @@ export function DayExpand({ dayKey, anchorRect, occurrences, calendars, dimSet, 
         <button type="button" class="bc-icon-btn" aria-label="Close" onClick=${onClose}><${Icon} name="close" size=${14} /></button>
       </div>
       <div class="bc-dayexpand-list">
-        ${sorted.length === 0 && html`<div class="bc-empty">No events this day</div>`}
+        ${ctx.length > 0 && html`<div class="bc-dayexpand-ctx" role="list" aria-label="Context for this day">
+          ${ctx.map((occ) => {
+            const cal = calendars[occ.calendarId];
+            const tk = contextToken(occ, cal, 60);
+            return html`<button
+              key=${occ.instanceId} type="button" role="listitem" class="bc-dayexpand-ctxrow" title=${contextTitle(occ)}
+              onClick=${(e) => onOpenEvent && onOpenEvent(occ.instanceId, e.currentTarget.getBoundingClientRect(), { dayKey })}
+            >
+              <${TokenIcon} token=${tk} cal=${cal} size=${12} />
+              <span class="bc-dayexpand-ctxtext">${contextText(occ) || '(untitled)'}</span>
+              ${tk.time && html`<span class="bc-dayexpand-ctxtime">${tk.time}${tk.zone ? ' ' + tk.zone : ''}</span>`}
+            </button>`;
+          })}
+        </div>`}
+        ${sorted.length === 0 && html`<div class="bc-empty">${ctx.length ? 'Nothing planned' : 'No events this day'}</div>`}
         ${sorted.map((occ) => {
           // All-day and multi-day events keep the tinted full-width chip (dot
           // + title) and gain angled ends where the event continues past this

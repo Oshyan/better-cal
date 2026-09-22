@@ -1601,6 +1601,7 @@ final class Events
             'attendance' => (string) $row['attendance'],
             'status' => (string) $row['status'],
             'relationship' => self::relationship((string) $row['attendance'], (string) $row['status'], (string) ($calMeta['role'] ?? 'mine')),
+            'icon' => isset($row['icon']) && $row['icon'] !== '' ? (string) $row['icon'] : null,
             'score' => isset($row['score']) && $row['score'] !== null ? (float) $row['score'] : null,
             'reminders' => $reminders,
             // List-shape bits, sent only when true (null is omitted): they let

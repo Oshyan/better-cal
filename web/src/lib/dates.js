@@ -214,8 +214,16 @@ export function startOfWeekKey(key) {
 let timeFmt = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' });
 let timeShortFmt = new Intl.DateTimeFormat(undefined, { hour: 'numeric' });
 
+let timeFmtSetting = '';
+const zoneTimeFmts = new Map();
+function tfOpts(tf) {
+  return tf === '24' ? { hour12: false } : tf === '12' ? { hour12: true } : {};
+}
+
 export function setTimeFormat(tf) {
-  const opts = tf === '24' ? { hour12: false } : tf === '12' ? { hour12: true } : {};
+  timeFmtSetting = tf;
+  zoneTimeFmts.clear();
+  const opts = tfOpts(tf);
   timeFmt = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit', ...opts });
   timeShortFmt = new Intl.DateTimeFormat(undefined, { hour: 'numeric', ...opts });
 }
@@ -229,6 +237,30 @@ const dateShortFmt = new Intl.DateTimeFormat(undefined, { month: 'short', day: '
 const dateFullFmt = new Intl.DateTimeFormat(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
 
 export function fmtTime(d) { return timeFmt.format(d).replace(/\s/g, ' '); }
+/** The clock time in a given zone (the user's time format), or the local time when the zone is unknown. */
+export function fmtTimeIn(d, tz) {
+  if (!tz) return fmtTime(d);
+  let f = zoneTimeFmts.get(tz);
+  if (!f) {
+    try {
+      f = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit', timeZone: tz, ...tfOpts(timeFmtSetting) });
+    } catch {
+      return fmtTime(d);
+    }
+    zoneTimeFmts.set(tz, f);
+  }
+  return f.format(d).replace(/\s/g, ' ');
+}
+
+/** "PDT", "BST", "CET"; "UTC-7" where the browser has no name for the zone at that instant. */
+export function tzAbbrev(tz, at = new Date()) {
+  try {
+    const p = new Intl.DateTimeFormat('en-US', { timeZone: tz, timeZoneName: 'short' }).formatToParts(at).find((x) => x.type === 'timeZoneName');
+    return p ? p.value.replace(/^GMT([+-])/, 'UTC$1') : '';
+  } catch {
+    return '';
+  }
+}
 export function fmtHour(d) { return timeShortFmt.format(d); }
 export function fmtMonthYear(d) { return monthYearFmt.format(d); }
 export function fmtMonthShort(d) { return monthShortFmt.format(d); }

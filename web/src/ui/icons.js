@@ -194,6 +194,20 @@ export function Icon({ name, size = 15 }) {
     // Suitcase: handle, body, two strap seams. Marks trip containers.
     trip: html`<rect x="2.8" y="4.8" width="10.4" height="8.8" rx="1.6" />
       <path d="M6.2 4.8V3.6c0-.6.4-1 1-1h1.6c.6 0 1 .4 1 1v1.2M5.6 4.8v8.8M10.4 4.8v8.8" />`,
+    // Information icons: what a context token is about (weather, air, sun, tide).
+    sun: html`<circle cx="8" cy="8" r="2.8" /><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4" />`,
+    sunrise: html`<path d="M1.5 12h13M4.5 12a3.5 3.5 0 0 1 7 0M8 7.5V2.5M6 4.5l2-2 2 2M3 9.2l.8-.8M13 9.2l-.8-.8" />`,
+    sunset: html`<path d="M1.5 12h13M4.5 12a3.5 3.5 0 0 1 7 0M8 2.5v5M6 5.5l2 2 2-2M3 9.2l.8-.8M13 9.2l-.8-.8" />`,
+    air: html`<path d="M2 5.5h7.5a1.8 1.8 0 1 0-1.8-1.8M2 8.5h10a1.8 1.8 0 1 1-1.8 1.8M2 11.5h5.5a1.5 1.5 0 1 1-1.5 1.5" />`,
+    tideHigh: html`<path d="M1.5 12c1.6 0 1.6-1.6 3.2-1.6s1.7 1.6 3.3 1.6 1.6-1.6 3.2-1.6 1.7 1.6 3.3 1.6M8 8V2.5M5.8 4.7L8 2.5l2.2 2.2" />`,
+    tideLow: html`<path d="M1.5 12c1.6 0 1.6-1.6 3.2-1.6s1.7 1.6 3.3 1.6 1.6-1.6 3.2-1.6 1.7 1.6 3.3 1.6M8 2.5V8M5.8 5.8L8 8l2.2-2.2" />`,
+    cloud: html`<path d="M5 12.5h6.5a2.8 2.8 0 0 0 .3-5.6 4 4 0 0 0-7.6-1A3.3 3.3 0 0 0 5 12.5z" />`,
+    rain: html`<path d="M5 10h6.5a2.5 2.5 0 0 0 .3-5 3.6 3.6 0 0 0-7-.9A2.9 2.9 0 0 0 5 10zM6 12l-.8 2M9 12l-.8 2M12 12l-.8 2" />`,
+    snow: html`<path d="M5 10h6.5a2.5 2.5 0 0 0 .3-5 3.6 3.6 0 0 0-7-.9A2.9 2.9 0 0 0 5 10z" /><circle cx="5.8" cy="13" r=".8" fill="currentColor" stroke="none" /><circle cx="8.8" cy="13" r=".8" fill="currentColor" stroke="none" /><circle cx="11.8" cy="13" r=".8" fill="currentColor" stroke="none" />`,
+    storm: html`<path d="M5 9.5h6.5a2.5 2.5 0 0 0 .3-5 3.6 3.6 0 0 0-7-.9A2.9 2.9 0 0 0 5 9.5zM8.8 9.5l-1.6 2.7h2l-1.6 2.8" />`,
+    thermometer: html`<path d="M6.5 9.3V3.5a1.5 1.5 0 0 1 3 0v5.8a2.6 2.6 0 1 1-3 0zM8 6v5" />`,
+    moon: html`<path d="M13 10.2A5.5 5.5 0 0 1 5.8 3a5.5 5.5 0 1 0 7.2 7.2z" />`,
+    flag: html`<path d="M4 14V2.5h8l-2 3 2 3H4" />`,
   }[name === 'organize' ? 'folder' : name];
   return html`<svg
     viewBox="0 0 16 16" width=${size} height=${size} aria-hidden="true"

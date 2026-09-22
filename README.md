@@ -1,5 +1,9 @@
 # Better-Cal
 
+**An opinionated calendar that questions the status quo.**
+
+*Built for power users, and inspired not merely by the wish to self-host but by a question: can calendars actually be made better and easier to use?*
+
 [![tests](https://github.com/Oshyan/better-cal/actions/workflows/tests.yml/badge.svg)](https://github.com/Oshyan/better-cal/actions/workflows/tests.yml)
 
 A self-hosted calendar built to fully replace Google Calendar: everything GCal does day-to-day, plus an activity log with undo, email-to-event ingest with real RSVP replies, trips and people as first-class objects, natural-language everything, and an agent-native API. Plain PHP + MySQL backend, no-build Preact frontend, CalDAV for native clients.

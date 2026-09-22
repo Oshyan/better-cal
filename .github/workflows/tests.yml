@@ -18,6 +18,11 @@ jobs:
   server:
     name: PHP suite
     runs-on: ubuntu-latest
+    # The runner's PHP loads Xdebug, which decorates every exception with a
+    # dynamic property and turns a caught bad-timezone exception into a
+    # fatal. Production and local PHP run without it; so does this job.
+    env:
+      XDEBUG_MODE: off
     steps:
       - uses: actions/checkout@v4
       - name: PHP and extensions on the runner

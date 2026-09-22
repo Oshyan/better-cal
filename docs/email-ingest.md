@@ -31,9 +31,9 @@ Ingested invitations show an RSVP row (Accept / Maybe / Decline) in the event de
 ```
 BETTERCAL_RSVP_SMTP_HOST=smtp.gmail.com
 BETTERCAL_RSVP_SMTP_PORT=587
-BETTERCAL_RSVP_SMTP_USER=you@example.com
+BETTERCAL_RSVP_SMTP_USER=you@gmail.com
 BETTERCAL_RSVP_SMTP_PASS=<16-char Google app password>
-BETTERCAL_RSVP_SMTP_FROM=you@example.com
+BETTERCAL_RSVP_SMTP_FROM=you@gmail.com
 ```
 
 App password: Google Account → Security → 2-Step Verification (must be on) → App passwords. Without this profile, replies fall back to the calendar@ SMTP profile — many servers accept that (the reply names the right attendee), Google organizers may not.

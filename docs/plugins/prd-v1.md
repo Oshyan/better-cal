@@ -201,7 +201,7 @@ Manage → Plugins. Per plugin: name, version, enabled toggle, declared permissi
 
 ## Success criteria
 
-- All three demos live on cal.oshyan.com with hot-path baselines unchanged within the documented noise threshold.
+- All three demos live on the reference install with hot-path baselines unchanged within the documented noise threshold.
 - Killing, breaking, or uninstalling any demo plugin leaves the core calendar fully functional with no orphaned invisible data.
 - The availability overlay runs through the generic registry with no user-visible change.
 - A third party can write a working provider plugin from the author guide without reading host source.

@@ -350,7 +350,7 @@ $imipIcs = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Test//EN\r\nMETHOD:REQUE
     . "UID:abc-123\@example.com\r\nDTSTAMP:20260801T000000Z\r\nDTSTART:20260810T170000Z\r\nDTEND:20260810T180000Z\r\n"
     . "SUMMARY:Team sync\r\nLOCATION:Room 4\r\nSEQUENCE:2\r\n"
     . "ORGANIZER;CN=Alice:mailto:alice@example.com\r\n"
-    . "ATTENDEE;CN=Oshyan;PARTSTAT=NEEDS-ACTION:mailto:oshyan@gmail.com\r\n"
+    . "ATTENDEE;CN=Owner;PARTSTAT=NEEDS-ACTION:mailto:owner@example.com\r\n"
     . "END:VEVENT\r\nEND:VCALENDAR\r\n";
 $imip = MailIngest::parseImip($imipIcs);
 checkEq('imip method', 'REQUEST', $imip['method']);
@@ -733,9 +733,9 @@ check('flatten drops style/script', !str_contains($flat, 'color:red') && !str_co
 check('flatten decodes entities', str_contains($flat, 'Hello & welcome'));
 check('flatten keeps content', str_contains($flat, 'Aug 15'));
 
-$reply = MailIngest::buildReplyIcs('abc-123@example.com', 'alice@example.com', 'oshyan@gmail.com', 'ACCEPTED', 2, 'Team sync', new DateTimeImmutable('2026-08-03T12:00:00Z'));
+$reply = MailIngest::buildReplyIcs('abc-123@example.com', 'alice@example.com', 'owner@example.com', 'ACCEPTED', 2, 'Team sync', new DateTimeImmutable('2026-08-03T12:00:00Z'));
 check('rsvp reply has METHOD', str_contains($reply, 'METHOD:REPLY'));
-check('rsvp reply has partstat attendee', str_contains($reply, 'ATTENDEE;PARTSTAT=ACCEPTED:mailto:oshyan@gmail.com'));
+check('rsvp reply has partstat attendee', str_contains($reply, 'ATTENDEE;PARTSTAT=ACCEPTED:mailto:owner@example.com'));
 check('rsvp reply has organizer', str_contains($reply, 'ORGANIZER:mailto:alice@example.com'));
 check('rsvp reply keeps sequence', str_contains($reply, 'SEQUENCE:2'));
 
@@ -3049,7 +3049,7 @@ use BetterCal\Infra\Secrets;
         return str_contains($u, 'calendar.readonly') && str_contains($u, 'calendar.events') && str_contains($u, 'access_type=offline') && str_contains($u, rawurlencode('https://cal.example/api/v1/google/callback'));
     })());
     // What kind of calendar each list entry is, from the id and role Google gives.
-    checkEq('google kind: primary is yours', 'yours', GoogleAuth::calendarKind('oshyan@gmail.com', 'owner', true));
+    checkEq('google kind: primary is yours', 'yours', GoogleAuth::calendarKind('owner@example.com', 'owner', true));
     checkEq('google kind: owned secondary is yours', 'yours', GoogleAuth::calendarKind('abc@group.calendar.google.com', 'owner', false));
     checkEq('google kind: writer on a secondary is shared', 'shared', GoogleAuth::calendarKind('05bdc@group.calendar.google.com', 'writer', false));
     checkEq('google kind: someone else primary is shared', 'shared', GoogleAuth::calendarKind('friend@gmail.com', 'reader', false));

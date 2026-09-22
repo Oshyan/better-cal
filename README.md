@@ -31,7 +31,6 @@ MIT, see [LICENSE](LICENSE). Use it, fork it, host it, sell it. If you build som
 - [CalDAV](docs/caldav.md)
 - [Email ingest](docs/email-ingest.md)
 - [Migration from Google Calendar](docs/migration.md)
-- [Deployment notes](docs/deployment-notes.md): facts about the one production install (cal.oshyan.com), not general guidance
 - Roadmap: the [GitHub issues](https://github.com/Oshyan/better-cal/issues); there is no separate roadmap document
 
 ## Configuration

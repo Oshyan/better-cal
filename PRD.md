@@ -209,7 +209,7 @@ The goal of Phase 1 is that Google Calendar can be abandoned for daily personal 
 
 **5.18b Email-to-event ingest** (user request 2026-07-31)
 
-- CC or forward an email to a dedicated address (calendar@oshyan.com or a subaddress) and Better-Cal parses it with the LLM to create the appropriate event or events from the text and context. Example: "we're all set for the campground June 1-12th" creates that multi-day event; correspondents mentioned or addressed (Mick, identified by his email address) are linked as People on the event, and optionally receive an invitation.
+- CC or forward an email to a dedicated address (a dedicated mailbox or a subaddress) and Better-Cal parses it with the LLM to create the appropriate event or events from the text and context. Example: "we're all set for the campground June 1-12th" creates that multi-day event; correspondents mentioned or addressed (Mick, identified by his email address) are linked as People on the event, and optionally receive an invitation.
 - Ingest path: IMAP polling of the mailbox from the worker (mxroute-compatible), or a forwarding pipe later. Confidence gating: low-confidence parses land in an inbox/review state rather than silently creating events.
 - People matching by email address becomes part of the Person record (add email column when building this).
 
@@ -248,7 +248,7 @@ Conclusion: no design tradeoffs need to be made now for mobile. API-first + PWA 
 
 > **Historical.** This section is the plan as written before building started, kept for the record. Milestones 1 through 5 and most of "Later" have shipped; `FEATURES.md` describes what exists and the GitHub issues hold what is next.
 
-> **Status 2026-07-31:** Milestones 1-3 are built, deployed to https://cal.oshyan.com, and live-tested end to end (month/multi-week infinite scroll, week/day/agenda, quick-add with Gemini parsing, drag create/move/resize, search, undo, ICS import/subscribe/outbound feeds, feed health, PWA, mobile layout). Agent access (5.18c) shipped early: bearer tokens plus an MCP server in `tools/mcp/`. Phase 2 work (triage, filters, saved views) in progress. Known issues queued: all-day date anchoring across timezones, initial-import "new" pill noise.
+> **Status 2026-07-31:** Milestones 1-3 are built, deployed to the reference install, and live-tested end to end (month/multi-week infinite scroll, week/day/agenda, quick-add with Gemini parsing, drag create/move/resize, search, undo, ICS import/subscribe/outbound feeds, feed health, PWA, mobile layout). Agent access (5.18c) shipped early: bearer tokens plus an MCP server in `tools/mcp/`. Phase 2 work (triage, filters, saved views) in progress. Known issues queued: all-day date anchoring across timezones, initial-import "new" pill noise.
 
 Recent experience (full Discourse calendar plugin with custom UI in days) sets the calibration: these are aggressive but genuine estimates for AI-assisted development with subagents, assuming roughly full-time focus bursts.
 
@@ -268,7 +268,7 @@ Dogfooding is the test plan: the milestone 3 gate forces real usage early, and e
 
 ## 9. Decisions (resolved 2026-07-30)
 
-1. **DB**: MariaDB/MySQL on the Hetzner box (CloudPanel-managed; use whichever MySQL-compatible server CloudPanel provides, FULLTEXT works on both). Root access available.
+1. **DB**: MariaDB/MySQL on the host (FULLTEXT works on both).
 2. **LLM provider**: Gemini Flash via existing API key to start; `LlmGateway` keeps Anthropic API and headless Claude CLI as swappable backends (Claude CLI could be installed on the box later).
 3. **Auth/tenancy**: single user per instance, password + long-lived session. Vision is self-host for everyone, open source eventually; instances interchange via calendar subscriptions, not shared multi-user hosting. Schema keeps `user_id` so multi-user is never foreclosed.
 4. **Geocoding**: start free (Photon/Nominatim or a free commercial tier), swappable behind an interface. Reference the Discourse Places plugin in EdgeTech for provider experience already gathered.

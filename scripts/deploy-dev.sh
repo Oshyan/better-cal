@@ -15,9 +15,9 @@ set -euo pipefail
 # all of that is not worth leaving open between branches.
 #
 # Open it only while you are actually testing, and close it again after:
-#   hcloud firewall add-rule cloudpanel-prod --direction in --protocol tcp \
+#   hcloud firewall add-rule <firewall-name> --direction in --protocol tcp \
 #     --port 9443 --source-ips 0.0.0.0/0 --source-ips ::/0
-#   hcloud firewall delete-rule cloudpanel-prod --direction in --protocol tcp \
+#   hcloud firewall delete-rule <firewall-name> --direction in --protocol tcp \
 #     --port 9443 --source-ips 0.0.0.0/0 --source-ips ::/0
 #
 # Better still, scope it to your own address the way port 8443 already is,

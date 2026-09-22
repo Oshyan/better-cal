@@ -1,6 +1,6 @@
 # CalDAV Sync
 
-Better-Cal exposes a CalDAV server at `https://cal.oshyan.com/dav`, so Apple Calendar (macOS/iOS), Android clients, Thunderbird, etc. can sync natively — including two-way editing of local calendars.
+Better-Cal exposes a CalDAV server at `https://cal.example.com/dav`, so Apple Calendar (macOS/iOS), Android clients, Thunderbird, etc. can sync natively — including two-way editing of local calendars.
 
 ## Credentials
 
@@ -11,13 +11,13 @@ Auth is HTTP Basic, so it is only safe over TLS. The server is HTTPS-only; never
 
 ## Adding the account
 
-**iOS:** Settings → Apps → Calendar → Calendar Accounts → Add Account → Other → Add CalDAV Account. Server: `cal.oshyan.com/dav` (if validation fails, use the full URL `https://cal.oshyan.com/dav`). Username = email, password = token or account password.
+**iOS:** Settings → Apps → Calendar → Calendar Accounts → Add Account → Other → Add CalDAV Account. Server: `cal.example.com/dav` (if validation fails, use the full URL `https://cal.example.com/dav`). Username = email, password = token or account password.
 
-**macOS Calendar:** Calendar → Settings → Accounts → + → CalDAV Account → Account Type: Advanced. Server address: `cal.oshyan.com`, Server path: `/dav`, port 443 with SSL. (Account Type "Manual" with address `cal.oshyan.com/dav` usually works too.)
+**macOS Calendar:** Calendar → Settings → Accounts → + → CalDAV Account → Account Type: Advanced. Server address: `cal.example.com`, Server path: `/dav`, port 443 with SSL. (Account Type "Manual" with address `cal.example.com/dav` usually works too.)
 
-**Android:** stock Android has no CalDAV support; install [DAVx5](https://www.davx5.com/) (Play Store or F-Droid). Add account → "Login with URL and user name" → base URL `https://cal.oshyan.com/dav`, username = email, password = token. DAVx5 syncs the calendars into the regular Android calendar app.
+**Android:** stock Android has no CalDAV support; install [DAVx5](https://www.davx5.com/) (Play Store or F-Droid). Add account → "Login with URL and user name" → base URL `https://cal.example.com/dav`, username = email, password = token. DAVx5 syncs the calendars into the regular Android calendar app.
 
-**Thunderbird:** New Calendar → On the Network → enter username and `https://cal.oshyan.com/dav`; it discovers all calendars.
+**Thunderbird:** New Calendar → On the Network → enter username and `https://cal.example.com/dav`; it discovers all calendars.
 
 ## What syncs
 
@@ -41,4 +41,4 @@ Auth is HTTP Basic, so it is only safe over TLS. The server is HTTPS-only; never
 - **400 "Object URI must be <UID>.ics":** the client PUT a resource whose filename does not match the VEVENT UID. Mainstream clients (Apple, DAVx5, Thunderbird) always match; if you script against the endpoint, name objects `{uid}.ics`.
 - **Sync seems stale:** clients poll; pull-to-refresh (iOS) or force sync (DAVx5) fetches immediately. Server-side feed calendars only update when the hourly poll runs.
 - **Plain HTTP:** Basic auth credentials are only sent over TLS; the server does not serve the DAV endpoint over http.
-- **Endpoint check:** `curl -u 'you@example.com:bc_...' https://cal.oshyan.com/dav/` should return XML/HTML, not a 404. If nginx has not been configured with the `/dav` location yet, `https://cal.oshyan.com/dav.php/` works as a fallback.
+- **Endpoint check:** `curl -u 'you@example.com:bc_...' https://cal.example.com/dav/` should return XML/HTML, not a 404. If nginx has not been configured with the `/dav` location yet, `https://cal.example.com/dav.php/` works as a fallback.

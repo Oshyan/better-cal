@@ -27,13 +27,13 @@ php server/bin/token.php --revoke=3
 Or over HTTP from a logged-in session (session cookie + `X-CSRF` header required):
 
 ```sh
-curl -s https://cal.oshyan.com/api/v1/tokens -X POST \
+curl -s https://cal.example.com/api/v1/tokens -X POST \
   -b cookies.txt -H "X-CSRF: $CSRF" -H 'Content-Type: application/json' \
   -d '{"name":"cron-digest"}'
 # -> {"id":3,"name":"cron-digest","token":"bc_..."}  (token shown once)
 
-curl -s https://cal.oshyan.com/api/v1/tokens -b cookies.txt          # list: id, name, createdAt, lastUsedAt
-curl -s https://cal.oshyan.com/api/v1/tokens/3 -X DELETE -b cookies.txt -H "X-CSRF: $CSRF"
+curl -s https://cal.example.com/api/v1/tokens -b cookies.txt          # list: id, name, createdAt, lastUsedAt
+curl -s https://cal.example.com/api/v1/tokens/3 -X DELETE -b cookies.txt -H "X-CSRF: $CSRF"
 ```
 
 ## curl examples
@@ -41,7 +41,7 @@ curl -s https://cal.oshyan.com/api/v1/tokens/3 -X DELETE -b cookies.txt -H "X-CS
 Set up once:
 
 ```sh
-BC=https://cal.oshyan.com/api/v1
+BC=https://cal.example.com/api/v1
 AUTH="Authorization: Bearer bc_yourtokenhere"
 ```
 
@@ -97,7 +97,7 @@ curl -s "$BC/events/42" -X DELETE -H "$AUTH" -H 'Content-Type: application/json'
 
 ```sh
 claude mcp add better-cal \
-  --env BETTERCAL_URL=https://cal.oshyan.com \
+  --env BETTERCAL_URL=https://cal.example.com \
   --env BETTERCAL_TOKEN=bc_yourtokenhere \
   -- node /path/to/better-cal/tools/mcp/server.mjs
 ```
@@ -123,7 +123,7 @@ claude mcp add better-cal \
 ```sh
 #!/bin/sh
 # Tomorrow's agenda, e.g. piped into a notifier.
-BC=https://cal.oshyan.com/api/v1
+BC=https://cal.example.com/api/v1
 AUTH="Authorization: Bearer $BETTERCAL_TOKEN"
 START=$(date -v+1d +%Y-%m-%dT00:00:00%z)
 END=$(date -v+2d +%Y-%m-%dT00:00:00%z)

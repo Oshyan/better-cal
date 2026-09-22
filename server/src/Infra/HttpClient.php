@@ -33,7 +33,7 @@ final class HttpClient
      */
     public function __construct(
         private readonly int $requestBudget = 60,
-        private readonly string $userAgent = 'Better-Cal/0.1 (+https://cal.oshyan.com)',
+        private readonly string $userAgent = 'Better-Cal (+https://github.com/Oshyan/better-cal)',
         private readonly int $maxBytes = self::MAX_BYTES,
         private readonly int $maxRedirects = self::MAX_REDIRECTS,
     ) {

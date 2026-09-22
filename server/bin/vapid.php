@@ -57,4 +57,4 @@ echo "Generated VAPID key pair. Add these lines to the app's .env file\n";
 echo "(keep the private key secret; changing keys invalidates existing subscriptions):\n\n";
 echo 'BETTERCAL_VAPID_PUBLIC=' . $public . "\n";
 echo 'BETTERCAL_VAPID_PRIVATE=' . $private . "\n";
-echo 'BETTERCAL_VAPID_SUBJECT=mailto:calendar@oshyan.com' . "\n";
+echo 'BETTERCAL_VAPID_SUBJECT=mailto:you@example.com' . "\n";

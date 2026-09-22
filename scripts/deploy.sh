@@ -2,14 +2,28 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-REMOTE="${REMOTE:-hetzner}"
-APP_DIR="/home/bettercal/app"
-DOCROOT="/home/bettercal/htdocs/cal.oshyan.com"
-HEALTH_URL="https://cal.oshyan.com/api/v1/health"
+# Target host and paths come from scripts/deploy.env (copy deploy.env.example;
+# ignored by git). Real environment variables win over the file.
+if [ -f "${ROOT_DIR}/scripts/deploy.env" ]; then
+  while IFS='=' read -r key value; do
+    case "${key}" in ''|\#*) continue ;; esac
+    if [ -z "${!key:-}" ]; then export "${key}=${value}"; fi
+  done < "${ROOT_DIR}/scripts/deploy.env"
+fi
+for v in REMOTE APP_USER APP_DIR HEALTH_URL; do
+  if [ -z "${!v:-}" ]; then
+    echo "${v} is not set. Copy scripts/deploy.env.example to scripts/deploy.env and fill it in." >&2
+    exit 1
+  fi
+done
+if [ -z "${DOCROOT:-}" ]; then
+  echo "DOCROOT is not set (the web server's document root; see scripts/deploy.env.example)." >&2
+  exit 1
+fi
 
 # Production deploys ship main. Feature branches go to the dev instance via
-# scripts/deploy-dev.sh (cal.oshyan.com:9443); FORCE_BRANCH=1 overrides for
-# the rare deliberate exception.
+# scripts/deploy-dev.sh; FORCE_BRANCH=1 overrides for the rare deliberate
+# exception.
 BRANCH="$(git -C "${ROOT_DIR}" branch --show-current)"
 if [ "${BRANCH}" != "main" ] && [ "${FORCE_BRANCH:-0}" != "1" ]; then
   echo "Refusing to deploy branch '${BRANCH}' to production. Use scripts/deploy-dev.sh, or FORCE_BRANCH=1." >&2
@@ -59,31 +73,30 @@ rsync -az \
   "${ROOT_DIR}/" "${REMOTE}:${APP_DIR}/"
 
 echo "== composer + migrate + link =="
-ssh "${REMOTE}" bash -s <<'EOF'
+ssh "${REMOTE}" "APP_DIR='${APP_DIR}' DOCROOT='${DOCROOT}' APP_USER='${APP_USER}' bash -s" <<'EOF'
 set -euo pipefail
-APP_DIR="/home/bettercal/app"
-DOCROOT="/home/bettercal/htdocs/cal.oshyan.com"
-chown -R bettercal:bettercal "${APP_DIR}"
-sudo -u bettercal bash -c "cd ${APP_DIR}/server && composer install --no-dev --quiet --no-interaction"
+chown -R "${APP_USER}:${APP_USER}" "${APP_DIR}"
+sudo -u "${APP_USER}" bash -c "cd ${APP_DIR}/server && composer install --no-dev --quiet --no-interaction"
 # Known advisories against the locked PHP dependencies: reported, not blocking.
 # A finding means "look at it", not "roll back the deploy in progress".
 echo "-- composer audit --"
-sudo -u bettercal bash -c "cd ${APP_DIR}/server && composer audit --no-dev --locked --no-interaction 2>&1 | tail -20" || true
-sudo -u bettercal php "${APP_DIR}/server/bin/migrate.php"
+sudo -u "${APP_USER}" bash -c "cd ${APP_DIR}/server && composer audit --no-dev --locked --no-interaction 2>&1 | tail -20" || true
+sudo -u "${APP_USER}" php "${APP_DIR}/server/bin/migrate.php"
 # Docroot -> app/server/public (replace real dir with symlink once)
 if [ ! -L "${DOCROOT}" ]; then
   rm -rf "${DOCROOT}"
   ln -s "${APP_DIR}/server/public" "${DOCROOT}"
-  chown -h bettercal:bettercal "${DOCROOT}"
+  chown -h "${APP_USER}:${APP_USER}" "${DOCROOT}"
 fi
-# Cron for worker (idempotent)
-sudo -u bettercal bash -c 'crontab -l 2>/dev/null | grep -q worker.php || (crontab -l 2>/dev/null; echo "* * * * * php /home/bettercal/app/server/bin/worker.php >> /home/bettercal/worker.log 2>&1") | crontab -'
+# Cron for worker (idempotent); the log sits beside the app directory.
+WORKER_LOG="$(dirname "${APP_DIR}")/worker.log"
+sudo -u "${APP_USER}" bash -c "crontab -l 2>/dev/null | grep -q worker.php || (crontab -l 2>/dev/null; echo \"* * * * * php ${APP_DIR}/server/bin/worker.php >> ${WORKER_LOG} 2>&1\") | crontab -"
 EOF
 
 # --- CalDAV nginx block (one-time manual change; NOT applied by this script) --
 # The /dav endpoint is served by server/public/dav.php (sabre/dav). Add this
-# location to the cal.oshyan.com nginx server block, above/alongside the
-# existing PHP location, then reload nginx:
+# location to the site's nginx server block, above/alongside the existing PHP
+# location, then reload nginx (docs/install.md has the full block):
 #
 #   location ^~ /dav {
 #     include fastcgi_params;                          # or the site's fastcgi include
@@ -96,7 +109,7 @@ EOF
 #   location = /.well-known/caldav { return 301 /dav/; }
 #
 # Until the block is applied, the endpoint also answers directly at
-# https://cal.oshyan.com/dav.php/ (dav.php adjusts its base URI automatically).
+# /dav.php/ (dav.php adjusts its base URI automatically).
 
 echo "== smoke =="
 sleep 1
@@ -105,4 +118,4 @@ sleep 1
 # serialise against the real data: a serializer refactor once 500ed the window
 # while this script printed "Deploy OK" under a green /health.
 curl -fsS --max-time 10 "${HEALTH_URL}" && echo
-ssh "${REMOTE}" "sudo -u bettercal php ${APP_DIR}/server/bin/smoke.php" && echo "Deploy OK"
+ssh "${REMOTE}" "sudo -u ${APP_USER} php ${APP_DIR}/server/bin/smoke.php" && echo "Deploy OK"

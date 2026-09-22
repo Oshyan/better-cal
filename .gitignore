@@ -9,3 +9,5 @@ server/vendor/
 dist/
 better-cal-gcal-redirect-*.zip
 workfolder/
+# Deploy target of this checkout (scripts/deploy.env.example is the template)
+scripts/deploy.env

@@ -1,10 +1,12 @@
 #!/bin/bash
 set -euo pipefail
 
-# Dev-instance deploy: ships the CURRENT branch (any branch) to the isolated
-# dev copy at https://cal.oshyan.com:9443. The dev instance is a full second
-# install — own directory (/home/bettercal/dev), own database (bettercal_dev),
-# own .env — sharing only the host, the TLS certificate, and the PHP-FPM pool.
+# Dev-instance deploy: ships the CURRENT branch (any branch) to an isolated
+# dev copy (DEV_DIR / DEV_HEALTH_URL in scripts/deploy.env). The dev instance
+# is a full second install — own directory, own database, own .env — sharing
+# only the host, the TLS certificate, and the PHP-FPM pool. The CLONE_DB step
+# assumes a CloudPanel host (clpctl for the MySQL root password); elsewhere,
+# set MYSQL_ROOT_PASSWORD.
 #
 # PORT 9443 IS CLOSED AT THE FIREWALL by default, so the URL above will time out
 # until you reopen it. That is deliberate: dev serves a CLONE of production —
@@ -40,9 +42,27 @@ set -euo pipefail
 # SKIP_TESTS=1 skips the local pre-flight suites.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-REMOTE="${REMOTE:-hetzner}"
-DEV_DIR="/home/bettercal/dev"
-HEALTH_URL="https://cal.oshyan.com:9443/api/v1/health"
+# Target host and paths come from scripts/deploy.env (copy deploy.env.example;
+# ignored by git). Real environment variables win over the file.
+if [ -f "${ROOT_DIR}/scripts/deploy.env" ]; then
+  while IFS='=' read -r key value; do
+    case "${key}" in ''|\#*) continue ;; esac
+    if [ -z "${!key:-}" ]; then export "${key}=${value}"; fi
+  done < "${ROOT_DIR}/scripts/deploy.env"
+fi
+for v in REMOTE APP_USER APP_DIR HEALTH_URL; do
+  if [ -z "${!v:-}" ]; then
+    echo "${v} is not set. Copy scripts/deploy.env.example to scripts/deploy.env and fill it in." >&2
+    exit 1
+  fi
+done
+for v in DEV_DIR DEV_HEALTH_URL PROD_DB DEV_DB; do
+  if [ -z "${!v:-}" ]; then
+    echo "${v} is not set (the dev instance; see scripts/deploy.env.example)." >&2
+    exit 1
+  fi
+done
+HEALTH_URL="${DEV_HEALTH_URL}"
 
 BRANCH="$(git -C "${ROOT_DIR}" branch --show-current)"
 echo "== deploying branch '${BRANCH}' to dev (${DEV_DIR}) =="
@@ -72,27 +92,26 @@ rsync -az \
   "${ROOT_DIR}/" "${REMOTE}:${DEV_DIR}/"
 
 if [ "${CLONE_DB:-0}" = "1" ]; then
-  echo "== re-cloning production DB into bettercal_dev =="
-  ssh "${REMOTE}" bash -s <<'EOF'
+  echo "== re-cloning ${PROD_DB} into ${DEV_DB} =="
+  ssh "${REMOTE}" "APP_DIR='${APP_DIR}' APP_USER='${APP_USER}' PROD_DB='${PROD_DB}' DEV_DB='${DEV_DB}' MYSQL_ROOT_PASSWORD='${MYSQL_ROOT_PASSWORD:-}' bash -s" <<'EOF'
 set -euo pipefail
-MPASS="$(clpctl db:show:master-credentials | awk -F'|' '/Password/ {gsub(/ /,"",$3); print $3}')"
-mysql -h 127.0.0.1 -u root -p"${MPASS}" -e "DROP DATABASE IF EXISTS bettercal_dev; CREATE DATABASE bettercal_dev CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
-mysqldump -h 127.0.0.1 -u root -p"${MPASS}" --single-transaction bettercal | mysql -h 127.0.0.1 -u root -p"${MPASS}" bettercal_dev
-DBUSER="$(sudo -u bettercal grep '^BETTERCAL_DB_USER=' /home/bettercal/app/.env | cut -d= -f2)"
-mysql -h 127.0.0.1 -u root -p"${MPASS}" -e "GRANT ALL PRIVILEGES ON bettercal_dev.* TO '${DBUSER}'@'localhost'; GRANT ALL PRIVILEGES ON bettercal_dev.* TO '${DBUSER}'@'127.0.0.1'; FLUSH PRIVILEGES;" || true
+MPASS="${MYSQL_ROOT_PASSWORD:-$(clpctl db:show:master-credentials | awk -F'|' '/Password/ {gsub(/ /,"",$3); print $3}')}"
+mysql -h 127.0.0.1 -u root -p"${MPASS}" -e "DROP DATABASE IF EXISTS ${DEV_DB}; CREATE DATABASE ${DEV_DB} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+mysqldump -h 127.0.0.1 -u root -p"${MPASS}" --single-transaction "${PROD_DB}" | mysql -h 127.0.0.1 -u root -p"${MPASS}" "${DEV_DB}"
+DBUSER="$(sudo -u "${APP_USER}" grep '^BETTERCAL_DB_USER=' "${APP_DIR}/.env" | cut -d= -f2)"
+mysql -h 127.0.0.1 -u root -p"${MPASS}" -e "GRANT ALL PRIVILEGES ON ${DEV_DB}.* TO '${DBUSER}'@'localhost'; GRANT ALL PRIVILEGES ON ${DEV_DB}.* TO '${DBUSER}'@'127.0.0.1'; FLUSH PRIVILEGES;" || true
 echo "cloned"
 EOF
 fi
 
 echo "== composer + migrate (dev) =="
-ssh "${REMOTE}" bash -s <<'EOF'
+ssh "${REMOTE}" "DEV_DIR='${DEV_DIR}' APP_USER='${APP_USER}' bash -s" <<'EOF'
 set -euo pipefail
-DEV_DIR="/home/bettercal/dev"
-chown -R bettercal:bettercal "${DEV_DIR}"
-sudo -u bettercal bash -c "cd ${DEV_DIR}/server && composer install --no-dev --quiet --no-interaction"
-sudo -u bettercal php "${DEV_DIR}/server/bin/migrate.php"
+chown -R "${APP_USER}:${APP_USER}" "${DEV_DIR}"
+sudo -u "${APP_USER}" bash -c "cd ${DEV_DIR}/server && composer install --no-dev --quiet --no-interaction"
+sudo -u "${APP_USER}" php "${DEV_DIR}/server/bin/migrate.php"
 EOF
 
 echo "== smoke =="
 sleep 1
-curl -fsS --max-time 10 "${HEALTH_URL}" && echo && echo "Dev deploy OK -> https://cal.oshyan.com:9443"
+curl -fsS --max-time 10 "${HEALTH_URL}" && echo && echo "Dev deploy OK -> ${HEALTH_URL%/api/v1/health}"

@@ -720,6 +720,10 @@ export function TimeGrid({
   // Infinite week track: month boundaries and weekend tints mirror the
   // month/ribbon views (2px accent rule on each month's first day column,
   // subtle weekend background + muted-accent weekday label).
+  // The context row is part of the header whenever any day in the track has
+  // all-day context: every day gets the same row (empty or not), so the day
+  // labels line up across the week. It goes only when there is none at all.
+  const hasCtxRow = [...ctxByDay.values()].some((list) => list.some((o) => o.allDay));
   const headCells = days.map((k) => {
     const d = dateOfDayKey(k);
     const weekend = infinite && isWeekendEpochDay(epochDayOfKey(k));
@@ -733,16 +737,16 @@ export function TimeGrid({
       aria-label=${'Open day view for ' + k}
       onClick=${() => { if (onOpenDay) onOpenDay(k); }}
     >
+      ${hasCtxRow && html`<span class="bc-tg-head-ctx">${ctxByDay.get(k) && html`<${ContextStrip}
+        occs=${ctxByDay.get(k).filter((o) => o.allDay)} calendars=${calendars} max=${3}
+        onOpen=${onOpenEvent} onMore=${() => { if (onExpandDay) onExpandDay(k); }}
+      />`}</span>`}
       <span class="bc-tg-head-main">
         <span class="bc-tg-dow">${fmtWeekdayShort(d)}</span>
         <span class="bc-tg-dom">${d.getDate()}</span>
         ${hiddenDays && hiddenDays.get(k) && html`<${HiddenMark} count=${hiddenDays.get(k)} />`}
         ${infinite && d.getDate() === 1 && html`<span class="bc-tg-month-tag">${fmtMonthShort(d)}</span>`}
       </span>
-      ${ctxByDay.get(k) && html`<${ContextStrip}
-        occs=${ctxByDay.get(k).filter((o) => o.allDay)} calendars=${calendars} max=${3}
-        onOpen=${onOpenEvent} onMore=${() => { if (onExpandDay) onExpandDay(k); }}
-      />`}
     </button>`;
   });
 
@@ -872,7 +876,7 @@ export function TimeGrid({
     : null;
 
   return html`<div class="bc-timegrid${infinite ? ' bc-tg-infinite' : ''}" ref=${rootRef}>
-    <div class="bc-tg-head${single ? ' is-single' : ''}" onWheel=${onHeaderWheel}>
+    <div class="bc-tg-head${single ? ' is-single' : ''}${hasCtxRow ? ' has-ctx' : ''}" onWheel=${onHeaderWheel}>
       <div class="bc-tg-gutter"></div>
       ${infinite
         ? html`<div class="bc-tg-hclip"><div class="bc-tg-htrack" ref=${headTrackRef} style=${`width:${totalW}px`}>${headCells}</div></div>`

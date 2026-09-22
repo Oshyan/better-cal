@@ -754,6 +754,7 @@ div.bc-duration-exact { display: flex; align-items: center; gap: 10px; flex-wrap
 .bc-tg-head-day .bc-ctxstrip { max-width: 100%; }
 /* Month: the day number never wraps to make room for tokens. */
 .bc-cell-head .bc-daynum { flex: none; white-space: nowrap; }
+.bc-cell-head .bc-ctxstrip { flex: 0 1 auto; min-width: 0; }
 .bc-tg-vday-head .bc-ctxstrip { margin-left: 6px; }
 .bc-agenda-day .bc-ctxstrip { margin-left: 10px; vertical-align: middle; }
 /* A moment on the timeline: a short dashed lead-in and the label, laid out

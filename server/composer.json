@@ -2,7 +2,7 @@
     "name": "oshyan/better-cal-server",
     "description": "Better-Cal self-hosted calendar backend",
     "type": "project",
-    "license": "proprietary",
+    "license": "MIT",
     "require": {
         "php": ">=8.3",
         "ext-pdo": "*",

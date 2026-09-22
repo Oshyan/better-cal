@@ -4,6 +4,10 @@ A self-hosted calendar built to fully replace Google Calendar: everything GCal d
 
 **[Full feature list → FEATURES.md](FEATURES.md)**
 
+## License
+
+MIT, see [LICENSE](LICENSE). Use it, fork it, host it, sell it. If you build something on it, a link back to this repo is appreciated but not required.
+
 ## Stack
 
 - Server: PHP 8.4, MySQL, no framework. CalDAV via sabre/dav. Cron worker for feed polls, mail ingest, reminders, ranking, and retention.

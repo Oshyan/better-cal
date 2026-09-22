@@ -745,11 +745,15 @@ div.bc-duration-exact { display: flex; align-items: center; gap: 10px; flex-wrap
 .bc-cell-head { position: relative; z-index: 2; display: flex; align-items: center; gap: 2px; height: 24px; padding-right: 2px; overflow: hidden; pointer-events: none; }
 .bc-cell:hover .bc-cell-head { padding-right: 46px; }
 .bc-cell-head > * { pointer-events: auto; }
-/* Week header: the day label on one line, its context tokens on a second
-   (up to three, then +N opens the day), never fighting the label for room. */
-.bc-tg-head-day { overflow: hidden; flex-direction: column; gap: 0; padding: 3px 2px; }
+/* Week header: the day's context tokens on a line above the day label (up
+   to three, then +N opens the day). The line is reserved on every day while
+   any day in the track has context, so labels align across the week. */
+.bc-tg-head-day { overflow: hidden; flex-direction: column; justify-content: flex-end; gap: 0; padding: 3px 2px; }
 .bc-tg-head-main { display: inline-flex; align-items: center; gap: 6px; }
+.bc-tg-head-ctx { display: inline-flex; align-items: center; justify-content: center; height: 18px; max-width: 100%; }
 .bc-tg-head-day .bc-ctxstrip { max-width: 100%; }
+/* Month: the day number never wraps to make room for tokens. */
+.bc-cell-head .bc-daynum { flex: none; white-space: nowrap; }
 .bc-tg-vday-head .bc-ctxstrip { margin-left: 6px; }
 .bc-agenda-day .bc-ctxstrip { margin-left: 10px; vertical-align: middle; }
 /* A moment on the timeline: a short dashed lead-in and the label, laid out
@@ -2034,7 +2038,8 @@ body.bc-rescheduling { user-select: none; }
 /* Header and all-day lane follow the day track via counter-translate. */
 .bc-tg-hclip { flex: 1; min-width: 0; overflow: hidden; position: relative; }
 .bc-tg-htrack { position: relative; height: 100%; will-change: transform; }
-.bc-tg-infinite .bc-tg-head { min-height: 52px; } /* two lines: the day label and its context tokens, descenders included */
+.bc-tg-infinite .bc-tg-head { min-height: 32px; }
+.bc-tg-infinite .bc-tg-head.has-ctx { min-height: 52px; } /* the context line above the day label */
 .bc-tg-infinite .bc-tg-head-day { position: absolute; top: 0; bottom: 0; }
 .bc-tg-month-tag {
   font-size: 10px; font-weight: 700; color: var(--accent);

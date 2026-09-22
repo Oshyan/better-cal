@@ -1517,6 +1517,11 @@ final class Events
         foreach (self::DETAIL_ONLY as $k) {
             unset($out[$k]);
         }
+        // A timed context moment (sunset, a tide) keeps its own clock on the
+        // grid, so it alone carries its zone (docs/relationships.md).
+        if (($out['relationship'] ?? '') === 'context' && empty($out['allDay'])) {
+            $out['tzid'] = (string) $row['tzid'];
+        }
         return array_filter($out, static fn($v): bool => $v !== null && $v !== []);
     }
 
@@ -1602,8 +1607,6 @@ final class Events
             'status' => (string) $row['status'],
             'relationship' => self::relationship((string) $row['attendance'], (string) $row['status'], (string) ($calMeta['role'] ?? 'mine')),
             'icon' => isset($row['icon']) && $row['icon'] !== '' ? (string) $row['icon'] : null,
-            // The event's own zone, so a place-bound moment can keep its clock (docs/relationships.md).
-            'tzid' => $tzid,
             'score' => isset($row['score']) && $row['score'] !== null ? (float) $row['score'] : null,
             'reminders' => $reminders,
             // List-shape bits, sent only when true (null is omitted): they let

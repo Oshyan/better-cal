@@ -1578,6 +1578,8 @@ console.log('');
   const plan = { instanceId: 'p', relationship: 'planned', allDay: false, start: at(20, 10), end: at(20, 11), title: 'Dentist' };
   const plug = { instanceId: 'g', relationship: 'context', allDay: true, start: '2026-09-20', end: '2026-09-21', title: 'Rain likely (60%)', icon: 'rain', tzid: 'UTC' };
   eq('context token: weather pair with a condition word', [contextToken(weather).icon, contextToken(weather).text], ['cloud', '72/58']);
+  eq('context token: a long-range normal keeps its tilde and gets the thermometer', [contextToken({ allDay: true, title: 'Oakland, CA: ~80/58 avg' }).icon, contextToken({ allDay: true, title: 'Oakland, CA: ~80/58 avg' }).text], ['thermometer', '~80/58']);
+  eq('context token: clear skies are the sun; wind is the air icon', [contextToken({ allDay: true, title: '96/66 clear' }).icon, contextToken({ allDay: true, title: '70/55 windy' }).icon], ['sun', 'air']);
   eq('context token: AQI keeps the number, the category goes to the tooltip', [contextToken(aqi).icon, contextToken(aqi).text], ['air', '54']);
   eq('context token: a sunset is its icon and time', [contextToken(sunset).icon, contextToken(sunset).text, contextToken(sunset).time], ['sunset', '', '7:10p']);
   eq('context token: low tide keeps its height', [contextToken(tide).icon, contextToken(tide).text], ['tideLow', '0.8 ft']);

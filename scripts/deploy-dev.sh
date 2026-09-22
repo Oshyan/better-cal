@@ -34,7 +34,7 @@ set -euo pipefail
 #     all no-op. Feed polls and geocoding still work (read-only fetches).
 #   - The worker cron only points at the prod path. Run the dev worker by
 #     hand when testing background jobs:
-#       ssh hetzner sudo -u bettercal php /home/bettercal/dev/server/bin/worker.php
+#       ssh "$REMOTE" sudo -u "$APP_USER" php "$DEV_DIR/server/bin/worker.php"
 #   - Same SESSION_SECRET as prod plus a cloned sessions table means the
 #     browser session you already have works on :9443 without logging in.
 #

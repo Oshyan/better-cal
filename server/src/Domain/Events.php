@@ -1602,6 +1602,8 @@ final class Events
             'status' => (string) $row['status'],
             'relationship' => self::relationship((string) $row['attendance'], (string) $row['status'], (string) ($calMeta['role'] ?? 'mine')),
             'icon' => isset($row['icon']) && $row['icon'] !== '' ? (string) $row['icon'] : null,
+            // The event's own zone, so a place-bound moment can keep its clock (docs/relationships.md).
+            'tzid' => $tzid,
             'score' => isset($row['score']) && $row['score'] !== null ? (float) $row['score'] : null,
             'reminders' => $reminders,
             // List-shape bits, sent only when true (null is omitted): they let

@@ -31,6 +31,8 @@ Settings → Connections → **Connect a Google account**. Google asks for conse
 
 **Disconnect** revokes the token at Google and forgets it. Calendars already subscribed from that account stay, with their events, but stop updating and report "Google account disconnected" as their poll error until you delete them or connect the account again (reconnecting the same email re-attaches them).
 
+**Adopt as local** (a Google calendar's settings) is the other way out: the calendar stays here with every event, the link to Google is severed in both directions, and the copy at Google is left as it is. It is the final step of a migration; `docs/migration.md` has the order to do things in.
+
 ## What writes send
 
 Title, description, location, start and end (dates for all-day, RFC 3339 with the time zone otherwise), status, and the recurrence rule with its exceptions. Not sent: attendees (they would mail people), reminders (per-user at Google), colour, the event link. Tags, people, reminders and the trip flag are local metadata on the row and survive polls.

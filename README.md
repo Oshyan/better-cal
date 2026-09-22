@@ -30,7 +30,7 @@ MIT, see [LICENSE](LICENSE). Use it, fork it, host it, sell it. If you build som
 - [Calendar roles and event relationships](docs/relationships.md): planned, maybe, available, context; what a calendar is to you and what that makes its events
 - [CalDAV](docs/caldav.md)
 - [Email ingest](docs/email-ingest.md)
-- [Migration from Google Calendar](docs/migration.md)
+- [Moving from Google Calendar](docs/migration.md): test it without changing anything at Google, run both for a while, switch fully, or go back
 - Roadmap: the [GitHub issues](https://github.com/Oshyan/better-cal/issues); there is no separate roadmap document
 
 ## Configuration

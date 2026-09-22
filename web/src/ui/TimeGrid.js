@@ -733,11 +733,16 @@ export function TimeGrid({
       aria-label=${'Open day view for ' + k}
       onClick=${() => { if (onOpenDay) onOpenDay(k); }}
     >
-      <span class="bc-tg-dow">${fmtWeekdayShort(d)}</span>
-      <span class="bc-tg-dom">${d.getDate()}</span>
-      ${hiddenDays && hiddenDays.get(k) && html`<${HiddenMark} count=${hiddenDays.get(k)} />`}
-      ${infinite && d.getDate() === 1 && html`<span class="bc-tg-month-tag">${fmtMonthShort(d)}</span>`}
-      ${ctxByDay.get(k) && html`<${ContextStrip} occs=${ctxByDay.get(k).filter((o) => o.allDay)} calendars=${calendars} max=${4} onOpen=${onOpenEvent} />`}
+      <span class="bc-tg-head-main">
+        <span class="bc-tg-dow">${fmtWeekdayShort(d)}</span>
+        <span class="bc-tg-dom">${d.getDate()}</span>
+        ${hiddenDays && hiddenDays.get(k) && html`<${HiddenMark} count=${hiddenDays.get(k)} />`}
+        ${infinite && d.getDate() === 1 && html`<span class="bc-tg-month-tag">${fmtMonthShort(d)}</span>`}
+      </span>
+      ${ctxByDay.get(k) && html`<${ContextStrip}
+        occs=${ctxByDay.get(k).filter((o) => o.allDay)} calendars=${calendars} max=${3}
+        onOpen=${onOpenEvent} onMore=${() => { if (onExpandDay) onExpandDay(k); }}
+      />`}
     </button>`;
   });
 

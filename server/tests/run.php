@@ -3171,6 +3171,14 @@ use BetterCal\Domain\GoogleWriter;
     checkEq('google tombstone shape', ['cancelled' => true, 'uid' => 'u', 'recurrence_instance_utc' => null], GoogleWriter::tombstone('u', null));
 }
 
+// --- Information icons are host icons a plugin may put on an event ---
+{
+    foreach (['sunset', 'air', 'tideLow', 'rain', 'flag'] as $n) {
+        checkEq('plugin icon: ' . $n . ' is a host icon', null, BetterCal\Domain\Plugins::iconError($n));
+    }
+    check('plugin icon: a guess is still refused', BetterCal\Domain\Plugins::iconError('weather-sunny') !== null);
+}
+
 // --- A patch that names the event's own calendar is not a move ---
 {
     $ev = ['calendar_id' => 41];

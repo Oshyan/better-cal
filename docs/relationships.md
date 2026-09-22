@@ -65,10 +65,11 @@ A day where the filter hid something shows a small hollow ring after its day num
 
 Context is consulted, not attended: the weather, the AQI, when the sun sets, whether the tide is low at a useful hour. That is the first thing to read about a day and something you come back to, so it lives where the day is named rather than in the list of things to do.
 
-- **Month**: up to three tokens beside the day number ("72/58 fog", "AQI 54", "Sunset 7:10p"), then "+N" which opens the day. A token is the event's title with a source prefix dropped ("Oakland, CA: 72/58 fog" reads "72/58 fog"); hover for the full title, click for the event. Context never takes a chip slot, so a day full of information still shows all its plans.
+- **Month**: two tokens beside the day number, then "+N" which opens the expanded day, where context has its own section on top. A token is an icon for the kind of information plus the value: a cloud and "72/58" for "Oakland, CA: 72/58 fog", an air icon and "54" for "AQI 54 (Moderate)", a sunset icon and "7:10p". Hover for the full title, click for the event. The two hover controls of a day, expand (chevron) and add (+), sit together at the cell's top right. Context never takes a chip slot, so a day full of information still shows all its plans.
+- **Icons**: a plugin sets one per event (`icon` in `syncEvents`; the host set includes sun, sunrise, sunset, air, tideHigh, tideLow, cloud, rain, snow, storm, thermometer, moon, flag, or any emoji). For feeds, which carry no icon, the host recognizes the common shapes in a title (a high/low pair with a condition word, AQI, sunset, sunrise, high or low tide, a holiday calendar) and otherwise shows the calendar's hollow square with the words.
+- **Times keep their place**: a moment on a calendar in another zone (Oakland's sunset while you are in London) reads in its own zone with the zone named, "7:10p PDT". Its position on the timeline is still the true instant.
 - **Week and day**: all-day context as tokens in the column header; a timed context event is a dashed hairline at its minute with a small label, never a block. Sunset at 7:10 is a moment, not a forty-minute appointment.
 - **Agenda**: the day's tokens ride on the day heading.
-- Plugins can give their context events an icon; feed-provided context uses the hollow square in the calendar's colour.
 
 ## Why it works this way
 

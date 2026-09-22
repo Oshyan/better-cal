@@ -4,8 +4,8 @@
 // what a token says and docs/relationships.md for why context lives here.
 
 import { html } from '../../vendor/index.js';
-import { PluginGlyph } from './icons.js';
-import { contextLabel, contextTitle } from '../lib/context.js';
+import { Icon } from './icons.js';
+import { contextToken, contextTitle, HOST_ICON } from '../lib/context.js';
 
 function open(onOpen, occ, e) {
   e.stopPropagation();
@@ -16,29 +16,33 @@ function keyOpen(onOpen, occ, e) {
   if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(onOpen, occ, e); }
 }
 
+/** The token's icon: a host icon, a literal glyph, or the calendar's hollow square. */
+export function TokenIcon({ token, cal, size = 10 }) {
+  if (token.icon && HOST_ICON.test(token.icon)) return html`<span class="bc-ctx-icon"><${Icon} name=${token.icon} size=${size} /></span>`;
+  if (token.icon) return html`<span class="bc-ctx-emoji">${token.icon}</span>`;
+  return html`<span class="bc-ctx-glyph" style=${`border-color:${(cal && cal.color) || 'var(--fg-muted)'}`}></span>`;
+}
+
 // Tokens are spans with the button role: a header is often itself a button
 // (week column, day panel), and buttons cannot nest.
 function Token({ occ, cal, onOpen }) {
-  const { text, time } = contextLabel(occ);
-  const color = (cal && cal.color) || 'var(--fg-muted)';
+  const tk = contextToken(occ, cal);
   return html`<span
     role="button" tabindex="0" class="bc-ctx-token" title=${contextTitle(occ)}
     onPointerDown=${(e) => e.stopPropagation()}
     onClick=${(e) => open(onOpen, occ, e)}
     onKeyDown=${(e) => keyOpen(onOpen, occ, e)}
   >
-    ${occ.pluginIcon || occ.pluginIconPath
-      ? html`<${PluginGlyph} icon=${occ.pluginIcon} iconPath=${occ.pluginIconPath} size=${10} />`
-      : html`<span class="bc-ctx-glyph" style=${`border-color:${color}`}></span>`}
-    <span class="bc-ctx-token-text">${text}</span>
-    ${time && html`<span class="bc-ctx-token-time">${time}</span>`}
+    <${TokenIcon} token=${tk} cal=${cal} />
+    ${tk.text && html`<span class="bc-ctx-token-text">${tk.text}</span>`}
+    ${tk.time && html`<span class="bc-ctx-token-time">${tk.time}${tk.zone ? ' ' + tk.zone : ''}</span>`}
   </span>`;
 }
 
 /**
  * @param {{occs:object[], calendars:object, max?:number, onOpen?:Function, onMore?:Function}} props
  * occs: this day's context (lib/context.js contextByDay). max: tokens
- * before "+N" (the month cell has room for three); onMore opens the day.
+ * before "+N"; onMore opens the day.
  */
 export function ContextStrip({ occs, calendars, max = Infinity, onOpen, onMore }) {
   if (!occs || occs.length === 0) return null;
@@ -58,7 +62,7 @@ export function ContextStrip({ occs, calendars, max = Infinity, onOpen, onMore }
 
 /** A timed context event on the timeline: a dashed hairline at its minute with a small label, never a block. */
 export function ContextMark({ occ, cal, top, onOpen }) {
-  const { text, time } = contextLabel(occ, 18);
+  const tk = contextToken(occ, cal, 18);
   const color = (cal && cal.color) || 'var(--fg-muted)';
   return html`<div class="bc-ctx-mark" style=${`top:${top}px`}>
     <span class="bc-ctx-mark-line" style=${`border-color:${color}`}></span>
@@ -67,6 +71,6 @@ export function ContextMark({ occ, cal, top, onOpen }) {
       onPointerDown=${(e) => e.stopPropagation()}
       onClick=${(e) => open(onOpen, occ, e)}
       onKeyDown=${(e) => keyOpen(onOpen, occ, e)}
-    >${text}${time && html` <span class="bc-ctx-token-time">${time}</span>`}</span>
+    ><${TokenIcon} token=${tk} cal=${cal} size=${9} />${tk.text && html`<span class="bc-ctx-token-text">${tk.text}</span>`}${tk.time && html`<span class="bc-ctx-token-time">${tk.time}${tk.zone ? ' ' + tk.zone : ''}</span>`}</span>
   </div>`;
 }

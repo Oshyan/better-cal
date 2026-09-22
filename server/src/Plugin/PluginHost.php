@@ -702,6 +702,8 @@ final class PluginHost
                 'end_utc' => $endUtc,
                 'all_day' => $allDay ? 1 : 0,
                 'tzid' => 'UTC',
+                // Per-event icon (host name or one glyph); a bad one is dropped, not fatal.
+                'icon' => isset($ev['icon']) && \BetterCal\Domain\Plugins::iconError($ev['icon']) === null ? trim((string) $ev['icon']) : null,
             ];
             $cur = $existing[$key] ?? null;
             if ($cur === null) {

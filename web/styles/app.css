@@ -596,14 +596,18 @@ button:focus-visible, [tabindex]:focus-visible {
 /* The strip between the day number and the + is its own affordance: click
    lists the day in place (the number now opens Day view). Quiet until the
    cell is hovered. */
+/* The day's two hover controls sit together at the top right of every
+   cell: expand the day (chevron) and add an event (+). One consistent
+   place, clear of the context tokens beside the day number. */
 .bc-cell-headstrip {
-  position: absolute; top: 0; left: 0; right: 0; height: 22px;
-  background: none; border: none; padding: 0; z-index: 1;
-  display: flex; align-items: center; justify-content: center;
-  color: transparent;
+  position: absolute; top: 2px; right: 24px; z-index: 4;
+  width: 20px; height: 20px; padding: 0;
+  background: var(--bg-inset); border: none; border-radius: 6px;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--fg-muted); opacity: 0; pointer-events: none;
 }
-.bc-cell:hover .bc-cell-headstrip { color: var(--fg-muted); }
-.bc-cell-headstrip:hover { background: var(--bg-inset); color: var(--fg); }
+.bc-cell:hover .bc-cell-headstrip, .bc-cell-headstrip:focus-visible { opacity: 1; pointer-events: auto; }
+.bc-cell-headstrip:hover { background: var(--accent); color: var(--accent-fg); }
 .bc-headstrip-glyph { display: inline-flex; line-height: 1; }
 @media (hover: none) { .bc-cell-headstrip { display: none; } }
 /* ISO week number, bottom-right of each row's gutter (the sticky month
@@ -723,10 +727,23 @@ div.bc-duration-exact { display: flex; align-items: center; gap: 10px; flex-wrap
 }
 .bc-ctx-token:hover, .bc-ctx-token:focus-visible { background: var(--bg-inset); color: var(--fg); }
 .bc-ctx-token .bc-ctx-glyph { width: 7px; height: 7px; }
+.bc-ctx-icon { display: inline-flex; flex: none; opacity: 0.85; }
+.bc-ctx-emoji { font-size: 10px; line-height: 1; font-style: normal; flex: none; }
+.bc-ctx-mark-label .bc-ctx-icon { margin-right: 2px; vertical-align: -1px; }
+.bc-dayexpand-ctx { display: flex; flex-direction: column; gap: 1px; margin: 0 0 6px; padding: 0 0 6px; border-bottom: 1px solid var(--border); }
+.bc-dayexpand-ctxrow {
+  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+  background: none; border: none; border-radius: 6px; padding: 4px 6px;
+  font-size: 12.5px; font-style: italic; color: var(--fg-muted); cursor: pointer;
+}
+.bc-dayexpand-ctxrow:hover { background: var(--bg-inset); color: var(--fg); }
+.bc-dayexpand-ctxtext { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bc-dayexpand-ctxtime { flex: none; font-style: normal; font-variant-numeric: tabular-nums; font-size: 11.5px; }
 .bc-ctx-token-time { font-style: normal; font-variant-numeric: tabular-nums; opacity: 0.8; }
 .bc-ctx-more { flex: none; font-size: 10px; color: var(--fg-muted); padding: 3px 3px; border-radius: 4px; cursor: pointer; }
 .bc-ctx-more:hover { background: var(--bg-inset); color: var(--fg); }
-.bc-cell-head { position: relative; z-index: 2; display: flex; align-items: center; gap: 2px; height: 24px; padding-right: 24px; overflow: hidden; pointer-events: none; }
+.bc-cell-head { position: relative; z-index: 2; display: flex; align-items: center; gap: 2px; height: 24px; padding-right: 2px; overflow: hidden; pointer-events: none; }
+.bc-cell:hover .bc-cell-head { padding-right: 46px; }
 .bc-cell-head > * { pointer-events: auto; }
 .bc-tg-head-day { overflow: hidden; }
 .bc-tg-head-day .bc-ctxstrip { margin-left: 2px; flex: 0 1 auto; }

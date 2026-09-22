@@ -28,7 +28,7 @@ import {
 } from '../src/lib/quickcreate.js';
 import { HOTKEYS, HOTKEY_GROUPS } from '../src/app/hotkeys.js';
 import { hiddenDayCounts, relShown, showRelFromConfig } from '../src/lib/relfilter.js';
-import { contextLabel, contextTitle, contextByDay, withoutContext } from '../src/lib/context.js';
+import { contextToken, contextTitle, contextByDay, withoutContext } from '../src/lib/context.js';
 import {
   fmtOffsetMinutes, fmtReminder, allDayEntryToMinutes, entryToMinutes,
   normalizeMinutesList, effectiveReminders, toMinutes, fromMinutes,
@@ -1573,19 +1573,30 @@ console.log('');
   const weather = { instanceId: 'w', relationship: 'context', allDay: true, start: '2026-09-20', end: '2026-09-21', title: 'Oakland, CA: 72/58 fog' };
   const aqi = { instanceId: 'q', relationship: 'context', allDay: true, start: '2026-09-20', end: '2026-09-21', title: 'Oakland, CA: AQI 54 (Moderate)' };
   const sunset = { instanceId: 's', relationship: 'context', allDay: false, start: at(20, 19, 10), end: at(20, 19, 20), title: 'Sunset' };
+  const tide = { instanceId: 't', relationship: 'context', allDay: false, start: at(20, 14, 15), end: at(20, 14, 25), title: 'Low tide: 0.8 ft' };
   const away = { instanceId: 'a', relationship: 'context', allDay: true, start: '2026-09-19', end: '2026-09-22', title: 'Rider in LA' };
   const plan = { instanceId: 'p', relationship: 'planned', allDay: false, start: at(20, 10), end: at(20, 11), title: 'Dentist' };
-  eq('context label: drops a source prefix', contextLabel(weather), { text: '72/58 fog', time: null });
-  eq('context label: drops a trailing parenthetical before clipping', contextLabel(aqi).text, 'AQI 54');
-  eq('context label: clips what is still too long', contextLabel({ allDay: true, title: 'Partly cloudy then thunderstorms' }).text, 'Partly cloudy…');
-  eq('context label: a moment carries its time', contextLabel(sunset), { text: 'Sunset', time: '7:10p' });
-  eq('context label: no prefix, no change', contextLabel(away).text, 'Rider in LA');
+  const plug = { instanceId: 'g', relationship: 'context', allDay: true, start: '2026-09-20', end: '2026-09-21', title: 'Rain likely (60%)', icon: 'rain', tzid: 'UTC' };
+  eq('context token: weather pair with a condition word', [contextToken(weather).icon, contextToken(weather).text], ['cloud', '72/58']);
+  eq('context token: AQI keeps the number, the category goes to the tooltip', [contextToken(aqi).icon, contextToken(aqi).text], ['air', '54']);
+  eq('context token: a sunset is its icon and time', [contextToken(sunset).icon, contextToken(sunset).text, contextToken(sunset).time], ['sunset', '', '7:10p']);
+  eq('context token: low tide keeps its height', [contextToken(tide).icon, contextToken(tide).text], ['tideLow', '0.8 ft']);
+  eq('context token: unrecognized text keeps its words and the calendar square', [contextToken(away).icon, contextToken(away).text], [null, 'Rider in LA']);
+  eq('context token: a holiday calendar gets the flag', contextToken({ allDay: true, title: 'Labor Day' }, { name: 'US Holidays' }).icon, 'flag');
+  eq('context token: the plugin icon wins and a long parenthetical is dropped', [contextToken(plug).icon, contextToken(plug).text], ['rain', 'Rain likely']);
+  eq('context token: no zone suffix in the device zone', contextToken(sunset).zone, '');
   assert('context title: a brief moment shows one time, no range', contextTitle(sunset).startsWith('Sunset · ') && !contextTitle(sunset).includes(' to '));
   const byDay = contextByDay([weather, aqi, sunset, away, plan]);
   eq('context by day: all-day first, then moments by time; spans cover each day', byDay.get('2026-09-20').map((o) => o.instanceId), ['a', 'w', 'q', 's']);
   eq('context by day: the span reaches its last day and not the exclusive end', [byDay.has('2026-09-21'), byDay.has('2026-09-22')], [true, false]);
   eq('context by day: plans are not context', byDay.get('2026-09-20').some((o) => o.instanceId === 'p'), false);
   eq('withoutContext: leaves only the plans', withoutContext([weather, sunset, plan]).map((o) => o.instanceId), ['p']);
+  // A place-bound moment in another zone keeps its own clock and names the zone.
+  const zoned = { allDay: false, start: '2026-09-20T19:10:00-07:00', end: '2026-09-20T19:20:00-07:00', title: 'Sunset', tzid: 'America/Los_Angeles' };
+  const tk = contextToken(zoned);
+  const here = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  if (here === 'America/Los_Angeles') eq('context zone: same clock, no suffix', [tk.time, tk.zone], ['7:10p', '']);
+  else eq('context zone: own clock with the zone named', [tk.time, tk.zone], ['7:10p', 'PDT']);
 }
 
 console.log(passed + ' passed, ' + failed + ' failed');

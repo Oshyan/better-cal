@@ -1,0 +1,45 @@
+# Every suite the deploy script gates on, on every push and pull request.
+# Nothing here needs a database, a secret or the network: the PHP suite runs
+# against SQLite in memory and pure functions, the smoke suite is frontend
+# logic under Node, the static check walks the module graph, and the MCP test
+# spawns the server on localhost. Only GitHub's own actions are used; the
+# runner's stock PHP is enough.
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  server:
+    name: PHP suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: PHP and extensions on the runner
+        run: php -v && php -m | grep -Ei 'pdo_sqlite|sodium|mbstring|curl|intl'
+      - name: Server tests
+        run: php server/tests/run.php
+
+  web:
+    name: Frontend suites
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Smoke tests, three time zones
+        run: |
+          for zone in America/Los_Angeles UTC Pacific/Auckland; do
+            echo "== $zone =="
+            TZ="$zone" node web/tests/smoke.mjs | tail -1
+          done
+      - name: Static module graph
+        run: node --experimental-vm-modules web/tests/static.mjs | tail -1
+      - name: MCP server
+        run: node tools/mcp/test.mjs

@@ -2034,7 +2034,7 @@ body.bc-rescheduling { user-select: none; }
 /* Header and all-day lane follow the day track via counter-translate. */
 .bc-tg-hclip { flex: 1; min-width: 0; overflow: hidden; position: relative; }
 .bc-tg-htrack { position: relative; height: 100%; will-change: transform; }
-.bc-tg-infinite .bc-tg-head { min-height: 46px; } /* two lines: the day label and its context tokens */
+.bc-tg-infinite .bc-tg-head { min-height: 52px; } /* two lines: the day label and its context tokens, descenders included */
 .bc-tg-infinite .bc-tg-head-day { position: absolute; top: 0; bottom: 0; }
 .bc-tg-month-tag {
   font-size: 10px; font-weight: 700; color: var(--accent);

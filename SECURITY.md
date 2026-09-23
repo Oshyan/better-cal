@@ -13,7 +13,9 @@ Include what you found, how to reproduce it, and what you think it allows. You w
 
 ## What has been reviewed
 
-A full Codex Security scan was run against revision `ea1ef19` and its candidates were independently validated by a manual review on 2026-08-04 (`docs/security-review-2026-08-04.md`). It found no Critical or High issues, 15 Medium and 5 Low. Every one of the twenty was fixed between 2026-08-05 and 2026-09-22; the fix commits name the finding they close (BC-01 through BC-21). The two leads deferred pending deployment evidence are recorded in the same document.
+- **2026-08-04**: a Codex Security discovery pass over the whole repository, independently validated by a manual review (`docs/security-review-2026-08-04.md`). No Critical or High; 15 Medium and 5 Low.
+- **2026-09-12**: a full Codex Security scan of the repository, reconciled against the earlier findings and recorded in [issue #24](https://github.com/Oshyan/better-cal/issues/24): 17 active findings, 9 Medium and 8 Low, none High or Critical, one of them new (BC-21).
+- **2026-09-17 to 2026-09-22**: every finding from both rounds fixed, deployed and verified on the reference install; each fix commit names the finding it closes (BC-01 through BC-21). Issue #24 records the disposition of each. Three client-rendering verification tasks (how mobile calendar apps, ICS subscribers and mail clients render descriptions) remain open there as evidence to gather, not as known vulnerabilities.
 
 Anything you find after that is new, and worth telling us about.
 

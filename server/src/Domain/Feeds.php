@@ -9,6 +9,7 @@ use BetterCal\Http\HttpError;
 use BetterCal\Infra\Db;
 use BetterCal\Infra\HttpClient;
 use BetterCal\Infra\JobQueue;
+use BetterCal\Support\Limits;
 use BetterCal\Support\Time;
 
 /** ICS feed subscription: fetch, parse, and sync by (calendar_id, uid). */
@@ -46,6 +47,13 @@ final class Feeds
                 return (new GoogleSync($this->db, new GoogleAuth($this->db, $cfg), $this))->poll($calendar);
             }
             $ics = $this->fetch((string) $calendar['source_url']);
+            // Bounded before parsing, like every other ICS door (F8): the
+            // refusal is recorded as this calendar's poll error, so the owner
+            // sees why it stopped updating.
+            $problem = Ics::budgetProblem($ics, self::MAX_BYTES, Limits::feedEventBudget());
+            if ($problem !== null) {
+                throw new \RuntimeException(str_replace('calendar file', 'feed', $problem) . '; it was not read');
+            }
             $parsed = Ics::parse($ics);
             $count = $this->sync($calendar, $parsed);
             $this->pollSucceeded($calendar, count($parsed), $count);

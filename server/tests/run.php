@@ -706,6 +706,20 @@ $resHtml = '<script type="application/ld+json">' . json_encode([
 ]) . '</script>';
 checkEq('ldjson reservation unwraps', 'Workshop', MailIngest::extractLdJsonEvents($resHtml)[0]['title']);
 checkEq('ldjson no markup -> empty', [], MailIngest::extractLdJsonEvents('<p>plain mail</p>'));
+// F9 (scan 2026-09-23): script/style blocks are found by a linear scan.
+checkEq('html blocks: script and style found in order', ['style', 'script'], array_column(BetterCal\Domain\Sanitize::htmlBlocks('<p>a</p><STYLE>x</style><b>b</b><script type="x">y</SCRIPT>'), 'tag'));
+checkEq('html blocks: dropScriptStyle keeps the rest', '<p>a</p> <b>b</b> ', BetterCal\Domain\Sanitize::dropScriptStyle('<p>a</p><style>x</style><b>b</b><script>y</script>'));
+checkEq('html blocks: an unclosed block ends the scan, keeps the text', '<p>a</p><script>never closed', BetterCal\Domain\Sanitize::dropScriptStyle('<p>a</p><script>never closed'));
+checkEq('html blocks: <scripts> is not a script tag', [], BetterCal\Domain\Sanitize::htmlBlocks('<scripts>no</scripts>'));
+{
+    $bomb = str_repeat('<script', 75000) . '>';
+    $t0 = microtime(true);
+    MailIngest::extractLdJsonEvents($bomb);
+    MailIngest::flattenHtml($bomb);
+    BetterCal\Domain\Sanitize::dropScriptStyle(str_repeat('<script x', 60000) . '>' . str_repeat('<style ', 60000));
+    MailIngest::stripForwardPreamble(str_repeat('-', 200000) . ' Forwarded message ---');
+    check('html blocks: 75,000 "<script" and 200,000 dashes take under a second', microtime(true) - $t0 < 1.0, sprintf('%.2fs', microtime(true) - $t0));
+}
 
 check('llm gate passes eventish subject', MailIngest::llmGateAllows('Your registration is confirmed!'));
 check('llm gate blocks ordinary mail', !MailIngest::llmGateAllows('Re: lunch tomorrow?'));
@@ -1688,11 +1702,22 @@ checkEq('dav calendar id rejects non-numeric', null, DavIcs::calendarIdFromUri('
 checkEq('dav calendar id rejects leading zero', null, DavIcs::calendarIdFromUri('cal-07'));
 
 checkEq('dav object uri from uid', 'ABC123.ics', DavIcs::objectUri('ABC123'));
+// F8 (scan 2026-09-23): a feed poll is bounded by the same memory-aware budget as an import.
+checkEq('feed budget: capped by memory like an import', 100, BetterCal\Support\Limits::feedEventBudget('32M', 30 * 1048576));
+checkEq('feed budget: FEED_EVENTS when memory is plentiful', BetterCal\Support\Limits::get('FEED_EVENTS'), BetterCal\Support\Limits::feedEventBudget('-1', 0));
 checkEq('dav uid from object uri', 'ABC123', DavIcs::uidFromObjectUri('ABC123.ics'));
 $ulidUid = Ids::ulid();
 checkEq('dav uid/uri round trip', $ulidUid, DavIcs::uidFromObjectUri(DavIcs::objectUri($ulidUid)));
 checkEq('dav uid requires .ics suffix', null, DavIcs::uidFromObjectUri('ABC123.txt'));
 checkEq('dav uid rejects empty stem', null, DavIcs::uidFromObjectUri('.ics'));
+// F7 (scan 2026-09-23): a UID from outside never becomes a raw path segment.
+checkEq('dav: an ordinary UID keeps its plain object name', 'abc-123@example.com.ics', DavIcs::objectUri('abc-123@example.com'));
+checkEq('dav: a UID with + keeps its plain name (no churn for existing events)', 'a1b2+x=y@host.ics', DavIcs::objectUri('a1b2+x=y@host'));
+foreach (['evil/x', '../../etc', 'with space', 'pct%2F', 'q?x#y', 'b64-looks-encoded', '.', '..', 'ünïcödé'] as $odd) {
+    $uri = DavIcs::objectUri($odd);
+    check('dav: odd UID ' . json_encode($odd) . ' gets one safe path segment', preg_match('/^[A-Za-z0-9._@-]+\.ics$/', $uri) === 1 && !str_contains($uri, '/'));
+    checkEq('dav: odd UID ' . json_encode($odd) . ' round-trips', $odd, DavIcs::uidFromObjectUri($uri));
+}
 check('dav uid preserves dots in uid', DavIcs::uidFromObjectUri('a.b.ics') === 'a.b');
 
 checkEq('dav etag derivation', md5('2026-07-30 10:00:00:42'), DavIcs::etag('2026-07-30 10:00:00', 42));

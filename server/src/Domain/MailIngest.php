@@ -124,7 +124,13 @@ final class MailIngest
     public static function extractLdJsonEvents(string $html): array
     {
         $out = [];
-        if (preg_match_all('~<script[^>]*type=["\']application/ld\+json["\'][^>]*>(.*?)</script>~si', $html, $m) < 1) {
+        $m = [1 => []];
+        foreach (Sanitize::htmlBlocks($html, ['script']) as $b) {
+            if (preg_match('~type\s*=\s*["\']?application/ld\+json~i', $b['attrs']) === 1) {
+                $m[1][] = $b['body'];
+            }
+        }
+        if ($m[1] === []) {
             return $out;
         }
         $collect = function ($node) use (&$collect, &$out): void {
@@ -223,7 +229,7 @@ final class MailIngest
     /** HTML body to readable text: drop script/style, strip tags, decode. */
     public static function flattenHtml(string $html): string
     {
-        $html = preg_replace('~<(script|style)[^>]*>.*?</\1>~si', ' ', $html) ?? $html;
+        $html = Sanitize::dropScriptStyle($html);
         $html = preg_replace('~<br\s*/?>|</p>|</div>|</tr>~i', "\n", $html) ?? $html;
         $text = html_entity_decode(strip_tags($html), ENT_QUOTES | ENT_HTML5);
         return trim(preg_replace('/[ \t]+/', ' ', preg_replace('/\n{3,}/', "\n\n", $text) ?? $text) ?? $text);
@@ -235,15 +241,21 @@ final class MailIngest
      */
     public static function stripForwardPreamble(string $text): string
     {
-        if (stripos($text, 'Forwarded message') === false) {
+        $at = stripos($text, 'Forwarded message');
+        if ($at === false) {
             return $text;
         }
-        return preg_replace(
+        // The regex runs on a bounded window around the marker, not the whole
+        // body: its leading dash run was quadratic on long runs of dashes (F9).
+        $start = max(0, $at - 200);
+        $window = substr($text, $start, 1200);
+        $replaced = preg_replace(
             '/-{3,}\s*Forwarded message\s*-{3,}\s*From:.{0,400}?To:\s*<?[^\s<>]+@[^\s<>]+>?/su',
             ' ',
-            $text,
+            $window,
             1
-        ) ?? $text;
+        );
+        return is_string($replaced) ? substr($text, 0, $start) . $replaced . substr($text, $start + strlen($window)) : $text;
     }
 
     /** Is there any date-shaped token to anchor an LLM parse on? */

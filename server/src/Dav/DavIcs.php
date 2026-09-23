@@ -28,10 +28,24 @@ final class DavIcs
         return (int) $m[1];
     }
 
-    /** Calendar-object uri for an event uid; one object per uid (master + overrides). */
+    /**
+     * Calendar-object uri for an event uid; one object per uid (master +
+     * overrides). A UID arrives from feeds, imports and email and may hold
+     * anything, and a "/" in it split the object's href into two path
+     * segments, which failed every sync REPORT for the calendar (scan
+     * 2026-09-23, F7). Ordinary UIDs (letters, digits and . _ @ + = -, which is
+     * what every mainstream client generates) keep their plain name, so
+     * existing hrefs do not change; anything else is named by its UID in
+     * base64url behind a "b64-" prefix, which round-trips without a lookup.
+     */
+    private const PLAIN_UID = '/^(?!b64-)[A-Za-z0-9._@+=-]{1,255}$/';
+
     public static function objectUri(string $uid): string
     {
-        return $uid . '.ics';
+        if (preg_match(self::PLAIN_UID, $uid) === 1 && $uid !== '.' && $uid !== '..') {
+            return $uid . '.ics';
+        }
+        return 'b64-' . rtrim(strtr(base64_encode($uid), '+/', '-_'), '=') . '.ics';
     }
 
     public static function uidFromObjectUri(string $uri): ?string
@@ -39,8 +53,17 @@ final class DavIcs
         if (!str_ends_with($uri, '.ics')) {
             return null;
         }
-        $uid = substr($uri, 0, -4);
-        return $uid === '' ? null : $uid;
+        $stem = substr($uri, 0, -4);
+        if ($stem === '') {
+            return null;
+        }
+        if (str_starts_with($stem, 'b64-') && preg_match('/^[A-Za-z0-9_-]+$/', substr($stem, 4)) === 1) {
+            $decoded = base64_decode(strtr(substr($stem, 4), '-_', '+/'), true);
+            if (is_string($decoded) && $decoded !== '' && self::objectUri($decoded) === $uri) {
+                return $decoded;
+            }
+        }
+        return $stem;
     }
 
     /** Weak content fingerprint: changes whenever the row (or an override) is touched. */

@@ -28,15 +28,15 @@ final class AuthBackend extends \Sabre\DAV\Auth\Backend\AbstractBasic
     protected function validateUserPass($username, $password)
     {
         $source = $this->guard?->source($_SERVER) ?? '';
-        $wait = $this->guard?->retryAfter($source) ?? 0;
+        $wait = $this->guard?->begin($source) ?? 0;
         if ($wait > 0) {
             throw new TooManyAttempts($wait);
         }
         $ok = $this->passwordOrTokenMatches((string) $username, (string) $password);
         if ($ok) {
-            $this->guard?->recordSuccess($source);
+            $this->guard?->succeeded($source);
         } else {
-            $this->guard?->failed($source, 'caldav');
+            $this->guard?->rejected($source, 'caldav');
         }
         return $ok;
     }
@@ -45,8 +45,7 @@ final class AuthBackend extends \Sabre\DAV\Auth\Backend\AbstractBasic
     {
         $user = $this->db->one('SELECT id, password_hash FROM users WHERE email = ?', [trim($username)]);
         if ($user === null) {
-            // Burn comparable time so unknown emails are not distinguishable.
-            password_verify($password, Auth::DUMMY_HASH);
+            Auth::burnTime($this->db, $password); // same work as a real check (F11)
             return false;
         }
         if (password_verify($password, (string) $user['password_hash'])) {

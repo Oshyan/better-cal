@@ -36,6 +36,9 @@ final class LoginGuard
     public const WINDOW = 900;          // 15 minutes
     public const DEFAULT_MAX = 10;      // failures per source per window
     public const GLOBAL_MAX = 60;       // failures from all sources per window
+    // ...and from at least this many different sources: a handful of
+    // addresses must not be able to shut every new device out (F14).
+    public const GLOBAL_SOURCES = 6;
     public const KNOWN_FOR = 2592000;   // a successful sign-in vouches for its source for 30 days
 
     private const FAIL_ALL = 'auth-fail:all';
@@ -60,7 +63,15 @@ final class LoginGuard
      */
     public function failed(string $source, string $door, ?\DateTimeImmutable $now = null): void
     {
-        if (!$this->recordFailure($source, $now) || $this->journal === null) {
+        if (!$this->recordFailure($source, $now)) {
+            return;
+        }
+        $this->journalBlock($source, $door);
+    }
+
+    private function journalBlock(string $source, string $door): void
+    {
+        if ($this->journal === null) {
             return;
         }
         try {
@@ -99,10 +110,62 @@ final class LoginGuard
         if ($wait > 0) {
             return $wait;
         }
-        if ($this->throttle->count(self::FAIL_ALL, self::WINDOW, $now) >= self::GLOBAL_MAX && !$this->isKnown($source, $now)) {
+        if ($this->throttle->count(self::FAIL_ALL, self::WINDOW, $now) >= self::GLOBAL_MAX
+            && $this->throttle->distinct('auth-fail:ip:', self::WINDOW, $now) >= self::GLOBAL_SOURCES
+            && !$this->isKnown($source, $now)) {
             return max(1, $this->throttle->retryAfter(self::FAIL_ALL, self::GLOBAL_MAX, self::WINDOW, $now));
         }
         return 0;
+    }
+
+    /** @var list<int> rows reserved by begin(), pending the outcome of this attempt */
+    private array $pending = [];
+
+    /**
+     * Start one password attempt. The attempt is counted BEFORE the password
+     * is checked, and the decision is made on the count that includes it, so
+     * concurrent requests cannot all slip in under the limit while the first
+     * ones are still hashing (scan 2026-09-23, F12/F15). Returns seconds to
+     * wait (and counts nothing) when the source may not try; otherwise 0,
+     * and the caller reports the outcome with succeeded() or rejected().
+     */
+    public function begin(string $source, ?\DateTimeImmutable $now = null): int
+    {
+        $this->pending = [
+            $this->throttle->reserve('auth-fail:ip:' . $source, $now),
+            $this->throttle->reserve(self::FAIL_ALL, $now),
+        ];
+        $max = max(1, $this->maxFailures);
+        if ($this->throttle->count('auth-fail:ip:' . $source, self::WINDOW, $now) > $max) {
+            $this->throttle->release($this->pending);
+            $this->pending = [];
+            return max(1, $this->throttle->retryAfter('auth-fail:ip:' . $source, $max, self::WINDOW, $now));
+        }
+        if ($this->throttle->count(self::FAIL_ALL, self::WINDOW, $now) > self::GLOBAL_MAX
+            && $this->throttle->distinct('auth-fail:ip:', self::WINDOW, $now) >= self::GLOBAL_SOURCES
+            && !$this->isKnown($source, $now)) {
+            $this->throttle->release($this->pending);
+            $this->pending = [];
+            return max(1, $this->throttle->retryAfter(self::FAIL_ALL, self::GLOBAL_MAX, self::WINDOW, $now));
+        }
+        return 0;
+    }
+
+    /** The attempt begun with begin() succeeded: it was not a failure after all. */
+    public function succeeded(string $source, ?\DateTimeImmutable $now = null): void
+    {
+        $this->throttle->release($this->pending);
+        $this->pending = [];
+        $this->recordSuccess($source, $now);
+    }
+
+    /** The attempt begun with begin() failed: it stays counted; the one that closes the door is journaled. */
+    public function rejected(string $source, string $door, ?\DateTimeImmutable $now = null): void
+    {
+        $this->pending = [];
+        if ($this->throttle->count('auth-fail:ip:' . $source, self::WINDOW, $now) === max(1, $this->maxFailures)) {
+            $this->journalBlock($source, $door);
+        }
     }
 
     /** @return bool true when THIS failure is the one that closes the door (worth telling the owner once) */

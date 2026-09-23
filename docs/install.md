@@ -16,7 +16,7 @@ Better-Cal is plain PHP and MySQL with a no-build frontend. It should run on any
 2. `cd server && composer install --no-dev`
 3. Copy `.env.example` to `.env` in the repository root and fill in the database, `BETTERCAL_BASE_URL` and `BETTERCAL_SESSION_SECRET`. Everything else in that file is optional and documented there.
 4. `php server/bin/migrate.php` creates the schema. Run it again after every update; it only applies what is new.
-5. `php server/bin/seed.php --email=you@example.com --password='...'` creates your account.
+5. `php server/bin/seed.php --email=you@example.com` creates your account; it asks for the password with echo off. From a script, set `BETTERCAL_SEED_PASSWORD` instead; a password on the command line is visible to other users and stays in shell history.
 6. Point the web server at `server/public` (next section).
 7. Add the worker to cron, as the user that owns the files: `* * * * * php /srv/better-cal/server/bin/worker.php >> /srv/better-cal/worker.log 2>&1`. It polls feeds, ingests mail, sends reminders and prunes old data. Settings, System shows whether each job is healthy.
 8. Optional: `php server/bin/vapid.php --generate` and put the keys in `.env` to enable push reminders.

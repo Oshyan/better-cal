@@ -15,6 +15,24 @@ final class Auth
     /** A valid bcrypt hash of nothing in particular, verified against when the account does not exist. */
     public const DUMMY_HASH = '$2y$10$usesomesillystringfore7hnbRJHxXVLeakoG8K30oukPsA.ztMG';
 
+    /**
+     * Spend the same time an unknown email would on a real check. The fixed
+     * DUMMY_HASH is cost 10 while real hashes are minted at the runtime's
+     * default (12 on PHP 8.4), so an unknown address answered about four
+     * times faster and the difference named which emails have accounts
+     * (scan 2026-09-23, F10/F11). Verifying against the account's own stored
+     * hash costs exactly what a real attempt does; the result is discarded.
+     */
+    public static function burnTime(Db $db, string $password): void
+    {
+        $hash = null;
+        try {
+            $hash = $db->scalar('SELECT password_hash FROM users ORDER BY id LIMIT 1');
+        } catch (\Throwable) {
+        }
+        password_verify($password, is_string($hash) && $hash !== '' ? $hash : self::DUMMY_HASH);
+    }
+
     public function __construct(private readonly Db $db, private readonly array $cfg)
     {
     }
@@ -26,7 +44,7 @@ final class Auth
         if ($user === null) {
             // Spend the same time as a real check, so "no such account" and
             // "wrong password" cannot be told apart by how fast the answer comes.
-            password_verify($password, self::DUMMY_HASH);
+            self::burnTime($this->db, $password);
             return null;
         }
         if (!password_verify($password, (string) $user['password_hash'])) {

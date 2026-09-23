@@ -21,6 +21,10 @@ final class SettingsController
 
     public function patch(Request $req): Response
     {
+        // Where reminder email goes is a standing channel out of the account (F6).
+        if (array_key_exists('notifyEmail', $req->body) || array_key_exists('notifyChannel', $req->body)) {
+            $req->requireSession('Changing where reminders are sent');
+        }
         return Response::json(['settings' => $this->settings->patch((int) $req->user['id'], $req->body)]);
     }
 }

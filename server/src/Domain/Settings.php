@@ -92,6 +92,10 @@ final class Settings
         // Persist only known keys so stale/renamed keys never accumulate.
         $merged = array_intersect_key($merged, self::DEFAULTS);
         $this->db->update('users', ['settings_json' => json_encode($merged)], 'id = ?', [$userId]);
+        if (array_key_exists('notifyEmail', $updates) && ($updates['notifyEmail'] ?? null) !== (($stored['notifyEmail'] ?? null))) {
+            (new Undo($this->db))->record($userId, 'settings', $userId, 'update', null, null,
+                $updates['notifyEmail'] ? 'Reminder email now goes to ' . $updates['notifyEmail'] : 'Reminder email goes to the account address again');
+        }
         return self::withDefaults($merged);
     }
 

@@ -3014,11 +3014,16 @@ require __DIR__ . '/plugins.php';
     $pdb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, password_hash TEXT, display_name TEXT, settings_json TEXT)');
     $pdb->run('CREATE TABLE sessions (token_hash TEXT PRIMARY KEY, user_id INTEGER, csrf TEXT, expires_at TEXT, last_seen_at TEXT DEFAULT CURRENT_TIMESTAMP)');
     $pdb->run('CREATE TABLE api_tokens (id INTEGER PRIMARY KEY, user_id INTEGER, token_hash TEXT)');
+    $pdb->run('CREATE TABLE push_subscriptions (id INTEGER PRIMARY KEY, user_id INTEGER, endpoint TEXT)');
+    $pdb->run('CREATE TABLE out_feeds (id INTEGER PRIMARY KEY, user_id INTEGER, token TEXT)');
+    $pdb->run("INSERT INTO push_subscriptions (user_id, endpoint) VALUES (1, 'https://fcm.googleapis.com/a'), (1, 'https://attacker.example/b'), (2, 'https://fcm.googleapis.com/c')");
+    $pdb->run("INSERT INTO out_feeds (user_id, token) VALUES (1, 'feed-one'), (2, 'feed-other')");
     $pdb->run("INSERT INTO users (id, email, password_hash, display_name) VALUES (1, 'owner@example.com', ?, 'Owner'), (2, 'other@example.com', ?, 'Other')", [
         password_hash('old-password', PASSWORD_DEFAULT),
         password_hash('other-password', PASSWORD_DEFAULT),
     ]);
     $pdb->run("INSERT INTO api_tokens (user_id, token_hash) VALUES (1, 'a'), (1, 'b'), (2, 'c')");
+    $pdb->run("UPDATE users SET settings_json = '{\"notifyEmail\":\"attacker@example.com\"}' WHERE id = 1");
     $pauth = new BetterCal\Domain\Auth($pdb, ['base_url' => 'https://cal.example.com']);
     $stolen = $pauth->login('owner@example.com', 'old-password');
     $mine = $pauth->login('owner@example.com', 'old-password');
@@ -3026,7 +3031,10 @@ require __DIR__ . '/plugins.php';
     check('reset: sessions resolve before the reset', $pauth->resolve($stolen['token']) !== null && $pauth->resolve($mine['token']) !== null);
 
     $revoked = $pauth->setPassword(1, 'new-password');
-    checkEq('reset: both of the owner\'s sessions are reported revoked', ['sessions' => 2, 'tokens' => 0], $revoked);
+    checkEq('reset: both of the owner\'s sessions are reported revoked', 2, $revoked['sessions']);
+    checkEq('reset: every push device of the owner goes (F5)', [2, 0], [$revoked['pushDevices'], (int) $pdb->scalar('SELECT COUNT(*) FROM push_subscriptions WHERE user_id = 1')]);
+    checkEq('reset: another user\'s push device stays', 1, (int) $pdb->scalar('SELECT COUNT(*) FROM push_subscriptions WHERE user_id = 2'));
+    checkEq('reset: a routine reset keeps feed addresses and the email setting', ['feed-one', 0, false], [$pdb->scalar('SELECT token FROM out_feeds WHERE user_id = 1'), $revoked['feedsRotated'], $revoked['notifyEmailReset']]);
     check('reset: a session opened under the old password no longer resolves', $pauth->resolve($stolen['token']) === null);
     check('reset: the owner\'s own old session is ended too', $pauth->resolve($mine['token']) === null);
     check('reset: another user\'s session is untouched', $pauth->resolve($bystander['token']) !== null);
@@ -3035,7 +3043,10 @@ require __DIR__ . '/plugins.php';
     checkEq('reset: API tokens survive a routine reset', 2, (int) $pdb->scalar('SELECT COUNT(*) FROM api_tokens WHERE user_id = 1'));
 
     $revoked = $pauth->setPassword(1, 'newer-password', true);
-    checkEq('reset --revoke-tokens: the session from the last login and both tokens go', ['sessions' => 1, 'tokens' => 2], $revoked);
+    checkEq('reset --revoke-tokens: the session from the last login and both tokens go', [1, 2], [$revoked['sessions'], $revoked['tokens']]);
+    check('reset --revoke-tokens: the owner\'s feed gets a new address (F6)', $revoked['feedsRotated'] === 1 && $pdb->scalar('SELECT token FROM out_feeds WHERE user_id = 1') !== 'feed-one');
+    checkEq('reset --revoke-tokens: another user\'s feed keeps its address', 'feed-other', $pdb->scalar('SELECT token FROM out_feeds WHERE user_id = 2'));
+    check('reset --revoke-tokens: a foreign reminder address is cleared (F6)', $revoked['notifyEmailReset'] && json_decode((string) $pdb->scalar('SELECT settings_json FROM users WHERE id = 1'), true)['notifyEmail'] === null);
     checkEq('reset --revoke-tokens: another user\'s token is untouched', 1, (int) $pdb->scalar('SELECT COUNT(*) FROM api_tokens WHERE user_id = 2'));
 }
 
@@ -3206,6 +3217,25 @@ use BetterCal\Domain\GoogleWriter;
     check('version: VERSION is semver', preg_match('/^\d+\.\d+\.\d+$/', $fileV) === 1);
     checkEq('version: config reads VERSION', $fileV, config()['version']);
     check('version: CHANGELOG has an entry for it', str_contains((string) file_get_contents(dirname(__DIR__, 2) . '/CHANGELOG.md'), '## ' . $fileV . ' '));
+}
+
+// --- Standing channels out of the account are for a person, not a token ---
+{
+    $tokenReq = new BetterCal\Http\Request('POST', '/api/v1/outfeeds');
+    $tokenReq->authMethod = 'token';
+    try {
+        $tokenReq->requireSession('Creating an outbound feed');
+        check('session only: a token is refused', false);
+    } catch (BetterCal\Http\HttpError $e) {
+        checkEq('session only: a token is refused with 403 session_required', [403, 'session_required'], [$e->status, $e->errorCode]);
+    }
+    $sessReq = new BetterCal\Http\Request('POST', '/api/v1/outfeeds');
+    $sessReq->authMethod = 'session';
+    $sessReq->requireSession('Creating an outbound feed');
+    check('session only: a session passes', true);
+    checkEq('push service: FCM', 'Chrome, Edge or Android', BetterCal\Domain\PushSubscriptions::service('https://fcm.googleapis.com/fcm/send/x'));
+    checkEq('push service: Apple', 'Safari or iPhone', BetterCal\Domain\PushSubscriptions::service('https://web.push.apple.com/abc'));
+    checkEq('push service: anything else names its host', 'push.example.net', BetterCal\Domain\PushSubscriptions::service('https://push.example.net/x'));
 }
 
 // --- A patch that names the event's own calendar is not a move ---

@@ -22,6 +22,19 @@ final class Request
     ) {
     }
 
+    /**
+     * Some things only a person signed in with the password may do, never a
+     * bearer token: anything that creates a standing channel out of the
+     * account (a push device, a public feed URL, where reminder email goes),
+     * because revoking the token would not close it (scan 2026-09-23, F5/F6).
+     */
+    public function requireSession(string $what): void
+    {
+        if ($this->authMethod !== 'session') {
+            throw HttpError::forbidden('session_required', $what . ' needs you signed in with your password, not an API token');
+        }
+    }
+
     public static function fromGlobals(): self
     {
         $method = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');

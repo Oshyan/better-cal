@@ -72,15 +72,45 @@ final class Auth
      *
      * @return array{sessions:int,tokens:int} how many of each were revoked
      */
+    /**
+     * A reset signs every browser out, and with it every push device those
+     * browsers registered: a device registered with a stolen session would
+     * otherwise keep receiving event details forever (scan 2026-09-23, F5).
+     * The owner's own browsers register again on their next sign-in (the
+     * client re-sends a subscription it still holds), so nothing is lost.
+     *
+     * With $revokeTokens (the "I was compromised" switch) every other
+     * standing channel goes too: API tokens, public feed URLs (rotated, so
+     * the owner's feeds keep their names and scopes but need their new
+     * addresses), and a reminder email destination that is not the account
+     * address (F6).
+     *
+     * @return array{sessions:int,tokens:int,pushDevices:int,feedsRotated:int,notifyEmailReset:bool}
+     */
     public function setPassword(int $userId, string $password, bool $revokeTokens = false): array
     {
         return $this->db->tx(function () use ($userId, $password, $revokeTokens): array {
             $this->db->run('UPDATE users SET password_hash = ? WHERE id = ?', [password_hash($password, PASSWORD_DEFAULT), $userId]);
             $sessions = $this->db->run('DELETE FROM sessions WHERE user_id = ?', [$userId])->rowCount();
-            $tokens = $revokeTokens
-                ? $this->db->run('DELETE FROM api_tokens WHERE user_id = ?', [$userId])->rowCount()
-                : 0;
-            return ['sessions' => $sessions, 'tokens' => $tokens];
+            $push = $this->db->run('DELETE FROM push_subscriptions WHERE user_id = ?', [$userId])->rowCount();
+            $tokens = 0;
+            $feeds = 0;
+            $emailReset = false;
+            if ($revokeTokens) {
+                $tokens = $this->db->run('DELETE FROM api_tokens WHERE user_id = ?', [$userId])->rowCount();
+                foreach ($this->db->all('SELECT id FROM out_feeds WHERE user_id = ?', [$userId]) as $f) {
+                    $this->db->run('UPDATE out_feeds SET token = ? WHERE id = ?', [Ids::feedToken(), (int) $f['id']]);
+                    $feeds++;
+                }
+                $raw = $this->db->scalar('SELECT settings_json FROM users WHERE id = ?', [$userId]);
+                $s = is_string($raw) ? json_decode($raw, true) : null;
+                if (is_array($s) && !empty($s['notifyEmail'])) {
+                    $s['notifyEmail'] = null;
+                    $this->db->run('UPDATE users SET settings_json = ? WHERE id = ?', [json_encode($s), $userId]);
+                    $emailReset = true;
+                }
+            }
+            return ['sessions' => $sessions, 'tokens' => $tokens, 'pushDevices' => $push, 'feedsRotated' => $feeds, 'notifyEmailReset' => $emailReset];
         });
     }
 

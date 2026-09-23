@@ -115,7 +115,8 @@ claude mcp add better-cal \
 | RSVP / hide | `POST /events/:id/attendance` | `set_attendance` | Works on read-only feed events |
 | List calendars | `GET /calendars` | `list_calendars` | Includes folders, tags, feed health |
 | Undo last change | `POST /undo` | `undo` | One level, per user |
-| Manage calendars/folders/feeds | `POST/PATCH/DELETE /calendars`, `/folders`, `/outfeeds` | — | REST only for now |
+| Manage calendars/folders | `POST/PATCH/DELETE /calendars`, `/folders` | — | REST only for now |
+| Outbound feeds, push devices, reminder email address | — | — | Session only: an API token cannot create a standing channel out of the account |
 | Manage tokens | `GET/POST/DELETE /tokens` | — | Session auth only, never bearer |
 
 ## Cron script sketch

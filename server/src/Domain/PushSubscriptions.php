@@ -61,10 +61,15 @@ final class PushSubscriptions
         return ['endpoint' => $endpoint, 'p256dh' => $p256dh, 'auth' => $auth];
     }
 
-    /** Upsert by endpoint hash; re-subscribing clears any failing state. */
+    /**
+     * Upsert by endpoint hash; re-subscribing clears any failing state. A
+     * device that is new to the account is written to Activity, so a device
+     * nobody remembers adding is visible.
+     */
     public function subscribe(int $userId, array $in): void
     {
         $sub = self::validate($in, $this->extraPushHosts);
+        $existed = $this->db->scalar('SELECT id FROM push_subscriptions WHERE endpoint_hash = ? AND user_id = ?', [self::endpointHash($sub['endpoint']), $userId]) !== null;
         $this->db->run(
             'INSERT INTO push_subscriptions (user_id, endpoint, endpoint_hash, p256dh, auth, last_used_at)
              VALUES (?, ?, ?, ?, ?, NULL) AS new_row
@@ -73,6 +78,60 @@ final class PushSubscriptions
                p256dh = new_row.p256dh, auth = new_row.auth, failing_since = NULL',
             [$userId, $sub['endpoint'], self::endpointHash($sub['endpoint']), $sub['p256dh'], $sub['auth']]
         );
+        if (!$existed) {
+            $id = (int) $this->db->scalar('SELECT id FROM push_subscriptions WHERE endpoint_hash = ?', [self::endpointHash($sub['endpoint'])]);
+            (new Undo($this->db))->record($userId, 'push', $id, 'create', null, null,
+                'Registered a device for reminders (' . self::service($sub['endpoint']) . ')');
+        }
+    }
+
+    /** Which push service an endpoint belongs to, in words a person recognises. */
+    public static function service(string $endpoint): string
+    {
+        $host = strtolower((string) parse_url($endpoint, PHP_URL_HOST));
+        return match (true) {
+            $host === 'fcm.googleapis.com' => 'Chrome, Edge or Android',
+            str_ends_with($host, 'push.services.mozilla.com') => 'Firefox',
+            str_ends_with($host, 'push.apple.com') => 'Safari or iPhone',
+            str_ends_with($host, 'notify.windows.com') => 'Windows',
+            default => $host !== '' ? $host : 'unknown service',
+        };
+    }
+
+    /**
+     * Every device registered for this account, for the owner to review and
+     * remove (F5: a device registered with a stolen credential shows here).
+     * The endpoint itself is never returned; its hash lets a browser find
+     * itself in the list.
+     *
+     * @return list<array{id:int,service:string,endpointHash:string,createdAt:?string,lastUsedAt:?string,failing:bool}>
+     */
+    public function devices(int $userId): array
+    {
+        $out = [];
+        foreach ($this->db->all('SELECT id, endpoint, endpoint_hash, created_at, last_used_at, failing_since FROM push_subscriptions WHERE user_id = ? ORDER BY id', [$userId]) as $r) {
+            $out[] = [
+                'id' => (int) $r['id'],
+                'service' => self::service((string) $r['endpoint']),
+                'endpointHash' => (string) $r['endpoint_hash'],
+                'createdAt' => $r['created_at'] !== null ? Time::iso(Time::fromDb((string) $r['created_at'])) : null,
+                'lastUsedAt' => $r['last_used_at'] !== null ? Time::iso(Time::fromDb((string) $r['last_used_at'])) : null,
+                'failing' => $r['failing_since'] !== null,
+            ];
+        }
+        return $out;
+    }
+
+    /** Remove one device by id (the owner reviewing the list); written to Activity. */
+    public function remove(int $userId, int $id): void
+    {
+        $row = $this->db->one('SELECT endpoint FROM push_subscriptions WHERE id = ? AND user_id = ?', [$id, $userId]);
+        if ($row === null) {
+            throw HttpError::notFound('No such device');
+        }
+        $this->db->run('DELETE FROM push_subscriptions WHERE id = ?', [$id]);
+        (new Undo($this->db))->record($userId, 'push', $id, 'delete', null, null,
+            'Removed a device from reminders (' . self::service((string) $row['endpoint']) . ')');
     }
 
     public function unsubscribe(int $userId, string $endpoint): bool

@@ -1694,6 +1694,11 @@ body.bc-dragging * { cursor: grabbing !important; }
 
 /* List rows as cards: badges + body type, not raw metadata dumps. */
 .bc-card-list { display: flex; flex-direction: column; gap: 8px; }
+.bc-devices { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.bc-device { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.bc-device-name { font-weight: 600; }
+.bc-device-meta { color: var(--fg-muted); font-size: 12px; }
+.bc-badge-warn { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, var(--border)); }
 .bc-card {
   display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
   border: 1px solid var(--border); border-radius: var(--radius);

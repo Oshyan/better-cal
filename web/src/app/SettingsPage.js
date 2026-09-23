@@ -17,7 +17,7 @@ import { PlaceInput, pickFillText, placeBias } from './PlaceInput.js';
 import { allowDeviceLocation, deviceLocationPermission } from './devicelocation.js';
 import { localTz, sameClock, tzOffsetLabel, tzCity, zoneOptions } from '../lib/dates.js';
 import {
-  permissionState, pushSupported, fetchPushStatus, enablePush, disablePush,
+  permissionState, pushSupported, fetchPushStatus, enablePush, disablePush, fetchPushDevices, removePushDevice, currentEndpointHash,
   sendTestNotification, sendTestEmail,
 } from './push.js';
 import {
@@ -260,11 +260,21 @@ function NotificationsSection({ settings, user }) {
     saveSetting('notifyEmail', v === '' ? null : v);
   };
 
+  // Every device reminders go to: a device nobody remembers adding is the
+  // one to remove (it could only have been registered while signed in).
+  const [devices, setDevices] = useState(null);
+  const [myHash, setMyHash] = useState(null);
   const refresh = () => {
     setPerm(permissionState());
     fetchPushStatus().then(setStatus).catch(() => setStatus(null));
+    fetchPushDevices().then(setDevices).catch(() => setDevices(null));
+    currentEndpointHash().then(setMyHash).catch(() => {});
   };
   useEffect(refresh, []);
+  const removeDevice = async (d) => {
+    if (!window.confirm('Stop sending reminders to this device (' + d.service + ')?')) return;
+    try { await removePushDevice(d.id); toast('Device removed'); refresh(); } catch (e) { toast((e && e.message) || 'Could not remove the device', { error: true }); }
+  };
 
   let statusText;
   if (!pushSupported()) statusText = 'Not supported in this browser';
@@ -348,6 +358,15 @@ function NotificationsSection({ settings, user }) {
       ${enabled && html`<button type="button" class="bc-btn" disabled=${busy}
         onClick=${run(sendTestNotification, (r) => 'Test sent to ' + ((r && r.sent) || 0) + ' device(s)')}>Send test notification</button>`}
     <//>
+    ${devices && devices.length > 0 && html`<${Row} label="Devices receiving reminders" hint="Every browser or phone reminders are sent to. Remove any you do not recognise.">
+      <ul class="bc-devices">
+        ${devices.map((d) => html`<li key=${d.id} class="bc-device">
+          <span class="bc-device-name">${d.service}${d.endpointHash === myHash ? html` <span class="bc-badge">this device</span>` : ''}${d.failing ? html` <span class="bc-badge bc-badge-warn">not reachable</span>` : ''}</span>
+          <span class="bc-device-meta">added ${d.createdAt ? fmtSince(d.createdAt) : 'at some point'}${d.lastUsedAt ? ', last reminder ' + fmtSince(d.lastUsedAt) : ''}</span>
+          <button type="button" class="bc-link-btn" onClick=${() => removeDevice(d)}>Remove</button>
+        </li>`)}
+      </ul>
+    <//>`}
     ${enabled && !tipHidden && batteryTipApplies() && html`<div class="bc-card">
       <div class="bc-card-main">
         <span class="bc-card-title">${BATTERY_TIP_TITLE}</span>

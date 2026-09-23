@@ -69,6 +69,39 @@ export async function enablePush() {
   });
 }
 
+// After a sign-in: a password reset removes every push device on the server
+// (so one registered with a stolen session cannot keep receiving), and this
+// browser still holds its own subscription. Hand it back, quietly, so the
+// owner's devices keep getting reminders without re-enabling anything.
+export async function resyncPush() {
+  try {
+    if (!pushSupported() || Notification.permission !== 'granted') return;
+    const reg = await navigator.serviceWorker.getRegistration();
+    const sub = reg && await reg.pushManager.getSubscription();
+    if (!sub) return;
+    const json = sub.toJSON();
+    await api('/push/subscribe', {
+      method: 'POST',
+      body: { endpoint: sub.endpoint, keys: { p256dh: json.keys.p256dh, auth: json.keys.auth } },
+    });
+  } catch { /* best-effort: Settings still offers Enable */ }
+}
+
+// Every device reminders go to, for review in Settings.
+export function fetchPushDevices() {
+  return api('/push/devices').then((r) => r.devices || []);
+}
+export function removePushDevice(id) {
+  return api('/push/devices/' + id, { method: 'DELETE' });
+}
+// sha256 of this browser's endpoint, to find it in the device list.
+export async function currentEndpointHash() {
+  const ep = await currentPushEndpoint();
+  if (!ep || !crypto.subtle) return null;
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(ep));
+  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
 // Remove this browser's subscription on both ends.
 export async function disablePush() {
   if (!pushSupported()) return;

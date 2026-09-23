@@ -24,17 +24,17 @@ final class AuthController
         // the password at all, so a blocked source cannot keep guessing (or
         // keep the server busy hashing). Same counters as CalDAV sign-in.
         $source = $this->guard?->source($_SERVER) ?? '';
-        $wait = $this->guard?->retryAfter($source) ?? 0;
+        $wait = $this->guard?->begin($source) ?? 0;
         if ($wait > 0) {
             return self::tooMany($wait);
         }
 
         $result = $this->auth->login($email, $password);
         if ($result === null) {
-            $this->guard?->failed($source, 'web');
+            $this->guard?->rejected($source, 'web');
             return Response::error('invalid_credentials', 'Email or password is incorrect', 401);
         }
-        $this->guard?->recordSuccess($source);
+        $this->guard?->succeeded($source);
         return Response::json(['ok' => true])
             ->withCookie(Auth::COOKIE, $result['token'], $this->auth->cookieOptions());
     }

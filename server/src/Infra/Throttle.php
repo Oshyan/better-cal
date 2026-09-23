@@ -76,6 +76,45 @@ final class Throttle
         }
     }
 
+    /** Like hit(), returning the row id so the caller can release it again (0 when the store failed). */
+    public function reserve(string $bucket, ?\DateTimeImmutable $now = null): int
+    {
+        try {
+            return (int) $this->db->insert('rate_events', ['bucket' => self::key($bucket), 'created_at' => Time::toDb($now ?? Time::nowUtc())]);
+        } catch (\Throwable $e) {
+            error_log('throttle reserve failed: ' . $e->getMessage());
+            return 0;
+        }
+    }
+
+    /** @param list<int> $ids rows from reserve() to take back */
+    public function release(array $ids): void
+    {
+        $ids = array_values(array_filter(array_map('intval', $ids), static fn(int $i): bool => $i > 0));
+        if ($ids === []) {
+            return;
+        }
+        try {
+            $this->db->run('DELETE FROM rate_events WHERE id IN (' . implode(',', array_fill(0, count($ids), '?')) . ')', $ids);
+        } catch (\Throwable $e) {
+            error_log('throttle release failed: ' . $e->getMessage());
+        }
+    }
+
+    /** How many different buckets starting with $prefix have had an event in the window. */
+    public function distinct(string $prefix, int $windowSeconds, ?\DateTimeImmutable $now = null): int
+    {
+        try {
+            return (int) $this->db->scalar(
+                'SELECT COUNT(DISTINCT bucket) FROM rate_events WHERE bucket LIKE ? AND created_at > ?',
+                [str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $prefix) . '%', Time::toDb(($now ?? Time::nowUtc())->sub(new \DateInterval('PT' . max(1, $windowSeconds) . 'S')))]
+            );
+        } catch (\Throwable $e) {
+            error_log('throttle distinct failed: ' . $e->getMessage());
+            return 0;
+        }
+    }
+
     public function clear(string $bucket): void
     {
         try {

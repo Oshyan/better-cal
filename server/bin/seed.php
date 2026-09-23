@@ -3,7 +3,12 @@
 declare(strict_types=1);
 
 // Creates or updates the single user:
-//   php bin/seed.php --email=... --password=... [--name=...] [--revoke-tokens]
+//   php bin/seed.php --email=... [--name=...] [--revoke-tokens]
+// The password is asked for with echo off, or read from the
+// BETTERCAL_SEED_PASSWORD environment variable when there is no terminal
+// (scripts). A command-line argument would sit in the process list and the
+// shell history (scan 2026-09-23, F20); --password=... still works, with a
+// warning, for setups that have no other way.
 // Also creates a default "Personal" calendar when the user has none.
 //
 // Setting the password of an existing user signs every browser out: a reset is
@@ -19,12 +24,37 @@ use BetterCal\Infra\Db;
 
 $options = getopt('', ['email:', 'password:', 'name::', 'revoke-tokens']);
 $email = trim((string) ($options['email'] ?? ''));
-$password = (string) ($options['password'] ?? '');
+$password = '';
+if (isset($options['password'])) {
+    $password = (string) $options['password'];
+    fwrite(STDERR, "Warning: a password on the command line is visible to other users of this machine and stays in your shell history. Leave --password off to be asked for it.\n");
+} elseif (($env = getenv('BETTERCAL_SEED_PASSWORD')) !== false && $env !== '') {
+    $password = $env;
+} elseif (stream_isatty(STDIN)) {
+    $ask = static function (string $prompt): string {
+        fwrite(STDERR, $prompt);
+        $stty = trim((string) shell_exec('stty -g 2>/dev/null'));
+        if ($stty !== '') {
+            shell_exec('stty -echo 2>/dev/null');
+        }
+        $line = rtrim((string) fgets(STDIN), "\r\n");
+        if ($stty !== '') {
+            shell_exec('stty ' . escapeshellarg($stty) . ' 2>/dev/null');
+        }
+        fwrite(STDERR, "\n");
+        return $line;
+    };
+    $password = $ask('New password: ');
+    if ($password !== '' && $ask('Again: ') !== $password) {
+        fwrite(STDERR, "The two entries differ.\n");
+        exit(1);
+    }
+}
 $name = trim((string) ($options['name'] ?? ''));
 $revokeTokens = isset($options['revoke-tokens']);
 
 if ($email === '' || $password === '') {
-    fwrite(STDERR, "Usage: php bin/seed.php --email=you@example.com --password=secret [--name=\"Display Name\"] [--revoke-tokens]\n");
+    fwrite(STDERR, "Usage: php bin/seed.php --email=you@example.com [--name=\"Display Name\"] [--revoke-tokens]\n(asks for the password; or set BETTERCAL_SEED_PASSWORD when running without a terminal)\n");
     exit(1);
 }
 if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {

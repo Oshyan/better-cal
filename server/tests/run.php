@@ -3000,6 +3000,39 @@ require __DIR__ . '/plugins.php';
     checkEq('guard: allowed again once the window rolls on', 0, $guard->retryAfter($bad, $at(100 + BetterCal\Domain\LoginGuard::WINDOW + 1)));
     checkEq('guard: the block is journaled once, naming the source', ['Blocked sign-in attempts from 203.0.113.7 after 3 wrong passwords (web)'],
         array_column($tdb->all("SELECT summary FROM mutations WHERE op = 'refuse'"), 'summary'));
+    // F12/F15 (scan 2026-09-23): the attempt is counted before the password
+    // is checked, so a burst of concurrent requests cannot all slip in.
+    $g2 = new BetterCal\Domain\LoginGuard($throttle, [], 3, $tdb);
+    $burst = '198.18.0.50';
+    $allowed = 0;
+    for ($i = 0; $i < 8; $i++) {
+        if ((new BetterCal\Domain\LoginGuard($throttle, [], 3, $tdb))->begin($burst, $at(500)) === 0) {
+            $allowed++; // none of these ever reports an outcome: all still "in flight"
+        }
+    }
+    checkEq('guard: 8 concurrent attempts, only the limit get a password check', 3, $allowed);
+    $ok = '198.18.0.60';
+    for ($i = 0; $i < 20; $i++) {
+        $one = new BetterCal\Domain\LoginGuard($throttle, [], 3, $tdb);
+        if ($one->begin($ok, $at(600 + $i)) === 0) {
+            $one->succeeded($ok, $at(600 + $i));
+        }
+    }
+    checkEq('guard: a device that always succeeds is never limited (successes release their slot)', 0, $g2->retryAfter($ok, $at(640)));
+    // F14: the overall brake needs failures from many different sources.
+    $few = new BetterCal\Infra\Throttle($tdb);
+    $tdb->run('DELETE FROM rate_events');
+    for ($i = 0; $i < 70; $i++) {
+        $few->hit('auth-fail:all', $at(700));
+        $few->hit('auth-fail:ip:203.0.113.' . ($i % 3), $at(700));
+    }
+    checkEq('guard: 70 failures from 3 sources do not shut out a new device (F14)', 0, $g2->retryAfter('198.51.100.200', $at(701)));
+    for ($i = 0; $i < 6; $i++) {
+        $few->hit('auth-fail:ip:192.0.2.' . (100 + $i), $at(700));
+    }
+    check('guard: with failures from many sources the brake does engage', $g2->retryAfter('198.51.100.200', $at(701)) > 0);
+    $tdb->run('DELETE FROM rate_events');
+
     // A typo or two, then the right password: the source is known, and its
     // failures are NOT wiped (a success must not reset the guessing budget,
     // or a token or a NAT neighbour's syncing phone launders it).
@@ -3242,6 +3275,18 @@ use BetterCal\Domain\GoogleWriter;
     check('version: VERSION is semver', preg_match('/^\d+\.\d+\.\d+$/', $fileV) === 1);
     checkEq('version: config reads VERSION', $fileV, config()['version']);
     check('version: CHANGELOG has an entry for it', str_contains((string) file_get_contents(dirname(__DIR__, 2) . '/CHANGELOG.md'), '## ' . $fileV . ' '));
+}
+
+// --- F10/F11: an unknown email costs what a known one does ---
+{
+    $bdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $bdb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, password_hash TEXT)');
+    $real = password_hash('correct horse', PASSWORD_BCRYPT, ['cost' => 11]);
+    $bdb->run("INSERT INTO users (id, email, password_hash) VALUES (1, 'owner@example.com', ?)", [$real]);
+    $time = static function (callable $f): float { $t = hrtime(true); $f(); return (hrtime(true) - $t) / 1e6; };
+    $known = $time(static fn() => password_verify('wrong', $real));
+    $unknown = $time(static fn() => BetterCal\Domain\Auth::burnTime($bdb, 'wrong'));
+    check('burnTime: an unknown email takes as long as a real check (within 40%)', abs($unknown - $known) / max($known, 0.001) < 0.4, sprintf('known %.1fms, unknown %.1fms', $known, $unknown));
 }
 
 // --- Standing channels out of the account are for a person, not a token ---

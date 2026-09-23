@@ -510,10 +510,12 @@ check('manifest: a plugin cannot require itself',
     Plugins::manifestErrors(array_merge($goodMan, ['requires' => [$goodMan['id']]])) !== []);
 
 // SSRF policy: the refusal list.
-foreach (['127.0.0.1', '10.1.2.3', '172.16.0.9', '192.168.1.1', '169.254.169.254', '100.64.0.1', '0.0.0.0', '::1', 'fe80::1', 'fd00::1', '::ffff:127.0.0.1', 'not-an-ip'] as $bad) {
+foreach (['127.0.0.1', '10.1.2.3', '172.16.0.9', '192.168.1.1', '169.254.169.254', '100.64.0.1', '0.0.0.0', '::1', 'fe80::1', 'fd00::1', '::ffff:127.0.0.1', 'not-an-ip',
+          // F24 (scan 2026-09-23): anything outside global unicast, and wrappers of private IPv4
+          '64:ff9b::a00:5', '64:ff9b::7f00:1', '64:ff9b:1::a00:5', '::a00:5', 'fec0::1', 'ff02::1', '2001:db8::1', '2001:0:4136:e378::1', '2002:a00:5::1', '2002:7f00:1::1'] as $bad) {
     check('http policy refuses ' . $bad, HttpClient::isForbiddenIp($bad));
 }
-foreach (['8.8.8.8', '140.82.112.3', '2606:4700:4700::1111', '100.128.0.1'] as $ok) {
+foreach (['8.8.8.8', '140.82.112.3', '2606:4700:4700::1111', '100.128.0.1', '2a00:1450:4009:81f::200e', '2002:808:808::1'] as $ok) {
     check('http policy allows ' . $ok, !HttpClient::isForbiddenIp($ok));
 }
 
@@ -1635,6 +1637,13 @@ checkEq(
 );
 check('gw eval sent prompt to model', str_contains((string) $fakeTransport->requests[0]['body'], 'dance events'));
 check('gw eval sent negative prompt', str_contains((string) $fakeTransport->requests[0]['body'], 'no webinars'));
+{
+    // F19 (scan 2026-09-23): the user's instructions and the third-party event text travel apart.
+    $sent = json_decode((string) $fakeTransport->requests[0]['body'], true);
+    check('gw eval: instructions are the system instruction', str_contains((string) ($sent['system_instruction']['parts'][0]['text'] ?? ''), 'dance events'));
+    check('gw eval: event text is its own user turn, marked untrusted', str_contains((string) ($sent['contents'][0]['parts'][0]['text'] ?? ''), 'untrusted') && str_contains((string) ($sent['contents'][0]['parts'][0]['text'] ?? ''), 'Salsa Night'));
+    check('gw eval: event text is not in the instructions', !str_contains((string) ($sent['system_instruction']['parts'][0]['text'] ?? ''), 'Salsa Night'));
+}
 
 $fakeTransport->reply = $envelope(['results' => [['eventId' => 1, 'score' => 0.4]]]);
 checkEq(
@@ -3287,6 +3296,22 @@ use BetterCal\Domain\GoogleWriter;
     $known = $time(static fn() => password_verify('wrong', $real));
     $unknown = $time(static fn() => BetterCal\Domain\Auth::burnTime($bdb, 'wrong'));
     check('burnTime: an unknown email takes as long as a real check (within 40%)', abs($unknown - $known) / max($known, 0.001) < 0.4, sprintf('known %.1fms, unknown %.1fms', $known, $unknown));
+}
+
+// --- F25: the push Topic is an opaque keyed hash ---
+{
+    $topic = BetterCal\Infra\PushSender::topicFor('4410:20260923T190000Z', 'k1');
+    check('push topic: 32 url-safe characters', preg_match('/^[A-Za-z0-9_-]{32}$/', $topic) === 1);
+    check('push topic: reveals neither the event id nor the time', !str_contains(base64_decode(strtr($topic, '-_', '+/')) ?: '', '4410') && !str_contains($topic, base64_encode('4410')));
+    checkEq('push topic: stable per occurrence, so repeats still collapse', $topic, BetterCal\Infra\PushSender::topicFor('4410:20260923T190000Z', 'k1'));
+    check('push topic: another occurrence, another topic', $topic !== BetterCal\Infra\PushSender::topicFor('4410:20260930T190000Z', 'k1'));
+}
+// --- F22: the server's HTML check is linear too ---
+{
+    $t0 = microtime(true);
+    BetterCal\Domain\Sanitize::isHtml(str_repeat('<a', 30000));
+    check('isHtml: 30,000 "<a" without ">" in well under a second', microtime(true) - $t0 < 0.5, sprintf('%.3fs', microtime(true) - $t0));
+    check('isHtml: still finds real markup', BetterCal\Domain\Sanitize::isHtml('see <b>this</b>') && !BetterCal\Domain\Sanitize::isHtml('a < b and <3'));
 }
 
 // --- Standing channels out of the account are for a person, not a token ---

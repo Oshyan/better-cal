@@ -4,6 +4,18 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.1.5 (2026-09-23)
+
+Security fixes from the 2026-09-23 scan (remaining low-severity findings).
+
+- The Google sign-in landing page shows fixed messages, never text from the link, so nobody can put their own words in the app's voice with a crafted link. After connecting it says "Google account connected" rather than naming the address.
+- Accepting an organizer's emailed change keeps the invitation bound to its original organizer.
+- Outbound fetches to IPv6 addresses outside global unicast are refused, closing a way to reach private IPv4 through NAT64, 6to4 and similar wrappers.
+- The push-notification Topic header is an opaque hash, so the push service no longer sees which event or when.
+- Prompt filters and ranking send event text to the model as separate, clearly marked third-party data.
+- The MCP server marks third-party text in its results as data, not instructions, and labels destructive tools.
+- Descriptions with crafted text no longer freeze the event detail view or the editor. Typing a bare address like "example.com/page" in the editor is no longer turned into a link automatically; "https://" and "www." addresses still are.
+
 ## 0.1.4 (2026-09-23)
 
 Security fixes from the 2026-09-23 scan (sign-in hardening).

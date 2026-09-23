@@ -47,20 +47,24 @@ final class GoogleController
     {
         $userId = (int) $req->user['id'];
         $land = static fn(string $q): Response => Response::text('', 'text/plain; charset=utf-8', 302, ['Location' => '/google?' . $q]);
+        // The landing page shows a fixed message for a code, never text from
+        // the URL: any link could otherwise put words in the app's own voice
+        // (scan 2026-09-23, F16). Details go to the server log.
         if ($req->q('error') !== null) {
-            return $land(http_build_query(['error' => (string) $req->q('error')]));
+            return $land('error=' . ((string) $req->q('error') === 'access_denied' ? 'denied' : 'google'));
         }
         $state = (string) ($req->q('state') ?? '');
         $code = (string) ($req->q('code') ?? '');
         if ($code === '' || !$this->auth->verifyState($state, $userId)) {
-            return $land(http_build_query(['error' => 'The sign-in did not come back the way it left (state mismatch or expired). Try again.']));
+            return $land('error=state');
         }
         try {
-            $account = $this->auth->connect($userId, $code);
+            $this->auth->connect($userId, $code);
         } catch (\Throwable $e) {
-            return $land(http_build_query(['error' => $e->getMessage()]));
+            error_log('google connect failed: ' . $e->getMessage());
+            return $land('error=failed');
         }
-        return $land(http_build_query(['connected' => (string) $account['email']]));
+        return $land('connected=1');
     }
 
     public function disconnect(Request $req, array $params): Response

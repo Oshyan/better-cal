@@ -14,8 +14,34 @@ const DROPPED = new Set(['SCRIPT', 'STYLE', 'IFRAME', 'OBJECT', 'EMBED', 'NOSCRI
 // A '<' immediately followed by a tag name (or '/') means markup, not prose;
 // "a < b" and "<3" stay plain text. Mirrors Sanitize::isHtml server-side.
 export function hasHtml(text) {
-  return typeof text === 'string' && /<\/?[a-zA-Z][^>]*>/.test(text);
+  // [^<>] rather than [^>]: a run like "<a<a<a..." with no ">" used to make
+  // every start scan to the end of the text (quadratic, scan 2026-09-23 F22).
+  return typeof text === 'string' && /<\/?[a-zA-Z][^<>]*>/.test(text);
 }
+
+// A URL found in prose, split from trailing punctuation that is prose, by a
+// loop instead of an end-anchored regex (quadratic on long punctuation runs,
+// F26). Returns [url, tail]. Longer than 2,048 characters is not a link.
+const URL_TAIL = new Set([')', ',', '.', ';', ':', '!', '?', ']']);
+export function splitUrlTail(raw) {
+  if (typeof raw !== 'string' || raw.length > 2048) return [null, raw];
+  let end = raw.length;
+  while (end > 0 && URL_TAIL.has(raw[end - 1])) end--;
+  return [raw.slice(0, end), raw.slice(end)];
+}
+
+// Squire's own auto-link pattern nests a quantifier and backtracks
+// exponentially on crafted text in a paste or a description being edited
+// (F27/F28). This keeps its groups (1 = web address, 2 = email) without
+// nested repetition, drops the bare "domain.tld/" form, and is never run on
+// a token longer than 2,048 characters. Squire only calls .exec().
+const SAFE_LINK_RE = /\b(?:((?:(?:ht|f)tps?:\/\/|www\d{0,3}[.])(?:[^\s()<>]|\([^\s()<>]*\))*(?:[^\s?&`!()\[\]{};:'".,<>«»“”‘’]|\([^\s()<>]*\)))|([\w\-.%+]+@(?:[\w\-]+\.)+[a-z]{2,}\b))/i;
+export const safeLinkMatcher = {
+  exec(text) {
+    if (typeof text !== 'string' || /\S{2049,}/.test(text)) return null;
+    return SAFE_LINK_RE.exec(text);
+  },
+};
 
 // Flatten a description (HTML or plain) to text: blocks and <br> become
 // newlines, tags drop, common entities decode. Pure string ops so the

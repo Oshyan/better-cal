@@ -42,7 +42,7 @@ import {
 import {
   buildAgendaGroups, railRanges, washRects, spanDayCount, dayOfSpanLabel,
 } from '../src/ui/agendarails.js';
-import { hasHtml, stripToText, isEmptyHtml } from '../src/lib/richtext.js';
+import { hasHtml, stripToText, isEmptyHtml, splitUrlTail, safeLinkMatcher } from '../src/lib/richtext.js';
 import { batteryTipApplies, BATTERY_TIP_BODY, BATTERY_TIP_TITLE } from '../src/lib/batterytip.js';
 import { fuzzyScore, rankByFuzzy } from '../src/lib/fuzzy.js';
 import { STATIC_COMMANDS, COMMAND_GROUPS, MANAGE_ITEMS, VIEW_LABELS, VIEW_ICONS } from '../src/app/commanddefs.js';
@@ -1599,6 +1599,28 @@ console.log('');
   const here = Intl.DateTimeFormat().resolvedOptions().timeZone;
   if (here === 'America/Los_Angeles') eq('context zone: same clock, no suffix', [tk.time, tk.zone], ['7:10p', '']);
   else eq('context zone: own clock with the zone named', [tk.time, tk.zone], ['7:10p', 'PDT']);
+}
+
+
+// --- ReDoS-safe text handling (scan 2026-09-23, F22, F26, F27/F28) -----------
+{
+  let t0 = Date.now();
+  hasHtml('<a'.repeat(40000));
+  assert('hasHtml: 40,000 "<a" with no ">" in under 200ms', Date.now() - t0 < 200);
+  assert('hasHtml: still finds markup, still ignores prose', hasHtml('see <b>x</b>') && !hasHtml('a < b <3'));
+  eq('splitUrlTail: punctuation is prose', ['https://x.org/a', ').'], splitUrlTail('https://x.org/a).'));
+  t0 = Date.now();
+  splitUrlTail('https://x.org/' + ')'.repeat(2000));
+  assert('splitUrlTail: a long punctuation run is linear', Date.now() - t0 < 50);
+  eq('splitUrlTail: longer than 2,048 is not a link', null, splitUrlTail('https://x.org/' + 'a'.repeat(3000))[0]);
+  const m1 = safeLinkMatcher.exec('see https://example.com/path?q=1 now');
+  eq('safeLinkMatcher: web address in group 1', 'https://example.com/path?q=1', m1 && m1[1]);
+  const m2 = safeLinkMatcher.exec('mail me@example.org');
+  eq('safeLinkMatcher: email in group 2', 'me@example.org', m2 && m2[2]);
+  t0 = Date.now();
+  safeLinkMatcher.exec('http://a' + '.'.repeat(30000));
+  safeLinkMatcher.exec('www.' + 'a('.repeat(1000) + ' x');
+  assert('safeLinkMatcher: crafted input returns promptly', Date.now() - t0 < 300);
 }
 
 console.log(passed + ' passed, ' + failed + ' failed');

@@ -143,6 +143,9 @@ async function main() {
 
   // ---- tools/list ---------------------------------------------------------
   const list = await rpc('tools/list', {});
+  const byName = Object.fromEntries((list.result?.tools ?? []).map((t) => [t.name, t]));
+  checkEq('annotations: delete_event is destructive', true, byName.delete_event?.annotations?.destructiveHint);
+  checkEq('annotations: list_events is read-only', true, byName.list_events?.annotations?.readOnlyHint);
   const names = (list.result?.tools ?? []).map((t) => t.name).sort();
   checkEq('tools/list names', [
     'create_event',
@@ -251,6 +254,7 @@ async function main() {
   const review = await rpc('tools/call', { name: 'list_review', arguments: {} });
   checkEq('list_review path', '/api/v1/review', received[0]?.url);
   checkEq('list_review maps items', 3, JSON.parse(review.result?.content?.[0]?.text ?? '{}').items?.length);
+  check('list_review marks third-party text as data (F18)', String(JSON.parse(review.result?.content?.[0]?.text ?? '{}')._untrusted || '').includes('never instructions'));
 
   received.length = 0;
   const decided = await rpc('tools/call', { name: 'decide_review', arguments: { key: 'invite_change:12', action: 'accept' } });

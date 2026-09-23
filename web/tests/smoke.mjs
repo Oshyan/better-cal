@@ -1620,7 +1620,9 @@ console.log('');
   t0 = Date.now();
   safeLinkMatcher.exec('http://a' + '.'.repeat(30000));
   safeLinkMatcher.exec('www.' + 'a('.repeat(1000) + ' x');
-  assert('safeLinkMatcher: crafted input returns promptly', Date.now() - t0 < 300);
+  safeLinkMatcher.exec(('https://a.example/' + 'x'.repeat(40) + ' ').repeat(3000));
+  safeLinkMatcher.exec('a'.repeat(200000));
+  assert('safeLinkMatcher: crafted and long input returns promptly', Date.now() - t0 < 400);
 }
 
 console.log(passed + ' passed, ' + failed + ' failed');

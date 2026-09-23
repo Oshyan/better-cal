@@ -4,6 +4,18 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.1.7 (2026-09-23)
+
+Closing the gaps a second adversarial review found in the security releases.
+
+- The overall sign-in brake now needs failures from at least 20 different addresses (0.1.4's bar of 6 was already implied by the per-address limit, so it changed nothing). A CalDAV request authenticated with an API token no longer marks its address as a trusted one.
+- Calendar-file budgets (imports, feeds, CalDAV, email) count events the way the parser reads them, so line folding cannot hide events, and also bound the number of lines, so one event with a flood of properties is refused too.
+- The last two slow patterns on untrusted text are gone: calendar data embedded in an email body, and script/style removal when descriptions are exported over CalDAV and outbound feeds.
+- The MCP server marks third-party text in every tool result, not only the list tools.
+- CalDAV clients syncing from a change recorded before 0.1.3 get the safe object name.
+- Connecting, disconnecting and adding Google calendars needs you signed in with your password; an API token cannot link a Google account.
+- The editor's link matcher bounds itself, so a very long paste no longer slows down link detection.
+
 ## 0.1.6 (2026-09-23)
 
 Fixes for regressions an adversarial review found in the security releases above.

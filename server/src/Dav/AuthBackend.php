@@ -32,8 +32,10 @@ final class AuthBackend extends \Sabre\DAV\Auth\Backend\AbstractBasic
         // is accepted outside the password limit: a device syncing with a
         // token keeps working even while another device at the same address
         // (one still using an old password, say) has run the limit out.
+        // It does NOT make the source "known": only a password success does,
+        // or a token holder could exempt address after address from the
+        // overall brake and guess the password from each (review of F2/F13).
         if (str_starts_with((string) $password, 'bc_') && $this->tokenMatches((string) $username, (string) $password)) {
-            $this->guard?->recordSuccess($source);
             return true;
         }
         $wait = $this->guard?->begin($source) ?? 0;

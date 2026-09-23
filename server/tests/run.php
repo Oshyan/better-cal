@@ -1720,6 +1720,9 @@ checkEq('dav calendar id rejects leading zero', null, DavIcs::calendarIdFromUri(
 checkEq('dav object uri from uid', 'ABC123.ics', DavIcs::objectUri('ABC123'));
 // F8 (scan 2026-09-23): a feed poll is bounded by the same memory-aware budget as an import.
 checkEq('feed budget: capped by memory like an import', 100, BetterCal\Support\Limits::feedEventBudget('32M', 30 * 1048576));
+check('ics budget: a folded BEGIN:VEVENT is still counted', BetterCal\Domain\Ics::budgetProblem("BEGIN:VCALENDAR\r\n" . str_repeat("BEGIN:VEV\r\n ENT\r\nEND:VEVENT\r\n", 3) . "END:VCALENDAR\r\n", 1 << 20, 2) !== null);
+check('ics budget: one event with a flood of lines is refused', BetterCal\Domain\Ics::budgetProblem("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\n" . str_repeat("X-A:1\r\n", 2000) . "END:VEVENT\r\nEND:VCALENDAR\r\n", 1 << 20, 10) !== null);
+checkEq('ics budget: an ordinary event passes', null, BetterCal\Domain\Ics::budgetProblem("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:a\r\nSUMMARY:x\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n", 1 << 20, 1));
 checkEq('feed budget: FEED_EVENTS when memory is plentiful', BetterCal\Support\Limits::get('FEED_EVENTS'), BetterCal\Support\Limits::feedEventBudget('-1', 0));
 checkEq('dav uid from object uri', 'ABC123', DavIcs::uidFromObjectUri('ABC123.ics'));
 $ulidUid = Ids::ulid();
@@ -3058,6 +3061,10 @@ require __DIR__ . '/plugins.php';
     for ($i = 0; $i < 6; $i++) {
         $few->hit('auth-fail:ip:192.0.2.' . (100 + $i), $at(700));
     }
+    checkEq('guard: failures from 9 sources still do not shut out a new device (F14 needs a real crowd)', 0, $g2->retryAfter('198.51.100.200', $at(701)));
+    for ($i = 0; $i < BetterCal\Domain\LoginGuard::GLOBAL_SOURCES; $i++) {
+        $few->hit('auth-fail:ip:192.0.2.' . (150 + $i), $at(700));
+    }
     check('guard: with failures from many sources the brake does engage', $g2->retryAfter('198.51.100.200', $at(701)) > 0);
     $tdb->run('DELETE FROM rate_events');
 
@@ -3330,6 +3337,10 @@ use BetterCal\Domain\GoogleWriter;
     $t0 = microtime(true);
     BetterCal\Domain\Sanitize::isHtml(str_repeat('<a', 30000));
     check('isHtml: 30,000 "<a" without ">" in well under a second', microtime(true) - $t0 < 0.5, sprintf('%.3fs', microtime(true) - $t0));
+    $t0 = microtime(true);
+    BetterCal\Domain\Sanitize::toText('<b>x</b>' . str_repeat('<script x>', 40000));
+    check('toText: 40,000 unclosed "<script" in well under a second', microtime(true) - $t0 < 0.5, sprintf('%.3fs', microtime(true) - $t0));
+    checkEq('toText: script and style still dropped', 'a b', trim(preg_replace('/\s+/', ' ', BetterCal\Domain\Sanitize::toText('<p>a</p><script>evil()</script><style>x{}</style><p>b</p>'))));
     check('isHtml: still finds real markup', BetterCal\Domain\Sanitize::isHtml('see <b>this</b>') && !BetterCal\Domain\Sanitize::isHtml('a < b and <3'));
 }
 

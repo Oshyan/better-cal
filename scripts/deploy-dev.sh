@@ -9,10 +9,12 @@ set -euo pipefail
 # set MYSQL_ROOT_PASSWORD.
 #
 # PORT 9443 IS CLOSED AT THE FIREWALL by default, so the URL above will time out
-# until you reopen it. That is deliberate: dev serves a CLONE of production —
-# real events, real people, real tokens — behind the SAME session secret as
-# prod, so a prod cookie authenticates on it. An internet-facing second door to
-# all of that is not worth leaving open between branches.
+# until you reopen it. That is deliberate: dev serves a CLONE of production's
+# events and people. The clone step strips sessions, API tokens, push devices,
+# outbound feeds and Google links, and dev should have its own
+# BETTERCAL_SESSION_SECRET, so no production credential works on it; the data
+# itself is still real, which is reason enough not to leave a second door open
+# between branches.
 #
 # Open it only while you are actually testing, and close it again after:
 #   hcloud firewall add-rule <firewall-name> --direction in --protocol tcp \

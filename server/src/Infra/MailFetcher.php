@@ -149,8 +149,13 @@ final class MailFetcher
         // Inline text/calendar bodies (Google sends invites this way too).
         $raw = (string) $message->getRawBody();
         if ($icsParts === [] && stripos($raw, 'BEGIN:VCALENDAR') !== false) {
-            if (preg_match('/BEGIN:VCALENDAR.*?END:VCALENDAR/s', quoted_printable_decode($raw), $m) === 1 && strlen($m[0]) <= $maxIcs) {
-                $icsParts[] = $m[0];
+            // strpos, not a lazy regex: many BEGINs without an END made the
+            // regex rescan to the end from each one (review of F9).
+            $decoded = quoted_printable_decode($raw);
+            $b = stripos($decoded, 'BEGIN:VCALENDAR');
+            $e = $b === false ? false : stripos($decoded, 'END:VCALENDAR', $b);
+            if ($b !== false && $e !== false && $e + 13 - $b <= $maxIcs) {
+                $icsParts[] = substr($decoded, $b, $e + 13 - $b);
             }
         }
         unset($raw);

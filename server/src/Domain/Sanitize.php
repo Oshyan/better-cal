@@ -150,7 +150,15 @@ final class Sanitize
         if (!self::isHtml($text)) {
             return $text;
         }
-        $s = preg_replace('/<\s*(script|style|iframe)\b[^>]*>.*?<\s*\/\s*\1\s*>/is', '', $text) ?? $text;
+        // Linear scan, not a lazy regex (review of F9): this runs on every
+        // CalDAV and outbound-feed export of descriptions from feeds and mail.
+        $s = '';
+        $pos = 0;
+        foreach (self::htmlBlocks($text, ['script', 'style', 'iframe']) as $b) {
+            $s .= substr($text, $pos, $b['start'] - $pos);
+            $pos = $b['end'];
+        }
+        $s .= substr($text, $pos);
         $s = preg_replace('/<\s*br\s*\/?\s*>/i', "\n", $s) ?? $s;
         $s = preg_replace('/<\s*\/\s*(p|div|li|ul|ol|h[1-6]|blockquote|tr)\s*>/i', "\n", $s) ?? $s;
         $s = strip_tags($s);

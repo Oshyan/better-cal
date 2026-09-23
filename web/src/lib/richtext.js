@@ -33,13 +33,13 @@ export function splitUrlTail(raw) {
 // Squire's own auto-link pattern nests a quantifier and backtracks
 // exponentially on crafted text in a paste or a description being edited
 // (F27/F28). This keeps its groups (1 = web address, 2 = email) without
-// nested repetition, drops the bare "domain.tld/" form, and is never run on
-// a token longer than 2,048 characters. Squire only calls .exec().
-const SAFE_LINK_RE = /\b(?:((?:(?:ht|f)tps?:\/\/|www\d{0,3}[.])(?:[^\s()<>]|\([^\s()<>]*\))*(?:[^\s?&`!()\[\]{};:'".,<>«»“”‘’]|\([^\s()<>]*\)))|([\w\-.%+]+@(?:[\w\-]+\.)+[a-z]{2,}\b))/i;
+// nested repetition, drops the bare "domain.tld/" form, and bounds every
+// repetition in the pattern itself, so each start position costs at most a
+// couple of thousand steps however long the text is. Squire only calls .exec().
+const SAFE_LINK_RE = /\b(?:((?:(?:ht|f)tps?:\/\/|www\d{0,3}[.])(?:[^\s()<>]|\([^\s()<>]{0,256}\)){0,2048}(?:[^\s?&`!()\[\]{};:'".,<>«»“”‘’]|\([^\s()<>]{0,256}\)))|([\w\-.%+]{1,64}@(?:[\w\-]{1,63}\.){1,8}[a-z]{2,24}\b))/i;
 export const safeLinkMatcher = {
   exec(text) {
-    if (typeof text !== 'string' || /\S{2049,}/.test(text)) return null;
-    return SAFE_LINK_RE.exec(text);
+    return typeof text === 'string' ? SAFE_LINK_RE.exec(text) : null;
   },
 };
 

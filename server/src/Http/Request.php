@@ -31,7 +31,7 @@ final class Request
     public function requireSession(string $what): void
     {
         if ($this->authMethod !== 'session') {
-            throw HttpError::forbidden('session_required', $what . ' needs you signed in with your password, not an API token');
+            throw HttpError::forbidden('session_required', $what . ': sign in with your password to do this; an API token cannot');
         }
     }
 

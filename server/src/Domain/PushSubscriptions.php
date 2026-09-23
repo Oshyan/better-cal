@@ -66,10 +66,22 @@ final class PushSubscriptions
      * device that is new to the account is written to Activity, so a device
      * nobody remembers adding is visible.
      */
-    public function subscribe(int $userId, array $in): void
+    public function subscribe(int $userId, array $in, bool $resync = false): void
     {
         $sub = self::validate($in, $this->extraPushHosts);
-        $existed = $this->db->scalar('SELECT id FROM push_subscriptions WHERE endpoint_hash = ? AND user_id = ?', [self::endpointHash($sub['endpoint']), $userId]) !== null;
+        $hash = self::endpointHash($sub['endpoint']);
+        $existed = $this->db->scalar('SELECT id FROM push_subscriptions WHERE endpoint_hash = ? AND user_id = ?', [$hash, $userId]) !== null;
+        if ($resync) {
+            // The quiet re-registration a browser does when it opens the app:
+            // it restores a device a password reset cleared, and nothing else.
+            // A device the owner removed stays removed, and an existing row
+            // keeps its failure state so a dead device can still be pruned.
+            if ($existed || $this->db->scalar('SELECT 1 FROM push_removed WHERE user_id = ? AND endpoint_hash = ?', [$userId, $hash]) !== null) {
+                return;
+            }
+        } else {
+            $this->db->run('DELETE FROM push_removed WHERE user_id = ? AND endpoint_hash = ?', [$userId, $hash]);
+        }
         $this->db->run(
             'INSERT INTO push_subscriptions (user_id, endpoint, endpoint_hash, p256dh, auth, last_used_at)
              VALUES (?, ?, ?, ?, ?, NULL) AS new_row
@@ -130,6 +142,10 @@ final class PushSubscriptions
             throw HttpError::notFound('No such device');
         }
         $this->db->run('DELETE FROM push_subscriptions WHERE id = ?', [$id]);
+        $hash = self::endpointHash((string) $row['endpoint']);
+        if ($this->db->scalar('SELECT 1 FROM push_removed WHERE user_id = ? AND endpoint_hash = ?', [$userId, $hash]) === null) {
+            $this->db->insert('push_removed', ['user_id' => $userId, 'endpoint_hash' => $hash]);
+        }
         (new Undo($this->db))->record($userId, 'push', $id, 'delete', null, null,
             'Removed a device from reminders (' . self::service((string) $row['endpoint']) . ')');
     }

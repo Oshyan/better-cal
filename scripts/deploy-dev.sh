@@ -56,7 +56,7 @@ for v in REMOTE APP_USER APP_DIR HEALTH_URL; do
     exit 1
   fi
 done
-for v in DEV_DIR DEV_HEALTH_URL PROD_DB DEV_DB DB_USER; do
+for v in DEV_DIR DEV_HEALTH_URL PROD_DB DEV_DB; do
   if [ -z "${!v:-}" ]; then
     echo "${v} is not set (the dev instance; see scripts/deploy.env.example)." >&2
     exit 1
@@ -96,8 +96,8 @@ if [ "${CLONE_DB:-0}" = "1" ]; then
   # be plain identifiers (scan 2026-09-23, F1: the DB user used to be read
   # from the app's own .env, which the web app could rewrite).
   for v in DB_USER PROD_DB DEV_DB; do
-    if ! printf '%s' "${!v:-}" | grep -Eq '^[A-Za-z0-9_]{1,64}$'; then
-      echo "${v} must be letters, digits and underscores (set it in scripts/deploy.env)." >&2
+    if ! printf '%s' "${!v:-}" | grep -Eq '^[A-Za-z0-9_-]{1,64}$'; then
+      echo "${v} must be letters, digits, hyphens and underscores (set it in scripts/deploy.env)." >&2
       exit 1
     fi
   done
@@ -119,9 +119,9 @@ mysqldump -h 127.0.0.1 -u root --single-transaction "${PROD_DB}" | mysql -h 127.
 # A clone must not carry live credentials or channels (F29): production
 # sessions and tokens revoked later would still work here, the dev worker
 # would push reminders to the owner's devices and write to Google.
-mysql -h 127.0.0.1 -u root "${DEV_DB}" -e "DELETE FROM sessions; DELETE FROM api_tokens; DELETE FROM push_subscriptions; DELETE FROM out_feeds; DELETE FROM google_accounts;"
+mysql -h 127.0.0.1 -u root "${DEV_DB}" -e "DELETE FROM sessions; DELETE FROM api_tokens; DELETE FROM push_subscriptions; DELETE FROM out_feeds; DELETE FROM google_accounts; UPDATE calendars SET kind = 'local', provider = 'ics', google_calendar_id = NULL, google_access_role = NULL, google_sync_token = NULL WHERE provider = 'google';"
 mysql -h 127.0.0.1 -u root -e "GRANT ALL PRIVILEGES ON \`${DEV_DB}\`.* TO '${DB_USER}'@'localhost'; GRANT ALL PRIVILEGES ON \`${DEV_DB}\`.* TO '${DB_USER}'@'127.0.0.1'; FLUSH PRIVILEGES;" || true
-echo "cloned (sessions, tokens, push devices, feeds and Google links cleared in ${DEV_DB})"
+echo "cloned (sessions, tokens, push devices, feeds and Google links cleared, Google calendars kept as local copies, in ${DEV_DB})"
 EOF
 fi
 

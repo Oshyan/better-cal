@@ -39,6 +39,12 @@ final class LoginGuard
     // ...and from at least this many different sources: a handful of
     // addresses must not be able to shut every new device out (F14).
     public const GLOBAL_SOURCES = 6;
+    // Password checks allowed in flight at once from one source, on top of
+    // its remaining failure budget: a client opening many connections with a
+    // correct password must not be refused, while a burst of guesses stays
+    // bounded (review of the 2026-09-23 fixes, B1).
+    public const INFLIGHT_SLACK = 10;
+    private const INFLIGHT_WINDOW = 60;
     public const KNOWN_FOR = 2592000;   // a successful sign-in vouches for its source for 30 days
 
     private const FAIL_ALL = 'auth-fail:all';
@@ -131,27 +137,30 @@ final class LoginGuard
      */
     public function begin(string $source, ?\DateTimeImmutable $now = null): int
     {
-        $this->pending = [
-            $this->throttle->reserve('auth-fail:ip:' . $source, $now),
-            $this->throttle->reserve(self::FAIL_ALL, $now),
-        ];
         $max = max(1, $this->maxFailures);
-        if ($this->throttle->count('auth-fail:ip:' . $source, self::WINDOW, $now) > $max) {
-            $this->throttle->release($this->pending);
-            $this->pending = [];
-            return max(1, $this->throttle->retryAfter('auth-fail:ip:' . $source, $max, self::WINDOW, $now));
+        $fail = 'auth-fail:ip:' . $source;
+        $wait = $this->throttle->retryAfter($fail, $max, self::WINDOW, $now);
+        if ($wait > 0) {
+            return $wait;
         }
-        if ($this->throttle->count(self::FAIL_ALL, self::WINDOW, $now) > self::GLOBAL_MAX
-            && $this->throttle->distinct('auth-fail:ip:', self::WINDOW, $now) >= self::GLOBAL_SOURCES
-            && !$this->isKnown($source, $now)) {
+        if ($this->throttle->count(self::FAIL_ALL, self::WINDOW, $now) >= self::GLOBAL_MAX
+            && !$this->isKnown($source, $now)
+            && $this->throttle->distinct('auth-fail:ip:', self::WINDOW, $now) >= self::GLOBAL_SOURCES) {
+            return max(1, $this->throttle->retryAfter(self::FAIL_ALL, self::GLOBAL_MAX, self::WINDOW, $now));
+        }
+        // The check is in flight: count it, then decide on the count that
+        // includes it, so a burst cannot all pass before any failure lands.
+        $try = 'auth-try:ip:' . $source;
+        $this->pending = [$this->throttle->reserve($try, $now)];
+        if ($this->throttle->count($fail, self::WINDOW, $now) + $this->throttle->count($try, self::INFLIGHT_WINDOW, $now) > $max + self::INFLIGHT_SLACK) {
             $this->throttle->release($this->pending);
             $this->pending = [];
-            return max(1, $this->throttle->retryAfter(self::FAIL_ALL, self::GLOBAL_MAX, self::WINDOW, $now));
+            return 5;
         }
         return 0;
     }
 
-    /** The attempt begun with begin() succeeded: it was not a failure after all. */
+    /** The attempt begun with begin() succeeded. Its in-flight mark goes; nothing is counted against the source. */
     public function succeeded(string $source, ?\DateTimeImmutable $now = null): void
     {
         $this->throttle->release($this->pending);
@@ -159,11 +168,12 @@ final class LoginGuard
         $this->recordSuccess($source, $now);
     }
 
-    /** The attempt begun with begin() failed: it stays counted; the one that closes the door is journaled. */
+    /** The attempt begun with begin() failed: it becomes a failure; the one that closes the door is journaled. */
     public function rejected(string $source, string $door, ?\DateTimeImmutable $now = null): void
     {
+        $this->throttle->release($this->pending);
         $this->pending = [];
-        if ($this->throttle->count('auth-fail:ip:' . $source, self::WINDOW, $now) === max(1, $this->maxFailures)) {
+        if ($this->recordFailure($source, $now)) {
             $this->journalBlock($source, $door);
         }
     }

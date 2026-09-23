@@ -77,6 +77,13 @@ final class HttpClient
             // ::/96, ULA, link-local, site-local and multicast; a NAT64
             // address wrapping 10.0.0.5 used to pass (scan 2026-09-23, F24).
             $first = ord($bin[0]);
+            // Well-known NAT64 (64:ff9b::/96, what DNS64 hands an IPv6-only
+            // server) is judged by the IPv4 it carries, so public IPv4 hosts
+            // stay reachable there and private ones do not.
+            if (str_starts_with(bin2hex($bin), '0064ff9b0000000000000000')) {
+                $v4 = inet_ntop(substr($bin, 12, 4));
+                return !is_string($v4) || self::isForbiddenIp($v4);
+            }
             if (($first & 0xE0) !== 0x20) {
                 return true;
             }

@@ -273,7 +273,13 @@ function NotificationsSection({ settings, user }) {
   useEffect(refresh, []);
   const removeDevice = async (d) => {
     if (!window.confirm('Stop sending reminders to this device (' + d.service + ')?')) return;
-    try { await removePushDevice(d.id); toast('Device removed'); refresh(); } catch (e) { toast((e && e.message) || 'Could not remove the device', { error: true }); }
+    try {
+      await removePushDevice(d.id);
+      // This browser: drop its own subscription too, so it is gone at both ends.
+      if (d.endpointHash === myHash) await disablePush().catch(() => {});
+      toast(d.endpointHash === myHash ? 'This device no longer gets reminders' : 'Device removed. If someone else may be signed in on it, reset your password to sign every browser out.');
+      refresh();
+    } catch (e) { toast((e && e.message) || 'Could not remove the device', { error: true }); }
   };
 
   let statusText;

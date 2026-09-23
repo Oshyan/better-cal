@@ -247,8 +247,17 @@ final class MailIngest
         }
         // The regex runs on a bounded window around the marker, not the whole
         // body: its leading dash run was quadratic on long runs of dashes (F9).
+        // Byte offsets moved onto character boundaries: a window that splits a
+        // multi-byte character made the /u regex fail and leave the header in.
         $start = max(0, $at - 200);
-        $window = substr($text, $start, 1200);
+        while ($start > 0 && (ord($text[$start]) & 0xC0) === 0x80) {
+            $start--;
+        }
+        $end = min(strlen($text), $start + 1200);
+        while ($end < strlen($text) && (ord($text[$end]) & 0xC0) === 0x80) {
+            $end++;
+        }
+        $window = substr($text, $start, $end - $start);
         $replaced = preg_replace(
             '/-{3,}\s*Forwarded message\s*-{3,}\s*From:.{0,400}?To:\s*<?[^\s<>]+@[^\s<>]+>?/su',
             ' ',

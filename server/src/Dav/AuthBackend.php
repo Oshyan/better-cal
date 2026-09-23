@@ -28,6 +28,14 @@ final class AuthBackend extends \Sabre\DAV\Auth\Backend\AbstractBasic
     protected function validateUserPass($username, $password)
     {
         $source = $this->guard?->source($_SERVER) ?? '';
+        // An API token is 256 random bits and cannot be guessed, so a valid one
+        // is accepted outside the password limit: a device syncing with a
+        // token keeps working even while another device at the same address
+        // (one still using an old password, say) has run the limit out.
+        if (str_starts_with((string) $password, 'bc_') && $this->tokenMatches((string) $username, (string) $password)) {
+            $this->guard?->recordSuccess($source);
+            return true;
+        }
         $wait = $this->guard?->begin($source) ?? 0;
         if ($wait > 0) {
             throw new TooManyAttempts($wait);
@@ -39,6 +47,18 @@ final class AuthBackend extends \Sabre\DAV\Auth\Backend\AbstractBasic
             $this->guard?->rejected($source, 'caldav');
         }
         return $ok;
+    }
+
+    private function tokenMatches(string $username, string $token): bool
+    {
+        $user = $this->db->one('SELECT id FROM users WHERE email = ?', [trim($username)]);
+        if ($user === null) {
+            return false;
+        }
+        return $this->db->one(
+            'SELECT id FROM api_tokens WHERE user_id = ? AND token_hash = ? AND (expires_at IS NULL OR expires_at > ?)',
+            [(int) $user['id'], hash('sha256', $token), Time::nowDb()]
+        ) !== null;
     }
 
     private function passwordOrTokenMatches(string $username, string $password): bool

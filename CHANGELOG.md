@@ -4,6 +4,22 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.2.0 (2026-09-23)
+
+The security pass is complete. This release contains every fix from the 2026-09-23 scan (0.1.1 to 0.1.5) and from the three adversarial reviews of those fixes (0.1.6 to 0.1.8); see those entries for the details and `SECURITY.md` for what was reviewed and what remains as accepted residuals. No functional changes beyond them.
+
+Things that work differently after the pass, in one place:
+
+- API tokens cannot manage outbound feeds, push devices, Google connections or where reminders go; sign in with your password for those.
+- A password reset removes all push devices; each browser registers again when you next open the app there.
+- `seed.php --revoke-tokens` also gives outbound feeds new addresses and resets a custom reminder email address.
+- `seed.php` asks for the password instead of taking it on the command line.
+- Feeds, imports and CalDAV objects over their event or line budget are refused with a clear error rather than processed.
+- Repeat rules with an interval over 1,000 or a count over 100,000 are treated as single events.
+- The editor auto-links `https://` and `www.` addresses, not bare `example.com/page`.
+- The Google connect page no longer names the account it connected.
+- CalDAV clients using API tokens are not subject to the password rate limit; clients using the password are.
+
 ## 0.1.8 (2026-09-23)
 
 Follow-up fixes from a third adversarial review.

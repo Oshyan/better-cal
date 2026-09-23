@@ -3200,6 +3200,14 @@ use BetterCal\Domain\GoogleWriter;
     check('plugin icon: a guess is still refused', BetterCal\Domain\Plugins::iconError('weather-sunny') !== null);
 }
 
+// --- The version comes from VERSION and is a plain semver ---
+{
+    $fileV = trim((string) file_get_contents(dirname(__DIR__, 2) . '/VERSION'));
+    check('version: VERSION is semver', preg_match('/^\d+\.\d+\.\d+$/', $fileV) === 1);
+    checkEq('version: config reads VERSION', $fileV, config()['version']);
+    check('version: CHANGELOG has an entry for it', str_contains((string) file_get_contents(dirname(__DIR__, 2) . '/CHANGELOG.md'), '## ' . $fileV . ' '));
+}
+
 // --- A patch that names the event's own calendar is not a move ---
 {
     $ev = ['calendar_id' => 41];

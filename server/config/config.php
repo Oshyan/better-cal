@@ -122,7 +122,11 @@ function config(): array
             'pass' => $env('BETTERCAL_RSVP_SMTP_PASS'),
             'from' => $env('BETTERCAL_RSVP_SMTP_FROM'),
         ],
-        'version' => '0.1.0',
+        // One source of truth: VERSION at the repository root (docs/versioning in CHANGELOG.md).
+        'version' => (static function () use ($appRoot): string {
+            $v = @file_get_contents($appRoot . '/VERSION');
+            return is_string($v) && preg_match('/^\d+\.\d+\.\d+$/', trim($v)) === 1 ? trim($v) : '0.0.0';
+        })(),
         'app_root' => $appRoot,
     ];
 

@@ -37,6 +37,10 @@ A few habits the codebase keeps:
 - Anything that writes to Google says so and says it cannot be undone, before and after.
 - A migration for every schema change, numbered after the last one in `server/migrations/`, and documented in `docs/api-contract.md` if it changes what the API returns.
 
+## Versions
+
+Maintainers bump `VERSION` and add a `CHANGELOG.md` entry when cutting a release; pull requests do not need to.
+
 ## Licence
 
 By contributing you agree that your contribution is licensed under the MIT licence in `LICENSE`, like the rest of the project.

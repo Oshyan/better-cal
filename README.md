@@ -27,6 +27,10 @@ What I focused on, and where that shows:
 
 Issues and pull requests are welcome; expect honest answers about what will and won't be taken on.
 
+## Versions
+
+Releases are tagged (`v0.1.1`) and listed on GitHub; `CHANGELOG.md` says what changed and why, and the running version shows in Settings. Below 1.0, minor versions carry features and behaviour changes, patch versions carry fixes.
+
 ## License
 
 MIT, see [LICENSE](LICENSE). Use it, fork it, host it, sell it. If you build something on it, a link back to this repo is appreciated but not required.

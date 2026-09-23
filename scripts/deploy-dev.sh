@@ -56,7 +56,7 @@ for v in REMOTE APP_USER APP_DIR HEALTH_URL; do
     exit 1
   fi
 done
-for v in DEV_DIR DEV_HEALTH_URL PROD_DB DEV_DB; do
+for v in DEV_DIR DEV_HEALTH_URL PROD_DB DEV_DB DB_USER; do
   if [ -z "${!v:-}" ]; then
     echo "${v} is not set (the dev instance; see scripts/deploy.env.example)." >&2
     exit 1
@@ -92,15 +92,36 @@ rsync -az \
   "${ROOT_DIR}/" "${REMOTE}:${DEV_DIR}/"
 
 if [ "${CLONE_DB:-0}" = "1" ]; then
+  # Names used in root SQL come from this operator-controlled file and must
+  # be plain identifiers (scan 2026-09-23, F1: the DB user used to be read
+  # from the app's own .env, which the web app could rewrite).
+  for v in DB_USER PROD_DB DEV_DB; do
+    if ! printf '%s' "${!v:-}" | grep -Eq '^[A-Za-z0-9_]{1,64}$'; then
+      echo "${v} must be letters, digits and underscores (set it in scripts/deploy.env)." >&2
+      exit 1
+    fi
+  done
   echo "== re-cloning ${PROD_DB} into ${DEV_DB} =="
-  ssh "${REMOTE}" "APP_DIR='${APP_DIR}' APP_USER='${APP_USER}' PROD_DB='${PROD_DB}' DEV_DB='${DEV_DB}' MYSQL_ROOT_PASSWORD='${MYSQL_ROOT_PASSWORD:-}' bash -s" <<'EOF'
+  # The MySQL root password never goes on a command line (F17): the remote
+  # side reads it from the first line of stdin, and the clients get it
+  # through MYSQL_PWD, which only root and the same user can read.
+  { printf '%s\n' "${MYSQL_ROOT_PASSWORD:-}"; cat <<'EOF'; } | ssh "${REMOTE}" "APP_USER='${APP_USER}' DB_USER='${DB_USER}' PROD_DB='${PROD_DB}' DEV_DB='${DEV_DB}' bash -c 'IFS= read -r MYSQL_ROOT_PASSWORD; export MYSQL_ROOT_PASSWORD; exec bash -s'"
 set -euo pipefail
-MPASS="${MYSQL_ROOT_PASSWORD:-$(clpctl db:show:master-credentials | awk -F'|' '/Password/ {gsub(/ /,"",$3); print $3}')}"
-mysql -h 127.0.0.1 -u root -p"${MPASS}" -e "DROP DATABASE IF EXISTS ${DEV_DB}; CREATE DATABASE ${DEV_DB} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
-mysqldump -h 127.0.0.1 -u root -p"${MPASS}" --single-transaction "${PROD_DB}" | mysql -h 127.0.0.1 -u root -p"${MPASS}" "${DEV_DB}"
-DBUSER="$(sudo -u "${APP_USER}" grep '^BETTERCAL_DB_USER=' "${APP_DIR}/.env" | cut -d= -f2)"
-mysql -h 127.0.0.1 -u root -p"${MPASS}" -e "GRANT ALL PRIVILEGES ON ${DEV_DB}.* TO '${DBUSER}'@'localhost'; GRANT ALL PRIVILEGES ON ${DEV_DB}.* TO '${DBUSER}'@'127.0.0.1'; FLUSH PRIVILEGES;" || true
-echo "cloned"
+if [ -n "${MYSQL_ROOT_PASSWORD}" ]; then
+  export MYSQL_PWD="${MYSQL_ROOT_PASSWORD}"
+else
+  MYSQL_PWD="$(clpctl db:show:master-credentials | awk -F'|' '/Password/ {gsub(/ /,"",$3); print $3}')"
+  export MYSQL_PWD
+fi
+unset MYSQL_ROOT_PASSWORD
+mysql -h 127.0.0.1 -u root -e "DROP DATABASE IF EXISTS \`${DEV_DB}\`; CREATE DATABASE \`${DEV_DB}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+mysqldump -h 127.0.0.1 -u root --single-transaction "${PROD_DB}" | mysql -h 127.0.0.1 -u root "${DEV_DB}"
+# A clone must not carry live credentials or channels (F29): production
+# sessions and tokens revoked later would still work here, the dev worker
+# would push reminders to the owner's devices and write to Google.
+mysql -h 127.0.0.1 -u root "${DEV_DB}" -e "DELETE FROM sessions; DELETE FROM api_tokens; DELETE FROM push_subscriptions; DELETE FROM out_feeds; DELETE FROM google_accounts;"
+mysql -h 127.0.0.1 -u root -e "GRANT ALL PRIVILEGES ON \`${DEV_DB}\`.* TO '${DB_USER}'@'localhost'; GRANT ALL PRIVILEGES ON \`${DEV_DB}\`.* TO '${DB_USER}'@'127.0.0.1'; FLUSH PRIVILEGES;" || true
+echo "cloned (sessions, tokens, push devices, feeds and Google links cleared in ${DEV_DB})"
 EOF
 fi
 
@@ -108,6 +129,7 @@ echo "== composer + migrate (dev) =="
 ssh "${REMOTE}" "DEV_DIR='${DEV_DIR}' APP_USER='${APP_USER}' bash -s" <<'EOF'
 set -euo pipefail
 chown -R "${APP_USER}:${APP_USER}" "${DEV_DIR}"
+if [ -f "${DEV_DIR}/.env" ]; then chown "root:${APP_USER}" "${DEV_DIR}/.env"; chmod 640 "${DEV_DIR}/.env"; fi
 sudo -u "${APP_USER}" bash -c "cd ${DEV_DIR}/server && composer install --no-dev --quiet --no-interaction"
 sudo -u "${APP_USER}" php "${DEV_DIR}/server/bin/migrate.php"
 EOF

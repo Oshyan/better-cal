@@ -4,6 +4,7 @@ import { html, useState } from '../../vendor/index.js';
 import { login, loadCalendars, loadConfig } from './api.js';
 import { set, state } from './store.js';
 import { runHandoff } from './handoff.js';
+import { resyncPush } from './push.js';
 
 export function Login() {
   const [email, setEmail] = useState('');
@@ -23,6 +24,7 @@ export function Login() {
       await login(email, password);
       await loadCalendars();
       loadConfig(); // fire-and-forget
+      resyncPush(); // this browser's reminders survive a password reset
       // A share or deep link that arrived while signed out is still owed.
       const handoff = state.pendingHandoff;
       if (handoff) {

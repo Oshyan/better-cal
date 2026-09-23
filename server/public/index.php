@@ -249,6 +249,8 @@ function bc_handle_api(Request $request, array $cfg): void
         $router->add('GET', "$base/push/status", [$pushController, 'status']);
         $router->add('POST', "$base/push/subscribe", [$pushController, 'subscribe']);
         $router->add('POST', "$base/push/unsubscribe", [$pushController, 'unsubscribe']);
+        $router->add('GET', "$base/push/devices", [$pushController, 'devices']);
+        $router->add('DELETE', "$base/push/devices/:id", [$pushController, 'removeDevice']);
         // Is background work working: the Settings panel and boot notices.
         $router->add('GET', "$base/system/health", [$systemController, 'health']);
         // Google Calendar connector (docs/google-calendar.md).

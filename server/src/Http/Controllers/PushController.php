@@ -66,7 +66,23 @@ final class PushController
     /** POST /push/subscribe {endpoint, keys:{p256dh, auth}} (upsert) */
     public function subscribe(Request $req): Response
     {
+        $req->requireSession('Registering a device for reminders');
         $this->subscriptions->subscribe((int) $req->user['id'], $req->body);
+        return Response::json(['ok' => true]);
+    }
+
+    /** GET /push/devices: every device reminders go to (session only). */
+    public function devices(Request $req): Response
+    {
+        $req->requireSession('Listing reminder devices');
+        return Response::json(['devices' => $this->subscriptions->devices((int) $req->user['id'])]);
+    }
+
+    /** DELETE /push/devices/:id (session only). */
+    public function removeDevice(Request $req, array $params): Response
+    {
+        $req->requireSession('Removing a reminder device');
+        $this->subscriptions->remove((int) $req->user['id'], (int) $params['id']);
         return Response::json(['ok' => true]);
     }
 

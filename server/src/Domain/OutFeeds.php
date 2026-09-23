@@ -66,6 +66,8 @@ final class OutFeeds
             'scope_json' => json_encode($normalized),
             'description' => isset($in['description']) ? trim((string) $in['description']) : null,
         ]);
+        (new Undo($this->db))->record($userId, 'outfeed', (int) $id, 'create', null, null,
+            'Created outbound feed "' . mb_substr($name, 0, 160) . '" (' . $normalized['type'] . ')');
         return $this->serialize($this->db->one('SELECT * FROM out_feeds WHERE id = ?', [$id]));
     }
 

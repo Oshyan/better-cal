@@ -39,6 +39,7 @@ final class GoogleController
 
     public function connect(Request $req): Response
     {
+        $req->requireSession('Connecting a Google account');
         $url = $this->auth->authUrl((int) $req->user['id']);
         return Response::text('', 'text/plain; charset=utf-8', 302, ['Location' => $url]);
     }
@@ -69,6 +70,7 @@ final class GoogleController
 
     public function disconnect(Request $req, array $params): Response
     {
+        $req->requireSession('Disconnecting a Google account');
         $this->auth->disconnect((int) $req->user['id'], (int) $params['id']);
         return Response::json(['ok' => true]);
     }
@@ -99,6 +101,7 @@ final class GoogleController
     /** Subscribe to one of the account's calendars; first sync happens now. */
     public function subscribe(Request $req, array $params): Response
     {
+        $req->requireSession('Adding a Google calendar');
         $userId = (int) $req->user['id'];
         $account = $this->auth->account($userId, (int) $params['id']);
         $googleCalendarId = trim((string) ($req->str('googleCalendarId') ?? ''));

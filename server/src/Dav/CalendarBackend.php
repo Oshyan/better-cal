@@ -392,7 +392,10 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
             }
             $latest = [];
             foreach ($this->db->all($sql, [(int) $calendarId, $since, $current]) as $row) {
-                $latest[(string) $row['uri']] = (int) $row['operation'];
+                // Rows recorded before object names were made path-safe can hold
+                // a raw "/" (F7): name them the way the object is named now.
+                $uid = DavIcs::uidFromObjectUri((string) $row['uri']);
+                $latest[$uid !== null ? DavIcs::objectUri($uid) : (string) $row['uri']] = (int) $row['operation'];
             }
             foreach ($latest as $uri => $op) {
                 match ($op) {

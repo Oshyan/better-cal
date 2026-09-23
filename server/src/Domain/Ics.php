@@ -97,15 +97,28 @@ final class Ics
      * the cost is: 3,000 tiny events in 329 KB became a 24 MiB object graph
      * (BC-12). Counts VEVENT openings; nested components do not start with it.
      */
+    /** Content lines allowed per event in the budget: generous for real events with long descriptions, alarms and attendees. */
+    public const LINES_PER_EVENT = 25;
+
     public static function budgetProblem(string $ics, int $maxBytes, int $maxEvents): ?string
     {
         $bytes = strlen($ics);
         if ($bytes > $maxBytes) {
             return 'The calendar file is ' . self::mib($bytes) . ', over the ' . self::mib($maxBytes) . ' limit';
         }
-        $events = preg_match_all('/^BEGIN:VEVENT[ \t]*\r?$/mi', $ics);
+        // Counted on the unfolded text, the way the parser will read it: a
+        // folded "BEGIN:VEV\r\n ENT" used to slip past the count (review of F8).
+        $unfolded = preg_replace('/\r?\n[ \t]/', '', $ics) ?? $ics;
+        $events = preg_match_all('/^BEGIN:VEVENT[ \t]*\r?$/mi', $unfolded);
         if ($events > $maxEvents) {
             return 'The calendar file holds ' . number_format((int) $events) . ' events, over the limit of ' . number_format($maxEvents);
+        }
+        // Parser memory grows with properties, not only events: one event
+        // with a million lines is as heavy as a million events.
+        $lines = substr_count($unfolded, "\n");
+        $maxLines = $maxEvents * self::LINES_PER_EVENT;
+        if ($lines > $maxLines) {
+            return 'The calendar file holds ' . number_format($lines) . ' lines, over the limit of ' . number_format($maxLines);
         }
         return null;
     }

@@ -36,9 +36,11 @@ final class LoginGuard
     public const WINDOW = 900;          // 15 minutes
     public const DEFAULT_MAX = 10;      // failures per source per window
     public const GLOBAL_MAX = 60;       // failures from all sources per window
-    // ...and from at least this many different sources: a handful of
-    // addresses must not be able to shut every new device out (F14).
-    public const GLOBAL_SOURCES = 6;
+    // ...and from at least this many different sources. With 10 failures
+    // allowed per source, 60 failures already take 6 sources, so the bar has
+    // to sit well above that for a handful of addresses not to be able to
+    // shut every new device out (F14; the first cut at 6 changed nothing).
+    public const GLOBAL_SOURCES = 20;
     // Password checks allowed in flight at once from one source, on top of
     // its remaining failure budget: a client opening many connections with a
     // correct password must not be refused, while a burst of guesses stays

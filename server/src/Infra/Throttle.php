@@ -80,7 +80,11 @@ final class Throttle
     public function reserve(string $bucket, ?\DateTimeImmutable $now = null): int
     {
         try {
-            return (int) $this->db->insert('rate_events', ['bucket' => self::key($bucket), 'created_at' => Time::toDb($now ?? Time::nowUtc())]);
+            $id = (int) $this->db->insert('rate_events', ['bucket' => self::key($bucket), 'created_at' => Time::toDb($now ?? Time::nowUtc())]);
+            if (random_int(1, 50) === 1) {
+                $this->prune($now);
+            }
+            return $id;
         } catch (\Throwable $e) {
             error_log('throttle reserve failed: ' . $e->getMessage());
             return 0;

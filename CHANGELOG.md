@@ -4,13 +4,24 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.2.1 (2026-09-23)
+
+API tokens get their capabilities back, safely. In 0.1.2 to 0.2.0 an API token could not manage outbound feeds, push devices or the reminder email address, because something a stolen token created could outlive the token. Now anything a token creates belongs to it instead:
+
+- An outbound feed or push device created with an API token is removed when that token is revoked, and stops working while it is expired. Feeds and devices you create signed in are never touched by revoking a token.
+- A token listing outbound feeds sees the addresses only of feeds it created itself.
+- A reminder email address set with an API token is used only while that token is valid; after that reminders go to the account address again.
+- Linking a Google account still needs you signed in with your password.
+
+Also: the deploy scripts only change `.env` ownership when running as root, and the install guide says how to protect `.env` on shared hosting. The README has a Security section.
+
 ## 0.2.0 (2026-09-23)
 
 The security pass is complete. This release contains every fix from the 2026-09-23 scan (0.1.1 to 0.1.5) and from the three adversarial reviews of those fixes (0.1.6 to 0.1.8); see those entries for the details and `SECURITY.md` for what was reviewed and what remains as accepted residuals. No functional changes beyond them.
 
 Things that work differently after the pass, in one place:
 
-- API tokens cannot manage outbound feeds, push devices, Google connections or where reminders go; sign in with your password for those.
+- API tokens cannot link Google accounts (sign in with your password for that). In 0.2.0 they also could not manage outbound feeds, push devices or the reminder address; 0.2.1 restores those, bound to the token.
 - A password reset removes all push devices; each browser registers again when you next open the app there.
 - `seed.php --revoke-tokens` also gives outbound feeds new addresses and resets a custom reminder email address.
 - `seed.php` asks for the password instead of taking it on the command line.

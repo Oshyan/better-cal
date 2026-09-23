@@ -3348,6 +3348,32 @@ use BetterCal\Domain\GoogleWriter;
     check('isHtml: still finds real markup', BetterCal\Domain\Sanitize::isHtml('see <b>this</b>') && !BetterCal\Domain\Sanitize::isHtml('a < b and <3'));
 }
 
+// --- 0.2.1: channels a token creates belong to the token ---
+{
+    $cdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $cdb->run('PRAGMA foreign_keys = ON');
+    $cdb->run('CREATE TABLE api_tokens (id INTEGER PRIMARY KEY, user_id INTEGER, expires_at TEXT NULL)');
+    $cdb->run('CREATE TABLE out_feeds (id INTEGER PRIMARY KEY, user_id INTEGER, token TEXT, created_by_token_id INTEGER NULL REFERENCES api_tokens(id) ON DELETE CASCADE)');
+    $cdb->run("INSERT INTO api_tokens (id, user_id, expires_at) VALUES (1, 1, NULL), (2, 1, '2000-01-01 00:00:00')");
+    $cdb->run("INSERT INTO out_feeds (user_id, token, created_by_token_id) VALUES (1, 'owner', NULL), (1, 'agent', 1)");
+    check('token-bound: a live token is valid, an expired one is not', BetterCal\Domain\ApiTokens::stillValid($cdb, 1) && !BetterCal\Domain\ApiTokens::stillValid($cdb, 2));
+    $cdb->run('DELETE FROM api_tokens WHERE id = 1');
+    checkEq('token-bound: revoking a token removes the feed it created, not the owner\'s', ['owner'], array_column($cdb->all('SELECT token FROM out_feeds ORDER BY id'), 'token'));
+    $s = BetterCal\Domain\Settings::withDefaults(['notifyEmail' => 'agent@example.com', 'notifyEmailToken' => 99]);
+    checkEq('token-bound: an address set by a revoked token falls back to the account', 'owner@example.com', BetterCal\Domain\Settings::notifyDestination($s, 'owner@example.com', $cdb));
+    checkEq('token-bound: with no database to ask, the account address is used', 'owner@example.com', BetterCal\Domain\Settings::notifyDestination($s, 'owner@example.com'));
+    $cdb->run("INSERT INTO api_tokens (id, user_id, expires_at) VALUES (3, 1, NULL)");
+    $s2 = BetterCal\Domain\Settings::withDefaults(['notifyEmail' => 'agent@example.com', 'notifyEmailToken' => 3]);
+    checkEq('token-bound: while the token is valid its address is used', 'agent@example.com', BetterCal\Domain\Settings::notifyDestination($s2, 'owner@example.com', $cdb));
+    checkEq('token-bound: an address the owner set is used as is', 'me@example.com', BetterCal\Domain\Settings::notifyDestination(BetterCal\Domain\Settings::withDefaults(['notifyEmail' => 'me@example.com']), 'owner@example.com'));
+    try {
+        BetterCal\Domain\Settings::validate(['notifyEmailToken' => 5]);
+        check('token-bound: notifyEmailToken cannot be set by a client', false);
+    } catch (BetterCal\Http\HttpError $e) {
+        check('token-bound: notifyEmailToken cannot be set by a client', true);
+    }
+}
+
 // --- Standing channels out of the account are for a person, not a token ---
 {
     $tokenReq = new BetterCal\Http\Request('POST', '/api/v1/outfeeds');

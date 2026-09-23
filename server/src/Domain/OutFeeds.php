@@ -24,15 +24,20 @@ final class OutFeeds
     }
 
     /** @return list<array> */
-    public function listAll(int $userId): array
+    /**
+     * @param ?int $viewerTokenId the API token asking, or null for the signed-in owner. A
+     *   feed URL is a capability that outlives the token that read it, so a token
+     *   sees the address only of feeds it created itself (the others: url null).
+     */
+    public function listAll(int $userId, ?int $viewerTokenId = null): array
     {
         return array_map(
-            fn(array $row) => $this->serialize($row),
+            fn(array $row) => $this->serialize($row, $viewerTokenId === null || (int) ($row['created_by_token_id'] ?? 0) === $viewerTokenId),
             $this->db->all('SELECT * FROM out_feeds WHERE user_id = ? ORDER BY id', [$userId])
         );
     }
 
-    public function create(int $userId, array $in): array
+    public function create(int $userId, array $in, ?int $tokenId = null): array
     {
         $name = trim((string) ($in['name'] ?? ''));
         if ($name === '') {
@@ -65,9 +70,10 @@ final class OutFeeds
             'name' => mb_substr($name, 0, 160),
             'scope_json' => json_encode($normalized),
             'description' => isset($in['description']) ? trim((string) $in['description']) : null,
+            'created_by_token_id' => $tokenId,
         ]);
         (new Undo($this->db))->record($userId, 'outfeed', (int) $id, 'create', null, null,
-            'Created outbound feed "' . mb_substr($name, 0, 160) . '" (' . $normalized['type'] . ')');
+            'Created outbound feed "' . mb_substr($name, 0, 160) . '" (' . $normalized['type'] . ')' . ($tokenId !== null ? ', with an API token' : ''));
         return $this->serialize($this->db->one('SELECT * FROM out_feeds WHERE id = ?', [$id]));
     }
 
@@ -85,6 +91,11 @@ final class OutFeeds
     {
         $feed = $this->db->one('SELECT * FROM out_feeds WHERE token = ?', [$token]);
         if ($feed === null) {
+            return null;
+        }
+        // A feed a token created lives as long as the token (revoking deletes
+        // it through the foreign key; an expired token's feed stops answering).
+        if (!empty($feed['created_by_token_id']) && !ApiTokens::stillValid($this->db, (int) $feed['created_by_token_id'])) {
             return null;
         }
         $userId = (int) $feed['user_id'];
@@ -134,12 +145,13 @@ final class OutFeeds
         return $base === '' ? $scopeText : $base . ' — ' . $scopeText;
     }
 
-    private function serialize(array $row): array
+    private function serialize(array $row, bool $showUrl = true): array
     {
         return [
             'id' => (int) $row['id'],
             'name' => (string) $row['name'],
-            'url' => $this->cfg['base_url'] . '/feed/' . $row['token'] . '.ics',
+            'url' => $showUrl ? $this->cfg['base_url'] . '/feed/' . $row['token'] . '.ics' : null,
+            'viaToken' => !empty($row['created_by_token_id']),
             'scope' => json_decode((string) $row['scope_json'], true),
             'description' => $row['description'] !== null ? (string) $row['description'] : null,
         ];

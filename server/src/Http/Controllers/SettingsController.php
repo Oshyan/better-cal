@@ -21,15 +21,8 @@ final class SettingsController
 
     public function patch(Request $req): Response
     {
-        // Where reminder email goes is a standing channel out of the account (F6).
-        if (array_key_exists('notifyEmail', $req->body) || array_key_exists('notifyChannel', $req->body)) {
-            $current = $this->settings->forUser((int) $req->user['id']);
-            $changes = (array_key_exists('notifyEmail', $req->body) && ($req->body['notifyEmail'] ?: null) !== ($current['notifyEmail'] ?? null))
-                || (array_key_exists('notifyChannel', $req->body) && $req->body['notifyChannel'] !== ($current['notifyChannel'] ?? null));
-            if ($changes) {
-                $req->requireSession('Changing where reminders are sent');
-            }
-        }
-        return Response::json(['settings' => $this->settings->patch((int) $req->user['id'], $req->body)]);
+        // A reminder address set with an API token is remembered with that token
+        // and stops receiving mail once the token is revoked or expires (F6).
+        return Response::json(['settings' => $this->settings->patch((int) $req->user['id'], $req->body, $req->authMethod === 'token' ? $req->tokenId : null)]);
     }
 }

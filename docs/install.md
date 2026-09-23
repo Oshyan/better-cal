@@ -133,6 +133,10 @@ Sign-in attempts are rate limited per network address. If something on another a
 
 **Check that your web server is not already believing visitors about their address.** The app can only be as right as the address the web server hands it. Nginx's `real_ip` module (`set_real_ip_from`, `real_ip_header`) rewrites the client address from a header, and it should only do so for peers you control. CloudPanel's stock `/etc/nginx/nginx.conf` includes `set_real_ip_from 0.0.0.0/0;`, which trusts that header from everyone: any visitor can then send `X-Real-IP: 1.2.3.4` and be counted as that address, which lets them dodge the per-address limit and aim a block at someone else's address. Keep the loopback and private ranges (CloudPanel's inner server on port 8080 needs `127.0.0.1`) and remove the `0.0.0.0/0` line, or replace it with your CDN's published ranges if you use one. To test: send one wrong password with a made-up `X-Real-IP` header and see which address the block in Activity names after ten of them, or look at `rate_events`.
 
+## Protecting `.env`
+
+`.env` holds the database password and the session secret. Keep it readable by the PHP user and by nobody else: on shared hosting (Dreamhost, Bluehost and the like) that is `chmod 600 .env`, owned by your own account, which is also the user PHP runs as. Where you have root, `scripts/deploy.sh` goes a step further and makes it owned by root and only readable by the app's group, so the web app cannot rewrite its own configuration. Nothing in the app depends on either; it only needs to read the file.
+
 ## After installing
 
 - `https://your-host/api/v1/health` should return `{"ok":true,"db":true,...}`.

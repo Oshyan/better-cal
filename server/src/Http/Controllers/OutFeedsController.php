@@ -15,23 +15,21 @@ final class OutFeedsController
     }
 
     // Feed URLs are capabilities (anyone holding one reads the events without
-    // signing in), so only a session may list, create or delete them: a
-    // leaked API token must not be able to mint one that outlives it (F6).
+    // signing in). A feed created with an API token belongs to that token and
+    // goes when it is revoked, and a token sees only the addresses of feeds it
+    // created, so a leaked token cannot leave behind a URL that outlives it (F6).
     public function index(Request $req): Response
     {
-        $req->requireSession('Outbound feed addresses');
-        return Response::json(['feeds' => $this->outFeeds->listAll((int) $req->user['id'])]);
+        return Response::json(['feeds' => $this->outFeeds->listAll((int) $req->user['id'], $req->authMethod === 'token' ? $req->tokenId : null)]);
     }
 
     public function create(Request $req): Response
     {
-        $req->requireSession('Creating an outbound feed');
-        return Response::json($this->outFeeds->create((int) $req->user['id'], $req->body), 201);
+        return Response::json($this->outFeeds->create((int) $req->user['id'], $req->body, $req->authMethod === 'token' ? $req->tokenId : null), 201);
     }
 
     public function delete(Request $req, array $params): Response
     {
-        $req->requireSession('Deleting an outbound feed');
         $this->outFeeds->delete((int) $req->user['id'], (int) $params['id']);
         return Response::json(['ok' => true]);
     }

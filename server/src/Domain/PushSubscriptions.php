@@ -66,7 +66,7 @@ final class PushSubscriptions
      * device that is new to the account is written to Activity, so a device
      * nobody remembers adding is visible.
      */
-    public function subscribe(int $userId, array $in, bool $resync = false): void
+    public function subscribe(int $userId, array $in, bool $resync = false, ?int $tokenId = null): void
     {
         $sub = self::validate($in, $this->extraPushHosts);
         $hash = self::endpointHash($sub['endpoint']);
@@ -83,19 +83,27 @@ final class PushSubscriptions
             $this->db->run('DELETE FROM push_removed WHERE user_id = ? AND endpoint_hash = ?', [$userId, $hash]);
         }
         $this->db->run(
-            'INSERT INTO push_subscriptions (user_id, endpoint, endpoint_hash, p256dh, auth, last_used_at)
-             VALUES (?, ?, ?, ?, ?, NULL) AS new_row
+            'INSERT INTO push_subscriptions (user_id, endpoint, endpoint_hash, p256dh, auth, last_used_at, created_by_token_id)
+             VALUES (?, ?, ?, ?, ?, NULL, ?) AS new_row
              ON DUPLICATE KEY UPDATE
                user_id = new_row.user_id, endpoint = new_row.endpoint,
-               p256dh = new_row.p256dh, auth = new_row.auth, failing_since = NULL',
-            [$userId, $sub['endpoint'], self::endpointHash($sub['endpoint']), $sub['p256dh'], $sub['auth']]
+               p256dh = new_row.p256dh, auth = new_row.auth, failing_since = NULL,
+               created_by_token_id = new_row.created_by_token_id',
+            [$userId, $sub['endpoint'], self::endpointHash($sub['endpoint']), $sub['p256dh'], $sub['auth'], $tokenId]
         );
         if (!$existed) {
             $id = (int) $this->db->scalar('SELECT id FROM push_subscriptions WHERE endpoint_hash = ?', [self::endpointHash($sub['endpoint'])]);
             (new Undo($this->db))->record($userId, 'push', $id, 'create', null, null,
-                'Registered a device for reminders (' . self::service($sub['endpoint']) . ')');
+                'Registered a device for reminders (' . self::service($sub['endpoint']) . ')' . ($tokenId !== null ? ', with an API token' : ''));
         }
     }
+
+    /**
+     * A device is sent to while the token that registered it is still valid
+     * (revoking deletes it outright via the foreign key; expiry is checked
+     * here). Devices the owner registered while signed in have no token.
+     */
+    private const LIVE = '(created_by_token_id IS NULL OR created_by_token_id IN (SELECT id FROM api_tokens WHERE expires_at IS NULL OR expires_at > ?))';
 
     /** Which push service an endpoint belongs to, in words a person recognises. */
     public static function service(string $endpoint): string
@@ -121,7 +129,7 @@ final class PushSubscriptions
     public function devices(int $userId): array
     {
         $out = [];
-        foreach ($this->db->all('SELECT id, endpoint, endpoint_hash, created_at, last_used_at, failing_since FROM push_subscriptions WHERE user_id = ? ORDER BY id', [$userId]) as $r) {
+        foreach ($this->db->all('SELECT id, endpoint, endpoint_hash, created_at, last_used_at, failing_since, created_by_token_id FROM push_subscriptions WHERE user_id = ? ORDER BY id', [$userId]) as $r) {
             $out[] = [
                 'id' => (int) $r['id'],
                 'service' => self::service((string) $r['endpoint']),
@@ -129,6 +137,7 @@ final class PushSubscriptions
                 'createdAt' => $r['created_at'] !== null ? Time::iso(Time::fromDb((string) $r['created_at'])) : null,
                 'lastUsedAt' => $r['last_used_at'] !== null ? Time::iso(Time::fromDb((string) $r['last_used_at'])) : null,
                 'failing' => $r['failing_since'] !== null,
+                'viaToken' => $r['created_by_token_id'] !== null,
             ];
         }
         return $out;
@@ -169,14 +178,14 @@ final class PushSubscriptions
     /** @return list<array> */
     public function forUser(int $userId): array
     {
-        return $this->db->all('SELECT * FROM push_subscriptions WHERE user_id = ? ORDER BY id', [$userId]);
+        return $this->db->all('SELECT * FROM push_subscriptions WHERE user_id = ? AND ' . self::LIVE . ' ORDER BY id', [$userId, Time::nowDb()]);
     }
 
     /** @return array<int, list<array>> all subscriptions grouped by user id */
     public function allByUser(): array
     {
         $out = [];
-        foreach ($this->db->all('SELECT * FROM push_subscriptions ORDER BY user_id, id') as $row) {
+        foreach ($this->db->all('SELECT * FROM push_subscriptions WHERE ' . self::LIVE . ' ORDER BY user_id, id', [Time::nowDb()]) as $row) {
             $out[(int) $row['user_id']][] = $row;
         }
         return $out;

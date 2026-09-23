@@ -297,7 +297,7 @@ final class Reminders
             $stored = is_string($user['settings_json'] ?? null) ? json_decode((string) $user['settings_json'], true) : null;
             $settings = Settings::withDefaults(is_array($stored) ? $stored : []);
             $channel = (string) $settings['notifyChannel'];
-            $emailTo = Settings::notifyDestination($settings, (string) $user['email']);
+            $emailTo = Settings::notifyDestination($settings, (string) $user['email'], $this->db);
             $subs = $subsByUser[$userId] ?? [];
             $wantsPush = $channel !== 'email' && $subs !== [];
             $wantsEmail = $emailReady && $channel !== 'push';

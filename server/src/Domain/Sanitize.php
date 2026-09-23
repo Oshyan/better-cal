@@ -58,13 +58,15 @@ final class Sanitize
             }
             $close = strpos($lower, '</' . $bestTag, $gt + 1);
             if ($close === false) {
-                // Unclosed: a browser treats the rest as script/style, so do we.
-                $out[] = ['tag' => $bestTag, 'attrs' => substr($html, $after, $gt - $after), 'body' => substr($html, $gt + 1), 'start' => $best, 'end' => $n];
+                // Unclosed: a browser treats the rest as script/style. Callers
+                // that strip untrusted mail want that; callers exporting
+                // someone's own words ("the <style> element") check 'closed'.
+                $out[] = ['tag' => $bestTag, 'attrs' => substr($html, $after, $gt - $after), 'body' => substr($html, $gt + 1), 'start' => $best, 'end' => $n, 'closed' => false];
                 break;
             }
             $closeGt = strpos($lower, '>', $close);
             $end = $closeGt === false ? $n : $closeGt + 1;
-            $out[] = ['tag' => $bestTag, 'attrs' => substr($html, $after, $gt - $after), 'body' => substr($html, $gt + 1, $close - $gt - 1), 'start' => $best, 'end' => $end];
+            $out[] = ['tag' => $bestTag, 'attrs' => substr($html, $after, $gt - $after), 'body' => substr($html, $gt + 1, $close - $gt - 1), 'start' => $best, 'end' => $end, 'closed' => true];
             $pos = $end;
         }
         return $out;
@@ -155,6 +157,9 @@ final class Sanitize
         $s = '';
         $pos = 0;
         foreach (self::htmlBlocks($text, ['script', 'style', 'iframe']) as $b) {
+            if (!$b['closed']) {
+                break; // a stray "<style>" in prose: keep the words after it
+            }
             $s .= substr($text, $pos, $b['start'] - $pos);
             $pos = $b['end'];
         }

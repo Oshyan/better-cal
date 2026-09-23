@@ -4,6 +4,17 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.1.8 (2026-09-23)
+
+Follow-up fixes from a third adversarial review.
+
+- Calendar-file budgets normalise every line ending the parser accepts, so extra carriage returns cannot hide events.
+- Sign-in: the overall brake needs failures from 10 different addresses (20 let a mid-size attacker guess without limit); a burst from one address gets at most 3 extra checks in flight.
+- Exported descriptions (CalDAV, outbound feeds) keep the words after a stray unclosed tag such as "the <style> element".
+- CalDAV object names issued by 0.1.3 to 0.1.5 still resolve.
+- Settings shows "Enabled" only when this device is registered, so removing this device offers Enable again.
+- The event popover's plain-text preview scans script/style blocks in linear time.
+
 ## 0.1.7 (2026-09-23)
 
 Closing the gaps a second adversarial review found in the security releases.

@@ -1721,6 +1721,8 @@ checkEq('dav object uri from uid', 'ABC123.ics', DavIcs::objectUri('ABC123'));
 // F8 (scan 2026-09-23): a feed poll is bounded by the same memory-aware budget as an import.
 checkEq('feed budget: capped by memory like an import', 100, BetterCal\Support\Limits::feedEventBudget('32M', 30 * 1048576));
 check('ics budget: a folded BEGIN:VEVENT is still counted', BetterCal\Domain\Ics::budgetProblem("BEGIN:VCALENDAR\r\n" . str_repeat("BEGIN:VEV\r\n ENT\r\nEND:VEVENT\r\n", 3) . "END:VCALENDAR\r\n", 1 << 20, 2) !== null);
+check('ics budget: extra carriage returns do not hide events', BetterCal\Domain\Ics::budgetProblem("BEGIN:VCALENDAR\r\n" . str_repeat("BEGIN:VEVENT\r\r\nEND:VEVENT\r\n", 3) . "END:VCALENDAR\r\n", 1 << 20, 2) !== null);
+check('ics budget: lone-CR line endings are counted too', BetterCal\Domain\Ics::budgetProblem("BEGIN:VCALENDAR\r" . str_repeat("BEGIN:VEVENT\rEND:VEVENT\r", 3) . "END:VCALENDAR\r", 1 << 20, 2) !== null);
 check('ics budget: one event with a flood of lines is refused', BetterCal\Domain\Ics::budgetProblem("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\n" . str_repeat("X-A:1\r\n", 2000) . "END:VEVENT\r\nEND:VCALENDAR\r\n", 1 << 20, 10) !== null);
 checkEq('ics budget: an ordinary event passes', null, BetterCal\Domain\Ics::budgetProblem("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:a\r\nSUMMARY:x\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n", 1 << 20, 1));
 checkEq('feed budget: FEED_EVENTS when memory is plentiful', BetterCal\Support\Limits::get('FEED_EVENTS'), BetterCal\Support\Limits::feedEventBudget('-1', 0));
@@ -1737,6 +1739,7 @@ foreach (['evil/x', '../../etc', 'back\\slash', 'b64-looks-encoded', '.', '..'] 
     check('dav: path-breaking UID ' . json_encode($odd) . ' is encoded into one segment', str_starts_with($uri, 'b64-') && strpbrk($uri, '/\\') === false);
     checkEq('dav: path-breaking UID ' . json_encode($odd) . ' round-trips', $odd, DavIcs::uidFromObjectUri($uri));
 }
+checkEq('dav: a b64 name from 0.1.3-0.1.5 still resolves', 'urn:uuid:1234', DavIcs::uidFromObjectUri('b64-' . rtrim(strtr(base64_encode('urn:uuid:1234'), '+/', '-_'), '=') . '.ics'));
 foreach (['with space', 'pct%2F', 'q?x#y', 'ünïcödé', 'urn:uuid:1234', '{braced}'] as $plain) {
     checkEq('dav: harmless UID ' . json_encode($plain) . ' keeps its name (no href churn)', $plain . '.ics', DavIcs::objectUri($plain));
 }
@@ -3340,6 +3343,7 @@ use BetterCal\Domain\GoogleWriter;
     $t0 = microtime(true);
     BetterCal\Domain\Sanitize::toText('<b>x</b>' . str_repeat('<script x>', 40000));
     check('toText: 40,000 unclosed "<script" in well under a second', microtime(true) - $t0 < 0.5, sprintf('%.3fs', microtime(true) - $t0));
+    check('toText: a stray unclosed tag in prose keeps the words after it (export)', str_contains(BetterCal\Domain\Sanitize::toText('<p>Learn the <style> element today</p>'), 'element today'));
     checkEq('toText: script and style still dropped', 'a b', trim(preg_replace('/\s+/', ' ', BetterCal\Domain\Sanitize::toText('<p>a</p><script>evil()</script><style>x{}</style><p>b</p>'))));
     check('isHtml: still finds real markup', BetterCal\Domain\Sanitize::isHtml('see <b>this</b>') && !BetterCal\Domain\Sanitize::isHtml('a < b and <3'));
 }

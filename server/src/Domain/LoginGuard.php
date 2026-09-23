@@ -113,10 +113,18 @@ final class LoginGuard
         return $this->throttle->count('auth-fail:ip:' . $source, self::WINDOW, $now) === max(1, $this->maxFailures);
     }
 
-    /** A success vouches for the source and wipes its own failures (a typo or two is not an attack). */
+    /**
+     * A success vouches for the source (it is exempt from the overall brake,
+     * so the owner's own devices keep working while strangers are refused)
+     * but does NOT clear its failures. Clearing them let any success reset
+     * the password-guessing budget: a CalDAV request authenticated with an
+     * API token, or the owner's phone syncing from the same NAT as an
+     * attacker, wiped the count and allowed unlimited guesses (scan
+     * 2026-09-23, F2/F13). Failures expire with the window instead; a typo
+     * or two never comes near the limit.
+     */
     public function recordSuccess(string $source, ?\DateTimeImmutable $now = null): void
     {
-        $this->throttle->clear('auth-fail:ip:' . $source);
         // One row per source is all "known" needs; refresh it rather than
         // adding a row per CalDAV request (a syncing phone makes thousands).
         if ($this->throttle->count('auth-ok:ip:' . $source, 86400, $now) === 0) {

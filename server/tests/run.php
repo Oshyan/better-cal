@@ -1113,6 +1113,21 @@ if (class_exists(\Sabre\VObject\Component\VCalendar::class)) {
 $farStart = Time::fromDb('2019-03-04 17:00:00');
 $skipTarget = Time::fromDb('2026-08-01 00:00:00');
 check('skip: old daily series skips thousands', Recurrence::skippablePeriods('FREQ=DAILY', $farStart, $skipTarget) > 2000);
+// F3/F4 (scan 2026-09-23): an absurd INTERVAL is refused at the door and
+// survives expansion if it was stored before that.
+checkEq('safeRrule: ordinary rule passes, uppercased', 'FREQ=WEEKLY;INTERVAL=2;BYDAY=MO', Recurrence::safeRrule('freq=weekly;interval=2;byday=MO'));
+checkEq('safeRrule: absurd INTERVAL drops the recurrence', null, Recurrence::safeRrule('FREQ=WEEKLY;INTERVAL=99999999999999999999'));
+checkEq('safeRrule: INTERVAL over the cap drops it', null, Recurrence::safeRrule('FREQ=DAILY;INTERVAL=1001'));
+checkEq('safeRrule: absurd COUNT drops it', null, Recurrence::safeRrule('FREQ=DAILY;COUNT=999999999'));
+checkEq('safeRrule: non-numeric INTERVAL drops it', null, Recurrence::safeRrule('FREQ=DAILY;INTERVAL=abc'));
+checkEq('safeRrule: empty is no rule', null, Recurrence::safeRrule('  '));
+checkEq('skip: a stored absurd INTERVAL skips nothing and does not throw', 0, Recurrence::skippablePeriods('FREQ=WEEKLY;INTERVAL=99999999999999999999', $farStart, $skipTarget));
+{
+    $boom = new Recurrence(static function (): array { throw new \TypeError('intdiv(): Argument #2 must be of type int, float given'); });
+    $m = ['id' => 9, 'rrule' => 'FREQ=WEEKLY', 'start_utc' => '2026-09-21 10:00:00', 'end_utc' => '2026-09-21 11:00:00'];
+    $got = $boom->expand($m, [], new DateTimeImmutable('2026-09-20', new DateTimeZone('UTC')), new DateTimeImmutable('2026-09-27', new DateTimeZone('UTC')));
+    checkEq('expand: an expander that throws yields the first occurrence, not a failed window', 1, count($got));
+}
 check('skip: old weekly series skips hundreds', Recurrence::skippablePeriods('FREQ=WEEKLY;BYDAY=MO', $farStart, $skipTarget) > 300);
 checkEq('skip: COUNT is never moved', 0, Recurrence::skippablePeriods('FREQ=DAILY;COUNT=10', $farStart, $skipTarget));
 checkEq('skip: MONTHLY is left alone', 0, Recurrence::skippablePeriods('FREQ=MONTHLY', $farStart, $skipTarget));
@@ -2960,15 +2975,21 @@ require __DIR__ . '/plugins.php';
     checkEq('guard: allowed again once the window rolls on', 0, $guard->retryAfter($bad, $at(100 + BetterCal\Domain\LoginGuard::WINDOW + 1)));
     checkEq('guard: the block is journaled once, naming the source', ['Blocked sign-in attempts from 203.0.113.7 after 3 wrong passwords (web)'],
         array_column($tdb->all("SELECT summary FROM mutations WHERE op = 'refuse'"), 'summary'));
-    // A typo or two, then the right password: clean slate.
+    // A typo or two, then the right password: the source is known, and its
+    // failures are NOT wiped (a success must not reset the guessing budget,
+    // or a token or a NAT neighbour's syncing phone launders it).
     $home = '192.0.2.10';
     $guard->failed($home, 'web', $at(200));
-    $guard->failed($home, 'web', $at(205));
     $guard->recordSuccess($home, $at(210));
     $guard->failed($home, 'web', $at(215));
-    $guard->failed($home, 'web', $at(216));
-    checkEq('guard: a success wipes that source\'s earlier failures', 0, $guard->retryAfter($home, $at(217)));
-    check('guard: and makes the source known', $guard->isKnown($home, $at(217)) && !$guard->isKnown($bad, $at(217)));
+    checkEq('guard: a typo or two after a success still leaves room', 0, $guard->retryAfter($home, $at(217)));
+    check('guard: a success makes the source known', $guard->isKnown($home, $at(217)) && !$guard->isKnown($bad, $at(217)));
+    $launder = '192.0.2.77';
+    for ($i = 0; $i < 3; $i++) {
+        $guard->failed($launder, 'web', $at(220 + $i));
+        $guard->recordSuccess($launder, $at(230 + $i));
+    }
+    check('guard: successes between failures do not reset the budget (F2/F13)', $guard->retryAfter($launder, $at(240)) > 0);
     $guard->recordSuccess($home, $at(300));
     $guard->recordSuccess($home, $at(301));
     checkEq('guard: a syncing CalDAV client does not add a row per request', 1, (int) $tdb->scalar("SELECT COUNT(*) FROM rate_events WHERE bucket = 'auth-ok:ip:192.0.2.10'"));

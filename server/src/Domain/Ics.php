@@ -390,7 +390,9 @@ final class Ics
             }
         }
 
-        $rrule = isset($vevent->RRULE) ? strtoupper((string) $vevent->RRULE) : null;
+        // Every path that turns ICS into rows comes through here (feeds,
+        // imports, CalDAV, mail): the RRULE is made safe once, at the door.
+        $rrule = isset($vevent->RRULE) ? Recurrence::safeRrule((string) $vevent->RRULE) : null;
 
         $exdates = [];
         if (isset($vevent->EXDATE)) {

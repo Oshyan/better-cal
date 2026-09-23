@@ -189,7 +189,7 @@ final class GoogleSync
         foreach ((array) ($item['recurrence'] ?? []) as $line) {
             $line = (string) $line;
             if (str_starts_with(strtoupper($line), 'RRULE:')) {
-                $rrule = strtoupper(substr($line, 6));
+                $rrule = Recurrence::safeRrule(substr($line, 6));
             } elseif (str_starts_with(strtoupper($line), 'EXDATE')) {
                 foreach (self::exdateValues($line, $tzid) as $ex) {
                     $exdates[] = $ex;

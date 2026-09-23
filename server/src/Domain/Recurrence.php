@@ -73,7 +73,16 @@ final class Recurrence
                     $exdates = array_fill_keys(array_map('strval', $decoded), true);
                 }
             }
-            $raw = ($this->expander)($master, $winStart, $winEnd);
+            // One unexpandable row must never fail the whole window (or the
+            // reminder scan): it shows as its first occurrence and is logged.
+            try {
+                $raw = ($this->expander)($master, $winStart, $winEnd);
+            } catch (\Throwable $e) {
+                error_log('recurrence: event ' . ($master['id'] ?? '?') . ' could not be expanded: ' . $e->getMessage());
+                $s0 = Time::fromDb((string) $master['start_utc']);
+                $e0 = Time::fromDb((string) $master['end_utc']);
+                $raw = ($s0 < $winEnd && $e0 > $winStart) ? [['start' => $s0, 'end' => $e0]] : [];
+            }
             $count = 0;
             foreach ($raw as $inst) {
                 if (++$count > self::MAX_INSTANCES) {
@@ -226,6 +235,38 @@ final class Recurrence
      *
      * @return int periods to advance (0 = leave DTSTART alone)
      */
+    /** Largest INTERVAL / COUNT accepted from outside. Anything beyond is not a real calendar. */
+    public const MAX_INTERVAL = 1000;
+    public const MAX_COUNT = 100000;
+
+    /**
+     * An RRULE from a feed, an import, CalDAV, Google or mail, made safe to
+     * store and expand: null (no recurrence, so the event stays as a single
+     * occurrence) when INTERVAL or COUNT is not a small positive integer.
+     * An absurd INTERVAL used to overflow to a float in skippablePeriods and
+     * throw on every events request, blanking the calendar (scan
+     * 2026-09-23, F3/F4). Tolerant by design: one bad event in a feed must
+     * not stop the rest syncing, so this never throws.
+     */
+    public static function safeRrule(?string $rrule): ?string
+    {
+        $rrule = strtoupper(trim((string) $rrule));
+        if ($rrule === '') {
+            return null;
+        }
+        $parts = self::rruleParts($rrule);
+        foreach (['INTERVAL' => self::MAX_INTERVAL, 'COUNT' => self::MAX_COUNT] as $key => $max) {
+            if (!isset($parts[$key])) {
+                continue;
+            }
+            $v = $parts[$key];
+            if (!ctype_digit($v) || strlen($v) > 6 || (int) $v < 1 || (int) $v > $max) {
+                return null;
+            }
+        }
+        return $rrule;
+    }
+
     public static function skippablePeriods(string $rrule, \DateTimeImmutable $dtStart, \DateTimeImmutable $target): int
     {
         if ($target <= $dtStart) {
@@ -246,6 +287,9 @@ final class Recurrence
             return 0;
         }
         $interval = max(1, (int) ($parts['INTERVAL'] ?? 1));
+        if ($interval > self::MAX_INTERVAL) {
+            return 0; // rows stored before safeRrule existed: no skipping, never overflow
+        }
         $daysPerPeriod = ($freq === 'WEEKLY' ? 7 : 1) * $interval;
 
         // Whole days between the two, floored — computed on calendar dates so

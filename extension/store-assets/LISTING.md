@@ -62,7 +62,7 @@ Stores the single setting the user enters in the options page: the address of th
 
 **Data usage**: check nothing (it collects no data of any kind), then certify the disclosures.
 
-**Privacy policy URL**: not required when no data is collected; leave blank. If the form insists, use `https://cal.example.com/`.
+**Privacy policy URL**: not required when no data is collected; leave blank. If the form insists, use the repository's README.
 
 ## Distribution tab
 

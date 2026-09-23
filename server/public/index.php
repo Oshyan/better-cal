@@ -268,7 +268,10 @@ function bc_handle_api(Request $request, array $cfg): void
         $router->add('POST', "$base/tokens", [$tokensController, 'create']);
         $router->add('DELETE', "$base/tokens/:id", [$tokensController, 'delete']);
 
-        $router->add('GET', "$base/health", fn(): Response => $healthController->health());
+        // Exempt from auth below, but a valid session still counts: the Settings page reads the version from here.
+        $router->add('GET', "$base/health", fn(Request $req): Response => $healthController->health(
+            $auth->resolve($req->cookies[Domain\Auth::COOKIE] ?? null) !== null
+        ));
 
         $match = $router->match($request->method, $request->path);
 

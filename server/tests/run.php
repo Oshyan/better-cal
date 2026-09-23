@@ -515,7 +515,7 @@ foreach (['127.0.0.1', '10.1.2.3', '172.16.0.9', '192.168.1.1', '169.254.169.254
           '64:ff9b::a00:5', '64:ff9b::7f00:1', '64:ff9b:1::a00:5', '::a00:5', 'fec0::1', 'ff02::1', '2001:db8::1', '2001:0:4136:e378::1', '2002:a00:5::1', '2002:7f00:1::1'] as $bad) {
     check('http policy refuses ' . $bad, HttpClient::isForbiddenIp($bad));
 }
-foreach (['8.8.8.8', '140.82.112.3', '2606:4700:4700::1111', '100.128.0.1', '2a00:1450:4009:81f::200e', '2002:808:808::1'] as $ok) {
+foreach (['8.8.8.8', '140.82.112.3', '2606:4700:4700::1111', '100.128.0.1', '2a00:1450:4009:81f::200e', '2002:808:808::1', '64:ff9b::808:808'] as $ok) {
     check('http policy allows ' . $ok, !HttpClient::isForbiddenIp($ok));
 }
 
@@ -711,7 +711,9 @@ checkEq('ldjson no markup -> empty', [], MailIngest::extractLdJsonEvents('<p>pla
 // F9 (scan 2026-09-23): script/style blocks are found by a linear scan.
 checkEq('html blocks: script and style found in order', ['style', 'script'], array_column(BetterCal\Domain\Sanitize::htmlBlocks('<p>a</p><STYLE>x</style><b>b</b><script type="x">y</SCRIPT>'), 'tag'));
 checkEq('html blocks: dropScriptStyle keeps the rest', '<p>a</p> <b>b</b> ', BetterCal\Domain\Sanitize::dropScriptStyle('<p>a</p><style>x</style><b>b</b><script>y</script>'));
-checkEq('html blocks: an unclosed block ends the scan, keeps the text', '<p>a</p><script>never closed', BetterCal\Domain\Sanitize::dropScriptStyle('<p>a</p><script>never closed'));
+checkEq('html blocks: an unclosed block runs to the end, as in a browser', '<p>a</p> ', BetterCal\Domain\Sanitize::dropScriptStyle('<p>a</p><script>never closed'));
+checkEq('forward preamble: a window edge inside a multi-byte character still strips the header', 'x',
+    trim(MailIngest::stripForwardPreamble(str_repeat('é', 150) . '---------- Forwarded message ---------' . "\nFrom: A <a@example.com>\nDate: Mon\nSubject: S\nTo: <b@example.com>") === str_repeat('é', 150) . ' ' ? 'x' : 'kept'));
 checkEq('html blocks: <scripts> is not a script tag', [], BetterCal\Domain\Sanitize::htmlBlocks('<scripts>no</scripts>'));
 {
     $bomb = str_repeat('<script', 75000) . '>';
@@ -1626,7 +1628,7 @@ $fakeTransport = new class implements LlmTransport {
 $envelope = static fn(array $json): string => json_encode([
     'candidates' => [['content' => ['parts' => [['text' => json_encode($json)]]]]],
 ]);
-$gw = new LlmGateway(['gemini' => ['key' => 'test-key', 'model' => 'test-model']], $fakeTransport);
+$gw = new LlmGateway(['gemini' => ['key' => 'test-key', 'model' => 'gemini-test-model']], $fakeTransport);
 $batchEvent = ['eventId' => 1, 'title' => 'Salsa Night', 'description' => null, 'location' => null, 'start' => '2026-08-01T19:00:00-07:00'];
 
 $fakeTransport->reply = $envelope(['results' => [['eventId' => 1, 'pass' => true, 'score' => 0.8]]]);
@@ -1643,6 +1645,11 @@ check('gw eval sent negative prompt', str_contains((string) $fakeTransport->requ
     check('gw eval: instructions are the system instruction', str_contains((string) ($sent['system_instruction']['parts'][0]['text'] ?? ''), 'dance events'));
     check('gw eval: event text is its own user turn, marked untrusted', str_contains((string) ($sent['contents'][0]['parts'][0]['text'] ?? ''), 'untrusted') && str_contains((string) ($sent['contents'][0]['parts'][0]['text'] ?? ''), 'Salsa Night'));
     check('gw eval: event text is not in the instructions', !str_contains((string) ($sent['system_instruction']['parts'][0]['text'] ?? ''), 'Salsa Night'));
+    $gemma = new LlmGateway(['gemini' => ['key' => 'k', 'model' => 'gemma-3-27b-it']], $fakeTransport);
+    $fakeTransport->reply = $envelope(['results' => []]);
+    $gemma->evaluateFilterBatch('dance events', null, [$batchEvent]);
+    $sentG = json_decode((string) end($fakeTransport->requests)['body'], true);
+    check('gw eval: a non-Gemini model gets no system_instruction, two parts instead', !isset($sentG['system_instruction']) && count($sentG['contents'][0]['parts'] ?? []) === 2);
 }
 
 $fakeTransport->reply = $envelope(['results' => [['eventId' => 1, 'score' => 0.4]]]);
@@ -1722,10 +1729,13 @@ checkEq('dav uid rejects empty stem', null, DavIcs::uidFromObjectUri('.ics'));
 // F7 (scan 2026-09-23): a UID from outside never becomes a raw path segment.
 checkEq('dav: an ordinary UID keeps its plain object name', 'abc-123@example.com.ics', DavIcs::objectUri('abc-123@example.com'));
 checkEq('dav: a UID with + keeps its plain name (no churn for existing events)', 'a1b2+x=y@host.ics', DavIcs::objectUri('a1b2+x=y@host'));
-foreach (['evil/x', '../../etc', 'with space', 'pct%2F', 'q?x#y', 'b64-looks-encoded', '.', '..', 'ünïcödé'] as $odd) {
+foreach (['evil/x', '../../etc', 'back\\slash', 'b64-looks-encoded', '.', '..'] as $odd) {
     $uri = DavIcs::objectUri($odd);
-    check('dav: odd UID ' . json_encode($odd) . ' gets one safe path segment', preg_match('/^[A-Za-z0-9._@-]+\.ics$/', $uri) === 1 && !str_contains($uri, '/'));
-    checkEq('dav: odd UID ' . json_encode($odd) . ' round-trips', $odd, DavIcs::uidFromObjectUri($uri));
+    check('dav: path-breaking UID ' . json_encode($odd) . ' is encoded into one segment', str_starts_with($uri, 'b64-') && strpbrk($uri, '/\\') === false);
+    checkEq('dav: path-breaking UID ' . json_encode($odd) . ' round-trips', $odd, DavIcs::uidFromObjectUri($uri));
+}
+foreach (['with space', 'pct%2F', 'q?x#y', 'ünïcödé', 'urn:uuid:1234', '{braced}'] as $plain) {
+    checkEq('dav: harmless UID ' . json_encode($plain) . ' keeps its name (no href churn)', $plain . '.ics', DavIcs::objectUri($plain));
 }
 check('dav uid preserves dots in uid', DavIcs::uidFromObjectUri('a.b.ics') === 'a.b');
 
@@ -3014,12 +3024,21 @@ require __DIR__ . '/plugins.php';
     $g2 = new BetterCal\Domain\LoginGuard($throttle, [], 3, $tdb);
     $burst = '198.18.0.50';
     $allowed = 0;
-    for ($i = 0; $i < 8; $i++) {
+    for ($i = 0; $i < 30; $i++) {
         if ((new BetterCal\Domain\LoginGuard($throttle, [], 3, $tdb))->begin($burst, $at(500)) === 0) {
             $allowed++; // none of these ever reports an outcome: all still "in flight"
         }
     }
-    checkEq('guard: 8 concurrent attempts, only the limit get a password check', 3, $allowed);
+    checkEq('guard: 30 concurrent attempts, a bounded number get a password check', 3 + BetterCal\Domain\LoginGuard::INFLIGHT_SLACK, $allowed);
+    $tdb->run("DELETE FROM rate_events WHERE bucket LIKE 'auth-try:%'");
+    $seq = '198.18.0.51';
+    for ($i = 0; $i < 3; $i++) {
+        $one = new BetterCal\Domain\LoginGuard($throttle, [], 3, $tdb);
+        if ($one->begin($seq, $at(510 + $i)) === 0) {
+            $one->rejected($seq, 'web', $at(510 + $i));
+        }
+    }
+    check('guard: after the limit of real failures, the source is refused', (new BetterCal\Domain\LoginGuard($throttle, [], 3, $tdb))->begin($seq, $at(520)) > 0);
     $ok = '198.18.0.60';
     for ($i = 0; $i < 20; $i++) {
         $one = new BetterCal\Domain\LoginGuard($throttle, [], 3, $tdb);

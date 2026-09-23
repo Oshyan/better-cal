@@ -4,6 +4,19 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.1.6 (2026-09-23)
+
+Fixes for regressions an adversarial review found in the security releases above.
+
+- CalDAV: an API token is accepted outside the password limit, so devices syncing with tokens keep working even when another device at the same address has used up the password attempts (for example one still using an old password). Several simultaneous connections with a correct password are no longer refused.
+- CalDAV: only UIDs that actually break a path (a "/" or "\\") get an encoded object name; 0.1.3 renamed more than that, which could leave some clients with stale entries.
+- Reminders: a device removed in Settings stays removed when that browser next opens the app, and opening the app no longer keeps a dead device from being cleaned up. Removing this device also turns push off in this browser.
+- Mail: stripping a forwarded message's header no longer fails on some non-English text, and an unclosed script or style block in an email is treated as running to the end, as a browser would.
+- Outbound fetches on IPv6-only servers can reach public IPv4 hosts through standard NAT64 again.
+- Prompt filters and ranking work with non-Gemini models on the same API.
+- An API token may send settings that include the reminder address unchanged.
+- Operators: the dev clone keeps Google calendars as local copies (they no longer fail every poll there), and `DB_USER` is only needed when cloning; database and user names may contain hyphens.
+
 ## 0.1.5 (2026-09-23)
 
 Security fixes from the 2026-09-23 scan (remaining low-severity findings).

@@ -33,16 +33,16 @@ final class DavIcs
      * overrides). A UID arrives from feeds, imports and email and may hold
      * anything, and a "/" in it split the object's href into two path
      * segments, which failed every sync REPORT for the calendar (scan
-     * 2026-09-23, F7). Ordinary UIDs (letters, digits and . _ @ + = -, which is
-     * what every mainstream client generates) keep their plain name, so
-     * existing hrefs do not change; anything else is named by its UID in
-     * base64url behind a "b64-" prefix, which round-trips without a lookup.
+     * 2026-09-23, F7). Only what breaks a path is encoded: a "/" or "\\",
+     * a bare "." or "..", or a UID that itself starts "b64-". Everything else
+     * (spaces, ":", non-ASCII) keeps its plain name, which sabre percent-
+     * encodes in hrefs as it always did, so existing object names do not
+     * change and no client is left with a stale href. The rest are named by
+     * their UID in base64url behind "b64-", which round-trips without a lookup.
      */
-    private const PLAIN_UID = '/^(?!b64-)[A-Za-z0-9._@+=-]{1,255}$/';
-
     public static function objectUri(string $uid): string
     {
-        if (preg_match(self::PLAIN_UID, $uid) === 1 && $uid !== '.' && $uid !== '..') {
+        if ($uid !== '' && $uid !== '.' && $uid !== '..' && strpbrk($uid, '/\\') === false && !str_starts_with($uid, 'b64-')) {
             return $uid . '.ics';
         }
         return 'b64-' . rtrim(strtr(base64_encode($uid), '+/', '-_'), '=') . '.ics';

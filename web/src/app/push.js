@@ -82,7 +82,8 @@ export async function resyncPush() {
     const json = sub.toJSON();
     await api('/push/subscribe', {
       method: 'POST',
-      body: { endpoint: sub.endpoint, keys: { p256dh: json.keys.p256dh, auth: json.keys.auth } },
+      // resync: restore a device a reset cleared; never one the owner removed
+      body: { endpoint: sub.endpoint, keys: { p256dh: json.keys.p256dh, auth: json.keys.auth }, resync: true },
     });
   } catch { /* best-effort: Settings still offers Enable */ }
 }

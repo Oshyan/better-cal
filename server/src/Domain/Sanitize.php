@@ -58,6 +58,8 @@ final class Sanitize
             }
             $close = strpos($lower, '</' . $bestTag, $gt + 1);
             if ($close === false) {
+                // Unclosed: a browser treats the rest as script/style, so do we.
+                $out[] = ['tag' => $bestTag, 'attrs' => substr($html, $after, $gt - $after), 'body' => substr($html, $gt + 1), 'start' => $best, 'end' => $n];
                 break;
             }
             $closeGt = strpos($lower, '>', $close);

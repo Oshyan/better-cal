@@ -67,7 +67,7 @@ final class PushController
     public function subscribe(Request $req): Response
     {
         $req->requireSession('Registering a device for reminders');
-        $this->subscriptions->subscribe((int) $req->user['id'], $req->body);
+        $this->subscriptions->subscribe((int) $req->user['id'], $req->body, !empty($req->body['resync']));
         return Response::json(['ok' => true]);
     }
 

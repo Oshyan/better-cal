@@ -103,7 +103,7 @@ function bc_handle_api(Request $request, array $cfg): void
         $proposalsController = new Controllers\ProposalsController($proposalsDomain);
         $reviewController = new Controllers\ReviewController(new Domain\ReviewQueue($db, $events), $proposalsDomain);
         $configController = new Controllers\ConfigController($settings, $cfg);
-        $pushController = new Controllers\PushController($pushSubscriptions, $pushSender, $emailSender, $throttle);
+        $pushController = new Controllers\PushController($pushSubscriptions, $pushSender, $emailSender, $throttle, $db);
         $systemController = new Controllers\SystemController(new Domain\SystemHealth($db), $pushSubscriptions, $emailSender, $cfg);
         $healthController = new Controllers\HealthController($db, $cfg);
         $googleController = new Controllers\GoogleController($db, $googleAuth, $calendars, $feeds);
@@ -290,6 +290,7 @@ function bc_handle_api(Request $request, array $cfg): void
                 }
                 $request->user = $user;
                 $request->authMethod = 'token';
+                $request->tokenId = $apiTokens->lastTokenId;
                 Domain\ActivityContext::set('api'); // agent/token writes tagged in the activity log
             } else {
                 $session = $auth->resolve($request->cookies[Domain\Auth::COOKIE] ?? null);

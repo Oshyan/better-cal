@@ -10,6 +10,8 @@ final class Request
     public ?string $csrf = null;
     /** 'session' or 'token' once authenticated; null on exempt routes. */
     public ?string $authMethod = null;
+    /** The API token this request authenticated with (authMethod 'token'), for binding what it creates. */
+    public ?int $tokenId = null;
 
     public function __construct(
         public readonly string $method,

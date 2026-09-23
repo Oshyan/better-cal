@@ -75,7 +75,7 @@ final class Notifier
         $plan = Reminders::channelPlan($channel, $hasLiveSub, $outcomes);
         $emailed = false;
         if ($plan['email'] && $email->isConfigured()) {
-            $to = Settings::notifyDestination($settings, (string) $user['email']);
+            $to = Settings::notifyDestination($settings, (string) $user['email'], $this->db);
             $emailed = $email->sendReminder($to, [
                 'title' => $payload['title'],
                 'body' => $payload['body'],

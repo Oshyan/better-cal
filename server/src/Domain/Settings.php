@@ -30,6 +30,11 @@ final class Settings
         // Where reminder/test emails are sent; null = the account email
         // (which is also the SMTP sender mailbox and may not be read).
         'notifyEmail' => null,
+        // The API token that set notifyEmail, or null when the owner set it
+        // signed in. A token-set address is honoured only while that token is
+        // valid (notifyDestination), so a revoked token's address stops getting
+        // mail. Not settable directly; see patch().
+        'notifyEmailToken' => null,
         // Overview layout for the month slot; null = unset (client applies
         // its device default: 3day on mobile, month on desktop).
         'overviewMode' => null,
@@ -68,9 +73,13 @@ final class Settings
     }
 
     /** Validate + merge the given keys into the stored settings; returns the merged result. */
-    public function patch(int $userId, array $in): array
+    public function patch(int $userId, array $in, ?int $tokenId = null): array
     {
+        unset($in['notifyEmailToken']);
         $updates = self::validate($in);
+        if (array_key_exists('notifyEmail', $updates)) {
+            $updates['notifyEmailToken'] = $updates['notifyEmail'] !== null ? $tokenId : null;
+        }
         if (isset($updates['defaultCalendarId'])) {
             $owned = $this->db->scalar(
                 "SELECT id FROM calendars WHERE id = ? AND user_id = ? AND kind = 'local'",
@@ -191,10 +200,18 @@ final class Settings
      * Effective destination for reminder/test emails: the notifyEmail setting
      * when set, else the account email. $settings is a withDefaults() result.
      */
-    public static function notifyDestination(array $settings, string $accountEmail): string
+    public static function notifyDestination(array $settings, string $accountEmail, ?Db $db = null): string
     {
         $to = $settings['notifyEmail'] ?? null;
-        return is_string($to) && $to !== '' ? $to : $accountEmail;
+        if (!is_string($to) || $to === '') {
+            return $accountEmail;
+        }
+        // Set with an API token: honoured only while that token is valid. With
+        // no database to ask, the account address is the safe answer.
+        if (!empty($settings['notifyEmailToken'])) {
+            return $db !== null && ApiTokens::stillValid($db, (int) $settings['notifyEmailToken']) ? $to : $accountEmail;
+        }
+        return $to;
     }
 
     /** Nullable email address (notification destination); null or blank clears. */

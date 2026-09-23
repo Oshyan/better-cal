@@ -78,7 +78,7 @@ set -euo pipefail
 chown -R "${APP_USER}:${APP_USER}" "${APP_DIR}"
 # The app reads its .env but must not be able to rewrite it: root owns it,
 # the app's group reads it (scan 2026-09-23, F1).
-if [ -f "${APP_DIR}/.env" ]; then chown "root:${APP_USER}" "${APP_DIR}/.env"; chmod 640 "${APP_DIR}/.env"; fi
+if [ "$(id -u)" -eq 0 ] && [ -f "${APP_DIR}/.env" ]; then chown "root:${APP_USER}" "${APP_DIR}/.env"; chmod 640 "${APP_DIR}/.env"; fi
 sudo -u "${APP_USER}" bash -c "cd ${APP_DIR}/server && composer install --no-dev --quiet --no-interaction"
 # Known advisories against the locked PHP dependencies: reported, not blocking.
 # A finding means "look at it", not "roll back the deploy in progress".

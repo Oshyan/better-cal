@@ -116,7 +116,7 @@ claude mcp add better-cal \
 | List calendars | `GET /calendars` | `list_calendars` | Includes folders, tags, feed health |
 | Undo last change | `POST /undo` | `undo` | One level, per user |
 | Manage calendars/folders | `POST/PATCH/DELETE /calendars`, `/folders` | — | REST only for now |
-| Outbound feeds, push devices, reminder email address | — | — | Session only: an API token cannot create a standing channel out of the account |
+| Outbound feeds, push devices, reminder email address | `/outfeeds`, `/push/*`, `PATCH /settings` | — | REST; anything a token creates belongs to it and goes when the token is revoked. A token sees only the feed URLs it created. Linking a Google account needs a signed-in person. |
 | Manage tokens | `GET/POST/DELETE /tokens` | — | Session auth only, never bearer |
 
 ## Cron script sketch

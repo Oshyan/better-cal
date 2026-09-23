@@ -131,7 +131,7 @@ echo "== composer + migrate (dev) =="
 ssh "${REMOTE}" "DEV_DIR='${DEV_DIR}' APP_USER='${APP_USER}' bash -s" <<'EOF'
 set -euo pipefail
 chown -R "${APP_USER}:${APP_USER}" "${DEV_DIR}"
-if [ -f "${DEV_DIR}/.env" ]; then chown "root:${APP_USER}" "${DEV_DIR}/.env"; chmod 640 "${DEV_DIR}/.env"; fi
+if [ "$(id -u)" -eq 0 ] && [ -f "${DEV_DIR}/.env" ]; then chown "root:${APP_USER}" "${DEV_DIR}/.env"; chmod 640 "${DEV_DIR}/.env"; fi
 sudo -u "${APP_USER}" bash -c "cd ${DEV_DIR}/server && composer install --no-dev --quiet --no-interaction"
 sudo -u "${APP_USER}" php "${DEV_DIR}/server/bin/migrate.php"
 EOF

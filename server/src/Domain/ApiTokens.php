@@ -84,6 +84,15 @@ final class ApiTokens
     }
 
     /** Resolve a bearer token to its user row (password hash removed); null if unknown or expired. */
+    /** The id of the token the last successful resolve() matched. */
+    public ?int $lastTokenId = null;
+
+    /** Is this token still usable (exists, not expired)? For channels bound to a token. */
+    public static function stillValid(\BetterCal\Infra\Db $db, int $tokenId): bool
+    {
+        return $db->scalar('SELECT 1 FROM api_tokens WHERE id = ? AND (expires_at IS NULL OR expires_at > ?)', [$tokenId, Time::nowDb()]) !== null;
+    }
+
     public function resolve(string $token): ?array
     {
         if (!self::isValidFormat($token)) {
@@ -99,6 +108,7 @@ final class ApiTokens
             return null;
         }
         $tokenId = (int) $row['token_id'];
+        $this->lastTokenId = $tokenId;
         $lastUsed = $row['token_last_used_at'];
         unset($row['token_id'], $row['token_last_used_at'], $row['password_hash']);
         // Throttle last_used_at writes to once a minute.

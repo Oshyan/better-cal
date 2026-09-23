@@ -20,6 +20,7 @@ final class PushController
         private readonly PushSender $sender,
         private readonly EmailSender $email,
         private readonly ?Throttle $throttle = null,
+        private readonly ?\BetterCal\Infra\Db $db = null,
     ) {
     }
 
@@ -66,22 +67,21 @@ final class PushController
     /** POST /push/subscribe {endpoint, keys:{p256dh, auth}} (upsert) */
     public function subscribe(Request $req): Response
     {
-        $req->requireSession('Registering a device for reminders');
-        $this->subscriptions->subscribe((int) $req->user['id'], $req->body, !empty($req->body['resync']));
+        // A device registered with an API token belongs to that token: revoking
+        // or expiry of the token removes it (migration 029).
+        $this->subscriptions->subscribe((int) $req->user['id'], $req->body, !empty($req->body['resync']), $req->authMethod === 'token' ? $req->tokenId : null);
         return Response::json(['ok' => true]);
     }
 
     /** GET /push/devices: every device reminders go to (session only). */
     public function devices(Request $req): Response
     {
-        $req->requireSession('Listing reminder devices');
         return Response::json(['devices' => $this->subscriptions->devices((int) $req->user['id'])]);
     }
 
     /** DELETE /push/devices/:id (session only). */
     public function removeDevice(Request $req, array $params): Response
     {
-        $req->requireSession('Removing a reminder device');
         $this->subscriptions->remove((int) $req->user['id'], (int) $params['id']);
         return Response::json(['ok' => true]);
     }
@@ -143,7 +143,8 @@ final class PushController
             : null;
         $to = Settings::notifyDestination(
             Settings::withDefaults(is_array($stored) ? $stored : []),
-            (string) ($req->user['email'] ?? '')
+            (string) ($req->user['email'] ?? ''),
+            $this->db
         );
         $ok = $this->email->sendReminder($to, [
             'title' => 'Better-Cal test email',

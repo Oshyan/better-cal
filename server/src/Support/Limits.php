@@ -33,6 +33,11 @@ final class Limits
         // really has, see importEventBudget().
         'IMPORT_BYTES' => 26214400,      // 25 MiB
         'IMPORT_EVENTS' => 20000,
+        // One subscribed feed, per poll. Parsing is bounded before it starts,
+        // like an import: a hostile feed of tiny events otherwise exhausted the
+        // worker's memory on every poll (scan 2026-09-23, F8). Also capped by
+        // the memory PHP really has, see feedEventBudget().
+        'FEED_EVENTS' => 20000,
         // One CalDAV object (one event plus its overrides) from a client.
         'DAV_OBJECT_BYTES' => 1048576,   // 1 MiB
         'DAV_OVERRIDES' => 500,
@@ -92,6 +97,12 @@ final class Limits
         }
         $free = $limit - ($usedBytes ?? memory_get_usage(true)) - self::MEMORY_HEADROOM;
         return max(100, min($configured, intdiv(max(0, $free), self::BYTES_PER_PARSED_EVENT)));
+    }
+
+    /** How many events one feed poll may parse here: FEED_EVENTS, lowered to what fits in memory. */
+    public static function feedEventBudget(?string $memoryLimit = null, ?int $usedBytes = null): int
+    {
+        return min(self::get('FEED_EVENTS'), self::importEventBudget($memoryLimit, $usedBytes));
     }
 
     /** "256M" -> bytes; "-1" and garbage -> 0 (no usable limit). */

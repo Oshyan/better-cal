@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace BetterCal\Infra;
 
+use BetterCal\Domain\Sanitize;
 use BetterCal\Support\Limits;
 
 /**
@@ -157,7 +158,7 @@ final class MailFetcher
         $html = $message->hasHTMLBody() ? self::clip((string) $message->getHTMLBody()) : null;
         $text = $message->hasTextBody() ? self::clip((string) $message->getTextBody()) : null;
         if ($text === null && $html !== null) {
-            $text = trim(html_entity_decode(strip_tags(preg_replace('/<(script|style)[^>]*>.*?<\/\1>/si', '', $html) ?? '')));
+            $text = trim(html_entity_decode(strip_tags(Sanitize::dropScriptStyle($html))));
         }
 
         return $envelope + ['icsParts' => $icsParts, 'html' => $html, 'text' => $text];

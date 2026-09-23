@@ -14,6 +14,72 @@ namespace BetterCal\Domain;
  */
 final class Sanitize
 {
+    /**
+     * Every <script>/<style> (or other named) block in untrusted HTML, found
+     * by one forward scan: each tag's next position is remembered and only
+     * searched again once passed, the scan never restarts from an earlier
+     * point, and an unclosed block ends it. The regexes this replaces did
+     * O(n*k) work on a body of repeated "<script" (scan 2026-09-23, F9).
+     *
+     * @param list<string> $tags lower-case tag names
+     * @return list<array{tag:string,attrs:string,body:string,start:int,end:int}>
+     */
+    public static function htmlBlocks(string $html, array $tags = ['script', 'style']): array
+    {
+        $lower = strtolower($html);
+        $n = strlen($html);
+        $next = [];
+        $out = [];
+        $pos = 0;
+        while ($pos < $n) {
+            $best = null;
+            $bestTag = null;
+            foreach ($tags as $t) {
+                if (!array_key_exists($t, $next) || ($next[$t] !== false && $next[$t] < $pos)) {
+                    $next[$t] = strpos($lower, '<' . $t, $pos);
+                }
+                if ($next[$t] !== false && ($best === null || $next[$t] < $best)) {
+                    $best = $next[$t];
+                    $bestTag = $t;
+                }
+            }
+            if ($best === null) {
+                break;
+            }
+            $after = $best + 1 + strlen($bestTag);
+            $c = $lower[$after] ?? '';
+            if (!($c === '>' || $c === '/' || ctype_space($c))) {
+                $pos = $after; // "<scripts" or "<script<script": not this tag
+                continue;
+            }
+            $gt = strpos($lower, '>', $after);
+            if ($gt === false) {
+                break;
+            }
+            $close = strpos($lower, '</' . $bestTag, $gt + 1);
+            if ($close === false) {
+                break;
+            }
+            $closeGt = strpos($lower, '>', $close);
+            $end = $closeGt === false ? $n : $closeGt + 1;
+            $out[] = ['tag' => $bestTag, 'attrs' => substr($html, $after, $gt - $after), 'body' => substr($html, $gt + 1, $close - $gt - 1), 'start' => $best, 'end' => $end];
+            $pos = $end;
+        }
+        return $out;
+    }
+
+    /** Untrusted HTML without its script and style blocks (each replaced by a space). Linear. */
+    public static function dropScriptStyle(string $html): string
+    {
+        $out = '';
+        $pos = 0;
+        foreach (self::htmlBlocks($html) as $b) {
+            $out .= substr($html, $pos, $b['start'] - $pos) . ' ';
+            $pos = $b['end'];
+        }
+        return $out . substr($html, $pos);
+    }
+
     /** Tags emitted as-is (no attributes). */
     private const ALLOWED = ['p', 'br', 'b', 'strong', 'i', 'em', 'u', 'a', 'ul', 'ol', 'li', 'div'];
 

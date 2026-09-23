@@ -14,7 +14,13 @@ final class HealthController
     {
     }
 
-    public function health(): Response
+    /**
+     * Anyone may ask whether the service is up (deploys and uptime checks
+     * do); only a signed-in caller learns which version and what time the
+     * server thinks it is. An anonymous visitor gets nothing that helps
+     * fingerprint the install.
+     */
+    public function health(bool $signedIn = false): Response
     {
         $dbOk = true;
         try {
@@ -22,11 +28,11 @@ final class HealthController
         } catch (\Throwable) {
             $dbOk = false;
         }
-        return Response::json([
-            'ok' => true,
-            'time' => Time::iso(Time::nowUtc()->setTimezone(Time::zone(date_default_timezone_get()))),
-            'db' => $dbOk,
-            'version' => $this->cfg['version'],
-        ]);
+        $out = ['ok' => true, 'db' => $dbOk];
+        if ($signedIn) {
+            $out['time'] = Time::iso(Time::nowUtc()->setTimezone(Time::zone(date_default_timezone_get())));
+            $out['version'] = $this->cfg['version'];
+        }
+        return Response::json($out);
     }
 }

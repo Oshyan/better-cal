@@ -62,7 +62,7 @@ Stores the single setting the user enters in the options page: the address of th
 
 **Data usage**: check nothing (it collects no data of any kind), then certify the disclosures.
 
-**Privacy policy URL**: not required when no data is collected; leave blank. If the form insists, use `https://cal.oshyan.com/`.
+**Privacy policy URL**: not required when no data is collected; leave blank. If the form insists, use the repository's README.
 
 ## Distribution tab
 
@@ -76,5 +76,5 @@ After approval, install from the item link on every Chrome profile you use; it s
 No credentials — the redirect is fully verifiable without any account:
 
 ```text
-No login needed. Install; the options page opens: enter any https address, e.g. https://cal.oshyan.com, Save. Then open https://calendar.google.com/calendar/render?action=TEMPLATE&text=Test&dates=20260901T170000Z/20260901T180000Z — it redirects to <address>/add with the same parameters (two dynamic declarativeNetRequest rules, visible in the address bar). That is the full feature set. "Stop redirecting" in the options removes the rules. Google Calendar's own event pages and browsing are unaffected.
+No login needed. Install; the options page opens: enter any https address, e.g. https://cal.example.com, Save. Then open https://calendar.google.com/calendar/render?action=TEMPLATE&text=Test&dates=20260901T170000Z/20260901T180000Z — it redirects to <address>/add with the same parameters (two dynamic declarativeNetRequest rules, visible in the address bar). That is the full feature set. "Stop redirecting" in the options removes the rules. Google Calendar's own event pages and browsing are unaffected.
 ```

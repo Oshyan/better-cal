@@ -286,12 +286,15 @@ function NotificationsSection({ settings, user }) {
   if (!pushSupported()) statusText = 'Not supported in this browser';
   else if (status && !status.vapidConfigured) statusText = 'Server not configured (VAPID keys missing)';
   else if (perm === 'denied') statusText = 'Blocked in this browser; allow notifications in site settings';
-  else if (status && status.subscribed && perm === 'granted') statusText = 'Enabled';
+  else if (perm === 'granted' && (devices && myHash ? devices.some((d) => d.endpointHash === myHash) : status && status.subscribed)) statusText = 'Enabled';
   else if (status && status.subscribed) statusText = 'Subscribed on the server, but this browser has not granted permission';
   else statusText = 'Off';
 
   const canEnable = pushSupported() && status && status.vapidConfigured && perm !== 'denied';
-  const enabled = !!(status && status.subscribed && perm === 'granted');
+  // This device, not the account: after "Remove" on this device the account
+  // may still have others, and this one must offer Enable again.
+  const thisRegistered = devices && myHash ? devices.some((d) => d.endpointHash === myHash) : !!(status && status.subscribed);
+  const enabled = !!(thisRegistered && perm === 'granted');
 
   const run = (fn, okText) => async () => {
     setBusy(true);

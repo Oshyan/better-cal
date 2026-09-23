@@ -59,7 +59,10 @@ final class DavIcs
         }
         if (str_starts_with($stem, 'b64-') && preg_match('/^[A-Za-z0-9_-]+$/', substr($stem, 4)) === 1) {
             $decoded = base64_decode(strtr(substr($stem, 4), '-_', '+/'), true);
-            if (is_string($decoded) && $decoded !== '' && self::objectUri($decoded) === $uri) {
+            // Accept any exact base64url name, not only the ones objectUri would
+            // pick today: 0.1.3 to 0.1.5 encoded more UIDs (":", spaces), and
+            // a client may still hold those names.
+            if (is_string($decoded) && $decoded !== '' && 'b64-' . rtrim(strtr(base64_encode($decoded), '+/', '-_'), '=') === $stem) {
                 return $decoded;
             }
         }

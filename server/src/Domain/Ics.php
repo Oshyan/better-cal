@@ -108,8 +108,11 @@ final class Ics
         }
         // Counted on the unfolded text, the way the parser will read it: a
         // folded "BEGIN:VEV\r\n ENT" used to slip past the count (review of F8).
-        $unfolded = preg_replace('/\r?\n[ \t]/', '', $ics) ?? $ics;
-        $events = preg_match_all('/^BEGIN:VEVENT[ \t]*\r?$/mi', $unfolded);
+        // Every line ending the parser accepts (CRLF, LF, lone CR, extra CRs)
+        // becomes one LF first, so "BEGIN:VEVENT\r\r\n" is counted too.
+        $normalized = preg_replace('/\r*\n|\r+/', "\n", $ics) ?? $ics;
+        $unfolded = preg_replace('/\n[ \t]/', '', $normalized) ?? $normalized;
+        $events = preg_match_all('/^BEGIN:VEVENT[ \t]*$/mi', $unfolded);
         if ($events > $maxEvents) {
             return 'The calendar file holds ' . number_format((int) $events) . ' events, over the limit of ' . number_format($maxEvents);
         }

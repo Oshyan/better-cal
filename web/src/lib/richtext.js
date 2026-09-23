@@ -46,10 +46,34 @@ export const safeLinkMatcher = {
 // Flatten a description (HTML or plain) to text: blocks and <br> become
 // newlines, tags drop, common entities decode. Pure string ops so the
 // popover preview and node tests share it.
+// Closed <script>/<style>/<iframe> blocks removed by one forward scan (a
+// lazy regex here rescanned to the end from every opening tag: F22).
+function dropBlocks(text) {
+  const lower = text.toLowerCase();
+  let out = '';
+  let pos = 0;
+  for (;;) {
+    let best = -1;
+    let tag = '';
+    for (const t of ['script', 'style', 'iframe']) {
+      const i = lower.indexOf('<' + t, pos);
+      if (i !== -1 && (best === -1 || i < best)) { best = i; tag = t; }
+    }
+    if (best === -1) break;
+    const gt = lower.indexOf('>', best);
+    const close = gt === -1 ? -1 : lower.indexOf('</' + tag, gt);
+    if (close === -1) break; // unclosed: keep the rest as text
+    const end = lower.indexOf('>', close);
+    out += text.slice(pos, best);
+    pos = end === -1 ? text.length : end + 1;
+  }
+  return out + text.slice(pos);
+}
+
 export function stripToText(text) {
   if (typeof text !== 'string' || text === '') return '';
   if (!hasHtml(text)) return text;
-  let s = text.replace(/<(script|style|iframe)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, '');
+  let s = dropBlocks(text);
   s = s.replace(/<br\s*\/?>/gi, '\n');
   s = s.replace(/<\/(p|div|li|ul|ol|h[1-6]|blockquote|tr)\s*>/gi, '\n');
   s = s.replace(/<[^>]+>/g, '');

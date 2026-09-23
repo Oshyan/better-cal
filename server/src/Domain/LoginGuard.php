@@ -40,12 +40,15 @@ final class LoginGuard
     // allowed per source, 60 failures already take 6 sources, so the bar has
     // to sit well above that for a handful of addresses not to be able to
     // shut every new device out (F14; the first cut at 6 changed nothing).
-    public const GLOBAL_SOURCES = 20;
+    // 10 balances the two risks: fewer addresses cannot lock you out, and
+    // an attacker below the bar still gets at most 9 x 10 guesses per window
+    // against a bcrypt hash.
+    public const GLOBAL_SOURCES = 10;
     // Password checks allowed in flight at once from one source, on top of
     // its remaining failure budget: a client opening many connections with a
     // correct password must not be refused, while a burst of guesses stays
     // bounded (review of the 2026-09-23 fixes, B1).
-    public const INFLIGHT_SLACK = 10;
+    public const INFLIGHT_SLACK = 3;
     private const INFLIGHT_WINDOW = 60;
     public const KNOWN_FOR = 2592000;   // a successful sign-in vouches for its source for 30 days
 
@@ -173,9 +176,12 @@ final class LoginGuard
     /** The attempt begun with begin() failed: it becomes a failure; the one that closes the door is journaled. */
     public function rejected(string $source, string $door, ?\DateTimeImmutable $now = null): void
     {
+        // Failure first, then the in-flight mark goes: no moment where the
+        // attempt is counted nowhere.
+        $closing = $this->recordFailure($source, $now);
         $this->throttle->release($this->pending);
         $this->pending = [];
-        if ($this->recordFailure($source, $now)) {
+        if ($closing) {
             $this->journalBlock($source, $door);
         }
     }

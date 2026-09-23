@@ -89,8 +89,15 @@ export async function runHandoff(handoff) {
   } else if (path === '/google') {
     // Back from Google's consent screen (GoogleController::callback).
     set({ route: 'settings', settingsTab: 'connections' });
-    if (params.get('connected')) toast('Connected ' + params.get('connected') + '. Pick the calendars to add below.');
-    else if (params.get('error')) toast('Google sign-in failed: ' + params.get('error'), { error: true });
+    // Fixed words for fixed codes: nothing from the URL reaches the screen (F16).
+    const GOOGLE_ERRORS = {
+      denied: 'Google sign-in was cancelled; nothing was connected.',
+      state: 'The Google sign-in did not come back the way it left (it expired or was started elsewhere). Try again.',
+      failed: 'Google accepted the sign-in but connecting the account failed. Try again; the server log has the detail.',
+      google: 'Google reported a problem with the sign-in. Try again.',
+    };
+    if (params.get('connected')) toast('Google account connected. Pick the calendars to add below.');
+    else if (params.get('error')) toast(GOOGLE_ERRORS[params.get('error')] || 'Google sign-in did not complete. Try again.', { error: true });
   } else if (path === '/share') {
     const p = handoff.params || {};
     const shared = [p.url, p.text, p.title].filter(Boolean).join(' ').trim();

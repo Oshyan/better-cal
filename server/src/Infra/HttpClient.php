@@ -72,13 +72,22 @@ final class HttpClient
             if ($ip === '::1' || $ip === '::') {
                 return true;
             }
+            // Only global unicast (2000::/3) is a real destination. That alone
+            // refuses NAT64 (64:ff9b::/96, 64:ff9b:1::/48), IPv4-compatible
+            // ::/96, ULA, link-local, site-local and multicast; a NAT64
+            // address wrapping 10.0.0.5 used to pass (scan 2026-09-23, F24).
             $first = ord($bin[0]);
-            $second = ord($bin[1]);
-            if (($first & 0xFE) === 0xFC) {                     // fc00::/7 ULA
+            if (($first & 0xE0) !== 0x20) {
                 return true;
             }
-            if ($first === 0xFE && ($second & 0xC0) === 0x80) { // fe80::/10 link-local
-                return true;
+            $hex = bin2hex($bin);
+            if (str_starts_with($hex, '20010db8') || str_starts_with($hex, '20010000')) {
+                return true; // documentation range; Teredo (wraps an IPv4 we cannot see)
+            }
+            if (str_starts_with($hex, '2002')) {
+                // 6to4 carries its IPv4 in bits 16-47: judge that address
+                $v4 = inet_ntop(substr($bin, 2, 4));
+                return !is_string($v4) || self::isForbiddenIp($v4);
             }
             return false;
         }

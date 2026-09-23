@@ -313,6 +313,14 @@ final class ReviewQueue
             throw HttpError::conflict('review_stale', 'This change is out of date (' . $why . '): a newer version of the invitation has already been applied. The item has been closed.');
         }
 
+        // The organizer the event was bound to stays bound. The incoming
+        // ORGANIZER was only checked against the bound one OR the (spoofable)
+        // envelope From, so storing it wholesale let a forged message
+        // rebind the invitation to the attacker (scan 2026-09-23, F23).
+        if (is_array($storedInvite) && !empty($storedInvite['organizer']) && $incoming !== []) {
+            $incoming['organizer'] = $storedInvite['organizer'];
+        }
+
         $method = (string) ($payload['method'] ?? '');
         $patch = $method === 'CANCEL' ? ['status' => 'cancelled'] : (array) ($payload['fields'] ?? []);
         if ($method !== 'CANCEL' && (string) ($event['status'] ?? '') === 'cancelled') {

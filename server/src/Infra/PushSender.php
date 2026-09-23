@@ -49,6 +49,18 @@ final class PushSender
     }
 
     /**
+     * The Topic header travels in the clear to the push service. The tag it
+     * stands for is "<eventId>:<start>", so base64 of it told the service
+     * which event and exactly when (scan 2026-09-23, F25). A keyed hash
+     * keeps one Topic per occurrence (so repeats still collapse) and reveals
+     * nothing. 32 base64url characters, as the header allows.
+     */
+    public static function topicFor(string $tag, string $key): string
+    {
+        return substr(rtrim(strtr(base64_encode(hash_hmac('sha256', $tag, $key !== '' ? $key : 'better-cal-push', true)), '+/', '-_'), '='), 0, 32);
+    }
+
+    /**
      * Why this endpoint may not be delivered to, or null when it may. Pure;
      * unit-tested. Used when a subscription is stored AND again at send time,
      * so rows saved before the policy existed (or under a since-removed extra
@@ -130,7 +142,7 @@ final class PushSender
             // Collapse repeated sends for the same occurrence at the push
             // service (Topic header), mirroring the client-side tag replace.
             if (!empty($payload['tag'])) {
-                $options['topic'] = substr(preg_replace('/[^A-Za-z0-9_\-=]/', '', base64_encode((string) $payload['tag'])), 0, 32);
+                $options['topic'] = self::topicFor((string) $payload['tag'], (string) ($this->cfg['session_secret'] ?? ''));
             }
             $report = $webPush->sendOneNotification(
                 $sub,

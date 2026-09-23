@@ -9,7 +9,7 @@
 // is client-sanitized too so stored feed HTML can never execute here.
 
 import { html, useState, useRef, useEffect } from '../../vendor/index.js';
-import { hasHtml, sanitizeHtml, textToHtml } from '../lib/richtext.js';
+import { hasHtml, sanitizeHtml, textToHtml, safeLinkMatcher } from '../lib/richtext.js';
 
 function loadScript(src, ready) {
   return new Promise((resolve, reject) => {
@@ -82,6 +82,7 @@ export function RichText({ seed, seedKey, onChange, ariaLabel }) {
     loadSquire().then((Squire) => {
       if (disposed || !elRef.current) return;
       const editor = new Squire(elRef.current);
+      editor.linkRegExp = safeLinkMatcher; // Squire's own pattern backtracks exponentially (F27/F28)
       editorRef.current = editor;
       const readFormats = () => setFormats({
         B: editor.hasFormat('B'),

@@ -19,7 +19,7 @@ import {
   parseISO, dateOfDayKey, fmtRange, fmtDateFull, fmtTime, occDayKey, zoneNote,
 } from '../lib/dates.js';
 import { fmtReminder } from '../lib/reminders.js';
-import { hasHtml, sanitizeHtml } from '../lib/richtext.js';
+import { hasHtml, sanitizeHtml, splitUrlTail } from '../lib/richtext.js';
 import { EventPluginData } from './EventPluginData.js';
 import { gmapsUrl, mapMosaic, stadiaStyle, mapTilerStyle } from '../lib/maps.js';
 import { Skeleton } from './PageShell.js';
@@ -88,9 +88,13 @@ function linkify(text) {
   while ((m = re.exec(text)) !== null) {
     if (m.index > last) out.push(text.slice(last, m.index));
     const raw = m[0];
-    const url = raw.replace(/[),.;:!?\]]+$/, ''); // trailing punctuation is prose
-    out.push(html`<a href=${url} target="_blank" rel="noopener noreferrer">${url}</a>`);
-    if (raw.length > url.length) out.push(raw.slice(url.length));
+    const [url, tail] = splitUrlTail(raw); // trailing punctuation is prose (F26)
+    if (url === null || url === '') {
+      out.push(raw);
+    } else {
+      out.push(html`<a href=${url} target="_blank" rel="noopener noreferrer">${url}</a>`);
+      if (tail) out.push(tail);
+    }
     last = m.index + raw.length;
   }
   if (last < text.length) out.push(text.slice(last));

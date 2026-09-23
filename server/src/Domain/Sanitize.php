@@ -90,7 +90,8 @@ final class Sanitize
     public static function isHtml(?string $text): bool
     {
         // A '<' immediately followed by a tag name (or '/'): markup, not prose.
-        return $text !== null && preg_match('/<\/?[a-zA-Z][^>]*>/', $text) === 1;
+        // [^<>], not [^>]: linear on "<a<a<a..." with no ">" (scan 2026-09-23, F22).
+        return $text !== null && preg_match('/<\/?[a-zA-Z][^<>]*>/', $text) === 1;
     }
 
     /**

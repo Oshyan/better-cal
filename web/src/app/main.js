@@ -154,6 +154,23 @@ if ('serviceWorker' in navigator) {
     // /sw.js only: the app fills in its version as it serves it. The same
     // file under /assets/ is the raw template, which would run without one.
     navigator.serviceWorker.register('/sw.js')
+      .then((reg) => {
+        // The browser only looks for a new version when a page loads. An
+        // installed app brought back from the background loads nothing, so
+        // it could run an old version for hours after a deploy. Look when the
+        // app comes back into view (at most once a minute) and every 30
+        // minutes while it stays open; a new version reports 'sw-updated'.
+        let lastCheck = Date.now();
+        const check = () => {
+          if (Date.now() - lastCheck < 60000) return;
+          lastCheck = Date.now();
+          reg.update().catch(() => { /* offline: try again next time */ });
+        };
+        document.addEventListener('visibilitychange', () => {
+          if (document.visibilityState === 'visible') check();
+        });
+        setInterval(check, 30 * 60000);
+      })
       .catch(() => { /* offline support unavailable */ });
   });
 }

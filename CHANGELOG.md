@@ -4,6 +4,10 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.3.6 (2026-09-24)
+
+- The installed app picks up new versions when you come back to it. The browser only checks for an update when a page loads, and an installed app brought back from the background loads nothing, so a phone could keep running an old version for hours after a release. It now checks each time the app comes back into view (at most once a minute) and every 30 minutes while open, then updates at the next quiet moment as before.
+
 ## 0.3.5 (2026-09-24)
 
 - Press and hold on the phone's New and Today buttons no longer ends with an extra tap. On iPhone, lifting your finger after a hold sent a click to whatever was now under it, which was the New sheet's "Calendar" row; the click that ends a hold is now dropped wherever it lands.

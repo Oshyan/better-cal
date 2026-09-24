@@ -15,6 +15,7 @@ Honest answers are the promise. Some things will be declined because they are no
 - Requirements and setup: `docs/install.md`. Copy `.env.example` to `.env`; only the database, base URL and session secret are required.
 - Layout and conventions: `docs/architecture.md`. Plain PHP 8.3+ with no framework on the server, Preact + HTM with no build step on the client. Read that before adding a dependency; the bar for one is high.
 - Writing a plugin: `docs/plugins/authoring.md`.
+- Run `git config core.hooksPath .githooks` once after cloning. The pre-commit hook then regenerates the preload block in `web/index.html` and the service worker's version in `web/sw.js` whenever a commit touches `web/`. The static test fails if those are stale.
 
 ## Before you open a pull request
 

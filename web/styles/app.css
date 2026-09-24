@@ -3036,3 +3036,73 @@ button.bc-review-title { color: var(--fg); padding: 0; }
   .bc-chip.is-anim-pulse, .bc-bar.is-anim-pulse, .bc-band.is-anim-pulse,
   .bc-chip.is-anim-shimmer, .bc-bar.is-anim-shimmer, .bc-band.is-anim-shimmer { animation: none; }
 }
+
+
+/* --- phones and touch: mobile audit phase 1 (0.3.0) ------------------------ */
+/* Bugs and baseline touch fixes only; the phone layout itself comes in later
+   phases (the audit report at claude.ai/artifact/MAqTCSCsxnp22y8Z8UEVxG). */
+
+/* The loading skeleton takes the phone's shape: no sidebar column squeezing
+   the grid into a sliver before the app snaps to its real layout. */
+@media (max-width: 640px) {
+  .bc-boot-body { grid-template-columns: 1fr; }
+  .bc-boot-side { display: none; }
+}
+
+/* Toasts on a narrow screen: the message keeps a readable width and the
+   choices wrap beneath it, instead of the message being crushed into a
+   one-word column beside buttons that refuse to wrap. */
+@media (max-width: 640px) {
+  .bc-toasts { left: 12px; right: 12px; transform: none; bottom: calc(12px + env(safe-area-inset-bottom, 0px)); }
+  .bc-toast { flex-wrap: wrap; row-gap: 2px; max-width: 100%; }
+  .bc-toast > span:first-child { flex: 1 1 14em; min-width: 0; }
+}
+
+/* Agenda rows are a fixed height (virtualized), so on a phone the title
+   yields instead of the triage buttons running off the edge. Thumbs and the
+   location stay on the event card, one tap away. */
+@media (max-width: 640px) {
+  .bc-agenda-row { overflow: hidden; }
+  .bc-agenda-row .bc-chip { flex: 1 1 auto; min-width: 0; max-width: none; }
+  .bc-agenda-row .bc-triage-sep,
+  .bc-agenda-row .bc-triage-thumb,
+  .bc-agenda-row .bc-agenda-loc { display: none; }
+}
+
+/* Card button rows wrap rather than push the page sideways (People). */
+.bc-card-actions { flex-wrap: wrap; max-width: 100%; }
+
+/* Quick add's time fields were a fixed 88px, which clipped "06:00 PM" to
+   "06:00 P" even before the touch font size; size them to the text. */
+.bc-qa-time { width: auto; min-width: 8.6em; }
+
+@media (pointer: coarse) {
+  /* iOS Safari zooms the page when a field under 16px takes focus, and does
+     not zoom back. !important because many fields set a smaller size by
+     class; on touch, 16px is the floor. */
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]),
+  select, textarea, [contenteditable="true"] { font-size: max(16px, 1em) !important; }
+
+  /* Tap targets: an invisible hit area of at least 44×44 around each small
+     control, so layout and density stay as they are. :where() keeps this at
+     zero specificity: any control already positioned keeps its position. */
+  :where(.bc-icon-btn, .bc-btn, .bc-link-btn, .bc-menu-btn, .bc-toast-undo, .bc-more, .bc-agenda-dayadd, .bc-toolbar-month, .bc-folder-head) { position: relative; }
+  :where(.bc-icon-btn, .bc-btn, .bc-link-btn, .bc-menu-btn, .bc-toast-undo, .bc-more, .bc-agenda-dayadd, .bc-toolbar-month, .bc-folder-head)::after {
+    content: ""; position: absolute;
+    top: min(0px, calc((100% - 44px) / 2)); bottom: min(0px, calc((100% - 44px) / 2));
+    left: min(0px, calc((100% - 44px) / 2)); right: min(0px, calc((100% - 44px) / 2));
+  }
+  /* Controls packed side by side grow only vertically, so a tap near one
+     edge never lands on the neighbour. */
+  :where(.bc-triage-btn, .bc-seg-btn, .bc-ctx-token) { position: relative; }
+  :where(.bc-triage-btn, .bc-seg-btn, .bc-ctx-token)::after {
+    content: ""; position: absolute; left: 0; right: 0;
+    top: min(0px, calc((100% - 40px) / 2)); bottom: min(0px, calc((100% - 40px) / 2));
+  }
+  /* A split button's halves touch: grow them vertically only, so the edge of
+     "+ New" never opens the menu beside it. */
+  .bc-newmenu > .bc-btn::after { left: 0; right: 0; }
+  /* Lists people scroll and tap through get real row heights. */
+  [role^="menuitem"] { min-height: 44px; }
+  .bc-cal-row { min-height: 40px; }
+}

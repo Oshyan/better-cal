@@ -4,6 +4,18 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.3.0 (2026-09-24)
+
+Phones and touch, phase 1 of the mobile pass: fixes only, no layout changes yet.
+
+- On touch screens every button, link and menu item gets a tap area of at least 44 by 44 points, without changing how anything looks. Menu items and sidebar rows are taller. Controls that sit side by side (triage buttons, segmented choices, the two halves of New) grow only vertically, so a tap never lands on the neighbor.
+- On touch screens text fields, pickers and the description editor use at least 16px text, so iPhone Safari no longer zooms the page when you tap into one.
+- Agenda on a phone: the triage buttons no longer run off the right edge. The title shrinks instead; thumbs and location stay on the event card.
+- The time-zone notice on a phone keeps its message readable, with the two choices beneath it, instead of a one-word-wide column over half the screen.
+- People on a phone: each card's buttons wrap instead of pushing the page sideways.
+- The loading skeleton takes the phone layout, instead of a desktop sidebar squeezing the grid.
+- Quick add's time fields fit their text ("06:00 PM" was clipped to "06:00 P"), on desktop too.
+
 ## 0.2.6 (2026-09-24)
 
 Two visible fixes.

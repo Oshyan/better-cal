@@ -3115,7 +3115,7 @@ button.bc-review-title { color: var(--fg); padding: 0; }
    640px is the phone breakpoint (lib/breakpoints.js). */
 .bc-bottombar, .bc-fchips { display: none; }
 /* Keyboard shortcuts mean nothing without a keyboard. */
-@media (pointer: coarse) { .bc-kbd-btn { display: none; } }
+@media (pointer: coarse) { .bc-kbd-btn, .bc-ov-key { display: none; } }
 @media (max-width: 640px) {
   .bc-toolbar { flex-wrap: nowrap; min-height: 44px; padding: 0 8px 0 2px; gap: 2px; }
   .bc-toolbar > .bc-brand,

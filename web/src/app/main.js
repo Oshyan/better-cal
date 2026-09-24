@@ -8,6 +8,7 @@ import { fetchMe, loadCalendars, loadSavedViews, loadConfig, loadPeople, loadPlu
 import { announceSystemHealth } from './system.js';
 import { installHoverPrefetch } from './prefetch.js';
 import { armQuietReload, restoreDraftsAfterBoot, installActivityTracking } from './drafts.js';
+import { installResumeSaving, restoreResume } from './resume.js';
 import { preloadRichText } from './RichText.js';
 import { loadLeaflet } from './EventDetail.js';
 import { localTz, sameClock, tzCity, tzOffsetLabel } from '../lib/dates.js';
@@ -47,8 +48,12 @@ async function boot() {
   } catch (e) {
     // 401 already flipped authed=false; anything else lands on login too.
   }
+  // Back where you were after a reload (resume.js), unless a link or a
+  // share is what opened the app.
+  if (authed && !handoff) restoreResume();
   set({ booted: true, pendingHandoff: authed ? null : handoff });
   if (authed) {
+    installResumeSaving();
     // Notification deep link (/?event=instanceId): open that event's detail.
     handleEventLink().catch(() => { /* best-effort */ });
     runHandoff(handoff).catch(() => { /* best-effort */ });

@@ -16,6 +16,7 @@
 // Closing the tab is a deliberate act; an unexpected reload is not.
 
 import { state, set, toast } from './store.js';
+import { saveResume } from './resume.js';
 
 const EDITOR_KEY = 'bc-editor-draft';
 const QUICKADD_KEY = 'bc-quickadd-draft';
@@ -101,11 +102,12 @@ export function restoreDraftsAfterBoot() {
 
 // --- quiet reload -----------------------------------------------------------
 
-// A new version is active behind this page. Apply it at the next quiet
-// moment: the tab is hidden, or nothing has been touched for QUIET_MS and no
-// gesture or modal flow is mid-way. Drafts survive, so nothing is lost; the
-// only thing a reload interrupts is reading, and it waits for that to pause.
-const QUIET_MS = 20000;
+// A new version is active behind this page. Apply it while the app is out of
+// sight (hidden), or after it has sat untouched for QUIET_MS with no gesture
+// or modal flow mid-way. Drafts survive, and so does where you were
+// (resume.js), so coming back finds the same place. A shorter idle wait used
+// to reload under someone who was only reading.
+const QUIET_MS = 10 * 60000;
 let lastInput = Date.now();
 let pointerDown = false;
 let armed = false;
@@ -123,6 +125,7 @@ export function armQuietReload() {
       || (Date.now() - lastInput > QUIET_MS && !pointerDown && !state.reschedule && !state.dropChoice);
     if (quiet) {
       armed = false;
+      saveResume();
       location.reload();
     }
   };

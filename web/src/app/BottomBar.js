@@ -18,7 +18,7 @@
 
 import { html, useRef, useEffect } from '../../vendor/index.js';
 import { useStore, set, shallowEq } from './store.js';
-import { setView, goToday, setOverviewMode, effectiveOverviewMode, toggleRel, showOnlyRel, showAllRel } from './actions.js';
+import { setView, setOverviewMode, effectiveOverviewMode, toggleRel, showOnlyRel, showAllRel } from './actions.js';
 import { REL_LABEL, REL_ORDER } from './Relationship.js';
 import { useSavedViewPicker } from './ViewSwitcher.js';
 import { trapFocus } from '../ui/DayExpand.js';
@@ -209,13 +209,15 @@ function NewSheet({ onClose }) {
 export function BottomBar() {
   const s = useStore((st) => ({
     view: st.view, overviewMode: st.settings.overviewMode, sheet: st.phoneSheet,
-    filterOn: filterActive(st), nowMinute: st.nowMinute,
+    filterOn: filterActive(st), route: st.route, reviewCount: st.reviewCount,
   }), shallowEq);
-  const toggle = (name) => set({ phoneSheet: s.sheet === name ? null : name });
+  // View and Filter act on the calendar, so they bring it back from a page
+  // such as Review.
+  const toggle = (name) => set({ phoneSheet: s.sheet === name ? null : name, route: 'calendar' });
+  const onReview = s.route === 'review';
   const close = () => set({ phoneSheet: null });
   const cur = PHONE_VIEWS.find(([k]) => k === phoneViewKey(s.view)) || PHONE_VIEWS[0];
   const newPress = useHold(() => set({ quickAddOpen: true, phoneSheet: null }), () => set({ phoneSheet: 'new' }));
-  const todayPress = useHold(() => { close(); goToday(); }, () => set({ phoneSheet: null, jumpOpen: true }));
   return html`<nav class="bc-bottombar" aria-label="Calendar actions">
       <button type="button" class=${'bc-bb-btn' + (s.sheet === 'view' ? ' is-open' : '')} aria-haspopup="dialog" aria-expanded=${s.sheet === 'view'} onClick=${() => toggle('view')}>
         <${Icon} name=${cur[2]} size=${22} /><span>${cur[1]}</span>
@@ -229,8 +231,15 @@ export function BottomBar() {
       <button type="button" class=${'bc-bb-btn' + (s.filterOn ? ' is-on' : '') + (s.sheet === 'filter' ? ' is-open' : '')} aria-haspopup="dialog" aria-expanded=${s.sheet === 'filter'} aria-label=${s.filterOn ? 'Filter (on)' : 'Filter'} onClick=${() => toggle('filter')}>
         <${Icon} name="filters" size=${22} /><span>Filter</span>
       </button>
-      <button type="button" class="bc-bb-btn bc-bb-today" aria-label="Today: tap to go to today, hold to jump to a date" ...${todayPress}>
-        <span class="bc-bb-date">${new Date().getDate()}</span><span>Today</span>
+      <button
+        type="button" class=${'bc-bb-btn' + (onReview ? ' is-open' : '')}
+        aria-label=${'Review' + (s.reviewCount ? ': ' + s.reviewCount + ' waiting on a decision' : '')}
+        aria-pressed=${onReview}
+        onClick=${() => set({ phoneSheet: null, route: onReview ? 'calendar' : 'review' })}
+      >
+        <${Icon} name="review" size=${22} />
+        ${s.reviewCount > 0 && html`<span class="bc-bb-count" aria-hidden="true">${s.reviewCount > 99 ? '99+' : s.reviewCount}</span>`}
+        <span>Review</span>
       </button>
     </nav>
     ${s.sheet === 'view' && html`<${ViewSheet} onClose=${close} />`}

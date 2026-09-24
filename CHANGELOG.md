@@ -4,6 +4,16 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.3.9 (2026-09-24)
+
+- Coming back to the app after an update, or after the phone set it aside, opens where you were: the same view, the same place in the calendar, the saved view in use and the filter text. Before, a reload opened on today in the default view. Updates now apply only while the app is out of sight, or after 10 minutes untouched (was 20 seconds), and a fresh launch, or a return after half an hour, still opens on today.
+- On phones and narrow windows, swipe the sidebar in from the left edge of the calendar (the column with the month names) and swipe it back out, as in Google Calendar's app. It follows the finger and finishes past a third of the way or with a flick. On Android, start just inside the screen edge; the edge itself is the system's back gesture.
+- Phone top bar: previous and next sit together before the month name, so they no longer move as the month's name gets longer or shorter. Today is back in the top bar, at the right, as a badge showing today's date. The menu icon is larger.
+- Phone bottom bar: Review (invitations, held changes and proposals waiting on a decision, with their count) takes the slot Today left. View and Filter bring you back to the calendar from Review or any other page.
+- The New button has a ring in the bottom bar's own colour and edge, and a soft glow, so it stands out from the calendar behind it.
+- Month and 3-day views: the month names in the left column are larger and bolder, and alternate months are shaded more clearly, in both themes.
+- The mark beside a day when the Show filter hides some of its events is now the half-filled circle the sidebar uses for "some shown", and on touch screens it can be tapped (it shows everything again, as clicking it does on desktop). Before, a tap missed it and opened a new event.
+
 ## 0.3.8 (2026-09-24)
 
 Phones: the top bar and the bottom bar's edge.

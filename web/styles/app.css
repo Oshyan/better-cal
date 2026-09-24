@@ -3189,6 +3189,9 @@ button.bc-review-title { color: var(--fg); padding: 0; }
 .bc-bsheet-row:disabled { opacity: .5; }
 .bc-bsheet-ico { width: 20px; display: inline-flex; justify-content: center; color: var(--fg-muted); flex: none; }
 .bc-bsheet-row.is-sel .bc-bsheet-ico { color: var(--accent); }
+/* Checkboxes (Filter's Show list) keep plain text: the check marks what is on,
+   and blue is saved for the single current choice in a list of options. */
+.bc-bsheet-row[role="menuitemcheckbox"].is-sel { color: var(--fg); font-weight: 400; }
 .bc-bsheet-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bc-bsheet-check { display: inline-flex; color: var(--accent); }
 .bc-bsheet-inline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 6px 12px; font-size: 14px; color: var(--fg-muted); }

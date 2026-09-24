@@ -42,8 +42,11 @@ fi
 # if that changed anything (or they had uncommitted edits already): what ships
 # must be what is committed and tagged. It used to regenerate after the
 # release commit and ship the result, leaving web/sw.js modified and the tag
-# out of step with production (0.2.2, 0.2.4). The deploy never commits for
-# you; the dev deploy keeps --check as its gate.
+# out of step with production (0.2.2, 0.2.4). The pre-commit hook in
+# .githooks regenerates them on every commit that touches web/, so with it
+# enabled (git config core.hooksPath .githooks) this never trips; it is the
+# backstop for a clone without the hook. The deploy never commits for you;
+# the dev deploy keeps --check as its gate.
 echo "== generated assets =="
 node "${ROOT_DIR}/scripts/gen-preload.mjs"
 if ! git -C "${ROOT_DIR}" diff --quiet HEAD -- web/sw.js web/index.html; then
@@ -53,6 +56,8 @@ if ! git -C "${ROOT_DIR}" diff --quiet HEAD -- web/sw.js web/index.html; then
   echo "commit them so the deployed files match the commit, then run the deploy again:" >&2
   echo "" >&2
   echo "  git add web/sw.js web/index.html && git commit -m 'Regenerate preload block and sw version'" >&2
+  echo "" >&2
+  echo "To have every commit do this for you: git config core.hooksPath .githooks" >&2
   exit 1
 fi
 

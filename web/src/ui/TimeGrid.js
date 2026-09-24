@@ -26,6 +26,7 @@ import { EventBlock, EventBar, HiddenMark } from './EventChip.js';
 import { ContextStrip, ContextMark } from './ContextStrip.js';
 import { contextByDay, isContext } from '../lib/context.js';
 import { Icon } from './icons.js';
+import { COMPACT_QUERY } from '../lib/breakpoints.js';
 import { startPointerDrag, cloneAsGhost, externalDropTarget, setDropRowHighlight } from './DragController.js';
 import {
   dayRangeDraft, allDayRangeDraft, dragCreateMode, normalizeDayRange,
@@ -38,7 +39,7 @@ const GUTTER = 52;   // px hour gutter
 const DAY_SPAN = 3653; // days either side of today (~10 years) in infinite mode
 const H_BUFFER = 3;    // extra day columns rendered either side
 const EDGE_HINT_PX = 24; // scroll distance before an edge hint counts as "more"
-const NARROW_QUERY = '(max-width: 800px)';
+const NARROW_QUERY = COMPACT_QUERY;
 // Day view (vstack): consecutive days stacked vertically. The window is a
 // fixed-size band that recenters on the day you scroll to, so the DOM stays
 // bounded while scrolling feels endless.

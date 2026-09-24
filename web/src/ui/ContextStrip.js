@@ -42,15 +42,15 @@ function Token({ occ, cal, onOpen, zone = true }) {
 /**
  * @param {{occs:object[], calendars:object, max?:number, onOpen?:Function, onMore?:Function}} props
  * occs: this day's context (lib/context.js contextByDay). max: tokens
- * before "+N"; onMore opens the day.
+ * before "+N" (none when more is false); onMore opens the day.
  */
-export function ContextStrip({ occs, calendars, max = Infinity, onOpen, onMore, zone = true }) {
+export function ContextStrip({ occs, calendars, max = Infinity, more = true, onOpen, onMore, zone = true }) {
   if (!occs || occs.length === 0) return null;
   const shown = occs.slice(0, max);
   const rest = occs.length - shown.length;
   return html`<span class="bc-ctxstrip" role="list" aria-label="Context for this day">
     ${shown.map((occ) => html`<${Token} key=${occ.instanceId} occ=${occ} cal=${calendars && calendars[occ.calendarId]} onOpen=${onOpen} zone=${zone} />`)}
-    ${rest > 0 && html`<span
+    ${more && rest > 0 && html`<span
       role="button" tabindex="0" class="bc-ctx-more"
       title=${occs.slice(max).map((o) => contextTitle(o)).join('\n')}
       onPointerDown=${(e) => e.stopPropagation()}

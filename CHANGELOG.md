@@ -4,6 +4,10 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.3.7 (2026-09-24)
+
+- On a phone, the full month no longer squeezes context (weather, AQI, sun, tides) beside each day number, and the 3-day view shows one item, usually the weather, without a "+N". Opening a day still lists all of them. Desktop is unchanged.
+
 ## 0.3.6 (2026-09-24)
 
 - The installed app picks up new versions when you come back to it. The browser only checks for an update when a page loads, and an installed app brought back from the background loads nothing, so a phone could keep running an old version for hours after a release. It now checks each time the app comes back into view (at most once a minute) and every 30 minutes while open, then updates at the next quiet moment as before.

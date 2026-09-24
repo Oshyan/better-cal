@@ -120,7 +120,12 @@ function RelFilter() {
       title="What to show (p, m, a, x toggle each)"
       onClick=${() => setOpen(!open)}
     >${relFilterLabel(showRel)}<span class="bc-viewmenu-caret" aria-hidden="true"><${Icon} name="chevronDown" size=${11} /></span></button>
-    ${open && html`<div class="bc-ov-menu bc-relfilter-drop" role="menu" aria-label="What to show">
+    ${open && html`<${RelMenu} showRel=${showRel} all=${all} />`}
+  </div>`;
+}
+
+function RelMenu({ showRel, all }) {
+  return html`<div class="bc-ov-menu bc-relfilter-drop" role="menu" aria-label="What to show">
       ${REL_ORDER.map((k) => html`<button
         key=${k} type="button" role="menuitemcheckbox"
         aria-checked=${showRel[k] !== false}
@@ -130,18 +135,53 @@ function RelFilter() {
       <div class="bc-ov-sep" role="separator"></div>
       <button type="button" role="menuitem" class="bc-ov-item" onClick=${() => showOnlyRel('planned')}><span class="bc-ov-check"></span>Planned only</button>
       <button type="button" role="menuitem" class="bc-ov-item" disabled=${all} onClick=${() => showAllRel()}><span class="bc-ov-check"></span>Show all</button>
-    </div>`}
+    </div>`;
+}
+
+// Phone only: a row under the top bar, present only while something narrows
+// what the calendar shows, naming each thing. A chip's label opens its
+// control (the Show menu right there, the Filter sheet, the View sheet); its
+// x clears it. The saved view has no x: leaving one can mean saving or
+// discarding changes, which the View sheet asks about.
+function PhoneChips() {
+  const { showRel, filterText, activeView } = useStore((s) => ({
+    showRel: s.showRel, filterText: s.filterText,
+    activeView: s.savedViews.find((v) => v.id === s.activeViewId) || null,
+  }), shallowEq);
+  const [relOpen, setRelOpen] = useState(false);
+  const relRef = useRef(null);
+  useDismiss(relOpen, setRelOpen, relRef);
+  const all = REL_ORDER.every((k) => showRel[k] !== false);
+  const text = (filterText || '').trim();
+  if (all && !text && !activeView) return null;
+  const openFilter = () => {
+    set({ phoneSheet: 'filter' });
+    // After the sheet has taken focus for itself (BottomBar Sheet).
+    setTimeout(() => { const el = document.getElementById('bc-phone-filter'); if (el) el.focus(); }, 60);
+  };
+  const relLabel = relFilterLabel(showRel).replace(/^Show: /, '');
+  return html`<div class="bc-chips" role="toolbar" aria-label="What the calendar is narrowed to">
+    ${activeView && html`<span class="bc-chip is-view">
+      <button type="button" class="bc-chip-body" title="Saved view in use" onClick=${() => set({ phoneSheet: 'view' })}>${activeView.name}</button>
+    </span>`}
+    ${!all && html`<span class="bc-chip bc-ov" ref=${relRef}>
+      <button type="button" class="bc-chip-body" aria-haspopup="menu" aria-expanded=${relOpen} onClick=${() => setRelOpen(!relOpen)}>${relLabel.charAt(0).toUpperCase() + relLabel.slice(1)}</button>
+      <button type="button" class="bc-chip-x" aria-label="Show all" onClick=${() => { setRelOpen(false); showAllRel(); }}><${Icon} name="close" size=${12} /></button>
+      ${relOpen && html`<${RelMenu} showRel=${showRel} all=${all} />`}
+    </span>`}
+    ${text && html`<span class="bc-chip">
+      <button type="button" class="bc-chip-body" title="Edit the filter" onClick=${openFilter}>“${text}”</button>
+      <button type="button" class="bc-chip-x" aria-label="Clear the filter" onClick=${() => set({ filterText: '' })}><${Icon} name="close" size=${12} /></button>
+    </span>`}
   </div>`;
 }
 
 export function Toolbar({ onToggleSidebar }) {
-  const { view, anchor, visibleMonth, filterText, jumpOpen, narrow, activeView } = useStore(
+  const { view, anchor, visibleMonth, filterText, jumpOpen, narrow } = useStore(
     (s) => ({
       view: s.view, anchor: s.anchor, visibleMonth: s.visibleMonth,
       filterText: s.filterText, jumpOpen: s.jumpOpen,
       narrow: s.viewportNarrow,
-      // The phone top bar names the saved view in use (the View sheet picks it).
-      activeView: s.savedViews.find((v) => v.id === s.activeViewId) || null,
       // Subscribed so the dropdown checkmark tracks the persisted setting.
       overviewMode: s.settings.overviewMode,
     }),
@@ -186,8 +226,8 @@ export function Toolbar({ onToggleSidebar }) {
     <button type="button" class="bc-icon-btn bc-tb-search" aria-label="Search" title="Search ( / )" onClick=${() => set({ searchOpen: true })}><${Icon} name="search" size=${16} /></button>
     <button type="button" class="bc-icon-btn bc-qa-btn" aria-label="Quick add" title="Quick add: type it in plain language (c)" onClick=${() => set({ quickAddOpen: true })}><${Icon} name="quickadd" size=${16} /></button>
     <${NewMenu} />
-    ${activeView && html`<button type="button" class="bc-tb-viewname" title="Saved view in use" onClick=${() => set({ phoneSheet: 'view' })}>${activeView.name}</button>`}
-  </header>`;
+  </header>
+  <${PhoneChips} />`;
 }
 
 // "+ New" split menu: Event is the headline action; the caret reveals Trip,

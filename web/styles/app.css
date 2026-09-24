@@ -3108,17 +3108,18 @@ button.bc-review-title { color: var(--fg); padding: 0; }
 
 
 /* --- the phone frame: mobile audit phase 2 (0.3.x) --------------------------- */
-/* A thin top bar (menu, the month title that opens jump-to-date, and the name
-   of a saved view in use) and a bottom bar of five actions (BottomBar.js).
+/* A thin top bar (menu, previous and next around the month title that opens
+   jump-to-date), a row of chips naming whatever narrows the calendar, shown
+   only while something does, and a bottom bar of five actions (BottomBar.js).
    Everything else the desktop toolbar holds lives in the bottom bar's sheets.
    640px is the phone breakpoint (lib/breakpoints.js). */
-.bc-bottombar, .bc-tb-viewname { display: none; }
+.bc-bottombar, .bc-chips { display: none; }
 /* Keyboard shortcuts mean nothing without a keyboard. */
 @media (pointer: coarse) { .bc-kbd-btn { display: none; } }
 @media (max-width: 640px) {
   .bc-toolbar { flex-wrap: nowrap; min-height: 44px; padding: 0 8px 0 2px; gap: 2px; }
+  .bc-toolbar > .bc-brand,
   .bc-toolbar > .bc-tb-today,
-  .bc-toolbar .bc-nav-btn,
   .bc-toolbar > .bc-views,
   .bc-toolbar > .bc-filter-input,
   .bc-toolbar > .bc-relfilter,
@@ -3127,18 +3128,51 @@ button.bc-review-title { color: var(--fg); padding: 0; }
   .bc-toolbar > .bc-tb-search,
   .bc-toolbar > .bc-qa-btn,
   .bc-toolbar > .bc-newmenu { display: none; }
-  .bc-toolbar-nav { min-width: 0; }
-  .bc-toolbar-month { font-size: 17px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .bc-tb-viewname {
-    display: inline-block; flex: none; max-width: 38%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    font-size: 12.5px; font-weight: 600; color: var(--fg-muted);
-    background: var(--bg-inset); border: 1px solid var(--border); border-radius: 8px; padding: 3px 9px;
+  .bc-toolbar-nav { min-width: 0; gap: 0; }
+  .bc-toolbar-month { font-size: 17px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 3px 4px; }
+  /* Previous and next sit either side of the month: small to look at, the
+     full bar height to tap, and never wider than drawn so a press beside the
+     month title opens jump-to-date, not a step. */
+  .bc-toolbar-nav > .bc-toolbar-date { order: 1; }
+  .bc-toolbar-nav > .bc-nav-btn + .bc-nav-btn { order: 2; }
+  .bc-toolbar .bc-nav-btn {
+    width: 32px; height: 32px; padding: 0; display: inline-grid; place-items: center; flex: none;
+    color: var(--fg-muted);
   }
+  .bc-toolbar .bc-nav-btn::after { left: 0; right: 0; }
+  /* The chips row: one line under the top bar, wrapping in the rare case it
+     overflows (a scrolling row would clip the Show menu). */
+  .bc-toolbar:has(+ .bc-chips) { border-bottom-color: transparent; }
+  .bc-chips {
+    display: flex; flex-wrap: wrap; gap: 6px; flex: none;
+    padding: 0 8px 7px; background: var(--bg-raised); border-bottom: 1px solid var(--border);
+    position: relative; z-index: 30;
+  }
+  .bc-chip {
+    display: inline-flex; align-items: center; max-width: 100%; min-width: 0; height: 30px;
+    border-radius: 999px; font-size: 13px; font-weight: 600;
+    background: color-mix(in srgb, var(--accent) 12%, var(--bg-raised));
+    border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border-strong));
+  }
+  .bc-chip.is-view { background: var(--bg-inset); border-color: var(--border-strong); }
+  .bc-chip-body, .bc-chip-x {
+    background: none; border: none; color: var(--fg); height: 100%; position: relative;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .bc-chip-body { padding: 0 4px 0 12px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bc-chip.is-view .bc-chip-body { padding-right: 12px; }
+  .bc-chip-x { padding: 0 10px 0 6px; display: inline-grid; place-items: center; color: var(--fg-muted); flex: none; }
+  /* Tall enough to tap, never reaching into the chip beside. */
+  .bc-chip-body::after, .bc-chip-x::after { content: ""; position: absolute; left: 0; right: 0; top: -7px; bottom: -7px; }
+  .bc-chip .bc-relfilter-drop { top: calc(100% + 4px); }
   /* Agenda's own toggles moved into the sheets (Show past: Filter; order: View). */
   .bc-agenda-toggle { display: none; }
   .bc-bottombar {
     display: grid; grid-template-columns: repeat(5, 1fr); align-items: end; flex: none;
-    background: var(--bg-raised); border-top: 1px solid var(--border);
+    /* A firmer line than the grid's own, so the bar reads as separate from
+       the calendar behind it; mixed from the text colour, it holds in both
+       themes. */
+    background: var(--bg-raised); border-top: 1px solid color-mix(in srgb, var(--fg) 24%, var(--bg-raised));
     padding: 2px 4px calc(2px + env(safe-area-inset-bottom, 0px));
     position: relative; z-index: 40;
   }

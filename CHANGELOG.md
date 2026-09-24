@@ -4,6 +4,10 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.3.10 (2026-09-24)
+
+- The month and 3-day views' left column (month names and week numbers) now alternates by month along with the days, in both themes. Before, only the day cells did.
+
 ## 0.3.9 (2026-09-24)
 
 - Coming back to the app after an update, or after the phone set it aside, opens where you were: the same view, the same place in the calendar, the saved view in use and the filter text. Before, a reload opened on today in the default view. Updates now apply only while the app is out of sight, or after 10 minutes untouched (was 20 seconds), and a fresh launch, or a return after half an hour, still opens on today.

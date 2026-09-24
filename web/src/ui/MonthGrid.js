@@ -680,6 +680,11 @@ function WeekRow({
   // Bars and chips shift down by the band block so bands never eat lanes.
   const bandList = bands || [];
   const bandH = mobile ? BAND_H_MOBILE : BAND_H;
+  // Context tokens (weather, sun, tides) beside the day number. On a phone
+  // the full month's cells have no room for them: none there, and one in the
+  // 3-day view (the first is the weather, all-day items sort first), with no
+  // "+N"; the day itself lists them all.
+  const ctxMax = mobile ? (columns >= 7 ? 0 : 1) : (columns >= 7 ? 2 : 4);
   const bandLanes = assignLanes(bandList.map((b) => ({ id: b.occ.instanceId + ':' + b.seg.startCol, startCol: b.seg.startCol, endCol: b.seg.endCol })));
   let bandLaneCount = 0;
   for (const l of bandLanes.values()) bandLaneCount = Math.max(bandLaneCount, l + 1);
@@ -765,8 +770,8 @@ function WeekRow({
           onClick=${(e) => { e.stopPropagation(); if (onOpenDay) onOpenDay(k); else if (onExpandDay) onExpandDay(k); }}
         >${label}</button>
         ${hiddenDays && hiddenDays.get(k) && html`<${HiddenMark} count=${hiddenDays.get(k)} onShow=${onShowHidden} />`}
-        ${ctxByDay && ctxByDay.get(k) && html`<${ContextStrip}
-          occs=${ctxByDay.get(k)} calendars=${calendars} max=${mobile || columns >= 7 ? 2 : 4} zone=${false}
+        ${ctxByDay && ctxByDay.get(k) && ctxMax > 0 && html`<${ContextStrip}
+          occs=${ctxByDay.get(k)} calendars=${calendars} max=${ctxMax} more=${!mobile} zone=${false}
           onOpen=${onOpenEvent} onMore=${() => { if (onExpandDay) onExpandDay(k); }}
         />`}
       </div>

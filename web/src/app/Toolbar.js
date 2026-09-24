@@ -160,18 +160,18 @@ function PhoneChips() {
     setTimeout(() => { const el = document.getElementById('bc-phone-filter'); if (el) el.focus(); }, 60);
   };
   const relLabel = relFilterLabel(showRel).replace(/^Show: /, '');
-  return html`<div class="bc-chips" role="toolbar" aria-label="What the calendar is narrowed to">
-    ${activeView && html`<span class="bc-chip is-view">
-      <button type="button" class="bc-chip-body" title="Saved view in use" onClick=${() => set({ phoneSheet: 'view' })}>${activeView.name}</button>
+  return html`<div class="bc-fchips" role="toolbar" aria-label="What the calendar is narrowed to">
+    ${activeView && html`<span class="bc-fchip is-view">
+      <button type="button" class="bc-fchip-body" title="Saved view in use" onClick=${() => set({ phoneSheet: 'view' })}>${activeView.name}</button>
     </span>`}
-    ${!all && html`<span class="bc-chip bc-ov" ref=${relRef}>
-      <button type="button" class="bc-chip-body" aria-haspopup="menu" aria-expanded=${relOpen} onClick=${() => setRelOpen(!relOpen)}>${relLabel.charAt(0).toUpperCase() + relLabel.slice(1)}</button>
-      <button type="button" class="bc-chip-x" aria-label="Show all" onClick=${() => { setRelOpen(false); showAllRel(); }}><${Icon} name="close" size=${12} /></button>
+    ${!all && html`<span class="bc-fchip bc-ov" ref=${relRef}>
+      <button type="button" class="bc-fchip-body" aria-haspopup="menu" aria-expanded=${relOpen} onClick=${() => setRelOpen(!relOpen)}>${relLabel.charAt(0).toUpperCase() + relLabel.slice(1)}</button>
+      <button type="button" class="bc-fchip-x" aria-label="Show all" onClick=${() => { setRelOpen(false); showAllRel(); }}><${Icon} name="close" size=${12} /></button>
       ${relOpen && html`<${RelMenu} showRel=${showRel} all=${all} />`}
     </span>`}
-    ${text && html`<span class="bc-chip">
-      <button type="button" class="bc-chip-body" title="Edit the filter" onClick=${openFilter}>“${text}”</button>
-      <button type="button" class="bc-chip-x" aria-label="Clear the filter" onClick=${() => set({ filterText: '' })}><${Icon} name="close" size=${12} /></button>
+    ${text && html`<span class="bc-fchip">
+      <button type="button" class="bc-fchip-body" title="Edit the filter" onClick=${openFilter}>“${text}”</button>
+      <button type="button" class="bc-fchip-x" aria-label="Clear the filter" onClick=${() => set({ filterText: '' })}><${Icon} name="close" size=${12} /></button>
     </span>`}
   </div>`;
 }

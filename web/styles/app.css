@@ -551,6 +551,10 @@ button:focus-visible, [tabindex]:focus-visible {
   position: absolute; left: 0; width: var(--bc-gutter-w, 44px);
   z-index: 2; pointer-events: none;
 }
+/* The gutter alternates by month with the cells (.bc-cell.alt-month). A
+   see-through tint, since this box sits over the week numbers below it; it
+   runs from the row holding the 1st to the next month's, as the label does. */
+.bc-gutter-month.alt-month { background: color-mix(in srgb, var(--fg) 7%, transparent); }
 .bc-gutter-label {
   position: sticky; top: 0;
   font-size: 14px; font-weight: 800; color: var(--fg); letter-spacing: 0.01em;

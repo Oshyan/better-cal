@@ -651,7 +651,7 @@ export function MonthGrid({
     const bottom = next ? weekTop(next.weekIndex, minWeek, rowH) : top + lookRows * rowH;
     return html`<div
       key=${'m' + year + '-' + month}
-      class="bc-gutter-month"
+      class=${'bc-gutter-month' + (month % 2 === 0 ? ' alt-month' : '')}
       style=${`top:${top}px;height:${bottom - top}px`}
     >
       <div class="bc-gutter-label">${fmtMonthShort(new Date(year, month - 1, 1))}<span class="bc-gutter-year">${month === 1 ? year : ''}</span></div>

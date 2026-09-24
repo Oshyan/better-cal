@@ -193,7 +193,8 @@ function FilterSheet({ onClose }) {
 }
 
 function NewSheet({ onClose }) {
-  const go = (patch) => () => { onClose(); set(patch); };
+  // What these open lives on the calendar (from Review, go back to it).
+  const go = (patch) => () => { onClose(); set({ ...patch, route: 'calendar' }); };
   return html`<${Sheet} label="New" onClose=${onClose}>
     <div class="bc-bsheet-h">New</div>
     <div role="menu" aria-label="Create">
@@ -211,18 +212,18 @@ export function BottomBar() {
     view: st.view, overviewMode: st.settings.overviewMode, sheet: st.phoneSheet,
     filterOn: filterActive(st), route: st.route, reviewCount: st.reviewCount,
   }), shallowEq);
-  // View and Filter act on the calendar, so they bring it back from a page
-  // such as Review.
+  // Every action but Review belongs to the calendar, so each brings it back
+  // from the Review page.
   const toggle = (name) => set({ phoneSheet: s.sheet === name ? null : name, route: 'calendar' });
   const onReview = s.route === 'review';
   const close = () => set({ phoneSheet: null });
   const cur = PHONE_VIEWS.find(([k]) => k === phoneViewKey(s.view)) || PHONE_VIEWS[0];
-  const newPress = useHold(() => set({ quickAddOpen: true, phoneSheet: null }), () => set({ phoneSheet: 'new' }));
+  const newPress = useHold(() => set({ quickAddOpen: true, phoneSheet: null, route: 'calendar' }), () => set({ phoneSheet: 'new' }));
   return html`<nav class="bc-bottombar" aria-label="Calendar actions">
       <button type="button" class=${'bc-bb-btn' + (s.sheet === 'view' ? ' is-open' : '')} aria-haspopup="dialog" aria-expanded=${s.sheet === 'view'} onClick=${() => toggle('view')}>
         <${Icon} name=${cur[2]} size=${22} /><span>${cur[1]}</span>
       </button>
-      <button type="button" class="bc-bb-btn" onClick=${() => { close(); set({ searchOpen: true }); }}>
+      <button type="button" class="bc-bb-btn" onClick=${() => set({ phoneSheet: null, searchOpen: true, route: 'calendar' })}>
         <${Icon} name="search" size=${22} /><span>Search</span>
       </button>
       <button type="button" class="bc-bb-btn bc-bb-new" aria-label="New: tap for quick add, hold for more" ...${newPress}>

@@ -1,7 +1,7 @@
 {
   "id": "tides",
   "name": "Tides",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "minHost": "0.1.0",
   "description": "NOAA tide predictions (US stations, no API key): high/low tide events plus daylight low-tide window bands. Find your station id at tidesandcurrents.noaa.gov.",
   "permissions": [

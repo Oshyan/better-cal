@@ -60,11 +60,11 @@ return new class implements PluginInterface {
                 continue;
             }
             $iso = str_replace(' ', 'T', $t) . ':00Z';
-            $glyph = $type === 'H' ? '▲' : '▽';
             $word = $type === 'H' ? 'High' : 'Low';
             $events[] = [
                 'sourceKey' => 'tide-' . $station . '-' . preg_replace('/\D/', '', $t),
-                'title' => $glyph . ' ' . $word . ' tide ' . number_format($v, 1) . ' ft',
+                'title' => $word . ' tide ' . number_format($v, 1) . ' ft',
+                'icon' => $type === 'H' ? 'tideHigh' : 'tideLow',
                 'start' => $iso,
                 'end' => $iso,
                 'description' => $word . ' tide of ' . number_format($v, 1) . ' ft (MLLW) at ' . $name . '. NOAA station ' . $station . '.',

@@ -8,7 +8,7 @@
   --bg: #f6f7f9;
   --bg-raised: #ffffff;
   --bg-inset: #eef0f3;
-  --bg-alt: #f0f2f6;
+  --bg-alt: #e9ecf1;
   --fg: #1e2430;
   --fg-muted: #6b7280;
   --border: #e2e5ea;
@@ -45,7 +45,7 @@
     --bg: #16181d;
     --bg-raised: #1e2128;
     --bg-inset: #23262e;
-    --bg-alt: #1a1d23;
+    --bg-alt: #1f2229;
     --fg: #e6e8ec;
     --fg-muted: #9aa1ac;
     --border: #2c3038;
@@ -72,7 +72,7 @@
   --bg: #16181d;
   --bg-raised: #1e2128;
   --bg-inset: #23262e;
-  --bg-alt: #1a1d23;
+  --bg-alt: #1f2229;
   --fg: #e6e8ec;
   --fg-muted: #9aa1ac;
   --border: #2c3038;
@@ -553,8 +553,8 @@ button:focus-visible, [tabindex]:focus-visible {
 }
 .bc-gutter-label {
   position: sticky; top: 0;
-  font-size: 12px; font-weight: 700; color: var(--fg);
-  padding: 4px 4px 2px 8px; line-height: 1.2;
+  font-size: 14px; font-weight: 800; color: var(--fg); letter-spacing: 0.01em;
+  padding: 5px 3px 2px 7px; line-height: 1.15;
 }
 .bc-gutter-year { display: block; font-size: 10px; font-weight: 600; color: var(--fg-muted); }
 .bc-week { position: absolute; left: 0; right: 0; display: flex; }
@@ -775,12 +775,16 @@ div.bc-duration-exact { display: flex; align-items: center; gap: 10px; flex-wrap
    day number (every view), named in its title; where it can be a button, a
    click shows every kind again. */
 .bc-hidden-mark {
-  display: inline-block; width: 8px; height: 8px; border-radius: 50%; box-sizing: border-box;
-  border: 1.5px solid var(--fg-muted); background: none; padding: 0; margin-left: 3px;
-  vertical-align: middle; opacity: 0.75; cursor: help; position: relative; z-index: 2;
+  display: inline-flex; align-items: center; justify-content: center; width: 13px; height: 13px;
+  border: none; background: none; padding: 0; margin-left: 2px; color: var(--fg-muted);
+  vertical-align: middle; opacity: 0.85; cursor: help; position: relative; z-index: 2;
 }
 button.bc-hidden-mark { cursor: pointer; }
-.bc-hidden-mark:hover { border-color: var(--accent); opacity: 1; }
+.bc-hidden-mark:hover { color: var(--accent); opacity: 1; }
+/* On touch it is a real target: tall enough to hit, a little wider than drawn. */
+@media (pointer: coarse) {
+  button.bc-hidden-mark::after { content: ""; position: absolute; left: -6px; right: -6px; top: -12px; bottom: -12px; }
+}
 .bc-tg-head-day .bc-hidden-mark { margin: 0; }
 .bc-agenda-day .bc-hidden-mark { margin-left: 6px; vertical-align: 1px; }
 .bc-rel { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; }
@@ -2016,6 +2020,7 @@ body.bc-rescheduling { user-select: none; }
     display: flex; align-items: center; gap: 2px;
   }
   :root { --bc-gutter-w: 34px; }
+  .bc-gutter-label { font-size: 13px; padding-left: 5px; }
   .bc-agenda-time { width: 84px; }
 }
 .bc-more-dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; flex: none; }
@@ -3108,12 +3113,13 @@ button.bc-review-title { color: var(--fg); padding: 0; }
 
 
 /* --- the phone frame: mobile audit phase 2 (0.3.x) --------------------------- */
-/* A thin top bar (menu, previous and next around the month title that opens
-   jump-to-date), a row of chips naming whatever narrows the calendar, shown
-   only while something does, and a bottom bar of five actions (BottomBar.js).
+/* A thin top bar (menu, previous and next, the month title that opens
+   jump-to-date, Today), a row of chips naming whatever narrows the calendar,
+   shown only while something does, and a bottom bar of five actions
+   (BottomBar.js).
    Everything else the desktop toolbar holds lives in the bottom bar's sheets.
    640px is the phone breakpoint (lib/breakpoints.js). */
-.bc-bottombar, .bc-fchips { display: none; }
+.bc-bottombar, .bc-fchips, .bc-tb-todaybadge { display: none; }
 /* Keyboard shortcuts mean nothing without a keyboard. */
 @media (pointer: coarse) { .bc-kbd-btn, .bc-ov-key { display: none; } }
 @media (max-width: 640px) {
@@ -3130,11 +3136,21 @@ button.bc-review-title { color: var(--fg); padding: 0; }
   .bc-toolbar > .bc-newmenu { display: none; }
   .bc-toolbar-nav { min-width: 0; gap: 0; }
   .bc-toolbar-month { font-size: 17px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 3px 4px; }
-  /* Previous and next sit either side of the month: small to look at, the
-     full bar height to tap, and never wider than drawn so a press beside the
-     month title opens jump-to-date, not a step. */
-  .bc-toolbar-nav > .bc-toolbar-date { order: 1; }
-  .bc-toolbar-nav > .bc-nav-btn + .bc-nav-btn { order: 2; }
+  /* Previous and next sit together before the month, so they stay put
+     whatever its name's length: small to look at, the full bar height to
+     tap, and never wider than drawn, so a press beside them lands on the
+     month title (jump to date) or the neighbouring arrow, not both. */
+  .bc-toolbar .bc-menu-btn { padding: 6px 8px; }
+  .bc-toolbar .bc-menu-btn svg { width: 23px; height: 23px; }
+  .bc-toolbar > .bc-tb-todaybadge {
+    display: inline-grid; place-items: center; flex: none; margin-left: auto;
+    width: 40px; height: 40px; padding: 0; background: none; border: none; color: var(--fg);
+    position: relative; -webkit-tap-highlight-color: transparent;
+  }
+  .bc-tb-todaybadge span {
+    font-size: 13px; font-weight: 800; line-height: 19px; min-width: 25px; text-align: center;
+    border: 1.8px solid currentColor; border-radius: 6px; padding: 0 2px; font-variant-numeric: tabular-nums;
+  }
   .bc-toolbar .bc-nav-btn {
     width: 32px; height: 32px; padding: 0; display: inline-grid; place-items: center; flex: none;
     color: var(--fg-muted);
@@ -3172,7 +3188,8 @@ button.bc-review-title { color: var(--fg); padding: 0; }
     /* A firmer line than the grid's own, so the bar reads as separate from
        the calendar behind it; mixed from the text colour, it holds in both
        themes. */
-    background: var(--bg-raised); border-top: 1px solid color-mix(in srgb, var(--fg) 24%, var(--bg-raised));
+    --bb-edge: color-mix(in srgb, var(--fg) 24%, var(--bg-raised));
+    background: var(--bg-raised); border-top: 1px solid var(--bb-edge);
     padding: 2px 4px calc(2px + env(safe-area-inset-bottom, 0px));
     position: relative; z-index: 40;
   }
@@ -3192,12 +3209,17 @@ button.bc-review-title { color: var(--fg); padding: 0; }
   .bc-bb-newico {
     width: 54px; height: 54px; border-radius: 17px; margin-top: -22px;
     background: var(--accent); color: var(--accent-fg);
-    display: grid; place-items: center; box-shadow: 0 6px 14px color-mix(in srgb, var(--accent) 45%, transparent);
+    display: grid; place-items: center;
+    box-shadow:
+      0 0 0 3px var(--bg-raised),
+      0 0 0 4px var(--bb-edge),
+      0 2px 18px 2px color-mix(in srgb, var(--accent) 55%, transparent);
   }
   .bc-bb-new:active .bc-bb-newico { filter: brightness(1.08); transform: scale(.97); }
-  .bc-bb-date {
-    font-size: 13px; font-weight: 800; line-height: 18px; min-width: 24px; text-align: center;
-    border: 1.8px solid currentColor; border-radius: 6px; padding: 0 2px; font-variant-numeric: tabular-nums;
+  .bc-bb-count {
+    position: absolute; top: 3px; left: calc(50% + 6px); min-width: 17px; height: 17px; padding: 0 4px;
+    border-radius: 9px; background: var(--accent); color: var(--accent-fg); border: 2px solid var(--bg-raised);
+    font-size: 10px; font-weight: 800; line-height: 13px; text-align: center; font-variant-numeric: tabular-nums;
   }
   /* Toasts sit above the bar. */
   .bc-toasts { bottom: calc(72px + env(safe-area-inset-bottom, 0px)); }

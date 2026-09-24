@@ -177,11 +177,14 @@ function PhoneChips() {
 }
 
 export function Toolbar({ onToggleSidebar }) {
-  const { view, anchor, visibleMonth, filterText, jumpOpen, narrow } = useStore(
+  const { view, anchor, visibleMonth, filterText, jumpOpen, narrow, todayDate } = useStore(
     (s) => ({
       view: s.view, anchor: s.anchor, visibleMonth: s.visibleMonth,
       filterText: s.filterText, jumpOpen: s.jumpOpen,
       narrow: s.viewportNarrow,
+      // The phone's Today badge shows the date; from the minute tick, so it
+      // turns over at midnight but re-renders nothing in between.
+      todayDate: new Date(s.nowMinute * 60000).getDate(),
       // Subscribed so the dropdown checkmark tracks the persisted setting.
       overviewMode: s.settings.overviewMode,
     }),
@@ -226,6 +229,7 @@ export function Toolbar({ onToggleSidebar }) {
     <button type="button" class="bc-icon-btn bc-tb-search" aria-label="Search" title="Search ( / )" onClick=${() => set({ searchOpen: true })}><${Icon} name="search" size=${16} /></button>
     <button type="button" class="bc-icon-btn bc-qa-btn" aria-label="Quick add" title="Quick add: type it in plain language (c)" onClick=${() => set({ quickAddOpen: true })}><${Icon} name="quickadd" size=${16} /></button>
     <${NewMenu} />
+    <button type="button" class="bc-tb-todaybadge" aria-label="Today" title="Today" onClick=${goToday}><span>${todayDate}</span></button>
   </header>
   <${PhoneChips} />`;
 }

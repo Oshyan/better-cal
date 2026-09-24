@@ -90,12 +90,13 @@ export function NewPill() {
 // where the header allows a click, one click shows everything again.
 export function HiddenMark({ count, onShow }) {
   const label = count + (count === 1 ? ' event' : ' events') + ' hidden by the Show filter' + (onShow ? '. Click to show all.' : '');
-  if (!onShow) return html`<span class="bc-hidden-mark" role="img" aria-label=${label} title=${label}></span>`;
+  const glyph = html`<${Icon} name="mixed" size=${11} />`;
+  if (!onShow) return html`<span class="bc-hidden-mark" role="img" aria-label=${label} title=${label}>${glyph}</span>`;
   return html`<button
     type="button" class="bc-hidden-mark" aria-label=${label} title=${label}
     onPointerDown=${(e) => e.stopPropagation()}
     onClick=${(e) => { e.stopPropagation(); onShow(); }}
-  ></button>`;
+  >${glyph}</button>`;
 }
 
 // Small stack glyph marking a near-duplicate group chip.

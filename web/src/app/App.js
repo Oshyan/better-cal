@@ -51,6 +51,7 @@ import { PluginsPage } from './PluginsPage.js';
 import { ReviewPage } from './ReviewPage.js';
 import { sanitizeHtml } from '../lib/richtext.js';
 import { onOutsidePress, insideAny, consumeOutsidePress } from '../ui/outside.js';
+import { installDrawerSwipe } from '../ui/drawerswipe.js';
 
 const MONTH_ROWS = { month: 6, weeks3: 3, weeks2: 2 };
 // Rows the month view will hold on screen before it starts squashing row
@@ -96,6 +97,15 @@ export function App() {
     shallowEq,
   );
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  // Swipe the drawer in from the left edge and back out (drawer layouts).
+  const sidebarOpenRef = useRef(false);
+  sidebarOpenRef.current = sidebarOpen;
+  useEffect(() => installDrawerSwipe({
+    enabled: () => state.viewportNarrow,
+    isOpen: () => sidebarOpenRef.current,
+    open: () => setSidebarOpen(true),
+    close: () => setSidebarOpen(false),
+  }), []);
   // Desktop sidebar collapse (persisted); mobile uses the slide-in drawer.
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     try { return localStorage.getItem('bc-sidebar-collapsed') === '1'; } catch { return false; }

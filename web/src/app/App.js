@@ -1,5 +1,6 @@
 // App root: routes between views, wires bettercal-ui to the store and API.
 
+import { COMPACT_QUERY, COARSE_QUERY } from '../lib/breakpoints.js';
 import { html, useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback } from '../../vendor/index.js';
 import { useStore, set, state, calendarMeta, shallowEq, invalidateRecords } from './store.js';
 import { loadWindow, api, refreshWindow, loadPeople, retryWindowsNow } from './api.js';
@@ -25,6 +26,7 @@ import { dayRangeDraft } from '../lib/quickcreate.js';
 import { DayExpand } from '../ui/DayExpand.js';
 import { RescheduleBanner, RescheduleStrip, RescheduleOverlay } from '../ui/RescheduleMode.js';
 import { Toolbar } from './Toolbar.js';
+import { BottomBar } from './BottomBar.js';
 import { Sidebar } from './Sidebar.js';
 import { QuickAdd } from './QuickAdd.js';
 import { EventPopover } from './EventPopover.js';
@@ -164,8 +166,8 @@ export function App() {
   // Track the responsive roster inputs in the store so the toolbar, keyboard
   // map and saved-view fallbacks all agree on what "mobile" means.
   useEffect(() => {
-    const mqNarrow = window.matchMedia('(max-width: 800px)');
-    const mqCoarse = window.matchMedia('(pointer: coarse)');
+    const mqNarrow = window.matchMedia(COMPACT_QUERY);
+    const mqCoarse = window.matchMedia(COARSE_QUERY);
     const sync = () => set({ viewportNarrow: mqNarrow.matches, coarsePointer: mqCoarse.matches });
     mqNarrow.addEventListener('change', sync);
     mqCoarse.addEventListener('change', sync);
@@ -789,6 +791,7 @@ export function App() {
       onDropConfirmed=${onReschedMove}
       onExit=${exitReschedule}
     />`}
+    <${BottomBar} />
     <${SystemBanner} /><${Toasts} />
   </div>`;
 }

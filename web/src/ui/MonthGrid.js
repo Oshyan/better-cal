@@ -33,6 +33,7 @@ import { EventChip, EventBar, TripBand, HiddenMark } from './EventChip.js';
 import { ContextStrip } from './ContextStrip.js';
 import { contextByDay, isContext } from '../lib/context.js';
 import { Icon } from './icons.js';
+import { PHONE_QUERY } from '../lib/breakpoints.js';
 import { startPointerDrag, cloneAsGhost, externalDropTarget, setDropRowHighlight } from './DragController.js';
 import { normalizeDayRange, dayRangeDraft } from '../lib/quickcreate.js';
 
@@ -54,7 +55,7 @@ const CELL_HEAD = 24;  // px reserved for the day number row
 // 700px, which left a wide band squashing rows for no benefit.
 const COMFORT_CHIPS = 7;
 const GUTTER_W = 44;   // px month-label gutter
-const MOBILE_QUERY = '(max-width: 600px)';
+const MOBILE_QUERY = PHONE_QUERY;
 const BAND_H = 16;        // px per trip backdrop band lane (desktop)
 const BAND_H_MOBILE = 12; // compact band lane at <=600px
 const MAX_BAND_LANES = 2; // stacked bands per row; more overflow into day expand

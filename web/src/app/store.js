@@ -2,6 +2,7 @@
 // Components use useStore(selector, equals) to re-render only when their
 // selected slice changes.
 
+import { COMPACT_QUERY, COARSE_QUERY } from '../lib/breakpoints.js';
 import { useState, useEffect, useRef } from '../../vendor/index.js';
 import { todayKey } from '../lib/dates.js';
 
@@ -72,9 +73,9 @@ export const state = {
   view: 'month', // month | weeks3 | weeks2 | week | day | agenda
   // Responsive roster inputs (kept in sync by App via matchMedia listeners).
   viewportNarrow: typeof window !== 'undefined' && window.matchMedia
-    ? window.matchMedia('(max-width: 800px)').matches : false,
+    ? window.matchMedia(COMPACT_QUERY).matches : false,
   coarsePointer: typeof window !== 'undefined' && window.matchMedia
-    ? window.matchMedia('(pointer: coarse)').matches : false,
+    ? window.matchMedia(COARSE_QUERY).matches : false,
   // What is actually showing, light or dark: the theme setting when pinned,
   // else the OS. settings.js keeps it current; the parts that pick colours
   // outside CSS (map tiles, calendar colour used as ink) read it.
@@ -96,6 +97,8 @@ export const state = {
   filterText: '',
   agendaShowPast: false,
   agendaSort: 'time', // 'time' | 'match' (rank score, PRD 5.8)
+  // Which phone bottom-bar sheet is open: 'view' | 'filter' | 'new' | null.
+  phoneSheet: null,
 
   savedViews: [],     // [{id, name, config, position}]
   activeViewId: null, // saved view currently applied, if any

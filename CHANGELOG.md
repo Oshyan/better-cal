@@ -4,6 +4,20 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.3.1 (2026-09-24)
+
+Phones, phase 2 of the mobile pass: the phone frame.
+
+- On a phone, the toolbar becomes a thin top bar: the menu, the month (tap it to jump to a date) and the name of a saved view in use. Previous and next go away; the scroll is the navigation.
+- A bottom bar holds the five actions reached for most: View, Search, New, Filter and Today.
+  - View opens a sheet with the views, your saved views (with the same save-or-discard step as the desktop menu) and, in the agenda, its order.
+  - New is centred and raised. Tap opens quick add; press and hold offers Event, Trip, Person and Calendar.
+  - Filter holds the text filter and the Show choices, and shows a dot while anything is filtered. The Show filter was hidden on phones until now.
+  - Today shows today's date. Tap returns to today; press and hold opens jump-to-date.
+- Sheets open from the bottom with a dimmed backdrop, a handle you can pull down to close, and 48-point rows.
+- The keyboard-shortcuts button hides on touch screens.
+- One set of breakpoints: phone below 640 pixels, compact below 800, defined once. The month grid's phone layout moved from 600 to 640 pixels to match the rest.
+
 ## 0.3.0 (2026-09-24)
 
 Phones and touch, phase 1 of the mobile pass: fixes only, no layout changes yet.

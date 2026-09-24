@@ -329,7 +329,7 @@ button:focus-visible, [tabindex]:focus-visible {
 .bc-jump-foot { display: flex; align-items: center; justify-content: space-between; }
 .bc-jump-closefoot { display: none; }
 
-@media (max-width: 600px) {
+@media (max-width: 640px) {
   .bc-jump-pop { position: fixed; left: 8px; right: 8px; top: 54px; width: auto; }
   .bc-jump-closefoot { display: block; }
 }
@@ -794,7 +794,6 @@ button.bc-hidden-mark { cursor: pointer; }
 .bc-ov-key { margin-left: auto; padding-left: 14px; font: inherit; font-size: 11px; color: var(--fg-muted); }
 .bc-ov-sep { height: 1px; background: var(--border); margin: 4px 2px; }
 /* Below the app's mobile breakpoint the Show filter leaves the toolbar; where it goes on a phone is the mobile design review's call. */
-@media (max-width: 600px) { .bc-relfilter { display: none; } }
 .is-cancelled .bc-chip-title, .bc-pop-title.is-cancelled { text-decoration: line-through; opacity: 0.75; }
 /* Dim treatment floor: desaturate + muted foreground instead of pure
    opacity, so dimmed items stay readable (clearly secondary, never
@@ -1468,7 +1467,7 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-quickadd-actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
 .bc-quickadd-expand { font-size: 12.5px; }
 .bc-quickadd-hint { color: var(--fg-muted); font-size: 11.5px; margin-left: auto; }
-@media (max-width: 600px) { .bc-quickadd-hint { display: none; } }
+@media (max-width: 640px) { .bc-quickadd-hint { display: none; } }
 
 /* --- editor drawer --------------------------------------------------------------- */
 
@@ -1649,7 +1648,7 @@ body.bc-dragging * { cursor: grabbing !important; }
   border-bottom-width: 2px; border-radius: 4px; padding: 0 5px;
 }
 .bc-sc-label { font-size: 12.5px; min-width: 0; }
-@media (max-width: 600px) { .bc-shortcuts-grid { grid-template-columns: 1fr; } }
+@media (max-width: 640px) { .bc-shortcuts-grid { grid-template-columns: 1fr; } }
 
 /* --- toasts ------------------------------------------------------------------------- */
 
@@ -1995,7 +1994,7 @@ body.bc-rescheduling { user-select: none; }
   .bc-toolbar-month { min-width: 0; font-size: 14px; }
 }
 
-@media (max-width: 600px) {
+@media (max-width: 640px) {
   /* Unified mobile month rendering: timed chips and all-day bars alike
      become compact single-line text pills (10px, ellipsized) in up to 3
      lanes; overflow renders as dots + "+N" (no more dots-vs-text split). */
@@ -2133,7 +2132,7 @@ body.bc-rescheduling { user-select: none; }
 
 /* Ribbon cells are wide even on phones: restore the chip time and dot that
    the 7-column mobile month hides. */
-@media (max-width: 600px) {
+@media (max-width: 640px) {
   .bc-month.is-ribbon .bc-cell .bc-chip .bc-chip-time { display: inline; }
   .bc-month.is-ribbon .bc-cell .bc-chip .bc-chip-dot { display: inline-block; }
   .bc-month.is-ribbon .bc-cell .bc-chip .bc-chip-title { font-size: 11px; }
@@ -3106,3 +3105,98 @@ button.bc-review-title { color: var(--fg); padding: 0; }
   [role^="menuitem"] { min-height: 44px; }
   .bc-cal-row { min-height: 40px; }
 }
+
+
+/* --- the phone frame: mobile audit phase 2 (0.3.x) --------------------------- */
+/* A thin top bar (menu, the month title that opens jump-to-date, and the name
+   of a saved view in use) and a bottom bar of five actions (BottomBar.js).
+   Everything else the desktop toolbar holds lives in the bottom bar's sheets.
+   640px is the phone breakpoint (lib/breakpoints.js). */
+.bc-bottombar, .bc-tb-viewname { display: none; }
+/* Keyboard shortcuts mean nothing without a keyboard. */
+@media (pointer: coarse) { .bc-kbd-btn { display: none; } }
+@media (max-width: 640px) {
+  .bc-toolbar { flex-wrap: nowrap; min-height: 44px; padding: 0 8px 0 2px; gap: 2px; }
+  .bc-toolbar > .bc-tb-today,
+  .bc-toolbar .bc-nav-btn,
+  .bc-toolbar > .bc-views,
+  .bc-toolbar > .bc-filter-input,
+  .bc-toolbar > .bc-relfilter,
+  .bc-toolbar > .bc-viewmenu,
+  .bc-toolbar > .bc-kbd-btn,
+  .bc-toolbar > .bc-tb-search,
+  .bc-toolbar > .bc-qa-btn,
+  .bc-toolbar > .bc-newmenu { display: none; }
+  .bc-toolbar-nav { min-width: 0; }
+  .bc-toolbar-month { font-size: 17px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .bc-tb-viewname {
+    display: inline-block; flex: none; max-width: 38%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-size: 12.5px; font-weight: 600; color: var(--fg-muted);
+    background: var(--bg-inset); border: 1px solid var(--border); border-radius: 8px; padding: 3px 9px;
+  }
+  /* Agenda's own toggles moved into the sheets (Show past: Filter; order: View). */
+  .bc-agenda-toggle { display: none; }
+  .bc-bottombar {
+    display: grid; grid-template-columns: repeat(5, 1fr); align-items: end; flex: none;
+    background: var(--bg-raised); border-top: 1px solid var(--border);
+    padding: 2px 4px calc(2px + env(safe-area-inset-bottom, 0px));
+    position: relative; z-index: 40;
+  }
+  .bc-bb-btn {
+    background: none; border: none; min-height: 54px; padding: 4px 0 2px; position: relative;
+    display: grid; justify-items: center; align-content: center; gap: 2px;
+    font-size: 11px; font-weight: 600; color: var(--fg-muted);
+    -webkit-tap-highlight-color: transparent; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+  }
+  .bc-bb-btn span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bc-bb-btn.is-open { color: var(--accent); }
+  .bc-bb-btn.is-on { color: var(--accent); }
+  .bc-bb-btn.is-on::before {
+    content: ""; position: absolute; top: 6px; left: calc(50% + 8px); width: 8px; height: 8px; border-radius: 50%;
+    background: var(--warn); border: 2px solid var(--bg-raised);
+  }
+  .bc-bb-newico {
+    width: 54px; height: 54px; border-radius: 17px; margin-top: -22px;
+    background: var(--accent); color: var(--accent-fg);
+    display: grid; place-items: center; box-shadow: 0 6px 14px color-mix(in srgb, var(--accent) 45%, transparent);
+  }
+  .bc-bb-new:active .bc-bb-newico { filter: brightness(1.08); transform: scale(.97); }
+  .bc-bb-date {
+    font-size: 13px; font-weight: 800; line-height: 18px; min-width: 24px; text-align: center;
+    border: 1.8px solid currentColor; border-radius: 6px; padding: 0 2px; font-variant-numeric: tabular-nums;
+  }
+  /* Toasts sit above the bar. */
+  .bc-toasts { bottom: calc(72px + env(safe-area-inset-bottom, 0px)); }
+}
+/* Bottom sheets (the bar's View, Filter and New). */
+.bc-bsheet-scrim { position: fixed; inset: 0; background: var(--scrim); z-index: 60; }
+.bc-bsheet {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 61; max-height: 82vh; overflow-y: auto;
+  overscroll-behavior: contain; background: var(--bg-raised); border-radius: 16px 16px 0 0; box-shadow: var(--shadow);
+  padding: 0 8px calc(12px + env(safe-area-inset-bottom, 0px)); transition: transform .12s ease;
+  animation: bc-sheet-up .18s ease-out;
+}
+.bc-bsheet:focus { outline: none; }
+.bc-bsheet-grip { display: grid; place-items: center; height: 22px; touch-action: none; cursor: grab; position: sticky; top: 0; background: var(--bg-raised); }
+.bc-bsheet-grip span { width: 38px; height: 5px; border-radius: 3px; background: var(--border-strong); }
+.bc-bsheet-h { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--fg-muted); padding: 10px 12px 4px; }
+.bc-bsheet-row {
+  display: flex; align-items: center; gap: 12px; width: 100%; min-height: 48px; padding: 0 12px;
+  background: none; border: none; border-radius: 10px; text-align: left; font-size: 16px; color: var(--fg);
+}
+.bc-bsheet-row:active, .bc-bsheet-row:hover { background: var(--bg-inset); }
+.bc-bsheet-row.is-sel { color: var(--accent); font-weight: 600; }
+.bc-bsheet-row:disabled { opacity: .5; }
+.bc-bsheet-ico { width: 20px; display: inline-flex; justify-content: center; color: var(--fg-muted); flex: none; }
+.bc-bsheet-row.is-sel .bc-bsheet-ico { color: var(--accent); }
+.bc-bsheet-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bc-bsheet-check { display: inline-flex; color: var(--accent); }
+.bc-bsheet-inline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 6px 12px; font-size: 14px; color: var(--fg-muted); }
+.bc-bsheet-inline > span:first-child { margin-right: auto; }
+.bc-bsheet-field { display: flex; align-items: center; gap: 8px; margin: 2px 12px 4px; color: var(--fg-muted); }
+.bc-bsheet-field input { flex: 1; min-width: 0; min-height: 40px; }
+.bc-bsheet-toggle { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 0 12px; font-size: 15px; }
+.bc-bsheet-note { font-size: 13px; color: var(--fg-muted); padding: 6px 12px; }
+.bc-bsheet-confirm { margin: 6px 12px; padding: 10px 12px; border-radius: 10px; background: var(--bg-inset); display: grid; gap: 8px; font-size: 14px; }
+.bc-bsheet-confirmrow { display: flex; gap: 8px; flex-wrap: wrap; }
+@media (prefers-reduced-motion: reduce) { .bc-bsheet { animation: none; transition: none; } }

@@ -2,6 +2,7 @@
 // day cell; mobile: bottom sheet. Esc or click-out closes. Focus is trapped
 // while open.
 
+import { PHONE_QUERY } from '../lib/breakpoints.js';
 import { html, useRef, useEffect } from '../../vendor/index.js';
 import { dateOfDayKey, fmtDayLong, parseISO, fmtTime, epochDayOfKey, byStart } from '../lib/dates.js';
 import { EventChip } from './EventChip.js';
@@ -10,7 +11,7 @@ import { Icon } from './icons.js';
 import { TokenIcon } from './ContextStrip.js';
 import { isContext, contextToken, contextText, contextTitle } from '../lib/context.js';
 
-export const MOBILE_QUERY = '(max-width: 640px)';
+export const MOBILE_QUERY = PHONE_QUERY;
 
 export function isMobile() {
   return window.matchMedia(MOBILE_QUERY).matches;

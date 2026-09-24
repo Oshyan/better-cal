@@ -137,11 +137,13 @@ function RelFilter() {
 }
 
 export function Toolbar({ onToggleSidebar }) {
-  const { view, anchor, visibleMonth, filterText, jumpOpen, narrow } = useStore(
+  const { view, anchor, visibleMonth, filterText, jumpOpen, narrow, activeView } = useStore(
     (s) => ({
       view: s.view, anchor: s.anchor, visibleMonth: s.visibleMonth,
       filterText: s.filterText, jumpOpen: s.jumpOpen,
       narrow: s.viewportNarrow,
+      // The phone top bar names the saved view in use (the View sheet picks it).
+      activeView: s.savedViews.find((v) => v.id === s.activeViewId) || null,
       // Subscribed so the dropdown checkmark tracks the persisted setting.
       overviewMode: s.settings.overviewMode,
     }),
@@ -158,7 +160,7 @@ export function Toolbar({ onToggleSidebar }) {
   return html`<header class="bc-toolbar">
     <button type="button" class="bc-icon-btn bc-menu-btn" aria-label="Toggle sidebar" title="Show or hide the sidebar" onClick=${onToggleSidebar}><${Icon} name="menu" size=${17} /></button>
     <span class="bc-brand"><span class="bc-brand-icon"><${Icon} name="brand" size=${21} /></span><span class="bc-brand-name">Better-Cal</span></span>
-    <button type="button" class="bc-btn" onClick=${goToday}>Today</button>
+    <button type="button" class="bc-btn bc-tb-today" onClick=${goToday}>Today</button>
     <div class="bc-toolbar-nav">
       <button type="button" class="bc-icon-btn bc-nav-btn" aria-label=${'Previous ' + unit} title=${'Previous ' + unit} onClick=${() => stepAnchor(-1)}><${Icon} name="chevronLeft" size=${15} /></button>
       <button type="button" class="bc-icon-btn bc-nav-btn" aria-label=${'Next ' + unit} title=${'Next ' + unit} onClick=${() => stepAnchor(1)}><${Icon} name="chevronRight" size=${15} /></button>
@@ -182,10 +184,11 @@ export function Toolbar({ onToggleSidebar }) {
     />
     <${RelFilter} />
     <${ViewMenu} view=${view} narrow=${narrow} />
-    <button type="button" class="bc-icon-btn" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)" onClick=${() => set({ shortcutsOpen: true })}><${Icon} name="keyboard" size=${16} /></button>
-    <button type="button" class="bc-icon-btn" aria-label="Search" title="Search ( / )" onClick=${() => set({ searchOpen: true })}><${Icon} name="search" size=${16} /></button>
+    <button type="button" class="bc-icon-btn bc-kbd-btn" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)" onClick=${() => set({ shortcutsOpen: true })}><${Icon} name="keyboard" size=${16} /></button>
+    <button type="button" class="bc-icon-btn bc-tb-search" aria-label="Search" title="Search ( / )" onClick=${() => set({ searchOpen: true })}><${Icon} name="search" size=${16} /></button>
     <button type="button" class="bc-icon-btn bc-qa-btn" aria-label="Quick add" title="Quick add: type it in plain language (c)" onClick=${() => set({ quickAddOpen: true })}><${Icon} name="quickadd" size=${16} /></button>
     <${NewMenu} />
+    ${activeView && html`<button type="button" class="bc-tb-viewname" title="Saved view in use" onClick=${() => set({ phoneSheet: 'view' })}>${activeView.name}</button>`}
   </header>`;
 }
 

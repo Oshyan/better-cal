@@ -12,6 +12,7 @@ Phones: the top bar and the bottom bar's edge.
 - Previous, next and Today now glide the month grid to where they land when it is near, so the days in between pass by instead of the grid cutting to a new place, on desktop too. Far jumps still move at once, and nothing glides if the device asks for reduced motion. Pressing Next again mid-glide steps on from where the glide is going.
 - While anything narrows the calendar, a row of chips under the phone's top bar says what: the saved view in use, the Show setting ("Planned only", "No context") and the filter text. Tapping a chip opens its control (the Show menu right there, the Filter sheet with its text field focused, the View sheet); its × clears it. The row is gone when nothing is narrowed.
 - The bottom bar has a firmer top edge, so it reads as separate from the calendar in both light and dark themes.
+- Menus on touch screens no longer list keyboard shortcuts (the p, m, a, x beside the Show choices).
 
 ## 0.3.7 (2026-09-24)
 

@@ -15,7 +15,8 @@ namespace BetterCal\Http;
  * - everything else (the document, styles, app modules, the manifest, and above
  *   all sw.js) is "no-cache": stored, but revalidated on every use. With the
  *   ETag below that is a 304 with no body, so a deploy shows up on the next
- *   load without anyone bumping a version. A cached sw.js is the failure that
+ *   load without anyone bumping a version. (sw.js and the document are
+ *   filled in by Http\AppShell and carry its version as their ETag.) A cached sw.js is the failure that
  *   matters most: the browser would never learn a new version exists.
  */
 final class StaticFiles

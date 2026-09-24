@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use BetterCal\Domain;
+use BetterCal\Http\AppShell;
 use BetterCal\Http\Controllers;
 use BetterCal\Http\HttpError;
 use BetterCal\Http\Request;
@@ -342,10 +343,20 @@ function bc_handle_static(Request $request): void
     $webRoot = realpath(dirname(__DIR__, 2) . '/web');
     $path = $request->path;
 
+    // The service worker and the document are filled in as they are served
+    // (Http\AppShell): the worker's VERSION and shell list, the document's
+    // modulepreload block. /assets/sw.js is answered the same way, in case a
+    // browser registered it under an older version of the app.
+    if ($webRoot !== false && ($path === '/sw.js' || $path === '/assets/sw.js')) {
+        $shell = AppShell::forWebRoot($webRoot);
+        bc_send_rendered($request, $shell->renderServiceWorker(), 'text/javascript; charset=utf-8', $shell->version(), StaticFiles::cacheControl('sw.js'));
+        return;
+    }
+
     $relative = null;
     if (str_starts_with($path, '/assets/')) {
         $relative = substr($path, strlen('/assets/'));
-    } elseif (in_array($path, ['/sw.js', '/manifest.webmanifest', '/favicon.ico', '/favicon.svg', '/favicon.png'], true)) {
+    } elseif (in_array($path, ['/manifest.webmanifest', '/favicon.ico', '/favicon.svg', '/favicon.png'], true)) {
         $relative = ltrim($path, '/');
     }
 
@@ -373,9 +384,26 @@ function bc_handle_static(Request $request): void
     // The document's referrer policy (also a <meta> in index.html for a docroot
     // that serves it statically): cross-origin requests such as map tiles get
     // the origin only, never the path, so a deep-link URL cannot travel.
-    bc_send_static($request, $index, 'text/html; charset=utf-8', StaticFiles::cacheControl('index.html'), [
+    $shell = AppShell::forWebRoot($webRoot);
+    bc_send_rendered($request, $shell->renderIndex(), 'text/html; charset=utf-8', $shell->version(), StaticFiles::cacheControl('index.html'), [
         'Referrer-Policy' => 'strict-origin-when-cross-origin',
     ]);
+}
+
+/**
+ * Send a file the app filled in (Http\AppShell). Its ETag is the shell
+ * version, which is a hash of everything the file depends on, so a matching
+ * If-None-Match is a 304 exactly until a deploy changes something.
+ */
+function bc_send_rendered(Request $request, string $body, string $mime, string $version, string $cacheControl, array $extraHeaders = []): void
+{
+    $etag = 'W/"' . $version . '"';
+    $headers = ['Cache-Control' => $cacheControl, 'ETag' => $etag] + $extraHeaders;
+    if (StaticFiles::matches($request->header('If-None-Match'), $etag)) {
+        Response::notModified($headers)->send();
+        return;
+    }
+    Response::text($body, $mime, 200, $headers)->send();
 }
 
 /**

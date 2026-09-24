@@ -151,11 +151,9 @@ if ('serviceWorker' in navigator) {
     if (e.data && e.data.type === 'sw-updated') armQuietReload();
   });
   window.addEventListener('load', () => {
-    // Prefer root scope; fall back to the /assets/ path (scope-limited)
-    // if the server does not alias /sw.js.
+    // /sw.js only: the app fills in its version as it serves it. The same
+    // file under /assets/ is the raw template, which would run without one.
     navigator.serviceWorker.register('/sw.js')
-      .catch(() => navigator.serviceWorker.register('/assets/sw.js', { scope: '/' }))
-      .catch(() => navigator.serviceWorker.register('/assets/sw.js'))
       .catch(() => { /* offline support unavailable */ });
   });
 }

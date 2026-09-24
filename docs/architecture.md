@@ -6,7 +6,7 @@ This document is the binding contract between backend and frontend work. Deviati
 
 - Backend: PHP 8.3 or later (production runs 8.4; CI runs the runner's stock PHP), no framework. Composer deps: `sabre/dav` and `sabre/vobject` (CalDAV server, ICS parse/serialize, RRULE expansion), `phpmailer` (reminder email and iMIP replies), `minishlink/web-push` (push reminders). Everything else is in-repo.
 - Database: MySQL 8 (Percona 8.4 in production), utf8mb4, FULLTEXT for search. Tests run against SQLite in memory where they need a database at all.
-- Frontend: Preact + HTM as vendored single-file ESM modules under `web/vendor/`, pinned by sha256 in `web/vendor/manifest.json`. No build step, no package manager; ES2022 modules served as written. The only generated artifacts are the modulepreload block and the service worker's shell list, both produced by `scripts/gen-preload.mjs` from the import graph.
+- Frontend: Preact + HTM as vendored single-file ESM modules under `web/vendor/`, pinned by sha256 in `web/vendor/manifest.json`. No build step, no package manager; ES2022 modules served as written. Nothing is generated into the repository. The two things that depend on the whole import graph, the modulepreload block in `index.html` and the service worker's `VERSION` and shell list, are filled in by the server as it serves those files (`server/src/Http/AppShell.php`), cached until a file under `web/` changes.
 - Deployment: rsync the repository to a host, `composer install` there, run migrations, symlink the web server's document root to `server/public`, and run `server/bin/worker.php` from cron every minute as the app user. `scripts/deploy.sh` does all of that for the host named in `scripts/deploy.env` (see `deploy.env.example`), after running every test suite locally and refusing to ship a red tree. `docs/install.md` has the web server blocks.
 
 ## Repo layout
@@ -43,7 +43,7 @@ tools/
   mcp/               # MCP server exposing the API to agents, with its own test
   gen-iata.py        # regenerates server/data/iata-airports.php from OurAirports
 extension/           # Chrome extension: Google Calendar add-links open in your Better-Cal
-scripts/             # deploy.sh, deploy-dev.sh, gen-preload.mjs, vendor.mjs
+scripts/             # deploy.sh, deploy-dev.sh, vendor.mjs
 docs/                # this file, install, api-contract, agent-api, caldav, email-ingest, google-calendar,
                      #   relationships, migration, plugins/ (authoring), design notes, security review
 ```

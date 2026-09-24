@@ -4,6 +4,10 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.3.2 (2026-09-24)
+
+- Phone Filter sheet: checked Show choices keep plain text with a check mark, instead of every checked row turning blue.
+
 ## 0.3.1 (2026-09-24)
 
 Phones, phase 2 of the mobile pass: the phone frame.

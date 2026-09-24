@@ -15,6 +15,7 @@ import { ViewSwitcher } from './ViewSwitcher.js';
 import { REL_LABEL, REL_ORDER } from './Relationship.js';
 import { Icon } from '../ui/icons.js';
 import { JumpPopover } from './JumpPopover.js';
+import { onOutsidePress, insideAny } from '../ui/outside.js';
 
 const DESKTOP_VIEWS = [
   ['month', 'Month'],
@@ -42,16 +43,13 @@ const STEP_UNITS = {
 function useDismiss(open, setOpen, rootRef) {
   useEffect(() => {
     if (!open) return undefined;
-    const onDoc = (e) => {
-      if (rootRef.current && !rootRef.current.contains(e.target)) setOpen(false);
-    };
     const onKey = (e) => {
       if (e.key === 'Escape') { e.stopPropagation(); setOpen(false); }
     };
-    document.addEventListener('pointerdown', onDoc, true);
+    const stop = onOutsidePress(insideAny(rootRef), () => setOpen(false));
     document.addEventListener('keydown', onKey, true);
     return () => {
-      document.removeEventListener('pointerdown', onDoc, true);
+      stop();
       document.removeEventListener('keydown', onKey, true);
     };
   }, [open]);
@@ -200,11 +198,7 @@ function NewMenu() {
 
   useEffect(() => {
     if (!open) return undefined;
-    const onDoc = (e) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
-    };
-    document.addEventListener('pointerdown', onDoc, true);
-    return () => document.removeEventListener('pointerdown', onDoc, true);
+    return onOutsidePress(insideAny(wrapRef), () => setOpen(false));
   }, [open]);
 
   const go = (fn) => () => { setOpen(false); fn(); };

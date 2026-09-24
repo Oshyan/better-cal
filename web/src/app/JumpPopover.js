@@ -11,6 +11,7 @@ import { trapFocus } from '../ui/DayExpand.js';
 import { parseJumpText, jumpGranularity } from '../lib/jumpparse.js';
 import { monthWeeks, stepMonthOf, weekdayHeads } from '../lib/minimonth.js';
 import { Icon } from '../ui/icons.js';
+import { onOutsidePress } from '../ui/outside.js';
 import {
   todayKey, dateOfDayKey, pad,
   fmtMonthYear, fmtDayLong, fmtMonthShort,
@@ -46,15 +47,15 @@ export function JumpPopover() {
       ? { year: vm.year, month: vm.month }
       : { year: Number(state.anchor.slice(0, 4)), month: Number(state.anchor.slice(5, 7)) });
     focusedRef.current = false;
-    const onDoc = (e) => {
-      if (panelRef.current && !panelRef.current.contains(e.target) &&
-          !e.target.closest('.bc-toolbar-date')) set({ jumpOpen: false });
-    };
     const onKey = (e) => { if (e.key === 'Tab') trapFocus(panelRef.current, e); };
-    document.addEventListener('pointerdown', onDoc, true);
+    // The month title that opens it counts as inside, so its click toggles it.
+    const stop = onOutsidePress(
+      (t) => (panelRef.current && panelRef.current.contains(t)) || !!(t.closest && t.closest('.bc-toolbar-date')),
+      () => set({ jumpOpen: false }),
+    );
     document.addEventListener('keydown', onKey, true);
     return () => {
-      document.removeEventListener('pointerdown', onDoc, true);
+      stop();
       document.removeEventListener('keydown', onKey, true);
     };
   }, [open]);

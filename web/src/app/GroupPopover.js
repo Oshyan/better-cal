@@ -8,6 +8,7 @@ import { useStore, set, state } from './store.js';
 import { openDetail } from './actions.js';
 import { isMobile, anchorPanel, trapFocus, MOBILE_QUERY } from '../ui/DayExpand.js';
 import { parseISO, fmtTime } from '../lib/dates.js';
+import { onOutsidePress, insideAny } from '../ui/outside.js';
 
 const WIDTH = 300;
 
@@ -17,18 +18,16 @@ export function GroupPopover() {
 
   // Document-level listeners; torn down on unmount, not just close.
   useEffect(() => {
-    const onDoc = (e) => {
-      if (panelRef.current && !panelRef.current.contains(e.target)) set({ groupPopover: null });
-    };
     const onKey = (e) => {
       if (e.key === 'Tab') trapFocus(panelRef.current, e);
     };
+    let stop = null;
     if (gp) {
-      document.addEventListener('pointerdown', onDoc, true);
+      stop = onOutsidePress(insideAny(panelRef), () => set({ groupPopover: null }));
       document.addEventListener('keydown', onKey, true);
     }
     return () => {
-      document.removeEventListener('pointerdown', onDoc, true);
+      if (stop) stop();
       document.removeEventListener('keydown', onKey, true);
     };
   }, [gp]);

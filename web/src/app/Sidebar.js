@@ -20,6 +20,7 @@ import { MiniMonth } from './MiniMonth.js';
 import { PALETTE } from '../lib/color.js';
 import { MANAGE_ITEMS } from './commanddefs.js';
 import { Icon, CalDot } from '../ui/icons.js';
+import { onOutsidePress, insideAny } from '../ui/outside.js';
 
 // Solo ("show only this calendar"): transient, session-scoped. Entering solo
 // captures the current visibility set; exiting restores it exactly. Switching
@@ -127,11 +128,7 @@ function ModeMenu({ mode, tip, ariaName, customDisabled, onPick }) {
 
   useEffect(() => {
     if (!open) return undefined;
-    const onDoc = (e) => {
-      if (rootRef.current && !rootRef.current.contains(e.target)) setOpen(false);
-    };
-    document.addEventListener('pointerdown', onDoc, true);
-    return () => document.removeEventListener('pointerdown', onDoc, true);
+    return onOutsidePress(insideAny(rootRef), () => setOpen(false));
   }, [open]);
 
   return html`<div class="bc-ov bc-modemenu" ref=${rootRef}>

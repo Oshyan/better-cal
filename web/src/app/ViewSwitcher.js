@@ -14,6 +14,7 @@ import {
 } from './actions.js';
 import { trapFocus } from '../ui/DayExpand.js';
 import { Icon } from '../ui/icons.js';
+import { onOutsidePress, insideAny } from '../ui/outside.js';
 
 // onDone runs after a view is applied (or the pending choice resolves).
 export function useSavedViewPicker(onDone) {
@@ -75,20 +76,16 @@ export function ViewSwitcher() {
   // Document-level listeners; torn down on unmount, not just close.
   useEffect(() => {
     if (!open) return undefined;
-    const onDoc = (e) => {
-      // Test against the whole widget (trigger + panel): closing on a
-      // pointerdown that lands on the trigger makes the follow-up click
-      // reopen it, so the button can never toggle the popover closed.
-      if (rootRef.current && !rootRef.current.contains(e.target)) close();
-    };
+    // Inside is the whole widget (trigger + panel), so the trigger's own
+    // click can toggle the popover closed.
     const onKey = (e) => {
       if (e.key === 'Escape') { e.stopPropagation(); close(); }
       if (e.key === 'Tab') trapFocus(panelRef.current, e);
     };
-    document.addEventListener('pointerdown', onDoc, true);
+    const stop = onOutsidePress(insideAny(rootRef), () => close());
     document.addEventListener('keydown', onKey, true);
     return () => {
-      document.removeEventListener('pointerdown', onDoc, true);
+      stop();
       document.removeEventListener('keydown', onKey, true);
     };
   }, [open]); // eslint-disable-line

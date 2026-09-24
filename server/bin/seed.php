@@ -79,6 +79,7 @@ if ($existing !== null) {
     echo "Updated user $email (id $userId).\n";
     echo "Signed out {$revoked['sessions']} session(s); log in again with the new password.\n";
     echo "Removed {$revoked['pushDevices']} push device(s); each of your browsers registers again when you sign in.\n";
+    echo "Forgot {$revoked['trustedDevices']} remembered browser(s); each is remembered again when it signs in.\n";
     if ($revokeTokens) {
         echo "Revoked {$revoked['tokens']} API token(s); re-issue with bin/token.php --create.\n";
         echo "Gave {$revoked['feedsRotated']} outbound feed(s) new addresses; copy them again from Settings, Connections.\n";

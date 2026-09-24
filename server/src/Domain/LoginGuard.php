@@ -30,6 +30,12 @@ use BetterCal\Support\ClientIp;
  *
  * A refused attempt does not run password_verify at all, so it cannot be used
  * to keep guessing (or to burn CPU on the hash) while "blocked".
+ *
+ * A browser that has signed in before carries a device cookie
+ * (TrustedDevices, issue #59), which vouches for it through the overall brake
+ * the way a known address does, from any network. Only through the brake:
+ * the per-source limit still applies to it, and after DEVICE_MAX wrong
+ * passwords sent with the same cookie in the window, it stops vouching.
  */
 final class LoginGuard
 {
@@ -51,6 +57,10 @@ final class LoginGuard
     public const INFLIGHT_SLACK = 3;
     private const INFLIGHT_WINDOW = 60;
     public const KNOWN_FOR = 2592000;   // a successful sign-in vouches for its source for 30 days
+    // Wrong passwords sent with one device cookie before it stops vouching
+    // through the overall brake. Low: the owner types a password or two wrong,
+    // a thief with a copied cookie is guessing.
+    public const DEVICE_MAX = 3;
 
     private const FAIL_ALL = 'auth-fail:all';
 
@@ -115,7 +125,7 @@ final class LoginGuard
      * May this source try a password right now? Returns the number of seconds
      * to wait when it may not, else 0.
      */
-    public function retryAfter(string $source, ?\DateTimeImmutable $now = null): int
+    public function retryAfter(string $source, ?\DateTimeImmutable $now = null, ?int $device = null): int
     {
         $wait = $this->throttle->retryAfter('auth-fail:ip:' . $source, max(1, $this->maxFailures), self::WINDOW, $now);
         if ($wait > 0) {
@@ -123,7 +133,8 @@ final class LoginGuard
         }
         if ($this->throttle->count(self::FAIL_ALL, self::WINDOW, $now) >= self::GLOBAL_MAX
             && $this->throttle->distinct('auth-fail:ip:', self::WINDOW, $now) >= self::GLOBAL_SOURCES
-            && !$this->isKnown($source, $now)) {
+            && !$this->isKnown($source, $now)
+            && !$this->deviceVouches($device, $now)) {
             return max(1, $this->throttle->retryAfter(self::FAIL_ALL, self::GLOBAL_MAX, self::WINDOW, $now));
         }
         return 0;
@@ -131,6 +142,16 @@ final class LoginGuard
 
     /** @var list<int> rows reserved by begin(), pending the outcome of this attempt */
     private array $pending = [];
+
+    /** The trusted device (TrustedDevices id) this attempt came with, if any. */
+    private ?int $device = null;
+
+    /**
+     * Why begin() last refused: 'source' (this address sent too many wrong
+     * passwords), 'brake' (the overall brake, which a known address or a
+     * device cookie would have passed), 'busy' (too many checks in flight).
+     */
+    public ?string $refusal = null;
 
     /**
      * Start one password attempt. The attempt is counted BEFORE the password
@@ -140,17 +161,22 @@ final class LoginGuard
      * wait (and counts nothing) when the source may not try; otherwise 0,
      * and the caller reports the outcome with succeeded() or rejected().
      */
-    public function begin(string $source, ?\DateTimeImmutable $now = null): int
+    public function begin(string $source, ?\DateTimeImmutable $now = null, ?int $device = null): int
     {
+        $this->device = $device;
+        $this->refusal = null;
         $max = max(1, $this->maxFailures);
         $fail = 'auth-fail:ip:' . $source;
         $wait = $this->throttle->retryAfter($fail, $max, self::WINDOW, $now);
         if ($wait > 0) {
+            $this->refusal = 'source';
             return $wait;
         }
         if ($this->throttle->count(self::FAIL_ALL, self::WINDOW, $now) >= self::GLOBAL_MAX
             && !$this->isKnown($source, $now)
+            && !$this->deviceVouches($device, $now)
             && $this->throttle->distinct('auth-fail:ip:', self::WINDOW, $now) >= self::GLOBAL_SOURCES) {
+            $this->refusal = 'brake';
             return max(1, $this->throttle->retryAfter(self::FAIL_ALL, self::GLOBAL_MAX, self::WINDOW, $now));
         }
         // The check is in flight: count it, then decide on the count that
@@ -160,6 +186,7 @@ final class LoginGuard
         if ($this->throttle->count($fail, self::WINDOW, $now) + $this->throttle->count($try, self::INFLIGHT_WINDOW, $now) > $max + self::INFLIGHT_SLACK) {
             $this->throttle->release($this->pending);
             $this->pending = [];
+            $this->refusal = 'busy';
             return 5;
         }
         return 0;
@@ -179,6 +206,9 @@ final class LoginGuard
         // Failure first, then the in-flight mark goes: no moment where the
         // attempt is counted nowhere.
         $closing = $this->recordFailure($source, $now);
+        if ($this->device !== null) {
+            $this->throttle->hit('auth-fail:dev:' . $this->device, $now);
+        }
         $this->throttle->release($this->pending);
         $this->pending = [];
         if ($closing) {
@@ -216,5 +246,12 @@ final class LoginGuard
     public function isKnown(string $source, ?\DateTimeImmutable $now = null): bool
     {
         return $this->throttle->count('auth-ok:ip:' . $source, self::KNOWN_FOR, $now) > 0;
+    }
+
+    /** A device cookie vouches through the overall brake until it has sent DEVICE_MAX wrong passwords in the window. */
+    public function deviceVouches(?int $device, ?\DateTimeImmutable $now = null): bool
+    {
+        return $device !== null
+            && $this->throttle->count('auth-fail:dev:' . $device, self::WINDOW, $now) < self::DEVICE_MAX;
     }
 }

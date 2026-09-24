@@ -103,7 +103,7 @@ final class Auth
      * addresses), and a reminder email destination that is not the account
      * address (F6).
      *
-     * @return array{sessions:int,tokens:int,pushDevices:int,feedsRotated:int,notifyEmailReset:bool}
+     * @return array{sessions:int,tokens:int,pushDevices:int,trustedDevices:int,feedsRotated:int,notifyEmailReset:bool}
      */
     public function setPassword(int $userId, string $password, bool $revokeTokens = false): array
     {
@@ -111,6 +111,9 @@ final class Auth
             $this->db->run('UPDATE users SET password_hash = ? WHERE id = ?', [password_hash($password, PASSWORD_DEFAULT), $userId]);
             $sessions = $this->db->run('DELETE FROM sessions WHERE user_id = ?', [$userId])->rowCount();
             $push = $this->db->run('DELETE FROM push_subscriptions WHERE user_id = ?', [$userId])->rowCount();
+            // Browsers that signed in under the old password stop vouching
+            // through the sign-in brake (issue #59); each earns it again.
+            $devices = (new TrustedDevices($this->db))->forgetAll($userId);
             $tokens = 0;
             $feeds = 0;
             $emailReset = false;
@@ -128,7 +131,7 @@ final class Auth
                     $emailReset = true;
                 }
             }
-            return ['sessions' => $sessions, 'tokens' => $tokens, 'pushDevices' => $push, 'feedsRotated' => $feeds, 'notifyEmailReset' => $emailReset];
+            return ['sessions' => $sessions, 'tokens' => $tokens, 'pushDevices' => $push, 'trustedDevices' => $devices, 'feedsRotated' => $feeds, 'notifyEmailReset' => $emailReset];
         });
     }
 
@@ -154,6 +157,18 @@ final class Auth
             $this->db->run('UPDATE sessions SET last_seen_at = ? WHERE token_hash = ?', [Time::nowDb(), $tokenHash]);
         }
         return ['user' => $row, 'csrf' => $csrf];
+    }
+
+    /** The device cookie (TrustedDevices): a year, sent only to the sign-in endpoints, never to scripts or other sites. */
+    public function deviceCookieOptions(): array
+    {
+        return [
+            'expires' => time() + TrustedDevices::TTL_DAYS * 86400,
+            'path' => TrustedDevices::PATH,
+            'secure' => str_starts_with($this->cfg['base_url'], 'https') || !empty($_SERVER['HTTPS']),
+            'httponly' => true,
+            'samesite' => 'Strict',
+        ];
     }
 
     public function cookieOptions(bool $clear = false): array

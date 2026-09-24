@@ -3146,6 +3146,114 @@ require __DIR__ . '/plugins.php';
     checkEq('reset --revoke-tokens: another user\'s token is untouched', 1, (int) $pdb->scalar('SELECT COUNT(*) FROM api_tokens WHERE user_id = 2'));
 }
 
+// --- Device cookies: the owner's browsers get past the sign-in brake (#59) ---
+{
+    $ddb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $ddb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, password_hash TEXT, display_name TEXT, settings_json TEXT)');
+    $ddb->run('CREATE TABLE sessions (token_hash TEXT PRIMARY KEY, user_id INTEGER, csrf TEXT, expires_at TEXT, last_seen_at TEXT DEFAULT CURRENT_TIMESTAMP)');
+    $ddb->run('CREATE TABLE trusted_devices (id INTEGER PRIMARY KEY, user_id INTEGER, token_hash TEXT UNIQUE, created_at TEXT, expires_at TEXT)');
+    $ddb->run('CREATE TABLE rate_events (id INTEGER PRIMARY KEY, bucket TEXT, created_at TEXT)');
+    $ddb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT)');
+    $ddb->run('CREATE TABLE api_tokens (id INTEGER PRIMARY KEY, user_id INTEGER, token_hash TEXT)');
+    $ddb->run('CREATE TABLE push_subscriptions (id INTEGER PRIMARY KEY, user_id INTEGER, endpoint TEXT)');
+    $ddb->run('CREATE TABLE out_feeds (id INTEGER PRIMARY KEY, user_id INTEGER, token TEXT)');
+    $ddb->run("INSERT INTO users (id, email, password_hash, display_name) VALUES (1, 'owner@example.com', ?, 'Owner'), (2, 'other@example.com', ?, 'Other')", [
+        password_hash('right-password', PASSWORD_DEFAULT),
+        password_hash('other-password', PASSWORD_DEFAULT),
+    ]);
+    $devices = new BetterCal\Domain\TrustedDevices($ddb);
+    $d0 = Time::parseIso('2026-09-24T12:00:00+00:00');
+    $later = static fn(string $spec) => $d0->add(new DateInterval($spec));
+
+    $tok = $devices->remember(1, null, $d0);
+    check('devices: a random cookie value is issued', is_string($tok) && preg_match('/^[A-Za-z0-9_-]{43}$/', $tok) === 1);
+    check('devices: only its hash is stored', (int) $ddb->scalar('SELECT COUNT(*) FROM trusted_devices WHERE token_hash = ?', [$tok]) === 0);
+    $id = $devices->find($tok, 'owner@example.com', $later('PT1H'));
+    check('devices: the cookie names its device', is_int($id));
+    checkEq('devices: it vouches only for its own account', null, $devices->find($tok, 'other@example.com', $later('PT1H')));
+    checkEq('devices: junk, empty and missing cookies name nothing', [null, null, null], [$devices->find('not-a-device', 'owner@example.com'), $devices->find('', 'owner@example.com'), $devices->find(null, 'owner@example.com')]);
+    checkEq('devices: it expires after a year', null, $devices->find($tok, 'owner@example.com', $later('P366D')));
+    $tok2 = $devices->remember(1, $id, $later('PT2H'));
+    checkEq('devices: signing in again replaces the cookie, and the old value stops working', [null, true], [$devices->find($tok, 'owner@example.com', $later('PT3H')), $devices->find($tok2, 'owner@example.com', $later('PT3H')) !== null]);
+    $newest = null;
+    for ($i = 0; $i < 25; $i++) {
+        $newest = $devices->remember(1, null, $later('PT' . (3 + $i) . 'H'));
+    }
+    checkEq('devices: at most MAX_PER_USER kept per account', BetterCal\Domain\TrustedDevices::MAX_PER_USER, (int) $ddb->scalar('SELECT COUNT(*) FROM trusted_devices WHERE user_id = 1'));
+    check('devices: the newest are the ones kept', $devices->find($newest, 'owner@example.com', $later('P1D')) !== null && $devices->find($tok2, 'owner@example.com', $later('P1D')) === null);
+    $ddb->run('DELETE FROM trusted_devices');
+    $broken = new BetterCal\Domain\TrustedDevices(new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]));
+    checkEq('devices: before the migration runs, nothing vouches and nothing breaks', [null, null, 0], [$broken->find(str_repeat('a', 43), 'owner@example.com'), $broken->remember(1), $broken->forgetAll(1)]);
+
+    // The whole sign-in path, with the overall brake held on by a crowd.
+    $savedAddr = $_SERVER['REMOTE_ADDR'] ?? null;
+    $dthrottle = new BetterCal\Infra\Throttle($ddb);
+    $holdBrake = static function () use ($dthrottle): void {
+        for ($i = 0; $i < BetterCal\Domain\LoginGuard::GLOBAL_MAX; $i++) {
+            $dthrottle->hit('auth-fail:all');
+            $dthrottle->hit('auth-fail:ip:192.0.2.' . ($i % BetterCal\Domain\LoginGuard::GLOBAL_SOURCES));
+        }
+    };
+    $holdBrake();
+    $dauth = new BetterCal\Domain\Auth($ddb, ['base_url' => 'https://cal.example.com']);
+    $login = static function (string $addr, string $password, array $cookies = []) use ($dauth, $dthrottle, $ddb, $devices): BetterCal\Http\Response {
+        $_SERVER['REMOTE_ADDR'] = $addr;
+        $ctl = new BetterCal\Http\Controllers\AuthController($dauth, new BetterCal\Domain\LoginGuard($dthrottle, [], 10, $ddb), $devices);
+        return $ctl->login(new BetterCal\Http\Request('POST', '/api/v1/auth/login', [], ['email' => 'owner@example.com', 'password' => $password], [], $cookies));
+    };
+    $setCookies = static function (BetterCal\Http\Response $r): array {
+        $out = [];
+        foreach ($r->cookies as [$name, $value, $options]) {
+            $out[$name] = ['value' => $value, 'options' => $options];
+        }
+        return $out;
+    };
+    $r = $login('198.51.100.44', 'right-password');
+    checkEq('brake: a new browser on a new network is refused, even with the right password', 429, $r->status);
+    check('brake: the refusal says new devices are paused, not that this network guessed', str_contains($r->body, 'new devices are paused') && !str_contains($r->body, 'from this network'));
+    $mine = $devices->remember(1);
+    $r = $login('198.51.100.45', 'right-password', [BetterCal\Domain\TrustedDevices::COOKIE => $mine]);
+    checkEq('brake: a browser that signed in before gets through from a new network', 200, $r->status);
+    $c = $setCookies($r);
+    check('brake: it gets a session and a fresh device cookie', isset($c['bc_session'], $c['bc_device']) && $c['bc_device']['value'] !== $mine);
+    check('brake: the cookie it presented is retired', $devices->find($mine, 'owner@example.com') === null && $devices->find($c['bc_device']['value'], 'owner@example.com') !== null);
+    $o = $c['bc_device']['options'];
+    checkEq('device cookie: only sent to the sign-in endpoints, never to scripts or other sites, over https', ['/api/v1/auth', true, 'Strict', true], [$o['path'], $o['httponly'], $o['samesite'], $o['secure']]);
+    check('device cookie: lives about a year', $o['expires'] > time() + 360 * 86400);
+
+    // A copied cookie is not a guessing ticket: wrong passwords count against it.
+    $copied = $devices->remember(1);
+    $codes = [];
+    for ($i = 0; $i < BetterCal\Domain\LoginGuard::DEVICE_MAX; $i++) {
+        $codes[] = $login('203.0.113.80', 'guess-' . $i, [BetterCal\Domain\TrustedDevices::COOKIE => $copied])->status;
+    }
+    checkEq('brake: wrong passwords with a device cookie are ordinary failures', array_fill(0, BetterCal\Domain\LoginGuard::DEVICE_MAX, 401), $codes);
+    checkEq('brake: after DEVICE_MAX of them the cookie stops vouching', 429, $login('203.0.113.81', 'right-password', [BetterCal\Domain\TrustedDevices::COOKIE => $copied])->status);
+    // The per-address limit still applies to a remembered browser.
+    $other = $devices->remember(1);
+    for ($i = 0; $i < 10; $i++) {
+        $dthrottle->hit('auth-fail:ip:198.51.100.90');
+    }
+    $r = $login('198.51.100.90', 'right-password', [BetterCal\Domain\TrustedDevices::COOKIE => $other]);
+    check('brake: a device cookie does not lift the per-address limit', $r->status === 429 && str_contains($r->body, 'from this network'));
+    // Without the brake, the first sign-in on a browser is what earns the cookie.
+    $ddb->run('DELETE FROM rate_events');
+    $r = $login('198.51.100.60', 'right-password');
+    check('no brake: an ordinary sign-in succeeds and the browser is remembered', $r->status === 200 && isset($setCookies($r)['bc_device']));
+    checkEq('no brake: a wrong password is still just a 401', 401, $login('198.51.100.61', 'nope')->status);
+
+    // A reset forgets every remembered browser of that account.
+    $ddb->run("INSERT INTO trusted_devices (user_id, token_hash, created_at, expires_at) VALUES (2, 'x', '2026-09-24 00:00:00', '2099-01-01 00:00:00')");
+    $rev = $dauth->setPassword(1, 'new-password');
+    check('reset: remembered browsers are forgotten', $rev['trustedDevices'] > 0 && (int) $ddb->scalar('SELECT COUNT(*) FROM trusted_devices WHERE user_id = 1') === 0);
+    checkEq('reset: another account\'s browsers are untouched', 1, (int) $ddb->scalar('SELECT COUNT(*) FROM trusted_devices WHERE user_id = 2'));
+    if ($savedAddr === null) {
+        unset($_SERVER['REMOTE_ADDR']);
+    } else {
+        $_SERVER['REMOTE_ADDR'] = $savedAddr;
+    }
+}
+
 // --- Google Calendar connector ------------------------------------------------
 use BetterCal\Domain\GoogleAuth;
 use BetterCal\Domain\GoogleSync;

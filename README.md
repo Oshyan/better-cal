@@ -37,7 +37,7 @@ Security is taken seriously here, which for a one-person project means verified 
 - **Published advisories**: each finding is a [GitHub security advisory](https://github.com/Oshyan/better-cal/security/advisories) with the affected and patched versions.
 - A test suite that runs on every change and before every deploy, including regression tests for the security fixes.
 
-[SECURITY.md](SECURITY.md) has the details, the residual risks that were accepted rather than fixed, and how to report a problem privately.
+[SECURITY.md](SECURITY.md) has the details, the residual risks that were accepted rather than fixed, the design trade-offs made on purpose (such as staying signed in on your own devices, and what to do if one is lost), and how to report a problem privately.
 
 ## Versions
 

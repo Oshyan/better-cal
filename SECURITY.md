@@ -27,6 +27,22 @@ Known residuals, accepted and documented rather than fixed:
 
 Anything you find after that is new, and worth telling us about.
 
+## Design trade-offs
+
+These are deliberate choices, not oversights. Each makes daily use easier and costs something if a device you use is lost or stolen.
+
+- **Staying signed in.** A browser session lasts 180 days. That suits a calendar you open many times a day. The cost is that anyone holding an unlocked device that is signed in can use your calendar without the password until the session ends or is revoked.
+- **Remembered browsers (since 0.2.3).** A browser that has signed in keeps a device cookie for a year, even after you sign out. The cookie never signs anyone in by itself. It only lets a sign-in with the right password through the overall sign-in brake while a distributed attack is going on (issue #59). Someone with the device but not the password gains at most 3 password guesses per 15 minutes while the brake is on. So the remembered browser adds very little to what a lost device already exposes. The open session is the real risk.
+- **Never locking the account.** Wrong passwords slow guessing down per address and overall, but the account itself is never locked, so nobody can lock you out of your own calendar by guessing badly on purpose. The cost is that a weak password is only slowed down, not protected. Use a long, unique one.
+- **CalDAV apps hold a credential.** A phone or desktop calendar app syncing over CalDAV stores whatever you gave it. Give it an API token rather than your password, so a lost device can be cut off by revoking one token instead of changing the password everywhere.
+
+### If a device is lost or stolen
+
+1. Reset the password on the server: `php server/bin/seed.php --email=you@example.com`. It asks for the new password. This signs out every browser session, forgets every remembered browser and removes every push device.
+2. Revoke any API token that device held (Settings, API keys). If you are not sure which, add `--revoke-tokens` to the reset. That revokes every token, gives your outbound feeds new addresses and sends reminder emails back to the account's own address.
+
+There is no in-app "sign out everywhere" yet, so step 1 needs shell access to the server.
+
 ## Scope notes
 
 - Better-Cal is single-user. There is one login; other people reach it through CalDAV, shared feeds and invitations. Problems that require being that one logged-in user are still worth reporting if they cross a boundary the app is supposed to keep (a feed reaching an internal address, a plugin escaping its calendar, an emailed invitation changing something without a decision).

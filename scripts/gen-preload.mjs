@@ -17,7 +17,10 @@
 // ONLY thing that invalidates a client's cache is a new VERSION; deriving it
 // from content means a deploy can never forget to bump it, and an unchanged
 // deploy never invalidates for nothing. deploy.sh runs this in write mode
-// before rsync; --check is for the dev gate and CI.
+// before rsync and refuses to continue if that leaves either file different
+// from the last commit; --check is for the dev gate, and web/tests/static.mjs
+// runs it too, so CI and every local test run catch a stale block before it
+// is committed.
 //
 //   node scripts/gen-preload.mjs [--check]
 

@@ -37,11 +37,24 @@ fi
 # Always, even when tests are skipped: the modulepreload block is generated
 # from the import graph (a stale one quietly sends the browser back to
 # discovering modules level by level), and the service worker's VERSION and
-# shell list are derived from a content hash of every shell file. Running it
-# here, in write mode, means what ships is self-consistent whether or not
-# anyone remembered to regenerate; the dev deploy keeps --check as its gate.
+# shell list are derived from a content hash of every shell file. It runs in
+# write mode, so the files are brought up to date, and then the deploy stops
+# if that changed anything (or they had uncommitted edits already): what ships
+# must be what is committed and tagged. It used to regenerate after the
+# release commit and ship the result, leaving web/sw.js modified and the tag
+# out of step with production (0.2.2, 0.2.4). The deploy never commits for
+# you; the dev deploy keeps --check as its gate.
 echo "== generated assets =="
 node "${ROOT_DIR}/scripts/gen-preload.mjs"
+if ! git -C "${ROOT_DIR}" diff --quiet HEAD -- web/sw.js web/index.html; then
+  echo "" >&2
+  echo "Refusing to deploy: web/sw.js or web/index.html differ from the last commit." >&2
+  echo "The generated preload block and service-worker version are now up to date on disk;" >&2
+  echo "commit them so the deployed files match the commit, then run the deploy again:" >&2
+  echo "" >&2
+  echo "  git add web/sw.js web/index.html && git commit -m 'Regenerate preload block and sw version'" >&2
+  exit 1
+fi
 
 if [ "${SKIP_TESTS:-0}" != "1" ]; then
   echo "== pre-flight tests =="

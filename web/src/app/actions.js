@@ -80,7 +80,10 @@ export function stepAnchor(dir) {
   const k = vm.year * 12 + (vm.month - 1) + dir;
   const y = Math.floor(k / 12);
   const m = ((k % 12) + 12) % 12 + 1;
-  set({ anchor: y + '-' + pad(m) + '-01', scrollSeq: state.scrollSeq + 1 });
+  // Mid-month in the month grid (jumpAnchorFor): landing on the 1st left the
+  // outgoing month dominant in a tall window, so the label, and the next
+  // step computed from it, stayed put and Next did nothing.
+  set({ anchor: jumpAnchorFor(y + '-' + pad(m) + '-01', 'month'), scrollSeq: state.scrollSeq + 1 });
 }
 
 // Where a jump should actually land, given how much of a date was asked for.

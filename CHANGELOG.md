@@ -4,6 +4,17 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.2.3 (2026-09-24)
+
+Your own browsers get past the sign-in brake (issue #59, layer 1).
+
+- A successful password sign-in now leaves a device cookie in the browser: random, stored only as a hash, valid for a year, sent only to the sign-in endpoints, and replaced with a fresh one on every sign-in. Signing out keeps it.
+- While the overall brake is on (many failed sign-ins from many addresses at once), a browser carrying a valid device cookie can sign in from any network, the same way a recently used address can. The password is still required and the per-address limit still applies.
+- Wrong passwords sent with a device cookie count against that cookie; after 3 in 15 minutes it stops helping, so a copied cookie is no use for guessing.
+- A password reset forgets every remembered browser, and `seed.php` says how many.
+- When the brake refuses a sign-in, the message now says new devices are paused, rather than blaming the network for wrong passwords.
+- Migration 030 adds the `trusted_devices` table.
+
 ## 0.2.2 (2026-09-24)
 
 Bundled plugins for context calendars.

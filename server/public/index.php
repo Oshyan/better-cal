@@ -84,7 +84,7 @@ function bc_handle_api(Request $request, array $cfg): void
 
         $throttle = new \BetterCal\Infra\Throttle($db);
         $loginGuard = new Domain\LoginGuard($throttle, $cfg['auth']['trusted_proxies'], $cfg['auth']['max_failures'], $db);
-        $authController = new Controllers\AuthController($auth, $loginGuard);
+        $authController = new Controllers\AuthController($auth, $loginGuard, new Domain\TrustedDevices($db));
         $calendarsController = new Controllers\CalendarsController($db, $calendars, $feeds);
         $foldersController = new Controllers\FoldersController($folders);
         $eventsController = new Controllers\EventsController($events, $trips, new Domain\MailIngest($db, $events));

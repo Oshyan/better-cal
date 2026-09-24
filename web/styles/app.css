@@ -1329,6 +1329,27 @@ body.bc-dragging * { cursor: grabbing !important; }
    address with no map reads as a known limitation rather than a bug. */
 .bc-detail-geonote { font-size: 12px; color: var(--fg-muted); margin-top: 2px; }
 
+/* --- event loading ------------------------------------------------------- */
+/* Floats over the top of the view: "Loading events…" on a cold load (after a
+   short delay, so a fast load never flashes it), or why events are missing
+   and that a retry is coming (#48). */
+.bc-view { position: relative; }
+.bc-winstatus {
+  position: absolute; top: 44px; left: 50%; transform: translateX(-50%); z-index: 5;
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 5px 12px; border-radius: 999px; font-size: 12px;
+  background: var(--bg-raised); color: var(--fg-muted);
+  border: 1px solid var(--border); box-shadow: var(--shadow);
+  animation: bc-fadein 0.2s ease 0.4s both;
+  pointer-events: auto; white-space: nowrap; max-width: calc(100% - 32px);
+}
+.bc-winstatus.is-failed {
+  animation: none; color: var(--fg);
+  background: color-mix(in srgb, var(--danger) 10%, var(--bg-raised));
+  border-color: color-mix(in srgb, var(--danger) 40%, var(--border));
+}
+.bc-winstatus > span { overflow: hidden; text-overflow: ellipsis; }
+
 /* --- system health ------------------------------------------------------- */
 /* The one persistent banner the app has: reminders cannot reach THIS device.
    Sits above the page content; everything else about failures lives on the

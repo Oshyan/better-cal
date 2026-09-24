@@ -64,6 +64,10 @@ export const state = {
   occ: new Map(),
   occVersion: 0,
   loadedRanges: [], // [{start, end}] ms epochs, merged
+  // Event window loading as the view needs to show it: null (nothing to say),
+  // {kind:'loading'} on a cold load, {kind:'failed', offline, retryAt} when a
+  // window request failed and a retry is scheduled (api.js).
+  windowStatus: null,
 
   view: 'month', // month | weeks3 | weeks2 | week | day | agenda
   // Responsive roster inputs (kept in sync by App via matchMedia listeners).

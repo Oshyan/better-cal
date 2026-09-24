@@ -20,6 +20,7 @@ import { isEmptyHtml } from '../lib/richtext.js';
 import {
   parseISO, toInputValue, fromInputValue, toISOWithOffset, addDaysDate, pad, localTz,
   dateOfDayKey, eventDuration, instantFromWallTime, wallTimeInZone, sameClock, tzCity, tzOffsetLabel, zoneOptions, fmtRange,
+  allDayFields, allDayInputs, addDaysKey, diffDaysKey,
 } from '../lib/dates.js';
 import {
   TIMED_CHOICES, ALLDAY_CHOICES, REMINDER_UNITS, fmtOffsetMinutes, fmtReminder,
@@ -80,6 +81,13 @@ function parseRrule(rrule) {
 // which case "3:00 PM" means 3:00 PM there. Untouched stays on the exact old
 // path, so drafts saved before the zone picker existed behave as they did.
 function formInstants(form) {
+  if (form.allDay) {
+    // Whole days at local midnight, end exclusive, whatever times the fields
+    // held before All day was ticked.
+    const f = allDayFields(form.start, form.end);
+    const v = allDayInputs(f.start, f.end);
+    return [fromInputValue(v.start), fromInputValue(v.end)];
+  }
   if (form.tzTouched && form.tz && !form.allDay) {
     return [instantFromWallTime(form.start, form.tz), instantFromWallTime(form.end, form.tz)];
   }
@@ -388,6 +396,20 @@ export function EditorDrawer() {
     set({ editor: null, editorDirty: false });
   };
 
+  // All-day date fields: the end field is the last day (inclusive). With the
+  // duration locked, moving the first day moves the last by the same amount.
+  const onAllDayStart = (v) => {
+    if (!v) return;
+    const cur = allDayFields(form.start, form.end);
+    const last = durationLock ? addDaysKey(v, diffDaysKey(cur.end, cur.start)) : (cur.end < v ? v : cur.end);
+    upd(allDayInputs(v, last));
+  };
+  const onAllDayEnd = (v) => {
+    if (!v) return;
+    const cur = allDayFields(form.start, form.end);
+    upd(allDayInputs(cur.start, v));
+  };
+
   const onStartChange = (v) => {
     if (durationLock) {
       const oldS = fromInputValue(form.start);
@@ -483,7 +505,8 @@ export function EditorDrawer() {
   };
 
   const r = form.rrule;
-  const duration = eventDuration(form);
+  const allDayView = form.allDay ? allDayFields(form.start, form.end) : null;
+  const duration = allDayView ? eventDuration({ ...allDayInputs(allDayView.start, allDayView.end), allDay: true }) : eventDuration(form);
 
   // --- reminders row --------------------------------------------------------
   const selectedCal = state.calendars.find((c) => c.id === Number(form.calendarId));
@@ -549,7 +572,9 @@ export function EditorDrawer() {
       <div class="bc-field-row">
         <label class=${'bc-field' + (nlFlash && nlFlash.has('start') ? ' bc-nl-applied' : '')}>
           <span>Start</span>
-          <input type="datetime-local" value=${form.start} onInput=${(e) => onStartChange(e.target.value)} required />
+          ${allDayView
+            ? html`<input type="date" value=${allDayView.start} onInput=${(e) => onAllDayStart(e.target.value)} required />`
+            : html`<input type="datetime-local" value=${form.start} onInput=${(e) => onStartChange(e.target.value)} required />`}
         </label>
         <button
           type="button"
@@ -560,8 +585,10 @@ export function EditorDrawer() {
           onClick=${() => setDurationLock(!durationLock)}
         ><${Icon} name=${durationLock ? 'lock' : 'unlock'} size=${13} /></button>
         <label class=${'bc-field' + (nlFlash && nlFlash.has('end') ? ' bc-nl-applied' : '')}>
-          <span>End</span>
-          <input type="datetime-local" value=${form.end} onInput=${(e) => upd({ end: e.target.value })} required />
+          <span>${allDayView ? 'Last day' : 'End'}</span>
+          ${allDayView
+            ? html`<input type="date" value=${allDayView.end} min=${allDayView.start} onInput=${(e) => onAllDayEnd(e.target.value)} required />`
+            : html`<input type="datetime-local" value=${form.end} onInput=${(e) => upd({ end: e.target.value })} required />`}
         </label>
         <label class=${'bc-check' + (nlFlash && nlFlash.has('allDay') ? ' bc-nl-applied' : '')}>
           <input type="checkbox" checked=${form.allDay} onChange=${(e) => upd({ allDay: e.target.checked })} />

@@ -5,7 +5,7 @@ import {
   parseISO, toISOWithOffset, dayKeyOf, dateOfDayKey, epochDayOfKey,
   keyOfEpochDay, addDaysKey, diffDaysKey, weekIndexOfKey, firstEpochDayOfWeek,
   dayKeysOfWeek, startOfWeekKey, setWeekStart, getWeekStart, setTimeFormat, fmtTime,
-  fmtMonthShort, timeState, startMs, byStart, eventDuration,
+  fmtMonthShort, timeState, startMs, byStart, eventDuration, allDayFields, allDayInputs,
 } from '../src/lib/dates.js';
 import { layoutOverlaps, assignLanes, rangesOverlap } from '../src/ui/layout.js';
 import {
@@ -1416,6 +1416,68 @@ console.log('--- chronological ordering across timezone offsets ---');
   eq('zone note: none for UTC (unknown, not a place)', zoneNote({ ...timed, tzid: 'UTC' }), '');
   eq('zone note: none for all-day events', zoneNote({ ...timed, allDay: true, tzid: far }), '');
   eq('zone note: none without a zone', zoneNote(timed), '');
+}
+
+// --- All-day date fields: the last day, not the stored exclusive end (#34) ---
+{
+  eq('all-day fields: a two-week trip reads Sep 12 to Sep 27', allDayFields('2026-09-12T00:00', '2026-09-28T00:00'), { start: '2026-09-12', end: '2026-09-27' });
+  eq('all-day fields: one day reads as that day twice', allDayFields('2026-09-12T00:00', '2026-09-13T00:00'), { start: '2026-09-12', end: '2026-09-12' });
+  eq('all-day fields: across a year boundary', allDayFields('2026-12-31T00:00', '2027-01-01T00:00'), { start: '2026-12-31', end: '2026-12-31' });
+  eq('all-day fields: a timed event just switched to all day keeps its own day', allDayFields('2026-09-24T10:00', '2026-09-24T11:00'), { start: '2026-09-24', end: '2026-09-24' });
+  eq('all-day fields: a timed event ending at midnight ends the day before', allDayFields('2026-09-24T22:00', '2026-09-25T00:00'), { start: '2026-09-24', end: '2026-09-24' });
+  eq('all-day fields: an end before the start is pulled up to it', allDayFields('2026-09-24T00:00', '2026-09-24T00:00'), { start: '2026-09-24', end: '2026-09-24' });
+  eq('all-day inputs: the last day becomes the stored exclusive end', allDayInputs('2026-09-12', '2026-09-27'), { start: '2026-09-12T00:00', end: '2026-09-28T00:00' });
+  eq('all-day inputs: a last day before the first is the first', allDayInputs('2026-09-12', '2026-09-01'), { start: '2026-09-12T00:00', end: '2026-09-13T00:00' });
+  eq('all-day inputs: the day clocks change is still one day', allDayInputs('2026-11-01', '2026-11-01'), { start: '2026-11-01T00:00', end: '2026-11-02T00:00' });
+  const trip = allDayInputs('2026-02-27', '2026-03-02');
+  eq('all-day: round trip over the end of February', allDayFields(trip.start, trip.end), { start: '2026-02-27', end: '2026-03-02' });
+}
+
+// --- Event windows: a failed load is shown and retried, not left blank (#48) ---
+{
+  const realFetch = globalThis.fetch;
+  const { loadWindow, retryWindowsNow } = await import('../src/app/api.js');
+  const { state: st, set: put } = await import('../src/app/store.js');
+  let mode = 'offline';
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    if (mode === 'offline') {
+      return new Response(JSON.stringify({ error: { code: 'offline', message: 'Offline and not cached' } }), { status: 503, headers: { 'Content-Type': 'application/json' } });
+    }
+    return new Response(JSON.stringify({ events: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
+  put({ loadedRanges: [], windowStatus: null });
+  const a = '2026-09-01T00:00:00-07:00';
+  const b = '2026-10-01T00:00:00-07:00';
+  let threw = false;
+  try { await loadWindow(a, b); } catch { threw = true; }
+  assert('window: a failed load no longer rejects into nowhere', !threw);
+  eq('window: the failure is shown, as offline, with a retry scheduled', [st.windowStatus && st.windowStatus.kind, st.windowStatus && st.windowStatus.offline, st.windowStatus && st.windowStatus.retryAt > Date.now()], ['failed', true, true]);
+  const before = calls;
+  mode = 'online';
+  retryWindowsNow();
+  await new Promise((r) => setTimeout(r, 20));
+  assert('window: Retry now asks again', calls > before);
+  eq('window: once it loads, the note goes away', st.windowStatus, null);
+  assert('window: and the dates count as loaded', st.loadedRanges.length > 0);
+  // A range that fails, then turns out to be covered by a wider window that
+  // loaded, must not leave the note stuck on.
+  mode = 'offline';
+  put({ loadedRanges: [], windowStatus: null });
+  await loadWindow('2027-01-01T00:00:00-08:00', '2027-01-15T00:00:00-08:00');
+  mode = 'online';
+  await loadWindow('2026-12-01T00:00:00-08:00', '2027-02-01T00:00:00-08:00');
+  retryWindowsNow();
+  await new Promise((r) => setTimeout(r, 20));
+  eq('window: a failed range covered later by a wider load clears the note', st.windowStatus, null);
+  put({ loadedRanges: [], windowStatus: null });
+  mode = 'online';
+  const loading = loadWindow(a, b);
+  eq('window: a cold load says it is loading', st.windowStatus && st.windowStatus.kind, 'loading');
+  await loading;
+  eq('window: and stops saying so when it lands', st.windowStatus, null);
+  globalThis.fetch = realFetch;
 }
 
 // --- Service worker: the API cache must not outlive the session (BC-04) -------

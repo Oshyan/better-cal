@@ -2,7 +2,7 @@
 
 import { html, useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback } from '../../vendor/index.js';
 import { useStore, set, state, calendarMeta, shallowEq, invalidateRecords } from './store.js';
-import { loadWindow, api, refreshWindow, loadPeople } from './api.js';
+import { loadWindow, api, refreshWindow, loadPeople, retryWindowsNow } from './api.js';
 import { hiddenDayCounts } from '../lib/relfilter.js';
 import {
   moveEvent, resizeEvent, sendFeedback, exitReschedule, googleBacked, setRelationship, showAllRel,
@@ -79,7 +79,7 @@ export function App() {
       anchor: st.anchor, scrollSeq: st.scrollSeq, occVersion: st.occVersion,
       calendars: st.calendars, filterText: st.filterText,
       expandedDay: st.expandedDay, agendaShowPast: st.agendaShowPast,
-      agendaSort: st.agendaSort,
+      agendaSort: st.agendaSort, windowStatus: st.windowStatus,
       reschedule: st.reschedule,
       dropChoice: st.dropChoice,
       pluginCard: st.pluginCard,
@@ -746,6 +746,13 @@ export function App() {
   }
 
   const reschedActive = !!(resched && reschedOcc);
+  const ws = s.windowStatus;
+  const windowNote = ws && html`<div class=${'bc-winstatus' + (ws.kind === 'failed' ? ' is-failed' : '')} role=${ws.kind === 'failed' ? 'alert' : 'status'}>
+    ${ws.kind === 'loading'
+      ? 'Loading events…'
+      : html`<span>${ws.offline ? 'Offline, and these dates are not saved on this device.' : 'Could not load events.'} Retrying…</span>
+        <button type="button" class="bc-link-btn" onClick=${retryWindowsNow}>Retry now</button>`}
+  </div>`;
 
   return html`<div class="bc-app${dimSet ? ' is-page-filtering' : ''}">
     <${Toolbar} onToggleSidebar=${toggleSidebar} />
@@ -757,7 +764,7 @@ export function App() {
         onPointerDown=${(e) => { e.preventDefault(); e.stopPropagation(); setSidebarOpen(false); }}
       ></div>`}
       <${Sidebar} open=${sidebarOpen} collapsed=${sidebarCollapsed} onClose=${() => setSidebarOpen(false)} />
-      <main class="bc-view" ref=${viewAreaRef}>${view}</main>
+      <main class="bc-view" ref=${viewAreaRef}>${windowNote}${view}</main>
       ${reschedActive && html`<${RescheduleStrip}
         year=${stripBase.year} month=${stripBase.month}
         currentYear=${s.visibleMonth ? s.visibleMonth.year : 0}

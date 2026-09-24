@@ -9,7 +9,7 @@ import { useStore, set, state } from './store.js';
 import { search } from './api.js';
 import { jumpToDate, openDetail } from './actions.js';
 import { trapFocus } from '../ui/DayExpand.js';
-import { parseISO, fmtDateFull, fmtTime, occDayKey } from '../lib/dates.js';
+import { parseISO, dateOfDayKey, fmtDateFull, fmtTime, occDayKey } from '../lib/dates.js';
 
 export function SearchOverlay() {
   const open = useStore((s) => s.searchOpen);
@@ -104,7 +104,7 @@ export function SearchOverlay() {
           ${occ.tags.map((t) => html`<span key=${t} class="bc-tag-chip">#${t}</span>`)}
         </span>`}
         ${occ.location && html`<span class="bc-search-loc">${occ.location}</span>`}
-        <span class="bc-search-date">${fmtDateFull(parseISO(occ.start))}${occ.allDay ? '' : ' ' + fmtTime(parseISO(occ.start))}</span>
+        <span class="bc-search-date">${occ.allDay ? fmtDateFull(dateOfDayKey(occ.start.slice(0, 10))) : fmtDateFull(parseISO(occ.start)) + ' ' + fmtTime(parseISO(occ.start))}</span>
       </button>`;
     })}
   </div>`;

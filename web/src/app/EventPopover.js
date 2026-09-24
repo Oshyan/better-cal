@@ -24,6 +24,7 @@ import { fmtReminder } from '../lib/reminders.js';
 import { ink } from '../lib/color.js';
 import { stripToText, hasHtml, sanitizeHtml } from '../lib/richtext.js';
 import { gmapsUrl } from '../lib/maps.js';
+import { onOutsidePress, insideAny } from '../ui/outside.js';
 
 const GAP = 10;
 const WIDTH = 360;
@@ -84,24 +85,19 @@ export function EventPopover() {
 
   // Document-level listeners; torn down on unmount, not just close.
   useEffect(() => {
-    const onDoc = (e) => {
-      if (!panelRef.current || panelRef.current.contains(e.target)) return;
-      // A pointerdown on the popover's own event element is left for the
-      // click handler: onOpenEvent toggles the open popover closed. Closing
-      // here first would make that click look like a fresh open.
-      const el = e.target.closest && e.target.closest('[data-instance]');
-      if (el && popover && el.dataset.instance === popover.instanceId) return;
-      set({ popover: null });
-    };
+    // A press anywhere outside the card closes it and does nothing else, the
+    // card's own event included (ui/outside.js): opening a different event
+    // takes a second, deliberate press.
     const onKey = (e) => {
       if (e.key === 'Tab') trapFocus(panelRef.current, e);
     };
+    let stop = null;
     if (popover) {
-      document.addEventListener('pointerdown', onDoc, true);
+      stop = onOutsidePress(insideAny(panelRef), () => set({ popover: null }));
       document.addEventListener('keydown', onKey, true);
     }
     return () => {
-      document.removeEventListener('pointerdown', onDoc, true);
+      if (stop) stop();
       document.removeEventListener('keydown', onKey, true);
     };
   }, [popover]);

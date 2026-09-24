@@ -4,6 +4,10 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.3.3 (2026-09-24)
+
+- A click or tap outside an open menu, popover, card or sheet now only closes it. Before, the same press also did whatever it landed on: tapping the grid to dismiss a menu could start a new event, tapping another event to dismiss an event card opened that event, tapping a toolbar button pressed it. This covers the view, saved-view, Show, New and calendar-mode menus, jump-to-date, quick add, event and "+N more" cards, the drop and plugin chips, the phone sheets and the sidebar backdrop, on desktop and phone. Full-screen dialogs already worked this way.
+
 ## 0.3.2 (2026-09-24)
 
 - Phone Filter sheet: checked Show choices keep plain text with a check mark, instead of every checked row turning blue.

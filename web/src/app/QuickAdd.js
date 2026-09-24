@@ -13,6 +13,7 @@ import { quickAddParse, quickAddCreate, defaultTargetCalendarId } from './action
 import { api, loadPeople } from './api.js';
 import { saveQuickAddText, clearQuickAddText } from './drafts.js';
 import { PlaceInput, pickFillText } from './PlaceInput.js';
+import { onOutsidePress, insideAny } from '../ui/outside.js';
 import {
   parseISO, dayKeyOf, dateOfDayKey, addDaysKey, toISOWithOffset, pad, localTz,
 } from '../lib/dates.js';
@@ -124,15 +125,10 @@ export function QuickAdd() {
   draftRef.current = draft;
   const cardRef = useRef(null);
 
-  // Click/tap outside the card dismisses it (the click still lands where it
-  // was aimed; capture-phase listener like the popover's).
+  // A press outside the card dismisses it and does nothing else (ui/outside.js).
   useEffect(() => {
     if (!open) return undefined;
-    const onDoc = (e) => {
-      if (cardRef.current && !cardRef.current.contains(e.target)) { clearQuickAddText(); set({ quickAddOpen: false }); }
-    };
-    document.addEventListener('pointerdown', onDoc, true);
-    return () => document.removeEventListener('pointerdown', onDoc, true);
+    return onOutsidePress(insideAny(cardRef), () => { clearQuickAddText(); set({ quickAddOpen: false }); });
   }, [open]);
 
   useEffect(() => {

@@ -50,6 +50,7 @@ import { OrganizePage } from './OrganizePage.js';
 import { PluginsPage } from './PluginsPage.js';
 import { ReviewPage } from './ReviewPage.js';
 import { sanitizeHtml } from '../lib/richtext.js';
+import { onOutsidePress, insideAny, consumeOutsidePress } from '../ui/outside.js';
 
 const MONTH_ROWS = { month: 6, weeks3: 3, weeks2: 2 };
 // Rows the month view will hold on screen before it starts squashing row
@@ -763,7 +764,7 @@ export function App() {
       ${sidebarOpen && html`<div
         class="bc-sidebar-scrim"
         aria-hidden="true"
-        onPointerDown=${(e) => { e.preventDefault(); e.stopPropagation(); setSidebarOpen(false); }}
+        onPointerDown=${(e) => { consumeOutsidePress(e); setSidebarOpen(false); }}
       ></div>`}
       <${Sidebar} open=${sidebarOpen} collapsed=${sidebarCollapsed} onClose=${() => setSidebarOpen(false)} />
       <main class="bc-view" ref=${viewAreaRef}>${windowNote}${view}</main>
@@ -802,12 +803,11 @@ function DropChoiceChip({ choice }) {
   const rootRef = useRef(null);
   useEffect(() => {
     const dismiss = () => set({ dropChoice: null });
-    const onDoc = (e) => { if (rootRef.current && !rootRef.current.contains(e.target)) dismiss(); };
     const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); dismiss(); } };
-    document.addEventListener('pointerdown', onDoc, true);
+    const stop = onOutsidePress(insideAny(rootRef), dismiss);
     document.addEventListener('keydown', onKey, true);
     return () => {
-      document.removeEventListener('pointerdown', onDoc, true);
+      stop();
       document.removeEventListener('keydown', onKey, true);
     };
   }, []);
@@ -831,12 +831,11 @@ function PluginRangeCard({ card }) {
   const rootRef = useRef(null);
   useEffect(() => {
     const dismiss = () => set({ pluginCard: null });
-    const onDoc = (e) => { if (rootRef.current && !rootRef.current.contains(e.target)) dismiss(); };
     const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); dismiss(); } };
-    document.addEventListener('pointerdown', onDoc, true);
+    const stop = onOutsidePress(insideAny(rootRef), dismiss);
     document.addEventListener('keydown', onKey, true);
     return () => {
-      document.removeEventListener('pointerdown', onDoc, true);
+      stop();
       document.removeEventListener('keydown', onKey, true);
     };
   }, []);

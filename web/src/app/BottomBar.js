@@ -23,6 +23,7 @@ import { REL_LABEL, REL_ORDER } from './Relationship.js';
 import { useSavedViewPicker } from './ViewSwitcher.js';
 import { trapFocus } from '../ui/DayExpand.js';
 import { Icon } from '../ui/icons.js';
+import { consumeOutsidePress } from '../ui/outside.js';
 
 const PHONE_VIEWS = [
   ['month:month', 'Full month', 'viewMonth'],
@@ -101,7 +102,7 @@ function Sheet({ label, onClose, children }) {
     if (ref.current) ref.current.style.transform = '';
     if (dy > 60) onClose();
   };
-  return html`<div class="bc-bsheet-scrim" onPointerDown=${(e) => { e.preventDefault(); onClose(); }}></div>
+  return html`<div class="bc-bsheet-scrim" onPointerDown=${(e) => { consumeOutsidePress(e); onClose(); }}></div>
     <div class="bc-bsheet" role="dialog" aria-modal="true" aria-label=${label} tabindex="-1" ref=${ref}>
       <div class="bc-bsheet-grip"
         onPointerDown=${onHandleDown} onPointerMove=${onHandleMove} onPointerUp=${onHandleUp} onPointerCancel=${onHandleUp}

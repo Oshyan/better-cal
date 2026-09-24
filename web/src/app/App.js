@@ -598,7 +598,8 @@ export function App() {
     return html`<div class="bc-app"><${PeoplePage} /><${CreateDrawer} /><${ShortcutsSheet} /><${CommandPalette} /><${SystemBanner} /><${Toasts} /></div>`;
   }
   if (s.route === 'review') {
-    return html`<div class="bc-app"><${ReviewPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${CommandPalette} /><${SystemBanner} /><${Toasts} /></div>`;
+    // Review is a tab of the phone's bottom bar, so the bar stays.
+    return html`<div class="bc-app"><${ReviewPage} /><${BottomBar} /><${CreateDrawer} /><${ShortcutsSheet} /><${CommandPalette} /><${SystemBanner} /><${Toasts} /></div>`;
   }
   if (s.route === 'plugins') {
     return html`<div class="bc-app"><${PluginsPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${CommandPalette} /><${SystemBanner} /><${Toasts} /></div>`;

@@ -4,6 +4,14 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.2.4 (2026-09-24)
+
+Sign out everywhere else, for a lost or stolen device.
+
+- Settings, Account shows how many other browsers are signed in, with a **Sign out everywhere else** button. It signs out every other browser, forgets every other remembered browser (so none of them gets past the sign-in brake any more) and stops push reminders to every other device. The browser you use stays signed in and keeps its reminders. API keys are left alone; revoke them on the same page.
+- It is written to Activity. An API token cannot use it.
+- SECURITY.md's lost-device steps now start here; resetting the password on the server is the fallback.
+
 ## 0.2.3 (2026-09-24)
 
 Your own browsers get past the sign-in brake (issue #59, layer 1).

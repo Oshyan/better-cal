@@ -38,10 +38,9 @@ These are deliberate choices, not oversights. Each makes daily use easier and co
 
 ### If a device is lost or stolen
 
-1. Reset the password on the server: `php server/bin/seed.php --email=you@example.com`. It asks for the new password. This signs out every browser session, forgets every remembered browser and removes every push device.
-2. Revoke any API token that device held (Settings, API keys). If you are not sure which, add `--revoke-tokens` to the reset. That revokes every token, gives your outbound feeds new addresses and sends reminder emails back to the account's own address.
-
-There is no in-app "sign out everywhere" yet, so step 1 needs shell access to the server.
+1. From a device you still have, open Settings, Account and choose **Sign out everywhere else** (since 0.2.4). This signs out every other browser, forgets every other remembered browser and stops push reminders to every other device. The browser you use stays signed in.
+2. On the same page, revoke any API key the lost device held.
+3. If you think the password itself was seen, or you have no signed-in device left, reset it on the server: `php server/bin/seed.php --email=you@example.com`. It asks for the new password and does everything step 1 does, for every browser including yours. Adding `--revoke-tokens` also revokes every API key, gives your outbound feeds new addresses and sends reminder emails back to the account's own address.
 
 ## Scope notes
 

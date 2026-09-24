@@ -59,6 +59,32 @@ final class AuthController
             ->withCookie(Auth::COOKIE, '', $this->auth->cookieOptions(clear: true));
     }
 
+    /** How many other browsers are signed in, for the Account tab. */
+    public function otherSessions(Request $req): Response
+    {
+        $req->requireSession('Seeing where you are signed in');
+        return Response::json(['others' => $this->auth->otherSessionCount((int) $req->user['id'], $req->cookies[Auth::COOKIE] ?? null)]);
+    }
+
+    /**
+     * Sign out every browser and device but this one (Auth::signOutOthers).
+     * Session only: an API token must not be able to sign the owner out, and
+     * "this browser" means the session cookie making the request. The page
+     * sends this browser's push endpoint hash so its reminders keep coming;
+     * the device cookie arrives by itself (this route is under its path).
+     */
+    public function signOutOthers(Request $req): Response
+    {
+        $req->requireSession('Signing out everywhere else');
+        $userId = (int) $req->user['id'];
+        $keepPush = $req->str('keepPushHash');
+        if ($keepPush !== null && preg_match('/^[0-9a-f]{64}$/', $keepPush) !== 1) {
+            $keepPush = null;
+        }
+        $device = $this->devices?->find($req->cookies[TrustedDevices::COOKIE] ?? null, (string) ($req->user['email'] ?? ''));
+        return Response::json($this->auth->signOutOthers($userId, $req->cookies[Auth::COOKIE] ?? null, $device, $keepPush));
+    }
+
     public function me(Request $req): Response
     {
         return Response::json([

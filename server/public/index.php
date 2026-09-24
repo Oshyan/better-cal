@@ -113,6 +113,8 @@ function bc_handle_api(Request $request, array $cfg): void
 
         $router->add('POST', "$base/auth/login", [$authController, 'login']);
         $router->add('POST', "$base/auth/logout", [$authController, 'logout']);
+        $router->add('GET', "$base/auth/sessions", [$authController, 'otherSessions']);
+        $router->add('POST', "$base/auth/sign-out-others", [$authController, 'signOutOthers']);
         $router->add('GET', "$base/me", [$authController, 'me']);
 
         $router->add('GET', "$base/calendars", [$calendarsController, 'index']);

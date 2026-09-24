@@ -13,7 +13,10 @@ const EDGE_MAX_SPEED = 18; // px per frame at the very edge
 
 // After a real drag completes, the browser fires a synthetic click on the
 // source element; swallow exactly one so drops never also open popovers.
+// A drag that ends without a click (usual on touch) must not leave the flag
+// set to eat the next real tap, so every new press clears it.
 let suppressClick = false;
+window.addEventListener('pointerdown', () => { suppressClick = false; }, true);
 window.addEventListener('click', (e) => {
   if (suppressClick) {
     suppressClick = false;

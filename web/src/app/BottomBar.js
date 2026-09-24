@@ -23,7 +23,7 @@ import { REL_LABEL, REL_ORDER } from './Relationship.js';
 import { useSavedViewPicker } from './ViewSwitcher.js';
 import { trapFocus } from '../ui/DayExpand.js';
 import { Icon } from '../ui/icons.js';
-import { consumeOutsidePress } from '../ui/outside.js';
+import { consumeOutsidePress, swallowClickOfThisPress } from '../ui/outside.js';
 
 const PHONE_VIEWS = [
   ['month:month', 'Full month', 'viewMonth'],
@@ -43,20 +43,19 @@ export function filterActive(st) {
 }
 
 // Tap does one thing, press-and-hold another. A hold that fired swallows the
-// click that follows it; keyboard activation (no pointer) is always a tap.
+// click that ends the press, wherever the browser sends it (ui/outside.js);
+// keyboard activation (no pointer) is always a tap.
 function useHold(onTap, onHold) {
   const timer = useRef(0);
-  const held = useRef(false);
   const clear = () => { clearTimeout(timer.current); timer.current = 0; };
   useEffect(() => clear, []);
   return {
     onPointerDown: (e) => {
       if (e.button !== undefined && e.button !== 0) return;
-      held.current = false;
       clear();
       timer.current = setTimeout(() => {
-        held.current = true;
         timer.current = 0;
+        swallowClickOfThisPress();
         if (navigator.vibrate) { try { navigator.vibrate(8); } catch { /* not allowed */ } }
         onHold();
       }, HOLD_MS);
@@ -65,10 +64,7 @@ function useHold(onTap, onHold) {
     onPointerLeave: clear,
     onPointerCancel: clear,
     onContextMenu: (e) => e.preventDefault(),
-    onClick: () => {
-      if (held.current) { held.current = false; return; }
-      onTap();
-    },
+    onClick: () => onTap(),
   };
 }
 

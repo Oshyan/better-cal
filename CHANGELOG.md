@@ -4,6 +4,11 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.3.5 (2026-09-24)
+
+- Press and hold on the phone's New and Today buttons no longer ends with an extra tap. On iPhone, lifting your finger after a hold sent a click to whatever was now under it, which was the New sheet's "Calendar" row; the click that ends a hold is now dropped wherever it lands.
+- After dragging an event on a touch screen, the next tap works. A drag that ended without a click left the app waiting to ignore one, so the next real tap did nothing.
+
 ## 0.3.4 (2026-09-24)
 
 - Next and Previous in the Month view work in tall windows. They moved the grid to the 1st of the month, which left the old month filling most of a tall screen, so the month name didn't change and the next click went to the same place: Next appeared to do nothing. They now land mid-month, as jump-to-date already did.

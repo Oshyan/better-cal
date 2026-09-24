@@ -42,6 +42,14 @@ export function consumeOutsidePress(e) {
   // stopPropagation, not stopImmediatePropagation: the page below never
   // sees the press, but every other open surface still does and closes too.
   if (e) e.stopPropagation();
+  swallowClickOfThisPress();
+}
+
+// Swallow the click that ends the current press, wherever it lands. Also for
+// a press-and-hold that already did its thing: iPhone Safari delivers that
+// click to whatever is under the finger on release, which after a hold is
+// often the menu the hold just opened.
+export function swallowClickOfThisPress() {
   swallowNextClick = true;
   armedAt = performance.now();
 }

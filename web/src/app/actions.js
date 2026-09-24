@@ -59,8 +59,15 @@ export function cycleView() {
   setView(roster[(i + 1) % roster.length]);
 }
 
+// Today and the arrows glide the month grid to where they land when it is
+// near (MonthGrid); anything else (jump to date, search) moves at once.
+function glideTo(anchor) {
+  const seq = state.scrollSeq + 1;
+  set({ anchor, scrollSeq: seq, glideSeq: seq });
+}
+
 export function goToday() {
-  set({ anchor: todayKey(), scrollSeq: state.scrollSeq + 1 });
+  glideTo(todayKey());
 }
 
 export function navigate(days) {
@@ -69,21 +76,26 @@ export function navigate(days) {
 
 // Toolbar chevron step, sized to the current view: month and agenda step by
 // month, multiweek by its week count, week by week, day by day.
+let lastStepAt = 0;
 export function stepAnchor(dir) {
   const v = state.view;
   if (v === 'day') return navigate(dir);
   if (v === 'week') return navigate(7 * dir);
   if (v === 'weeks2') return navigate(14 * dir);
   if (v === 'weeks3') return navigate(21 * dir);
-  const vm = state.visibleMonth ||
-    { year: Number(state.anchor.slice(0, 4)), month: Number(state.anchor.slice(5, 7)) };
+  // Mid-glide the month on screen still reads as the one being left, so a
+  // quick second press steps from where the first one is going.
+  const gliding = Date.now() - lastStepAt < 900 && state.glideSeq === state.scrollSeq;
+  lastStepAt = Date.now();
+  const fromAnchor = { year: Number(state.anchor.slice(0, 4)), month: Number(state.anchor.slice(5, 7)) };
+  const vm = (!gliding && state.visibleMonth) || fromAnchor;
   const k = vm.year * 12 + (vm.month - 1) + dir;
   const y = Math.floor(k / 12);
   const m = ((k % 12) + 12) % 12 + 1;
   // Mid-month in the month grid (jumpAnchorFor): landing on the 1st left the
   // outgoing month dominant in a tall window, so the label, and the next
   // step computed from it, stayed put and Next did nothing.
-  set({ anchor: jumpAnchorFor(y + '-' + pad(m) + '-01', 'month'), scrollSeq: state.scrollSeq + 1 });
+  glideTo(jumpAnchorFor(y + '-' + pad(m) + '-01', 'month'));
 }
 
 // Where a jump should actually land, given how much of a date was asked for.

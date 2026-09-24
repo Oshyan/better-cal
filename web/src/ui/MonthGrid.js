@@ -146,7 +146,7 @@ function isoWeekOfDate(d) {
 
 export function MonthGrid({
   occurrences, calendars, visibleRows = 6, minRows = visibleRows, columns = 7,
-  scrollKey, scrollSeq = 0, dimSet, nowMs,
+  scrollKey, scrollSeq = 0, glide = false, dimSet, nowMs,
   onRequestWindow, onVisibleMonthChange, onOpenEvent, onExpandDay, onOpenDay,
   onCreateRange, onMoveEvent, onResizeEvent,
   onMoveSpan, onMoveTrip, onDropToCalendar, onDropToPerson, onDropToTrip,
@@ -267,12 +267,17 @@ export function MonthGrid({
   // but still recomputes, and the demand effect below dutifully requested a
   // window from 2016 on the boot critical path before asking for today.
   const anchoredRef = useRef(false);
+  // Where the scroller sits to show a row a little above centre.
+  const anchorTop = useCallback((row) => {
+    const el = scrollRef.current;
+    const h = (el && el.clientHeight) || 0;
+    const lead = Math.max(0, Math.round((h - rowHRef.current) * 0.4));
+    return Math.max(0, weekTop(row, minWeek, rowHRef.current) - lead);
+  }, [minWeek]);
   const applyAnchor = useCallback((row) => {
     const el = scrollRef.current;
     if (!el) return;
-    const h = el.clientHeight || 0;
-    const lead = Math.max(0, Math.round((h - rowHRef.current) * 0.4));
-    el.scrollTop = Math.max(0, weekTop(row, minWeek, rowHRef.current) - lead);
+    el.scrollTop = anchorTop(row);
     topWeekRef.current = Math.max(minWeek, minWeek + Math.floor(el.scrollTop / rowHRef.current));
     anchoredRef.current = true;
   }, [minWeek]);
@@ -315,6 +320,20 @@ export function MonthGrid({
     // the focused day needs a row or two of context before it, and a day at
     // the very top (or bottom) reads as "nothing came before".
     const w = rowIndexOfDayKey(scrollKey, columns);
+    // Today and the arrows glide when the target is near, so the days in
+    // between pass by (continuity) instead of the grid cutting to a new
+    // place. Only once settled on real geometry, and not over long distances
+    // or for people who asked for less motion.
+    if (glide && anchoredRef.current && el.clientHeight > 0
+        && Math.abs(el.clientHeight - viewHRef.current) <= 2
+        && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      const top = anchorTop(w);
+      if (Math.abs(top - el.scrollTop) <= el.clientHeight * 2.5) {
+        pendingRowRef.current = null;
+        el.scrollTo({ top, behavior: 'smooth' });
+        return;
+      }
+    }
     pendingRowRef.current = w;
     if (el.clientHeight > 0) {
       applyAnchor(w);

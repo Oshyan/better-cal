@@ -79,7 +79,7 @@ export function App() {
   const s = useStore(
     (st) => ({
       booted: st.booted, authed: st.authed, route: st.route, view: st.view,
-      anchor: st.anchor, scrollSeq: st.scrollSeq, occVersion: st.occVersion,
+      anchor: st.anchor, scrollSeq: st.scrollSeq, glideSeq: st.glideSeq, occVersion: st.occVersion,
       calendars: st.calendars, filterText: st.filterText,
       expandedDay: st.expandedDay, agendaShowPast: st.agendaShowPast,
       agendaSort: st.agendaSort, windowStatus: st.windowStatus,
@@ -614,6 +614,7 @@ export function App() {
       minRows=${ribbon ? 5 : MONTH_MIN_ROWS[s.view] || MONTH_ROWS[s.view]}
       scrollKey=${s.anchor}
       scrollSeq=${s.scrollSeq}
+      glide=${s.glideSeq === s.scrollSeq}
       dimSet=${dimSet}
       nowMs=${nowMs}
       onRequestWindow=${onRequestWindow}

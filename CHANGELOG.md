@@ -4,6 +4,15 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.3.8 (2026-09-24)
+
+Phones: the top bar and the bottom bar's edge.
+
+- Previous and next are back on phones, either side of the month name: small to look at, the full bar height to tap. The logo is gone from the phone's top bar.
+- Previous, next and Today now glide the month grid to where they land when it is near, so the days in between pass by instead of the grid cutting to a new place, on desktop too. Far jumps still move at once, and nothing glides if the device asks for reduced motion. Pressing Next again mid-glide steps on from where the glide is going.
+- While anything narrows the calendar, a row of chips under the phone's top bar says what: the saved view in use, the Show setting ("Planned only", "No context") and the filter text. Tapping a chip opens its control (the Show menu right there, the Filter sheet with its text field focused, the View sheet); its × clears it. The row is gone when nothing is narrowed.
+- The bottom bar has a firmer top edge, so it reads as separate from the calendar in both light and dark themes.
+
 ## 0.3.7 (2026-09-24)
 
 - On a phone, the full month no longer squeezes context (weather, AQI, sun, tides) beside each day number, and the 3-day view shows one item, usually the weather, without a "+N". Opening a day still lists all of them. Desktop is unchanged.

@@ -89,6 +89,8 @@ export const state = {
   viewAreaNarrow: false,
   anchor: todayKey(),
   scrollSeq: 0,
+  // The scrollSeq whose navigation glides (actions.js glideTo); others jump.
+  glideSeq: 0,
   // Current epoch minute (Date.now() / 60000, floored), bumped by the single
   // global tick installed in App. Views read it so time-relative styling
   // (past dim, active gold ring) and the now-line advance as time passes.

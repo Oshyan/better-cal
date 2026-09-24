@@ -211,6 +211,37 @@ function TokensSection() {
   </section>`;
 }
 
+// Sign out everywhere else: the in-app answer to a lost or stolen device
+// (SECURITY.md, "If a device is lost or stolen"). This browser stays signed
+// in and keeps its push reminders; API keys are managed just below.
+function OtherBrowsersRow() {
+  const [others, setOthers] = useState(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    api('/auth/sessions').then((d) => setOthers(d.others)).catch(() => setOthers(null));
+  }, []);
+  const run = async () => {
+    if (!window.confirm('Sign out every other browser and device? They will need your password to sign in again, and stop getting push reminders until they do. This browser stays signed in. API keys are not affected.')) return;
+    setBusy(true);
+    try {
+      const keepPushHash = await currentEndpointHash().catch(() => null);
+      const r = await api('/auth/sign-out-others', { method: 'POST', body: { keepPushHash } });
+      setOthers(0);
+      toast('Signed out ' + r.sessions + ' other browser' + (r.sessions === 1 ? '' : 's')
+        + (r.pushDevices ? ' and removed ' + r.pushDevices + ' push device' + (r.pushDevices === 1 ? '' : 's') : '') + '.');
+    } catch (err) {
+      toast('Could not sign out other browsers: ' + err.message, { error: true });
+    } finally {
+      setBusy(false);
+    }
+  };
+  const count = others === null ? '' : others === 0 ? 'No other browsers are signed in.' : others === 1 ? '1 other browser is signed in.' : others + ' other browsers are signed in.';
+  return html`<${Row} label="Other browsers" hint="If a device is lost or stolen, this signs it out, stops its push reminders, and stops it counting as a known device when sign-ins are paused. If it used an API key, revoke that below too.">
+    <span class="bc-set-value">${count}</span>
+    <button type="button" class="bc-btn" disabled=${busy} onClick=${run}>Sign out everywhere else</button>
+  <//>`;
+}
+
 function Row({ label, hint, children }) {
   return html`<div class="bc-set-row">
     <span class="bc-set-label">${label}</span>
@@ -681,6 +712,7 @@ export function SettingsPage() {
         <span class="bc-set-value">${(user && user.email) || ''}</span>
         <button type="button" class="bc-btn" disabled=${busy} onClick=${signOut}>Sign out</button>
       <//>
+      <${OtherBrowsersRow} />
     </section>
     <${TokensSection} />`}
 

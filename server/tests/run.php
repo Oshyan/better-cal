@@ -3254,6 +3254,75 @@ require __DIR__ . '/plugins.php';
     }
 }
 
+// --- Sign out everywhere else: the in-app answer to a lost device ---
+{
+    $odb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $odb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, password_hash TEXT, display_name TEXT, settings_json TEXT)');
+    $odb->run('CREATE TABLE sessions (token_hash TEXT PRIMARY KEY, user_id INTEGER, csrf TEXT, expires_at TEXT, last_seen_at TEXT DEFAULT CURRENT_TIMESTAMP)');
+    $odb->run('CREATE TABLE trusted_devices (id INTEGER PRIMARY KEY, user_id INTEGER, token_hash TEXT UNIQUE, created_at TEXT, expires_at TEXT)');
+    $odb->run('CREATE TABLE push_subscriptions (id INTEGER PRIMARY KEY, user_id INTEGER, endpoint TEXT, endpoint_hash TEXT)');
+    $odb->run('CREATE TABLE api_tokens (id INTEGER PRIMARY KEY, user_id INTEGER, token_hash TEXT)');
+    $odb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT)');
+    $odb->run("INSERT INTO users (id, email, password_hash) VALUES (1, 'owner@example.com', ?), (2, 'other@example.com', ?)", [
+        password_hash('pw', PASSWORD_DEFAULT), password_hash('pw2', PASSWORD_DEFAULT),
+    ]);
+    $oauth = new BetterCal\Domain\Auth($odb, ['base_url' => 'https://cal.example.com']);
+    $odev = new BetterCal\Domain\TrustedDevices($odb);
+    $here = $oauth->login('owner@example.com', 'pw');
+    $lost = $oauth->login('owner@example.com', 'pw');
+    $laptop = $oauth->login('owner@example.com', 'pw');
+    $theirs = $oauth->login('other@example.com', 'pw2');
+    $hereDev = $odev->remember(1);
+    $lostDev = $odev->remember(1);
+    $theirDev = $odev->remember(2);
+    $hereHash = hash('sha256', 'https://fcm.googleapis.com/here');
+    $odb->run('INSERT INTO push_subscriptions (user_id, endpoint, endpoint_hash) VALUES (1, ?, ?), (1, ?, ?), (2, ?, ?)', [
+        'https://fcm.googleapis.com/here', $hereHash,
+        'https://fcm.googleapis.com/lost', hash('sha256', 'https://fcm.googleapis.com/lost'),
+        'https://fcm.googleapis.com/theirs', hash('sha256', 'https://fcm.googleapis.com/theirs'),
+    ]);
+    $odb->run("INSERT INTO api_tokens (user_id, token_hash) VALUES (1, 'k')");
+    checkEq('sessions: the count leaves out this browser', 2, $oauth->otherSessionCount(1, $here['token']));
+
+    $octl = new BetterCal\Http\Controllers\AuthController($oauth, null, $odev);
+    $asOwner = static function (string $method, string $path, array $body, array $cookies) use ($oauth): BetterCal\Http\Request {
+        $r = new BetterCal\Http\Request($method, $path, [], $body, [], $cookies);
+        $r->user = $oauth->resolve($cookies[BetterCal\Domain\Auth::COOKIE])['user'];
+        $r->authMethod = 'session';
+        return $r;
+    };
+    $cookies = [BetterCal\Domain\Auth::COOKIE => $here['token'], BetterCal\Domain\TrustedDevices::COOKIE => $hereDev];
+    checkEq('sessions: the Account tab sees two other browsers', ['others' => 2], json_decode($octl->otherSessions($asOwner('GET', '/api/v1/auth/sessions', [], $cookies))->body, true));
+    $r = $octl->signOutOthers($asOwner('POST', '/api/v1/auth/sign-out-others', ['keepPushHash' => $hereHash], $cookies));
+    checkEq('sign out elsewhere: counts what went', ['sessions' => 2, 'devices' => 1, 'pushDevices' => 1], json_decode($r->body, true));
+    check('sign out elsewhere: the lost device and the laptop are signed out', $oauth->resolve($lost['token']) === null && $oauth->resolve($laptop['token']) === null);
+    check('sign out elsewhere: this browser stays signed in', $oauth->resolve($here['token']) !== null);
+    check('sign out elsewhere: only this browser is still remembered', $odev->find($hereDev, 'owner@example.com') !== null && $odev->find($lostDev, 'owner@example.com') === null);
+    checkEq('sign out elsewhere: only this browser keeps push reminders', [$hereHash], array_column($odb->all('SELECT endpoint_hash FROM push_subscriptions WHERE user_id = 1'), 'endpoint_hash'));
+    checkEq('sign out elsewhere: API keys are left alone', 1, (int) $odb->scalar('SELECT COUNT(*) FROM api_tokens WHERE user_id = 1'));
+    check('sign out elsewhere: another account is untouched', $oauth->resolve($theirs['token']) !== null
+        && $odev->find($theirDev, 'other@example.com') !== null
+        && (int) $odb->scalar('SELECT COUNT(*) FROM push_subscriptions WHERE user_id = 2') === 1);
+    checkEq('sign out elsewhere: written to Activity, log-only', [['Signed out everywhere else: 2 other browsers signed out, 1 push device removed', null]],
+        array_map(static fn($m) => [$m['summary'], $m['before_json']], $odb->all("SELECT summary, before_json FROM mutations WHERE entity = 'system'")));
+    // A malformed push hash keeps nothing rather than matching something odd.
+    $again = $oauth->login('owner@example.com', 'pw');
+    $odb->run('INSERT INTO push_subscriptions (user_id, endpoint, endpoint_hash) VALUES (1, ?, ?)', ['https://fcm.googleapis.com/x', hash('sha256', 'https://fcm.googleapis.com/x')]);
+    $r = json_decode($octl->signOutOthers($asOwner('POST', '/api/v1/auth/sign-out-others', ['keepPushHash' => "' OR 1=1 --"], $cookies))->body, true);
+    checkEq('sign out elsewhere: a malformed push hash is ignored, so every push device goes', [1, 2, 0], [$r['sessions'], $r['pushDevices'], (int) $odb->scalar('SELECT COUNT(*) FROM push_subscriptions WHERE user_id = 1')]);
+    // An API token cannot do it (it must not be able to sign the owner out).
+    $tokReq = new BetterCal\Http\Request('POST', '/api/v1/auth/sign-out-others', [], [], [], []);
+    $tokReq->user = ['id' => 1, 'email' => 'owner@example.com'];
+    $tokReq->authMethod = 'token';
+    $refused = null;
+    try {
+        $octl->signOutOthers($tokReq);
+    } catch (BetterCal\Http\HttpError $e) {
+        $refused = $e->getMessage();
+    }
+    check('sign out elsewhere: refused to an API token', $refused !== null);
+}
+
 // --- Google Calendar connector ------------------------------------------------
 use BetterCal\Domain\GoogleAuth;
 use BetterCal\Domain\GoogleSync;

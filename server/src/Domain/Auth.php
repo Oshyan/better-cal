@@ -135,6 +135,55 @@ final class Auth
         });
     }
 
+    /** How many browsers other than the one holding $token are signed in to this account. */
+    public function otherSessionCount(int $userId, ?string $token): int
+    {
+        return (int) $this->db->scalar(
+            'SELECT COUNT(*) FROM sessions WHERE user_id = ? AND token_hash <> ? AND expires_at > ?',
+            [$userId, hash('sha256', (string) $token), Time::nowDb()]
+        );
+    }
+
+    /**
+     * "Sign out everywhere else", the owner's answer to a lost or stolen
+     * device when they still have one that works. Everything a device keeps
+     * without the password goes, except for the browser asking:
+     *
+     * - every other session, so nothing else stays signed in;
+     * - every other remembered browser (TrustedDevices), so none of them
+     *   vouches through the sign-in brake any more;
+     * - every other push device, so reminders (event titles, places) stop
+     *   reaching the lost one. They are not marked removed: the owner's
+     *   other browsers register again when they next sign in, exactly as
+     *   after a password reset, and the lost one cannot without signing in.
+     *
+     * API tokens are separate credentials the owner manages one by one on
+     * the same page, so they are left alone. Written to Activity.
+     *
+     * @return array{sessions:int,devices:int,pushDevices:int}
+     */
+    public function signOutOthers(int $userId, ?string $keepToken, ?int $keepDevice, ?string $keepPushHash): array
+    {
+        $out = $this->db->tx(function () use ($userId, $keepToken, $keepDevice, $keepPushHash): array {
+            $sessions = $this->db->run(
+                'DELETE FROM sessions WHERE user_id = ? AND token_hash <> ?',
+                [$userId, hash('sha256', (string) $keepToken)]
+            )->rowCount();
+            $devices = (new TrustedDevices($this->db))->forgetAllExcept($userId, $keepDevice);
+            $push = $keepPushHash === null
+                ? $this->db->run('DELETE FROM push_subscriptions WHERE user_id = ?', [$userId])->rowCount()
+                : $this->db->run('DELETE FROM push_subscriptions WHERE user_id = ? AND endpoint_hash <> ?', [$userId, $keepPushHash])->rowCount();
+            return ['sessions' => $sessions, 'devices' => $devices, 'pushDevices' => $push];
+        });
+        $parts = [$out['sessions'] . ' other browser' . ($out['sessions'] === 1 ? '' : 's') . ' signed out'];
+        if ($out['pushDevices'] > 0) {
+            $parts[] = $out['pushDevices'] . ' push device' . ($out['pushDevices'] === 1 ? '' : 's') . ' removed';
+        }
+        (new Undo($this->db))->record($userId, 'system', 0, 'delete', null, null,
+            'Signed out everywhere else: ' . implode(', ', $parts), $out);
+        return $out;
+    }
+
     /** @return ?array{user:array,csrf:string} */
     public function resolve(?string $token): ?array
     {

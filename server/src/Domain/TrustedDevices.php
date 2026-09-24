@@ -98,8 +98,16 @@ final class TrustedDevices
     /** Forget every browser of this account (a password reset). Returns how many. */
     public function forgetAll(int $userId): int
     {
+        return $this->forgetAllExcept($userId, null);
+    }
+
+    /** Forget every browser of this account but one ("sign out everywhere else"). Returns how many. */
+    public function forgetAllExcept(int $userId, ?int $keepId): int
+    {
         try {
-            return $this->db->run('DELETE FROM trusted_devices WHERE user_id = ?', [$userId])->rowCount();
+            return $keepId === null
+                ? $this->db->run('DELETE FROM trusted_devices WHERE user_id = ?', [$userId])->rowCount()
+                : $this->db->run('DELETE FROM trusted_devices WHERE user_id = ? AND id <> ?', [$userId, $keepId])->rowCount();
         } catch (\PDOException $e) {
             return 0;
         }

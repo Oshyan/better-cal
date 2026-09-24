@@ -85,13 +85,16 @@ export function contextToken(occ, cal, max = 14) {
   const t = contextText(occ);
   const paren = t.match(/\s*\([^)]*\)\s*$/);
   const bare = paren ? t.slice(0, paren.index).trim() : t;
+  // A plugin's own icon always wins; the value is still boiled down the same
+  // way ("High tide 5.2 ft" -> "5.2 ft", "AQI 54" -> "54", "Sunset" -> its time).
   let icon = occ.icon || null;
   let text;
-  if (icon) {
-    text = paren && t.length > max ? bare : t;
+  const r = recognize(bare, cal);
+  if (r) {
+    text = r.text;
+    if (!icon) icon = r.icon;
   } else {
-    const r = recognize(bare, cal);
-    if (r) { icon = r.icon; text = r.text; } else text = paren && t.length > max ? bare : t;
+    text = paren && t.length > max ? bare : t;
   }
   const timed = !occ.allDay;
   text = clip(text, timed ? Math.max(6, max - 4) : max);

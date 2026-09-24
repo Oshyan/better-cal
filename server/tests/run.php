@@ -3374,6 +3374,28 @@ use BetterCal\Domain\GoogleWriter;
     }
 }
 
+// --- Bundled plugins: icons, AQI, sun ---
+{
+    $weather = require dirname(__DIR__) . '/plugins/weather/Plugin.php';
+    checkEq('weather: icons are host icons', ['sun', 'cloud', 'rain', 'snow', 'storm'], [$weather::describe(0)[0], $weather::describe(3)[0], $weather::describe(61)[0], $weather::describe(71)[0], $weather::describe(95)[0]]);
+    foreach ([0, 3, 45, 61, 71, 95] as $code) {
+        checkEq('weather: icon for code ' . $code . ' passes the host check', null, BetterCal\Domain\Plugins::iconError($weather::describe($code)[0]));
+    }
+    checkEq('weather: daily max AQI per local date', ['2026-09-24' => 61, '2026-09-25' => 40], $weather::dailyMaxAqi(['2026-09-24T01:00', '2026-09-24T15:00', '2026-09-25T09:00', '2026-09-25T10:00'], [30, 60.6, null, 40]));
+    checkEq('weather: AQI categories', ['Good', 'Moderate', 'Unhealthy for sensitive groups', 'Hazardous'], [$weather::aqiCategory(50), $weather::aqiCategory(51), $weather::aqiCategory(120), $weather::aqiCategory(400)]);
+    $sun = require dirname(__DIR__) . '/plugins/sun/Plugin.php';
+    $oak = $sun::sunTimes(37.8044, -122.2712, '2026-09-24', 1);
+    checkEq('sun: one sunrise and one sunset for Oakland on 2026-09-24', ['sunrise', 'sunset'], array_column($oak, 'kind'));
+    $local = array_map(static fn(array $x): string => (new DateTimeImmutable('@' . $x['at']))->setTimezone(new DateTimeZone('America/Los_Angeles'))->format('H:i'), $oak);
+    check('sun: Oakland sunrise near 7:00 and sunset near 19:00 local', $local[0] >= '06:45' && $local[0] <= '07:15' && $local[1] >= '18:50' && $local[1] <= '19:20', implode(' / ', $local));
+    checkEq('sun: dated by the local day', '2026-09-24', $oak[1]['date']);
+    checkEq('sun: polar night yields no events that day', [], $sun::sunTimes(78.2, 15.6, '2026-12-21', 1));
+    $syd = $sun::sunTimes(-33.87, 151.21, '2026-09-24', 1);
+    checkEq('sun: works east of Greenwich too (Sydney)', ['sunrise', 'sunset'], array_column($syd, 'kind'));
+    checkEq('sun: the manifest is valid', [], BetterCal\Domain\Plugins::manifestErrors(json_decode((string) file_get_contents(dirname(__DIR__) . '/plugins/sun/plugin.json'), true)));
+    checkEq('weather: the manifest is still valid', [], BetterCal\Domain\Plugins::manifestErrors(json_decode((string) file_get_contents(dirname(__DIR__) . '/plugins/weather/plugin.json'), true)));
+}
+
 // --- Standing channels out of the account are for a person, not a token ---
 {
     $tokenReq = new BetterCal\Http\Request('POST', '/api/v1/outfeeds');

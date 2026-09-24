@@ -1,9 +1,9 @@
 {
   "id": "weather",
   "name": "Weather",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "minHost": "0.1.0",
-  "description": "Daily forecast on your calendar via Open-Meteo (free, no API key). One all-day event per day with conditions and high/low; severe-weather days raise warnings.",
+  "description": "Daily forecast on your calendar via Open-Meteo (free, no API key): one all-day event per day with an icon for the conditions and the high/low, plus the day's air quality (US AQI) when enabled. Severe weather and unhealthy air raise warnings.",
   "permissions": [
     "http",
     "events:write",
@@ -38,6 +38,12 @@
       "min": 1,
       "max": 14,
       "default": 10
+    },
+    {
+      "key": "airQuality",
+      "type": "toggle",
+      "label": "Include air quality (AQI)",
+      "default": true
     }
   ],
   "decoration": {

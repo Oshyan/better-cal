@@ -4,6 +4,15 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.2.2 (2026-09-24)
+
+Bundled plugins for context calendars.
+
+- Weather (0.2.0): each day carries an icon for its conditions (sun, cloud, rain, snow, storm) and a title like "64°/57° rain"; air quality is included as one "AQI 54 (Moderate)" event per day with the air icon (a new setting, on by default), and unhealthy air raises a warning like severe weather does.
+- Tides (0.2.0): high and low tides carry their own icons instead of arrow characters in the title.
+- New Sun plugin: sunrise and sunset for a place, computed on the server with no network access or key.
+- Context tokens keep a plugin's icon and still show just the value ("5.2 ft", "54", "64/57").
+
 ## 0.2.1 (2026-09-23)
 
 API tokens get their capabilities back, safely. In 0.1.2 to 0.2.0 an API token could not manage outbound feeds, push devices or the reminder email address, because something a stolen token created could outlive the token. Now anything a token creates belongs to it instead:

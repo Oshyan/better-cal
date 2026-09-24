@@ -1,0 +1,40 @@
+{
+  "id": "sun",
+  "name": "Sun",
+  "version": "0.1.0",
+  "minHost": "0.1.0",
+  "description": "Sunrise and sunset for a place, computed on this server (no network, no API key). One sunrise and one sunset moment per day, shown in each day's header and as a line on the timeline.",
+  "permissions": [
+    "events:write"
+  ],
+  "jobs": [
+    {
+      "id": "refresh",
+      "interval": "P1D"
+    }
+  ],
+  "settings": [
+    {
+      "key": "location",
+      "type": "location",
+      "label": "Location"
+    },
+    {
+      "key": "days",
+      "type": "number",
+      "label": "Days ahead",
+      "min": 1,
+      "max": 60,
+      "default": 21
+    },
+    {
+      "key": "sunrise",
+      "type": "toggle",
+      "label": "Include sunrise",
+      "default": true
+    }
+  ],
+  "decoration": {
+    "icon": "sunset"
+  }
+}

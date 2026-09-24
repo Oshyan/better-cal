@@ -2,7 +2,7 @@
 
 A plugin is a directory under `server/plugins/<id>/` with two files: `plugin.json` (the manifest) and `Plugin.php` (the code). Drop it in, open Manage → Plugins, and enable it. No build step, no registration, no autoloader coordination.
 
-This guide is the contract. The three bundled plugins (`weather`, `tides`, `lint`) are working references for the three output shapes.
+This guide is the contract. The bundled plugins are working references: `weather` and `sun` for materialized events with per-event icons (`sun` needs no network at all), `tides` for events plus overlay bands, `lint` for warnings; `dayplanner`, `travel`, `trip-planner` and `visit-intents` show proposals, cross-plugin reads and heavier logic.
 
 ## The one rule
 

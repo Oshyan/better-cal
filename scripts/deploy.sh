@@ -34,33 +34,10 @@ fi
 # dead "+ New" button, a frozen agenda) was a broken reference that a test run
 # would have caught — but deploy never ran the tests. It does now. Set
 # SKIP_TESTS=1 only when deliberately shipping a known-red tree.
-# Always, even when tests are skipped: the modulepreload block is generated
-# from the import graph (a stale one quietly sends the browser back to
-# discovering modules level by level), and the service worker's VERSION and
-# shell list are derived from a content hash of every shell file. It runs in
-# write mode, so the files are brought up to date, and then the deploy stops
-# if that changed anything (or they had uncommitted edits already): what ships
-# must be what is committed and tagged. It used to regenerate after the
-# release commit and ship the result, leaving web/sw.js modified and the tag
-# out of step with production (0.2.2, 0.2.4). The pre-commit hook in
-# .githooks regenerates them on every commit that touches web/, so with it
-# enabled (git config core.hooksPath .githooks) this never trips; it is the
-# backstop for a clone without the hook. The deploy never commits for you;
-# the dev deploy keeps --check as its gate.
-echo "== generated assets =="
-node "${ROOT_DIR}/scripts/gen-preload.mjs"
-if ! git -C "${ROOT_DIR}" diff --quiet HEAD -- web/sw.js web/index.html; then
-  echo "" >&2
-  echo "Refusing to deploy: web/sw.js or web/index.html differ from the last commit." >&2
-  echo "The generated preload block and service-worker version are now up to date on disk;" >&2
-  echo "commit them so the deployed files match the commit, then run the deploy again:" >&2
-  echo "" >&2
-  echo "  git add web/sw.js web/index.html && git commit -m 'Regenerate preload block and sw version'" >&2
-  echo "" >&2
-  echo "To have every commit do this for you: git config core.hooksPath .githooks" >&2
-  exit 1
-fi
-
+#
+# The modulepreload block and the service worker's version are no longer
+# generated here: the app fills them in as it serves index.html and sw.js
+# (server/src/Http/AppShell.php), so the committed files are what ships.
 if [ "${SKIP_TESTS:-0}" != "1" ]; then
   echo "== pre-flight tests =="
   node --experimental-vm-modules "${ROOT_DIR}/web/tests/static.mjs" 2>/dev/null | tail -1

@@ -39,7 +39,7 @@ This is all a web server needs to know, and it is the same on any of them:
 
 The app sets its own cache headers on the static files it serves (`server/src/Http/StaticFiles.php`), so you do not have to configure caching at all: files under `/assets/vendor/` are cached for 30 days as immutable, and everything else, including `sw.js` and the HTML, is `no-cache` with an ETag, which means the browser revalidates on each load and gets a bodyless 304 unless a deploy changed the file. The one rule that matters if you override this: **never let `sw.js` be cached without revalidation**, or browsers will not notice new versions.
 
-`server/public/assets` and `server/public/sw.js` are symlinks into `web/`. They exist so a web server can serve those files directly as an optimisation. You can ignore them; routing everything to `index.php` works without them.
+`server/public/assets` is a symlink into `web/`. It exists so a web server can serve those files directly as an optimisation. You can ignore it; routing everything to `index.php` works without it. **`/sw.js` must always go to `index.php`**: the app fills in the service worker's version as it serves it. Sent straight from disk, the worker runs without one and the app loses offline start (it still works online).
 
 ## Nginx (tested)
 
@@ -79,11 +79,21 @@ Optional: let Nginx serve the static files itself, which is what the production 
         add_header Cache-Control "no-cache";
         try_files $uri =404;
     }
+```
+
+Do not add a rule that serves `/sw.js` from disk; see above.
+
+**Hosting panels (CloudPanel, and many others) add a catch-all rule for static file extensions**, typically `location ~* \.(css|js|png|...)$` with `expires max`. It catches `/sw.js` before your `location /` does and answers it from disk, or with a 404 since there is no such file. Add an exact rule that sends it to the app; an exact `location =` always wins over a regex. With PHP-FPM directly:
+
+```nginx
     location = /sw.js {
-        add_header Cache-Control "no-cache";
-        try_files $uri =404;
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME $document_root/index.php;
+        fastcgi_pass unix:/run/php/php8.4-fpm.sock;
     }
 ```
+
+Behind a panel that proxies `location /` to an inner server (CloudPanel does: `proxy_pass http://127.0.0.1:8080`), use the same `proxy_pass` and headers as its `location /` inside `location = /sw.js { ... }`. To check: `curl -sI https://your-host/sw.js` should show `ETag: W/"bc-` followed by twelve hex digits.
 
 The `types` block is there because `.webmanifest` is missing from Nginx's default MIME map, and a `types` block replaces the inherited map inside that location, so every extension the frontend uses has to be listed. Nginx follows the symlinks by default.
 

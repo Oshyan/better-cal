@@ -4,6 +4,15 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.2.5 (2026-09-24)
+
+Nothing generated is committed any more.
+
+- The modulepreload block in `index.html` and the service worker's version and file list are now filled in by the server as it serves those two files, and cached until something under `web/` changes. They used to be written into the repository by a script at deploy time, which left the working tree modified after every deploy and the release tags out of step with what shipped.
+- Removed: `scripts/gen-preload.mjs`, the pre-commit hook, and the deploy step that ran the generator.
+- **Self-hosters:** `/sw.js` must reach `index.php`. Remove any web server rule that serves it from disk (`docs/install.md` no longer has one). If it is still served raw, the worker leaves the app's files to the network: the app works online but loses offline start.
+- The page registers only `/sw.js`; the `/assets/sw.js` fallback is gone.
+
 ## 0.2.4 (2026-09-24)
 
 Sign out everywhere else, for a lost or stolen device.

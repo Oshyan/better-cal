@@ -71,7 +71,6 @@ echo "== deploying branch '${BRANCH}' to dev (${DEV_DIR}) =="
 
 if [ "${SKIP_TESTS:-0}" != "1" ]; then
   echo "== pre-flight tests =="
-  node "${ROOT_DIR}/scripts/gen-preload.mjs" --check
   node --experimental-vm-modules "${ROOT_DIR}/web/tests/static.mjs" 2>/dev/null | tail -1
   # Several zones, not just Pacific: see scripts/deploy.sh.
   for zone in America/Los_Angeles UTC Europe/Berlin Asia/Kolkata Pacific/Auckland; do

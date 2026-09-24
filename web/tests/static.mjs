@@ -15,7 +15,6 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
-import { spawnSync } from 'node:child_process';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', 'src');
 
@@ -83,17 +82,6 @@ for (const file of files) {
   check(cleanup > 0 && firstLink > cleanup, 'index.html handoff script must run before the first <link>');
   check(/history\.replaceState\(null,'','\/'\)/.test(html), 'index.html handoff script must rewrite the address to /');
   check(/<meta name="referrer" content="strict-origin-when-cross-origin">/.test(html), 'index.html must set a referrer policy');
-}
-
-// The generated preload block (index.html) and the service worker's shell list
-// and VERSION (sw.js) must match the committed sources. A stale VERSION means
-// clients keep serving old shell files from cache; deploy.sh also refuses to
-// ship one, but catching it here means it never gets committed stale.
-{
-  const gen = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'scripts', 'gen-preload.mjs');
-  const r = spawnSync(process.execPath, [gen, '--check'], { encoding: 'utf8' });
-  if (r.status === 0) passed++;
-  else fail('generated assets are stale: ' + ((r.stderr || r.stdout || '').trim() || 'gen-preload --check exited ' + r.status));
 }
 
 console.log('');

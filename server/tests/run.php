@@ -3323,6 +3323,83 @@ require __DIR__ . '/plugins.php';
     check('sign out elsewhere: refused to an API token', $refused !== null);
 }
 
+// --- App shell: preload block and service-worker version, filled in when served ---
+{
+    $AS = BetterCal\Http\AppShell::class;
+    $root = sys_get_temp_dir() . '/bc-appshell-' . bin2hex(random_bytes(4));
+    foreach (['src/app', 'src/lib', 'styles', 'tests'] as $d) {
+        mkdir($root . '/' . $d, 0777, true);
+    }
+    file_put_contents("$root/index.html", "<head>\n" . $AS::PRELOAD_START . "\n" . $AS::PRELOAD_END . "\n</head>\n");
+    file_put_contents("$root/sw.js", "// top\n" . $AS::SW_START . "\nconst VERSION = 'bc-unversioned';\nconst SHELL = [];\n" . $AS::SW_END . "\nself.rest = 1;\n");
+    file_put_contents("$root/styles/app.css", 'body{}');
+    file_put_contents("$root/src/app/main.js", "import { a } from './a.js';\nexport { b } from '../lib/b.js';\nimport '../lib/side.js';\nconst later = () => import('./lazy.js');\nimport x from 'https://cdn.example/x.js';\n");
+    file_put_contents("$root/src/app/a.js", "import { b } from '../lib/b.js';\nexport const a = 1;\n");
+    file_put_contents("$root/src/lib/b.js", "export const b = 2;\n");
+    file_put_contents("$root/src/lib/side.js", "/* side effect */\n");
+    file_put_contents("$root/src/app/lazy.js", "export default 1;\n");
+    file_put_contents("$root/tests/t.mjs", "// a test\n");
+    $extra = ['/', '/assets/styles/app.css', '/assets/icons/missing.png'];
+    $cache = $root . '-cache.json';
+    $savedLog = ini_get('error_log');
+    ini_set('error_log', $root . '-errors.log'); // the missing-entry notice is expected here
+
+    $shell = new BetterCal\Http\AppShell($root, $cache, $extra);
+    checkEq('app shell: static imports breadth-first; dynamic and remote imports left out', ['src/app/main.js', 'src/app/a.js', 'src/lib/b.js', 'src/lib/side.js'], $shell->graph());
+    $st = $shell->state();
+    check('app shell: the first request computes', $shell->computed);
+    checkEq('app shell: preload skips main.js (it has its own script tag)', ['/assets/src/app/a.js', '/assets/src/lib/b.js', '/assets/src/lib/side.js'], $st['modules']);
+    checkEq('app shell: shell = fixed entries, then the graph; one missing on disk is left out', ['/', '/assets/styles/app.css', '/assets/src/app/main.js', '/assets/src/app/a.js', '/assets/src/lib/b.js', '/assets/src/lib/side.js'], $st['shell']);
+    check('app shell: a missing entry is logged', str_contains((string) @file_get_contents($root . '-errors.log'), 'icons/missing.png'));
+    check('app shell: the version is bc- and 12 hex digits', preg_match('/^bc-[0-9a-f]{12}$/', $st['version']) === 1);
+    $again = new BetterCal\Http\AppShell($root, $cache, $extra);
+    checkEq('app shell: the next request uses the cache', [false, $st['version']], [$again->state()['version'] === $st['version'] ? $again->computed : 'changed', $st['version']]);
+    $html = $again->renderIndex();
+    check('app shell: the document gets a preload link per module, and none for main.js', str_contains($html, '<link rel="modulepreload" href="/assets/src/lib/b.js">') && !str_contains($html, 'main.js') && str_contains($html, $AS::PRELOAD_END));
+    $sw = $again->renderServiceWorker();
+    check('app shell: the worker gets its version and shell list, the rest of it untouched', str_contains($sw, 'const VERSION = "' . $st['version'] . '";') && str_contains($sw, '  "/assets/src/lib/side.js",') && str_contains($sw, "self.rest = 1;") && !str_contains($sw, 'bc-unversioned'));
+    checkEq('app shell: the committed template itself is not changed', "const VERSION = 'bc-unversioned';", (static function () use ($root) { preg_match("/const VERSION = '[^']*';/", (string) file_get_contents("$root/sw.js"), $m); return $m[0] ?? ''; })());
+
+    file_put_contents("$root/tests/t.mjs", "// a longer test file now\n");
+    $t = new BetterCal\Http\AppShell($root, $cache, $extra);
+    checkEq('app shell: editing a test file changes nothing', [$st['version'], false], [$t->state()['version'], $t->computed]);
+    file_put_contents("$root/src/lib/b.js", "export const b = 3; // changed\n");
+    $t = new BetterCal\Http\AppShell($root, $cache, $extra);
+    $v2 = $t->state()['version'];
+    check('app shell: changing a module recomputes and gives a new version', $t->computed && $v2 !== $st['version']);
+    file_put_contents("$root/src/app/lazy.js", "export default 22;\n");
+    $t = new BetterCal\Http\AppShell($root, $cache, $extra);
+    check('app shell: any file under web/ recomputes, even one outside the shell', $t->state()['version'] === $v2 && $t->computed);
+    file_put_contents($cache, '{not json');
+    $t = new BetterCal\Http\AppShell($root, $cache, $extra);
+    checkEq('app shell: a corrupt cache file is recomputed, not trusted', [$v2, true], [$t->state()['version'], $t->computed]);
+    $nowhere = new BetterCal\Http\AppShell($root, $root . '/no/such/dir/cache.json', $extra);
+    checkEq('app shell: an unwritable cache still serves (computing each time)', [$v2, true, $v2, true], [$nowhere->state()['version'], $nowhere->computed, $nowhere->state()['version'], $nowhere->computed]);
+    checkEq('app shell: without the markers the text is left alone', 'no markers here', $AS::fillWorker('no markers here', 'bc-x', ['/']));
+
+    ini_set('error_log', (string) $savedLog);
+    foreach ([$cache, $root . '-errors.log'] as $f) {
+        @unlink($f);
+    }
+    $rm = static function (string $dir) use (&$rm): void {
+        foreach (array_diff((array) scandir($dir), ['.', '..']) as $n) {
+            is_dir("$dir/$n") ? $rm("$dir/$n") : unlink("$dir/$n");
+        }
+        rmdir($dir);
+    };
+    $rm($root);
+
+    // The real frontend.
+    $web = dirname(__DIR__, 2) . '/web';
+    $real = new BetterCal\Http\AppShell($web, null);
+    $rs = $real->state();
+    checkEq('app shell (real): every fixed shell entry exists on disk', [], array_values(array_diff($AS::EXTRA, $rs['shell'])));
+    check('app shell (real): the graph reaches the app\'s modules', count($rs['modules']) > 50 && in_array('/assets/src/app/push.js', $rs['modules'], true) && in_array('/assets/vendor/preact.module.js', $rs['modules'], true));
+    check('app shell (real): the committed document has an empty preload block', str_contains((string) file_get_contents("$web/index.html"), $AS::PRELOAD_START . "\n" . $AS::PRELOAD_END));
+    check('app shell (real): the committed worker is the unversioned template', str_contains((string) file_get_contents("$web/sw.js"), "const VERSION = '" . $AS::UNVERSIONED . "';"));
+    check('app shell (real): served, it carries the version', str_contains($real->renderServiceWorker(), 'const VERSION = "' . $rs['version'] . '";'));
+}
+
 // --- Google Calendar connector ------------------------------------------------
 use BetterCal\Domain\GoogleAuth;
 use BetterCal\Domain\GoogleSync;

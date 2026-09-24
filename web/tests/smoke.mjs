@@ -1425,9 +1425,17 @@ console.log('--- chronological ordering across timezone offsets ---');
 {
   const { readFileSync } = await import('node:fs');
   const vm = await import('node:vm');
-  const swSource = readFileSync(new URL('../sw.js', import.meta.url), 'utf8');
+  // The committed file is a template; the server fills in VERSION and SHELL
+  // as it serves it (server/src/Http/AppShell.php). Fill it the same way.
+  const swTemplate = readFileSync(new URL('../sw.js', import.meta.url), 'utf8');
+  const fillWorker = (version, shell) => swTemplate.replace(
+    /\/\/ @generated-shell:start[\s\S]*?\/\/ @generated-shell:end/,
+    `// @generated-shell:start\nconst VERSION = '${version}';\nconst SHELL = ${JSON.stringify(shell)};\n// @generated-shell:end`,
+  );
+  const swSource = fillWorker('bc-test00000000', ['/', '/assets/src/app/main.js']);
+  assert('sw template: the committed file has the unversioned placeholder', /const VERSION = 'bc-unversioned';/.test(swTemplate) && swSource.includes("const VERSION = 'bc-test00000000';"));
 
-  const makeWorker = () => {
+  const makeWorker = (source = swSource) => {
     const stores = new Map(); // cache name -> Map(url -> Response)
     const keyOf = (r) => (typeof r === 'string' ? r : r.url);
     const caches = {
@@ -1451,9 +1459,11 @@ console.log('--- chronological ordering across timezone offsets ---');
       clients: { matchAll: async () => [], openWindow: async () => {} },
       location: { origin: 'https://cal.example.com' },
       fetch: async (req) => net.respond(keyOf(req)),
-      Response, Request, URL, Promise, JSON, setTimeout, clearTimeout,
+      // A worker resolves relative URLs against its origin; Node's Request does not.
+      Response, Request: class extends Request { constructor(u, o) { super(typeof u === 'string' && u.startsWith('/') ? 'https://cal.example.com' + u : u, o); } },
+      URL, Promise, JSON, setTimeout, clearTimeout, console: { warn: () => {}, log: () => {} },
     };
-    vm.runInNewContext(swSource, sandbox);
+    vm.runInNewContext(source, sandbox);
     const get = (path) => new Promise((resolve) => {
       const request = new Request('https://cal.example.com' + path);
       handlers.fetch({ request, respondWith: (p) => resolve(p) });
@@ -1464,7 +1474,19 @@ console.log('--- chronological ordering across timezone offsets ---');
       await done;
     };
     const settle = () => new Promise((r) => setTimeout(r, 5)); // let the un-awaited cache write land
-    return { stores, net, get, message, settle };
+    // Dispatch a fetch and report whether the worker took it (respondWith) or left it to the network.
+    const takes = (path, mode) => {
+      let took = false;
+      const request = new Request('https://cal.example.com' + path);
+      handlers.fetch({ request: mode ? { url: request.url, method: 'GET', mode } : request, respondWith: (p) => { took = true; p.catch(() => {}); } });
+      return took;
+    };
+    const lifecycle = async (type) => {
+      let done = Promise.resolve();
+      handlers[type]({ waitUntil: (p) => { done = p; } });
+      await done;
+    };
+    return { stores, net, get, message, settle, takes, lifecycle };
   };
   const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
   const offline = () => { throw new TypeError('Failed to fetch'); };
@@ -1509,6 +1531,26 @@ console.log('--- chronological ordering across timezone offsets ---');
     const res = await w.get('/api/v1/me');
     eq('sw: the 401 itself still reaches the page', res.status, 401);
     eq('sw: a 401 purges everything cached under the dead session', apiCached(w), 0);
+  }
+
+  // Filled in by the server: the app's files are precached and served from cache.
+  {
+    const w = makeWorker();
+    w.net.respond = () => new Response('ok');
+    await w.lifecycle('install');
+    eq('sw: a versioned worker precaches its shell', [...w.stores.keys()], ['bc-test00000000-shell']);
+    eq('sw: and answers app files and navigations itself', [w.takes('/assets/src/app/main.js'), w.takes('/add', 'navigate')], [true, true]);
+  }
+
+  // Served raw (a web server sent the template from disk): app files go to the
+  // network, so no cache can pin a version that no deploy would ever replace.
+  {
+    const w = makeWorker(swTemplate);
+    w.net.respond = () => new Response('ok');
+    await w.lifecycle('install');
+    eq('sw raw: nothing is precached', w.stores.size, 0);
+    eq('sw raw: app files and navigations are left to the network', [w.takes('/assets/src/app/main.js'), w.takes('/add', 'navigate')], [false, false]);
+    eq('sw raw: the API is still handled (offline calendar data, sign-out purge)', w.takes('/api/v1/me'), true);
   }
 
   // The race a plain delete leaves open: a response in flight at sign-out.

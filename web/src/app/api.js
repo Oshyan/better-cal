@@ -219,14 +219,66 @@ async function fetchRange(s, e) {
   }
 }
 
+// A window request that fails (offline, a server error) used to reject with
+// nobody listening: the dates were never marked loaded, but nothing asked for
+// them again until the view scrolled, so a calendar opened on a bad
+// connection sat empty with no word about why (#48). Now a failure is shown
+// (windowStatus, shown as a small note over the view by App.js) and retried on a growing
+// delay, and at once when the device comes back online.
+const RETRY_DELAYS = [2000, 5000, 15000, 30000, 60000];
+let retryTimer = null;
+let retryStep = 0;
+const failedWindows = new Map(); // "start|end" -> {start, end} (ISO), retried together
+
+function windowFailed(startISO, endISO, err) {
+  failedWindows.set(startISO + '|' + endISO, { start: startISO, end: endISO });
+  // Scrolling while offline asks for window after window; the newest few are
+  // enough to retry (a retry that lands covers the view the person is on).
+  while (failedWindows.size > 4) failedWindows.delete(failedWindows.keys().next().value);
+  const delay = RETRY_DELAYS[Math.min(retryStep, RETRY_DELAYS.length - 1)];
+  retryStep++;
+  if (retryTimer) clearTimeout(retryTimer);
+  retryTimer = setTimeout(retryWindowsNow, delay);
+  set({ windowStatus: { kind: 'failed', offline: !!(err && err.code === 'offline'), retryAt: Date.now() + delay } });
+}
+
+function windowLoaded(startISO, endISO) {
+  failedWindows.delete(startISO + '|' + endISO);
+  if (failedWindows.size > 0) return;
+  retryStep = 0;
+  if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+  if (state.windowStatus) set({ windowStatus: null });
+}
+
+// Try every failed window again now (the Retry button, coming back online).
+export function retryWindowsNow() {
+  if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+  const again = [...failedWindows.values()];
+  failedWindows.clear();
+  for (const w of again) loadWindow(w.start, w.end);
+}
+
+if (typeof window !== 'undefined' && window.addEventListener) {
+  window.addEventListener('online', () => { if (failedWindows.size > 0) retryWindowsNow(); });
+}
+
 export async function loadWindow(startISO, endISO, { force = false } = {}) {
   lastWindow = { start: startISO, end: endISO };
   const s = new Date(startISO).getTime();
   const e = new Date(endISO).getTime();
+  // Only a cold load says "Loading": later windows arrive while the calendar
+  // already shows something, and a pill flickering on every scroll is noise.
+  const cold = state.loadedRanges.length === 0 && !state.windowStatus;
   if (force) {
     abortSubsumed(s, e);
     windowReqId++;
-    await fetchRange(s, e);
+    if (cold) set({ windowStatus: { kind: 'loading' } });
+    try {
+      await fetchRange(s, e);
+      windowLoaded(startISO, endISO);
+    } catch (err) {
+      windowFailed(startISO, endISO, err);
+    }
     return;
   }
   // Ask only for what is not already held or on its way. Scrolling requests a
@@ -239,8 +291,14 @@ export async function loadWindow(startISO, endISO, { force = false } = {}) {
     ...state.loadedRanges,
     ...inFlight.map((r) => ({ start: r.start, end: r.end })),
   ]);
-  if (gaps.length === 0) return;
-  await Promise.all(gaps.map((g) => fetchRange(g.start, g.end)));
+  // Nothing missing: already held (perhaps by a later, wider window), or on
+  // its way. Either way this window no longer counts as failed.
+  if (gaps.length === 0) { windowLoaded(startISO, endISO); return; }
+  if (cold) set({ windowStatus: { kind: 'loading' } });
+  const results = await Promise.allSettled(gaps.map((g) => fetchRange(g.start, g.end)));
+  const failed = results.find((r) => r.status === 'rejected');
+  if (failed) windowFailed(startISO, endISO, failed.reason);
+  else windowLoaded(startISO, endISO);
 }
 
 // The window carries what the grid draws. Description, cadence, reminders,

@@ -4,6 +4,14 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.2.6 (2026-09-24)
+
+Two visible fixes.
+
+- All-day events edit as dates (#34). The event card's quick editor and the full editor used to show all-day events as date-and-time fields at 12:00 AM, ending the day after the event ends. They now show plain date fields, and the end field is the last day ("Sep 12 to Sep 27"). Ticking All day on a timed event keeps it on its own day.
+- Search results show an all-day event on its own date; west of UTC it showed a day early.
+- A calendar that cannot load its events says so (#48). A failed request for a range of dates used to leave the grid empty with no message until you scrolled. Now a note over the view says the events could not load (or that you are offline and those dates are not saved on this device), retries on a growing delay and as soon as the device is back online, and has a Retry now button. A cold load that takes a moment shows "Loading events…".
+
 ## 0.2.5 (2026-09-24)
 
 Nothing generated is committed any more.

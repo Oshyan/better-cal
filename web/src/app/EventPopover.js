@@ -18,6 +18,7 @@ import { ThumbIcon, PinIcon, LinkIcon, Icon } from '../ui/icons.js';
 import { DurationSuffix } from '../ui/EventChip.js';
 import {
   parseISO, dateOfDayKey, fmtRange, eventDuration, toInputValue, fromInputValue, toISOWithOffset, occDayKey,
+  allDayFields, allDayInputs,
 } from '../lib/dates.js';
 import { fmtReminder } from '../lib/reminders.js';
 import { ink } from '../lib/color.js';
@@ -273,10 +274,23 @@ function TimeEditor({ start, end, allDay, onSave, onCancel }) {
   const [sv, setSv] = useState(toInputValue(start));
   const [ev, setEv] = useState(toInputValue(end));
   const duration = eventDuration({ start: sv, end: ev, allDay });
+  // All-day: two date fields, the second being the last day (the stored end
+  // is the day after; #34). The values kept here stay datetime-local, so the
+  // save path is the same for both kinds.
+  const days = allDay ? allDayFields(sv, ev) : null;
+  const setDays = (first, last) => {
+    const v = allDayInputs(first, last);
+    setSv(v.start);
+    setEv(v.end);
+  };
   return html`<div class="bc-pop-timeedit">
-    <input type="datetime-local" value=${sv} onInput=${(x) => setSv(x.target.value)} aria-label="Start" />
-    <span>to</span>
-    <input type="datetime-local" value=${ev} onInput=${(x) => setEv(x.target.value)} aria-label="End" />
+    ${days
+      ? html`<input type="date" value=${days.start} onInput=${(x) => x.target.value && setDays(x.target.value, days.end < x.target.value ? x.target.value : days.end)} aria-label="First day" />
+        <span>to</span>
+        <input type="date" value=${days.end} min=${days.start} onInput=${(x) => x.target.value && setDays(days.start, x.target.value)} aria-label="Last day" />`
+      : html`<input type="datetime-local" value=${sv} onInput=${(x) => setSv(x.target.value)} aria-label="Start" />
+        <span>to</span>
+        <input type="datetime-local" value=${ev} onInput=${(x) => setEv(x.target.value)} aria-label="End" />`}
     ${duration && html`<span class="bc-duration-exact">${duration.exact} total</span>`}
     <button type="button" class="bc-btn bc-btn-primary" onClick=${() => onSave(sv, ev)}>Save</button>
     <button type="button" class="bc-btn" onClick=${onCancel}>Cancel</button>

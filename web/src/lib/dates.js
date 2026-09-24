@@ -410,6 +410,32 @@ export function fromInputValue(v) {
   return new Date(v);
 }
 
+// All-day events are stored with an exclusive end: Sep 12 to Sep 27 is
+// start 09-12, end 09-28. People mean the last day, so date fields show
+// that (#34: the editors used to show "09/28/2026, 12:00 AM").
+//
+// From the editors' datetime-local values (exclusive end) to the two date
+// fields (inclusive end, never before the start).
+export function allDayFields(startInput, endInput) {
+  const start = String(startInput || '').slice(0, 10);
+  let end = String(endInput || '').slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(end)) {
+    // An end at midnight is exclusive: the last day is the one before. An end
+    // later in a day (a timed event just switched to all-day) is its own day.
+    const t = String(endInput).slice(11, 16);
+    if (!t || t === '00:00') end = addDaysKey(end, -1);
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(end) || end < start) end = start;
+  return { start, end };
+}
+
+// And back: two date fields (inclusive end) to datetime-local values at local
+// midnight with the exclusive end the server stores.
+export function allDayInputs(startKey, lastKey) {
+  const last = lastKey && lastKey >= startKey ? lastKey : startKey;
+  return { start: startKey + 'T00:00', end: addDaysKey(last, 1) + 'T00:00' };
+}
+
 // Snap a Date to the nearest `mins` minutes.
 export function snapDate(d, mins) {
   const ms = mins * 60000;

@@ -3113,7 +3113,7 @@ button.bc-review-title { color: var(--fg); padding: 0; }
    only while something does, and a bottom bar of five actions (BottomBar.js).
    Everything else the desktop toolbar holds lives in the bottom bar's sheets.
    640px is the phone breakpoint (lib/breakpoints.js). */
-.bc-bottombar, .bc-chips { display: none; }
+.bc-bottombar, .bc-fchips { display: none; }
 /* Keyboard shortcuts mean nothing without a keyboard. */
 @media (pointer: coarse) { .bc-kbd-btn { display: none; } }
 @media (max-width: 640px) {
@@ -3142,29 +3142,29 @@ button.bc-review-title { color: var(--fg); padding: 0; }
   .bc-toolbar .bc-nav-btn::after { left: 0; right: 0; }
   /* The chips row: one line under the top bar, wrapping in the rare case it
      overflows (a scrolling row would clip the Show menu). */
-  .bc-toolbar:has(+ .bc-chips) { border-bottom-color: transparent; }
-  .bc-chips {
+  .bc-toolbar:has(+ .bc-fchips) { border-bottom-color: transparent; }
+  .bc-fchips {
     display: flex; flex-wrap: wrap; gap: 6px; flex: none;
     padding: 0 8px 7px; background: var(--bg-raised); border-bottom: 1px solid var(--border);
     position: relative; z-index: 30;
   }
-  .bc-chip {
+  .bc-fchip {
     display: inline-flex; align-items: center; max-width: 100%; min-width: 0; height: 30px;
     border-radius: 999px; font-size: 13px; font-weight: 600;
     background: color-mix(in srgb, var(--accent) 12%, var(--bg-raised));
     border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border-strong));
   }
-  .bc-chip.is-view { background: var(--bg-inset); border-color: var(--border-strong); }
-  .bc-chip-body, .bc-chip-x {
+  .bc-fchip.is-view { background: var(--bg-inset); border-color: var(--border-strong); }
+  .bc-fchip-body, .bc-fchip-x {
     background: none; border: none; color: var(--fg); height: 100%; position: relative;
     -webkit-tap-highlight-color: transparent;
   }
-  .bc-chip-body { padding: 0 4px 0 12px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .bc-chip.is-view .bc-chip-body { padding-right: 12px; }
-  .bc-chip-x { padding: 0 10px 0 6px; display: inline-grid; place-items: center; color: var(--fg-muted); flex: none; }
+  .bc-fchip-body { padding: 0 4px 0 12px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bc-fchip.is-view .bc-fchip-body { padding-right: 12px; }
+  .bc-fchip-x { padding: 0 10px 0 6px; display: inline-grid; place-items: center; color: var(--fg-muted); flex: none; }
   /* Tall enough to tap, never reaching into the chip beside. */
-  .bc-chip-body::after, .bc-chip-x::after { content: ""; position: absolute; left: 0; right: 0; top: -7px; bottom: -7px; }
-  .bc-chip .bc-relfilter-drop { top: calc(100% + 4px); }
+  .bc-fchip-body::after, .bc-fchip-x::after { content: ""; position: absolute; left: 0; right: 0; top: -7px; bottom: -7px; }
+  .bc-fchip .bc-relfilter-drop { top: calc(100% + 4px); }
   /* Agenda's own toggles moved into the sheets (Show past: Filter; order: View). */
   .bc-agenda-toggle { display: none; }
   .bc-bottombar {

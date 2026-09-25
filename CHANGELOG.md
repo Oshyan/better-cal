@@ -4,6 +4,16 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.4.3 (2026-09-25)
+
+A compact list on phones, for Split and the Agenda view (the agenda redesign, brought forward from 0.5.0 for phones; desktop styling comes separately).
+
+- **One line per event:** the start time in a narrow column ("8p", "8:30p", "all day", "1/4" for a day of a multi-day event), the title at full width, then the place, muted. A meeting link shows just its site ("zoom.us"). The full details stay on the event card, one tap away.
+- **Triage on a swipe:** drag a suggested event left to reveal Maybe, Planned, Hide, More like this and Less like this. Let go past halfway and they stay open; a tap anywhere else closes them without doing anything else. The row of buttons on every event is gone.
+- **Slimmer day headings:** "Fri, Sep 25" on one line with the weather and sunset.
+- **Unchanged:** the rails and tinted rows that mark multi-day events, now sized to the smaller rows.
+- **Folded empty days** (Split) have a stronger hatch, so they read as skipped time at a glance, on desktop too.
+
 ## 0.4.2 (2026-09-25)
 
 - The phone's month uses each day's full height. A fixed limit of three events per day showed "+2" with room for two more still empty below; now a day shows as many as fit, and "+N" appears only when it truly overflows. Split's weeks get the same room.

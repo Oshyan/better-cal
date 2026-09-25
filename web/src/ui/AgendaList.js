@@ -20,7 +20,9 @@ import {
 } from '../lib/dates.js';
 import { EventChip, HiddenMark } from './EventChip.js';
 import { ContextStrip } from './ContextStrip.js';
-import { contextByDay, withoutContext } from '../lib/context.js';
+import { contextByDay, withoutContext, compactTime } from '../lib/context.js';
+import { PHONE_QUERY } from '../lib/breakpoints.js';
+import { onOutsidePress } from './outside.js';
 import { ThumbIcon, TripBadge, PinIcon, Icon } from './icons.js';
 import { gmapsUrl } from '../lib/maps.js';
 import {
@@ -43,6 +45,8 @@ const FEEDBACK_BUTTONS = [
   ['up', 'More like this'],
   ['down', 'Less like this'],
 ];
+// Width of one swipe action (compact rows).
+const SWIPE_ACT_W = 52;
 
 function TriageCluster({ occ, onSetAttendance, onFeedback }) {
   const hasOn = TRIAGE_BUTTONS.some(([value]) => occ.relationship === value);
@@ -72,14 +76,17 @@ function fmtDayShort(occ) {
 // A location that is really a link (Zoom, Meet, any URL) becomes one; a real
 // place gets a maps link. Either way it is clickable from the agenda instead
 // of a string you have to copy out by hand.
-function AgendaLocation({ location, lat, lng }) {
+// compact: a link shows only its site ("zoom.us"): a meeting path is noise
+// in a narrow column, and the full link is on the event card.
+function AgendaLocation({ location, lat, lng, compact = false }) {
   const url = /^https?:\/\//i.test(location.trim()) ? location.trim() : null;
   const stop = (e) => e.stopPropagation();
   if (url) {
     let label = url;
     try {
       const u = new URL(url);
-      label = u.hostname.replace(/^www\./, '') + (u.pathname !== '/' ? u.pathname : '');
+      const host = u.hostname.replace(/^www\./, '');
+      label = compact ? host.split('.').slice(-2).join('.') : host + (u.pathname !== '/' ? u.pathname : '');
     } catch { /* keep the raw string */ }
     return html`<a
       class="bc-agenda-loc bc-agenda-loclink" href=${url}
@@ -126,6 +133,20 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
   const [win, setWin] = useState({ top: 0, height: 800 });
   const flat = sortMode === 'match';
 
+  // Phones get a compact layout: one-line rows (start time, then the title at
+  // full width, then the place), a one-line day heading, and triage on a
+  // swipe instead of a row of buttons. The heights feed the layout math, so
+  // the rails and tints line up with the smaller rows.
+  const [compact, setCompact] = useState(() => typeof window !== 'undefined' && !!window.matchMedia && window.matchMedia(PHONE_QUERY).matches);
+  useEffect(() => {
+    const mq = window.matchMedia(PHONE_QUERY);
+    const onChange = () => setCompact(mq.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+  const metrics = useMemo(() => (compact ? { rowH: 30, headH: 32, sepH: 26, gapH: 28 } : {}), [compact]);
+  const rowH = metrics.rowH || ROW_H;
+
   // A span's rail, wash and boundary rows highlight together, whichever one
   // the pointer is over. Done by toggling classes on the matching nodes, NOT
   // through state: hover on a list of this size must not re-render every
@@ -150,24 +171,24 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
       const rows = occurrences
         .filter((occ) => occ.attendance !== 'hidden')
         .map((occ) => ({ kind: 'normal', occ }));
-      return rows.length === 0 ? [] : [{ dayKey: null, rows, top: 0, height: rows.length * ROW_H }];
+      return rows.length === 0 ? [] : [{ dayKey: null, rows, top: 0, height: rows.length * rowH }];
     }
-    if (!gaps) return buildAgendaGroups(withoutContext(occurrences));
+    if (!gaps) return buildAgendaGroups(withoutContext(occurrences), metrics);
     const heldDays = loaded
       ? loaded.map((r) => [epochDayOfKey(dayKeyOf(new Date(r.start))), epochDayOfKey(dayKeyOf(new Date(r.end - 1)))])
       : null;
-    return buildAgendaGroups(withoutContext(occurrences), { gaps: true, loaded: heldDays });
-  }, [occurrences, flat, gaps, loaded]);
+    return buildAgendaGroups(withoutContext(occurrences), { ...metrics, gaps: true, loaded: heldDays });
+  }, [occurrences, flat, gaps, loaded, metrics, rowH]);
 
   // Rails and header suffixes only exist in day-grouped mode; match mode
   // reorders rows, so a vertical span would connect unrelated positions.
   const rails = useMemo(
-    () => (flat ? [] : railRanges(groups, { colorOf: (occ) => calColorOf(calendars, occ) })),
-    [groups, flat, calendars],
+    () => (flat ? [] : railRanges(groups, { ...metrics, colorOf: (occ) => calColorOf(calendars, occ) })),
+    [groups, flat, calendars, metrics],
   );
   const washes = useMemo(
-    () => (flat ? [] : washRects(groups, { colorOf: (occ) => calColorOf(calendars, occ) })),
-    [groups, flat, calendars],
+    () => (flat ? [] : washRects(groups, { ...metrics, colorOf: (occ) => calColorOf(calendars, occ) })),
+    [groups, flat, calendars, metrics],
   );
 
   const totalH = groups.length ? groups[groups.length - 1].top + groups[groups.length - 1].height : 0;
@@ -207,9 +228,65 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
     topPosRef.current = { dayKey: g.dayKey, within: el.scrollTop - g.top };
   }, []);
 
+  // Swipe triage (compact): the row whose actions are showing, if any.
+  const [swiped, setSwiped] = useState(null);
+  const swipedRef = useRef(null);
+  swipedRef.current = swiped;
+  const swipe = useRef(null);
+  useEffect(() => {
+    if (!swiped) return undefined;
+    return onOutsidePress(
+      (t) => !!(t.closest && t.closest(`[data-swipe="${CSS.escape(swiped)}"]`)),
+      () => setSwiped(null),
+    );
+  }, [swiped]);
+
+  // Drag a row left to uncover its actions; let go past half of them and
+  // they stay open, otherwise the row slides back. Only a mostly-sideways
+  // drag counts: a vertical one is the list scrolling.
+  const swipeHandlers = (key, count) => ({
+    onTouchStart: (e) => {
+      const t = e.touches[0];
+      const row = e.currentTarget;
+      swipe.current = {
+        key, x: t.clientX, y: t.clientY, dx: 0, on: false,
+        inner: row.querySelector('.bc-agenda-rowin'), acts: row.querySelector('.bc-agenda-acts'),
+        w: count * SWIPE_ACT_W, open: swipedRef.current === key,
+      };
+    },
+    onTouchMove: (e) => {
+      const s = swipe.current;
+      if (!s || s.key !== key || !s.inner) return;
+      const t = e.touches[0];
+      const dx = t.clientX - s.x;
+      const dy = t.clientY - s.y;
+      if (!s.on) {
+        if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+        if (Math.abs(dx) < Math.abs(dy) * 1.3) { swipe.current = null; return; }
+        s.on = true;
+        s.inner.style.transition = 'none';
+        if (s.acts) s.acts.style.transition = 'none';
+      }
+      if (e.cancelable) e.preventDefault();
+      s.dx = Math.max(-s.w, Math.min(0, (s.open ? -s.w : 0) + dx));
+      s.inner.style.transform = `translateX(${s.dx}px)`;
+      if (s.acts) s.acts.style.width = `${-s.dx}px`;
+    },
+    onTouchEnd: () => {
+      const s = swipe.current;
+      swipe.current = null;
+      if (!s || !s.on) return;
+      s.inner.style.transition = '';
+      s.inner.style.transform = '';
+      if (s.acts) { s.acts.style.transition = ''; s.acts.style.width = ''; }
+      setSwiped(s.dx < -s.w / 2 ? key : null);
+    },
+  });
+
   const onScroll = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
+    if (swipedRef.current) setSwiped(null);
     noteTopPos();
     setWin((prev) => {
       const next = { top: el.scrollTop, height: el.clientHeight };
@@ -353,10 +430,10 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
             <span class="bc-agenda-gap-what">${g.unloaded ? 'not loaded yet' : g.covered ? 'nothing else on' : 'nothing on'}</span>
           </p>`}
           ${g.dayKey !== null && !g.gap && html`<h3 class="bc-agenda-day">
-            ${fmtDayLong(dateOfDayKey(g.dayKey))}
+            ${compact ? gapDayFmt.format(dateOfDayKey(g.dayKey)) : fmtDayLong(dateOfDayKey(g.dayKey))}
             ${hiddenDays && hiddenDays.get(g.dayKey) && html`<${HiddenMark} count=${hiddenDays.get(g.dayKey)} onShow=${onShowHidden} />`}
             ${ctxByDay.get(g.dayKey) && html`<${ContextStrip} occs=${ctxByDay.get(g.dayKey)} calendars=${calendars} onOpen=${onOpenEvent} />`}
-            ${onCreateDay && html`<button
+            ${onCreateDay && !compact && html`<button
               type="button" class="bc-agenda-dayadd"
               title=${'New event on ' + fmtDayLong(dateOfDayKey(g.dayKey))}
               aria-label=${'New event on ' + fmtDayLong(dateOfDayKey(g.dayKey))}
@@ -385,17 +462,59 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
             const spanTime = span && !occ.allDay
               ? (start ? 'from ' : 'until ') + fmtTime(parseISO(start ? occ.start : occ.end))
               : null;
+            // Compact: the start alone ("8:30p"), and "1/4" for a span; the
+            // event card has the rest, one tap away.
             const gutter = flat
               ? fmtDayShort(occ) + ' · ' + (occ.allDay ? 'all day' : fmtTime(parseISO(occ.start)))
+              : compact
+                ? (span ? dayOfSpanLabel(occ, g.dayKey).replace(/^Day /, '') : occ.allDay ? 'all day' : compactTime(parseISO(occ.start)))
               : span ? dayOfSpanLabel(occ, g.dayKey) + (spanTime ? ' · ' + spanTime : '')
               : occ.allDay ? 'all day'
               : fmtTime(parseISO(occ.start)) + (occ.end ? ' to ' + fmtTime(parseISO(occ.end)) : '');
             const color = calColorOf(calendars, occ);
+            const triage = !end && occ.source === 'feed' && onSetAttendance;
+            const rowClass = `bc-agenda-row${ts === 'past' ? ' is-past' : ts === 'now' ? ' is-now' : ''}${trip ? ' is-trip' : ''}`;
+            if (compact) {
+              const key = row.kind + ':' + occ.instanceId;
+              const acts = triage ? TRIAGE_BUTTONS.length + (onFeedback ? FEEDBACK_BUTTONS.length : 0) : 0;
+              return html`<div
+                key=${key}
+                class=${rowClass + ' is-compact' + (swiped === key ? ' is-swiped' : '')}
+                data-span=${span ? occ.instanceId : undefined}
+                data-swipe=${triage ? key : undefined}
+                style=${`height:${rowH}px;--act-w:${acts * SWIPE_ACT_W}px`}
+                ...${triage ? swipeHandlers(key, acts) : {}}
+              >
+                ${triage && html`<span class="bc-agenda-acts" aria-label="Triage and feedback">
+                  ${TRIAGE_BUTTONS.map(([value, iconName, label]) => html`<button
+                    key=${value} type="button" class=${'bc-agenda-act is-' + value + (occ.relationship === value ? ' is-on' : '')}
+                    aria-label=${label} aria-pressed=${occ.relationship === value}
+                    onClick=${(e) => { e.stopPropagation(); setSwiped(null); onSetAttendance(occ, value); }}
+                  ><${Icon} name=${iconName} size=${16} /><span>${label}</span></button>`)}
+                  ${onFeedback && FEEDBACK_BUTTONS.map(([value, label]) => html`<button
+                    key=${value} type="button" class=${'bc-agenda-act is-' + value}
+                    aria-label=${label}
+                    onClick=${(e) => { e.stopPropagation(); setSwiped(null); onFeedback(occ, value); }}
+                  ><${ThumbIcon} dir=${value} size=${16} /></button>`)}
+                </span>`}
+                <div class="bc-agenda-rowin">
+                  ${trip && !start && !end && html`<span class="bc-agenda-tripedge" aria-hidden="true" style=${`background:${color}`}></span>`}
+                  <span class="bc-agenda-time${span ? ' is-span' : ''}" style=${span ? `--span-color:${color}` : undefined}>${gutter}</span>
+                  <${EventChip}
+                    occ=${occ} cal=${calendars[occ.calendarId]} showTime=${false}
+                    dimmed=${dimSet && dimSet.has(occ.instanceId)} nowMs=${nowMs}
+                    onOpen=${onOpenEvent}
+                  />
+                  ${trip && html`<${TripBadge} />`}
+                  ${occ.location && html`<${AgendaLocation} location=${occ.location} lat=${occ.locationLat} lng=${occ.locationLng} compact=${true} />`}
+                </div>
+              </div>`;
+            }
             return html`<div
               key=${row.kind + ':' + occ.instanceId}
-              class="bc-agenda-row${ts === 'past' ? ' is-past' : ts === 'now' ? ' is-now' : ''}${trip ? ' is-trip' : ''}"
+              class=${rowClass}
               data-span=${span ? occ.instanceId : undefined}
-              style=${`height:${ROW_H}px`}
+              style=${`height:${rowH}px`}
               onPointerEnter=${span ? () => setLinked(occ.instanceId) : undefined}
               onPointerLeave=${span ? () => setLinked(null) : undefined}
             >

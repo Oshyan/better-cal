@@ -16,7 +16,7 @@
 import { html, useState, useRef, useMemo, useEffect, useLayoutEffect, useCallback } from '../../vendor/index.js';
 import {
   parseISO, fmtTime, dateOfDayKey, fmtDayLong, occDayKey, todayKey,
-  timeState, addDaysKey, fmtDateShort,
+  timeState, addDaysKey, fmtDateShort, dayKeyOf, epochDayOfKey,
 } from '../lib/dates.js';
 import { EventChip, HiddenMark } from './EventChip.js';
 import { ContextStrip } from './ContextStrip.js';
@@ -100,6 +100,13 @@ function monthLabelOf(dayKey) {
 // A folded run's dates: "Thu, Oct 22", with the weekday so the skipped days
 // read as days of the week, not only numbers.
 const gapDayFmt = new Intl.DateTimeFormat(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+// A stretch not loaded can run for years, so it names them.
+const gapYearFmt = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+function gapRange(g) {
+  const fmt = g.unloaded ? gapYearFmt : gapDayFmt;
+  const a = fmt.format(dateOfDayKey(g.dayKey));
+  return g.gapTo === g.dayKey ? a : a + ' to ' + fmt.format(dateOfDayKey(g.gapTo));
+}
 
 function calColorOf(calendars, occ) {
   return (calendars[occ.calendarId] && calendars[occ.calendarId].color) || '#888';
@@ -111,9 +118,10 @@ function calColorOf(calendars, occ) {
 // new seq scrolls the list to the anchor's day group (nearest following group
 // when the exact day has no events).
 // gaps: every day appears, runs of empty days folded to one line each (the
-// Split view). apiRef: receives {el, groups} for a caller that links another
-// scroller to this one.
-export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, scrollKey, scrollSeq, onOpenEvent, onSetAttendance, onFeedback, onCreateDay, onRequestWindow, onVisibleMonthChange, emptyLabel, gapFrom, hiddenDays, onShowHidden, gaps = false, apiRef }) {
+// Split view); loaded: the held windows ([{start, end}] ms), so a run never
+// fetched reads "not loaded yet" rather than "nothing on". apiRef: receives
+// {el, groups, ...} for a caller that links another scroller to this one.
+export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, scrollKey, scrollSeq, onOpenEvent, onSetAttendance, onFeedback, onCreateDay, onRequestWindow, onVisibleMonthChange, emptyLabel, gapFrom, hiddenDays, onShowHidden, gaps = false, loaded = null, apiRef }) {
   const scrollRef = useRef(null);
   const [win, setWin] = useState({ top: 0, height: 800 });
   const flat = sortMode === 'match';
@@ -144,8 +152,12 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
         .map((occ) => ({ kind: 'normal', occ }));
       return rows.length === 0 ? [] : [{ dayKey: null, rows, top: 0, height: rows.length * ROW_H }];
     }
-    return buildAgendaGroups(withoutContext(occurrences), gaps ? { gaps: true } : undefined);
-  }, [occurrences, flat, gaps]);
+    if (!gaps) return buildAgendaGroups(withoutContext(occurrences));
+    const heldDays = loaded
+      ? loaded.map((r) => [epochDayOfKey(dayKeyOf(new Date(r.start))), epochDayOfKey(dayKeyOf(new Date(r.end - 1)))])
+      : null;
+    return buildAgendaGroups(withoutContext(occurrences), { gaps: true, loaded: heldDays });
+  }, [occurrences, flat, gaps, loaded]);
 
   // Rails and header suffixes only exist in day-grouped mode; match mode
   // reorders rows, so a vertical span would connect unrelated positions.
@@ -172,6 +184,9 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
       get anchored() { return appliedSeqRef.current != null; },
       // A navigation this list has not landed on yet (its day still loading).
       get pending() { return !!scrollSeq && appliedSeqRef.current !== scrollSeq; },
+      // You scrolled the list yourself: that outranks a navigation still
+      // waiting for its day, which is then dropped where it stands.
+      cancelPending() { appliedSeqRef.current = scrollSeq; },
     };
   }
 
@@ -219,30 +234,31 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
 
   // Anchor-aware scroll: apply each scrollSeq once, retrying as groups fill in
   // (the window load is async) but never re-yanking after it has applied.
-  // With gaps (Split), a target outside the loaded days waits for them:
-  // landing on the nearest loaded day would leave the list, and the weeks
-  // that follow it, in the wrong year. It waits a moment at most, for a date
-  // with nothing on it anywhere near.
-  const [waitedOut, setWaitedOut] = useState(0);
+  // With gaps (Split) the list covers every loaded day, so it lands exactly
+  // when the target day's window has arrived, and not before: landing on the
+  // nearest loaded day instead would leave the list, and the weeks that
+  // follow it, somewhere else entirely. No timer: if the load fails, the
+  // failure note shows and the retry that follows brings the day in.
   useEffect(() => {
-    if (flat || !scrollSeq || !scrollKey) return undefined;
-    if (appliedSeqRef.current === scrollSeq) return undefined;
+    if (flat || !scrollSeq || !scrollKey) return;
+    if (appliedSeqRef.current === scrollSeq) return;
     const el = scrollRef.current;
-    if (!el || groups.length === 0) return undefined;
-    if (gaps && waitedOut !== scrollSeq) {
-      const last = groups[groups.length - 1];
-      if (scrollKey < groups[0].dayKey || scrollKey > (last.gapTo || last.dayKey)) {
-        const t = setTimeout(() => setWaitedOut(scrollSeq), 2500);
-        return () => clearTimeout(t);
-      }
-    }
-    // A day inside a folded run lands on that run's line.
+    if (!el || groups.length === 0) return;
+    const holds = (g) => !g.unloaded && g.dayKey <= scrollKey && scrollKey <= (g.gapTo || g.dayKey);
+    if (gaps && !groups.some(holds)) return;
+    // A day inside a folded run lands on its own place along that run's line,
+    // so the day read off the list (and outlined in Split's weeks) is that
+    // day, not the run's first.
     const target = groups.find((g) => (g.gapTo || g.dayKey) >= scrollKey) || groups[groups.length - 1];
-    el.scrollTop = target.top;
+    let into = 0;
+    if (target.gap && target.gapTo !== target.dayKey && scrollKey > target.dayKey) {
+      const days = epochDayOfKey(target.gapTo) - epochDayOfKey(target.dayKey) + 1;
+      into = Math.round(((epochDayOfKey(scrollKey) - epochDayOfKey(target.dayKey)) / days) * target.height);
+    }
+    el.scrollTop = target.top + into;
     appliedSeqRef.current = scrollSeq;
     onScroll();
-    return undefined;
-  }, [scrollSeq, scrollKey, groups, flat, onScroll, gaps, waitedOut]);
+  }, [scrollSeq, scrollKey, groups, flat, onScroll, gaps]);
 
   const openDetail = useCallback((instanceId) => (e) => {
     e.stopPropagation();
@@ -331,12 +347,10 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
           style=${`top:${g.top}px;height:${g.height}px`}
         >
           ${g.monthStart && html`<div class="bc-agenda-monthsep"><span>${monthLabelOf(g.dayKey)}</span></div>`}
-          ${visible && g.gap && html`<p class="bc-agenda-gap${g.covered ? ' is-covered' : ''}">
-            <${Icon} name="gapDays" size=${14} />
-            <span class="bc-agenda-gap-when">${g.gapTo === g.dayKey
-              ? gapDayFmt.format(dateOfDayKey(g.dayKey))
-              : gapDayFmt.format(dateOfDayKey(g.dayKey)) + ' to ' + gapDayFmt.format(dateOfDayKey(g.gapTo))}</span>
-            <span class="bc-agenda-gap-what">${g.covered ? 'nothing else on' : 'nothing on'}</span>
+          ${visible && g.gap && html`<p class="bc-agenda-gap${g.covered ? ' is-covered' : ''}${g.unloaded ? ' is-unloaded' : ''}">
+            ${!g.unloaded && html`<${Icon} name="gapDays" size=${14} />`}
+            <span class="bc-agenda-gap-when">${gapRange(g)}</span>
+            <span class="bc-agenda-gap-what">${g.unloaded ? 'not loaded yet' : g.covered ? 'nothing else on' : 'nothing on'}</span>
           </p>`}
           ${g.dayKey !== null && !g.gap && html`<h3 class="bc-agenda-day">
             ${fmtDayLong(dateOfDayKey(g.dayKey))}

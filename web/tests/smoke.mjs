@@ -1117,6 +1117,15 @@ eq('buildAgendaGroups group day keys',
     gs.filter((g) => g.monthStart).map((g) => g.dayKey), ['2026-07-01']);
   eq('gaps: groups stack with no holes',
     gs.every((g, i) => i === 0 || g.top === gs[i - 1].top + gs[i - 1].height), true);
+  // Loaded windows: the list covers them fully, and a stretch outside them is
+  // "not loaded", never "nothing on".
+  const ed = (y, m, d) => epochDayOfKey(`${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`);
+  const held = buildAgendaGroups([before, trip], { gaps: true, loaded: [[ed(2026, 6, 25), ed(2026, 7, 8)], [ed(2026, 7, 20), ed(2026, 7, 22)]] });
+  eq('gaps: loaded edges are covered, the unloaded stretch is one line',
+    held.map((g) => g.gap ? `${g.dayKey}..${g.gapTo}${g.unloaded ? ' unloaded' : ''}${g.covered ? ' covered' : ''}` : g.dayKey),
+    ['2026-06-25..2026-06-27', '2026-06-28', '2026-06-29..2026-06-29', '2026-06-30', '2026-07-01..2026-07-05 covered', '2026-07-06', '2026-07-07..2026-07-08', '2026-07-09..2026-07-19 unloaded', '2026-07-20..2026-07-22']);
+  eq('gaps: nothing loaded and no events is an empty list',
+    buildAgendaGroups([], { gaps: true, loaded: [] }), []);
   eq('gaps: without the option, empty days are still skipped',
     buildAgendaGroups([before, trip, after]).map((g) => g.dayKey), ['2026-06-28', '2026-06-30', '2026-07-06', '2026-07-09']);
 }

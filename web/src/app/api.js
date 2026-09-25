@@ -352,13 +352,19 @@ export async function refreshWindow() {
   if (!lastWindow) return;
   windowReqId++;
   const id = windowReqId;
-  const params = new URLSearchParams({ start: lastWindow.start, end: lastWindow.end });
-  try {
-    const data = await api('/events?' + params.toString());
-    if (id !== windowReqId) return;
-    mergeWindow(lastWindow.start, lastWindow.end, data.events || []);
-  } catch (e) {
-    // A failed refresh only leaves slightly stale data; not fatal.
+  // In pieces under the server's cap, like any other window (fetchRange).
+  const s = new Date(lastWindow.start).getTime();
+  const e = new Date(lastWindow.end).getTime();
+  for (let a = s; a < e; a += MAX_SPAN_MS) {
+    const b = Math.min(e, a + MAX_SPAN_MS);
+    const params = new URLSearchParams({ start: iso(a), end: iso(b) });
+    try {
+      const data = await api('/events?' + params.toString());
+      if (id !== windowReqId) return;
+      mergeWindow(iso(a), iso(b), data.events || []);
+    } catch (err) {
+      // A failed refresh only leaves slightly stale data; not fatal.
+    }
   }
 }
 

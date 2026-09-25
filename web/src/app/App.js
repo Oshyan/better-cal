@@ -854,6 +854,14 @@ export function App() {
 // events). Escape or any outside press dismisses without acting.
 function DropChoiceChip({ choice }) {
   const rootRef = useRef(null);
+  // Kept fully on screen by its real size (it wraps on phones), not a guess.
+  useLayoutEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    if (r.right > window.innerWidth - 8) el.style.left = Math.max(8, window.innerWidth - 8 - r.width) + 'px';
+    if (r.bottom > window.innerHeight - 8) el.style.top = Math.max(8, window.innerHeight - 8 - r.height) + 'px';
+  });
   useEffect(() => {
     const dismiss = () => set({ dropChoice: null });
     const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); dismiss(); } };
@@ -865,7 +873,8 @@ function DropChoiceChip({ choice }) {
     };
   }, []);
   // Clamped so a drop near the viewport edge keeps the chip fully on-screen.
-  const x = Math.max(8, Math.min(choice.x, window.innerWidth - 300));
+  // Phones: edge to edge with a margin (CSS), at the drop's height.
+  const x = window.innerWidth <= 640 ? 8 : Math.max(8, Math.min(choice.x, window.innerWidth - 300));
   const y = Math.max(8, Math.min(choice.y, window.innerHeight - 56));
   return html`<div class="bc-dropchoice" ref=${rootRef} style=${'left:' + x + 'px;top:' + y + 'px'} role="dialog" aria-label=${choice.title}>
     <span class="bc-dropchoice-title">${choice.title}</span>

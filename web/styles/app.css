@@ -3450,9 +3450,12 @@ button.bc-review-title { color: var(--fg); padding: 0; }
 .bc-block.is-title-only .bc-chip-title { white-space: normal; overflow: visible; overflow-wrap: anywhere; hyphens: auto; line-height: 1.2; }
 .bc-block.is-title-only .bc-event-duration { display: none; }
 /* A long bar that began off to the left keeps its title in view: the lane's
-   track carries its scroll (--sl), each slot its left edge (--bl). */
-.bc-tg-infinite .bc-tg-allday .bc-bar { padding-left: calc(6px + max(0px, var(--sl, 0px) - var(--bl, 0px))); }
-.bc-tg-infinite .bc-tg-allday .bc-bar.cont-l { padding-left: calc(11px + max(0px, var(--sl, 0px) - var(--bl, 0px))); }
+   track carries its scroll (--sl), each slot its left edge (--bl) and width
+   (--bw). The shift stops short of the bar's own end: past it, the padding
+   stretched the bar, and its end trailed along the left edge after it had
+   ended (0.4.10). */
+.bc-tg-infinite .bc-tg-allday .bc-bar { padding-left: calc(6px + clamp(0px, var(--sl, 0px) - var(--bl, 0px), var(--bw, 0px) - 34px)); }
+.bc-tg-infinite .bc-tg-allday .bc-bar.cont-l { padding-left: calc(11px + clamp(0px, var(--sl, 0px) - var(--bl, 0px), var(--bw, 0px) - 34px)); }
 .bc-tg-phone .bc-tg-vday-head { flex-wrap: wrap; row-gap: 3px; padding: 3px 6px 4px 6px; }
 .bc-tg-phone .bc-tg-vday-allday { flex-basis: 100%; flex-direction: column; align-items: stretch; gap: 2px; min-height: 0; }
 .bc-tg-phone .bc-tg-vday-allday:empty { display: none; }
@@ -3462,3 +3465,10 @@ button.bc-review-title { color: var(--fg); padding: 0; }
 /* A long-press on the grid is a drag, never a text selection or the OS
    callout (the haptic that led nowhere). */
 .bc-tg-col, .bc-block, .bc-tg-allday { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+/* The drop chip (repeating event scope, trip move) fits a phone: it wraps,
+   the question on its own line, and is kept on screen by its measured size. */
+.bc-dropchoice { max-width: calc(100vw - 16px); flex-wrap: wrap; }
+@media (max-width: 640px) {
+  .bc-dropchoice { right: 8px; }
+  .bc-dropchoice-title { flex-basis: 100%; max-width: none; }
+}

@@ -4,6 +4,13 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.5.0 (2026-09-25)
+
+- **On phones, an event opens in a sheet that holds still.** It opens at one height for every event, so stepping through a day changes what's in it, never where its top edge is. The event you tapped scrolls into view just above it in the calendar, outlined, and the outline follows as you step.
+- **Swipe the sheet sideways** to step through the day's events, or tap the larger arrows either side of the date; dots show where you are in the day.
+- **Pull it up for everything,** by dragging the handle, tapping it, or tapping the title or More: the same sheet grows to full height instead of switching to a different screen. Drag down to shrink it, and again to close. The phone's back gesture steps it down the same way, rather than leaving the calendar. Tapping above the sheet still closes it. (Its expand button, once grown, still opens the separate full view for the map, invitation replies and source, until those move into the sheet.)
+- **Stepping through a day follows what the view shows,** on phones and desktop alike: calendars you've hidden, events you've hidden, kinds the Show filter has switched off and context such as sunset are skipped, and the count ("3 of 4") no longer changes as you step.
+
 ## 0.4.18 (2026-09-25)
 
 - **The calendar picker's list looks scrollable at rest,** like the sidebar: a soft shadow at the top or bottom edge wherever there are more calendars that way, and a scroll bar that stays (on touch screens, a thin drawn thumb, since the platform's bar only flashes while scrolling).

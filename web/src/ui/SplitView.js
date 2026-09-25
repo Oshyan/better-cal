@@ -5,12 +5,15 @@
 // of a week to the whole pane, remembered per device. The list is the agenda
 // with every day present, empty runs folded to one line each.
 //
-// Whichever part you touch leads and the other follows. Scrolling the list,
-// the weeks hold still through a week and glide to the next as the list
-// passes Saturday into Sunday: always moving with it, never jumping. The day
-// at the top of the list is outlined in the weeks. Navigation (Today, the
-// arrows, jump to date, tapping a day) goes through the list, and the weeks
-// follow it.
+// One position in time drives both. Scrolling the list moves it; so does
+// scrolling over the weeks, which scrubs through the days (one row's height
+// of travel is one week) rather than sliding the weeks themselves. Either
+// way the weeks hold still through a week, with the day being read
+// outlined, and glide one row as that day passes Saturday into Sunday: the
+// current week never slides half out of view. With three or more weeks
+// showing, the current one sits in the middle row, a week of context above
+// it; with fewer, at the top. Navigation (Today, the arrows, jump to date,
+// tapping a day) goes through the list, and the weeks follow it.
 
 import { html, useRef, useState, useEffect, useLayoutEffect, useCallback } from '../../vendor/index.js';
 import { MonthGrid } from './MonthGrid.js';
@@ -72,19 +75,21 @@ export function SplitView({ gridProps, listProps, scrollSeq }) {
     return g.top + Math.min(1, (ed - g0) / days) * g.height;
   }, []);
 
+  // Which row the current week sits in: the middle one (one above centre
+  // when the count is even: the weeks ahead matter more) once three or more
+  // show, else the top.
+  const leadRows = () => {
+    const G = grid.current;
+    const shown = Math.floor(G.el.clientHeight / G.rowH + 0.05);
+    return shown >= 3 ? Math.floor((shown - 1) / 2) : 0;
+  };
+
   // Hold through the week, glide across Saturday into Sunday.
   const gridTopOf = useCallback((ed) => {
     const G = grid.current;
     const row = rowIndexOfEpochDay(Math.floor(ed), 7);
     const p = ed - firstEpochDayOfRow(row, 7);
-    return (row - G.minWeek) * G.rowH + G.rowH * Math.min(1, Math.max(0, p - 6));
-  }, []);
-
-  const gridDay = useCallback(() => {
-    const G = grid.current;
-    const rf = G.el.scrollTop / G.rowH;
-    const row = G.minWeek + Math.floor(rf);
-    return firstEpochDayOfRow(row, 7) + (rf - Math.floor(rf)) * 7;
+    return Math.max(0, (row - G.minWeek - leadRows()) * G.rowH + G.rowH * Math.min(1, Math.max(0, p - 6)));
   }, []);
 
   // Outline the day being read. The weeks render only rows near the view, so
@@ -118,14 +123,25 @@ export function SplitView({ gridProps, listProps, scrollSeq }) {
     mark(ed);
   }, [listDay, gridTopOf, mark]);
 
-  const listFromGrid = useCallback(() => {
+  // Scrubbing over the weeks: move the day being read by a distance in
+  // pixels, one row's height per week, through the list (the weeks follow).
+  const scrubEd = useRef(null);
+  const scrubBy = useCallback((dy) => {
     const L = list.current;
     const G = grid.current;
-    if (!L || !L.el || !G || !G.el || !L.groups.length) return;
-    const ed = gridDay();
-    L.el.scrollTop = listTopOf(ed);
-    mark(ed);
-  }, [gridDay, listTopOf, mark]);
+    if (!L || !L.el || !G || !L.groups.length) return false;
+    if (L.pending) L.cancelPending();
+    if (scrubEd.current == null) scrubEd.current = listDay();
+    if (scrubEd.current == null) return false;
+    const gs = L.groups;
+    const first = epochDayOfKey(gs[0].dayKey);
+    const lastG = gs[gs.length - 1];
+    const last = epochDayOfKey(lastG.gapTo || lastG.dayKey) + 0.999;
+    scrubEd.current = Math.min(last, Math.max(first, scrubEd.current + (dy / G.rowH) * 7));
+    lead.current = 'list';
+    L.el.scrollTop = listTopOf(scrubEd.current);
+    return true;
+  }, [listDay, listTopOf]);
 
   // --- wiring --------------------------------------------------------------
 
@@ -134,18 +150,88 @@ export function SplitView({ gridProps, listProps, scrollSeq }) {
     const le = list.current && list.current.el;
     if (!ge || !le) return undefined;
     const onList = () => { if (lead.current === 'list') gridFromList(); };
-    // The list leads unless the weeks are being touched: anything else that
-    // moves them (their own re-layout when the handle changes their height)
-    // is put straight back, before they load a window for the wrong place.
-    const onGrid = () => { if (lead.current === 'grid') listFromGrid(); else gridFromList(); };
-    const takeGrid = () => { lead.current = 'grid'; };
+    // The weeks never scroll on their own: anything that moves them (their
+    // own re-layout when the handle changes their height, their anchoring on
+    // a navigation) is put straight back, before they load a window for the
+    // wrong place. Except while a navigation waits for its day to load:
+    // then they sit on that day, which is what loads it.
+    const onGrid = () => { gridFromList(); };
     const takeList = () => {
       lead.current = 'list';
+      stopFling();
+      scrubEd.current = null;
       if (list.current && list.current.pending) list.current.cancelPending();
     };
     const opts = { passive: true, capture: true };
     le.addEventListener('scroll', onList, { passive: true });
     ge.addEventListener('scroll', onGrid, { passive: true });
+
+    // Scrubbing over the weeks. A wheel or trackpad already brings its own
+    // momentum; a finger gets a fling that slows to a stop.
+    let fling = 0;
+    const stopFling = () => { cancelAnimationFrame(fling); fling = 0; };
+    const dragging = () => document.body.classList.contains('bc-dragging');
+    const onWheel = (e) => {
+      if (dragging()) return;
+      e.preventDefault();
+      stopFling();
+      scrubEd.current = null;
+      const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? ge.clientHeight : 1;
+      scrubBy(e.deltaY * unit);
+    };
+    // The rest of a touch is followed on the element it started on: the
+    // weeks render only rows near the view, so a row under the finger can
+    // be replaced as they glide, and a phone keeps sending that touch to the
+    // replaced element, where it would never bubble up to the grid.
+    let touch = null;
+    const onTouchStart = (e) => {
+      stopFling();
+      scrubEd.current = null;
+      if (touch) release();
+      if (e.touches.length !== 1) return;
+      const y = e.touches[0].clientY;
+      touch = { y, t: performance.now(), v: 0, el: e.target };
+      touch.el.addEventListener('touchmove', onTouchMove, { passive: false });
+      touch.el.addEventListener('touchend', onTouchEnd, { passive: true });
+      touch.el.addEventListener('touchcancel', onTouchEnd, { passive: true });
+    };
+    const release = () => {
+      if (!touch) return;
+      touch.el.removeEventListener('touchmove', onTouchMove, { passive: false });
+      touch.el.removeEventListener('touchend', onTouchEnd, { passive: true });
+      touch.el.removeEventListener('touchcancel', onTouchEnd, { passive: true });
+    };
+    const onTouchMove = (e) => {
+      if (!touch || dragging()) return;
+      const y = e.touches[0].clientY;
+      const now = performance.now();
+      const dy = touch.y - y;
+      const dt = Math.max(1, now - touch.t);
+      touch.v = 0.8 * (dy / dt) + 0.2 * touch.v;
+      touch.y = y;
+      touch.t = now;
+      if (e.cancelable) e.preventDefault();
+      scrubBy(dy);
+    };
+    const onTouchEnd = () => {
+      if (!touch) return;
+      release();
+      if (dragging()) { touch = null; return; }
+      let v = touch.v; // px per ms
+      touch = null;
+      if (Math.abs(v) < 0.05) return;
+      let last = performance.now();
+      const step = (now) => {
+        const dt = now - last;
+        last = now;
+        if (!scrubBy(v * dt)) { fling = 0; return; }
+        v *= Math.pow(0.995, dt);
+        fling = Math.abs(v) > 0.02 ? requestAnimationFrame(step) : 0;
+      };
+      fling = requestAnimationFrame(step);
+    };
+    ge.addEventListener('wheel', onWheel, { passive: false });
+    ge.addEventListener('touchstart', onTouchStart, { passive: true });
     // Rows arrive after the weeks scroll (they render what is near the view):
     // re-find the outlined day's cell each time rows are added or replaced.
     // Only child-list changes, so the outline's own class change never loops.
@@ -160,20 +246,18 @@ export function SplitView({ gridProps, listProps, scrollSeq }) {
     };
     const mo = new MutationObserver(remark);
     mo.observe(ge, { childList: true, subtree: true });
-    for (const ev of ['pointerdown', 'wheel', 'touchstart']) {
-      ge.addEventListener(ev, takeGrid, opts);
-      le.addEventListener(ev, takeList, opts);
-    }
+    for (const ev of ['pointerdown', 'wheel', 'touchstart']) le.addEventListener(ev, takeList, opts);
     return () => {
       le.removeEventListener('scroll', onList);
       ge.removeEventListener('scroll', onGrid);
       mo.disconnect();
-      for (const ev of ['pointerdown', 'wheel', 'touchstart']) {
-        ge.removeEventListener(ev, takeGrid, opts);
-        le.removeEventListener(ev, takeList, opts);
-      }
+      stopFling();
+      ge.removeEventListener('wheel', onWheel, { passive: false });
+      ge.removeEventListener('touchstart', onTouchStart, { passive: true });
+      release();
+      for (const ev of ['pointerdown', 'wheel', 'touchstart']) le.removeEventListener(ev, takeList, opts);
     };
-  }, [gridFromList, listFromGrid, listDay, mark]);
+  }, [gridFromList, scrubBy, listDay, mark]);
 
   // Navigation goes through the list: AgendaList scrolls itself to the
   // anchor (its effect runs before this one), or waits for that day to load
@@ -205,7 +289,7 @@ export function SplitView({ gridProps, listProps, scrollSeq }) {
     wrap.style.height = Math.round((head ? head.offsetHeight : 0) + r * G.rowH) + 'px';
   }, []);
 
-  useLayoutEffect(() => { applyHeight(); });
+  useLayoutEffect(() => { applyHeight(); gridFromList(); });
   useEffect(() => {
     const box = boxRef.current;
     if (!box) return undefined;

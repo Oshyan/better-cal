@@ -176,8 +176,9 @@ export function Icon({ name, size = 15 }) {
     // Split: a strip of weeks over a list.
     viewSplit: html`<rect x="2.2" y="2.4" width="11.6" height="5.4" rx="1.2" />
       <path d="M6.1 2.4v5.4M9.9 2.4v5.4M2.6 10.6h10.8M2.6 13.4h7.4" />`,
-    // A run of empty days folded to one line: the days skipped over.
-    gapDays: html`<path d="M8 2.2v2.6M8 11.2v2.6" /><path d="M5.2 6.6 8 8.4l2.8-1.8" /><path d="M5.2 9.6 8 11.2l2.8-1.6" />`,
+    // A run of empty days folded to one line: arrows pressing in on a
+    // dashed fold, the common "collapsed" sign.
+    gapDays: html`<path d="M2.4 8h11.2" stroke-dasharray="1.6 1.6" /><path d="M8 1.8v3.6M6 3.6 8 5.6l2-2" /><path d="M8 14.2v-3.6M6 12.4 8 10.4l2 2" />`,
     // Power plug: prongs, socket body, cord. The Plugins page.
     plugins: html`<path d="M5.6 2.2v3M10.4 2.2v3" />
       <path d="M4 5.2h8v2.6a4 4 0 0 1-8 0z" />

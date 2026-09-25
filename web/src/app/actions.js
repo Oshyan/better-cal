@@ -168,14 +168,24 @@ export function openDetail(instanceId) {
 // multi-day event would re-derive the day from THAT event's start and walk
 // off to another day mid-navigation. Membership is span-based (an event
 // covering the day belongs to it), matching the day-expand list.
+//
+// Only what the views show (0.5.0): visible calendars, not hidden, not a
+// kind the Show filter has switched off, and not context (weather, sunset:
+// information in the day's header, not an event to step onto). The open
+// event always counts, so its place in the list is never lost.
 export function sameDayList(occ, anchorDay) {
   const dayKey = anchorDay || occDayKey(occ);
   const ed = epochDayOfKey(dayKey);
   const visible = new Set(state.calendars.filter((c) => c.visible).map((c) => c.id));
+  const showRel = state.showRel || {};
   const list = [];
   for (const o of state.occ.values()) {
-    if (!visible.has(o.calendarId) && o.instanceId !== occ.instanceId) continue;
-    if (o.attendance === 'hidden' && o.instanceId !== occ.instanceId) continue;
+    if (o.instanceId !== occ.instanceId) {
+      if (!visible.has(o.calendarId)) continue;
+      if (o.attendance === 'hidden') continue;
+      if (o.relationship === 'context') continue;
+      if (o.relationship && showRel[o.relationship] === false) continue;
+    }
     const span = occurrenceDaySpan(o);
     if (epochDayOfKey(span.startKey) > ed || epochDayOfKey(span.endKey) < ed) continue;
     list.push(o);

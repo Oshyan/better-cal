@@ -1,7 +1,13 @@
 // EventPopover: anchored details popover (bottom sheet on mobile).
 // Prefers the right side of the anchor, flips left on viewport overflow,
 // clamps with a gap. Inline title/time editing; edit / delete / attendance.
-// Mobile sheet puts what/when/where above the fold.
+//
+// On phones it is the event sheet (0.5.0): one fixed height for every event,
+// so stepping through a day never moves its edge; a grab handle; drag or tap
+// the handle (or the title, or More) to grow it to full height, drag down to
+// shrink and then close; swipe sideways to step through the day; the phone's
+// back gesture steps it down too. The event it shows is kept in view above
+// it in the calendar, outlined, and the outline follows the stepping.
 
 import { html, useState, useRef, useEffect } from '../../vendor/index.js';
 import { useStore, set, state } from './store.js';
@@ -24,10 +30,24 @@ import { fmtReminder } from '../lib/reminders.js';
 import { ink } from '../lib/color.js';
 import { stripToText, hasHtml, sanitizeHtml } from '../lib/richtext.js';
 import { gmapsUrl, isPendingLocation } from '../lib/maps.js';
-import { onOutsidePress, insideAny } from '../ui/outside.js';
+import { onOutsidePress, insideAny, swallowClickOfThisPress } from '../ui/outside.js';
 
 const GAP = 10;
 const WIDTH = 360;
+// Sheet gestures (phones): movement before a touch counts as a drag or a
+// swipe, and how far a release must travel to change the sheet.
+const SLOP = 10;
+const SNAP = 64;
+const SWIPE = 56;
+
+// The nearest ancestor that scrolls vertically, to bring an event into view.
+function scrollParent(el) {
+  for (let n = el.parentElement; n && n !== document.body; n = n.parentElement) {
+    const oy = getComputedStyle(n).overflowY;
+    if ((oy === 'auto' || oy === 'scroll') && n.scrollHeight > n.clientHeight + 1) return n;
+  }
+  return null;
+}
 
 // Anchor placement. The rect is first clipped to the viewport: multi-day
 // bars and week-spanning segments routinely start off-screen, and anchoring
@@ -68,6 +88,126 @@ export function EventPopover() {
   // slots between renders and read another hook's state.
   const [copyOpen, setCopyOpen] = useState(false);
   const [timeScope, setTimeScope] = useState(null); // {start, end} awaiting a scope for a series
+  // Phone sheet: quick height or full; refs for the gesture and back-gesture
+  // handlers, which live across renders.
+  const [full, setFull] = useState(false);
+  const fullRef = useRef(false);
+  fullRef.current = full;
+  const bodyRef = useRef(null);
+  const navRef = useRef(null); // {go(i), index, count} of the day being stepped
+  const poppedRef = useRef(false);
+  const open = !!popover;
+  const sheet = open && isMobile();
+
+  useEffect(() => { if (!open) setFull(false); }, [open]);
+
+  // The phone's back gesture steps the sheet down: full to quick, quick to
+  // closed. One history entry stands for the open sheet; closing it any
+  // other way takes that entry back off.
+  useEffect(() => {
+    if (!sheet) return undefined;
+    history.pushState({ bcSheet: 1 }, '');
+    const onPop = () => {
+      if (fullRef.current) { setFull(false); history.pushState({ bcSheet: 1 }, ''); return; }
+      poppedRef.current = true;
+      set({ popover: null });
+    };
+    window.addEventListener('popstate', onPop);
+    return () => {
+      window.removeEventListener('popstate', onPop);
+      if (!poppedRef.current && history.state && history.state.bcSheet) history.back();
+      poppedRef.current = false;
+    };
+  }, [sheet]);
+
+  // Keep the event in view above the sheet, in whatever view is behind it:
+  // scroll its nearest scroller just enough, as the sheet opens and at each
+  // step through the day. (The outline is a style rule, below.)
+  useEffect(() => {
+    if (!sheet || !popover) return;
+    const panel = panelRef.current;
+    if (!panel) return;
+    const sel = '[data-instance="' + CSS.escape(popover.instanceId) + '"]';
+    const el = [...document.querySelectorAll(sel)].find((n) => !panel.contains(n) && n.getClientRects().length);
+    if (!el) return;
+    const sc = scrollParent(el);
+    if (!sc) return;
+    const sheetTop = window.innerHeight - panel.offsetHeight; // not its rect: it may be mid-animation
+    const top = Math.max(0, sc.getBoundingClientRect().top) + 8;
+    const r = el.getBoundingClientRect();
+    let delta = 0;
+    if (r.bottom > sheetTop - 12) delta = r.bottom - (sheetTop - 12);
+    if (r.top - delta < top) delta = r.top - top;
+    if (Math.abs(delta) > 1) sc.scrollBy({ top: delta, behavior: 'smooth' });
+  }, [sheet, popover && popover.instanceId]); // eslint-disable-line
+
+  // Touch on the sheet: up or down on the handle row (or down on the body
+  // when it is scrolled to its top) drags the sheet; sideways steps through
+  // the day; anything else scrolls the body as usual.
+  useEffect(() => {
+    if (!sheet) return undefined;
+    const panel = panelRef.current;
+    if (!panel) return undefined;
+    let g = null;
+    const onStart = (e) => {
+      if (e.touches.length !== 1) { g = null; return; }
+      const t = e.touches[0];
+      const head = e.target.closest && e.target.closest('.bc-evsheet-head');
+      const body = bodyRef.current;
+      g = { x: t.clientX, y: t.clientY, mode: null, head: !!head, atTop: !body || body.scrollTop <= 0, h: panel.offsetHeight };
+    };
+    const onMove = (e) => {
+      if (!g || e.touches.length !== 1) return;
+      const t = e.touches[0];
+      const dx = t.clientX - g.x;
+      const dy = t.clientY - g.y;
+      if (!g.mode) {
+        if (Math.abs(dx) < SLOP && Math.abs(dy) < SLOP) return;
+        if (Math.abs(dx) > Math.abs(dy) * 1.3) g.mode = 'swipe';
+        else if (g.head || (dy > 0 && g.atTop)) g.mode = 'drag';
+        else { g = null; return; } // the body scrolls
+        panel.classList.add('is-gesture');
+      }
+      if (e.cancelable) e.preventDefault();
+      if (g.mode === 'drag') {
+        const maxH = window.innerHeight - 8;
+        const h = Math.min(maxH, g.h - dy);
+        if (h >= g.h || fullRef.current) panel.style.height = h + 'px';
+        else panel.style.transform = 'translateY(' + (g.h - h) + 'px)';
+      } else {
+        const body = bodyRef.current;
+        if (body) body.style.transform = 'translateX(' + dx * 0.35 + 'px)';
+      }
+    };
+    const onEnd = (e) => {
+      if (!g || !g.mode) { g = null; return; }
+      const t = e.changedTouches[0];
+      const dx = t.clientX - g.x;
+      const dy = t.clientY - g.y;
+      panel.classList.remove('is-gesture');
+      panel.style.height = '';
+      panel.style.transform = '';
+      if (bodyRef.current) bodyRef.current.style.transform = '';
+      swallowClickOfThisPress(); // a drag or swipe that ends on a button is not a press of it
+      if (g.mode === 'drag') {
+        if (dy < -SNAP) setFull(true);
+        else if (dy > SNAP) { if (fullRef.current) setFull(false); else set({ popover: null }); }
+      } else if (Math.abs(dx) > SWIPE && navRef.current) {
+        navRef.current.go(navRef.current.index + (dx < 0 ? 1 : -1));
+      }
+      g = null;
+    };
+    panel.addEventListener('touchstart', onStart, { passive: true });
+    panel.addEventListener('touchmove', onMove, { passive: false });
+    panel.addEventListener('touchend', onEnd, { passive: true });
+    panel.addEventListener('touchcancel', onEnd, { passive: true });
+    return () => {
+      panel.removeEventListener('touchstart', onStart, { passive: true });
+      panel.removeEventListener('touchmove', onMove, { passive: false });
+      panel.removeEventListener('touchend', onEnd, { passive: true });
+      panel.removeEventListener('touchcancel', onEnd, { passive: true });
+    };
+  }, [sheet]);
 
   // Opens instantly from the cached occurrence; description, cadence and
   // reminders arrive a round trip later from the single-event record (#15).
@@ -137,6 +277,12 @@ export function EventPopover() {
     const target = nav && nav.list[idx];
     if (target) set({ popover: { ...popover, instanceId: target.instanceId, dayKey: navDay } });
   };
+  navRef.current = nav ? { go: goSheet, index: nav.index, count: nav.list.length } : null;
+  // On the phone the full view is the same sheet grown; elsewhere, the
+  // separate full view. Once grown, the expand button still opens the
+  // separate view, for what the sheet doesn't hold yet (map, invitation
+  // replies, source); 0.5.2 brings those into the sheet.
+  const openFull = () => (mobile ? setFull(true) : openDetail(occ.instanceId));
 
   const saveTime = async (startVal, endVal) => {
     const s = fromInputValue(startVal);
@@ -154,33 +300,45 @@ export function EventPopover() {
   const s = occ.allDay ? dateOfDayKey(occ.start.slice(0, 10)) : parseISO(occ.start);
   const e = occ.allDay ? dateOfDayKey(occ.end.slice(0, 10)) : parseISO(occ.end);
 
+  const color = (cal && cal.color) || '#888';
   return html`<div
-    class="bc-popover${mobile ? ' bc-sheet' : ''}"
-    style=${pos ? `left:${pos.left}px;top:${pos.top}px;width:${WIDTH}px` : ''}
+    class="bc-popover${mobile ? ' bc-sheet bc-evsheet' : ''}${mobile && full ? ' is-full' : ''}"
+    style=${pos ? `left:${pos.left}px;top:${pos.top}px;width:${WIDTH}px` : (mobile ? `--cal:${color}` : '')}
     ref=${panelRef}
     role="dialog"
     aria-modal="true"
     aria-label="Event details"
   >
-    <div class="bc-pop-color" style=${`background:${(cal && cal.color) || '#888'}`}></div>
-    <div class="bc-pop-body">
-      ${mobile && nav && html`<div class="bc-sheet-nav" role="group" aria-label="Previous and next event this day">
+    ${mobile && html`<style>${'[data-instance="' + CSS.escape(occ.instanceId) + '"]:not(.bc-popover *) { outline: 2px solid var(--accent); outline-offset: -2px; }'}</style>`}
+    ${!mobile && html`<div class="bc-pop-color" style=${`background:${color}`}></div>`}
+    ${mobile && html`<div class="bc-evsheet-head">
+      <button
+        type="button" class="bc-evsheet-grab"
+        aria-label=${full ? 'Show less' : 'Show all details'} aria-expanded=${full}
+        onClick=${() => setFull(!full)}
+      ><i></i></button>
+      ${nav && html`<div class="bc-sheet-nav" role="group" aria-label="Previous and next event this day">
         <button
           type="button" class="bc-icon-btn bc-sheet-chev" aria-label="Previous event this day"
           disabled=${nav.index <= 0} onClick=${() => goSheet(nav.index - 1)}
-        ><${Icon} name="chevronLeft" size=${16} /></button>
+        ><${Icon} name="chevronLeft" size=${20} /></button>
+        <span class="bc-sheet-where">
+          <span class="bc-sheet-day">${dateOfDayKey(navDay).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}${nav.list.length > 1 ? ' \u00b7 ' + (nav.index + 1) + ' of ' + nav.list.length : ''}</span>
+          ${nav.list.length > 1 && nav.list.length <= 12 && html`<span class="bc-sheet-dots" aria-hidden="true">${nav.list.map((o, i) => html`<i key=${o.instanceId} class=${i === nav.index ? 'is-on' : ''}></i>`)}</span>`}
+        </span>
         <button
           type="button" class="bc-icon-btn bc-sheet-chev" aria-label="Next event this day"
           disabled=${nav.index < 0 || nav.index >= nav.list.length - 1} onClick=${() => goSheet(nav.index + 1)}
-        ><${Icon} name="chevronRight" size=${16} /></button>
-        ${nav.list.length > 1 && html`<span class="bc-sheet-count">${nav.index + 1} of ${nav.list.length}</span>`}
+        ><${Icon} name="chevronRight" size=${20} /></button>
       </div>`}
+    </div>`}
+    <div class="bc-pop-body" ref=${bodyRef}>
       <div class="bc-pop-titlerow">
-        <h2 class="bc-pop-title${occ.status === 'cancelled' ? ' is-cancelled' : ''}" onClick=${() => openDetail(occ.instanceId)} title="Open full details">
+        <h2 class="bc-pop-title${occ.status === 'cancelled' ? ' is-cancelled' : ''}" onClick=${openFull} title="Open full details">
           ${occ.title || '(untitled)'}${occ.isNew ? html` <span class="bc-new-pill">new</span>` : ''}
         </h2>
         <span class="bc-pop-iconrow" role="group" aria-label="Event actions">
-          <button type="button" class="bc-icon-btn" title="Open full details" aria-label="Open full details" onClick=${() => openDetail(occ.instanceId)}><${Icon} name="expand" size=${14} /></button>
+          <button type="button" class="bc-icon-btn" title="Open full details" aria-label="Open full details" onClick=${mobile && full ? () => openDetail(occ.instanceId) : openFull}><${Icon} name="expand" size=${14} /></button>
           ${!isFeed && html`<button type="button" class="bc-icon-btn" title="Reschedule (r)" aria-label="Reschedule" onClick=${() => enterReschedule(occ.instanceId)}><${Icon} name="reschedule" size=${14} /></button>`}
           ${!isFeed && html`<button type="button" class="bc-icon-btn" title="Edit" aria-label="Edit" onClick=${() => set({ popover: null, editor: { mode: 'edit', occ } })}><${Icon} name="pencil" size=${14} /></button>`}
           ${!isFeed && html`<button type="button" class="bc-icon-btn bc-pop-trash" title="Delete" aria-label="Delete" onClick=${() => (occ.recurring || googleBacked(occ) ? set({ deletePrompt: occ.instanceId }) : deleteEvent(occ))}><${Icon} name="trash" size=${14} /></button>`}
@@ -245,8 +403,8 @@ export function EventPopover() {
           ${rich
             ? html`<div class="bc-pop-desc bc-pop-desc-rich bc-rich" dangerouslySetInnerHTML=${{ __html: sanitizeHtml(occ.description) }}></div>`
             : html`<div class="bc-pop-desc">${text}</div>`}
-          ${long && html`<button
-            type="button" class="bc-pop-more" onClick=${() => openDetail(occ.instanceId)}
+          ${long && !(mobile && full) && html`<button
+            type="button" class="bc-pop-more" onClick=${openFull}
           >More</button>`}
         </div>`;
       })()}

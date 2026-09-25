@@ -3637,3 +3637,36 @@ button.bc-review-title { color: var(--fg); padding: 0; }
     background-position: center top, center bottom, center top, center bottom, right 3px bottom 6px;
   }
 }
+
+/* --- The event sheet (0.5.0): the phone's event card ------------------------
+   One height for every event (its edge never moves as you step through a
+   day), a grab handle, full height when pulled up, a header row that stays
+   while the body scrolls. The calendar's colour runs along the top edge. */
+.bc-evsheet {
+  flex-direction: column; height: max(360px, 48dvh); max-height: none;
+  border-top: 4px solid var(--cal, var(--border-strong));
+  transition: height 0.22s ease, transform 0.22s ease;
+}
+.bc-evsheet.is-full { height: calc(100dvh - 8px - env(safe-area-inset-top, 0px)); }
+.bc-evsheet.is-gesture { transition: none; }
+.bc-evsheet-head { flex: none; touch-action: none; }
+.bc-evsheet-grab {
+  display: grid; place-items: center; width: 100%; height: 22px; padding: 0;
+  background: none; border: none; cursor: grab;
+}
+.bc-evsheet-grab i { display: block; width: 40px; height: 5px; border-radius: 3px; background: var(--border-strong); }
+.bc-evsheet .bc-sheet-nav { margin: 0; padding: 0 4px 2px; min-height: 48px; }
+.bc-evsheet .bc-sheet-chev { width: 48px; height: 44px; padding: 0; display: grid; place-items: center; flex: none; }
+.bc-sheet-where { flex: 1; display: grid; justify-items: center; gap: 4px; min-width: 0; }
+.bc-sheet-day { font-size: 13.5px; font-weight: 600; color: var(--fg-muted); white-space: nowrap; }
+.bc-sheet-dots { display: flex; gap: 5px; }
+.bc-sheet-dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--border-strong); }
+.bc-sheet-dots i.is-on { background: var(--accent); }
+.bc-evsheet .bc-pop-body {
+  flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y;
+  padding: 8px 16px calc(18px + env(safe-area-inset-bottom, 0px));
+  transition: transform 0.18s ease;
+}
+.bc-evsheet.is-gesture .bc-pop-body { transition: none; }
+/* Grown: the description reads in full. */
+.bc-evsheet.is-full .bc-pop-desc { display: block; -webkit-line-clamp: unset; overflow: visible; }

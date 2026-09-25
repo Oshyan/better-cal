@@ -3485,7 +3485,8 @@ button.bc-review-title { color: var(--fg); padding: 0; }
 }
 .bc-tg-vday:first-child .bc-tg-vday-divider { border-top: none; }
 .bc-tg-vday-divider.is-today { background: color-mix(in srgb, var(--today) 10%, var(--bg-raised)); }
-.bc-tg-vday-divider.is-today .bc-tg-dom { background: var(--today); color: var(--accent-fg); border-radius: 50%; }
+.bc-tg-vday-label { font-size: 14px; font-weight: 700; color: var(--fg); white-space: nowrap; flex: none; }
+.bc-tg-vday-divider.is-today .bc-tg-vday-label { color: var(--today); }
 .bc-tg-vday-divider .bc-ctxstrip { margin-left: 2px; }
 /* The date title opens the jump-to-date picker: a small caret says so. */
 .bc-toolbar-date { display: inline-flex; align-items: center; gap: 3px; min-width: 0; }
@@ -3497,7 +3498,9 @@ button.bc-review-title { color: var(--fg); padding: 0; }
   /* Day view: the day's weather and such to the right of the date, on the
      title's line (the date shortens to make room). */
   .bc-toolbar-titlewrap { flex: 1 1 auto; overflow: hidden; gap: 4px; }
-  .bc-toolbar-titlewrap .bc-toolbar-month { flex: 0 1 auto; }
+  /* The date never gives way; the context after it clips instead. */
+  .bc-toolbar-titlewrap .bc-toolbar-month { flex: none; }
+  .bc-toolbar-titlewrap .bc-toolbar-label { overflow: visible; }
   .bc-toolbar-ctx { display: flex; flex: 0 1 auto; min-width: 0; overflow: hidden; }
   .bc-toolbar-ctx .bc-ctx-token { padding: 2px 3px; font-size: 11px; }
   /* Today: the date with its suffix ("25th") on a small calendar page, a

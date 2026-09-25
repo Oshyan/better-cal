@@ -1735,7 +1735,7 @@ console.log('');
   eq('context token: no zone suffix in the device zone', contextToken(sunset).zone, '');
   assert('context title: a brief moment shows one time, no range', contextTitle(sunset).startsWith('Sunset · ') && !contextTitle(sunset).includes(' to '));
   const byDay = contextByDay([weather, aqi, sunset, away, plan]);
-  eq('context by day: all-day first, then moments by time; spans cover each day', byDay.get('2026-09-20').map((o) => o.instanceId), ['a', 'w', 'q', 's']);
+  eq('context by day: all-day first (values before named days), then moments by time; spans cover each day', byDay.get('2026-09-20').map((o) => o.instanceId), ['w', 'q', 'a', 's']);
   eq('context by day: the span reaches its last day and not the exclusive end', [byDay.has('2026-09-21'), byDay.has('2026-09-22')], [true, false]);
   eq('context by day: plans are not context', byDay.get('2026-09-20').some((o) => o.instanceId === 'p'), false);
   eq('withoutContext: leaves only the plans', withoutContext([weather, sunset, plan]).map((o) => o.instanceId), ['p']);

@@ -139,7 +139,11 @@ export function contextByDay(occurrences) {
       out.get(k).push(occ);
     }
   }
-  const order = (a, b) => (Number(!a.allDay) - Number(!b.allDay)) || (a.start < b.start ? -1 : a.start > b.start ? 1 : 0) || (a.title || '').localeCompare(b.title || '');
+  // Among all-day items, values (weather, AQI: they carry numbers) come
+  // before named days (a holiday): a short value survives a tight header,
+  // and it's the name that truncates.
+  const named = (o) => Number(o.allDay && !/\d/.test(o.title || ''));
+  const order = (a, b) => (Number(!a.allDay) - Number(!b.allDay)) || (named(a) - named(b)) || (a.start < b.start ? -1 : a.start > b.start ? 1 : 0) || (a.title || '').localeCompare(b.title || '');
   for (const list of out.values()) list.sort(order);
   return out;
 }

@@ -4,6 +4,10 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.4.5 (2026-09-25)
+
+- In the phone's swipe actions, Hide is soft rose, the one action that takes an event off your calendar, and no longer the same grey as Less like this. The two thumbs sit a little apart from Maybe, Planned and Hide, since they're feedback on suggestions rather than a choice about the event.
+
 ## 0.4.4 (2026-09-25)
 
 - The swipe actions on phones sit in a slightly taller tray that stands just proud of its row, so icons and labels have room instead of touching the edges. The buttons are soft tints of their colors (amber, green, grey, blue, slate) with labels in a deeper shade of the same hue: pastel in light mode, muted in dark. The row itself keeps its height.

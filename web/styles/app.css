@@ -3491,13 +3491,15 @@ button.bc-review-title { color: var(--fg); padding: 0; }
 .bc-toolbar-date { display: inline-flex; align-items: center; gap: 3px; min-width: 0; }
 .bc-toolbar-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .bc-toolbar-caret { display: inline-flex; flex: none; color: var(--fg-muted); opacity: 0.8; }
-.bc-toolbar-titlewrap { display: inline-flex; flex-direction: column; min-width: 0; }
+.bc-toolbar-titlewrap { display: inline-flex; align-items: center; min-width: 0; }
 .bc-toolbar-ctx { display: none; }
 @media (max-width: 640px) {
-  .bc-toolbar-titlewrap { flex: 0 1 auto; overflow: hidden; }
-  .bc-toolbar-titlewrap:has(.bc-toolbar-ctx) .bc-toolbar-month { font-size: 15.5px; padding-top: 1px; padding-bottom: 0; }
-  .bc-toolbar-ctx { display: flex; margin: -2px 0 1px 1px; min-width: 0; overflow: hidden; }
-  .bc-toolbar-ctx .bc-ctx-token { padding: 1px 3px; font-size: 10.5px; }
+  /* Day view: the day's weather and such to the right of the date, on the
+     title's line (the date shortens to make room). */
+  .bc-toolbar-titlewrap { flex: 1 1 auto; overflow: hidden; gap: 4px; }
+  .bc-toolbar-titlewrap .bc-toolbar-month { flex: 0 1 auto; }
+  .bc-toolbar-ctx { display: flex; flex: 0 1 auto; min-width: 0; overflow: hidden; }
+  .bc-toolbar-ctx .bc-ctx-token { padding: 2px 3px; font-size: 11px; }
   /* Today: the date with its suffix ("25th") on a small calendar page, a
      heavier top edge like a tear-off sheet. */
   .bc-toolbar > .bc-tb-todaybadge { width: auto; min-width: 44px; padding: 0 2px; }

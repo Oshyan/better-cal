@@ -4,6 +4,11 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.5.1 (2026-09-25)
+
+- **The phone's event sheet points at the day you're on.** Stepping onto a multi-day event outlines it where the browsed day shows it: its segment in that day's week in month view, its row on that day in lists, or, where a list shows the event as a rail between its first and last rows, the rail beside that day. The list no longer jumps back to the event's first day.
+- **With the sheet open, tapping another event opens it** in the sheet straight away, instead of first only closing the sheet. A tap anywhere else still just closes it, and a row's swipe actions never take a tap through.
+
 ## 0.5.0 (2026-09-25)
 
 - **On phones, an event opens in a sheet that holds still.** It opens at one height for every event, so stepping through a day changes what's in it, never where its top edge is. The event you tapped scrolls into view just above it in the calendar, outlined, and the outline follows as you step.

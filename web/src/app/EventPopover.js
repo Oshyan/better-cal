@@ -40,6 +40,47 @@ const SLOP = 10;
 const SNAP = 64;
 const SWIPE = 56;
 
+// Which of an event's pieces on screen stands for the day being browsed: a
+// multi-day event appears on several days (agenda rows, month bar segments),
+// and the sheet points at the one on the day you are stepping through, not
+// its first. Inside the day's own element first (an agenda day, a month
+// cell, a day column), then a piece lying over that day (a bar segment over
+// its cell), then the agenda's rail beside that day (the list shows a
+// multi-day event as rows where it starts and ends, and a rail between),
+// then one across the day's column (a week's all-day bar).
+// Returns {mark, scrollTo}: what to outline, and what to bring into view.
+function focusTarget(instanceId, dayKey, panel) {
+  const shown = (n) => !panel.contains(n) && n.getClientRects().length > 0;
+  const esc = CSS.escape(instanceId);
+  const cands = [...document.querySelectorAll('[data-instance="' + esc + '"]')].filter(shown);
+  const days = dayKey ? [...document.querySelectorAll('[data-day="' + CSS.escape(dayKey) + '"]')].filter(shown) : [];
+  const one = (el) => (el ? { mark: el, scrollTo: el } : null);
+  if (!days.length) return one(cands[0]);
+  for (const d of days) {
+    const inner = cands.find((c) => d.contains(c));
+    if (inner) return one(inner);
+  }
+  const x = (r, dr) => r.left < dr.right && r.right > dr.left;
+  const y = (r, dr) => r.top < dr.bottom && r.bottom > dr.top;
+  for (const d of days) {
+    const dr = d.getBoundingClientRect();
+    const hit = cands.find((c) => { const r = c.getBoundingClientRect(); return x(r, dr) && y(r, dr); });
+    if (hit) return one(hit);
+  }
+  const rails = [...document.querySelectorAll('.bc-agenda-rail[data-span="' + esc + '"]')].filter(shown); // the line, not the tint behind the span
+  for (const d of days) {
+    const dr = d.getBoundingClientRect();
+    const rail = rails.find((c) => y(c.getBoundingClientRect(), dr));
+    if (rail) return { mark: rail, scrollTo: d };
+  }
+  for (const d of days) {
+    const dr = d.getBoundingClientRect();
+    const hit = cands.find((c) => x(c.getBoundingClientRect(), dr));
+    if (hit) return one(hit);
+  }
+  return one(cands[0]);
+}
+
 // The nearest ancestor that scrolls vertically, to bring an event into view.
 function scrollParent(el) {
   for (let n = el.parentElement; n && n !== document.body; n = n.parentElement) {
@@ -120,15 +161,40 @@ export function EventPopover() {
     };
   }, [sheet]);
 
+  // Outline the event where the day being browsed shows it, and keep that
+  // outline as the views behind re-render (virtualized rows come and go).
+  const focusDay = popover && (popover.dayKey || (occ ? occDayKey(occ) : null));
+  useEffect(() => {
+    if (!sheet || !popover) return undefined;
+    const panel = panelRef.current;
+    if (!panel) return undefined;
+    let raf = 0;
+    const mark = () => {
+      raf = 0;
+      const t = focusTarget(popover.instanceId, focusDay, panel);
+      const el = t && t.mark;
+      for (const n of document.querySelectorAll('.bc-sheet-focus')) if (n !== el) n.classList.remove('bc-sheet-focus');
+      if (el) el.classList.add('bc-sheet-focus');
+    };
+    mark();
+    const mo = new MutationObserver(() => { if (!raf) raf = requestAnimationFrame(mark); });
+    mo.observe(document.body, { childList: true, subtree: true });
+    return () => {
+      mo.disconnect();
+      cancelAnimationFrame(raf);
+      for (const n of document.querySelectorAll('.bc-sheet-focus')) n.classList.remove('bc-sheet-focus');
+    };
+  }, [sheet, popover && popover.instanceId, focusDay]); // eslint-disable-line
+
   // Keep the event in view above the sheet, in whatever view is behind it:
   // scroll its nearest scroller just enough, as the sheet opens and at each
-  // step through the day. (The outline is a style rule, below.)
+  // step through the day.
   useEffect(() => {
     if (!sheet || !popover) return;
     const panel = panelRef.current;
     if (!panel) return;
-    const sel = '[data-instance="' + CSS.escape(popover.instanceId) + '"]';
-    const el = [...document.querySelectorAll(sel)].find((n) => !panel.contains(n) && n.getClientRects().length);
+    const t = focusTarget(popover.instanceId, focusDay, panel);
+    const el = t && t.scrollTo;
     if (!el) return;
     const sc = scrollParent(el);
     if (!sc) return;
@@ -139,7 +205,7 @@ export function EventPopover() {
     if (r.bottom > sheetTop - 12) delta = r.bottom - (sheetTop - 12);
     if (r.top - delta < top) delta = r.top - top;
     if (Math.abs(delta) > 1) sc.scrollBy({ top: delta, behavior: 'smooth' });
-  }, [sheet, popover && popover.instanceId]); // eslint-disable-line
+  }, [sheet, popover && popover.instanceId, focusDay]); // eslint-disable-line
 
   // Touch on the sheet: up or down on the handle row (or down on the body
   // when it is scrolled to its top) drags the sheet; sideways steps through
@@ -233,7 +299,14 @@ export function EventPopover() {
     };
     let stop = null;
     if (popover) {
-      stop = onOutsidePress(insideAny(panelRef), () => set({ popover: null }));
+      // On the phone sheet, a tap on another event in the calendar opens it
+      // here (the press goes through to it) instead of only closing the
+      // sheet; a tap anywhere else closes it and does nothing more. Controls
+      // inside a row (its swipe actions) never take a press through.
+      const inPanel = insideAny(panelRef);
+      const toEvent = (t) => isMobile() && t && t.closest
+        && t.closest('[data-instance]') && !t.closest('.bc-agenda-acts, .bc-agenda-grip');
+      stop = onOutsidePress((t) => inPanel(t) || toEvent(t), () => set({ popover: null }));
       document.addEventListener('keydown', onKey, true);
     }
     return () => {
@@ -309,7 +382,6 @@ export function EventPopover() {
     aria-modal="true"
     aria-label="Event details"
   >
-    ${mobile && html`<style>${'[data-instance="' + CSS.escape(occ.instanceId) + '"]:not(.bc-popover *) { outline: 2px solid var(--accent); outline-offset: -2px; }'}</style>`}
     ${!mobile && html`<div class="bc-pop-color" style=${`background:${color}`}></div>`}
     ${mobile && html`<div class="bc-evsheet-head">
       <button

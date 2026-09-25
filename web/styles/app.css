@@ -3670,3 +3670,9 @@ button.bc-review-title { color: var(--fg); padding: 0; }
 .bc-evsheet.is-gesture .bc-pop-body { transition: none; }
 /* Grown: the description reads in full. */
 .bc-evsheet.is-full .bc-pop-desc { display: block; -webkit-line-clamp: unset; overflow: visible; }
+
+/* The event the phone sheet shows, where the browsed day shows it. */
+.bc-sheet-focus { outline: 2px solid var(--accent) !important; outline-offset: -2px; }
+/* An agenda rail is a hairline: it thickens and takes the accent instead. */
+.bc-agenda-rail.bc-sheet-focus { outline: none !important; }
+.bc-agenda-rail.bc-sheet-focus .bc-agenda-rail-line { width: 5px; background: var(--accent) !important; opacity: 1; }

@@ -232,7 +232,7 @@ export function Toolbar({ onToggleSidebar }) {
           aria-haspopup="dialog" aria-expanded=${jumpOpen}
           title="Jump to date (g)" aria-live="polite"
           onClick=${() => set({ jumpOpen: !jumpOpen })}
-        ><span class="bc-toolbar-label">${label}</span><span class="bc-toolbar-caret" aria-hidden="true"><${Icon} name="chevronDown" size=${12} /></span></button>
+        ><span class="bc-toolbar-label">${label}</span><span class="bc-toolbar-jump" aria-hidden="true"><${Icon} name="jumpDate" size=${15} /></span></button>
         ${dayCtx.length > 0 && html`<span class="bc-toolbar-ctx"><${ContextStrip}
           occs=${dayCtx} calendars=${calMeta} max=${3} more=${false}
           onOpen=${(instanceId, anchorRect) => set({ popover: { instanceId, anchorRect } })}

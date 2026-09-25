@@ -4,6 +4,10 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.4.12 (2026-09-25)
+
+- **Phone day view: the day's weather sits to the right of the date** in the top bar, on one line ("Thu, Sep 24 · 79/55 · AQI 68"), instead of on a cramped second line under it. The date shortens to make room.
+
 ## 0.4.11 (2026-09-25)
 
 - **Phone day view: one date, not two.** The top bar already names the day you're on, so each day's date and weather are now a thin divider line that scrolls up under the bar, and the bar then shows that day (as "Thursday, Sep 24") with its weather on a small line under it. The sticky header below keeps only the day's all-day items, and a day without any has none, so the hours start a whole row higher. Nothing changes height as days pass the top, so the hours don't jump.

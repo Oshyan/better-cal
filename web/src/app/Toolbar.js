@@ -212,10 +212,10 @@ export function Toolbar({ onToggleSidebar }) {
 
   // Day view shows the full date ("Friday, August 8"); everything else the
   // visible month.
-  // Narrow screens shorten the month ("Thursday, Sep 24") so the date fits
-  // beside the arrows and today.
+  // Narrow screens shorten the date ("Thu, Sep 24") so the day's weather
+  // fits beside it on the title's line.
   const label = view === 'day'
-    ? (narrow ? dateOfDayKey(anchor).toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' }) : fmtDayLong(dateOfDayKey(anchor)))
+    ? (narrow ? dateOfDayKey(anchor).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }) : fmtDayLong(dateOfDayKey(anchor)))
     : (visibleMonth ? fmtMonthYear(new Date(visibleMonth.year, visibleMonth.month - 1, 1)) : '');
   const unit = STEP_UNITS[view] || 'month';
 

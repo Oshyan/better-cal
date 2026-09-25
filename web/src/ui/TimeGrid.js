@@ -10,7 +10,8 @@
 //   virtualized inside a native horizontal scroller spanning ~10 years either
 //   side of today. Columns are fixed-width (min 110px desktop, ~44vw on
 //   narrow viewports so ~2.3 days show), rendered only for the visible window
-//   plus a buffer. One vertical scroller owns time; the header and all-day
+//   plus a buffer. On narrow viewports a sideways pinch sets how many days
+//   fit across, and the device keeps it (0.4.8). One vertical scroller owns time; the header and all-day
 //   lane follow the horizontal scroll via the counter-translate pattern.
 //   Edge fades + chevrons hint at more days off-screen; drags auto-scroll
 //   horizontally near the edges.
@@ -26,7 +27,7 @@ import { EventBlock, EventBar, HiddenMark } from './EventChip.js';
 import { ContextStrip, ContextMark } from './ContextStrip.js';
 import { contextByDay, isContext } from '../lib/context.js';
 import { Icon } from './icons.js';
-import { COMPACT_QUERY } from '../lib/breakpoints.js';
+import { COMPACT_QUERY, PHONE_QUERY } from '../lib/breakpoints.js';
 import { startPointerDrag, cloneAsGhost, externalDropTarget, setDropRowHighlight } from './DragController.js';
 import {
   dayRangeDraft, allDayRangeDraft, dragCreateMode, normalizeDayRange,
@@ -49,6 +50,30 @@ const V_EDGE = 3; // days from a window edge that trigger a recenter
 // A sticky header must never eat the viewport: a task-heavy day can carry 30+
 // all-day items, so the rest overflow into the day-expand list.
 const V_ALLDAY_MAX = 3;
+// Phones list the day's all-day items as full-width rows under the date, so
+// a few more fit before "+N more" (0.4.8).
+const V_ALLDAY_MAX_PHONE = 4;
+
+// Narrow week: how many days fit across. This is the starting value; a
+// sideways pinch changes it and the device remembers what you chose.
+const DAYS_ACROSS = 2.3;
+const DAYS_ACROSS_MIN = 1.2;
+const DAYS_ACROSS_MAX = 7;
+const DAYS_ACROSS_KEY = 'bc-week-days-across';
+function readDaysAcross() {
+  try {
+    const v = parseFloat(localStorage.getItem(DAYS_ACROSS_KEY));
+    return v >= DAYS_ACROSS_MIN && v <= DAYS_ACROSS_MAX ? v : DAYS_ACROSS;
+  } catch { return DAYS_ACROSS; }
+}
+// Below this column width the weekday shows as its first letter.
+const TIGHT_COL_W = 64;
+// Phone week all-day lane: thin lanes, then a "+N" line per day that has
+// more (opens the day's list). A fixed few lanes, not one per overlap, at
+// one height whatever is in view.
+const PHONE_BAR_LANES = 3;
+const PHONE_BAR_PITCH = 17;
+const PHONE_MORE_H = 13;
 
 function minutesOfDay(d) {
   return d.getHours() * 60 + d.getMinutes();
@@ -124,6 +149,16 @@ export function TimeGrid({
   const maxDay = centerDay + DAY_SPAN;
 
   const [viewW, setViewW] = useState(0);
+  const [phone, setPhone] = useState(() => window.matchMedia(PHONE_QUERY).matches);
+  useEffect(() => {
+    const mq = window.matchMedia(PHONE_QUERY);
+    const onChange = () => setPhone(mq.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+  const [daysAcross, setDaysAcross] = useState(readDaysAcross);
+  const daysAcrossRef = useRef(daysAcross);
+  daysAcrossRef.current = daysAcross;
   const [narrow, setNarrow] = useState(() => window.matchMedia(NARROW_QUERY).matches);
   useEffect(() => {
     const mq = window.matchMedia(NARROW_QUERY);
@@ -132,13 +167,14 @@ export function TimeGrid({
     return () => mq.removeEventListener('change', onChange);
   }, []);
 
-  // Fixed column width: narrow viewports show ~2.3 columns; desktop divides
-  // the track into 7 with a 110px floor.
+  // Fixed column width: narrow viewports show `daysAcross` columns (2.3 to
+  // start, then whatever a pinch set); desktop divides the track into 7 with
+  // a 110px floor.
   const colW = useMemo(() => {
     if (!infinite) return 0;
     const w = viewW || Math.max(280, window.innerWidth - GUTTER);
-    return narrow ? Math.max(120, Math.round(w * 0.44)) : Math.max(110, w / 7);
-  }, [infinite, viewW, narrow]);
+    return narrow ? Math.max(24, Math.round(w / daysAcross)) : Math.max(110, w / 7);
+  }, [infinite, viewW, narrow, daysAcross]);
 
   const [hRange, setHRange] = useState(() => {
     const a = epochDayOfKey(scrollKey || todayKey());
@@ -156,7 +192,12 @@ export function TimeGrid({
     if (!el) return;
     const t = 'translateX(' + (-el.scrollLeft) + 'px)';
     if (headTrackRef.current) headTrackRef.current.style.transform = t;
-    if (alldayTrackRef.current) alldayTrackRef.current.style.transform = t;
+    if (alldayTrackRef.current) {
+      alldayTrackRef.current.style.transform = t;
+      // A bar that began off to the left keeps its title at the visible
+      // edge (CSS reads --sl against each slot's --bl).
+      alldayTrackRef.current.style.setProperty('--sl', el.scrollLeft + 'px');
+    }
   }, []);
 
   const recomputeH = useCallback(() => {
@@ -231,6 +272,60 @@ export function TimeGrid({
     el.addEventListener('scroll', onScroll, { passive: true });
     return () => { el.removeEventListener('scroll', onScroll); cancelAnimationFrame(raf); };
   }, [infinite, syncTracks, recomputeH]);
+
+  // Sideways pinch on the narrow week sets how many days fit across. The day
+  // under the fingers stays under them; the width is saved when the pinch
+  // ends. Two fingers never start a drag (that needs a still long-press).
+  useEffect(() => {
+    if (!infinite || !narrow) return undefined;
+    const el = hscrollRef.current;
+    if (!el) return undefined;
+    let pinch = null;
+    let raf = 0;
+    let pending = null;
+    const spread = (t) => Math.max(24, Math.abs(t[0].clientX - t[1].clientX));
+    const midX = (t) => (t[0].clientX + t[1].clientX) / 2 - el.getBoundingClientRect().left;
+    const apply = () => {
+      raf = 0;
+      if (!pending) return;
+      leftDayRef.current = pending.leftDay;
+      setDaysAcross(pending.across);
+    };
+    const onStart = (e) => {
+      if (e.touches.length !== 2) { pinch = null; return; }
+      const g = geomH.current;
+      pinch = {
+        d0: spread(e.touches),
+        across0: daysAcrossRef.current,
+        focal: g.minDay + (el.scrollLeft + midX(e.touches)) / g.colW,
+        w: el.clientWidth,
+      };
+    };
+    const onMove = (e) => {
+      if (!pinch || e.touches.length !== 2) return;
+      if (e.cancelable) e.preventDefault();
+      const across = Math.min(DAYS_ACROSS_MAX, Math.max(DAYS_ACROSS_MIN, pinch.across0 * pinch.d0 / spread(e.touches)));
+      const w = Math.max(24, Math.round(pinch.w / across));
+      pending = { across, leftDay: pinch.focal - midX(e.touches) / w };
+      if (!raf) raf = requestAnimationFrame(apply);
+    };
+    const onEnd = (e) => {
+      if (!pinch || e.touches.length >= 2) return;
+      pinch = null;
+      try { localStorage.setItem(DAYS_ACROSS_KEY, String(Math.round(daysAcrossRef.current * 100) / 100)); } catch { /* per-device only */ }
+    };
+    el.addEventListener('touchstart', onStart, { passive: true });
+    el.addEventListener('touchmove', onMove, { passive: false });
+    el.addEventListener('touchend', onEnd, { passive: true });
+    el.addEventListener('touchcancel', onEnd, { passive: true });
+    return () => {
+      el.removeEventListener('touchstart', onStart, { passive: true });
+      el.removeEventListener('touchmove', onMove, { passive: false });
+      el.removeEventListener('touchend', onEnd, { passive: true });
+      el.removeEventListener('touchcancel', onEnd, { passive: true });
+      cancelAnimationFrame(raf);
+    };
+  }, [infinite, narrow]);
 
   // The all-day lane can remount as bars enter/leave the window; re-apply the
   // counter-translate after every render.
@@ -320,7 +415,7 @@ export function TimeGrid({
         const s = epochDayOfKey(startKey);
         const e = epochDayOfKey(endKey);
         if (s > ed || e < ed) continue;
-        out.push({ occ, seg: { contLeft: s < ed, contRight: e > ed } });
+        out.push({ occ, seg: { contLeft: s < ed, contRight: e > ed }, dayOf: e > s ? [ed - s + 1, e - s + 1] : null });
       }
       return out;
     });
@@ -332,6 +427,17 @@ export function TimeGrid({
   );
   let barLaneCount = 0;
   for (const l of barLanes.values()) barLaneCount = Math.max(barLaneCount, l + 1);
+  const phoneWeek = infinite && phone;
+  // Phone week: bars past the last lane are counted per day for its "+N".
+  const moreByCol = useMemo(() => {
+    if (!phoneWeek) return null;
+    const m = new Map();
+    for (const b of allDayBars) {
+      if (barLanes.get(b.occ.instanceId) < PHONE_BAR_LANES) continue;
+      for (let c = b.seg.startCol; c <= b.seg.endCol; c++) m.set(c, (m.get(c) || 0) + 1);
+    }
+    return m;
+  }, [phoneWeek, allDayBars, barLanes]);
 
   // Overlap layout per day column (see layout.js for the algorithm).
   const layoutByDay = useMemo(() => timedByDay.map((list) => {
@@ -706,7 +812,10 @@ export function TimeGrid({
   const buildHours = () => {
     const out = [];
     for (let h = 0; h < 24; h++) {
-      out.push(html`<div key=${h} class="bc-hour-label${h === 0 ? ' is-first' : ''}" style=${`top:${h * HOUR_H}px`}>${fmtTime(new Date(2000, 0, 1, h, 0)).replace(':00', '')}</div>`);
+      const label = fmtTime(new Date(2000, 0, 1, h, 0)).replace(':00', '');
+      // Phones: "8a", so the hour column can be narrow.
+      const shown = phone ? label.replace(/\s?([AaPp])\.?\s?[Mm]\.?$/, (m, x) => x.toLowerCase()) : label;
+      out.push(html`<div key=${h} class="bc-hour-label${h === 0 ? ' is-first' : ''}" style=${`top:${h * HOUR_H}px`}>${shown}</div>`);
     }
     return out;
   };
@@ -739,11 +848,11 @@ export function TimeGrid({
       onClick=${() => { if (onOpenDay) onOpenDay(k); }}
     >
       ${hasCtxRow && html`<span class="bc-tg-head-ctx">${ctxByDay.get(k) && html`<${ContextStrip}
-        occs=${ctxByDay.get(k).filter((o) => o.allDay)} calendars=${calendars} max=${3}
+        occs=${ctxByDay.get(k).filter((o) => o.allDay)} calendars=${calendars} max=${phoneWeek ? 1 : 3} more=${!phoneWeek}
         onOpen=${onOpenEvent} onMore=${() => { if (onExpandDay) onExpandDay(k); }}
       />`}</span>`}
       <span class="bc-tg-head-main">
-        <span class="bc-tg-dow">${fmtWeekdayShort(d)}</span>
+        <span class="bc-tg-dow">${fmtWeekdayShort(d).slice(0, 1)}<span class="bc-tg-dow-rest">${fmtWeekdayShort(d).slice(1)}</span></span>
         <span class="bc-tg-dom">${d.getDate()}</span>
         ${hiddenDays && hiddenDays.get(k) && html`<${HiddenMark} count=${hiddenDays.get(k)} />`}
         ${infinite && d.getDate() === 1 && html`<span class="bc-tg-month-tag">${fmtMonthShort(d)}</span>`}
@@ -751,16 +860,31 @@ export function TimeGrid({
     </button>`;
   });
 
-  const barSlot = ({ occ, seg }) => html`<div
+  const lanePitch = phoneWeek ? PHONE_BAR_PITCH : 24;
+  const barSlot = ({ occ, seg }) => {
+    const lane = barLanes.get(occ.instanceId);
+    if (phoneWeek && lane >= PHONE_BAR_LANES) return null;
+    const left = (epochDayOfKey(days[0]) - minDay + seg.startCol) * colW;
+    return html`<div
     key=${occ.instanceId}
     class="bc-bar-slot"
     style=${infinite
-      ? `left:${(epochDayOfKey(days[0]) - minDay + seg.startCol) * colW}px;width:${(seg.endCol - seg.startCol + 1) * colW}px;top:${barLanes.get(occ.instanceId) * 24}px`
-      : `left:${(seg.startCol / days.length) * 100}%;width:${((seg.endCol - seg.startCol + 1) / days.length) * 100}%;top:${barLanes.get(occ.instanceId) * 24}px`}
+      ? `left:${left}px;width:${(seg.endCol - seg.startCol + 1) * colW}px;top:${lane * lanePitch}px;--bl:${left}px`
+      : `left:${(seg.startCol / days.length) * 100}%;width:${((seg.endCol - seg.startCol + 1) / days.length) * 100}%;top:${lane * lanePitch}px`}
   >
     <${EventBar} occ=${occ} cal=${calendars[occ.calendarId]} seg=${seg}
       dimmed=${dimSet && dimSet.has(occ.instanceId)} nowMs=${nowMs} onOpen=${onOpenEvent} />
   </div>`;
+  };
+  // Phone week: "+N" under the lanes on each day that has more; it opens
+  // the day's full list.
+  const moreSlots = moreByCol ? [...moreByCol].map(([c, n]) => html`<button
+    type="button" key=${'more' + c} class="bc-tg-allday-more"
+    style=${`left:${(epochDayOfKey(days[0]) - minDay + c) * colW}px;width:${colW}px;top:${PHONE_BAR_LANES * PHONE_BAR_PITCH}px`}
+    title=${n + ' more all-day on this day'}
+    onPointerDown=${(e) => e.stopPropagation()}
+    onClick=${(e) => { e.stopPropagation(); if (onExpandDay) onExpandDay(days[c]); }}
+  >+${n}</button>`) : null;
 
   // Day-range draft (multi-day drag-create or all-day lane selection): the
   // spanned columns carry a full-height tint, clamped to the rendered window.
@@ -792,6 +916,7 @@ export function TimeGrid({
         occ=${item.occ} cal=${calendars[item.occ.calendarId]}
         rect=${{ top, height, leftPct, widthPct, z: item.col + 1 }}
         dimmed=${dimSet && dimSet.has(item.occ.instanceId)} nowMs=${nowMs}
+        titleOnly=${phoneWeek}
         onOpen=${onOpenEvent}
         onPointerDown=${(e) => dragMove(item.occ, e)}
         onEdgePointerDown=${(edge, e) => dragResize(item.occ, edge, e)}
@@ -816,7 +941,8 @@ export function TimeGrid({
   // a gap and a sticky dated header between them, each carrying its own
   // all-day bars and hour gutter.
   if (vstack) {
-    return html`<div class="bc-timegrid bc-tg-vstacked" ref=${rootRef}>
+    const vMax = phone ? V_ALLDAY_MAX_PHONE : V_ALLDAY_MAX;
+    return html`<div class="bc-timegrid bc-tg-vstacked${phone ? ' bc-tg-phone' : ''}" ref=${rootRef}>
       <div class="bc-tg-scroll" ref=${scrollRef}>
         <div class="bc-tg-vdays">
           ${days.map((k, i) => {
@@ -841,15 +967,16 @@ export function TimeGrid({
                     onCreateRange(allDayRangeDraft(k, k));
                   }}
                 >
-                  ${bars.slice(0, V_ALLDAY_MAX).map(({ occ, seg }) => html`<${EventBar}
+                  ${bars.slice(0, vMax).map(({ occ, seg, dayOf }) => html`<${EventBar}
                     key=${occ.instanceId} occ=${occ} cal=${calendars[occ.calendarId]} seg=${seg}
+                    note=${phone && dayOf ? `day ${dayOf[0]} of ${dayOf[1]}` : null}
                     dimmed=${dimSet && dimSet.has(occ.instanceId)} nowMs=${nowMs} onOpen=${onOpenEvent}
                   />`)}
-                  ${bars.length > V_ALLDAY_MAX && html`<button
+                  ${bars.length > vMax && html`<button
                     type="button" class="bc-vday-more"
                     title="List everything on this day"
                     onClick=${() => onExpandDay && onExpandDay(k)}
-                  >+${bars.length - V_ALLDAY_MAX} more</button>`}
+                  >+${bars.length - vMax} more</button>`}
                 </div>
               </header>
               <div class="bc-tg-vday-body">
@@ -876,17 +1003,21 @@ export function TimeGrid({
       ></div>`)
     : null;
 
-  return html`<div class="bc-timegrid${infinite ? ' bc-tg-infinite' : ''}" ref=${rootRef}>
+  return html`<div class="bc-timegrid${infinite ? ' bc-tg-infinite' : ''}${phone ? ' bc-tg-phone' : ''}${infinite && colW < TIGHT_COL_W ? ' is-tight' : ''}" ref=${rootRef}>
     <div class="bc-tg-head${single ? ' is-single' : ''}${hasCtxRow ? ' has-ctx' : ''}" onWheel=${onHeaderWheel}>
       <div class="bc-tg-gutter"></div>
       ${infinite
         ? html`<div class="bc-tg-hclip"><div class="bc-tg-htrack" ref=${headTrackRef} style=${`width:${totalW}px`}>${headCells}</div></div>`
         : headCells}
     </div>
-    ${showAllday && html`<div class="bc-tg-allday${alldayOpen ? '' : ' is-collapsed'}" onWheel=${onHeaderWheel} style=${`height:${(alldayOpen ? Math.max(1, barLaneCount) : 1) * 24 + (barLaneCount > 1 ? 20 : 6)}px`}>
+    ${showAllday && html`<div class="bc-tg-allday${alldayOpen || phoneWeek ? '' : ' is-collapsed'}" onWheel=${onHeaderWheel} style=${`height:${phoneWeek
+      // One steady height on phones: lanes coming and going as you scroll
+      // sideways would move the whole grid up and down.
+      ? PHONE_BAR_LANES * PHONE_BAR_PITCH + 3 + PHONE_MORE_H
+      : (alldayOpen ? Math.max(1, barLaneCount) : 1) * 24 + (barLaneCount > 1 ? 20 : 6)}px`}>
       <div class="bc-tg-gutter bc-tg-allday-label">
-        all day
-        ${barLaneCount > 1 && html`<button
+        ${!phoneWeek && 'all day'}
+        ${barLaneCount > 1 && !phoneWeek && html`<button
           type="button" class="bc-allday-toggle"
           title=${alldayOpen ? 'Collapse all-day events' : 'Show all all-day events'}
           aria-expanded=${alldayOpen}
@@ -896,7 +1027,7 @@ export function TimeGrid({
           : html`<${Icon} name="chevronDown" size=${11} />${barLaneCount - 1}+`}</button>`}
       </div>
       ${infinite
-        ? html`<div class="bc-tg-hclip"><div class="bc-tg-htrack" ref=${alldayTrackRef} style=${`width:${totalW}px`} onPointerDown=${dragCreateAllDay}>${alldayMonthLines}${allDayBars.map(barSlot)}</div></div>`
+        ? html`<div class="bc-tg-hclip"><div class="bc-tg-htrack" ref=${alldayTrackRef} style=${`width:${totalW}px`} onPointerDown=${dragCreateAllDay}>${alldayMonthLines}${allDayBars.map(barSlot)}${moreSlots}</div></div>`
         : html`<div class="bc-tg-allday-lane" onPointerDown=${dragCreateAllDay}>${allDayBars.map(barSlot)}</div>`}
     </div>`}
     <div class="bc-tg-scroll" ref=${scrollRef}>

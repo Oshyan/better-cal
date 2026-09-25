@@ -164,7 +164,9 @@ export function EventChip({ occ, cal, dimmed, nowMs, showTime = true, seg = null
 // Solid segment bar for multi-day events in month/week rows.
 // props: occ, cal, seg {contLeft, contRight}, dimmed, nowMs, onOpen,
 //        onPointerDown, onEdgePointerDown(edge, ev)
-export function EventBar({ occ, cal, seg, dimmed, nowMs, onOpen, onPointerDown, onEdgePointerDown }) {
+// `note` (optional) is said at the right end instead of the duration, e.g.
+// "day 2 of 3" on a phone's day view.
+export function EventBar({ occ, cal, seg, dimmed, nowMs, note = null, onOpen, onPointerDown, onEdgePointerDown }) {
   const color = calColor(cal);
   const interested = occ.relationship === 'maybe';
   const trip = !!occ.isContainer;
@@ -198,16 +200,18 @@ export function EventBar({ occ, cal, seg, dimmed, nowMs, onOpen, onPointerDown, 
     ${!seg.contLeft && occ.isGroup && html`<${StackGlyph} />`}
     ${!seg.contLeft && occ.relationship === 'context' && html`<span class="bc-ctx-glyph"></span>`}
     <span class="bc-chip-title">${occ.title || '(untitled)'}${occ.isGroup ? ` · ${occ.count}` : ''}</span>
-    <${DurationSuffix} occ=${occ} />
+    ${note ? html`<span class="bc-bar-note">${note}</span>` : html`<${DurationSuffix} occ=${occ} />`}
     ${occ.isNew && !occ.isGroup && !seg.contLeft && html`<${NewPill} />`}
     ${!seg.contRight && edges && html`<span class="bc-bar-handle r" onPointerDown=${(e) => edges('end', e)}></span>`}
   </div>`;
 }
 
 // Positioned block for the time grid.
-// props: occ, cal, rect {top,height,leftPct,widthPct}, dimmed, nowMs, compact,
-//        onOpen, onPointerDown, onEdgePointerDown(edge, ev)
-export function EventBlock({ occ, cal, rect, dimmed, nowMs, onOpen, onPointerDown, onEdgePointerDown }) {
+// props: occ, cal, rect {top,height,leftPct,widthPct}, dimmed, nowMs,
+//        titleOnly, onOpen, onPointerDown, onEdgePointerDown(edge, ev)
+// titleOnly (phone week): the title wraps over the block and the time and
+// place lines go; the hour column already says when.
+export function EventBlock({ occ, cal, rect, dimmed, nowMs, titleOnly = false, onOpen, onPointerDown, onEdgePointerDown }) {
   const color = calColor(cal);
   const interested = occ.relationship === 'maybe';
   const trip = !!occ.isContainer;
@@ -221,13 +225,13 @@ export function EventBlock({ occ, cal, rect, dimmed, nowMs, onOpen, onPointerDow
       : `background:${color};color:${contrastText(color)};border-left:3px solid ${color}`;
   const s = parseISO(occ.start);
   const e = parseISO(occ.end);
-  const showMeta = rect.height > 34 && !occ.isGroup;
+  const showMeta = !titleOnly && rect.height > 34 && !occ.isGroup;
   // A block's second line is for a real place; "after RSVP" isn't one.
-  const showLoc = rect.height > 52 && occ.location && !isPendingLocation(occ.location);
+  const showLoc = !titleOnly && rect.height > 52 && occ.location && !isPendingLocation(occ.location);
   const { onClick, onDblClick } = openHandlers(occ, onOpen);
   const edges = occ.isGroup || trip ? null : onEdgePointerDown;
   return html`<div
-    class="bc-block${stateClasses(occ, dimmed, nowMs)}"
+    class="bc-block${titleOnly ? ' is-title-only' : ''}${stateClasses(occ, dimmed, nowMs)}"
     title=${chipTitle(occ)}
     style=${`top:${rect.top}px;height:${rect.height}px;left:${rect.leftPct}%;width:${rect.widthPct}%;${rect.z ? `z-index:${rect.z};` : ''}${bg}${hlVar(occ)}`}
     data-instance=${occ.instanceId}

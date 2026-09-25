@@ -4,6 +4,14 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.4.8 (2026-09-25)
+
+- **Phone week: pinch sideways to set how wide days are.** Spread two fingers for wider days, pinch in to fit up to about seven across. The day under your fingers stays put, and the phone remembers the width. It starts where it always has, about 2.3 days across (one setting in the code).
+- **Phone week: blocks show their title only, wrapped over the block,** instead of a cut-off title with the time under it; the hour column already says when. Overlaps keep the same cascade as before.
+- **Phone week: a thinner all-day area.** Three slim lanes, then a "+N" line under any day with more (tap it for that day's full list), at one steady height, so the grid no longer grows by a lane per overlap or jumps as you scroll sideways. Day heads are the date with the weather under it, the hour column is narrower ("8a"), and when days get narrow the weekday shows as its first letter.
+- **Phone day view: all-day items get full-width rows** under the date, with their full names and where they are in their span ("day 2 of 3"), instead of a narrow column beside the date. Up to four show before "+N more".
+- **Week view, everywhere: a long all-day bar keeps its title in view.** A trip that began weeks ago used to show as a bare outline because its title was back at its start, off screen; the title now stays at the visible left edge.
+
 ## 0.4.7 (2026-09-25)
 
 - **"Location available once RSVP'd" and the like** now show as a small lock with "After RSVP" ("RSVP" in phone rows; the feed's own wording on hover). They're no longer offered as a map, sent off to be placed on one, or shown on timeline blocks as if they were an address.

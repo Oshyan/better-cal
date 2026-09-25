@@ -30,8 +30,8 @@ import {
 } from './monthmath.js';
 import { assignLanes } from './layout.js';
 import { EventChip, EventBar, TripBand, HiddenMark } from './EventChip.js';
-import { ContextStrip } from './ContextStrip.js';
-import { contextByDay, isContext } from '../lib/context.js';
+import { ContextStrip, DayLabel } from './ContextStrip.js';
+import { contextByDay, dayLabelsByDay, isContext } from '../lib/context.js';
 import { Icon } from './icons.js';
 import { PHONE_QUERY } from '../lib/breakpoints.js';
 import { startPointerDrag, cloneAsGhost, externalDropTarget, setDropRowHighlight } from './DragController.js';
@@ -113,7 +113,7 @@ function indexOccurrences(occurrences, columns) {
     }
   }
   for (const list of byDay.values()) list.sort(byStart);
-  return { byDay, barsByRow, bandsByRow, longBars, longBands, ctxByDay: contextByDay(occurrences), rowCache: new Map() };
+  return { byDay, barsByRow, bandsByRow, longBars, longBands, rowCache: new Map() };
 }
 
 // What one row draws: its pre-segmented entries plus the segment of any very
@@ -205,6 +205,12 @@ export function MonthGrid({
   viewHRef.current = viewH;
 
   const idx = useMemo(() => indexOccurrences(occurrences, columns), [occurrences, columns]);
+  // The day's context tokens and its label (a holiday), which needs the
+  // calendars to tell a holiday calendar.
+  const dayInfo = useMemo(() => ({
+    ctxByDay: contextByDay(occurrences, calendars),
+    labelsByDay: dayLabelsByDay(occurrences, calendars),
+  }), [occurrences, calendars]);
 
   // Measure viewport height.
   useLayoutEffect(() => {
@@ -628,7 +634,7 @@ export function MonthGrid({
       key=${wi} weekIndex=${wi} columns=${columns} ribbon=${ribbon}
       top=${weekTop(wi, minWeek, rowH)} rowH=${rowH}
       byDay=${idx.byDay} bars=${rowEntries(idx, 'bars', wi, columns)} bands=${rowEntries(idx, 'bands', wi, columns)} calendars=${calendars}
-      hiddenDays=${hiddenDays} onShowHidden=${onShowHidden} ctxByDay=${idx.ctxByDay}
+      hiddenDays=${hiddenDays} onShowHidden=${onShowHidden} ctxByDay=${dayInfo.ctxByDay} labelsByDay=${dayInfo.labelsByDay}
       capacity=${capacity} chipRow=${chipRow} mobile=${mobile} todayKey=${tKey} dimSet=${dimSet} nowMs=${nowMs}
       sel=${sel}
       onOpenEvent=${onOpenEvent} onExpandDay=${onExpandDay} onOpenDay=${onOpenDay}
@@ -691,7 +697,7 @@ export function MonthGrid({
 function WeekRow({
   weekIndex, columns, ribbon, top, rowH, byDay, bars, bands, calendars, capacity, chipRow, mobile,
   todayKey: tKey, dimSet, nowMs, sel, onOpenEvent, onExpandDay, onOpenDay, dragMoveOcc, dragResizeOcc, dragCreate,
-  cellClickSelect, quickCreateDay, hiddenDays, onShowHidden, ctxByDay,
+  cellClickSelect, quickCreateDay, hiddenDays, onShowHidden, ctxByDay, labelsByDay,
 }) {
   const keys = dayKeysOfRow(weekIndex, columns);
   // Week-of-year in the gutter (7-col rows only): taken from the row's
@@ -793,6 +799,7 @@ function WeekRow({
           onClick=${(e) => { e.stopPropagation(); if (onOpenDay) onOpenDay(k); else if (onExpandDay) onExpandDay(k); }}
         >${label}</button>
         ${hiddenDays && hiddenDays.get(k) && html`<${HiddenMark} count=${hiddenDays.get(k)} onShow=${onShowHidden} />`}
+        ${labelsByDay && html`<${DayLabel} occs=${labelsByDay.get(k)} onOpen=${onOpenEvent} flag=${mobile && columns >= 7} />`}
         ${ctxByDay && ctxByDay.get(k) && ctxMax > 0 && html`<${ContextStrip}
           occs=${ctxByDay.get(k)} calendars=${calendars} max=${ctxMax} more=${!mobile} zone=${false}
           onOpen=${onOpenEvent} onMore=${() => { if (onExpandDay) onExpandDay(k); }}

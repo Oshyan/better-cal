@@ -4,6 +4,10 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.4.15 (2026-09-25)
+
+- **Holidays are written with the date, not as context.** A holiday calendar's days read "Mon, Oct 12 · Columbus Day" in agenda headings (and Split's list) and the day list, after the day number in week heads and desktop month cells, and after the date in the desktop day view's title. They no longer sit among the weather and other context tokens, where their names were cut short or cut the date. In the phone's day view the holiday gets its own line at the top of the day, in full. In the phone's full month, where a cell has room for a letter or two, it's a small flag after the day number; tap it for the name. Holiday calendars are recognized by name, as before; tapping a holiday opens it.
+
 ## 0.4.14 (2026-09-25)
 
 - **The date title's hint is a small "jump to a date" icon** (a calendar page with a magnifier) instead of a dropdown caret, on phones and desktop.

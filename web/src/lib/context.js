@@ -1,9 +1,14 @@
 // Context events (docs/relationships.md) are information about a day, not
-// plans: weather, AQI, sunset, tides, a holiday, someone being away. They
-// are consulted, not attended, so the views draw them as small tokens in
-// the day's header (and as hairline moments on the timeline) instead of
-// spending event slots on them. This module decides what a token says: an
-// icon for what kind of information it is, and the value.
+// plans: weather, AQI, sunset, tides. They are consulted, not attended, so
+// the views draw them as small tokens in the day's header (and as hairline
+// moments on the timeline) instead of spending event slots on them. This
+// module decides what a token says: an icon for what kind of information it
+// is, and the value.
+//
+// A holiday is different: it names the day, and its name is the whole of it,
+// so it can't shrink to an icon and a number. All-day context from a holiday
+// calendar is a day label instead, written with the date wherever a date is
+// written ("Mon, Oct 12 · Columbus Day"), and left out of the tokens.
 
 import { fmtTime, fmtTimeIn, tzAbbrev, sameClock, localTz, parseISO, occDayKey, addDaysKey } from './dates.js';
 import { occurrenceDaySpan } from '../ui/monthmath.js';
@@ -123,10 +128,45 @@ export function contextTitle(occ) {
  * (the state of the day), then moments by time. A multi-day all-day span
  * counts on each day it covers (capped so a runaway span cannot flood).
  */
-export function contextByDay(occurrences) {
+/** A holiday calendar, recognized by its name (as the flag icon is). */
+export function isHolidayCalendar(cal) {
+  return !!cal && /holiday/i.test(cal.name || '');
+}
+
+/** All-day context from a holiday calendar: a day label, not a token. */
+export function isDayLabel(occ, calendars) {
+  return isContext(occ) && !!occ.allDay && !!calendars && isHolidayCalendar(calendars[occ.calendarId]);
+}
+
+/**
+ * Day key -> the day labels (holidays) on that day, for every day a
+ * multi-day one covers. Needs the calendars to tell a holiday calendar.
+ */
+export function dayLabelsByDay(occurrences, calendars) {
+  const out = new Map();
+  if (!calendars) return out;
+  for (const occ of occurrences) {
+    if (occ.attendance === 'hidden' || !isDayLabel(occ, calendars)) continue;
+    const { startKey, endKey } = occurrenceDaySpan(occ);
+    for (let k = startKey, i = 0; k <= endKey && i < 62; k = addDaysKey(k, 1), i++) {
+      if (!out.has(k)) out.set(k, []);
+      out.get(k).push(occ);
+    }
+  }
+  for (const list of out.values()) list.sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+  return out;
+}
+
+/** The label's words: the titles, source prefix dropped, joined. */
+export function dayLabelText(occs) {
+  return occs.map((o) => contextText(o) || '(untitled)').join(' · ');
+}
+
+export function contextByDay(occurrences, calendars) {
   const out = new Map();
   for (const occ of occurrences) {
     if (!isContext(occ) || occ.attendance === 'hidden') continue;
+    if (calendars && isDayLabel(occ, calendars)) continue; // written with the date instead
     if (!occ.allDay) {
       const k = occDayKey(occ);
       if (!out.has(k)) out.set(k, []);

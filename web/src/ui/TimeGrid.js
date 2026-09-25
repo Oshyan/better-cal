@@ -24,8 +24,8 @@ import {
 import { layoutOverlaps, assignLanes } from './layout.js';
 import { occurrenceDaySpan, isWeekendEpochDay } from './monthmath.js';
 import { EventBlock, EventBar, HiddenMark } from './EventChip.js';
-import { ContextStrip, ContextMark } from './ContextStrip.js';
-import { contextByDay, isContext } from '../lib/context.js';
+import { ContextStrip, ContextMark, DayLabel } from './ContextStrip.js';
+import { contextByDay, dayLabelsByDay, isContext } from '../lib/context.js';
 import { Icon } from './icons.js';
 import { COMPACT_QUERY, PHONE_QUERY } from '../lib/breakpoints.js';
 import { startPointerDrag, cloneAsGhost, externalDropTarget, setDropRowHighlight } from './DragController.js';
@@ -379,7 +379,7 @@ export function TimeGrid({
 
   // Split occurrences into all-day-lane items and per-day timed items,
   // clamped to the rendered day window.
-  const { allDayBars, timedByDay, ctxByDay } = useMemo(() => {
+  const { allDayBars, timedByDay, ctxByDay, labelsByDay } = useMemo(() => {
     const dayIdx = new Map(days.map((k, i) => [k, i]));
     const firstDay = days.length ? epochDayOfKey(days[0]) : 0;
     const lastDay = days.length ? epochDayOfKey(days[days.length - 1]) : -1;
@@ -399,8 +399,12 @@ export function TimeGrid({
         if (i != null) timed[i].push(occ);
       }
     }
-    return { allDayBars: bars, timedByDay: timed, ctxByDay: contextByDay(occurrences) };
-  }, [occurrences, days]);
+    return {
+      allDayBars: bars, timedByDay: timed,
+      ctxByDay: contextByDay(occurrences, calendars),
+      labelsByDay: dayLabelsByDay(occurrences, calendars),
+    };
+  }, [occurrences, days, calendars]);
 
   // Vertical stack: every day owns its all-day bars, angled where the event
   // continues past that day (same cue as the day-expand list).
@@ -897,6 +901,7 @@ export function TimeGrid({
         <span class="bc-tg-dom">${d.getDate()}</span>
         ${hiddenDays && hiddenDays.get(k) && html`<${HiddenMark} count=${hiddenDays.get(k)} />`}
         ${infinite && d.getDate() === 1 && html`<span class="bc-tg-month-tag">${fmtMonthShort(d)}</span>`}
+        <${DayLabel} occs=${labelsByDay.get(k)} onOpen=${onOpenEvent} />
       </span>
     </button>`;
   });
@@ -1001,8 +1006,9 @@ export function TimeGrid({
             const ctxStrip = ctxByDay.get(k) && html`<${ContextStrip} occs=${ctxByDay.get(k).filter((o) => o.allDay)} calendars=${calendars} onOpen=${onOpenEvent} />`;
             // Phones: the date and weather are a divider that scrolls away
             // under the top bar, which then names the day and shows its
-            // weather; the sticky header keeps only the all-day items, and a
-            // day without any has none. Nothing changes height as days pass
+            // weather; the sticky header keeps the day's holiday (its own
+            // line, in full) and its all-day items, and a day with neither
+            // has none. Nothing changes height as days pass
             // the top, so the hours never jump (0.4.11).
             // Written as the top bar writes it ("Tue, Oct 13"), so the date
             // reads the same when it becomes the title.
@@ -1013,8 +1019,10 @@ export function TimeGrid({
                 >${d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</button>${ctxStrip}</div>`;
             return html`<section key=${k} class="bc-tg-vday" data-vday=${k}>
               ${divider}
-              ${(!phone || bars.length > 0) && html`<header class="bc-tg-vday-head${k === tKey ? ' is-today' : ''}">
+              ${(!phone || bars.length > 0 || labelsByDay.has(k)) && html`<header class="bc-tg-vday-head${k === tKey ? ' is-today' : ''}">
+                ${phone && labelsByDay.has(k) && html`<div class="bc-tg-vday-labelrow"><${DayLabel} occs=${labelsByDay.get(k)} onOpen=${onOpenEvent} /></div>`}
                 ${!phone && dateBtn}
+                ${!phone && html`<${DayLabel} occs=${labelsByDay.get(k)} onOpen=${onOpenEvent} sep=${true} />`}
                 ${!phone && ctxStrip}
                 <div
                   class="bc-tg-vday-allday"

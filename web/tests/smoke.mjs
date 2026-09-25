@@ -28,7 +28,7 @@ import {
 } from '../src/lib/quickcreate.js';
 import { HOTKEYS, HOTKEY_GROUPS } from '../src/app/hotkeys.js';
 import { hiddenDayCounts, relShown, showRelFromConfig } from '../src/lib/relfilter.js';
-import { contextToken, contextTitle, contextByDay, withoutContext } from '../src/lib/context.js';
+import { contextToken, contextTitle, contextByDay, withoutContext, dayLabelsByDay, isDayLabel, dayLabelText } from '../src/lib/context.js';
 import {
   fmtOffsetMinutes, fmtReminder, allDayEntryToMinutes, entryToMinutes,
   normalizeMinutesList, effectiveReminders, toMinutes, fromMinutes,
@@ -1739,6 +1739,15 @@ console.log('');
   eq('context by day: the span reaches its last day and not the exclusive end', [byDay.has('2026-09-21'), byDay.has('2026-09-22')], [true, false]);
   eq('context by day: plans are not context', byDay.get('2026-09-20').some((o) => o.instanceId === 'p'), false);
   eq('withoutContext: leaves only the plans', withoutContext([weather, sunset, plan]).map((o) => o.instanceId), ['p']);
+  // A holiday is a day label, written with the date, not a token.
+  const cals = { 1: { name: 'US Holidays' }, 2: { name: 'Oakland weather' } };
+  const hol = { instanceId: 'h', calendarId: 1, relationship: 'context', allDay: true, start: '2026-10-12', end: '2026-10-13', title: 'Columbus Day' };
+  const wx = { ...weather, calendarId: 2, start: '2026-10-12', end: '2026-10-13' };
+  eq('day labels: a holiday calendar day is a label on its day', [...dayLabelsByDay([hol, wx], cals).get('2026-10-12')].map((o) => o.instanceId), ['h']);
+  eq('day labels: and not a context token there', contextByDay([hol, wx], cals).get('2026-10-12').map((o) => o.instanceId), ['w']);
+  eq('day labels: without calendars, nothing is a label', [dayLabelsByDay([hol], null).size, contextByDay([hol]).get('2026-10-12').length], [0, 1]);
+  eq('day labels: a timed holiday-calendar item stays a moment', isDayLabel({ ...hol, allDay: false }, cals), false);
+  eq('day labels: the words drop a source prefix and join', dayLabelText([{ title: 'US: Columbus Day' }, { title: "Indigenous Peoples' Day" }]), "Columbus Day · Indigenous Peoples' Day");
   // A place-bound moment in another zone keeps its own clock and names the zone.
   const zoned = { allDay: false, start: '2026-09-20T19:10:00-07:00', end: '2026-09-20T19:20:00-07:00', title: 'Sunset', tzid: 'America/Los_Angeles' };
   const tk = contextToken(zoned);

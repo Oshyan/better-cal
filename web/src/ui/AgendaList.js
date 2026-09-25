@@ -19,8 +19,8 @@ import {
   timeState, addDaysKey, fmtDateShort, dayKeyOf, epochDayOfKey,
 } from '../lib/dates.js';
 import { EventChip, HiddenMark } from './EventChip.js';
-import { ContextStrip } from './ContextStrip.js';
-import { contextByDay, withoutContext, compactTime } from '../lib/context.js';
+import { ContextStrip, DayLabel } from './ContextStrip.js';
+import { contextByDay, dayLabelsByDay, withoutContext, compactTime } from '../lib/context.js';
 import { PHONE_QUERY } from '../lib/breakpoints.js';
 import { onOutsidePress } from './outside.js';
 import { ThumbIcon, TripBadge, PinIcon, Icon } from './icons.js';
@@ -169,7 +169,8 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
 
   // The day's context (weather, sunset, tides) rides on its heading: the
   // first thing to read for a day, and never a row in the list.
-  const ctxByDay = useMemo(() => contextByDay(occurrences), [occurrences]);
+  const ctxByDay = useMemo(() => contextByDay(occurrences, calendars), [occurrences, calendars]);
+  const labelsByDay = useMemo(() => dayLabelsByDay(occurrences, calendars), [occurrences, calendars]);
   const groups = useMemo(() => {
     if (flat) {
       // Match order: one flat section preserving the caller's ranked order.
@@ -437,6 +438,7 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
           ${g.dayKey !== null && !g.gap && html`<h3 class="bc-agenda-day">
             ${compact ? gapDayFmt.format(dateOfDayKey(g.dayKey)) : fmtDayLong(dateOfDayKey(g.dayKey))}
             ${hiddenDays && hiddenDays.get(g.dayKey) && html`<${HiddenMark} count=${hiddenDays.get(g.dayKey)} onShow=${onShowHidden} />`}
+            <${DayLabel} occs=${labelsByDay.get(g.dayKey)} onOpen=${onOpenEvent} sep=${true} />
             ${ctxByDay.get(g.dayKey) && html`<${ContextStrip} occs=${ctxByDay.get(g.dayKey)} calendars=${calendars} onOpen=${onOpenEvent} />`}
             ${onCreateDay && !compact && html`<button
               type="button" class="bc-agenda-dayadd"

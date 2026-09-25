@@ -4,6 +4,10 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.4.14 (2026-09-25)
+
+- **The date title's hint is a small "jump to a date" icon** (a calendar page with a magnifier) instead of a dropdown caret, on phones and desktop.
+
 ## 0.4.13 (2026-09-25)
 
 - **Phone day view: the date in each day's divider reads the same as the top bar** ("Tue, Oct 13"), so it doesn't reorder itself as it scrolls up to become the title.

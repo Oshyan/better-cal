@@ -152,6 +152,11 @@ export function Icon({ name, size = 15 }) {
     // Small calendar page: binding rings + top rule. Marks calendar names.
     calendar: html`<rect x="2.2" y="3.4" width="11.6" height="10.4" rx="1.4" />
       <path d="M2.2 6.6h11.6M5.4 1.8v3M10.6 1.8v3" />`,
+    // Calendar page with a magnifier at its corner: "jump to a date". The
+    // page's corner is cut away where the lens sits so the two don't tangle.
+    jumpDate: html`<path d="M12 7.4V4.8a1.4 1.4 0 0 0-1.4-1.4H3.6a1.4 1.4 0 0 0-1.4 1.4v8a1.4 1.4 0 0 0 1.4 1.4h3.8" />
+      <path d="M2.2 6.6h9.8M5 1.8v3M9.2 1.8v3" />
+      <circle cx="11.2" cy="11.2" r="2.4" /><path d="M13 13l1.7 1.7" />`,
     // Calendar page with a filled dot: "go to today". The dot is the mark;
     // rings are dropped so it stays clean at palette size (14px).
     today: html`<rect x="2.2" y="3.4" width="11.6" height="10.4" rx="1.4" />

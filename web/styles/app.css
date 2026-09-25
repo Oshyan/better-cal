@@ -3488,10 +3488,11 @@ button.bc-review-title { color: var(--fg); padding: 0; }
 .bc-tg-vday-label { font-size: 14px; font-weight: 700; color: var(--fg); white-space: nowrap; flex: none; }
 .bc-tg-vday-divider.is-today .bc-tg-vday-label { color: var(--today); }
 .bc-tg-vday-divider .bc-ctxstrip { margin-left: 2px; }
-/* The date title opens the jump-to-date picker: a small caret says so. */
+/* The date title opens the jump-to-date picker: a small calendar-and-lens
+   icon after it says so. */
 .bc-toolbar-date { display: inline-flex; align-items: center; gap: 3px; min-width: 0; }
 .bc-toolbar-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.bc-toolbar-caret { display: inline-flex; flex: none; color: var(--fg-muted); opacity: 0.8; }
+.bc-toolbar-jump { display: inline-flex; flex: none; color: var(--fg-muted); margin-left: 2px; }
 .bc-toolbar-titlewrap { display: inline-flex; align-items: center; min-width: 0; }
 .bc-toolbar-ctx { display: none; }
 @media (max-width: 640px) {

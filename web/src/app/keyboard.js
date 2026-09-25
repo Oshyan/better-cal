@@ -42,7 +42,7 @@ export const handlers = {
   prevWeek: () => navigate(-7),
   nextWeek: () => navigate(7),
   cycleView,
-  // Number keys map onto the visible roster (1-4 on mobile, 1-6 on desktop);
+  // Number keys map onto the visible roster (1-5 on mobile, 1-7 on desktop);
   // keys past the roster fall through untouched.
   setView: (e) => {
     const v = rosterViews()[Number(e.key) - 1];

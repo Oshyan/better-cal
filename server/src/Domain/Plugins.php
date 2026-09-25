@@ -43,7 +43,7 @@ final class Plugins
         'views', 'folder', 'mixed', 'visAll', 'visNone', 'reschedule', 'pencil',
         'trash', 'arrowLeft', 'note', 'keyboard', 'expand', 'bell', 'activeOnly',
         'lock', 'unlock', 'calendar', 'today', 'viewMonth', 'viewWeek',
-        'viewWeeks3', 'viewWeeks2', 'viewDay', 'viewAgenda', 'plugins',
+        'viewWeeks3', 'viewWeeks2', 'viewDay', 'viewAgenda', 'viewSplit', 'gapDays', 'plugins',
         'proposals', 'review', 'mail', 'arrowRight', 'people', 'trip', 'google',
         // Information icons, for context events (a plugin sets one per event).
         'sun', 'sunrise', 'sunset', 'air', 'tideHigh', 'tideLow', 'cloud', 'rain', 'snow', 'storm', 'thermometer', 'moon', 'flag',

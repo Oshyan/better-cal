@@ -4,6 +4,18 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.4.0 (2026-09-25)
+
+A new view: Split.
+
+- **Split** puts a strip of weeks over a list that runs on without a break. The weeks are the month you know: titles in every day, trips and stays as bars across the days they cover, "+N" when a day is full. The list below is every day in order, with weather and sunset in each day's heading and multi-day events drawn with their rails.
+- **The two move together.** Scroll the list and the weeks follow: they hold through a week and glide to the next as Saturday turns into Sunday, and the day at the top of the list is outlined. Scroll the weeks and the list follows; tap a day number and the list goes there. Today, the arrows and jump to date move both. Nothing pages or snaps.
+- **Drag the handle between them** to show more weeks or more list, from part of a week to the whole screen. It's remembered on each device; two weeks to start.
+- **Empty days fold.** In Split's list, each run of days with nothing on becomes one line ("Thu, Oct 22 to Fri, Oct 23 · nothing on"), set in italics over a faint hatch so it reads as skipped time. When a trip or stay runs through those days it says "nothing else on".
+- Split is in the view menu, the phone's View sheet (after 3 day), the command palette and on key 7, so the other views keep their number keys. The phone still opens on 3 day unless you've picked another view.
+- The 3-day view on phones drops the start time from each event, which took half of every pill; the title gets the room.
+- Fixed: a request for more than about two years of events was quietly cut short by the server, and the app then treated the whole span as loaded, so the later part stayed empty. Long spans are now fetched in pieces.
+
 ## 0.3.10 (2026-09-24)
 
 - The month and 3-day views' left column (month names and week numbers) now alternates by month along with the days, in both themes. Before, only the day cells did.

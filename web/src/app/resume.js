@@ -13,6 +13,7 @@
 
 import { state, set } from './store.js';
 import { applySavedView } from './actions.js';
+import { splitDay } from '../lib/splitday.js';
 
 const KEY = 'bc-resume';
 const MAX_AGE_MS = 30 * 60000;
@@ -40,7 +41,7 @@ export function saveResume() {
   const snap = {
     at: Date.now(),
     view: state.view,
-    day: dayAtAnchorLine() || state.anchor,
+    day: (state.view === 'split' && splitDay()) || dayAtAnchorLine() || state.anchor,
     filterText: state.filterText || '',
     activeViewId: state.activeViewId || null,
   };

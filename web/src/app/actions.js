@@ -12,7 +12,8 @@ import { occurrenceDaySpan, shiftOccurrenceDays } from '../ui/monthmath.js';
 import { extendTripSpan } from '../ui/trips.js';
 import { REL_KINDS, showRelFromConfig } from '../lib/relfilter.js';
 
-export const VIEWS = ['month', 'weeks3', 'weeks2', 'week', 'day', 'agenda'];
+// Split sits last so the number keys of the older views stay where they were.
+export const VIEWS = ['month', 'weeks3', 'weeks2', 'week', 'day', 'agenda', 'split'];
 
 // The roster the toolbar actually shows: narrow viewports drop the multiweek
 // views ([Overview] [Week] [Day] [Agenda]). v-cycle and the 1-6 keys follow

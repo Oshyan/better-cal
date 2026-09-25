@@ -173,6 +173,11 @@ export function Icon({ name, size = 15 }) {
       <path d="M5.2 5.4h5.6" />`,
     viewAgenda: html`<path d="M5.6 4.2h8M5.6 8h8M5.6 11.8h8" />
       <path d="M2.5 4.2h.01M2.5 8h.01M2.5 11.8h.01" />`,
+    // Split: a strip of weeks over a list.
+    viewSplit: html`<rect x="2.2" y="2.4" width="11.6" height="5.4" rx="1.2" />
+      <path d="M6.1 2.4v5.4M9.9 2.4v5.4M2.6 10.6h10.8M2.6 13.4h7.4" />`,
+    // A run of empty days folded to one line: the days skipped over.
+    gapDays: html`<path d="M8 2.2v2.6M8 11.2v2.6" /><path d="M5.2 6.6 8 8.4l2.8-1.8" /><path d="M5.2 9.6 8 11.2l2.8-1.6" />`,
     // Power plug: prongs, socket body, cord. The Plugins page.
     plugins: html`<path d="M5.6 2.2v3M10.4 2.2v3" />
       <path d="M4 5.2h8v2.6a4 4 0 0 1-8 0z" />

@@ -10,7 +10,7 @@ import { PageShell, EmptyState } from './PageShell.js';
 
 const VIEW_TYPE_LABELS = {
   month: 'Month', weeks3: '3 weeks', weeks2: '2 weeks',
-  week: 'Week', day: 'Day', agenda: 'Agenda',
+  week: 'Week', day: 'Day', agenda: 'Agenda', split: 'Split',
 };
 
 export function SavedViewsPage() {

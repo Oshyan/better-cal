@@ -70,7 +70,7 @@ export const state = {
   // window request failed and a retry is scheduled (api.js).
   windowStatus: null,
 
-  view: 'month', // month | weeks3 | weeks2 | week | day | agenda
+  view: 'month', // month | weeks3 | weeks2 | week | day | agenda | split
   // Responsive roster inputs (kept in sync by App via matchMedia listeners).
   viewportNarrow: typeof window !== 'undefined' && window.matchMedia
     ? window.matchMedia(COMPACT_QUERY).matches : false,

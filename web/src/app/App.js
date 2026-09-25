@@ -52,6 +52,7 @@ import { ReviewPage } from './ReviewPage.js';
 import { sanitizeHtml } from '../lib/richtext.js';
 import { onOutsidePress, insideAny, consumeOutsidePress } from '../ui/outside.js';
 import { installDrawerSwipe } from '../ui/drawerswipe.js';
+import { SplitView } from '../ui/SplitView.js';
 
 const MONTH_ROWS = { month: 6, weeks3: 3, weeks2: 2 };
 // Rows the month view will hold on screen before it starts squashing row
@@ -641,6 +642,44 @@ export function App() {
       onDropToCalendar=${onDropToCalendar}
       onDropToPerson=${onDropToPerson}
       onDropToTrip=${onDropToTrip}
+    />`;
+  } else if (s.view === 'split') {
+    // Split: the weeks over a continuous list (ui/SplitView.js). A tap on a
+    // day in the weeks brings the list to it; the list is where you read.
+    const toDay = (k) => set({ anchor: k, scrollSeq: state.scrollSeq + 1 });
+    view = html`<${SplitView}
+      key="split"
+      scrollSeq=${s.scrollSeq}
+      gridProps=${{
+        occurrences: occurrencesWithAvail,
+        hiddenDays, onShowHidden: showAllRel,
+        calendars: calMeta,
+        columns: 7, visibleRows: 2, minRows: 1,
+        scrollKey: s.anchor, scrollSeq: s.scrollSeq,
+        dimSet, nowMs,
+        onRequestWindow,
+        onOpenEvent,
+        onExpandDay: toDay,
+        onOpenDay: toDay,
+        onCreateRange,
+        onMoveEvent: onMoveEventW,
+        onResizeEvent: onResizeEventW,
+        onMoveSpan, onMoveTrip,
+        onDropToCalendar, onDropToPerson, onDropToTrip,
+      }}
+      listProps=${{
+        occurrences,
+        hiddenDays, onShowHidden: showAllRel,
+        calendars: calMeta,
+        dimSet, nowMs,
+        scrollKey: s.anchor, scrollSeq: s.scrollSeq,
+        onVisibleMonthChange,
+        onOpenEvent,
+        onSetAttendance: (occ, v) => setRelationship(occ, occ.relationship === v ? 'available' : v),
+        onFeedback: sendFeedback,
+        onCreateDay: (k) => onCreateRange(dayRangeDraft(k, k)),
+        emptyLabel: 'No events',
+      }}
     />`;
   } else if (s.view === 'week') {
     // Week is a horizontally infinite day track: no remount on navigation,

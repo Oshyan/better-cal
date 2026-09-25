@@ -30,7 +30,7 @@ import {
 
 const VIEW_OPTIONS = [
   ['month', 'Month'], ['weeks3', '3 weeks'], ['weeks2', '2 weeks'],
-  ['week', 'Week'], ['day', 'Day'], ['agenda', 'Agenda'],
+  ['week', 'Week'], ['day', 'Day'], ['agenda', 'Agenda'], ['split', 'Split'],
 ];
 
 const MAP_STYLES = [

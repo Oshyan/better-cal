@@ -4,6 +4,11 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.4.2 (2026-09-25)
+
+- The phone's month uses each day's full height. A fixed limit of three events per day showed "+2" with room for two more still empty below; now a day shows as many as fit, and "+N" appears only when it truly overflows. Split's weeks get the same room.
+- Week numbers no longer collide with the month name pinned at the top of the left column: they slide under it and fade out as they reach it.
+
 ## 0.4.1 (2026-09-25)
 
 - The server refuses a request for more than two years of events with a clear error, instead of quietly returning only the first two years. The app already asks for long spans in pieces (0.4.0), and the refresh after an edit now does too, so this only shows if something is wrong, as the "couldn't load" note.

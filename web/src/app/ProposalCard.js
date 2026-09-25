@@ -11,6 +11,7 @@ import { toast } from './store.js';
 import { api, refreshWindow } from './api.js';
 import { Icon } from '../ui/icons.js';
 import { sanitizeHtml } from '../lib/richtext.js';
+import { isPendingLocation } from '../lib/maps.js';
 import { parseISO, dateOfDayKey, fmtDateFull, fmtTime } from '../lib/dates.js';
 
 function planLine(ev) {
@@ -21,7 +22,7 @@ function planLine(ev) {
   return html`<li class="bc-proposal-item">
     <span class="bc-proposal-when">${fmtDateFull(s)}${allDay ? '' : ' ' + fmtTime(s)}</span>
     <span class="bc-proposal-what">${ev.title}</span>
-    ${ev.location && html`<span class="bc-proposal-where">${ev.location}</span>`}
+    ${ev.location && html`<span class="bc-proposal-where" title=${isPendingLocation(ev.location) ? ev.location : undefined}>${isPendingLocation(ev.location) ? 'Location after RSVP' : ev.location}</span>`}
   </li>`;
 }
 

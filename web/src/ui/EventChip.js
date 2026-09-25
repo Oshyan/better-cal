@@ -11,6 +11,7 @@ import { html } from '../../vendor/index.js';
 import { contrastText, withAlpha, ink, DEFAULT_COLOR } from '../lib/color.js';
 import { parseISO, fmtTime, timeState, eventDuration } from '../lib/dates.js';
 import { Icon, PluginGlyph } from './icons.js';
+import { isPendingLocation } from '../lib/maps.js';
 
 // Bail out of custom click handling when modifier keys are pressed so
 // browser-native behaviors are never hijacked.
@@ -221,7 +222,8 @@ export function EventBlock({ occ, cal, rect, dimmed, nowMs, onOpen, onPointerDow
   const s = parseISO(occ.start);
   const e = parseISO(occ.end);
   const showMeta = rect.height > 34 && !occ.isGroup;
-  const showLoc = rect.height > 52 && occ.location;
+  // A block's second line is for a real place; "after RSVP" isn't one.
+  const showLoc = rect.height > 52 && occ.location && !isPendingLocation(occ.location);
   const { onClick, onDblClick } = openHandlers(occ, onOpen);
   const edges = occ.isGroup || trip ? null : onEdgePointerDown;
   return html`<div

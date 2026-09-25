@@ -16,7 +16,7 @@ import {
   dayKeysOfRow, isWeekendEpochDay, dominantMonthOfRow, dominantMonthOfRows,
 } from '../src/ui/monthmath.js';
 import { contrastText, withAlpha, parseHex, inkColor, luminance } from '../src/lib/color.js';
-import { mapMosaic, stadiaStyle, mapTilerStyle } from '../src/lib/maps.js';
+import { mapMosaic, stadiaStyle, mapTilerStyle, isPendingLocation } from '../src/lib/maps.js';
 import { baseTitle, groupOccurrences, itemMatchesFilter, isGroupId } from '../src/ui/grouping.js';
 import { sortByMatch } from '../src/lib/rank.js';
 import { parseJumpText, jumpGranularity } from '../src/lib/jumpparse.js';
@@ -1459,6 +1459,17 @@ console.log('--- chronological ordering across timezone offsets ---');
   eq('all-day inputs: the day clocks change is still one day', allDayInputs('2026-11-01', '2026-11-01'), { start: '2026-11-01T00:00', end: '2026-11-02T00:00' });
   const trip = allDayInputs('2026-02-27', '2026-03-02');
   eq('all-day: round trip over the end of February', allDayFields(trip.start, trip.end), { start: '2026-02-27', end: '2026-03-02' });
+}
+
+// --- A location that only says it will come later is not a place ---
+{
+  for (const t of ["Location available once RSVP'd", 'Location will be shared after you register', 'Address revealed upon approval',
+    'RSVP to see location', 'Register to view the address', 'Location: TBA', 'Venue TBD']) {
+    eq('pending location: ' + t, isPendingLocation(t), true);
+  }
+  for (const t of ['15 Calton Hill, Edinburgh', 'Location Bar & Grill, Oakland', 'The RSVP Lounge', 'https://zoom.us/j/1', '', null]) {
+    eq('a real place is not pending: ' + String(t), isPendingLocation(t), false);
+  }
 }
 
 // --- Event windows: a failed load is shown and retried, not left blank (#48) ---

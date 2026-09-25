@@ -65,3 +65,17 @@ export function gmapsUrl(location, lat, lng) {
   }
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(location || '')}`;
 }
+
+// A location that says the location will come later ("Location available
+// once RSVP'd", "Register to see address"): feeds put it in the location
+// field, but it is not a place. Shown as a short "after RSVP" mark instead
+// of the sentence, never offered as a map, never geocoded.
+const PENDING_LOCATION = [
+  /^(the\s+)?(location|address|venue)\s+(is\s+|will\s+be\s+)?(available|shown|revealed|shared|visible|sent|provided)\s+(once|after|when|upon|to)\b/i,
+  /^(rsvp|register|sign\s*up|request\s+to\s+join)\s+(to|for)\s+(see|view|reveal|get|unlock)\s+(the\s+)?(location|address|venue)/i,
+  /^(location|address|venue)\s*(:\s*)?(tba|tbd|hidden|secret|private)\.?$/i,
+];
+export function isPendingLocation(text) {
+  const t = (text || '').trim();
+  return !!t && PENDING_LOCATION.some((re) => re.test(t));
+}

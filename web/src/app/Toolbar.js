@@ -29,10 +29,10 @@ const DESKTOP_VIEWS = [
 const MOBILE_VIEWS = [
   ['month:month', 'Full month'],
   ['month:3day', '3 day'],
-  ['split', 'Split'],
   ['week', 'Week'],
   ['day', 'Day'],
   ['agenda', 'Agenda'],
+  ['split', 'Split'],
 ];
 
 const STEP_UNITS = {

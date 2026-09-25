@@ -4,6 +4,13 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.4.16 (2026-09-25)
+
+- **A dropped ssh connection can no longer take the site down mid-deploy.** The deploy scripts opened a new ssh connection for each step. While the server's sshd was busy turning away brute-force logins, it dropped one of them right after the code was copied, the ownership fix never ran, and the web server refused every file until the deploy was re-run. Now one connection, opened with retries before anything changes, carries every step, and the server side of rsync writes as the app user, so copied files have the right owner the moment they land (with any rsync on the deploying machine, including macOS's built-in one).
+- **A failed deploy says so.** If a step fails after the code was copied, the script prints which step, whether the site's health check still answers, and that the deploy needs re-running. A failure before that says nothing on the server changed. A failing health check in the final smoke test now fails the deploy; before, it was printed and ignored.
+- **Deploys no longer re-own the whole app directory,** only stray files a root shell left behind, and never the `.env`, which briefly passed to the app user on every deploy.
+- Self-hosters: the deploy login still needs passwordless sudo (or is root); rsync is now received through `sudo -n -u APP_USER`.
+
 ## 0.4.15 (2026-09-25)
 
 - **Holidays are written with the date, not as context.** A holiday calendar's days read "Mon, Oct 12 · Columbus Day" in agenda headings (and Split's list) and the day list, after the day number in week heads and desktop month cells, and after the date in the desktop day view's title. They no longer sit among the weather and other context tokens, where their names were cut short or cut the date. In the phone's day view the holiday gets its own line at the top of the day, in full. In the phone's full month, where a cell has room for a letter or two, it's a small flag after the day number; tap it for the name. Holiday calendars are recognized by name, as before; tapping a holiday opens it.

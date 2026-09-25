@@ -30,6 +30,9 @@ if [ "${BRANCH}" != "main" ] && [ "${FORCE_BRANCH:-0}" != "1" ]; then
   exit 1
 fi
 
+# One shared ssh connection, loud failures (see the file for why).
+source "${ROOT_DIR}/scripts/deploy-lib.sh"
+
 # Pre-flight gate. Every live break so far (blank app from a stray import, a
 # dead "+ New" button, a frozen agenda) was a broken reference that a test run
 # would have caught — but deploy never ran the tests. It does now. Set
@@ -54,23 +57,18 @@ if [ "${SKIP_TESTS:-0}" != "1" ]; then
   node "${ROOT_DIR}/scripts/vendor.mjs" --verify | tail -1
 fi
 
-echo "== rsync code =="
-# No --delete by explicit policy (user has been burned by it). Stale-file removal,
-# when ever needed, is a deliberate manual action on the server.
-rsync -az \
-  --exclude '.git' \
-  --exclude '.credentials' \
-  --exclude '.env' \
-  --exclude '.DS_Store' \
-  --exclude 'server/vendor' \
-  --exclude 'node_modules' \
-  --rsync-path="rsync" \
-  "${ROOT_DIR}/" "${REMOTE}:${APP_DIR}/"
+stage "connect"
+ssh_open
 
-echo "== composer + migrate + link =="
-ssh "${REMOTE}" "APP_DIR='${APP_DIR}' DOCROOT='${DOCROOT}' APP_USER='${APP_USER}' bash -s" <<'EOF'
+stage "rsync code"
+deploy_rsync "${APP_DIR}"
+
+stage "composer + migrate + link"
+rssh "APP_DIR='${APP_DIR}' DOCROOT='${DOCROOT}' APP_USER='${APP_USER}' bash -s" <<'EOF'
 set -euo pipefail
-chown -R "${APP_USER}:${APP_USER}" "${APP_DIR}"
+# rsync already wrote everything as APP_USER; this only repairs strays (a file
+# a root shell left behind), and never touches .env.
+find "${APP_DIR}" ! -user "${APP_USER}" ! -path "${APP_DIR}/.env" -exec chown -h "${APP_USER}:${APP_USER}" {} +
 # The app reads its .env but must not be able to rewrite it: root owns it,
 # the app's group reads it (scan 2026-09-23, F1).
 if [ "$(id -u)" -eq 0 ] && [ -f "${APP_DIR}/.env" ]; then chown "root:${APP_USER}" "${APP_DIR}/.env"; chmod 640 "${APP_DIR}/.env"; fi
@@ -109,11 +107,14 @@ EOF
 # Until the block is applied, the endpoint also answers directly at
 # /dav.php/ (dav.php adjusts its base URI automatically).
 
-echo "== smoke =="
+stage "smoke"
 sleep 1
 # /health proves PHP and the database answer. The server-side smoke proves the
 # events window, the single-event record and the calendars listing actually
 # serialise against the real data: a serializer refactor once 500ed the window
 # while this script printed "Deploy OK" under a green /health.
-curl -fsS --max-time 10 "${HEALTH_URL}" && echo
-ssh "${REMOTE}" "sudo -u ${APP_USER} php ${APP_DIR}/server/bin/smoke.php" && echo "Deploy OK"
+# (curl on its own line: inside `curl && echo`, set -e ignored a failing /health.)
+curl -fsS --max-time 10 "${HEALTH_URL}"
+echo
+rssh "sudo -u ${APP_USER} php ${APP_DIR}/server/bin/smoke.php"
+echo "Deploy OK"

@@ -559,7 +559,17 @@ button:focus-visible, [tabindex]:focus-visible {
   position: sticky; top: 0;
   font-size: 14px; font-weight: 800; color: var(--fg); letter-spacing: 0.01em;
   padding: 5px 3px 2px 7px; line-height: 1.15;
+  /* Solid, in the column's own colour (tinted in alternate months, as the
+     column is), so a week number scrolling up under the pinned month name
+     slides beneath it; the short fade below softens the edge it goes under. */
+  background: var(--bg-inset);
 }
+.bc-gutter-label::after {
+  content: ""; position: absolute; left: 0; right: 0; top: 100%; height: 10px;
+  background: linear-gradient(var(--bg-inset), transparent); pointer-events: none;
+}
+.bc-gutter-month.alt-month .bc-gutter-label { background: color-mix(in srgb, var(--fg) 7%, var(--bg-inset)); }
+.bc-gutter-month.alt-month .bc-gutter-label::after { background: linear-gradient(color-mix(in srgb, var(--fg) 7%, var(--bg-inset)), transparent); }
 .bc-gutter-year { display: block; font-size: 10px; font-weight: 600; color: var(--fg-muted); }
 .bc-week { position: absolute; left: 0; right: 0; display: flex; }
 .bc-week-gutter {

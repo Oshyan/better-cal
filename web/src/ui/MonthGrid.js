@@ -40,7 +40,6 @@ import { normalizeDayRange, dayRangeDraft } from '../lib/quickcreate.js';
 const WEEK_SPAN = 522; // weeks either side of today (~10 years)
 const CHIP_ROW = 22;   // px per chip/bar lane
 const CHIP_ROW_MOBILE = 15; // compact single-line pills at <=600px
-const MOBILE_LANES = 3;     // pill lanes per day on mobile 7-col, then dots + "+N"
 const CELL_HEAD = 24;  // px reserved for the day number row
 // Events a day cell should hold before "+N more" takes over. THE tuning knob
 // for how the grid gives way as the window shrinks: it is the row height the
@@ -619,10 +618,10 @@ export function MonthGrid({
   const ribbon = columns !== 7;
   const weeks = [];
   const tKey = todayKey();
-  let capacity = Math.max(1, Math.floor((rowH - CELL_HEAD - 4) / chipRow));
-  // The mobile lane cap exists for 7 cramped columns; ribbon cells are wide
-  // enough to keep every lane the row height affords.
-  if (mobile && !ribbon) capacity = Math.min(capacity, MOBILE_LANES);
+  // Every lane the row height affords, phones included: a fixed three-lane
+  // cap on the phone's month showed "+2" with two lanes of room still empty
+  // below. Dots and "+N" take the last lane only when a day truly overflows.
+  const capacity = Math.max(1, Math.floor((rowH - CELL_HEAD - 4) / chipRow));
   const sel = null; // selection tint retired with the two-step confirm chip
   for (let wi = range.first; wi <= range.last; wi++) {
     weeks.push(html`<${WeekRow}

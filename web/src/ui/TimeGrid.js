@@ -422,10 +422,32 @@ export function TimeGrid({
     });
   }, [vstack, days, occurrences]);
 
-  const barLanes = useMemo(
-    () => assignLanes(allDayBars.map((b) => ({ id: b.occ.instanceId, startCol: b.seg.startCol, endCol: b.seg.endCol }))),
-    [allDayBars],
-  );
+  // All-day lanes keep one top-to-bottom order while you scroll: lanes are
+  // assigned over everything loaded by real dates (earlier start first, then
+  // the longer, trips before other bars that start the same day), not over
+  // the rendered stretch, where a bar's start was clipped to its first column
+  // and the order changed with the scroll. Lanes empty across the rendered
+  // stretch then close up, keeping that order.
+  const globalLanes = useMemo(() => {
+    if (!infinite) return null;
+    const items = [];
+    for (const occ of occurrences) {
+      if (occ.attendance === 'hidden' || isContext(occ)) continue;
+      const { startKey, endKey } = occurrenceDaySpan(occ);
+      if (!occ.allDay && startKey === endKey) continue;
+      items.push({ id: occ.instanceId, startCol: epochDayOfKey(startKey), endCol: epochDayOfKey(endKey), trip: !!occ.isContainer });
+    }
+    items.sort((a, b) => (b.trip - a.trip) || String(a.id).localeCompare(String(b.id)));
+    return assignLanes(items); // stable sort inside: start, then longer, then this order
+  }, [infinite, occurrences]);
+  const barLanes = useMemo(() => {
+    if (!globalLanes) {
+      return assignLanes(allDayBars.map((b) => ({ id: b.occ.instanceId, startCol: b.seg.startCol, endCol: b.seg.endCol })));
+    }
+    const used = [...new Set(allDayBars.map((b) => globalLanes.get(b.occ.instanceId)))].sort((a, b) => a - b);
+    const compact = new Map(used.map((l, i) => [l, i]));
+    return new Map(allDayBars.map((b) => [b.occ.instanceId, compact.get(globalLanes.get(b.occ.instanceId))]));
+  }, [globalLanes, allDayBars]);
   let barLaneCount = 0;
   for (const l of barLanes.values()) barLaneCount = Math.max(barLaneCount, l + 1);
   const phoneWeek = infinite && phone;
@@ -888,7 +910,7 @@ export function TimeGrid({
     key=${occ.instanceId}
     class="bc-bar-slot"
     style=${infinite
-      ? `left:${left}px;width:${(seg.endCol - seg.startCol + 1) * colW}px;top:${lane * lanePitch}px;--bl:${left}px`
+      ? `left:${left}px;width:${(seg.endCol - seg.startCol + 1) * colW}px;top:${lane * lanePitch}px;--bl:${left}px;--bw:${(seg.endCol - seg.startCol + 1) * colW}px`
       : `left:${(seg.startCol / days.length) * 100}%;width:${((seg.endCol - seg.startCol + 1) / days.length) * 100}%;top:${lane * lanePitch}px`}
   >
     <${EventBar} occ=${occ} cal=${calendars[occ.calendarId]} seg=${seg}

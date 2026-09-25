@@ -4,6 +4,12 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.4.10 (2026-09-25)
+
+- **Week view: all-day bars keep their order as you scroll.** Lanes are now worked out from real dates across everything loaded (earlier start on top, then the longer one, trips first on a shared start), so a bar no longer hops between lines as you scroll left and right. A line that's empty across the days in view still closes up, keeping the same order.
+- **Fixed: the ends of finished multi-day bars trailed along the left edge** of the week's all-day area after scrolling past them (from 0.4.8's title-stays-in-view change, which could stretch a bar past its own end).
+- **The "which occurrences?" choice for a repeating event fits a phone:** it spans the screen and wraps, with the question on its own line, so Cancel is no longer off the right edge.
+
 ## 0.4.9 (2026-09-25)
 
 - **Creating and moving events by touch in week and day views.** Tap an empty time to start a one-hour event there; press and hold, then drag, to draw a longer one (dragging across days makes it all-day), or to pick up an event and move it to a new time or day. A short buzz says it's picked up. A finger that moves first is scrolling and creates nothing, and a tap that stops a scroll in motion isn't taken as a create. Until now touch creation was switched off in these views and a held event dropped as soon as your finger moved.

@@ -45,8 +45,10 @@ const FEEDBACK_BUTTONS = [
   ['up', 'More like this'],
   ['down', 'Less like this'],
 ];
-// Width of one swipe action (compact rows).
+// Width of one swipe action (compact rows), and the extra gap that sets the
+// feedback thumbs apart from the triage actions.
 const SWIPE_ACT_W = 52;
+const SWIPE_GROUP_GAP = 6;
 
 function TriageCluster({ occ, onSetAttendance, onFeedback }) {
   const hasOn = TRIAGE_BUTTONS.some(([value]) => occ.relationship === value);
@@ -244,14 +246,14 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
   // Drag a row left to uncover its actions; let go past half of them and
   // they stay open, otherwise the row slides back. Only a mostly-sideways
   // drag counts: a vertical one is the list scrolling.
-  const swipeHandlers = (key, count) => ({
+  const swipeHandlers = (key, width) => ({
     onTouchStart: (e) => {
       const t = e.touches[0];
       const row = e.currentTarget;
       swipe.current = {
         key, x: t.clientX, y: t.clientY, dx: 0, on: false,
         inner: row.querySelector('.bc-agenda-rowin'), acts: row.querySelector('.bc-agenda-acts'),
-        w: count * SWIPE_ACT_W, open: swipedRef.current === key,
+        w: width, open: swipedRef.current === key,
       };
     },
     onTouchMove: (e) => {
@@ -476,13 +478,15 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
             const rowClass = `bc-agenda-row${ts === 'past' ? ' is-past' : ts === 'now' ? ' is-now' : ''}${trip ? ' is-trip' : ''}`;
             if (compact) {
               const key = row.kind + ':' + occ.instanceId;
-              const acts = triage ? TRIAGE_BUTTONS.length + (onFeedback ? FEEDBACK_BUTTONS.length : 0) : 0;
+              const acts = triage
+                ? (TRIAGE_BUTTONS.length + (onFeedback ? FEEDBACK_BUTTONS.length : 0)) * SWIPE_ACT_W + (onFeedback ? SWIPE_GROUP_GAP : 0)
+                : 0;
               return html`<div
                 key=${key}
                 class=${rowClass + ' is-compact' + (swiped === key ? ' is-swiped' : '')}
                 data-span=${span ? occ.instanceId : undefined}
                 data-swipe=${triage ? key : undefined}
-                style=${`height:${rowH}px;--act-w:${acts * SWIPE_ACT_W}px`}
+                style=${`height:${rowH}px;--act-w:${acts}px`}
                 ...${triage ? swipeHandlers(key, acts) : {}}
               >
                 ${triage && html`<span class="bc-agenda-acts" aria-label="Triage and feedback">

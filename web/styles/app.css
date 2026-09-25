@@ -3130,7 +3130,10 @@ button.bc-review-title { color: var(--fg); padding: 0; }
   .bc-agenda-act span { font-size: 9.5px; font-weight: 700; line-height: 10px; }
   .bc-agenda-act.is-maybe { --hue: #d4a017; }
   .bc-agenda-act.is-planned { --hue: #3f9d6e; }
-  .bc-agenda-act.is-hidden { --hue: #8a91a1; }
+  /* Hide takes the event off your calendar, the one removal here: rose, as
+     swipe-to-delete usually is. The thumbs are feedback, a separate group. */
+  .bc-agenda-act.is-hidden { --hue: #c4626b; }
+  .bc-agenda-act.is-up { margin-left: 6px; }
   .bc-agenda-act.is-up { --hue: #5b7fd4; }
   .bc-agenda-act.is-down { --hue: #6b7280; }
   .bc-agenda-act.is-on { box-shadow: inset 0 -3px 0 color-mix(in srgb, var(--hue) 80%, var(--fg)); }

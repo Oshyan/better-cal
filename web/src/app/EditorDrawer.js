@@ -26,6 +26,7 @@ import {
   TIMED_CHOICES, ALLDAY_CHOICES, REMINDER_UNITS, fmtOffsetMinutes, fmtReminder,
   entryToMinutes, normalizeMinutesList, effectiveReminders, toMinutes,
 } from '../lib/reminders.js';
+import { CalendarSelect } from '../ui/CalendarSelect.js';
 
 const BYDAY = [['MO', 'Mon'], ['TU', 'Tue'], ['WE', 'Wed'], ['TH', 'Thu'], ['FR', 'Fri'], ['SA', 'Sat'], ['SU', 'Sun']];
 
@@ -564,9 +565,11 @@ export function EditorDrawer() {
 
       <label class="bc-field">
         <span>Calendar</span>
-        <select value=${form.calendarId} onChange=${(e) => upd({ calendarId: e.target.value })}>
-          ${state.calendars.filter((c) => c.editable).map((c) => html`<option key=${c.id} value=${c.id}>${c.name}</option>`)}
-        </select>
+        <${CalendarSelect}
+          calendars=${state.calendars.filter((c) => c.editable)}
+          value=${form.calendarId}
+          onChange=${(v) => upd({ calendarId: v })}
+        />
       </label>
 
       <div class="bc-field-row">

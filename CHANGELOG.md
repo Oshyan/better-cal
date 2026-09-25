@@ -4,6 +4,12 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.4.9 (2026-09-25)
+
+- **Creating and moving events by touch in week and day views.** Tap an empty time to start a one-hour event there; press and hold, then drag, to draw a longer one (dragging across days makes it all-day), or to pick up an event and move it to a new time or day. A short buzz says it's picked up. A finger that moves first is scrolling and creates nothing, and a tap that stops a scroll in motion isn't taken as a create. Until now touch creation was switched off in these views and a held event dropped as soon as your finger moved.
+- **Fixed: "+N" in week view did nothing.** The all-day "+N" on phones, and the weather and context "+N" in desktop week heads, now open that day's full list.
+- **Phone week: the weather goes back above the date,** as in the other views, instead of under it.
+
 ## 0.4.8 (2026-09-25)
 
 - **Phone week: pinch sideways to set how wide days are.** Spread two fingers for wider days, pinch in to fit up to about seven across. The day under your fingers stays put, and the phone remembers the width. It starts where it always has, about 2.3 days across (one setting in the code).

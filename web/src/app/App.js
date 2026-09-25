@@ -702,6 +702,7 @@ export function App() {
       onResizeEvent=${onResizeEventW}
       onOpenEvent=${onOpenEvent}
       onOpenDay=${onOpenDay}
+      onExpandDay=${onExpandDay}
       onDropToCalendar=${onDropToCalendar}
       onDropToPerson=${onDropToPerson}
     />`;

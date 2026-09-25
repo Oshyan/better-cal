@@ -1,7 +1,11 @@
 // Shared pointer-drag logic for mouse and touch.
 // Mouse: drag starts after a 4px movement threshold.
 // Touch: long-press (350ms) lifts the item; moving first cancels so the
-// gesture stays a scroll.
+// gesture stays a scroll. Once lifted, the finger's movement is kept from
+// the browser (which would otherwise start scrolling and cancel the drag),
+// a short buzz says it's lifted, and a second finger going down cancels.
+// A release that never lifted calls onTap when given (a click or tap),
+// otherwise onCancel; scrolling away or Escape always calls onCancel.
 // Provides a ghost element that follows the pointer via CSS transforms and
 // edge auto-scroll of a scroll container while dragging.
 
@@ -31,7 +35,7 @@ window.addEventListener('click', (e) => {
 //   ghostOffset: {x, y}           ghost offset from pointer (default 8,8)
 //   scrollEl: Element | null      auto-scrolled near its top/bottom edges
 //   hScrollEl: Element | null     auto-scrolled near its left/right edges
-//   onLift(pt), onMove(pt), onDrop(pt), onCancel()
+//   onLift(pt), onMove(pt), onDrop(pt), onCancel(), onTap?()
 //   pt = {x, y} in client coordinates
 // }
 // Returns a cancel function.
@@ -59,6 +63,7 @@ export function startPointerDrag(e, opts) {
       }
     }
     document.body.classList.add('bc-dragging');
+    if (isTouch && navigator.vibrate) { try { navigator.vibrate(10); } catch { /* not allowed */ } }
     if (opts.onLift) opts.onLift(lastPt);
     loop();
   }
@@ -112,7 +117,19 @@ export function startPointerDrag(e, opts) {
       suppressClick = true;
       setTimeout(() => { suppressClick = false; }, 350);
       if (opts.onDrop) opts.onDrop(lastPt);
-    } else if (opts.onCancel) opts.onCancel();
+    } else if (opts.onTap) opts.onTap();
+    else if (opts.onCancel) opts.onCancel();
+  }
+
+  // Touch, once lifted: the browser must not turn the finger's movement into
+  // a scroll (it would fire pointercancel and drop the drag).
+  function onTouchMove(ev) {
+    if (lifted && ev.cancelable) ev.preventDefault();
+  }
+
+  // A second finger is a pinch or a two-finger scroll, never this drag.
+  function onOtherDown(ev) {
+    if (ev.pointerType === 'touch' && ev.pointerId !== e.pointerId && !lifted) cancel();
   }
 
   function onKey(ev) {
@@ -141,13 +158,19 @@ export function startPointerDrag(e, opts) {
     window.removeEventListener('pointercancel', cancel);
     window.removeEventListener('keydown', onKey, true);
     window.removeEventListener('contextmenu', onContextMenu, true);
+    window.removeEventListener('touchmove', onTouchMove, { passive: false });
+    window.removeEventListener('pointerdown', onOtherDown, true);
   }
 
   window.addEventListener('pointermove', onMove, { passive: false });
   window.addEventListener('pointerup', onUp);
   window.addEventListener('pointercancel', cancel);
   window.addEventListener('keydown', onKey, true);
-  if (isTouch) window.addEventListener('contextmenu', onContextMenu, true);
+  if (isTouch) {
+    window.addEventListener('contextmenu', onContextMenu, true);
+    window.addEventListener('touchmove', onTouchMove, { passive: false });
+    window.addEventListener('pointerdown', onOtherDown, true);
+  }
 
   if (isTouch) pressTimer = setTimeout(lift, LONG_PRESS_MS);
 

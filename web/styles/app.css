@@ -3418,8 +3418,8 @@ button.bc-review-title { color: var(--fg); padding: 0; }
 }
 
 /* --- phone week and day (0.4.8) ---------------------------------------------
-   A narrow hour column ("8a"), day heads of one date line with the weather
-   under it, all-day as a few thin lanes then "+N" per day, and blocks that
+   A narrow hour column ("8a"), day heads with the weather small above the
+   date as in the other views, all-day as a few thin lanes then "+N" per day, and blocks that
    carry their title only, wrapped. The day view lists all-day items as
    full-width rows under the date, with where each is in its span. */
 .bc-tg-phone .bc-tg-gutter { width: 34px; }
@@ -3427,7 +3427,7 @@ button.bc-review-title { color: var(--fg); padding: 0; }
 .bc-tg-phone .bc-tg-edge.l { left: 34px; }
 .bc-tg-phone.bc-tg-infinite .bc-tg-head { min-height: 30px; }
 .bc-tg-phone.bc-tg-infinite .bc-tg-head.has-ctx { min-height: 38px; }
-.bc-tg-phone .bc-tg-head-day { flex-direction: column-reverse; justify-content: center; padding: 2px 1px; }
+.bc-tg-phone .bc-tg-head-day { padding: 2px 1px; }
 .bc-tg-phone .bc-tg-head-main { gap: 3px; }
 .bc-tg-phone .bc-tg-dow { font-size: 10.5px; }
 .bc-tg-phone.bc-tg-infinite .bc-tg-dom { font-size: 13px; min-width: 20px; height: 20px; line-height: 20px; }
@@ -3459,3 +3459,6 @@ button.bc-review-title { color: var(--fg); padding: 0; }
 .bc-tg-phone .bc-tg-vday-allday .bc-bar { max-width: none; height: 19px; font-size: 11px; }
 .bc-tg-phone .bc-vday-more { align-self: flex-start; }
 .bc-bar-note { margin-left: auto; padding-left: 8px; flex: none; font-size: 0.92em; font-weight: 600; opacity: 0.85; }
+/* A long-press on the grid is a drag, never a text selection or the OS
+   callout (the haptic that led nowhere). */
+.bc-tg-col, .bc-block, .bc-tg-allday { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }

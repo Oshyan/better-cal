@@ -4,6 +4,14 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.4.6 (2026-09-25)
+
+- **Split: scrolling over the weeks scrubs through the days.** The weeks no longer slide on their own: moving your finger (or the wheel) over them walks the day being read through the week, one row's height of travel per week, with the list following. The weeks hold still, the day moves along its row, and at the end of the week they glide one row. A flick carries on and slows to a stop. Both halves now move the same way, and the current week never slides half out of view.
+- **Split: with three or more weeks showing, the current week sits in the middle row**, a week of context above it (one above centre when the count is even); with two, at the top.
+- **Phone lists: rows with actions carry a grip** (⋮) at their end, so a suggested event you can triage looks different from one you can only open; tapping the grip opens the actions too.
+- **Folded "nothing on" days** have a halo around their text so it reads over the hatch, and a clearer icon: arrows pressing in on a dashed fold.
+- **Sidebar on phones:** it no longer scrolls a couple of pixels sideways (the enlarged tap areas of its right-edge buttons reached past it), so no stray scroll bars flash as it slides in. It has a scroll bar that stays visible and soft shadows at the top and bottom edges wherever there's more to scroll.
+
 ## 0.4.5 (2026-09-25)
 
 - In the phone's swipe actions, Hide is soft rose, the one action that takes an event off your calendar, and no longer the same grey as Less like this. The two thumbs sit a little apart from Maybe, Planned and Hide, since they're feedback on suggestions rather than a choice about the event.

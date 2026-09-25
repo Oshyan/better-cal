@@ -341,9 +341,15 @@ button:focus-visible, [tabindex]:focus-visible {
   border-right: 1px solid var(--border);
   background: var(--bg-raised);
   display: flex; flex-direction: column;
-  min-height: 0;
+  min-height: 0; position: relative;
 }
-.bc-sidebar-scroll { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 8px 10px; }
+.bc-sidebar-scroll {
+  flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 8px 10px;
+  /* Never sideways: the enlarged tap areas of the small buttons at the right
+     edge (touch) reached a couple of pixels past it and made it scroll. */
+  overflow-x: hidden;
+  scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent;
+}
 /* Desktop collapse: the toolbar hamburger hides the sidebar entirely
    (mobile ignores this class; the drawer has its own open state). */
 @media (min-width: 801px) {
@@ -3095,6 +3101,15 @@ button.bc-review-title { color: var(--fg); padding: 0; }
   .bc-agenda-row.is-compact .bc-agenda-time { width: 46px; font-size: 11.5px; }
   .bc-agenda-row.is-compact .bc-chip { flex: 1 1 auto; min-width: 0; max-width: none; }
   .bc-agenda-row.is-compact .bc-agenda-loc { flex: 0 1 auto; max-width: 38%; font-size: 11.5px; }
+  /* Rows with actions carry a grip at their end: a sign they do something
+     more than open, and a tap target for anyone who doesn't swipe. */
+  .bc-agenda-grip {
+    flex: none; width: 18px; height: 24px; margin-right: -4px; padding: 0; border: 0; background: none;
+    display: grid; grid-template-columns: 3px; align-content: center; justify-content: center; gap: 2.5px;
+    position: relative;
+  }
+  .bc-agenda-grip span { width: 3px; height: 3px; border-radius: 50%; background: var(--fg-muted); opacity: .8; }
+  .bc-agenda-grip::after { content: ""; position: absolute; left: -6px; right: -4px; top: -3px; bottom: -3px; }
   /* The actions a swipe uncovers, right-aligned under the row. They widen
      with the drag, so they never show through the row's own text. The tray
      stands a few pixels proud of its 30px row (a raised strip, not squeezed
@@ -3356,6 +3371,39 @@ button.bc-review-title { color: var(--fg); padding: 0; }
 .bc-agenda-gap svg { flex: none; opacity: .8; }
 .bc-agenda-gap-when { font-weight: 600; }
 .bc-agenda-gap-what { opacity: .85; }
+/* A halo in the page's own colour keeps the words readable over the hatch. */
+.bc-agenda-gap-when, .bc-agenda-gap-what {
+  text-shadow: 0 0 2px var(--bg), 0 0 2px var(--bg), 0 0 3px var(--bg), 0 0 5px var(--bg);
+}
 /* Days whose events haven't been fetched: no claim about them, so none of
    the "free time" look. A dashed outline, and they fill in as they load. */
 .bc-agenda-gap.is-unloaded { background: none; border: 1px dashed var(--border-strong); font-style: normal; }
+
+/* --- Scroll that looks scrollable at rest (0.4.6) --------------------------- */
+/* Edge shadows: a soft shadow at the top or bottom edge wherever there is
+   more to scroll that way, and none at either end. The two covers scroll
+   with the content (local) and hide the fixed shadows (scroll) at the ends. */
+.bc-scroll-edges {
+  --edge-bg: var(--bg-raised);
+  --edge-shadow: color-mix(in srgb, var(--fg) 22%, transparent);
+  background:
+    linear-gradient(var(--edge-bg) 30%, transparent) center top,
+    linear-gradient(transparent, var(--edge-bg) 70%) center bottom,
+    radial-gradient(farthest-side at 50% 0, var(--edge-shadow), transparent) center top,
+    radial-gradient(farthest-side at 50% 100%, var(--edge-shadow), transparent) center bottom;
+  background-repeat: no-repeat;
+  background-size: 100% 28px, 100% 28px, 100% 10px, 100% 10px;
+  background-attachment: local, local, scroll, scroll;
+  background-color: var(--edge-bg);
+}
+/* The drawn rail (touch screens, ui/scrollrail.js) replaces the platform's
+   overlay bar, which would only flash on top of it. */
+.has-rail { scrollbar-width: none; }
+.has-rail::-webkit-scrollbar { display: none; }
+.bc-scroll-rail { position: absolute; right: 2px; width: 8px; z-index: 6; pointer-events: none; display: flex; justify-content: center; }
+.bc-scroll-rail[hidden] { display: none; }
+.bc-scroll-thumb { width: 4px; border-radius: 4px; background: color-mix(in srgb, var(--fg) 26%, transparent); }
+
+/* Split: the weeks don't scroll on their own; wheel and touch over them
+   scrub through the days instead (ui/SplitView.js). */
+.bc-split-grid .bc-month-scroll { overflow-y: hidden; touch-action: none; scrollbar-gutter: auto; }

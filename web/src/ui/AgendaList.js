@@ -511,6 +511,12 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
                   />
                   ${trip && html`<${TripBadge} />`}
                   ${occ.location && html`<${AgendaLocation} location=${occ.location} lat=${occ.locationLat} lng=${occ.locationLng} compact=${true} />`}
+                  ${triage && html`<button
+                    type="button" class="bc-agenda-grip" aria-label="Triage and feedback"
+                    title="Swipe left, or tap, for Maybe, Planned, Hide and feedback"
+                    onPointerDown=${(e) => e.stopPropagation()}
+                    onClick=${(e) => { e.stopPropagation(); setSwiped(swiped === key ? null : key); }}
+                  ><span></span><span></span><span></span></button>`}
                 </div>
               </div>`;
             }

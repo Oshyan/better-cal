@@ -20,6 +20,8 @@ import { MiniMonth } from './MiniMonth.js';
 import { PALETTE } from '../lib/color.js';
 import { MANAGE_ITEMS } from './commanddefs.js';
 import { Icon, CalDot } from '../ui/icons.js';
+import { attachScrollRail } from '../ui/scrollrail.js';
+import { COARSE_QUERY } from '../lib/breakpoints.js';
 import { onOutsidePress, insideAny } from '../ui/outside.js';
 
 // Solo ("show only this calendar"): transient, session-scoped. Entering solo
@@ -289,6 +291,14 @@ function AddMenu() {
 // command palette offer exactly the same pages.
 
 export function Sidebar({ open, collapsed, onClose }) {
+  // On touch screens the scroll bar is drawn, so it shows at rest and says
+  // there is more below (ui/scrollrail.js); elsewhere the native one shows.
+  const scrollRef = useRef(null);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || !window.matchMedia(COARSE_QUERY).matches) return undefined;
+    return attachScrollRail(el);
+  }, []);
   // The Manage group is admin and configuration, visited rarely, so it
   // starts folded and stays how you left it. Review is the exception
   // (an inbox, not admin): its count rides the folded header so nothing
@@ -435,7 +445,7 @@ export function Sidebar({ open, collapsed, onClose }) {
       <span class="bc-manage-head">Calendars</span>
       <button type="button" class="bc-icon-btn" aria-label="Close sidebar" onClick=${onClose}><${Icon} name="close" size=${15} /></button>
     </div>`}
-    <div class="bc-sidebar-scroll">
+    <div class="bc-sidebar-scroll bc-scroll-edges" ref=${scrollRef}>
       <${MiniMonth} />
       ${byFolder.map(({ folder, cals }) => html`<section key=${'f' + folder.id} class="bc-folder">
         <${FolderHead}

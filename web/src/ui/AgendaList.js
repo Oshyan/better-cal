@@ -427,6 +427,7 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
         return html`<section
           key=${g.dayKey === null ? 'match' : g.dayKey}
           class="bc-agenda-group${g.dayKey === tKey ? ' is-today' : ''}${g.gap ? ' is-gap' : ''}"
+          data-day=${g.dayKey && !g.gap ? g.dayKey : undefined}
           style=${`top:${g.top}px;height:${g.height}px`}
         >
           ${g.monthStart && html`<div class="bc-agenda-monthsep"><span>${monthLabelOf(g.dayKey)}</span></div>`}

@@ -17,6 +17,7 @@ import { onOutsidePress, insideAny } from '../ui/outside.js';
 import {
   parseISO, dayKeyOf, dateOfDayKey, addDaysKey, toISOWithOffset, pad, localTz,
 } from '../lib/dates.js';
+import { CalendarSelect } from '../ui/CalendarSelect.js';
 
 const hm = (d) => pad(d.getHours()) + ':' + pad(d.getMinutes());
 
@@ -428,11 +429,11 @@ export function QuickAdd() {
         </label>
         <label class=${'bc-qa-field bc-qa-calfield' + flashCls('calendarId')}>
           <span class="bc-qa-label">Calendar</span>
-          <select
-            class="bc-qa-cal" value=${form.calendarId}
-            onChange=${(e) => touch('calendarId', Number(e.target.value))}
-            aria-label="Calendar"
-          >${localCals.map((c) => html`<option key=${c.id} value=${c.id}>${c.name}</option>`)}</select>
+          <${CalendarSelect}
+            className="bc-qa-cal" calendars=${localCals} value=${form.calendarId}
+            onChange=${(v) => touch('calendarId', Number(v))}
+            ariaLabel="Calendar"
+          />
         </label>
       </div>`}
       <div class="bc-quickadd-actions">

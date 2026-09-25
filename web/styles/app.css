@@ -3553,3 +3553,32 @@ button.bc-review-title { color: var(--fg); padding: 0; }
   .bc-cell-head:has(.bc-daylabel.is-flag) { gap: 0; padding-right: 0; }
   .bc-cell-head:has(.bc-daylabel.is-flag) .bc-daynum { padding-right: 1px; }
 }
+
+/* --- The calendar picker with colour dots (ui/CalendarSelect.js) ------------
+   A customizable select where the browser has one (Chrome 135+): the dots
+   show in the list and on the button. Elsewhere the plain select, unchanged. */
+.bc-caldot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; flex: none; }
+@supports (appearance: base-select) {
+  select.bc-calselect, select.bc-calselect::picker(select) { appearance: base-select; }
+  select.bc-calselect { display: flex; align-items: center; min-height: 32px; padding: 4px 8px; }
+  .bc-calselect-btn { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1 1 auto; background: none; border: none; padding: 0; color: inherit; font: inherit; text-align: left; }
+  .bc-calselect-btn selectedcontent { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .bc-calselect-btn .bc-calselect-name, .bc-calselect option .bc-calselect-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  /* A quiet chevron like the other selects' arrows, not the heavy default. */
+  select.bc-calselect::picker-icon {
+    content: ""; width: 7px; height: 7px; margin-right: 3px;
+    border-right: 1.5px solid var(--fg-muted); border-bottom: 1.5px solid var(--fg-muted);
+    transform: translateY(-2px) rotate(45deg);
+  }
+  select.bc-calselect::picker(select) {
+    border: 1px solid var(--border-strong); border-radius: 8px; background: var(--bg-raised); color: var(--fg);
+    box-shadow: var(--shadow); padding: 4px; max-height: min(60vh, 420px);
+  }
+  select.bc-calselect option { display: flex; align-items: center; gap: 9px; padding: 7px 10px; border-radius: 6px; }
+  select.bc-calselect option:hover, select.bc-calselect option:focus-visible { background: var(--bg-inset); }
+  select.bc-calselect option:checked { background: color-mix(in srgb, var(--accent) 12%, var(--bg-raised)); font-weight: 600; }
+  select.bc-calselect option::checkmark { display: none; }
+}
+@media (pointer: coarse) {
+  @supports (appearance: base-select) { select.bc-calselect option { padding: 11px 12px; } }
+}

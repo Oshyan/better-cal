@@ -4,6 +4,11 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.4.17 (2026-09-25)
+
+- **The calendar picker shows each calendar's colour** when creating or editing an event, and in quick add: a dot beside every name in the list and on the closed picker, so the right calendar is found by colour at a glance. This uses the browser's customizable select (Chrome and Edge 135 and later, desktop and Android); other browsers keep the plain list of names.
+- Escape while a dropdown list is open now just closes the list, not the editor it's in.
+
 ## 0.4.16 (2026-09-25)
 
 - **A dropped ssh connection can no longer take the site down mid-deploy.** The deploy scripts opened a new ssh connection for each step. While the server's sshd was busy turning away brute-force logins, it dropped one of them right after the code was copied, the ownership fix never ran, and the web server refused every file until the deploy was re-run. Now one connection, opened with retries before anything changes, carries every step, and the server side of rsync writes as the app user, so copied files have the right owner the moment they land (with any rsync on the deploying machine, including macOS's built-in one).

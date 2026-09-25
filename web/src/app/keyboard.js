@@ -105,9 +105,16 @@ export const handlers = {
   escape: () => closeOverlays(), // dispatched before the typing guard below
 };
 
+function selectOpen() {
+  try { return !!document.querySelector('select:open'); } catch { return false; } // :open unknown: no open lists to protect
+}
+
 export function installKeyboard() {
   const onKey = (e) => {
     if (e.key === 'Escape') {
+      // An open dropdown list (a customizable select) takes its own Escape;
+      // the editor it sits in stays open.
+      if (selectOpen()) return;
       if (handlers.escape()) e.preventDefault();
       return;
     }

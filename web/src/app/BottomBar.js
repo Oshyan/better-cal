@@ -28,6 +28,7 @@ import { consumeOutsidePress, swallowClickOfThisPress } from '../ui/outside.js';
 const PHONE_VIEWS = [
   ['month:month', 'Full month', 'viewMonth'],
   ['month:3day', '3 day', 'calendar'],
+  ['split', 'Split', 'viewSplit'],
   ['week', 'Week', 'viewWeek'],
   ['day', 'Day', 'viewDay'],
   ['agenda', 'Agenda', 'viewAgenda'],

@@ -1102,6 +1102,25 @@ eq('buildAgendaGroups group day keys',
   railGroups.map((g) => g.dayKey),
   ['2026-06-01', '2026-06-02', '2026-06-03', '2026-06-04']);
 
+// The gaps option (Split view): every day appears, each run of empty days is
+// one group, runs split at month boundaries, and a run a multi-day event
+// passes through is marked covered ("nothing else on").
+{
+  const before = { instanceId: 'g1', calendarId: 'c1', title: 'Dinner', allDay: false, start: localISO(2026, 6, 28, 19, 0), end: localISO(2026, 6, 28, 21, 0) };
+  const trip = { instanceId: 'g2', calendarId: 'c1', title: 'Trip', allDay: true, start: '2026-06-30T00:00:00+00:00', end: '2026-07-07T00:00:00+00:00' };
+  const after = { instanceId: 'g3', calendarId: 'c1', title: 'Lunch', allDay: false, start: localISO(2026, 7, 9, 12, 0), end: localISO(2026, 7, 9, 13, 0) };
+  const gs = buildAgendaGroups([before, trip, after], { gaps: true });
+  eq('gaps: every day, empty runs folded, split at the month',
+    gs.map((g) => g.gap ? `${g.dayKey}..${g.gapTo}${g.covered ? ' covered' : ''}` : g.dayKey),
+    ['2026-06-28', '2026-06-29..2026-06-29', '2026-06-30', '2026-07-01..2026-07-05 covered', '2026-07-06', '2026-07-07..2026-07-08', '2026-07-09']);
+  eq('gaps: the month separator opens July on the folded run',
+    gs.filter((g) => g.monthStart).map((g) => g.dayKey), ['2026-07-01']);
+  eq('gaps: groups stack with no holes',
+    gs.every((g, i) => i === 0 || g.top === gs[i - 1].top + gs[i - 1].height), true);
+  eq('gaps: without the option, empty days are still skipped',
+    buildAgendaGroups([before, trip, after]).map((g) => g.dayKey), ['2026-06-28', '2026-06-30', '2026-07-06', '2026-07-09']);
+}
+
 // Synthesized start day: header plus the single start row.
 eq('start day rows', railGroups[0].rows.map((r) => r.kind + ':' + r.occ.instanceId), ['start:rt1']);
 

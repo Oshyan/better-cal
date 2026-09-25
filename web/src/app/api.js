@@ -200,7 +200,19 @@ const iso = (ms) => toISOWithOffset(new Date(ms));
 // Fetch one contiguous gap. Kept separate from loadWindow so the caller can
 // issue several concurrently without any of them cancelling the others — they
 // cover disjoint spans, so none is stale with respect to the rest.
+// The server answers at most about two years per query (Events.php
+// MAX_WINDOW_SECONDS) and cuts a longer one short without saying so. The
+// whole asked-for span was then marked loaded, so the rest was never fetched
+// and those years looked empty. Longer spans go out as pieces under the cap.
+const MAX_SPAN_MS = 700 * 864e5;
+
 async function fetchRange(s, e) {
+  if (e - s > MAX_SPAN_MS) {
+    const parts = [];
+    for (let a = s; a < e; a += MAX_SPAN_MS) parts.push(fetchRange(a, Math.min(e, a + MAX_SPAN_MS)));
+    await Promise.all(parts);
+    return;
+  }
   const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
   const entry = { start: s, end: e, ctrl };
   inFlight.push(entry);

@@ -65,6 +65,7 @@ export const VIEW_ICONS = {
   week: 'viewWeek',
   day: 'viewDay',
   agenda: 'viewAgenda',
+  split: 'viewSplit',
 };
 
 // Human labels for the view ids in actions.js VIEWS.
@@ -75,4 +76,5 @@ export const VIEW_LABELS = {
   week: 'Week',
   day: 'Day',
   agenda: 'Agenda',
+  split: 'Split',
 };

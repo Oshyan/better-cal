@@ -151,6 +151,10 @@ export function MonthGrid({
   onCreateRange, onMoveEvent, onResizeEvent,
   onMoveSpan, onMoveTrip, onDropToCalendar, onDropToPerson, onDropToTrip,
   hiddenDays, onShowHidden,
+  // Split view: rows keep their comfortable height whatever the grid's own
+  // height (the handle adds or removes rows, it never squashes them), and
+  // apiRef receives {el, rowH, minWeek} so the list can drive the scroll.
+  fixedRows = false, apiRef,
 }) {
   const scrollRef = useRef(null);
   const [viewH, setViewH] = useState(600);
@@ -191,9 +195,10 @@ export function MonthGrid({
   // original behaviour exactly.
   const comfortH = CELL_HEAD + COMFORT_CHIPS * chipRow + 4;
   const fitAll = Math.floor(viewH / visibleRows);
-  const rowH = fitAll >= comfortH
+  const rowH = fixedRows ? comfortH : fitAll >= comfortH
     ? fitAll
     : (viewH >= minRows * comfortH ? comfortH : Math.max(64, Math.floor(viewH / minRows)));
+  if (apiRef) apiRef.current = { get el() { return scrollRef.current; }, rowH, minWeek };
 
   // Read by settleAnchor, which runs inside effects that must compare against
   // the height THIS render's rowH came from, not a stale closure's.

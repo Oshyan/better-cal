@@ -24,10 +24,12 @@ const DESKTOP_VIEWS = [
   ['week', 'Week'],
   ['day', 'Day'],
   ['agenda', 'Agenda'],
+  ['split', 'Split'],
 ];
 const MOBILE_VIEWS = [
   ['month:month', 'Full month'],
   ['month:3day', '3 day'],
+  ['split', 'Split'],
   ['week', 'Week'],
   ['day', 'Day'],
   ['agenda', 'Agenda'],
@@ -35,7 +37,7 @@ const MOBILE_VIEWS = [
 
 const STEP_UNITS = {
   month: 'month', weeks3: '3 weeks', weeks2: '2 weeks',
-  week: 'week', day: 'day', agenda: 'month',
+  week: 'week', day: 'day', agenda: 'month', split: 'month',
 };
 
 // Current-view dropdown, right-aligned so the label's width never moves it.

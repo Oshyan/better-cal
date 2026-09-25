@@ -2139,10 +2139,10 @@ body.bc-rescheduling { user-select: none; }
 
 /* --- 3-day ribbon (Overview: 3 day) ---------------------------------------- */
 
-/* Ribbon cells are wide even on phones: restore the chip time and dot that
-   the 7-column mobile month hides. */
+/* Ribbon cells are wider than the 7-column mobile month's: restore the dot it
+   hides. Not the time: at about 100 points a day, "1:30 AM" took half of
+   every pill and left a word of the title (0.4.0). */
 @media (max-width: 640px) {
-  .bc-month.is-ribbon .bc-cell .bc-chip .bc-chip-time { display: inline; }
   .bc-month.is-ribbon .bc-cell .bc-chip .bc-chip-dot { display: inline-block; }
   .bc-month.is-ribbon .bc-cell .bc-chip .bc-chip-title { font-size: 11px; }
 }
@@ -3263,3 +3263,31 @@ button.bc-review-title { color: var(--fg); padding: 0; }
 .bc-bsheet-confirm { margin: 6px 12px; padding: 10px 12px; border-radius: 10px; background: var(--bg-inset); display: grid; gap: 8px; font-size: 14px; }
 .bc-bsheet-confirmrow { display: flex; gap: 8px; flex-wrap: wrap; }
 @media (prefers-reduced-motion: reduce) { .bc-bsheet { animation: none; transition: none; } }
+
+/* --- Split view (0.4.0): weeks over a continuous list (ui/SplitView.js) ---- */
+.bc-split { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.bc-split-grid { flex: none; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.bc-split-list { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+/* The handle: a grip between the two, dragged to trade weeks for list. */
+.bc-split-handle {
+  flex: none; height: 18px; display: grid; place-items: center; position: relative;
+  cursor: ns-resize; touch-action: none; user-select: none; -webkit-user-select: none;
+  background: var(--bg-raised); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
+}
+.bc-split-handle span { width: 40px; height: 4px; border-radius: 2px; background: var(--border-strong); }
+.bc-split-handle:hover span, .bc-split-handle:focus-visible span { background: var(--accent); }
+.bc-split-handle:focus-visible { outline: none; }
+/* A thumb-sized grab zone around the thin bar. */
+@media (pointer: coarse) { .bc-split-handle::after { content: ""; position: absolute; left: 0; right: 0; top: -13px; bottom: -13px; } }
+/* The day at the top of the list, outlined in the weeks. */
+.bc-cell.is-split-cur { box-shadow: inset 0 0 0 2px var(--accent); }
+/* A run of empty days folded to one line: set apart as skipped time, not a
+   day with nothing written in it. Italic, a faint hatch, the skip glyph. */
+.bc-agenda-gap {
+  display: flex; align-items: center; gap: 7px; height: 26px; margin: 2px 0; padding: 0 10px;
+  font-size: 12.5px; font-style: italic; color: var(--fg-muted); border-radius: 6px;
+  background: repeating-linear-gradient(-45deg, transparent 0 5px, color-mix(in srgb, var(--fg) 7%, transparent) 5px 6px);
+}
+.bc-agenda-gap svg { flex: none; opacity: .8; }
+.bc-agenda-gap-when { font-weight: 600; }
+.bc-agenda-gap-what { opacity: .85; }

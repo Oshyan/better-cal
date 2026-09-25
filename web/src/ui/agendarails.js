@@ -9,11 +9,13 @@
 // the rail alone carries continuity across them.
 
 import { occurrenceDaySpan } from './monthmath.js';
-import { epochDayOfKey, startMs } from '../lib/dates.js';
+import { epochDayOfKey, keyOfEpochDay, startMs } from '../lib/dates.js';
 
 export const AGENDA_ROW_H = 36;
 export const AGENDA_HEAD_H = 40;
 export const AGENDA_MONTH_SEP_H = 30;
+// A folded run of empty days (the gaps option).
+export const AGENDA_GAP_H = 30;
 export const MAX_RAIL_LANES = 3;
 
 // Inclusive day count of an occurrence's span (1 for single-day).
@@ -45,6 +47,60 @@ function chronological(a, b) {
 // its final day (the rail bar runs down past that day's events to the end
 // pill). Heights and tops are pixel values (rowH per row, headH per header)
 // so the windowed renderer and railRanges share one coordinate space.
+function dayRows(b) {
+  b.ends.sort(chronological);
+  const merged = [
+    ...b.starts.map((occ) => ({ kind: 'start', occ })),
+    ...b.normals.map((occ) => ({ kind: 'normal', occ })),
+  ].sort((x, y) => chronological(x.occ, y.occ));
+  return [...merged, ...b.ends.map((occ) => ({ kind: 'end', occ }))];
+}
+
+// The gaps option: every day from the first to the last appears, and each
+// run of days with no rows folds into ONE gap group
+//   {dayKey (first day), gapTo (last day), gap: true, covered, rows: []}
+// so the list is continuous in time and free stretches are visible instead
+// of silently skipped. A run never crosses a month boundary, which keeps the
+// month separator on the group that opens the month. covered: a multi-day
+// event runs through the gap (its rail passes by), so the days are not empty,
+// just free of anything else.
+function withGaps(keys, byDay, occurrences, { rowH, headH, sepH, gapH }) {
+  const spans = [];
+  for (const occ of occurrences) {
+    if (occ.attendance === 'hidden') continue;
+    const { startKey, endKey } = occurrenceDaySpan(occ);
+    if (startKey !== endKey) spans.push([epochDayOfKey(startKey), epochDayOfKey(endKey)]);
+  }
+  const entries = [];
+  let prev = null;
+  for (const k of keys) {
+    if (prev !== null) {
+      let d = epochDayOfKey(prev) + 1;
+      const last = epochDayOfKey(k) - 1;
+      while (d <= last) {
+        const first = keyOfEpochDay(d);
+        let e = d;
+        while (e < last && keyOfEpochDay(e + 1).slice(0, 7) === first.slice(0, 7)) e++;
+        const covered = spans.some(([a, b]) => a < d && b > e);
+        entries.push({ dayKey: first, gapTo: keyOfEpochDay(e), gap: true, covered, rows: [] });
+        d = e + 1;
+      }
+    }
+    entries.push({ dayKey: k, rows: dayRows(byDay.get(k)) });
+    prev = k;
+  }
+  let offset = 0;
+  let prevEnd = null;
+  for (const g of entries) {
+    g.monthStart = prevEnd !== null && prevEnd.slice(0, 7) !== g.dayKey.slice(0, 7);
+    g.height = (g.gap ? gapH : headH + g.rows.length * rowH) + (g.monthStart ? sepH : 0);
+    g.top = offset;
+    offset += g.height;
+    prevEnd = g.gapTo || g.dayKey;
+  }
+  return entries;
+}
+
 export function buildAgendaGroups(occurrences, opts = {}) {
   const rowH = opts.rowH ?? AGENDA_ROW_H;
   const headH = opts.headH ?? AGENDA_HEAD_H;
@@ -66,15 +122,10 @@ export function buildAgendaGroups(occurrences, opts = {}) {
   }
   const keys = [...byDay.keys()].sort();
   const sepH = opts.sepH ?? AGENDA_MONTH_SEP_H;
+  if (opts.gaps) return withGaps(keys, byDay, occurrences, { rowH, headH, sepH, gapH: opts.gapH ?? AGENDA_GAP_H });
   let offset = 0;
   return keys.map((k, i) => {
-    const b = byDay.get(k);
-    b.ends.sort(chronological);
-    const merged = [
-      ...b.starts.map((occ) => ({ kind: 'start', occ })),
-      ...b.normals.map((occ) => ({ kind: 'normal', occ })),
-    ].sort((x, y) => chronological(x.occ, y.occ));
-    const rows = [...merged, ...b.ends.map((occ) => ({ kind: 'end', occ }))];
+    const rows = dayRows(byDay.get(k));
     // A month separator is a real band inside the group that opens the month,
     // not an overlay: its height has to be in the layout or it draws on top
     // of the previous day's last row.

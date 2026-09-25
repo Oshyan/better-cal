@@ -7,7 +7,7 @@
 import { setWeekStart, setTimeFormat } from '../lib/dates.js';
 import { state, set } from './store.js';
 
-const VALID_VIEWS = ['month', 'weeks3', 'weeks2', 'week', 'day', 'agenda'];
+const VALID_VIEWS = ['month', 'weeks3', 'weeks2', 'week', 'day', 'agenda', 'split'];
 
 const THEME_KEY = 'bc-theme';
 const DARK_MQ = typeof window !== 'undefined' && window.matchMedia

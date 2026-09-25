@@ -3582,3 +3582,58 @@ button.bc-review-title { color: var(--fg); padding: 0; }
 @media (pointer: coarse) {
   @supports (appearance: base-select) { select.bc-calselect option { padding: 11px 12px; } }
 }
+
+/* The calendar picker's list looks scrollable at rest, as the sidebar does
+   (0.4.6): edge shadows where there's more that way, and a bar that stays.
+   The list is drawn by the browser, so the sidebar's scripted rail can't
+   reach it: on touch screens the thumb is painted into the list's own
+   background and moved by the list's scroll (a scroll-driven animation). */
+@supports (appearance: base-select) {
+  select.bc-calselect::picker(select) {
+    --edge-bg: var(--bg-raised);
+    --edge-shadow: color-mix(in srgb, var(--fg) 22%, transparent);
+    --rail: color-mix(in srgb, var(--fg) 26%, transparent);
+    overflow-y: auto;
+    background-image:
+      linear-gradient(var(--edge-bg) 30%, transparent),
+      linear-gradient(transparent, var(--edge-bg) 70%),
+      radial-gradient(farthest-side at 50% 0, var(--edge-shadow), transparent),
+      radial-gradient(farthest-side at 50% 100%, var(--edge-shadow), transparent);
+    background-position: center top, center bottom, center top, center bottom;
+    background-repeat: no-repeat;
+    background-size: 100% 28px, 100% 28px, 100% 10px, 100% 10px;
+    background-attachment: local, local, scroll, scroll;
+    background-color: var(--edge-bg);
+    scrollbar-width: thin; scrollbar-color: var(--rail) transparent;
+  }
+}
+@media (pointer: coarse) {
+  @supports (appearance: base-select) and (animation-timeline: scroll()) {
+    select.bc-calselect::picker(select) {
+      scrollbar-width: none;
+      background-image:
+        linear-gradient(var(--edge-bg) 30%, transparent),
+        linear-gradient(transparent, var(--edge-bg) 70%),
+        radial-gradient(farthest-side at 50% 0, var(--edge-shadow), transparent),
+        radial-gradient(farthest-side at 50% 100%, var(--edge-shadow), transparent),
+        linear-gradient(var(--rail), var(--rail));
+      background-position: center top, center bottom, center top, center bottom, right 3px top 6px;
+      /* The thumb has no size until the list scrolls: a list that fits has
+         no scroll timeline, so the animation (and the thumb) stays off. */
+      background-size: 100% 28px, 100% 28px, 100% 10px, 100% 10px, 0 0;
+      background-attachment: local, local, scroll, scroll, scroll;
+      animation: bc-picker-rail linear both;
+      animation-timeline: scroll(self);
+    }
+  }
+}
+@keyframes bc-picker-rail {
+  from {
+    background-size: 100% 28px, 100% 28px, 100% 10px, 100% 10px, 4px 44px;
+    background-position: center top, center bottom, center top, center bottom, right 3px top 6px;
+  }
+  to {
+    background-size: 100% 28px, 100% 28px, 100% 10px, 100% 10px, 4px 44px;
+    background-position: center top, center bottom, center top, center bottom, right 3px bottom 6px;
+  }
+}

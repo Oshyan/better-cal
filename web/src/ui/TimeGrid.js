@@ -989,9 +989,7 @@ export function TimeGrid({
           ${days.map((k, i) => {
             const d = dateOfDayKey(k);
             const bars = (vAllDay && vAllDay[i]) || [];
-            return html`<section key=${k} class="bc-tg-vday" data-vday=${k}>
-              <header class="bc-tg-vday-head${k === tKey ? ' is-today' : ''}">
-                <button
+            const dateBtn = html`<button
                   type="button" class="bc-tg-vday-date"
                   title="Scroll this day to the top"
                   onClick=${() => { vDayRef.current = k; vScrollTo(k, 0); if (onVisibleDay) onVisibleDay(k); }}
@@ -999,8 +997,19 @@ export function TimeGrid({
                   <span class="bc-tg-dow">${fmtWeekdayShort(d)}</span>
                   <span class="bc-tg-dom">${d.getDate()}</span>
                   <span class="bc-tg-vday-month">${fmtMonthShort(d)}</span>
-                </button>
-                ${ctxByDay.get(k) && html`<${ContextStrip} occs=${ctxByDay.get(k).filter((o) => o.allDay)} calendars=${calendars} onOpen=${onOpenEvent} />`}
+                </button>`;
+            const ctxStrip = ctxByDay.get(k) && html`<${ContextStrip} occs=${ctxByDay.get(k).filter((o) => o.allDay)} calendars=${calendars} onOpen=${onOpenEvent} />`;
+            // Phones: the date and weather are a divider that scrolls away
+            // under the top bar, which then names the day and shows its
+            // weather; the sticky header keeps only the all-day items, and a
+            // day without any has none. Nothing changes height as days pass
+            // the top, so the hours never jump (0.4.11).
+            const divider = phone && html`<div class="bc-tg-vday-divider${k === tKey ? ' is-today' : ''}">${dateBtn}${ctxStrip}</div>`;
+            return html`<section key=${k} class="bc-tg-vday" data-vday=${k}>
+              ${divider}
+              ${(!phone || bars.length > 0) && html`<header class="bc-tg-vday-head${k === tKey ? ' is-today' : ''}">
+                ${!phone && dateBtn}
+                ${!phone && ctxStrip}
                 <div
                   class="bc-tg-vday-allday"
                   onClick=${(ev) => {
@@ -1019,7 +1028,7 @@ export function TimeGrid({
                     onClick=${() => onExpandDay && onExpandDay(k)}
                   >+${bars.length - vMax} more</button>`}
                 </div>
-              </header>
+              </header>`}
               <div class="bc-tg-vday-body">
                 <div class="bc-tg-gutter bc-tg-hours">${buildHours()}</div>
                 ${dayCols[i]}

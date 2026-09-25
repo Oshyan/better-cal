@@ -3472,3 +3472,35 @@ button.bc-review-title { color: var(--fg); padding: 0; }
   .bc-dropchoice { right: 8px; }
   .bc-dropchoice-title { flex-basis: 100%; max-width: none; }
 }
+
+/* --- 0.4.11: the day's date as a divider on phones; title and today hints --- */
+/* Day view on phones: each day opens with a thin divider (date, weather)
+   that scrolls away under the top bar; the sticky header below it holds only
+   that day's all-day items. */
+.bc-tg-phone .bc-tg-vday + .bc-tg-vday { margin-top: 0; }
+.bc-tg-phone .bc-tg-vday::before { display: none; }
+.bc-tg-vday-divider {
+  display: flex; align-items: center; gap: 8px; min-height: 30px; padding: 1px 8px 1px 4px;
+  border-top: 2px solid var(--border-strong); background: var(--bg-raised);
+}
+.bc-tg-vday:first-child .bc-tg-vday-divider { border-top: none; }
+.bc-tg-vday-divider.is-today { background: color-mix(in srgb, var(--today) 10%, var(--bg-raised)); }
+.bc-tg-vday-divider.is-today .bc-tg-dom { background: var(--today); color: var(--accent-fg); border-radius: 50%; }
+.bc-tg-vday-divider .bc-ctxstrip { margin-left: 2px; }
+/* The date title opens the jump-to-date picker: a small caret says so. */
+.bc-toolbar-date { display: inline-flex; align-items: center; gap: 3px; min-width: 0; }
+.bc-toolbar-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.bc-toolbar-caret { display: inline-flex; flex: none; color: var(--fg-muted); opacity: 0.8; }
+.bc-toolbar-titlewrap { display: inline-flex; flex-direction: column; min-width: 0; }
+.bc-toolbar-ctx { display: none; }
+@media (max-width: 640px) {
+  .bc-toolbar-titlewrap { flex: 0 1 auto; overflow: hidden; }
+  .bc-toolbar-titlewrap:has(.bc-toolbar-ctx) .bc-toolbar-month { font-size: 15.5px; padding-top: 1px; padding-bottom: 0; }
+  .bc-toolbar-ctx { display: flex; margin: -2px 0 1px 1px; min-width: 0; overflow: hidden; }
+  .bc-toolbar-ctx .bc-ctx-token { padding: 1px 3px; font-size: 10.5px; }
+  /* Today: the date with its suffix ("25th") on a small calendar page, a
+     heavier top edge like a tear-off sheet. */
+  .bc-toolbar > .bc-tb-todaybadge { width: auto; min-width: 44px; padding: 0 2px; }
+  .bc-tb-todaybadge span { border-top-width: 3.5px; padding: 0 3px; line-height: 18px; }
+  .bc-tb-todaybadge small { font-size: 9px; font-weight: 700; margin-left: 1px; vertical-align: 3px; letter-spacing: 0.2px; }
+}

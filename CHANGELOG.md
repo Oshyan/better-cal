@@ -4,6 +4,12 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.4.11 (2026-09-25)
+
+- **Phone day view: one date, not two.** The top bar already names the day you're on, so each day's date and weather are now a thin divider line that scrolls up under the bar, and the bar then shows that day (as "Thursday, Sep 24") with its weather on a small line under it. The sticky header below keeps only the day's all-day items, and a day without any has none, so the hours start a whole row higher. Nothing changes height as days pass the top, so the hours don't jump.
+- **The today button reads as a date:** "25th" rather than a bare "25", on a small calendar-page shape (a heavier top edge).
+- **The date title shows it opens the date picker,** with a small caret after it, on phones and desktop.
+
 ## 0.4.10 (2026-09-25)
 
 - **Week view: all-day bars keep their order as you scroll.** Lanes are now worked out from real dates across everything loaded (earlier start on top, then the longer one, trips first on a shared start), so a bar no longer hops between lines as you scroll left and right. A line that's empty across the days in view still closes up, keeping the same order.

@@ -7,8 +7,10 @@
 // month slot splits into "Full month" and "3 day" (persisted as the
 // mobile-only overviewMode setting) and the multiweek options drop out.
 
-import { html, useState, useRef, useEffect } from '../../vendor/index.js';
-import { useStore, set, shallowEq } from './store.js';
+import { html, useState, useRef, useEffect, useMemo } from '../../vendor/index.js';
+import { useStore, set, shallowEq, state, calendarMeta } from './store.js';
+import { ContextStrip } from '../ui/ContextStrip.js';
+import { contextByDay } from '../lib/context.js';
 import { setView, goToday, stepAnchor, setOverviewMode, effectiveOverviewMode, toggleRel, showOnlyRel, showAllRel } from './actions.js';
 import { fmtMonthYear, fmtDayLong, dateOfDayKey } from '../lib/dates.js';
 import { ViewSwitcher } from './ViewSwitcher.js';
@@ -178,8 +180,14 @@ function PhoneChips() {
   </div>`;
 }
 
+// "25th": the day of the month as a date, not a count, so the button reads
+// as today's date.
+const ORDINAL = new Intl.PluralRules('en', { type: 'ordinal' });
+const ORDINAL_SUFFIX = { one: 'st', two: 'nd', few: 'rd', other: 'th' };
+function ordinalSuffix(n) { return ORDINAL_SUFFIX[ORDINAL.select(n)] || 'th'; }
+
 export function Toolbar({ onToggleSidebar }) {
-  const { view, anchor, visibleMonth, filterText, jumpOpen, narrow, todayDate } = useStore(
+  const { view, anchor, visibleMonth, filterText, jumpOpen, narrow, todayDate, occVersion, showCtx, calendars } = useStore(
     (s) => ({
       view: s.view, anchor: s.anchor, visibleMonth: s.visibleMonth,
       filterText: s.filterText, jumpOpen: s.jumpOpen,
@@ -189,14 +197,25 @@ export function Toolbar({ onToggleSidebar }) {
       todayDate: new Date(s.nowMinute * 60000).getDate(),
       // Subscribed so the dropdown checkmark tracks the persisted setting.
       overviewMode: s.settings.overviewMode,
+      // Day view on phones: the day's weather and such under the title.
+      occVersion: s.view === 'day' ? s.occVersion : 0,
+      showCtx: s.showRel.context !== false,
+      calendars: s.calendars,
     }),
     shallowEq,
   );
+  const calMeta = useMemo(() => calendarMeta(), [calendars]);
+  const dayCtx = useMemo(() => {
+    if (view !== 'day' || !showCtx) return [];
+    return (contextByDay([...state.occ.values()]).get(anchor) || []).filter((o) => o.allDay);
+  }, [view, anchor, occVersion, showCtx]);
 
   // Day view shows the full date ("Friday, August 8"); everything else the
   // visible month.
+  // Narrow screens shorten the month ("Thursday, Sep 24") so the date fits
+  // beside the arrows and today.
   const label = view === 'day'
-    ? fmtDayLong(dateOfDayKey(anchor))
+    ? (narrow ? dateOfDayKey(anchor).toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' }) : fmtDayLong(dateOfDayKey(anchor)))
     : (visibleMonth ? fmtMonthYear(new Date(visibleMonth.year, visibleMonth.month - 1, 1)) : '');
   const unit = STEP_UNITS[view] || 'month';
 
@@ -207,12 +226,18 @@ export function Toolbar({ onToggleSidebar }) {
     <div class="bc-toolbar-nav">
       <button type="button" class="bc-icon-btn bc-nav-btn" aria-label=${'Previous ' + unit} title=${'Previous ' + unit} onClick=${() => stepAnchor(-1)}><${Icon} name="chevronLeft" size=${15} /></button>
       <button type="button" class="bc-icon-btn bc-nav-btn" aria-label=${'Next ' + unit} title=${'Next ' + unit} onClick=${() => stepAnchor(1)}><${Icon} name="chevronRight" size=${15} /></button>
-      <button
-        type="button" class="bc-toolbar-month bc-toolbar-date"
-        aria-haspopup="dialog" aria-expanded=${jumpOpen}
-        title="Jump to date (g)" aria-live="polite"
-        onClick=${() => set({ jumpOpen: !jumpOpen })}
-      >${label}</button>
+      <span class="bc-toolbar-titlewrap">
+        <button
+          type="button" class="bc-toolbar-month bc-toolbar-date"
+          aria-haspopup="dialog" aria-expanded=${jumpOpen}
+          title="Jump to date (g)" aria-live="polite"
+          onClick=${() => set({ jumpOpen: !jumpOpen })}
+        ><span class="bc-toolbar-label">${label}</span><span class="bc-toolbar-caret" aria-hidden="true"><${Icon} name="chevronDown" size=${12} /></span></button>
+        ${dayCtx.length > 0 && html`<span class="bc-toolbar-ctx"><${ContextStrip}
+          occs=${dayCtx} calendars=${calMeta} max=${3} more=${false}
+          onOpen=${(instanceId, anchorRect) => set({ popover: { instanceId, anchorRect } })}
+        /></span>`}
+      </span>
       <${JumpPopover} />
     </div>
     <${ViewSwitcher} />
@@ -231,7 +256,7 @@ export function Toolbar({ onToggleSidebar }) {
     <button type="button" class="bc-icon-btn bc-tb-search" aria-label="Search" title="Search ( / )" onClick=${() => set({ searchOpen: true })}><${Icon} name="search" size=${16} /></button>
     <button type="button" class="bc-icon-btn bc-qa-btn" aria-label="Quick add" title="Quick add: type it in plain language (c)" onClick=${() => set({ quickAddOpen: true })}><${Icon} name="quickadd" size=${16} /></button>
     <${NewMenu} />
-    <button type="button" class="bc-tb-todaybadge" aria-label="Today" title="Today" onClick=${goToday}><span>${todayDate}</span></button>
+    <button type="button" class="bc-tb-todaybadge" aria-label=${'Go to today, the ' + todayDate + ordinalSuffix(todayDate)} title="Go to today" onClick=${goToday}><span>${todayDate}<small>${ordinalSuffix(todayDate)}</small></span></button>
   </header>
   <${PhoneChips} />`;
 }

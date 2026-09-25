@@ -69,6 +69,9 @@ HEALTH_URL="${DEV_HEALTH_URL}"
 BRANCH="$(git -C "${ROOT_DIR}" branch --show-current)"
 echo "== deploying branch '${BRANCH}' to dev (${DEV_DIR}) =="
 
+# One shared ssh connection, loud failures (see the file for why).
+source "${ROOT_DIR}/scripts/deploy-lib.sh"
+
 if [ "${SKIP_TESTS:-0}" != "1" ]; then
   echo "== pre-flight tests =="
   node --experimental-vm-modules "${ROOT_DIR}/web/tests/static.mjs" 2>/dev/null | tail -1
@@ -80,17 +83,12 @@ if [ "${SKIP_TESTS:-0}" != "1" ]; then
   php "${ROOT_DIR}/server/tests/run.php" | tail -1
 fi
 
-echo "== rsync code =="
-# Same no --delete policy as production.
-rsync -az \
-  --exclude '.git' \
-  --exclude '.credentials' \
-  --exclude '.env' \
-  --exclude '.DS_Store' \
-  --exclude 'server/vendor' \
-  --exclude 'node_modules' \
-  --rsync-path="rsync" \
-  "${ROOT_DIR}/" "${REMOTE}:${DEV_DIR}/"
+stage "connect"
+ssh_open
+
+stage "rsync code"
+# Same rsync, same no --delete policy as production (deploy_rsync).
+deploy_rsync "${DEV_DIR}"
 
 if [ "${CLONE_DB:-0}" = "1" ]; then
   # Names used in root SQL come from this operator-controlled file and must
@@ -102,11 +100,11 @@ if [ "${CLONE_DB:-0}" = "1" ]; then
       exit 1
     fi
   done
-  echo "== re-cloning ${PROD_DB} into ${DEV_DB} =="
+  stage "re-cloning ${PROD_DB} into ${DEV_DB}"
   # The MySQL root password never goes on a command line (F17): the remote
   # side reads it from the first line of stdin, and the clients get it
   # through MYSQL_PWD, which only root and the same user can read.
-  { printf '%s\n' "${MYSQL_ROOT_PASSWORD:-}"; cat <<'EOF'; } | ssh "${REMOTE}" "APP_USER='${APP_USER}' DB_USER='${DB_USER}' PROD_DB='${PROD_DB}' DEV_DB='${DEV_DB}' bash -c 'IFS= read -r MYSQL_ROOT_PASSWORD; export MYSQL_ROOT_PASSWORD; exec bash -s'"
+  { printf '%s\n' "${MYSQL_ROOT_PASSWORD:-}"; cat <<'EOF'; } | rssh "APP_USER='${APP_USER}' DB_USER='${DB_USER}' PROD_DB='${PROD_DB}' DEV_DB='${DEV_DB}' bash -c 'IFS= read -r MYSQL_ROOT_PASSWORD; export MYSQL_ROOT_PASSWORD; exec bash -s'"
 set -euo pipefail
 if [ -n "${MYSQL_ROOT_PASSWORD}" ]; then
   export MYSQL_PWD="${MYSQL_ROOT_PASSWORD}"
@@ -126,15 +124,18 @@ echo "cloned (sessions, tokens, push devices, feeds and Google links cleared, Go
 EOF
 fi
 
-echo "== composer + migrate (dev) =="
-ssh "${REMOTE}" "DEV_DIR='${DEV_DIR}' APP_USER='${APP_USER}' bash -s" <<'EOF'
+stage "composer + migrate (dev)"
+rssh "DEV_DIR='${DEV_DIR}' APP_USER='${APP_USER}' bash -s" <<'EOF'
 set -euo pipefail
-chown -R "${APP_USER}:${APP_USER}" "${DEV_DIR}"
+# Repairs strays only; rsync already wrote as APP_USER (see deploy.sh).
+find "${DEV_DIR}" ! -user "${APP_USER}" ! -path "${DEV_DIR}/.env" -exec chown -h "${APP_USER}:${APP_USER}" {} +
 if [ "$(id -u)" -eq 0 ] && [ -f "${DEV_DIR}/.env" ]; then chown "root:${APP_USER}" "${DEV_DIR}/.env"; chmod 640 "${DEV_DIR}/.env"; fi
 sudo -u "${APP_USER}" bash -c "cd ${DEV_DIR}/server && composer install --no-dev --quiet --no-interaction"
 sudo -u "${APP_USER}" php "${DEV_DIR}/server/bin/migrate.php"
 EOF
 
-echo "== smoke =="
+stage "smoke"
 sleep 1
-curl -fsS --max-time 10 "${HEALTH_URL}" && echo && echo "Dev deploy OK -> ${HEALTH_URL%/api/v1/health}"
+curl -fsS --max-time 10 "${HEALTH_URL}"
+echo
+echo "Dev deploy OK -> ${HEALTH_URL%/api/v1/health}"

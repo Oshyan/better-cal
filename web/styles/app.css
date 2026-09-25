@@ -3096,24 +3096,44 @@ button.bc-review-title { color: var(--fg); padding: 0; }
   .bc-agenda-row.is-compact .bc-chip { flex: 1 1 auto; min-width: 0; max-width: none; }
   .bc-agenda-row.is-compact .bc-agenda-loc { flex: 0 1 auto; max-width: 38%; font-size: 11.5px; }
   /* The actions a swipe uncovers, right-aligned under the row. They widen
-     with the drag, so they never show through the row's own text. */
+     with the drag, so they never show through the row's own text. The tray
+     stands a few pixels proud of its 30px row (a raised strip, not squeezed
+     into it): the row clips sideways only, and an open row sits above its
+     neighbours. Each button is 48px plus a 4px gap: 52px apiece, as
+     AgendaList's SWIPE_ACT_W counts them. */
+  .bc-agenda-row.is-compact { overflow: visible; clip-path: inset(-6px 0 -6px 0); }
+  .bc-agenda-row.is-swiped { z-index: 3; }
   .bc-agenda-acts {
-    position: absolute; top: 2px; bottom: 2px; right: 0; width: 0; z-index: 2;
-    display: flex; justify-content: flex-end; overflow: hidden; border-radius: 8px;
-    transition: width .18s ease;
+    position: absolute; top: -4px; bottom: -4px; right: 0; width: 0; z-index: 2;
+    display: flex; justify-content: flex-end; gap: 4px; overflow: hidden;
+    box-sizing: border-box; padding: 3px 2px; border-radius: 10px;
+    background: var(--bg-raised); box-shadow: 0 2px 10px rgba(0, 0, 0, .14);
+    /* Closed, it is hidden outright: at zero width its padding and shadow
+       still drew a sliver at the end of every row. It stays visible while
+       it closes, then hides. */
+    visibility: hidden;
+    transition: width .18s ease, visibility 0s linear .18s;
   }
-  .bc-agenda-row.is-swiped .bc-agenda-acts { width: var(--act-w); }
+  .bc-agenda-row.is-swiped .bc-agenda-acts { width: var(--act-w); visibility: visible; transition: width .18s ease, visibility 0s; }
+  /* A day's section would clip the tray of its last row. */
+  .bc-agenda-group { overflow: visible; }
+  /* Soft tints of each action's hue, with the label in a deeper shade of
+     the same hue: pastel in light, muted in dark (mixed from the theme). */
   .bc-agenda-act {
-    flex: none; width: 52px; height: 100%; border: 0; padding: 0; color: #fff;
-    display: grid; place-items: center; align-content: center; gap: 1px;
+    --hue: #8a91a1;
+    flex: none; width: 48px; height: 100%; border: 0; padding: 0; border-radius: 7px;
+    display: grid; place-items: center; align-content: center; gap: 2px;
+    background: color-mix(in srgb, var(--hue) 26%, var(--bg-raised));
+    color: color-mix(in srgb, var(--hue) 72%, var(--fg));
   }
-  .bc-agenda-act span { font-size: 9.5px; font-weight: 700; }
-  .bc-agenda-act.is-maybe { background: #b8850f; }
-  .bc-agenda-act.is-planned { background: #3f9d6e; }
-  .bc-agenda-act.is-hidden { background: #6b7280; }
-  .bc-agenda-act.is-up { background: #5b7fd4; }
-  .bc-agenda-act.is-down { background: #4a5263; }
-  .bc-agenda-act.is-on { box-shadow: inset 0 -3px 0 rgba(255, 255, 255, .75); }
+  .bc-agenda-act svg { width: 15px; height: 15px; }
+  .bc-agenda-act span { font-size: 9.5px; font-weight: 700; line-height: 10px; }
+  .bc-agenda-act.is-maybe { --hue: #d4a017; }
+  .bc-agenda-act.is-planned { --hue: #3f9d6e; }
+  .bc-agenda-act.is-hidden { --hue: #8a91a1; }
+  .bc-agenda-act.is-up { --hue: #5b7fd4; }
+  .bc-agenda-act.is-down { --hue: #6b7280; }
+  .bc-agenda-act.is-on { box-shadow: inset 0 -3px 0 color-mix(in srgb, var(--hue) 80%, var(--fg)); }
 }
 @media (max-width: 640px) and (prefers-reduced-motion: reduce) {
   .bc-agenda-rowin, .bc-agenda-acts { transition: none; }

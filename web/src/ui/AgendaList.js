@@ -270,7 +270,7 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
       if (e.cancelable) e.preventDefault();
       s.dx = Math.max(-s.w, Math.min(0, (s.open ? -s.w : 0) + dx));
       s.inner.style.transform = `translateX(${s.dx}px)`;
-      if (s.acts) s.acts.style.width = `${-s.dx}px`;
+      if (s.acts) { s.acts.style.width = `${-s.dx}px`; s.acts.style.visibility = 'visible'; }
     },
     onTouchEnd: () => {
       const s = swipe.current;
@@ -278,7 +278,7 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
       if (!s || !s.on) return;
       s.inner.style.transition = '';
       s.inner.style.transform = '';
-      if (s.acts) { s.acts.style.transition = ''; s.acts.style.width = ''; }
+      if (s.acts) { s.acts.style.transition = ''; s.acts.style.width = ''; s.acts.style.visibility = ''; }
       setSwiped(s.dx < -s.w / 2 ? key : null);
     },
   });

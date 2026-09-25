@@ -4,6 +4,11 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.4.4 (2026-09-25)
+
+- The swipe actions on phones sit in a slightly taller tray that stands just proud of its row, so icons and labels have room instead of touching the edges. The buttons are soft tints of their colors (amber, green, grey, blue, slate) with labels in a deeper shade of the same hue: pastel in light mode, muted in dark. The row itself keeps its height.
+- Fixed: a thin sliver of the closed tray showed at the end of every row, and the last event of a day had the bottom of its tray cut off.
+
 ## 0.4.3 (2026-09-25)
 
 A compact list on phones, for Split and the Agenda view (the agenda redesign, brought forward from 0.5.0 for phones; desktop styling comes separately).

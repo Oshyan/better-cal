@@ -4,6 +4,13 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.4.7 (2026-09-25)
+
+- **"Location available once RSVP'd" and the like** now show as a small lock with "After RSVP" ("RSVP" in phone rows; the feed's own wording on hover). They're no longer offered as a map, sent off to be placed on one, or shown on timeline blocks as if they were an address.
+- **Split: steadier scrubbing, no flick.** The weeks move in the same frame as the list instead of one frame behind, and finger movement is applied once per frame. A flick no longer carries on after you let go: in whole-week glides it moved faster than you could follow. A trackpad or wheel keeps its own momentum.
+- **One view order everywhere:** Split is last on phones too, as on desktop.
+- **The sidebar's buttons no longer shift** when its scroll bar appears or goes away (folding or unfolding a group): the bar's space is always kept.
+
 ## 0.4.6 (2026-09-25)
 
 - **Split: scrolling over the weeks scrubs through the days.** The weeks no longer slide on their own: moving your finger (or the wheel) over them walks the day being read through the week, one row's height of travel per week, with the list following. The weeks hold still, the day moves along its row, and at the end of the week they glide one row. A flick carries on and slows to a stop. Both halves now move the same way, and the current week never slides half out of view.

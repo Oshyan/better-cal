@@ -140,8 +140,11 @@ export function SplitView({ gridProps, listProps, scrollSeq }) {
     scrubEd.current = Math.min(last, Math.max(first, scrubEd.current + (dy / G.rowH) * 7));
     lead.current = 'list';
     L.el.scrollTop = listTopOf(scrubEd.current);
+    // The weeks move in this same frame, not a frame later when the list
+    // reports its scroll: that lag was the jitter.
+    gridFromList();
     return true;
-  }, [listDay, listTopOf]);
+  }, [listDay, listTopOf, gridFromList]);
 
   // --- wiring --------------------------------------------------------------
 
@@ -166,10 +169,15 @@ export function SplitView({ gridProps, listProps, scrollSeq }) {
     le.addEventListener('scroll', onList, { passive: true });
     ge.addEventListener('scroll', onGrid, { passive: true });
 
-    // Scrubbing over the weeks. A wheel or trackpad already brings its own
-    // momentum; a finger gets a fling that slows to a stop.
-    let fling = 0;
-    const stopFling = () => { cancelAnimationFrame(fling); fling = 0; };
+    // Scrubbing over the weeks. Movement is gathered and applied once per
+    // frame. No fling for a finger: the weeks move by whole-week glides, and
+    // a fling ran those past faster than they could be followed. A wheel or
+    // trackpad brings its own momentum, which is gentler.
+    let pendingDy = 0;
+    let frame = 0;
+    const flush = () => { frame = 0; const d = pendingDy; pendingDy = 0; if (d) scrubBy(d); };
+    const queue = (d) => { pendingDy += d; if (!frame) frame = requestAnimationFrame(flush); };
+    const stopFling = () => { cancelAnimationFrame(frame); frame = 0; pendingDy = 0; };
     const dragging = () => document.body.classList.contains('bc-dragging');
     const onWheel = (e) => {
       if (dragging()) return;
@@ -177,7 +185,7 @@ export function SplitView({ gridProps, listProps, scrollSeq }) {
       stopFling();
       scrubEd.current = null;
       const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? ge.clientHeight : 1;
-      scrubBy(e.deltaY * unit);
+      queue(e.deltaY * unit);
     };
     // The rest of a touch is followed on the element it started on: the
     // weeks render only rows near the view, so a row under the finger can
@@ -190,7 +198,7 @@ export function SplitView({ gridProps, listProps, scrollSeq }) {
       if (touch) release();
       if (e.touches.length !== 1) return;
       const y = e.touches[0].clientY;
-      touch = { y, t: performance.now(), v: 0, el: e.target };
+      touch = { y, el: e.target };
       touch.el.addEventListener('touchmove', onTouchMove, { passive: false });
       touch.el.addEventListener('touchend', onTouchEnd, { passive: true });
       touch.el.addEventListener('touchcancel', onTouchEnd, { passive: true });
@@ -204,31 +212,15 @@ export function SplitView({ gridProps, listProps, scrollSeq }) {
     const onTouchMove = (e) => {
       if (!touch || dragging()) return;
       const y = e.touches[0].clientY;
-      const now = performance.now();
       const dy = touch.y - y;
-      const dt = Math.max(1, now - touch.t);
-      touch.v = 0.8 * (dy / dt) + 0.2 * touch.v;
       touch.y = y;
-      touch.t = now;
       if (e.cancelable) e.preventDefault();
-      scrubBy(dy);
+      queue(dy);
     };
     const onTouchEnd = () => {
       if (!touch) return;
       release();
-      if (dragging()) { touch = null; return; }
-      let v = touch.v; // px per ms
       touch = null;
-      if (Math.abs(v) < 0.05) return;
-      let last = performance.now();
-      const step = (now) => {
-        const dt = now - last;
-        last = now;
-        if (!scrubBy(v * dt)) { fling = 0; return; }
-        v *= Math.pow(0.995, dt);
-        fling = Math.abs(v) > 0.02 ? requestAnimationFrame(step) : 0;
-      };
-      fling = requestAnimationFrame(step);
     };
     ge.addEventListener('wheel', onWheel, { passive: false });
     ge.addEventListener('touchstart', onTouchStart, { passive: true });

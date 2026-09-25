@@ -21,7 +21,7 @@ import {
 import { fmtReminder } from '../lib/reminders.js';
 import { hasHtml, sanitizeHtml, splitUrlTail } from '../lib/richtext.js';
 import { EventPluginData } from './EventPluginData.js';
-import { gmapsUrl, mapMosaic, stadiaStyle, mapTilerStyle } from '../lib/maps.js';
+import { gmapsUrl, mapMosaic, stadiaStyle, mapTilerStyle, isPendingLocation } from '../lib/maps.js';
 import { Skeleton } from './PageShell.js';
 
 // --- recurrence in words ----------------------------------------------------
@@ -287,7 +287,7 @@ export function EventDetail() {
       setGeo({ status: 'ok', lat: occ.locationLat, lng: occ.locationLng });
       return undefined;
     }
-    if (!location || !location.trim()) { setGeo(null); return undefined; }
+    if (!location || !location.trim() || isPendingLocation(location)) { setGeo(null); return undefined; }
     let alive = true;
     setGeo({ status: 'loading' });
     // Same bias precedence as the place picker (home location, else event
@@ -411,7 +411,10 @@ export function EventDetail() {
           ><${Icon} name="bell" size=${12} /></span>`}
           ${occ.status === 'cancelled' && html`<span class="bc-badge">cancelled</span>`}
         </div>
-        ${occ.location && html`<div class="bc-detail-section bc-detail-loc">
+        ${occ.location && isPendingLocation(occ.location) && html`<div class="bc-detail-section bc-detail-loc">
+          <div class="bc-detail-locline is-pending" title=${occ.location}><${Icon} name="lock" size=${12} />Location after RSVP</div>
+        </div>`}
+        ${occ.location && !isPendingLocation(occ.location) && html`<div class="bc-detail-section bc-detail-loc">
           <div class="bc-detail-locline">
             <${PinIcon} size=${12} />${occ.location}
             <a

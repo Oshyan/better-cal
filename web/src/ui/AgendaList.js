@@ -24,7 +24,7 @@ import { contextByDay, withoutContext, compactTime } from '../lib/context.js';
 import { PHONE_QUERY } from '../lib/breakpoints.js';
 import { onOutsidePress } from './outside.js';
 import { ThumbIcon, TripBadge, PinIcon, Icon } from './icons.js';
-import { gmapsUrl } from '../lib/maps.js';
+import { gmapsUrl, isPendingLocation } from '../lib/maps.js';
 import {
   buildAgendaGroups, railRanges, washRects, dayOfSpanLabel,
   AGENDA_ROW_H as ROW_H, AGENDA_HEAD_H as HEAD_H,
@@ -81,6 +81,9 @@ function fmtDayShort(occ) {
 // compact: a link shows only its site ("zoom.us"): a meeting path is noise
 // in a narrow column, and the full link is on the event card.
 function AgendaLocation({ location, lat, lng, compact = false }) {
+  if (isPendingLocation(location)) {
+    return html`<span class="bc-agenda-loc is-pending" title=${location}><${Icon} name="lock" size=${11} />${compact ? 'RSVP' : 'After RSVP'}</span>`;
+  }
   const url = /^https?:\/\//i.test(location.trim()) ? location.trim() : null;
   const stop = (e) => e.stopPropagation();
   if (url) {

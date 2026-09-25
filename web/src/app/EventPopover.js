@@ -23,7 +23,7 @@ import {
 import { fmtReminder } from '../lib/reminders.js';
 import { ink } from '../lib/color.js';
 import { stripToText, hasHtml, sanitizeHtml } from '../lib/richtext.js';
-import { gmapsUrl } from '../lib/maps.js';
+import { gmapsUrl, isPendingLocation } from '../lib/maps.js';
 import { onOutsidePress, insideAny } from '../ui/outside.js';
 
 const GAP = 10;
@@ -210,7 +210,10 @@ export function EventPopover() {
       ${occ.reminders && occ.reminders.length > 0 && html`<div class=${'bc-pop-rem' + (occ.full ? ' bc-late' : '')}>
         <${Icon} name="bell" size=${12} />${occ.reminders.map(fmtReminder).join(', ')}
       </div>`}
-      ${occ.location && html`<div class="bc-pop-where">
+      ${occ.location && isPendingLocation(occ.location) && html`<div class="bc-pop-where is-pending" title=${occ.location}>
+        <${Icon} name="lock" size=${12} />Location after RSVP
+      </div>`}
+      ${occ.location && !isPendingLocation(occ.location) && html`<div class="bc-pop-where">
         <${PinIcon} size=${12} />${occ.location}
         <a
           class="bc-maplink" href=${gmapsUrl(occ.location, occ.locationLat, occ.locationLng)}

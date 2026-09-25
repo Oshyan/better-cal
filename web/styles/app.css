@@ -349,6 +349,9 @@ button:focus-visible, [tabindex]:focus-visible {
      edge (touch) reached a couple of pixels past it and made it scroll. */
   overflow-x: hidden;
   scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent;
+  /* Room for the bar is always kept, so the buttons at the right edge don't
+     shift as the list grows past the pane or shrinks back (folding a group). */
+  scrollbar-gutter: stable;
 }
 /* Desktop collapse: the toolbar hamburger hides the sidebar entirely
    (mobile ignores this class; the drawer has its own open state). */
@@ -3407,3 +3410,9 @@ button.bc-review-title { color: var(--fg); padding: 0; }
 /* Split: the weeks don't scroll on their own; wheel and touch over them
    scrub through the days instead (ui/SplitView.js). */
 .bc-split-grid .bc-month-scroll { overflow-y: hidden; touch-action: none; scrollbar-gutter: auto; }
+
+/* A location that arrives after you RSVP: a short lock mark, not the
+   sentence the feed sent (lib/maps.js isPendingLocation). */
+.bc-agenda-loc.is-pending, .bc-pop-where.is-pending, .bc-detail-locline.is-pending {
+  display: inline-flex; align-items: center; gap: 4px; color: var(--fg-muted); font-style: italic;
+}

@@ -29,6 +29,7 @@ import { contextByDay, isContext } from '../lib/context.js';
 import { Icon } from './icons.js';
 import { COMPACT_QUERY, PHONE_QUERY } from '../lib/breakpoints.js';
 import { startPointerDrag, cloneAsGhost, externalDropTarget, setDropRowHighlight } from './DragController.js';
+import { swallowClickOfThisPress } from './outside.js';
 import {
   dayRangeDraft, allDayRangeDraft, dragCreateMode, normalizeDayRange,
 } from '../lib/quickcreate.js';
@@ -556,6 +557,17 @@ export function TimeGrid({
     });
   }, [vstack, vWin.first, vWin.last]); // eslint-disable-line
 
+  // A touch that lands while the grid is still moving is catching the scroll,
+  // not asking for an event: remember when either scroller last moved.
+  const lastScrollAt = useRef(0);
+  useEffect(() => {
+    const mark = () => { lastScrollAt.current = performance.now(); };
+    const els = [scrollRef.current, hscrollRef.current].filter(Boolean);
+    for (const el of els) el.addEventListener('scroll', mark, { passive: true });
+    return () => { for (const el of els) el.removeEventListener('scroll', mark); };
+  }, [infinite, vstack]);
+  const catchingScroll = (ev) => ev.pointerType === 'touch' && performance.now() - lastScrollAt.current < 120;
+
   // --- pointer helpers ------------------------------------------------------
 
   const pointToSlot = useCallback((pt) => {
@@ -608,9 +620,12 @@ export function TimeGrid({
   // range (spanned columns tinted full-height); confirming that chip creates
   // an all-day multi-day event. Dragging back into the origin column reverts
   // to the timed draft.
+  // Touch: a tap creates, a long-press then drag draws the range; a finger
+  // that moves first is scrolling and creates nothing.
   const dragCreate = useCallback((ev) => {
     if (ev.target !== ev.currentTarget) return;
-    if (ev.pointerType === 'touch') return; // scroll wins on touch
+    if (catchingScroll(ev)) return;
+    const touch = ev.pointerType === 'touch';
     const origin = pointToSlot({ x: ev.clientX, y: ev.clientY });
     if (!origin) return;
     const startSnap = Math.floor(origin.min / SNAP_MIN) * SNAP_MIN;
@@ -642,10 +657,12 @@ export function TimeGrid({
       onDrop: () => {
         commitSelection(current || { dayKey: origin.dayKey, startMin: startSnap, endMin: startSnap + 60 });
       },
-      onCancel: () => {
-        if (lifted) { setDraft(null); return; } // Escape mid-drag: no create
+      onTap: () => {
+        // The editor opens under the finger; its click must not land in it.
+        if (touch) swallowClickOfThisPress();
         commitSelection({ dayKey: origin.dayKey, startMin: startSnap, endMin: startSnap + 60 });
       },
+      onCancel: () => setDraft(null), // Escape, or the finger scrolled away
     });
   }, [pointToSlot, infinite]);
 
@@ -654,7 +671,8 @@ export function TimeGrid({
   // for a single day (the lane is the all-day surface).
   const dragCreateAllDay = useCallback((ev) => {
     if (ev.target !== ev.currentTarget) return; // only empty lane space
-    if (ev.pointerType === 'touch') return; // scroll wins on touch
+    if (catchingScroll(ev)) return;
+    const touch = ev.pointerType === 'touch';
     const origin = pointToSlot({ x: ev.clientX, y: ev.clientY });
     if (!origin) return;
     const single = { mode: 'days', startKey: origin.dayKey, endKey: origin.dayKey, allDayLane: true };
@@ -676,10 +694,11 @@ export function TimeGrid({
       onDrop: () => {
         commitSelection(current || single);
       },
-      onCancel: () => {
-        if (lifted) { setDraft(null); return; } // Escape mid-drag: no create
+      onTap: () => {
+        if (touch) swallowClickOfThisPress();
         commitSelection(single);
       },
+      onCancel: () => setDraft(null),
     });
   }, [pointToSlot, infinite]);
 

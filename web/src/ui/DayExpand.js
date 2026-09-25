@@ -8,8 +8,8 @@ import { dateOfDayKey, fmtDayLong, parseISO, fmtTime, epochDayOfKey, byStart } f
 import { EventChip } from './EventChip.js';
 import { occurrenceDaySpan } from './monthmath.js';
 import { Icon } from './icons.js';
-import { TokenIcon } from './ContextStrip.js';
-import { isContext, contextToken, contextText, contextTitle } from '../lib/context.js';
+import { TokenIcon, DayLabel } from './ContextStrip.js';
+import { isContext, isDayLabel, contextToken, contextText, contextTitle } from '../lib/context.js';
 
 export const MOBILE_QUERY = PHONE_QUERY;
 
@@ -46,7 +46,8 @@ export function DayExpand({ dayKey, anchorRect, occurrences, calendars, dimSet, 
   const ed = epochDayOfKey(dayKey);
   // Context (weather, sunset, tides) sits in its own section on top: the
   // state of the day first, then what is planned.
-  const ctx = occurrences.filter(isContext).sort((a, b) => {
+  const labels = occurrences.filter((o) => isDayLabel(o, calendars));
+  const ctx = occurrences.filter((o) => isContext(o) && !isDayLabel(o, calendars)).sort((a, b) => {
     if (a.allDay !== b.allDay) return a.allDay ? -1 : 1;
     return byStart(a, b);
   });
@@ -77,7 +78,7 @@ export function DayExpand({ dayKey, anchorRect, occurrences, calendars, dimSet, 
       aria-label=${'Events on ' + fmtDayLong(d)}
     >
       <div class="bc-dayexpand-head">
-        <span class="bc-dayexpand-title">${fmtDayLong(d)}</span>
+        <span class="bc-dayexpand-title">${fmtDayLong(d)}<${DayLabel} occs=${labels} onOpen=${(id, rect) => onOpenEvent && onOpenEvent(id, rect, { dayKey })} sep=${true} /></span>
         <button type="button" class="bc-icon-btn" aria-label="Close" onClick=${onClose}><${Icon} name="close" size=${14} /></button>
       </div>
       <div class="bc-dayexpand-list">

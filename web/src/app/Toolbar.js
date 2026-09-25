@@ -9,8 +9,8 @@
 
 import { html, useState, useRef, useEffect, useMemo } from '../../vendor/index.js';
 import { useStore, set, shallowEq, state, calendarMeta } from './store.js';
-import { ContextStrip } from '../ui/ContextStrip.js';
-import { contextByDay } from '../lib/context.js';
+import { ContextStrip, DayLabel } from '../ui/ContextStrip.js';
+import { contextByDay, dayLabelsByDay } from '../lib/context.js';
 import { setView, goToday, stepAnchor, setOverviewMode, effectiveOverviewMode, toggleRel, showOnlyRel, showAllRel } from './actions.js';
 import { fmtMonthYear, fmtDayLong, dateOfDayKey } from '../lib/dates.js';
 import { ViewSwitcher } from './ViewSwitcher.js';
@@ -205,10 +205,15 @@ export function Toolbar({ onToggleSidebar }) {
     shallowEq,
   );
   const calMeta = useMemo(() => calendarMeta(), [calendars]);
-  const dayCtx = useMemo(() => {
-    if (view !== 'day' || !showCtx) return [];
-    return (contextByDay([...state.occ.values()]).get(anchor) || []).filter((o) => o.allDay);
-  }, [view, anchor, occVersion, showCtx]);
+  const { dayCtx, dayLabels } = useMemo(() => {
+    if (view !== 'day' || !showCtx) return { dayCtx: [], dayLabels: [] };
+    const all = [...state.occ.values()];
+    return {
+      dayCtx: (contextByDay(all, calMeta).get(anchor) || []).filter((o) => o.allDay),
+      dayLabels: dayLabelsByDay(all, calMeta).get(anchor) || [],
+    };
+  }, [view, anchor, occVersion, showCtx, calMeta]);
+  const openCtx = (instanceId, anchorRect) => set({ popover: { instanceId, anchorRect } });
 
   // Day view shows the full date ("Friday, August 8"); everything else the
   // visible month.
@@ -234,9 +239,9 @@ export function Toolbar({ onToggleSidebar }) {
           onClick=${() => set({ jumpOpen: !jumpOpen })}
         ><span class="bc-toolbar-label">${label}</span><span class="bc-toolbar-jump" aria-hidden="true"><${Icon} name="jumpDate" size=${15} /></span></button>
         ${dayCtx.length > 0 && html`<span class="bc-toolbar-ctx"><${ContextStrip}
-          occs=${dayCtx} calendars=${calMeta} max=${3} more=${false}
-          onOpen=${(instanceId, anchorRect) => set({ popover: { instanceId, anchorRect } })}
+          occs=${dayCtx} calendars=${calMeta} max=${3} more=${false} onOpen=${openCtx}
         /></span>`}
+        ${dayLabels.length > 0 && html`<span class="bc-toolbar-daylabel"><${DayLabel} occs=${dayLabels} onOpen=${openCtx} /></span>`}
       </span>
       <${JumpPopover} />
     </div>

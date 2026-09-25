@@ -5,7 +5,7 @@
 
 import { html } from '../../vendor/index.js';
 import { Icon } from './icons.js';
-import { contextToken, contextTitle, HOST_ICON } from '../lib/context.js';
+import { contextToken, contextTitle, HOST_ICON, dayLabelText } from '../lib/context.js';
 
 function open(onOpen, occ, e) {
   e.stopPropagation();
@@ -75,4 +75,33 @@ export function ContextMark({ occ, cal, top, onOpen }) {
       onKeyDown=${(e) => keyOpen(onOpen, occ, e)}
     ><${TokenIcon} token=${tk} cal=${cal} size=${11} />${tk.text && html`<span class="bc-ctx-token-text">${tk.text}</span>`}${tk.time && html`<span class="bc-ctx-token-time">${tk.time}${tk.zone ? ' ' + tk.zone : ''}</span>`}</span>
   </div>`;
+}
+
+/**
+ * A day's label (a holiday), written after the date: plain words, never an
+ * icon, cut short with an ellipsis where the header is tight. `sep` puts a
+ * middle dot before it, for headings that read "Mon, Oct 12 · Columbus Day".
+ * Opens the (first) holiday like any event.
+ *
+ * `flag`: the phone's full month, where a cell has room for a letter or two
+ * of the name and nothing more. A small flag after the day number instead;
+ * the holidays everyone knows need no spelling out, and a tap names the rest.
+ */
+export function DayLabel({ occs, onOpen, sep = false, flag = false }) {
+  if (!occs || occs.length === 0) return null;
+  const text = dayLabelText(occs);
+  if (flag) {
+    return html`<span
+      role="button" tabindex="0" class="bc-daylabel is-flag" title=${text} aria-label=${text}
+      onPointerDown=${(e) => e.stopPropagation()}
+      onClick=${(e) => open(onOpen, occs[0], e)}
+      onKeyDown=${(e) => keyOpen(onOpen, occs[0], e)}
+    ><${Icon} name="flag" size=${11} /></span>`;
+  }
+  return html`<span
+    role="button" tabindex="0" class=${'bc-daylabel' + (sep ? ' is-sep' : '')} title=${text}
+    onPointerDown=${(e) => e.stopPropagation()}
+    onClick=${(e) => open(onOpen, occs[0], e)}
+    onKeyDown=${(e) => keyOpen(onOpen, occs[0], e)}
+  >${text}</span>`;
 }

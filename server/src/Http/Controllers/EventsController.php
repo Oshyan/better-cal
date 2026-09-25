@@ -33,6 +33,12 @@ final class EventsController
         } catch (\InvalidArgumentException $e) {
             throw HttpError::badRequest($e->getMessage());
         }
+        // A window longer than the domain's cap used to be cut short there
+        // without a word, and the caller took the part it got for the whole.
+        // Refuse it instead: a client asks for long spans in pieces.
+        if ($end->getTimestamp() - $start->getTimestamp() > Events::MAX_WINDOW_SECONDS) {
+            throw HttpError::badRequest('A window can cover at most two years; ask for longer spans in pieces.');
+        }
         $calendars = null;
         $calendarsRaw = $req->q('calendars');
         if ($calendarsRaw !== null) {

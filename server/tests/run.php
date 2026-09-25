@@ -3690,6 +3690,27 @@ use BetterCal\Domain\GoogleWriter;
     checkEq('rel: a going mark on my calendar is planned', 'planned', $rel('going', 'tentative', 'mine'));
 }
 
+// --- /events refuses a window longer than the cap instead of cutting it short ---
+{
+    // The size check comes before any lookup, so stand-ins without a
+    // database are enough to reach it.
+    $evStub = (new ReflectionClass(BetterCal\Domain\Events::class))->newInstanceWithoutConstructor();
+    $trStub = (new ReflectionClass(BetterCal\Domain\Trips::class))->newInstanceWithoutConstructor();
+    $ectl = new BetterCal\Http\Controllers\EventsController($evStub, $trStub);
+    $longReq = new BetterCal\Http\Request('GET', '/api/v1/events', ['start' => '2016-08-20T00:00:00Z', 'end' => '2036-10-25T00:00:00Z']);
+    $longReq->user = ['id' => 1];
+    $status = null;
+    $message = '';
+    try {
+        $ectl->window($longReq);
+    } catch (BetterCal\Http\HttpError $e) {
+        $status = $e->status;
+        $message = $e->getMessage();
+    }
+    checkEq('events window: twenty years is refused, not quietly cut to two', 400, $status);
+    check('events window: the refusal says to ask in pieces', str_contains($message, 'in pieces'));
+}
+
 $pass = $GLOBALS['__pass'];
 $fail = $GLOBALS['__fail'];
 echo "\n$pass passed, $fail failed\n";

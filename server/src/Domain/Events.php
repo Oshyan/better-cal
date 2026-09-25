@@ -13,7 +13,7 @@ use BetterCal\Support\Time;
 
 final class Events
 {
-    private const MAX_WINDOW_SECONDS = 2 * 366 * 86400; // ~2 year hard cap per query
+    public const MAX_WINDOW_SECONDS = 2 * 366 * 86400; // ~2 year hard cap per query
     // How long a genuinely-new event wears its badge. A day is long enough to
     // catch it on the next visit without the calendar staying lit for most of
     // a week.

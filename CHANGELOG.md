@@ -4,6 +4,13 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.4.1 (2026-09-25)
+
+- The server refuses a request for more than two years of events with a clear error, instead of quietly returning only the first two years. The app already asks for long spans in pieces (0.4.0), and the refresh after an edit now does too, so this only shows if something is wrong, as the "couldn't load" note.
+- Split's list never claims "nothing on" for days it hasn't loaded. A stretch not fetched yet reads "not loaded yet", in a dashed outline, and fills in as it loads.
+- Jumping somewhere in Split (Today, the arrows, jump to date) lands the moment that day's events arrive, with no fixed delay. Scrolling the list yourself while it waits cancels the jump. Landing on a day inside a folded run outlines that day, not the run's first.
+- Split's day outline no longer drops out after a long jump; it's put back whenever the weeks redraw.
+
 ## 0.4.0 (2026-09-25)
 
 A new view: Split.

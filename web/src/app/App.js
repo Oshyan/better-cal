@@ -679,6 +679,7 @@ export function App() {
         onFeedback: sendFeedback,
         onCreateDay: (k) => onCreateRange(dayRangeDraft(k, k)),
         emptyLabel: 'No events',
+        loaded: state.loadedRanges,
       }}
     />`;
   } else if (s.view === 'week') {

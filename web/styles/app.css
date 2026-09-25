@@ -3291,3 +3291,6 @@ button.bc-review-title { color: var(--fg); padding: 0; }
 .bc-agenda-gap svg { flex: none; opacity: .8; }
 .bc-agenda-gap-when { font-weight: 600; }
 .bc-agenda-gap-what { opacity: .85; }
+/* Days whose events haven't been fetched: no claim about them, so none of
+   the "free time" look. A dashed outline, and they fill in as they load. */
+.bc-agenda-gap.is-unloaded { background: none; border: 1px dashed var(--border-strong); font-style: normal; }

@@ -38,6 +38,7 @@ export function SplitView({ gridProps, listProps, scrollSeq }) {
   const list = useRef(null); // {el, groups} from AgendaList
   const lead = useRef('list');
   const curCell = useRef(null);
+  const curKey = useRef(null);
   const [rows, setRows] = useState(readRows);
   const rowsRef = useRef(rows);
   rowsRef.current = rows;
@@ -86,11 +87,13 @@ export function SplitView({ gridProps, listProps, scrollSeq }) {
     return firstEpochDayOfRow(row, 7) + (rf - Math.floor(rf)) * 7;
   }, []);
 
-  // Outline the day being read. Re-applied on every sync: the weeks render
-  // only rows near the view, so the cell comes and goes as they scroll.
+  // Outline the day being read. The weeks render only rows near the view, so
+  // the cell comes and goes as they scroll; the observer in the wiring below
+  // puts the outline back whenever they redraw.
   const mark = useCallback((ed) => {
     if (ed == null) return;
     const key = keyOfEpochDay(Math.floor(ed));
+    curKey.current = key;
     noteSplitDay(key);
     const G = grid.current;
     if (!G || !G.el) return;
@@ -136,49 +139,50 @@ export function SplitView({ gridProps, listProps, scrollSeq }) {
     // is put straight back, before they load a window for the wrong place.
     const onGrid = () => { if (lead.current === 'grid') listFromGrid(); else gridFromList(); };
     const takeGrid = () => { lead.current = 'grid'; };
-    const takeList = () => { lead.current = 'list'; };
+    const takeList = () => {
+      lead.current = 'list';
+      if (list.current && list.current.pending) list.current.cancelPending();
+    };
     const opts = { passive: true, capture: true };
     le.addEventListener('scroll', onList, { passive: true });
     ge.addEventListener('scroll', onGrid, { passive: true });
+    // Rows arrive after the weeks scroll (they render what is near the view):
+    // re-find the outlined day's cell each time rows are added or replaced.
+    // Only child-list changes, so the outline's own class change never loops.
+    const remark = () => {
+      const key = curKey.current;
+      if (!key) return;
+      const cell = ge.querySelector(`.bc-cell[data-day="${key}"]`);
+      if (!cell || cell.classList.contains('is-split-cur')) return;
+      if (curCell.current) curCell.current.classList.remove('is-split-cur');
+      cell.classList.add('is-split-cur');
+      curCell.current = cell;
+    };
+    const mo = new MutationObserver(remark);
+    mo.observe(ge, { childList: true, subtree: true });
     for (const ev of ['pointerdown', 'wheel', 'touchstart']) {
       ge.addEventListener(ev, takeGrid, opts);
       le.addEventListener(ev, takeList, opts);
     }
-    // The grid re-lays itself out when its height changes (the handle, a
-    // window resize); follow the list again once it has.
-    let raf = 0;
-    const settle = () => {
-      cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(() => { raf = requestAnimationFrame(() => { if (lead.current === 'list') gridFromList(); }); });
-    };
-    const ro = new ResizeObserver(settle);
-    ro.observe(ge);
     return () => {
       le.removeEventListener('scroll', onList);
       ge.removeEventListener('scroll', onGrid);
+      mo.disconnect();
       for (const ev of ['pointerdown', 'wheel', 'touchstart']) {
         ge.removeEventListener(ev, takeGrid, opts);
         le.removeEventListener(ev, takeList, opts);
       }
-      ro.disconnect();
-      cancelAnimationFrame(raf);
     };
   }, [gridFromList, listFromGrid, listDay, mark]);
 
-  // Navigation goes through the list (AgendaList scrolls itself to the
-  // anchor); the weeks follow it, overriding the grid's own anchor placement.
+  // Navigation goes through the list: AgendaList scrolls itself to the
+  // anchor (its effect runs before this one), or waits for that day to load
+  // while the weeks, left free, sit on it and load it. Either way the list
+  // leads from here; its scroll event brings the weeks along when it lands.
   useEffect(() => {
     lead.current = 'list';
-    const t = setTimeout(gridFromList, 0);
-    return () => clearTimeout(t);
+    gridFromList();
   }, [scrollSeq, gridFromList]);
-
-  // The list's layout changes as events load; keep the weeks on its day.
-  useEffect(() => {
-    if (lead.current !== 'list') return undefined;
-    const raf = requestAnimationFrame(gridFromList);
-    return () => cancelAnimationFrame(raf);
-  }, [listProps.occurrences, gridFromList]);
 
   // --- the handle ----------------------------------------------------------
 

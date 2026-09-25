@@ -56,38 +56,51 @@ function dayRows(b) {
   return [...merged, ...b.ends.map((occ) => ({ kind: 'end', occ }))];
 }
 
-// The gaps option: every day from the first to the last appears, and each
-// run of days with no rows folds into ONE gap group
-//   {dayKey (first day), gapTo (last day), gap: true, covered, rows: []}
+// The gaps option: every day appears, and each run of days with no rows is
+// one gap group
+//   {dayKey (first day), gapTo (last day), gap: true, covered, unloaded, rows: []}
 // so the list is continuous in time and free stretches are visible instead
-// of silently skipped. A run never crosses a month boundary, which keeps the
-// month separator on the group that opens the month. covered: a multi-day
-// event runs through the gap (its rail passes by), so the days are not empty,
-// just free of anything else.
-function withGaps(keys, byDay, occurrences, { rowH, headH, sepH, gapH }) {
+// of silently skipped. A run of loaded days never crosses a month boundary,
+// which keeps the month separator on the group that opens the month.
+// covered: a multi-day event runs through the gap (its rail passes by), so
+// the days are not empty, just free of anything else.
+// loaded ([[firstEpochDay, lastEpochDay], ...]): the days whose events are
+// held. A run outside them is one "not loaded" group, never "nothing on": an
+// empty day and a day not fetched yet are different claims. The list covers
+// the loaded days too, not only the days that have events, so a day with
+// nothing on it at the edge of what's loaded is still a place to land.
+function withGaps(keys, byDay, occurrences, { rowH, headH, sepH, gapH, loaded }) {
   const spans = [];
   for (const occ of occurrences) {
     if (occ.attendance === 'hidden') continue;
     const { startKey, endKey } = occurrenceDaySpan(occ);
     if (startKey !== endKey) spans.push([epochDayOfKey(startKey), epochDayOfKey(endKey)]);
   }
+  const held = (d) => !loaded || loaded.some(([a, b]) => a <= d && d <= b);
+  let first = keys.length ? epochDayOfKey(keys[0]) : Infinity;
+  let last = keys.length ? epochDayOfKey(keys[keys.length - 1]) : -Infinity;
+  if (loaded) for (const [a, b] of loaded) { first = Math.min(first, a); last = Math.max(last, b); }
+  if (!Number.isFinite(first) || !Number.isFinite(last)) return [];
   const entries = [];
-  let prev = null;
-  for (const k of keys) {
-    if (prev !== null) {
-      let d = epochDayOfKey(prev) + 1;
-      const last = epochDayOfKey(k) - 1;
-      while (d <= last) {
-        const first = keyOfEpochDay(d);
-        let e = d;
-        while (e < last && keyOfEpochDay(e + 1).slice(0, 7) === first.slice(0, 7)) e++;
-        const covered = spans.some(([a, b]) => a < d && b > e);
-        entries.push({ dayKey: first, gapTo: keyOfEpochDay(e), gap: true, covered, rows: [] });
-        d = e + 1;
-      }
+  let d = first;
+  while (d <= last) {
+    const k = keyOfEpochDay(d);
+    if (byDay.has(k)) {
+      entries.push({ dayKey: k, rows: dayRows(byDay.get(k)) });
+      d++;
+      continue;
     }
-    entries.push({ dayKey: k, rows: dayRows(byDay.get(k)) });
-    prev = k;
+    const isHeld = held(d);
+    let e = d;
+    while (e < last) {
+      const nk = keyOfEpochDay(e + 1);
+      if (byDay.has(nk) || held(e + 1) !== isHeld) break;
+      if (isHeld && nk.slice(0, 7) !== k.slice(0, 7)) break;
+      e++;
+    }
+    const covered = isHeld && spans.some(([a, b]) => a < d && b > e);
+    entries.push({ dayKey: k, gapTo: keyOfEpochDay(e), gap: true, unloaded: !isHeld, covered, rows: [] });
+    d = e + 1;
   }
   let offset = 0;
   let prevEnd = null;
@@ -122,7 +135,7 @@ export function buildAgendaGroups(occurrences, opts = {}) {
   }
   const keys = [...byDay.keys()].sort();
   const sepH = opts.sepH ?? AGENDA_MONTH_SEP_H;
-  if (opts.gaps) return withGaps(keys, byDay, occurrences, { rowH, headH, sepH, gapH: opts.gapH ?? AGENDA_GAP_H });
+  if (opts.gaps) return withGaps(keys, byDay, occurrences, { rowH, headH, sepH, gapH: opts.gapH ?? AGENDA_GAP_H, loaded: opts.loaded });
   let offset = 0;
   return keys.map((k, i) => {
     const rows = dayRows(byDay.get(k));

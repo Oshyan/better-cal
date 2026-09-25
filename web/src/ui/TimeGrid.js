@@ -1004,7 +1004,13 @@ export function TimeGrid({
             // weather; the sticky header keeps only the all-day items, and a
             // day without any has none. Nothing changes height as days pass
             // the top, so the hours never jump (0.4.11).
-            const divider = phone && html`<div class="bc-tg-vday-divider${k === tKey ? ' is-today' : ''}">${dateBtn}${ctxStrip}</div>`;
+            // Written as the top bar writes it ("Tue, Oct 13"), so the date
+            // reads the same when it becomes the title.
+            const divider = phone && html`<div class="bc-tg-vday-divider${k === tKey ? ' is-today' : ''}"><button
+                  type="button" class="bc-tg-vday-date bc-tg-vday-label"
+                  title="Scroll this day to the top"
+                  onClick=${() => { vDayRef.current = k; vScrollTo(k, 0); if (onVisibleDay) onVisibleDay(k); }}
+                >${d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</button>${ctxStrip}</div>`;
             return html`<section key=${k} class="bc-tg-vday" data-vday=${k}>
               ${divider}
               ${(!phone || bars.length > 0) && html`<header class="bc-tg-vday-head${k === tKey ? ' is-today' : ''}">

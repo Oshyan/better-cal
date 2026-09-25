@@ -4,6 +4,12 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.4.13 (2026-09-25)
+
+- **Phone day view: the date in each day's divider reads the same as the top bar** ("Tue, Oct 13"), so it doesn't reorder itself as it scrolls up to become the title.
+- **The date in the top bar is never cut short;** the weather and other context after it clip instead.
+- **Weather and other values come before named days** (a holiday, someone away) wherever a day's context is listed, so in a tight header it's the name that gets cut, not the numbers.
+
 ## 0.4.12 (2026-09-25)
 
 - **Phone day view: the day's weather sits to the right of the date** in the top bar, on one line ("Thu, Sep 24 · 79/55 · AQI 68"), instead of on a cramped second line under it. The date shortens to make room.

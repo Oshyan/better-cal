@@ -1,6 +1,6 @@
 # Lessons from the Discourse Events Calendar Plugin (reference review, 2026-07-30)
 
-Distilled from a deep review of `/Users/oshyan/Projects/Coding/EdgeTech/discourse-events-calendar` and its docs corpus. This is the transferable knowledge base for bettercal-ui and the Better-Cal backend. File/line references point into the plugin repo.
+Distilled from a deep review of a private Discourse Events Calendar plugin and its docs corpus. This is the transferable knowledge base for bettercal-ui and the Better-Cal backend. File/line references point into that plugin's repo, which is not public.
 
 ## Why FullCalendar was rejected (avoid the same traps)
 

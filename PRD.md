@@ -23,7 +23,7 @@ Assembled and deduplicated from audio note transcripts plus one written note:
 - 2026-07-22 "Indecision is the Core Problem, Not Scheduling" (decision support as design driver)
 - Written note: "Fancier Calendar Items, Dynamic, Styling" (dynamic event content, weather integration, custom per-event styling)
 
-**UI reference implementation:** the Discourse Events Calendar plugin at `/Users/oshyan/Projects/Coding/EdgeTech/discourse-events-calendar` (with `discourse-events-calendar-prd.md`, `discourse-events-calendar-implementation-guide.md`, and `discourse-event-and-calendar-plugin-evaluation.md` alongside it in EdgeTech). Its UI/UX was developed through extensive testing against a FullCalendar benchmark implementation that was evaluated and rejected. The language/framework will differ here, but its view layouts, interaction patterns, and the evaluation doc's findings are the starting point for `bettercal-ui` design decisions.
+**UI reference implementation:** a Discourse Events Calendar plugin from a separate, private project (with its own PRD, implementation guide and plugin evaluation alongside it). Its UI/UX was developed through extensive testing against a FullCalendar benchmark implementation that was evaluated and rejected. The language/framework will differ here, but its view layouts, interaction patterns, and the evaluation doc's findings are the starting point for `bettercal-ui` design decisions.
 
 ## 3. Product Principles
 
@@ -271,8 +271,8 @@ Dogfooding is the test plan: the milestone 3 gate forces real usage early, and e
 1. **DB**: MariaDB/MySQL on the host (FULLTEXT works on both).
 2. **LLM provider**: Gemini Flash via existing API key to start; `LlmGateway` keeps Anthropic API and headless Claude CLI as swappable backends (Claude CLI could be installed on the box later).
 3. **Auth/tenancy**: single user per instance, password + long-lived session. Vision is self-host for everyone, open source eventually; instances interchange via calendar subscriptions, not shared multi-user hosting. Schema keeps `user_id` so multi-user is never foreclosed.
-4. **Geocoding**: start free (Photon/Nominatim or a free commercial tier), swappable behind an interface. Reference the Discourse Places plugin in EdgeTech for provider experience already gathered.
-5. **Discourse plugin reference**: mine `/Users/oshyan/Projects/Coding/EdgeTech/discourse-events-calendar` for view layouts and interaction patterns (hard-won, tested against FullCalendar and won), but do not inherit Discourse-specific constraints or unpolished areas; port judgment, not cruft.
+4. **Geocoding**: start free (Photon/Nominatim or a free commercial tier), swappable behind an interface. Reference the earlier Discourse Places plugin work (private) for provider experience already gathered.
+5. **Discourse plugin reference**: mine the Discourse Events Calendar plugin (private) for view layouts and interaction patterns (hard-won, tested against FullCalendar and won), but do not inherit Discourse-specific constraints or unpolished areas; port judgment, not cruft.
 6. **Google sync**: one-way out first; bidirectional is required well within the first year, slotted as Phase 2/3.
 
 ## 10. Deployment Target

@@ -49,9 +49,9 @@ the header, because that is what a real client does.
 
 ### Reverse DNS is not a location
 
-Hetzner puts `.your-server.de` on every machine it owns regardless of continent.
-This server is in **US East (Virginia)**, ~81ms RTT from the Bay Area, and was
-confidently described as German on the strength of that hostname.
+A hosting provider can put its own home-country domain on every machine it
+owns, whatever continent the machine is on. One server measured here sat in the
+US and was confidently described as German on the strength of its hostname.
 
 `traceroute` answers it in seconds — watch the city codes in the hop names.
 
@@ -116,7 +116,7 @@ app's database credentials and its installed dependencies.
 ## Baselines
 
 Measured 2026-08-06 on the production box (4-core EPYC-Milan, ~40% loaded),
-from a Bay Area client at ~81ms RTT. Conditions stated because they matter.
+from a client about 81ms RTT away. Conditions stated because they matter.
 
 | what | value | conditions |
 |---|---|---|

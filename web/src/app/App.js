@@ -101,6 +101,10 @@ export function App() {
   // Swipe the drawer in from the left edge and back out (drawer layouts).
   const sidebarOpenRef = useRef(false);
   sidebarOpenRef.current = sidebarOpen;
+  // "Manage calendar" from the event sheet: open the drawer; the sidebar
+  // opens that calendar's settings (Sidebar.js).
+  const manageCal = useStore((st) => st.manageCal);
+  useEffect(() => { if (manageCal && state.viewportNarrow) setSidebarOpen(true); }, [manageCal]);
   useEffect(() => installDrawerSwipe({
     enabled: () => state.viewportNarrow,
     isOpen: () => sidebarOpenRef.current,

@@ -31,6 +31,7 @@ import { ink } from '../lib/color.js';
 import { stripToText, hasHtml, sanitizeHtml } from '../lib/richtext.js';
 import { gmapsUrl, isPendingLocation } from '../lib/maps.js';
 import { onOutsidePress, insideAny, swallowClickOfThisPress } from '../ui/outside.js';
+import { EventSheetBody } from './EventSheetBody.js';
 
 const GAP = 10;
 const WIDTH = 360;
@@ -141,6 +142,14 @@ export function EventPopover() {
   const sheet = open && isMobile();
 
   useEffect(() => { if (!open) setFull(false); }, [open]);
+  // One bar at the bottom at a time: while the sheet is open its actions
+  // take the place of the app's bottom bar, which slides down under it and
+  // back when the sheet closes.
+  useEffect(() => {
+    if (!sheet) return undefined;
+    document.documentElement.classList.add('bc-sheet-open');
+    return () => document.documentElement.classList.remove('bc-sheet-open');
+  }, [sheet]);
 
   // The phone's back gesture steps the sheet down: full to quick, quick to
   // closed. One history entry stands for the open sheet; closing it any
@@ -404,7 +413,11 @@ export function EventPopover() {
         ><${Icon} name="chevronRight" size=${20} /></button>
       </div>`}
     </div>`}
-    <div class="bc-pop-body" ref=${bodyRef}>
+    ${mobile ? html`<${EventSheetBody}
+      occ=${occ} cal=${cal} isFeed=${isFeed} full=${full} onFull=${() => setFull(true)} bodyRef=${bodyRef}
+      copyOpen=${copyOpen} setCopyOpen=${setCopyOpen} timeScope=${timeScope} setTimeScope=${setTimeScope}
+      deletePrompt=${deletePrompt} attendPrompt=${attendPrompt} s=${s} e=${e}
+    />` : html`<div class="bc-pop-body" ref=${bodyRef}>
       <div class="bc-pop-titlerow">
         <h2 class="bc-pop-title${occ.status === 'cancelled' ? ' is-cancelled' : ''}" onClick=${openFull} title="Open full details">
           ${occ.title || '(untitled)'}${occ.isNew ? html` <span class="bc-new-pill">new</span>` : ''}
@@ -495,7 +508,7 @@ export function EventPopover() {
           ><${ThumbIcon} dir=${value} /></button>`)}
         </div>`}
       </div>`}
-    </div>
+    </div>`}
   </div>`;
 }
 

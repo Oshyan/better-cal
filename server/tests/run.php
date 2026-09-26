@@ -1381,6 +1381,14 @@ checkEq('pe sweep window years', [2, 3], [PromptEval::WINDOW_YEARS_PAST, PromptE
 
 checkEq('geo normalize trims + collapses whitespace', 'Zuni Cafe, San Francisco', Geocode::normalize("  Zuni   Cafe,\n San Francisco  "));
 checkEq('geo normalize caps length', Geocode::MAX_QUERY_LENGTH, mb_strlen(Geocode::normalize(str_repeat('a', 600))));
+// Easier forms of a decorated address, tried when the full text finds nothing.
+checkEq('geo variants drop a trailing parenthetical', ['111 Conselyea St, Brooklyn, NY 11211, USA'], Geocode::variants('111 Conselyea St, Brooklyn, NY 11211, USA (The Lounge)'));
+checkEq('geo variants drop brackets anywhere', ['5 Main St, Oakland, CA'], Geocode::variants('[Upstairs] 5 Main St (rear door), Oakland, CA'));
+checkEq('geo variants start at the street number after a venue name', ['111 Conselyea St, Brooklyn, NY'], Geocode::variants('The Lounge, 111 Conselyea St, Brooklyn, NY'));
+checkEq('geo variants: both, in order', ['The Lounge, 111 Conselyea St, Brooklyn', '111 Conselyea St, Brooklyn'], Geocode::variants('The Lounge (2nd floor), 111 Conselyea St, Brooklyn'));
+checkEq('geo variants: nothing to simplify', [], Geocode::variants('Zuni Cafe, San Francisco'));
+checkEq('geo variants: a leading street number is already the address', [], Geocode::variants('1680 Mission St, San Francisco'));
+checkEq('geo variants: range numbers count', ['12-14 Rue Oberkampf, Paris'], Geocode::variants('Le Bar, 12-14 Rue Oberkampf, Paris'));
 checkEq('geo hash whitespace-insensitive', Geocode::queryHash('Zuni  Cafe'), Geocode::queryHash(' Zuni Cafe '));
 checkEq('geo hash case-insensitive', Geocode::queryHash('ZUNI CAFE'), Geocode::queryHash('zuni cafe'));
 check('geo hash differs for different queries', Geocode::queryHash('Zuni Cafe') !== Geocode::queryHash('Tartine'));

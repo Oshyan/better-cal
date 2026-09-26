@@ -4,6 +4,10 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.5.4 (2026-09-26)
+
+- **Addresses with extra words now find their place on the map.** Feeds often decorate an address: "111 Conselyea St, Brooklyn, NY 11211, USA (The Lounge)", "[Upstairs] 5 Main St", or a venue name ahead of the street. When the full text finds nothing, Better-Cal now tries it without the bracketed parts, and then from the street number on, and uses the first that resolves. Addresses that had already been marked "couldn't place" get the retry too: the map appears the next time the event is opened, and the background matching picks them up on its next pass.
+
 ## 0.5.3 (2026-09-26)
 
 - **Pulled up, the phone's event sheet is the full view.** Under the address, a map (a still image until you tap it, so it doesn't catch your scrolling); the full description with its links tappable; any plugin information; for feed events, the feed with a link to its source; and when the event was added and last updated. The separate full-screen view is no longer needed on phones, so "All details" leaves the More menu.

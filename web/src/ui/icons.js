@@ -219,6 +219,13 @@ export function Icon({ name, size = 15 }) {
     thermometer: html`<path d="M6.5 9.3V3.5a1.5 1.5 0 0 1 3 0v5.8a2.6 2.6 0 1 1-3 0zM8 6v5" />`,
     moon: html`<path d="M13 10.2A5.5 5.5 0 0 1 5.8 3a5.5 5.5 0 1 0 7.2 7.2z" />`,
     flag: html`<path d="M4 14V2.5h8l-2 3 2 3H4" />`,
+    // Event sheet actions (0.5.2): more (three dots), a clock for when, two
+    // pages for copy, a chain link, and an eye struck through for hide.
+    more: html`<circle cx="3.4" cy="8" r="1.1" fill="currentColor" stroke="none" /><circle cx="8" cy="8" r="1.1" fill="currentColor" stroke="none" /><circle cx="12.6" cy="8" r="1.1" fill="currentColor" stroke="none" />`,
+    clock: html`<circle cx="8" cy="8" r="5.8" /><path d="M8 4.8V8l2.2 1.4" />`,
+    copy: html`<rect x="5.4" y="5.4" width="8.2" height="8.2" rx="1.4" /><path d="M10.6 5.4V3.8a1.4 1.4 0 0 0-1.4-1.4H3.8a1.4 1.4 0 0 0-1.4 1.4v5.4a1.4 1.4 0 0 0 1.4 1.4h1.6" />`,
+    link: html`<path d="M6.6 9.4a2.8 2.8 0 0 0 4 0l2-2a2.8 2.8 0 0 0-4-4l-.7.7M9.4 6.6a2.8 2.8 0 0 0-4 0l-2 2a2.8 2.8 0 0 0 4 4l.7-.7" />`,
+    eyeOff: html`<path d="M1.8 8S4 3.8 8 3.8 14.2 8 14.2 8 12 12.2 8 12.2 1.8 8 1.8 8z" /><circle cx="8" cy="8" r="2" /><path d="M2.6 13.4 13.4 2.6" />`,
   }[name === 'organize' ? 'folder' : name];
   return html`<svg
     viewBox="0 0 16 16" width=${size} height=${size} aria-hidden="true"

@@ -3676,3 +3676,66 @@ button.bc-review-title { color: var(--fg); padding: 0; }
 /* An agenda rail is a hairline: it thickens and takes the accent instead. */
 .bc-agenda-rail.bc-sheet-focus { outline: none !important; }
 .bc-agenda-rail.bc-sheet-focus .bc-agenda-rail-line { width: 5px; background: var(--accent) !important; opacity: 1; }
+
+/* --- The event sheet contents (0.5.2) ----------------------------------------
+   Read at arm's length (title 22, facts 16, secondary 14), every target 44+,
+   "For me" pinned above four labelled actions. The app's bottom bar slides
+   away while the sheet is open, so there is one bar at the bottom at a time. */
+.bc-bottombar { transition: transform 0.22s ease, opacity 0.22s ease; }
+.bc-sheet-open .bc-bottombar { transform: translateY(100%); opacity: 0; pointer-events: none; }
+.bc-evsheet .bc-es-body { display: flex; flex-direction: column; gap: 14px; padding: 6px 18px 14px; font-size: 16px; }
+.bc-es-head { display: grid; gap: 6px; }
+.bc-es-title { margin: 0; font-size: 22px; line-height: 1.2; font-weight: 700; cursor: pointer; }
+.bc-es-cal { display: inline-flex; align-items: center; gap: 7px; font-size: 14px; font-weight: 600; color: var(--fg-muted); }
+.bc-es-cal i { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+.bc-es-partof { justify-self: start; display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--border); background: none; font-size: 14px; color: var(--fg); }
+.bc-es-row { display: flex; align-items: flex-start; gap: 14px; min-height: 24px; }
+.bc-es-row > svg { flex: none; color: var(--fg-muted); margin-top: 1px; }
+.bc-es-row.is-pending { color: var(--fg-muted); font-style: italic; }
+.bc-es-rt { flex: 1; min-width: 0; overflow-wrap: anywhere; line-height: 1.35; }
+.bc-es-rt small { display: block; font-size: 14px; color: var(--fg-muted); margin-top: 3px; }
+.bc-es-rowbtn {
+  flex: none; display: inline-flex; align-items: center; gap: 5px; height: 44px; padding: 0 14px; margin-top: -10px;
+  border: 1px solid var(--border); border-radius: 10px; font-size: 14.5px; font-weight: 600; color: var(--accent); text-decoration: none;
+}
+.bc-es-join { display: flex; gap: 10px; }
+.bc-es-joinbtn {
+  flex: 1; display: flex; align-items: center; justify-content: center; gap: 10px; height: 50px; border-radius: 12px;
+  background: var(--accent); color: var(--accent-fg); font-size: 16.5px; font-weight: 700; text-decoration: none;
+}
+.bc-es-sqbtn { flex: none; width: 50px; height: 50px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 12px; background: none; color: var(--fg-muted); }
+.bc-es-tags { font-size: 14px; color: var(--accent); }
+.bc-es-desc { display: grid; gap: 4px; justify-items: start; }
+.bc-es-desctext { font-size: 15.5px; line-height: 1.45; color: var(--fg); opacity: 0.86; white-space: pre-wrap; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+.bc-es-desctext.bc-rich { white-space: normal; }
+.bc-evsheet.is-full .bc-es-desctext { display: block; -webkit-line-clamp: unset; overflow: visible; }
+.bc-es-more { background: none; border: none; padding: 6px 0; font-size: 15px; font-weight: 600; color: var(--accent); }
+.bc-es-foot { flex: none; position: relative; background: var(--bg-raised); border-top: 1px solid var(--border); padding: 8px 10px calc(10px + env(safe-area-inset-bottom, 0px)); display: grid; gap: 8px; }
+.bc-es-forme { display: flex; align-items: center; gap: 10px; padding: 0 4px; }
+.bc-es-forme-label { font-size: 14px; font-weight: 600; color: var(--fg-muted); flex: none; }
+.bc-es-seg { flex: 1; display: flex; height: 44px; border: 1px solid var(--border-strong); border-radius: 12px; overflow: hidden; }
+.bc-es-segbtn { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: none; border-right: 1px solid var(--border); background: none; font-size: 15px; font-weight: 600; color: var(--fg); }
+.bc-es-segbtn:last-child { border-right: none; }
+.bc-es-segbtn.is-on { background: color-mix(in srgb, var(--accent) 14%, var(--bg-raised)); color: var(--accent); }
+.bc-es-bar { display: flex; gap: 4px; }
+.bc-es-act {
+  flex: 1; height: 56px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  border: none; border-radius: 12px; background: none; font-size: 12.5px; font-weight: 600; color: var(--fg);
+}
+.bc-es-act:active, .bc-es-act.is-on { background: var(--bg-inset); }
+.bc-es-menu {
+  position: absolute; right: 10px; bottom: calc(100% - 64px); width: min(300px, calc(100vw - 20px)); z-index: 5;
+  background: var(--bg-raised); border: 1px solid var(--border-strong); border-radius: 14px; box-shadow: var(--shadow); padding: 6px;
+  transform: translateY(-72px);
+}
+.bc-es-menu hr { border: none; border-top: 1px solid var(--border); margin: 4px 6px; }
+.bc-es-menu hr:first-child, .bc-es-menu hr + hr, .bc-es-menu hr:last-child { display: none; }
+.bc-es-mi { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 48px; padding: 0 12px; border: none; border-radius: 10px; background: none; font-size: 15.5px; color: var(--fg); text-align: left; }
+.bc-es-mi:active { background: var(--bg-inset); }
+.bc-es-mi svg { flex: none; color: var(--fg-muted); }
+.bc-es-mi small { margin-left: auto; font-size: 12.5px; color: var(--fg-muted); }
+.bc-es-mi.is-danger, .bc-es-mi.is-danger svg { color: var(--danger, #c34a4a); }
+/* The prompts that open inside the sheet (copy to, which occurrences) sit
+   at the top of the body at the sheet's reading size. */
+.bc-es-body .bc-copyto, .bc-es-body .bc-delscope { padding: 0; font-size: 15px; }
+.bc-es-body .bc-copyto .bc-btn, .bc-es-body .bc-delscope .bc-btn { min-height: 40px; }

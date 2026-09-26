@@ -46,7 +46,7 @@ final class Plugins
         'viewWeeks3', 'viewWeeks2', 'viewDay', 'viewAgenda', 'viewSplit', 'gapDays', 'jumpDate', 'plugins',
         'proposals', 'review', 'mail', 'arrowRight', 'people', 'trip', 'google',
         // Information icons, for context events (a plugin sets one per event).
-        'sun', 'sunrise', 'sunset', 'air', 'tideHigh', 'tideLow', 'cloud', 'rain', 'snow', 'storm', 'thermometer', 'moon', 'flag',
+        'sun', 'sunrise', 'sunset', 'air', 'tideHigh', 'tideLow', 'cloud', 'rain', 'snow', 'storm', 'thermometer', 'moon', 'flag', 'more', 'clock', 'copy', 'link', 'eyeOff',
     ];
 
     /**

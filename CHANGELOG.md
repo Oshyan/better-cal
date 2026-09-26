@@ -4,6 +4,15 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.5.2 (2026-09-26)
+
+- **The phone's event sheet, redone inside.** Bigger type (the title at 22 points, the facts at 16) and the event as rows with an icon each: when (with how it repeats and the time where it is), where, reminders, people, tags, the description and the event's link. Nothing to tap is smaller than 44 points.
+- **One bar at the bottom at a time.** While an event is open the app's bottom bar slides away and the sheet's actions take its place, under the thumb; it slides back when the sheet closes.
+- **Four labelled actions for every event.** Your events: Edit, Move, Copy to, More. Feed and suggested events: More like, Less like, Copy to, More. Delete is in More, set apart in red, away from Edit.
+- **"For me" as buttons,** pinned just above the actions: Planned or Maybe for your own events; Planned, Maybe or Hide for suggestions (tap the lit one again to put it back to available).
+- **More** holds Manage (opens the event's calendar settings in the sidebar: rename, colour, folders, what it is, unsubscribe or delete), Hide this calendar, the event's own page and link, All details (the map, invitation replies and source, until those move into the sheet) and Delete.
+- **Meeting links are a Join button** (Zoom, Google Meet, Teams, Webex), with Copy beside it, instead of a raw address with a "Map" link. A real address gets Directions; a web address in the location gets Open.
+
 ## 0.5.1 (2026-09-25)
 
 - **The phone's event sheet points at the day you're on.** Stepping onto a multi-day event outlines it where the browsed day shows it: its segment in that day's week in month view, its row on that day in lists, or, where a list shows the event as a rail between its first and last rows, the rail beside that day. The list no longer jumps back to the event's first day.

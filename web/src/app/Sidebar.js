@@ -331,6 +331,18 @@ export function Sidebar({ open, collapsed, onClose }) {
   const [solo, setSolo] = useState(null); // {calId, prev: [[id, visible], ...]}
 
   const toggleGear = (key) => setOpenGear(openGear === key ? null : key);
+  // Asked for from the event sheet's More ("Manage calendar"): open that
+  // calendar's settings in All calendars and bring it into view.
+  const manageCal = useStore((st) => st.manageCal);
+  useEffect(() => {
+    if (!manageCal) return;
+    setOpenGear('all:' + manageCal);
+    set({ manageCal: null });
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const el = document.querySelector('.bc-calset');
+      if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }));
+  }, [manageCal]);
 
   // Enabled plugins that contribute overlay bands get a visibility row; the
   // toggle is a persisted setting so it survives reloads.

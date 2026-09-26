@@ -83,19 +83,35 @@ function ForMe({ occ, cal, onHidden }) {
   </div>`;
 }
 
-function MoreMenu({ occ, cal, isFeed, onClose, onDelete }) {
+// The event's own web address, by the site it belongs to: "partiful.com".
+function sourceHost(url) {
+  try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; }
+}
+
+// More (0.5.8). Three groups, each saying what it acts on, because "the
+// calendar", "the event" and "the event's page" will mean different things
+// once calendars can be shared: this event (Copy to), the calendar it is on
+// (named, with its colour), and the site it came from (named by its address,
+// so nobody mistakes it for a page of this app). Delete last.
+function MoreMenu({ occ, cal, isFeed, onClose, onDelete, onCopy }) {
   const ref = useRef(null);
   useEffect(() => onOutsidePress(insideAny(ref), onClose), []); // eslint-disable-line
   const item = (icon, label, fn, cls = '', note = null) => html`<button type="button" role="menuitem" class=${'bc-es-mi ' + cls} onClick=${() => { onClose(); fn(); }}>
     <${Icon} name=${icon} size=${18} /><span>${label}</span>${note && html`<small>${note}</small>`}
   </button>`;
+  const head = (content) => html`<div class="bc-es-mh" role="presentation">${content}</div>`;
   const calName = (cal && cal.name) || 'Calendar';
+  const host = occ.url ? sourceHost(occ.url) : '';
   return html`<div class="bc-es-menu" role="menu" ref=${ref}>
-    ${cal && item('calendar', 'Manage “' + calName + '”', () => set({ popover: null, manageCal: cal.id }), '', 'settings')}
-    ${cal && cal.visible && item('eyeOff', 'Hide this calendar', () => { set({ popover: null }); toggleCalendarVisible(cal); toast(calName + ' hidden. Show it again from the sidebar.', { duration: 4000 }); })}
-    <hr />
-    ${occ.url && item('arrowUpRight', 'Open the event’s page', () => window.open(occ.url, '_blank', 'noopener'))}
-    ${occ.url && item('link', 'Copy link to event', () => copyText(occ.url, 'Link'))}
+    ${item('copy', 'Copy to another calendar…', onCopy)}
+    ${cal && html`<hr />
+      ${head(html`<i style=${'background:' + (cal.color || 'var(--border-strong)')}></i>Calendar: ${calName}`)}
+      ${item('settings', 'Calendar settings', () => set({ popover: null, manageCal: cal.id }))}
+      ${cal.visible && item('eyeOff', 'Hide this calendar', () => { set({ popover: null }); toggleCalendarVisible(cal); toast(calName + ' hidden. Show it again from the sidebar.', { duration: 4000 }); })}`}
+    ${occ.url && html`<hr />
+      ${head(html`Source: ${host || 'web page'}`)}
+      ${item('arrowUpRight', host ? 'Open on ' + host : 'Open the source page', () => window.open(occ.url, '_blank', 'noopener'), '', 'new tab')}
+      ${item('link', host ? 'Copy the ' + host + ' link' : 'Copy the source link', () => copyText(occ.url, host ? host + ' link' : 'Source link'))}`}
     ${!isFeed && html`<hr />`}
     ${!isFeed && item('trash', 'Delete…', onDelete, 'is-danger', occ.recurring ? 'asks which ones' : null)}
   </div>`;
@@ -135,7 +151,7 @@ export function EventSheetBody({ occ, cal, isFeed, full, panel = false, onFull, 
   const context = cal && cal.role === 'context';
   const openEdit = () => set({ popover: null, editor: { mode: 'edit', occ } });
   const openMove = () => { close(); enterReschedule(occ.instanceId); };
-  const moreMenu = moreOpen && html`<${MoreMenu} occ=${occ} cal=${cal} isFeed=${isFeed} onClose=${() => setMoreOpen(false)} onDelete=${onDelete} />`;
+  const moreMenu = moreOpen && html`<${MoreMenu} occ=${occ} cal=${cal} isFeed=${isFeed} onClose=${() => setMoreOpen(false)} onDelete=${onDelete} onCopy=${() => setCopyOpen(true)} />`;
 
   // The phone keeps For me and the actions at the bottom, under the thumb.
   const foot = html`<div class="bc-es-foot">
@@ -145,7 +161,6 @@ export function EventSheetBody({ occ, cal, isFeed, full, panel = false, onFull, 
         ${!isFeed && html`<button type="button" class="bc-es-act" onClick=${openMove}><${Icon} name="reschedule" size=${20} />Move</button>`}
         ${isFeed && !context && html`<button type="button" class="bc-es-act" onClick=${() => sendFeedback(occ, 'up')}><${ThumbIcon} dir="up" size=${20} />More like</button>`}
         ${isFeed && !context && html`<button type="button" class="bc-es-act" onClick=${() => sendFeedback(occ, 'down')}><${ThumbIcon} dir="down" size=${20} />Less like</button>`}
-        <button type="button" class=${'bc-es-act' + (copyOpen ? ' is-on' : '')} aria-expanded=${copyOpen} onClick=${() => setCopyOpen(!copyOpen)}><${Icon} name="copy" size=${20} />Copy to</button>
         <button type="button" class=${'bc-es-act' + (moreOpen ? ' is-on' : '')} aria-haspopup="menu" aria-expanded=${moreOpen} onClick=${() => setMoreOpen(!moreOpen)}><${Icon} name="more" size=${20} />More</button>
       </div>
       ${moreMenu}
@@ -155,6 +170,7 @@ export function EventSheetBody({ occ, cal, isFeed, full, panel = false, onFull, 
   // The row is the same height for every event, For me or not, so stepping
   // through a day never moves a button or the content under it. Edit and Move
   // keep their words; the rest are icons with tooltips so one row holds all.
+  // Copy to lives in More: it is rare, and a bare copy icon read as Duplicate.
   const tool = (icon, label, onClick, extra = {}) => html`<button
     type="button" class=${'bc-es-tool' + (extra.word ? '' : ' is-icon') + (extra.on ? ' is-on' : '')}
     aria-label=${label} title=${extra.word ? undefined : label} aria-expanded=${extra.expanded} aria-haspopup=${extra.popup}
@@ -166,7 +182,6 @@ export function EventSheetBody({ occ, cal, isFeed, full, panel = false, onFull, 
         ${!isFeed && tool(html`<${Icon} name="reschedule" size=${15} />`, 'Move', openMove, { word: true })}
         ${isFeed && !context && tool(html`<${ThumbIcon} dir="up" size=${16} />`, 'More like this', () => sendFeedback(occ, 'up'))}
         ${isFeed && !context && tool(html`<${ThumbIcon} dir="down" size=${16} />`, 'Less like this', () => sendFeedback(occ, 'down'))}
-        ${tool(html`<${Icon} name="copy" size=${15} />`, 'Copy to another calendar', () => setCopyOpen(!copyOpen), { on: copyOpen, expanded: copyOpen })}
         ${tool(html`<${Icon} name="more" size=${16} />`, 'More', () => setMoreOpen(!moreOpen), { on: moreOpen, expanded: moreOpen, popup: 'menu' })}
       </span>
       ${!context && html`<${ForMe} occ=${occ} cal=${cal} onHidden=${close} />`}

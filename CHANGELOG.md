@@ -4,6 +4,12 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.5.8 (2026-09-26)
+
+- **Copy to another calendar moved into More,** on the desktop panel and the phone sheet. It is rarely used, and on its own a copy icon read as "duplicate this event".
+- **More says what each group acts on:** the event (Copy to another calendar), the calendar it is on ("Calendar: Partiful", with its colour, then Calendar settings and Hide this calendar), and the site it came from ("Source: partiful.com", then "Open on partiful.com", marked new tab, and "Copy the partiful.com link"). Nothing reads as a page or link of this app when it is the source's. That matters more once calendars can be shared.
+- **On the desktop panel, More's rows are list-sized** for a mouse, with hover, rather than thumb-sized.
+
 ## 0.5.7 (2026-09-26)
 
 - **Forwarded emails are read on the clock of the place they're about.** A booking in Edinburgh is 3 PM Edinburgh time whatever your Home zone is: the reader names the zone of the event's address, venue or city (or a zone the email states, like "3pm ET"), and the event keeps that zone. An email naming no place is read on the clock where your device last was, then Home. "Add to Google Calendar" links keep their own zone too, and a time without an offset is never read on the server's clock. Before this, emailed events were all stamped with Home's zone, so a correct 3 PM in Edinburgh also said "7:00 AM in Los Angeles".

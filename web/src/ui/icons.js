@@ -225,6 +225,7 @@ export function Icon({ name, size = 15 }) {
     clock: html`<circle cx="8" cy="8" r="5.8" /><path d="M8 4.8V8l2.2 1.4" />`,
     copy: html`<rect x="5.4" y="5.4" width="8.2" height="8.2" rx="1.4" /><path d="M10.6 5.4V3.8a1.4 1.4 0 0 0-1.4-1.4H3.8a1.4 1.4 0 0 0-1.4 1.4v5.4a1.4 1.4 0 0 0 1.4 1.4h1.6" />`,
     link: html`<path d="M6.6 9.4a2.8 2.8 0 0 0 4 0l2-2a2.8 2.8 0 0 0-4-4l-.7.7M9.4 6.6a2.8 2.8 0 0 0-4 0l-2 2a2.8 2.8 0 0 0 4 4l.7-.7" />`,
+    globe: html`<circle cx="8" cy="8" r="5.8" /><path d="M2.2 8h11.6M8 2.2c1.7 1.6 2.5 3.6 2.5 5.8S9.7 12.2 8 13.8C6.3 12.2 5.5 10.2 5.5 8S6.3 3.8 8 2.2z" />`,
     eyeOff: html`<path d="M1.8 8S4 3.8 8 3.8 14.2 8 14.2 8 12 12.2 8 12.2 1.8 8 1.8 8z" /><circle cx="8" cy="8" r="2" /><path d="M2.6 13.4 13.4 2.6" />`,
   }[name === 'organize' ? 'folder' : name];
   return html`<svg

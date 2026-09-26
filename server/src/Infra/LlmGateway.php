@@ -30,9 +30,16 @@ final class LlmGateway
     /**
      * Parse natural-language event text.
      *
-     * @return ?array{title:string,start:string,end:string,allDay:bool,location:?string,personNames:list<string>}
+     * With $placeZone (mail), the model also names the zone the event happens
+     * in, judged from its address, venue or city, and the times are read as
+     * the clock there: a restaurant booking in Edinburgh is 3 PM Edinburgh time
+     * whatever zone the owner's Home is. With no place clue it is $hereTz (where
+     * the owner was last seen), else $tz. The result then carries 'tzid'.
+     * Quick-add leaves it off: there the owner types times on their own clock.
+     *
+     * @return ?array{title:string,start:string,end:string,allDay:bool,location:?string,personNames:list<string>,tzid?:string}
      */
-    public function parseEvent(string $text, \DateTimeImmutable $now, string $tz): ?array
+    public function parseEvent(string $text, \DateTimeImmutable $now, string $tz, bool $placeZone = false, ?string $hereTz = null): ?array
     {
         if (!$this->isConfigured()) {
             return null;
@@ -44,7 +51,13 @@ final class LlmGateway
             . "use the soonest FUTURE occurrence of that time (today if still ahead, else tomorrow); never place start "
             . "before the current datetime unless the text explicitly names a past date; "
             . "if no time is given, treat as an all-day event; "
-            . "if no end is given, default to one hour after start; start and end must be ISO8601 with UTC offset; "
+            . ($placeZone
+                ? "if no end is given, default to one hour after start; start and end are the LOCAL wall-clock time "
+                    . "where the event happens, as ISO8601 WITHOUT any offset (e.g. 2026-10-02T15:00:00), exactly as the "
+                    . "text states them; timezone is the IANA zone of the event's place (e.g. Europe/London for Edinburgh), "
+                    . "judged from its address, venue or city, or from an explicit zone in the text (\"3pm ET\"); if the text "
+                    . "gives no place or zone, timezone is " . ($hereTz ?? $tz) . "; "
+                : "if no end is given, default to one hour after start; start and end must be ISO8601 with UTC offset; ")
             . "the title is the text minus only its date/time/location phrases — keep companion phrases "
             . "(\"Cocktails with Virginia at 4pm\" -> title \"Cocktails with Virginia\", NOT \"Cocktails\"); "
             . "location is a place name or empty string; personNames are people mentioned as companions "
@@ -64,7 +77,7 @@ final class LlmGateway
                         'allDay' => ['type' => 'BOOLEAN'],
                         'location' => ['type' => 'STRING'],
                         'personNames' => ['type' => 'ARRAY', 'items' => ['type' => 'STRING']],
-                    ],
+                    ] + ($placeZone ? ['timezone' => ['type' => 'STRING', 'description' => 'IANA zone of the event\'s place']] : []),
                     'required' => ['title', 'start', 'end', 'allDay'],
                 ],
                 'temperature' => 0.1,
@@ -80,17 +93,25 @@ final class LlmGateway
         if ($parsed === null) {
             return null;
         }
+        // Place zone: the model's zone if it is a real one, else where the
+        // owner is, else Home. The times are that place's clock, so any offset
+        // the model added anyway is dropped rather than trusted over the zone.
+        $zoneId = $tz;
+        if ($placeZone) {
+            $zoneId = self::validZone($parsed['timezone'] ?? null) ?? self::validZone($hereTz) ?? $tz;
+        }
+        $wall = static fn($v) => $placeZone ? preg_replace('/(Z|[+-]\d{2}:?\d{2})$/i', '', trim((string) $v)) : (string) $v;
         try {
-            $start = Time::parseIso((string) ($parsed['start'] ?? ''), $tz);
-            $end = Time::parseIso((string) ($parsed['end'] ?? ''), $tz);
+            $start = Time::parseIso($wall($parsed['start'] ?? ''), $zoneId);
+            $end = Time::parseIso($wall($parsed['end'] ?? ''), $zoneId);
         } catch (\InvalidArgumentException) {
             return null;
         }
         if ($end <= $start) {
             $end = $start->add(new \DateInterval('PT1H'));
         }
-        $tzZone = Time::zone($tz);
-        return [
+        $tzZone = Time::zone($zoneId);
+        return ($placeZone ? ['tzid' => $zoneId] : []) + [
             'title' => trim((string) ($parsed['title'] ?? '')) ?: 'New event',
             'start' => Time::iso($start->setTimezone($tzZone)),
             'end' => Time::iso($end->setTimezone($tzZone)),
@@ -101,6 +122,20 @@ final class LlmGateway
                 is_array($parsed['personNames'] ?? null) ? $parsed['personNames'] : []
             ))),
         ];
+    }
+
+    /** An IANA zone name PHP knows, or null. */
+    public static function validZone(mixed $z): ?string
+    {
+        if (!is_string($z) || $z === '' || !str_contains($z, '/') && $z !== 'UTC') {
+            return null;
+        }
+        try {
+            new \DateTimeZone($z);
+        } catch (\Throwable) {
+            return null;
+        }
+        return $z;
     }
 
     /**

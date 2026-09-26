@@ -44,6 +44,10 @@ final class Settings
         'sidebarActiveOnly' => false,
         'pluginHidden' => [],
         'tz' => null,
+        // Where the owner's device last was (its IANA zone), reported by the
+        // app at boot. Mail that names no place is read on this clock: an
+        // email about "3 PM" arriving while travelling means 3 PM there.
+        'hereTz' => null,
         // Global default reminders; effective-reminder resolution falls back
         // to these when neither the event nor its calendar overrides them.
         'reminderTimed' => [['minutes' => 10]],
@@ -184,6 +188,7 @@ final class Settings
                 'sidebarActiveOnly' => self::bool($key, $value),
                 'pluginHidden' => self::pluginHidden($value),
                 'tz' => self::tzid($value),
+                'hereTz' => self::tzid($value),
                 'reminderTimed' => Reminders::validateTimedList($value),
                 'reminderAllDay' => Reminders::validateAllDayList($value),
                 'homeLat' => self::coordinate($key, $value, 90.0),

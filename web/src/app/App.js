@@ -3,6 +3,7 @@
 import { COMPACT_QUERY, COARSE_QUERY } from '../lib/breakpoints.js';
 import { html, useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback } from '../../vendor/index.js';
 import { useStore, set, state, calendarMeta, shallowEq, invalidateRecords } from './store.js';
+import { PHONE_QUERY } from '../lib/breakpoints.js';
 import { loadWindow, api, refreshWindow, loadPeople, retryWindowsNow } from './api.js';
 import { hiddenDayCounts } from '../lib/relfilter.js';
 import {
@@ -104,6 +105,8 @@ export function App() {
   // "Manage calendar" from the event sheet: open the drawer; the sidebar
   // opens that calendar's settings (Sidebar.js).
   const manageCal = useStore((st) => st.manageCal);
+  const tuckSetting = useStore((st) => st.settings.panelTucksSidebar);
+  const popoverOpen = useStore((st) => !!st.popover);
   useEffect(() => { if (manageCal && state.viewportNarrow) setSidebarOpen(true); }, [manageCal]);
   useEffect(() => installDrawerSwipe({
     enabled: () => state.viewportNarrow,
@@ -510,6 +513,12 @@ export function App() {
     // the day being browsed rather than each event's own start day.
     const dayKey = opts && opts.dayKey;
     if (opts && opts.detail) {
+      const target = state.occ.get(instanceId);
+      // Desktop: the side panel already holds everything the full view did.
+      if (!window.matchMedia(PHONE_QUERY).matches && target && !target.isContainer) {
+        set({ popover: { instanceId, anchorRect, dayKey }, detail: null, groupPopover: null, expandedDay: null });
+        return;
+      }
       set({ detail: { instanceId, dayKey }, popover: null, groupPopover: null, expandedDay: null });
       return;
     }
@@ -814,16 +823,20 @@ export function App() {
         <button type="button" class="bc-link-btn" onClick=${retryWindowsNow}>Retry now</button>`}
   </div>`;
 
+  // The desktop event panel (EventPopover): the calendar makes room for it,
+  // and the sidebar tucks away while it is open unless the setting says not.
+  const evPanel = popoverOpen && !window.matchMedia(PHONE_QUERY).matches;
+  const tuckSidebar = evPanel && tuckSetting !== false;
   return html`<div class="bc-app${dimSet ? ' is-page-filtering' : ''}">
     <${Toolbar} onToggleSidebar=${toggleSidebar} />
     ${reschedActive && html`<${RescheduleBanner} occ=${reschedOcc} onExit=${exitReschedule} />`}
-    <div class="bc-main">
+    <div class=${'bc-main' + (evPanel ? ' has-evpanel' : '')}>
       ${sidebarOpen && html`<div
         class="bc-sidebar-scrim"
         aria-hidden="true"
         onPointerDown=${(e) => { consumeOutsidePress(e); setSidebarOpen(false); }}
       ></div>`}
-      <${Sidebar} open=${sidebarOpen} collapsed=${sidebarCollapsed} onClose=${() => setSidebarOpen(false)} />
+      <${Sidebar} open=${sidebarOpen} collapsed=${sidebarCollapsed || tuckSidebar} onClose=${() => setSidebarOpen(false)} />
       <main class="bc-view" ref=${viewAreaRef}>${windowNote}${view}</main>
       ${reschedActive && html`<${RescheduleStrip}
         year=${stripBase.year} month=${stripBase.month}

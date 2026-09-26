@@ -35,8 +35,8 @@ export const HOTKEYS = [
   { id: 'editEvent', keys: ['e'], label: 'Edit event (popover or detail open)', group: 'Events' },
   { id: 'reschedule', keys: ['r'], label: 'Reschedule (popover open)', group: 'Events' },
   { id: 'deleteEvent', keys: ['Delete', 'Backspace'], display: ['Del'], label: 'Delete event (popover or detail open)', group: 'Events' },
-  { id: 'detailPrev', keys: ['['], label: 'Previous event that day (detail open)', group: 'Events' },
-  { id: 'detailNext', keys: [']'], label: 'Next event that day (detail open)', group: 'Events' },
+  { id: 'detailPrev', keys: ['['], label: 'Previous event that day (event open)', group: 'Events' },
+  { id: 'detailNext', keys: [']'], label: 'Next event that day (event open)', group: 'Events' },
 
   // Overlays
   { id: 'palette', keys: ['k'], mod: true, display: ['⌘/Ctrl', 'K'], label: 'Command palette', group: 'Overlays' },

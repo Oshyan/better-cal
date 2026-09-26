@@ -4,6 +4,13 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.5.5 (2026-09-26)
+
+- **On desktop, an event opens in a panel on the right** instead of a small card beside it. The panel is the same place and size every time, 480 points wide at full height under the top bar, so stepping through a day never moves or resizes it. It holds everything at once, the map included, so there's no separate full view to open; double-clicking an event (or anything that used to open the full view) opens the panel too. Trips keep their own view.
+- **The calendar makes room for it** rather than hiding under it, so every day stays visible and clickable, with the open event outlined. Clicking another event opens it in the panel; clicking anywhere else closes it, as does Esc. [ and ] step through the day.
+- **The sidebar tucks away while the panel is open,** giving the days back their width, and returns when you close it. Settings, General, "Event panel" turns that off.
+- **Same contents as the phone's event sheet,** at desktop sizes: For me and labelled actions (Edit, Move, Copy to, More; or More like, Less like, Copy to, More) under the title, then when, the invitation reply, where with Directions or Join, reminders, people, the map, the description, plugin data and the source.
+
 ## 0.5.4 (2026-09-26)
 
 - **Addresses with extra words now find their place on the map.** Feeds often decorate an address: "111 Conselyea St, Brooklyn, NY 11211, USA (The Lounge)", "[Upstairs] 5 Main St", or a venue name ahead of the street. When the full text finds nothing, Better-Cal now tries it without the bracketed parts, and then from the street number on, and uses the first that resolves. Addresses that had already been marked "couldn't place" get the retry too: the map appears the next time the event is opened, and the background matching picks them up on its next pass.

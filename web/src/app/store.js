@@ -53,6 +53,8 @@ export const state = {
     reminderTimed: [{ minutes: 10 }], reminderAllDay: [{ daysBefore: 1, time: '18:00' }],
     homeLat: null, homeLng: null, homeLabel: null,
     mapStyle: 'streets-v2',
+    // Desktop: tuck the sidebar away while an event's panel is open.
+    panelTucksSidebar: true,
   },
   // Public-safe server config (GET /config), fetched once at boot.
   config: { maptilerKey: null },

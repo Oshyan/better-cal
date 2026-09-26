@@ -2,6 +2,11 @@
 // Prefers the right side of the anchor, flips left on viewport overflow,
 // clamps with a gap. Inline title/time editing; edit / delete / attendance.
 //
+// On desktop (0.5.5) it is a panel along the right edge, the same place
+// and size every time, beside the calendar (which makes room for it, and
+// whose sidebar tucks away meanwhile unless a setting says not to); it holds
+// the same contents as the phone's sheet, all at once.
+//
 // On phones it is the event sheet (0.5.0): one fixed height for every event,
 // so stepping through a day never moves its edge; a grab handle; drag or tap
 // the handle (or the title, or More) to grow it to full height, drag down to
@@ -80,6 +85,12 @@ function focusTarget(instanceId, dayKey, panel) {
     if (hit) return one(hit);
   }
   return one(cands[0]);
+}
+
+// The desktop panel starts under the top bar.
+function panelTop() {
+  const tb = document.querySelector('.bc-toolbar');
+  return tb ? Math.round(tb.getBoundingClientRect().bottom) : 52;
 }
 
 // The nearest ancestor that scrolls vertically, to bring an event into view.
@@ -174,7 +185,7 @@ export function EventPopover() {
   // outline as the views behind re-render (virtualized rows come and go).
   const focusDay = popover && (popover.dayKey || (occ ? occDayKey(occ) : null));
   useEffect(() => {
-    if (!sheet || !popover) return undefined;
+    if (!open || !popover) return undefined;
     const panel = panelRef.current;
     if (!panel) return undefined;
     let raf = 0;
@@ -193,13 +204,13 @@ export function EventPopover() {
       cancelAnimationFrame(raf);
       for (const n of document.querySelectorAll('.bc-sheet-focus')) n.classList.remove('bc-sheet-focus');
     };
-  }, [sheet, popover && popover.instanceId, focusDay]); // eslint-disable-line
+  }, [open, popover && popover.instanceId, focusDay]); // eslint-disable-line
 
   // Keep the event in view above the sheet, in whatever view is behind it:
   // scroll its nearest scroller just enough, as the sheet opens and at each
   // step through the day.
   useEffect(() => {
-    if (!sheet || !popover) return;
+    if (!open || !popover) return;
     const panel = panelRef.current;
     if (!panel) return;
     const t = focusTarget(popover.instanceId, focusDay, panel);
@@ -207,14 +218,14 @@ export function EventPopover() {
     if (!el) return;
     const sc = scrollParent(el);
     if (!sc) return;
-    const sheetTop = window.innerHeight - panel.offsetHeight; // not its rect: it may be mid-animation
+    const sheetTop = sheet ? window.innerHeight - panel.offsetHeight : window.innerHeight; // not its rect: it may be mid-animation
     const top = Math.max(0, sc.getBoundingClientRect().top) + 8;
     const r = el.getBoundingClientRect();
     let delta = 0;
     if (r.bottom > sheetTop - 12) delta = r.bottom - (sheetTop - 12);
     if (r.top - delta < top) delta = r.top - top;
     if (Math.abs(delta) > 1) sc.scrollBy({ top: delta, behavior: 'smooth' });
-  }, [sheet, popover && popover.instanceId, focusDay]); // eslint-disable-line
+  }, [open, popover && popover.instanceId, focusDay]); // eslint-disable-line
 
   // Touch on the sheet: up or down on the handle row (or down on the body
   // when it is scrolled to its top) drags the sheet; sideways steps through
@@ -308,12 +319,12 @@ export function EventPopover() {
     };
     let stop = null;
     if (popover) {
-      // On the phone sheet, a tap on another event in the calendar opens it
-      // here (the press goes through to it) instead of only closing the
-      // sheet; a tap anywhere else closes it and does nothing more. Controls
+      // With the phone sheet or the desktop panel open, a press on another
+      // event in the calendar opens it here (the press goes through to it)
+      // instead of only closing; a tap anywhere else closes it and does nothing more. Controls
       // inside a row (its swipe actions) never take a press through.
       const inPanel = insideAny(panelRef);
-      const toEvent = (t) => isMobile() && t && t.closest
+      const toEvent = (t) => t && t.closest
         && t.closest('[data-instance]') && !t.closest('.bc-agenda-acts, .bc-agenda-grip');
       stop = onOutsidePress((t) => inPanel(t) || toEvent(t), () => set({ popover: null }));
       document.addEventListener('keydown', onKey, true);
@@ -350,11 +361,8 @@ export function EventPopover() {
   // stepping onto a multi-day event never re-derives the day from that
   // event's start and jumps the list to another date.
   const navDay = popover.dayKey || occDayKey(occ);
-  let nav = null;
-  if (mobile) {
-    const list = sameDayList(occ, navDay);
-    nav = { list, index: list.findIndex((o) => o.instanceId === occ.instanceId) };
-  }
+  const navList = sameDayList(occ, navDay);
+  const nav = { list: navList, index: navList.findIndex((o) => o.instanceId === occ.instanceId) };
   const goSheet = (idx) => {
     const target = nav && nav.list[idx];
     if (target) set({ popover: { ...popover, instanceId: target.instanceId, dayKey: navDay } });
@@ -383,20 +391,19 @@ export function EventPopover() {
 
   const color = (cal && cal.color) || '#888';
   return html`<div
-    class="bc-popover${mobile ? ' bc-sheet bc-evsheet' : ''}${mobile && full ? ' is-full' : ''}"
-    style=${pos ? `left:${pos.left}px;top:${pos.top}px;width:${WIDTH}px` : (mobile ? `--cal:${color}` : '')}
+    class="bc-popover${mobile ? ' bc-sheet bc-evsheet' : ' bc-evpanel'}${mobile && full ? ' is-full' : ''}"
+    style=${mobile ? `--cal:${color}` : `--cal:${color};top:${panelTop()}px`}
     ref=${panelRef}
     role="dialog"
     aria-modal="true"
     aria-label="Event details"
   >
-    ${!mobile && html`<div class="bc-pop-color" style=${`background:${color}`}></div>`}
-    ${mobile && html`<div class="bc-evsheet-head">
-      <button
+    <div class="bc-evsheet-head">
+      ${mobile && html`<button
         type="button" class="bc-evsheet-grab"
         aria-label=${full ? 'Show less' : 'Show all details'} aria-expanded=${full}
         onClick=${() => setFull(!full)}
-      ><i></i></button>
+      ><i></i></button>`}
       ${nav && html`<div class="bc-sheet-nav" role="group" aria-label="Previous and next event this day">
         <button
           type="button" class="bc-icon-btn bc-sheet-chev" aria-label="Previous event this day"
@@ -410,104 +417,14 @@ export function EventPopover() {
           type="button" class="bc-icon-btn bc-sheet-chev" aria-label="Next event this day"
           disabled=${nav.index < 0 || nav.index >= nav.list.length - 1} onClick=${() => goSheet(nav.index + 1)}
         ><${Icon} name="chevronRight" size=${20} /></button>
+        ${!mobile && html`<button type="button" class="bc-icon-btn bc-sheet-chev" aria-label="Close" title="Close (Esc)" onClick=${() => set({ popover: null })}><${Icon} name="close" size=${18} /></button>`}
       </div>`}
-    </div>`}
-    ${mobile ? html`<${EventSheetBody}
-      occ=${occ} cal=${cal} isFeed=${isFeed} full=${full} onFull=${() => setFull(true)} bodyRef=${bodyRef}
+    </div>
+    <${EventSheetBody}
+      occ=${occ} cal=${cal} isFeed=${isFeed} full=${mobile ? full : true} panel=${!mobile} onFull=${() => setFull(true)} bodyRef=${bodyRef}
       copyOpen=${copyOpen} setCopyOpen=${setCopyOpen} timeScope=${timeScope} setTimeScope=${setTimeScope}
       deletePrompt=${deletePrompt} attendPrompt=${attendPrompt} s=${s} e=${e}
-    />` : html`<div class="bc-pop-body" ref=${bodyRef}>
-      <div class="bc-pop-titlerow">
-        <h2 class="bc-pop-title${occ.status === 'cancelled' ? ' is-cancelled' : ''}" onClick=${openFull} title="Open full details">
-          ${occ.title || '(untitled)'}${occ.isNew ? html` <span class="bc-new-pill">new</span>` : ''}
-        </h2>
-        <span class="bc-pop-iconrow" role="group" aria-label="Event actions">
-          <button type="button" class="bc-icon-btn" title="Open full details" aria-label="Open full details" onClick=${mobile && full ? () => openDetail(occ.instanceId) : openFull}><${Icon} name="expand" size=${14} /></button>
-          ${!isFeed && html`<button type="button" class="bc-icon-btn" title="Reschedule (r)" aria-label="Reschedule" onClick=${() => enterReschedule(occ.instanceId)}><${Icon} name="reschedule" size=${14} /></button>`}
-          ${!isFeed && html`<button type="button" class="bc-icon-btn" title="Edit" aria-label="Edit" onClick=${() => set({ popover: null, editor: { mode: 'edit', occ } })}><${Icon} name="pencil" size=${14} /></button>`}
-          ${!isFeed && html`<button type="button" class="bc-icon-btn bc-pop-trash" title="Delete" aria-label="Delete" onClick=${() => (occ.recurring || googleBacked(occ) ? set({ deletePrompt: occ.instanceId }) : deleteEvent(occ))}><${Icon} name="trash" size=${14} /></button>`}
-          <button type="button" class=${'bc-icon-btn' + (copyOpen ? ' is-active' : '')} title="Copy to another calendar" aria-label="Copy to another calendar" aria-expanded=${copyOpen} onClick=${() => setCopyOpen(!copyOpen)}><${Icon} name="stack" size=${14} /></button>
-          <button type="button" class="bc-icon-btn" aria-label="Close" onClick=${() => set({ popover: null })}><${Icon} name="close" size=${14} /></button>
-        </span>
-      </div>
-      ${copyOpen && html`<${CopyTo} occ=${occ} compact onDone=${() => set({ popover: null })} />`}
-      ${deletePrompt === occ.instanceId && html`<${DeleteScope} occ=${occ} compact onDone=${() => set({ deletePrompt: null, popover: null })} onCancel=${() => set({ deletePrompt: null })} />`}
-      ${timeScope && html`<${ScopeChoice} occ=${occ} verb="New time for" compact note=${googleBacked(occ) ? GOOGLE_NO_UNDO : null} onPick=${(scope) => { const f = timeScope; setTimeScope(null); updateEvent(occ, f, scope); }} onCancel=${() => setTimeScope(null)} />`}
-      ${attendPrompt && attendPrompt.instanceId === occ.instanceId && html`<${ScopeChoice} occ=${occ} verb=${attendPrompt.label + ' for'} compact note=${cal && cal.role === 'mine' && googleBacked(occ) ? GOOGLE_NO_UNDO : null}
-        onPick=${async (scope) => { const v = attendPrompt.relationship; set({ attendPrompt: null }); const r = await setRelationship(occ, v, scope); if (r === 'hidden') set({ popover: null }); }}
-        onCancel=${() => set({ attendPrompt: null })} />`}
-      ${occ.containers && occ.containers.length > 0 && html`<button
-        type="button" class="bc-partof" title="Open this trip"
-        onClick=${() => { set({ popover: null }); openTripByEventId(occ.containers[0].eventId); }}
-      ><${LinkIcon} size=${12} /> Part of: ${occ.containers[0].title}</button>`}
-      ${editingTime
-        ? html`<${TimeEditor} start=${s} end=${e} allDay=${occ.allDay} onSave=${saveTime} onCancel=${() => setEditingTime(false)} />`
-        : html`<div class="bc-pop-when" onClick=${() => !isFeed && setEditingTime(true)} title=${isFeed ? '' : 'Click to edit time'}>
-            <span class="bc-date-duration">${fmtRange(s, e, occ.allDay)} <${DurationSuffix} occ=${occ} expanded /></span>
-            ${occ.recurring && html`<span class="bc-pop-recur">${describeRrule(occ.rrule)}</span>`}
-          </div>`}
-      ${!occ.full && occ.hasReminders && !occ.reminders && html`<div class="bc-pop-rem bc-pop-skel">
-        <${Icon} name="bell" size=${12} /><${Skeleton} rows=${1} compact=${true} />
-      </div>`}
-      ${occ.reminders && occ.reminders.length > 0 && html`<div class=${'bc-pop-rem' + (occ.full ? ' bc-late' : '')}>
-        <${Icon} name="bell" size=${12} />${occ.reminders.map(fmtReminder).join(', ')}
-      </div>`}
-      ${occ.location && isPendingLocation(occ.location) && html`<div class="bc-pop-where is-pending" title=${occ.location}>
-        <${Icon} name="lock" size=${12} />Location after RSVP
-      </div>`}
-      ${occ.location && !isPendingLocation(occ.location) && html`<div class="bc-pop-where">
-        <${PinIcon} size=${12} />${occ.location}
-        <a
-          class="bc-maplink" href=${gmapsUrl(occ.location, occ.locationLat, occ.locationLng)}
-          target="_blank" rel="noopener noreferrer" title="Open in Google Maps"
-        >Map <${Icon} name="arrowUpRight" size=${10} /></a>
-      </div>`}
-      ${((occ.people && occ.people.length > 0) || (occ.tags && occ.tags.length > 0)) && html`<div class="bc-pop-meta">
-        ${occ.people && occ.people.length > 0 && html`<span class="bc-pop-people">
-          <${Icon} name="people" size=${12} />
-          ${occ.people.map((n, i) => html`<span key=${n}>${i > 0 && ', '}<button
-            type="button" class="bc-person-link" title=${'Open ' + n + ' in People'}
-            onClick=${() => set({ popover: null, route: 'people', peopleFocus: n })}
-          >${n}</button></span>`)}
-        </span>`}
-        ${occ.tags && occ.tags.length > 0 && html`<span class="bc-pop-tags">${occ.tags.map((t) => '#' + t).join(' ')}</span>`}
-      </div>`}
-      ${!occ.full && occ.hasDescription && !occ.description && html`<div class="bc-pop-descwrap bc-pop-skel">
-        <${Skeleton} rows=${2} compact=${true} />
-      </div>`}
-      ${occ.description && (() => {
-        // Preview only: the popover is a summary card, so the description is
-        // line-clamped with a "More" link into the detail view. It never
-        // scrolls internally — a scrollbar inside a hover card is a trap.
-        const rich = hasHtml(occ.description);
-        const text = rich ? '' : stripToText(occ.description);
-        if (!rich && !text) return null;
-        const long = rich ? true : text.length > 160;
-        return html`<div class=${'bc-pop-descwrap' + (occ.full ? ' bc-late' : '')}>
-          ${rich
-            ? html`<div class="bc-pop-desc bc-pop-desc-rich bc-rich" dangerouslySetInnerHTML=${{ __html: sanitizeHtml(occ.description) }}></div>`
-            : html`<div class="bc-pop-desc">${text}</div>`}
-          ${long && !(mobile && full) && html`<button
-            type="button" class="bc-pop-more" onClick=${openFull}
-          >More</button>`}
-        </div>`;
-      })()}
-      ${occ.url && html`<a class="bc-pop-url" href=${occ.url} target="_blank" rel="noopener">Event link <${Icon} name="arrowUpRight" size=${10} /></a>`}
-      <div class="bc-pop-calline" title=${'Calendar: ' + ((cal && cal.name) || 'Calendar')}>
-        <span class="bc-pop-calicon" style=${`color:${ink((cal && cal.color) || '#888')}`}><${Icon} name="calendar" size=${12} /></span>
-        ${(cal && cal.name) || 'Calendar'}
-      </div>
-      ${!(cal && cal.role === 'context') && html`<div class="bc-pop-actions">
-        <${RelationshipControl} occ=${occ} cal=${cal} compact onHidden=${() => set({ popover: null })} />
-        ${isFeed && html`<div class="bc-seg" role="group" aria-label="Feedback">
-          ${[['up', 'More like this'], ['down', 'Less like this']].map(([value, label]) => html`<button
-            key=${value} type="button" class="bc-seg-btn bc-seg-icon"
-            title=${label} aria-label=${label}
-            onClick=${() => sendFeedback(occ, value)}
-          ><${ThumbIcon} dir=${value} /></button>`)}
-        </div>`}
-      </div>`}
-    </div>`}
+    />
   </div>`;
 }
 

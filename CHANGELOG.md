@@ -4,6 +4,13 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.5.9 (2026-09-26)
+
+- **The location dropdown no longer waits for your device's position.** Each search used to ask the browser where you are first, when location was allowed. A browser can stay silent (Chrome on a Mac with Location Services off for it), and then the dropdown never came. Search now goes out at once with the best place already known, and a fresh position is fetched in the background for the next search.
+- **Location search looks near where your calendar puts you on that date:** the planned event with a known place nearest in time to the one you're editing (within a day and a half; a stay spanning it counts first). A dinner added during a trip searches near the trip. Then your device's position, your device's time zone when you're away from Home, your Home location, and the zone.
+- **"and" and "&" find the same place.** "Panda and Sons" finds "Panda & Sons" (both spellings are asked at once).
+- **The panel and sidebar ease over 300ms** instead of 220ms.
+
 ## 0.5.8 (2026-09-26)
 
 - **Copy to another calendar moved into More,** on the desktop panel and the phone sheet. It is rarely used, and on its own a copy icon read as "duplicate this event".

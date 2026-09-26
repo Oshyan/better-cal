@@ -4,6 +4,13 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.5.3 (2026-09-26)
+
+- **Pulled up, the phone's event sheet is the full view.** Under the address, a map (a still image until you tap it, so it doesn't catch your scrolling); the full description with its links tappable; any plugin information; for feed events, the feed with a link to its source; and when the event was added and last updated. The separate full-screen view is no longer needed on phones, so "All details" leaves the More menu.
+- **Invitations can be answered from the sheet:** Accept, Maybe or Decline, right under the time, in the quick view as well as pulled up.
+- **Lighter controls:** For me and the invitation reply size to their labels at 36 points instead of stretching across the sheet, and the action bar is 48 points tall.
+- Fixed: on an event with a lot in it, the sheet's rows could squeeze into each other instead of the sheet scrolling.
+
 ## 0.5.2 (2026-09-26)
 
 - **The phone's event sheet, redone inside.** Bigger type (the title at 22 points, the facts at 16) and the event as rows with an icon each: when (with how it repeats and the time where it is), where, reminders, people, tags, the description and the event's link. Nothing to tap is smaller than 44 points.

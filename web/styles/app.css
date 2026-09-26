@@ -3739,3 +3739,24 @@ button.bc-review-title { color: var(--fg); padding: 0; }
    at the top of the body at the sheet's reading size. */
 .bc-es-body .bc-copyto, .bc-es-body .bc-delscope { padding: 0; font-size: 15px; }
 .bc-es-body .bc-copyto .bc-btn, .bc-es-body .bc-delscope .bc-btn { min-height: 40px; }
+
+/* --- The pulled-up sheet (0.5.3): map, invitation, plugin data, source ------ */
+.bc-es-map { border-radius: 12px; overflow: hidden; border: 1px solid var(--border); min-height: 170px; }
+.bc-es-map .bc-map-wrap, .bc-es-map .bc-map, .bc-es-map .bc-map-mosaic { height: 190px; }
+.bc-es-map.is-loading { height: 190px; background: linear-gradient(90deg, var(--bg-inset), var(--bg-raised), var(--bg-inset)); background-size: 200% 100%; }
+.bc-es-note { font-size: 14px; color: var(--fg-muted); }
+.bc-es-invite { display: grid; gap: 10px; }
+.bc-es-invite .bc-es-seg { height: 46px; }
+.bc-es-meta { font-size: 13px; color: var(--fg-muted); }
+.bc-evsheet .bc-es-body .bc-plugdata, .bc-evsheet .bc-es-body .bc-detail-section { padding: 0; }
+.bc-es-desctext a { color: var(--accent); }
+/* Rows keep their height; the body scrolls instead of squeezing them into each other. */
+.bc-evsheet .bc-es-body > * { flex-shrink: 0; }
+/* Lighter controls (0.5.3): the choices size to their labels at 36 points,
+   the action bar is 48; all still comfortable to tap. */
+.bc-es-seg { flex: 0 1 auto; height: 36px; border-radius: 10px; }
+.bc-es-segbtn { flex: none; padding: 0 14px; font-size: 14px; gap: 5px; }
+.bc-es-segbtn svg { width: 15px; height: 15px; }
+.bc-es-invite .bc-es-seg { height: 36px; justify-self: start; margin-left: 34px; }
+.bc-es-act { height: 48px; gap: 3px; font-size: 12px; }
+.bc-es-foot { gap: 6px; padding-top: 8px; }

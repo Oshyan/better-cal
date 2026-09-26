@@ -12,12 +12,13 @@ import { DeleteScope, ScopeChoice } from './DeleteScope.js';
 import { relationshipOptions, REL_LABEL } from './Relationship.js';
 import {
   deleteEvent, updateEvent, setRelationship, sendFeedback, enterReschedule, openDetail, openTripByEventId,
-  googleBacked, GOOGLE_NO_UNDO, toggleCalendarVisible,
+  googleBacked, GOOGLE_NO_UNDO, toggleCalendarVisible, rsvpEvent,
 } from './actions.js';
-import { describeRrule } from './EventDetail.js';
+import { describeRrule, MiniMap, useEventGeo, linkify } from './EventDetail.js';
+import { EventPluginData } from './EventPluginData.js';
 import { Icon, ThumbIcon, PinIcon } from '../ui/icons.js';
 import { DurationSuffix } from '../ui/EventChip.js';
-import { fmtRange, zoneNote } from '../lib/dates.js';
+import { fmtRange, zoneNote, fmtDateFull, fmtTime, parseISO } from '../lib/dates.js';
 import { fmtReminder } from '../lib/reminders.js';
 import { stripToText, hasHtml, sanitizeHtml } from '../lib/richtext.js';
 import { gmapsUrl, isPendingLocation } from '../lib/maps.js';
@@ -95,7 +96,6 @@ function MoreMenu({ occ, cal, isFeed, onClose, onDelete }) {
     <hr />
     ${occ.url && item('arrowUpRight', 'Open the event’s page', () => window.open(occ.url, '_blank', 'noopener'))}
     ${occ.url && item('link', 'Copy link to event', () => copyText(occ.url, 'Link'))}
-    ${item('expand', 'All details', () => openDetail(occ.instanceId), '', 'map, invitation, source')}
     ${!isFeed && html`<hr />`}
     ${!isFeed && item('trash', 'Delete…', onDelete, 'is-danger', occ.recurring ? 'asks which ones' : null)}
   </div>`;
@@ -112,6 +112,12 @@ export function EventSheetBody({ occ, cal, isFeed, full, onFull, bodyRef, copyOp
   const role = (cal && cal.role) || (isFeed ? 'opportunities' : 'mine');
   const suggested = role === 'opportunities';
   const onDelete = () => (occ.recurring || googleBacked(occ) ? set({ deletePrompt: occ.instanceId }) : (close(), deleteEvent(occ)));
+  // Pulled up (0.5.3): the map, invitation replies, plugin data and where the
+  // event came from join the sheet. The map's address lookup waits until then.
+  const geo = useEventGeo(occ, full);
+  const place = loc && !locIsMeeting && !isPendingLocation(loc) && !isUrl(loc);
+  const mapLat = geo && geo.status === 'ok' ? geo.lat : null;
+  const mapLng = geo && geo.status === 'ok' ? geo.lng : null;
 
   const desc = occ.description && (() => {
     const rich = hasHtml(occ.description);
@@ -121,7 +127,7 @@ export function EventSheetBody({ occ, cal, isFeed, full, onFull, bodyRef, copyOp
     return html`<div class=${'bc-es-desc' + (occ.full ? ' bc-late' : '')}>
       ${rich
         ? html`<div class="bc-es-desctext bc-rich" dangerouslySetInnerHTML=${{ __html: sanitizeHtml(occ.description) }}></div>`
-        : html`<div class="bc-es-desctext">${text}</div>`}
+        : html`<div class="bc-es-desctext">${linkify(text)}</div>`}
       ${long && !full && html`<button type="button" class="bc-es-more" onClick=${onFull}>More</button>`}
     </div>`;
   })();
@@ -153,6 +159,19 @@ export function EventSheetBody({ occ, cal, isFeed, full, onFull, bodyRef, copyOp
         </div>
       </div>
 
+      ${/* An invitation's reply is the thing to do: right under when. */ ''}
+      ${occ.invite && html`<div class="bc-es-invite">
+        <div class="bc-es-row">
+          <${Icon} name="mail" size=${20} />
+          <div class="bc-es-rt">Invitation${occ.invite.organizer && occ.invite.organizer.email ? ' from ' + (occ.invite.organizer.name || occ.invite.organizer.email) : ''}${occ.invite.attendees && occ.invite.attendees.length > 1 ? html`<small>${occ.invite.attendees.length} invited</small>` : ''}</div>
+        </div>
+        <span class="bc-es-seg" role="group" aria-label="Reply to the invitation">
+          ${[['accepted', 'ACCEPTED', 'Accept'], ['tentative', 'TENTATIVE', 'Maybe'], ['declined', 'DECLINED', 'Decline']].map(([answer, ps, label]) => html`<button
+            key=${answer} type="button" class=${'bc-es-segbtn' + (occ.invite.myPartstat === ps ? ' is-on' : '')}
+            aria-pressed=${occ.invite.myPartstat === ps} onClick=${() => rsvpEvent(occ, answer)}
+          >${label}</button>`)}
+        </span>
+      </div>`}
       ${meet && html`<div class="bc-es-join">
         <a class="bc-es-joinbtn" href=${meet.url} target="_blank" rel="noopener noreferrer"><${Icon} name="video" size=${20} />Join ${meet.name}</a>
         <button type="button" class="bc-es-sqbtn" aria-label="Copy meeting link" title="Copy meeting link" onClick=${() => copyText(meet.url, 'Meeting link')}><${Icon} name="copy" size=${20} /></button>
@@ -165,10 +184,13 @@ export function EventSheetBody({ occ, cal, isFeed, full, onFull, bodyRef, copyOp
         <${Icon} name="link" size=${20} /><div class="bc-es-rt">${hostOf(loc)}</div>
         <a class="bc-es-rowbtn" href=${/^www\./i.test(loc) ? 'https://' + loc : loc} target="_blank" rel="noopener noreferrer">Open <${Icon} name="arrowUpRight" size=${14} /></a>
       </div>`}
-      ${loc && !locIsMeeting && !isPendingLocation(loc) && !isUrl(loc) && html`<div class="bc-es-row">
+      ${place && html`<div class="bc-es-row">
         <${PinIcon} size=${20} /><div class="bc-es-rt">${loc}</div>
-        <a class="bc-es-rowbtn" href=${gmapsUrl(loc, occ.locationLat, occ.locationLng)} target="_blank" rel="noopener noreferrer">Directions <${Icon} name="arrowUpRight" size=${14} /></a>
+        <a class="bc-es-rowbtn" href=${gmapsUrl(loc, mapLat != null ? mapLat : occ.locationLat, mapLng != null ? mapLng : occ.locationLng)} target="_blank" rel="noopener noreferrer">Directions <${Icon} name="arrowUpRight" size=${14} /></a>
       </div>`}
+      ${place && full && mapLat != null && html`<div class="bc-es-map"><${MiniMap} lat=${mapLat} lng=${mapLng} location=${loc} /></div>`}
+      ${place && full && geo && geo.status === 'loading' && html`<div class="bc-es-map is-loading" aria-hidden="true"></div>`}
+      ${place && full && geo && geo.status === 'none' && html`<div class="bc-es-note">Couldn\u2019t place this address on a map. A street address, or \u201cplace, city\u201d, will fix it.</div>`}
 
       ${occ.reminders && occ.reminders.length > 0 && html`<div class=${'bc-es-row' + (occ.full ? ' bc-late' : '')}>
         <${Icon} name="bell" size=${20} /><div class="bc-es-rt">${occ.reminders.map(fmtReminder).join(', ')}</div>
@@ -185,17 +207,26 @@ export function EventSheetBody({ occ, cal, isFeed, full, onFull, bodyRef, copyOp
         <${Icon} name="link" size=${20} /><div class="bc-es-rt">${hostOf(occ.url)}</div>
         <a class="bc-es-rowbtn" href=${occ.url} target="_blank" rel="noopener noreferrer">Open <${Icon} name="arrowUpRight" size=${14} /></a>
       </div>`}
+      ${full && html`<${EventPluginData} eventId=${occ.eventId} readOnly=${isFeed} />`}
+      ${full && isFeed && cal && html`<div class="bc-es-row">
+        <${Icon} name="calendar" size=${20} />
+        <div class="bc-es-rt">${cal.name}<small>${cal.sourceUrl ? 'Subscribed feed' : 'Read-only calendar'}</small></div>
+        ${cal.sourceUrl && html`<a class="bc-es-rowbtn" href=${cal.sourceUrl} target="_blank" rel="noopener noreferrer">Source <${Icon} name="arrowUpRight" size=${14} /></a>`}
+      </div>`}
+      ${full && occ.createdAt && html`<div class="bc-es-meta">
+        Added ${fmtDateFull(parseISO(occ.createdAt))} ${fmtTime(parseISO(occ.createdAt))}${occ.updatedAt && occ.updatedAt !== occ.createdAt ? ' \u00b7 updated ' + fmtDateFull(parseISO(occ.updatedAt)) + ' ' + fmtTime(parseISO(occ.updatedAt)) : ''}
+      </div>`}
     </div>
 
     <div class="bc-es-foot">
       ${!(cal && cal.role === 'context') && html`<${ForMe} occ=${occ} cal=${cal} onHidden=${close} />`}
       <div class="bc-es-bar" role="toolbar" aria-label="Event actions">
-        ${!isFeed && html`<button type="button" class="bc-es-act" onClick=${() => set({ popover: null, editor: { mode: 'edit', occ } })}><${Icon} name="pencil" size=${22} />Edit</button>`}
-        ${!isFeed && html`<button type="button" class="bc-es-act" onClick=${() => { close(); enterReschedule(occ.instanceId); }}><${Icon} name="reschedule" size=${22} />Move</button>`}
-        ${isFeed && !(cal && cal.role === 'context') && html`<button type="button" class="bc-es-act" onClick=${() => sendFeedback(occ, 'up')}><${ThumbIcon} dir="up" size=${22} />More like</button>`}
-        ${isFeed && !(cal && cal.role === 'context') && html`<button type="button" class="bc-es-act" onClick=${() => sendFeedback(occ, 'down')}><${ThumbIcon} dir="down" size=${22} />Less like</button>`}
-        <button type="button" class=${'bc-es-act' + (copyOpen ? ' is-on' : '')} aria-expanded=${copyOpen} onClick=${() => setCopyOpen(!copyOpen)}><${Icon} name="copy" size=${22} />Copy to</button>
-        <button type="button" class=${'bc-es-act' + (moreOpen ? ' is-on' : '')} aria-haspopup="menu" aria-expanded=${moreOpen} onClick=${() => setMoreOpen(!moreOpen)}><${Icon} name="more" size=${22} />More</button>
+        ${!isFeed && html`<button type="button" class="bc-es-act" onClick=${() => set({ popover: null, editor: { mode: 'edit', occ } })}><${Icon} name="pencil" size=${20} />Edit</button>`}
+        ${!isFeed && html`<button type="button" class="bc-es-act" onClick=${() => { close(); enterReschedule(occ.instanceId); }}><${Icon} name="reschedule" size=${20} />Move</button>`}
+        ${isFeed && !(cal && cal.role === 'context') && html`<button type="button" class="bc-es-act" onClick=${() => sendFeedback(occ, 'up')}><${ThumbIcon} dir="up" size=${20} />More like</button>`}
+        ${isFeed && !(cal && cal.role === 'context') && html`<button type="button" class="bc-es-act" onClick=${() => sendFeedback(occ, 'down')}><${ThumbIcon} dir="down" size=${20} />Less like</button>`}
+        <button type="button" class=${'bc-es-act' + (copyOpen ? ' is-on' : '')} aria-expanded=${copyOpen} onClick=${() => setCopyOpen(!copyOpen)}><${Icon} name="copy" size=${20} />Copy to</button>
+        <button type="button" class=${'bc-es-act' + (moreOpen ? ' is-on' : '')} aria-haspopup="menu" aria-expanded=${moreOpen} onClick=${() => setMoreOpen(!moreOpen)}><${Icon} name="more" size=${20} />More</button>
       </div>
       ${moreOpen && html`<${MoreMenu} occ=${occ} cal=${cal} isFeed=${isFeed} onClose=${() => setMoreOpen(false)} onDelete=${onDelete} />`}
     </div>`;

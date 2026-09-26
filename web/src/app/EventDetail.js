@@ -80,7 +80,7 @@ export function describeRrule(rrule) {
 
 // Split text into text nodes and anchor elements. No innerHTML anywhere:
 // everything renders through the vdom as text or an explicit <a>.
-function linkify(text) {
+export function linkify(text) {
   const out = [];
   const re = /https?:\/\/[^\s<>"]+/g;
   let last = 0;
@@ -127,7 +127,7 @@ export function loadLeaflet() {
 // the same tiles the map would fetch, behind tap-to-activate; Leaflet loads
 // only then, or if a tile fails. While tiles load, the box shows the address
 // over a shimmer rather than flat grey, which read as broken.
-function MiniMap({ lat, lng, location }) {
+export function MiniMap({ lat, lng, location }) {
   const elRef = useRef(null);
   const mapRef = useRef(null);
   // Desktop gets the live map straight away: a wheel over it zooms the map,
@@ -247,39 +247,16 @@ function enableOn(map, L) {
   map.addControl(L.control.zoom({ position: 'topright' }));
 }
 
-// --- detail view ------------------------------------------------------------
-
-export function EventDetail() {
-  const detail = useStore((s) => s.detail);
-  useStore((s) => s.occVersion);
-  const deletePrompt = useStore((s) => s.deletePrompt);
-  const attendPrompt = useStore((s) => s.attendPrompt);
-  const occ = detail ? state.occ.get(detail.instanceId) : null;
-  const panelRef = useRef(null);
+// Where an event is on a map: its stored coordinates, or a lookup (server
+// proxy, cached) when it has an address but no coordinates yet. Shared by
+// the full view and the phone's pulled-up sheet; `active` is whether the
+// view that wants it is showing.
+export function useEventGeo(occ, active) {
   const [geo, setGeo] = useState(null); // {status:'loading'|'ok'|'none', lat?, lng?}
-  const [copyOpen, setCopyOpen] = useState(false); // above the early returns: hook order
-
-  // Description, cadence, reminders and timestamps ride the single-event
-  // record, not the window (#15). Ask for it on open; it merges into the
-  // cached occurrence and this re-renders on occVersion. Until it lands the
-  // view shows what the grid had, which is everything above the fold.
-  useEffect(() => {
-    if (detail) ensureFullOccurrence(detail.instanceId);
-  }, [detail && detail.instanceId]); // eslint-disable-line
-
-  // Focus trap while open; Esc is handled by the global keyboard map.
-  useEffect(() => {
-    const onKey = (e) => {
-      if (e.key === 'Tab') trapFocus(panelRef.current, e);
-    };
-    if (detail) document.addEventListener('keydown', onKey, true);
-    return () => document.removeEventListener('keydown', onKey, true);
-  }, [detail]);
-
   // Lazy geocode when the event has a location but no stored coordinates.
   // Resolved coordinates are persisted onto local events (PATCH), so the
   // lookup happens once per event, not once per open.
-  const instanceId = detail ? detail.instanceId : null;
+  const instanceId = active && occ ? occ.instanceId : null;
   const location = occ ? occ.location : null;
   useEffect(() => {
     if (!instanceId || !occ) { setGeo(null); return undefined; }
@@ -325,6 +302,38 @@ export function EventDetail() {
       .catch(() => { if (alive) setGeo({ status: 'none' }); });
     return () => { alive = false; };
   }, [instanceId, location]); // eslint-disable-line
+  return geo;
+}
+
+// --- detail view ------------------------------------------------------------
+
+export function EventDetail() {
+  const detail = useStore((s) => s.detail);
+  useStore((s) => s.occVersion);
+  const deletePrompt = useStore((s) => s.deletePrompt);
+  const attendPrompt = useStore((s) => s.attendPrompt);
+  const occ = detail ? state.occ.get(detail.instanceId) : null;
+  const panelRef = useRef(null);
+  const [copyOpen, setCopyOpen] = useState(false); // above the early returns: hook order
+
+  // Description, cadence, reminders and timestamps ride the single-event
+  // record, not the window (#15). Ask for it on open; it merges into the
+  // cached occurrence and this re-renders on occVersion. Until it lands the
+  // view shows what the grid had, which is everything above the fold.
+  useEffect(() => {
+    if (detail) ensureFullOccurrence(detail.instanceId);
+  }, [detail && detail.instanceId]); // eslint-disable-line
+
+  // Focus trap while open; Esc is handled by the global keyboard map.
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === 'Tab') trapFocus(panelRef.current, e);
+    };
+    if (detail) document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+  }, [detail]);
+
+  const geo = useEventGeo(occ, !!detail);
 
   // Same-day navigation list: this day's visible events in chronological
   // order (all-day first), never spilling into other days. The list builder

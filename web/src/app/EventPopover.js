@@ -360,10 +360,9 @@ export function EventPopover() {
     if (target) set({ popover: { ...popover, instanceId: target.instanceId, dayKey: navDay } });
   };
   navRef.current = nav ? { go: goSheet, index: nav.index, count: nav.list.length } : null;
-  // On the phone the full view is the same sheet grown; elsewhere, the
-  // separate full view. Once grown, the expand button still opens the
-  // separate view, for what the sheet doesn't hold yet (map, invitation
-  // replies, source); 0.5.2 brings those into the sheet.
+  // On the phone the full view is the same sheet grown (0.5.3: with the map,
+  // invitation replies, plugin data and source); elsewhere, the separate
+  // full view.
   const openFull = () => (mobile ? setFull(true) : openDetail(occ.instanceId));
 
   const saveTime = async (startVal, endVal) => {

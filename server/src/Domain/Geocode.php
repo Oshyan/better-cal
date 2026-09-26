@@ -34,6 +34,47 @@ final class Geocode
     }
 
     /**
+     * Easier forms of a location to try when the full text finds nothing.
+     * Feeds decorate addresses: "111 Conselyea St, Brooklyn, NY 11211, USA
+     * (The Lounge)", "[Upstairs] 5 Main St", or a venue name ahead of the
+     * street: "The Lounge, 111 Conselyea St, Brooklyn". In order: without the
+     * bracketed parts; then, if a later comma-separated part starts with a
+     * street number, from that part on. Never the original, never empty.
+     *
+     * @return list<string>
+     */
+    public static function variants(string $q): array
+    {
+        $q = self::normalize($q);
+        $out = [];
+        $bare = preg_replace('/\s*[\(\[][^\)\]]*[\)\]]/u', ' ', $q) ?? $q;
+        $bare = trim(preg_replace('/\s{2,}/u', ' ', $bare) ?? $bare, " ,;-\t");
+        $bare = preg_replace('/\s+,/u', ',', $bare) ?? $bare;
+        if ($bare !== '' && $bare !== $q) {
+            $out[] = $bare;
+        }
+        $base = $bare !== '' ? $bare : $q;
+        $parts = array_map('trim', explode(',', $base));
+        for ($i = 1, $n = count($parts); $i < $n; $i++) {
+            if (preg_match('/^\d+[a-z]?(?:-\d+)?\s+\S/iu', $parts[$i])) {
+                $out[] = implode(', ', array_slice($parts, $i));
+                break;
+            }
+        }
+        $seen = [];
+        $result = [];
+        foreach ($out as $v) {
+            $k = mb_strtolower($v);
+            if ($v === '' || $k === mb_strtolower($q) || isset($seen[$k])) {
+                continue;
+            }
+            $seen[$k] = true;
+            $result[] = $v;
+        }
+        return $result;
+    }
+
+    /**
      * Cache key: sha256 over the lowercased normalized query plus the coarse
      * bias cell. Bias participates because the same text resolves differently
      * per region ("SFO" is an airport here, an after-school program in
@@ -400,6 +441,40 @@ final class Geocode
         if ($normalized === '') {
             throw HttpError::badRequest('q is required');
         }
+        $result = $this->lookupExact($normalized, $biasLat, $biasLng);
+        if ($result['lat'] !== null || !empty($result['transport'])) {
+            unset($result['transport']);
+            return $result;
+        }
+        // Nothing for the full text: try its easier forms (variants()). Each
+        // is looked up and cached in its own right, so a form already tried
+        // costs one cache read, and one that works becomes the answer for the
+        // full text as well. This also revisits misses cached before the
+        // easier forms existed.
+        foreach (self::variants($normalized) as $v) {
+            $alt = $this->lookupExact($v, $biasLat, $biasLng);
+            if (!empty($alt['transport'])) {
+                break;
+            }
+            if ($alt['lat'] !== null) {
+                $this->db->run(
+                    'UPDATE geocode_cache SET lat = ?, lng = ?, display = ?, kind = ? WHERE query_hash = ?',
+                    [$alt['lat'], $alt['lng'], $alt['display'], $alt['kind'] ?? null, self::queryHash($normalized, $biasLat, $biasLng)]
+                );
+                return $alt;
+            }
+        }
+        unset($result['transport']);
+        return $result;
+    }
+
+    /**
+     * One query, as given: the cache, else the provider, then cached. A
+     * transport failure comes back not-found with 'transport' => true and
+     * nothing cached.
+     */
+    private function lookupExact(string $normalized, ?float $biasLat, ?float $biasLng): array
+    {
         $hash = self::queryHash($normalized, $biasLat, $biasLng);
 
         $row = $this->db->one('SELECT lat, lng, display, kind FROM geocode_cache WHERE query_hash = ?', [$hash]);
@@ -423,7 +498,7 @@ final class Geocode
             $body = $this->fetch($params);
             if ($body === null) {
                 // Transport failure: answer not-found, cache nothing.
-                return ['lat' => null, 'lng' => null, 'display' => null, 'kind' => null];
+                return ['lat' => null, 'lng' => null, 'display' => null, 'kind' => null, 'transport' => true];
             }
             $decoded = json_decode($body, true);
             if ($biasLat !== null && $biasLng !== null) {

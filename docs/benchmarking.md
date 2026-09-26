@@ -49,9 +49,9 @@ the header, because that is what a real client does.
 
 ### Reverse DNS is not a location
 
-A host's generic reverse DNS names say nothing about where a machine is.
-This server is in **US East (Virginia)**, ~81ms RTT from the Bay Area, and was
-confidently described as German on the strength of that hostname.
+A hosting provider can put its own home-country domain on every machine it
+owns, whatever continent the machine is on. One server measured here sat in the
+US and was confidently described as German on the strength of its hostname.
 
 `traceroute` answers it in seconds — watch the city codes in the hop names.
 

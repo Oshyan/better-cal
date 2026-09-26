@@ -127,7 +127,7 @@ function ZoneControl({ form, occ, onPick }) {
       ? html`<select class="bc-zone-select" aria-label="Time zone" value=${tz} onChange=${(e) => onPick(e.target.value)}>
           ${zones.map(([z, label]) => html`<option key=${z} value=${z}>${label}</option>`)}
         </select>`
-      : html`<button type="button" class="bc-link-btn bc-zone-btn" title=${title} onClick=${() => setOpen(true)}>${tzCity(tz)} time</button>
+      : html`<button type="button" class="bc-ed-chip bc-zone-btn" title=${title} aria-label=${'Time zone: ' + tzCity(tz) + '. Change'} onClick=${() => setOpen(true)}><${Icon} name="globe" size=${12} />${tzCity(tz)} time<${Icon} name="chevronDown" size=${10} /></button>
           ${stored && html`<button
             type="button" class="bc-link-btn bc-zone-btn"
             title=${'This event is stored in ' + tzCity(stored) + ' time (' + tzOffsetLabel(stored) + '). Switch the fields to that clock; the event does not move.'}
@@ -622,15 +622,18 @@ export function EditorDrawer() {
     upd({ reminders: list });
   };
 
+  const lab = (text, cls = '') => html`<span class=${'bc-ed-lab' + cls}>${text}</span>`;
+
   return html`<div class="bc-drawer-backdrop" onClick=${(e) => { if (e.target === e.currentTarget) requestClose(); }}>
-    <form class="bc-drawer" ref=${panelRef} onSubmit=${submit} role="dialog" aria-modal="true" aria-label=${(occ ? 'Edit ' : 'New ') + (form.isContainer ? 'trip' : 'event')}>
+    <form class="bc-drawer bc-editor" ref=${panelRef} onSubmit=${submit} role="dialog" aria-modal="true" aria-label=${(occ ? 'Edit ' : 'New ') + (form.isContainer ? 'trip' : 'event')}>
       <div class="bc-drawer-head">
         <h2>${(occ ? 'Edit ' : 'New ') + (form.isContainer ? 'trip' : 'event')}</h2>
         <button type="button" class="bc-icon-btn" aria-label="Close" onClick=${requestClose}><${Icon} name="close" size=${15} /></button>
       </div>
 
-      ${!occ && html`<div class="bc-nl">
+      ${!occ && html`<div class="bc-nl" title="Fills the fields below as you type. Enter or Fill applies it now; everything stays editable.">
         <div class="bc-nl-row">
+          <${Icon} name="quickadd" size=${15} />
           <input
             class="bc-nl-input"
             placeholder="Type it naturally: Lunch with Ada Friday noon at Zuni"
@@ -642,70 +645,69 @@ export function EditorDrawer() {
           />
           <button type="button" class="bc-btn bc-nl-go" title="Fill the fields now" onClick=${() => { clearTimeout(nlTimer.current); runNlParse(nlText); }}>Fill</button>
         </div>
-        <span class="bc-nl-hint">Fills the fields below as you type — Enter or Fill applies immediately; everything stays editable</span>
       </div>`}
 
-      <label class=${'bc-field' + (nlFlash && nlFlash.has('title') ? ' bc-nl-applied' : '')}>
-        <span>Title</span>
-        <input value=${form.title} onInput=${(e) => upd({ title: e.target.value })} required autofocus=${!editor.nlText} />
-      </label>
+      <div class=${'bc-ed-titlewrap' + flash('title')}>
+        <input class="bc-ed-title" placeholder="Add a title" aria-label="Title" value=${form.title} onInput=${(e) => upd({ title: e.target.value })} required autofocus=${!editor.nlText} />
+      </div>
 
-      <label class="bc-field">
-        <span>Calendar</span>
-        <${CalendarSelect}
-          calendars=${state.calendars.filter((c) => c.editable)}
-          value=${form.calendarId}
-          onChange=${(v) => upd({ calendarId: v })}
-        />
-      </label>
+      <div class="bc-ed-grid">
+        ${lab('Calendar')}
+        <div class="bc-ed-ctl">
+          <${CalendarSelect}
+            calendars=${state.calendars.filter((c) => c.editable)}
+            value=${form.calendarId}
+            onChange=${(v) => upd({ calendarId: v })}
+          />
+        </div>
 
-      <div class=${'bc-when' + (allDayView ? ' is-allday' : '')} role="group" aria-label="When">
-        <span class="bc-when-lab">Start</span>
-        <span class=${'bc-when-cell' + flash('start')}>
+        ${lab('Start')}
+        <div class=${'bc-ed-ctl bc-ed-when' + flash('start')}>
           ${allDayView
             ? html`<${DateField} value=${allDayView.start} ariaLabel="First day" onChange=${onAllDayStart} />`
             : html`<${DateField} value=${dateOf(form.start)} ariaLabel="Start date" onChange=${(k) => setStart(joinWhen(k, startMins))} />`}
-        </span>
-        ${!allDayView && html`<span class=${'bc-when-cell' + flash('start')}><${TimeField}
-          display=${fmtTime(fromInputValue(form.start))} options=${startOptions} currentIdx=${startIdx}
-          ariaLabel="Start time" onText=${onStartText} onOption=${setStart}
-        /></span>`}
-        <span class="bc-when-lab">${allDayView ? 'Last day' : 'End'}</span>
-        <span class=${'bc-when-cell' + flash('end')}>
+          ${!allDayView && html`<${TimeField}
+            display=${fmtTime(fromInputValue(form.start))} options=${startOptions} currentIdx=${startIdx}
+            ariaLabel="Start time" onText=${onStartText} onOption=${setStart}
+          />`}
+        </div>
+        ${lab(allDayView ? 'Last day' : 'End')}
+        <div class=${'bc-ed-ctl bc-ed-when' + flash('end')}>
           ${allDayView
             ? html`<${DateField} value=${allDayView.end} ariaLabel="Last day" onChange=${onAllDayEnd} />`
             : html`<${DateField} value=${dateOf(form.end)} ariaLabel="End date" onChange=${(k) => upd({ end: joinWhen(k, endMins) })} />`}
-        </span>
-        ${!allDayView && html`<span class=${'bc-when-cell' + flash('end')}><${TimeField}
-          display=${fmtTime(fromInputValue(form.end))} options=${endOptions} currentIdx=${endIdx}
-          ariaLabel="End time" onText=${onEndText} onOption=${(v) => upd({ end: v })}
-        /></span>`}
-      </div>
-      <div class="bc-duration-exact bc-when-meta" role="status">
-        <label class=${'bc-check' + flash('allDay')}>
-          <input type="checkbox" checked=${form.allDay} onChange=${(e) => upd({ allDay: e.target.checked })} />
-          <span>All day</span>
-        </label>
-        <button
-          type="button"
-          class="bc-lock-btn${durationLock ? ' is-on' : ''}"
-          aria-pressed=${durationLock}
-          aria-label="Keep the length when the start moves"
-          title=${durationLock ? 'Length kept: moving the start moves the end with it. Click to set them separately.' : 'Start and end set separately. Click to keep the length when the start moves.'}
-          onClick=${() => setDurationLock(!durationLock)}
-        ><${Icon} name=${durationLock ? 'lock' : 'unlock'} size=${12} />${lengthText}</button>
-        ${!form.allDay && html`<${ZoneControl} form=${form} occ=${occ} onPick=${pickZone} />`}
-      </div>
-      ${backwards && html`<div class="bc-when-err" role="alert">
-        <${Icon} name="warning" size=${13} /> The end is before the start.
-        <button type="button" class="bc-link-btn" onClick=${() => upd(form.allDay
-          ? allDayInputs(allDayView.start, allDayView.start)
-          : { end: shiftWhen(form.start, 60) })}>${form.allDay ? 'Make it one day' : 'End an hour after the start'}</button>
-      </div>`}
+          ${!allDayView && html`<${TimeField}
+            display=${fmtTime(fromInputValue(form.end))} options=${endOptions} currentIdx=${endIdx}
+            ariaLabel="End time" onText=${onEndText} onOption=${(v) => upd({ end: v })}
+          />`}
+        </div>
+        <span></span>
+        <div class="bc-ed-ctl bc-ed-meta" role="status">
+          <label class=${'bc-check' + flash('allDay')}>
+            <input type="checkbox" checked=${form.allDay} onChange=${(e) => upd({ allDay: e.target.checked })} />
+            <span>All day</span>
+          </label>
+          <button
+            type="button"
+            class=${'bc-ed-chip' + (durationLock ? ' is-on' : '')}
+            aria-pressed=${durationLock}
+            aria-label="Keep the length when the start moves"
+            title=${durationLock ? 'Length kept: moving the start moves the end with it. Click to set them separately.' : 'Start and end set separately. Click to keep the length when the start moves.'}
+            onClick=${() => setDurationLock(!durationLock)}
+          ><${Icon} name=${durationLock ? 'lock' : 'unlock'} size=${12} />${lengthText || 'Length'}</button>
+          ${!form.allDay && html`<${ZoneControl} form=${form} occ=${occ} onPick=${pickZone} />`}
+        </div>
+        ${backwards && html`<span></span><div class="bc-ed-ctl bc-when-err" role="alert">
+          <${Icon} name="warning" size=${13} /> The end is before the start.
+          <button type="button" class="bc-link-btn" onClick=${() => upd(form.allDay
+            ? allDayInputs(allDayView.start, allDayView.start)
+            : { end: shiftWhen(form.start, 60) })}>${form.allDay ? 'Make it one day' : 'End an hour after the start'}</button>
+        </div>`}
 
-      <div class="bc-field-row">
-        <label class=${'bc-field grow' + (nlFlash && nlFlash.has('location') ? ' bc-nl-applied' : '')}>
-          <span>Location</span>
+        <hr class="bc-ed-sep" />
+
+        ${lab('Location')}
+        <div class=${'bc-ed-ctl' + flash('location')}>
           <${PlaceInput}
             value=${form.location}
             ariaLabel="Location"
@@ -713,73 +715,64 @@ export function EditorDrawer() {
             onText=${(v) => upd({ location: v, locationLat: null, locationLng: null })}
             onPick=${(r) => upd({ location: pickFillText(r), locationLat: r.lat, locationLng: r.lng })}
           />
-        </label>
-        <label class="bc-field grow">
-          <span>URL</span>
-          <input type="url" value=${form.url} onInput=${(e) => upd({ url: e.target.value })} />
-        </label>
-      </div>
+        </div>
+        ${lab('Link')}
+        <div class="bc-ed-ctl">
+          <input type="url" placeholder="https://" aria-label="Link" value=${form.url} onInput=${(e) => upd({ url: e.target.value })} />
+        </div>
+        ${lab('Description', ' is-top')}
+        <div class="bc-ed-ctl">
+          <${RichText}
+            seed=${occ ? (occ.description || '') : (editor.draft && editor.draft.description) || ''}
+            seedKey=${occ ? occ.instanceId : 'new'}
+            ariaLabel="Description"
+            onChange=${(htmlValue, meta) => (meta && meta.seeded
+              ? adoptSeededDescription(htmlValue)
+              : upd({ description: htmlValue }))}
+          />
+        </div>
 
-      <div class="bc-field">
-        <span>Description</span>
-        <${RichText}
-          seed=${occ ? (occ.description || '') : (editor.draft && editor.draft.description) || ''}
-          seedKey=${occ ? occ.instanceId : 'new'}
-          ariaLabel="Description"
-          onChange=${(htmlValue, meta) => (meta && meta.seeded
-            ? adoptSeededDescription(htmlValue)
-            : upd({ description: htmlValue }))}
-        />
-      </div>
+        <hr class="bc-ed-sep" />
 
-      <div class="bc-field-row">
-        <div class=${'bc-field grow'
-          + (form.people.some((c) => c.id == null) ? ' bc-field-claims-row' : '')
-          + (nlFlash && nlFlash.has('people') ? ' bc-nl-applied' : '')}>
-          <span>People</span>
+        ${lab('People', ' is-top')}
+        <div class=${'bc-ed-ctl' + flash('people')}>
           <${PeopleInput}
             value=${form.people}
             ariaLabel="People at this event"
             onChange=${(list) => upd({ people: list })}
           />
+          ${availWarn.length > 0 && html`<div class="bc-avail-warn" role="status">
+            ${availWarn.map((c) => html`<span key=${c.id}><${Icon} name="warning" size=${12} /> ${c.name} is ${c.kind} then${c.note ? ' (' + c.note + ')' : ''}</span>`)}
+          </div>`}
         </div>
-        <label class="bc-field grow">
-          <span>Tags (comma separated)</span>
-          <input value=${form.tags} onInput=${(e) => upd({ tags: e.target.value })} />
-        </label>
-      </div>
-      ${availWarn.length > 0 && html`<div class="bc-avail-warn" role="status">
-        ${availWarn.map((c) => html`<span key=${c.id}><${Icon} name="warning" size=${12} /> ${c.name} is ${c.kind} then${c.note ? ' (' + c.note + ')' : ''}</span>`)}
-      </div>`}
-
-      <div class="bc-ed-flags">
-        ${mineCal && html`<span class="bc-ed-forme" title="What this event is to you. Maybe marks it tentative, which other calendar apps see too.">
-          <span class="bc-ed-flag-lab">For me</span>
-          <span class="bc-ed-seg" role="group" aria-label="What this event is to you">
+        ${lab('Tags')}
+        <div class="bc-ed-ctl">
+          <input placeholder="Comma separated" aria-label="Tags, comma separated" value=${form.tags} onInput=${(e) => upd({ tags: e.target.value })} />
+        </div>
+        ${lab(mineCal ? 'For me' : 'Trip')}
+        <div class="bc-ed-ctl bc-ed-flags">
+          ${mineCal && html`<span class="bc-ed-seg" role="group" aria-label="What this event is to you" title="What this event is to you. Maybe marks it tentative, which other calendar apps see too.">
             ${[['planned', 'Planned'], ['maybe', 'Maybe']].map(([v, label]) => html`<button
               key=${v} type="button" class=${'bc-ed-segbtn' + (form.rel === v ? ' is-on' : '')}
               aria-pressed=${form.rel === v} onClick=${() => upd({ rel: v })}
             >${v === 'planned' && html`<${Icon} name="star" size=${13} />`}${label}</button>`)}
-          </span>
-        </span>`}
-        <label class="bc-check" title="A trip is a span of days that other events happen inside">
-          <input type="checkbox" checked=${form.isContainer} onChange=${(e) => upd({ isContainer: e.target.checked })} />
-          <span>This event is a trip (container)</span>
-        </label>
-      </div>
-      ${occ && !occ.isContainer && !form.isContainer && html`<${TripRow} occ=${occ} />`}
+          </span>`}
+          <label class="bc-check" title="A trip is a span of days that other events happen inside">
+            <input type="checkbox" checked=${form.isContainer} onChange=${(e) => upd({ isContainer: e.target.checked })} />
+            <span>This is a trip (container)</span>
+          </label>
+        </div>
+        ${occ && !occ.isContainer && !form.isContainer && html`${lab('Part of')}<div class="bc-ed-ctl bc-ed-trip"><${TripRow} occ=${occ} /></div>`}
 
-      <div class="bc-ed-pair">
-      <fieldset class="bc-rem">
-        <legend>Reminders</legend>
-        <div class="bc-rem-list">
+        <hr class="bc-ed-sep" />
+
+        ${lab('Reminders', ' is-top')}
+        <div class="bc-ed-ctl bc-ed-rem">
           ${remEff.reminders.length === 0 && html`<span class="bc-rem-none">None</span>`}
           ${remEff.reminders.map((entry, i) => html`<span key=${i + ':' + fmtReminder(entry)} class="bc-rem-chip">
             <${Icon} name="bell" size=${11} /> ${fmtReminder(entry)}
             <button type="button" class="bc-rem-x" aria-label=${'Remove reminder: ' + fmtReminder(entry)} onClick=${() => remRemove(i)}><${Icon} name="close" size=${10} /></button>
           </span>`)}
-        </div>
-        <div class="bc-rem-row">
           <select class="bc-rem-add" aria-label="Add reminder" value=""
             onChange=${(e) => {
               const v = e.target.value;
@@ -787,7 +780,7 @@ export function EditorDrawer() {
               if (v === 'custom') setRemCustom({ n: 1, unit: 'hours' });
               else if (v !== '') remAdd(Number(v));
             }}>
-            <option value="">+ Add reminder</option>
+            <option value="">+ Add</option>
             ${remChoices.map((c) => html`<option key=${c.minutes} value=${String(c.minutes)}>${c.label}</option>`)}
             <option value="custom">Custom</option>
           </select>
@@ -804,62 +797,62 @@ export function EditorDrawer() {
             <button type="button" class="bc-icon-btn" aria-label="Cancel custom reminder"
               onClick=${() => setRemCustom(null)}><${Icon} name="close" size=${10} /></button>
           </span>`}
-          ${form.reminders !== null && html`<button type="button" class="bc-btn bc-rem-reset" onClick=${() => upd({ reminders: null })}>Reset to default</button>`}
-          <span class="bc-rem-src">${remSrcHint}</span>
+          ${form.reminders !== null
+            ? html`<button type="button" class="bc-link-btn bc-rem-reset" title="Use the calendar's or your default reminders again" onClick=${() => upd({ reminders: null })}>Reset to default</button>`
+            : html`<span class="bc-rem-src">${remSrcHint}</span>`}
         </div>
-      </fieldset>
 
-      <fieldset class="bc-rrule">
-        <legend>Repeat</legend>
-        <div class="bc-field-row">
-          <select value=${r.freq} onChange=${(e) => updRrule({ freq: e.target.value })} aria-label="Repeat frequency">
-            <option value="none">Does not repeat</option>
-            <option value="DAILY">Daily</option>
-            <option value="WEEKLY">Weekly</option>
-            <option value="MONTHLY">Monthly</option>
-            <option value="YEARLY">Yearly</option>
-          </select>
-          ${r.freq !== 'none' && html`<label class="bc-check">
-            <span>every</span>
-            <input class="bc-num" type="number" min="1" max="99" value=${r.interval} onInput=${(e) => updRrule({ interval: Number(e.target.value) || 1 })} aria-label="Interval" />
-            <span>${r.freq === 'DAILY' ? 'day(s)' : r.freq === 'WEEKLY' ? 'week(s)' : r.freq === 'MONTHLY' ? 'month(s)' : 'year(s)'}</span>
-          </label>`}
+        ${lab('Repeat', ' is-top')}
+        <div class="bc-ed-ctl bc-ed-repeat">
+          <div class="bc-ed-inline">
+            <select value=${r.freq} onChange=${(e) => updRrule({ freq: e.target.value })} aria-label="Repeat frequency">
+              <option value="none">Does not repeat</option>
+              <option value="DAILY">Daily</option>
+              <option value="WEEKLY">Weekly</option>
+              <option value="MONTHLY">Monthly</option>
+              <option value="YEARLY">Yearly</option>
+            </select>
+            ${r.freq !== 'none' && html`<label class="bc-check">
+              <span>every</span>
+              <input class="bc-num" type="number" min="1" max="99" value=${r.interval} onInput=${(e) => updRrule({ interval: Number(e.target.value) || 1 })} aria-label="Interval" />
+              <span>${r.freq === 'DAILY' ? 'day(s)' : r.freq === 'WEEKLY' ? 'week(s)' : r.freq === 'MONTHLY' ? 'month(s)' : 'year(s)'}</span>
+            </label>`}
+          </div>
+          ${r.freq === 'WEEKLY' && html`<div class="bc-byday">
+            ${BYDAY.map(([code, label]) => html`<label key=${code} class="bc-byday-day${r.byday.includes(code) ? ' is-on' : ''}">
+              <input
+                type="checkbox"
+                checked=${r.byday.includes(code)}
+                onChange=${(e) => updRrule({ byday: e.target.checked ? [...r.byday, code] : r.byday.filter((d) => d !== code) })}
+              />${label}
+            </label>`)}
+          </div>`}
+          ${r.freq !== 'none' && html`<div class="bc-ed-inline">
+            <span class="bc-ed-sub">Ends</span>
+            <select value=${r.ends} onChange=${(e) => updRrule({ ends: e.target.value, until: e.target.value === 'until' && !r.until ? defaultUntil(fromInputValue(form.start) || new Date()) : r.until })} aria-label="Ends">
+              <option value="never">Never</option>
+              <option value="until">Until date</option>
+              <option value="count">After N times</option>
+            </select>
+            ${r.ends === 'until' && html`<input type="date" value=${r.until} onInput=${(e) => updRrule({ until: e.target.value })} aria-label="Until date" />`}
+            ${r.ends === 'count' && html`<input class="bc-num" type="number" min="1" max="999" value=${r.count} onInput=${(e) => updRrule({ count: Number(e.target.value) || 1 })} aria-label="Occurrence count" />`}
+          </div>`}
         </div>
-        ${r.freq === 'WEEKLY' && html`<div class="bc-byday">
-          ${BYDAY.map(([code, label]) => html`<label key=${code} class="bc-byday-day${r.byday.includes(code) ? ' is-on' : ''}">
-            <input
-              type="checkbox"
-              checked=${r.byday.includes(code)}
-              onChange=${(e) => updRrule({ byday: e.target.checked ? [...r.byday, code] : r.byday.filter((d) => d !== code) })}
-            />${label}
-          </label>`)}
-        </div>`}
-        ${r.freq !== 'none' && html`<div class="bc-field-row">
-          <select value=${r.ends} onChange=${(e) => updRrule({ ends: e.target.value, until: e.target.value === 'until' && !r.until ? defaultUntil(fromInputValue(form.start) || new Date()) : r.until })} aria-label="Ends">
-            <option value="never">Never</option>
-            <option value="until">Until date</option>
-            <option value="count">After N times</option>
+
+        ${occ && occ.recurring && html`${lab('Apply to')}<div class="bc-ed-ctl">
+          <select value=${scope} onChange=${(e) => setScope(e.target.value)} aria-label="Apply to">
+            <option value="this">This event only</option>
+            <option value="following">This and following</option>
+            <option value="all">All events in series</option>
           </select>
-          ${r.ends === 'until' && html`<input type="date" value=${r.until} onInput=${(e) => updRrule({ until: e.target.value })} aria-label="Until date" />`}
-          ${r.ends === 'count' && html`<input class="bc-num" type="number" min="1" max="999" value=${r.count} onInput=${(e) => updRrule({ count: Number(e.target.value) || 1 })} aria-label="Occurrence count" />`}
         </div>`}
-      </fieldset>
       </div>
 
-      ${occ && occ.recurring && html`<label class="bc-field">
-        <span>Apply to</span>
-        <select value=${scope} onChange=${(e) => setScope(e.target.value)}>
-          <option value="this">This event only</option>
-          <option value="following">This and following</option>
-          <option value="all">All events in series</option>
-        </select>
-      </label>`}
-
-      <div class="bc-drawer-actions">
+      <div class="bc-drawer-actions bc-ed-actions">
         <button type="submit" class="bc-btn bc-btn-primary" disabled=${backwards} title=${backwards ? 'The end is before the start' : undefined}>${occ ? 'Save' : 'Create'}</button>
-        ${googleCalendar(Number(form.calendarId)) && html`<span class="bc-drawer-note" title="This calendar lives at Google. Better-Cal writes straight through and cannot restore the previous version.">${occ ? 'Saves' : 'Creates'} at Google; can't be undone</span>`}
-        ${occ && html`<button type="button" class="bc-btn bc-btn-danger" onClick=${() => deleteEvent(occ, scope)}>Delete</button>`}
         <button type="button" class="bc-btn" onClick=${requestClose}>Cancel</button>
+        ${googleCalendar(Number(form.calendarId)) && html`<span class="bc-drawer-note" title="This calendar lives at Google. Better-Cal writes straight through and cannot restore the previous version.">${occ ? 'Saves' : 'Creates'} at Google; can't be undone</span>`}
+        ${occ && html`<button type="button" class="bc-btn bc-btn-danger bc-ed-delete" onClick=${() => deleteEvent(occ, scope)}>Delete</button>`}
       </div>
     </form>
   </div>`;

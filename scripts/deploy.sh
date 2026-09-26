@@ -61,7 +61,7 @@ stage "connect"
 ssh_open
 
 # Back up before anything changes: the app directory and the database, into
-# backups/ beside the app, keeping the newest 20 of each. Database credentials
+# backups/ beside the app, keeping the newest 5 of each. Database credentials
 # come from the app's own .env on the server and are never printed. A failed
 # backup stops the deploy; SKIP_BACKUP=1 skips it deliberately.
 if [ "${SKIP_BACKUP:-0}" != "1" ]; then
@@ -87,7 +87,7 @@ case "${DSN}" in
   *)
     echo "BETTERCAL_DB_DSN is neither mysql nor sqlite; database not backed up, not deploying" >&2; exit 1 ;;
 esac
-for kind in app db; do ls -1t "${BK}"/bettercal-${kind}-2* 2>/dev/null | tail -n +21 | xargs -r rm -f; done
+for kind in app db; do ls -1t "${BK}"/bettercal-${kind}-2* 2>/dev/null | tail -n +6 | xargs -r rm -f; done
 ls -1 "${BK}"/*"${TS}"* | sed 's|.*/|  |'
 BACKUP
 fi

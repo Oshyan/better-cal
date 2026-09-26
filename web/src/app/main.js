@@ -43,6 +43,9 @@ async function boot() {
       // Tell the server our timezone once. The browser has always known it;
       // worker-side code (plugins building local times) had no way to.
       (state.settings.tz ? Promise.resolve() : saveSetting('tz', localTz()).catch(() => {})),
+      // And where this device is now, whenever that changes: mail naming no
+      // place is read on this clock (a booking email while travelling).
+      (state.settings.hereTz === localTz() ? Promise.resolve() : saveSetting('hereTz', localTz()).catch(() => {})),
     ]);
     authed = true;
   } catch (e) {

@@ -4,6 +4,16 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.5.7 (2026-09-26)
+
+- **Forwarded emails are read on the clock of the place they're about.** A booking in Edinburgh is 3 PM Edinburgh time whatever your Home zone is: the reader names the zone of the event's address, venue or city (or a zone the email states, like "3pm ET"), and the event keeps that zone. An email naming no place is read on the clock where your device last was, then Home. "Add to Google Calendar" links keep their own zone too, and a time without an offset is never read on the server's clock. Before this, emailed events were all stamped with Home's zone, so a correct 3 PM in Edinburgh also said "7:00 AM in Los Angeles".
+- **The app tells the server where you are** (your device's time zone) whenever it changes, for the rule above.
+- **The event panel's actions sit in a fixed toolbar at the top:** Edit and Move with their words, Copy and More as icons, For me on the right. It is the same height for every event, so stepping through a day never moves a button or the details under it.
+- **The calendar eases over when the event panel opens or closes,** and the sidebar slides out and back instead of vanishing (220ms; off with reduced motion). The sidebar keeps its width as it slides, so nothing inside it reflows.
+- **The event editor has labels on the left and one line per field,** grouped by thin rules instead of boxes: a large title, Calendar, Start, End, then All day, the length and the time zone on one line; Location, Link and Description; People, Tags, For me and the trip box; Reminders and Repeat. Create and Cancel stay pinned at the bottom however long the form is. The natural-language box is one line.
+- **The time zone is a visible control in the editor,** a globe chip naming the zone ("London time") that opens the zone list. It was a plain link before, and easy to miss.
+- **Deploys keep the newest 5 backups** of the app and the database, not 20.
+
 ## 0.5.6 (2026-09-26)
 
 - **Dates and times in the event editor are plain text boxes now.** Clicking in selects the whole value, so you just type over it: "7p", "7:30", "1930" or "noon" for a time, "fri", "tomorrow", "10/5", "oct 5" or a day of the month for a date. Enter or moving on applies it; anything unreadable puts the old value back and marks the field, and Esc undoes the typing without closing the editor. The calendar button beside each date still opens the date picker.

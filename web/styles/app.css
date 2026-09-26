@@ -1519,7 +1519,6 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-nl-row { display: flex; align-items: center; gap: 6px; }
 .bc-nl-input { flex: 1; min-width: 0; }
 .bc-nl-go { flex: none; }
-.bc-nl-hint { color: var(--fg-muted); font-size: 11px; }
 /* NL assist just filled these fields: brief accent wash on the control. */
 .bc-nl-applied input, .bc-nl-applied select { animation: bc-nl-flash 0.9s ease; }
 @keyframes bc-nl-flash {
@@ -1529,21 +1528,9 @@ body.bc-dragging * { cursor: grabbing !important; }
 @media (prefers-reduced-motion: reduce) { .bc-nl-applied input, .bc-nl-applied select { animation: none; } }
 .bc-field { display: flex; flex-direction: column; gap: 3px; }
 .bc-field > span { font-size: 11.5px; font-weight: 600; color: var(--fg-muted); }
-.bc-field-row { display: flex; align-items: flex-end; gap: 8px; flex-wrap: wrap; }
 .bc-field.grow { flex: 1; min-width: 140px; }
-/* A field that needs the full row for a moment (People, while it asks whether
-   an unrecognised name should become a person). Its neighbours wrap below. */
-.bc-field-row > .bc-field-claims-row { flex-basis: 100%; }
 .bc-check { display: inline-flex; align-items: center; gap: 5px; }
 .bc-num { width: 58px; }
-.bc-lock-btn {
-  background: none; border: 1px solid var(--border-strong); border-radius: 6px;
-  padding: 4px 6px; display: inline-flex; align-items: center; color: var(--fg-muted);
-}
-.bc-lock-btn.is-on { color: var(--accent); }
-.bc-lock-btn.is-on { border-color: var(--accent); }
-.bc-rrule { border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 10px; display: flex; flex-direction: column; gap: 8px; }
-.bc-rrule legend { font-size: 11.5px; font-weight: 600; color: var(--fg-muted); padding: 0 4px; }
 .bc-byday { display: flex; gap: 4px; flex-wrap: wrap; }
 .bc-byday-day {
   border: 1px solid var(--border-strong); border-radius: 6px;
@@ -1556,9 +1543,6 @@ body.bc-dragging * { cursor: grabbing !important; }
 
 /* --- reminders (editor row + bell glyph) ------------------------------------------- */
 
-.bc-rem { border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 10px; }
-.bc-rem legend { font-size: 11.5px; font-weight: 600; color: var(--fg-muted); padding: 0 4px; }
-.bc-rem-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .bc-rem-none { color: var(--fg-muted); font-size: 12.5px; }
 .bc-rem-chip {
   display: inline-flex; align-items: center; gap: 4px;
@@ -2475,13 +2459,6 @@ body.bc-rescheduling { user-select: none; }
 .bc-trip-confirm-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .bc-trip-confirm-note { color: var(--fg-muted); font-size: 11.5px; }
 
-/* Event-side "Trip" row: current trip or None, overlap candidates, plus the
-   "Other trip" title search over loaded containers. */
-.bc-trip-fieldset {
-  border: 1px solid var(--border); border-radius: var(--radius);
-  padding: 8px 10px; display: flex; flex-direction: column; gap: 8px;
-}
-.bc-trip-fieldset legend { font-size: 11.5px; font-weight: 600; color: var(--fg-muted); padding: 0 4px; }
 .bc-trip-rowsect { min-width: 0; }
 .bc-trip-rowline { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .bc-trip-rowlabel { color: var(--fg-muted); font-size: 12.5px; }
@@ -3785,23 +3762,67 @@ button.bc-review-title { color: var(--fg); padding: 0; }
 .bc-evpanel .bc-es-joinbtn { height: 42px; font-size: 15px; }
 .bc-evpanel .bc-es-sqbtn { width: 42px; height: 42px; }
 .bc-evpanel .bc-es-desctext { font-size: 14.5px; display: block; -webkit-line-clamp: unset; overflow: visible; }
-.bc-es-foot.is-inline { position: relative; border: none; padding: 0; background: none; gap: 10px; }
-.bc-es-foot.is-inline .bc-es-forme { padding: 0; }
-.bc-es-foot.is-inline .bc-es-bar { flex-wrap: wrap; gap: 8px; }
-.bc-es-foot.is-inline .bc-es-act {
-  flex: none; flex-direction: row; height: 36px; padding: 0 12px; gap: 7px;
-  border: 1px solid var(--border); border-radius: 9px; font-size: 13.5px;
-}
-.bc-es-foot.is-inline .bc-es-act svg { width: 16px; height: 16px; }
-.bc-es-foot.is-inline .bc-es-act:hover { background: var(--bg-inset); }
-.bc-es-foot.is-inline .bc-es-menu { bottom: auto; top: calc(100% + 6px); right: auto; left: 0; transform: none; }
 .bc-set-check { display: inline-flex; align-items: center; gap: 8px; }
 
-/* --- editor: When fields, For me + trip, reminders beside repeat (0.5.6) ---------- */
-.bc-when { display: grid; grid-template-columns: auto minmax(0, 1fr) 8.5em; gap: 6px 8px; align-items: center; }
-.bc-when.is-allday { grid-template-columns: auto minmax(0, 1fr); }
-.bc-when-lab { font-size: 11.5px; font-weight: 600; color: var(--fg-muted); }
-.bc-when-cell { min-width: 0; }
+/* --- event editor (0.5.7): labels on the left, one line per field ------------------
+   Every row is label + control, so the left edge and the rhythm are the same all the
+   way down; related rows are grouped by thin rules instead of boxes. Create and Cancel
+   stay pinned at the bottom however long the form gets. */
+.bc-editor { gap: 12px; padding-bottom: 0; }
+.bc-editor .bc-nl { padding: 6px 8px; }
+.bc-editor .bc-nl-row > svg { color: var(--fg-muted); flex: none; }
+.bc-editor .bc-nl-input { border: none; background: transparent; padding: 3px 2px; }
+.bc-editor .bc-nl-input:focus-visible { outline: none; }
+.bc-editor .bc-nl:focus-within { border-color: var(--accent); }
+.bc-ed-title {
+  width: 100%; font-size: 19px; font-weight: 600; padding: 6px 10px;
+}
+.bc-ed-grid {
+  display: grid; grid-template-columns: 5.6em minmax(0, 1fr);
+  gap: 8px 10px; align-items: center;
+}
+.bc-ed-lab { font-size: 12px; font-weight: 600; color: var(--fg-muted); }
+.bc-ed-lab.is-top { align-self: start; padding-top: 7px; }
+.bc-ed-ctl, .bc-ed-titlewrap, .bc-ed-trip { min-width: 0; }
+.bc-ed-ctl > input:not([type="checkbox"]), .bc-ed-ctl > select { width: 100%; }
+.bc-ed-sep { grid-column: 1 / -1; width: 100%; margin: 2px 0; border: none; border-top: 1px solid var(--border); }
+/* Date and time keep their columns in every state, so ticking All day never moves the date. */
+.bc-ed-when { display: grid; grid-template-columns: minmax(0, 1fr) 8.5em; gap: 8px; }
+.bc-ed-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; font-size: 12.5px; color: var(--fg-muted); margin-top: -2px; }
+.bc-ed-chip {
+  display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 9px;
+  border: 1px solid var(--border-strong); border-radius: 12px; background: none;
+  font-size: 12px; color: var(--fg-muted); cursor: pointer; white-space: nowrap;
+}
+.bc-ed-chip:hover { color: var(--fg); border-color: var(--fg-muted); }
+.bc-ed-chip.is-on { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, var(--border-strong)); }
+.bc-ed-flags { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; }
+.bc-ed-seg { display: inline-flex; height: 28px; border: 1px solid var(--border-strong); border-radius: 8px; overflow: hidden; }
+.bc-ed-segbtn {
+  display: inline-flex; align-items: center; gap: 4px; padding: 0 11px;
+  border: none; border-right: 1px solid var(--border); background: none;
+  font-size: 13px; color: var(--fg); cursor: pointer;
+}
+.bc-ed-segbtn:last-child { border-right: none; }
+.bc-ed-segbtn.is-on { background: color-mix(in srgb, var(--accent) 14%, var(--bg-raised)); color: var(--accent); font-weight: 600; }
+.bc-ed-rem { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; }
+.bc-ed-rem .bc-rem-add { width: 5.6em; }
+.bc-ed-rem .bc-rem-reset { font-size: 12px; }
+.bc-ed-repeat { display: flex; flex-direction: column; gap: 8px; }
+.bc-ed-repeat > .bc-ed-inline > select:first-child { width: auto; }
+.bc-ed-inline { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; }
+.bc-ed-sub { font-size: 12.5px; color: var(--fg-muted); }
+.bc-ed-actions {
+  position: sticky; bottom: 0; z-index: 6; margin: auto -16px 0;
+  padding: 10px 16px calc(12px + env(safe-area-inset-bottom, 0px));
+  background: var(--bg-raised); border-top: 1px solid var(--border);
+}
+.bc-ed-actions .bc-drawer-note { flex: 1; }
+.bc-ed-delete { margin-left: auto; }
+.bc-drawer-actions .bc-btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+.bc-when-err { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; color: var(--danger); font-size: 12.5px; }
+
+/* Date and time boxes (WhenFields.js). */
 .bc-when-date, .bc-when-time { position: relative; display: flex; align-items: center; min-width: 0; }
 .bc-when-text { flex: 1; min-width: 0; width: 100%; }
 .bc-when-date .bc-when-text { padding-right: 32px; }
@@ -3816,7 +3837,7 @@ button.bc-review-title { color: var(--fg); padding: 0; }
 .bc-when-native { position: absolute; left: 0; bottom: 0; width: 100%; height: 100%; opacity: 0; pointer-events: none; border: 0; padding: 0; }
 .bc-when-date.is-bad .bc-when-text, .bc-when-time.is-bad .bc-when-text { border-color: var(--danger); }
 .bc-when-list {
-  position: absolute; top: calc(100% + 3px); right: 0; z-index: 5;
+  position: absolute; top: calc(100% + 3px); right: 0; z-index: 7;
   min-width: 100%; width: max-content; max-height: 248px; overflow-y: scroll;
   background: var(--bg-raised); border: 1px solid var(--border-strong); border-radius: var(--radius);
   box-shadow: var(--shadow); padding: 4px 0;
@@ -3825,25 +3846,45 @@ button.bc-review-title { color: var(--fg); padding: 0; }
 .bc-when-opt small { color: var(--fg-muted); font-size: 11.5px; }
 .bc-when-opt:hover, .bc-when-opt.is-active { background: color-mix(in srgb, var(--accent) 10%, var(--bg-raised)); }
 .bc-when-opt.is-current { color: var(--accent); font-weight: 600; }
-.bc-when-meta { gap: 14px; }
-.bc-when-meta .bc-lock-btn { gap: 4px; padding: 2px 7px; font-size: 11.5px; }
-.bc-when-err { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; color: var(--danger); font-size: 12.5px; }
-.bc-drawer-actions .bc-btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
 
-.bc-ed-flags { display: flex; align-items: center; gap: 8px 18px; flex-wrap: wrap; }
-.bc-ed-forme { display: inline-flex; align-items: center; gap: 8px; }
-.bc-ed-flag-lab { font-size: 11.5px; font-weight: 600; color: var(--fg-muted); }
-.bc-ed-seg { display: inline-flex; height: 28px; border: 1px solid var(--border-strong); border-radius: 8px; overflow: hidden; }
-.bc-ed-segbtn {
-  display: inline-flex; align-items: center; gap: 4px; padding: 0 11px;
-  border: none; border-right: 1px solid var(--border); background: none;
-  font-size: 13px; color: var(--fg); cursor: pointer;
+/* --- desktop event panel toolbar (0.5.7): pinned, one height for every event ------- */
+.bc-es-tools {
+  position: sticky; top: 0; z-index: 4; flex-shrink: 0;
+  display: flex; align-items: center; gap: 10px;
+  margin: -16px -22px 6px; padding: 9px 16px 9px 22px; min-height: 52px;
+  background: var(--bg-raised); border-bottom: 1px solid var(--border);
 }
-.bc-ed-segbtn:last-child { border-right: none; }
-.bc-ed-segbtn.is-on { background: color-mix(in srgb, var(--accent) 14%, var(--bg-raised)); color: var(--accent); font-weight: 600; }
+.bc-es-tools-acts { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
+.bc-es-tool {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; flex: none;
+  height: 32px; padding: 0 11px; border: 1px solid var(--border-strong); border-radius: 8px;
+  background: none; font-size: 13.5px; color: var(--fg); cursor: pointer;
+}
+.bc-es-tool.is-icon { width: 32px; padding: 0; }
+.bc-es-tool:hover { background: var(--bg-inset); }
+.bc-es-tool.is-on { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, var(--border-strong)); }
+.bc-es-tools .bc-es-forme { padding: 0; flex: none; }
+.bc-es-tools .bc-es-forme-label { display: none; }
+.bc-es-tools .bc-es-seg { flex: none; height: 32px; border-radius: 8px; }
+.bc-es-tools .bc-es-segbtn { padding: 0 10px; font-size: 13px; gap: 4px; }
+.bc-es-tools .bc-es-segbtn svg { width: 14px; height: 14px; }
+.bc-es-tools .bc-es-menu { position: absolute; top: calc(100% + 4px); left: 16px; right: auto; bottom: auto; transform: none; }
 
-.bc-ed-pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; align-items: stretch; }
-.bc-ed-pair > fieldset { min-width: 0; margin: 0; }
-.bc-rem-list { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; margin-bottom: 6px; }
-.bc-ed-pair .bc-rem-add { max-width: 100%; }
-@media (max-width: 400px) { .bc-ed-pair { grid-template-columns: minmax(0, 1fr); } }
+/* --- easing the desktop layout (0.5.7) -------------------------------------------
+   The calendar narrows for the event panel and widens when the sidebar tucks away
+   over 220ms instead of in one jump; the panel slides in from the right edge and the
+   sidebar slides out to the left rather than vanishing. The sidebar keeps its width
+   while it moves (a negative margin, not a shrinking box), so its contents never
+   reflow mid-slide, and it becomes hidden to focus once it is out of view. */
+@media (min-width: 801px) and (prefers-reduced-motion: no-preference) {
+  .bc-main { transition: padding-right 0.22s cubic-bezier(0.2, 0, 0, 1); }
+  .bc-evpanel { animation: bc-evpanel-in 0.22s cubic-bezier(0.2, 0, 0, 1); }
+  .bc-sidebar {
+    transition: margin-left 0.22s cubic-bezier(0.2, 0, 0, 1), visibility 0s linear 0s;
+  }
+  .bc-sidebar.is-collapsed {
+    display: flex; margin-left: -257px; visibility: hidden;
+    transition: margin-left 0.22s cubic-bezier(0.2, 0, 0, 1), visibility 0s linear 0.22s;
+  }
+}
+@keyframes bc-evpanel-in { from { transform: translateX(100%); } }

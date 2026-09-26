@@ -2961,6 +2961,23 @@ require __DIR__ . '/plugins.php';
     check('mail: and may not begin again', $mail->begin($env) === false);
     $direct = $mail->ingestMessage(1, ['messageId' => 'direct@example.test', 'subject' => 'No begin', 'from' => 'y@example.test', 'icsParts' => [], 'html' => null, 'text' => 'hello'], 'UTC');
     checkEq('mail: callers that never call begin() still get a log row', 1, (int) $mdb->scalar("SELECT COUNT(*) FROM mail_ingest WHERE message_id = 'direct@example.test'"));
+
+    // Mail is read on the clock of the event's place (an Edinburgh booking while
+    // Home is Los Angeles), and the stored zone matches the stored moment.
+    $w = MailIngest::draftWhen(['start' => '2026-10-02T15:00:00', 'end' => '2026-10-02T17:00:00', 'tzid' => 'Europe/London'], 'America/Los_Angeles');
+    checkEq('mail zone: a draft in Edinburgh is 3 PM there, not 3 PM Home', ['2026-10-02T14:00:00Z', '2026-10-02T16:00:00Z', 'Europe/London'],
+        [$w[0]->format('Y-m-d\TH:i:s\Z'), $w[1]->format('Y-m-d\TH:i:s\Z'), $w[3]]);
+    $w = MailIngest::draftWhen(['start' => '2026-10-02T15:00:00'], 'America/Los_Angeles');
+    checkEq('mail zone: no zone in the draft reads it on Home, not PHP\'s default', ['2026-10-02T22:00:00Z', 'America/Los_Angeles'], [$w[0]->format('Y-m-d\TH:i:s\Z'), $w[3]]);
+    $w = MailIngest::draftWhen(['start' => '2026-10-02T15:00:00-04:00', 'tzid' => 'Europe/London'], 'America/Los_Angeles');
+    checkEq('mail zone: an explicit offset is still the moment', '2026-10-02T19:00:00Z', $w[0]->format('Y-m-d\TH:i:s\Z'));
+    $w = MailIngest::draftWhen(['start' => '2026-10-02T15:00:00', 'tzid' => 'Mars/Olympus'], 'America/Los_Angeles');
+    checkEq('mail zone: a made-up zone falls back to Home', 'America/Los_Angeles', $w[3]);
+    check('mail zone: an unreadable start is no draft', MailIngest::draftWhen(['start' => 'soon'], 'UTC') === null);
+    checkEq('mail zone: validZone takes real IANA names only', ['Europe/London', null, null, 'UTC'],
+        [BetterCal\Infra\LlmGateway::validZone('Europe/London'), BetterCal\Infra\LlmGateway::validZone('London'), BetterCal\Infra\LlmGateway::validZone(null), BetterCal\Infra\LlmGateway::validZone('UTC')]);
+    $g = GcalLink::parse('https://calendar.google.com/calendar/render?action=TEMPLATE&text=Call&dates=20260901T100000/20260901T110000&ctz=Europe/London', 'America/Los_Angeles');
+    checkEq('mail zone: a Google link keeps its ctz as the event zone', 'Europe/London', $g['tzid']);
 }
 
 // --- Sign-in throttle (BC-05/BC-06, issue #20) ----------------------------------

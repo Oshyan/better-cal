@@ -77,6 +77,7 @@ final class GcalLink
             'personNames' => [],
             'confidence' => 0.98,
             'source' => 'gcal-link',
+            'tzid' => $tz->getName(),
         ];
     }
 

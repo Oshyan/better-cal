@@ -132,23 +132,50 @@ export function EventSheetBody({ occ, cal, isFeed, full, panel = false, onFull, 
     </div>`;
   })();
 
-  // The phone keeps For me and the actions at the bottom, under the thumb;
-  // the desktop panel puts them under the title, a short reach for the mouse.
-  const foot = html`<div class=${'bc-es-foot' + (panel ? ' is-inline' : '')}>
-      ${!(cal && cal.role === 'context') && html`<${ForMe} occ=${occ} cal=${cal} onHidden=${close} />`}
+  const context = cal && cal.role === 'context';
+  const openEdit = () => set({ popover: null, editor: { mode: 'edit', occ } });
+  const openMove = () => { close(); enterReschedule(occ.instanceId); };
+  const moreMenu = moreOpen && html`<${MoreMenu} occ=${occ} cal=${cal} isFeed=${isFeed} onClose=${() => setMoreOpen(false)} onDelete=${onDelete} />`;
+
+  // The phone keeps For me and the actions at the bottom, under the thumb.
+  const foot = html`<div class="bc-es-foot">
+      ${!context && html`<${ForMe} occ=${occ} cal=${cal} onHidden=${close} />`}
       <div class="bc-es-bar" role="toolbar" aria-label="Event actions">
-        ${!isFeed && html`<button type="button" class="bc-es-act" onClick=${() => set({ popover: null, editor: { mode: 'edit', occ } })}><${Icon} name="pencil" size=${20} />Edit</button>`}
-        ${!isFeed && html`<button type="button" class="bc-es-act" onClick=${() => { close(); enterReschedule(occ.instanceId); }}><${Icon} name="reschedule" size=${20} />Move</button>`}
-        ${isFeed && !(cal && cal.role === 'context') && html`<button type="button" class="bc-es-act" onClick=${() => sendFeedback(occ, 'up')}><${ThumbIcon} dir="up" size=${20} />More like</button>`}
-        ${isFeed && !(cal && cal.role === 'context') && html`<button type="button" class="bc-es-act" onClick=${() => sendFeedback(occ, 'down')}><${ThumbIcon} dir="down" size=${20} />Less like</button>`}
+        ${!isFeed && html`<button type="button" class="bc-es-act" onClick=${openEdit}><${Icon} name="pencil" size=${20} />Edit</button>`}
+        ${!isFeed && html`<button type="button" class="bc-es-act" onClick=${openMove}><${Icon} name="reschedule" size=${20} />Move</button>`}
+        ${isFeed && !context && html`<button type="button" class="bc-es-act" onClick=${() => sendFeedback(occ, 'up')}><${ThumbIcon} dir="up" size=${20} />More like</button>`}
+        ${isFeed && !context && html`<button type="button" class="bc-es-act" onClick=${() => sendFeedback(occ, 'down')}><${ThumbIcon} dir="down" size=${20} />Less like</button>`}
         <button type="button" class=${'bc-es-act' + (copyOpen ? ' is-on' : '')} aria-expanded=${copyOpen} onClick=${() => setCopyOpen(!copyOpen)}><${Icon} name="copy" size=${20} />Copy to</button>
         <button type="button" class=${'bc-es-act' + (moreOpen ? ' is-on' : '')} aria-haspopup="menu" aria-expanded=${moreOpen} onClick=${() => setMoreOpen(!moreOpen)}><${Icon} name="more" size=${20} />More</button>
       </div>
-      ${moreOpen && html`<${MoreMenu} occ=${occ} cal=${cal} isFeed=${isFeed} onClose=${() => setMoreOpen(false)} onDelete=${onDelete} />`}
+      ${moreMenu}
+    </div>`;
+
+  // The desktop panel pins them in one toolbar row at the top instead (0.5.7).
+  // The row is the same height for every event, For me or not, so stepping
+  // through a day never moves a button or the content under it. Edit and Move
+  // keep their words; the rest are icons with tooltips so one row holds all.
+  const tool = (icon, label, onClick, extra = {}) => html`<button
+    type="button" class=${'bc-es-tool' + (extra.word ? '' : ' is-icon') + (extra.on ? ' is-on' : '')}
+    aria-label=${label} title=${extra.word ? undefined : label} aria-expanded=${extra.expanded} aria-haspopup=${extra.popup}
+    onClick=${onClick}
+  >${icon}${extra.word ? label : ''}</button>`;
+  const tools = html`<div class="bc-es-tools" role="toolbar" aria-label="Event actions">
+      <span class="bc-es-tools-acts">
+        ${!isFeed && tool(html`<${Icon} name="pencil" size=${15} />`, 'Edit', openEdit, { word: true })}
+        ${!isFeed && tool(html`<${Icon} name="reschedule" size=${15} />`, 'Move', openMove, { word: true })}
+        ${isFeed && !context && tool(html`<${ThumbIcon} dir="up" size=${16} />`, 'More like this', () => sendFeedback(occ, 'up'))}
+        ${isFeed && !context && tool(html`<${ThumbIcon} dir="down" size=${16} />`, 'Less like this', () => sendFeedback(occ, 'down'))}
+        ${tool(html`<${Icon} name="copy" size=${15} />`, 'Copy to another calendar', () => setCopyOpen(!copyOpen), { on: copyOpen, expanded: copyOpen })}
+        ${tool(html`<${Icon} name="more" size=${16} />`, 'More', () => setMoreOpen(!moreOpen), { on: moreOpen, expanded: moreOpen, popup: 'menu' })}
+      </span>
+      ${!context && html`<${ForMe} occ=${occ} cal=${cal} onHidden=${close} />`}
+      ${moreMenu}
     </div>`;
 
   return html`
     <div class="bc-pop-body bc-es-body" ref=${bodyRef}>
+      ${panel && tools}
       ${copyOpen && html`<${CopyTo} occ=${occ} compact onDone=${close} />`}
       ${deletePrompt === occ.instanceId && html`<${DeleteScope} occ=${occ} compact onDone=${() => set({ deletePrompt: null, popover: null })} onCancel=${() => set({ deletePrompt: null })} />`}
       ${timeScope && html`<${ScopeChoice} occ=${occ} verb="New time for" compact note=${googleBacked(occ) ? GOOGLE_NO_UNDO : null} onPick=${(scope) => { const f = timeScope; setTimeScope(null); updateEvent(occ, f, scope); }} onCancel=${() => setTimeScope(null)} />`}
@@ -165,8 +192,6 @@ export function EventSheetBody({ occ, cal, isFeed, full, panel = false, onFull, 
           type="button" class="bc-es-partof" onClick=${() => { close(); openTripByEventId(occ.containers[0].eventId); }}
         ><${Icon} name="trip" size=${15} />Part of ${occ.containers[0].title}</button>`}
       </div>
-
-      ${panel && foot}
 
       <div class="bc-es-row">
         <${Icon} name="clock" size=${20} />

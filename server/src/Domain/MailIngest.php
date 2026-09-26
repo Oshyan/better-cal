@@ -286,7 +286,7 @@ final class MailIngest
      * @param array{messageId:string,subject:string,from:string,icsParts:list<string>,html:?string,text:?string} $msg
      * @return array{tier:?string,outcome:string,eventId:?int,error:?string}
      */
-    public function ingestMessage(int $userId, array $msg, string $tz): array
+    public function ingestMessage(int $userId, array $msg, string $tz, ?string $hereTz = null): array
     {
         if ($this->alreadyProcessed($msg['messageId'])) {
             return ['tier' => null, 'outcome' => 'skipped', 'eventId' => null, 'error' => 'duplicate'];
@@ -299,7 +299,7 @@ final class MailIngest
             $result['error'] = 'message too large to ingest (' . number_format((int) $msg['oversize']) . ' bytes)';
         } else {
             try {
-                $result = $this->runTiers($userId, $msg, $tz);
+                $result = $this->runTiers($userId, $msg, $tz, $hereTz);
             } catch (\Throwable $e) {
                 $result = ['tier' => 'none', 'outcome' => 'error', 'eventId' => null, 'error' => mb_substr($e->getMessage(), 0, 500)];
             }
@@ -372,7 +372,7 @@ final class MailIngest
     }
 
     /** @param array{messageId:string,subject:string,from:string,icsParts:list<string>,html:?string,text:?string} $msg */
-    private function runTiers(int $userId, array $msg, string $tz): array
+    private function runTiers(int $userId, array $msg, string $tz, ?string $hereTz = null): array
     {
         // Tier 1: iMIP.
         foreach ($msg['icsParts'] as $ics) {
@@ -419,6 +419,7 @@ final class MailIngest
                 'location' => $draft['location'],
                 'description' => $draft['description'],
                 'url' => null,
+                'tzid' => $draft['tzid'] ?? null,
             ], 'gcal-link', $tz));
             if ($created !== null) {
                 return ['tier' => 'gcal-link', 'outcome' => 'created', 'eventId' => $created, 'error' => null];
@@ -437,7 +438,7 @@ final class MailIngest
                 return ['tier' => 'llm', 'outcome' => 'skipped', 'eventId' => null, 'error' => 'no date evidence in body'];
             }
             $body = mb_substr(self::stripForwardPreamble($msg['subject']) . "\n\n" . $llmSource, 0, 4000);
-            $parsed = $this->llm->parseEvent($body, Time::nowUtc(), $tz);
+            $parsed = $this->llm->parseEvent($body, Time::nowUtc(), $tz, true, $hereTz);
             if ($parsed !== null && !empty($parsed['title']) && $parsed['title'] !== 'New event') {
                 $created = ActivityContext::with('mail:llm', fn() => $this->createFromDraft($userId, $msg, [
                     'title' => $parsed['title'],
@@ -446,6 +447,7 @@ final class MailIngest
                     'location' => $parsed['location'],
                     'url' => null,
                     'allDay' => (bool) $parsed['allDay'],
+                    'tzid' => $parsed['tzid'] ?? null,
                 ], 'llm', $tz));
                 if ($created !== null) {
                     return ['tier' => 'llm', 'outcome' => 'created', 'eventId' => $created, 'error' => null];
@@ -626,25 +628,50 @@ final class MailIngest
         return ['created', $eventId];
     }
 
-    /** @param array{title:string,start:string,end:?string,location:?string,url:?string,allDay?:bool} $draft */
-    private function createFromDraft(int $userId, array $msg, array $draft, string $tier, string $tz): ?int
+    /**
+     * A draft's moments and zone: [start, end, allDay, tzid], or null when the
+     * start can't be read. The zone is the draft's own when it names a real
+     * one, else $tz; times without an offset are read in it. Pure, for tests.
+     *
+     * @return ?array{0:\DateTimeImmutable,1:\DateTimeImmutable,2:bool,3:string}
+     */
+    public static function draftWhen(array $draft, string $tz): ?array
     {
+        $tz = LlmGateway::validZone($draft['tzid'] ?? null) ?? $tz;
         try {
-            $start = new \DateTimeImmutable($draft['start']);
-        } catch (\Exception) {
+            $start = Time::parseIso((string) ($draft['start'] ?? ''), $tz);
+        } catch (\InvalidArgumentException) {
             return null;
         }
-        $allDay = (bool) ($draft['allDay'] ?? (strlen($draft['start']) <= 10));
+        $allDay = (bool) ($draft['allDay'] ?? (strlen((string) $draft['start']) <= 10));
         try {
             $end = isset($draft['end']) && $draft['end'] !== null && $draft['end'] !== ''
-                ? new \DateTimeImmutable($draft['end'])
+                ? Time::parseIso((string) $draft['end'], $tz)
                 : $start->add(new \DateInterval($allDay ? 'P1D' : 'PT1H'));
-        } catch (\Exception) {
+        } catch (\InvalidArgumentException) {
             $end = $start->add(new \DateInterval($allDay ? 'P1D' : 'PT1H'));
         }
         if ($end <= $start) {
             $end = $start->add(new \DateInterval($allDay ? 'P1D' : 'PT1H'));
         }
+        return [$start, $end, $allDay, $tz];
+    }
+
+    /**
+     * The event keeps the zone its draft was read in (the place's, from the
+     * LLM or a Google link's ctz), so the stored zone and the stored moment
+     * agree; Home only when the draft has none. A time without an offset is
+     * read in that zone, never in PHP's default.
+     *
+     * @param array{title:string,start:string,end:?string,location:?string,url:?string,allDay?:bool,tzid?:?string} $draft
+     */
+    private function createFromDraft(int $userId, array $msg, array $draft, string $tier, string $tz): ?int
+    {
+        $when = self::draftWhen($draft, $tz);
+        if ($when === null) {
+            return null;
+        }
+        [$start, $end, $allDay, $tz] = $when;
 
         // Synthetic UID keyed on the message: reprocessing can't duplicate.
         $uid = 'mail-' . sha1($msg['messageId'] . '|' . $draft['title']);

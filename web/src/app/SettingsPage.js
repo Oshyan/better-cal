@@ -670,6 +670,12 @@ export function SettingsPage() {
         <${Seg} label="Theme" value=${settings.theme}
           options=${[['system', 'System'], ['light', 'Light'], ['dark', 'Dark']]} onChange=${save('theme')} />
       <//>
+      <${Row} label="Event panel" hint="On a wide screen an event opens in a panel on the right, and the calendar narrows to make room. Tucking the sidebar away meanwhile gives the days more width back.">
+        <label class="bc-set-check"><input
+          type="checkbox" checked=${settings.panelTucksSidebar !== false}
+          onChange=${(e) => save('panelTucksSidebar')(e.target.checked)}
+        /> Hide the sidebar while an event is open</label>
+      <//>
       <${Row} label="Default calendar" hint="Where new events land unless you pick otherwise.">
         <select
           value=${settings.defaultCalendarId == null ? '' : String(settings.defaultCalendarId)}

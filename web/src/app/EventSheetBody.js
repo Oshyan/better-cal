@@ -101,7 +101,7 @@ function MoreMenu({ occ, cal, isFeed, onClose, onDelete }) {
   </div>`;
 }
 
-export function EventSheetBody({ occ, cal, isFeed, full, onFull, bodyRef, copyOpen, setCopyOpen, timeScope, setTimeScope, deletePrompt, attendPrompt, s, e }) {
+export function EventSheetBody({ occ, cal, isFeed, full, panel = false, onFull, bodyRef, copyOpen, setCopyOpen, timeScope, setTimeScope, deletePrompt, attendPrompt, s, e }) {
   const [moreOpen, setMoreOpen] = useState(false);
   useEffect(() => { setMoreOpen(false); }, [occ.instanceId]);
   const close = () => set({ popover: null });
@@ -132,6 +132,21 @@ export function EventSheetBody({ occ, cal, isFeed, full, onFull, bodyRef, copyOp
     </div>`;
   })();
 
+  // The phone keeps For me and the actions at the bottom, under the thumb;
+  // the desktop panel puts them under the title, a short reach for the mouse.
+  const foot = html`<div class=${'bc-es-foot' + (panel ? ' is-inline' : '')}>
+      ${!(cal && cal.role === 'context') && html`<${ForMe} occ=${occ} cal=${cal} onHidden=${close} />`}
+      <div class="bc-es-bar" role="toolbar" aria-label="Event actions">
+        ${!isFeed && html`<button type="button" class="bc-es-act" onClick=${() => set({ popover: null, editor: { mode: 'edit', occ } })}><${Icon} name="pencil" size=${20} />Edit</button>`}
+        ${!isFeed && html`<button type="button" class="bc-es-act" onClick=${() => { close(); enterReschedule(occ.instanceId); }}><${Icon} name="reschedule" size=${20} />Move</button>`}
+        ${isFeed && !(cal && cal.role === 'context') && html`<button type="button" class="bc-es-act" onClick=${() => sendFeedback(occ, 'up')}><${ThumbIcon} dir="up" size=${20} />More like</button>`}
+        ${isFeed && !(cal && cal.role === 'context') && html`<button type="button" class="bc-es-act" onClick=${() => sendFeedback(occ, 'down')}><${ThumbIcon} dir="down" size=${20} />Less like</button>`}
+        <button type="button" class=${'bc-es-act' + (copyOpen ? ' is-on' : '')} aria-expanded=${copyOpen} onClick=${() => setCopyOpen(!copyOpen)}><${Icon} name="copy" size=${20} />Copy to</button>
+        <button type="button" class=${'bc-es-act' + (moreOpen ? ' is-on' : '')} aria-haspopup="menu" aria-expanded=${moreOpen} onClick=${() => setMoreOpen(!moreOpen)}><${Icon} name="more" size=${20} />More</button>
+      </div>
+      ${moreOpen && html`<${MoreMenu} occ=${occ} cal=${cal} isFeed=${isFeed} onClose=${() => setMoreOpen(false)} onDelete=${onDelete} />`}
+    </div>`;
+
   return html`
     <div class="bc-pop-body bc-es-body" ref=${bodyRef}>
       ${copyOpen && html`<${CopyTo} occ=${occ} compact onDone=${close} />`}
@@ -150,6 +165,8 @@ export function EventSheetBody({ occ, cal, isFeed, full, onFull, bodyRef, copyOp
           type="button" class="bc-es-partof" onClick=${() => { close(); openTripByEventId(occ.containers[0].eventId); }}
         ><${Icon} name="trip" size=${15} />Part of ${occ.containers[0].title}</button>`}
       </div>
+
+      ${panel && foot}
 
       <div class="bc-es-row">
         <${Icon} name="clock" size=${20} />
@@ -218,16 +235,5 @@ export function EventSheetBody({ occ, cal, isFeed, full, onFull, bodyRef, copyOp
       </div>`}
     </div>
 
-    <div class="bc-es-foot">
-      ${!(cal && cal.role === 'context') && html`<${ForMe} occ=${occ} cal=${cal} onHidden=${close} />`}
-      <div class="bc-es-bar" role="toolbar" aria-label="Event actions">
-        ${!isFeed && html`<button type="button" class="bc-es-act" onClick=${() => set({ popover: null, editor: { mode: 'edit', occ } })}><${Icon} name="pencil" size=${20} />Edit</button>`}
-        ${!isFeed && html`<button type="button" class="bc-es-act" onClick=${() => { close(); enterReschedule(occ.instanceId); }}><${Icon} name="reschedule" size=${20} />Move</button>`}
-        ${isFeed && !(cal && cal.role === 'context') && html`<button type="button" class="bc-es-act" onClick=${() => sendFeedback(occ, 'up')}><${ThumbIcon} dir="up" size=${20} />More like</button>`}
-        ${isFeed && !(cal && cal.role === 'context') && html`<button type="button" class="bc-es-act" onClick=${() => sendFeedback(occ, 'down')}><${ThumbIcon} dir="down" size=${20} />Less like</button>`}
-        <button type="button" class=${'bc-es-act' + (copyOpen ? ' is-on' : '')} aria-expanded=${copyOpen} onClick=${() => setCopyOpen(!copyOpen)}><${Icon} name="copy" size=${20} />Copy to</button>
-        <button type="button" class=${'bc-es-act' + (moreOpen ? ' is-on' : '')} aria-haspopup="menu" aria-expanded=${moreOpen} onClick=${() => setMoreOpen(!moreOpen)}><${Icon} name="more" size=${20} />More</button>
-      </div>
-      ${moreOpen && html`<${MoreMenu} occ=${occ} cal=${cal} isFeed=${isFeed} onClose=${() => setMoreOpen(false)} onDelete=${onDelete} />`}
-    </div>`;
+    ${!panel && foot}`;
 }

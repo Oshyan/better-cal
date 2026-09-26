@@ -160,7 +160,29 @@ export function closeOverlays() {
 
 // Open the full detail view for one occurrence, replacing lighter overlays.
 export function openDetail(instanceId) {
+  // Desktop: the side panel is the full view (0.5.5); trips keep theirs.
+  const occ = state.occ.get(instanceId);
+  if (occ && !occ.isContainer && typeof window !== 'undefined' && window.matchMedia && !window.matchMedia('(max-width: 640px)').matches) {
+    set({ popover: { instanceId, anchorRect: null }, detail: null, groupPopover: null, expandedDay: null });
+    return;
+  }
   set({ detail: { instanceId }, popover: null, groupPopover: null, expandedDay: null });
+}
+
+// Step the open event (sheet or panel) to the previous or next event of the
+// day being browsed ([ and ] on desktop).
+export function stepPopoverSameDay(dir) {
+  const pop = state.popover;
+  if (!pop) return false;
+  const occ = state.occ.get(pop.instanceId);
+  if (!occ) return false;
+  const dayKey = pop.dayKey || occDayKey(occ);
+  const list = sameDayList(occ, dayKey);
+  const i = list.findIndex((o) => o.instanceId === occ.instanceId);
+  const target = i >= 0 ? list[i + dir] : null;
+  if (!target) return false;
+  set({ popover: { ...pop, instanceId: target.instanceId, dayKey } });
+  return true;
 }
 
 // Chronological list of one day's visible occurrences (all-day first).

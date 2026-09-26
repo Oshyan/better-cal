@@ -770,6 +770,10 @@ check('gcal detects with surrounding whitespace', GcalLink::isTemplateUrl('  ' .
 check('gcal rejects plain text', !GcalLink::isTemplateUrl('Lunch with Ada Friday noon'));
 check('gcal rejects other google urls', !GcalLink::isTemplateUrl('https://calendar.google.com/calendar/r?cid=abc'));
 
+checkEq('place search: "and" is also asked as "&"', 'Panda & Sons', \BetterCal\Domain\PlaceSearch::ampersandVariant('Panda and Sons'));
+checkEq('place search: "&" is also asked as "and"', 'Marks and Spencer', \BetterCal\Domain\PlaceSearch::ampersandVariant('Marks & Spencer'));
+checkEq('place search: no "and" means one query', null, \BetterCal\Domain\PlaceSearch::ampersandVariant('Zuni Cafe'));
+checkEq('place search: "and" inside a word is left alone', null, \BetterCal\Domain\PlaceSearch::ampersandVariant('Andalucia Bar'));
 $g = GcalLink::parse($lumaUrl, 'America/Los_Angeles');
 checkEq('gcal luma title', 'The Commons Public Hours ☕', $g['title']);
 checkEq('gcal luma start (UTC->LA)', '2026-08-09T09:00:00-07:00', $g['start']);

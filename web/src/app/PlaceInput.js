@@ -7,8 +7,11 @@
 // fills the text ("Name, City") AND hands back lat/lng so the caller can
 // persist coordinates directly on create/PATCH.
 //
-// Search bias, in order: where this device is, when the browser already
-// lets us know (devicelocation.js, never prompting); the device's time zone
+// Search bias, in order: where the calendar puts you around the event's date
+// (the nearest-in-time planned event with a known place, within a day and a half, so
+// a dinner added during a trip searches near the trip); where this device is,
+// when the browser already knows (devicelocation.js, never prompting and
+// never waited for); the device's time zone
 // when it differs from the home zone (travelling: "The George" should find
 // the pub in London, not a bar in San Francisco); the home location setting;
 // the given time zone. Zone centroids resolve server-side. Results beyond
@@ -18,13 +21,39 @@
 import { html, useState, useRef, useEffect } from '../../vendor/index.js';
 import { api } from './api.js';
 import { state } from './store.js';
-import { devicePosition, awayFromHome } from './devicelocation.js';
+import { knownPosition, awayFromHome } from './devicelocation.js';
 import { localTz } from '../lib/dates.js';
 
+const NEAR_MS = 36 * 3600 * 1000;
+
+/**
+ * Where the calendar puts you at `atMs`: the place of the event nearest in
+ * time (0 while one spans it, like a stay), within a day and a half. The
+ * event being edited is left out. Null when nothing placed is that close.
+ */
+export function calendarPlaceNear(atMs, excludeEventId = null) {
+  if (!Number.isFinite(atMs)) return null;
+  let best = null;
+  let bestGap = NEAR_MS;
+  for (const o of state.occ.values()) {
+    // Only plans say where you will be: a feed suggestion or a context entry
+    // (sunset at home) is about a place, not about you.
+    if (o.relationship !== 'planned') continue;
+    if (o.locationLat == null || o.locationLng == null || o.eventId === excludeEventId) continue;
+    const s = Date.parse(o.start);
+    const e = Date.parse(o.end);
+    if (!Number.isFinite(s)) continue;
+    const gap = atMs < s ? s - atMs : (Number.isFinite(e) && atMs <= e ? 0 : atMs - (Number.isFinite(e) ? e : s));
+    if (gap <= bestGap) { bestGap = gap; best = o; }
+  }
+  return best ? { lat: best.locationLat, lng: best.locationLng, title: best.title } : null;
+}
+
 /** The bias parameters for a place search right now (exported for Settings to describe). */
-export async function placeBias(tz) {
+export function placeBias(tz, near = null) {
   const s = state.settings || {};
-  const here = await devicePosition();
+  if (near) return { lat: near.lat, lng: near.lng, source: 'calendar' };
+  const here = knownPosition();
   if (here) return { lat: here.lat, lng: here.lng, source: 'device' };
   if (awayFromHome(s.tz)) return { tz: localTz(), source: 'devicetz' };
   if (s.homeLat != null && s.homeLng != null) return { lat: s.homeLat, lng: s.homeLng, source: 'home' };
@@ -52,7 +81,7 @@ function farRegion(candidate) {
 }
 
 export function PlaceInput({
-  value, onText, onPick, tz, compact, placeholder, ariaLabel, inputClass,
+  value, onText, onPick, tz, near, compact, placeholder, ariaLabel, inputClass,
 }) {
   const [results, setResults] = useState(null); // null = closed, [] = no matches
   const [active, setActive] = useState(-1);
@@ -68,8 +97,7 @@ export function PlaceInput({
   const runSearch = async (q) => {
     const id = ++reqRef.current;
     const params = new URLSearchParams({ q, limit: '6' });
-    const bias = await placeBias(tz);
-    if (id !== reqRef.current) return; // typed on while the position was read
+    const bias = placeBias(tz, typeof near === 'function' ? near() : near);
     if (bias.lat != null) {
       params.set('lat', String(bias.lat));
       params.set('lng', String(bias.lng));

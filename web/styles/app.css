@@ -3880,19 +3880,19 @@ button.bc-review-title { color: var(--fg); padding: 0; }
 
 /* --- easing the desktop layout (0.5.7) -------------------------------------------
    The calendar narrows for the event panel and widens when the sidebar tucks away
-   over 220ms instead of in one jump; the panel slides in from the right edge and the
+   over 300ms instead of in one jump; the panel slides in from the right edge and the
    sidebar slides out to the left rather than vanishing. The sidebar keeps its width
    while it moves (a negative margin, not a shrinking box), so its contents never
    reflow mid-slide, and it becomes hidden to focus once it is out of view. */
 @media (min-width: 801px) and (prefers-reduced-motion: no-preference) {
-  .bc-main { transition: padding-right 0.22s cubic-bezier(0.2, 0, 0, 1); }
-  .bc-evpanel { animation: bc-evpanel-in 0.22s cubic-bezier(0.2, 0, 0, 1); }
+  .bc-main { transition: padding-right 0.3s cubic-bezier(0.2, 0, 0, 1); }
+  .bc-evpanel { animation: bc-evpanel-in 0.3s cubic-bezier(0.2, 0, 0, 1); }
   .bc-sidebar {
-    transition: margin-left 0.22s cubic-bezier(0.2, 0, 0, 1), visibility 0s linear 0s;
+    transition: margin-left 0.3s cubic-bezier(0.2, 0, 0, 1), visibility 0s linear 0s;
   }
   .bc-sidebar.is-collapsed {
     display: flex; margin-left: -257px; visibility: hidden;
-    transition: margin-left 0.22s cubic-bezier(0.2, 0, 0, 1), visibility 0s linear 0.22s;
+    transition: margin-left 0.3s cubic-bezier(0.2, 0, 0, 1), visibility 0s linear 0.3s;
   }
 }
 @keyframes bc-evpanel-in { from { transform: translateX(100%); } }

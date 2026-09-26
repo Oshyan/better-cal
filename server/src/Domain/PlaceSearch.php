@@ -245,11 +245,23 @@ final class PlaceSearch
             $params['lat'] = $biasLat;
             $params['lon'] = $biasLng;
         }
-        $body = $this->fetch($params);
-        if ($body === null) {
+        // "Panda and Sons" is "Panda & Sons" in OpenStreetMap, and Photon
+        // matches neither spelling from the other. Both are asked at once;
+        // the other spelling's matches go first, since they are the ones the
+        // typed spelling missed, and duplicates fold in mapFeatures.
+        $alt = self::ampersandVariant($q);
+        $bodies = $this->fetchAll($alt === null ? [$params] : [['q' => $alt] + $params, $params]);
+        $features = [];
+        foreach ($bodies as $body) {
+            $decoded = $body === null ? null : json_decode($body, true);
+            if (is_array($decoded) && is_array($decoded['features'] ?? null)) {
+                array_push($features, ...$decoded['features']);
+            }
+        }
+        if ($features === [] && !in_array(true, array_map(static fn($b) => $b !== null, $bodies), true)) {
             return [];
         }
-        $candidates = self::mapFeatures(json_decode($body, true), $biasLat, $biasLng);
+        $candidates = self::mapFeatures(['features' => $features], $biasLat, $biasLng);
         if ($biasLat !== null && $biasLng !== null) {
             $candidates = self::rank($candidates);
         }
@@ -282,6 +294,81 @@ final class PlaceSearch
             )));
         }
         return array_slice($candidates, 0, $limit);
+    }
+
+    /** The query with "and" and "&" swapped, or null when it has neither. */
+    public static function ampersandVariant(string $q): ?string
+    {
+        if (preg_match('/\s&\s/u', $q)) {
+            return preg_replace('/\s&\s/u', ' and ', $q);
+        }
+        if (preg_match('/\sand\s/iu', $q)) {
+            return preg_replace('/\sand\s/iu', ' & ', $q);
+        }
+        return null;
+    }
+
+    /**
+     * Several provider fetches in parallel; each result null on failure.
+     * @param list<array<string,mixed>> $paramSets
+     * @return list<?string>
+     */
+    private function fetchAll(array $paramSets): array
+    {
+        if (count($paramSets) === 1 || !function_exists('curl_multi_init')) {
+            return array_map(fn(array $p): ?string => $this->fetch($p), $paramSets);
+        }
+        $multi = curl_multi_init();
+        $handles = [];
+        foreach ($paramSets as $i => $p) {
+            $ch = $this->handle($p);
+            if ($ch === null) {
+                continue;
+            }
+            $handles[$i] = $ch;
+            curl_multi_add_handle($multi, $ch);
+        }
+        do {
+            $status = curl_multi_exec($multi, $running);
+            if ($running) {
+                curl_multi_select($multi, 0.5);
+            }
+        } while ($running && $status === CURLM_OK);
+        $out = [];
+        foreach ($paramSets as $i => $_) {
+            $ch = $handles[$i] ?? null;
+            if ($ch === null) {
+                $out[] = null;
+                continue;
+            }
+            $body = curl_multi_getcontent($ch);
+            $code = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+            curl_multi_remove_handle($multi, $ch);
+            curl_close($ch);
+            $out[] = is_string($body) && $body !== '' && $code > 0 && $code < 400 ? $body : null;
+        }
+        curl_multi_close($multi);
+        return $out;
+    }
+
+    /** A configured curl handle for one provider request, or null. */
+    private function handle(array $params): ?\CurlHandle
+    {
+        $ch = curl_init(self::ENDPOINT . '?' . http_build_query($params));
+        if ($ch === false) {
+            return null;
+        }
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_MAXREDIRS => 3,
+            CURLOPT_TIMEOUT => self::TIMEOUT_SECONDS,
+            CURLOPT_CONNECTTIMEOUT => self::TIMEOUT_SECONDS,
+            CURLOPT_USERAGENT => self::USER_AGENT,
+            CURLOPT_PROTOCOLS => CURLPROTO_HTTPS,
+            CURLOPT_REDIR_PROTOCOLS => CURLPROTO_HTTPS,
+        ]);
+        return $ch;
     }
 
     /** Raw provider fetch; null on any transport-level failure. */

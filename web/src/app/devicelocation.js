@@ -37,6 +37,26 @@ function position(timeout) {
 }
 
 /**
+ * The position already known, right now, or null; never waits. When the
+ * browser has granted location it also asks for a fresh fix in the
+ * background, for the next search. Place search uses this rather than
+ * devicePosition: a browser that has the permission but no answer (Chrome on
+ * a Mac with Location Services off for it can stay silent indefinitely) must
+ * never hold the dropdown back.
+ * @returns {{lat:number,lng:number}|null}
+ */
+export function knownPosition() {
+  const fresh = cached && Date.now() - cached.at < CACHE_MS;
+  if (!fresh) {
+    permissionState().then((s) => {
+      if (s !== 'granted') return;
+      position(10000).then((p) => { if (p) cached = { ...p, at: Date.now() }; });
+    });
+  }
+  return cached ? { lat: cached.lat, lng: cached.lng } : null;
+}
+
+/**
  * The device position when it can be had without asking; null otherwise.
  * @returns {Promise<{lat:number,lng:number}|null>}
  */

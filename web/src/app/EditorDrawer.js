@@ -12,7 +12,7 @@ import { api, loadPeople, ensureFullOccurrence } from './api.js';
 import { saveEditorDraft, clearEditorDraft, discardEditorWithUndo } from './drafts.js';
 import { TripRow } from './Trips.js';
 import { trapFocus } from '../ui/DayExpand.js';
-import { PlaceInput, pickFillText } from './PlaceInput.js';
+import { PlaceInput, pickFillText, calendarPlaceNear } from './PlaceInput.js';
 import { PeopleInput } from './PeopleInput.js';
 import { RichText } from './RichText.js';
 import { Icon } from '../ui/icons.js';
@@ -712,6 +712,7 @@ export function EditorDrawer() {
             value=${form.location}
             ariaLabel="Location"
             tz=${occ ? occ.tzid : localTz()}
+            near=${() => calendarPlaceNear(formInstants(form)[0].getTime(), occ ? occ.eventId : null)}
             onText=${(v) => upd({ location: v, locationLat: null, locationLng: null })}
             onPick=${(r) => upd({ location: pickFillText(r), locationLat: r.lat, locationLng: r.lng })}
           />

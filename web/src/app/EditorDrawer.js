@@ -20,13 +20,15 @@ import { isEmptyHtml } from '../lib/richtext.js';
 import {
   parseISO, toInputValue, fromInputValue, toISOWithOffset, addDaysDate, pad, localTz,
   dateOfDayKey, eventDuration, instantFromWallTime, wallTimeInZone, sameClock, tzCity, tzOffsetLabel, zoneOptions, fmtRange,
-  allDayFields, allDayInputs, addDaysKey, diffDaysKey,
+  allDayFields, allDayInputs, addDaysKey, diffDaysKey, fmtTime, fmtWeekdayShort,
 } from '../lib/dates.js';
 import {
   TIMED_CHOICES, ALLDAY_CHOICES, REMINDER_UNITS, fmtOffsetMinutes, fmtReminder,
   entryToMinutes, normalizeMinutesList, effectiveReminders, toMinutes,
 } from '../lib/reminders.js';
 import { CalendarSelect } from '../ui/CalendarSelect.js';
+import { DateField, TimeField } from './WhenFields.js';
+import { parseClockText, resolveClock, minsToHHMM, hhmmToMins, durationLabel } from '../lib/whenparse.js';
 
 const BYDAY = [['MO', 'Mon'], ['TU', 'Tue'], ['WE', 'Wed'], ['TH', 'Thu'], ['FR', 'Fri'], ['SA', 'Sat'], ['SU', 'Sun']];
 
@@ -140,6 +142,19 @@ function defaultUntil(startDate) {
   const d = addDaysDate(startDate, 12 * 7);
   return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
 }
+
+// A datetime-local value in parts, and back.
+const dateOf = (v) => String(v || '').slice(0, 10);
+const minsOf = (v) => hhmmToMins(String(v || '').slice(11, 16));
+const joinWhen = (key, mins) => key + 'T' + minsToHHMM(mins);
+const shiftWhen = (v, minutes) => toInputValue(new Date(fromInputValue(v).getTime() + minutes * 60000));
+
+// Whether this user reads a 24-hour clock, from how their time format prints 1 PM.
+const reads24h = () => /13/.test(fmtTime(new Date(2000, 0, 1, 13, 0)));
+
+// A calendar whose events are mine: there "Maybe" is the event's own status
+// (tentative), which other calendar apps and Google see too.
+const isMineCal = (cal) => !cal || (cal.role || 'mine') === 'mine';
 
 export function EditorDrawer() {
   const editor = useStore((s) => s.editor);
@@ -300,7 +315,8 @@ export function EditorDrawer() {
     // instants would land a day early west of UTC (saving then actually
     // moved the event back a day). Anchor them to local midnight instead.
     const anchor = (iso, allDay) => (allDay ? dateOfDayKey(iso.slice(0, 10)) : parseISO(iso));
-    const start = occ ? anchor(occ.start, occ.allDay) : (draft.start ? anchor(draft.start, !!draft.allDay) : new Date());
+    // A blank new event starts at the next quarter hour, not at 5:39.
+    const start = occ ? anchor(occ.start, occ.allDay) : (draft.start ? anchor(draft.start, !!draft.allDay) : new Date(Math.ceil(Date.now() / 900000) * 900000));
     const end = occ ? anchor(occ.end, occ.allDay) : (draft.end ? anchor(draft.end, !!draft.allDay) : new Date(start.getTime() + 3600000));
     const initial = {
       title: occ ? occ.title : (draft.title || ''),
@@ -317,6 +333,8 @@ export function EditorDrawer() {
       tz: localTz(),
       tzTouched: false,
       isContainer: occ ? !!occ.isContainer : !!draft.isContainer,
+      // Planned or Maybe, on my own calendars (status confirmed / tentative).
+      rel: (occ ? occ.relationship : draft.relationship) === 'maybe' ? 'maybe' : 'planned',
       location: occ ? (occ.location || '') : (draft.location || ''),
       locationLat: occ ? (occ.locationLat != null ? occ.locationLat : null)
         : (draft.locationLat != null ? draft.locationLat : null),
@@ -411,18 +429,49 @@ export function EditorDrawer() {
     upd(allDayInputs(cur.start, v));
   };
 
-  const onStartChange = (v) => {
-    if (durationLock) {
-      const oldS = fromInputValue(form.start);
-      const oldE = fromInputValue(form.end);
-      const dur = oldE - oldS;
-      const ns = fromInputValue(v);
-      if (!isNaN(ns) && !isNaN(dur)) {
-        upd({ start: v, end: toInputValue(new Date(ns.getTime() + dur)) });
-        return;
-      }
+  // Start moves the end with it: by the event's length while the length is
+  // locked, and otherwise only when the end would no longer be after the
+  // start, to an hour later (Google Calendar's rule). An end before its start
+  // is never made silently.
+  const setStart = (v) => setForm((f) => {
+    const ns = fromInputValue(v);
+    if (isNaN(ns)) return f;
+    const oldS = fromInputValue(f.start);
+    const oldE = fromInputValue(f.end);
+    const dur = oldE - oldS;
+    let end = f.end;
+    if (durationLock && dur > 0) end = toInputValue(new Date(ns.getTime() + dur));
+    else if (isNaN(oldE) || oldE <= ns) end = toInputValue(new Date(ns.getTime() + 3600000));
+    return { ...f, start: v, end };
+  });
+
+  // A typed start time: an hour with no am/pm keeps the half of the day the
+  // start was already in.
+  const onStartText = (t) => {
+    const mins = resolveClock(parseClockText(t), { role: 'start', current: minsOf(form.start), h24: reads24h() });
+    if (mins == null) return false;
+    setStart(joinWhen(dateOf(form.start), mins));
+    return true;
+  };
+
+  // A typed end time on the start's day: an hour with no am/pm is the first
+  // reading after the start, and a time earlier than the start is the next
+  // morning when that makes an event of 12 hours or less (10 PM to 1). Past
+  // that it stays put and the fields say the end is before the start.
+  const onEndText = (t) => {
+    const parsed = parseClockText(t);
+    const sameDay = dateOf(form.end) === dateOf(form.start);
+    const mins = sameDay
+      ? resolveClock(parsed, { role: 'end', after: minsOf(form.start), h24: reads24h() })
+      : resolveClock(parsed, { role: 'start', current: minsOf(form.end), h24: reads24h() });
+    if (mins == null) return false;
+    let v = joinWhen(dateOf(form.end), mins);
+    if (sameDay && fromInputValue(v) <= fromInputValue(form.start)) {
+      const next = shiftWhen(v, 1440);
+      if (fromInputValue(next) - fromInputValue(form.start) <= 12 * 3600000) v = next;
     }
-    upd({ start: v });
+    upd({ end: v });
+    return true;
   };
 
   const updRrule = (patch) => {
@@ -487,6 +536,12 @@ export function EditorDrawer() {
     if (occ ? !!occ.isContainer !== form.isContainer : form.isContainer) {
       fields.isContainer = form.isContainer;
     }
+    // Planned or Maybe is the event's status on my own calendars; sent on a
+    // new Maybe, or when an edit changes it.
+    if (isMineCal(state.calendars.find((c) => c.id === Number(form.calendarId)))) {
+      const was = occ ? (occ.relationship === 'maybe' ? 'maybe' : 'planned') : 'planned';
+      if (form.rel !== was) fields.status = form.rel === 'maybe' ? 'tentative' : 'confirmed';
+    }
     let ok;
     if (occ) {
       ok = await updateEvent(occ, fields, scope);
@@ -508,6 +563,38 @@ export function EditorDrawer() {
   const r = form.rrule;
   const allDayView = form.allDay ? allDayFields(form.start, form.end) : null;
   const duration = allDayView ? eventDuration({ ...allDayInputs(allDayView.start, allDayView.end), allDay: true }) : eventDuration(form);
+
+  // --- when ---------------------------------------------------------------------
+  const [whenS, whenE] = formInstants(form);
+  const backwards = !isNaN(whenS) && !isNaN(whenE) && whenE <= whenS;
+  const startMins = minsOf(form.start);
+  const endMins = minsOf(form.end);
+  const quarter = (key, i, curMins) => {
+    const v = joinWhen(key, i * 15);
+    return { value: v, label: fmtTime(fromInputValue(v)), current: curMins === i * 15 };
+  };
+  const startOptions = allDayView ? [] : Array.from({ length: 96 }, (_, i) => quarter(dateOf(form.start), i, startMins));
+  // The end list runs from a quarter hour after the start through the next
+  // 24 hours, each with its length, so overnight is one pick. An end days
+  // later lists that day's quarter hours instead.
+  const endSpan = (fromInputValue(form.end) - fromInputValue(form.start)) / 60000;
+  const endFromStart = !allDayView && endSpan > 0 && endSpan <= 1440;
+  const endOptions = allDayView ? [] : endFromStart || isNaN(endSpan) || endSpan <= 0
+    ? Array.from({ length: 96 }, (_, i) => {
+        const v = shiftWhen(form.start, (i + 1) * 15);
+        const d = fromInputValue(v);
+        const otherDay = dateOf(v) !== dateOf(form.start);
+        return { value: v, label: fmtTime(d), note: (otherDay ? fmtWeekdayShort(d) + ' · ' : '') + durationLabel((i + 1) * 15), current: v === form.end };
+      })
+    : Array.from({ length: 96 }, (_, i) => quarter(dateOf(form.end), i, endMins));
+  const startIdx = Math.min(95, Math.floor(startMins / 15));
+  const endIdx = endFromStart ? Math.max(0, Math.min(95, Math.round(endSpan / 15) - 1)) : Math.min(95, Math.floor(endMins / 15));
+  const flash = (k) => (nlFlash && nlFlash.has(k) ? ' bc-nl-applied' : '');
+  // The event's length on the lock: days spelled out, shorter spans as the end list says them.
+  const lengthText = backwards || isNaN(whenE - whenS) ? ''
+    : duration ? duration.exact
+    : allDayView ? '1 day' : durationLabel(Math.round((whenE - whenS) / 60000));
+  const mineCal = isMineCal(state.calendars.find((c) => c.id === Number(form.calendarId)));
 
   // --- reminders row --------------------------------------------------------
   const selectedCal = state.calendars.find((c) => c.id === Number(form.calendarId));
@@ -572,36 +659,49 @@ export function EditorDrawer() {
         />
       </label>
 
-      <div class="bc-field-row">
-        <label class=${'bc-field' + (nlFlash && nlFlash.has('start') ? ' bc-nl-applied' : '')}>
-          <span>Start</span>
+      <div class=${'bc-when' + (allDayView ? ' is-allday' : '')} role="group" aria-label="When">
+        <span class="bc-when-lab">Start</span>
+        <span class=${'bc-when-cell' + flash('start')}>
           ${allDayView
-            ? html`<input type="date" value=${allDayView.start} onInput=${(e) => onAllDayStart(e.target.value)} required />`
-            : html`<input type="datetime-local" value=${form.start} onInput=${(e) => onStartChange(e.target.value)} required />`}
+            ? html`<${DateField} value=${allDayView.start} ariaLabel="First day" onChange=${onAllDayStart} />`
+            : html`<${DateField} value=${dateOf(form.start)} ariaLabel="Start date" onChange=${(k) => setStart(joinWhen(k, startMins))} />`}
+        </span>
+        ${!allDayView && html`<span class=${'bc-when-cell' + flash('start')}><${TimeField}
+          display=${fmtTime(fromInputValue(form.start))} options=${startOptions} currentIdx=${startIdx}
+          ariaLabel="Start time" onText=${onStartText} onOption=${setStart}
+        /></span>`}
+        <span class="bc-when-lab">${allDayView ? 'Last day' : 'End'}</span>
+        <span class=${'bc-when-cell' + flash('end')}>
+          ${allDayView
+            ? html`<${DateField} value=${allDayView.end} ariaLabel="Last day" onChange=${onAllDayEnd} />`
+            : html`<${DateField} value=${dateOf(form.end)} ariaLabel="End date" onChange=${(k) => upd({ end: joinWhen(k, endMins) })} />`}
+        </span>
+        ${!allDayView && html`<span class=${'bc-when-cell' + flash('end')}><${TimeField}
+          display=${fmtTime(fromInputValue(form.end))} options=${endOptions} currentIdx=${endIdx}
+          ariaLabel="End time" onText=${onEndText} onOption=${(v) => upd({ end: v })}
+        /></span>`}
+      </div>
+      <div class="bc-duration-exact bc-when-meta" role="status">
+        <label class=${'bc-check' + flash('allDay')}>
+          <input type="checkbox" checked=${form.allDay} onChange=${(e) => upd({ allDay: e.target.checked })} />
+          <span>All day</span>
         </label>
         <button
           type="button"
           class="bc-lock-btn${durationLock ? ' is-on' : ''}"
           aria-pressed=${durationLock}
-          aria-label="Lock duration"
-          title=${durationLock ? 'Duration locked: moving start moves end' : 'Duration unlocked: ends edit independently'}
+          aria-label="Keep the length when the start moves"
+          title=${durationLock ? 'Length kept: moving the start moves the end with it. Click to set them separately.' : 'Start and end set separately. Click to keep the length when the start moves.'}
           onClick=${() => setDurationLock(!durationLock)}
-        ><${Icon} name=${durationLock ? 'lock' : 'unlock'} size=${13} /></button>
-        <label class=${'bc-field' + (nlFlash && nlFlash.has('end') ? ' bc-nl-applied' : '')}>
-          <span>${allDayView ? 'Last day' : 'End'}</span>
-          ${allDayView
-            ? html`<input type="date" value=${allDayView.end} min=${allDayView.start} onInput=${(e) => onAllDayEnd(e.target.value)} required />`
-            : html`<input type="datetime-local" value=${form.end} onInput=${(e) => upd({ end: e.target.value })} required />`}
-        </label>
-        <label class=${'bc-check' + (nlFlash && nlFlash.has('allDay') ? ' bc-nl-applied' : '')}>
-          <input type="checkbox" checked=${form.allDay} onChange=${(e) => upd({ allDay: e.target.checked })} />
-          <span>All day</span>
-        </label>
-      </div>
-      <div class="bc-duration-exact" role="status">
-        ${duration ? html`<span>${duration.exact} total</span>` : ''}
+        ><${Icon} name=${durationLock ? 'lock' : 'unlock'} size=${12} />${lengthText}</button>
         ${!form.allDay && html`<${ZoneControl} form=${form} occ=${occ} onPick=${pickZone} />`}
       </div>
+      ${backwards && html`<div class="bc-when-err" role="alert">
+        <${Icon} name="warning" size=${13} /> The end is before the start.
+        <button type="button" class="bc-link-btn" onClick=${() => upd(form.allDay
+          ? allDayInputs(allDayView.start, allDayView.start)
+          : { end: shiftWhen(form.start, 60) })}>${form.allDay ? 'Make it one day' : 'End an hour after the start'}</button>
+      </div>`}
 
       <div class="bc-field-row">
         <label class=${'bc-field grow' + (nlFlash && nlFlash.has('location') ? ' bc-nl-applied' : '')}>
@@ -652,23 +752,34 @@ export function EditorDrawer() {
         ${availWarn.map((c) => html`<span key=${c.id}><${Icon} name="warning" size=${12} /> ${c.name} is ${c.kind} then${c.note ? ' (' + c.note + ')' : ''}</span>`)}
       </div>`}
 
-      <fieldset class="bc-trip-fieldset">
-        <legend>Trip</legend>
+      <div class="bc-ed-flags">
+        ${mineCal && html`<span class="bc-ed-forme" title="What this event is to you. Maybe marks it tentative, which other calendar apps see too.">
+          <span class="bc-ed-flag-lab">For me</span>
+          <span class="bc-ed-seg" role="group" aria-label="What this event is to you">
+            ${[['planned', 'Planned'], ['maybe', 'Maybe']].map(([v, label]) => html`<button
+              key=${v} type="button" class=${'bc-ed-segbtn' + (form.rel === v ? ' is-on' : '')}
+              aria-pressed=${form.rel === v} onClick=${() => upd({ rel: v })}
+            >${v === 'planned' && html`<${Icon} name="star" size=${13} />`}${label}</button>`)}
+          </span>
+        </span>`}
         <label class="bc-check" title="A trip is a span of days that other events happen inside">
           <input type="checkbox" checked=${form.isContainer} onChange=${(e) => upd({ isContainer: e.target.checked })} />
-          <span>This event is itself a trip (contains other events)</span>
+          <span>This event is a trip (container)</span>
         </label>
-        ${occ && !occ.isContainer && !form.isContainer && html`<${TripRow} occ=${occ} />`}
-      </fieldset>
+      </div>
+      ${occ && !occ.isContainer && !form.isContainer && html`<${TripRow} occ=${occ} />`}
 
+      <div class="bc-ed-pair">
       <fieldset class="bc-rem">
         <legend>Reminders</legend>
-        <div class="bc-rem-row">
+        <div class="bc-rem-list">
           ${remEff.reminders.length === 0 && html`<span class="bc-rem-none">None</span>`}
           ${remEff.reminders.map((entry, i) => html`<span key=${i + ':' + fmtReminder(entry)} class="bc-rem-chip">
             <${Icon} name="bell" size=${11} /> ${fmtReminder(entry)}
             <button type="button" class="bc-rem-x" aria-label=${'Remove reminder: ' + fmtReminder(entry)} onClick=${() => remRemove(i)}><${Icon} name="close" size=${10} /></button>
           </span>`)}
+        </div>
+        <div class="bc-rem-row">
           <select class="bc-rem-add" aria-label="Add reminder" value=""
             onChange=${(e) => {
               const v = e.target.value;
@@ -733,6 +844,7 @@ export function EditorDrawer() {
           ${r.ends === 'count' && html`<input class="bc-num" type="number" min="1" max="999" value=${r.count} onInput=${(e) => updRrule({ count: Number(e.target.value) || 1 })} aria-label="Occurrence count" />`}
         </div>`}
       </fieldset>
+      </div>
 
       ${occ && occ.recurring && html`<label class="bc-field">
         <span>Apply to</span>
@@ -744,7 +856,7 @@ export function EditorDrawer() {
       </label>`}
 
       <div class="bc-drawer-actions">
-        <button type="submit" class="bc-btn bc-btn-primary">${occ ? 'Save' : 'Create'}</button>
+        <button type="submit" class="bc-btn bc-btn-primary" disabled=${backwards} title=${backwards ? 'The end is before the start' : undefined}>${occ ? 'Save' : 'Create'}</button>
         ${googleCalendar(Number(form.calendarId)) && html`<span class="bc-drawer-note" title="This calendar lives at Google. Better-Cal writes straight through and cannot restore the previous version.">${occ ? 'Saves' : 'Creates'} at Google; can't be undone</span>`}
         ${occ && html`<button type="button" class="bc-btn bc-btn-danger" onClick=${() => deleteEvent(occ, scope)}>Delete</button>`}
         <button type="button" class="bc-btn" onClick=${requestClose}>Cancel</button>

@@ -60,6 +60,38 @@ fi
 stage "connect"
 ssh_open
 
+# Back up before anything changes: the app directory and the database, into
+# backups/ beside the app, keeping the newest 20 of each. Database credentials
+# come from the app's own .env on the server and are never printed. A failed
+# backup stops the deploy; SKIP_BACKUP=1 skips it deliberately.
+if [ "${SKIP_BACKUP:-0}" != "1" ]; then
+  stage "backup"
+  rssh "APP_DIR='${APP_DIR}' bash -s" <<'BACKUP'
+set -euo pipefail
+envval() { grep -E "^$1=" "${APP_DIR}/.env" | head -1 | cut -d= -f2- | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'$/\1/"; }
+BK="$(dirname "${APP_DIR}")/backups"
+mkdir -p "${BK}"
+TS="$(date +%Y-%m-%dT%H%M%S%z)"
+tar czf "${BK}/bettercal-app-${TS}.tar.gz" --exclude=.git -C "$(dirname "${APP_DIR}")" "$(basename "${APP_DIR}")"
+DSN="$(envval BETTERCAL_DB_DSN)"
+case "${DSN}" in
+  mysql:*)
+    DB="$(printf '%s' "${DSN}" | sed -n 's/.*dbname=\([^;]*\).*/\1/p')"
+    HOST="$(printf '%s' "${DSN}" | sed -n 's/.*host=\([^;]*\).*/\1/p')"
+    MYSQL_PWD="$(envval BETTERCAL_DB_PASS)" mysqldump --single-transaction --no-tablespaces \
+      -h "${HOST:-localhost}" -u "$(envval BETTERCAL_DB_USER)" "${DB}" | gzip > "${BK}/bettercal-db-${TS}.sql.gz"
+    zcat "${BK}/bettercal-db-${TS}.sql.gz" | tail -1 | grep -q 'Dump completed' \
+      || { echo "database dump incomplete; not deploying" >&2; exit 1; } ;;
+  sqlite:*)
+    cp "${DSN#sqlite:}" "${BK}/bettercal-db-${TS}.sqlite" ;;
+  *)
+    echo "BETTERCAL_DB_DSN is neither mysql nor sqlite; database not backed up, not deploying" >&2; exit 1 ;;
+esac
+for kind in app db; do ls -1t "${BK}"/bettercal-${kind}-2* 2>/dev/null | tail -n +21 | xargs -r rm -f; done
+ls -1 "${BK}"/*"${TS}"* | sed 's|.*/|  |'
+BACKUP
+fi
+
 stage "rsync code"
 deploy_rsync "${APP_DIR}"
 

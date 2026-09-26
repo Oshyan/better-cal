@@ -4,6 +4,16 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.5.6 (2026-09-26)
+
+- **Dates and times in the event editor are plain text boxes now.** Clicking in selects the whole value, so you just type over it: "7p", "7:30", "1930" or "noon" for a time, "fri", "tomorrow", "10/5", "oct 5" or a day of the month for a date. Enter or moving on applies it; anything unreadable puts the old value back and marks the field, and Esc undoes the typing without closing the editor. The calendar button beside each date still opens the date picker.
+- **Times have a quarter-hour list,** opened when you click in: one click for the usual choices, and any exact time can still be typed. The end list starts after the start and shows each length ("1 hr", "1.5 hr"), so an overnight end is one pick.
+- **The end follows the start.** Moving the start keeps the event's length (the lock, now showing that length, turns this off). With the lock off, a start that passes the end pushes the end to an hour later. An hour typed without am or pm reads sensibly: the start keeps its half of the day, the end takes the first time after the start, and an end earlier than the start means the next morning when that makes 12 hours or less (10 PM to "1"). Otherwise the editor says the end is before the start, offers to fix it, and won't save until it's fixed.
+- **Maybe when you create an event.** "For me: Planned / Maybe" sits in the editor for events on your own calendars; Maybe saves the event as tentative, which other calendar apps and Google see too.
+- **A tighter editor.** It is as wide as the event panel (480). Start and end each sit on one line with their labels, All day and the length share a line under them, the trip checkbox is shorter and shares its line with For me, and Reminders and Repeat sit side by side, reminders listed first with Add reminder under them.
+- **A blank new event starts at the next quarter hour,** not at the current minute.
+- **Every production deploy backs up first:** the app directory and the database, into backups/ beside the app, keeping the newest 20 of each. A failed backup stops the deploy.
+
 ## 0.5.5 (2026-09-26)
 
 - **On desktop, an event opens in a panel on the right** instead of a small card beside it. The panel is the same place and size every time, 480 points wide at full height under the top bar, so stepping through a day never moves or resizes it. It holds everything at once, the map included, so there's no separate full view to open; double-clicking an event (or anything that used to open the full view) opens the panel too. Trips keep their own view.

@@ -1500,7 +1500,7 @@ body.bc-dragging * { cursor: grabbing !important; }
 
 .bc-drawer-backdrop { position: fixed; inset: 0; z-index: 75; background: var(--scrim); }
 .bc-drawer {
-  position: fixed; top: 0; right: 0; bottom: 0; width: 420px; max-width: 94vw;
+  position: fixed; top: 0; right: 0; bottom: 0; width: 480px; max-width: 94vw;
   z-index: 76;
   background: var(--bg-raised); border-left: 1px solid var(--border);
   box-shadow: var(--shadow); padding: 14px 16px; overflow-y: auto;
@@ -3796,3 +3796,54 @@ button.bc-review-title { color: var(--fg); padding: 0; }
 .bc-es-foot.is-inline .bc-es-act:hover { background: var(--bg-inset); }
 .bc-es-foot.is-inline .bc-es-menu { bottom: auto; top: calc(100% + 6px); right: auto; left: 0; transform: none; }
 .bc-set-check { display: inline-flex; align-items: center; gap: 8px; }
+
+/* --- editor: When fields, For me + trip, reminders beside repeat (0.5.6) ---------- */
+.bc-when { display: grid; grid-template-columns: auto minmax(0, 1fr) 8.5em; gap: 6px 8px; align-items: center; }
+.bc-when.is-allday { grid-template-columns: auto minmax(0, 1fr); }
+.bc-when-lab { font-size: 11.5px; font-weight: 600; color: var(--fg-muted); }
+.bc-when-cell { min-width: 0; }
+.bc-when-date, .bc-when-time { position: relative; display: flex; align-items: center; min-width: 0; }
+.bc-when-text { flex: 1; min-width: 0; width: 100%; }
+.bc-when-date .bc-when-text { padding-right: 32px; }
+.bc-when-pick {
+  position: absolute; right: 3px; top: 50%; transform: translateY(-50%);
+  border: none; background: none; color: var(--fg-muted); padding: 4px; border-radius: 5px;
+  display: inline-flex; cursor: pointer;
+}
+.bc-when-pick:hover { color: var(--fg); background: var(--bg-inset); }
+/* The browser's own date picker, opened from the calendar button: invisible,
+   the size of the field so the picker drops from under it, and unclickable. */
+.bc-when-native { position: absolute; left: 0; bottom: 0; width: 100%; height: 100%; opacity: 0; pointer-events: none; border: 0; padding: 0; }
+.bc-when-date.is-bad .bc-when-text, .bc-when-time.is-bad .bc-when-text { border-color: var(--danger); }
+.bc-when-list {
+  position: absolute; top: calc(100% + 3px); right: 0; z-index: 5;
+  min-width: 100%; width: max-content; max-height: 248px; overflow-y: scroll;
+  background: var(--bg-raised); border: 1px solid var(--border-strong); border-radius: var(--radius);
+  box-shadow: var(--shadow); padding: 4px 0;
+}
+.bc-when-opt { display: flex; justify-content: space-between; align-items: baseline; gap: 14px; padding: 4px 10px; font-size: 13px; white-space: nowrap; cursor: pointer; }
+.bc-when-opt small { color: var(--fg-muted); font-size: 11.5px; }
+.bc-when-opt:hover, .bc-when-opt.is-active { background: color-mix(in srgb, var(--accent) 10%, var(--bg-raised)); }
+.bc-when-opt.is-current { color: var(--accent); font-weight: 600; }
+.bc-when-meta { gap: 14px; }
+.bc-when-meta .bc-lock-btn { gap: 4px; padding: 2px 7px; font-size: 11.5px; }
+.bc-when-err { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; color: var(--danger); font-size: 12.5px; }
+.bc-drawer-actions .bc-btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.bc-ed-flags { display: flex; align-items: center; gap: 8px 18px; flex-wrap: wrap; }
+.bc-ed-forme { display: inline-flex; align-items: center; gap: 8px; }
+.bc-ed-flag-lab { font-size: 11.5px; font-weight: 600; color: var(--fg-muted); }
+.bc-ed-seg { display: inline-flex; height: 28px; border: 1px solid var(--border-strong); border-radius: 8px; overflow: hidden; }
+.bc-ed-segbtn {
+  display: inline-flex; align-items: center; gap: 4px; padding: 0 11px;
+  border: none; border-right: 1px solid var(--border); background: none;
+  font-size: 13px; color: var(--fg); cursor: pointer;
+}
+.bc-ed-segbtn:last-child { border-right: none; }
+.bc-ed-segbtn.is-on { background: color-mix(in srgb, var(--accent) 14%, var(--bg-raised)); color: var(--accent); font-weight: 600; }
+
+.bc-ed-pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; align-items: stretch; }
+.bc-ed-pair > fieldset { min-width: 0; margin: 0; }
+.bc-rem-list { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; margin-bottom: 6px; }
+.bc-ed-pair .bc-rem-add { max-width: 100%; }
+@media (max-width: 400px) { .bc-ed-pair { grid-template-columns: minmax(0, 1fr); } }

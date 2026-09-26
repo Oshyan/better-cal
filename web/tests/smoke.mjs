@@ -20,6 +20,7 @@ import { mapMosaic, stadiaStyle, mapTilerStyle, isPendingLocation } from '../src
 import { baseTitle, groupOccurrences, itemMatchesFilter, isGroupId } from '../src/ui/grouping.js';
 import { sortByMatch } from '../src/lib/rank.js';
 import { parseJumpText, jumpGranularity } from '../src/lib/jumpparse.js';
+import { parseClockText, resolveClock, minsToHHMM, hhmmToMins, parseDateText, durationLabel } from '../src/lib/whenparse.js';
 import { monthWeeks, stepMonthOf } from '../src/lib/minimonth.js';
 import { missingRanges } from '../src/app/store.js';
 import {
@@ -1782,6 +1783,52 @@ console.log('');
   safeLinkMatcher.exec(('https://a.example/' + 'x'.repeat(40) + ' ').repeat(3000));
   safeLinkMatcher.exec('a'.repeat(200000));
   assert('safeLinkMatcher: crafted and long input returns promptly', Date.now() - t0 < 400);
+}
+
+// --- when fields: typed times and dates (whenparse.js) ---
+{
+  const clk = (t, o) => { const r = resolveClock(parseClockText(t), o); return r == null ? null : minsToHHMM(r); };
+  eq('clock: 7pm', clk('7pm'), '19:00');
+  eq('clock: 7 p.m.', clk('7 p.m.'), '19:00');
+  eq('clock: 7p', clk('7p'), '19:00');
+  eq('clock: 730p', clk('730p'), '19:30');
+  eq('clock: 7:30 am', clk('7:30 am'), '07:30');
+  eq('clock: 12am is midnight', clk('12am'), '00:00');
+  eq('clock: 12pm is noon', clk('12pm'), '12:00');
+  eq('clock: bare 12 is noon', clk('12'), '12:00');
+  eq('clock: noon', clk('noon'), '12:00');
+  eq('clock: midnight', clk('midnight'), '00:00');
+  eq('clock: 19:30', clk('19:30'), '19:30');
+  eq('clock: 1930', clk('1930'), '19:30');
+  eq('clock: 07:00 is morning', clk('07:00', { current: 1000 }), '07:00');
+  eq('clock: 7.15pm', clk('7.15pm'), '19:15');
+  eq('clock: bare 7, start in the afternoon keeps pm', clk('7', { role: 'start', current: 17 * 60 }), '19:00');
+  eq('clock: bare 7, start in the morning keeps am', clk('7', { role: 'start', current: 9 * 60 }), '07:00');
+  eq('clock: bare 7 on a 24-hour clock', clk('7', { role: 'start', current: 17 * 60, h24: true }), '07:00');
+  eq('clock: bare 8, end after a 7pm start', clk('8', { role: 'end', after: 19 * 60 }), '20:00');
+  eq('clock: bare 11, end after a 10am start', clk('11', { role: 'end', after: 600 }), '11:00');
+  eq('clock: bare 1, end after a 10pm start wraps to am', clk('1', { role: 'end', after: 22 * 60 }), '01:00');
+  eq('clock: 25:00 rejected', clk('25:00'), null);
+  eq('clock: 7:75 rejected', clk('7:75'), null);
+  eq('clock: 13pm rejected', clk('13pm'), null);
+  eq('clock: words rejected', clk('soon'), null);
+  eq('hhmmToMins', hhmmToMins('19:45'), 1185);
+  const dk = (t) => parseDateText(t, { todayKey: '2026-09-26', currentKey: '2026-09-26' });
+  eq('date: display text round-trips', dk('Sat, Sep 26, 2026'), '2026-09-26');
+  eq('date: weekday name is the next one', dk('fri'), '2026-10-02');
+  eq('date: tomorrow', dk('tomorrow'), '2026-09-27');
+  eq('date: m/d', dk('10/5'), '2026-10-05');
+  eq('date: month day', dk('oct 5'), '2026-10-05');
+  eq('date: bare day stays in the shown month', dk('3'), '2026-09-03');
+  eq('date: ordinal day', dk('30th'), '2026-09-30');
+  eq('date: day past the month end rejected', dk('31'), null);
+  eq('date: weekday then date', dk('thu oct 8'), '2026-10-08');
+  eq('date: nonsense rejected', dk('whenever'), null);
+  eq('duration: 30 min', durationLabel(30), '30 min');
+  eq('duration: 1 hr', durationLabel(60), '1 hr');
+  eq('duration: 1.5 hr', durationLabel(90), '1.5 hr');
+  eq('duration: 2 hr 15 min', durationLabel(135), '2 hr 15 min');
+  eq('duration: 1 day', durationLabel(1440), '1 day');
 }
 
 console.log(passed + ' passed, ' + failed + ' failed');

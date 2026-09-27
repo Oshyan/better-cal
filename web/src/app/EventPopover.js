@@ -176,7 +176,8 @@ export function EventPopover() {
     window.addEventListener('popstate', onPop);
     return () => {
       window.removeEventListener('popstate', onPop);
-      if (!poppedRef.current && history.state && history.state.bcSheet) history.back();
+      // Edit from the sheet: the editor takes this entry over rather than stacking another.
+      if (!poppedRef.current && history.state && history.state.bcSheet && !state.editor) history.back();
       poppedRef.current = false;
     };
   }, [sheet]);

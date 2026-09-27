@@ -1153,6 +1153,9 @@ body.bc-dragging * { cursor: grabbing !important; }
   padding: 8px 12px; border-bottom: 1px solid var(--border);
 }
 .bc-dayexpand-title { font-weight: 700; }
+.bc-dayexpand-title { flex: 1; min-width: 0; }
+.bc-dayexpand-new { display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 10px; margin-right: 6px; font-size: 13px; }
+@media (max-width: 640px) { .bc-dayexpand-new { height: 36px; padding: 0 14px; font-size: 15px; } }
 .bc-dayexpand-list { overflow-y: auto; overscroll-behavior: contain; padding: 6px 10px 10px; }
 .bc-dayexpand-row { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
 .bc-dayexpand-time { width: 64px; flex: none; font-size: 11.5px; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
@@ -3896,3 +3899,54 @@ button.bc-review-title { color: var(--fg); padding: 0; }
   }
 }
 @keyframes bc-evpanel-in { from { transform: translateX(100%); } }
+
+/* --- the event editor on a phone (0.6.0) ---------------------------------------------
+   A full screen that slides up, not a drawer with a sliver of calendar beside it. The
+   top bar carries Close, the title and Create, so the keyboard never hides Create;
+   the pinned bottom bar keeps only what the top bar doesn't (Delete, the Google note).
+   Rows are thumb height and text is 16px, which also stops iPhones zooming in on
+   every field. The desktop editor keeps its close button at the right. */
+.bc-editor .bc-drawer-head { gap: 8px; }
+.bc-editor .bc-drawer-head h2 { flex: 1; }
+.bc-editor .bc-ed-x { order: 2; }
+.bc-when-type { position: sticky; top: -4px; z-index: 1; margin-top: -4px; padding-top: 12px; color: var(--accent); background: var(--bg-raised); border-bottom: 1px solid var(--border); }
+.bc-when-type span { display: inline-flex; align-items: center; gap: 8px; }
+@media (max-width: 640px) {
+  .bc-editor {
+    width: 100%; max-width: 100%; border-left: none; box-shadow: none;
+    padding: 0 16px; gap: 14px;
+    animation: bc-editor-up 0.24s cubic-bezier(0.2, 0, 0, 1);
+  }
+  .bc-editor .bc-drawer-head {
+    position: sticky; top: 0; z-index: 8; margin: 0 -16px; padding: calc(8px + env(safe-area-inset-top, 0px)) 10px 8px 6px;
+    background: var(--bg-raised); border-bottom: 1px solid var(--border);
+  }
+  .bc-editor .bc-ed-x { order: 0; width: 44px; height: 44px; display: grid; place-items: center; }
+  .bc-editor .bc-drawer-head h2 { font-size: 18px; }
+  .bc-ed-headsave { height: 38px; padding: 0 18px; font-size: 15px; border-radius: 19px; }
+  .bc-ed-actions .bc-btn-primary, .bc-ed-actions > .bc-btn:not(.bc-ed-delete) { display: none; }
+  .bc-ed-actions:not(:has(.bc-ed-delete, .bc-drawer-note)) { display: none; }
+  .bc-editor input:not([type="checkbox"]), .bc-editor select, .bc-editor .bc-nl-input {
+    font-size: 16px; min-height: 44px;
+  }
+  .bc-ed-title { font-size: 20px; min-height: 48px; }
+  .bc-ed-grid { grid-template-columns: 4.8em minmax(0, 1fr); gap: 10px 10px; }
+  .bc-ed-lab { font-size: 13px; }
+  .bc-ed-lab.is-top { padding-top: 12px; }
+  .bc-ed-when { grid-template-columns: minmax(0, 1fr) 7.4em; }
+  .bc-ed-chip { height: 34px; padding: 0 12px; font-size: 13.5px; border-radius: 17px; }
+  .bc-ed-meta { font-size: 14px; gap: 8px 12px; }
+  .bc-ed-meta .bc-check input, .bc-ed-flags .bc-check input { width: 20px; height: 20px; }
+  .bc-ed-seg { height: 40px; border-radius: 10px; }
+  .bc-ed-segbtn { padding: 0 14px; font-size: 15px; }
+  .bc-ed-flags .bc-check, .bc-ed-meta .bc-check { font-size: 15px; min-height: 40px; }
+  .bc-ed-rem .bc-rem-add { width: 6.4em; }
+  .bc-rem-chip { min-height: 34px; font-size: 14px; }
+  .bc-when-list { max-height: min(50vh, 360px); }
+}
+@media (pointer: coarse) {
+  .bc-when-opt { padding: 11px 14px; font-size: 16px; }
+  .bc-when-opt small { font-size: 13px; }
+}
+@keyframes bc-editor-up { from { transform: translateY(40px); opacity: 0.4; } }
+@media (prefers-reduced-motion: reduce) { .bc-editor { animation: none; } }

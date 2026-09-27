@@ -13,8 +13,22 @@
 
 import { html, useState, useRef, useEffect } from '../../vendor/index.js';
 import { Icon } from '../ui/icons.js';
-import { fmtDateFull, dateOfDayKey, todayKey } from '../lib/dates.js';
+import { fmtDateFull, fmtDayMedium, dateOfDayKey, todayKey } from '../lib/dates.js';
 import { parseDateText } from '../lib/whenparse.js';
+import { COARSE_QUERY, PHONE_QUERY } from '../lib/breakpoints.js';
+
+// On a touch screen (0.6.0) the boxes open pickers rather than the keyboard:
+// a tap on a date opens the phone's own calendar, a tap on a time opens the
+// quarter-hour list, whose first row brings the keyboard when an exact time
+// is wanted. On a phone, a date in this year leaves the year off so the box
+// never cuts the date short.
+const isTouch = () => { try { return matchMedia(COARSE_QUERY).matches; } catch { return false; } };
+const isPhone = () => { try { return matchMedia(PHONE_QUERY).matches; } catch { return false; } };
+function dateLabel(key) {
+  if (!key) return '';
+  const d = dateOfDayKey(key);
+  return isPhone() && key.slice(0, 4) === todayKey().slice(0, 4) ? fmtDayMedium(d) : fmtDateFull(d);
+}
 
 // Select the whole value on the click that focuses the box. The browser
 // places the caret on mouseup, which would undo a select() made on focus,
@@ -33,7 +47,8 @@ export function DateField({ value, onChange, ariaLabel }) {
   const [bad, setBad] = useState(false);
   const pickRef = useRef(null);
   const sel = useSelectOnFocus();
-  const shown = text != null ? text : (value ? fmtDateFull(dateOfDayKey(value)) : '');
+  const shown = text != null ? text : dateLabel(value);
+  const touch = isTouch();
 
   const commit = () => {
     if (text == null) return;
@@ -54,6 +69,8 @@ export function DateField({ value, onChange, ariaLabel }) {
     <input
       type="text" class="bc-when-text" value=${shown} aria-label=${ariaLabel} autocomplete="off" spellcheck="false"
       title=${bad ? 'Not a date I can read. Try fri, tomorrow, 10/5 or oct 5.' : 'Type a date: fri, tomorrow, 10/5, oct 5, or a day of this month'}
+      inputmode=${touch ? 'none' : undefined}
+      onClick=${touch ? openPicker : undefined}
       ...${sel}
       onInput=${(e) => { setText(e.target.value); setBad(false); }}
       onBlur=${commit}
@@ -80,23 +97,39 @@ export function TimeField({ display, options, currentIdx, onText, onOption, aria
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
   const [bad, setBad] = useState(false);
+  const [typing, setTyping] = useState(false); // touch: the keyboard was asked for
   const listRef = useRef(null);
+  const inputRef = useRef(null);
   const sel = useSelectOnFocus();
   const shown = text != null ? text : display;
+  const touch = isTouch();
+  const offset = touch && !typing ? 1 : 0; // the "Type a time" row above the times
 
   // Opening centres the current time; arrowing keeps the active row in view.
   useEffect(() => {
     const list = listRef.current;
     if (!open || !list) return;
     const i = active >= 0 ? active : currentIdx;
-    const row = list.children[i];
+    const row = list.children[i + offset];
     if (!row) return;
     if (active < 0) list.scrollTop = row.offsetTop - (list.clientHeight - row.offsetHeight) / 2;
     else if (row.offsetTop < list.scrollTop) list.scrollTop = row.offsetTop;
     else if (row.offsetTop + row.offsetHeight > list.scrollTop + list.clientHeight) list.scrollTop = row.offsetTop + row.offsetHeight - list.clientHeight;
   }, [open, active]); // eslint-disable-line
 
-  const close = () => { setOpen(false); setActive(-1); };
+  const close = () => { setOpen(false); setActive(-1); setTyping(false); };
+  // Touch: bring the keyboard up in the same tap (a phone only raises it for
+  // a focus that a gesture caused), keeping the list open under it.
+  const askKeyboard = () => {
+    const el = inputRef.current;
+    if (!el) return;
+    setTyping(true);
+    el.setAttribute('inputmode', 'text');
+    el.blur();
+    el.focus();
+    el.select();
+    setOpen(true);
+  };
   const commit = () => {
     close();
     if (text == null) return;
@@ -122,12 +155,13 @@ export function TimeField({ display, options, currentIdx, onText, onOption, aria
   return html`<span class=${'bc-when-time' + (bad ? ' is-bad' : '')}>
     <input
       type="text" class="bc-when-text" value=${shown} aria-label=${ariaLabel} autocomplete="off" spellcheck="false"
-      role="combobox" aria-expanded=${open} aria-autocomplete="none"
+      role="combobox" aria-expanded=${open} aria-autocomplete="none" ref=${inputRef}
+      inputmode=${touch && !typing ? 'none' : undefined}
       title=${bad ? 'Not a time I can read. Try 7p, 7:30pm, 1930 or noon.' : 'Type a time (7p, 7:30, 1930, noon) or pick one'}
       ...${sel}
       onFocus=${(e) => { sel.onFocus(e); setOpen(true); setActive(-1); }}
       onInput=${(e) => { setText(e.target.value); setBad(false); setOpen(true); setActive(-1); }}
-      onBlur=${commit}
+      onBlur=${() => { if (!typing || document.activeElement !== inputRef.current) commit(); }}
       onKeyDown=${(e) => {
         if (e.key === 'ArrowDown') { e.preventDefault(); step(1); }
         else if (e.key === 'ArrowUp') { e.preventDefault(); step(-1); }
@@ -143,6 +177,11 @@ export function TimeField({ display, options, currentIdx, onText, onOption, aria
       }}
     />
     ${open && html`<div class="bc-when-list" role="listbox" ref=${listRef} aria-label=${ariaLabel + ' choices'}>
+      ${offset > 0 && html`<div
+        class="bc-when-opt bc-when-type" role="option" aria-selected="false"
+        onMouseDown=${(e) => e.preventDefault()}
+        onClick=${askKeyboard}
+      ><span><${Icon} name="keyboard" size=${15} /> Type a time</span></div>`}
       ${options.map((o, i) => html`<div
         key=${o.value} role="option" aria-selected=${!!o.current}
         class=${'bc-when-opt' + (o.current ? ' is-current' : '') + (i === active ? ' is-active' : '')}

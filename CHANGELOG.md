@@ -4,6 +4,18 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.6.0 (2026-09-27)
+
+Creating events on phones.
+
+- **The event editor is a full screen on a phone,** sliding up, instead of a drawer with a sliver of calendar beside it. Close, the title and Create sit in a top bar, so the keyboard never hides Create; Delete and the Google note stay at the bottom when editing.
+- **Back closes it,** as it closes the event sheet (with Undo if you'd typed anything). Opened with Edit from an event, it takes over that screen's place in history, so one Back leaves both.
+- **Thumb-sized and readable:** 44-point rows, 16-point text (which also stops iPhones zooming in on every field), bigger checkboxes, For me and the length and zone chips.
+- **Pickers on touch:** a tap on a time opens the quarter-hour list without the keyboard, with "Type a time" pinned at its top for an exact time; a tap on a date opens the phone's own calendar. The list rows are tap-sized.
+- **Dates fit:** on a phone a date this year leaves the year off ("Sun, Sep 27"), so the box never cuts it short.
+- **The form shrinks above the Android keyboard** instead of sliding under it.
+- **New on a day:** the day sheet (a day tapped in month view, or its +more) has a New button: today starts at the next quarter hour, any other day at 9 AM.
+
 ## 0.5.10 (2026-09-27)
 
 - **Directions (and every map link) open the place itself in Google Maps,** not a pin on bare coordinates. The link searches the event's own place text, its name and address, with the map already at its stored coordinates, so Google shows that place's card (hours, phone, reviews, Directions) and an ambiguous address can't land in another city. Coordinates alone are used only when the text has nothing findable in it (empty, "available once RSVP'd", a link, or a pair of numbers).

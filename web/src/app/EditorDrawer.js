@@ -27,6 +27,7 @@ import {
   entryToMinutes, normalizeMinutesList, effectiveReminders, toMinutes,
 } from '../lib/reminders.js';
 import { CalendarSelect } from '../ui/CalendarSelect.js';
+import { PHONE_QUERY } from '../lib/breakpoints.js';
 import { DateField, TimeField } from './WhenFields.js';
 import { parseClockText, resolveClock, minsToHHMM, hhmmToMins, durationLabel } from '../lib/whenparse.js';
 
@@ -382,6 +383,28 @@ export function EditorDrawer() {
     }
   }, [editor]);
 
+  // Phone (0.6.0): the editor is a full screen, so Back closes it, the way
+  // it closes the event sheet. Opened from that sheet (Edit), it takes over
+  // the sheet's history entry instead of stacking a second one, and the
+  // sheet leaves the entry for it (EventPopover).
+  const phoneOpen = !!editor && (() => { try { return matchMedia(PHONE_QUERY).matches; } catch { return false; } })();
+  useEffect(() => {
+    if (!phoneOpen) return undefined;
+    if (history.state && history.state.bcSheet) history.replaceState({ bcEditor: 1 }, '');
+    else history.pushState({ bcEditor: 1 }, '');
+    let popped = false;
+    const onPop = () => {
+      popped = true;
+      if (state.editorDirty) discardEditorWithUndo();
+      else set({ editor: null, editorDirty: false });
+    };
+    window.addEventListener('popstate', onPop);
+    return () => {
+      window.removeEventListener('popstate', onPop);
+      if (!popped && history.state && history.state.bcEditor) history.back();
+    };
+  }, [phoneOpen]);
+
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Tab') trapFocus(panelRef.current, e); };
     if (editor) document.addEventListener('keydown', onKey, true);
@@ -627,8 +650,9 @@ export function EditorDrawer() {
   return html`<div class="bc-drawer-backdrop" onClick=${(e) => { if (e.target === e.currentTarget) requestClose(); }}>
     <form class="bc-drawer bc-editor" ref=${panelRef} onSubmit=${submit} role="dialog" aria-modal="true" aria-label=${(occ ? 'Edit ' : 'New ') + (form.isContainer ? 'trip' : 'event')}>
       <div class="bc-drawer-head">
+        <button type="button" class="bc-icon-btn bc-ed-x" aria-label="Close" onClick=${requestClose}><${Icon} name="close" size=${phoneOpen ? 20 : 15} /></button>
         <h2>${(occ ? 'Edit ' : 'New ') + (form.isContainer ? 'trip' : 'event')}</h2>
-        <button type="button" class="bc-icon-btn" aria-label="Close" onClick=${requestClose}><${Icon} name="close" size=${15} /></button>
+        ${phoneOpen && html`<button type="submit" class="bc-btn bc-btn-primary bc-ed-headsave" disabled=${backwards}>${occ ? 'Save' : 'Create'}</button>`}
       </div>
 
       ${!occ && html`<div class="bc-nl" title="Fills the fields below as you type. Enter or Fill applies it now; everything stays editable.">
@@ -636,7 +660,7 @@ export function EditorDrawer() {
           <${Icon} name="quickadd" size=${15} />
           <input
             class="bc-nl-input"
-            placeholder="Type it naturally: Lunch with Ada Friday noon at Zuni"
+            placeholder=${phoneOpen ? 'Type it: Lunch with Ada Fri noon' : 'Type it naturally: Lunch with Ada Friday noon at Zuni'}
             value=${nlText}
             onInput=${onNlInput}
             onKeyDown=${onNlKeyDown}

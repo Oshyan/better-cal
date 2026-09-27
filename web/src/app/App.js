@@ -810,6 +810,12 @@ export function App() {
       nowMs=${nowMs}
       onOpenEvent=${onOpenEvent}
       onOpenDetail=${onOpenDetail}
+      onNew=${() => {
+        // A new event on this day: today starts at the next quarter hour
+        // (the editor's own default), any other day at 9 AM.
+        const k = s.expandedDay.dayKey;
+        set({ expandedDay: null, editor: { mode: 'create', draft: k === todayKey() ? {} : dayRangeDraft(k, k) } });
+      }}
       onClose=${() => set({ expandedDay: null })}
     />`;
   }

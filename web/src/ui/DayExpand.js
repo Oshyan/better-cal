@@ -26,7 +26,7 @@ export function anchorPanel(anchorRect, panelW, panelH, margin = 8) {
   return { left: Math.max(margin, left), top: Math.max(margin, top) };
 }
 
-export function DayExpand({ dayKey, anchorRect, occurrences, calendars, dimSet, nowMs, onOpenEvent, onOpenDetail, onClose }) {
+export function DayExpand({ dayKey, anchorRect, occurrences, calendars, dimSet, nowMs, onOpenEvent, onOpenDetail, onNew, onClose }) {
   const panelRef = useRef(null);
 
   useEffect(() => {
@@ -79,6 +79,7 @@ export function DayExpand({ dayKey, anchorRect, occurrences, calendars, dimSet, 
     >
       <div class="bc-dayexpand-head">
         <span class="bc-dayexpand-title">${fmtDayLong(d)}<${DayLabel} occs=${labels} onOpen=${(id, rect) => onOpenEvent && onOpenEvent(id, rect, { dayKey })} sep=${true} /></span>
+        ${onNew && html`<button type="button" class="bc-btn bc-dayexpand-new" title=${'New event on ' + fmtDayLong(d)} onClick=${onNew}><${Icon} name="plus" size=${14} />New</button>`}
         <button type="button" class="bc-icon-btn" aria-label="Close" onClick=${onClose}><${Icon} name="close" size=${14} /></button>
       </div>
       <div class="bc-dayexpand-list">

@@ -16,7 +16,7 @@ import {
   dayKeysOfRow, isWeekendEpochDay, dominantMonthOfRow, dominantMonthOfRows,
 } from '../src/ui/monthmath.js';
 import { contrastText, withAlpha, parseHex, inkColor, luminance } from '../src/lib/color.js';
-import { mapMosaic, stadiaStyle, mapTilerStyle, isPendingLocation } from '../src/lib/maps.js';
+import { mapMosaic, stadiaStyle, mapTilerStyle, isPendingLocation, gmapsUrl } from '../src/lib/maps.js';
 import { baseTitle, groupOccurrences, itemMatchesFilter, isGroupId } from '../src/ui/grouping.js';
 import { sortByMatch } from '../src/lib/rank.js';
 import { parseJumpText, jumpGranularity } from '../src/lib/jumpparse.js';
@@ -1831,5 +1831,13 @@ console.log('');
   eq('duration: 1 day', durationLabel(1440), '1 day');
 }
 
+// --- Google Maps links: the place by name, anchored at its coordinates ---
+eq('gmaps: name and coordinates open the place there',
+  gmapsUrl('Panda & Sons, 79 Queen Street, Edinburgh', 55.9532068, -3.2069716),
+  'https://www.google.com/maps/search/Panda+%26+Sons%2C+79+Queen+Street%2C+Edinburgh/@55.9532068,-3.2069716,17z');
+eq('gmaps: a slash in the name stays inside the query', gmapsUrl('Bar 1/2', 1, 2), 'https://www.google.com/maps/search/Bar+1%2F2/@1,2,17z');
+eq('gmaps: pending text falls back to the coordinates', gmapsUrl("Location available once RSVP'd", 37.7, -122.4), 'https://www.google.com/maps/search/?api=1&query=37.7,-122.4');
+eq('gmaps: coordinate text uses the coordinates', gmapsUrl('37.7, -122.4', 37.7, -122.4), 'https://www.google.com/maps/search/?api=1&query=37.7,-122.4');
+eq('gmaps: text alone is a search', gmapsUrl('Zuni Cafe', null, null), 'https://www.google.com/maps/search/?api=1&query=Zuni%20Cafe');
 console.log(passed + ' passed, ' + failed + ' failed');
 if (failed > 0) process.exit(1);

@@ -56,14 +56,25 @@ export function mapMosaic(lat, lng, { width = 640, height = 200, zoom = 15, mapt
 }
 
 // Google Maps place link (place view, not directions: viewing is the base
-// case and directions are one tap from there). Stored coordinates when
-// available (unambiguous); else the location text as a search query, which
-// Google resolves well for named places.
+// case and directions are one tap from there). The place's own words, name
+// and address, searched with the map already at its stored coordinates: Google
+// opens that place's card (hours, phone, reviews, Directions) rather than a
+// dropped pin on a bare lat/lng, and the coordinates keep an ambiguous text
+// ("43 Charlotte Street") from resolving in another city. Coordinates alone
+// only when the text says nothing findable (empty, "available once RSVP'd", a
+// link, or itself a pair of numbers); the text alone when nothing is stored.
+const COORD_TEXT = /^-?\d+(\.\d+)?\s*,\s*-?\d+(\.\d+)?$/;
 export function gmapsUrl(location, lat, lng) {
-  if (lat != null && lng != null) {
-    return `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
+  const text = (location || '').trim();
+  const findable = text !== '' && !isPendingLocation(text) && !/^https?:\/\//i.test(text) && !COORD_TEXT.test(text);
+  const hasCoords = lat != null && lng != null && Number.isFinite(Number(lat)) && Number.isFinite(Number(lng));
+  if (findable && hasCoords) {
+    return `https://www.google.com/maps/search/${encodeURIComponent(text).replace(/%20/g, '+')}/@${Number(lat)},${Number(lng)},17z`;
   }
-  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(location || '')}`;
+  if (!findable && hasCoords) {
+    return `https://www.google.com/maps/search/?api=1&query=${Number(lat)},${Number(lng)}`;
+  }
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(text)}`;
 }
 
 // A location that says the location will come later ("Location available

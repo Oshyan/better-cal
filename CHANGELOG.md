@@ -4,6 +4,10 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.5.10 (2026-09-27)
+
+- **Directions (and every map link) open the place itself in Google Maps,** not a pin on bare coordinates. The link searches the event's own place text, its name and address, with the map already at its stored coordinates, so Google shows that place's card (hours, phone, reviews, Directions) and an ambiguous address can't land in another city. Coordinates alone are used only when the text has nothing findable in it (empty, "available once RSVP'd", a link, or a pair of numbers).
+
 ## 0.5.9 (2026-09-26)
 
 - **The location dropdown no longer waits for your device's position.** Each search used to ask the browser where you are first, when location was allowed. A browser can stay silent (Chrome on a Mac with Location Services off for it), and then the dropdown never came. Search now goes out at once with the best place already known, and a fresh position is fetched in the background for the next search.

@@ -4,6 +4,12 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.6.1 (2026-09-28)
+
+- **The phone event sheet puts the event first.** The band of big buttons at the bottom is gone. Edit and More are two small icons beside the title; For me is a small switch at the end of the calendar line, where it reads as part of what the event is to you; everything rarer (Move, More like, Less like, Copy to another calendar) is in More, which opens as a sheet from the bottom edge. The collapsed sheet shows more of the event in the same space, and an address keeps to two lines until the sheet is pulled up. Invitation replies and Directions are a size smaller.
+- **The editor takes focus when it opens:** the title, or the plain-language box when text came with it. The Filter box (or whatever had focus) used to keep it. On a phone, editing an event doesn't raise the keyboard by itself.
+- **Unticking All day makes an hour, not a day.** Ticking it leaves the times at midnight to midnight; unticking now turns those into one hour, at the next quarter hour today or 9 AM on another day. Times you set before ticking it are kept.
+
 ## 0.6.0 (2026-09-27)
 
 Creating events on phones.

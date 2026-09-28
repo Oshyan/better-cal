@@ -20,7 +20,7 @@ import { isEmptyHtml } from '../lib/richtext.js';
 import {
   parseISO, toInputValue, fromInputValue, toISOWithOffset, addDaysDate, pad, localTz,
   dateOfDayKey, eventDuration, instantFromWallTime, wallTimeInZone, sameClock, tzCity, tzOffsetLabel, zoneOptions, fmtRange,
-  allDayFields, allDayInputs, addDaysKey, diffDaysKey, fmtTime, fmtWeekdayShort,
+  allDayFields, allDayInputs, addDaysKey, diffDaysKey, fmtTime, fmtWeekdayShort, todayKey,
 } from '../lib/dates.js';
 import {
   TIMED_CHOICES, ALLDAY_CHOICES, REMINDER_UNITS, fmtOffsetMinutes, fmtReminder,
@@ -405,6 +405,23 @@ export function EditorDrawer() {
     };
   }, [phoneOpen]);
 
+  // Focus lands in the editor when it opens (the autofocus attribute does
+  // nothing for an element added after the page loaded, so whatever had focus
+  // before, the Filter box say, kept it). The title, or the plain-language
+  // box when text came with it; the caret at the end, never selecting. A
+  // phone skips it when editing, where a keyboard nobody asked for would
+  // cover the event.
+  const focusedFor = useRef(null);
+  useEffect(() => {
+    if (!editor || !form || focusedFor.current === editor) return;
+    focusedFor.current = editor;
+    if (phoneOpen && editor.occ) return;
+    const el = panelRef.current && panelRef.current.querySelector(editor.nlText ? '.bc-nl-input' : '.bc-ed-title');
+    if (!el) return;
+    el.focus({ preventScroll: true });
+    try { el.setSelectionRange(el.value.length, el.value.length); } catch { /* not a text box */ }
+  }, [editor, form]); // eslint-disable-line
+
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Tab') trapFocus(panelRef.current, e); };
     if (editor) document.addEventListener('keydown', onKey, true);
@@ -451,6 +468,22 @@ export function EditorDrawer() {
     const cur = allDayFields(form.start, form.end);
     upd(allDayInputs(cur.start, v));
   };
+
+  // Unticking All day: the times ticking it left behind are midnight to
+  // midnight, which as a timed event is a day long. Those become an hour,
+  // at the next quarter hour today or 9 AM on another day. Times the owner
+  // had set before ticking it (on and straight off again) are kept.
+  const onAllDayToggle = (checked) => setForm((f) => {
+    if (checked) return { ...f, allDay: true };
+    const s0 = fromInputValue(f.start);
+    const e0 = fromInputValue(f.end);
+    const dayLong = String(f.start).slice(11, 16) === '00:00' && !(e0 - s0 < 23 * 3600000);
+    if (!dayLong) return { ...f, allDay: false };
+    const day = allDayFields(f.start, f.end).start;
+    const [y, m, d] = day.split('-').map(Number);
+    const start = day === todayKey() ? new Date(Math.ceil(Date.now() / 900000) * 900000) : new Date(y, m - 1, d, 9, 0);
+    return { ...f, allDay: false, start: toInputValue(start), end: toInputValue(new Date(start.getTime() + 3600000)) };
+  });
 
   // Start moves the end with it: by the event's length while the length is
   // locked, and otherwise only when the end would no longer be after the
@@ -664,7 +697,6 @@ export function EditorDrawer() {
             value=${nlText}
             onInput=${onNlInput}
             onKeyDown=${onNlKeyDown}
-            autofocus=${!!editor.nlText}
             aria-label="Describe the event in plain language"
           />
           <button type="button" class="bc-btn bc-nl-go" title="Fill the fields now" onClick=${() => { clearTimeout(nlTimer.current); runNlParse(nlText); }}>Fill</button>
@@ -672,7 +704,7 @@ export function EditorDrawer() {
       </div>`}
 
       <div class=${'bc-ed-titlewrap' + flash('title')}>
-        <input class="bc-ed-title" placeholder="Add a title" aria-label="Title" value=${form.title} onInput=${(e) => upd({ title: e.target.value })} required autofocus=${!editor.nlText} />
+        <input class="bc-ed-title" placeholder="Add a title" aria-label="Title" value=${form.title} onInput=${(e) => upd({ title: e.target.value })} required />
       </div>
 
       <div class="bc-ed-grid">
@@ -708,7 +740,7 @@ export function EditorDrawer() {
         <span></span>
         <div class="bc-ed-ctl bc-ed-meta" role="status">
           <label class=${'bc-check' + flash('allDay')}>
-            <input type="checkbox" checked=${form.allDay} onChange=${(e) => upd({ allDay: e.target.checked })} />
+            <input type="checkbox" checked=${form.allDay} onChange=${(e) => onAllDayToggle(e.target.checked)} />
             <span>All day</span>
           </label>
           <button

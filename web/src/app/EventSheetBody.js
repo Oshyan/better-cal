@@ -93,16 +93,20 @@ function sourceHost(url) {
 // once calendars can be shared: this event (Copy to), the calendar it is on
 // (named, with its colour), and the site it came from (named by its address,
 // so nobody mistakes it for a page of this app). Delete last.
-function MoreMenu({ occ, cal, isFeed, onClose, onDelete, onCopy }) {
+function MoreMenu({ occ, cal, isFeed, onClose, onDelete, onCopy, phone = false, onMove = null }) {
   const ref = useRef(null);
   useEffect(() => onOutsidePress(insideAny(ref), onClose), []); // eslint-disable-line
   const item = (icon, label, fn, cls = '', note = null) => html`<button type="button" role="menuitem" class=${'bc-es-mi ' + cls} onClick=${() => { onClose(); fn(); }}>
-    <${Icon} name=${icon} size=${18} /><span>${label}</span>${note && html`<small>${note}</small>`}
+    ${typeof icon === 'string' ? html`<${Icon} name=${icon} size=${18} />` : icon}<span>${label}</span>${note && html`<small>${note}</small>`}
   </button>`;
+  const context = cal && cal.role === 'context';
   const head = (content) => html`<div class="bc-es-mh" role="presentation">${content}</div>`;
   const calName = (cal && cal.name) || 'Calendar';
   const host = occ.url ? sourceHost(occ.url) : '';
-  return html`<div class="bc-es-menu" role="menu" ref=${ref}>
+  return html`<div class=${'bc-es-menu' + (phone ? ' is-phone' : '')} role="menu" ref=${ref}>
+    ${phone && !isFeed && onMove && item('reschedule', 'Move to another time', onMove)}
+    ${phone && isFeed && !context && item(html`<${ThumbIcon} dir="up" size=${18} />`, 'More like this', () => sendFeedback(occ, 'up'))}
+    ${phone && isFeed && !context && item(html`<${ThumbIcon} dir="down" size=${18} />`, 'Less like this', () => sendFeedback(occ, 'down'))}
     ${item('copy', 'Copy to another calendar…', onCopy)}
     ${cal && html`<hr />
       ${head(html`<i style=${'background:' + (cal.color || 'var(--border-strong)')}></i>Calendar: ${calName}`)}
@@ -151,20 +155,7 @@ export function EventSheetBody({ occ, cal, isFeed, full, panel = false, onFull, 
   const context = cal && cal.role === 'context';
   const openEdit = () => set({ popover: null, editor: { mode: 'edit', occ } });
   const openMove = () => { close(); enterReschedule(occ.instanceId); };
-  const moreMenu = moreOpen && html`<${MoreMenu} occ=${occ} cal=${cal} isFeed=${isFeed} onClose=${() => setMoreOpen(false)} onDelete=${onDelete} onCopy=${() => setCopyOpen(true)} />`;
-
-  // The phone keeps For me and the actions at the bottom, under the thumb.
-  const foot = html`<div class="bc-es-foot">
-      ${!context && html`<${ForMe} occ=${occ} cal=${cal} onHidden=${close} />`}
-      <div class="bc-es-bar" role="toolbar" aria-label="Event actions">
-        ${!isFeed && html`<button type="button" class="bc-es-act" onClick=${openEdit}><${Icon} name="pencil" size=${20} />Edit</button>`}
-        ${!isFeed && html`<button type="button" class="bc-es-act" onClick=${openMove}><${Icon} name="reschedule" size=${20} />Move</button>`}
-        ${isFeed && !context && html`<button type="button" class="bc-es-act" onClick=${() => sendFeedback(occ, 'up')}><${ThumbIcon} dir="up" size=${20} />More like</button>`}
-        ${isFeed && !context && html`<button type="button" class="bc-es-act" onClick=${() => sendFeedback(occ, 'down')}><${ThumbIcon} dir="down" size=${20} />Less like</button>`}
-        <button type="button" class=${'bc-es-act' + (moreOpen ? ' is-on' : '')} aria-haspopup="menu" aria-expanded=${moreOpen} onClick=${() => setMoreOpen(!moreOpen)}><${Icon} name="more" size=${20} />More</button>
-      </div>
-      ${moreMenu}
-    </div>`;
+  const moreMenu = moreOpen && html`<${MoreMenu} occ=${occ} cal=${cal} isFeed=${isFeed} phone=${!panel} onMove=${openMove} onClose=${() => setMoreOpen(false)} onDelete=${onDelete} onCopy=${() => setCopyOpen(true)} />`;
 
   // The desktop panel pins them in one toolbar row at the top instead (0.5.7).
   // The row is the same height for every event, For me or not, so stepping
@@ -176,6 +167,16 @@ export function EventSheetBody({ occ, cal, isFeed, full, panel = false, onFull, 
     aria-label=${label} title=${extra.word ? undefined : label} aria-expanded=${extra.expanded} aria-haspopup=${extra.popup}
     onClick=${onClick}
   >${icon}${extra.word ? label : ''}</button>`;
+  // The phone (0.6.1): no band of big buttons. The event's details come
+  // first; Edit and More are two small icons beside the title, For me a small
+  // switch on the calendar line (it is part of what the event is to you, not
+  // a command), and everything rarer lives in More, which opens from the
+  // bottom edge under the thumb.
+  const titleActs = !panel && html`<span class="bc-es-titleacts" role="toolbar" aria-label="Event actions">
+      ${!isFeed && tool(html`<${Icon} name="pencil" size=${18} />`, 'Edit', openEdit)}
+      ${tool(html`<${Icon} name="more" size=${19} />`, 'More', () => setMoreOpen(!moreOpen), { on: moreOpen, expanded: moreOpen, popup: 'menu' })}
+    </span>`;
+
   const tools = html`<div class="bc-es-tools" role="toolbar" aria-label="Event actions">
       <span class="bc-es-tools-acts">
         ${!isFeed && tool(html`<${Icon} name="pencil" size=${15} />`, 'Edit', openEdit, { word: true })}
@@ -199,10 +200,16 @@ export function EventSheetBody({ occ, cal, isFeed, full, panel = false, onFull, 
         onCancel=${() => set({ attendPrompt: null })} />`}
 
       <div class="bc-es-head">
-        <h2 class=${'bc-es-title' + (occ.status === 'cancelled' ? ' is-cancelled' : '')} onClick=${onFull} title="Show all details">
-          ${occ.title || '(untitled)'}${occ.isNew ? html` <span class="bc-new-pill">new</span>` : ''}
-        </h2>
-        <span class="bc-es-cal"><i style=${'background:' + color}></i>${(cal && cal.name) || 'Calendar'}${suggested ? ' · suggested' : ''}${occ.status === 'cancelled' ? ' · cancelled' : ''}</span>
+        <div class="bc-es-titlerow">
+          <h2 class=${'bc-es-title' + (occ.status === 'cancelled' ? ' is-cancelled' : '')} onClick=${onFull} title="Show all details">
+            ${occ.title || '(untitled)'}${occ.isNew ? html` <span class="bc-new-pill">new</span>` : ''}
+          </h2>
+          ${titleActs}
+        </div>
+        <div class="bc-es-calrow">
+          <span class="bc-es-cal"><i style=${'background:' + color}></i>${(cal && cal.name) || 'Calendar'}${suggested ? ' · suggested' : ''}${occ.status === 'cancelled' ? ' · cancelled' : ''}</span>
+          ${!panel && !context && html`<${ForMe} occ=${occ} cal=${cal} onHidden=${close} />`}
+        </div>
         ${occ.containers && occ.containers.length > 0 && html`<button
           type="button" class="bc-es-partof" onClick=${() => { close(); openTripByEventId(occ.containers[0].eventId); }}
         ><${Icon} name="trip" size=${15} />Part of ${occ.containers[0].title}</button>`}
@@ -242,7 +249,7 @@ export function EventSheetBody({ occ, cal, isFeed, full, panel = false, onFull, 
         <a class="bc-es-rowbtn" href=${/^www\./i.test(loc) ? 'https://' + loc : loc} target="_blank" rel="noopener noreferrer">Open <${Icon} name="arrowUpRight" size=${14} /></a>
       </div>`}
       ${place && html`<div class="bc-es-row">
-        <${PinIcon} size=${20} /><div class="bc-es-rt">${loc}</div>
+        <${PinIcon} size=${20} /><div class=${'bc-es-rt bc-es-addr' + (full ? '' : ' is-clamped')} title=${loc}>${loc}</div>
         <a class="bc-es-rowbtn" href=${gmapsUrl(loc, mapLat != null ? mapLat : occ.locationLat, mapLng != null ? mapLng : occ.locationLng)} target="_blank" rel="noopener noreferrer">Directions <${Icon} name="arrowUpRight" size=${14} /></a>
       </div>`}
       ${place && full && mapLat != null && html`<div class="bc-es-map"><${MiniMap} lat=${mapLat} lng=${mapLng} location=${loc} /></div>`}
@@ -275,5 +282,5 @@ export function EventSheetBody({ occ, cal, isFeed, full, panel = false, onFull, 
       </div>`}
     </div>
 
-    ${!panel && foot}`;
+    ${!panel && moreMenu}`;
 }

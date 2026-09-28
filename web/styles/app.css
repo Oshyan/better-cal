@@ -3690,19 +3690,12 @@ button.bc-review-title { color: var(--fg); padding: 0; }
 .bc-es-desctext.bc-rich { white-space: normal; }
 .bc-evsheet.is-full .bc-es-desctext { display: block; -webkit-line-clamp: unset; overflow: visible; }
 .bc-es-more { background: none; border: none; padding: 6px 0; font-size: 15px; font-weight: 600; color: var(--accent); }
-.bc-es-foot { flex: none; position: relative; background: var(--bg-raised); border-top: 1px solid var(--border); padding: 8px 10px calc(10px + env(safe-area-inset-bottom, 0px)); display: grid; gap: 8px; }
 .bc-es-forme { display: flex; align-items: center; gap: 10px; padding: 0 4px; }
 .bc-es-forme-label { font-size: 14px; font-weight: 600; color: var(--fg-muted); flex: none; }
 .bc-es-seg { flex: 1; display: flex; height: 44px; border: 1px solid var(--border-strong); border-radius: 12px; overflow: hidden; }
 .bc-es-segbtn { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: none; border-right: 1px solid var(--border); background: none; font-size: 15px; font-weight: 600; color: var(--fg); }
 .bc-es-segbtn:last-child { border-right: none; }
 .bc-es-segbtn.is-on { background: color-mix(in srgb, var(--accent) 14%, var(--bg-raised)); color: var(--accent); }
-.bc-es-bar { display: flex; gap: 4px; }
-.bc-es-act {
-  flex: 1; height: 56px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
-  border: none; border-radius: 12px; background: none; font-size: 12.5px; font-weight: 600; color: var(--fg);
-}
-.bc-es-act:active, .bc-es-act.is-on { background: var(--bg-inset); }
 .bc-es-menu {
   position: absolute; right: 10px; bottom: calc(100% - 64px); width: min(300px, calc(100vw - 20px)); z-index: 5;
   background: var(--bg-raised); border: 1px solid var(--border-strong); border-radius: 14px; box-shadow: var(--shadow); padding: 6px;
@@ -3746,8 +3739,6 @@ button.bc-review-title { color: var(--fg); padding: 0; }
 .bc-es-segbtn { flex: none; padding: 0 14px; font-size: 14px; gap: 5px; }
 .bc-es-segbtn svg { width: 15px; height: 15px; }
 .bc-es-invite .bc-es-seg { height: 36px; justify-self: start; margin-left: 34px; }
-.bc-es-act { height: 48px; gap: 3px; font-size: 12px; }
-.bc-es-foot { gap: 6px; padding-top: 8px; }
 
 /* --- The desktop event panel (0.5.5) ------------------------------------------
    The same place and size every time: along the right edge under the top
@@ -3950,3 +3941,30 @@ button.bc-review-title { color: var(--fg); padding: 0; }
 }
 @keyframes bc-editor-up { from { transform: translateY(40px); opacity: 0.4; } }
 @media (prefers-reduced-motion: reduce) { .bc-editor { animation: none; } }
+
+/* --- phone event sheet, details first (0.6.1) ------------------------------------------
+   Edit and More are small icons beside the title, For me a small switch at the end of
+   the calendar line, and More opens as a sheet from the bottom edge. The address keeps
+   to two lines until the sheet is pulled up. The desktop panel keeps its toolbar. */
+.bc-es-titlerow { display: flex; align-items: flex-start; gap: 8px; }
+.bc-es-titlerow .bc-es-title { flex: 1; min-width: 0; }
+.bc-es-titleacts { display: inline-flex; gap: 2px; flex: none; margin: -2px -8px 0 0; }
+.bc-es-titleacts .bc-es-tool { width: 40px; height: 40px; border: none; border-radius: 20px; color: var(--fg-muted); }
+.bc-es-titleacts .bc-es-tool:active, .bc-es-titleacts .bc-es-tool.is-on { background: var(--bg-inset); color: var(--fg); }
+.bc-es-calrow { display: flex; align-items: center; justify-content: space-between; gap: 6px 12px; flex-wrap: wrap; min-height: 32px; }
+.bc-es-calrow .bc-es-cal { min-width: 0; }
+.bc-es-calrow .bc-es-forme { padding: 0; flex: none; }
+.bc-es-calrow .bc-es-forme-label { display: none; }
+.bc-es-calrow .bc-es-seg { flex: none; height: 30px; border-radius: 8px; }
+.bc-es-calrow .bc-es-segbtn { flex: none; padding: 0 10px; font-size: 13px; font-weight: 600; gap: 4px; }
+.bc-es-calrow .bc-es-segbtn svg { width: 13px; height: 13px; }
+.bc-es-addr.is-clamped { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.bc-es-menu.is-phone {
+  position: fixed; left: 8px; right: 8px; top: auto; bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+  width: auto; transform: none; z-index: 95; animation: bc-sheet-up 0.16s ease-out;
+}
+@media (max-width: 640px) {
+  .bc-es-invite .bc-es-seg { height: 32px; }
+  .bc-es-invite .bc-es-segbtn { font-size: 13.5px; }
+  .bc-evsheet .bc-es-rowbtn { height: 32px; padding: 0 10px; font-size: 13px; }
+}

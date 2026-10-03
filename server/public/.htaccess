@@ -1,0 +1,20 @@
+# Apache and LiteSpeed routing for Better-Cal (docs/install.md). Nginx ignores
+# this file; its configuration is in the same document.
+#
+# Every request goes to index.php except /dav, which goes to dav.php. [END]
+# rather than [L]: in a directory context [L] starts another rewrite pass,
+# which would send dav.php on to index.php. The first rule hands the
+# Authorization header to PHP (API tokens and CalDAV sign-ins arrive in it);
+# it works where CGIPassAuth is not allowed, which is most shared hosting.
+#
+# Needs mod_rewrite and AllowOverride FileInfo (or All) for this directory.
+# No Options line: hosts that allow FileInfo but not Options would answer
+# every request with an error, and listings can't happen anyway, since every
+# path goes to the app.
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+    RewriteRule ^dav(/|$) dav.php [END]
+    RewriteRule ^ index.php [END]
+</IfModule>

@@ -89,12 +89,12 @@ final class PushSubscriptions
         }
         $this->db->run(
             'INSERT INTO push_subscriptions (user_id, endpoint, endpoint_hash, p256dh, auth, last_used_at, created_by_token_id, device_label)
-             VALUES (?, ?, ?, ?, ?, NULL, ?, ?) AS new_row
+             VALUES (?, ?, ?, ?, ?, NULL, ?, ?)
              ON DUPLICATE KEY UPDATE
-               user_id = new_row.user_id, endpoint = new_row.endpoint,
-               p256dh = new_row.p256dh, auth = new_row.auth, failing_since = NULL,
-               created_by_token_id = new_row.created_by_token_id,
-               device_label = COALESCE(new_row.device_label, push_subscriptions.device_label)',
+               user_id = VALUES(user_id), endpoint = VALUES(endpoint),
+               p256dh = VALUES(p256dh), auth = VALUES(auth), failing_since = NULL,
+               created_by_token_id = VALUES(created_by_token_id),
+               device_label = COALESCE(VALUES(device_label), push_subscriptions.device_label)',
             [$userId, $sub['endpoint'], self::endpointHash($sub['endpoint']), $sub['p256dh'], $sub['auth'], $tokenId, $label]
         );
         if (!$existed) {

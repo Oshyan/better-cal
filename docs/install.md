@@ -1,11 +1,19 @@
 # Installing Better-Cal
 
-Better-Cal is plain PHP and MySQL with a no-build frontend. It should run on any host that gives you PHP 8.3+, MySQL 8, a cron job and a web server you can point at one directory. **It has been run in production on Nginx with PHP-FPM only. The Apache configuration below follows from how the app routes requests but has not been tested on a live Apache install yet**; if you try it, please report what you had to change.
+Better-Cal is plain PHP and MySQL with a no-build frontend. It runs on any host that gives you PHP 8.3+, MySQL 8 or MariaDB 10.6+, a cron job and a web server you can point at one directory.
+
+What has been run, and how:
+
+- **Production:** Nginx with PHP-FPM 8.4 and Percona Server 8.4 (MySQL), on Debian.
+- **Clean-install test (2026-10-03):** Ubuntu 24.04 with Apache 2.4 and mod_php 8.3, MariaDB 10.11 (and MariaDB 10.6 for the migrations, the smoke test and the worker), following this page from an empty machine. Everything below was checked there: install, migrations, sign-in, events and undo, search, repeating events, CalDAV and API tokens through Apache, a subscribed feed, a plugin, the worker under cron.
+
+If your host differs and something needs changing, please report it.
 
 ## Requirements
 
-- PHP 8.3 or newer with `pdo_mysql`, `curl`, `json`, `openssl`, `mbstring`. Composer to install dependencies.
-- MySQL 8.0.19 or newer (production runs Percona Server 8.4), one empty database and a user with full rights on it. **MariaDB is not supported yet**: a few queries use MySQL's `INSERT ... AS alias ON DUPLICATE KEY UPDATE` form, which MariaDB does not accept.
+- PHP 8.3 or newer with these extensions: `pdo_mysql`, `curl`, `mbstring`, `xml` (dom, simplexml, xmlreader, xmlwriter: CalDAV needs them), `zip`, plus `json`, `openssl`, `sodium` and `ctype`, which nearly every PHP build already has. On Debian and Ubuntu that is `apt install php8.3-cli php8.3-mysql php8.3-curl php8.3-mbstring php8.3-xml php8.3-zip` (and `libapache2-mod-php8.3` or `php8.3-fpm` for the web server). `composer check-platform-reqs --lock --no-dev`, run in `server/`, lists anything missing.
+- Composer, to install the PHP dependencies.
+- MySQL 8.0.19 or newer, or MariaDB 10.6 or newer, with one empty database and a user with full rights on it.
 - A cron entry (or any scheduler) that can run a PHP script every minute.
 - HTTPS. Sessions, the service worker and Web Push all require it.
 - Node 20+ only if you want to run the frontend tests or the MCP server. The app itself needs no build step.
@@ -97,9 +105,9 @@ Behind a panel that proxies `location /` to an inner server (CloudPanel does: `p
 
 The `types` block is there because `.webmanifest` is missing from Nginx's default MIME map, and a `types` block replaces the inherited map inside that location, so every extension the frontend uses has to be listed. Nginx follows the symlinks by default.
 
-## Apache 2.4 (untested)
+## Apache 2.4 (tested with mod_php)
 
-Needs `mod_rewrite`. In the virtual host:
+Needs `mod_rewrite` (`a2enmod rewrite` on Debian and Ubuntu). In the virtual host:
 
 ```apache
 <VirtualHost *:443>
@@ -122,16 +130,11 @@ Needs `mod_rewrite`. In the virtual host:
 </VirtualHost>
 ```
 
+This exact block was used in the clean-install test under mod_php: CalDAV, API tokens and every page route worked. For a plain-HTTP test on your own machine, use `<VirtualHost *:80>` and an `http://localhost:PORT` base URL; browsers treat localhost as secure, so sign-in works without a certificate.
+
 `[END]` rather than `[L]` matters: in a directory context `[L]` starts another rewrite pass, which would send `dav.php` on to `index.php`. This routes every request through PHP, including static files, so the symlinks and `FollowSymLinks` are not involved and the app's cache headers apply as they are.
 
-On shared hosting where you cannot edit the virtual host, the same rules work as `server/public/.htaccess` (the host must allow `FileInfo` overrides). If `CGIPassAuth` is not permitted there, use the older form instead, which the app also understands:
-
-```apache
-RewriteEngine On
-RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
-RewriteRule ^dav(/|$) dav.php [END]
-RewriteRule ^ index.php [END]
-```
+**On shared hosting, or anywhere you cannot edit the virtual host, there is nothing to add:** the repository ships `server/public/.htaccess` with the same routing, using the older way of passing the Authorization header, which works where `CGIPassAuth` is not allowed. The host only has to allow `FileInfo` overrides for that directory, which shared hosts do. Tested on Apache 2.4 with `AllowOverride FileInfo` and nothing else: every page, CalDAV and API tokens. It should behave the same on LiteSpeed, which reads `.htaccess` rewrites, but that hasn't been tried yet. With a virtual host like the one above (`AllowOverride None`), the file is ignored.
 
 If the host forces the document root to a directory you do not control (`public_html`), make that directory a symlink to `server/public`, or put the repository beside it and symlink `index.php` and `dav.php` in; both files locate the rest of the app relative to their real path.
 

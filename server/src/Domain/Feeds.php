@@ -340,8 +340,8 @@ final class Feeds
     private function recordStats(int $calendarId, int $rawCount): void
     {
         $this->db->run(
-            'INSERT INTO feed_stats (calendar_id, poll_date, raw_count, passing_count) VALUES (?, CURDATE(), ?, ?) AS new_row
-             ON DUPLICATE KEY UPDATE raw_count = new_row.raw_count, passing_count = new_row.passing_count',
+            'INSERT INTO feed_stats (calendar_id, poll_date, raw_count, passing_count) VALUES (?, CURDATE(), ?, ?)
+             ON DUPLICATE KEY UPDATE raw_count = VALUES(raw_count), passing_count = VALUES(passing_count)',
             [$calendarId, $rawCount, $rawCount]
         );
     }

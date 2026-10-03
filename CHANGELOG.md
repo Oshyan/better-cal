@@ -4,6 +4,17 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.7.3 (2026-10-03)
+
+Search, and the leftovers from the phone work.
+
+- **Search finds upcoming events first, and finds all of them** ([#60](https://github.com/Oshyan/better-cal/issues/60)). It used to take the 50 best matches across all time and only then split them into Upcoming and Past, so a word with a long history (a weekly class, a venue) could push the next event out of the results entirely. Now Upcoming (the default), All or Past is chosen under the search box and applied before the limit, with an optional calendar. An Upcoming search ends with "12 past matches, Show them". Both choices are remembered on each device. Results read in calendar order, the soonest upcoming first and the latest past first; relevance still decides which ones come back.
+- **A repeating series shows its next date** in search results and opens there, instead of the date it began. A series counts as upcoming until its last date.
+- **No result looks chosen until you choose it.** The first row was always marked as selected, so with no upcoming matches the first past result stood out at full strength as if it were current. Enter still opens the first result.
+- **Back from an event opened in search returns to the results,** with the query, filters and scroll position as they were. "‹ Search" above the event does the same on a desktop. Closing the event any other way (the close button, swiping the sheet away) goes to the calendar as before.
+- **Quick add uses the editor's date and time boxes:** click in and type "fri" or "7p", or pick a quarter hour from the list. The end list runs on from the start with each length, so an evening that ends after midnight is one pick, and moving the start keeps the length.
+- **Leaving the editor without saving returns to the event** it was opened from, with Back on a phone, the close button or Cancel, instead of dropping to the calendar.
+
 ## 0.7.2 (2026-10-03)
 
 - **The old full-page event view is gone.** Since 0.7.0 every event and trip opens in the side panel or the sheet, so the view, its state, its keyboard stepping and 43 style rules that only it used are removed. Every way that could still have reached it (an event not yet loaded, the full-view request from a double-click or an Agenda line) now opens the panel or sheet. The pieces the panel, sheet and trips share (the mini-map and base map, links in descriptions, a repeat rule in words) moved to their own module.

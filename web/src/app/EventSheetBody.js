@@ -12,7 +12,7 @@ import { DeleteScope, ScopeChoice } from './DeleteScope.js';
 import { relationshipOptions, REL_LABEL } from './Relationship.js';
 import {
   deleteEvent, updateEvent, setRelationship, sendFeedback, enterReschedule, openDetail, openTripByEventId,
-  googleBacked, GOOGLE_NO_UNDO, toggleCalendarVisible, rsvpEvent,
+  googleBacked, GOOGLE_NO_UNDO, toggleCalendarVisible, rsvpEvent, goBackTo, editFromView,
 } from './actions.js';
 import { describeRrule, MiniMap, useEventGeo, linkify } from './eventparts.js';
 import { EventPluginData } from './EventPluginData.js';
@@ -153,7 +153,7 @@ export function EventSheetBody({ occ, cal, isFeed, full, panel = false, onFull, 
   })();
 
   const context = cal && cal.role === 'context';
-  const openEdit = () => set({ popover: null, editor: { mode: 'edit', occ } });
+  const openEdit = () => editFromView(occ);
   const openMove = () => { close(); enterReschedule(occ.instanceId); };
   const moreMenu = moreOpen && html`<${MoreMenu} occ=${occ} cal=${cal} isFeed=${isFeed} phone=${!panel} onMove=${openMove} onClose=${() => setMoreOpen(false)} onDelete=${onDelete} onCopy=${() => setCopyOpen(true)} />`;
 
@@ -205,8 +205,8 @@ export function EventSheetBody({ occ, cal, isFeed, full, panel = false, onFull, 
       ${timeScope && html`<${ScopeChoice} occ=${occ} verb="New time for" compact note=${googleBacked(occ) ? GOOGLE_NO_UNDO : null} onPick=${(scope) => { const f = timeScope; setTimeScope(null); updateEvent(occ, f, scope); }} onCancel=${() => setTimeScope(null)} />`}
       ${panel && attendScope}
 
-      ${backTo && html`<button type="button" class="bc-es-backto" onClick=${() => set({ popover: { instanceId: backTo.instanceId, anchorRect: null } })}>
-        <${Icon} name="chevronLeft" size=${15} /><${Icon} name="trip" size=${14} />${backTo.title}
+      ${backTo && html`<button type="button" class="bc-es-backto" onClick=${() => goBackTo(backTo)}>
+        <${Icon} name="chevronLeft" size=${15} /><${Icon} name=${backTo.search ? 'search' : 'trip'} size=${14} />${backTo.title}
       </button>`}
       <div class="bc-es-head">
         <div class="bc-es-titlerow">

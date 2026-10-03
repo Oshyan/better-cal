@@ -169,6 +169,26 @@ export function openDetail(instanceId) {
 
 // Step the open event (sheet or panel) to the previous or next event of the
 // day being browsed ([ and ] on desktop).
+// Edit from an open event (0.7.3): the editor remembers that event so that
+// leaving without saving (Back, the close button, Cancel) returns to it.
+export function editFromView(occ) {
+  const pop = state.popover;
+  set({ popover: null, editor: { mode: 'edit', occ, returnTo: pop ? { ...pop, anchorRect: null } : null } });
+}
+
+// What closing the editor without saving opens again: the event it was
+// opened from, if any.
+export function editorReturn(editor) {
+  return editor && editor.returnTo ? { popover: editor.returnTo } : {};
+}
+
+// "‹ Trip" / "‹ Search" on an event opened from one (0.7.0, 0.7.3), and the
+// phone's Back from it: return to that trip, or to the search results.
+export function goBackTo(back) {
+  if (back.search) set({ popover: null, searchOpen: true, searchRestore: true });
+  else set({ popover: { instanceId: back.instanceId, anchorRect: null } });
+}
+
 export function stepPopoverSameDay(dir) {
   const pop = state.popover;
   if (!pop) return false;

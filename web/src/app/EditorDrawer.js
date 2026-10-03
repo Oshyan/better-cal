@@ -7,7 +7,7 @@
 
 import { html, useState, useEffect, useRef, useMemo } from '../../vendor/index.js';
 import { useStore, set, state, toast } from './store.js';
-import { createEvent, updateEvent, deleteEvent, quickAddParse, attachToTrip, defaultTargetCalendarId, googleCalendar } from './actions.js';
+import { createEvent, updateEvent, deleteEvent, quickAddParse, attachToTrip, defaultTargetCalendarId, googleCalendar, editorReturn } from './actions.js';
 import { api, loadPeople, ensureFullOccurrence } from './api.js';
 import { saveEditorDraft, clearEditorDraft, discardEditorWithUndo } from './drafts.js';
 import { TripRow } from './Trips.js';
@@ -402,12 +402,16 @@ export function EditorDrawer() {
     const onPop = () => {
       popped = true;
       if (state.editorDirty) discardEditorWithUndo();
-      else set({ editor: null, editorDirty: false });
+      else set({ editor: null, editorDirty: false, ...editorReturn(state.editor) });
     };
     window.addEventListener('popstate', onPop);
     return () => {
       window.removeEventListener('popstate', onPop);
-      if (!popped && history.state && history.state.bcEditor) history.back();
+      // Back to the event it was opened from (0.7.3): the sheet takes this entry again.
+      if (!popped && history.state && history.state.bcEditor) {
+        if (state.popover) history.replaceState({ bcSheet: 1 }, '');
+        else history.back();
+      }
     };
   }, [phoneOpen]);
 
@@ -459,7 +463,7 @@ export function EditorDrawer() {
   // reads state.editorDirty in closeOverlays).
   const requestClose = () => {
     if (state.editorDirty) { discardEditorWithUndo(); return; }
-    set({ editor: null, editorDirty: false });
+    set({ editor: null, editorDirty: false, ...editorReturn(state.editor) });
   };
 
   // All-day date fields: the end field is the last day (inclusive). With the

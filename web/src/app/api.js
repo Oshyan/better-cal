@@ -372,11 +372,16 @@ export async function refreshWindow() {
 
 let searchReqId = 0;
 
-export async function search(q, limit = 50) {
+// opts: {when: 'upcoming' | 'all' | 'past', calendar: id or ''} (0.7.3, #60).
+// Resolves to {results, pastCount} (pastCount only for an Upcoming search),
+// or null when a newer search has superseded this one.
+export async function search(q, opts = {}, limit = 50) {
   const id = ++searchReqId;
-  const data = await api('/search?' + new URLSearchParams({ q, limit }));
+  const params = { q, limit, when: opts.when || 'all' };
+  if (opts.calendar) params.calendar = opts.calendar;
+  const data = await api('/search?' + new URLSearchParams(params));
   if (id !== searchReqId) return null; // stale
-  return data.results || [];
+  return { results: data.results || [], pastCount: data.pastCount || 0 };
 }
 
 // --- undo ------------------------------------------------------------------

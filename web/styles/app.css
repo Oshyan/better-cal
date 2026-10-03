@@ -1429,8 +1429,12 @@ body.bc-dragging * { cursor: grabbing !important; }
 }
 .bc-qa-field { display: inline-flex; align-items: center; gap: 5px; min-width: 0; }
 .bc-qa-label { font-size: 11px; font-weight: 600; color: var(--fg-muted); }
-.bc-qa-date, .bc-qa-time, .bc-qa-cal { font-size: 12.5px; padding: 3px 6px; }
-.bc-qa-time { width: 88px; }
+.bc-qa-cal { font-size: 12.5px; padding: 3px 6px; }
+/* The editor's date and time boxes (0.7.3), sized to their text. */
+.bc-qa-field .bc-when-text { font-size: 12.5px; padding: 3px 6px; }
+.bc-qa-date .bc-when-date { width: 10.5em; }
+.bc-qa-date .bc-when-text { padding-right: 28px; }
+.bc-qa-time .bc-when-time { width: 6.6em; }
 .bc-qa-to { color: var(--fg-muted); font-size: 11.5px; }
 .bc-qa-allday { font-size: 12.5px; color: var(--fg); flex: none; }
 .bc-qa-calfield { min-width: 0; }
@@ -1526,6 +1530,15 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-search-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bc-search-loc { color: var(--fg-muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bc-search-date { margin-left: auto; color: var(--fg-muted); font-size: 12px; flex: none; }
+.bc-search-opts { display: flex; align-items: center; gap: 8px; padding: 8px 14px; border-bottom: 1px solid var(--border); }
+.bc-search-opts .bc-seg-btn { font-size: 13px; padding: 4px 10px; }
+.bc-search-cal { min-width: 0; max-width: 14em; font-size: 13px; padding: 4px 6px; }
+.bc-search-more {
+  display: flex; align-items: baseline; gap: 8px; width: 100%; padding: 8px 14px 10px;
+  border: none; border-top: 1px solid var(--border); background: none; color: var(--fg-muted); font-size: 13px; text-align: left; cursor: pointer;
+}
+.bc-search-more-act { color: var(--accent); font-weight: 600; }
+.bc-search-more:hover .bc-search-more-act { text-decoration: underline; }
 
 /* --- command palette ---------------------------------------------------------------- */
 
@@ -3073,9 +3086,6 @@ button.bc-review-title { color: var(--fg); padding: 0; }
 /* Card button rows wrap rather than push the page sideways (People). */
 .bc-card-actions { flex-wrap: wrap; max-width: 100%; }
 
-/* Quick add's time fields were a fixed 88px, which clipped "06:00 PM" to
-   "06:00 P" even before the touch font size; size them to the text. */
-.bc-qa-time { width: auto; min-width: 8.6em; }
 
 @media (pointer: coarse) {
   /* iOS Safari zooms the page when a field under 16px takes focus, and does
@@ -3936,6 +3946,10 @@ button.bc-review-title { color: var(--fg); padding: 0; }
   }
   .bc-search-input { padding: 14px 16px; min-height: 56px; font-size: 17px; }
   .bc-search-close { width: 44px; height: 44px; display: grid; place-items: center; }
+  .bc-search-opts { padding: 8px 16px; }
+  .bc-search-opts .bc-seg-btn { font-size: 14px; padding: 7px 12px; }
+  .bc-search-cal { flex: 1; max-width: none; font-size: 14px; padding: 7px 8px; }
+  .bc-search-more { padding: 14px 16px; font-size: 14px; }
   .bc-search-tags { padding: 10px 16px; gap: 8px; }
   .bc-search-tags .bc-tag-chip { font-size: 13px; padding: 7px 12px; }
   .bc-search-group-label { padding: 12px 16px 4px; }

@@ -788,6 +788,22 @@ checkEq('push label: a device names itself', 'Pixel 9 Pro · Chrome app', \Bette
 checkEq('push label: control characters and runs of space go', 'Mac · Chrome', \BetterCal\Domain\PushSubscriptions::label("Mac\n\t·   Chrome"));
 checkEq('push label: capped at 80 characters', 80, mb_strlen(\BetterCal\Domain\PushSubscriptions::label(str_repeat('x', 200))));
 checkEq('push label: nothing, or not text, is no label', [null, null], [\BetterCal\Domain\PushSubscriptions::label('  '), \BetterCal\Domain\PushSubscriptions::label(['x'])]);
+$nowSql = '2026-10-03 12:00:00';
+check('search upcoming: an event that has not ended', \BetterCal\Domain\Search::isUpcoming(['end_utc' => '2026-10-03 13:00:00', 'rrule' => null], $nowSql));
+check('search upcoming: one that ended is past', !\BetterCal\Domain\Search::isUpcoming(['end_utc' => '2026-10-03 11:00:00', 'rrule' => null], $nowSql));
+check('search upcoming: an open-ended series is upcoming', \BetterCal\Domain\Search::isUpcoming(['end_utc' => '2025-01-01 10:00:00', 'rrule' => 'FREQ=WEEKLY'], $nowSql));
+check('search upcoming: a series past its UNTIL is past', !\BetterCal\Domain\Search::isUpcoming(['end_utc' => '2025-01-01 10:00:00', 'rrule' => 'FREQ=WEEKLY;UNTIL=20260101T000000Z'], $nowSql));
+check('search upcoming: a series with UNTIL ahead is upcoming', \BetterCal\Domain\Search::isUpcoming(['end_utc' => '2025-01-01 10:00:00', 'rrule' => 'FREQ=DAILY;UNTIL=20261231'], $nowSql));
+// A stand-in expander (sabre is not installed for these tests): weekly from the series start.
+$weekly = new \BetterCal\Domain\Recurrence(static function (array $m, \DateTimeImmutable $ws, \DateTimeImmutable $we): array {
+    $out = [];
+    for ($s = \BetterCal\Support\Time::fromDb($m['start_utc']); $s < $we && count($out) < 200; $s = $s->modify('+7 days')) {
+        if ($s->modify('+1 hour') > $ws) { $out[] = ['start' => $s, 'end' => $s->modify('+1 hour')]; }
+    }
+    return $out;
+});
+$nx = \BetterCal\Domain\Search::nextOccurrence(['id' => 1, 'start_utc' => '2026-01-05 17:00:00', 'end_utc' => '2026-01-05 18:00:00', 'rrule' => 'FREQ=WEEKLY', 'tzid' => 'UTC', 'all_day' => 0], $nowSql, $weekly);
+check('search: a weekly series shows its next date', $nx !== null && $nx[0] === '2026-10-05 17:00:00' && $nx[1] === '2026-10-05 18:00:00');
 $g = GcalLink::parse($lumaUrl, 'America/Los_Angeles');
 checkEq('gcal luma title', 'The Commons Public Hours ☕', $g['title']);
 checkEq('gcal luma start (UTC->LA)', '2026-08-09T09:00:00-07:00', $g['start']);

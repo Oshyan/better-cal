@@ -8,6 +8,18 @@ import { todayKey } from '../lib/dates.js';
 
 const listeners = new Set();
 
+// Which sidebar groups are folded (calendar folders, All calendars, People),
+// kept per device across reloads (0.6.4): a phone and a desktop are set up
+// differently, the way the Manage section already is ('bc-manage-collapsed').
+const COLLAPSE_KEY = 'bc-sidebar-collapse';
+function savedCollapse() {
+  try {
+    const v = JSON.parse(localStorage.getItem(COLLAPSE_KEY) || 'null');
+    return v && typeof v === 'object' ? v : {};
+  } catch { return {}; }
+}
+const collapse0 = savedCollapse();
+
 export const state = {
   booted: false,
   pendingHandoff: null, // a deep link or share that arrived signed out; run after sign-in
@@ -18,10 +30,10 @@ export const state = {
   calendars: [],
   folders: [],
   tags: [],
-  collapsedFolders: {},
+  collapsedFolders: collapse0.folders && typeof collapse0.folders === 'object' ? collapse0.folders : {},
   editorDirty: false, // editor drawer has unsaved entered data (confirm on close)
-  collapsedAllCals: false,
-  collapsedPeople: false,
+  collapsedAllCals: !!collapse0.allCals,
+  collapsedPeople: !!collapse0.people,
 
   // People directory (sidebar folder, editor autocomplete, People page).
   people: [],         // [{id, name, notes, showOnCalendar, eventCount, currentSpan, nextSpan, ...}]
@@ -151,6 +163,18 @@ export function set(patch) {
   Object.assign(state, typeof patch === 'function' ? patch(state) : patch);
   for (const fn of listeners) fn(state);
 }
+
+// Write the fold state when it changes (any path: the sidebar, a saved view).
+let lastCollapse = JSON.stringify({ folders: state.collapsedFolders, allCals: state.collapsedAllCals, people: state.collapsedPeople });
+let lastRefs = [state.collapsedFolders, state.collapsedAllCals, state.collapsedPeople];
+listeners.add((st) => {
+  if (st.collapsedFolders === lastRefs[0] && st.collapsedAllCals === lastRefs[1] && st.collapsedPeople === lastRefs[2]) return;
+  lastRefs = [st.collapsedFolders, st.collapsedAllCals, st.collapsedPeople];
+  const now = JSON.stringify({ folders: st.collapsedFolders, allCals: st.collapsedAllCals, people: st.collapsedPeople });
+  if (now === lastCollapse) return;
+  lastCollapse = now;
+  try { localStorage.setItem(COLLAPSE_KEY, now); } catch { /* private mode: folds last for this visit */ }
+});
 
 export function subscribe(fn) {
   listeners.add(fn);

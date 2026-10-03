@@ -4,6 +4,12 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.6.4 (2026-10-03)
+
+- **Folded sidebar groups stay folded across reloads** (calendar folders, All calendars, People), kept per device, so a phone and a desktop can be set up differently.
+- **A reminder's Map button asks for the Google Maps app on Android** (an intent link naming it), since a plain link from a notification opens in a browser tab. Without the app it falls back to the same place on the web, and a browser that refuses the request gets the plain link as before.
+- **The web app manifest names the app's identity and has a full-bleed PNG icon,** which Android's adaptive icons and Chrome's full install both use. A full install has its own notification icon and no "Open in Chrome" item in the notification shade.
+
 ## 0.6.3 (2026-10-03)
 
 - **Better-Cal's notification icon is a calendar, not a square.** Android draws the small status-bar and notification-header icon from the image's shape alone, and the full-colour app icon is solid all over, so it showed as a plain square. Notifications now carry a white calendar silhouette for that spot.

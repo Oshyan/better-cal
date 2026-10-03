@@ -18,7 +18,7 @@ import {
 } from './actions.js';
 import { CalDot, TripBadge, LinkIcon, Icon, PinIcon } from '../ui/icons.js';
 import { onOutsidePress, insideAny } from '../ui/outside.js';
-import { loadLeaflet, addBaseTiles, linkify } from './EventDetail.js';
+import { loadLeaflet, addBaseTiles, linkify } from './eventparts.js';
 import { DurationSuffix } from '../ui/EventChip.js';
 import { tripSpan, tripSpanLabel, candidateTrips, attachableInSpan } from '../ui/trips.js';
 import {

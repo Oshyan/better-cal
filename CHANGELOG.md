@@ -4,6 +4,10 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.7.2 (2026-10-03)
+
+- **The old full-page event view is gone.** Since 0.7.0 every event and trip opens in the side panel or the sheet, so the view, its state, its keyboard stepping and 43 style rules that only it used are removed. Every way that could still have reached it (an event not yet loaded, the full-view request from a double-click or an Agenda line) now opens the panel or sheet. The pieces the panel, sheet and trips share (the mini-map and base map, links in descriptions, a repeat rule in words) moved to their own module.
+
 ## 0.7.1 (2026-10-03)
 
 - **A trip's events show their map numbers only when the map is in view.** On a phone the collapsed sheet hides the map, and the numbers beside the places pointed at nothing.

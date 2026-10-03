@@ -23,7 +23,7 @@ import { RelationshipControl } from './Relationship.js';
 import { prefetchMap } from './prefetch.js';
 import { Skeleton } from './PageShell.js';
 import { updateEvent, deleteEvent, setRelationship, sendFeedback, enterReschedule, openDetail, sameDayList, openTripByEventId, googleBacked, GOOGLE_NO_UNDO } from './actions.js';
-import { describeRrule } from './EventDetail.js';
+import { describeRrule } from './eventparts.js';
 import { isMobile, trapFocus, MOBILE_QUERY } from '../ui/DayExpand.js';
 import { ThumbIcon, PinIcon, LinkIcon, Icon } from '../ui/icons.js';
 import { DurationSuffix } from '../ui/EventChip.js';

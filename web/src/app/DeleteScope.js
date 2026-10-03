@@ -6,7 +6,7 @@
 // version for a surface that has room for a row of buttons.
 
 import { html } from '../../vendor/index.js';
-import { describeRrule } from './EventDetail.js';
+import { describeRrule } from './eventparts.js';
 import { deleteEvent, googleBacked, GOOGLE_NO_UNDO } from './actions.js';
 
 /** @param {{occ:object, verb:string, danger?:boolean, onPick:(scope:string)=>void, onCancel:()=>void, compact?:boolean}} props */

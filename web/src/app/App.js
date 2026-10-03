@@ -31,7 +31,6 @@ import { BottomBar } from './BottomBar.js';
 import { Sidebar } from './Sidebar.js';
 import { QuickAdd } from './QuickAdd.js';
 import { EventPopover } from './EventPopover.js';
-import { EventDetail } from './EventDetail.js';
 import { GroupPopover } from './GroupPopover.js';
 import { EditorDrawer } from './EditorDrawer.js';
 import { CreateDrawer } from './CreateDrawer.js';
@@ -529,15 +528,11 @@ export function App() {
     // dayKey (passed by the day-expand list) pins prev/next navigation to
     // the day being browsed rather than each event's own start day.
     const dayKey = opts && opts.dayKey;
+    // The full view (a double-click, a trip, the agenda's multi-day line) is
+    // the side panel on a desktop and the sheet on a phone, the same as a
+    // plain open; it never toggles closed.
     if (opts && opts.detail) {
-      const target = state.occ.get(instanceId);
-      // The side panel (desktop) and the event sheet (phone) hold everything
-      // the old full page did, for trips too (0.7.0).
-      if (target) {
-        set({ popover: { instanceId, anchorRect, dayKey }, detail: null, groupPopover: null, expandedDay: null });
-        return;
-      }
-      set({ detail: { instanceId, dayKey }, popover: null, groupPopover: null, expandedDay: null });
+      set({ popover: { instanceId, anchorRect, dayKey }, groupPopover: null, expandedDay: null });
       return;
     }
     // Clicking the event whose popover is already open dismisses it (a
@@ -890,7 +885,6 @@ export function App() {
     <${QuickAdd} />
     <${EventPopover} />
     <${GroupPopover} />
-    <${EventDetail} />
     <${EditorDrawer} />
     <${CreateDrawer} />
     <${SearchOverlay} />

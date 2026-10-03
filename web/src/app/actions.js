@@ -137,7 +137,7 @@ export function jumpToDate(dayKey, flashId) {
 }
 
 export function closeOverlays() {
-  if (state.popover || state.detail || state.groupPopover || state.editor || state.expandedDay ||
+  if (state.popover || state.groupPopover || state.editor || state.expandedDay ||
       state.searchOpen || state.quickAddOpen || state.jumpOpen || state.shortcutsOpen ||
       state.createDrawer) {
     // An editor with entered data closes like anything else; the draft is
@@ -149,7 +149,7 @@ export function closeOverlays() {
     // come back at the next boot (drafts.js restores whatever is still saved).
     if (state.quickAddOpen) clearQuickAddText();
     set({
-      popover: null, detail: null, groupPopover: null, editor: null, expandedDay: null, deletePrompt: null, attendPrompt: null,
+      popover: null, groupPopover: null, editor: null, expandedDay: null, deletePrompt: null, attendPrompt: null,
       searchOpen: false, quickAddOpen: false, jumpOpen: false, shortcutsOpen: false,
       editorDirty: false, createDrawer: null,
     });
@@ -160,15 +160,11 @@ export function closeOverlays() {
 
 // Open the full detail view for one occurrence, replacing lighter overlays.
 export function openDetail(instanceId) {
-  // An event's full view is the side panel on a desktop (0.5.5) and the event
-  // sheet on a phone (0.6.9: search results and notification links used to
-  // open the older full page there). Trips too, since 0.7.0.
+  // An event's full view is the side panel on a desktop (0.5.5) and the
+  // sheet on a phone (0.6.9), for trips too (0.7.0). The old full-page view
+  // is gone (0.7.2).
   const occ = state.occ.get(instanceId);
-  if (occ) {
-    set({ popover: { instanceId, anchorRect: null, dayKey: occDayKey(occ) }, detail: null, groupPopover: null, expandedDay: null });
-    return;
-  }
-  set({ detail: { instanceId }, popover: null, groupPopover: null, expandedDay: null });
+  set({ popover: { instanceId, anchorRect: null, dayKey: occ ? occDayKey(occ) : undefined }, groupPopover: null, expandedDay: null });
 }
 
 // Step the open event (sheet or panel) to the previous or next event of the
@@ -226,19 +222,6 @@ export function sameDayList(occ, anchorDay, pin = null) {
   return list;
 }
 
-// Step the open detail view to the previous/next event of the same day.
-export function stepDetailSameDay(dir) {
-  if (!state.detail) return false;
-  const occ = state.occ.get(state.detail.instanceId);
-  if (!occ) return false;
-  const dayKey = state.detail.dayKey || occDayKey(occ);
-  const list = sameDayList(occ, dayKey);
-  const i = list.findIndex((o) => o.instanceId === occ.instanceId);
-  const target = i >= 0 ? list[i + dir] : null;
-  if (!target) return false;
-  set({ detail: { instanceId: target.instanceId, dayKey } });
-  return true;
-}
 
 // --- reschedule mode (PRD 5.9) -----------------------------------------------
 
@@ -255,7 +238,6 @@ export function enterReschedule(instanceId) {
   set({
     reschedule: { instanceId, grabbed: true },
     popover: null,
-    detail: null,
     groupPopover: null,
     expandedDay: null,
     editor: null,
@@ -640,7 +622,7 @@ export function openTripByEventId(eventId) {
 // survive on their own calendars.
 export async function deleteTripOnly(occ) {
   const removed = removeOccurrencesOfEvent(occ.eventId);
-  set({ detail: null });
+  set({ popover: null });
   try {
     await api('/events/' + occ.eventId, { method: 'DELETE', body: {} });
     toast('Trip removed, its events kept', { undoable: true });
@@ -656,7 +638,7 @@ export async function deleteTripOnly(occ) {
 // "Delete trip and its N events": members first, then the trip (api-contract
 // order), so repeated undo restores the trip first and then its events.
 export async function deleteTripAndMembers(occ, members) {
-  set({ detail: null });
+  set({ popover: null });
   try {
     for (const m of members) {
       await api('/events/' + m.eventId, {

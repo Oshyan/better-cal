@@ -3,7 +3,8 @@
 # against SQLite in memory and pure functions, the smoke suite is frontend
 # logic under Node, the static check walks the module graph, and the MCP test
 # spawns the server on localhost. Only GitHub's own actions are used; the
-# runner's stock PHP is enough.
+# runner's stock PHP is enough. One job also installs the PHP libraries the way
+# a fresh install does, on the minimum PHP.
 name: tests
 
 on:
@@ -28,6 +29,30 @@ jobs:
       - name: PHP and extensions on the runner
         run: php -v && php -m | grep -Ei 'pdo_sqlite|sodium|mbstring|curl|intl'
       - name: Server tests
+        run: php server/tests/run.php
+
+  # A fresh install on the lowest PHP Better-Cal supports: Composer installs
+  # from the lock file exactly as docs/install.md says, and the suite runs
+  # again with the real libraries present. It catches a lock resolved on a
+  # newer PHP (0.8.3: Symfony 8 needed 8.4.1) the day it is pushed, rather
+  # than on someone's first install. ubuntu-24.04 rather than -latest, because
+  # its stock PHP is 8.3 and -latest will move on.
+  install:
+    name: Fresh install on PHP 8.3
+    runs-on: ubuntu-24.04
+    env:
+      XDEBUG_MODE: off
+    steps:
+      - uses: actions/checkout@v4
+      - name: PHP is 8.3
+        run: php -v && php -r 'exit(PHP_MAJOR_VERSION . "." . PHP_MINOR_VERSION === "8.3" ? 0 : 1);'
+      - name: Platform requirements of the lock file
+        working-directory: server
+        run: composer check-platform-reqs --lock --no-dev
+      - name: composer install, as an install does
+        working-directory: server
+        run: composer install --no-dev --no-interaction --prefer-dist
+      - name: Server tests with the installed libraries
         run: php server/tests/run.php
 
   web:

@@ -116,7 +116,7 @@ export function SearchOverlay() {
     else if (e.key === 'Enter' && ordered[sel]) { e.preventDefault(); go(ordered[sel]); }
   };
 
-  const renderGroup = (label, items, offset) => items.length > 0 && html`<div class="bc-search-group">
+  const renderGroup = (label, items, offset, past = false) => items.length > 0 && html`<div class=${'bc-search-group' + (past ? ' is-past' : '')}>
     <div class="bc-search-group-label">${label}</div>
     ${items.map((occ, i) => {
       const cal = state.calendars.find((c) => c.id === occ.calendarId);
@@ -161,7 +161,7 @@ export function SearchOverlay() {
       <div class="bc-search-results">
         ${results !== null && ordered.length === 0 && html`<div class="bc-empty">No matches for "${q}"</div>`}
         ${renderGroup('Upcoming', future, 0)}
-        ${renderGroup('Past', past, future.length)}
+        ${renderGroup('Past', past, future.length, true)}
       </div>
     </div>
   </div>`;

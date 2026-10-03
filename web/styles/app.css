@@ -1422,7 +1422,7 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-sys-ok { color: var(--fg-muted); }
 .bc-sys-bad { color: var(--danger); font-weight: 600; }
 .bc-sys-err { color: var(--fg-muted); max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.bc-map-wrap { position: relative; margin-top: 6px; }
+.bc-map-wrap { position: relative; margin-top: 6px; isolation: isolate; } /* Leaflet layers (z 400+) stay inside the map, under menus (0.6.10) */
 /* Leaflet ships a white attribution strip and light-grey tile gaps; both
    follow the theme here (the tiles themselves switch style, lib/maps.js). */
 /* leaflet.css is injected after this sheet and uses the same two-class
@@ -4057,3 +4057,11 @@ button.bc-review-title { color: var(--fg); padding: 0; }
   .bc-set-section .bc-link-btn { min-height: 40px; }
   .bc-set-section input[type="checkbox"] { width: 20px; height: 20px; }
 }
+
+/* Past search results recede the way past events do on the calendar (0.6.10), so it is
+   plain at a glance which results are behind you; the one under the pointer or
+   keyboard comes back to full strength. */
+.bc-search-group.is-past .bc-search-row { opacity: 0.62; filter: saturate(0.5); }
+.bc-search-group.is-past .bc-search-row:hover,
+.bc-search-group.is-past .bc-search-row.is-selected,
+.bc-search-group.is-past .bc-search-row:focus-visible { opacity: 1; filter: none; }

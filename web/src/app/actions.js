@@ -179,11 +179,12 @@ export function stepPopoverSameDay(dir) {
   const occ = state.occ.get(pop.instanceId);
   if (!occ) return false;
   const dayKey = pop.dayKey || occDayKey(occ);
-  const list = sameDayList(occ, dayKey);
+  const pin = pop.pin || pop.instanceId;
+  const list = sameDayList(occ, dayKey, pin);
   const i = list.findIndex((o) => o.instanceId === occ.instanceId);
   const target = i >= 0 ? list[i + dir] : null;
   if (!target) return false;
-  set({ popover: { ...pop, instanceId: target.instanceId, dayKey } });
+  set({ popover: { ...pop, pin, instanceId: target.instanceId, dayKey } });
   return true;
 }
 
@@ -197,14 +198,17 @@ export function stepPopoverSameDay(dir) {
 // kind the Show filter has switched off, and not context (weather, sunset:
 // information in the day's header, not an event to step onto). The open
 // event always counts, so its place in the list is never lost.
-export function sameDayList(occ, anchorDay) {
+// `pin` (0.6.10): the event the sheet or panel was opened on stays in the
+// list while you step away from it, even when the views hide it (a search
+// result on a hidden calendar), so stepping back to it always works.
+export function sameDayList(occ, anchorDay, pin = null) {
   const dayKey = anchorDay || occDayKey(occ);
   const ed = epochDayOfKey(dayKey);
   const visible = new Set(state.calendars.filter((c) => c.visible).map((c) => c.id));
   const showRel = state.showRel || {};
   const list = [];
   for (const o of state.occ.values()) {
-    if (o.instanceId !== occ.instanceId) {
+    if (o.instanceId !== occ.instanceId && o.instanceId !== pin) {
       if (!visible.has(o.calendarId)) continue;
       if (o.attendance === 'hidden') continue;
       if (o.relationship === 'context') continue;

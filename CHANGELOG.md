@@ -4,6 +4,10 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.6.6 (2026-10-03)
+
+- **A reminder's Map button opens the place on Google Maps again,** whose page offers to open it in the Maps app. The Android intent link tried in 0.6.4 can't be launched from a notification, so it is gone.
+
 ## 0.6.5 (2026-10-03)
 
 - **Undo on a toast works on the first tap with the event sheet open.** A press outside the sheet closes it and is swallowed, and the toast counted as outside, so the first tap only closed the sheet. Toasts now answer for themselves.

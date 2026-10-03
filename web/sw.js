@@ -197,32 +197,14 @@ self.addEventListener('push', (event) => {
   }));
 });
 
-function mapsIntent(httpsUrl) {
-  try {
-    const u = new URL(httpsUrl);
-    return 'intent://' + u.host + u.pathname + u.search
-      + '#Intent;scheme=https;package=com.google.android.apps.maps;S.browser_fallback_url='
-      + encodeURIComponent(httpsUrl) + ';end';
-  } catch (e) {
-    return null;
-  }
-}
-
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   const data = event.notification.data || {};
-  // A button goes straight out: the call, or the place in the maps app.
-  // On Android, Map asks for the Google Maps app by name (an intent link):
-  // a plain link from a notification opens in a browser tab, never handing
-  // off to the app. Without the app the intent falls back to the same page
-  // on the web, and a browser that refuses the intent gets the plain link.
+  // A button goes straight out: the call, or the place on Google Maps, whose
+  // page offers to open it in the Maps app. (An Android intent link naming
+  // the Maps app was tried in 0.6.4; a notification can't launch one.)
   if ((event.action === 'join' || event.action === 'map') && data[event.action]) {
-    const target = data[event.action];
-    const viaApp = event.action === 'map' && /Android/i.test(self.navigator.userAgent) ? mapsIntent(target) : null;
-    event.waitUntil(
-      (viaApp ? clients.openWindow(viaApp) : Promise.reject(new Error('no intent')))
-        .catch(() => clients.openWindow(target)),
-    );
+    event.waitUntil(clients.openWindow(data[event.action]));
     return;
   }
   const url = data.url || '/';

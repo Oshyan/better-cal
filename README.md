@@ -45,7 +45,7 @@ Releases are tagged (`v0.1.1`) and listed on GitHub; `CHANGELOG.md` says what ch
 
 ## License
 
-MIT, see [LICENSE](LICENSE). Use it, fork it, host it, sell it. If you build something on it, a link back to this repo is appreciated but not required.
+MIT, see [LICENSE](LICENSE). Use it, fork it, host it, sell it. If you build something on it, a link back to this repo is appreciated but not required. Bundled and installed third-party software keeps its own licenses, listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Stack
 

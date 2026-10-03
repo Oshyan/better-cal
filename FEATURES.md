@@ -34,13 +34,22 @@ Multi-day events show their total duration beside the title on every visible seg
 - Sidebar state is legible at a glance: hidden calendars and people are dimmed with a light strikethrough, while an away person is italic (a distinct channel, so "away" never looks like "hidden").
 - Day numbers open the day view; the strip beside them expands the day in place; a hover + creates an event. Week and day headers click through to the day view too.
 - Collapsible sidebar (persisted), hover-revealed visibility checkboxes with dimmed hidden calendars, and a collapsible all-day lane in day/week views.
-- Mobile-aware overview: a 3-day ribbon replaces the month grid on narrow screens (configurable).
 - Sidebar mini-month for orientation and fast jumps; month dividers keep long scrolls legible.
 - Quick jump (press `g`): type a date or a natural phrase and land there.
 - Full hotkey coverage (navigation, view switching, creation, search, filter, undo) with a `?` cheat sheet generated from the live bindings.
 - Day expand: click a crowded day to see everything, with per-row open buttons.
 - Saved views capture a mode plus filter state and restore it in one click.
 - Live view filter: type to dim non-matching events in place without a reload.
+
+### On phones
+
+- An installable app with a phone layout of its own: navigation along the top (menu, previous and next, the month, Today), view and find along the bottom (View, Search, New, Filter, Review).
+- Split month: dense weeks with every title over a continuous day list, moving together as you scroll, with a handle to trade one for the other. Full month, 3 day, week (pinch for day width), day and agenda too.
+- Events open in a sheet: step through the day, pull it up for everything (map, full description, invitation replies, plugin data), and trips open the same way.
+- A full-screen editor with typed dates and times ("fri", "7p") and quarter-hour lists, and quick add from the New button.
+- Back works on every surface (the sheet, search, the editor, the drawer, every page), and the sidebar drawer swipes in from the edge.
+- In the drawer, each calendar is listed once in its folder; press and hold one to show only it or open its settings.
+- Push reminders with Map and Join buttons.
 
 ### Creating and editing
 
@@ -133,7 +142,7 @@ Multi-day events show their total duration beside the title on every visible seg
 
 ### Self-hosting and privacy
 
-- Plain PHP 8.4 + MySQL on your own server; no framework, no build step (Preact + HTM served as-is), no telemetry.
+- Plain PHP 8.4+ with MySQL or MariaDB on your own server (shared hosting is enough); no framework, no build step (Preact + HTM served as-is), no telemetry.
 - Your data is ordinary SQL you can query, back up, and take with you.
 - LLM features are optional, provider-keyed, and degrade gracefully; the deterministic paths always work without them.
 - Single-user by design today, hardened with session auth, CSRF protection, and scoped API tokens.

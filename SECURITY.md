@@ -25,7 +25,7 @@ Known residuals, accepted and documented rather than fixed:
 - Prompt filters and ranking judge events in batches of 25, so one event's text can in principle sway the model's verdicts on the others in its batch. The text is sent as separate, marked data.
 - The deploy script leaves `.env` root-owned, but the app user owns the directory it sits in, so this is not a hard boundary.
 
-Anything you find after that is new, and worth telling us about.
+These scans cover the code as of release 0.1.5 (2026-09-23). Changes since then have had tests, including regression tests for every fixed finding, and review as they were made, but not yet a full scan. Anything you find is worth telling us about.
 
 ## Design trade-offs
 

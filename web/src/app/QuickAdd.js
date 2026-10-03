@@ -6,6 +6,11 @@
 // changes that field. The strip is the source of truth on Create. Enter
 // creates from anywhere in the card (flushing any pending parse first), Esc
 // cancels, "More options" transfers everything into the full editor drawer.
+//
+// 0.7.3: the date and times are the editor's own fields (WhenFields.js):
+// click in and type "fri" or "7p", or pick a quarter hour from the list. The
+// end list runs on from the start with each length, so overnight is one
+// pick; an end at or before the start is the next day.
 
 import { html, useState, useRef, useEffect } from '../../vendor/index.js';
 import { useStore, set, state, toast } from './store.js';
@@ -15,11 +20,20 @@ import { saveQuickAddText, clearQuickAddText } from './drafts.js';
 import { PlaceInput, pickFillText } from './PlaceInput.js';
 import { onOutsidePress, insideAny } from '../ui/outside.js';
 import {
-  parseISO, dayKeyOf, dateOfDayKey, addDaysKey, toISOWithOffset, pad, localTz,
+  parseISO, dayKeyOf, dateOfDayKey, addDaysKey, toISOWithOffset, pad, localTz, fmtTime,
 } from '../lib/dates.js';
 import { CalendarSelect } from '../ui/CalendarSelect.js';
+import { DateField, TimeField } from './WhenFields.js';
+import { parseClockText, resolveClock, minsToHHMM, hhmmToMins, durationLabel } from '../lib/whenparse.js';
 
 const hm = (d) => pad(d.getHours()) + ':' + pad(d.getMinutes());
+const reads24h = () => /13/.test(fmtTime(new Date(2000, 0, 1, 13, 0)));
+const clockLabel = (mins) => fmtTime(new Date(2000, 0, 1, Math.floor(mins / 60), mins % 60));
+// Minutes from the start to the end; an end at or before the start is the next day.
+const spanOf = (form) => {
+  const d = hhmmToMins(form.endTime) - hhmmToMins(form.startTime);
+  return d > 0 ? d : d + 1440;
+};
 
 // Directory lookup for a parsed name, case-insensitive like the server's.
 const knownPerson = (name) =>
@@ -91,7 +105,7 @@ function buildRange(form, draft, dateTouched) {
   const [eh, em] = form.endTime.split(':').map(Number);
   const s = new Date(base.getFullYear(), base.getMonth(), base.getDate(), sh, sm);
   let e = new Date(base.getFullYear(), base.getMonth(), base.getDate(), eh, em);
-  if (e <= s) e = new Date(s.getTime() + 3600000); // end at/before start: give it an hour
+  if (e <= s) e = new Date(base.getFullYear(), base.getMonth(), base.getDate() + 1, eh, em); // overnight
   return { start: toISOWithOffset(s), end: toISOWithOffset(e) };
 }
 
@@ -292,11 +306,13 @@ export function QuickAdd() {
   };
 
   // Enter anywhere in the card creates; buttons and links keep Enter for
-  // their own activation. Esc is handled by the global keyboard map.
+  // their own activation, and the date and time boxes for applying what was
+  // typed in them. Esc is handled by the global keyboard map.
   const onCardKeyDown = (e) => {
     if (e.key !== 'Enter') return;
     const tag = e.target.tagName;
     if (tag === 'BUTTON' || tag === 'A') return;
+    if (e.target.closest && e.target.closest('.bc-when-date, .bc-when-time')) return;
     e.preventDefault();
     submit();
   };
@@ -336,6 +352,37 @@ export function QuickAdd() {
     });
   };
 
+  // Start and end: a new start keeps the event's length; typed times read
+  // like the editor's (an hour with no am/pm keeps the start's half of the
+  // day; an end is the first reading after the start).
+  const startMins = hhmmToMins(form.startTime);
+  const span = spanOf(form);
+  const setStartMins = (mins) => {
+    touchedRef.current.add('startTime');
+    setForm((f) => {
+      const nf = { ...f, startTime: minsToHHMM(mins), endTime: minsToHHMM((mins + spanOf(f)) % 1440) };
+      formRef.current = nf;
+      return nf;
+    });
+  };
+  const onStartText = (t) => {
+    const mins = resolveClock(parseClockText(t), { role: 'start', current: startMins, h24: reads24h() });
+    if (mins == null) return false;
+    setStartMins(mins);
+    return true;
+  };
+  const onEndText = (t) => {
+    const mins = resolveClock(parseClockText(t), { role: 'end', after: startMins, h24: reads24h() });
+    if (mins == null) return false;
+    touch('endTime', minsToHHMM(mins));
+    return true;
+  };
+  const startOptions = Array.from({ length: 96 }, (_, i) => ({ value: i * 15, label: clockLabel(i * 15), current: startMins === i * 15 }));
+  const endOptions = Array.from({ length: 96 }, (_, i) => {
+    const len = (i + 1) * 15;
+    return { value: (startMins + len) % 1440, label: clockLabel((startMins + len) % 1440), note: (startMins + len >= 1440 ? 'next day · ' : '') + durationLabel(len), current: len === span };
+  });
+
   const localCals = state.calendars.filter((c) => c.editable);
   const flashCls = (f) => (flash && flash.has(f) ? ' bc-nl-applied' : '');
   const canCreate = (!busy && draft && draft.intent === 'availability') || (!busy && !!((draft && draft.title) || text.trim()) &&
@@ -368,31 +415,25 @@ export function QuickAdd() {
         ${draft.source === 'fallback' && html`<span class="bc-qchip bc-qchip-fallback" title="Parsed without the language model">basic parse</span>`}
       </div>`}
       ${(!draft || draft.intent !== 'availability') && html`<div class="bc-quickadd-strip">
-        <label class=${'bc-qa-field' + flashCls('dateKey')}>
+        <div class=${'bc-qa-field bc-qa-date' + flashCls('dateKey')}>
           <span class="bc-qa-label">Date</span>
-          <input
-            type="date" class="bc-qa-date" value=${form.dateKey}
-            onInput=${(e) => touch('dateKey', e.target.value)}
-            aria-label="Date"
-          />
-        </label>
-        ${!form.allDay && html`<label class=${'bc-qa-field' + flashCls('startTime')}>
+          <${DateField} value=${form.dateKey} ariaLabel="Date" onChange=${(k) => touch('dateKey', k)} />
+        </div>
+        ${!form.allDay && html`<div class=${'bc-qa-field bc-qa-time' + flashCls('startTime')}>
           <span class="bc-qa-label">Start</span>
-          <input
-            type="time" class="bc-qa-time" value=${form.startTime}
-            onInput=${(e) => touch('startTime', e.target.value)}
-            aria-label="Start time"
+          <${TimeField}
+            display=${clockLabel(startMins)} options=${startOptions} currentIdx=${Math.min(95, Math.floor(startMins / 15))}
+            ariaLabel="Start time" onText=${onStartText} onOption=${setStartMins}
           />
-        </label>
+        </div>
         <span class="bc-qa-to" aria-hidden="true">to</span>
-        <label class=${'bc-qa-field' + flashCls('endTime')}>
+        <div class=${'bc-qa-field bc-qa-time' + flashCls('endTime')}>
           <span class="bc-qa-label">End</span>
-          <input
-            type="time" class="bc-qa-time" value=${form.endTime}
-            onInput=${(e) => touch('endTime', e.target.value)}
-            aria-label="End time"
+          <${TimeField}
+            display=${clockLabel(hhmmToMins(form.endTime))} options=${endOptions} currentIdx=${Math.max(0, Math.min(95, Math.round(span / 15) - 1))}
+            ariaLabel="End time" onText=${onEndText} onOption=${(m) => touch('endTime', minsToHHMM(m))}
           />
-        </label>`}
+        </div>`}
         <label class=${'bc-check bc-qa-allday' + flashCls('allDay')}>
           <input
             type="checkbox" checked=${form.allDay}

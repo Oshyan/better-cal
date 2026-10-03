@@ -60,7 +60,9 @@ export function loadEditorDraft() {
 export function discardEditorWithUndo() {
   const draft = loadEditorDraft() || (state.editor ? { editor: bareEditor(state.editor), form: null } : null);
   clearEditorDraft();
-  set({ editor: null, editorDirty: false });
+  // Back to the event the editor was opened from, if any (actions.editorReturn).
+  const back = state.editor && state.editor.returnTo;
+  set({ editor: null, editorDirty: false, ...(back ? { popover: back } : {}) });
   if (!draft || !draft.form) return;
   toast('Draft discarded', {
     actionLabel: 'Undo',

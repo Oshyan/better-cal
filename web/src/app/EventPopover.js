@@ -22,7 +22,7 @@ import { DeleteScope, ScopeChoice } from './DeleteScope.js';
 import { RelationshipControl } from './Relationship.js';
 import { prefetchMap } from './prefetch.js';
 import { Skeleton } from './PageShell.js';
-import { updateEvent, deleteEvent, setRelationship, sendFeedback, enterReschedule, openDetail, sameDayList, openTripByEventId, googleBacked, GOOGLE_NO_UNDO } from './actions.js';
+import { updateEvent, deleteEvent, setRelationship, sendFeedback, enterReschedule, openDetail, sameDayList, openTripByEventId, goBackTo, googleBacked, GOOGLE_NO_UNDO } from './actions.js';
 import { describeRrule } from './eventparts.js';
 import { isMobile, trapFocus, MOBILE_QUERY } from '../ui/DayExpand.js';
 import { ThumbIcon, PinIcon, LinkIcon, Icon } from '../ui/icons.js';
@@ -170,12 +170,16 @@ export function EventPopover() {
     if (!sheet) return undefined;
     // Opened from search, the sheet takes over search's entry (and the one
     // search may have handed it), so one Back closes it, not two.
-    if (history.state && (history.state.bcSearch || history.state.bcSheet)) history.replaceState({ bcSheet: 1 }, '');
+    // Back from the editor to this event (0.7.3) takes the editor's entry.
+    if (history.state && (history.state.bcSearch || history.state.bcSheet || history.state.bcEditor)) history.replaceState({ bcSheet: 1 }, '');
     else history.pushState({ bcSheet: 1 }, '');
     const onPop = () => {
       // An event opened from its trip: Back returns to the trip (0.7.0).
+      // Opened from search: Back returns to the results (0.7.3), which
+      // push their own entry.
       const back = state.popover && state.popover.backTo;
-      if (back) { set({ popover: { instanceId: back.instanceId, anchorRect: null } }); history.pushState({ bcSheet: 1 }, ''); return; }
+      if (back && back.search) { poppedRef.current = true; goBackTo(back); return; }
+      if (back) { goBackTo(back); history.pushState({ bcSheet: 1 }, ''); return; }
       if (fullRef.current) { setFull(false); history.pushState({ bcSheet: 1 }, ''); return; }
       poppedRef.current = true;
       set({ popover: null });
@@ -183,8 +187,12 @@ export function EventPopover() {
     window.addEventListener('popstate', onPop);
     return () => {
       window.removeEventListener('popstate', onPop);
-      // Edit from the sheet: the editor takes this entry over rather than stacking another.
-      if (!poppedRef.current && history.state && history.state.bcSheet && !state.editor) history.back();
+      // Edit from the sheet: the editor takes this entry over rather than
+      // stacking another; "‹ Search" hands it back to search (0.7.3).
+      if (!poppedRef.current && history.state && history.state.bcSheet && !state.editor) {
+        if (state.searchOpen) history.replaceState({ bcSearch: 1 }, '');
+        else history.back();
+      }
       poppedRef.current = false;
     };
   }, [sheet]);

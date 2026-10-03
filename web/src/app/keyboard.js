@@ -7,7 +7,7 @@
 import { state, set } from './store.js';
 import {
   rosterViews, setView, cycleView, goToday, navigate, closeOverlays,
-  enterReschedule, openDetail, deleteEvent, stepPopoverSameDay, googleBacked, toggleRel, applyDefaultView,
+  enterReschedule, openDetail, deleteEvent, stepPopoverSameDay, googleBacked, toggleRel, applyDefaultView, editFromView,
 } from './actions.js';
 import { HOTKEYS } from './hotkeys.js';
 
@@ -60,7 +60,7 @@ export const handlers = {
   editEvent: () => {
     const occ = focusedOcc();
     if (!occ || isFeedOcc(occ)) return false;
-    set({ popover: null, editor: { mode: 'edit', occ } });
+    editFromView(occ);
     return true;
   },
   reschedule: () => {

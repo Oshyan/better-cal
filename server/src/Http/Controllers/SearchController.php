@@ -25,8 +25,22 @@ final class SearchController
     {
         $userId = (int) $req->user['id'];
         $q = (string) ($req->q('q') ?? '');
-        $limit = (int) ($req->q('limit') ?? '50');
-        $rows = $this->search->search($userId, $q, $limit);
+        $limit = max(1, min(200, (int) ($req->q('limit') ?? '50')));
+        // #60: Upcoming (the default), All or Past, and optionally one calendar,
+        // applied in the query before the limit.
+        $when = (string) ($req->q('when') ?? 'all');
+        if (!in_array($when, ['all', 'upcoming', 'past'], true)) {
+            $when = 'all';
+        }
+        $calendarId = $req->q('calendar');
+        $opts = ['when' => $when, 'calendarId' => ($calendarId !== null && $calendarId !== '' && ctype_digit((string) $calendarId)) ? (int) $calendarId : null];
+        $rows = $this->search->search($userId, $q, $limit, true, $opts);
+        $upcomingIds = [];
+        foreach ($rows as $row) {
+            if (!empty($row['_upcoming'])) {
+                $upcomingIds[(int) $row['id']] = true;
+            }
+        }
 
         // User filters: hide drops rows, dim/highlight mark them (additive
         // fields). Prompt filters join cached background verdicts; no LLM
@@ -66,6 +80,7 @@ final class SearchController
 
         $results = $this->events->serializeRows($rows);
         foreach ($results as &$occ) {
+            $occ['upcoming'] = isset($upcomingIds[$occ['eventId']]);
             if (isset($dimmedIds[$occ['eventId']])) {
                 $occ['dimmed'] = true;
             }
@@ -74,6 +89,10 @@ final class SearchController
             }
         }
         unset($occ);
-        return Response::json(['results' => $results]);
+        $payload = ['results' => $results];
+        if ($when === 'upcoming') {
+            $payload['pastCount'] = $this->search->countPast($userId, $q, ['calendarId' => $opts['calendarId']]);
+        }
+        return Response::json($payload);
     }
 }

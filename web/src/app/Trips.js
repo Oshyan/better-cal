@@ -14,7 +14,7 @@ import { useStore, set, state, insertOccurrence, toast } from './store.js';
 import { api, loadWindow } from './api.js';
 import { Skeleton } from './PageShell.js';
 import {
-  openDetail, attachToTrip, detachFromTrip, deleteTripOnly, deleteTripAndMembers,
+  openDetail, attachToTrip, detachFromTrip, deleteTripOnly, deleteTripAndMembers, editFromView,
 } from './actions.js';
 import { CalDot, TripBadge, LinkIcon, Icon, PinIcon } from '../ui/icons.js';
 import { onOutsidePress, insideAny } from '../ui/outside.js';
@@ -151,7 +151,7 @@ export function TripSheetBody({ occ, cal, panel = false, full = true, bodyRef })
     setAdding(false);
   };
   const newInTrip = () => set({ popover: null, editor: { mode: 'create', draft: dayRangeDraft(span.startKey, span.startKey), attachTrip: occ } });
-  const openEdit = () => set({ popover: null, editor: { mode: 'edit', occ } });
+  const openEdit = () => editFromView(occ);
   const startAdding = () => { setAdding(true); setSelected(new Set()); };
 
   const tool = (icon, label, onClick, extra = {}) => html`<button

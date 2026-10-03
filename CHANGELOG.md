@@ -4,6 +4,12 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.6.10 (2026-10-03)
+
+- **More on the desktop event panel draws over the map.** The map's layers (Leaflet's, at z-index 400) shared a stacking layer with the menu and covered its lower items, Delete included. Every map now keeps its layers to itself.
+- **Stepping through a day keeps the event you opened.** Open an event on a hidden calendar (from search, say), step to its neighbour, and it is still in the day's list to step back to ("3 of 3" no longer turns into "2 of 2"). Opening another event starts afresh.
+- **Past search results recede** the way past events do on the calendar, so it is plain which results are behind you; the one under the pointer or keyboard comes back to full strength.
+
 ## 0.6.9 (2026-10-03)
 
 Search, the sidebar and Settings on phones.

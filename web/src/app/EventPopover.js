@@ -365,11 +365,12 @@ export function EventPopover() {
   // stepping onto a multi-day event never re-derives the day from that
   // event's start and jumps the list to another date.
   const navDay = popover.dayKey || occDayKey(occ);
-  const navList = sameDayList(occ, navDay);
+  const navPin = popover.pin || popover.instanceId;
+  const navList = sameDayList(occ, navDay, navPin);
   const nav = { list: navList, index: navList.findIndex((o) => o.instanceId === occ.instanceId) };
   const goSheet = (idx) => {
     const target = nav && nav.list[idx];
-    if (target) set({ popover: { ...popover, instanceId: target.instanceId, dayKey: navDay } });
+    if (target) set({ popover: { ...popover, pin: navPin, instanceId: target.instanceId, dayKey: navDay } });
   };
   navRef.current = nav ? { go: goSheet, index: nav.index, count: nav.list.length } : null;
   // On the phone the full view is the same sheet grown (0.5.3: with the map,

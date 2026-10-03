@@ -45,7 +45,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: PHP is 8.3
-        run: php -v && php -r 'exit(PHP_MAJOR_VERSION . "." . PHP_MINOR_VERSION === "8.3" ? 0 : 1);'
+        run: |
+          php -v
+          php -r 'exit(PHP_MAJOR_VERSION . "." . PHP_MINOR_VERSION === "8.3" ? 0 : 1);'
       - name: Platform requirements of the lock file
         working-directory: server
         run: composer check-platform-reqs --lock --no-dev

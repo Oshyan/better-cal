@@ -322,11 +322,16 @@ export function removeOccurrencesOfEvent(eventId) {
 let toastSeq = 0;
 // opts: undoable, error, duration, and an optional action prompt
 // (actionLabel + onAction, with dismissLabel replacing the ✕ dismiss).
+// How long a toast stays (0.6.2): ten seconds when it offers Undo, so there
+// is time to read it and reach the button; six for a plain notice. The toast
+// draws its countdown and leaves when that animation ends (Toasts.js); the
+// timer below is the backstop for a browser that runs no animation.
 export function toast(text, opts = {}) {
   const id = ++toastSeq;
+  const duration = opts.duration || (opts.undoable ? 10000 : 6000);
   set({
     toasts: [...state.toasts, {
-      id, text,
+      id, text, duration,
       undoable: !!opts.undoable,
       // Shown where Undo would be, for a write that has no undo (Google).
       note: opts.note || null,
@@ -341,7 +346,7 @@ export function toast(text, opts = {}) {
   });
   setTimeout(() => {
     set({ toasts: state.toasts.filter((t) => t.id !== id) });
-  }, opts.duration || 6000);
+  }, duration + 1500);
   return id;
 }
 

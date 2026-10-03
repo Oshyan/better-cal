@@ -65,21 +65,24 @@ final class FallbackParser
         // "at ..." tail is a place, not a time — the time pattern always wins).
         // Multi-word locations are kept intact; a trailing with-clause is not
         // part of the location ("Dinner at Zuni with Sam" -> "Zuni").
+        // The place also STAYS in the title (0.6.2): "Lunch at The Pig's Ear"
+        // is what the event is called, the way a with-clause stays; only the
+        // date and time phrases leave it. "@" reads as "at" there.
         $location = null;
         $locPattern = '/\s(?:at|@)\s+([^,]+?)\s*(?=$|\bwith\s|\bw\/)/i';
         if (preg_match($locPattern, $work, $m) && !preg_match('/^\d/', trim($m[1]))) {
             $location = trim($m[1]);
-            $work = preg_replace($locPattern, ' ', $work, 1);
+            $work = preg_replace('/\s@\s+/', ' at ', $work, 1) ?? $work;
             $confidence += 0.05;
         }
 
         // People: "with <phrase>" / "w/ <phrase>". The clause STAYS in the
-        // title (the title is the input minus date/time/location phrases
-        // only), while personNames parses the clause: split on commas/and/&,
+        // title (the title is the input minus date/time phrases only), while
+        // personNames parses the clause: split on commas/and/&,
         // title-cased; a leading article stays part of a group name
         // ("the Sages" -> "The Sages"), a bare article is never a name.
         $personNames = [];
-        if (preg_match('/\b(?:with|w\/)\s*(.+)$/iu', $work, $m)) {
+        if (preg_match('/\b(?:with|w\/)\s*(.+?)(?=\s(?:at|@)\s|$)/iu', $work, $m)) {
             $personNames = self::parsePeople($m[1]);
             if ($personNames !== []) {
                 $confidence += 0.05;

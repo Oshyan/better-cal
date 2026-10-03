@@ -23,6 +23,7 @@ import { api } from './api.js';
 import { state } from './store.js';
 import { knownPosition, awayFromHome } from './devicelocation.js';
 import { localTz } from '../lib/dates.js';
+import { onOutsidePress, insideAny } from '../ui/outside.js';
 
 const NEAR_MS = 36 * 3600 * 1000;
 
@@ -80,8 +81,11 @@ function farRegion(candidate) {
   return parts.slice(-Math.min(2, parts.length)).join(', ');
 }
 
+// ask: {seq, focus} from the caller to search what the box holds now and
+// open the candidates (the editor's quick fill found a place). Nothing is
+// picked for you; with focus, the cursor moves here so arrows and Enter pick.
 export function PlaceInput({
-  value, onText, onPick, tz, near, compact, placeholder, ariaLabel, inputClass,
+  value, onText, onPick, tz, near, compact, placeholder, ariaLabel, inputClass, ask,
 }) {
   const [results, setResults] = useState(null); // null = closed, [] = no matches
   const [active, setActive] = useState(-1);
@@ -93,6 +97,20 @@ export function PlaceInput({
   useEffect(() => () => { clearTimeout(timerRef.current); clearTimeout(blurTimer.current); }, []);
 
   const close = () => { setResults(null); setActive(-1); };
+  const inputRef = useRef(null);
+
+  // Opened without the box having focus, the list closes on a press
+  // anywhere else rather than on a blur that never comes.
+  useEffect(() => (results ? onOutsidePress(insideAny(wrapRef), close) : undefined), [!!results]); // eslint-disable-line
+
+  useEffect(() => {
+    if (!ask || !ask.seq) return;
+    const q = (value || '').trim();
+    if (q.length < MIN_CHARS) return;
+    clearTimeout(timerRef.current);
+    runSearch(q);
+    if (ask.focus && inputRef.current) inputRef.current.focus({ preventScroll: false });
+  }, [ask && ask.seq]); // eslint-disable-line
 
   const runSearch = async (q) => {
     const id = ++reqRef.current;
@@ -160,6 +178,7 @@ export function PlaceInput({
   return html`<span class=${'bc-place' + (compact ? ' bc-place-compact' : '')} ref=${wrapRef}>
     <input
       class=${inputClass || ''}
+      ref=${inputRef}
       value=${value}
       placeholder=${placeholder || ''}
       aria-label=${ariaLabel || 'Location'}

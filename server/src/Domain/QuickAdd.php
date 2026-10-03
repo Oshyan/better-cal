@@ -195,6 +195,27 @@ final class QuickAdd
      *
      * @param array{title:string,start:string,end:string,allDay:bool,location:?string,personNames:list<string>} $llm
      */
+    /**
+     * True when the model's title is the deterministic title with words
+     * missing: every one of its words appears, in order, in the longer one.
+     */
+    public static function overStripped(string $llmTitle, string $fbTitle): bool
+    {
+        $words = static fn(string $t): array => preg_split('/[^\p{L}\p{N}\']+/u', mb_strtolower($t), -1, PREG_SPLIT_NO_EMPTY) ?: [];
+        $a = $words($llmTitle);
+        $b = $words($fbTitle);
+        if ($a === [] || count($a) >= count($b)) {
+            return false;
+        }
+        $i = 0;
+        foreach ($b as $w) {
+            if ($i < count($a) && $a[$i] === $w) {
+                $i++;
+            }
+        }
+        return $i === count($a);
+    }
+
     public static function mergeLlm(array $llm, array $fallback, \DateTimeImmutable $now): array
     {
         $merged = $llm;
@@ -219,6 +240,11 @@ final class QuickAdd
         if (preg_match('/\b(?:with|w\/)\b/i', $fbTitle) === 1
             && preg_match('/\b(?:with|w\/)\b/i', $llmTitle) !== 1
         ) {
+            $merged['title'] = $fbTitle;
+        } elseif (self::overStripped($llmTitle, $fbTitle)) {
+            // The model cut words the text kept ("Lunch" from "Lunch at The
+            // Pig's Ear"): the deterministic title, which only drops dates
+            // and times, says what the event is called.
             $merged['title'] = $fbTitle;
         }
 

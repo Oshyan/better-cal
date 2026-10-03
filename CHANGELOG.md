@@ -4,6 +4,15 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.6.2 (2026-10-03)
+
+- **For me on a repeating event asks right where you tapped.** The choice of this occurrence, this and following, or all of them opens under the switch on the phone sheet; it used to open at the top of the sheet, out of view whenever the sheet had scrolled, so Planned and Maybe seemed to do nothing.
+- **Quick fill keeps the place in the title.** "Lunch at The Pig's Ear at 12PM" is titled "Lunch at The Pig's Ear", with The Pig's Ear in Location too. Only date and time phrases leave the title now ("Coffee @ Blue Bottle" reads "Coffee at Blue Bottle"). The AI reading follows the same rule, and when it drops words the text kept, the plain reading's title wins.
+- **A place quick fill finds opens the Location choices,** biased to where you'll be, so you pick the right Pig's Ear rather than leaving it to a later guess. Nothing is picked for you. While you type it only opens; Enter or Fill moves the cursor there to pick with the arrows and Enter.
+- **A new event starts in the quick-fill box;** editing an event starts in the title.
+- **Toasts:** ten seconds when there's an Undo (six otherwise), with a thin countdown along the bottom; the toast leaves when it runs out, and a tap on its message dismisses it. On a phone it's bigger, Undo is a real button, and the close button never wraps to its own line.
+- **Day lists line up:** every row's dot and title start at the same place, whether the chip is tinted, timed or runs overnight. An event that continues past the day shows a chevron inside the chip's edge instead of an angled cut, which broke the gold "happening" ring and the trip outline into floating tips.
+
 ## 0.6.1 (2026-09-28)
 
 - **The phone event sheet puts the event first.** The band of big buttons at the bottom is gone. Edit and More are two small icons beside the title; For me is a small switch at the end of the calendar line, where it reads as part of what the event is to you; everything rarer (Move, More like, Less like, Copy to another calendar) is in More, which opens as a sheet from the bottom edge. The collapsed sheet shows more of the event in the same space, and an address keeps to two lines until the sheet is pulled up. Invitation replies and Directions are a size smaller.

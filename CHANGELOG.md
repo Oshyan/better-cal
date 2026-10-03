@@ -4,6 +4,10 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.7.1 (2026-10-03)
+
+- **A trip's events show their map numbers only when the map is in view.** On a phone the collapsed sheet hides the map, and the numbers beside the places pointed at nothing.
+
 ## 0.7.0 (2026-10-03)
 
 Trips, in step with events.

@@ -236,7 +236,7 @@ export function TripSheetBody({ occ, cal, panel = false, full = true, bodyRef })
               <span class="bc-tr-when">${fmtWhen(m)}</span>
               <span class="bc-tr-what">
                 <span class="bc-tr-title"><${CalDot} cal=${mcal} color=${(mcal && mcal.color) || '#888'} />${m.title || '(untitled)'}</span>
-                ${m.location && html`<span class="bc-tr-sub">${pinned && points.length > 1 ? html`<b class="bc-tr-n">${i + 1}</b>` : ''}${m.location}</span>`}
+                ${m.location && html`<span class="bc-tr-sub">${pinned && points.length > 1 && (panel || full) ? html`<b class="bc-tr-n">${i + 1}</b>` : ''}${m.location}</span>`}
               </span>
             </button>
             ${asking

@@ -202,7 +202,7 @@ final class People
         $person = $this->requirePerson($userId, $personId);
         $row = $this->db->one('SELECT * FROM availability WHERE id = ? AND person_id = ?', [$spanId, $personId]);
         if ($row === null) {
-            throw HttpError::notFound('No such availability span');
+            throw HttpError::notFound('No such away or busy time');
         }
         $start = isset($in['start']) ? self::instant($in['start'], 'start') : Time::fromDb((string) $row['start_utc']);
         $end = isset($in['end']) ? self::instant($in['end'], 'end') : Time::fromDb((string) $row['end_utc']);
@@ -228,7 +228,7 @@ final class People
             'update',
             ['availability' => [$row]],
             ['availability' => [$after]],
-            'Moved ' . (string) ($fields['kind'] ?? $row['kind']) . ' span for ' . (string) $person['name']
+            'Moved ' . (string) ($fields['kind'] ?? $row['kind']) . ' time for ' . (string) $person['name']
                 . ' (' . $start->format('M j') . ')'
         );
         return self::spanRow($after);
@@ -240,7 +240,7 @@ final class People
         $row = $this->db->one('SELECT * FROM availability WHERE id = ? AND person_id = ?', [$spanId, $personId]);
         $count = $this->db->run('DELETE FROM availability WHERE id = ? AND person_id = ?', [$spanId, $personId])->rowCount();
         if ($count === 0) {
-            throw HttpError::notFound('No such availability span');
+            throw HttpError::notFound('No such away or busy time');
         }
         (new Undo($this->db))->record(
             $userId,
@@ -249,7 +249,7 @@ final class People
             'delete',
             ['availability' => [$row]],
             null,
-            'Removed ' . (string) $row['kind'] . ' span for ' . (string) $person['name']
+            'Removed ' . (string) $row['kind'] . ' time for ' . (string) $person['name']
         );
     }
 

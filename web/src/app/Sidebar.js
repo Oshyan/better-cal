@@ -246,7 +246,7 @@ function PeopleModeButton() {
   const mode = peopleVisibilityMode();
   return html`<${ModeMenu}
     mode=${mode}
-    tip="People visibility: All shows everyone's away/busy spans, None hides them all, Custom is your own per-person selection."
+    tip="People visibility: All shows everyone's away and busy times, None hides them all, Custom is your own per-person selection."
     ariaName="People visibility"
     customDisabled=${mode !== 'custom' && !(peopleVisCustom && peopleVisCustom.length > 0)}
     onPick=${setPeopleVisibilityMode}
@@ -337,12 +337,12 @@ function PersonRow({ p, soloed, phone, onDragStart, onMenu }) {
           type="checkbox"
           checked=${p.showOnCalendar}
           onChange=${() => togglePersonVisible(p)}
-          title="Show away/busy spans on the calendar"
+          title="Show away and busy times on the calendar"
           aria-label=${'Show ' + p.name + ' availability on calendar'}
         />
         <button
           type="button" class="bc-cal-name bc-person-namebtn"
-          title=${(p.currentSpan ? p.name + ' is ' + p.currentSpan.kind + ' now. ' : '') + 'Open in People'}
+          title=${(p.currentSpan ? p.name + ' is ' + p.currentSpan.kind + ' now. ' : '') + 'Open person'}
           onClick=${() => set({ route: 'people', peopleFocus: p.name })}
         >${p.name}</button>
         ${p.currentSpan && html`<span class="bc-badge bc-away-pill is-${p.currentSpan.kind}">${p.currentSpan.kind}</span>`}
@@ -351,7 +351,7 @@ function PersonRow({ p, soloed, phone, onDragStart, onMenu }) {
         type="button"
         class="bc-icon-btn bc-cal-solo${soloed ? ' is-on' : ''}"
         aria-pressed=${soloed}
-        title=${soloed ? 'Showing only this person. Click to restore.' : "Show only this person's spans"}
+        title=${soloed ? 'Showing only this person. Click to restore.' : "Show only this person's availability"}
         onClick=${(e) => { toggleSolo(); e.currentTarget.blur(); }}
       >${soloed ? html`Only <${Icon} name="check" size=${10} />` : 'Only'}</button>`}
     </div>
@@ -645,8 +645,8 @@ export function Sidebar({ open, collapsed, onClose }) {
             onMenu=${() => setMenu({
               head: p.name, color: null,
               items: [
-                soloed ? ['visAll', 'Show everyone again', exitPeopleSolo] : ['visNone', "Show only this person's spans", () => enterPeopleSolo(p)],
-                ['people', 'Open in People', () => set({ route: 'people', peopleFocus: p.name })],
+                soloed ? ['visAll', "Show everyone's availability again", exitPeopleSolo] : ['visNone', "Show only this person's availability", () => enterPeopleSolo(p)],
+                ['people', 'Open person', () => set({ route: 'people', peopleFocus: p.name })],
               ],
             })}
           />`;

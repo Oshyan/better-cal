@@ -10,7 +10,16 @@ import { search } from './api.js';
 import { jumpToDate, openDetail } from './actions.js';
 import { trapFocus } from '../ui/DayExpand.js';
 import { isPendingLocation } from '../lib/maps.js';
-import { parseISO, dateOfDayKey, fmtDateFull, fmtTime, occDayKey } from '../lib/dates.js';
+import { parseISO, dateOfDayKey, fmtDateFull, fmtDayMedium, fmtTime, occDayKey, todayKey } from '../lib/dates.js';
+import { PHONE_QUERY } from '../lib/breakpoints.js';
+
+// "Fri, Oct 9 · 3:00 AM"; the year only when it isn't this one (0.6.9).
+function whenText(occ) {
+  const d = occ.allDay ? dateOfDayKey(occ.start.slice(0, 10)) : parseISO(occ.start);
+  const sameYear = String(d.getFullYear()) === todayKey().slice(0, 4);
+  const day = sameYear ? fmtDayMedium(d) : fmtDateFull(d);
+  return occ.allDay ? day : day + ' \u00b7 ' + fmtTime(d);
+}
 
 export function SearchOverlay() {
   const open = useStore((s) => s.searchOpen);
@@ -38,6 +47,24 @@ export function SearchOverlay() {
   }, [open]);
 
   useEffect(() => () => clearTimeout(timerRef.current), []);
+
+  // Phone: search is a full screen, so Back closes it like the sheet and
+  // the editor (0.6.9). Picking a result leaves the entry to the event sheet.
+  const phone = (() => { try { return matchMedia(PHONE_QUERY).matches; } catch { return false; } })();
+  useEffect(() => {
+    if (!open || !phone) return undefined;
+    history.pushState({ bcSearch: 1 }, '');
+    let popped = false;
+    const onPop = () => { popped = true; set({ searchOpen: false }); };
+    window.addEventListener('popstate', onPop);
+    return () => {
+      window.removeEventListener('popstate', onPop);
+      if (!popped && history.state && history.state.bcSearch) {
+        if (state.popover) history.replaceState({ bcSheet: 1 }, '');
+        else history.back();
+      }
+    };
+  }, [open, phone]);
 
   if (!open) return null;
 
@@ -79,7 +106,8 @@ export function SearchOverlay() {
       set({ occVersion: state.occVersion + 1 });
     }
     jumpToDate(occDayKey(occ), occ.instanceId);
-    openDetail(occ.instanceId); // land on the full detail view after the jump
+    openDetail(occ.instanceId); // land on the event's full view after the jump
+    set({ searchOpen: false });
   };
 
   const onKeyDown = (e) => {
@@ -104,8 +132,8 @@ export function SearchOverlay() {
         ${occ.tags && occ.tags.length > 0 && html`<span class="bc-search-rowtags">
           ${occ.tags.map((t) => html`<span key=${t} class="bc-tag-chip">#${t}</span>`)}
         </span>`}
-        ${occ.location && html`<span class="bc-search-loc" title=${isPendingLocation(occ.location) ? occ.location : undefined}>${isPendingLocation(occ.location) ? 'After RSVP' : occ.location}</span>`}
-        <span class="bc-search-date">${occ.allDay ? fmtDateFull(dateOfDayKey(occ.start.slice(0, 10))) : fmtDateFull(parseISO(occ.start)) + ' ' + fmtTime(parseISO(occ.start))}</span>
+        ${occ.location && html`<span class="bc-search-loc" title=${isPendingLocation(occ.location) ? occ.location : occ.location}>${isPendingLocation(occ.location) ? 'After RSVP' : occ.location}</span>`}
+        <span class="bc-search-date">${whenText(occ)}</span>
       </button>`;
     })}
   </div>`;

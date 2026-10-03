@@ -108,6 +108,23 @@ export function App() {
   const tuckSetting = useStore((st) => st.settings.panelTucksSidebar);
   const popoverOpen = useStore((st) => !!st.popover);
   useEffect(() => { if (manageCal && state.viewportNarrow) setSidebarOpen(true); }, [manageCal]);
+  // Phone: Back closes the drawer, as it closes every other full-screen
+  // surface (0.6.9); before, it left the app.
+  useEffect(() => {
+    if (!sidebarOpen || !window.matchMedia(PHONE_QUERY).matches) return undefined;
+    history.pushState({ bcDrawer: 1 }, '');
+    let popped = false;
+    const onPop = () => { popped = true; setSidebarOpen(false); };
+    window.addEventListener('popstate', onPop);
+    return () => {
+      window.removeEventListener('popstate', onPop);
+      if (popped || !history.state || !history.state.bcDrawer) return;
+      // Closed by opening a page (Settings, People, ...): the page takes over
+      // this entry rather than stacking another on it.
+      if (state.route && state.route !== 'calendar') history.replaceState({ bcRoute: state.route }, '');
+      else history.back();
+    };
+  }, [sidebarOpen]);
   useEffect(() => installDrawerSwipe({
     enabled: () => state.viewportNarrow,
     isOpen: () => sidebarOpenRef.current,
@@ -514,8 +531,9 @@ export function App() {
     const dayKey = opts && opts.dayKey;
     if (opts && opts.detail) {
       const target = state.occ.get(instanceId);
-      // Desktop: the side panel already holds everything the full view did.
-      if (!window.matchMedia(PHONE_QUERY).matches && target && !target.isContainer) {
+      // The side panel (desktop) and the event sheet (phone) hold everything
+      // the old full page did; only a trip keeps its own view (0.6.9).
+      if (target && !target.isContainer) {
         set({ popover: { instanceId, anchorRect, dayKey }, detail: null, groupPopover: null, expandedDay: null });
         return;
       }
@@ -578,6 +596,23 @@ export function App() {
     land(undefined);
   }, [promptScopeAt]);
   const onJumpMonth = useCallback((firstKey) => jumpToDate(firstKey), []);
+
+  // Pages (Settings, People, Review, ...) take a history entry, so Back
+  // returns to the calendar instead of leaving the app (0.6.9). Moving from
+  // one page to another reuses the entry.
+  const route = s.route;
+  useEffect(() => {
+    if (!route || route === 'calendar') return undefined;
+    if (history.state && (history.state.bcRoute || history.state.bcDrawer)) history.replaceState({ bcRoute: route }, '');
+    else history.pushState({ bcRoute: route }, '');
+    let popped = false;
+    const onPop = () => { popped = true; set({ route: 'calendar' }); };
+    window.addEventListener('popstate', onPop);
+    return () => {
+      window.removeEventListener('popstate', onPop);
+      if (!popped && state.route === 'calendar' && history.state && history.state.bcRoute) history.back();
+    };
+  }, [route]);
 
   if (!s.booted) {
     // The frame the app will have, painted before /me answers, so the first

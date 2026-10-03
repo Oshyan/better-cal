@@ -4,6 +4,16 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.6.9 (2026-10-03)
+
+Search, the sidebar and Settings on phones.
+
+- **Search is a full screen on a phone,** with a taller box and a thumb-sized close. Each result is two lines: the title first, up to two lines of it rather than cut to a word, then when and where under it. Dates leave the year off when it's this year ("Fri, Oct 9 · 3:00 AM"), on every screen.
+- **An event opens in the event sheet everywhere on a phone,** and in the side panel on a desktop: search results, notification links, the Agenda's multi-day lines, People, Activity, grouped events and trip members used to open the older full page on a phone. Only a trip keeps its own page.
+- **Back works everywhere on a phone.** It closes search and the sidebar drawer, and from Settings, People, Review or any other page it returns to the calendar; before, Back on those left the app. Opening a page from the drawer, or moving between pages, never leaves a dead Back step behind.
+- **The sidebar drawer is wider on a phone** (86% of the screen, up to 360 points), so calendar names fit beside Only and the gear.
+- **Settings on a phone:** every tab is in view (they wrap to a second row instead of scrolling off the edge unannounced), controls are thumb-sized with 16-point text, and the Event panel setting, which only applies to wide screens, is hidden.
+
 ## 0.6.8 (2026-10-03)
 
 - **Settings labels read as headings on a phone,** where each sits above what it names: 16 points and bold, a step above the content under it, with a thin rule between settings. On a desktop they are bolder too. The content (device names, values) keeps its size.

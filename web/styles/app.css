@@ -4000,3 +4000,60 @@ button.bc-review-title { color: var(--fg); padding: 0; }
   .bc-toast-x { width: 40px; height: 40px; display: grid; place-items: center; }
   .bc-toast-note { white-space: normal; }
 }
+
+/* --- search on a phone (0.6.9) ----------------------------------------------------------
+   A full screen, not a floating card: more results above the keyboard. Each result is two
+   lines, the title first (up to two lines of it, never cut to a word) and when and where
+   under it, so nothing important is truncated to make room for the rest. */
+@media (max-width: 640px) {
+  .bc-search-overlay { padding: 0; align-items: stretch; }
+  .bc-search {
+    width: 100%; max-width: 100%; max-height: none; height: 100%;
+    border: none; border-radius: 0; box-shadow: none;
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+  .bc-search-input { padding: 14px 16px; min-height: 56px; font-size: 17px; }
+  .bc-search-close { width: 44px; height: 44px; display: grid; place-items: center; }
+  .bc-search-tags { padding: 10px 16px; gap: 8px; }
+  .bc-search-tags .bc-tag-chip { font-size: 13px; padding: 7px 12px; }
+  .bc-search-group-label { padding: 12px 16px 4px; }
+  .bc-search-row {
+    display: grid; grid-template-columns: 12px auto minmax(0, 1fr);
+    grid-template-areas: "dot title title" ". date loc" ". tags tags";
+    column-gap: 8px; row-gap: 3px; align-items: baseline; padding: 10px 16px; min-height: 56px;
+  }
+  .bc-search-row > :first-child { grid-area: dot; align-self: center; margin-top: 1px; }
+  .bc-search-title {
+    grid-area: title; white-space: normal; font-size: 15.5px; line-height: 1.3;
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+  }
+  .bc-search-date { grid-area: date; margin: 0; font-size: 13px; }
+  .bc-search-loc { grid-area: loc; font-size: 13px; }
+  .bc-search-loc::before { content: "\00b7\00a0"; }
+  .bc-search-rowtags { grid-area: tags; flex-wrap: wrap; }
+  .bc-search-row.is-selected { background: none; }
+  .bc-search-row:active { background: var(--bg-inset); }
+}
+
+/* --- the sidebar drawer on a phone (0.6.9) ----------------------------------------------
+   Wide enough that a calendar's name fits beside Only and its gear, with the calendar
+   still visible at the right edge to tap back to. */
+@media (max-width: 640px) {
+  .bc-sidebar { width: min(86vw, 360px); }
+}
+
+/* --- Settings on a phone (0.6.9) ----------------------------------------------------------
+   Every tab in view (they wrap to a second row instead of scrolling off the edge with
+   nothing to say there are more), and controls a thumb can hit. */
+@media (max-width: 640px) {
+  .bc-tabs { flex-wrap: wrap; overflow: visible; row-gap: 0; }
+  .bc-tab { padding: 10px 12px; font-size: 14px; }
+}
+@media (max-width: 640px) and (pointer: coarse) {
+  .bc-set-section select,
+  .bc-set-section input:not([type="checkbox"]):not([type="radio"]),
+  .bc-set-section .bc-btn { min-height: 44px; font-size: 16px; }
+  .bc-set-section .bc-seg-btn { min-height: 42px; padding: 0 14px; font-size: 15px; }
+  .bc-set-section .bc-link-btn { min-height: 40px; }
+  .bc-set-section input[type="checkbox"] { width: 20px; height: 20px; }
+}

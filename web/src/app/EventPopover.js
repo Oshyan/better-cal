@@ -167,7 +167,10 @@ export function EventPopover() {
   // other way takes that entry back off.
   useEffect(() => {
     if (!sheet) return undefined;
-    history.pushState({ bcSheet: 1 }, '');
+    // Opened from search, the sheet takes over search's entry (and the one
+    // search may have handed it), so one Back closes it, not two.
+    if (history.state && (history.state.bcSearch || history.state.bcSheet)) history.replaceState({ bcSheet: 1 }, '');
+    else history.pushState({ bcSheet: 1 }, '');
     const onPop = () => {
       if (fullRef.current) { setFull(false); history.pushState({ bcSheet: 1 }, ''); return; }
       poppedRef.current = true;

@@ -160,10 +160,12 @@ export function closeOverlays() {
 
 // Open the full detail view for one occurrence, replacing lighter overlays.
 export function openDetail(instanceId) {
-  // Desktop: the side panel is the full view (0.5.5); trips keep theirs.
+  // An event's full view is the side panel on a desktop (0.5.5) and the event
+  // sheet on a phone (0.6.9: search results and notification links used to
+  // open the older full page there). Trips keep their own view.
   const occ = state.occ.get(instanceId);
-  if (occ && !occ.isContainer && typeof window !== 'undefined' && window.matchMedia && !window.matchMedia('(max-width: 640px)').matches) {
-    set({ popover: { instanceId, anchorRect: null }, detail: null, groupPopover: null, expandedDay: null });
+  if (occ && !occ.isContainer) {
+    set({ popover: { instanceId, anchorRect: null, dayKey: occDayKey(occ) }, detail: null, groupPopover: null, expandedDay: null });
     return;
   }
   set({ detail: { instanceId }, popover: null, groupPopover: null, expandedDay: null });

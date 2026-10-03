@@ -1825,7 +1825,7 @@ body.bc-dragging * { cursor: grabbing !important; }
 /* A label names everything to its right: it sits level with the first line of
    its controls, not halfway down a long list of them (0.6.5). */
 .bc-set-row > .bc-set-label { align-self: flex-start; padding-top: 6px; }
-.bc-set-label { width: 170px; flex: none; font-weight: 600; }
+.bc-set-label { width: 170px; flex: none; font-weight: 700; }
 /* Takes the width left beside the label and wraps INSIDE it, so a long control
    (a select plus a note plus a button) never drops below its own label. */
 .bc-set-control { display: flex; flex: 1 1 0; min-width: 0; align-items: center; gap: 10px; flex-wrap: wrap; }
@@ -1835,7 +1835,12 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-set-hint { flex-basis: 100%; margin-left: 182px; color: var(--fg-muted); font-size: 12px; }
 
 @media (max-width: 640px) {
-  .bc-set-label { width: 100%; }
+  /* On a phone the label sits above what it names, so it has to read as the
+     heading of that block, a step above the content (device names, values),
+     which is already as small as it should go (0.6.8). */
+  .bc-set-label { width: 100%; font-size: 16px; font-weight: 700; color: var(--fg); padding-top: 4px; margin-bottom: -2px; }
+  .bc-set-row { padding: 10px 0; }
+  .bc-set-row + .bc-set-row { border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent); }
   .bc-set-hint { margin-left: 0; }
 }
 

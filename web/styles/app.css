@@ -1188,11 +1188,7 @@ body.bc-dragging * { cursor: grabbing !important; }
    delete, close). */
 .bc-pop-titlerow { display: flex; align-items: flex-start; gap: 8px; }
 .bc-pop-titlerow .bc-pop-title { flex: 1; min-width: 0; }
-.bc-pop-iconrow { display: inline-flex; align-items: center; gap: 0; flex: none; margin: -3px -4px 0 0; }
-.bc-pop-iconrow .bc-icon-btn { padding: 3px 5px; color: var(--fg-muted); }
-.bc-pop-iconrow .bc-icon-btn:hover { color: var(--fg); }
-.bc-pop-iconrow .bc-pop-trash:hover { color: var(--danger, #c33); }
-.bc-pop-iconrow .bc-icon-btn.is-active { background: var(--bg-inset); color: var(--fg); }
+
 .bc-delscope { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 6px 12px 2px; }
 .bc-delscope.is-compact { padding: 4px 12px 0; }
 .bc-delscope-q { font-size: 12.5px; color: var(--fg-muted); flex-basis: 100%; }
@@ -1211,7 +1207,7 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-pop-when { color: var(--fg); cursor: text; }
 .bc-pop-where { color: var(--fg-muted); display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
 .bc-pop-meta { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 12.5px; }
-.bc-pop-tags { color: var(--accent); }
+
 /* Description preview: clamped to three lines with a fade, never its own
    scroll region (the detail view is where long text belongs). */
 .bc-pop-descwrap { position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
@@ -1237,9 +1233,7 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-seg-btn:last-child { border-right: none; }
 .bc-seg-btn:hover { background: var(--bg-inset); }
 .bc-seg-btn.is-active { background: var(--accent); color: var(--accent-fg); }
-/* Icon-only segment buttons (feedback thumbs): center the svg in the box. */
-.bc-seg-icon { display: inline-flex; align-items: center; justify-content: center; }
-.bc-seg-icon svg { display: block; }
+
 .bc-pop-timeedit { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
 
 .bc-sheet {
@@ -1295,68 +1289,19 @@ body.bc-dragging * { cursor: grabbing !important; }
 
 /* --- event detail view --------------------------------------------------------- */
 
-.bc-detail-overlay {
-  display: flex; align-items: center; justify-content: center;
-  z-index: 74; padding: 24px 16px; background: var(--scrim);
-}
-.bc-detail {
-  width: 560px; max-width: 100%; max-height: min(84vh, 720px);
-  background: var(--bg-raised); border: 1px solid var(--border);
-  border-radius: var(--radius); box-shadow: var(--shadow);
-  display: flex; flex-direction: column; overflow: hidden;
-}
-.bc-detail-head {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 7px 10px; border-bottom: 1px solid var(--border);
-}
-.bc-detail-nav { display: flex; align-items: center; gap: 2px; }
-.bc-detail-chev { padding: 4px 10px; }
-.bc-detail-chev:disabled { opacity: 0.35; cursor: default; }
-.bc-detail-chev:disabled:hover { background: none; color: var(--fg-muted); }
-.bc-detail-count { color: var(--fg-muted); font-size: 12px; margin-left: 6px; }
-.bc-detail-body {
-  padding: 10px 16px 14px; overflow-y: auto; overscroll-behavior: contain;
-  display: flex; flex-direction: column; gap: 7px;
-}
-/* Baseline-align so the Part-of chip's text sits on the title's baseline
-   rather than floating at the row's vertical center. */
-.bc-detail-titlerow { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
-.bc-detail-titlerow .bc-partof { align-self: baseline; }
-.bc-detail-title { margin: 0; font-size: 19px; line-height: 1.25; }
-.bc-detail-title.is-cancelled { text-decoration: line-through; opacity: 0.75; }
 .bc-detail-calrow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.bc-detail-calchip {
-  display: inline-flex; align-items: center; gap: 6px;
-  border: 1px solid var(--border); border-radius: 11px;
-  background: var(--bg-inset); padding: 1px 9px;
-  font-size: 12px; color: var(--fg-muted);
-}
-.bc-detail-when { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 14px; }
-.bc-detail-locline { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.bc-maplink { font-size: 12px; color: var(--accent); text-decoration: none; white-space: nowrap; }
-.bc-maplink:hover { text-decoration: underline; }
-.bc-detail-recur { color: var(--fg-muted); font-size: 12.5px; }
-.bc-detail-zone { color: var(--fg-muted); font-size: 12.5px; }
+
 .bc-detail-section { display: flex; flex-direction: column; gap: 3px; }
 .bc-detail-label {
   font-size: 10.5px; font-weight: 700; text-transform: uppercase;
   letter-spacing: 0.4px; color: var(--fg-muted);
 }
-.bc-detail-desc {
-  white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px;
-  max-height: 240px; overflow-y: auto; overscroll-behavior: contain;
-}
-.bc-detail-desc a, .bc-detail-section a { color: var(--accent); }
-.bc-detail-labels { flex-direction: row; gap: 12px; flex-wrap: wrap; }
-.bc-detail-people { color: var(--fg-muted); }
-.bc-detail-meta { color: var(--fg-muted); font-size: 11.5px; border-top: 1px solid var(--border); padding-top: 8px; }
-.bc-detail-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.bc-detail-openlink { text-decoration: none; display: inline-flex; align-items: center; }
+
+.bc-detail-section a { color: var(--accent); }
 
 /* Mini-map: fixed height, inert until clicked, marker + OSM link. */
 /* Shown in place of the map when the address could not be geocoded, so an
    address with no map reads as a known limitation rather than a bug. */
-.bc-detail-geonote { font-size: 12px; color: var(--fg-muted); margin-top: 2px; }
 
 /* --- event loading ------------------------------------------------------- */
 /* Floats over the top of the view: "Loading events…" on a cold load (after a
@@ -1452,10 +1397,6 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-map-wrap:hover .bc-map-cover span, .bc-map-cover:focus-visible span { opacity: 1; }
 
 /* Full-screen sheet on mobile. */
-@media (max-width: 640px) {
-  .bc-detail-overlay { padding: 0; align-items: stretch; }
-  .bc-detail { width: 100%; max-height: none; border-radius: 0; border: none; }
-}
 
 /* --- quick add ----------------------------------------------------------------- */
 
@@ -1557,7 +1498,6 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-rem-add { max-width: 160px; }
 .bc-rem-reset { padding: 2px 8px; font-size: 12px; }
 .bc-rem-src { color: var(--fg-muted); font-size: 11.5px; font-style: italic; }
-.bc-bell { margin-left: 4px; cursor: default; display: inline-flex; align-items: center; color: var(--fg-muted); }
 
 /* --- search ------------------------------------------------------------------------ */
 
@@ -2727,9 +2667,6 @@ body.bc-rescheduling { user-select: none; }
 .bc-ov-item:disabled { opacity: 0.45; cursor: default; }
 
 /* Invitation panel (mail-ingested events): organizer + RSVP segments. */
-.bc-invite-line { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.bc-invite-from { font-size: 12.5px; color: var(--fg-muted); }
-.bc-invite-count { color: var(--fg-muted); }
 
 /* --- activity log page --------------------------------------------------- */
 
@@ -3039,7 +2976,6 @@ button.bc-review-title { color: var(--fg); padding: 0; }
   .bc-chip.is-anim-shimmer, .bc-bar.is-anim-shimmer, .bc-band.is-anim-shimmer { animation: none; }
 }
 
-
 /* --- phones and touch: mobile audit phase 1 (0.3.0) ------------------------ */
 /* Bugs and baseline touch fixes only; the phone layout itself comes in later
    phases (the audit report at claude.ai/artifact/MAqTCSCsxnp22y8Z8UEVxG). */
@@ -3171,7 +3107,6 @@ button.bc-review-title { color: var(--fg); padding: 0; }
   [role^="menuitem"] { min-height: 44px; }
   .bc-cal-row { min-height: 40px; }
 }
-
 
 /* --- the phone frame: mobile audit phase 2 (0.3.x) --------------------------- */
 /* A thin top bar (menu, previous and next, the month title that opens
@@ -3387,7 +3322,7 @@ button.bc-review-title { color: var(--fg); padding: 0; }
 
 /* A location that arrives after you RSVP: a short lock mark, not the
    sentence the feed sent (lib/maps.js isPendingLocation). */
-.bc-agenda-loc.is-pending, .bc-pop-where.is-pending, .bc-detail-locline.is-pending {
+.bc-agenda-loc.is-pending, .bc-pop-where.is-pending {
   display: inline-flex; align-items: center; gap: 4px; color: var(--fg-muted); font-style: italic;
 }
 

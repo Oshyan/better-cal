@@ -35,7 +35,7 @@ export function CommandPalette() {
   // Rebuild when anything the registry reads changes underneath it.
   const stamp = useStore((s) => [
     s.calendars.length, s.people.length, s.savedViews.length, s.view, s.anchor,
-    s.popover ? s.popover.instanceId : '', s.detail ? s.detail.instanceId : '',
+    s.popover ? s.popover.instanceId : '',
   ].join('|'));
 
   const [q, setQ] = useState('');

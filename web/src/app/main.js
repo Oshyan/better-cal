@@ -10,7 +10,7 @@ import { installHoverPrefetch } from './prefetch.js';
 import { armQuietReload, restoreDraftsAfterBoot, installActivityTracking } from './drafts.js';
 import { installResumeSaving, restoreResume } from './resume.js';
 import { preloadRichText } from './RichText.js';
-import { loadLeaflet } from './EventDetail.js';
+import { loadLeaflet } from './eventparts.js';
 import { localTz, sameClock, tzCity, tzOffsetLabel } from '../lib/dates.js';
 import { handleEventLink, resyncPush, offerPushOnThisDevice } from './push.js';
 import { takeHandoff, runHandoff } from './handoff.js';

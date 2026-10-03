@@ -23,7 +23,7 @@ import { parseJumpText, jumpGranularity } from '../lib/jumpparse.js';
 function hasContext(need) {
   if (need === 'popover') return !!state.popover;
   if (need === 'occ') {
-    const src = state.detail || state.popover;
+    const src = state.popover;
     return !!(src && state.occ.get(src.instanceId));
   }
   return true;
@@ -200,7 +200,7 @@ export function buildCommands() {
       icon: route, // Icon maps 'organize' to the folder glyph, same as the sidebar
       keywords: 'open page manage',
       staysOnPage: true,
-      run: () => set({ route, popover: null, detail: null }),
+      run: () => set({ route, popover: null }),
     });
   }
 

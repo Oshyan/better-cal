@@ -7,7 +7,7 @@
 import { state, set } from './store.js';
 import {
   rosterViews, setView, cycleView, goToday, navigate, closeOverlays,
-  enterReschedule, openDetail, deleteEvent, stepDetailSameDay, stepPopoverSameDay, googleBacked, toggleRel, applyDefaultView,
+  enterReschedule, openDetail, deleteEvent, stepPopoverSameDay, googleBacked, toggleRel, applyDefaultView,
 } from './actions.js';
 import { HOTKEYS } from './hotkeys.js';
 
@@ -18,9 +18,9 @@ function isTyping() {
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
 }
 
-// The occurrence the open popover or detail view is showing, if any.
+// The occurrence the open panel or sheet is showing, if any.
 function focusedOcc() {
-  const src = state.detail || state.popover;
+  const src = state.popover;
   if (!src) return null;
   return state.occ.get(src.instanceId) || null;
 }
@@ -51,7 +51,7 @@ export const handlers = {
     return true;
   },
   quickAdd: () => set({ quickAddOpen: true }),
-  newEvent: () => set({ editor: { mode: 'create', draft: {} }, popover: null, detail: null }),
+  newEvent: () => set({ editor: { mode: 'create', draft: {} }, popover: null }),
   openDetail: () => {
     if (!state.popover) return false;
     openDetail(state.popover.instanceId);
@@ -60,7 +60,7 @@ export const handlers = {
   editEvent: () => {
     const occ = focusedOcc();
     if (!occ || isFeedOcc(occ)) return false;
-    set({ popover: null, detail: null, editor: { mode: 'edit', occ } });
+    set({ popover: null, editor: { mode: 'edit', occ } });
     return true;
   },
   reschedule: () => {
@@ -81,13 +81,13 @@ export const handlers = {
       return true;
     }
     if (window.confirm('Delete "' + (occ.title || 'this event') + '"?')) {
-      set({ detail: null });
+      set({ popover: null });
       deleteEvent(occ);
     }
     return true; // key consumed either way
   },
-  detailPrev: () => (state.detail ? (stepDetailSameDay(-1), true) : state.popover ? (stepPopoverSameDay(-1), true) : false),
-  detailNext: () => (state.detail ? (stepDetailSameDay(1), true) : state.popover ? (stepPopoverSameDay(1), true) : false),
+  detailPrev: () => (state.popover ? (stepPopoverSameDay(-1), true) : false),
+  detailNext: () => (state.popover ? (stepPopoverSameDay(1), true) : false),
   defaultView: () => { applyDefaultView(); return true; },
   relPlanned: () => { toggleRel('planned'); return true; },
   relMaybe: () => { toggleRel('maybe'); return true; },

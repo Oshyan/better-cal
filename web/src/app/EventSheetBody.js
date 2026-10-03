@@ -14,7 +14,7 @@ import {
   deleteEvent, updateEvent, setRelationship, sendFeedback, enterReschedule, openDetail, openTripByEventId,
   googleBacked, GOOGLE_NO_UNDO, toggleCalendarVisible, rsvpEvent,
 } from './actions.js';
-import { describeRrule, MiniMap, useEventGeo, linkify } from './EventDetail.js';
+import { describeRrule, MiniMap, useEventGeo, linkify } from './eventparts.js';
 import { EventPluginData } from './EventPluginData.js';
 import { Icon, ThumbIcon, PinIcon } from '../ui/icons.js';
 import { DurationSuffix } from '../ui/EventChip.js';

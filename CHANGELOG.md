@@ -4,6 +4,17 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.8.3 (2026-10-03)
+
+Installing on someone else's server, from a clean-install dry run (#22).
+
+- **MariaDB is supported** (10.6 and later). Three queries used MySQL 8's `INSERT ... AS alias` form, which MariaDB rejects; they use the form both accept. Checked on MariaDB 10.11 (the whole app) and 10.6 (migrations, smoke test, worker).
+- **PHP 8.3 installs work again.** The dependency lock had been resolved on PHP 8.5, which pulled in Symfony 8 (PHP 8.4.1 or later) although Better-Cal says PHP 8.3. Composer now resolves for PHP 8.3 (`config.platform.php`), so Symfony is on its 7.4 long-term line; PHP 8.4 and later are unaffected.
+- **The install guide lists every PHP extension needed:** it was missing `xml` (dom, simplexml, xmlreader, xmlwriter, which CalDAV needs) and `zip`. It now gives the Debian/Ubuntu packages and the command that checks them.
+- **The Apache setup in the guide is tested** (Apache 2.4 with mod_php on Ubuntu 24.04): every page, CalDAV, and API tokens through the Authorization header.
+- **Apache and shared hosting need no web-server setup:** `server/public/.htaccess` now ships with the routing and the Authorization-header pass-through. A host only has to allow `FileInfo` overrides. Nginx ignores the file.
+- **`.env.example` includes the Google connector's two keys.**
+
 ## 0.8.2 (2026-10-03)
 
 - **The phone drawer's pages moved to the bottom,** under a Manage heading below the calendars, people and plugins, so the calendars come first. They are visited far less often on a phone. Review and Saved views left the grid, since the bottom bar already has them: Review with its count, and Saved views in the View sheet (switch views, or Manage views).

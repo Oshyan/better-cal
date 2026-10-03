@@ -27,7 +27,7 @@ node --experimental-vm-modules web/tests/static.mjs
 node tools/mcp/test.mjs
 ```
 
-The smoke suite is run under several time zones on deploy, so a test that only passes in yours will be caught. Add a test with any behaviour change: the server suite is plain PHP with no database (SQLite in memory where one is needed), the smoke suite is plain Node.
+The smoke suite is run under several time zones on deploy, so a test that only passes in yours will be caught. Add a test with any behaviour change: the server suite is plain PHP with no database (SQLite in memory where one is needed, so PHP needs `pdo_sqlite`: `php8.3-sqlite3` on Debian and Ubuntu), the smoke suite is plain Node.
 
 A few habits the codebase keeps:
 

@@ -75,14 +75,18 @@ final class Db
         return $stmt->rowCount();
     }
 
-    /** Upsert a full row by primary key (used by undo restore). */
+    /**
+     * Upsert a full row by primary key (used by undo restore). VALUES(col)
+     * rather than MySQL 8's row alias (`AS new_row`): MariaDB accepts only
+     * this form, and MySQL still does (deprecated, not removed in 8.4).
+     */
     public function upsert(string $table, array $row): void
     {
         $cols = array_keys($row);
         $colSql = implode(', ', array_map(static fn($c) => "`$c`", $cols));
         $placeholders = implode(', ', array_fill(0, count($cols), '?'));
-        $updates = implode(', ', array_map(static fn($c) => "`$c` = new_row.`$c`", $cols));
-        $sql = "INSERT INTO `$table` ($colSql) VALUES ($placeholders) AS new_row ON DUPLICATE KEY UPDATE $updates";
+        $updates = implode(', ', array_map(static fn($c) => "`$c` = VALUES(`$c`)", $cols));
+        $sql = "INSERT INTO `$table` ($colSql) VALUES ($placeholders) ON DUPLICATE KEY UPDATE $updates";
         $this->run($sql, array_values($row));
     }
 

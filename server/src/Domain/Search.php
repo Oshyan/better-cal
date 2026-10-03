@@ -61,7 +61,16 @@ final class Search
             if (($opts['when'] ?? 'all') === 'upcoming' && !$row['_upcoming']) {
                 continue; // a series whose UNTIL has passed
             }
-            if ($row['_upcoming'] && !empty($row['rrule']) && (string) $row['end_utc'] < $now) {
+            if (($opts['when'] ?? 'all') === 'past' && $row['_upcoming']) {
+                // A series still running matched Past by its first date: show
+                // its latest occurrence that has ended (0.7.4), not its next.
+                $prev = self::previousOccurrence($row, $now);
+                if ($prev === null) {
+                    continue;
+                }
+                [$row['start_utc'], $row['end_utc']] = $prev;
+                $row['_upcoming'] = false;
+            } elseif ($row['_upcoming'] && !empty($row['rrule']) && (string) $row['end_utc'] < $now) {
                 // A series that began in the past: show (and open) its next date, not its first.
                 $next = self::nextOccurrence($row, $now);
                 if ($next === null) {
@@ -130,6 +139,24 @@ final class Search
             }
         }
         return null;
+    }
+
+    /** [start, end] of a series' latest occurrence that ended by $nowSql, within two years; null when there is none. */
+    public static function previousOccurrence(array $row, string $nowSql, ?Recurrence $recurrence = null): ?array
+    {
+        $to = Time::fromDb($nowSql);
+        try {
+            $occs = ($recurrence ?? new Recurrence())->expand($row, [], $to->modify('-2 years'), $to);
+        } catch (\Throwable) {
+            return null;
+        }
+        $last = null;
+        foreach ($occs as $o) {
+            if ($o['end'] <= $to) {
+                $last = [Time::toDb($o['start']), Time::toDb($o['end'])];
+            }
+        }
+        return $last;
     }
 
     private function nowSql(array $opts): string

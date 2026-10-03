@@ -804,6 +804,8 @@ $weekly = new \BetterCal\Domain\Recurrence(static function (array $m, \DateTimeI
 });
 $nx = \BetterCal\Domain\Search::nextOccurrence(['id' => 1, 'start_utc' => '2026-01-05 17:00:00', 'end_utc' => '2026-01-05 18:00:00', 'rrule' => 'FREQ=WEEKLY', 'tzid' => 'UTC', 'all_day' => 0], $nowSql, $weekly);
 check('search: a weekly series shows its next date', $nx !== null && $nx[0] === '2026-10-05 17:00:00' && $nx[1] === '2026-10-05 18:00:00');
+$pv = \BetterCal\Domain\Search::previousOccurrence(['id' => 1, 'start_utc' => '2026-01-05 17:00:00', 'end_utc' => '2026-01-05 18:00:00', 'rrule' => 'FREQ=WEEKLY', 'tzid' => 'UTC', 'all_day' => 0], $nowSql, $weekly);
+check('search: under Past, a running weekly series shows its latest past date', $pv !== null && $pv[0] === '2026-09-28 17:00:00');
 $g = GcalLink::parse($lumaUrl, 'America/Los_Angeles');
 checkEq('gcal luma title', 'The Commons Public Hours ☕', $g['title']);
 checkEq('gcal luma start (UTC->LA)', '2026-08-09T09:00:00-07:00', $g['start']);

@@ -4,6 +4,15 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.8.0 (2026-10-03)
+
+The sidebar and Settings on phones.
+
+- **The sidebar's pages are a short grid at the top** of the phone drawer (Review with its count, Settings, Calendars & folders, People, Activity, Plugins, Filters, Saved views), instead of a folded list at the bottom. The drawer's title reads Better-Cal, since it holds more than calendars now.
+- **Each calendar is listed once on a phone:** in its folder, and the rest under Other calendars. All calendars used to repeat every filed calendar a second time. The controls that act on every calendar (new calendar, list only active ones, All / None / Custom) sit on one Calendars header above the folders, and "list only active" applies to every folder there.
+- **Only and a calendar's settings are a press and hold away** on a phone: hold a calendar to show only it or open its settings, and hold a person to show only their spans or open them in People. The row keeps its full width for the name. A calendar or person shown alone keeps its "Only ✓" in view, to tap back. Desktop is unchanged.
+- **Settings on a phone opens on a list of its sections,** each with a line of what it holds (General shows your default view, week start, time format and theme). A section opens as its own page with "‹ Settings" above it, and Back returns to the list. The two crowded rows of tabs are gone there; a desktop keeps its tabs.
+
 ## 0.7.4 (2026-10-03)
 
 - **Stepping from a multi-day event walks the day you opened it on.** Open Monday's part of a Sunday-to-Tuesday event and the previous and next arrows go through Monday's events; they used to go through Sunday's, the day it began. This holds in every view: month, week, Split and Agenda.

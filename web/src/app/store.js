@@ -127,7 +127,7 @@ export const state = {
   // Settings is one page with tabs. It opens on General unless something
   // sent you to a particular tab (a boot notice, the OAuth callback, a
   // /settings/<tab> link, handoff.js), and the page resets it on leaving.
-  settingsTab: 'general',
+  settingsTab: null, // Settings section; null = General on a desktop, the section list on a phone (0.8.0)
 
   quickAddOpen: false,
   paletteOpen: false, // command palette (Cmd/Ctrl-K)

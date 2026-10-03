@@ -3982,8 +3982,21 @@ button.bc-review-title { color: var(--fg); padding: 0; }
    Every tab in view (they wrap to a second row instead of scrolling off the edge with
    nothing to say there are more), and controls a thumb can hit. */
 @media (max-width: 640px) {
-  .bc-tabs { flex-wrap: wrap; overflow: visible; row-gap: 0; }
-  .bc-tab { padding: 10px 12px; font-size: 14px; }
+/* 0.8.0: the tabs gave way to a list of sections, each a page of its own (SettingsPage.js). */
+.bc-setlist { display: grid; margin-top: 12px; border-top: 1px solid var(--border); }
+.bc-setlist-row {
+  display: flex; align-items: center; gap: 10px; width: 100%; min-height: 64px; padding: 10px 2px;
+  background: none; border: none; border-bottom: 1px solid var(--border); text-align: left; color: var(--fg); cursor: pointer;
+}
+.bc-setlist-row:active { background: var(--bg-inset); }
+.bc-setlist-row > svg { flex: none; color: var(--fg-muted); }
+.bc-setlist-text { flex: 1; min-width: 0; display: grid; gap: 3px; }
+.bc-setlist-name { font-size: 16.5px; font-weight: 700; }
+.bc-setlist-sum { font-size: 13.5px; color: var(--fg-muted); line-height: 1.35; }
+.bc-page-back { min-height: 40px; font-size: 15px; }
+/* The page title names the section, so its first heading would only repeat it. */
+.bc-setpage:not([data-tab="connections"]) > .bc-set-section:first-child > .bc-set-h:first-child { display: none; }
+.bc-setpage { margin-top: 8px; }
 }
 @media (max-width: 640px) and (pointer: coarse) {
   .bc-set-section select,
@@ -4052,3 +4065,24 @@ button.bc-review-title { color: var(--fg); padding: 0; }
   .bc-tr-mapel { height: 200px; }
 }
 .bc-tr-picksug { align-self: flex-start; font-size: 13px; }
+
+/* --- the sidebar on a phone (0.8.0) ---------------------------------------------------
+   Pages as a short grid at the top (the footer list is desktop's); one Calendars header
+   carrying the controls that act on every calendar; each calendar listed once; and a
+   row's Only and settings behind a press and hold (Sidebar.js), so names get the width. */
+.bc-sb-pages { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr); gap: 2px 4px; padding: 6px 6px 8px; border-bottom: 1px solid var(--border); }
+.bc-sb-page {
+  display: flex; align-items: center; gap: 8px; min-height: 42px; padding: 0 6px; min-width: 0;
+  background: none; border: none; border-radius: 9px; color: var(--fg); font-size: 14px; text-align: left;
+}
+.bc-sb-page span:not(.bc-manage-badge) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bc-sb-page svg { flex: none; color: var(--fg-muted); }
+.bc-sb-page:active { background: var(--bg-inset); }
+.bc-sb-page.is-active { background: color-mix(in srgb, var(--accent) 13%, transparent); color: var(--accent); }
+.bc-sb-page.is-active svg { color: var(--accent); }
+.bc-sb-page .bc-manage-badge { margin-left: auto; }
+.bc-sb-calhead { padding-top: 6px; }
+.bc-sb-calhead .bc-folder-static { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; color: var(--fg-muted); cursor: default; }
+/* A held row: no text selection or callout, so the hold opens the row's menu. */
+.bc-cal-row.is-held { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.bc-rowmenu { z-index: 120; }

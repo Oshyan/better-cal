@@ -4,6 +4,11 @@
 // visibility), hover "+" launchers and the creation launcher list (all of
 // which open the titled CreateDrawer), feed health badges, and the manage
 // navigation in the footer.
+//
+// On a phone (0.8.0) the drawer is arranged for a thumb: the pages are a
+// short grid at the top, each calendar is listed once (in its folder, the
+// rest under Other calendars), and a row's Only and settings sit behind a
+// press and hold instead of taking width from every name.
 
 import { html, useState, useRef, useEffect } from '../../vendor/index.js';
 import { useStore, set, state, toast, shallowEq } from './store.js';
@@ -21,7 +26,7 @@ import { PALETTE } from '../lib/color.js';
 import { MANAGE_ITEMS } from './commanddefs.js';
 import { Icon, CalDot } from '../ui/icons.js';
 import { attachScrollRail } from '../ui/scrollrail.js';
-import { COARSE_QUERY } from '../lib/breakpoints.js';
+import { COARSE_QUERY, PHONE_QUERY } from '../lib/breakpoints.js';
 import { onOutsidePress, insideAny } from '../ui/outside.js';
 
 // Solo ("show only this calendar"): transient, session-scoped. Entering solo
@@ -70,13 +75,53 @@ function pluginDecoFor(cal) {
   return (pl && pl.decoration) || null;
 }
 
-function CalendarRow({ cal, folders, open, onGear, soloed, onSolo, filedIn }) {
+// Press and hold (0.8.0): opens a row's menu on a phone. Half a second
+// without moving; a scroll or a drag cancels it. Android also reports the
+// hold as a context menu, which opens the same menu (and never the browser's
+// own). The tap that ends a hold doesn't also toggle the row.
+const HOLD_MS = 480;
+function useLongPress(onLong) {
+  const hold = useRef(null);
+  const fired = useRef(false);
+  const clear = () => { if (hold.current) { clearTimeout(hold.current.t); hold.current = null; } };
+  const fire = () => { clear(); fired.current = true; onLong(); };
+  return {
+    onPointerDown: (e) => {
+      fired.current = false;
+      clear();
+      if (e.button > 0) return;
+      hold.current = { x: e.clientX, y: e.clientY, t: setTimeout(fire, HOLD_MS) };
+    },
+    onPointerMove: (e) => { if (hold.current && Math.hypot(e.clientX - hold.current.x, e.clientY - hold.current.y) > 8) clear(); },
+    onPointerUp: clear,
+    onPointerCancel: clear,
+    onContextMenu: (e) => { e.preventDefault(); if (!fired.current) fire(); },
+    onClickCapture: (e) => { if (fired.current) { e.preventDefault(); e.stopPropagation(); fired.current = false; } },
+  };
+}
+
+// The menu a held row opens: a sheet at the foot of the drawer, in the
+// event sheet's More style.
+function RowMenu({ head, color, items, onClose }) {
+  const ref = useRef(null);
+  useEffect(() => onOutsidePress(insideAny(ref), onClose), []); // eslint-disable-line
+  return html`<div class="bc-es-menu is-phone bc-rowmenu" role="menu" ref=${ref}>
+    <div class="bc-es-mh" role="presentation">${color && html`<i style=${'background:' + color}></i>`}${head}</div>
+    ${items.filter(Boolean).map(([icon, label, fn]) => html`<button key=${label} type="button" role="menuitem" class="bc-es-mi" onClick=${() => { onClose(); fn(); }}>
+      <${Icon} name=${icon} size=${18} /><span>${label}</span>
+    </button>`)}
+  </div>`;
+}
+
+function CalendarRow({ cal, folders, open, onGear, soloed, onSolo, filedIn, phone = false, onMenu = null }) {
+  const press = useLongPress(() => onMenu && onMenu());
   // data-drop-cal marks writable calendars as drag targets: dropping an event
   // here moves it onto this calendar (feeds are read-only, so no attribute).
   return html`<div class="bc-cal-item">
     <div
-      class="bc-cal-row${cal.visible ? '' : ' is-off'}"
+      class="bc-cal-row${cal.visible ? '' : ' is-off'}${phone ? ' is-held' : ''}"
       data-drop-cal=${cal.kind === 'subscribed' ? undefined : cal.id}
+      ...${phone ? press : {}}
     >
       <label class="bc-cal-label" title=${cal.name}>
         <input
@@ -94,22 +139,22 @@ function CalendarRow({ cal, folders, open, onGear, soloed, onSolo, filedIn }) {
         ><${Icon} name="folder" size=${11} /></span>`}
       </label>
       ${healthBadge(cal)}
-      <button
+      ${(!phone || soloed) && html`<button
         type="button"
         class="bc-icon-btn bc-cal-solo${soloed ? ' is-on' : ''}"
         aria-label=${soloed ? 'Stop showing only ' + cal.name : 'Show only ' + cal.name}
         aria-pressed=${soloed}
         title=${soloed ? 'Showing only this calendar. Click to restore.' : 'Show only this calendar'}
         onClick=${(e) => { onSolo(cal); e.currentTarget.blur(); }}
-      >${soloed ? html`Only <${Icon} name="check" size=${10} />` : 'Only'}</button>
-      <button
+      >${soloed ? html`Only <${Icon} name="check" size=${10} />` : 'Only'}</button>`}
+      ${!phone && html`<button
         type="button"
         class="bc-icon-btn bc-cal-gear${open ? ' is-open' : ''}"
         aria-label=${'Settings for ' + cal.name}
         aria-expanded=${open}
         title="Calendar settings"
         onClick=${() => onGear()}
-      ><${Icon} name="settings" size=${13} /></button>
+      ><${Icon} name="settings" size=${13} /></button>`}
     </div>
     ${open && html`<${CalendarSettings} cal=${cal} folders=${folders} onClose=${() => onGear()} />`}
   </div>`;
@@ -276,6 +321,43 @@ function FolderHead({ folder, cals, collapsed, onToggleCollapse }) {
   </div>`;
 }
 
+function PersonRow({ p, soloed, phone, onDragStart, onMenu }) {
+  const press = useLongPress(() => onMenu && onMenu());
+  const toggleSolo = () => (soloed ? exitPeopleSolo() : enterPeopleSolo(p));
+  return html`<div class="bc-cal-item">
+    <div
+      class="bc-cal-row${p.currentSpan && p.currentSpan.kind === 'away' ? ' is-person-away' : ''}${p.showOnCalendar ? '' : ' is-off'}${phone ? ' is-held' : ''}"
+      data-drop-person=${p.id}
+      data-person-name=${p.name}
+      onPointerDown=${(e) => { if (phone) press.onPointerDown(e); onDragStart(e); }}
+      ...${phone ? { onPointerMove: press.onPointerMove, onPointerUp: press.onPointerUp, onPointerCancel: press.onPointerCancel, onContextMenu: press.onContextMenu, onClickCapture: press.onClickCapture } : {}}
+    >
+      <span class="bc-cal-label">
+        <input
+          type="checkbox"
+          checked=${p.showOnCalendar}
+          onChange=${() => togglePersonVisible(p)}
+          title="Show away/busy spans on the calendar"
+          aria-label=${'Show ' + p.name + ' availability on calendar'}
+        />
+        <button
+          type="button" class="bc-cal-name bc-person-namebtn"
+          title=${(p.currentSpan ? p.name + ' is ' + p.currentSpan.kind + ' now. ' : '') + 'Open in People'}
+          onClick=${() => set({ route: 'people', peopleFocus: p.name })}
+        >${p.name}</button>
+        ${p.currentSpan && html`<span class="bc-badge bc-away-pill is-${p.currentSpan.kind}">${p.currentSpan.kind}</span>`}
+      </span>
+      ${(!phone || soloed) && html`<button
+        type="button"
+        class="bc-icon-btn bc-cal-solo${soloed ? ' is-on' : ''}"
+        aria-pressed=${soloed}
+        title=${soloed ? 'Showing only this person. Click to restore.' : "Show only this person's spans"}
+        onClick=${(e) => { toggleSolo(); e.currentTarget.blur(); }}
+      >${soloed ? html`Only <${Icon} name="check" size=${10} />` : 'Only'}</button>`}
+    </div>
+  </div>`;
+}
+
 // Creation launchers: every "+ ..." opens the titled CreateDrawer (the
 // slide-in from the right), never an anonymous inline form.
 function AddMenu() {
@@ -329,6 +411,15 @@ export function Sidebar({ open, collapsed, onClose }) {
   // id; keying by id alone opened both copies of the settings panel at once.
   const [openGear, setOpenGear] = useState(null); // "<section>:<calendarId>"
   const [solo, setSolo] = useState(null); // {calId, prev: [[id, visible], ...]}
+  const [menu, setMenu] = useState(null); // phone: {head, color, items} of a held row
+  const phone = (() => { try { return window.matchMedia(PHONE_QUERY).matches; } catch { return false; } })();
+  // A phone lists a calendar once: in the first folder it is filed in, else
+  // under Other calendars. That is the section its settings open in.
+  const homeSection = (calId) => {
+    const cal = state.calendars.find((c) => c.id === calId);
+    const f = cal && state.folders.find((fo) => (cal.folderIds || []).includes(fo.id));
+    return f ? 'f' + f.id : 'all';
+  };
 
   const toggleGear = (key) => setOpenGear(openGear === key ? null : key);
   // Asked for from the event sheet's More ("Manage calendar"): open that
@@ -336,7 +427,12 @@ export function Sidebar({ open, collapsed, onClose }) {
   const manageCal = useStore((st) => st.manageCal);
   useEffect(() => {
     if (!manageCal) return;
-    setOpenGear('all:' + manageCal);
+    const section = phone ? homeSection(manageCal) : 'all';
+    setOpenGear(section + ':' + manageCal);
+    if (section !== 'all' && state.collapsedFolders[section.slice(1)]) {
+      set({ collapsedFolders: { ...state.collapsedFolders, [section.slice(1)]: false } });
+    }
+    if (section === 'all' && state.collapsedAllCals) set({ collapsedAllCals: false });
     set({ manageCal: null });
     requestAnimationFrame(() => requestAnimationFrame(() => {
       const el = document.querySelector('.bc-calset');
@@ -439,26 +535,64 @@ export function Sidebar({ open, collapsed, onClose }) {
   // whose header carries the button. The row whose gear is open stays
   // regardless: switching a calendar off from its own settings panel would
   // otherwise yank the panel out from under the pointer.
-  const listed = (cals, section) => (activeOnly && section === 'all'
-    ? cals.filter((c) => c.visible || openGear === 'all:' + c.id)
+  // On a phone the button sits over every section, so it applies to all.
+  const listed = (cals, section) => (activeOnly && (section === 'all' || phone)
+    ? cals.filter((c) => c.visible || openGear === section + ':' + c.id)
     : cals);
+
+  const calMenu = (c, section) => {
+    const soloed = solo && solo.calId === c.id;
+    setMenu({
+      head: c.name, color: c.color || 'var(--border-strong)',
+      items: [
+        soloed ? ['visAll', 'Show all calendars again', exitSolo] : ['visNone', 'Show only this calendar', () => enterSolo(c)],
+        ['settings', openGear === section + ':' + c.id ? 'Close its settings' : 'Calendar settings', () => toggleGear(section + ':' + c.id)],
+      ],
+    });
+  };
 
   const rows = (cals, section) => listed(cals, section).map((c) => html`<${CalendarRow}
     key=${c.id} cal=${c} folders=${folders}
     open=${openGear === section + ':' + c.id}
     onGear=${() => toggleGear(section + ':' + c.id)}
-    filedIn=${section === 'all' ? folderNamesOf(c) : null}
+    filedIn=${section === 'all' && !phone ? folderNamesOf(c) : null}
     soloed=${solo && solo.calId === c.id}
     onSolo=${(cal) => (solo && solo.calId === cal.id ? exitSolo() : enterSolo(cal))}
+    phone=${phone}
+    onMenu=${() => calMenu(c, section)}
   />`);
+  const unfiled = calendars.filter((c) => !folders.some((f) => (c.folderIds || []).includes(f.id)));
+  const allCalTools = html`<span class="bc-folder-tools">
+    <button
+      type="button" class="bc-icon-btn bc-folder-tool"
+      aria-label="New calendar" title="New calendar"
+      onClick=${() => set({ createDrawer: { kind: 'calendar' } })}
+    ><${Icon} name="plus" size=${13} /></button>
+    <${ActiveOnlyButton} />
+    <${AllModeButton} />
+  </span>`;
+  const pagesGrid = html`<nav class="bc-sb-pages" aria-label="Pages">
+    ${MANAGE_ITEMS.map(([r, label]) => html`<button
+      key=${r} type="button"
+      class="bc-sb-page${route === r ? ' is-active' : ''}"
+      aria-current=${route === r ? 'page' : 'false'}
+      onClick=${() => set({ route: r })}
+    ><${Icon} name=${r} size=${17} /><span>${label}</span>${r === 'review' && reviewCount > 0
+      && html`<span class="bc-manage-badge" aria-label=${reviewCount + ' awaiting a decision'}>${reviewCount}</span>`}</button>`)}
+  </nav>`;
 
   return html`<aside class="bc-sidebar${open ? ' is-open' : ''}${collapsed ? ' is-collapsed' : ''}">
     ${onClose && html`<div class="bc-sidebar-mobilehead">
-      <span class="bc-manage-head">Calendars</span>
+      <span class="bc-manage-head">Better-Cal</span>
       <button type="button" class="bc-icon-btn" aria-label="Close sidebar" onClick=${onClose}><${Icon} name="close" size=${15} /></button>
     </div>`}
     <div class="bc-sidebar-scroll bc-scroll-edges" ref=${scrollRef}>
+      ${phone && pagesGrid}
       <${MiniMonth} />
+      ${phone && html`<div class="bc-folder-headrow bc-sb-calhead">
+        <span class="bc-folder-head bc-folder-static">Calendars</span>
+        ${allCalTools}
+      </div>`}
       ${byFolder.map(({ folder, cals }) => html`<section key=${'f' + folder.id} class="bc-folder">
         <${FolderHead}
           folder=${folder} cals=${cals}
@@ -467,25 +601,26 @@ export function Sidebar({ open, collapsed, onClose }) {
         />
         ${!collapsedFolders[folder.id] && html`<div class="bc-folder-body">${rows(cals, 'f' + folder.id)}</div>`}
       </section>`)}
-      <section class="bc-folder">
+      ${phone ? (unfiled.length > 0 && html`<section class="bc-folder">
+        ${byFolder.length > 0 && html`<div class="bc-folder-headrow">
+          <button
+            type="button" class="bc-folder-head bc-folder-static"
+            aria-expanded=${!collapsedAllCals}
+            onClick=${() => set({ collapsedAllCals: !collapsedAllCals })}
+          ><span class="bc-folder-caret${collapsedAllCals ? ' is-closed' : ''}"><${Icon} name="chevronDown" size=${13} /></span>Other calendars</button>
+        </div>`}
+        ${(byFolder.length === 0 || !collapsedAllCals) && rows(unfiled, 'all')}
+      </section>`) : html`<section class="bc-folder">
         ${byFolder.length > 0 && html`<div class="bc-folder-headrow">
           <button
             type="button" class="bc-folder-head bc-folder-static"
             aria-expanded=${!collapsedAllCals}
             onClick=${() => set({ collapsedAllCals: !collapsedAllCals })}
           ><span class="bc-folder-caret${collapsedAllCals ? ' is-closed' : ''}"><${Icon} name="chevronDown" size=${13} /></span>All calendars</button>
-          <span class="bc-folder-tools">
-            <button
-              type="button" class="bc-icon-btn bc-folder-tool"
-              aria-label="New calendar" title="New calendar"
-              onClick=${() => set({ createDrawer: { kind: 'calendar' } })}
-            ><${Icon} name="plus" size=${13} /></button>
-            <${ActiveOnlyButton} />
-            <${AllModeButton} />
-          </span>
+          ${allCalTools}
         </div>`}
         ${(byFolder.length === 0 || !collapsedAllCals) && rows(calendars, 'all')}
-      </section>
+      </section>`}
       ${people.length > 0 && html`<section class="bc-folder">
         <div class="bc-folder-headrow">
           <button
@@ -502,37 +637,20 @@ export function Sidebar({ open, collapsed, onClose }) {
             ><${Icon} name="plus" size=${13} /></button>
           </span>
         </div>
-        ${!collapsedPeople && people.map((p) => html`<div key=${p.id} class="bc-cal-item">
-          <div
-            class="bc-cal-row${p.currentSpan && p.currentSpan.kind === 'away' ? ' is-person-away' : ''}${p.showOnCalendar ? '' : ' is-off'}"
-            data-drop-person=${p.id}
-            data-person-name=${p.name}
-            onPointerDown=${(e) => dragPersonStart(p, e)}
-          >
-            <span class="bc-cal-label">
-              <input
-                type="checkbox"
-                checked=${p.showOnCalendar}
-                onChange=${() => togglePersonVisible(p)}
-                title="Show away/busy spans on the calendar"
-                aria-label=${'Show ' + p.name + ' availability on calendar'}
-              />
-              <button
-                type="button" class="bc-cal-name bc-person-namebtn"
-                title=${(p.currentSpan ? p.name + ' is ' + p.currentSpan.kind + ' now. ' : '') + 'Open in People'}
-                onClick=${() => set({ route: 'people', peopleFocus: p.name })}
-              >${p.name}</button>
-              ${p.currentSpan && html`<span class="bc-badge bc-away-pill is-${p.currentSpan.kind}">${p.currentSpan.kind}</span>`}
-            </span>
-            <button
-              type="button"
-              class="bc-icon-btn bc-cal-solo${peopleSolo && peopleSolo.personId === p.id ? ' is-on' : ''}"
-              aria-pressed=${peopleSolo && peopleSolo.personId === p.id}
-              title=${peopleSolo && peopleSolo.personId === p.id ? 'Showing only this person. Click to restore.' : "Show only this person's spans"}
-              onClick=${(e) => { if (peopleSolo && peopleSolo.personId === p.id) exitPeopleSolo(); else enterPeopleSolo(p); e.currentTarget.blur(); }}
-            >${peopleSolo && peopleSolo.personId === p.id ? html`Only <${Icon} name="check" size=${10} />` : 'Only'}</button>
-          </div>
-        </div>`)}
+        ${!collapsedPeople && people.map((p) => {
+          const soloed = !!(peopleSolo && peopleSolo.personId === p.id);
+          return html`<${PersonRow}
+            key=${p.id} p=${p} soloed=${soloed} phone=${phone}
+            onDragStart=${(e) => dragPersonStart(p, e)}
+            onMenu=${() => setMenu({
+              head: p.name, color: null,
+              items: [
+                soloed ? ['visAll', 'Show everyone again', exitPeopleSolo] : ['visNone', "Show only this person's spans", () => enterPeopleSolo(p)],
+                ['people', 'Open in People', () => set({ route: 'people', peopleFocus: p.name })],
+              ],
+            })}
+          />`;
+        })}
       </section>`}
       ${layerPlugins.length > 0 && html`<section class="bc-folder" aria-label="Plugin layers">
         <div class="bc-folder-head">
@@ -559,7 +677,8 @@ export function Sidebar({ open, collapsed, onClose }) {
         <button type="button" class="bc-link-btn" onClick=${exitSolo}>Show all</button>
       </div>`}
     </div>
-    <footer class="bc-sidebar-foot">
+    ${menu && html`<${RowMenu} head=${menu.head} color=${menu.color} items=${menu.items} onClose=${() => setMenu(null)} />`}
+    ${!phone && html`<footer class="bc-sidebar-foot">
       <button
         type="button" class="bc-folder-head bc-manage-head"
         aria-expanded=${!manageCollapsed}
@@ -573,6 +692,6 @@ export function Sidebar({ open, collapsed, onClose }) {
         onClick=${() => set({ route: r })}
       ><${Icon} name=${r} /><span>${label}</span>${r === 'review' && reviewCount > 0
         && html`<span class="bc-manage-badge" aria-label=${reviewCount + ' awaiting a decision'}>${reviewCount}</span>`}</button>`)}
-    </footer>
+    </footer>`}
   </aside>`;
 }

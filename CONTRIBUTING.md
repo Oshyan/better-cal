@@ -13,7 +13,7 @@ Honest answers are the promise. Some things will be declined because they are no
 ## Running it locally
 
 - Requirements and setup: `docs/install.md`. Copy `.env.example` to `.env`; only the database, base URL and session secret are required.
-- Layout and conventions: `docs/architecture.md`. Plain PHP 8.3+ with no framework on the server, Preact + HTM with no build step on the client. Read that before adding a dependency; the bar for one is high.
+- Layout and conventions: `docs/architecture.md`. Plain PHP 8.4+ with no framework on the server, Preact + HTM with no build step on the client. Read that before adding a dependency; the bar for one is high.
 - Writing a plugin: `docs/plugins/authoring.md`.
 
 ## Before you open a pull request
@@ -27,7 +27,7 @@ node --experimental-vm-modules web/tests/static.mjs
 node tools/mcp/test.mjs
 ```
 
-The smoke suite is run under several time zones on deploy, so a test that only passes in yours will be caught. Add a test with any behaviour change: the server suite is plain PHP with no database (SQLite in memory where one is needed, so PHP needs `pdo_sqlite`: `php8.3-sqlite3` on Debian and Ubuntu), the smoke suite is plain Node.
+The smoke suite is run under several time zones on deploy, so a test that only passes in yours will be caught. Add a test with any behaviour change: the server suite is plain PHP with no database (SQLite in memory where one is needed, so PHP needs `pdo_sqlite`: `php8.4-sqlite3` on Debian and Ubuntu), the smoke suite is plain Node.
 
 A few habits the codebase keeps:
 

@@ -4,6 +4,11 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.9.0 (2026-10-03)
+
+- **Better-Cal now needs PHP 8.4 (8.4.1 or later).** Production has run 8.4 all along, so the minimum now matches what is used every day. 8.3 was a floor nothing else ran, and 0.8.3 showed how quietly it drifts. New servers ship 8.4 or 8.5 (Debian 13, Ubuntu 26.04), and shared hosts offer both in their panels. On Ubuntu 24.04 or Debian 12, the install guide shows how to add PHP 8.4 from the Ondřej Surý packages. The dependency lock is resolved for 8.4.1, which puts Symfony back on its current 8.1 line.
+- **The GitHub check installs and tests on PHP 8.4,** in the official PHP image rather than the runner's stock PHP.
+
 ## 0.8.3 (2026-10-03)
 
 Installing on someone else's server, from a clean-install dry run (#22).

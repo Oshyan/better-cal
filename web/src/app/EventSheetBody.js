@@ -189,15 +189,21 @@ export function EventSheetBody({ occ, cal, isFeed, full, panel = false, onFull, 
       ${moreMenu}
     </div>`;
 
+  // Which occurrences a For me change is for, on a repeating event. On the
+  // phone it opens right under the switch that asked (0.6.2); at the top of
+  // the sheet it was out of view whenever the sheet had scrolled, and the
+  // switch seemed to do nothing.
+  const attendScope = attendPrompt && attendPrompt.instanceId === occ.instanceId && html`<${ScopeChoice} occ=${occ} verb=${attendPrompt.label + ' for'} compact note=${cal && cal.role === 'mine' && googleBacked(occ) ? GOOGLE_NO_UNDO : null}
+        onPick=${async (scope) => { const v = attendPrompt.relationship; set({ attendPrompt: null }); const r = await setRelationship(occ, v, scope); if (r === 'hidden') close(); }}
+        onCancel=${() => set({ attendPrompt: null })} />`;
+
   return html`
     <div class="bc-pop-body bc-es-body" ref=${bodyRef}>
       ${panel && tools}
       ${copyOpen && html`<${CopyTo} occ=${occ} compact onDone=${close} />`}
       ${deletePrompt === occ.instanceId && html`<${DeleteScope} occ=${occ} compact onDone=${() => set({ deletePrompt: null, popover: null })} onCancel=${() => set({ deletePrompt: null })} />`}
       ${timeScope && html`<${ScopeChoice} occ=${occ} verb="New time for" compact note=${googleBacked(occ) ? GOOGLE_NO_UNDO : null} onPick=${(scope) => { const f = timeScope; setTimeScope(null); updateEvent(occ, f, scope); }} onCancel=${() => setTimeScope(null)} />`}
-      ${attendPrompt && attendPrompt.instanceId === occ.instanceId && html`<${ScopeChoice} occ=${occ} verb=${attendPrompt.label + ' for'} compact note=${cal && cal.role === 'mine' && googleBacked(occ) ? GOOGLE_NO_UNDO : null}
-        onPick=${async (scope) => { const v = attendPrompt.relationship; set({ attendPrompt: null }); const r = await setRelationship(occ, v, scope); if (r === 'hidden') close(); }}
-        onCancel=${() => set({ attendPrompt: null })} />`}
+      ${panel && attendScope}
 
       <div class="bc-es-head">
         <div class="bc-es-titlerow">
@@ -210,6 +216,7 @@ export function EventSheetBody({ occ, cal, isFeed, full, panel = false, onFull, 
           <span class="bc-es-cal"><i style=${'background:' + color}></i>${(cal && cal.name) || 'Calendar'}${suggested ? ' · suggested' : ''}${occ.status === 'cancelled' ? ' · cancelled' : ''}</span>
           ${!panel && !context && html`<${ForMe} occ=${occ} cal=${cal} onHidden=${close} />`}
         </div>
+        ${!panel && attendScope}
         ${occ.containers && occ.containers.length > 0 && html`<button
           type="button" class="bc-es-partof" onClick=${() => { close(); openTripByEventId(occ.containers[0].eventId); }}
         ><${Icon} name="trip" size=${15} />Part of ${occ.containers[0].title}</button>`}

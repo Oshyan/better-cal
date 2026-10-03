@@ -67,7 +67,7 @@ $now = new DateTimeImmutable('2026-07-30T10:00:00', new DateTimeZone($tz));
 $p = static fn(string $text): array => FallbackParser::parse($text, $tz, $now);
 
 $d = $p('Dinner with Sam next thursday 7pm at Zuni');
-checkEq('fp1 title keeps with-clause', 'Dinner with Sam', $d['title']);
+checkEq('fp1 title keeps with-clause and place', 'Dinner with Sam at Zuni', $d['title']);
 checkEq('fp1 start', '2026-08-06T19:00:00-07:00', $d['start']);
 checkEq('fp1 end', '2026-08-06T20:00:00-07:00', $d['end']);
 checkEq('fp1 location', 'Zuni', $d['location']);
@@ -237,12 +237,22 @@ checkEq('fp37 title', 'Dinner with the Sages and Sam', $d['title']);
 $d = $p('Dinner with Sam, Alex and Pat at Delfina tomorrow 7pm');
 checkEq('fp38 people list with location', ['Sam', 'Alex', 'Pat'], $d['personNames']);
 checkEq('fp38 location', 'Delfina', $d['location']);
-checkEq('fp38 title', 'Dinner with Sam, Alex and Pat', $d['title']);
+checkEq('fp38 title keeps the place', 'Dinner with Sam, Alex and Pat at Delfina', $d['title']);
 
 $d = $p('Dinner at Zuni with Sam tomorrow 7pm');
 checkEq('fp39 location before with-clause', 'Zuni', $d['location']);
 checkEq('fp39 people', ['Sam'], $d['personNames']);
-checkEq('fp39 title', 'Dinner with Sam', $d['title']);
+checkEq('fp39 title keeps the place', 'Dinner at Zuni with Sam', $d['title']);
+
+$d = $p("Lunch at The Pig's Ear at 12PM");
+checkEq('fp41 a venue stays in the title', "Lunch at The Pig's Ear", $d['title']);
+checkEq('fp41 and fills the location', "The Pig's Ear", $d['location']);
+$d = $p('Coffee @ Blue Bottle tomorrow 3pm');
+checkEq('fp42 "@" reads as "at" in the title', 'Coffee at Blue Bottle', $d['title']);
+checkEq('fp42 location', 'Blue Bottle', $d['location']);
+check('qa over-stripped: "Lunch" from "Lunch at The Pig\'s Ear"', QuickAdd::overStripped('Lunch', "Lunch at The Pig's Ear"));
+check('qa over-stripped: a different title is not', !QuickAdd::overStripped('Brunch', "Lunch at The Pig's Ear"));
+check('qa over-stripped: an equal-length title is not', !QuickAdd::overStripped('Lunch at Pigs', "Lunch at The"));
 
 $d = $p('the standup tomorrow 9am');
 checkEq('fp40 leading article sentence-cased only', 'The standup', $d['title']);
@@ -251,7 +261,7 @@ checkEq('fp40 no people', [], $d['personNames']);
 $d = $p('meet at 6pm at The Ferry Building tomorrow');
 checkEq('fp41 at-time wins over at-location', '2026-07-31T18:00:00-07:00', $d['start']);
 checkEq('fp41 multi-word capitalized location intact', 'The Ferry Building', $d['location']);
-checkEq('fp41 title sentence-cased', 'Meet', $d['title']);
+checkEq('fp41 title sentence-cased, place kept', 'Meet at The Ferry Building', $d['title']);
 
 $d = $p('Drinks at 8pm');
 checkEq('fp42 at-time is a time not a location', null, $d['location']);
@@ -260,7 +270,7 @@ checkEq('fp42 start', '2026-07-30T20:00:00-07:00', $d['start']);
 $d = $p('Picnic at Golden Gate Park saturday');
 checkEq('fp43 multi-word location', 'Golden Gate Park', $d['location']);
 checkEq('fp43 allDay', true, $d['allDay']);
-checkEq('fp43 title', 'Picnic', $d['title']);
+checkEq('fp43 title keeps the place', 'Picnic at Golden Gate Park', $d['title']);
 
 $d = $p('Call at 14:30 tomorrow');
 checkEq('fp44 24h at-time wins', '2026-07-31T14:30:00-07:00', $d['start']);

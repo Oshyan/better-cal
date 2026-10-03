@@ -177,8 +177,14 @@ export function EditorDrawer() {
   const nlReq = useRef(0);
   const flashTimer = useRef(0);
 
-  const applyNlDraft = (d) => {
+  // A place the quick fill found opens the Location candidates (0.6.2):
+  // typed text alone lands wherever a later lookup guesses (The Pig's Ear in
+  // Dublin), so the choice is offered right away. Nothing is picked for you.
+  // While typing it only opens; on Enter or Fill the cursor moves there too.
+  const [placeAsk, setPlaceAsk] = useState(null);
+  const applyNlDraft = (d, fromEnter = false) => {
     if (!d) return;
+    if (d.location) setPlaceAsk((p) => ({ seq: ((p && p.seq) || 0) + 1, focus: fromEnter }));
     const touched = [];
     setForm((f) => {
       if (!f) return f;
@@ -207,12 +213,12 @@ export function EditorDrawer() {
     }
   };
 
-  const runNlParse = async (v) => {
+  const runNlParse = async (v, fromEnter = false) => {
     if (!v.trim()) return;
     const id = ++nlReq.current;
     try {
       const d = await quickAddParse(v);
-      if (id === nlReq.current) applyNlDraft(d);
+      if (id === nlReq.current) applyNlDraft(d, fromEnter);
     } catch { /* assist is best-effort */ }
   };
 
@@ -230,7 +236,7 @@ export function EditorDrawer() {
     if (e.key === 'Enter') {
       e.preventDefault();
       clearTimeout(nlTimer.current);
-      runNlParse(nlText);
+      runNlParse(nlText, true);
     }
   };
 
@@ -407,8 +413,9 @@ export function EditorDrawer() {
 
   // Focus lands in the editor when it opens (the autofocus attribute does
   // nothing for an element added after the page loaded, so whatever had focus
-  // before, the Filter box say, kept it). The title, or the plain-language
-  // box when text came with it; the caret at the end, never selecting. A
+  // before, the Filter box say, kept it). A new event starts in the quick
+  // fill box (0.6.2), an edit in the title; the caret at the end, never
+  // selecting. A
   // phone skips it when editing, where a keyboard nobody asked for would
   // cover the event.
   const focusedFor = useRef(null);
@@ -416,7 +423,7 @@ export function EditorDrawer() {
     if (!editor || !form || focusedFor.current === editor) return;
     focusedFor.current = editor;
     if (phoneOpen && editor.occ) return;
-    const el = panelRef.current && panelRef.current.querySelector(editor.nlText ? '.bc-nl-input' : '.bc-ed-title');
+    const el = panelRef.current && panelRef.current.querySelector(!editor.occ && !editor.restore ? '.bc-nl-input' : '.bc-ed-title');
     if (!el) return;
     el.focus({ preventScroll: true });
     try { el.setSelectionRange(el.value.length, el.value.length); } catch { /* not a text box */ }
@@ -699,7 +706,7 @@ export function EditorDrawer() {
             onKeyDown=${onNlKeyDown}
             aria-label="Describe the event in plain language"
           />
-          <button type="button" class="bc-btn bc-nl-go" title="Fill the fields now" onClick=${() => { clearTimeout(nlTimer.current); runNlParse(nlText); }}>Fill</button>
+          <button type="button" class="bc-btn bc-nl-go" title="Fill the fields now" onClick=${() => { clearTimeout(nlTimer.current); runNlParse(nlText, true); }}>Fill</button>
         </div>
       </div>`}
 
@@ -769,6 +776,7 @@ export function EditorDrawer() {
             ariaLabel="Location"
             tz=${occ ? occ.tzid : localTz()}
             near=${() => calendarPlaceNear(formInstants(form)[0].getTime(), occ ? occ.eventId : null)}
+            ask=${placeAsk}
             onText=${(v) => upd({ location: v, locationLat: null, locationLng: null })}
             onPick=${(r) => upd({ location: pickFillText(r), locationLat: r.lat, locationLng: r.lng })}
           />

@@ -58,8 +58,10 @@ final class LlmGateway
                     . "judged from its address, venue or city, or from an explicit zone in the text (\"3pm ET\"); if the text "
                     . "gives no place or zone, timezone is " . ($hereTz ?? $tz) . "; "
                 : "if no end is given, default to one hour after start; start and end must be ISO8601 with UTC offset; ")
-            . "the title is the text minus only its date/time/location phrases — keep companion phrases "
-            . "(\"Cocktails with Virginia at 4pm\" -> title \"Cocktails with Virginia\", NOT \"Cocktails\"); "
+            . "the title is the text minus only its date and time phrases: keep the place and the companions in it "
+            . "(\"Lunch at The Pig's Ear at 12pm\" -> title \"Lunch at The Pig's Ear\", location \"The Pig's Ear\"; "
+            . "\"Cocktails with Virginia at 4pm\" -> title \"Cocktails with Virginia\", NOT \"Cocktails\"); only a "
+            . "street address leaves the title for the location field; "
             . "location is a place name or empty string; personNames are people mentioned as companions "
             . "(e.g. \"with Sam\" -> [\"Sam\"], also listed in personNames while staying in the title).\n"
             . "Text: " . $text;

@@ -1,17 +1,20 @@
 # Installing Better-Cal
 
-Better-Cal is plain PHP and MySQL with a no-build frontend. It runs on any host that gives you PHP 8.3+, MySQL 8 or MariaDB 10.6+, a cron job and a web server you can point at one directory.
+Better-Cal is plain PHP and MySQL with a no-build frontend. It runs on any host that gives you PHP 8.4+, MySQL 8 or MariaDB 10.6+, a cron job and a web server you can point at one directory.
 
 What has been run, and how:
 
 - **Production:** Nginx with PHP-FPM 8.4 and Percona Server 8.4 (MySQL), on Debian.
-- **Clean-install test (2026-10-03):** Ubuntu 24.04 with Apache 2.4 and mod_php 8.3, MariaDB 10.11 (and MariaDB 10.6 for the migrations, the smoke test and the worker), following this page from an empty machine. Everything below was checked there: install, migrations, sign-in, events and undo, search, repeating events, CalDAV and API tokens through Apache, a subscribed feed, a plugin, the worker under cron.
+- **Clean-install test (2026-10-03):** Ubuntu 24.04 with Apache 2.4 and mod_php 8.3 (the minimum then; it is 8.4 since 0.9.0, and the GitHub check installs on 8.4 on every push), MariaDB 10.11 (and MariaDB 10.6 for the migrations, the smoke test and the worker), following this page from an empty machine. Everything below was checked there: install, migrations, sign-in, events and undo, search, repeating events, CalDAV and API tokens through Apache, a subscribed feed, a plugin, the worker under cron.
 
 If your host differs and something needs changing, please report it.
 
 ## Requirements
 
-- PHP 8.3 or newer with these extensions: `pdo_mysql`, `curl`, `mbstring`, `xml` (dom, simplexml, xmlreader, xmlwriter: CalDAV needs them), `zip`, plus `json`, `openssl`, `sodium` and `ctype`, which nearly every PHP build already has. On Debian and Ubuntu that is `apt install php8.3-cli php8.3-mysql php8.3-curl php8.3-mbstring php8.3-xml php8.3-zip` (and `libapache2-mod-php8.3` or `php8.3-fpm` for the web server). `composer check-platform-reqs --lock --no-dev`, run in `server/`, lists anything missing.
+- PHP 8.4 or newer (8.4.1 or later) with these extensions: `pdo_mysql`, `curl`, `mbstring`, `xml` (dom, simplexml, xmlreader, xmlwriter: CalDAV needs them), `zip`, plus `json`, `openssl`, `sodium` and `ctype`, which nearly every PHP build already has. `composer check-platform-reqs --lock --no-dev`, run in `server/`, lists anything missing.
+  - Shared hosting: pick PHP 8.4 or 8.5 in the host's panel (DreamHost, cPanel hosts and most others offer both).
+  - Debian 13 and Ubuntu 26.04 ship PHP 8.4 and 8.5 respectively: `apt install php8.4-cli php8.4-mysql php8.4-curl php8.4-mbstring php8.4-xml php8.4-zip` (use `8.5` on Ubuntu 26.04), plus `libapache2-mod-php8.4` or `php8.4-fpm` for the web server.
+  - Ubuntu 24.04 and Debian 12 ship older PHP. Add the widely used packages by Ondřej Surý first: `sudo add-apt-repository ppa:ondrej/php` on Ubuntu (Debian: https://packages.sury.org/php/), then the `php8.4-*` packages above.
 - Composer, to install the PHP dependencies.
 - MySQL 8.0.19 or newer, or MariaDB 10.6 or newer, with one empty database and a user with full rights on it.
 - A cron entry (or any scheduler) that can run a PHP script every minute.

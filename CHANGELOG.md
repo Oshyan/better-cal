@@ -4,6 +4,17 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.7.0 (2026-10-03)
+
+Trips, in step with events.
+
+- **A trip opens where an event does:** the side panel on a desktop, the sheet on a phone, with the same toolbar, Back and stepping. It used to open as a small card in the middle of the screen on a desktop and a sparse page on a phone.
+- **It leads with the trip:** its dates and length, its place with Directions, its events as rows that say when, what and where, and a map numbering the places of its events (on a phone, once the sheet is pulled up, as with an event's map).
+- **Opening one of its events keeps the way back:** "‹ London trip" above the event, and Back on a phone returns to the trip.
+- **Edit and Add events** are in the desktop toolbar; New event in this trip, the calendar's settings and Delete trip are in More. On a phone, Edit and More sit beside the title and Add events under the list.
+- **Removing an event from a trip asks first,** from that event's own row (its ⋯), instead of a bare x beside it.
+- **Adding events offers yours:** your planned and maybe events during the trip, on calendars you show, never weather or sunset entries; feed suggestions on request. A three-week trip through a busy city offered 241 candidates before, 29 now.
+
 ## 0.6.10 (2026-10-03)
 
 - **More on the desktop event panel draws over the map.** The map's layers (Leaflet's, at z-index 400) shared a stacking layer with the menu and covered its lower items, Delete included. Every map now keeps its layers to itself.

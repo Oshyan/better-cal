@@ -7,11 +7,13 @@ import { html } from '../../vendor/index.js';
 import { set } from './store.js';
 import { Icon } from '../ui/icons.js';
 
-export function PageShell({ title, note, children }) {
+// back: {label, onClick} for a page inside a page (a Settings section on a
+// phone, 0.8.0); otherwise Back goes to the calendar.
+export function PageShell({ title, note, children, back = null }) {
   return html`<div class="bc-page">
     <div class="bc-page-col">
-      <button type="button" class="bc-page-back" onClick=${() => set({ route: 'calendar' })}>
-        <${Icon} name="arrowLeft" size=${13} /><span>Back to calendar</span>
+      <button type="button" class="bc-page-back" onClick=${back ? back.onClick : () => set({ route: 'calendar' })}>
+        <${Icon} name="arrowLeft" size=${13} /><span>${back ? back.label : 'Back to calendar'}</span>
       </button>
       <h1 class="bc-page-title">${title}</h1>
       ${note && html`<p class="bc-page-note">${note}</p>`}

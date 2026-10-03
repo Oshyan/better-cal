@@ -611,6 +611,24 @@ export const SETTINGS_TABS = [
   ['system', 'System'],
 ];
 
+// What each section holds, under its name in the phone's list (0.8.0).
+// Live values where they are cheap to show, so the list says something
+// without opening anything.
+function sectionSummary(id, settings, user, version) {
+  const view = (VIEW_OPTIONS.find(([v]) => v === settings.defaultView) || [null, 'Month'])[1];
+  switch (id) {
+    case 'general': return [view, settings.weekStart === 'mon' ? 'Monday' : 'Sunday', settings.timeFormat === '24' ? '24-hour' : '12-hour',
+      (settings.theme === 'light' ? 'Light' : settings.theme === 'dark' ? 'Dark' : 'System') + ' theme', 'default calendar, home time zone, quick add'].join(' · ');
+    case 'notifications': return 'Reminders on this device, devices, delivery, default reminders';
+    case 'location': return 'Home location, map style, place search';
+    case 'connections': return 'Google, outgoing feeds, CalDAV, browser extension';
+    case 'account': return [(user && user.email) || 'Signed in', 'other browsers', 'API keys'].join(' · ');
+    case 'about': return (version ? 'Version ' + version : 'Version') + ' · source';
+    case 'system': return 'Background work, failure emails';
+    default: return '';
+  }
+}
+
 export function SettingsPage() {
   const { settings, user, calendars, config, settingsTab } = useStore(
     (s) => ({ settings: s.settings, user: s.user, calendars: s.calendars, config: s.config, settingsTab: s.settingsTab }),
@@ -640,22 +658,55 @@ export function SettingsPage() {
     }
   };
 
-  const tab = SETTINGS_TABS.some(([id]) => id === settingsTab) ? settingsTab : 'general';
+  // A phone (0.8.0) opens on a list of the sections, each a page of its own
+  // with Back to the list; the tab strip ran to two crowded rows there.
+  const phone = window.matchMedia(PHONE_QUERY).matches;
+  const chosen = SETTINGS_TABS.some(([id]) => id === settingsTab) ? settingsTab : null;
+  const tab = chosen || 'general';
   const pick = (id) => set({ settingsTab: id });
-  // Leaving the page forgets the tab: coming back means starting at General,
-  // not wherever you happened to be last.
-  useEffect(() => () => set({ settingsTab: 'general' }), []);
+  // Leaving the page forgets the tab: coming back means starting at General
+  // (or the list), not wherever you happened to be last.
+  useEffect(() => () => set({ settingsTab: null }), []);
 
-  return html`<${PageShell} title="Settings" note="Changes are saved as you make them.">
-    <div class="bc-tabs" role="tablist" aria-label="Settings sections">
+  // Phone: a section takes a history entry, so Back returns to the list.
+  useEffect(() => {
+    if (!phone || !chosen) return undefined;
+    history.pushState({ bcRoute: 'settings', bcSetSection: chosen }, '');
+    let popped = false;
+    const onPop = () => { popped = true; set({ settingsTab: null }); };
+    window.addEventListener('popstate', onPop);
+    return () => {
+      window.removeEventListener('popstate', onPop);
+      if (!popped && history.state && history.state.bcSetSection) history.back();
+    };
+  }, [phone, chosen]);
+
+  if (phone && !chosen) {
+    return html`<${PageShell} title="Settings" note="Changes are saved as you make them.">
+      <nav class="bc-setlist" aria-label="Settings sections">
+        ${SETTINGS_TABS.map(([id, label]) => html`<button key=${id} type="button" class="bc-setlist-row" onClick=${() => pick(id)}>
+          <span class="bc-setlist-text"><span class="bc-setlist-name">${label}</span><span class="bc-setlist-sum">${sectionSummary(id, settings, user, version)}</span></span>
+          <${Icon} name="chevronRight" size=${16} />
+        </button>`)}
+      </nav>
+    <//>`;
+  }
+
+  const sectionLabel = phone ? (SETTINGS_TABS.find(([id]) => id === tab) || [null, 'Settings'])[1] : 'Settings';
+  return html`<${PageShell}
+    title=${sectionLabel}
+    note=${phone ? null : 'Changes are saved as you make them.'}
+    back=${phone ? { label: 'Settings', onClick: () => history.back() } : null}
+  >
+    ${!phone && html`<div class="bc-tabs" role="tablist" aria-label="Settings sections">
       ${SETTINGS_TABS.map(([id, label]) => html`<button
         key=${id} type="button" role="tab" id=${'bc-settab-' + id}
         class="bc-tab${tab === id ? ' is-active' : ''}"
         aria-selected=${tab === id ? 'true' : 'false'}
         onClick=${() => pick(id)}
       >${label}</button>`)}
-    </div>
-    <div role="tabpanel" aria-labelledby=${'bc-settab-' + tab}>
+    </div>`}
+    <div role=${phone ? undefined : 'tabpanel'} aria-labelledby=${phone ? undefined : 'bc-settab-' + tab} class=${phone ? 'bc-setpage' : undefined} data-tab=${tab}>
     ${tab === 'general' && html`
     <section class="bc-set-section">
       <h2 class="bc-set-h">General</h2>

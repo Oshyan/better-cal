@@ -634,7 +634,13 @@ export function App() {
     if (history.state && (history.state.bcRoute || history.state.bcDrawer)) history.replaceState({ bcRoute: route }, '');
     else history.pushState({ bcRoute: route }, '');
     let popped = false;
-    const onPop = () => { popped = true; set({ route: 'calendar' }); };
+    const onPop = () => {
+      // Back from a page within this page (a Settings section on a phone,
+      // 0.8.0) lands on this page's own entry: stay.
+      if (history.state && history.state.bcRoute === state.route && !history.state.bcSetSection) return;
+      popped = true;
+      set({ route: 'calendar' });
+    };
     window.addEventListener('popstate', onPop);
     return () => {
       window.removeEventListener('popstate', onPop);

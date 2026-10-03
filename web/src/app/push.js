@@ -1,7 +1,12 @@
 // Web Push client: permission + subscription lifecycle against /push/*, and
 // the ?event=instanceId deep link that notification clicks open with.
-// Permission is only ever requested from the explicit Enable button in
-// settings, never on page load.
+// Permission is only ever requested from a button press (Enable in Settings,
+// or Turn on in the offer below), never by the page on its own.
+
+// Disable on this device is remembered, so the app never signs it back up.
+const OFF_KEY = 'bc-push-off';
+const OFFERED_KEY = 'bc-push-offered';
+const markOff = (off) => { try { if (off) localStorage.setItem(OFF_KEY, '1'); else localStorage.removeItem(OFF_KEY); } catch { /* private mode */ } };
 
 import { api, loadWindow } from './api.js';
 import { state, toast, insertOccurrence } from './store.js';
@@ -67,6 +72,40 @@ export async function enablePush() {
     method: 'POST',
     body: { endpoint: sub.endpoint, keys: { p256dh: json.keys.p256dh, auth: json.keys.auth } },
   });
+  markOff(false);
+}
+
+// At launch (0.6.5): a device that should get reminders but isn't signed up.
+// Reinstalling the app on a phone drops its subscription, and before this
+// nothing noticed until a reminder failed to arrive. Notifications already
+// allowed (the owner allowed them in the phone's settings): sign up quietly.
+// Never asked: offer it once a fortnight with a Turn on button, since only a
+// press may ask. Blocked, switched off here, or the account uses email only:
+// nothing.
+export async function offerPushOnThisDevice() {
+  try {
+    if (!pushSupported() || Notification.permission === 'denied') return;
+    if (localStorage.getItem(OFF_KEY) === '1') return;
+    if (await currentPushEndpoint()) return; // signed up; resyncPush keeps the server in step
+    const status = await fetchPushStatus();
+    if (!status || !status.vapidConfigured || state.settings.notifyChannel === 'email') return;
+    if (Notification.permission === 'granted') {
+      await enablePush();
+      toast('Reminders are on for this device');
+      return;
+    }
+    const last = Number(localStorage.getItem(OFFERED_KEY) || 0);
+    if (Date.now() - last < 14 * 86400000) return;
+    localStorage.setItem(OFFERED_KEY, String(Date.now()));
+    toast('Get reminders on this device?', {
+      duration: 20000,
+      actions: [{
+        label: 'Turn on',
+        run: () => enablePush().then(() => toast('Reminders are on for this device'), (e) => toast((e && e.message) || 'Could not turn reminders on', { error: true })),
+      }],
+      dismissLabel: 'Not now',
+    });
+  } catch { /* best-effort: Settings still offers Enable */ }
 }
 
 // After a sign-in: a password reset removes every push device on the server
@@ -108,6 +147,7 @@ export async function disablePush() {
   if (!pushSupported()) return;
   const reg = await navigator.serviceWorker.getRegistration();
   if (!reg) return;
+  markOff(true);
   const sub = await reg.pushManager.getSubscription();
   if (!sub) return;
   await api('/push/unsubscribe', { method: 'POST', body: { endpoint: sub.endpoint } });

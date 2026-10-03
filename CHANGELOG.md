@@ -4,6 +4,14 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.6.5 (2026-10-03)
+
+- **Undo on a toast works on the first tap with the event sheet open.** A press outside the sheet closes it and is swallowed, and the toast counted as outside, so the first tap only closed the sheet. Toasts now answer for themselves.
+- **The toast's countdown is easier to see:** a 4-pixel line in the accent colour.
+- **A reinstalled phone signs back up for reminders.** Reinstalling the app drops its push subscription and nothing noticed. At launch, a device that isn't signed up now signs up quietly if notifications are already allowed for it, or offers "Get reminders on this device?" with Turn on if they were never asked (only a press may bring up the permission prompt). A device you switched off with Disable is left alone.
+- **Settings tells this device's state from this device.** It used to fall back to whether the account had any device, so a phone with a dead old registration on the list looked enabled after Disable or a reinstall, and Enable stayed greyed out. A registered phone the browser has allowed but that isn't signed up now reads "Off on this device" with Enable.
+- **Settings labels sit level with the first line of what they name,** not halfway down a list (Devices receiving reminders).
+
 ## 0.6.4 (2026-10-03)
 
 - **Folded sidebar groups stay folded across reloads** (calendar folders, All calendars, People), kept per device, so a phone and a desktop can be set up differently.

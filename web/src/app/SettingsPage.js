@@ -17,7 +17,7 @@ import { PlaceInput, pickFillText, placeBias } from './PlaceInput.js';
 import { allowDeviceLocation, deviceLocationPermission } from './devicelocation.js';
 import { localTz, sameClock, tzOffsetLabel, tzCity, zoneOptions } from '../lib/dates.js';
 import {
-  permissionState, pushSupported, fetchPushStatus, enablePush, disablePush, fetchPushDevices, removePushDevice, currentEndpointHash,
+  permissionState, pushSupported, fetchPushStatus, enablePush, disablePush, fetchPushDevices, removePushDevice, currentEndpointHash, currentPushEndpoint,
   sendTestNotification, sendTestEmail,
 } from './push.js';
 import {
@@ -295,11 +295,13 @@ function NotificationsSection({ settings, user }) {
   // one to remove (it could only have been registered while signed in).
   const [devices, setDevices] = useState(null);
   const [myHash, setMyHash] = useState(null);
+  const [hasLocalSub, setHasLocalSub] = useState(false);
   const refresh = () => {
     setPerm(permissionState());
     fetchPushStatus().then(setStatus).catch(() => setStatus(null));
     fetchPushDevices().then(setDevices).catch(() => setDevices(null));
-    currentEndpointHash().then(setMyHash).catch(() => {});
+    currentEndpointHash().then(setMyHash).catch(() => setMyHash(null));
+    currentPushEndpoint().then((ep) => setHasLocalSub(!!ep)).catch(() => setHasLocalSub(false));
   };
   useEffect(refresh, []);
   const removeDevice = async (d) => {
@@ -313,19 +315,22 @@ function NotificationsSection({ settings, user }) {
     } catch (e) { toast((e && e.message) || 'Could not remove the device', { error: true }); }
   };
 
+  // This device, never the account (0.6.5): it is signed up when this browser
+  // holds a subscription the server also lists. Falling back to "does the
+  // account have any device" kept a phone looking enabled after Disable, or
+  // after a reinstall, while another (dead) device was still on the list.
+  const thisRegistered = hasLocalSub && (devices && myHash ? devices.some((d) => d.endpointHash === myHash) : true);
+  const enabled = !!(thisRegistered && perm === 'granted');
+
   let statusText;
   if (!pushSupported()) statusText = 'Not supported in this browser';
   else if (status && !status.vapidConfigured) statusText = 'Server not configured (VAPID keys missing)';
   else if (perm === 'denied') statusText = 'Blocked in this browser; allow notifications in site settings';
-  else if (perm === 'granted' && (devices && myHash ? devices.some((d) => d.endpointHash === myHash) : status && status.subscribed)) statusText = 'Enabled';
-  else if (status && status.subscribed) statusText = 'Subscribed on the server, but this browser has not granted permission';
+  else if (enabled) statusText = 'Enabled';
+  else if (perm === 'granted') statusText = 'Off on this device';
   else statusText = 'Off';
 
-  const canEnable = pushSupported() && status && status.vapidConfigured && perm !== 'denied';
-  // This device, not the account: after "Remove" on this device the account
-  // may still have others, and this one must offer Enable again.
-  const thisRegistered = devices && myHash ? devices.some((d) => d.endpointHash === myHash) : !!(status && status.subscribed);
-  const enabled = !!(thisRegistered && perm === 'granted');
+  const canEnable = pushSupported() && !!status && status.vapidConfigured && perm !== 'denied';
 
   const run = (fn, okText) => async () => {
     setBusy(true);

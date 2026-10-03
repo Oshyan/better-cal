@@ -60,6 +60,9 @@ export function swallowClickOfThisPress() {
 export function onOutsidePress(isInside, onOutside) {
   const handler = (e) => {
     if (isInside(e.target)) return;
+    // Toasts float above every surface and answer for themselves: Undo on a
+    // toast must undo, not first close the sheet the change was made in.
+    if (e.target && e.target.closest && e.target.closest('.bc-toasts')) return;
     consumeOutsidePress(e);
     onOutside(e);
   };

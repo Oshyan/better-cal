@@ -489,7 +489,43 @@ final class Reminders
             'body' => $body,
             'url' => '/?event=' . rawurlencode($instanceId) . '&at=' . rawurlencode($at),
             'tag' => $instanceId,
-        ];
+        ] + array_filter(self::links($row), static fn($v) => $v !== null);
+    }
+
+    /**
+     * The notification's buttons (0.6.3): Join for a video call, Map for a
+     * place. Map opens the place by name at its coordinates, the way the
+     * app's Directions does (web/src/lib/maps.js gmapsUrl); coordinates alone
+     * when the text names nothing findable, text alone when nothing is stored.
+     *
+     * @return array{join:?string,map:?string}
+     */
+    public static function links(array $row): array
+    {
+        $loc = trim((string) ($row['location'] ?? ''));
+        $join = null;
+        foreach ([$loc, (string) ($row['url'] ?? ''), (string) ($row['description'] ?? '')] as $text) {
+            if (preg_match('~https?://[^\s"\'<>]*(?:zoom\.us/(?:j|my|w)/|meet\.google\.com/|teams\.microsoft\.com/l/meetup|teams\.live\.com/meet|webex\.com/(?:meet|join|[a-z0-9.-]+/j))[^\s"\'<>]*~i', $text, $m) === 1) {
+                $join = rtrim($m[0], '.,;)');
+                break;
+            }
+        }
+        $lat = $row['location_lat'] ?? null;
+        $lng = $row['location_lng'] ?? null;
+        $hasCoords = is_numeric($lat) && is_numeric($lng);
+        $isLink = preg_match('~^(?:https?://|www\.)~i', $loc) === 1;
+        $pending = preg_match('/\b(?:rsvp|register|registration|tba|tbd|to be announced|announced|available (?:once|after|upon)|sign ?up)\b/i', $loc) === 1;
+        $coordText = preg_match('/^-?\d+(?:\.\d+)?\s*,\s*-?\d+(?:\.\d+)?$/', $loc) === 1;
+        $findable = $loc !== '' && !$isLink && !$pending && !$coordText;
+        $map = null;
+        if ($findable && $hasCoords) {
+            $map = 'https://www.google.com/maps/search/' . str_replace('%20', '+', rawurlencode($loc)) . '/@' . (float) $lat . ',' . (float) $lng . ',17z';
+        } elseif ($hasCoords && !$isLink) {
+            $map = 'https://www.google.com/maps/search/?api=1&query=' . (float) $lat . ',' . (float) $lng;
+        } elseif ($findable && $join === null) {
+            $map = 'https://www.google.com/maps/search/?api=1&query=' . rawurlencode($loc);
+        }
+        return ['join' => $join, 'map' => $map];
     }
 
     /** @return list<array>|null decoded reminders_json */

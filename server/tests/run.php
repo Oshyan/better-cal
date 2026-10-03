@@ -1995,6 +1995,18 @@ checkEq(
     1,
     preg_match('#^/\?event=\d+%3A\d{8}T\d{6}Z&at=\d{4}-\d{2}-\d{2}T\d{2}%3A\d{2}%3A\d{2}Z$#', $pl['url'])
 );
+$lk = Reminders::links(['location' => "Panda & Sons, 79 Queen Street, Edinburgh", 'location_lat' => 55.9532068, 'location_lng' => -3.2069716]);
+checkEq('notify links: a place opens by name at its coordinates', 'https://www.google.com/maps/search/Panda+%26+Sons%2C+79+Queen+Street%2C+Edinburgh/@55.9532068,-3.2069716,17z', $lk['map']);
+checkEq('notify links: no call, no Join', null, $lk['join']);
+$lk = Reminders::links(['location' => 'https://us02web.zoom.us/j/123456?pwd=abc', 'description' => null]);
+checkEq('notify links: a Zoom location is Join', 'https://us02web.zoom.us/j/123456?pwd=abc', $lk['join']);
+checkEq('notify links: and no Map', null, $lk['map']);
+$lk = Reminders::links(['location' => 'Office', 'description' => 'Dial in: https://meet.google.com/abc-defg-hij.']);
+checkEq('notify links: a Meet link in the description is Join', 'https://meet.google.com/abc-defg-hij', $lk['join']);
+$lk = Reminders::links(['location' => "Location available once RSVP'd"]);
+checkEq('notify links: a pending location has no Map', null, $lk['map']);
+$lk = Reminders::links(['location' => 'Zuni Cafe']);
+checkEq('notify links: text alone is a search', 'https://www.google.com/maps/search/?api=1&query=Zuni%20Cafe', $lk['map']);
 $plAllDay = Reminders::payload(['id' => 7, 'title' => 'Fair', 'location' => null, 'tzid' => 'America/Los_Angeles', 'all_day' => 1], $allDayLa, true);
 checkEq('rem payload allday body', 'Fri, Aug 7 · All day', $plAllDay['body']);
 checkEq(

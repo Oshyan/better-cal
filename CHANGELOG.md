@@ -4,6 +4,12 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.6.3 (2026-10-03)
+
+- **Better-Cal's notification icon is a calendar, not a square.** Android draws the small status-bar and notification-header icon from the image's shape alone, and the full-colour app icon is solid all over, so it showed as a plain square. Notifications now carry a white calendar silhouette for that spot.
+- **Reminders have buttons:** Map for an event with a place, opening that place in Google Maps by name at its coordinates (the way Directions does in the app), and Join for a video call (Zoom, Meet, Teams, Webex) in the location, link or description. A tap on the notification itself still opens the event.
+- **Settings' test notification shows a Map button,** so it can be tried without waiting for a reminder.
+
 ## 0.6.2 (2026-10-03)
 
 - **For me on a repeating event asks right where you tapped.** The choice of this occurrence, this and following, or all of them opens under the switch on the phone sheet; it used to open at the top of the sheet, out of view whenever the sheet had scrolled, so Planned and Maybe seemed to do nothing.

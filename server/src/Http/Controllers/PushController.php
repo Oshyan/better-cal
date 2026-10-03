@@ -106,8 +106,11 @@ final class PushController
         $this->limitTestSends($req);
         $payload = [
             'title' => 'Better-Cal test notification',
-            'body' => 'Push notifications are working.',
+            'body' => 'Push notifications are working. The Map button opens a place, as an event reminder\'s would.',
             'url' => '/',
+            // A reminder for an event with a place carries a Map button; the
+            // test shows one so the button can be tried without waiting.
+            'map' => 'https://www.google.com/maps/search/?api=1&query=' . rawurlencode('Ferry Building, San Francisco'),
             'tag' => 'bettercal-test',
         ];
         $sent = 0;

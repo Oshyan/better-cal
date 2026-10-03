@@ -171,8 +171,11 @@ async function shareTarget(request) {
 }
 
 // --- Web Push reminders -----------------------------------------------------
-// The worker sends {title, body, url, tag}; tag replaces earlier notifications
-// for the same occurrence instead of stacking duplicates.
+// The worker sends {title, body, url, tag, join?, map?}; tag replaces earlier
+// notifications for the same occurrence instead of stacking duplicates. Join
+// and Map become the notification's buttons (0.6.3). The badge is a white
+// silhouette: Android draws the status-bar icon from its shape alone, so the
+// full-colour app icon showed as a plain square.
 
 self.addEventListener('push', (event) => {
   let data = {};
@@ -181,18 +184,28 @@ self.addEventListener('push', (event) => {
   } catch (e) {
     data = { body: event.data ? event.data.text() : '' };
   }
+  const actions = [];
+  if (data.join) actions.push({ action: 'join', title: 'Join' });
+  if (data.map) actions.push({ action: 'map', title: 'Map' });
   event.waitUntil(self.registration.showNotification(data.title || 'Better-Cal', {
     body: data.body || '',
     tag: data.tag || undefined,
     icon: '/assets/icons/icon-192.png',
-    badge: '/assets/icons/icon-192.png',
-    data: { url: data.url || '/' },
+    badge: '/assets/icons/badge-96.png',
+    actions: actions.slice(0, 2),
+    data: { url: data.url || '/', join: data.join || null, map: data.map || null },
   }));
 });
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const url = (event.notification.data && event.notification.data.url) || '/';
+  const data = event.notification.data || {};
+  // A button goes straight out: the call, or the place in the maps app.
+  if ((event.action === 'join' || event.action === 'map') && data[event.action]) {
+    event.waitUntil(clients.openWindow(data[event.action]));
+    return;
+  }
+  const url = data.url || '/';
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
       for (const client of list) {

@@ -12,7 +12,7 @@ import { installResumeSaving, restoreResume } from './resume.js';
 import { preloadRichText } from './RichText.js';
 import { loadLeaflet } from './EventDetail.js';
 import { localTz, sameClock, tzCity, tzOffsetLabel } from '../lib/dates.js';
-import { handleEventLink, resyncPush } from './push.js';
+import { handleEventLink, resyncPush, offerPushOnThisDevice } from './push.js';
 import { takeHandoff, runHandoff } from './handoff.js';
 import {
   BATTERY_TIP_BODY, shouldShowInstallTip, markInstallTipShown,
@@ -61,6 +61,7 @@ async function boot() {
     handleEventLink().catch(() => { /* best-effort */ });
     runHandoff(handoff).catch(() => { /* best-effort */ });
     resyncPush(); // own catch; keeps this device registered after a reset
+    offerPushOnThisDevice(); // own catch; a reinstalled phone signs back up
     // One-time notices for failures that change what the calendar shows.
     announceSystemHealth();
     announceAwayFromHome();

@@ -1822,6 +1822,9 @@ body.bc-dragging * { cursor: grabbing !important; }
   color: var(--fg-muted); border-bottom: 1px solid var(--border);
 }
 .bc-set-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 8px 0; }
+/* A label names everything to its right: it sits level with the first line of
+   its controls, not halfway down a long list of them (0.6.5). */
+.bc-set-row > .bc-set-label { align-self: flex-start; padding-top: 6px; }
 .bc-set-label { width: 170px; flex: none; font-weight: 600; }
 /* Takes the width left beside the label and wraps INSIDE it, so a long control
    (a select plus a note plus a button) never drops below its own label. */
@@ -3976,8 +3979,8 @@ button.bc-review-title { color: var(--fg); padding: 0; }
 .bc-toast { position: relative; overflow: hidden; display: grid; grid-template-columns: minmax(0, 1fr); grid-auto-flow: column; grid-auto-columns: auto; align-items: center; column-gap: 6px; }
 .bc-toast-text { cursor: default; }
 .bc-toast-life {
-  position: absolute; left: 0; bottom: 0; height: 3px; width: 100%;
-  background: currentColor; opacity: 0.35; transform-origin: left center;
+  position: absolute; left: 0; bottom: 0; height: 4px; width: 100%;
+  background: color-mix(in srgb, var(--accent) 75%, var(--bg)); transform-origin: left center;
   animation: bc-toast-life linear forwards;
 }
 @keyframes bc-toast-life { from { transform: scaleX(1); } to { transform: scaleX(0); } }

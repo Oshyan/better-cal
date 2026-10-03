@@ -37,6 +37,7 @@ import { stripToText, hasHtml, sanitizeHtml } from '../lib/richtext.js';
 import { gmapsUrl, isPendingLocation } from '../lib/maps.js';
 import { onOutsidePress, insideAny, swallowClickOfThisPress } from '../ui/outside.js';
 import { EventSheetBody } from './EventSheetBody.js';
+import { TripSheetBody } from './Trips.js';
 
 const GAP = 10;
 const WIDTH = 360;
@@ -172,6 +173,9 @@ export function EventPopover() {
     if (history.state && (history.state.bcSearch || history.state.bcSheet)) history.replaceState({ bcSheet: 1 }, '');
     else history.pushState({ bcSheet: 1 }, '');
     const onPop = () => {
+      // An event opened from its trip: Back returns to the trip (0.7.0).
+      const back = state.popover && state.popover.backTo;
+      if (back) { set({ popover: { instanceId: back.instanceId, anchorRect: null } }); history.pushState({ bcSheet: 1 }, ''); return; }
       if (fullRef.current) { setFull(false); history.pushState({ bcSheet: 1 }, ''); return; }
       poppedRef.current = true;
       set({ popover: null });
@@ -425,11 +429,13 @@ export function EventPopover() {
         ${!mobile && html`<button type="button" class="bc-icon-btn bc-sheet-chev" aria-label="Close" title="Close (Esc)" onClick=${() => set({ popover: null })}><${Icon} name="close" size=${18} /></button>`}
       </div>`}
     </div>
-    <${EventSheetBody}
-      occ=${occ} cal=${cal} isFeed=${isFeed} full=${mobile ? full : true} panel=${!mobile} onFull=${() => setFull(true)} bodyRef=${bodyRef}
-      copyOpen=${copyOpen} setCopyOpen=${setCopyOpen} timeScope=${timeScope} setTimeScope=${setTimeScope}
-      deletePrompt=${deletePrompt} attendPrompt=${attendPrompt} s=${s} e=${e}
-    />
+    ${occ.isContainer
+      ? html`<${TripSheetBody} occ=${occ} cal=${cal} panel=${!mobile} full=${mobile ? full : true} bodyRef=${bodyRef} />`
+      : html`<${EventSheetBody}
+          occ=${occ} cal=${cal} isFeed=${isFeed} full=${mobile ? full : true} panel=${!mobile} onFull=${() => setFull(true)} bodyRef=${bodyRef}
+          copyOpen=${copyOpen} setCopyOpen=${setCopyOpen} timeScope=${timeScope} setTimeScope=${setTimeScope}
+          deletePrompt=${deletePrompt} attendPrompt=${attendPrompt} s=${s} e=${e} backTo=${popover.backTo}
+        />`}
   </div>`;
 }
 

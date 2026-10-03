@@ -11,7 +11,6 @@ import { deleteEvent, setRelationship, sendFeedback, enterReschedule, sameDayLis
 import { CopyTo } from './CopyTo.js';
 import { DeleteScope, ScopeChoice } from './DeleteScope.js';
 import { RelationshipControl } from './Relationship.js';
-import { TripDetail } from './Trips.js';
 import { trapFocus } from '../ui/DayExpand.js';
 import { ThumbIcon, CalDot, PinIcon, LinkIcon, Icon } from '../ui/icons.js';
 import { DurationSuffix } from '../ui/EventChip.js';
@@ -127,6 +126,34 @@ export function loadLeaflet() {
 // the same tiles the map would fetch, behind tap-to-activate; Leaflet loads
 // only then, or if a tile fails. While tiles load, the box shows the address
 // over a shimmer rather than flat grey, which read as broken.
+// The base map every map in the app draws (the event's mini-map, a trip's
+// map): Stadia tiles, or MapTiler when a key is configured, or nothing.
+export function addBaseTiles(L, map, dark) {
+  // Stadia Outdoors tiles (auth is by authorized domain on the Stadia
+  // account, no key in the URL); MapTiler when a key is configured
+  // (legacy option, kept for self-hosters); plain OSM as last resort.
+  const maptilerKey = state.config && state.config.maptilerKey;
+  if (maptilerKey) {
+    const style = mapTilerStyle(state.settings && state.settings.mapStyle, dark);
+    L.tileLayer(
+      'https://api.maptiler.com/maps/' + style + '/{z}/{x}/{y}@2x.png?key=' + encodeURIComponent(maptilerKey),
+      {
+        maxZoom: 19,
+        attribution: '© <a href="https://www.maptiler.com/copyright/">MapTiler</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+      }
+    ).addTo(map);
+  } else {
+    L.tileLayer('https://tiles.stadiamaps.com/tiles/' + stadiaStyle(dark) + '/{z}/{x}/{y}{r}.png', {
+      maxZoom: 19,
+      // Stadia authorizes by request domain; the site's Referrer-Policy
+      // (same-origin) would strip it from cross-origin tile requests and
+      // every tile would 401, so tiles opt into sending the origin.
+      referrerPolicy: 'origin',
+      attribution: '© <a href="https://stadiamaps.com/">Stadia Maps</a> © <a href="https://openmaptiles.org/">OpenMapTiles</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    }).addTo(map);
+  }
+}
+
 export function MiniMap({ lat, lng, location }) {
   const elRef = useRef(null);
   const mapRef = useRef(null);
@@ -167,29 +194,7 @@ export function MiniMap({ lat, lng, location }) {
         keyboard: false,
         zoomControl: false,
       });
-      // Stadia Outdoors tiles (auth is by authorized domain on the Stadia
-      // account, no key in the URL); MapTiler when a key is configured
-      // (legacy option, kept for self-hosters); plain OSM as last resort.
-      const maptilerKey = state.config && state.config.maptilerKey;
-      if (maptilerKey) {
-        const style = mapTilerStyle(state.settings && state.settings.mapStyle, dark);
-        L.tileLayer(
-          'https://api.maptiler.com/maps/' + style + '/{z}/{x}/{y}@2x.png?key=' + encodeURIComponent(maptilerKey),
-          {
-            maxZoom: 19,
-            attribution: '© <a href="https://www.maptiler.com/copyright/">MapTiler</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-          }
-        ).addTo(map);
-      } else {
-        L.tileLayer('https://tiles.stadiamaps.com/tiles/' + stadiaStyle(dark) + '/{z}/{x}/{y}{r}.png', {
-          maxZoom: 19,
-          // Stadia authorizes by request domain; the site's Referrer-Policy
-          // (same-origin) would strip it from cross-origin tile requests and
-          // every tile would 401, so tiles opt into sending the origin.
-          referrerPolicy: 'origin',
-          attribution: '© <a href="https://stadiamaps.com/">Stadia Maps</a> © <a href="https://openmaptiles.org/">OpenMapTiles</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-        }).addTo(map);
-      }
+      addBaseTiles(L, map, dark);
       const icon = L.icon({
         iconUrl: '/assets/vendor/leaflet/images/marker-icon.png',
         iconRetinaUrl: '/assets/vendor/leaflet/images/marker-icon-2x.png',
@@ -350,7 +355,6 @@ export function EventDetail() {
   if (!detail || !occ) return null;
 
   // Containers get their own view: span line, member list, add/detach.
-  if (occ.isContainer) return html`<${TripDetail} occ=${occ} />`;
 
   const cal = state.calendars.find((c) => c.id === occ.calendarId);
   const isFeed = cal ? !cal.editable : occ.source === 'feed';

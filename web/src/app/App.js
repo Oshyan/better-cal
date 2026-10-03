@@ -532,8 +532,8 @@ export function App() {
     if (opts && opts.detail) {
       const target = state.occ.get(instanceId);
       // The side panel (desktop) and the event sheet (phone) hold everything
-      // the old full page did; only a trip keeps its own view (0.6.9).
-      if (target && !target.isContainer) {
+      // the old full page did, for trips too (0.7.0).
+      if (target) {
         set({ popover: { instanceId, anchorRect, dayKey }, detail: null, groupPopover: null, expandedDay: null });
         return;
       }

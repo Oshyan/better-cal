@@ -162,9 +162,9 @@ export function closeOverlays() {
 export function openDetail(instanceId) {
   // An event's full view is the side panel on a desktop (0.5.5) and the event
   // sheet on a phone (0.6.9: search results and notification links used to
-  // open the older full page there). Trips keep their own view.
+  // open the older full page there). Trips too, since 0.7.0.
   const occ = state.occ.get(instanceId);
-  if (occ && !occ.isContainer) {
+  if (occ) {
     set({ popover: { instanceId, anchorRect: null, dayKey: occDayKey(occ) }, detail: null, groupPopover: null, expandedDay: null });
     return;
   }

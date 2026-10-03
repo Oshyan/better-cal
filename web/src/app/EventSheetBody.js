@@ -121,7 +121,7 @@ function MoreMenu({ occ, cal, isFeed, onClose, onDelete, onCopy, phone = false, 
   </div>`;
 }
 
-export function EventSheetBody({ occ, cal, isFeed, full, panel = false, onFull, bodyRef, copyOpen, setCopyOpen, timeScope, setTimeScope, deletePrompt, attendPrompt, s, e }) {
+export function EventSheetBody({ occ, cal, isFeed, full, panel = false, onFull, bodyRef, copyOpen, setCopyOpen, timeScope, setTimeScope, deletePrompt, attendPrompt, s, e, backTo = null }) {
   const [moreOpen, setMoreOpen] = useState(false);
   useEffect(() => { setMoreOpen(false); }, [occ.instanceId]);
   const close = () => set({ popover: null });
@@ -205,6 +205,9 @@ export function EventSheetBody({ occ, cal, isFeed, full, panel = false, onFull, 
       ${timeScope && html`<${ScopeChoice} occ=${occ} verb="New time for" compact note=${googleBacked(occ) ? GOOGLE_NO_UNDO : null} onPick=${(scope) => { const f = timeScope; setTimeScope(null); updateEvent(occ, f, scope); }} onCancel=${() => setTimeScope(null)} />`}
       ${panel && attendScope}
 
+      ${backTo && html`<button type="button" class="bc-es-backto" onClick=${() => set({ popover: { instanceId: backTo.instanceId, anchorRect: null } })}>
+        <${Icon} name="chevronLeft" size=${15} /><${Icon} name="trip" size=${14} />${backTo.title}
+      </button>`}
       <div class="bc-es-head">
         <div class="bc-es-titlerow">
           <h2 class=${'bc-es-title' + (occ.status === 'cancelled' ? ' is-cancelled' : '')} onClick=${onFull} title="Show all details">

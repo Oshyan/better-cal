@@ -2421,22 +2421,9 @@ body.bc-rescheduling { user-select: none; }
 .bc-partof:hover { text-decoration: underline; }
 .bc-partof svg { flex: none; }
 
-/* Trip detail: chronological member list with open + detach per row. */
+/* Trip view: loading and empty notes (the rows are .bc-tr-*, 0.7.0). */
 .bc-trip-loading, .bc-trip-empty { color: var(--fg-muted); font-size: 12.5px; }
-.bc-trip-members { display: flex; flex-direction: column; }
-.bc-trip-member { display: flex; align-items: center; gap: 4px; padding: 2px 0; min-width: 0; }
-.bc-trip-member-when {
-  width: 118px; flex: none; color: var(--fg-muted);
-  font-size: 12px; font-variant-numeric: tabular-nums;
-}
-.bc-trip-member-title {
-  flex: 1; min-width: 0; display: inline-flex; align-items: center; gap: 7px;
-  background: none; border: none; border-radius: 5px;
-  padding: 2px 5px; text-align: left; color: var(--fg);
-}
-.bc-trip-member-title:hover { background: var(--bg-inset); }
 .bc-trip-x:hover { color: var(--danger); }
-.bc-trip-addrow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
 
 /* Inline "Add events" picker: multi-select within the trip's span. */
 .bc-trip-picker {
@@ -4065,3 +4052,54 @@ button.bc-review-title { color: var(--fg); padding: 0; }
 .bc-search-group.is-past .bc-search-row:hover,
 .bc-search-group.is-past .bc-search-row.is-selected,
 .bc-search-group.is-past .bc-search-row:focus-visible { opacity: 1; filter: none; }
+
+/* --- trips in the panel and the sheet (0.7.0) -------------------------------------------
+   The trip leads with itself (dates, place, a map of its places), then its events as rows
+   that say when, what and where. A row's own menu removes it from the trip, after asking. */
+.bc-tr-map { margin-top: 0; border-radius: 12px; overflow: hidden; border: 1px solid var(--border); }
+.bc-tr-mapel { height: 220px; background: var(--bg-inset); }
+.bc-tr-pin span {
+  display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%;
+  background: var(--accent); color: var(--accent-fg); font: 700 12px/1 var(--font);
+  border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+}
+.bc-tr-section { display: flex; flex-direction: column; gap: 6px; }
+.bc-tr-label { font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--fg-muted); }
+.bc-tr-list { display: flex; flex-direction: column; border-top: 1px solid var(--border); }
+.bc-tr-row { display: flex; align-items: center; gap: 4px; border-bottom: 1px solid var(--border); min-height: 52px; }
+.bc-tr-main {
+  flex: 1; min-width: 0; display: grid; grid-template-columns: 8.2em minmax(0, 1fr); gap: 10px; align-items: baseline;
+  background: none; border: none; padding: 8px 4px; text-align: left; color: var(--fg); cursor: pointer; border-radius: 6px;
+}
+.bc-tr-main:hover { background: var(--bg-inset); }
+.bc-tr-when { color: var(--fg-muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+.bc-tr-what { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.bc-tr-title { display: flex; align-items: center; gap: 7px; font-weight: 600; font-size: 15px; line-height: 1.3; }
+.bc-tr-title .bc-cal-dot, .bc-tr-title svg { flex: none; }
+.bc-tr-sub { color: var(--fg-muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: flex; align-items: center; gap: 6px; }
+.bc-tr-n {
+  flex: none; display: inline-grid; place-items: center; min-width: 17px; height: 17px; padding: 0 4px; border-radius: 9px;
+  background: var(--accent); color: var(--accent-fg); font-size: 10.5px; font-weight: 700;
+}
+.bc-tr-rowmore { flex: none; width: 36px; height: 36px; display: grid; place-items: center; color: var(--fg-muted); }
+.bc-tr-ask { display: inline-flex; gap: 6px; flex: none; padding-right: 2px; }
+.bc-tr-ask .bc-btn { font-size: 13px; padding: 4px 10px; }
+.bc-tr-row.is-asking .bc-tr-main { opacity: 0.7; }
+.bc-tr-addrow { display: flex; gap: 8px; padding-top: 4px; }
+.bc-tr-addrow .bc-btn { display: inline-flex; align-items: center; gap: 6px; }
+.bc-es-backto {
+  align-self: flex-start; display: inline-flex; align-items: center; gap: 4px; margin: -4px 0 -6px -4px;
+  padding: 4px 8px; border: none; background: none; color: var(--accent); font-size: 13.5px; font-weight: 600; border-radius: 6px; cursor: pointer;
+}
+.bc-es-backto:hover { background: var(--bg-inset); }
+@media (max-width: 640px) {
+  .bc-tr-main { grid-template-columns: 6.6em minmax(0, 1fr); padding: 10px 2px; }
+  .bc-tr-when { font-size: 13.5px; }
+  .bc-tr-title { font-size: 16px; }
+  .bc-tr-rowmore { width: 44px; height: 44px; }
+  .bc-tr-ask { flex-direction: column; align-items: stretch; }
+  .bc-tr-ask .bc-btn { min-height: 40px; font-size: 14px; }
+  .bc-tr-addrow .bc-btn { min-height: 44px; font-size: 15px; padding: 0 16px; }
+  .bc-tr-mapel { height: 200px; }
+}
+.bc-tr-picksug { align-self: flex-start; font-size: 13px; }

@@ -70,12 +70,17 @@ final class PushSubscriptions
     {
         $sub = self::validate($in, $this->extraPushHosts);
         $hash = self::endpointHash($sub['endpoint']);
+        $label = self::label($in['label'] ?? null);
         $existed = $this->db->scalar('SELECT id FROM push_subscriptions WHERE endpoint_hash = ? AND user_id = ?', [$hash, $userId]) !== null;
         if ($resync) {
             // The quiet re-registration a browser does when it opens the app:
             // it restores a device a password reset cleared, and nothing else.
             // A device the owner removed stays removed, and an existing row
             // keeps its failure state so a dead device can still be pruned.
+            // It does refresh what the device calls itself (0.6.7).
+            if ($existed && $label !== null) {
+                $this->db->run('UPDATE push_subscriptions SET device_label = ? WHERE endpoint_hash = ? AND user_id = ?', [$label, $hash, $userId]);
+            }
             if ($existed || $this->db->scalar('SELECT 1 FROM push_removed WHERE user_id = ? AND endpoint_hash = ?', [$userId, $hash]) !== null) {
                 return;
             }
@@ -83,19 +88,36 @@ final class PushSubscriptions
             $this->db->run('DELETE FROM push_removed WHERE user_id = ? AND endpoint_hash = ?', [$userId, $hash]);
         }
         $this->db->run(
-            'INSERT INTO push_subscriptions (user_id, endpoint, endpoint_hash, p256dh, auth, last_used_at, created_by_token_id)
-             VALUES (?, ?, ?, ?, ?, NULL, ?) AS new_row
+            'INSERT INTO push_subscriptions (user_id, endpoint, endpoint_hash, p256dh, auth, last_used_at, created_by_token_id, device_label)
+             VALUES (?, ?, ?, ?, ?, NULL, ?, ?) AS new_row
              ON DUPLICATE KEY UPDATE
                user_id = new_row.user_id, endpoint = new_row.endpoint,
                p256dh = new_row.p256dh, auth = new_row.auth, failing_since = NULL,
-               created_by_token_id = new_row.created_by_token_id',
-            [$userId, $sub['endpoint'], self::endpointHash($sub['endpoint']), $sub['p256dh'], $sub['auth'], $tokenId]
+               created_by_token_id = new_row.created_by_token_id,
+               device_label = COALESCE(new_row.device_label, push_subscriptions.device_label)',
+            [$userId, $sub['endpoint'], self::endpointHash($sub['endpoint']), $sub['p256dh'], $sub['auth'], $tokenId, $label]
         );
         if (!$existed) {
             $id = (int) $this->db->scalar('SELECT id FROM push_subscriptions WHERE endpoint_hash = ?', [self::endpointHash($sub['endpoint'])]);
             (new Undo($this->db))->record($userId, 'push', $id, 'create', null, null,
-                'Registered a device for reminders (' . self::service($sub['endpoint']) . ')' . ($tokenId !== null ? ', with an API token' : ''));
+                'Registered a device for reminders (' . ($label ?? self::service($sub['endpoint'])) . ')' . ($tokenId !== null ? ', with an API token' : ''));
         }
+    }
+
+    /**
+     * What a device calls itself ("Pixel 9 Pro · Chrome app"): the browser's
+     * own words, so it is cleaned rather than trusted. Printable text only,
+     * one line, at most 80 characters; null when nothing is left.
+     */
+    public static function label(mixed $raw): ?string
+    {
+        if (!is_string($raw)) {
+            return null;
+        }
+        $s = preg_replace('/[\p{C}]+/u', ' ', $raw) ?? '';
+        $s = trim(preg_replace('/\s+/u', ' ', $s) ?? '');
+        $s = mb_substr($s, 0, 80);
+        return $s !== '' ? $s : null;
     }
 
     /**
@@ -129,10 +151,11 @@ final class PushSubscriptions
     public function devices(int $userId): array
     {
         $out = [];
-        foreach ($this->db->all('SELECT id, endpoint, endpoint_hash, created_at, last_used_at, failing_since, created_by_token_id FROM push_subscriptions WHERE user_id = ? ORDER BY id', [$userId]) as $r) {
+        foreach ($this->db->all('SELECT id, endpoint, endpoint_hash, created_at, last_used_at, failing_since, created_by_token_id, device_label FROM push_subscriptions WHERE user_id = ? ORDER BY id', [$userId]) as $r) {
             $out[] = [
                 'id' => (int) $r['id'],
                 'service' => self::service((string) $r['endpoint']),
+                'label' => $r['device_label'] !== null ? (string) $r['device_label'] : null,
                 'endpointHash' => (string) $r['endpoint_hash'],
                 'createdAt' => $r['created_at'] !== null ? Time::iso(Time::fromDb((string) $r['created_at'])) : null,
                 'lastUsedAt' => $r['last_used_at'] !== null ? Time::iso(Time::fromDb((string) $r['last_used_at'])) : null,
@@ -146,7 +169,7 @@ final class PushSubscriptions
     /** Remove one device by id (the owner reviewing the list); written to Activity. */
     public function remove(int $userId, int $id): void
     {
-        $row = $this->db->one('SELECT endpoint FROM push_subscriptions WHERE id = ? AND user_id = ?', [$id, $userId]);
+        $row = $this->db->one('SELECT endpoint, device_label FROM push_subscriptions WHERE id = ? AND user_id = ?', [$id, $userId]);
         if ($row === null) {
             throw HttpError::notFound('No such device');
         }
@@ -156,7 +179,7 @@ final class PushSubscriptions
             $this->db->insert('push_removed', ['user_id' => $userId, 'endpoint_hash' => $hash]);
         }
         (new Undo($this->db))->record($userId, 'push', $id, 'delete', null, null,
-            'Removed a device from reminders (' . self::service((string) $row['endpoint']) . ')');
+            'Removed a device from reminders (' . ($row['device_label'] ?? self::service((string) $row['endpoint'])) . ')');
     }
 
     public function unsubscribe(int $userId, string $endpoint): bool

@@ -406,8 +406,8 @@ function NotificationsSection({ settings, user }) {
     ${devices && devices.length > 0 && html`<${Row} label="Devices receiving reminders" hint="Every browser or phone reminders are sent to. Remove any you do not recognise.">
       <ul class="bc-devices">
         ${devices.map((d) => html`<li key=${d.id} class="bc-device">
-          <span class="bc-device-name">${d.service}${d.endpointHash === myHash ? html` <span class="bc-badge">this device</span>` : ''}${d.failing ? html` <span class="bc-badge bc-badge-warn">not reachable</span>` : ''}</span>
-          <span class="bc-device-meta">added ${d.createdAt ? fmtSince(d.createdAt) : 'at some point'}${d.lastUsedAt ? ', last reminder ' + fmtSince(d.lastUsedAt) : ''}</span>
+          <span class="bc-device-name">${d.label || d.service}${d.endpointHash === myHash ? html` <span class="bc-badge">this device</span>` : ''}${d.failing ? html` <span class="bc-badge bc-badge-warn">not reachable</span>` : ''}</span>
+          <span class="bc-device-meta">${d.label ? '' : 'not yet named (it names itself when the app opens there) · '}added ${d.createdAt ? fmtSince(d.createdAt) : 'at some point'}${d.lastUsedAt ? ', last reminder ' + fmtSince(d.lastUsedAt) : ', no reminder yet'}</span>
           <button type="button" class="bc-link-btn" onClick=${() => removeDevice(d)}>Remove</button>
         </li>`)}
       </ul>

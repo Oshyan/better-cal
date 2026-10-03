@@ -41,6 +41,37 @@ export async function currentPushEndpoint() {
   }
 }
 
+// What this device is, in words a person recognises (0.6.7): "Pixel 9 Pro ·
+// Chrome app", "Mac · Chrome", "iPhone · Safari app". Chromium browsers say
+// it through userAgentData (the phone's model is one of its details); the
+// rest are read from the user-agent string. "app" when it runs installed.
+export async function deviceLabel() {
+  const ua = navigator.userAgent || '';
+  let where = '';
+  let browser = '';
+  const d = navigator.userAgentData;
+  if (d) {
+    let platform = d.platform || '';
+    let model = '';
+    try {
+      const h = await d.getHighEntropyValues(['model', 'platform']);
+      model = (h.model || '').trim();
+      platform = h.platform || platform;
+    } catch { /* the low-entropy platform will do */ }
+    where = model || (platform === 'macOS' ? 'Mac' : platform);
+    const brand = (d.brands || []).map((b) => b.brand)
+      .find((n) => !/Not.?A.?Brand|Chromium/i.test(n));
+    browser = brand ? brand.replace(/^(Google|Microsoft) /, '') : 'Chromium';
+  } else {
+    where = /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) ? 'iPad' : /Android/.test(ua) ? 'Android'
+      : /Mac OS X/.test(ua) ? 'Mac' : /Windows/.test(ua) ? 'Windows' : /Linux/.test(ua) ? 'Linux' : '';
+    browser = /Firefox\//.test(ua) ? 'Firefox' : /Edg\//.test(ua) ? 'Edge' : /Chrome\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : 'Browser';
+  }
+  let installed = false;
+  try { installed = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true; } catch { /* no media queries */ }
+  return [where, browser + (installed ? ' app' : '')].filter(Boolean).join(' · ');
+}
+
 // Standard VAPID application server key conversion.
 function urlBase64ToUint8Array(base64String) {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
@@ -70,7 +101,7 @@ export async function enablePush() {
   const json = sub.toJSON();
   await api('/push/subscribe', {
     method: 'POST',
-    body: { endpoint: sub.endpoint, keys: { p256dh: json.keys.p256dh, auth: json.keys.auth } },
+    body: { endpoint: sub.endpoint, keys: { p256dh: json.keys.p256dh, auth: json.keys.auth }, label: await deviceLabel() },
   });
   markOff(false);
 }
@@ -121,8 +152,9 @@ export async function resyncPush() {
     const json = sub.toJSON();
     await api('/push/subscribe', {
       method: 'POST',
-      // resync: restore a device a reset cleared; never one the owner removed
-      body: { endpoint: sub.endpoint, keys: { p256dh: json.keys.p256dh, auth: json.keys.auth }, resync: true },
+      // resync: restore a device a reset cleared; never one the owner removed.
+      // The label rides along so a device registered before 0.6.7 gets named.
+      body: { endpoint: sub.endpoint, keys: { p256dh: json.keys.p256dh, auth: json.keys.auth }, resync: true, label: await deviceLabel() },
     });
   } catch { /* best-effort: Settings still offers Enable */ }
 }

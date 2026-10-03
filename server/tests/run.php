@@ -784,6 +784,10 @@ checkEq('place search: "and" is also asked as "&"', 'Panda & Sons', \BetterCal\D
 checkEq('place search: "&" is also asked as "and"', 'Marks and Spencer', \BetterCal\Domain\PlaceSearch::ampersandVariant('Marks & Spencer'));
 checkEq('place search: no "and" means one query', null, \BetterCal\Domain\PlaceSearch::ampersandVariant('Zuni Cafe'));
 checkEq('place search: "and" inside a word is left alone', null, \BetterCal\Domain\PlaceSearch::ampersandVariant('Andalucia Bar'));
+checkEq('push label: a device names itself', 'Pixel 9 Pro · Chrome app', \BetterCal\Domain\PushSubscriptions::label('Pixel 9 Pro · Chrome app'));
+checkEq('push label: control characters and runs of space go', 'Mac · Chrome', \BetterCal\Domain\PushSubscriptions::label("Mac\n\t·   Chrome"));
+checkEq('push label: capped at 80 characters', 80, mb_strlen(\BetterCal\Domain\PushSubscriptions::label(str_repeat('x', 200))));
+checkEq('push label: nothing, or not text, is no label', [null, null], [\BetterCal\Domain\PushSubscriptions::label('  '), \BetterCal\Domain\PushSubscriptions::label(['x'])]);
 $g = GcalLink::parse($lumaUrl, 'America/Los_Angeles');
 checkEq('gcal luma title', 'The Commons Public Hours ☕', $g['title']);
 checkEq('gcal luma start (UTC->LA)', '2026-08-09T09:00:00-07:00', $g['start']);

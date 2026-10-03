@@ -4,6 +4,10 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.8.2 (2026-10-03)
+
+- **The phone drawer's pages moved to the bottom,** under a Manage heading below the calendars, people and plugins, so the calendars come first. They are visited far less often on a phone. Review and Saved views left the grid, since the bottom bar already has them: Review with its count, and Saved views in the View sheet (switch views, or Manage views).
+
 ## 0.8.1 (2026-10-03)
 
 - **A person's away and busy times are called that,** or their availability, everywhere they were "spans": the sidebar's hold menu ("Show only this person's availability"), its tooltips, the People page, Activity ("Moved away time for Sam") and the toasts after moving one.

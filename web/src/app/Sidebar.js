@@ -6,7 +6,8 @@
 // navigation in the footer.
 //
 // On a phone (0.8.0) the drawer is arranged for a thumb: the pages are a
-// short grid at the top, each calendar is listed once (in its folder, the
+// short grid at the bottom (0.8.2: below the calendars, since they are
+// visited far less there; Review is left to the bottom bar), each calendar is listed once (in its folder, the
 // rest under Other calendars), and a row's Only and settings sit behind a
 // press and hold instead of taking width from every name.
 
@@ -371,6 +372,10 @@ function AddMenu() {
 
 // MANAGE_ITEMS lives in commanddefs.js so the sidebar footer and the
 // command palette offer exactly the same pages.
+// The phone's grid (0.8.2): Review is on the bottom bar and Saved views in
+// its View sheet, so neither repeats here; the long names sit in the wider
+// left column (the grid fills row by row).
+const PHONE_PAGES = ['organize', 'settings', 'people', 'activity', 'plugins', 'filters'];
 
 export function Sidebar({ open, collapsed, onClose }) {
   // On touch screens the scroll bar is drawn, so it shows at rest and says
@@ -571,8 +576,9 @@ export function Sidebar({ open, collapsed, onClose }) {
     <${ActiveOnlyButton} />
     <${AllModeButton} />
   </span>`;
-  const pagesGrid = html`<nav class="bc-sb-pages" aria-label="Pages">
-    ${MANAGE_ITEMS.map(([r, label]) => html`<button
+  const pagesGrid = html`<nav class="bc-sb-pages" aria-label="Manage">
+    <div class="bc-sb-pageshead">Manage</div>
+    ${PHONE_PAGES.map((r) => MANAGE_ITEMS.find(([id]) => id === r)).filter(Boolean).map(([r, label]) => html`<button
       key=${r} type="button"
       class="bc-sb-page${route === r ? ' is-active' : ''}"
       aria-current=${route === r ? 'page' : 'false'}
@@ -587,7 +593,6 @@ export function Sidebar({ open, collapsed, onClose }) {
       <button type="button" class="bc-icon-btn" aria-label="Close sidebar" onClick=${onClose}><${Icon} name="close" size=${15} /></button>
     </div>`}
     <div class="bc-sidebar-scroll bc-scroll-edges" ref=${scrollRef}>
-      ${phone && pagesGrid}
       <${MiniMonth} />
       ${phone && html`<div class="bc-folder-headrow bc-sb-calhead">
         <span class="bc-folder-head bc-folder-static">Calendars</span>
@@ -672,6 +677,7 @@ export function Sidebar({ open, collapsed, onClose }) {
         </div>`)}
       </section>`}
       <${AddMenu} />
+      ${phone && pagesGrid}
       ${soloCal && html`<div class="bc-solo-banner" role="status">
         Showing only <strong>${soloCal.name}</strong>
         <button type="button" class="bc-link-btn" onClick=${exitSolo}>Show all</button>

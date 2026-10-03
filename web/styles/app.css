@@ -4067,10 +4067,11 @@ button.bc-review-title { color: var(--fg); padding: 0; }
 .bc-tr-picksug { align-self: flex-start; font-size: 13px; }
 
 /* --- the sidebar on a phone (0.8.0) ---------------------------------------------------
-   Pages as a short grid at the top (the footer list is desktop's); one Calendars header
+   Pages as a short grid at the bottom (0.8.2) (the footer list is desktop's); one Calendars header
    carrying the controls that act on every calendar; each calendar listed once; and a
    row's Only and settings behind a press and hold (Sidebar.js), so names get the width. */
-.bc-sb-pages { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr); gap: 2px 4px; padding: 6px 6px 8px; border-bottom: 1px solid var(--border); }
+.bc-sb-pages { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr); gap: 2px 4px; padding: 6px 6px 10px; margin-top: 8px; border-top: 1px solid var(--border); }
+.bc-sb-pageshead { grid-column: 1 / -1; padding: 6px 6px 2px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; color: var(--fg-muted); }
 .bc-sb-page {
   display: flex; align-items: center; gap: 8px; min-height: 42px; padding: 0 6px; min-width: 0;
   background: none; border: none; border-radius: 9px; color: var(--fg); font-size: 14px; text-align: left;

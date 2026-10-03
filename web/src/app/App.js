@@ -77,6 +77,37 @@ function matchesFilter(occ, needle) {
     (occ.tags || []).some((t) => t.toLowerCase().includes(needle));
 }
 
+// The day under the last press, for an event that spans several days. A
+// bar crosses many day cells, so the cell (or week column) under the pointer
+// says which day of it was meant. A key press forgets the pointer, so an
+// event opened from the keyboard keeps its own start day.
+let lastPress = null;
+if (typeof window !== 'undefined') {
+  window.addEventListener('pointerdown', (e) => { lastPress = { x: e.clientX, y: e.clientY }; }, true);
+  window.addEventListener('keydown', () => { lastPress = null; }, true);
+}
+function pressedDay(occ) {
+  if (!occ || !lastPress) return undefined;
+  const span = occurrenceDaySpan(occ);
+  if (span.startKey === span.endKey) return undefined;
+  const { x, y } = lastPress;
+  let key = null;
+  for (const el of document.elementsFromPoint(x, y)) {
+    const k = el.closest && el.closest('[data-day]');
+    if (k && k.dataset.day) { key = k.dataset.day; break; }
+  }
+  if (!key) {
+    // The week grid's all-day lane sits above its day columns: match by x.
+    for (const col of document.querySelectorAll('.bc-tg-col[data-day]')) {
+      const r = col.getBoundingClientRect();
+      if (r.width > 0 && x >= r.left && x < r.right) { key = col.dataset.day; break; }
+    }
+  }
+  if (!key) return undefined;
+  const ed = epochDayOfKey(key);
+  return ed >= epochDayOfKey(span.startKey) && ed <= epochDayOfKey(span.endKey) ? key : undefined;
+}
+
 export function App() {
   const s = useStore(
     (st) => ({
@@ -526,8 +557,10 @@ export function App() {
       return;
     }
     // dayKey (passed by the day-expand list) pins prev/next navigation to
-    // the day being browsed rather than each event's own start day.
-    const dayKey = opts && opts.dayKey;
+    // the day being browsed rather than each event's own start day. Without
+    // one, a multi-day event takes the day it was pressed on (0.7.4), so
+    // stepping from Monday's part of a Sunday-to-Tuesday event walks Monday.
+    const dayKey = (opts && opts.dayKey) || pressedDay(state.occ.get(instanceId));
     // The full view (a double-click, a trip, the agenda's multi-day line) is
     // the side panel on a desktop and the sheet on a phone, the same as a
     // plain open; it never toggles closed.

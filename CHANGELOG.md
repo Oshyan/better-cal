@@ -4,6 +4,11 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.7.4 (2026-10-03)
+
+- **Stepping from a multi-day event walks the day you opened it on.** Open Monday's part of a Sunday-to-Tuesday event and the previous and next arrows go through Monday's events; they used to go through Sunday's, the day it began. This holds in every view: month, week, Split and Agenda.
+- **Past search results are all in the past.** A repeating series that is still running matched Past by its first date and then showed under Upcoming at its next one. Under Past it now shows its latest date that has gone by.
+
 ## 0.7.3 (2026-10-03)
 
 Search, and the leftovers from the phone work.

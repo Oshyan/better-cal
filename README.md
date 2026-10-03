@@ -20,7 +20,7 @@ So this is built for one person's daily use, and it runs my real calendar every 
 
 What I focused on, and where that shows:
 
-- **Desktop first.** I use this on a laptop with a keyboard, so that's where the polish went: hotkeys for everything, a command palette, drag and drop that behaves. Mobile works (it's an installable PWA with a real phone layout) but it's less tested and less refined. I'll get to it in time. If mobile is your thing, testing and pull requests for mobile-oriented polish are especially welcome.
+- **Desktop first, phones close behind.** I use this on a laptop with a keyboard, so that's where the polish started: hotkeys for everything, a command palette, drag and drop that behaves. Phones got a pass of their own from 0.4 to 0.8: an installable app with a split month (dense weeks over a list that scrolls with them), an event sheet you can step through, a full-screen editor, and Back that works everywhere. It's used daily on Android. It hasn't been tried on an iPhone yet, so reports from iPhone users are especially welcome.
 - **Questioning defaults.** Wherever Google Calendar does something because it always has, I asked whether it's actually good. Sometimes it is and I kept it. Often it isn't: that's where infinite scroll, the Show filter, context in the day header and the honest "can't be undone" on Google writes come from.
 - **Feeds and other people's calendars as first-class**, not as a grudging import. Most of what's on my calendar didn't originate with me.
 - **Honesty in the interface.** The app says what it did, what it can't undo, and what it's hiding from you.
@@ -49,13 +49,13 @@ MIT, see [LICENSE](LICENSE). Use it, fork it, host it, sell it. If you build som
 
 ## Stack
 
-- Server: PHP 8.4, MySQL, no framework. CalDAV via sabre/dav. Cron worker for feed polls, mail ingest, reminders, ranking, and retention.
+- Server: PHP 8.4+, MySQL 8 or MariaDB 10.6+, no framework. CalDAV via sabre/dav. Cron worker for feed polls, mail ingest, reminders, ranking, and retention.
 - Web: Preact + HTM served directly (no build step), installable PWA.
 - Optional: LLM provider key for natural-language assist, prompt filters, and ranking; MapTiler key for map tiles; SMTP for reminder email and iMIP RSVP replies.
 
 ## Docs
 
-- [Installing](docs/install.md): requirements, steps, and web server setup for Nginx (tested) and Apache (untested)
+- [Installing](docs/install.md): requirements, steps, and web server setup for Nginx and Apache (both tested), on MySQL or MariaDB; shared hosting works
 - [Architecture](docs/architecture.md)
 - [API contract](docs/api-contract.md) and [agent API](docs/agent-api.md)
 - [Calendar roles and event relationships](docs/relationships.md): planned, maybe, available, context; what a calendar is to you and what that makes its events
@@ -71,5 +71,5 @@ Copy [`.env.example`](.env.example) to `.env` in the app root and fill it in. It
 ## Development
 
 - Deploy: `./scripts/deploy.sh` (rsync, composer, migrations, smoke check).
-- Tests: `php server/tests/run.php` (server, pure PHP), `node web/tests/smoke.mjs` (frontend logic; passes in any time zone, and the deploy scripts run it under five), `node --experimental-vm-modules web/tests/static.mjs` (module graph), `node tools/mcp/test.mjs` (MCP server).
+- Tests: `php server/tests/run.php` (server, pure PHP), `node web/tests/smoke.mjs` (frontend logic; passes in any time zone, and the deploy scripts run it under five), `node --experimental-vm-modules web/tests/static.mjs` (module graph), `node tools/mcp/test.mjs` (MCP server). GitHub runs all of them on every push, plus a fresh install from the lock file on PHP 8.4, the minimum.
 - Chrome extension (redirects Google Calendar add-links): `extension/`.

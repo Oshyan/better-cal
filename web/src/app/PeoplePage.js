@@ -110,7 +110,7 @@ function PersonAvailability({ person }) {
       setStartDate(''); setEndDate(''); setNote('');
       reload();
     } catch (err) {
-      toast(err.message || 'Could not add span', { error: true });
+      toast(err.message || 'Could not add that time', { error: true });
     } finally {
       setBusy(false);
     }
@@ -127,7 +127,7 @@ function PersonAvailability({ person }) {
 
   return html`<div class="bc-person-avail">
     ${spans === null && html`<${Skeleton} rows=${2} compact=${true} />`}
-    ${spans !== null && spans.length === 0 && html`<div class="bc-trip-empty">No away or busy spans yet</div>`}
+    ${spans !== null && spans.length === 0 && html`<div class="bc-trip-empty">No away or busy times yet</div>`}
     ${spans !== null && spans.map((span) => html`<div key=${span.id} class="bc-person-availrow">
       <span class="bc-badge bc-away-pill is-${span.kind}">${span.kind}</span>
       <span class="bc-person-availrange">${fmtSpanRange(span)}</span>
@@ -283,7 +283,7 @@ export function PeoplePage() {
             <button
               type="button" class="bc-btn bc-btn-toggle${openId === p.id && openSection === 'availability' ? ' is-active' : ''}"
               aria-pressed=${openId === p.id && openSection === 'availability'}
-              title="Show and edit away/busy spans"
+              title="Show and edit away and busy times"
               onClick=${() => toggleOpen(p, 'availability')}
             >Availability</button>
             ${!p.notes && html`<button type="button" class="bc-btn" onClick=${() => { setNotesId(p.id); setNotes(''); }}>Add note</button>`}

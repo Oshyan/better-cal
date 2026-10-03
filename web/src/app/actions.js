@@ -763,7 +763,7 @@ export async function resizeAvailabilitySpanDays(spanId, startDeltaDays, endDelt
       method: 'PATCH',
       body: { start: shift(sp.start, startDeltaDays || 0), end: shift(sp.end, endDeltaDays || 0) },
     });
-    toast('Adjusted ' + sp.name + "'s " + sp.kind + ' span', { undoable: true });
+    toast('Adjusted ' + sp.name + "'s " + sp.kind + ' time', { undoable: true });
     set({ availSeq: state.availSeq + 1 });
   } catch (e) {
     toast('Resize failed: ' + e.message, { error: true });
@@ -781,7 +781,7 @@ export async function moveAvailabilitySpan(spanId, deltaDays) {
       method: 'PATCH',
       body: { start: shift(sp.start), end: shift(sp.end) },
     });
-    toast('Moved ' + sp.name + "'s " + sp.kind + ' span', { undoable: true });
+    toast('Moved ' + sp.name + "'s " + sp.kind + ' time', { undoable: true });
     set({ availSeq: state.availSeq + 1 });
   } catch (e) {
     toast('Move failed: ' + e.message, { error: true });

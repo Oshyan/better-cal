@@ -4,6 +4,10 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.6.8 (2026-10-03)
+
+- **Settings labels read as headings on a phone,** where each sits above what it names: 16 points and bold, a step above the content under it, with a thin rule between settings. On a desktop they are bolder too. The content (device names, values) keeps its size.
+
 ## 0.6.7 (2026-10-03)
 
 - **Reminder devices are named:** "Pixel 9 Pro · Chrome app", "Mac · Chrome", "iPhone · Safari app". Every Chromium browser on every platform uses Google's push service, so the list used to call a phone and a desktop the same thing, "Chrome, Edge or Android". A device now says what it is when it signs up, and one signed up earlier names itself the next time the app opens there. Until then its entry says so. Entries also say when no reminder has reached them yet, and the Activity log uses the names.

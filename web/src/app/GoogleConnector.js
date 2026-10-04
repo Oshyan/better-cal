@@ -17,6 +17,10 @@ function Row({ label, hint, children }) {
   </div>`;
 }
 
+// The operator's setup guide (Google Cloud project, OAuth client, two .env
+// lines), linked wherever the connector says it isn't set up yet.
+export const GOOGLE_SETUP_URL = 'https://github.com/Oshyan/better-cal/blob/main/docs/google-calendar.md#one-time-setup-the-operator';
+
 export function GoogleConnector() {
   const calendars = useStore((s) => s.calendars);
   const [status, setStatus] = useState(null); // {configured, accounts:[{id,email,status,error}]}
@@ -89,8 +93,8 @@ export function GoogleConnector() {
     <h2 class="bc-set-h">Google Calendar</h2>
     <p class="bc-set-lead">Calendars through a Google account: yours, ones you subscribe to, and ones shared with you, including shared-but-not-public calendars no iCal address can reach. Where the account can edit, so can you here: a change goes to Google first and lands back within a second. Edits made in Google arrive within the check interval.</p>
     ${status === null && html`<${Row} label="Account"><span class="bc-set-value">Loading…</span><//>`}
-    ${status && !status.configured && html`<${Row} label="Account" hint="Reading calendars through a Google account needs an OAuth client on this server: BETTERCAL_GOOGLE_CLIENT_ID and _SECRET, see docs/google-calendar.md. Ten minutes, once.">
-      <span class="bc-set-value">Not set up on this server.</span>
+    ${status && !status.configured && html`<${Row} label="Account" hint="Reading calendars through a Google account needs an OAuth client of this server's own, from a free Google Cloud project: about ten minutes, once, by whoever runs the server. The two values go in .env as BETTERCAL_GOOGLE_CLIENT_ID and BETTERCAL_GOOGLE_CLIENT_SECRET.">
+      <span class="bc-set-value">Not set up on this server. <a href=${GOOGLE_SETUP_URL} target="_blank" rel="noopener">How to set it up</a></span>
     <//>`}
     ${status && status.configured && html`
       <${Row} label=${status.accounts.length ? 'Accounts' : 'Account'}>

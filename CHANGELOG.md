@@ -4,6 +4,12 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.9.3 (2026-10-04)
+
+- **The Google connector's setup guide links straight to each page it needs** in Google Cloud: create a project, enable the Calendar API, Branding, Audience, Data Access and Clients. It now says up front that the connector is optional, that a Google Cloud project costs nothing and needs no billing account, and why an "unverified" app is fine for your own install. Google's own docs for each part are linked for when a screen has moved. (docs/google-calendar.md)
+- **Where the app says Google isn't set up,** in Settings, Connections and in the welcome, it links to that guide.
+- **The install guide mentions the Google connector** as an optional last step.
+
 ## 0.9.2 (2026-10-04)
 
 - **A first-run welcome (#79).** A new account opens on two short steps over the calendar:

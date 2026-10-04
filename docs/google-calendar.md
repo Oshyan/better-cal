@@ -6,15 +6,21 @@ Where the connected account may edit the calendar (Google's access role `writer`
 
 ## One-time setup (the operator)
 
-Google requires each installation to have its own OAuth client. About ten minutes, once. The console changes its layout often; as of September 2026 OAuth lives under **Google Auth Platform** (Overview, Branding, Audience, Clients, Data Access, Verification Center) rather than the old "OAuth consent screen" page.
+Google requires each installation to have its own OAuth client, so whoever runs a Better-Cal install sets one up once, in their own Google Cloud project. About ten minutes.
 
-1. Pick or create a project at https://console.cloud.google.com/ (any existing project of yours works; one that already has an OAuth setup saves the branding step).
-2. **APIs & Services → Library** → search "Google Calendar API" → **Enable**. Do this first: the scope picker only lists enabled APIs.
-3. **Google Auth Platform → Branding**: app name, support email, developer contact. Save.
-4. **Google Auth Platform → Audience**: User type **External**; then **Publish app** so the publishing status reads *In production*. It stays unverified (Google shows a warning once per account when connecting: "Advanced", then "Go to <app>"). This matters: in *Testing* status Google expires refresh tokens after seven days and every connected account would need reconnecting weekly.
-5. **Google Auth Platform → Data Access → Add or remove scopes**: filter "Google Calendar API" and tick `.../auth/calendar.readonly` and `.../auth/calendar.events`; `openid` and `.../auth/userinfo.email` from the top of the list. Update, Save. (The request itself carries the scopes, so this is what the consent screen describes; an unverified app works without it, but it is a minute.)
-6. **Google Auth Platform → Clients → Create client**: Application type **Web application**, any name. Under **Authorized redirect URIs** add `https://<your host>/api/v1/google/callback` (must match `BETTERCAL_BASE_URL` exactly, including the scheme; no JavaScript origins needed). Create, then copy the **Client ID** and the **Client secret** (shown once; there is a download button).
-7. Put the client id and secret in the server `.env`:
+- **Only needed for the Google connector.** Everything else works without it, including following a Google calendar by its secret iCal address (Subscribe) and bringing calendars over from a Google Takeout export (Import).
+- **No cost and no billing account.** A Google Cloud project is free to create with any Google account, and the Calendar API has no charge at this scale.
+- **The app stays "unverified"**, which is fine for your own install. Verification is for apps offered to the public; an unverified app shows a one-time warning when an account connects.
+
+The console changes its layout often. As of October 2026, OAuth lives under **Google Auth Platform** (Overview, Branding, Audience, Clients, Data Access, Verification Center) rather than the old "OAuth consent screen" page. The links below open each page for whichever project is selected in the console's project picker at the top.
+
+1. **Pick or create a project:** [console.cloud.google.com/projectcreate](https://console.cloud.google.com/projectcreate), or choose an existing one in the project picker. One that already has an OAuth setup saves the branding step.
+2. **Enable the Google Calendar API:** [its page in the API Library](https://console.cloud.google.com/apis/library/calendar-json.googleapis.com) → **Enable**. Do this first: the scope picker in step 5 only lists APIs that are enabled.
+3. **Branding:** [Google Auth Platform → Branding](https://console.cloud.google.com/auth/branding). App name (say "Better-Cal"), a support email, a developer contact. Save.
+4. **Audience:** [Google Auth Platform → Audience](https://console.cloud.google.com/auth/audience). User type **External**, then **Publish app**, so the publishing status reads *In production*. This matters: in *Testing* status Google expires refresh tokens after seven days, and every connected account would need reconnecting weekly. In production it stays unverified: Google shows a warning once per account when connecting ("Advanced", then "Go to Better-Cal").
+5. **Scopes:** [Google Auth Platform → Data Access](https://console.cloud.google.com/auth/scopes) → **Add or remove scopes**. Filter "Google Calendar API" and tick `.../auth/calendar.readonly` and `.../auth/calendar.events`, then `openid` and `.../auth/userinfo.email` from the top of the list. Update, Save. The request itself carries the scopes, so this only sets what the consent screen describes. An unverified app works without it, but it takes a minute.
+6. **The client:** [Google Auth Platform → Clients](https://console.cloud.google.com/auth/clients) → **Create client**. Application type **Web application**, any name. Under **Authorized redirect URIs** add `https://<your host>/api/v1/google/callback`. It must match `BETTERCAL_BASE_URL` exactly, including the scheme; no JavaScript origins are needed. Create, then copy the **Client ID** and the **Client secret** (shown once; there is a download button).
+7. **Put the client ID and secret in the server's `.env`:**
 
 ```
 BETTERCAL_GOOGLE_CLIENT_ID=....apps.googleusercontent.com
@@ -24,6 +30,13 @@ BETTERCAL_GOOGLE_CLIENT_SECRET=...
 `BETTERCAL_SESSION_SECRET` must be set (it already is on any working install): the refresh token is sealed with it (`Infra\Secrets`, libsodium secretbox) before it is stored. Changing the session secret invalidates stored tokens; reconnecting the account is the fix.
 
 Until both variables are set, Settings → Connections says the connector is not set up and offers nothing.
+
+**Google's own documentation**, if a screen looks different from the steps above:
+
+- [Get started with the Google Auth Platform](https://support.google.com/cloud/answer/15544987): the Branding, Audience, Clients and Data Access pages.
+- [Configure the OAuth consent screen](https://developers.google.com/workspace/guides/configure-oauth-consent) and [create access credentials](https://developers.google.com/workspace/guides/create-credentials), from Google's Workspace developer guides.
+- [Unverified apps](https://support.google.com/cloud/answer/7454865): what the warning means, and why verification isn't needed for your own install.
+- [Refresh token expiration](https://developers.google.com/identity/protocols/oauth2#expiration): the seven-day limit in Testing status.
 
 ## Connecting (each user)
 

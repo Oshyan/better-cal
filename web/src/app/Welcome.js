@@ -17,6 +17,7 @@ import { localTz, zoneOptions } from '../lib/dates.js';
 import { pushSupported, permissionState, enablePush, currentPushEndpoint } from './push.js';
 import { isInstalled, canPromptInstall, promptInstall, onInstallChange, installHint } from './install.js';
 import { PHONE_QUERY } from '../lib/breakpoints.js';
+import { GOOGLE_SETUP_URL } from './GoogleConnector.js';
 
 // What the device's locale says, for the settings a new account hasn't chosen.
 function localeWeekStart() {
@@ -156,9 +157,11 @@ export function Welcome() {
     {
       id: 'google', icon: 'google', title: 'Connect Google Calendar',
       sub: google && !google.configured
-        ? "Needs this server's Google setup first (docs/google-calendar.md, about ten minutes)."
+        ? "Needs this server's own Google setup first: a free Google Cloud project, about ten minutes, by whoever runs the server."
         : 'Your Google calendars, kept in step both ways where you can edit them.',
       act: google && google.configured ? 'Connect' : null,
+      href: google && !google.configured ? GOOGLE_SETUP_URL : null,
+      hrefLabel: 'Setup guide',
       run: () => { mark('google'); set({ route: 'settings', settingsTab: 'connections' }); },
       isDone: !!(google && google.connected),
     },
@@ -236,6 +239,7 @@ export function Welcome() {
               <span class="bc-welcome-ico"><${Icon} name=${isDone ? 'check' : r.icon} size=${17} /></span>
               <span class="bc-welcome-text"><b>${r.title}</b><small>${r.sub}</small></span>
               ${r.act && !(isDone && (r.id === 'reminders' || r.id === 'install')) && html`<button type="button" class="bc-btn" onClick=${r.run}>${r.act}</button>`}
+              ${!r.act && r.href && html`<a class="bc-btn" href=${r.href} target="_blank" rel="noopener">${r.hrefLabel}</a>`}
             </div>`;
           })}
         </div>

@@ -54,6 +54,7 @@ Multi-day events show their total duration beside the title on every visible seg
 ### Creating and editing
 
 - Natural-language quick add with a structured confirmation strip (the parse fills it, your edits win), Enter to commit, click-outside to dismiss.
+- Quick add from outside the app: a "New event" shortcut on the installed app's icon, and an optional key in the Chrome extension (Ctrl/Cmd+Shift+9) that opens it from any app.
 - Deterministic parser first; LLM assist only when the parse is incomplete, with merge guards so the LLM can never move an event into the past, drop companions, or rewrite the title. Parse mode (smart / always / never) is a setting.
 - Paste a Google Calendar template link into quick-add and it becomes the event, recurrence and all.
 - Drag-create opens the editor pre-filled; drag and resize existing events to reschedule.

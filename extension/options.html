@@ -17,6 +17,11 @@
     #status.ok { color: #3f9d6e; }
     #status.err { color: #c34a4a; }
     code { font-size: 12.5px; }
+    hr { border: 0; border-top: 1px solid #8884; margin: 16px 0 12px; }
+    .check { display: flex; gap: 8px; align-items: flex-start; font-weight: 400; }
+    .check input { width: auto; margin-top: 3px; }
+    .hint { font-size: 13px; margin: 6px 0 0 24px; opacity: 0.8; }
+    .linkish { border: 0; padding: 0; background: none; color: #5b7fd4; text-decoration: underline; cursor: pointer; font: inherit; }
   </style>
 </head>
 <body>
@@ -29,6 +34,10 @@
     <button id="clear" type="button">Stop redirecting</button>
   </div>
   <div id="status" aria-live="polite"></div>
+  <hr>
+  <h1>New event shortcut</h1>
+  <label class="check" for="newEventKey"><input id="newEventKey" type="checkbox"> Open quick add in Better-Cal with a keyboard shortcut, from any app</label>
+  <p class="hint"><span id="keyName">Key: not set</span>. <button id="keys" type="button" class="linkish">Change or remove the key</button> (Chrome's shortcut settings; removing it there frees the key for other apps).</p>
   <script src="rules.js"></script>
   <script src="options.js"></script>
 </body>

@@ -3,6 +3,8 @@
 //   /subscribe?url=<ics|webcal>  -> subscribe drawer prefilled (webcal: handler)
 //   /import                      -> import drawer (file arrives via launchQueue)
 //   /review                      -> the Review queue (held-change notification target)
+//   /new                         -> quick add, open and empty (the app icon's
+//                                   "New event" shortcut and the extension's key)
 //   /google?connected=|error=    -> Settings, Connections (OAuth callback landing)
 //   /settings[/<tab>]            -> Settings, on that tab (general, notifications,
 //                                   location, connections, account, about, system)
@@ -80,6 +82,8 @@ export async function runHandoff(handoff) {
     openSubscribe(params.get('url') || '');
   } else if (path === '/import') {
     set({ createDrawer: { kind: 'import' } });
+  } else if (path === '/new') {
+    set({ quickAddOpen: true, route: 'calendar' });
   } else if (path === '/review') {
     // Where the "an organizer changed ..." notification lands.
     set({ route: 'review' });

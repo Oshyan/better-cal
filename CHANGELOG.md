@@ -4,6 +4,11 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.9.11 (2026-10-04)
+
+- **New event from the app icon.** The installed app's icon has a "New event" shortcut that opens quick add: long-press it on Android, or right-click it in the Windows taskbar or the Mac dock. The address behind it, `/new`, opens quick add from anywhere else too.
+- **Chrome extension 2.1.0: a new event key.** Ctrl+Shift+9 (Cmd+Shift+9 on a Mac) opens quick add in a small Better-Cal window from any app while Chrome is running. It can be turned off in the extension's options, and the key changed or removed in Chrome's shortcut settings. No new permissions. Reaches users once the new version is published on the Chrome Web Store.
+
 ## 0.9.10 (2026-10-04)
 
 - **"Also on" takes one line.** An event's other copies are listed in a row, separated by dots, each with a small ✕ for "Not the same", instead of a button after each that wrapped onto extra lines.

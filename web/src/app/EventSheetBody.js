@@ -100,13 +100,17 @@ function AlsoOn({ occ }) {
   return html`<div class="bc-es-alsoon">
     <${Icon} name="stack" size=${15} />
     <span>Also on</span>
-    ${copies.map((d) => {
+    ${copies.map((d, i) => {
       const other = copyOcc(d);
       return html`<span class="bc-es-alsoon-item" key=${d.pairId}>
+        ${i > 0 && html`<span class="bc-es-alsoon-sep" aria-hidden="true">·</span>`}
         ${other
           ? html`<button type="button" class="bc-es-alsoon-cal" title="Open this copy" onClick=${() => openDetail(other.instanceId)}><i style=${'background:' + (d.cal.color || 'var(--border-strong)')}></i>${d.cal.name}</button>`
           : html`<span class="bc-es-alsoon-cal"><i style=${'background:' + (d.cal.color || 'var(--border-strong)')}></i>${d.cal.name}</span>`}
-        <button type="button" class="bc-es-alsoon-split" disabled=${busy} title="These are different events: show both" onClick=${() => notSame(d)}>Not the same</button>
+        <button type="button" class="bc-es-alsoon-split" disabled=${busy}
+          title=${'Not the same event: show the one on ' + d.cal.name + ' separately'}
+          aria-label=${'Not the same as the one on ' + d.cal.name}
+          onClick=${() => notSame(d)}><${Icon} name="close" size=${11} /></button>
       </span>`;
     })}
   </div>`;

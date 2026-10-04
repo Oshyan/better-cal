@@ -4,6 +4,10 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.9.10 (2026-10-04)
+
+- **"Also on" takes one line.** An event's other copies are listed in a row, separated by dots, each with a small ✕ for "Not the same", instead of a button after each that wrapped onto extra lines.
+
 ## 0.9.9 (2026-10-04)
 
 - **Repeating events with skipped dates no longer "change" on every poll.** MySQL hands the list of skipped dates back reformatted, and the comparison read that as a change. So on any feed or Google calendar, every series with two or more skipped dates was rewritten each poll, logged as updated in Activity ("a feed: 9 updated", hourly), and fetched again by CalDAV apps. They now compare by content, as the invitation details already did.

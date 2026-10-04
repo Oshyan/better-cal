@@ -3679,13 +3679,14 @@ button.bc-review-title { color: var(--fg); padding: 0; }
 .bc-es-segbtn svg { width: 15px; height: 15px; }
 .bc-es-invite .bc-es-seg { height: 36px; justify-self: start; margin-left: 34px; }
 /* The same event on other calendars (#9): one line under the calendar. */
-.bc-es-alsoon { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 13.5px; color: var(--fg-muted); }
-.bc-es-alsoon-item { display: inline-flex; align-items: center; gap: 6px; }
+.bc-es-alsoon { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-size: 13.5px; color: var(--fg-muted); }
+.bc-es-alsoon-item { display: inline-flex; align-items: center; gap: 4px; }
+.bc-es-alsoon-sep { margin: 0 4px 0 2px; color: var(--fg-muted); }
 .bc-es-alsoon-cal { display: inline-flex; align-items: center; gap: 5px; padding: 0; border: 0; background: none; font: inherit; color: var(--fg); }
 button.bc-es-alsoon-cal { cursor: pointer; text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 3px; }
 .bc-es-alsoon-cal i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
-.bc-es-alsoon-split { padding: 0 6px; height: 24px; border: 1px solid var(--border); border-radius: 6px; background: none; font: inherit; font-size: 12.5px; color: var(--fg-muted); cursor: pointer; }
-.bc-es-alsoon-split:hover { color: var(--fg); border-color: var(--border-strong); }
+.bc-es-alsoon-split { display: inline-grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--fg-muted); cursor: pointer; }
+.bc-es-alsoon-split:hover { background: var(--bg-inset); color: var(--fg); }
 /* Why an invitation can't be answered here, or that a reply didn't go (#70). */
 .bc-es-invite-note { margin: 0 0 0 34px; font-size: 13.5px; color: var(--fg-muted); }
 .bc-es-invite-note.is-failed { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; color: var(--danger); }

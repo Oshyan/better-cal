@@ -234,13 +234,24 @@ final class Ics
         $out .= self::line('SUMMARY', self::escape((string) ($ev['title'] ?? '')));
         if (!empty($ev['description'])) {
             // Rich (HTML) descriptions export as plain text in DESCRIPTION
-            // plus the original HTML in X-ALT-DESC (the de facto rich-text
-            // field, understood by Outlook and Apple Calendar). Plain text
+            // plus HTML in X-ALT-DESC (the de facto rich-text field,
+            // understood by Outlook and Apple Calendar). Plain text
             // descriptions export exactly as before.
+            //
+            // Feed and Google descriptions are stored as they arrived, so
+            // both fields are made inert here, the one door every export
+            // (feeds, CalDAV, files) goes out through (#58, review D-02):
+            // the HTML through the same allowlist the app shows it with,
+            // the text with no markup left, not even markup that was only
+            // entity-escaped in the source (some clients, Google among
+            // them, read DESCRIPTION as HTML).
             $description = (string) $ev['description'];
             if (Sanitize::isHtml($description)) {
-                $out .= self::line('DESCRIPTION', self::escape(Sanitize::toText($description)));
-                $out .= self::fold('X-ALT-DESC;FMTTYPE=text/html:' . self::escape($description)) . "\r\n";
+                $out .= self::line('DESCRIPTION', self::escape(Sanitize::inertText($description)));
+                $html = Sanitize::html($description);
+                if ($html !== '') {
+                    $out .= self::fold('X-ALT-DESC;FMTTYPE=text/html:' . self::escape($html)) . "\r\n";
+                }
             } else {
                 $out .= self::line('DESCRIPTION', self::escape($description));
             }

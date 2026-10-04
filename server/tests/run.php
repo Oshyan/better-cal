@@ -2474,6 +2474,32 @@ check('ics rich X-ALT-DESC carries html', str_contains($richUnfolded, 'X-ALT-DES
 checkEq('ics plain description has no X-ALT-DESC', 1, substr_count($richUnfolded, 'X-ALT-DESC'));
 check('ics plain description unchanged', str_contains($richUnfolded, 'DESCRIPTION:Line1\\nLine2'));
 
+// Descriptions from feeds and Google are stored as they came; what goes out
+// is inert whatever the client does with it (#58, review D-02).
+$hostile = '<p onclick="x()">Hi <img src=x onerror="fetch(\'//evil\')"><script>steal()</script>'
+    . '<a href="javascript:alert(1)">click</a> <a href="https://example.com/ok">ok</a>'
+    . '<iframe src="https://evil"></iframe><style>body{}</style><svg onload=alert(1)></svg>'
+    . ' &lt;img src=x onerror=alert(2)&gt; &amp;lt;script&amp;gt;deep()&amp;lt;/script&amp;gt;</p>';
+$hostileCal = Ics::unfold(Ics::buildCalendar('Feed', null, [[
+    'uid' => 'hostile-1', 'title' => 'Imported', 'description' => $hostile,
+    'start_utc' => '2026-08-01 17:00:00', 'end_utc' => '2026-08-01 18:00:00', 'all_day' => 0, 'tzid' => 'UTC', 'status' => 'confirmed',
+]]));
+preg_match('/^X-ALT-DESC;FMTTYPE=text\/html:(.*)$/m', $hostileCal, $altM);
+preg_match('/^DESCRIPTION:(.*)$/m', $hostileCal, $txtM);
+$alt = strtolower(stripcslashes($altM[1] ?? ''));
+$txt = stripcslashes($txtM[1] ?? '');
+foreach (['<script', 'javascript:', '<iframe', '<style', '<svg', '<img'] as $bad) {
+    check("ics export: X-ALT-DESC has no $bad", !str_contains($alt, $bad));
+}
+// Escaped text may still read "onerror=" as words; no real tag may carry a handler.
+check('ics export: no tag in X-ALT-DESC carries an event handler', preg_match('/<[a-z][^>]*\son[a-z]+\s*=/', $alt) !== 1);
+check('ics export: escaped markup stays escaped', str_contains($alt, '&lt;img src=x onerror=alert(2)&gt;'));
+check('ics export: a safe link survives in X-ALT-DESC', str_contains($alt, 'href="https://example.com/ok"'));
+check('ics export: DESCRIPTION has no markup, even entity-escaped markup', !Sanitize::isHtml($txt) && !str_contains(strtolower($txt), 'onerror=alert(2)>'));
+check('ics export: DESCRIPTION keeps the words', str_contains($txt, 'Hi') && str_contains($txt, 'click') && str_contains($txt, 'ok'));
+checkEq('inert text: nested escapes stay inert', false, Sanitize::isHtml(Sanitize::inertText('<p>&amp;amp;lt;b onmouseover=x&amp;amp;gt;hi</p>')));
+checkEq('caldav write: a description is cleaned on the way in', '<p>hi</p>', BetterCal\Dav\DavIcs::eventColumns(['title' => 't', 'start_utc' => '2026-08-01 17:00:00', 'end_utc' => '2026-08-01 18:00:00', 'description' => '<p onclick="x()">hi<script>y()</script></p>'])['description']);
+
 // ---------------------------------------------------------------------------
 // PlaceSearch: tz centroids, address compose, distance, ranking (pure)
 // ---------------------------------------------------------------------------

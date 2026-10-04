@@ -4,6 +4,14 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.9.7 (2026-10-04)
+
+- **Descriptions leave Better-Cal inert (#58, security review D-02).** A subscribed feed or a Google calendar can put HTML in an event's description, and Better-Cal stores it as it arrived (it is cleaned when shown). Until now that HTML also went back out unchanged when the event was exported, so a script or a `javascript:` link in a feed could reach the other calendar apps reading your Better-Cal feeds or CalDAV. Every export now sends:
+  - the rich version (`X-ALT-DESC`) through the same allowlist the app displays it with: plain formatting and http(s) links only;
+  - the plain version (`DESCRIPTION`) with no markup at all, including markup that was only entity-escaped in the source, since some apps (Google among them) read that field as HTML.
+
+  Descriptions written by CalDAV clients are now cleaned when they arrive, like every other edit.
+
 ## 0.9.6 (2026-10-04)
 
 - **The same event, shown once (#9).** An event that reaches Better-Cal by two routes (a Luma feed and the confirmation forwarded from Gmail, a Takeout import and the Google calendar it came from, a booking and the venue's feed) no longer shows twice.

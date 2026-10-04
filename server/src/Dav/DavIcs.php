@@ -89,7 +89,8 @@ final class DavIcs
         $exdates = is_array($parsed['exdates'] ?? null) ? $parsed['exdates'] : [];
         return [
             'title' => (string) ($parsed['title'] ?? ''),
-            'description' => $parsed['description'] ?? null,
+            // Cleaned on the way in, like every other local edit (#58).
+            'description' => isset($parsed['description']) ? \BetterCal\Domain\Sanitize::description((string) $parsed['description']) : null,
             'location' => $parsed['location'] ?? null,
             'url' => $parsed['url'] ?? null,
             'start_utc' => (string) $parsed['start_utc'],

@@ -22,7 +22,7 @@ Auth is HTTP Basic, so it is only safe over TLS. The server is HTTPS-only; never
 ## What syncs
 
 - Every Better-Cal calendar appears as a CalDAV collection (`/dav/calendars/{email}/cal-{id}/`), with its name, color, and order.
-- Events sync both ways on **local** calendars: create, edit, move, delete, recurring rules (RRULE), skipped instances (EXDATE), and edited single occurrences (RECURRENCE-ID overrides) all round-trip. Fields carried: title, description, location, URL, status, start/end (all-day supported), timezone, recurrence.
+- Events sync both ways on **local** calendars: create, edit, move, delete, recurring rules (RRULE), skipped instances (EXDATE), and edited single occurrences (RECURRENCE-ID overrides) all round-trip. Fields carried: title, description, location, URL, status, start/end (all-day supported), timezone, recurrence. A rich description goes out as plain text in `DESCRIPTION` and allowlisted HTML (plain formatting and http(s) links) in `X-ALT-DESC`; one written by a client is cleaned the same way when it arrives.
 - Changes made via the web app, JSON API, or agents show up on your devices via efficient delta sync (sync-collection/ctag), and undo in the app propagates too.
 - Feed subscriptions poll hourly server-side; their events flow out to your devices on the same schedule.
 

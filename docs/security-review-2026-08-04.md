@@ -287,6 +287,7 @@ Local developer-only availability failures, operator-only footguns, duplicate wr
 - Proven path: untrusted feed `DESCRIPTION` HTML is stored unsanitized and `server/src/Domain/Ics.php:153-164` re-exports it verbatim in `X-ALT-DESC;FMTTYPE=text/html`. A real Sabre round trip retained `<img onerror>` and `<script>` markup exactly.
 - Proof gap: no supported downstream calendar client was shown to execute the active markup in a security-relevant origin or to perform another meaningful unsafe action. Propagating HTML alone does not prove XSS in Better-Cal.
 - Fix regardless: sanitize feed descriptions with the server's HTML allowlist before persistence/export, or omit rich HTML for untrusted subscriptions and export plain text only.
+- Resolved in 0.9.7 (#58): every export sanitizes `X-ALT-DESC` with the allowlist and strips markup from `DESCRIPTION`, including markup that was only entity-escaped in the source; CalDAV writes are sanitized on arrival.
 
 ## Suppressed and disproved lead families
 

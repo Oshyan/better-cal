@@ -173,6 +173,21 @@ final class Sanitize
         return trim($s);
     }
 
+    /**
+     * Plain text with no markup at all, for a field another program might
+     * read as HTML. toText decodes entities, so "&lt;img onerror=...&gt;"
+     * in the source would come back as a live tag; what decoding produced
+     * is stripped too, a few rounds deep.
+     */
+    public static function inertText(?string $text): string
+    {
+        $t = self::toText($text);
+        for ($i = 0; $i < 3 && self::isHtml($t); $i++) {
+            $t = trim(html_entity_decode(strip_tags($t), ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+        }
+        return self::isHtml($t) ? (string) preg_replace('/<(?=\/?[a-zA-Z])/', '< ', $t) : $t;
+    }
+
     // ---- internals -----------------------------------------------------
 
     private static function renderChildren(\DOMNode $node): string

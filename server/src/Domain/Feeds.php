@@ -147,6 +147,24 @@ final class Feeds
     }
 
     /**
+     * Does a stored column already hold this value? Numbers come back as
+     * strings, and JSON columns come back reformatted by MySQL ('["a", "b"]'),
+     * so those compare by what they say. Comparing JSON as text made every
+     * series with two or more skipped dates "change" on every poll. Pure.
+     */
+    public static function sameValue(string $col, mixed $current, mixed $value): bool
+    {
+        if ($current !== null && in_array($col, ['all_day', 'recurrence_parent_id'], true)) {
+            $current = (int) $current;
+        }
+        if (in_array($col, ['invite_json', 'exdates_json'], true) && $current !== null && $value !== null
+            && json_decode((string) $current, true) == json_decode((string) $value, true)) {
+            return true;
+        }
+        return $current === $value || (string) $current === (string) $value;
+    }
+
+    /**
      * Sync parsed VEVENTs into the calendar: update changed, insert new,
      * delete events whose uid disappeared from the feed.
      *
@@ -238,17 +256,7 @@ final class Feeds
 
                 $changed = [];
                 foreach ($columns as $col => $value) {
-                    $currentValue = $current[$col];
-                    if ($currentValue !== null && in_array($col, ['all_day', 'recurrence_parent_id'], true)) {
-                        $currentValue = (int) $currentValue;
-                    }
-                    if ($col === 'invite_json' && $currentValue !== null && $value !== null) {
-                        // The database hands JSON back reformatted; compare what it says.
-                        if (json_decode((string) $currentValue, true) == json_decode((string) $value, true)) {
-                            continue;
-                        }
-                    }
-                    if ($currentValue !== $value && (string) $currentValue !== (string) $value) {
+                    if (!self::sameValue($col, $current[$col], $value)) {
                         $changed[$col] = $value;
                     }
                 }

@@ -2504,6 +2504,11 @@ foreach ([$hostile, '<p>Tom &amp; Jerry&#039;s <a href="https://x.test/?a=1&amp;
     $once = Sanitize::description($sample);
     checkEq("sanitize is idempotent (sample $i)", $once, Sanitize::description((string) $once));
 }
+check('feed sync: MySQL-formatted exdates are not a change', BetterCal\Domain\Feeds::sameValue('exdates_json', '["2026-10-01 17:00:00", "2026-10-08 17:00:00"]', json_encode(['2026-10-01 17:00:00', '2026-10-08 17:00:00'])));
+check('feed sync: a different exdate is a change', !BetterCal\Domain\Feeds::sameValue('exdates_json', '["2026-10-01 17:00:00", "2026-10-08 17:00:00"]', json_encode(['2026-10-01 17:00:00'])));
+check('feed sync: invite JSON compares by content', BetterCal\Domain\Feeds::sameValue('invite_json', '{"a": 1, "b": [1, 2]}', '{"b":[1,2],"a":1}'));
+check('feed sync: all_day "1" is 1', BetterCal\Domain\Feeds::sameValue('all_day', '1', 1));
+check('feed sync: a new title is a change', !BetterCal\Domain\Feeds::sameValue('title', 'Old', 'New'));
 $cleanMigration = require __DIR__ . '/../migrations/034_clean_descriptions.php';
 check('migration 034 is a PHP migration the runner can call', is_callable($cleanMigration));
 {

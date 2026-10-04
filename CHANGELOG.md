@@ -4,6 +4,10 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.9.9 (2026-10-04)
+
+- **Repeating events with skipped dates no longer "change" on every poll.** MySQL hands the list of skipped dates back reformatted, and the comparison read that as a change. So on any feed or Google calendar, every series with two or more skipped dates was rewritten each poll, logged as updated in Activity ("a feed: 9 updated", hourly), and fetched again by CalDAV apps. They now compare by content, as the invitation details already did.
+
 ## 0.9.8 (2026-10-04)
 
 - **Only clean HTML is stored (#58 follow-up).** Descriptions typed in Better-Cal were always cleaned when saved, but those from subscribed feeds, Google sync and the Takeout import were stored as they arrived, cleaned only when shown or exported, and "Adopt as local" carried them into your own calendars. Now every way in cleans them with the same allowlist, and a one-time migration cleans what is already stored. Showing and exporting still clean as a second layer.

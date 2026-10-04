@@ -99,6 +99,18 @@ try {
                         . ($eventIds !== null ? ' events=' . count($eventIds) : '')
                         . " evaluated=$evaluated\n";
                     break;
+                case 'google_move':
+                    // Moving a calendar to Google (#55): up to 40 seconds of
+                    // uploading per run; an unfinished move queues itself again.
+                    $moveId = (int) ($payload['moveId'] ?? 0);
+                    $googleAuth = new BetterCal\Domain\GoogleAuth($db, $cfg);
+                    $mover = new BetterCal\Domain\GoogleMove($db, $googleAuth, new BetterCal\Domain\GoogleWriter($db, $googleAuth, $feeds), $feeds, $undo, $queue);
+                    $over = $mover->run($moveId, 40);
+                    if (!$over) {
+                        $queue->enqueue('google_move', ['moveId' => $moveId]);
+                    }
+                    echo bc_ts() . " google_move move=$moveId " . ($over ? 'finished' : 'continuing') . "\n";
+                    break;
                 case 'rank_events':
                     $scored = $ranking->run();
                     echo bc_ts() . " rank_events scored=$scored\n";

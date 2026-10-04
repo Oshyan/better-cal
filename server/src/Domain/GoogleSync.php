@@ -203,7 +203,12 @@ final class GoogleSync
         }
         $title = trim((string) ($item['summary'] ?? ''));
         $description = isset($item['description']) ? (string) $item['description'] : null;
-        $url = isset($item['htmlLink']) ? Ics::clip(Ics::structural((string) $item['htmlLink']), Limits::get('URL_CHARS')) : null;
+        // The event's own link when it has one (GoogleWriter sends it as
+        // `source`), else Google's page for the event.
+        $link = isset($item['source']['url']) && preg_match('#^https?://#i', (string) $item['source']['url']) === 1
+            ? (string) $item['source']['url']
+            : (isset($item['htmlLink']) ? (string) $item['htmlLink'] : null);
+        $url = $link !== null ? Ics::clip(Ics::structural($link), Limits::get('URL_CHARS')) : null;
 
         return [
             'uid' => $uid,

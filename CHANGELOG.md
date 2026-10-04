@@ -4,6 +4,19 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.9.4 (2026-10-04)
+
+- **Move a calendar to Google (#55).** A calendar that started in Better-Cal can now be seen live by people who use Google Calendar, and added to if you share it with them that way: its settings, **Move to Google…**.
+  - **How it works:** Better-Cal creates the calendar in your Google account (or uses one you pick), uploads every event without mailing anyone, and from then on edits it in place like your other Google calendars.
+  - **What stays:** the events keep their identity, so tags, people, reminders, trip membership and links stay with them.
+  - **Big calendars and failures:** a big calendar uploads in the background with its progress shown. A failed upload leaves the calendar untouched, and Try again continues where it stopped.
+  - **What you give up:** Undo on that calendar, as for any Google calendar.
+  - **Reversible:** "Adopt as local calendar" brings it back.
+
+  A full two-way bridge that keeps the calendar local is recorded separately (#83), with the cases where it would be better.
+- **Better-Cal asks Google for one more, narrow permission:** to create calendars of its own and manage only those (`calendar.app.created`). An account connected earlier is asked to reconnect once, when it first moves a calendar.
+- **Event links survive Google.** Writing to a Google calendar used to lose an event's link (a Partiful or Luma page, say): the next sync replaced it with Google's own page for the event. The link now travels as Google's `source` field and is read back from it.
+
 ## 0.9.3 (2026-10-04)
 
 - **The Google connector's setup guide links straight to each page it needs** in Google Cloud: create a project, enable the Calendar API, Branding, Audience, Data Access and Clients. It now says up front that the connector is optional, that a Google Cloud project costs nothing and needs no billing account, and why an "unverified" app is fine for your own install. Google's own docs for each part are linked for when a screen has moved. (docs/google-calendar.md)

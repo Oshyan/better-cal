@@ -65,6 +65,13 @@ final class GoogleWriter
             // tentative ↔ "maybe" on my calendar (Events::relationship); Google shows it hatched
             'status' => (string) ($row['status'] ?? '') === 'tentative' ? 'tentative' : 'confirmed',
         ];
+        // The event's link (a Partiful or Luma page, say) travels as Google's
+        // `source`, which GoogleSync reads back, so a write never trades it
+        // for Google's own event page (0.9.4).
+        $url = trim((string) ($row['url'] ?? ''));
+        if ($url !== '' && preg_match('#^https?://#i', $url) === 1) {
+            $body['source'] = ['url' => $url, 'title' => mb_substr((string) (parse_url($url, PHP_URL_HOST) ?: 'Link'), 0, 100)];
+        }
         if ($allDay) {
             $body['start'] = ['date' => $start->format('Y-m-d')];
             $body['end'] = ['date' => $end->format('Y-m-d')];
@@ -114,7 +121,33 @@ final class GoogleWriter
         return $masterGoogleId . '_' . ($allDay ? $dt->format('Ymd') : $dt->format('Ymd\THis\Z'));
     }
 
+    /**
+     * A changed occurrence of a series, as the body of a patch to its
+     * instance id: the series' recurrence never goes on an instance.
+     */
+    public static function instanceBody(array $row): array
+    {
+        $body = self::body($row);
+        unset($body['recurrence']);
+        return $body;
+    }
+
+    /**
+     * The body for importing an event that already exists here (moving a
+     * calendar to Google, 0.9.4): import keeps our iCalendar UID, so the
+     * first poll after the move matches every row, and it sends no mail.
+     */
+    public static function importBody(array $row): array
+    {
+        return self::body($row) + ['iCalUID' => (string) $row['uid']];
+    }
+
     // ---- Calls ----------------------------------------------------------------
+
+    public function import(array $calendar, array $row): array
+    {
+        return $this->call($calendar, 'POST', '/import', self::importBody($row));
+    }
 
     public function insert(array $calendar, array $row): array
     {

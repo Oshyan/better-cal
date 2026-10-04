@@ -11,6 +11,7 @@ import { state, toast } from './store.js';
 import { parseHex, PALETTE } from '../lib/color.js';
 import { SchemaForm } from './SchemaForm.js';
 import { Icon } from '../ui/icons.js';
+import { MoveToGoogle } from './MoveToGoogle.js';
 
 // Preset grid: the app palette plus teal and slate to round out 12.
 const SWATCHES = [...PALETTE, '#3aa695', '#708090'];
@@ -212,6 +213,8 @@ export function CalendarSettings({ cal, folders, onClose }) {
         }}
       />
     </div>`)}
+
+    ${cal.kind === 'local' && cal.editable && html`<${MoveToGoogle} cal=${cal} />`}
 
     <div class="bc-calset-danger">
       ${confirmDelete

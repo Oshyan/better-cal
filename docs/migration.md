@@ -40,7 +40,7 @@ Once the test is comfortable, make Better-Cal the thing you open and Google the 
 - **Reminders**: turn on push or email reminders here and turn Google's notifications off, or you will get both.
 - **Stop opening Google Calendar.** That is the actual test. If you find yourself needing it, note what for; it is either a gap listed above or something worth an issue.
 
-The one thing that does not work well yet in this arrangement is showing a *local* calendar to Google users. Google refreshes a subscribed ICS feed on its own schedule, often once a day. If a calendar has to be seen live by people on Google, keep it at Google for now.
+**A local calendar that people on Google need to see live** (or add to): move it to Google from its settings (**Move to Google…**, see [google-calendar.md](google-calendar.md#moving-a-calendar-to-google)). It stays here and is edited in place; Google holds it, and you share it from Google Calendar. An outbound feed still works for read-only sharing, but Google refreshes it on its own schedule, often once a day.
 
 ## Going back
 
@@ -59,7 +59,7 @@ Do this per calendar, when you are sure, not all at once.
 
 **Calendars that are yours alone.** Open the calendar's settings and choose **Adopt as local calendar**. Every event and its history stays, the sync stops in both directions, and the calendar is yours here from then on. Then at Google, hide the calendar or delete it; leaving it is also fine, it just stops changing. (If you never connected Google, the Takeout route below does the same job in one go.)
 
-**Calendars other people use.** If someone else writes to it or depends on seeing it live, keep it at Google and keep using it through the connector. That is not a compromise; it is the right home for it until Better-Cal can share a calendar to Google users in real time.
+**Calendars other people use.** If someone else writes to it or depends on seeing it live, keep it at Google and keep using it through the connector, or move it there if it started here (**Move to Google…**). That is not a compromise: Google is where the people sharing it already are, and Better-Cal edits it in place.
 
 **Takeout, for a clean cut.** At [takeout.google.com](https://takeout.google.com) deselect all, select Calendar, export. Unzip, put the `Calendar/` folder on the server, and run:
 

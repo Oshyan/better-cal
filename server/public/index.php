@@ -107,7 +107,8 @@ function bc_handle_api(Request $request, array $cfg): void
         $pushController = new Controllers\PushController($pushSubscriptions, $pushSender, $emailSender, $throttle, $db);
         $systemController = new Controllers\SystemController(new Domain\SystemHealth($db), $pushSubscriptions, $emailSender, $cfg);
         $healthController = new Controllers\HealthController($db, $cfg);
-        $googleController = new Controllers\GoogleController($db, $googleAuth, $calendars, $feeds);
+        $googleMove = new Domain\GoogleMove($db, $googleAuth, new Domain\GoogleWriter($db, $googleAuth, $feeds), $feeds, $undo, $jobQueue);
+        $googleController = new Controllers\GoogleController($db, $googleAuth, $calendars, $feeds, $googleMove);
 
         $router = new Router();
         $base = '/api/v1';
@@ -263,6 +264,8 @@ function bc_handle_api(Request $request, array $cfg): void
         $router->add('POST', "$base/google/accounts/:id/disconnect", [$googleController, 'disconnect']);
         $router->add('GET', "$base/google/accounts/:id/calendars", [$googleController, 'calendars']);
         $router->add('POST', "$base/google/accounts/:id/subscribe", [$googleController, 'subscribe']);
+        $router->add('POST', "$base/calendars/:id/move-to-google", [$googleController, 'moveToGoogle']);
+        $router->add('GET', "$base/calendars/:id/move-to-google", [$googleController, 'moveStatus']);
         $router->add('POST', "$base/push/test", [$pushController, 'test']);
         $router->add('POST', "$base/push/test-email", [$pushController, 'testEmail']);
 

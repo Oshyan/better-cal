@@ -4127,3 +4127,15 @@ button.bc-review-title { color: var(--fg); padding: 0; }
   .bc-welcome-text small { font-size: 13.5px; }
   .bc-welcome-item .bc-btn, .bc-welcome-foot .bc-btn { min-height: 42px; }
 }
+
+/* Move to Google, in a local calendar's settings (0.9.4, #55). */
+.bc-calset-value { font-size: 12.5px; color: var(--fg-muted); line-height: 1.4; }
+.bc-move .bc-btn { align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; }
+.bc-move-panel { display: grid; gap: 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-raised); }
+.bc-move-note { margin: 0; font-size: 12.5px; color: var(--fg-muted); line-height: 1.45; }
+.bc-move-note .bc-btn { margin-top: 6px; }
+.bc-move-row { display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
+.bc-move-row > span { flex: none; width: 4.5em; color: var(--fg-muted); }
+.bc-move-row select { flex: 1; min-width: 0; }
+.bc-move-actions { display: flex; gap: 8px; }
+.bc-move-error { color: var(--danger, #c34a4a); display: grid; gap: 6px; }

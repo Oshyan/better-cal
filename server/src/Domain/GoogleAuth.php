@@ -14,16 +14,19 @@ use BetterCal\Support\Time;
  * Google account connection: OAuth consent, token storage, token refresh,
  * and the calendar listing (docs/google-calendar.md, GH #42).
  *
- * Scope: read everything, write events. The write side (write-through to
- * calendars the user can edit) is the next step and asking for it now
- * spares every account a re-consent; calendar management (creating or
- * deleting calendars at Google) is deliberately not requested. The refresh
- * token is the only thing kept, sealed with the session secret; access
- * tokens are minted per run and never stored.
+ * Scope: read everything, write events, and (0.9.4, #55) create calendars
+ * of its own: calendar.app.created lets Better-Cal make a secondary calendar
+ * and manage events on the calendars it made, and nothing else, which is how
+ * a local calendar is moved to Google. Accounts connected before 0.9.4 lack
+ * it until they reconnect once (needsReconnectToCreate). The refresh token
+ * is the only thing kept, sealed with the session secret; access tokens are
+ * minted per run and never stored.
  */
 final class GoogleAuth
 {
-    public const SCOPES = 'openid email https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events';
+    public const SCOPES = 'openid email https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.app.created';
+    public const CREATE_SCOPE = 'https://www.googleapis.com/auth/calendar.app.created';
+    private const CALENDARS_URL = 'https://www.googleapis.com/calendar/v3/calendars';
     private const AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
     private const TOKEN_URL = 'https://oauth2.googleapis.com/token';
     private const REVOKE_URL = 'https://oauth2.googleapis.com/revoke';
@@ -222,6 +225,29 @@ final class GoogleAuth
         return $out;
     }
 
+    /** May this account create calendars at Google? Pure; unit-tested. */
+    public static function canCreateCalendars(array $account): bool
+    {
+        $granted = preg_split('/\s+/', trim((string) ($account['scopes'] ?? ''))) ?: [];
+        return in_array(self::CREATE_SCOPE, $granted, true) || in_array('https://www.googleapis.com/auth/calendar', $granted, true);
+    }
+
+    /**
+     * Create a secondary calendar owned by this account; returns its id.
+     * Needs calendar.app.created (canCreateCalendars).
+     */
+    public function createCalendar(array $account, string $name, string $tzid): string
+    {
+        $access = $this->accessToken($account);
+        $r = $this->http()->json('POST', self::CALENDARS_URL, ['summary' => $name, 'timeZone' => $tzid], ['Authorization: Bearer ' . $access]);
+        $data = json_decode($r['body'], true);
+        if ($r['status'] < 200 || $r['status'] >= 300 || !is_array($data) || empty($data['id'])) {
+            $why = is_array($data) ? (string) ($data['error']['message'] ?? '') : '';
+            throw new \RuntimeException('Google would not create the calendar: HTTP ' . $r['status'] . ($why !== '' ? " ($why)" : ''));
+        }
+        return (string) $data['id'];
+    }
+
     /** Pure; unit-tested. See listCalendars() for what each kind means. */
     public static function calendarKind(string $id, string $accessRole, bool $primary): string
     {
@@ -244,6 +270,7 @@ final class GoogleAuth
             'email' => (string) $row['email'],
             'status' => (string) $row['status'],
             'error' => $row['last_error'] !== null ? (string) $row['last_error'] : null,
+            'canCreateCalendars' => self::canCreateCalendars($row),
             'connectedAt' => Time::dbToIso((string) $row['created_at']),
         ];
     }

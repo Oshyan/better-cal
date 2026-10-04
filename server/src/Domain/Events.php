@@ -656,6 +656,26 @@ final class Events
         return $row;
     }
 
+    /**
+     * A calendar on its way to Google (0.9.4, #55) takes no edits until the
+     * upload is done: a change made mid-upload could miss Google entirely.
+     * It takes seconds for most calendars.
+     */
+    private function assertNotMoving(int $calendarId): void
+    {
+        try {
+            $moving = $this->db->scalar(
+                "SELECT id FROM calendar_moves WHERE calendar_id = ? AND status IN ('queued', 'running') LIMIT 1",
+                [$calendarId]
+            );
+        } catch (\PDOException) {
+            return; // no moves table (an install mid-upgrade, the test database)
+        }
+        if ($moving !== null) {
+            throw new HttpError('calendar_moving', 'This calendar is being moved to Google; it takes edits again once the upload finishes.', 409);
+        }
+    }
+
     /** @return array occurrence for the created event (first instance) */
     public function create(int $userId, array $in): array
     {
@@ -664,6 +684,7 @@ final class Events
         if ($calendar === null) {
             throw HttpError::badRequest('Unknown calendarId');
         }
+        $this->assertNotMoving($calendarId);
         $google = $calendar['kind'] === 'subscribed' && GoogleWriter::writable($calendar) ? $calendar : null;
         if ($calendar['kind'] === 'subscribed' && $google === null) {
             throw HttpError::forbidden('feed_readonly', 'Cannot create events on a subscribed calendar');
@@ -828,6 +849,12 @@ final class Events
         // Reminders are user-local metadata (like tags), so feed events accept
         // them even though their feed-derived content is read-only.
         $editKeys = array_diff(array_keys($in), ['scope', 'instanceStart', 'tagNames', 'reminders']);
+        if ($editKeys !== []) {
+            $this->assertNotMoving((int) $event['calendar_id']);
+            if (isset($in['calendarId'])) {
+                $this->assertNotMoving((int) $in['calendarId']);
+            }
+        }
         $google = $event['source'] === 'feed' ? $this->googleCalendarFor((int) $event['calendar_id']) : null;
         if ($event['source'] === 'feed' && $editKeys !== [] && $google === null) {
             throw HttpError::forbidden('feed_readonly', 'Feed events are read-only except attendance, tags and reminders');
@@ -1259,6 +1286,7 @@ final class Events
     public function deleteEvent(int $userId, int $id, ?string $scope, ?string $instanceStart): void
     {
         $event = $this->get($userId, $id);
+        $this->assertNotMoving((int) $event['calendar_id']);
         $google = $event['source'] === 'feed' ? $this->googleCalendarFor((int) $event['calendar_id']) : null;
         if ($event['source'] === 'feed' && $google === null) {
             throw HttpError::forbidden('feed_readonly', 'Feed events cannot be deleted; hide them instead');

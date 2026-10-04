@@ -3642,6 +3642,24 @@ use BetterCal\Domain\GoogleWriter;
     checkEq('google instance id: timed is UTC basic with Z', 'abc123_20261012T080000Z', GoogleWriter::instanceId('abc123', '2026-10-12 08:00:00', false));
     checkEq('google instance id: all-day is the date', 'abc123_20261012', GoogleWriter::instanceId('abc123', '2026-10-12 00:00:00', true));
 
+    // Moving a calendar to Google (0.9.4, #55).
+    $linked = ['uid' => 'evt-1@better-cal', 'title' => 'Bake sale', 'url' => 'https://partiful.com/e/abc', 'start_utc' => '2026-10-10 17:00:00', 'end_utc' => '2026-10-10 19:00:00', 'all_day' => 0, 'tzid' => 'America/Los_Angeles', 'rrule' => 'FREQ=WEEKLY'];
+    $imp = GoogleWriter::importBody($linked);
+    checkEq('google move: import keeps our UID', 'evt-1@better-cal', $imp['iCalUID']);
+    checkEq('google move: the event link travels as source', ['url' => 'https://partiful.com/e/abc', 'title' => 'partiful.com'], $imp['source']);
+    checkEq('google move: a series keeps its rule', ['RRULE:FREQ=WEEKLY'], $imp['recurrence']);
+    check('google move: an occurrence patch has no recurrence', !array_key_exists('recurrence', GoogleWriter::instanceBody($linked)));
+    check('google move: a non-web link is not sent', !isset(GoogleWriter::body(['url' => 'mailto:a@b.c'] + $linked)['source']));
+    check('google account: old scopes cannot create calendars', !GoogleAuth::canCreateCalendars(['scopes' => 'openid email https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events']));
+    check('google account: app.created can', GoogleAuth::canCreateCalendars(['scopes' => GoogleAuth::SCOPES]));
+    check('google account: full calendar scope can', GoogleAuth::canCreateCalendars(['scopes' => 'openid https://www.googleapis.com/auth/calendar']));
+    $sourced = GoogleSync::toParsed([
+        'id' => 'g1', 'iCalUID' => 'evt-1@better-cal', 'summary' => 'Bake sale', 'htmlLink' => 'https://www.google.com/calendar/event?eid=g1',
+        'source' => ['url' => 'https://partiful.com/e/abc', 'title' => 'partiful.com'],
+        'start' => ['dateTime' => '2026-10-10T10:00:00-07:00', 'timeZone' => 'America/Los_Angeles'], 'end' => ['dateTime' => '2026-10-10T12:00:00-07:00', 'timeZone' => 'America/Los_Angeles'],
+    ]);
+    checkEq('google->parsed: the event link comes back from source, not Google\'s page', 'https://partiful.com/e/abc', $sourced['url']);
+
     $cal = ['provider' => 'google', 'google_calendar_id' => 'x@group.calendar.google.com', 'google_account_id' => 1, 'google_access_role' => 'writer'];
     check('google writable: writer role', GoogleWriter::writable($cal));
     check('google writable: owner role', GoogleWriter::writable(['google_access_role' => 'owner'] + $cal));

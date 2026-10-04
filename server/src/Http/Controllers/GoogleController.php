@@ -7,6 +7,7 @@ namespace BetterCal\Http\Controllers;
 use BetterCal\Domain\Calendars;
 use BetterCal\Domain\Feeds;
 use BetterCal\Domain\GoogleAuth;
+use BetterCal\Domain\GoogleMove;
 use BetterCal\Http\HttpError;
 use BetterCal\Http\Request;
 use BetterCal\Http\Response;
@@ -25,7 +26,28 @@ final class GoogleController
         private readonly GoogleAuth $auth,
         private readonly Calendars $calendars,
         private readonly Feeds $feeds,
+        private readonly GoogleMove $move,
     ) {
+    }
+
+    /**
+     * Move a local calendar to Google (#55): body {accountId, googleCalendarId?}.
+     * Without googleCalendarId Better-Cal creates the Google calendar. Small
+     * calendars finish within the request; a big one carries on in the
+     * worker, and GET reports its progress.
+     */
+    public function moveToGoogle(Request $req, array $params): Response
+    {
+        $req->requireSession('Moving a calendar to Google');
+        $userId = (int) $req->user['id'];
+        $accountId = (int) ($req->body['accountId'] ?? 0);
+        $target = trim((string) ($req->str('googleCalendarId') ?? ''));
+        return Response::json($this->move->start($userId, (int) $params['id'], $accountId, $target !== '' ? $target : null));
+    }
+
+    public function moveStatus(Request $req, array $params): Response
+    {
+        return Response::json(['move' => $this->move->status((int) $req->user['id'], (int) $params['id'])]);
     }
 
     public function status(Request $req): Response

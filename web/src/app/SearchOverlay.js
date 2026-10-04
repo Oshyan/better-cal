@@ -43,6 +43,23 @@ function saveOpts(o) {
 
 // The results an event was opened from, for "‹ Search" to bring back.
 let last = null;
+// What the open search holds, for a reload to bring back (0.9.1, resume.js).
+let live = { q: '', peek: null };
+
+export function searchSnapshot() {
+  return { open: !!state.searchOpen, q: live.q, peek: live.peek, last: last ? { q: last.q, peek: last.peek } : null };
+}
+
+// After a reload: "‹ Search" on a restored event comes back to this query.
+export function primeSearchBack(q, peek = null) {
+  last = { q, results: null, pastCount: 0, peek, sel: -1, scrollTop: 0 };
+}
+
+// After a reload: search open again on the same query, results refreshed.
+export function reopenSearch(q, peek = null) {
+  primeSearchBack(q, peek);
+  set({ searchOpen: true, searchRestore: true });
+}
 
 export function SearchOverlay() {
   const open = useStore((s) => s.searchOpen);
@@ -65,6 +82,7 @@ export function SearchOverlay() {
 
   const phone = (() => { try { return matchMedia(PHONE_QUERY).matches; } catch { return false; } })();
   const when = peek || opts.when;
+  live = { q, peek };
 
   useEffect(() => {
     if (!open) return;

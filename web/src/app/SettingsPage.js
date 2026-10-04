@@ -10,13 +10,14 @@ import { api, logout, loadSystemHealth } from './api.js';
 import { fmtSince } from '../lib/since.js';
 import { adoptSettings } from './settings.js';
 import { saveSetting } from './actions.js';
+import { recentStarts } from './resume.js';
 import { PageShell } from './PageShell.js';
 import { Icon } from '../ui/icons.js';
 import { GoogleConnector } from './GoogleConnector.js';
 import { OutfeedsSection } from './OutfeedsPage.js';
 import { PlaceInput, pickFillText, placeBias } from './PlaceInput.js';
 import { allowDeviceLocation, deviceLocationPermission } from './devicelocation.js';
-import { localTz, sameClock, tzOffsetLabel, tzCity, zoneOptions } from '../lib/dates.js';
+import { localTz, sameClock, tzOffsetLabel, tzCity, zoneOptions, fmtDayMedium, fmtTime } from '../lib/dates.js';
 import {
   permissionState, pushSupported, fetchPushStatus, enablePush, disablePush, fetchPushDevices, removePushDevice, currentEndpointHash, currentPushEndpoint,
   sendTestNotification, sendTestEmail,
@@ -101,7 +102,28 @@ function SystemSection() {
         Your feeds and devices: ${alerts.accountTo}${alerts.systemTo !== alerts.accountTo ? html`<br />System-wide: ${alerts.systemTo}` : html`<br />System-wide: same address (set BETTERCAL_ALERT_EMAIL to change)`}
       </span>`}
     <//>
+    <${StartsRow} />
   </section>`;
+}
+
+// Why this device's app started, most recent first (0.9.1, resume.js): to
+// tell a phone ending the app in the background from the app reloading itself
+// for a new version. Kept on the device only.
+const START_WORDS = {
+  update: 'reloaded for a new version',
+  discarded: 'discarded in the background by the browser, then reloaded',
+  restarted: 'started again minutes after use (ended in the background, or swiped away)',
+  reload: 'reloaded (pulled down or refreshed)',
+  launch: 'opened',
+};
+function StartsRow() {
+  const starts = recentStarts().slice(0, 10);
+  if (starts.length === 0) return null;
+  return html`<${Row} label="Recent starts on this device" hint="Why the app last started here, most recent first. Kept on this device only.">
+    <ul class="bc-sys-starts">
+      ${starts.map((st) => html`<li key=${st.at}><span class="bc-sys-starts-when">${fmtDayMedium(new Date(st.at))}, ${fmtTime(new Date(st.at))}</span> ${START_WORDS[st.reason] || st.reason}</li>`)}
+    </ul>
+  <//>`;
 }
 
 // API keys: what CalDAV clients, the MCP server and scripts sign in with.
@@ -671,7 +693,8 @@ export function SettingsPage() {
   // Phone: a section takes a history entry, so Back returns to the list.
   useEffect(() => {
     if (!phone || !chosen) return undefined;
-    history.pushState({ bcRoute: 'settings', bcSetSection: chosen }, '');
+    // Back from a reload (0.9.1) the section's entry is already there.
+    if (!(history.state && history.state.bcSetSection === chosen)) history.pushState({ bcRoute: 'settings', bcSetSection: chosen }, '');
     let popped = false;
     const onPop = () => { popped = true; set({ settingsTab: null }); };
     window.addEventListener('popstate', onPop);

@@ -4087,3 +4087,7 @@ button.bc-review-title { color: var(--fg); padding: 0; }
 /* A held row: no text selection or callout, so the hold opens the row's menu. */
 .bc-cal-row.is-held { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 .bc-rowmenu { z-index: 120; }
+
+/* Settings, System: why this device's app last started (0.9.1). */
+.bc-sys-starts { margin: 0; padding: 0; list-style: none; display: grid; gap: 4px; font-size: 13.5px; }
+.bc-sys-starts-when { color: var(--fg-muted); font-variant-numeric: tabular-nums; margin-right: 6px; }

@@ -4,6 +4,20 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.9.1 (2026-10-04)
+
+- **Reminders say the time on your clock.** A reminder's time was written in the event's own time zone. Events imported from Google Takeout are stored in UTC, so a 12:45 PM flight in London (summer time) was announced as 11:45 AM. Reminders, by push and by email, now read on the zone your device last reported (then your Home zone), the way the app shows times. An event that keeps a zone of its own whose clock differs adds that time: "12:45 PM (4:45 AM in Los Angeles)". They also follow the 12- or 24-hour setting.
+- **The app keeps track of where your device is while it stays open,** not only when it starts, so reminders follow you on a trip.
+- **Coming back after a reload puts you exactly where you were.** As well as the view, day, filter and saved view, it now brings back:
+  - the page you were on, and the Settings section;
+  - an open event, on the day it was opened from, with its way back to a trip or to search;
+  - an open search with its query;
+  - the time of day in week and day view.
+
+  In the installed app this also survives the phone ending the app in the background (which starts it with a new session), for up to 30 minutes as before. A notification you tap to open the app still opens its own event.
+  Back keeps working after such a reload: a restored Settings section goes back to the list, then to the calendar, and a restored event opened from search goes back to the results.
+- **Settings, System lists why the app last started on this device:** a new version, the browser discarding it in the background, the phone ending it, or a plain launch. Kept on the device only. It shows which kind of reload is happening.
+
 ## 0.9.0 (2026-10-03)
 
 - **Better-Cal now needs PHP 8.4 (8.4.1 or later).** Production has run 8.4 all along, so the minimum now matches what is used every day. 8.3 was a floor nothing else ran, and 0.8.3 showed how quietly it drifts. New servers ship 8.4 or 8.5 (Debian 13, Ubuntu 26.04), and shared hosts offer both in their panels. On Ubuntu 24.04 or Debian 12, the install guide shows how to add PHP 8.4 from the Ondřej Surý packages. The dependency lock is resolved for 8.4.1, which puts Symfony back on its current 8.1 line.

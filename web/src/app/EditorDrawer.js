@@ -396,7 +396,9 @@ export function EditorDrawer() {
   const phoneOpen = !!editor && (() => { try { return matchMedia(PHONE_QUERY).matches; } catch { return false; } })();
   useEffect(() => {
     if (!phoneOpen) return undefined;
-    if (history.state && history.state.bcSheet) history.replaceState({ bcEditor: 1 }, '');
+    // Back from a reload (0.9.1) the editor's entry is already there.
+    if (history.state && history.state.bcEditor) { /* adopt */ }
+    else if (history.state && history.state.bcSheet) history.replaceState({ bcEditor: 1 }, '');
     else history.pushState({ bcEditor: 1 }, '');
     let popped = false;
     const onPop = () => {

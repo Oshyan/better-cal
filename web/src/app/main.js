@@ -8,7 +8,7 @@ import { fetchMe, loadCalendars, loadSavedViews, loadConfig, loadPeople, loadPlu
 import { announceSystemHealth } from './system.js';
 import { installHoverPrefetch } from './prefetch.js';
 import { armQuietReload, restoreDraftsAfterBoot, installActivityTracking } from './drafts.js';
-import { installResumeSaving, restoreResume } from './resume.js';
+import { installResumeSaving, restoreResume, recordStart } from './resume.js';
 import { preloadRichText } from './RichText.js';
 import { loadLeaflet } from './eventparts.js';
 import { localTz, sameClock, tzCity, tzOffsetLabel } from '../lib/dates.js';
@@ -51,12 +51,22 @@ async function boot() {
   } catch (e) {
     // 401 already flipped authed=false; anything else lands on login too.
   }
-  // Back where you were after a reload (resume.js), unless a link or a
-  // share is what opened the app.
+  // Why this start happened (Settings, System), then back where you were
+  // after a reload (resume.js), unless a link or a share is what opened it.
+  if (authed) recordStart();
+  // A reload never reopens the drawer, so an entry it left would be a Back
+  // step that does nothing.
+  try { if (history.state && history.state.bcDrawer) history.replaceState(null, ''); } catch { /* fine */ }
   if (authed && !handoff) restoreResume();
   set({ booted: true, pendingHandoff: authed ? null : handoff });
   if (authed) {
     installResumeSaving();
+    // Where this device is, kept current while the app stays open (0.9.1):
+    // reminder text reads on this clock, so a trip shouldn't wait for a
+    // restart to be noticed.
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && state.settings.hereTz !== localTz()) saveSetting('hereTz', localTz()).catch(() => {});
+    });
     // Notification deep link (/?event=instanceId): open that event's detail.
     handleEventLink().catch(() => { /* best-effort */ });
     runHandoff(handoff).catch(() => { /* best-effort */ });

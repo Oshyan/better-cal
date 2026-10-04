@@ -30,6 +30,7 @@ import { Icon } from './icons.js';
 import { COMPACT_QUERY, PHONE_QUERY } from '../lib/breakpoints.js';
 import { startPointerDrag, cloneAsGhost, externalDropTarget, setDropRowHighlight } from './DragController.js';
 import { swallowClickOfThisPress } from './outside.js';
+import { takeResumeTime } from '../lib/resumetime.js';
 import {
   dayRangeDraft, allDayRangeDraft, dragCreateMode, normalizeDayRange,
 } from '../lib/quickcreate.js';
@@ -490,7 +491,9 @@ export function TimeGrid({
     const el = scrollRef.current;
     if (!el || vstack) return; // the stack has its own anchor effect below
     const onToday = infinite ? (scrollKey || todayKey()) === todayKey() : fixedDays.includes(todayKey());
-    el.scrollTop = onToday ? nowWithin(el.clientHeight) : 7 * HOUR_H;
+    // Back from a reload (0.9.1): the time of day you were looking at.
+    const resumed = takeResumeTime();
+    el.scrollTop = resumed ? resumed.within : onToday ? nowWithin(el.clientHeight) : 7 * HOUR_H;
   }, []); // eslint-disable-line
 
   // Stack: explicit navigation (today, chevrons, jump, a day-number click)
@@ -500,7 +503,9 @@ export function TimeGrid({
     if (!vstack) return;
     const key = scrollKey || todayKey();
     const a = epochDayOfKey(key);
-    const within = (key === todayKey()
+    // Back from a reload (0.9.1): the same day at the top, as far into it.
+    const resumed = takeResumeTime();
+    const within = resumed && resumed.day === key ? resumed.within : (key === todayKey()
       ? nowWithin(scrollRef.current ? scrollRef.current.clientHeight : 0)
       : 7 * HOUR_H);
     vDayRef.current = key;

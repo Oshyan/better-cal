@@ -631,7 +631,10 @@ export function App() {
   const route = s.route;
   useEffect(() => {
     if (!route || route === 'calendar') return undefined;
-    if (history.state && (history.state.bcRoute || history.state.bcDrawer)) history.replaceState({ bcRoute: route }, '');
+    // Already this page's entry (back from a reload, 0.9.1): keep it as it
+    // is, with whatever a page within it (a Settings section) added.
+    if (history.state && history.state.bcRoute === route) { /* adopt */ }
+    else if (history.state && (history.state.bcRoute || history.state.bcDrawer)) history.replaceState({ bcRoute: route }, '');
     else history.pushState({ bcRoute: route }, '');
     let popped = false;
     const onPop = () => {

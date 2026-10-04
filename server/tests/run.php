@@ -2031,6 +2031,18 @@ $lk = Reminders::links(['location' => 'Zuni Cafe']);
 checkEq('notify links: text alone is a search', 'https://www.google.com/maps/search/?api=1&query=Zuni%20Cafe', $lk['map']);
 $plAllDay = Reminders::payload(['id' => 7, 'title' => 'Fair', 'location' => null, 'tzid' => 'America/Los_Angeles', 'all_day' => 1], $allDayLa, true);
 checkEq('rem payload allday body', 'Fri, Aug 7 · All day', $plAllDay['body']);
+// 0.9.1: the text reads on the device's zone. An imported flight stored in UTC
+// at 11:45Z, read in London (BST): 12:45 PM, not 11:45 AM.
+$flightUtc = new DateTimeImmutable('2026-10-04 11:45:00', new DateTimeZone('UTC'));
+$flight = ['id' => 9, 'title' => 'Flight', 'location' => 'London LHR', 'tzid' => 'UTC', 'all_day' => 0];
+checkEq('rem payload: a UTC-stored event reads on the device zone', 'Sun, Oct 4, 12:45 PM · London LHR', Reminders::payload($flight, $flightUtc, false, 'Europe/London')['body']);
+checkEq('rem payload: 24-hour setting', 'Sun, Oct 4, 12:45 · London LHR', Reminders::payload($flight, $flightUtc, false, 'Europe/London', true)['body']);
+checkEq('rem payload: an event zone with another clock says it too', 'Sun, Oct 4, 12:45 PM (4:45 AM in Los Angeles) · London LHR',
+    Reminders::payload(['tzid' => 'America/Los_Angeles'] + $flight, $flightUtc, false, 'Europe/London')['body']);
+checkEq('rem payload: the same clock says nothing more', 'Sun, Oct 4, 12:45 PM · London LHR',
+    Reminders::payload(['tzid' => 'Europe/Dublin'] + $flight, $flightUtc, false, 'Europe/London')['body']);
+checkEq('rem payload: another day names it', 'Sun, Oct 4, 11:45 PM (Mon 9:45 AM in Sydney) · London LHR',
+    Reminders::payload(['tzid' => 'Australia/Sydney'] + $flight, new DateTimeImmutable('2026-10-04 22:45:00', new DateTimeZone('UTC')), false, 'Europe/London')['body']);
 checkEq(
     'rem payload allday url at is occurrence start utc',
     '/?event=' . rawurlencode('7:20260807T070000Z') . '&at=' . rawurlencode('2026-08-07T07:00:00Z'),

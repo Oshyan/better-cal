@@ -16,7 +16,7 @@
 // Closing the tab is a deliberate act; an unexpected reload is not.
 
 import { state, set, toast } from './store.js';
-import { saveResume } from './resume.js';
+import { saveResume, UPDATE_FLAG } from './resume.js';
 
 const EDITOR_KEY = 'bc-editor-draft';
 const QUICKADD_KEY = 'bc-quickadd-draft';
@@ -128,6 +128,7 @@ export function armQuietReload() {
     if (quiet) {
       armed = false;
       saveResume();
+      try { localStorage.setItem(UPDATE_FLAG, '1'); } catch { /* the start log just says reload */ }
       location.reload();
     }
   };

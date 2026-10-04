@@ -213,7 +213,9 @@ export async function handleEventLink() {
 // Open one occurrence's detail view wherever it is on the calendar: load a
 // window that contains it, then open it. Shared by notification links and by
 // the Review page, whose items are about events that may be months away.
-export async function openOccurrence(instanceId, at) {
+// quiet: say nothing when it can't be found (a reload restoring an event
+// deleted since, 0.9.1).
+export async function openOccurrence(instanceId, at, { quiet = false } = {}) {
   const { broad, tight } = deepLinkWindows(instanceId, at, Date.now());
   try {
     await loadWindow(broad.start, broad.end);
@@ -239,5 +241,5 @@ export async function openOccurrence(instanceId, at) {
       return;
     }
   } catch { /* fall through: genuinely unreachable */ }
-  toast('Could not find the event from that notification', { error: true });
+  if (!quiet) toast('Could not find the event from that notification', { error: true });
 }

@@ -29,6 +29,10 @@ use BetterCal\Support\Time;
  */
 final class Reminders
 {
+    /** The clock reminder text reads on, and 12/24-hour, for the user being scanned. */
+    private ?string $viewTz = null;
+    private bool $h24 = false;
+
     public const MAX_ENTRIES = 5;
     public const MAX_MINUTES = 40320; // 4 weeks
     public const MAX_DAYS_BEFORE = 28;
@@ -387,6 +391,12 @@ final class Reminders
         $globalAllDay = is_array($userSettings['reminderAllDay'] ?? null) ? $userSettings['reminderAllDay'] : [];
         // The owner's Home zone: the clock all-day reminder times are read on.
         $homeTzid = is_string($userSettings['tz'] ?? null) && $userSettings['tz'] !== '' ? $userSettings['tz'] : null;
+        // The clock a reminder's text reads on (0.9.1): where the owner's
+        // device last was, then Home, the way the app shows times on the
+        // device in hand. 12- or 24-hour as the owner set it.
+        $hereTzid = is_string($userSettings['hereTz'] ?? null) && $userSettings['hereTz'] !== '' ? $userSettings['hereTz'] : null;
+        $this->viewTz = $hereTzid ?? $homeTzid;
+        $this->h24 = (string) ($userSettings['timeFormat'] ?? '12') === '24';
 
         // Masters + standalone events whose occurrences can start in the
         // window (mirrors Events::window's selection, without user filters).
@@ -466,17 +476,39 @@ final class Reminders
             $offset = (int) round(($startUtc->getTimestamp() - $fire->getTimestamp()) / 60);
             $due[] = [
                 'key' => self::instanceKey((int) $row['id'], $startUtc, $offset),
-                'payload' => self::payload($row, $startUtc, $allDay),
+                'payload' => self::payload($row, $startUtc, $allDay, $this->viewTz, $this->h24),
             ];
         }
     }
 
-    /** Notification payload shown by the service worker. */
-    public static function payload(array $row, \DateTimeImmutable $startUtc, bool $allDay): array
+    /**
+     * Notification payload shown by the service worker (and the reminder
+     * email). A timed event's time reads on $viewTz, the owner's device zone
+     * (then Home), as the app shows it; an event that keeps a zone of its own
+     * whose clock reads differently says that time too: "12:45 PM (4:45 AM
+     * in Los Angeles)". Without a view zone it reads on the event's zone,
+     * unless that is UTC (imported events with no zone of their own). An
+     * all-day event names its own date. $h24: the 24-hour clock setting.
+     */
+    public static function payload(array $row, \DateTimeImmutable $startUtc, bool $allDay, ?string $viewTz = null, bool $h24 = false): array
     {
-        $tz = Time::zone((string) $row['tzid']);
+        $eventTzid = (string) ($row['tzid'] ?? '');
+        $tz = Time::zone($eventTzid);
         $local = $startUtc->setTimezone($tz);
-        $body = $allDay ? $local->format('D, M j') . ' · All day' : $local->format('D, M j, g:i A');
+        if ($allDay) {
+            $body = $local->format('D, M j') . ' · All day';
+        } else {
+            $clock = $h24 ? 'H:i' : 'g:i A';
+            $view = $viewTz !== null && $viewTz !== '' ? Time::zone($viewTz) : $tz;
+            $seen = $startUtc->setTimezone($view);
+            $body = $seen->format('D, M j, ' . $clock);
+            $ownZone = $eventTzid !== '' && strtoupper($eventTzid) !== 'UTC' && $tz->getName() !== $view->getName();
+            if ($ownZone && $local->format('Y-m-d H:i') !== $seen->format('Y-m-d H:i')) {
+                $city = str_replace('_', ' ', substr($tz->getName(), (int) strrpos($tz->getName(), '/') + 1));
+                $other = $local->format('D, M j') === $seen->format('D, M j') ? $local->format($clock) : $local->format('D ' . $clock);
+                $body .= ' (' . $other . ' in ' . $city . ')';
+            }
+        }
         if (!empty($row['location'])) {
             $body .= ' · ' . mb_substr((string) $row['location'], 0, 120);
         }

@@ -133,15 +133,40 @@ function announceAwayFromHome() {
   );
 }
 
-// Installed-PWA file handling (.ics): the OS hands files here.
+// Installed-PWA launches. The manifest asks for focus-existing: opening the
+// app (its icon's "New event" shortcut, a webcal link, an .ics file) brings
+// the open window forward instead of starting a second one, and the address
+// it was opened with arrives here rather than as a page load.
 if ('launchQueue' in window) {
+  // The address this page itself was loaded at (the shell's head script
+  // parked it): boot runs that handoff, so its launch must not run twice.
+  const bootPath = (() => {
+    try { const h = JSON.parse(sessionStorage.getItem('bc-handoff') || 'null'); return h && h.path; } catch { return null; }
+  })();
+  let firstLaunch = true;
   window.launchQueue.setConsumer(async (launchParams) => {
+    const first = firstLaunch;
+    firstLaunch = false;
+    // .ics files: the OS hands them here.
     const handle = launchParams.files && launchParams.files[0];
-    if (!handle) return;
-    try {
-      const file = await handle.getFile();
-      set({ pendingImportFile: file, createDrawer: { kind: 'import' } });
-    } catch { /* best-effort */ }
+    if (handle) {
+      try {
+        const file = await handle.getFile();
+        set({ pendingImportFile: file, createDrawer: { kind: 'import' } });
+      } catch { /* best-effort */ }
+      return;
+    }
+    let url = null;
+    try { url = launchParams.targetURL ? new URL(launchParams.targetURL) : null; } catch { /* not a URL */ }
+    if (!url || url.origin !== location.origin || url.pathname === '/') return;
+    if (first && url.pathname === bootPath) return;
+    if (url.pathname === '/share') {
+      // A share's content travels as a form post, which a launch into an
+      // open window doesn't carry.
+      toast('That share arrived without its content. Share it again, or paste it into quick add.', { error: true });
+      return;
+    }
+    runHandoff({ path: url.pathname, search: url.search }).catch(() => { /* best-effort */ });
   });
 }
 

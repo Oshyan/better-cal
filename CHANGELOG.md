@@ -4,6 +4,10 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.9.12 (2026-10-04)
+
+- **The app's "New event" shortcut uses the window you have open.** On a desktop, it (and a webcal link or an .ics file) started a second Better-Cal window. Now the open window comes forward with quick add ready, without reloading. Chrome picks up the change when it next refreshes the installed app's details, which can take a relaunch of the app or up to a day.
+
 ## 0.9.11 (2026-10-04)
 
 - **New event from the app icon.** The installed app's icon has a "New event" shortcut that opens quick add: long-press it on Android, or right-click it in the Windows taskbar or the Mac dock. The address behind it, `/new`, opens quick add from anywhere else too.

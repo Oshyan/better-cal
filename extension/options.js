@@ -38,21 +38,17 @@ document.getElementById('clear').addEventListener('click', async () => {
   say('Not redirecting: no address set.');
 });
 
-// The new-event key (2.1): on unless turned off here. Chrome owns the key
-// itself; this page only shows it and links to where it is changed.
-const keyBox = document.getElementById('newEventKey');
+// The new-event key (2.1): none by default. Chrome owns the key; this page
+// shows it and links to where it is set, changed or removed.
 const keyName = document.getElementById('keyName');
 
 async function loadKey() {
-  const { newEventKey } = await chrome.storage.sync.get('newEventKey');
-  keyBox.checked = newEventKey !== false;
   const cmd = (await chrome.commands.getAll()).find((c) => c.name === 'new-event');
-  keyName.textContent = cmd && cmd.shortcut ? 'Key: ' + cmd.shortcut : 'Key: not set (Chrome may have refused the suggested one if another extension uses it)';
+  keyName.textContent = cmd && cmd.shortcut ? 'Key: ' + cmd.shortcut : 'No key set';
 }
 
-keyBox.addEventListener('change', async () => {
-  await chrome.storage.sync.set({ newEventKey: keyBox.checked });
-});
+// Back from Chrome's shortcut page: show the key as it now is.
+document.addEventListener('visibilitychange', () => { if (!document.hidden) loadKey(); });
 
 document.getElementById('keys').addEventListener('click', () => {
   chrome.tabs.create({ url: 'chrome://extensions/shortcuts' });

@@ -18,9 +18,7 @@
     #status.err { color: #c34a4a; }
     code { font-size: 12.5px; }
     hr { border: 0; border-top: 1px solid #8884; margin: 16px 0 12px; }
-    .check { display: flex; gap: 8px; align-items: flex-start; font-weight: 400; }
-    .check input { width: auto; margin-top: 3px; }
-    .hint { font-size: 13px; margin: 6px 0 0 24px; opacity: 0.8; }
+    .hint { font-size: 13px; margin: 6px 0 0; opacity: 0.8; }
     .linkish { border: 0; padding: 0; background: none; color: #5b7fd4; text-decoration: underline; cursor: pointer; font: inherit; }
   </style>
 </head>
@@ -36,8 +34,8 @@
   <div id="status" aria-live="polite"></div>
   <hr>
   <h1>New event shortcut</h1>
-  <label class="check" for="newEventKey"><input id="newEventKey" type="checkbox"> Open quick add in Better-Cal with a keyboard shortcut, from any app</label>
-  <p class="hint"><span id="keyName">Key: not set</span>. <button id="keys" type="button" class="linkish">Change or remove the key</button> (Chrome's shortcut settings; removing it there frees the key for other apps).</p>
+  <p>A key that opens quick add in your Better-Cal, in a small window. Off until you set one.</p>
+  <p class="hint"><span id="keyName">No key set</span>. <button id="keys" type="button" class="linkish">Set or change the key</button> in Chrome's shortcut settings. Choose "Global" there to use it from any app while Chrome is running (Chrome allows Ctrl+Shift+digit for those, Cmd+Shift+digit on a Mac). Removing the key turns it off.</p>
   <script src="rules.js"></script>
   <script src="options.js"></script>
 </body>

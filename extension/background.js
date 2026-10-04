@@ -17,14 +17,13 @@ chrome.runtime.onStartup.addListener(async () => {
 });
 
 // The "new event" key (2.1): a small window on <Better-Cal>/new, which opens
-// quick add. Global, so it works while Chrome is in the background (Chrome
-// allows global keys only as Ctrl+Shift+digit; Cmd on a Mac). Off when the
-// person turned it off in the options; with no address set yet, the options
-// open instead.
+// quick add. It ships with no key: the extension is public, and a key on by
+// default would claim a shortcut for everyone who installed a link
+// redirector. The person sets one in Chrome's shortcut settings (scope
+// "Global" makes it work from any app while Chrome runs). With no address
+// set yet, the options open instead.
 chrome.commands.onCommand.addListener(async (command) => {
   if (command !== 'new-event') return;
-  const { newEventKey } = await chrome.storage.sync.get('newEventKey');
-  if (newEventKey === false) return;
   const origin = await storedOrigin();
   if (!origin) {
     chrome.runtime.openOptionsPage();

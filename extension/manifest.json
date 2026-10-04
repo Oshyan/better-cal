@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Better-Cal: Google Calendar Link Redirect",
   "version": "2.1.0",
-  "description": "Sends 'Add to Google Calendar' links to your own Better-Cal instead, and opens a new event there from a keyboard shortcut.",
+  "description": "Sends 'Add to Google Calendar' links to your own Better-Cal instead, and can open a new event there from a keyboard shortcut.",
   "permissions": [
     "declarativeNetRequest",
     "storage"
@@ -16,9 +16,7 @@
   },
   "commands": {
     "new-event": {
-      "description": "New event in Better-Cal (works even when Chrome is in the background)",
-      "suggested_key": { "default": "Ctrl+Shift+9" },
-      "global": true
+      "description": "New event in Better-Cal"
     }
   },
   "background": {

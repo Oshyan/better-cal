@@ -4,6 +4,17 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.9.6 (2026-10-04)
+
+- **The same event, shown once (#9).** An event that reaches Better-Cal by two routes (a Luma feed and the confirmation forwarded from Gmail, a Takeout import and the Google calendar it came from, a booking and the venue's feed) no longer shows twice.
+  - **How it's found:** every ten minutes, Better-Cal looks for the same event ID on two calendars, or the same title at the same moment on two calendars. Those are shown as one.
+  - **When it isn't sure:** near-matches (close in time, similar titles, one calendar holding the same thing twice) go to Review as "Possible duplicate", with Same event / Not the same.
+  - **Which copy you see:** the most live one: Google, then your own calendars, then feeds, then a booking read from email. Its details say "Also on <calendar>", with a link to the other copy and "Not the same" for a wrong match. Hide a calendar and the copy elsewhere shows instead.
+  - **Nothing is merged or deleted:** every copy stays where it was, so a wrong match costs nothing to undo. Search shows one result per event too.
+  - **One reminder:** only the copy that would be shown reminds you, or the best-placed one that has reminders.
+  - **Copy to** is never mistaken for a duplicate: a copy you made on purpose shows on both calendars, as before.
+- **Activity filters** for Geocoding, System, Plugins and Review now filter. The server ignored them before and showed everything. There's a new Duplicates filter as well.
+
 ## 0.9.5 (2026-10-04)
 
 - **Answering invitations, finished (#70).**

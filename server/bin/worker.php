@@ -60,6 +60,7 @@ const HEALTH_JOB_LABELS = [
     'activity_prune' => 'Activity retention',
     'geocode_sweep' => 'Geocoding',
     'system_alerts' => 'Alert emails',
+    'duplicate_scan' => 'Duplicate detection',
 ];
 
 $locked = $db->scalar('SELECT GET_LOCK(?, 0)', [WORKER_LOCK]);
@@ -111,7 +112,11 @@ try {
                     }
                     echo bc_ts() . " google_move move=$moveId " . ($over ? 'finished' : 'continuing') . "\n";
                     break;
-                case 'rank_events':
+                case 'duplicate_scan':
+            $dup = (new BetterCal\Domain\Duplicates($db))->scanAll();
+            echo bc_ts() . " duplicate_scan linked={$dup['linked']} possible={$dup['possible']}\n";
+            break;
+        case 'rank_events':
                     $scored = $ranking->run();
                     echo bc_ts() . " rank_events scored=$scored\n";
                     break;
@@ -253,6 +258,9 @@ function bc_enqueue_recurring(Db $db, JobQueue $queue): void
     // ten minutes rather than per minute. The decision of WHAT to email is
     // SystemHealth::shouldAlert; this is only how often it is asked.
     bc_enqueue_if_stale($db, $queue, 'system_alerts', 'PT10M');
+    // The same event arriving twice (#9). Feeds poll every few minutes at
+    // most, so a duplicate shows as one within ten.
+    bc_enqueue_if_stale($db, $queue, 'duplicate_scan', 'PT10M');
 
     // Plugin jobs: manifests declare intervals; staleness is judged from
     // plugin_runs (a failing job still respects its interval). Cap per tick.

@@ -19,8 +19,8 @@ final class Activity
     public const LOG_DAYS = 90;
     public const MAX_LIMIT = 100;
 
-    /** Sources the API accepts as filters; 'mail' matches every mail:* tier. */
-    public const SOURCES = ['web', 'api', 'caldav', 'feed', 'mail', 'quickadd', 'rsvp', 'import'];
+    /** Sources the API accepts as filters; 'mail' and 'plugin' match every mail:* / plugin:* source. */
+    public const SOURCES = ['web', 'api', 'caldav', 'feed', 'mail', 'quickadd', 'rsvp', 'import', 'geocode', 'system', 'plugin', 'review', 'dedup'];
 
     public function __construct(private readonly Db $db)
     {
@@ -50,8 +50,8 @@ final class Activity
                 if (!in_array($s, self::SOURCES, true)) {
                     continue;
                 }
-                if ($s === 'mail') {
-                    $conds[] = "source LIKE 'mail:%'";
+                if ($s === 'mail' || $s === 'plugin') {
+                    $conds[] = "source LIKE '$s:%'";
                 } else {
                     $conds[] = 'source = ?';
                     $params[] = $s;

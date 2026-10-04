@@ -812,6 +812,88 @@ check('rsvp reply keeps sequence', str_contains($reply, 'SEQUENCE:2'));
     check('google invite: none when the account is not a guest', BetterCal\Domain\Rsvp::fromGoogle(['attendees' => [['email' => 'x@y.z']]] + $gItem) === null);
 }
 
+// Duplicates (#9): the same event arriving by two routes.
+{
+    $D = BetterCal\Domain\Duplicates::class;
+    checkEq('dup title: booking prefix and (note) go', 'kinkally', $D::normTitle('Reservation at Kinkally (2 people)'));
+    checkEq('dup title: invitation prefix goes', 'team sync', $D::normTitle('Updated invitation: Team sync'));
+    check('dup similar: "Kinkally" and "Dinner at Kinkally"', $D::similarTitles('Kinkally', 'Dinner at Kinkally'));
+    check('dup similar: one short common word is not enough', !$D::similarTitles('Lunch', 'Lunch with Bob'));
+    check('dup similar: different events', !$D::similarTitles('Board meeting', 'Birthday party'));
+    $ev = static fn(int $id, int $cal, string $title, string $start, int $allDay = 0, string $tz = 'America/Los_Angeles'): array => ['id' => $id, 'calendar_id' => $cal, 'title' => $title, 'start_utc' => $start, 'all_day' => $allDay, 'tzid' => $tz];
+    checkEq('dup when: same instant', 'same', $D::when($ev(1, 1, 'x', '2026-10-10 02:00:00'), $ev(2, 2, 'x', '2026-10-10 02:00:00')));
+    checkEq('dup when: 20 minutes apart is near', 'near', $D::when($ev(1, 1, 'x', '2026-10-10 02:00:00'), $ev(2, 2, 'x', '2026-10-10 02:20:00')));
+    check('dup when: two hours apart is not', $D::when($ev(1, 1, 'x', '2026-10-10 02:00:00'), $ev(2, 2, 'x', '2026-10-10 04:00:00')) === null);
+    checkEq('dup when: all-day on the timed one\'s local date', 'near', $D::when($ev(1, 1, 'x', '2026-10-09 00:00:00', 1), $ev(2, 2, 'x', '2026-10-10 02:00:00')));
+    checkEq('dup classify: same title, same moment, two calendars links', 'linked', $D::classify($ev(1, 1, 'Reservation at Noto', '2026-10-10 02:00:00'), $ev(2, 2, 'Noto', '2026-10-10 02:00:00'))['status']);
+    checkEq('dup classify: the same on one calendar only asks', 'possible', $D::classify($ev(1, 1, 'Noto', '2026-10-10 02:00:00'), $ev(2, 1, 'Noto', '2026-10-10 02:00:00'))['status']);
+    checkEq('dup classify: near in time only asks', 'possible', $D::classify($ev(1, 1, 'Noto', '2026-10-10 02:00:00'), $ev(2, 2, 'Noto', '2026-10-10 02:15:00'))['status']);
+    checkEq('dup classify: "Lunch" on two calendars at noon only asks', 'possible', $D::classify($ev(1, 1, 'Lunch', '2026-10-10 19:00:00'), $ev(2, 2, 'Lunch', '2026-10-10 19:00:00'))['status']);
+    check('dup classify: unrelated titles at one time are not a pair', $D::classify($ev(1, 1, 'Dentist', '2026-10-10 02:00:00'), $ev(2, 2, 'Standup', '2026-10-10 02:00:00')) === null);
+    checkEq('dup rank: Google beats local beats feed beats a booking', [4, 3, 2, 1], [
+        $D::rank([], ['provider' => 'google', 'kind' => 'subscribed']),
+        $D::rank([], ['provider' => 'ics', 'kind' => 'local']),
+        $D::rank([], ['provider' => 'ics', 'kind' => 'subscribed']),
+        $D::rank(['invite_json' => '{"kind":"booking"}'], ['provider' => 'ics', 'kind' => 'local']),
+    ]);
+
+    $ddb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $ddb->run("CREATE TABLE users (id INTEGER PRIMARY KEY)");
+    $ddb->run("CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, kind TEXT, role TEXT, provider TEXT)");
+    $ddb->run("CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, start_utc TEXT, end_utc TEXT, all_day INTEGER DEFAULT 0, tzid TEXT DEFAULT 'UTC', rrule TEXT, recurrence_instance_utc TEXT, recurrence_parent_id INTEGER, status TEXT DEFAULT 'confirmed', is_container INTEGER DEFAULT 0, deleted_at TEXT, invite_json TEXT, reminders_json TEXT)");
+    $ddb->run("CREATE TABLE event_duplicates (id INTEGER PRIMARY KEY, user_id INTEGER, event_a INTEGER, event_b INTEGER, status TEXT, basis TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, decided_at TEXT)");
+    $ddb->run("CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)");
+    $ddb->run("INSERT INTO users (id) VALUES (1)");
+    $ddb->run("INSERT INTO calendars VALUES (1, 1, 'Takeout', 'local', 'mine', 'ics'), (2, 1, 'Google', 'subscribed', 'mine', 'google'), (3, 1, 'Invitations', 'local', 'mine', 'ics'), (4, 1, 'Luma', 'subscribed', 'opportunities', 'ics'), (5, 1, 'Weather', 'plugin', 'context', 'ics')");
+    $soon = BetterCal\Support\Time::nowUtc()->add(new DateInterval('P3D'))->format('Y-m-d') . ' 02:00:00';
+    $soonEnd = substr($soon, 0, 11) . '03:00:00';
+    $ins = static fn(int $id, int $cal, string $uid, string $title, ?string $rrule = null, ?string $invite = null, ?string $rem = null) => $ddb->run(
+        'INSERT INTO events (id, user_id, calendar_id, uid, title, start_utc, end_utc, rrule, invite_json, reminders_json) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [$id, $cal, $uid, $title, $soon, $soonEnd, $rrule, $invite, $rem]
+    );
+    $ins(10, 1, 'g-1@google.com', 'Book club', 'FREQ=WEEKLY', null, '[{"minutes":30}]');
+    $ins(11, 2, 'g-1@google.com', 'Book club', 'FREQ=WEEKLY');
+    $ins(20, 3, 'mail-abc', 'Reservation at Noto', null, '{"kind":"booking","method":"llm"}');
+    $ins(21, 4, 'luma-1', 'Noto');
+    $ins(30, 4, 'luma-2', 'Coffee with Ana');
+    $ins(31, 4, 'luma-3', 'Coffee w/ Ana');
+    $ins(40, 5, 'w-1', 'Noto');
+    $ins(50, 1, 'copy-src', 'Planning');
+    $ins(51, 3, 'copy-dst', 'Planning');
+    $ins(60, 1, 'mine-1', 'Sweaty Hour: October!');
+    $ins(61, 1, 'mine-2', 'Sweaty Hour: October!');
+    $ins(62, 4, 'luma-9', 'Sweaty Hour: October!');
+    $D::markDistinct($ddb, 1, 51, 50);
+    $dups = new BetterCal\Domain\Duplicates($ddb);
+    checkEq('dup preview: find records nothing', 0, (int) $ddb->scalar("SELECT COUNT(*) FROM event_duplicates WHERE status <> 'dismissed'") + 0 * count($dups->find(1)));
+    checkEq('dup scan: sure by UID and by title, one to ask', ['linked' => 4, 'possible' => 1], $dups->scan(1));
+    $pairs = $ddb->all('SELECT event_a, event_b, status, basis FROM event_duplicates ORDER BY event_a');
+    checkEq('dup scan: the pairs', [
+        ['event_a' => 10, 'event_b' => 11, 'status' => 'linked', 'basis' => 'uid'],
+        ['event_a' => 20, 'event_b' => 21, 'status' => 'linked', 'basis' => 'title'],
+        ['event_a' => 30, 'event_b' => 31, 'status' => 'possible', 'basis' => 'similar'],
+        ['event_a' => 50, 'event_b' => 51, 'status' => 'dismissed', 'basis' => 'owner'],
+        ['event_a' => 60, 'event_b' => 62, 'status' => 'linked', 'basis' => 'title'],
+        ['event_a' => 61, 'event_b' => 62, 'status' => 'linked', 'basis' => 'title'],
+    ], array_map(static fn(array $r): array => ['event_a' => (int) $r['event_a'], 'event_b' => (int) $r['event_b'], 'status' => $r['status'], 'basis' => $r['basis']], $pairs));
+    checkEq('dup scan: nothing new the second time', ['linked' => 0, 'possible' => 0], $dups->scan(1));
+    check('dup scan: two copies already one through a third are not asked about', $ddb->scalar('SELECT id FROM event_duplicates WHERE event_a = 60 AND event_b = 61') === null);
+    check('dup scan: logged once in Activity as dedup', (int) $ddb->scalar("SELECT COUNT(*) FROM mutations WHERE source = 'dedup'") === 1);
+    $linked = $dups->linkedFor([10, 21]);
+    check('dup linked: each copy names the other and its calendar', $linked[10][0]['eventId'] === 11 && $linked[10][0]['calendarId'] === 2 && $linked[21][0]['eventId'] === 20);
+    $rows = [];
+    foreach ($ddb->all('SELECT * FROM events WHERE id IN (10, 11, 20, 21)') as $r) {
+        $rows[(int) $r['id']] = $r;
+    }
+    $cals = [1 => ['provider' => 'ics', 'kind' => 'local'], 2 => ['provider' => 'google', 'kind' => 'subscribed'], 3 => ['provider' => 'ics', 'kind' => 'local'], 4 => ['provider' => 'ics', 'kind' => 'subscribed']];
+    $quiet = $dups->silenced($rows, static fn(array $r): bool => $r['reminders_json'] !== null || (int) $r['calendar_id'] === 3, $cals);
+    check('dup reminders: the copy with reminders speaks though Google ranks higher', !isset($quiet[10]) && isset($quiet[11]));
+    check('dup reminders: of two with reminders, the better-ranked speaks', isset($quiet[20]) xor isset($quiet[21]));
+    $possibleId = (int) $ddb->scalar("SELECT id FROM event_duplicates WHERE status = 'possible'");
+    $dups->decide(1, $possibleId, 'dismissed');
+    checkEq('dup decide: dismissed by the owner', 'dismissed', $ddb->scalar('SELECT status FROM event_duplicates WHERE id = ?', [$possibleId]));
+}
+
 // ---------------------------------------------------------------------------
 // GcalLink — Google Calendar template link parsing (pure)
 // ---------------------------------------------------------------------------

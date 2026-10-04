@@ -120,6 +120,19 @@ final class Events
         return $calendar !== null && GoogleWriter::writable($calendar) ? $calendar : null;
     }
 
+    private ?Duplicates $duplicates = null;
+
+    /** The row duplicates are linked by: the series for an occurrence override. */
+    private static function seriesId(array $row): int
+    {
+        return !empty($row['recurrence_parent_id']) ? (int) $row['recurrence_parent_id'] : (int) $row['id'];
+    }
+
+    private function duplicates(): Duplicates
+    {
+        return $this->duplicates ??= new Duplicates($this->db);
+    }
+
     private function google(): GoogleWriter
     {
         return $this->googleWriter ??= new GoogleWriter($this->db, new GoogleAuth($this->db, config()), new Feeds($this->db, null, config()));
@@ -572,14 +585,17 @@ final class Events
         }
 
         $eventIds = [];
+        $seriesIds = [];
         foreach ($expanded as $occ) {
             $eventIds[(int) $occ['row']['id']] = true;
+            $seriesIds[self::seriesId($occ['row'])] = true;
         }
         if ($links === null) {
             $links = $this->labels->forEvents(array_keys($eventIds));
         }
         // Trip membership, batch-loaded like tags (one query, no N+1).
         $links['containers'] = $this->trips->containersFor(array_keys($eventIds));
+        $links['dupes'] = $this->duplicates()->linkedFor(array_keys($seriesIds));
 
         return array_map(
             function (array $occ) use ($links): array {
@@ -826,7 +842,10 @@ final class Events
         if ($event['source'] === 'local' && !empty($source['url'])) {
             $in['url'] = (string) $source['url'];
         }
-        return $this->create($userId, $in);
+        $copy = $this->create($userId, $in);
+        // A copy made on purpose is not a duplicate of its source (#9).
+        Duplicates::markDistinct($this->db, $userId, (int) $event['id'], (int) $copy['eventId']);
+        return $copy;
     }
 
     /**
@@ -1499,6 +1518,7 @@ final class Events
     {
         $links = $this->labels->forEvents([(int) $row['id']]);
         $links['containers'] = $this->trips->containersFor([(int) $row['id']]);
+        $links['dupes'] = $this->duplicates()->linkedFor([self::seriesId($row)]);
         return $this->serialize($row, Time::fromDb((string) $row['start_utc']), Time::fromDb((string) $row['end_utc']), $links, full: true);
     }
 
@@ -1517,6 +1537,7 @@ final class Events
         $ids = array_map(static fn($r) => (int) $r['id'], $rows);
         $links = $this->labels->forEvents($ids);
         $links['containers'] = $this->trips->containersFor($ids);
+        $links['dupes'] = $this->duplicates()->linkedFor(array_values(array_unique(array_map(self::seriesId(...), $rows))));
         return array_map(
             fn(array $row) => $this->serialize($row, Time::fromDb((string) $row['start_utc']), Time::fromDb((string) $row['end_utc']), $links, full: false),
             $rows
@@ -1652,6 +1673,9 @@ final class Events
             // from mail: what they are, and whether an answer can go (Rsvp).
             'invite' => self::invite($row),
             'containers' => $links['containers'][$id] ?? [],
+            // The same event on other calendars (#9): the client shows one.
+            // Linked by series, so a moved occurrence carries its series' copies.
+            'dupes' => $links['dupes'][self::seriesId($row)] ?? [],
             'styleJson' => $style ?: null,
             'createdAt' => Time::iso($createdAt),
             'updatedAt' => Time::iso(Time::fromDb((string) $row['updated_at'])),

@@ -6,7 +6,8 @@
 // popover's own body.
 
 import { html, useState, useEffect, useRef } from '../../vendor/index.js';
-import { set, state, toast } from './store.js';
+import { set, state, toast, invalidateRecords } from './store.js';
+import { api, refreshWindow } from './api.js';
 import { CopyTo } from './CopyTo.js';
 import { DeleteScope, ScopeChoice } from './DeleteScope.js';
 import { relationshipOptions, REL_LABEL } from './Relationship.js';
@@ -18,7 +19,7 @@ import { describeRrule, MiniMap, useEventGeo, linkify } from './eventparts.js';
 import { EventPluginData } from './EventPluginData.js';
 import { Icon, ThumbIcon, PinIcon } from '../ui/icons.js';
 import { DurationSuffix } from '../ui/EventChip.js';
-import { fmtRange, zoneNote, fmtDateFull, fmtTime, parseISO } from '../lib/dates.js';
+import { fmtRange, zoneNote, fmtDateFull, fmtTime, parseISO, startMs } from '../lib/dates.js';
 import { fmtReminder } from '../lib/reminders.js';
 import { stripToText, hasHtml, sanitizeHtml } from '../lib/richtext.js';
 import { gmapsUrl, isPendingLocation } from '../lib/maps.js';
@@ -56,6 +57,59 @@ function senderSite(addr) {
   const keep = parts.length > 2 && /^(co|com|org|net|ac|gov|edu)$/.test(parts[parts.length - 2]) ? 3 : 2; // example.co.uk
   const site = parts.slice(-keep).join('.');
   return WEBMAIL.test(site) ? null : site;
+}
+
+// The same event on other calendars (#9), shown once in the grid: where
+// else it is, a way to open that copy, and "Not the same" for a wrong match.
+function AlsoOn({ occ }) {
+  const [busy, setBusy] = useState(false);
+  // The whole group, not only direct links: A and C may each be linked to B.
+  const seen = new Map([[occ.eventId, null]]);
+  const queue = [...occ.dupes];
+  while (queue.length) {
+    const d = queue.shift();
+    if (seen.has(d.eventId)) continue;
+    seen.set(d.eventId, d);
+    for (const x of state.occ.values()) {
+      if (x.eventId === d.eventId && x.dupes) queue.push(...x.dupes);
+    }
+  }
+  const copies = [...seen.values()].filter(Boolean)
+    .map((d) => ({ ...d, cal: state.calendars.find((c) => c.id === d.calendarId) }))
+    .filter((d) => d.cal);
+  if (!copies.length) return null;
+  const at = startMs(occ);
+  const copyOcc = (d) => {
+    for (const x of state.occ.values()) {
+      if (x.eventId === d.eventId && (!occ.recurring || startMs(x) === at)) return x;
+    }
+    return null;
+  };
+  const notSame = async (d) => {
+    setBusy(true);
+    try {
+      await api('/duplicates/' + d.pairId, { method: 'POST', body: { status: 'dismissed' } });
+      toast('Shown as separate events again');
+      invalidateRecords(occ.eventId);
+      refreshWindow();
+    } catch (e) {
+      toast("Couldn't change that: " + e.message, { error: true });
+    }
+    setBusy(false);
+  };
+  return html`<div class="bc-es-alsoon">
+    <${Icon} name="stack" size=${15} />
+    <span>Also on</span>
+    ${copies.map((d) => {
+      const other = copyOcc(d);
+      return html`<span class="bc-es-alsoon-item" key=${d.pairId}>
+        ${other
+          ? html`<button type="button" class="bc-es-alsoon-cal" title="Open this copy" onClick=${() => openDetail(other.instanceId)}><i style=${'background:' + (d.cal.color || 'var(--border-strong)')}></i>${d.cal.name}</button>`
+          : html`<span class="bc-es-alsoon-cal"><i style=${'background:' + (d.cal.color || 'var(--border-strong)')}></i>${d.cal.name}</span>`}
+        <button type="button" class="bc-es-alsoon-split" disabled=${busy} title="These are different events: show both" onClick=${() => notSame(d)}>Not the same</button>
+      </span>`;
+    })}
+  </div>`;
 }
 
 const ANSWERS = [['accepted', 'ACCEPTED', 'Accept'], ['tentative', 'TENTATIVE', 'Maybe'], ['declined', 'DECLINED', 'Decline']];
@@ -284,6 +338,7 @@ export function EventSheetBody({ occ, cal, isFeed, full, panel = false, onFull, 
           ${!panel && !context && html`<${ForMe} occ=${occ} cal=${cal} onHidden=${close} />`}
         </div>
         ${!panel && attendScope}
+        ${occ.dupes && occ.dupes.length > 0 && html`<${AlsoOn} occ=${occ} />`}
         ${occ.containers && occ.containers.length > 0 && html`<button
           type="button" class="bc-es-partof" onClick=${() => { close(); openTripByEventId(occ.containers[0].eventId); }}
         ><${Icon} name="trip" size=${15} />Part of ${occ.containers[0].title}</button>`}

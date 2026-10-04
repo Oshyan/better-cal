@@ -18,6 +18,7 @@ import { trapFocus } from '../ui/DayExpand.js';
 import { isPendingLocation } from '../lib/maps.js';
 import { parseISO, dateOfDayKey, fmtDateFull, fmtDayMedium, fmtTime, occDayKey, todayKey } from '../lib/dates.js';
 import { PHONE_QUERY } from '../lib/breakpoints.js';
+import { collapseDuplicates } from '../ui/duplicates.js';
 
 // "Fri, Oct 9 · 3:00 AM"; the year only when it isn't this one (0.6.9).
 function whenText(occ) {
@@ -197,7 +198,8 @@ export function SearchOverlay() {
     if (inputRef.current) inputRef.current.focus();
   };
 
-  const flat = results || [];
+  // The same event on two calendars is one result (#9).
+  const flat = collapseDuplicates(results || [], new Map(state.calendars.map((c) => [c.id, c])));
   const now = Date.now();
   // The server says which results are still to come (a running series is,
   // whatever its first date); the end decides for anything without the flag.

@@ -376,12 +376,12 @@ final class Reminders
         $winEnd = $now->add(new \DateInterval(self::SCAN_LOOKAHEAD));
 
         $calendars = [];
-        foreach ($this->db->all('SELECT id, kind, settings_json FROM calendars WHERE user_id = ?', [$userId]) as $cal) {
+        foreach ($this->db->all('SELECT id, kind, provider, settings_json FROM calendars WHERE user_id = ?', [$userId]) as $cal) {
             $settings = is_string($cal['settings_json'] ?? null) ? json_decode((string) $cal['settings_json'], true) : $cal['settings_json'];
             $defaults = is_array($settings) && isset($settings['reminderDefaults']) && is_array($settings['reminderDefaults'])
                 ? $settings['reminderDefaults']
                 : null;
-            $calendars[(int) $cal['id']] = ['kind' => (string) $cal['kind'], 'defaults' => $defaults];
+            $calendars[(int) $cal['id']] = ['kind' => (string) $cal['kind'], 'provider' => (string) ($cal['provider'] ?? 'ics'), 'defaults' => $defaults];
         }
 
         $rawSettings = $this->db->scalar('SELECT settings_json FROM users WHERE id = ?', [$userId]);
@@ -420,10 +420,29 @@ final class Reminders
             $ovByParent[(int) $ov['recurrence_parent_id']][] = $ov;
         }
 
+        // The same event on two calendars (#9) reminds once: from the copy
+        // that would be shown, among those that have reminders at all.
+        $byId = [];
+        foreach ($masters as $m) {
+            $byId[(int) $m['id']] = $m;
+        }
+        $quiet = (new Duplicates($this->db))->silenced(
+            $byId,
+            function (array $row) use ($calendars, $globalTimed, $globalAllDay): bool {
+                $cal = $calendars[(int) $row['calendar_id']] ?? ['kind' => 'local', 'defaults' => null];
+                [$entries] = self::effective(self::decode($row['reminders_json'] ?? null), $cal['defaults'], $globalTimed, $globalAllDay, (int) $row['all_day'] === 1, $cal['kind']);
+                return $entries !== [];
+            },
+            $calendars
+        );
+
         $due = [];
         $seenParents = [];
         foreach ($masters as $master) {
             $seenParents[(int) $master['id']] = true;
+            if (isset($quiet[(int) $master['id']])) {
+                continue;
+            }
             $occs = $this->recurrence->expand($master, $ovByParent[(int) $master['id']] ?? [], $winStart, $winEnd);
             foreach ($occs as $occ) {
                 $this->collectDue($occ['row'], $occ['start'], $calendars, $globalTimed, $globalAllDay, $now, $grace, $due, $homeTzid);
@@ -432,7 +451,7 @@ final class Reminders
         // Overrides in-window whose master was not selected (series otherwise
         // out of range) — same edge Events::window handles.
         foreach ($ovByParent as $parentId => $ovs) {
-            if (isset($seenParents[$parentId])) {
+            if (isset($seenParents[$parentId]) || isset($quiet[$parentId])) {
                 continue;
             }
             foreach ($ovs as $ov) {

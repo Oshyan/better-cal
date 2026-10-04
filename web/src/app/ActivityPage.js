@@ -17,6 +17,7 @@ const SOURCES = [
   ['quickadd', 'Quick add', 'manual'],
   ['caldav', 'CalDAV', 'manual'],
   ['rsvp', 'RSVP', 'manual'],
+  ['review', 'Review', 'manual'],
   ['api', 'Agent/API', 'auto'],
   ['feed', 'Feeds', 'auto'],
   ['mail', 'Email', 'auto'],
@@ -24,6 +25,7 @@ const SOURCES = [
   ['geocode', 'Geocoding', 'auto'],
   ['system', 'System', 'auto'],
   ['plugin', 'Plugins', 'auto'],
+  ['dedup', 'Duplicates', 'auto'],
 ];
 const GROUPS = { manual: SOURCES.filter((s) => s[2] === 'manual').map((s) => s[0]),
   auto: SOURCES.filter((s) => s[2] === 'auto').map((s) => s[0]) };

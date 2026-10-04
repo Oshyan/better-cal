@@ -13,6 +13,7 @@ import {
   resizeAvailabilitySpanDays,
 } from './actions.js';
 import { groupOccurrences, itemMatchesFilter } from '../ui/grouping.js';
+import { collapseDuplicates } from '../ui/duplicates.js';
 import { sortByMatch } from '../lib/rank.js';
 import { installKeyboard } from './keyboard.js';
 import {
@@ -283,7 +284,9 @@ export function App() {
     }
     const flags = {};
     for (const c of s.calendars) flags[c.id] = !!c.groupSimilar;
-    return groupOccurrences(out, flags);
+    // The same event on two visible calendars draws once (#9).
+    const calById = new Map(s.calendars.map((c) => [c.id, c]));
+    return groupOccurrences(collapseDuplicates(out, calById), flags);
   }, [s.occVersion, s.calendars, showRel]);
   // Days where the kind filter hid something: every view marks them, so a
   // filtered view never loses things silently (docs/relationships.md).

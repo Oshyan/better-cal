@@ -38,6 +38,7 @@ Once the test is comfortable, make Better-Cal the thing you open and Google the 
 - **Phone**: install the app, or add the CalDAV account to Apple Calendar or DAVx5.
 - **Invitations**: set up the Gmail forward filter in `docs/email-ingest.md`, so invitations sent to your address turn into events here, and you can accept or decline from here with a proper reply. Invitations still show at Google too; answer from whichever side you are on.
 - **Reminders**: turn on push or email reminders here and turn Google's notifications off, or you will get both.
+- **The same event twice** (a Takeout copy and the Google calendar it came from, a Luma feed and the confirmation you forwarded): Better-Cal shows it once, from the most live copy, and its details say "Also on <calendar>". Close matches it isn't sure of wait in Review as "Possible duplicate"; "Not the same" in either place shows both again. Nothing is merged or deleted, and only one copy reminds you.
 - **Stop opening Google Calendar.** That is the actual test. If you find yourself needing it, note what for; it is either a gap listed above or something worth an issue.
 
 **A local calendar that people on Google need to see live** (or add to): move it to Google from its settings (**Move to Google…**, see [google-calendar.md](google-calendar.md#moving-a-calendar-to-google)). It stays here and is edited in place; Google holds it, and you share it from Google Calendar. An outbound feed still works for read-only sharing, but Google refreshes it on its own schedule, often once a day.

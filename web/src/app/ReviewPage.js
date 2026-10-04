@@ -26,8 +26,8 @@ import { rsvpOutcome } from './actions.js';
 import { fmtSince } from '../lib/since.js';
 import { parseISO, dateOfDayKey, fmtRange, fmtDayMedium, fmtTime } from '../lib/dates.js';
 
-const KIND_LABEL = { invite_change: 'Invitation change', rsvp: 'Invitation', proposal: 'Proposal' };
-const KIND_ICON = { invite_change: 'mail', rsvp: 'mail', proposal: 'proposals' };
+const KIND_LABEL = { invite_change: 'Invitation change', rsvp: 'Invitation', proposal: 'Proposal', duplicate: 'Possible duplicate' };
+const KIND_ICON = { invite_change: 'mail', rsvp: 'mail', proposal: 'proposals', duplicate: 'stack' };
 
 // One side of a changed date. All-day values are bare dates; timed ones are
 // instants, shown on this device's clock like everything else on screen.
@@ -69,6 +69,8 @@ function ReviewCard({ item, onChanged }) {
       if (item.kind === 'rsvp') {
         const out = rsvpOutcome(res || {}, d.via);
         toast(out.text, { error: !!out.error });
+      } else if (item.kind === 'duplicate') {
+        toast(action.name === 'linked' ? 'Shown as one event from now on' : 'Kept as separate events');
       } else {
         toast(
           accepted ? (d.method === 'CANCEL' ? 'Cancellation accepted' : 'Change applied') : 'Dismissed. Your calendar is unchanged',
@@ -95,6 +97,7 @@ function ReviewCard({ item, onChanged }) {
         ? html`<button type="button" class="bc-link-btn bc-review-title" title="Open this event" onClick=${open}>${item.title}</button>`
         : html`<span class="bc-review-title">${item.title}</span>`}
       ${item.kind === 'rsvp' && html`<span class="bc-review-when">${whenLine(d)}${d.location ? ' · ' + d.location : ''}</span>`}
+      ${item.kind === 'duplicate' && html`<span class="bc-review-when">${d.a.start === d.b.start ? fmtWhen(d.a.start) : fmtWhen(d.a.start) + ' and ' + fmtWhen(d.b.start)}</span>`}
       <span class="bc-review-age" title=${item.createdAt ? new Date(item.createdAt).toLocaleString() : ''}>${item.createdAt ? fmtSince(item.createdAt) : ''}</span>
       ${item.status !== 'open' && html`<span class="bc-badge">${item.status}</span>`}
     </div>

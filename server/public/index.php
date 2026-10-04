@@ -102,7 +102,7 @@ function bc_handle_api(Request $request, array $cfg): void
         $proposalsDomain = new Domain\Proposals($db, $events, $trips);
         $pluginsController = new Controllers\PluginsController($pluginsDomain, $jobQueue, $proposalsDomain, $undo, $db);
         $proposalsController = new Controllers\ProposalsController($proposalsDomain);
-        $reviewController = new Controllers\ReviewController(new Domain\ReviewQueue($db, $events), $proposalsDomain);
+        $reviewController = new Controllers\ReviewController(new Domain\ReviewQueue($db, $events), $proposalsDomain, new Domain\Duplicates($db));
         $configController = new Controllers\ConfigController($settings, $cfg);
         $pushController = new Controllers\PushController($pushSubscriptions, $pushSender, $emailSender, $throttle, $db);
         $systemController = new Controllers\SystemController(new Domain\SystemHealth($db), $pushSubscriptions, $emailSender, $cfg);
@@ -223,6 +223,7 @@ function bc_handle_api(Request $request, array $cfg): void
         $router->add('GET', "$base/review/count", [$reviewController, 'count']);
         $router->add('POST', "$base/review/invite-changes/:id/accept", [$reviewController, 'acceptInviteChange']);
         $router->add('POST', "$base/review/invite-changes/:id/dismiss", [$reviewController, 'dismissInviteChange']);
+        $router->add('POST', "$base/duplicates/:id", [$reviewController, 'decideDuplicate']);
 
         // Proposals (C11): a plugin suggests, the user decides.
         $router->add('GET', "$base/proposals", [$proposalsController, 'index']);

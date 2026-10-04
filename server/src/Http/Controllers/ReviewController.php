@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace BetterCal\Http\Controllers;
 
+use BetterCal\Domain\Duplicates;
 use BetterCal\Domain\Proposals;
 use BetterCal\Domain\ReviewQueue;
 use BetterCal\Http\Request;
 use BetterCal\Http\Response;
+use BetterCal\Support\Time;
 
 /**
  * The Review queue: everything waiting on the owner's decision, in one list.
@@ -20,13 +22,18 @@ use BetterCal\Http\Response;
  *                  held instead of applied (ReviewQueue; BC-07)
  *   rsvp           an invitation not answered yet (events.invite_json)
  *   proposal       a plan a plugin suggests (plugin_proposals)
+ *   duplicate      two events that may be one, arriving by two routes (#9)
  *
  * Only invite_change is stored by the queue itself; the other two live where
  * they always did and keep their own endpoints, which the actions point at.
  */
 final class ReviewController
 {
-    public function __construct(private readonly ReviewQueue $queue, private readonly Proposals $proposals)
+    public function __construct(
+        private readonly ReviewQueue $queue,
+        private readonly Proposals $proposals,
+        private readonly ?Duplicates $duplicates = null,
+    )
     {
     }
 
@@ -107,6 +114,35 @@ final class ReviewController
             ];
         }
 
+        foreach ($this->duplicates?->possible($userId) ?? [] as $p) {
+            $copy = static fn(string $s): array => [
+                'eventId' => (int) $p[$s . '_id'],
+                'title' => (string) $p[$s . '_title'],
+                'calendar' => (string) $p[$s . '_cal'],
+                'allDay' => (int) $p[$s . '_all_day'] === 1,
+                'start' => (int) $p[$s . '_all_day'] === 1
+                    ? substr((string) $p[$s . '_start'], 0, 10)
+                    : Time::dbToIso((string) $p[$s . '_start'], (string) $p[$s . '_tzid']),
+            ];
+            $a = $copy('a');
+            $b = $copy('b');
+            $where = $a['calendar'] === $b['calendar'] ? "twice on {$a['calendar']}" : "on {$a['calendar']} and {$b['calendar']}";
+            $items[] = [
+                'key' => 'duplicate:' . $p['id'],
+                'kind' => 'duplicate',
+                'status' => 'open',
+                'title' => $a['title'],
+                'summary' => "Possibly the same event, $where" . ($a['title'] !== $b['title'] ? " (\"{$a['title']}\" and \"{$b['title']}\")" : '') . '. The same event shows once.',
+                'createdAt' => Time::dbToIso((string) $p['created_at'], 'UTC'),
+                'eventId' => $a['eventId'],
+                'detail' => ['pairId' => (int) $p['id'], 'a' => $a, 'b' => $b],
+                'actions' => [
+                    self::action('linked', 'Same event', "/duplicates/{$p['id']}", ['status' => 'linked']),
+                    self::action('dismissed', 'Not the same', "/duplicates/{$p['id']}", ['status' => 'dismissed']),
+                ],
+            ];
+        }
+
         // Every item about an event says how to open it.
         foreach ($items as &$item) {
             $item['link'] = $item['eventId'] !== null ? $this->queue->eventLink($userId, (int) $item['eventId']) : null;
@@ -127,8 +163,19 @@ final class ReviewController
             'invite_change' => $this->queue->openCount($userId),
             'rsvp' => count($this->queue->invitationsAwaitingReply($userId)),
             'proposal' => count($this->proposals->listFor($userId, 'open')),
+            'duplicate' => count($this->duplicates?->possible($userId) ?? []),
         ];
         return Response::json(['count' => array_sum($byKind), 'byKind' => $byKind]);
+    }
+
+    /** POST /duplicates/:id {status: linked|dismissed}: the owner's word on a pair. */
+    public function decideDuplicate(Request $req, array $params): Response
+    {
+        if ($this->duplicates === null) {
+            return Response::json(['ok' => false], 404);
+        }
+        $this->duplicates->decide((int) $req->user['id'], (int) $params['id'], (string) ($req->str('status') ?? ''));
+        return Response::json(['ok' => true]);
     }
 
     public function acceptInviteChange(Request $req, array $params): Response

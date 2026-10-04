@@ -193,7 +193,9 @@ final class Feeds
                 // overwrite them on every poll.
                 $columns = [
                     'title' => $ev['title'],
-                    'description' => $ev['description'],
+                    // Cleaned on the way in like every other source (#58):
+                    // only allowlisted HTML is ever stored.
+                    'description' => Sanitize::description($ev['description']),
                     'location' => $ev['location'],
                     'url' => $ev['url'],
                     'start_utc' => $ev['start_utc'],

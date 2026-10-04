@@ -28,7 +28,7 @@ server/
                      #   import-takeout.php, profile-*.php
   config/            # config.php reads env / .env file; every key is read in exactly one place
   data/              # generated static tables (IATA airports)
-  migrations/        # NNN_name.sql, applied in order by migrate.php, tracked in schema_migrations
+  migrations/        # NNN_name.sql (or .php returning fn(Db), for data changes that need app code), applied in order by migrate.php, tracked in schema_migrations
   tests/             # run.php: plain PHP, no PHPUnit, no MySQL, no network
 web/
   index.html         # app shell (served by the PHP front controller at /)

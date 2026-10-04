@@ -2,8 +2,10 @@
 
 declare(strict_types=1);
 
-// Applies server/migrations/*.sql in filename order, tracked in schema_migrations.
-// Idempotent: already-applied files are skipped.
+// Applies server/migrations/*.sql and *.php in filename order, tracked in
+// schema_migrations. Idempotent: already-applied files are skipped. A .php
+// migration returns a function taking the Db, for changes SQL can't make
+// (data that needs the application's own code, like the HTML sanitizer).
 
 require dirname(__DIR__) . '/src/bootstrap.php';
 
@@ -21,7 +23,7 @@ $pdo->exec(
 );
 
 $dir = dirname(__DIR__) . '/migrations';
-$files = glob($dir . '/*.sql') ?: [];
+$files = array_merge(glob($dir . '/*.sql') ?: [], glob($dir . '/*.php') ?: []);
 sort($files, SORT_STRING);
 
 $applied = array_column($db->all('SELECT filename FROM schema_migrations'), 'filename');
@@ -34,6 +36,20 @@ foreach ($files as $file) {
         continue;
     }
     echo "Applying $name ... ";
+    if (str_ends_with($name, '.php')) {
+        try {
+            $fn = require $file;
+            $note = $fn($db);
+            $db->run('INSERT INTO schema_migrations (filename) VALUES (?)', [$name]);
+            echo 'ok' . (is_string($note) && $note !== '' ? " ($note)" : '') . "\n";
+            $ran++;
+        } catch (\Throwable $e) {
+            echo "FAILED\n";
+            fwrite(STDERR, $e->getMessage() . "\n");
+            exit(1);
+        }
+        continue;
+    }
     $sql = file_get_contents($file);
     if ($sql === false) {
         fwrite(STDERR, "cannot read $file\n");

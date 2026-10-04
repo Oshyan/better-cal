@@ -4,6 +4,13 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.9.8 (2026-10-04)
+
+- **Only clean HTML is stored (#58 follow-up).** Descriptions typed in Better-Cal were always cleaned when saved, but those from subscribed feeds, Google sync and the Takeout import were stored as they arrived, cleaned only when shown or exported, and "Adopt as local" carried them into your own calendars. Now every way in cleans them with the same allowlist, and a one-time migration cleans what is already stored. Showing and exporting still clean as a second layer.
+  - **Nothing visible changes:** the app never showed what the cleaning removes (styles, tables, scripts, unknown tags are unwrapped).
+  - **CalDAV apps** fetch the cleaned events once.
+- **Migrations can now be PHP** as well as SQL, for data changes that need the application's own code.
+
 ## 0.9.7 (2026-10-04)
 
 - **Descriptions leave Better-Cal inert (#58, security review D-02).** A subscribed feed or a Google calendar can put HTML in an event's description, and Better-Cal stores it as it arrived (it is cleaned when shown). Until now that HTML also went back out unchanged when the event was exported, so a script or a `javascript:` link in a feed could reach the other calendar apps reading your Better-Cal feeds or CalDAV. Every export now sends:

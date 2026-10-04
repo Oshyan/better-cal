@@ -2497,6 +2497,28 @@ check('ics export: escaped markup stays escaped', str_contains($alt, '&lt;img sr
 check('ics export: a safe link survives in X-ALT-DESC', str_contains($alt, 'href="https://example.com/ok"'));
 check('ics export: DESCRIPTION has no markup, even entity-escaped markup', !Sanitize::isHtml($txt) && !str_contains(strtolower($txt), 'onerror=alert(2)>'));
 check('ics export: DESCRIPTION keeps the words', str_contains($txt, 'Hi') && str_contains($txt, 'click') && str_contains($txt, 'ok'));
+// Stored descriptions are cleaned on every way in, and Google's incremental
+// sync feeds stored rows back through the cleaner: it must be idempotent, or
+// every poll would see a change and rewrite the row.
+foreach ([$hostile, '<p>Tom &amp; Jerry&#039;s <a href="https://x.test/?a=1&amp;b=2">link</a></p><ul><li>one<br>two</li></ul>', '<div><span style="color:red">Join</span> us &lt;3</div>', "<p>It's \"quoted\" &nbsp; café</p>"] as $i => $sample) {
+    $once = Sanitize::description($sample);
+    checkEq("sanitize is idempotent (sample $i)", $once, Sanitize::description((string) $once));
+}
+$cleanMigration = require __DIR__ . '/../migrations/034_clean_descriptions.php';
+check('migration 034 is a PHP migration the runner can call', is_callable($cleanMigration));
+{
+    $mdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $mdb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, synctoken INTEGER DEFAULT 1)');
+    $mdb->run('CREATE TABLE dav_changes (id INTEGER PRIMARY KEY, calendar_id INTEGER, uid TEXT, op INTEGER, synctoken INTEGER)');
+    $mdb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, calendar_id INTEGER, uid TEXT, description TEXT, updated_at TEXT)');
+    $mdb->run('INSERT INTO calendars (id) VALUES (1)');
+    $mdb->run("INSERT INTO events VALUES (1, 1, 'a', '<p onclick=\"x()\">hi<script>y()</script></p>', '2026-01-01 00:00:00'), (2, 1, 'b', 'a < b plain', '2026-01-01 00:00:00'), (3, 1, 'c', '<p>already clean</p>', '2026-01-01 00:00:00')");
+    checkEq('migration 034: cleans only what needs it', '1 description cleaned', $cleanMigration($mdb));
+    checkEq('migration 034: the dirty one is clean', '<p>hi</p>', $mdb->scalar('SELECT description FROM events WHERE id = 1'));
+    checkEq('migration 034: plain text untouched', 'a < b plain', $mdb->scalar('SELECT description FROM events WHERE id = 2'));
+    checkEq('migration 034: a clean row keeps its updated_at', '2026-01-01 00:00:00', $mdb->scalar('SELECT updated_at FROM events WHERE id = 3'));
+    checkEq('migration 034: running again changes nothing', '0 descriptions cleaned', $cleanMigration($mdb));
+}
 checkEq('inert text: nested escapes stay inert', false, Sanitize::isHtml(Sanitize::inertText('<p>&amp;amp;lt;b onmouseover=x&amp;amp;gt;hi</p>')));
 checkEq('caldav write: a description is cleaned on the way in', '<p>hi</p>', BetterCal\Dav\DavIcs::eventColumns(['title' => 't', 'start_utc' => '2026-08-01 17:00:00', 'end_utc' => '2026-08-01 18:00:00', 'description' => '<p onclick="x()">hi<script>y()</script></p>'])['description']);
 

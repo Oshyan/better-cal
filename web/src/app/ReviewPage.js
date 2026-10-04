@@ -22,6 +22,7 @@ import { openOccurrence } from './push.js';
 import { PageShell, EmptyState, Skeleton } from './PageShell.js';
 import { Icon } from '../ui/icons.js';
 import { ProposalCard } from './ProposalCard.js';
+import { rsvpOutcome } from './actions.js';
 import { fmtSince } from '../lib/since.js';
 import { parseISO, dateOfDayKey, fmtRange, fmtDayMedium, fmtTime } from '../lib/dates.js';
 
@@ -63,13 +64,17 @@ function ReviewCard({ item, onChanged }) {
   const run = async (action) => {
     setBusy(true);
     try {
-      await api(action.path, { method: action.method || 'POST', body: action.body || {} });
+      const res = await api(action.path, { method: action.method || 'POST', body: action.body || {} });
       const accepted = action.name !== 'dismiss';
-      toast(
-        item.kind === 'rsvp' ? 'Reply recorded: ' + action.label
-          : (accepted ? (d.method === 'CANCEL' ? 'Cancellation accepted' : 'Change applied') : 'Dismissed. Your calendar is unchanged'),
-        { undoable: accepted && item.kind === 'invite_change' },
-      );
+      if (item.kind === 'rsvp') {
+        const out = rsvpOutcome(res || {}, d.via);
+        toast(out.text, { error: !!out.error });
+      } else {
+        toast(
+          accepted ? (d.method === 'CANCEL' ? 'Cancellation accepted' : 'Change applied') : 'Dismissed. Your calendar is unchanged',
+          { undoable: accepted && item.kind === 'invite_change' },
+        );
+      }
       invalidateRecords();
       refreshWindow();
     } catch (e) {

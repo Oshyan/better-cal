@@ -149,17 +149,19 @@ final class EmailSender
      * from the address that was actually invited); falls back to the main
      * SMTP profile. The ICS rides both as the text/calendar body alternative
      * and as an attachment, which covers the pickier servers.
+     *
+     * @return string|null why it didn't go, or null when it went
      */
-    public function sendImipReply(string $toEmail, string $subject, string $ics, string $bodyText): bool
+    public function sendImipReply(string $toEmail, string $subject, string $ics, string $bodyText): ?string
     {
         $rsvp = $this->cfg['rsvp_smtp'] ?? [];
         $smtp = ($rsvp['host'] ?? '') !== '' ? $rsvp : ($this->cfg['smtp'] ?? []);
-        if (($smtp['host'] ?? '') === '' || ($smtp['from'] ?? ($smtp['user'] ?? '')) === '') {
-            return false;
+        if (($smtp['host'] ?? '') === '' || (($smtp['from'] ?? '') === '' && ($smtp['user'] ?? '') === '')) {
+            return 'no email account is set up to send from';
         }
         if (!class_exists(\PHPMailer\PHPMailer\PHPMailer::class)) {
             error_log('rsvp send skipped: phpmailer not installed');
-            return false;
+            return 'the mail library is missing on the server';
         }
         try {
             $mail = new \PHPMailer\PHPMailer\PHPMailer(true);
@@ -183,10 +185,10 @@ final class EmailSender
             $mail->ContentType = 'text/plain';
             $mail->addStringAttachment($ics, 'invite.ics', 'base64', 'text/calendar; method=REPLY');
             $mail->send();
-            return true;
+            return null;
         } catch (\Throwable $e) {
             error_log('rsvp send error: ' . $e->getMessage());
-            return false;
+            return mb_substr($e->getMessage(), 0, 300);
         }
     }
 }

@@ -211,6 +211,9 @@ final class Feeds
                 if (array_key_exists('google_event_id', $ev)) {
                     $columns['google_event_id'] = $ev['google_event_id'];
                 }
+                if (array_key_exists('invite_json', $ev)) {
+                    $columns['invite_json'] = $ev['invite_json'];
+                }
 
                 $current = $existingByKey[$key] ?? null;
                 if ($current === null) {
@@ -236,6 +239,12 @@ final class Feeds
                     $currentValue = $current[$col];
                     if ($currentValue !== null && in_array($col, ['all_day', 'recurrence_parent_id'], true)) {
                         $currentValue = (int) $currentValue;
+                    }
+                    if ($col === 'invite_json' && $currentValue !== null && $value !== null) {
+                        // The database hands JSON back reformatted; compare what it says.
+                        if (json_decode((string) $currentValue, true) == json_decode((string) $value, true)) {
+                            continue;
+                        }
                     }
                     if ($currentValue !== $value && (string) $currentValue !== (string) $value) {
                         $changed[$col] = $value;

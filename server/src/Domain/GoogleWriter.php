@@ -154,6 +154,11 @@ final class GoogleWriter
         return $this->call($calendar, 'POST', '', self::body($row));
     }
 
+    public function get(array $calendar, string $googleId): array
+    {
+        return $this->call($calendar, 'GET', '/' . rawurlencode($googleId), null);
+    }
+
     public function patch(array $calendar, string $googleId, array $body): array
     {
         return $this->call($calendar, 'PATCH', '/' . rawurlencode($googleId), $body);

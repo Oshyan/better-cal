@@ -3678,6 +3678,11 @@ button.bc-review-title { color: var(--fg); padding: 0; }
 .bc-es-segbtn { flex: none; padding: 0 14px; font-size: 14px; gap: 5px; }
 .bc-es-segbtn svg { width: 15px; height: 15px; }
 .bc-es-invite .bc-es-seg { height: 36px; justify-self: start; margin-left: 34px; }
+/* Why an invitation can't be answered here, or that a reply didn't go (#70). */
+.bc-es-invite-note { margin: 0 0 0 34px; font-size: 13.5px; color: var(--fg-muted); }
+.bc-es-invite-note.is-failed { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; color: var(--danger); }
+.bc-es-invite-acts { display: inline-flex; gap: 6px; }
+.bc-es-invite-acts .bc-btn { min-height: 32px; padding: 0 10px; font-size: 13px; color: var(--fg); }
 
 /* --- The desktop event panel (0.5.5) ------------------------------------------
    The same place and size every time: along the right edge under the top

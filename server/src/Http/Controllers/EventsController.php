@@ -16,7 +16,7 @@ final class EventsController
     public function __construct(
         private readonly Events $events,
         private readonly Trips $trips,
-        private readonly ?\BetterCal\Domain\MailIngest $mailIngest = null,
+        private readonly ?\BetterCal\Domain\Rsvp $rsvp = null,
     ) {
     }
 
@@ -111,18 +111,10 @@ final class EventsController
 
     public function rsvp(Request $req, array $params): Response
     {
-        if ($this->mailIngest === null) {
-            throw \BetterCal\Http\HttpError::notFound('RSVP unavailable');
+        if ($this->rsvp === null) {
+            throw HttpError::notFound('RSVP unavailable');
         }
-        $cfg = config();
-        $result = $this->mailIngest->rsvp(
-            (int) $req->user['id'],
-            (int) $params['id'],
-            (string) ($req->str('answer') ?? ''),
-            new \BetterCal\Infra\EmailSender($cfg),
-            $cfg
-        );
-        return Response::json($result);
+        return Response::json($this->rsvp->answer((int) $req->user['id'], (int) $params['id'], (string) ($req->str('answer') ?? '')));
     }
 
     /** POST /events/:id/relationship {relationship, scope?, instanceStart?} -> {ok:true} */

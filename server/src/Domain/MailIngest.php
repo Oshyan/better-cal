@@ -23,7 +23,8 @@ use BetterCal\Support\Time;
  *      subject so ordinary mail never becomes calendar noise.
  *
  * Ingested events land in a local "Invitations" calendar with invite_json
- * carrying organizer/attendees/method for the detail view and RSVP.
+ * carrying organizer/attendees/method for the detail view; answering an
+ * invitation is Rsvp's job.
  * mail_ingest logs every message id; nothing is processed twice.
  */
 final class MailIngest
@@ -694,12 +695,16 @@ final class MailIngest
             'description' => $draft['description'] ?? null,
         ]);
         $eventId = (int) $occurrence['eventId'];
+        // A reservation, ticket or confirmation: a booking, with nothing to
+        // answer (Rsvp). `from` is whoever sent or forwarded the message.
         self::storeInvite($this->db, $eventId, [
+            'kind' => 'booking',
+            'via' => 'mail',
             'method' => $tier,
-            'organizer' => ['email' => strtolower($msg['from']), 'name' => null],
+            'from' => strtolower($msg['from']),
+            'organizer' => null,
             'attendees' => [],
             'sequence' => 0,
-            'myPartstat' => 'NEEDS-ACTION',
         ], false);
         return $eventId;
     }
@@ -773,70 +778,6 @@ final class MailIngest
             'END:VCALENDAR',
         ];
         return implode("\r\n", array_map(Ics::fold(...), $lines)) . "\r\n";
-    }
-
-    /**
-     * RSVP to an ingested invitation: records myPartstat and emails an iMIP
-     * REPLY to the organizer (best-effort; recording never fails on send).
-     *
-     * @return array{myPartstat: string, sent: bool}
-     */
-    public function rsvp(int $userId, int $eventId, string $answer, \BetterCal\Infra\EmailSender $mailer, array $cfg): array
-    {
-        $map = ['accepted' => 'ACCEPTED', 'declined' => 'DECLINED', 'tentative' => 'TENTATIVE'];
-        $partstat = $map[strtolower($answer)] ?? null;
-        if ($partstat === null) {
-            throw \BetterCal\Http\HttpError::badRequest('answer must be accepted, declined or tentative');
-        }
-        $row = $this->db->one(
-            'SELECT id, calendar_id, uid, title, invite_json FROM events WHERE id = ? AND user_id = ? AND deleted_at IS NULL',
-            [$eventId, $userId]
-        );
-        if ($row === null || $row['invite_json'] === null) {
-            throw \BetterCal\Http\HttpError::notFound('No invitation on this event');
-        }
-        $invite = is_array($row['invite_json']) ? $row['invite_json'] : json_decode((string) $row['invite_json'], true);
-        $invite['myPartstat'] = $partstat;
-        $this->db->run('UPDATE events SET invite_json = ? WHERE id = ?', [json_encode($invite), $eventId]);
-        ActivityContext::with('rsvp', fn() => (new Undo($this->db))->record(
-            $userId,
-            'event',
-            $eventId,
-            'update',
-            null,
-            null,
-            "RSVP'd " . ucfirst(strtolower($partstat)) . " to '" . (string) $row['title'] . "'"
-        ));
-        // Journal so other open clients see the RSVP on their next cursor poll.
-        \BetterCal\Dav\ChangeLog::record($this->db, (int) $row['calendar_id'], (string) $row['uid'], \BetterCal\Dav\ChangeLog::OP_MODIFY);
-
-        $sent = false;
-        $organizer = $invite['organizer']['email'] ?? null;
-        if (is_string($organizer) && $organizer !== '' && ($invite['method'] ?? '') === 'REQUEST') {
-            $me = (string) ($cfg['rsvp_smtp']['from'] ?? '');
-            if ($me === '') {
-                $me = (string) ($cfg['smtp']['from'] ?? '');
-            }
-            if ($me !== '') {
-                $ics = self::buildReplyIcs(
-                    (string) $row['uid'],
-                    $organizer,
-                    $me,
-                    $partstat,
-                    (int) ($invite['sequence'] ?? 0),
-                    (string) $row['title'],
-                    Time::nowUtc()
-                );
-                $verb = ['ACCEPTED' => 'Accepted', 'DECLINED' => 'Declined', 'TENTATIVE' => 'Tentative'][$partstat];
-                $sent = $mailer->sendImipReply(
-                    $organizer,
-                    $verb . ': ' . (string) $row['title'],
-                    $ics,
-                    $verb . ': ' . (string) $row['title']
-                );
-            }
-        }
-        return ['myPartstat' => $partstat, 'sent' => $sent];
     }
 
     private function alreadyProcessed(string $messageId): bool

@@ -226,7 +226,12 @@ final class GoogleSync
             'recurrence_instance_utc' => $instance,
             'reminders' => [],
             'google_event_id' => $googleId,
-        ];
+        ] + (isset($item['attendees'])
+            // A guest list: an invitation to answer when someone else asked
+            // this account (Rsvp::fromGoogle). Only when Google sends one, so
+            // an event without guests keeps whatever block it had.
+            ? ['invite_json' => ($invite = Rsvp::fromGoogle($item)) !== null ? json_encode($invite) : null]
+            : []);
     }
 
     /**
@@ -306,7 +311,9 @@ final class GoogleSync
                 'recurrence_instance_utc' => $r['recurrence_instance_utc'] !== null ? (string) $r['recurrence_instance_utc'] : null,
                 'reminders' => [],
                 'google_event_id' => isset($r['google_event_id']) && $r['google_event_id'] !== null ? (string) $r['google_event_id'] : null,
-            ];
+            ] + (isset($r['invite_json']) && $r['invite_json'] !== null
+                ? ['invite_json' => is_array($r['invite_json']) ? json_encode($r['invite_json']) : (string) $r['invite_json']]
+                : []);
         }
         return $out;
     }

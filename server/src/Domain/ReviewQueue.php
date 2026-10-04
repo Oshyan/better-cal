@@ -218,6 +218,11 @@ final class ReviewQueue
             if (!is_array($invite) || ($invite['method'] ?? '') !== 'REQUEST' || ($invite['myPartstat'] ?? 'NEEDS-ACTION') !== 'NEEDS-ACTION') {
                 continue;
             }
+            // Only what can actually be answered from here (#70); the event
+            // itself says why one can't.
+            if (Rsvp::kind($invite) !== 'invitation' || Rsvp::blocker($invite, config()) !== null) {
+                continue;
+            }
             // A series that has run out is not waiting on anyone either.
             if (!empty($row['rrule']) && preg_match('/UNTIL=(\d{8})/', (string) $row['rrule'], $m) === 1 && $m[1] < $now->format('Ymd')) {
                 continue;
@@ -236,6 +241,7 @@ final class ReviewQueue
                 'recurring' => !empty($row['rrule']),
                 'location' => $row['location'] !== null ? (string) $row['location'] : null,
                 'organizer' => $invite['organizer'] ?? null,
+                'via' => ($invite['via'] ?? 'mail') === 'google' ? 'google' : 'mail',
                 'invitedCount' => is_array($invite['attendees'] ?? null) ? count($invite['attendees']) : 0,
                 'createdAt' => Time::dbToIso((string) $row['created_at'], 'UTC'),
             ];

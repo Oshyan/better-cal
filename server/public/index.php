@@ -88,7 +88,7 @@ function bc_handle_api(Request $request, array $cfg): void
         $authController = new Controllers\AuthController($auth, $loginGuard, new Domain\TrustedDevices($db));
         $calendarsController = new Controllers\CalendarsController($db, $calendars, $feeds);
         $foldersController = new Controllers\FoldersController($folders);
-        $eventsController = new Controllers\EventsController($events, $trips, new Domain\MailIngest($db, $events));
+        $eventsController = new Controllers\EventsController($events, $trips, new Domain\Rsvp($db, $emailSender, $cfg, new Domain\GoogleWriter($db, $googleAuth, $feeds)));
         $quickAddController = new Controllers\QuickAddController($quickAdd);
         $searchController = new Controllers\SearchController($search, $events, $filters, $labels);
         $outFeedsController = new Controllers\OutFeedsController($outFeeds);

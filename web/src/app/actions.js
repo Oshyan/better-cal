@@ -1122,18 +1122,31 @@ export function setFolderVisibilityMode(folderId, mode) {
   }
 }
 
-// RSVP to a mail-ingested invitation (docs/email-ingest.md).
+// What happened to an answer, in words: where it went, or why it didn't.
+export function rsvpOutcome(result, via) {
+  const verb = { ACCEPTED: 'Accepted', TENTATIVE: 'Maybe', DECLINED: 'Declined' }[result.myPartstat] || 'Answered';
+  if (result.sent) {
+    return { text: via === 'google' ? verb + '. Google passes your answer to the organizer.' : verb + '. The reply went to the organizer.' };
+  }
+  return { text: verb + " here; the reply wasn't sent: " + (result.message || 'unknown reason'), error: true };
+}
+
+// Answer an invitation (#70): by email for one read from mail, at Google for
+// one on a Google calendar. The server says whether it went.
 export async function rsvpEvent(occ, answer) {
   try {
     const result = await api('/events/' + occ.eventId + '/rsvp', { method: 'POST', body: { answer } });
-    patchOccurrence(occ.instanceId, { invite: { ...occ.invite, myPartstat: result.myPartstat } });
+    const via = occ.invite && occ.invite.via;
+    const reply = via === 'google' ? null
+      : { partstat: result.myPartstat, sent: result.sent, reason: result.reason, message: result.message };
+    patchOccurrence(occ.instanceId, { invite: { ...occ.invite, myPartstat: result.myPartstat, reply } });
+    invalidateRecords(occ.eventId);
     loadReviewCount(); // an answered invitation leaves the Review queue
-    toast(result.sent
-      ? 'RSVP sent to the organizer'
-      : 'RSVP recorded (no reply sent — organizer unknown or RSVP mail not configured)');
+    const out = rsvpOutcome(result, via);
+    toast(out.text, { error: !!out.error });
     return result;
   } catch (e) {
-    toast('RSVP failed: ' + e.message, { error: true });
+    toast("Couldn't answer: " + e.message, { error: true });
     return null;
   }
 }

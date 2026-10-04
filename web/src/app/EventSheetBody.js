@@ -45,6 +45,70 @@ export function meetingLink(occ) {
 }
 
 const isUrl = (s) => /^(https?:\/\/|www\.)\S+$/i.test((s || '').trim());
+// The site a booking email came from ("noreply@order.eventbrite.com" →
+// eventbrite.com); none for mail forwarded from a personal mailbox, which
+// says nothing about the booking.
+const WEBMAIL = /^(gmail|googlemail|outlook|hotmail|live|icloud|me|yahoo|proton|protonmail|fastmail|aol)\./;
+function senderSite(addr) {
+  const domain = String(addr || '').split('@')[1];
+  if (!domain) return null;
+  const parts = domain.toLowerCase().split('.');
+  const keep = parts.length > 2 && /^(co|com|org|net|ac|gov|edu)$/.test(parts[parts.length - 2]) ? 3 : 2; // example.co.uk
+  const site = parts.slice(-keep).join('.');
+  return WEBMAIL.test(site) ? null : site;
+}
+
+const ANSWERS = [['accepted', 'ACCEPTED', 'Accept'], ['tentative', 'TENTATIVE', 'Maybe'], ['declined', 'DECLINED', 'Decline']];
+const ANSWERED = { ACCEPTED: 'Accepted', TENTATIVE: 'Maybe', DECLINED: 'Declined' };
+
+// The invite block (#70). A booking read from mail (a reservation, ticket or
+// confirmation) has nobody to answer, so it only says where it came from. An
+// invitation shows Accept / Maybe / Decline while a reply can go; when it
+// can't, it says why instead. A reply that didn't go keeps the answer and
+// says so, with Retry, and the answer can still be changed.
+function InviteBlock({ occ }) {
+  const inv = occ.invite;
+  const [changing, setChanging] = useState(false);
+  const [busy, setBusy] = useState(false);
+  if (inv.kind === 'booking') {
+    const via = occ.url ? hostOf(occ.url) : senderSite(inv.from || (inv.organizer && inv.organizer.email));
+    return html`<div class="bc-es-row">
+      <${Icon} name="mail" size=${20} />
+      <div class="bc-es-rt">Booking${via ? ' via ' + via : ''}<small>Read from an email; nothing to answer</small></div>
+    </div>`;
+  }
+  const answer = async (a) => {
+    setBusy(true);
+    const r = await rsvpEvent(occ, a);
+    setBusy(false);
+    if (r) setChanging(false);
+  };
+  const from = inv.organizer && inv.organizer.email ? ' from ' + (inv.organizer.name || inv.organizer.email) : '';
+  const count = inv.attendees && inv.attendees.length > 1 ? inv.attendees.length + ' invited' : null;
+  const where = inv.via === 'google' ? 'In Google Calendar' : null;
+  const failed = inv.reply && !inv.reply.sent && inv.reply.partstat === inv.myPartstat ? inv.reply : null;
+  return html`<div class="bc-es-invite">
+    <div class="bc-es-row">
+      <${Icon} name="mail" size=${20} />
+      <div class="bc-es-rt">Invitation${from}${(count || where) && html`<small>${[count, where].filter(Boolean).join(' · ')}</small>`}</div>
+    </div>
+    ${!inv.canReply && html`<p class="bc-es-invite-note">${inv.myPartstat && ANSWERED[inv.myPartstat] ? ANSWERED[inv.myPartstat] + ' here. ' : ''}Can't be answered from Better-Cal: ${inv.why}</p>`}
+    ${inv.canReply && failed && !changing && html`<div class="bc-es-invite-note is-failed">
+      <span>${ANSWERED[failed.partstat]} here; the reply couldn't be sent: ${failed.message || 'unknown error'}</span>
+      <span class="bc-es-invite-acts">
+        <button type="button" class="bc-btn" disabled=${busy} onClick=${() => answer(ANSWERS.find((x) => x[1] === failed.partstat)[0])}>Retry</button>
+        <button type="button" class="bc-btn" onClick=${() => setChanging(true)}>Change answer</button>
+      </span>
+    </div>`}
+    ${inv.canReply && (!failed || changing) && html`<span class="bc-es-seg" role="group" aria-label="Reply to the invitation">
+      ${ANSWERS.map(([a, ps, label]) => html`<button
+        key=${a} type="button" class=${'bc-es-segbtn' + (inv.myPartstat === ps ? ' is-on' : '')} disabled=${busy}
+        aria-pressed=${inv.myPartstat === ps} onClick=${() => answer(a)}
+      >${label}</button>`)}
+    </span>`}
+  </div>`;
+}
+
 const hostOf = (u) => { try { return new URL(/^www\./i.test(u) ? 'https://' + u : u).hostname.replace(/^www\./, ''); } catch { return u; } };
 
 function copyText(text, what) {
@@ -234,18 +298,7 @@ export function EventSheetBody({ occ, cal, isFeed, full, panel = false, onFull, 
       </div>
 
       ${/* An invitation's reply is the thing to do: right under when. */ ''}
-      ${occ.invite && html`<div class="bc-es-invite">
-        <div class="bc-es-row">
-          <${Icon} name="mail" size=${20} />
-          <div class="bc-es-rt">Invitation${occ.invite.organizer && occ.invite.organizer.email ? ' from ' + (occ.invite.organizer.name || occ.invite.organizer.email) : ''}${occ.invite.attendees && occ.invite.attendees.length > 1 ? html`<small>${occ.invite.attendees.length} invited</small>` : ''}</div>
-        </div>
-        <span class="bc-es-seg" role="group" aria-label="Reply to the invitation">
-          ${[['accepted', 'ACCEPTED', 'Accept'], ['tentative', 'TENTATIVE', 'Maybe'], ['declined', 'DECLINED', 'Decline']].map(([answer, ps, label]) => html`<button
-            key=${answer} type="button" class=${'bc-es-segbtn' + (occ.invite.myPartstat === ps ? ' is-on' : '')}
-            aria-pressed=${occ.invite.myPartstat === ps} onClick=${() => rsvpEvent(occ, answer)}
-          >${label}</button>`)}
-        </span>
-      </div>`}
+      ${occ.invite && html`<${InviteBlock} occ=${occ} />`}
       ${meet && html`<div class="bc-es-join">
         <a class="bc-es-joinbtn" href=${meet.url} target="_blank" rel="noopener noreferrer"><${Icon} name="video" size=${20} />Join ${meet.name}</a>
         <button type="button" class="bc-es-sqbtn" aria-label="Copy meeting link" title="Copy meeting link" onClick=${() => copyText(meet.url, 'Meeting link')}><${Icon} name="copy" size=${20} /></button>

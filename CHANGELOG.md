@@ -4,6 +4,14 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.9.5 (2026-10-04)
+
+- **Answering invitations, finished (#70).**
+  - **Bookings aren't invitations.** A reservation, ticket or confirmation read from email no longer shows Accept / Maybe / Decline, which could never send anything. It reads "Booking via <site>".
+  - **Buttons only where a reply can go.** An invitation that can't be answered from here says why instead: no organizer named, no email account set up to send from, or replies would come from an address that wasn't invited (the organizer's calendar would ignore them).
+  - **Says whether it went.** The old "no reply sent (organizer unknown or RSVP mail not configured)" covered four different causes. Now the reason is given. A reply that failed to send keeps your answer, says why it didn't go, and offers Retry, and you can still change your answer.
+  - **Invitations from Google.** An event on a connected Google calendar that someone else invited you to shows Accept / Maybe / Decline with your current answer, and answering sets it at Google, which tells the organizer. Nobody else on the guest list is mailed. These also show on the Review page.
+
 ## 0.9.4 (2026-10-04)
 
 - **Move a calendar to Google (#55).** A calendar that started in Better-Cal can now be seen live by people who use Google Calendar, and added to if you share it with them that way: its settings, **Move to Google…**.

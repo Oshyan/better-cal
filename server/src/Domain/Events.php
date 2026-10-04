@@ -1648,17 +1648,24 @@ final class Events
             'tags' => $links['tags'][$id] ?? [],
             'people' => $links['people'][$id] ?? [],
             'isContainer' => (int) ($row['is_container'] ?? 0) === 1,
-            // Mail-ingested invitations: organizer/attendees/partstat for the
-            // detail view's invitation panel and RSVP.
-            'invite' => isset($row['invite_json']) && $row['invite_json'] !== null
-                ? (is_array($row['invite_json']) ? $row['invite_json'] : json_decode((string) $row['invite_json'], true))
-                : null,
+            // Invitations (from mail or a Google guest list) and bookings read
+            // from mail: what they are, and whether an answer can go (Rsvp).
+            'invite' => self::invite($row),
             'containers' => $links['containers'][$id] ?? [],
             'styleJson' => $style ?: null,
             'createdAt' => Time::iso($createdAt),
             'updatedAt' => Time::iso(Time::fromDb((string) $row['updated_at'])),
             'isNew' => $this->isNew($row, $createdAt),
         ];
+    }
+
+    private static function invite(array $row): ?array
+    {
+        if (!isset($row['invite_json']) || $row['invite_json'] === null) {
+            return null;
+        }
+        $invite = is_array($row['invite_json']) ? $row['invite_json'] : json_decode((string) $row['invite_json'], true);
+        return is_array($invite) ? Rsvp::describe($invite, config()) : null;
     }
 
     /**

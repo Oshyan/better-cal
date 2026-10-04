@@ -22,9 +22,15 @@ In-process DKIM verification (issue #25) could later let changes from a verifiab
 
 ## RSVP
 
-Invitations you have not answered also appear on the Review page, with Accept / Maybe / Decline inline.
+**Invitations and bookings are different things.** Only an iMIP `REQUEST` with an organizer is an invitation. A reservation, ticket or confirmation read from mail (the markup, Google-link and LLM tiers, and iMIP `PUBLISH`) is a booking: it lands on the calendar like any event, reads "Booking via <site>" in its details, and has no reply buttons, since there is nobody to answer.
 
-Ingested invitations show an RSVP row (Accept / Maybe / Decline) in the event detail view. `POST /api/v1/events/:id/rsvp {answer}` records `myPartstat` and emails an iMIP `REPLY` to the organizer.
+**An invitation shows Accept / Maybe / Decline when a reply can go:** it names an organizer, and there is an account to send from (below) that is one of the invited addresses. When one of those is missing, the event says which instead of showing buttons: no organizer, no account to send from, or "replies would come from X, which isn't one of the invited addresses" (the organizer's calendar ignores a reply from an address it didn't invite). Invitations you can answer and haven't also appear on the Review page.
+
+**Whether it went:** `POST /api/v1/events/:id/rsvp {answer}` records the answer, emails an iMIP `REPLY`, and says what happened. The answer is kept either way. If the email didn't go, the event says so with the reason ("Accepted here; the reply couldn't be sent: ...") and offers Retry, and the answer can still be changed. A changed answer sends a new reply, and each answer is an entry in Activity.
+
+Invitations on a connected Google calendar are answered at Google instead; see [google-calendar.md](google-calendar.md#invitations).
+
+**Unverified:** whether an invitation forwarded from Gmail keeps its calendar part (so it reads as a `REQUEST` and can be answered). Every forwarded message so far has been a booking. To check, forward one invitation to the ingest address and see whether its Activity entry is badged "Email · imip".
 
 **Sender identity matters**: organizers match replies to the invited address. Configure the dedicated RSVP SMTP profile so replies come from the Gmail address that was actually invited:
 

@@ -772,6 +772,46 @@ check('rsvp reply has partstat attendee', str_contains($reply, 'ATTENDEE;PARTSTA
 check('rsvp reply has organizer', str_contains($reply, 'ORGANIZER:mailto:alice@example.com'));
 check('rsvp reply keeps sequence', str_contains($reply, 'SEQUENCE:2'));
 
+// Answering invitations (#70): invitation or booking, and whether a reply can go.
+{
+    $rsvpCfg = ['smtp' => ['host' => 'smtp.example.com', 'from' => 'calendar@example.com'], 'rsvp_smtp' => ['host' => 'smtp.gmail.com', 'user' => 'Owner@Example.com', 'from' => '']];
+    $noMail = ['smtp' => ['host' => ''], 'rsvp_smtp' => ['host' => '']];
+    $request = ['method' => 'REQUEST', 'organizer' => ['email' => 'alice@example.com'], 'attendees' => [['email' => 'owner@example.com']], 'sequence' => 1, 'myPartstat' => 'NEEDS-ACTION'];
+    checkEq('rsvp kind: an iMIP REQUEST is an invitation', 'invitation', BetterCal\Domain\Rsvp::kind($request));
+    foreach (['llm', 'markup', 'gcal-link', 'PUBLISH'] as $m) {
+        checkEq("rsvp kind: a $m read from mail is a booking", 'booking', BetterCal\Domain\Rsvp::kind(['method' => $m]));
+    }
+    checkEq('rsvp kind: a stored kind wins', 'booking', BetterCal\Domain\Rsvp::kind(['kind' => 'booking', 'method' => 'REQUEST']));
+    checkEq('rsvp sender: the RSVP profile, its user when from is empty, lowercased', 'owner@example.com', BetterCal\Domain\Rsvp::senderAddress($rsvpCfg));
+    checkEq('rsvp sender: the main profile when the RSVP one is empty', 'calendar@example.com', BetterCal\Domain\Rsvp::senderAddress(['smtp' => ['host' => 'h', 'from' => 'calendar@example.com'], 'rsvp_smtp' => ['host' => '']]));
+    check('rsvp: a REQUEST to the sending address can be answered', BetterCal\Domain\Rsvp::blocker($request, $rsvpCfg) === null);
+    checkEq('rsvp: no mail account says so', 'not_configured', BetterCal\Domain\Rsvp::blocker($request, $noMail)['code']);
+    checkEq('rsvp: no organizer says so', 'no_organizer', BetterCal\Domain\Rsvp::blocker(['organizer' => null] + $request, $rsvpCfg)['code']);
+    checkEq('rsvp: a cancelled meeting has nothing to answer', 'cancelled', BetterCal\Domain\Rsvp::blocker(['method' => 'CANCEL'] + $request, $rsvpCfg)['code']);
+    checkEq('rsvp: replies from an address that was not invited would be ignored', 'address_mismatch', BetterCal\Domain\Rsvp::blocker(['attendees' => [['email' => 'someone@else.com']]] + $request, $rsvpCfg)['code']);
+    check('rsvp: a Google invitation is always worth trying', BetterCal\Domain\Rsvp::blocker(['via' => 'google'] + $request, $noMail) === null);
+    $booking = BetterCal\Domain\Rsvp::describe(['method' => 'llm', 'organizer' => ['email' => 'me@fwd.example'], 'myPartstat' => 'NEEDS-ACTION'], $rsvpCfg);
+    check('rsvp describe: a booking offers no reply and gives no reason', $booking['kind'] === 'booking' && $booking['canReply'] === false && $booking['why'] === null);
+    $blocked = BetterCal\Domain\Rsvp::describe($request, $noMail);
+    check('rsvp describe: a blocked invitation says why', $blocked['canReply'] === false && str_contains((string) $blocked['why'], 'send from'));
+
+    $gItem = [
+        'organizer' => ['email' => 'Alice@Example.com', 'displayName' => 'Alice'],
+        'attendees' => [
+            ['email' => 'alice@example.com', 'organizer' => true, 'responseStatus' => 'accepted'],
+            ['email' => 'owner@gmail.com', 'self' => true, 'responseStatus' => 'tentative'],
+            ['email' => 'room@resource.calendar.google.com', 'resource' => true, 'responseStatus' => 'accepted'],
+        ],
+    ];
+    $gInvite = BetterCal\Domain\Rsvp::fromGoogle($gItem);
+    checkEq('google invite: answered Maybe at Google', 'TENTATIVE', $gInvite['myPartstat']);
+    checkEq('google invite: organizer, lowercased', 'alice@example.com', $gInvite['organizer']['email']);
+    checkEq('google invite: rooms are not guests', 2, count($gInvite['attendees']));
+    check('google invite: answered at Google', $gInvite['via'] === 'google' && $gInvite['kind'] === 'invitation');
+    check('google invite: none when the account organises it', BetterCal\Domain\Rsvp::fromGoogle(['organizer' => ['self' => true]] + $gItem) === null);
+    check('google invite: none when the account is not a guest', BetterCal\Domain\Rsvp::fromGoogle(['attendees' => [['email' => 'x@y.z']]] + $gItem) === null);
+}
+
 // ---------------------------------------------------------------------------
 // GcalLink — Google Calendar template link parsing (pure)
 // ---------------------------------------------------------------------------
@@ -3659,6 +3699,18 @@ use BetterCal\Domain\GoogleWriter;
         'start' => ['dateTime' => '2026-10-10T10:00:00-07:00', 'timeZone' => 'America/Los_Angeles'], 'end' => ['dateTime' => '2026-10-10T12:00:00-07:00', 'timeZone' => 'America/Los_Angeles'],
     ]);
     checkEq('google->parsed: the event link comes back from source, not Google\'s page', 'https://partiful.com/e/abc', $sourced['url']);
+    check('google->parsed: no guest list, no invite column, so a block from mail survives', !array_key_exists('invite_json', $sourced));
+    $guest = GoogleSync::toParsed($sourcedItem = [
+        'id' => 'g2', 'iCalUID' => 'inv-1@google.com', 'summary' => 'Planning',
+        'start' => ['dateTime' => '2026-10-10T10:00:00-07:00'], 'end' => ['dateTime' => '2026-10-10T11:00:00-07:00'],
+        'organizer' => ['email' => 'alice@example.com'],
+        'attendees' => [['email' => 'alice@example.com', 'organizer' => true], ['email' => 'me@gmail.com', 'self' => true, 'responseStatus' => 'needsAction']],
+    ]);
+    checkEq('google->parsed: a guest list from someone else is an invitation to answer', 'NEEDS-ACTION', json_decode((string) $guest['invite_json'], true)['myPartstat']);
+    $own = GoogleSync::toParsed(['organizer' => ['email' => 'me@gmail.com', 'self' => true]] + $sourcedItem);
+    check('google->parsed: my own meeting clears the block', array_key_exists('invite_json', $own) && $own['invite_json'] === null);
+    $back = GoogleSync::rowsToParsed([['uid' => 'u', 'title' => 't', 'description' => null, 'location' => null, 'url' => null, 'start_utc' => '2026-10-10 17:00:00', 'end_utc' => '2026-10-10 18:00:00', 'all_day' => 0, 'tzid' => 'UTC', 'rrule' => null, 'exdates_json' => null, 'status' => 'confirmed', 'recurrence_instance_utc' => null, 'google_event_id' => 'g2', 'invite_json' => $guest['invite_json']]]);
+    checkEq('google rows->parsed: the invitation rides an incremental merge', $guest['invite_json'], $back[0]['invite_json']);
 
     $cal = ['provider' => 'google', 'google_calendar_id' => 'x@group.calendar.google.com', 'google_account_id' => 1, 'google_access_role' => 'writer'];
     check('google writable: writer role', GoogleWriter::writable($cal));

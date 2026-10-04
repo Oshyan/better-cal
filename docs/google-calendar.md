@@ -72,13 +72,21 @@ Recurring edits map onto Google the way the local model already works: "this occ
 
 Activity records each write as a plain entry ("Updated 'Dishoom' on Google calendar 'London'"); there is no Undo for these, since undoing would be a second write to Google against a row that is Google's, not a snapshot of ours.
 
+## Invitations
+
+An event on a connected Google calendar that lists your account as a guest, organised by someone else, is an invitation: its details show who invited you, how many are invited, and Accept / Maybe / Decline, with your current answer at Google selected. Unanswered ones also appear on the Review page.
+
+Answering sets your response at Google (`attendees[self].responseStatus`). Google passes a guest's answer to the organizer by itself, so Better-Cal sends it with `sendUpdates=none` and nobody else on the guest list gets mail. An answer changed in Google Calendar shows here on the next poll. If Google refuses or can't be reached, nothing changes here and the error says why.
+
+Google puts invitations on the account's main calendar, so this needs that calendar connected. A recurring invitation is answered for the whole series (or, for an occurrence Google already treats separately, for that one).
+
 ## How syncing works
 
 - First sync lists every event on the calendar (Google's `events.list`, masters with their `RRULE`, exceptions as instances) and stores the sync token Google returns.
 - Every later poll sends only the sync token and receives only what changed: new, edited, moved, cancelled. Nothing changed is one request with an empty answer. The changes are merged into the current snapshot and handed to the same materialisation the ICS feeds use (`Feeds::sync`), so upserts, deletions, the CalDAV change log, the Activity roll-up and the health states are identical to a feed's.
 - Google's cancelled instance of a recurring event becomes an `EXDATE` on the series here; a cancelled series is deleted whole.
 - When Google says the token is stale (HTTP 410, which happens after long gaps), the next poll is a full list again. Nothing is lost either way.
-- Reminders and attendees are not synced. Reminders are per-user on Google's side anyway; attendees are the write side's problem.
+- Reminders are not synced; they are per-user on Google's side anyway. Guest lists are read only to recognise invitations (below).
 - The poll interval, stale threshold, "check now", and everything else in a calendar's settings work as for any feed.
 
 ## Endpoints

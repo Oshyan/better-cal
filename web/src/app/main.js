@@ -14,6 +14,7 @@ import { loadLeaflet } from './eventparts.js';
 import { localTz, sameClock, tzCity, tzOffsetLabel } from '../lib/dates.js';
 import { handleEventLink, resyncPush, offerPushOnThisDevice } from './push.js';
 import { takeHandoff, runHandoff } from './handoff.js';
+import './install.js'; // keeps the browser's one-time install prompt for the welcome
 import {
   BATTERY_TIP_BODY, shouldShowInstallTip, markInstallTipShown,
 } from '../lib/batterytip.js';

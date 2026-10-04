@@ -4091,3 +4091,39 @@ button.bc-review-title { color: var(--fg); padding: 0; }
 /* Settings, System: why this device's app last started (0.9.1). */
 .bc-sys-starts { margin: 0; padding: 0; list-style: none; display: grid; gap: 4px; font-size: 13.5px; }
 .bc-sys-starts-when { color: var(--fg-muted); font-variant-numeric: tabular-nums; margin-right: 6px; }
+
+/* --- first-run welcome (0.9.2, #79) ----------------------------------------------------
+   A card over the calendar on a desktop, a sheet from the bottom on a phone. Settings
+   rows put the label beside its control; the start list is one row per thing to try. */
+.bc-welcome-wrap { position: fixed; inset: 0; z-index: 85; background: var(--scrim); display: flex; align-items: center; justify-content: center; padding: 16px; }
+.bc-welcome {
+  width: 560px; max-width: 100%; max-height: calc(100vh - 32px); overflow-y: auto; overscroll-behavior: contain;
+  background: var(--bg-raised); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow); padding: 20px 22px;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.bc-welcome-head { display: flex; align-items: baseline; gap: 10px; }
+.bc-welcome-head h2 { margin: 0; font-size: 20px; }
+.bc-welcome-step { margin-left: auto; color: var(--fg-muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.bc-welcome-lede { margin: 0; color: var(--fg-muted); font-size: 14px; line-height: 1.45; }
+.bc-welcome-form { display: grid; gap: 10px; }
+.bc-welcome-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.bc-welcome-row > span:first-child { width: 150px; flex: none; font-weight: 600; font-size: 14px; }
+.bc-welcome-row select, .bc-welcome-row input { flex: 1; min-width: 0; }
+.bc-welcome-list { display: grid; border-top: 1px solid var(--border); }
+.bc-welcome-item { display: flex; align-items: center; gap: 12px; padding: 10px 2px; border-bottom: 1px solid var(--border); }
+.bc-welcome-ico { flex: none; width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; background: var(--bg-inset); color: var(--fg-muted); }
+.bc-welcome-item.is-done .bc-welcome-ico { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+.bc-welcome-text { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.bc-welcome-text b { font-size: 14.5px; }
+.bc-welcome-text small { color: var(--fg-muted); font-size: 12.5px; line-height: 1.35; }
+.bc-welcome-item .bc-btn { flex: none; }
+.bc-welcome-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-top: 4px; }
+@media (max-width: 640px) {
+  .bc-welcome-wrap { align-items: flex-end; padding: 0; }
+  .bc-welcome { width: 100%; max-height: 92vh; border-radius: 18px 18px 0 0; padding: 18px 16px calc(16px + env(safe-area-inset-bottom, 0px)); }
+  .bc-welcome-row > span:first-child { width: 100%; }
+  .bc-welcome-row .bc-seg-btn { min-height: 40px; padding: 0 14px; font-size: 15px; }
+  .bc-welcome-row select, .bc-welcome-row input { min-height: 44px; font-size: 16px; }
+  .bc-welcome-text small { font-size: 13.5px; }
+  .bc-welcome-item .bc-btn, .bc-welcome-foot .bc-btn { min-height: 42px; }
+}

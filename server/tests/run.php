@@ -466,6 +466,11 @@ sort($jsIcons);
 $phpIcons = Plugins::ICON_NAMES;
 sort($phpIcons);
 checkEq('icon set: PHP allowlist matches icons.js', $jsIcons, $phpIcons);
+// The views a default may be: exactly the app's (0.9.2: the server's list had
+// drifted and refused 3 weeks, 2 weeks and Split).
+preg_match("/export const VIEWS = \\[([^\\]]*)\\]/", (string) file_get_contents(dirname(__DIR__, 2) . '/web/src/app/actions.js'), $mViews);
+preg_match_all("/'([a-z0-9]+)'/", $mViews[1] ?? '', $mViewIds);
+checkEq('views: the server accepts exactly the app\'s views as a default', $mViewIds[1], \BetterCal\Domain\Settings::VIEWS);
 
 check('icon: a host name validates', Plugins::iconError('calendar') === null);
 check('icon: an unknown name is refused', Plugins::iconError('map-pin') !== null);
@@ -788,6 +793,14 @@ checkEq('push label: a device names itself', 'Pixel 9 Pro · Chrome app', \Bette
 checkEq('push label: control characters and runs of space go', 'Mac · Chrome', \BetterCal\Domain\PushSubscriptions::label("Mac\n\t·   Chrome"));
 checkEq('push label: capped at 80 characters', 80, mb_strlen(\BetterCal\Domain\PushSubscriptions::label(str_repeat('x', 200))));
 checkEq('push label: nothing, or not text, is no label', [null, null], [\BetterCal\Domain\PushSubscriptions::label('  '), \BetterCal\Domain\PushSubscriptions::label(['x'])]);
+foreach (['month', 'weeks3', 'weeks2', 'week', 'day', 'agenda', 'split'] as $v) {
+    checkEq('settings: ' . $v . ' can be the default view', $v, \BetterCal\Domain\Settings::validate(['defaultView' => $v])['defaultView']);
+}
+check('settings: welcome is done by default (existing accounts never see it)', \BetterCal\Domain\Settings::withDefaults([])['welcomeDone'] === true);
+check('settings: a new account can start with it pending', \BetterCal\Domain\Settings::withDefaults(['welcomeDone' => false])['welcomeDone'] === false);
+checkEq('settings: welcome steps dedupe', ['import', 'google'], \BetterCal\Domain\Settings::validate(['welcomeSteps' => ['import', 'google', 'import']])['welcomeSteps']);
+$threw = false; try { \BetterCal\Domain\Settings::validate(['welcomeSteps' => ['nope']]); } catch (\Throwable) { $threw = true; }
+check('settings: unknown welcome step refused', $threw);
 $nowSql = '2026-10-03 12:00:00';
 check('search upcoming: an event that has not ended', \BetterCal\Domain\Search::isUpcoming(['end_utc' => '2026-10-03 13:00:00', 'rrule' => null], $nowSql));
 check('search upcoming: one that ended is past', !\BetterCal\Domain\Search::isUpcoming(['end_utc' => '2026-10-03 11:00:00', 'rrule' => null], $nowSql));

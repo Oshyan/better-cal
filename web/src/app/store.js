@@ -134,7 +134,9 @@ export const state = {
   dropChoice: null,  // {x, y, title, options: [{label, value}], cb} — chip at a drop point
   pluginCard: null,  // {occ, anchorRect} — plugin band info card
   searchOpen: false,
-  searchRestore: false, // reopen search with the results an event was opened from (0.7.3)
+  searchRestore: false,
+  welcomeOpen: false, // the first-run welcome, reopened from Settings (0.9.2)
+  welcomeLater: false, // put aside with Back on a phone until the next launch // reopen search with the results an event was opened from (0.7.3)
   jumpOpen: false,   // jump-to-date popover (toolbar date label / g)
   shortcutsOpen: false, // keyboard shortcuts cheat sheet (?)
   popover: null,     // {instanceId, anchorRect}

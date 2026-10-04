@@ -60,8 +60,18 @@ final class Settings
         // MapTiler raster style for the event detail mini-map (used only when
         // BETTERCAL_MAPTILER_KEY is configured; OSM tiles otherwise).
         'mapStyle' => 'streets-v2',
+        // First-run welcome (0.9.2, #79). Done unless an account starts
+        // without it: seed.php creates new accounts with false, so existing
+        // accounts never see it. welcomeSteps: the "where to start" items
+        // taken so far.
+        'welcomeDone' => true,
+        'welcomeSteps' => [],
     ];
-    private const VIEWS = ['month', 'multiweek', 'week', 'day', 'agenda'];
+    public const WELCOME_STEPS = ['subscribe', 'import', 'google', 'install', 'reminders', 'plugins'];
+    // Every view the app has (web/src/app/actions.js VIEWS). It listed a
+    // 'multiweek' that no longer exists and refused 3 weeks, 2 weeks and
+    // Split as a default until 0.9.2.
+    public const VIEWS = ['month', 'weeks3', 'weeks2', 'week', 'day', 'agenda', 'split'];
     private const MAP_STYLES = ['streets-v2', 'dataviz', 'outdoor-v2', 'bright-v2'];
 
     public function __construct(private readonly Db $db)
@@ -195,6 +205,8 @@ final class Settings
                 'homeLng' => self::coordinate($key, $value, 180.0),
                 'homeLabel' => self::label($key, $value),
                 'mapStyle' => self::enum($key, $value, self::MAP_STYLES),
+                'welcomeDone' => self::bool($key, $value),
+                'welcomeSteps' => self::welcomeSteps($value),
                 default => throw HttpError::badRequest("Unknown setting '$key'", 'unknown_setting'),
             };
         }
@@ -261,6 +273,22 @@ final class Settings
         }
         $value = trim($value);
         return $value === '' ? null : mb_substr($value, 0, 200);
+    }
+
+    /** @return list<string> */
+    private static function welcomeSteps(mixed $value): array
+    {
+        if (!is_array($value)) {
+            throw HttpError::badRequest('welcomeSteps must be a list');
+        }
+        $out = [];
+        foreach ($value as $step) {
+            if (!is_string($step) || !in_array($step, self::WELCOME_STEPS, true)) {
+                throw HttpError::badRequest('welcomeSteps may only hold: ' . implode('|', self::WELCOME_STEPS));
+            }
+            $out[$step] = true;
+        }
+        return array_keys($out);
     }
 
     private static function bool(string $key, mixed $value): bool

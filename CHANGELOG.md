@@ -4,6 +4,15 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship; each advisory names the affected and patched versions.
 
+## 0.9.2 (2026-10-04)
+
+- **A first-run welcome (#79).** A new account opens on two short steps over the calendar:
+  - **Confirm the basics,** filled in from the device: Home time zone, the day the week starts, 12- or 24-hour clock, theme, and the first calendar's name.
+  - **Where to start:** subscribe to a calendar by address, import a file or a Google Takeout export, connect Google (or a note that the server needs its Google setup first), install the app, turn on reminders on this device, and browse the plugins. Each one marks itself done.
+
+  The welcome is skippable at every step. It stands aside while something it opened is in use and comes back until Done. On a phone, Back steps from 2 to 1, and from 1 puts it aside until the next launch. Settings, General has "Show the welcome again", which opens it right there. Things already set up (subscriptions, a Google account, plugins, this device's reminders, the installed app) show as done. Existing accounts don't see it unasked.
+- **Every view can be the default view.** The server still listed an old "multiweek" view and refused 3 weeks, 2 weeks and Split as a default, though Settings offered them. A test now checks the server's list against the app's.
+
 ## 0.9.1 (2026-10-04)
 
 - **Reminders say the time on your clock.** A reminder's time was written in the event's own time zone. Events imported from Google Takeout are stored in UTC, so a 12:45 PM flight in London (summer time) was announced as 11:45 AM. Reminders, by push and by email, now read on the zone your device last reported (then your Home zone), the way the app shows times. An event that keeps a zone of its own whose clock differs adds that time: "12:45 PM (4:45 AM in Los Angeles)". They also follow the 12- or 24-hour setting.

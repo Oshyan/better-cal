@@ -97,6 +97,8 @@ if ($existing !== null) {
         'email' => $email,
         'password_hash' => password_hash($password, PASSWORD_DEFAULT),
         'display_name' => $name !== '' ? $name : explode('@', $email)[0],
+        // A new account opens on the first-run welcome (#79).
+        'settings_json' => json_encode(['welcomeDone' => false]),
     ]);
     echo "Created user $email (id $userId).\n";
 }

@@ -30,6 +30,7 @@ import { Toolbar } from './Toolbar.js';
 import { BottomBar } from './BottomBar.js';
 import { Sidebar } from './Sidebar.js';
 import { QuickAdd } from './QuickAdd.js';
+import { Welcome } from './Welcome.js';
 import { EventPopover } from './EventPopover.js';
 import { GroupPopover } from './GroupPopover.js';
 import { EditorDrawer } from './EditorDrawer.js';
@@ -638,9 +639,9 @@ export function App() {
     else history.pushState({ bcRoute: route }, '');
     let popped = false;
     const onPop = () => {
-      // Back from a page within this page (a Settings section on a phone,
-      // 0.8.0) lands on this page's own entry: stay.
-      if (history.state && history.state.bcRoute === state.route && !history.state.bcSetSection) return;
+      // Back from something on top of this page (a Settings section, the
+      // welcome) lands on one of this page's own entries: stay.
+      if (history.state && history.state.bcRoute === state.route) return;
       popped = true;
       set({ route: 'calendar' });
     };
@@ -678,7 +679,7 @@ export function App() {
     return html`<div class="bc-app"><${SavedViewsPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${CommandPalette} /><${SystemBanner} /><${Toasts} /></div>`;
   }
   if (s.route === 'settings') {
-    return html`<div class="bc-app"><${SettingsPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${CommandPalette} /><${SystemBanner} /><${Toasts} /></div>`;
+    return html`<div class="bc-app"><${SettingsPage} /><${Welcome} /><${CreateDrawer} /><${ShortcutsSheet} /><${CommandPalette} /><${SystemBanner} /><${Toasts} /></div>`;
   }
   if (s.route === 'people') {
     return html`<div class="bc-app"><${PeoplePage} /><${CreateDrawer} /><${ShortcutsSheet} /><${CommandPalette} /><${SystemBanner} /><${Toasts} /></div>`;
@@ -925,6 +926,7 @@ export function App() {
     </div>
     ${expand}
     <${QuickAdd} />
+    <${Welcome} />
     <${EventPopover} />
     <${GroupPopover} />
     <${EditorDrawer} />

@@ -696,7 +696,13 @@ export function SettingsPage() {
     // Back from a reload (0.9.1) the section's entry is already there.
     if (!(history.state && history.state.bcSetSection === chosen)) history.pushState({ bcRoute: 'settings', bcSetSection: chosen }, '');
     let popped = false;
-    const onPop = () => { popped = true; set({ settingsTab: null }); };
+    // Back from something on top of the section (the welcome) lands on the
+    // section's own entry: stay in it.
+    const onPop = () => {
+      if (history.state && history.state.bcSetSection === chosen) return;
+      popped = true;
+      set({ settingsTab: null });
+    };
     window.addEventListener('popstate', onPop);
     return () => {
       window.removeEventListener('popstate', onPop);
@@ -767,6 +773,9 @@ export function SettingsPage() {
         </select>
       <//>
       <${HomeTimezoneRow} tz=${settings.tz} onChange=${save('tz')} />
+      <${Row} label="Welcome" hint="The first-run setup: these settings from the device, and where to start (subscribe, import, Google, install, reminders, plugins).">
+        <button type="button" class="bc-btn" onClick=${() => set({ welcomeOpen: true })}>Show the welcome again</button>
+      <//>
     </section>
     <section class="bc-set-section">
       <h2 class="bc-set-h">Quick add</h2>

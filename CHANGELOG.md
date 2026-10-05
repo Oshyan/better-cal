@@ -19,7 +19,7 @@ Security fixes are tracked privately as GitHub security advisories until they sh
 
 ## 0.9.9 (2026-10-04)
 
-- **Repeating events with skipped dates no longer "change" on every poll.** MySQL hands the list of skipped dates back reformatted, and the comparison read that as a change. So on any feed or Google calendar, every series with two or more skipped dates was rewritten each poll, logged as updated in Activity ("a feed: 9 updated", hourly), and fetched again by CalDAV apps. They now compare by content, as the invitation details already did.
+- **Repeating events with skipped dates no longer "change" on every poll.** MySQL hands the list of skipped dates back reformatted, and the comparison read that as a change. So on any feed or Google calendar, every series with two or more skipped dates was rewritten each poll, logged as updated in Activity (one feed showed "9 updated" every hour), and fetched again by CalDAV apps. They now compare by content, as the invitation details already did.
 
 ## 0.9.8 (2026-10-04)
 

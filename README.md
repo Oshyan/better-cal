@@ -10,8 +10,6 @@ A self-hosted calendar built to fully replace Google Calendar: everything GCal d
 
 **[Full feature list → FEATURES.md](FEATURES.md)**
 
-![Month view with the command palette open: go to a date, create, switch views, toggle calendars, all from the keyboard](docs/screenshots/command-palette.webp)
-
 ## What this is, and isn't
 
 I wanted infinite scroll in a calendar. That's the whole origin story: Google Calendar has never had it, people have been asking for it for years, and one evening I sat down with Claude (Fable 5) to see how far a calendar with infinite scroll could get. By morning there was a working one. Within a week it had replaced Google Calendar for me outright, and by then it did a number of things GCal doesn't and probably never will: undo for everything, trips and people as real objects, a relationship to every event that tells "what am I doing" apart from "what could I do" and "what's the weather", feeds that are actually pleasant to live with, and an API that an agent can drive as well as I can.

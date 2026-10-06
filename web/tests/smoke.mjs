@@ -1420,6 +1420,13 @@ console.log('--- chronological ordering across timezone offsets ---');
   eq('zone: evening after fall-back uses the winter offset', utc(instantFromWallTime('2026-11-01T20:00', 'America/Los_Angeles')), '2026-11-02T04:00Z');
   eq('zone: just before fall-back uses the summer offset', utc(instantFromWallTime('2026-11-01T00:30', 'America/Los_Angeles')), '2026-11-01T07:30Z');
   eq('zone: a time inside the spring-forward gap moves an hour later', utc(instantFromWallTime('2026-03-08T02:30', 'America/Los_Angeles')), '2026-03-08T10:30Z');
+  // 0.9.15: the repeated hour when clocks go back is the earlier pass, east and west.
+  eq('zone: repeated hour is the earlier pass (London)', utc(instantFromWallTime('2026-10-25T01:30', 'Europe/London')), '2026-10-25T00:30Z');
+  eq('zone: repeated hour is the earlier pass (Los Angeles)', utc(instantFromWallTime('2026-11-01T01:30', 'America/Los_Angeles')), '2026-11-01T08:30Z');
+  eq('zone: repeated hour is the earlier pass (Sydney)', utc(instantFromWallTime('2026-04-05T02:30', 'Australia/Sydney')), '2026-04-04T15:30Z');
+  const { addDaysInZone } = await import('../src/lib/dates.js');
+  eq('zone: a London 9:00 moved a week across the US change stays 9:00 London', utc(addDaysInZone(new Date('2026-03-02T09:00:00Z'), 7, 'Europe/London')), '2026-03-09T09:00Z');
+  eq('zone: a London 9:00 moved across the UK change stays 9:00 London', utc(addDaysInZone(new Date('2026-03-23T09:00:00Z'), 7, 'Europe/London')), '2026-03-30T08:00Z');
   assert('zone: an unknown zone is NaN, never a silent guess', isNaN(instantFromWallTime('2026-06-04T15:00', 'Mars/Olympus_Mons')));
   assert('zone: a malformed value is NaN', isNaN(instantFromWallTime('next tuesday', 'UTC')));
   eq('zone: wall time in New York', wallTimeInZone(new Date('2026-06-04T19:00:00Z'), 'America/New_York'), '2026-06-04T15:00');
@@ -1457,6 +1464,8 @@ console.log('--- chronological ordering across timezone offsets ---');
   eq('until: a UTC end time reads as its local day', untilDayKey(z), '2026-10-20');
   eq('until: a date-only end is that date', untilDayKey('20261020'), '2026-10-20');
   eq('until: nothing usable is empty', untilDayKey(''), '');
+  eq('until: a UTC end read on the series clock (Tokyo)', untilDayKey('20261020T145900Z', 'Asia/Tokyo'), '2026-10-20');
+  eq('until: a UTC end read on the series clock (Los Angeles)', untilDayKey('20261021T065900Z', 'America/Los_Angeles'), '2026-10-20');
 }
 
 // --- All-day date fields: the last day, not the stored exclusive end (#34) ---

@@ -1,0 +1,10 @@
+[project]
+name = "better-cal-tz-harness"
+version = "0.1.0"
+description = "Time zone cross-check: expands Better-Cal's exported series with recurring-ical-events"
+requires-python = ">=3.12"
+dependencies = [
+    "icalendar>=7.3.0",
+    "python-dateutil>=2.9.0.post0",
+    "recurring-ical-events>=3.8.2",
+]

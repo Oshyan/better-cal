@@ -1,0 +1,9 @@
+{
+  "name": "better-cal-tz-harness",
+  "private": true,
+  "description": "Time zone cross-check: expands Better-Cal's exported series with ical.js",
+  "type": "module",
+  "dependencies": {
+    "ical.js": "^2.2.1"
+  }
+}

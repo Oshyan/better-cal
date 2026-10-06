@@ -1322,6 +1322,37 @@ checkEq('all-day weekly in UTC unchanged', ['2026-08-31 00:00:00', '2026-09-02 0
     checkEq('all-day UTC event made timed takes the Home zone', ['America/Los_Angeles', '2026-10-26 16:00:00'], [$fCols['tzid'] ?? null, $fCols['start_utc'] ?? null]);
     $fCols = $fPatch->invoke($fEvents, ['tzid' => 'Europe/Paris'] + $fImported, ['allDay' => false, 'start' => '2026-10-26T09:00:00+01:00', 'end' => '2026-10-26T10:00:00+01:00']);
     check('all-day event in a zone made timed keeps its zone', !isset($fCols['tzid']));
+    // 0.9.15: an "All events" edit made from one occurrence changes the series
+    // by what changed for that occurrence, not by making it the first.
+    $fRebase = (new ReflectionClass(BetterCal\Domain\Events::class))->getMethod('rebaseSeriesEdit');
+    $fMon = ['id' => 7, 'uid' => 'mon', 'user_id' => 1, 'all_day' => 0, 'tzid' => 'America/Los_Angeles', 'start_utc' => '2026-10-05 16:00:00', 'end_utc' => '2026-10-05 17:00:00', 'rrule' => 'FREQ=WEEKLY;COUNT=8', 'recurrence_parent_id' => null, 'exdates_json' => null];
+    $fEdit = static fn(string $s, string $e): array => ['scope' => 'all', 'instanceStart' => '2026-11-02T09:00:00-08:00', 'title' => 'Renamed', 'start' => $s, 'end' => $e];
+    $fOut = $fRebase->invoke($fEvents, $fMon, $fEdit('2026-11-02T09:00:00-08:00', '2026-11-02T10:00:00-08:00'));
+    check('series edit from a later occurrence, times untouched: the series start stays', !isset($fOut['start']) && $fOut['title'] === 'Renamed');
+    $fOut = $fRebase->invoke($fEvents, $fMon, $fEdit('2026-11-02T10:00:00-08:00', '2026-11-02T11:30:00-08:00'));
+    checkEq('series edit to 10:00 moves the series start to 10:00 on its own first day', ['2026-10-05T10:00:00-07:00', '2026-10-05T11:30:00-07:00'], [$fOut['start'], $fOut['end']]);
+    $fOut = $fRebase->invoke($fEvents, $fMon, $fEdit('2026-11-03T09:00:00-08:00', '2026-11-03T10:00:00-08:00'));
+    checkEq('series edit a day later moves the series a day later', '2026-10-06T09:00:00-07:00', $fOut['start']);
+    $fShift = (new ReflectionClass(BetterCal\Domain\Events::class))->getMethod('seriesKeyShift');
+    $fMap = $fShift->invoke(null, $fMon, ['start_utc' => '2026-10-05 17:00:00', 'end_utc' => '2026-10-05 18:00:00'] + $fMon);
+    checkEq('series moved to 10:00: skipped and edited days keep their place, across DST', ['2026-10-12 17:00:00', '2026-11-02 18:00:00'], [$fMap('2026-10-12 16:00:00'), $fMap('2026-11-02 17:00:00')]);
+    $fMap = $fShift->invoke(null, $fMon, ['start_utc' => '2026-10-06 16:00:00', 'end_utc' => '2026-10-06 17:00:00'] + $fMon);
+    checkEq('series moved a day: keys move a day', '2026-11-03 17:00:00', $fMap('2026-11-02 17:00:00'));
+    check('series unchanged: nothing to re-key', $fShift->invoke(null, $fMon, $fMon) === null);
+    $fMap = $fShift->invoke(null, $fMon, ['all_day' => 1, 'start_utc' => '2026-10-05 07:00:00', 'end_utc' => '2026-10-06 07:00:00'] + $fMon);
+    checkEq('series made all-day: keys become its local midnights', '2026-11-02 08:00:00', $fMap('2026-11-02 17:00:00'));
+
+    checkEq('byday: every Monday moved a day is every Tuesday', 'FREQ=WEEKLY;BYDAY=TU', Recurrence::shiftByday('FREQ=WEEKLY;BYDAY=MO', 1));
+    checkEq('byday: Mon/Wed/Fri moved back a day wraps Monday to Sunday', 'FREQ=WEEKLY;BYDAY=TU,TH,SU', Recurrence::shiftByday('FREQ=WEEKLY;BYDAY=MO,WE,FR', -1));
+    checkEq('byday: monthly nth weekday is left alone', 'FREQ=MONTHLY;BYDAY=3TH', Recurrence::shiftByday('FREQ=MONTHLY;BYDAY=3TH', 1));
+    checkEq('byday: a Thursday start with Mon/Wed/Fri waits one day for Friday', 1, Recurrence::daysToFirstByday('FREQ=WEEKLY;BYDAY=MO,WE,FR', new DateTimeImmutable('2026-10-08 09:00', new DateTimeZone('America/Los_Angeles'))));
+    checkEq('byday: a start on a listed day stays', 0, Recurrence::daysToFirstByday('FREQ=WEEKLY;BYDAY=MO,TH', new DateTimeImmutable('2026-10-08 09:00', new DateTimeZone('America/Los_Angeles'))));
+    check('pattern ignores bounds', Recurrence::pattern('FREQ=WEEKLY;BYDAY=MO;COUNT=8') === Recurrence::pattern('FREQ=WEEKLY;UNTIL=20261201;BYDAY=MO'));
+    $fAlign = (new ReflectionClass(BetterCal\Domain\Events::class))->getMethod('alignedStart');
+    checkEq('align: a Thursday 9:00 start of a Mon/Wed/Fri series moves to Friday 9:00', ['start_utc' => '2026-10-09 16:00:00', 'end_utc' => '2026-10-09 17:00:00'], $fAlign->invoke(null, ['rrule' => 'FREQ=WEEKLY;BYDAY=MO,WE,FR', 'start_utc' => '2026-10-08 16:00:00', 'end_utc' => '2026-10-08 17:00:00'] + $fMon));
+    $fOut = $fRebase->invoke($fEvents, ['rrule' => 'FREQ=WEEKLY;BYDAY=MO'] + $fMon, $fEdit('2026-11-03T09:00:00-08:00', '2026-11-03T10:00:00-08:00'));
+    checkEq('series moved Monday to Tuesday: its day moves too', ['2026-10-06T09:00:00-07:00', 'FREQ=WEEKLY;BYDAY=TU'], [$fOut['start'], $fOut['rrule'] ?? null]);
+
     // "This and following" on a series with a COUNT keeps what is left of it.
     $fFollow = (new ReflectionClass(BetterCal\Domain\Events::class))->getMethod('followingRrule');
     $fSeries = ['id' => 9, 'uid' => 'c10', 'all_day' => 0, 'tzid' => 'America/Los_Angeles', 'start_utc' => '2026-10-05 16:00:00', 'end_utc' => '2026-10-05 17:00:00', 'rrule' => 'FREQ=WEEKLY;COUNT=10', 'exdates_json' => json_encode(['2026-10-12 16:00:00'])];
@@ -1336,6 +1367,96 @@ checkEq('all-day weekly in UTC unchanged', ['2026-08-31 00:00:00', '2026-09-02 0
     $fdb->run("INSERT INTO feedback_signals (user_id, event_id, kind) VALUES (1, 2, 'up')"); // from triage (going)
     $fEvents->recordFeedback(1, 2, 'up');
     checkEq('thumbs: up after going adds nothing', 3, $fCount());
+}
+
+// Round trip (0.9.15): a series exported, read back as CalDAV would store it,
+// and expanded again has the same occurrences, across zones west and east,
+// half-hour and southern ones, the repeated hour when clocks go back, all-day
+// and timed, with a skipped day and an edited one. The model's core was also
+// checked against independent engines (tools/tz-harness).
+{
+    $rtZones = ['America/Los_Angeles', 'America/New_York', 'Europe/London', 'Europe/Berlin', 'Asia/Kolkata', 'Asia/Tokyo', 'Australia/Sydney', 'Pacific/Auckland', 'America/Sao_Paulo', 'Australia/Lord_Howe', 'UTC', 'Pacific/Chatham'];
+    $rtRules = ['FREQ=WEEKLY', 'FREQ=WEEKLY;BYDAY=MO,WE,FR', 'FREQ=DAILY;COUNT=40', 'FREQ=MONTHLY;BYMONTHDAY=15', 'FREQ=MONTHLY;BYDAY=-1SU'];
+    $rtRec = new Recurrence();
+    $rtKey = static fn(array $o): string => (int) $o['row']['all_day'] === 1
+        ? 'D' . $o['start']->setTimezone(Time::zone((string) $o['row']['tzid']))->format('Y-m-d')
+        : 'T' . Time::toDb($o['start']);
+    $rtBad = [];
+    $rtCases = 0;
+    foreach ($rtZones as $z) {
+        $tz = new DateTimeZone($z);
+        foreach ($rtRules as $rule) {
+            foreach (['01:30', '09:00', 'day'] as $when) {
+                foreach (['2026-10-19', '2026-03-16'] as $date) { // Mondays
+                    $allDay = $when === 'day';
+                    $s = $allDay ? Time::parseAllDay($date, $z) : (new DateTimeImmutable($date . ' ' . $when, $tz))->setTimezone(Time::utc());
+                    $e = $allDay ? Time::parseAllDay((new DateTimeImmutable($date))->modify('+1 day')->format('Y-m-d'), $z) : $s->modify('+1 hour');
+                    $master = ['id' => 1, 'uid' => 'rt', 'title' => 'Round trip', 'all_day' => $allDay ? 1 : 0, 'tzid' => $z, 'start_utc' => Time::toDb($s), 'end_utc' => Time::toDb($e), 'rrule' => $rule, 'status' => 'confirmed', 'exdates_json' => null, 'recurrence_parent_id' => null];
+                    $win = [$s->modify('-1 day'), $s->modify('+200 days')];
+                    $occs = $rtRec->expand($master, [], $win[0], $win[1]);
+                    if (count($occs) < 6) {
+                        continue;
+                    }
+                    // The edited occurrence: one in the hour clocks go back over,
+                    // when the series has one (moved an hour, onto the second
+                    // pass of that clock time), else the fifth; the one before
+                    // it is skipped.
+                    $pick = 4;
+                    foreach ($occs as $i => $o) {
+                        if ($i >= 3 && $o['start']->setTimezone($tz)->format('YmdHi') === $o['start']->modify('+1 hour')->setTimezone($tz)->format('YmdHi')) {
+                            $pick = $i;
+                            break;
+                        }
+                    }
+                    $master['exdates_json'] = json_encode([$occs[$pick - 1]['instanceUtc']]);
+                    $ovStart = Time::fromDb($occs[$pick]['instanceUtc'])->modify($allDay ? '+0 seconds' : '+60 minutes');
+                    $override = ['id' => 2, 'uid' => 'rt', 'title' => 'Edited', 'all_day' => $master['all_day'], 'tzid' => $z, 'start_utc' => Time::toDb($ovStart),
+                        'end_utc' => Time::toDb($ovStart->modify($allDay ? '+1 day' : '+1 hour')), 'rrule' => null, 'status' => 'confirmed', 'recurrence_parent_id' => 1, 'recurrence_instance_utc' => $occs[$pick]['instanceUtc']];
+                    $before = array_map($rtKey, $rtRec->expand($master, [$override], $win[0], $win[1]));
+                    $rows = [];
+                    foreach (Ics::parse(Ics::buildObject([$master, $override])) as $p) {
+                        $rows[] = DavIcs::eventColumns($p) + ['uid' => 'rt'];
+                    }
+                    $m2 = null;
+                    $o2 = [];
+                    foreach ($rows as $r) {
+                        if ($r['recurrence_instance_utc'] === null) {
+                            $m2 = ['id' => 1, 'recurrence_parent_id' => null] + $r;
+                        } else {
+                            $o2[] = ['id' => 2, 'recurrence_parent_id' => 1] + $r;
+                        }
+                    }
+                    $after = $m2 === null ? [] : array_map($rtKey, $rtRec->expand($m2, $o2, $win[0], $win[1]));
+                    // Compared away from the window's edges: an all-day day stored
+                    // as a UTC midnight after the trip can sit on the other side of
+                    // an edge instant (the two all-day conventions, 0.9.16).
+                    $inner = [Time::toDb($win[0]->modify('+2 days')), Time::toDb($win[1]->modify('-2 days'))];
+                    $keep = static fn(string $k): bool => ($k[0] === 'D' ? substr($k, 1) . ' 12:00:00' : substr($k, 1)) > $inner[0] && ($k[0] === 'D' ? substr($k, 1) . ' 12:00:00' : substr($k, 1)) < $inner[1];
+                    $before = array_values(array_filter($before, $keep));
+                    $after = array_values(array_filter($after, $keep));
+                    sort($before);
+                    sort($after);
+                    $rtCases++;
+                    if ($before !== $after) {
+                        $rtBad[] = "$z $rule $when $date: " . implode(' ', array_slice(array_diff($before, $after), 0, 2)) . ' | ' . implode(' ', array_slice(array_diff($after, $before), 0, 2));
+                    }
+                }
+            }
+        }
+    }
+    checkEq('round trip: export, re-import, same occurrences (' . $rtCases . ' series)', [], array_slice($rtBad, 0, 5));
+}
+
+// Shared text patterns (0.9.15): one copy in web/src/lib/patterns.js, read by
+// the server as JSON, so push notifications and the app agree.
+{
+    $pt = BetterCal\Support\Patterns::all();
+    check('patterns: the shared file reads as JSON on the server', count($pt['meetings']) >= 4 && count($pt['pendingLocation']) >= 3);
+    checkEq('patterns: a Zoom link is a meeting', ['https://example.zoom.us/j/123456', 'Zoom'], BetterCal\Support\Patterns::meetingLink('Join at https://example.zoom.us/j/123456.'));
+    checkEq('patterns: a Teams link is a meeting', 'Teams', BetterCal\Support\Patterns::meetingLink('https://teams.microsoft.com/l/meetup-join/abc')[1] ?? null);
+    check('patterns: "address after RSVP" is pending', BetterCal\Support\Patterns::isPendingLocation('Location available once RSVP\'d'));
+    check('patterns: a registration desk is a place, not pending', !BetterCal\Support\Patterns::isPendingLocation('Registration desk, Hall B'));
+    checkEq('reminder links: the push Join button uses the shared list', 'https://meet.google.com/abc-defg-hij', BetterCal\Domain\Reminders::links(['location' => 'https://meet.google.com/abc-defg-hij', 'url' => null, 'description' => null])['join'] ?? null);
 }
 
 // Instance id contract (frozen format).

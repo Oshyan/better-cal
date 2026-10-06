@@ -4,6 +4,20 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.15 (2026-10-06)
+
+A second look at time zones, this time against independent calendar engines (a Python one built on the zone database, and ical.js, which Thunderbird and Nextcloud use) over about 3,800 generated repeating events. The core held up: every repeat came out the same, apart from cases the standard leaves undefined. What it found was in the code around it.
+
+- **Editing "All events" from a later occurrence no longer restarts the series there.** The opened occurrence became the series' first: earlier ones disappeared, a repeat count started over from it, and edited days before it were left behind. Now the series changes by what you changed (a new time, a different day, a new length), from its own start. Moving it to another weekday moves its repeat day too ("every Monday" becomes "every Tuesday").
+- **Skipped and edited days move with their series.** Changing a series' time, day, zone or all-day setting used to leave them where they were, so a deleted day came back and an edited one showed twice.
+- **A weekly series starts on a day it repeats on.** Starting a Mon/Wed/Fri series on a Thursday was undefined, and calendar apps disagreed about it; such a start now moves to the next listed day.
+- **The repeated hour when clocks go back.** A change to an occurrence in that hour could come back an hour off from a calendar app, or show twice east of UTC. It is now written unambiguously and read as the standard says.
+- **Older events in Thunderbird and Outlook.** The time zone rules sent with feeds and CalDAV started this year, so those apps had no offset for anything earlier; they now start in 1970, as Google's and Outlook's do.
+- **Dragging an event that keeps its own zone** moves it by days on its own clock: a London 9:00 dragged a week from a device in Los Angeles stays 9:00 in London. A repeat's end date is read and written on the event's clock too.
+- **Meeting links and "address after RSVP" text** are recognized the same way by the app and by push notifications (one shared list); a location like "Registration desk, Hall B" is no longer mistaken for "address after RSVP" in a notification.
+
+For contributors: a round-trip check (export, re-import, expand: same occurrences, 360 series) now runs with every test and deploy, and `tools/tz-harness` runs the full cross-check against the independent engines.
+
 ## 0.9.14 (2026-10-06)
 
 A clean install found one time zone bug; an audit of every place the app converts between UTC, an event's own zone, the Home zone and all-day dates found the rest. Events already stored are unaffected unless noted.

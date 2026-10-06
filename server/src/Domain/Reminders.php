@@ -562,9 +562,12 @@ final class Reminders
     {
         $loc = trim((string) ($row['location'] ?? ''));
         $join = null;
+        // The same meeting links and "address comes later" phrases the app
+        // knows (web/src/lib/patterns.js, one copy for both since 0.9.15).
         foreach ([$loc, (string) ($row['url'] ?? ''), (string) ($row['description'] ?? '')] as $text) {
-            if (preg_match('~https?://[^\s"\'<>]*(?:zoom\.us/(?:j|my|w)/|meet\.google\.com/|teams\.microsoft\.com/l/meetup|teams\.live\.com/meet|webex\.com/(?:meet|join|[a-z0-9.-]+/j))[^\s"\'<>]*~i', $text, $m) === 1) {
-                $join = rtrim($m[0], '.,;)');
+            $hit = \BetterCal\Support\Patterns::meetingLink($text);
+            if ($hit !== null) {
+                $join = $hit[0];
                 break;
             }
         }
@@ -572,7 +575,7 @@ final class Reminders
         $lng = $row['location_lng'] ?? null;
         $hasCoords = is_numeric($lat) && is_numeric($lng);
         $isLink = preg_match('~^(?:https?://|www\.)~i', $loc) === 1;
-        $pending = preg_match('/\b(?:rsvp|register|registration|tba|tbd|to be announced|announced|available (?:once|after|upon)|sign ?up)\b/i', $loc) === 1;
+        $pending = \BetterCal\Support\Patterns::isPendingLocation($loc);
         $coordText = preg_match('/^-?\d+(?:\.\d+)?\s*,\s*-?\d+(?:\.\d+)?$/', $loc) === 1;
         $findable = $loc !== '' && !$isLink && !$pending && !$coordText;
         $map = null;

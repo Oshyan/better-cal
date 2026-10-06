@@ -29,6 +29,8 @@ node tools/mcp/test.mjs
 
 The smoke suite is run under several time zones on deploy, so a test that only passes in yours will be caught. Add a test with any behaviour change: the server suite is plain PHP with no database (SQLite in memory where one is needed, so PHP needs `pdo_sqlite`: `php8.4-sqlite3` on Debian and Ubuntu), the smoke suite is plain Node.
 
+Changing anything about repeating events, time zones, or import and export (`Recurrence`, `Ics`, `Time`, `web/src/lib/dates.js`)? Also run `tools/tz-harness/run.sh`, which checks about 3,800 series against two independent calendar engines (see its README). It needs uv and Node, so it isn't part of the deploy.
+
 A few habits the codebase keeps:
 
 - A comment explains why, never what. The what is the code.

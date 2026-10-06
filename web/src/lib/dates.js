@@ -15,7 +15,8 @@ export function pad(n, w = 2) {
 // UNTIL is that date; a UTC one ("…T065900Z", what the editor wrote for "ends
 // Oct 20" on a device in Los Angeles) is the local date it falls on. Read as
 // its UTC date, it came back a day later on every save west of UTC (0.9.14).
-export function untilDayKey(until) {
+// `tz`: the clock the series keeps, when it isn't this device's (0.9.15).
+export function untilDayKey(until, tz = null) {
   const v = String(until || '');
   const m = /^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})(Z?))?/.exec(v);
   if (!m) return '';
@@ -23,6 +24,10 @@ export function untilDayKey(until) {
   const d = m[7] === 'Z'
     ? new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]))
     : new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
+  if (tz && m[7] === 'Z') {
+    const wall = wallTimeInZone(d, tz);
+    if (wall) return wall.slice(0, 10);
+  }
   return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
 }
 
@@ -350,18 +355,31 @@ export function instantFromWallTime(value, tz) {
   const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(String(value || ''));
   if (!m) return new Date(NaN);
   const asUtc = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]);
-  const first = tzOffsetMinutes(tz, new Date(asUtc));
-  if (first == null) return new Date(NaN);
-  // The offset was read at the wrong instant (the wall time taken as UTC), so
-  // read it again at the corrected one and, if it changed, check the answer
-  // that gives. It holds unless the wall time falls in a DST gap and does not
-  // exist; then the first guess stands, which lands an hour later, as every
-  // calendar does (2:30 AM on spring-forward night becomes 3:30).
-  const guess = asUtc - first * 60000;
-  const second = tzOffsetMinutes(tz, new Date(guess));
-  if (second === first) return new Date(guess);
-  const settled = asUtc - second * 60000;
-  return new Date(tzOffsetMinutes(tz, new Date(settled)) === second ? settled : guess);
+  if (tzOffsetMinutes(tz, new Date(asUtc)) == null) return new Date(NaN);
+  // Every offset the zone has within half a day either side gives a
+  // candidate; the ones whose clock really reads this wall time are valid.
+  // Two are valid in the hour repeated when clocks go back: the earlier one,
+  // as RFC 5545 and Temporal take it (0.9.15; this used to depend on which
+  // was found first). None is valid in a DST gap: then the offset from before
+  // the gap applies, which lands an hour later, as every calendar does
+  // (2:30 AM on spring-forward night becomes 3:30).
+  const before = tzOffsetMinutes(tz, new Date(asUtc - 43200000));
+  const offsets = new Set([before, tzOffsetMinutes(tz, new Date(asUtc)), tzOffsetMinutes(tz, new Date(asUtc + 43200000))]);
+  const valid = [...offsets].filter((o) => o != null)
+    .map((o) => asUtc - o * 60000)
+    .filter((c) => tzOffsetMinutes(tz, new Date(c)) === (asUtc - c) / 60000);
+  return new Date(valid.length ? Math.min(...valid) : asUtc - before * 60000);
+}
+
+// The same clock time `days` days later (or earlier) in `tz`: a 9:00 event in
+// London moved a week stays 9:00 in London whatever this device's zone and
+// whichever DST changes fall between (0.9.15).
+export function addDaysInZone(date, days, tz) {
+  const wall = wallTimeInZone(date, tz);
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}:\d{2})/.exec(wall);
+  if (!m) return addDaysDate(date, days);
+  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3] + days));
+  return instantFromWallTime(d.getUTCFullYear() + '-' + pad(d.getUTCMonth() + 1) + '-' + pad(d.getUTCDate()) + 'T' + m[4], tz);
 }
 
 // The reverse: a datetime-local value for what the clock in `tz` reads at `date`.

@@ -48,7 +48,7 @@ function toPeopleChips(names) {
     });
 }
 
-function buildRrule(r, allDay = false) {
+function buildRrule(r, allDay = false, tz = null) {
   if (!r || r.freq === 'none') return null;
   const parts = ['FREQ=' + r.freq];
   if (r.interval > 1) parts.push('INTERVAL=' + r.interval);
@@ -57,7 +57,9 @@ function buildRrule(r, allDay = false) {
     // A date series ends on a date (RFC 5545: UNTIL takes DTSTART's type).
     parts.push('UNTIL=' + r.until.replace(/-/g, ''));
   } else if (r.ends === 'until' && r.until) {
-    const d = new Date(r.until + 'T23:59:59');
+    // The end of that day on the event's clock: the zone picked for it, else
+    // this device's (0.9.15; device time alone could drop or add the last day).
+    const d = tz ? instantFromWallTime(r.until + 'T23:59', tz) : new Date(r.until + 'T23:59:59');
     parts.push('UNTIL=' + d.getUTCFullYear() + pad(d.getUTCMonth() + 1) + pad(d.getUTCDate()) + 'T' + pad(d.getUTCHours()) + pad(d.getUTCMinutes()) + '00Z');
   } else if (r.ends === 'count' && r.count > 0) {
     parts.push('COUNT=' + r.count);
@@ -65,7 +67,13 @@ function buildRrule(r, allDay = false) {
   return parts.join(';');
 }
 
-function parseRrule(rrule) {
+// The clock a timed series' end date is read and written on: the zone the
+// event keeps, when that isn't this device's; null means this device.
+function untilZone(occ) {
+  return occ && !occ.allDay && occ.tzid && occ.tzid !== 'UTC' && !sameClock(occ.tzid, localTz()) ? occ.tzid : null;
+}
+
+function parseRrule(rrule, tz = null) {
   const r = { freq: 'none', interval: 1, byday: [], ends: 'never', until: '', count: 10 };
   if (!rrule) return r;
   for (const part of rrule.split(';')) {
@@ -76,7 +84,7 @@ function parseRrule(rrule) {
     if (k === 'COUNT') { r.ends = 'count'; r.count = Number(v) || 10; }
     if (k === 'UNTIL') {
       r.ends = 'until';
-      r.until = untilDayKey(v);
+      r.until = untilDayKey(v, tz);
     }
   }
   if (r.freq !== 'none' && r.ends === 'until' && !r.until) r.ends = 'never';
@@ -360,7 +368,7 @@ export function EditorDrawer() {
       people: toPeopleChips(occ ? (occ.people || []) : (draft.personNames || [])),
       rrule: parseRrule(occ
         ? (occ.recurring ? (occ.rrule || editor.rrule || '') : '')
-        : (draft.rrule || '')),
+        : (draft.rrule || ''), untilZone(occ)),
       // null = inherit calendar/global defaults; a list = explicit override
       // (minutes before start; [] = no reminders). remInitial detects changes.
       reminders: occ && occ.reminderSource === 'event'
@@ -594,7 +602,7 @@ export function EditorDrawer() {
       // duplicate. Proposed chips (id null) are blocked above, so every chip
       // here is a directory person the user confirmed.
       personIds: form.people.map((c) => c.id),
-      rrule: buildRrule(form.rrule, form.allDay),
+      rrule: buildRrule(form.rrule, form.allDay, form.tzTouched ? form.tz : untilZone(occ)),
     };
     // A zone the owner picked becomes the event's own zone: it is what a
     // repeating event keeps its clock time in across DST changes. All-day

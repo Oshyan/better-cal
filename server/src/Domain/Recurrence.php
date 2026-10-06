@@ -183,6 +183,64 @@ final class Recurrence
     }
 
     /**
+     * Days from a weekly series' start to the first day its own BYDAY lists
+     * (0 when it already is one, or the rule is not a plain weekly BYDAY).
+     * A start on an unlisted day is undefined in RFC 5545 and calendar apps
+     * disagree on it (sabre counts it, others drop it), so the series starts
+     * on its first real day instead (0.9.15).
+     */
+    public static function daysToFirstByday(string $rrule, \DateTimeImmutable $localStart): int
+    {
+        $parts = self::rruleParts(strtoupper($rrule));
+        if (($parts['FREQ'] ?? '') !== 'WEEKLY' || empty($parts['BYDAY'])) {
+            return 0;
+        }
+        $days = array_filter(explode(',', $parts['BYDAY']), static fn(string $d): bool => preg_match('/^(MO|TU|WE|TH|FR|SA|SU)$/', $d) === 1);
+        if ($days === []) {
+            return 0;
+        }
+        for ($i = 0; $i < 7; $i++) {
+            if (in_array(strtoupper(substr($localStart->modify('+' . $i . ' days')->format('D'), 0, 2)), $days, true)) {
+                return $i;
+            }
+        }
+        return 0;
+    }
+
+    /**
+     * A weekly rule's plain BYDAY days moved by $days ("every Monday" moved a
+     * day later is "every Tuesday"); anything else unchanged.
+     */
+    public static function shiftByday(string $rrule, int $days): string
+    {
+        $parts = self::rruleParts($rrule);
+        if (($parts['FREQ'] ?? '') !== 'WEEKLY' || empty($parts['BYDAY']) || $days % 7 === 0) {
+            return $rrule;
+        }
+        $week = ['MO', 'TU', 'WE', 'TH', 'FR', 'SA', 'SU'];
+        $out = [];
+        foreach (explode(',', $parts['BYDAY']) as $d) {
+            $i = array_search($d, $week, true);
+            if ($i === false) {
+                return $rrule; // an nth-weekday form: leave the rule alone
+            }
+            $out[] = (((int) $i + $days) % 7 + 7) % 7;
+        }
+        sort($out);
+        $parts['BYDAY'] = implode(',', array_map(static fn(int $i): string => $week[$i], array_unique($out)));
+        return self::joinParts($parts);
+    }
+
+    /** The rule without its bounds (COUNT, UNTIL): what decides which days a series falls on. */
+    public static function pattern(?string $rrule): string
+    {
+        $parts = self::rruleParts(strtoupper((string) $rrule));
+        unset($parts['COUNT'], $parts['UNTIL']);
+        ksort($parts);
+        return self::joinParts($parts);
+    }
+
+    /**
      * Replace COUNT with an UNTIL bound (used for "following" splits). An
      * all-day UNTIL is a date, taken in the series' own zone like its
      * occurrences (sabreExpand); in UTC, a series west of UTC kept the day it

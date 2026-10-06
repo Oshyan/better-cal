@@ -51,7 +51,11 @@ ssh_open() {
 # removal, when ever needed, is a deliberate manual action on the server.
 deploy_rsync() {
   DEPLOY_TOUCHED=1
+  # Nothing git ignores is shipped (0.9.15): scratch folders, generated test
+  # data and local tooling stay on this machine. The explicit excludes stay
+  # as a backstop for the files that must never leave it.
   rsync -az --no-owner --no-group \
+    --filter=':- .gitignore' \
     --exclude '.git' \
     --exclude '.credentials' \
     --exclude '.env' \

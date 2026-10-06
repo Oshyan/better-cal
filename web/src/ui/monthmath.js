@@ -4,7 +4,7 @@
 import {
   epochDayOfKey, keyOfEpochDay, weekIndexOfEpochDay, firstEpochDayOfWeek,
   dayKeyOfISO, parseISO, dayKeyOf, addDaysDate, toISOWithOffset, dateOfDayKey,
-  pad,
+  pad, addDaysInZone, sameClock, localTz,
 } from '../lib/dates.js';
 
 // Visible week window for a virtualized scroller.
@@ -217,7 +217,10 @@ export function miniMonthGrid(year, month) {
 // exclusive). Their serialized start is "<date>T00:00:00+00:00", and pushing
 // that through a local Date lands on the evening before anywhere west of UTC:
 // from Los Angeles a move to June 3 went out as "2026-06-02T17:00:00-07:00".
-// Timed: local wall-clock math, so the time of day survives a DST change.
+// Timed: wall-clock math, so the time of day survives a DST change; in the
+// event's own zone when it keeps one that reads differently from this
+// device (0.9.15: a London 9:00 dragged a week from Los Angeles across the
+// spring change landed at 8:00 London).
 export function shiftOccurrenceDays(occ, deltaDays) {
   if (occ.allDay) {
     const { startKey, endKey } = occurrenceDaySpan(occ);
@@ -226,9 +229,11 @@ export function shiftOccurrenceDays(occ, deltaDays) {
       newEnd: keyOfEpochDay(epochDayOfKey(endKey) + 1 + deltaDays), // exclusive
     };
   }
+  const own = occ.tzid && occ.tzid !== 'UTC' && !sameClock(occ.tzid, localTz()) ? occ.tzid : null;
+  const shift = (iso) => (own ? addDaysInZone(parseISO(iso), deltaDays, own) : addDaysDate(parseISO(iso), deltaDays));
   return {
-    newStart: toISOWithOffset(addDaysDate(parseISO(occ.start), deltaDays)),
-    newEnd: toISOWithOffset(addDaysDate(parseISO(occ.end), deltaDays)),
+    newStart: toISOWithOffset(shift(occ.start)),
+    newEnd: toISOWithOffset(shift(occ.end)),
   };
 }
 

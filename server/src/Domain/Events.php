@@ -187,6 +187,7 @@ final class Events
     private function googlePatchAll(int $userId, array $calendar, array $event, array $in): void
     {
         $id = (int) $event['id'];
+        $in = $this->rebaseSeriesEdit($event, $in);
         [$googleFields, $localFields] = self::splitGoogleFields($this->columnPatch($event, $in));
         if ($googleFields !== []) {
             $googleId = self::requireGoogleId($event);
@@ -759,6 +760,8 @@ final class Events
             'created_at' => Time::nowDb(),
             'updated_at' => Time::nowDb(),
         ];
+        // A weekly series starts on a day it actually repeats on (0.9.15).
+        $row = array_merge($row, self::alignedStart($row));
 
         if ($google !== null) {
             return $this->serializeSingle($this->googleCreate($userId, $google, $row, $in));
@@ -1036,22 +1039,184 @@ final class Events
         }
     }
 
+    /**
+     * A whole-series edit made from one occurrence (the editor sends that
+     * occurrence's start and end with instanceStart) changes the series by
+     * what changed for that occurrence: the days it moved, its new time of
+     * day, zone and length. Applied as given, the opened occurrence became
+     * the series' first, and every earlier one vanished (0.9.15). API calls
+     * with no instanceStart still set the series' own start, as before.
+     */
+    private function rebaseSeriesEdit(array $master, array $in): array
+    {
+        if (empty($master['rrule']) || !empty($master['recurrence_parent_id']) || !isset($in['start']) || empty($in['instanceStart'])) {
+            return $in;
+        }
+        $instUtc = Time::fromDb($this->requireInstance($in, $master));
+        $occ = ['start_utc' => Time::toDb($instUtc), 'end_utc' => Time::toDb($instUtc->add(new \DateInterval('PT' . Recurrence::durationSeconds($master) . 'S')))] + $master;
+        $occFields = $this->columnPatch($occ, array_intersect_key($in, array_flip(['start', 'end', 'allDay', 'tzid'])));
+        $same = static fn(string $k): bool => !isset($occFields[$k]) || (string) $occFields[$k] === (string) $occ[$k];
+        if ($same('start_utc') && $same('end_utc') && $same('all_day') && $same('tzid')) {
+            unset($in['start'], $in['end']);
+            return $in;
+        }
+        $oldTz = Time::zone((string) $master['tzid']);
+        $newTz = Time::zone((string) ($occFields['tzid'] ?? $master['tzid']));
+        $allDay = (int) ($occFields['all_day'] ?? $master['all_day']) === 1;
+        $occWas = $instUtc->setTimezone($oldTz);
+        $occNow = Time::fromDb((string) $occFields['start_utc'])->setTimezone($newTz);
+        $days = self::dayDelta($occWas, $occNow);
+        $length = Time::fromDb((string) ($occFields['end_utc'] ?? $occ['end_utc']))->getTimestamp() - Time::fromDb((string) $occFields['start_utc'])->getTimestamp();
+        $date = (new \DateTimeImmutable(Time::fromDb((string) $master['start_utc'])->setTimezone($oldTz)->format('Y-m-d'), Time::utc()))
+            ->modify(($days >= 0 ? '+' : '') . $days . ' days')->format('Y-m-d');
+        // "Every Monday" moved to a Tuesday becomes "every Tuesday", unless the
+        // same edit chose the days itself.
+        $rule = (string) ($in['rrule'] ?? $master['rrule']);
+        if ($days % 7 !== 0 && Recurrence::pattern($rule) === Recurrence::pattern((string) $master['rrule'])) {
+            $shifted = Recurrence::shiftByday($rule, $days);
+            if ($shifted !== $rule) {
+                $in['rrule'] = $shifted;
+            }
+        }
+        if ($allDay) {
+            $in['start'] = $date;
+            $in['end'] = (new \DateTimeImmutable($date, Time::utc()))->modify('+' . max(1, (int) round($length / 86400)) . ' days')->format('Y-m-d');
+        } else {
+            $start = new \DateTimeImmutable($date . ' ' . $occNow->format('H:i:s'), $newTz);
+            $in['start'] = Time::iso($start);
+            $in['end'] = Time::iso($start->modify('+' . max(60, $length) . ' seconds'));
+        }
+        return $in;
+    }
+
+    /**
+     * A weekly series starting on a day its BYDAY doesn't list moves to the
+     * first day it does, keeping its time (start and end columns, or []).
+     */
+    private static function alignedStart(array $row): array
+    {
+        if (empty($row['rrule'])) {
+            return [];
+        }
+        $tz = Time::zone((string) $row['tzid']);
+        $start = Time::fromDb((string) $row['start_utc'])->setTimezone($tz);
+        $n = Recurrence::daysToFirstByday((string) $row['rrule'], $start);
+        if ($n === 0) {
+            return [];
+        }
+        return [
+            'start_utc' => Time::toDb($start->modify('+' . $n . ' days')),
+            'end_utc' => Time::toDb(Time::fromDb((string) $row['end_utc'])->setTimezone($tz)->modify('+' . $n . ' days')),
+        ];
+    }
+
+    /** Whole calendar days from one local date to another. */
+    private static function dayDelta(\DateTimeImmutable $from, \DateTimeImmutable $to): int
+    {
+        return (int) (new \DateTimeImmutable($from->format('Y-m-d'), Time::utc()))
+            ->diff(new \DateTimeImmutable($to->format('Y-m-d'), Time::utc()))->format('%r%a');
+    }
+
+    /**
+     * When a series' start, zone or all-day flag changes, its skipped dates,
+     * edited occurrences and a timed UNTIL move with it: each keeps its place
+     * in the series (the same number of days on, at the series' new time of
+     * day, in its new zone). Left behind, a deleted day came back and an
+     * edited one showed twice (0.9.15, as Thunderbird and Nextcloud do it).
+     * Null when nothing moved.
+     *
+     * @return null|callable(string): string  old instance key => new one
+     */
+    private static function seriesKeyShift(array $before, array $after): ?callable
+    {
+        $oldTz = Time::zone((string) $before['tzid']);
+        $newTz = Time::zone((string) $after['tzid']);
+        $oldAllDay = (int) $before['all_day'] === 1;
+        $newAllDay = (int) $after['all_day'] === 1;
+        $was = Time::fromDb((string) $before['start_utc'])->setTimezone($oldTz);
+        $now = Time::fromDb((string) $after['start_utc'])->setTimezone($newTz);
+        if ($was->format('Y-m-d H:i:s') === $now->format('Y-m-d H:i:s') && $oldTz->getName() === $newTz->getName() && $oldAllDay === $newAllDay) {
+            return null;
+        }
+        $days = self::dayDelta($was, $now);
+        $time = $newAllDay ? '00:00:00' : $now->format('H:i:s');
+        return static function (string $key) use ($oldTz, $newTz, $days, $time): string {
+            $date = (new \DateTimeImmutable(Time::fromDb($key)->setTimezone($oldTz)->format('Y-m-d'), Time::utc()))
+                ->modify(($days >= 0 ? '+' : '') . $days . ' days')->format('Y-m-d');
+            return Time::toDb((new \DateTimeImmutable($date . ' ' . $time, $newTz))->setTimezone(Time::utc()));
+        };
+    }
+
     private function patchAll(int $userId, array $event, array $in): void
     {
         $id = (int) $event['id'];
         $beforeLinks = $this->labels->eventLinkRows($id);
+        $in = $this->rebaseSeriesEdit($event, $in);
         $fields = $this->columnPatch($event, $in);
+        $isSeries = !empty($event['rrule']) && empty($event['recurrence_parent_id']);
+        $shift = null;
+        if ($isSeries && !empty(($fields + $event)['rrule'])) {
+            $after = array_merge($event, $fields);
+            $tz = Time::zone((string) $event['tzid']);
+            $moved = self::dayDelta(Time::fromDb((string) $event['start_utc'])->setTimezone($tz), Time::fromDb((string) $after['start_utc'])->setTimezone(Time::zone((string) $after['tzid'])));
+            if (Recurrence::pattern((string) $after['rrule']) === Recurrence::pattern(Recurrence::shiftByday((string) $event['rrule'], $moved))) {
+                // Same days, moved together: skipped and edited days follow.
+                $shift = self::seriesKeyShift($event, $after);
+            } else {
+                // The days themselves changed: the series starts on its first
+                // listed day, and old keys no longer name places in it.
+                $fields = array_merge($fields, self::alignedStart($after));
+            }
+        }
+        if ($shift !== null) {
+            $exdates = array_map($shift, $this->decodeExdates($event));
+            $fields['exdates_json'] = $exdates === [] ? null : json_encode($exdates);
+            // A timed UNTIL moves with the series; a rule sent with the edit
+            // (the editor's own end date) is taken as given.
+            $rrule = (string) ($fields['rrule'] ?? $event['rrule']);
+            if (!array_key_exists('rrule', $in) && preg_match('/UNTIL=(\d{8}T\d{6}Z)/', $rrule, $m) === 1) {
+                $until = \DateTimeImmutable::createFromFormat('Ymd\THis\Z', $m[1], Time::utc());
+                if ($until !== false) {
+                    // Its day moved like an occurrence, at the series' new
+                    // time: still inclusive of the last occurrence.
+                    $moved = Time::fromDb($shift(Time::toDb($until)));
+                    $fields['rrule'] = str_replace('UNTIL=' . $m[1], 'UNTIL=' . $moved->format('Ymd\THis\Z'), $rrule);
+                }
+            }
+        }
         // A calendar change moves the exceptions too: an override parked on
         // another calendar than its master is a row nothing can reach.
         $movesCalendar = isset($fields['calendar_id']) && !empty($event['rrule']);
-        $overridesBefore = $movesCalendar ? $this->db->all('SELECT * FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$id]) : [];
+        $overridesBefore = ($movesCalendar || $shift !== null) ? $this->db->all('SELECT * FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$id]) : [];
 
-        $this->db->tx(function () use ($id, $userId, $fields, $in, $movesCalendar): void {
+        $this->db->tx(function () use ($id, $userId, $fields, $in, $movesCalendar, $shift, $overridesBefore, $event): void {
             if ($fields !== []) {
                 $fields['updated_at'] = Time::nowDb();
                 $this->db->update('events', $fields, 'id = ?', [$id]);
                 if ($movesCalendar) {
                     $this->db->run('UPDATE events SET calendar_id = ? WHERE recurrence_parent_id = ?', [$fields['calendar_id'], $id]);
+                }
+            }
+            if ($shift !== null) {
+                $after = array_merge($event, $fields);
+                foreach ($overridesBefore as $ov) {
+                    $key = $shift((string) $ov['recurrence_instance_utc']);
+                    $set = ['recurrence_instance_utc' => $key, 'updated_at' => Time::nowDb()];
+                    // An occurrence edited in other ways but not moved follows
+                    // the series to its new day, time and zone.
+                    if ((string) $ov['start_utc'] === (string) $ov['recurrence_instance_utc']) {
+                        $len = Time::fromDb((string) $ov['end_utc'])->getTimestamp() - Time::fromDb((string) $ov['start_utc'])->getTimestamp();
+                        if ((int) $after['all_day'] !== (int) $ov['all_day']) {
+                            $len = Recurrence::durationSeconds($after);
+                        }
+                        $set += [
+                            'start_utc' => $key,
+                            'end_utc' => Time::toDb(Time::fromDb($key)->modify('+' . max(60, $len) . ' seconds')),
+                            'all_day' => (int) $after['all_day'],
+                            'tzid' => (string) $after['tzid'],
+                        ];
+                    }
+                    $this->db->update('events', $set, 'id = ?', [(int) $ov['id']]);
                 }
             }
             if (array_key_exists('tagNames', $in) && is_array($in['tagNames'])) {
@@ -1289,6 +1454,8 @@ final class Events
         if (isset($in['rrule']) && $in['rrule'] !== null && $in['rrule'] !== '') {
             $newMaster['rrule'] = (string) $in['rrule'];
         }
+        // New days chosen for the rest of the series: it starts on the first.
+        $newMaster = array_merge($newMaster, self::alignedStart($newMaster));
 
         $movedOverrides = $this->db->all(
             'SELECT * FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc >= ? AND deleted_at IS NULL',

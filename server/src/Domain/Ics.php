@@ -251,9 +251,30 @@ final class Ics
             return self::fold($name . ';VALUE=DATE:' . $t->setTimezone(Time::zone($shape['tzid'] ?? null))->format('Ymd')) . "\r\n";
         }
         $z = self::zoneOf($shape);
+        // A local time in the repeated hour when clocks go back names two
+        // instants, and readers take the first (RFC 5545 3.3.5). The second
+        // is written in UTC instead, which every property but a series' own
+        // DTSTART may be (its zone is what the series repeats in) (0.9.15).
+        $series = $name === 'DTSTART' && !empty($shape['rrule']);
+        if ($z !== null && !$series && self::isSecondOfRepeatedHour($t, new \DateTimeZone($z))) {
+            return self::line($name, $t->format('Ymd\THis\Z'));
+        }
         return $z !== null
             ? self::fold($name . ';TZID=' . $z . ':' . $t->setTimezone(new \DateTimeZone($z))->format('Ymd\THis')) . "\r\n"
             : self::line($name, $t->format('Ymd\THis\Z'));
+    }
+
+    /** Is this instant the later of two that share its local clock time (the hour repeated when clocks go back)? */
+    private static function isSecondOfRepeatedHour(\DateTimeImmutable $utc, \DateTimeZone $zone): bool
+    {
+        $wall = $utc->setTimezone($zone)->format('YmdHis');
+        // An hour back (half an hour on Lord Howe Island) reads the same clock time.
+        foreach ([3600, 1800] as $step) {
+            if ($utc->modify('-' . $step . ' seconds')->setTimezone($zone)->format('YmdHis') === $wall) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -299,7 +320,18 @@ final class Ics
                 $nth = $day + 7 > (int) $local->format('t') ? -1 : intdiv($day - 1, 7) + 1;
                 $wd = strtoupper(substr($local->format('D'), 0, 2));
                 $rrule = 'FREQ=YEARLY;BYMONTH=' . (int) $local->format('n') . ';BYDAY=' . $nth . $wd;
-                $out .= $component($t, $from, $rrule, $local->format('Ymd\THis'));
+                // First onset in 1970, on the day the rule picks that year:
+                // starting it this year left older events with no offset at
+                // all in Thunderbird and Outlook (0.9.15). Past rule changes
+                // are not reproduced, as in Google's and Outlook's own.
+                $month = [];
+                for ($d = new \DateTimeImmutable(sprintf('1970-%02d-01', (int) $local->format('n')), Time::utc()); (int) $d->format('n') === (int) $local->format('n'); $d = $d->modify('+1 day')) {
+                    if (strtoupper(substr($d->format('D'), 0, 2)) === $wd) {
+                        $month[] = $d;
+                    }
+                }
+                $onset = $nth === -1 ? end($month) : $month[$nth - 1];
+                $out .= $component($t, $from, $rrule, $onset->format('Ymd') . 'T' . $local->format('His'));
             }
         } else {
             foreach ($changes as $i => $t) {
@@ -507,10 +539,24 @@ final class Ics
             }
             return $out;
         }
-        return array_map(
-            static fn($dt) => \DateTimeImmutable::createFromInterface($dt)->setTimezone(Time::utc()),
-            $prop->getDateTimes($readTz)
-        );
+        // A local time in the repeated hour when clocks go back is the earlier
+        // of its two instants (RFC 5545 3.3.5). PHP resolves it to the later
+        // one in zones east of UTC and the earlier one west of it; read the
+        // later, an EXDATE or RECURRENCE-ID missed its occurrence (0.9.15).
+        return array_map(static function ($dt): \DateTimeImmutable {
+            $local = \DateTimeImmutable::createFromInterface($dt);
+            $utc = $local->setTimezone(Time::utc());
+            $zone = $local->getTimezone();
+            if ($zone->getName() !== 'UTC' && $zone->getName() !== 'Z') {
+                foreach ([3600, 1800] as $step) {
+                    $earlier = $utc->modify('-' . $step . ' seconds');
+                    if ($earlier->setTimezone($zone)->format('YmdHis') === $local->format('YmdHis')) {
+                        return $earlier;
+                    }
+                }
+            }
+            return $utc;
+        }, $prop->getDateTimes($readTz));
     }
 
     private static function parseVevent(object $vevent, string $floatName = 'UTC'): ?array

@@ -23,15 +23,12 @@ import { fmtRange, zoneNote, fmtDateFull, fmtTime, parseISO, startMs } from '../
 import { fmtReminder } from '../lib/reminders.js';
 import { stripToText, hasHtml, sanitizeHtml } from '../lib/richtext.js';
 import { gmapsUrl, isPendingLocation } from '../lib/maps.js';
+import PATTERNS from '../lib/patterns.js';
 import { onOutsidePress, insideAny } from '../ui/outside.js';
 
-// Video meetings: the link is a Join button, not an address.
-const MEETINGS = [
-  [/https?:\/\/[\w.-]*zoom\.us\/[^\s<>"')]+/i, 'Zoom'],
-  [/https?:\/\/meet\.google\.com\/[^\s<>"')]+/i, 'Google Meet'],
-  [/https?:\/\/teams\.(?:microsoft|live)\.com\/[^\s<>"')]+/i, 'Teams'],
-  [/https?:\/\/[\w.-]*webex\.com\/[^\s<>"')]+/i, 'Webex'],
-];
+// Video meetings: the link is a Join button, not an address. The providers
+// are shared with the server's push notifications (lib/patterns.js).
+const MEETINGS = PATTERNS.meetings.map((m) => [new RegExp(m.pattern, 'i'), m.name]);
 
 /** The first video-meeting link in the location, link or description: {url, name}. */
 export function meetingLink(occ) {

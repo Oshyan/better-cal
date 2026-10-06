@@ -1,5 +1,6 @@
 // Map helpers. Pure: everything here is arithmetic and URL building, so the
 // smoke tests cover it without a browser.
+import PATTERNS from './patterns.js';
 
 // The tiles that cover a box centred on a point, positioned so the caller
 // can lay them out absolutely inside a clipped container and draw a pin at
@@ -81,11 +82,8 @@ export function gmapsUrl(location, lat, lng) {
 // once RSVP'd", "Register to see address"): feeds put it in the location
 // field, but it is not a place. Shown as a short "after RSVP" mark instead
 // of the sentence, never offered as a map, never geocoded.
-const PENDING_LOCATION = [
-  /^(the\s+)?(location|address|venue)\s+(is\s+|will\s+be\s+)?(available|shown|revealed|shared|visible|sent|provided)\s+(once|after|when|upon|to)\b/i,
-  /^(rsvp|register|sign\s*up|request\s+to\s+join)\s+(to|for)\s+(see|view|reveal|get|unlock)\s+(the\s+)?(location|address|venue)/i,
-  /^(location|address|venue)\s*(:\s*)?(tba|tbd|hidden|secret|private)\.?$/i,
-];
+// Shared with the server (lib/patterns.js), which checks the same phrases.
+const PENDING_LOCATION = PATTERNS.pendingLocation.map((p) => new RegExp(p, 'i'));
 export function isPendingLocation(text) {
   const t = (text || '').trim();
   return !!t && PENDING_LOCATION.some((re) => re.test(t));

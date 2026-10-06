@@ -119,7 +119,14 @@ mysqldump -h 127.0.0.1 -u root --single-transaction "${PROD_DB}" | mysql -h 127.
 # sessions and tokens revoked later would still work here, the dev worker
 # would push reminders to the owner's devices and write to Google.
 mysql -h 127.0.0.1 -u root "${DEV_DB}" -e "DELETE FROM sessions; DELETE FROM api_tokens; DELETE FROM push_subscriptions; DELETE FROM out_feeds; DELETE FROM google_accounts; UPDATE calendars SET kind = 'local', provider = 'ics', google_calendar_id = NULL, google_access_role = NULL, google_sync_token = NULL WHERE provider = 'google';"
-mysql -h 127.0.0.1 -u root -e "GRANT ALL PRIVILEGES ON \`${DEV_DB}\`.* TO '${DB_USER}'@'localhost'; GRANT ALL PRIVILEGES ON \`${DEV_DB}\`.* TO '${DB_USER}'@'127.0.0.1'; FLUSH PRIVILEGES;" || true
+# The app's database user may exist for either host form; grant to each that
+# does. MySQL 8 refuses to create an account through GRANT (ERROR 1410), and
+# one batched statement stopped at the first missing account.
+for host in localhost 127.0.0.1; do
+  if [ "$(mysql -h 127.0.0.1 -u root -N -e "SELECT COUNT(*) FROM mysql.user WHERE user = '${DB_USER}' AND host = '${host}'")" != "0" ]; then
+    mysql -h 127.0.0.1 -u root -e "GRANT ALL PRIVILEGES ON \`${DEV_DB}\`.* TO '${DB_USER}'@'${host}'"
+  fi
+done
 echo "cloned (sessions, tokens, push devices, feeds and Google links cleared, Google calendars kept as local copies, in ${DEV_DB})"
 EOF
 fi

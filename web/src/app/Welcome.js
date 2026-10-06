@@ -77,7 +77,10 @@ export function Welcome() {
       weekStart: pending ? localeWeekStart() : st.weekStart,
       timeFormat: pending ? localeClock() : st.timeFormat,
       theme: st.theme || 'system',
-      calName: firstCal ? firstCal.name : '',
+      // Left unset until typed: on a first sign-in the calendars can still be
+      // loading when this opens, so the field follows the first calendar's
+      // name once it arrives instead of what was known at this moment.
+      calName: null,
     });
   }, [show]); // eslint-disable-line
 
@@ -118,6 +121,7 @@ export function Welcome() {
     if (pending) saveQuietly({ welcomeDone: true }).catch(() => {});
     setStep(1);
   };
+  const calName = form.calName ?? (firstCal ? firstCal.name : '');
   const upd = (patch) => setForm((f) => ({ ...f, ...patch }));
 
   const saveCore = async () => {
@@ -126,7 +130,7 @@ export function Welcome() {
     for (const k of ['tz', 'weekStart', 'timeFormat', 'theme']) {
       if (form[k] && form[k] !== st[k]) patch[k] = form[k];
     }
-    const name = form.calName.trim();
+    const name = calName.trim();
     try {
       if (Object.keys(patch).length) await saveQuietly(patch);
       if (pending && firstCal && name && name !== firstCal.name) {
@@ -219,7 +223,7 @@ export function Welcome() {
             <${Seg} label="Theme" value=${form.theme} options=${[['system', 'System'], ['light', 'Light'], ['dark', 'Dark']]} onChange=${(v) => upd({ theme: v })} />
           </div>
           ${pending && firstCal && html`<label class="bc-welcome-row"><span>Your first calendar</span>
-            <input value=${form.calName} maxlength="80" onInput=${(e) => upd({ calName: e.target.value })} aria-label="First calendar's name" />
+            <input value=${calName} maxlength="80" onInput=${(e) => upd({ calName: e.target.value })} aria-label="First calendar's name" />
           </label>`}
         </div>
         <div class="bc-welcome-foot">

@@ -21,6 +21,9 @@ export function MiniMonth() {
     (st) => ({
       anchor: st.anchor, visibleMonth: st.visibleMonth,
       occVersion: st.occVersion, calendars: st.calendars,
+      // The grid and weekday heads read the week start from the date utils,
+      // so a change to it (Settings, the welcome) has to redraw this too.
+      weekStart: st.settings && st.settings.weekStart,
     }),
     shallowEq,
   );
@@ -32,7 +35,7 @@ export function MiniMonth() {
   useEffect(() => { setDisp(null); }, [base.year * 12 + base.month]); // eslint-disable-line
 
   const shown = disp || base;
-  const weeks = useMemo(() => monthWeeks(shown.year, shown.month), [shown.year, shown.month]);
+  const weeks = useMemo(() => monthWeeks(shown.year, shown.month), [shown.year, shown.month, s.weekStart]);
 
   // Days (within the shown grid) that have at least one visible occurrence.
   const dotDays = useMemo(() => {

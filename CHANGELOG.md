@@ -4,6 +4,13 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.13 (2026-10-05)
+
+Found in a clean install on a fresh machine, signing in to a brand-new account (#79):
+
+- **The welcome fills in your first calendar's name.** On a first sign-in it opened before the calendar list had loaded, so "Your first calendar" was blank. It now shows the name (Personal) as soon as the list arrives, and only renames the calendar if you change it.
+- **The small month in the sidebar follows a new week start right away.** Changing it in the welcome or in Settings redrew the main calendar but left the sidebar month on the old first day until the next reload.
+
 ## 0.9.12 (2026-10-04)
 
 - **The app's "New event" shortcut uses the window you have open.** On a desktop, it (and a webcal link or an .ics file) started a second Better-Cal window. Now the open window comes forward with quick add ready, without reloading. Chrome picks up the change when it next refreshes the installed app's details, which can take a relaunch of the app or up to a day.

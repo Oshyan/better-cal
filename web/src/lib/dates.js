@@ -11,6 +11,21 @@ export function pad(n, w = 2) {
   return String(n).padStart(w, '0');
 }
 
+// The last day of a repeat rule's UNTIL, as a local YYYY-MM-DD. A date-only
+// UNTIL is that date; a UTC one ("…T065900Z", what the editor wrote for "ends
+// Oct 20" on a device in Los Angeles) is the local date it falls on. Read as
+// its UTC date, it came back a day later on every save west of UTC (0.9.14).
+export function untilDayKey(until) {
+  const v = String(until || '');
+  const m = /^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})(Z?))?/.exec(v);
+  if (!m) return '';
+  if (!m[4]) return m[1] + '-' + m[2] + '-' + m[3];
+  const d = m[7] === 'Z'
+    ? new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]))
+    : new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
+  return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+}
+
 // Parse ISO8601 (with or without offset) into a Date. Date() handles offsets.
 export function parseISO(s) {
   return new Date(s);

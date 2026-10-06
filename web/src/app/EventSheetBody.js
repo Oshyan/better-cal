@@ -218,7 +218,7 @@ function sourceHost(url) {
 function MoreMenu({ occ, cal, isFeed, onClose, onDelete, onCopy, phone = false, onMove = null }) {
   const ref = useRef(null);
   useEffect(() => onOutsidePress(insideAny(ref), onClose), []); // eslint-disable-line
-  const item = (icon, label, fn, cls = '', note = null) => html`<button type="button" role="menuitem" class=${'bc-es-mi ' + cls} onClick=${() => { onClose(); fn(); }}>
+  const item = (icon, label, fn, cls = '', note = null, chosen = false) => html`<button type="button" role=${chosen ? 'menuitemradio' : 'menuitem'} aria-checked=${chosen ? 'true' : undefined} disabled=${chosen} class=${'bc-es-mi ' + cls + (chosen ? ' is-on' : '')} onClick=${() => { onClose(); fn(); }}>
     ${typeof icon === 'string' ? html`<${Icon} name=${icon} size=${18} />` : icon}<span>${label}</span>${note && html`<small>${note}</small>`}
   </button>`;
   const context = cal && cal.role === 'context';
@@ -227,8 +227,8 @@ function MoreMenu({ occ, cal, isFeed, onClose, onDelete, onCopy, phone = false, 
   const host = occ.url ? sourceHost(occ.url) : '';
   return html`<div class=${'bc-es-menu' + (phone ? ' is-phone' : '')} role="menu" ref=${ref}>
     ${phone && !isFeed && onMove && item('reschedule', 'Move to another time', onMove)}
-    ${phone && isFeed && !context && item(html`<${ThumbIcon} dir="up" size=${18} />`, 'More like this', () => sendFeedback(occ, 'up'))}
-    ${phone && isFeed && !context && item(html`<${ThumbIcon} dir="down" size=${18} />`, 'Less like this', () => sendFeedback(occ, 'down'))}
+    ${phone && isFeed && !context && item(html`<${ThumbIcon} dir="up" size=${18} />`, 'More like this', () => sendFeedback(occ, 'up'), '', occ.feedback === 'up' ? 'Chosen' : null, occ.feedback === 'up')}
+    ${phone && isFeed && !context && item(html`<${ThumbIcon} dir="down" size=${18} />`, 'Less like this', () => sendFeedback(occ, 'down'), '', occ.feedback === 'down' ? 'Chosen' : null, occ.feedback === 'down')}
     ${item('copy', 'Copy to another calendar…', onCopy)}
     ${cal && html`<hr />
       ${head(html`<i style=${'background:' + (cal.color || 'var(--border-strong)')}></i>Calendar: ${calName}`)}
@@ -287,6 +287,7 @@ export function EventSheetBody({ occ, cal, isFeed, full, panel = false, onFull, 
   const tool = (icon, label, onClick, extra = {}) => html`<button
     type="button" class=${'bc-es-tool' + (extra.word ? '' : ' is-icon') + (extra.on ? ' is-on' : '')}
     aria-label=${label} title=${extra.word ? undefined : label} aria-expanded=${extra.expanded} aria-haspopup=${extra.popup}
+    aria-pressed=${extra.pressed} disabled=${extra.pressed === true}
     onClick=${onClick}
   >${icon}${extra.word ? label : ''}</button>`;
   // The phone (0.6.1): no band of big buttons. The event's details come
@@ -303,8 +304,8 @@ export function EventSheetBody({ occ, cal, isFeed, full, panel = false, onFull, 
       <span class="bc-es-tools-acts">
         ${!isFeed && tool(html`<${Icon} name="pencil" size=${15} />`, 'Edit', openEdit, { word: true })}
         ${!isFeed && tool(html`<${Icon} name="reschedule" size=${15} />`, 'Move', openMove, { word: true })}
-        ${isFeed && !context && tool(html`<${ThumbIcon} dir="up" size=${16} />`, 'More like this', () => sendFeedback(occ, 'up'))}
-        ${isFeed && !context && tool(html`<${ThumbIcon} dir="down" size=${16} />`, 'Less like this', () => sendFeedback(occ, 'down'))}
+        ${isFeed && !context && tool(html`<${ThumbIcon} dir="up" size=${16} />`, 'More like this', () => sendFeedback(occ, 'up'), { on: occ.feedback === 'up', pressed: occ.feedback === 'up' })}
+        ${isFeed && !context && tool(html`<${ThumbIcon} dir="down" size=${16} />`, 'Less like this', () => sendFeedback(occ, 'down'), { on: occ.feedback === 'down', pressed: occ.feedback === 'down' })}
         ${tool(html`<${Icon} name="more" size=${16} />`, 'More', () => setMoreOpen(!moreOpen), { on: moreOpen, expanded: moreOpen, popup: 'menu' })}
       </span>
       ${!context && html`<${ForMe} occ=${occ} cal=${cal} onHidden=${close} />`}

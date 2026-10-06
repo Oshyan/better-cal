@@ -713,7 +713,9 @@ function WeekRow({
   // the full month's cells have no room for them: none there, and one in the
   // 3-day view (the first is the weather, all-day items sort first), with no
   // "+N"; the day itself lists them all.
-  const ctxMax = mobile ? (columns >= 7 ? 0 : 1) : (columns >= 7 ? 2 : 4);
+  // On a desktop they fit the cell's width (#108): a wide screen shows them
+  // all, not two and "+N".
+  const ctxMax = mobile ? (columns >= 7 ? 0 : 1) : Infinity;
   const bandLanes = assignLanes(bandList.map((b) => ({ id: b.occ.instanceId + ':' + b.seg.startCol, startCol: b.seg.startCol, endCol: b.seg.endCol })));
   let bandLaneCount = 0;
   for (const l of bandLanes.values()) bandLaneCount = Math.max(bandLaneCount, l + 1);
@@ -801,7 +803,7 @@ function WeekRow({
         ${hiddenDays && hiddenDays.get(k) && html`<${HiddenMark} count=${hiddenDays.get(k)} onShow=${onShowHidden} />`}
         ${labelsByDay && html`<${DayLabel} occs=${labelsByDay.get(k)} onOpen=${onOpenEvent} flag=${mobile && columns >= 7} />`}
         ${ctxByDay && ctxByDay.get(k) && ctxMax > 0 && html`<${ContextStrip}
-          occs=${ctxByDay.get(k)} calendars=${calendars} max=${ctxMax} more=${!mobile} zone=${false}
+          occs=${ctxByDay.get(k)} calendars=${calendars} max=${ctxMax} fit=${mobile ? null : 4} more=${!mobile} zone=${false}
           onOpen=${onOpenEvent} onMore=${() => { if (onExpandDay) onExpandDay(k); }}
         />`}
       </div>

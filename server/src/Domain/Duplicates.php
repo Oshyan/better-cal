@@ -101,13 +101,17 @@ final class Duplicates
     {
         $aDay = (int) $a['all_day'] === 1;
         $bDay = (int) $b['all_day'] === 1;
+        // An event's date in its own zone: an all-day day made in the app is
+        // local midnight (07:00 UTC in Los Angeles), its Google copy a UTC
+        // midnight; compared as raw instants they never paired (audit, 0.9.14).
+        $date = static fn(array $e): string => Time::fromDb((string) $e['start_utc'])
+            ->setTimezone(Time::zone(Time::normalizeTzid((string) $e['tzid'])))->format('Y-m-d');
         if ($aDay && $bDay) {
-            return $a['start_utc'] === $b['start_utc'] ? 'same' : null;
+            return $date($a) === $date($b) ? 'same' : null;
         }
         if ($aDay !== $bDay) {
             [$day, $timed] = $aDay ? [$a, $b] : [$b, $a];
-            $local = Time::fromDb((string) $timed['start_utc'])->setTimezone(Time::zone(Time::normalizeTzid((string) $timed['tzid'])));
-            return $local->format('Y-m-d') === substr((string) $day['start_utc'], 0, 10) ? 'near' : null;
+            return $date($timed) === $date($day) ? 'near' : null;
         }
         $gap = abs(Time::fromDb((string) $a['start_utc'])->getTimestamp() - Time::fromDb((string) $b['start_utc'])->getTimestamp());
         if ($gap === 0) {

@@ -3,7 +3,7 @@
 // moment for a timed context event on the timeline. See lib/context.js for
 // what a token says and docs/relationships.md for why context lives here.
 
-import { html } from '../../vendor/index.js';
+import { html, useState, useLayoutEffect, useRef } from '../../vendor/index.js';
 import { Icon } from './icons.js';
 import { contextToken, contextTitle, HOST_ICON, dayLabelText } from '../lib/context.js';
 
@@ -25,10 +25,11 @@ export function TokenIcon({ token, cal, size = 10 }) {
 
 // Tokens are spans with the button role: a header is often itself a button
 // (week column, day panel), and buttons cannot nest.
-function Token({ occ, cal, onOpen, zone = true }) {
+function Token({ occ, cal, onOpen, zone = true, overflow = false }) {
   const tk = contextToken(occ, cal);
   return html`<span
-    role="button" tabindex="0" class="bc-ctx-token" title=${contextTitle(occ)}
+    role="button" tabindex=${overflow ? -1 : 0} aria-hidden=${overflow ? 'true' : undefined}
+    class=${'bc-ctx-token' + (overflow ? ' is-overflow' : '')} title=${contextTitle(occ)}
     onPointerDown=${(e) => e.stopPropagation()}
     onClick=${(e) => open(onOpen, occ, e)}
     onKeyDown=${(e) => keyOpen(onOpen, occ, e)}
@@ -40,19 +41,51 @@ function Token({ occ, cal, onOpen, zone = true }) {
 }
 
 /**
- * @param {{occs:object[], calendars:object, max?:number, onOpen?:Function, onMore?:Function}} props
+ * @param {{occs:object[], calendars:object, max?:number, fit?:number|null, onOpen?:Function, onMore?:Function}} props
  * occs: this day's context (lib/context.js contextByDay). max: tokens
  * before "+N" (none when more is false); onMore opens the day.
+ * fit (month cells, #108): instead of a fixed count, as many as the header
+ * has room for, keeping `fit` px free at its end (the space the hover
+ * buttons take, so hovering never changes the count), then "+N". Every token
+ * is rendered so each can be measured; the ones past the room are hidden.
+ * Measured again whenever the header changes size.
  */
-export function ContextStrip({ occs, calendars, max = Infinity, more = true, onOpen, onMore, zone = true }) {
+export function ContextStrip({ occs, calendars, max = Infinity, fit = null, more = true, onOpen, onMore, zone = true }) {
+  const ref = useRef(null);
+  const [fitCount, setFitCount] = useState(null);
+  const key = occs ? occs.map((o) => o.instanceId).join('|') : '';
+  useLayoutEffect(() => {
+    if (fit === null || !ref.current) return undefined;
+    const strip = ref.current;
+    const head = strip.parentElement;
+    const measure = () => {
+      const tokens = [...strip.querySelectorAll('.bc-ctx-token')];
+      let others = 0;
+      for (const el of head.children) if (el !== strip && el.offsetParent !== null) others += el.offsetWidth + 2;
+      const avail = head.clientWidth - fit - others;
+      const moreW = 22; // "+N" at this size, with its gap
+      let used = 0;
+      let k = 0;
+      for (; k < tokens.length; k++) {
+        const w = tokens[k].offsetWidth + (k > 0 ? 2 : 0);
+        if (used + w + (k + 1 < tokens.length ? moreW : 0) > avail) break;
+        used += w;
+      }
+      setFitCount(k);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(head);
+    return () => ro.disconnect();
+  }, [fit, key]); // eslint-disable-line
   if (!occs || occs.length === 0) return null;
-  const shown = occs.slice(0, max);
-  const rest = occs.length - shown.length;
-  return html`<span class="bc-ctxstrip" role="list" aria-label="Context for this day">
-    ${shown.map((occ) => html`<${Token} key=${occ.instanceId} occ=${occ} cal=${calendars && calendars[occ.calendarId]} onOpen=${onOpen} zone=${zone} />`)}
+  const limit = Math.min(occs.length, fit !== null ? (fitCount ?? occs.length) : max);
+  const rest = occs.length - limit;
+  return html`<span class="bc-ctxstrip" role="list" aria-label="Context for this day" ref=${ref}>
+    ${occs.map((occ, i) => (fit !== null || i < limit) && html`<${Token} key=${occ.instanceId} occ=${occ} cal=${calendars && calendars[occ.calendarId]} onOpen=${onOpen} zone=${zone} overflow=${i >= limit} />`)}
     ${more && rest > 0 && html`<span
       role="button" tabindex="0" class="bc-ctx-more"
-      title=${occs.slice(max).map((o) => contextTitle(o)).join('\n')}
+      title=${occs.slice(limit).map((o) => contextTitle(o)).join('\n')}
       onPointerDown=${(e) => e.stopPropagation()}
       onClick=${(e) => { e.stopPropagation(); if (onMore) onMore(); }}
       onKeyDown=${(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); if (onMore) onMore(); } }}

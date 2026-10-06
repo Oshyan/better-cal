@@ -5,7 +5,7 @@ import {
   parseISO, toISOWithOffset, dayKeyOf, dateOfDayKey, epochDayOfKey,
   keyOfEpochDay, addDaysKey, diffDaysKey, weekIndexOfKey, firstEpochDayOfWeek,
   dayKeysOfWeek, startOfWeekKey, setWeekStart, getWeekStart, setTimeFormat, fmtTime,
-  fmtMonthShort, timeState, startMs, byStart, eventDuration, allDayFields, allDayInputs,
+  fmtMonthShort, timeState, startMs, byStart, eventDuration, allDayFields, allDayInputs, untilDayKey,
 } from '../src/lib/dates.js';
 import { layoutOverlaps, assignLanes, rangesOverlap } from '../src/ui/layout.js';
 import {
@@ -1445,6 +1445,18 @@ console.log('--- chronological ordering across timezone offsets ---');
   eq('zone note: none for UTC (unknown, not a place)', zoneNote({ ...timed, tzid: 'UTC' }), '');
   eq('zone note: none for all-day events', zoneNote({ ...timed, allDay: true, tzid: far }), '');
   eq('zone note: none without a zone', zoneNote(timed), '');
+}
+
+// --- Repeat end date: the local day, however UNTIL was written (0.9.14) ---
+{
+  // What the editor writes for "ends Oct 20" (23:59:59 local, in UTC) reads
+  // back as Oct 20 in every zone the suite runs in, so saving never moves it.
+  const written = new Date(2026, 9, 20, 23, 59, 59);
+  const z = written.getUTCFullYear() + String(written.getUTCMonth() + 1).padStart(2, '0') + String(written.getUTCDate()).padStart(2, '0')
+    + 'T' + String(written.getUTCHours()).padStart(2, '0') + String(written.getUTCMinutes()).padStart(2, '0') + '00Z';
+  eq('until: a UTC end time reads as its local day', untilDayKey(z), '2026-10-20');
+  eq('until: a date-only end is that date', untilDayKey('20261020'), '2026-10-20');
+  eq('until: nothing usable is empty', untilDayKey(''), '');
 }
 
 // --- All-day date fields: the last day, not the stored exclusive end (#34) ---

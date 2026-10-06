@@ -372,7 +372,14 @@ final class Reminders
     private function dueForUser(int $userId, \DateTimeImmutable $now): array
     {
         $grace = $now->sub(new \DateInterval(self::FIRE_GRACE));
-        $winStart = $grace;
+        // Occurrences are collected from a day and more back: an all-day
+        // reminder fires on the Home clock, which can be after the stored
+        // day has ended in UTC ("6 PM that day" in Los Angeles for an event
+        // stored as a UTC date). Starting at the grace mark, those occurrences
+        // were never looked at (audit, 0.9.14). Which ones are due is still
+        // decided by the fire time below, and sends are deduplicated per
+        // instance, so the wider window adds no repeats.
+        $winStart = $grace->sub(new \DateInterval('PT26H'));
         $winEnd = $now->add(new \DateInterval(self::SCAN_LOOKAHEAD));
 
         $calendars = [];

@@ -224,7 +224,8 @@ final class ReviewQueue
                 continue;
             }
             // A series that has run out is not waiting on anyone either.
-            if (!empty($row['rrule']) && preg_match('/UNTIL=(\d{8})/', (string) $row['rrule'], $m) === 1 && $m[1] < $now->format('Ymd')) {
+            // The last date in the event's own zone (audit, 0.9.14).
+            if (!empty($row['rrule']) && preg_match('/UNTIL=(\d{8})/', (string) $row['rrule'], $m) === 1 && $m[1] < $now->setTimezone(Time::zone((string) $row['tzid']))->format('Ymd')) {
                 continue;
             }
             $tz = Time::zone((string) $row['tzid']);

@@ -8,7 +8,7 @@ import { html, useState, useRef, useEffect } from '../../vendor/index.js';
 import { state, patchOccurrence } from './store.js';
 import { api } from './api.js';
 import { PinIcon } from '../ui/icons.js';
-import { fmtDateFull } from '../lib/dates.js';
+import { fmtDateFull, untilDayKey, dateOfDayKey } from '../lib/dates.js';
 import { splitUrlTail } from '../lib/richtext.js';
 import { mapMosaic, stadiaStyle, mapTilerStyle, isPendingLocation } from '../lib/maps.js';
 
@@ -56,10 +56,7 @@ export function describeRrule(rrule) {
   if (parts.COUNT && /^\d+$/.test(parts.COUNT)) {
     text += `, ${parts.COUNT} times`;
   } else if (parts.UNTIL && /^\d{8}/.test(parts.UNTIL)) {
-    const y = Number(parts.UNTIL.slice(0, 4));
-    const m = Number(parts.UNTIL.slice(4, 6));
-    const d = Number(parts.UNTIL.slice(6, 8));
-    text += ', until ' + fmtDateFull(new Date(y, m - 1, d));
+    text += ', until ' + fmtDateFull(dateOfDayKey(untilDayKey(parts.UNTIL)));
   }
   return text;
 }

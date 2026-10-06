@@ -267,7 +267,7 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
             throw new Forbidden(str_replace('calendar file', 'calendar object', $problem) . ' (CALDAV:max-resource-size)');
         }
 
-        $parsed = Ics::parse($calendarData);
+        $parsed = Ics::parse($calendarData, \BetterCal\Domain\Settings::homeTzid($this->db, (int) $calendar['user_id']));
         $masters = array_values(array_filter($parsed, static fn(array $p): bool => $p['recurrence_instance_utc'] === null));
         $parsedOverrides = array_values(array_filter($parsed, static fn(array $p): bool => $p['recurrence_instance_utc'] !== null));
         if (count($masters) !== 1) {

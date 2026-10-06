@@ -223,7 +223,7 @@ final class Events
                 // id; the occurrence's instance id addresses it at Google.
                 $googleId = !empty($existing['google_event_id'])
                     ? (string) $existing['google_event_id']
-                    : GoogleWriter::instanceId(self::requireGoogleId($master), $instanceUtc, $allDay);
+                    : GoogleWriter::instanceId(self::requireGoogleId($master), $instanceUtc, $allDay, (string) $master['tzid']);
                 $resp = $this->google()->patch($calendar, $googleId, GoogleWriter::body(array_merge($existing, $googleFields)));
                 $this->google()->apply($calendar, [$resp]);
             }
@@ -241,7 +241,7 @@ final class Events
             $patch = $this->columnPatch($override, $in, $instanceUtc, forOverride: true);
             [, $localFields] = self::splitGoogleFields($patch);
             $override = array_merge($override, $patch);
-            $instanceId = GoogleWriter::instanceId(self::requireGoogleId($master), $instanceUtc, $allDay);
+            $instanceId = GoogleWriter::instanceId(self::requireGoogleId($master), $instanceUtc, $allDay, (string) $master['tzid']);
             $resp = $this->google()->patch($calendar, $instanceId, GoogleWriter::body($override));
             $this->google()->apply($calendar, [$resp]);
             $created = $this->google()->rowByGoogleId((int) $calendar['id'], (string) ($resp['id'] ?? $instanceId));
@@ -275,7 +275,7 @@ final class Events
         $masterGoogleId = self::requireGoogleId($master);
 
         // The old series ends before this occurrence; a new one starts here.
-        $oldRrule = Recurrence::setUntil((string) $master['rrule'], Recurrence::splitUntil($instStart), $allDay);
+        $oldRrule = Recurrence::setUntil((string) $master['rrule'], Recurrence::splitUntil($instStart), $allDay, (string) $master['tzid']);
         $endOld = $this->google()->patch($calendar, $masterGoogleId, [
             'recurrence' => GoogleWriter::recurrenceLines($oldRrule, $this->decodeExdates($master), $allDay, (string) $master['tzid']),
         ]);
@@ -283,7 +283,7 @@ final class Events
         $newMaster = $this->copyForChild($master);
         $newMaster['start_utc'] = Time::toDb($instStart);
         $newMaster['end_utc'] = Time::toDb($instStart->add(new \DateInterval('PT' . $duration . 'S')));
-        $newMaster['rrule'] = $this->stripCount((string) $master['rrule']);
+        $newMaster['rrule'] = $this->followingRrule($master, $instanceUtc);
         $newMaster['exdates_json'] = $this->exdatesFrom($master, $instanceUtc);
         $patch = $this->columnPatch($newMaster, $in);
         [, $localFields] = self::splitGoogleFields($patch);
@@ -326,7 +326,7 @@ final class Events
         );
         $googleId = $override !== null && !empty($override['google_event_id'])
             ? (string) $override['google_event_id']
-            : GoogleWriter::instanceId(self::requireGoogleId($master), $instanceUtc, $allDay);
+            : GoogleWriter::instanceId(self::requireGoogleId($master), $instanceUtc, $allDay, (string) $master['tzid']);
         $this->google()->delete($calendar, $googleId);
         $this->google()->apply($calendar, [], [GoogleWriter::tombstone((string) $master['uid'], $instanceUtc)]);
         $this->googleJournal($userId, "Deleted one occurrence of '" . (string) $master['title'] . "'", $calendar, (int) $master['id']);
@@ -336,7 +336,7 @@ final class Events
     {
         $instanceUtc = $this->requireInstance(['instanceStart' => $instanceStart], $master);
         $allDay = (int) $master['all_day'] === 1;
-        $newRrule = Recurrence::setUntil((string) $master['rrule'], Recurrence::splitUntil(Time::fromDb($instanceUtc)), $allDay);
+        $newRrule = Recurrence::setUntil((string) $master['rrule'], Recurrence::splitUntil(Time::fromDb($instanceUtc)), $allDay, (string) $master['tzid']);
         $resp = $this->google()->patch($calendar, self::requireGoogleId($master), [
             'recurrence' => GoogleWriter::recurrenceLines($newRrule, $this->decodeExdates($master), $allDay, (string) $master['tzid']),
         ]);
@@ -596,6 +596,7 @@ final class Events
         // Trip membership, batch-loaded like tags (one query, no N+1).
         $links['containers'] = $this->trips->containersFor(array_keys($eventIds));
         $links['dupes'] = $this->duplicates()->linkedFor(array_keys($seriesIds));
+        $links['feedback'] = $this->feedbackFor(self::feedIds(array_map(static fn($o) => $o['row'], $expanded)));
 
         return array_map(
             function (array $occ) use ($links): array {
@@ -975,9 +976,24 @@ final class Events
     {
         $id = (int) $event['id'];
         $fields = $this->columnPatch($event, $in);
-        $deltaSec = isset($fields['start_utc'])
-            ? Time::fromDb((string) $fields['start_utc'])->getTimestamp() - Time::fromDb((string) $event['start_utc'])->getTimestamp()
-            : 0;
+        // The move as the trip's own calendar sees it: whole days, plus any
+        // change in its time of day. Members move by the same days on their
+        // own calendars, keeping their wall-clock times; shifting them by the
+        // elapsed seconds moved them an hour (and all-day ones a day) when
+        // the move crossed a DST change (audit, 0.9.14).
+        $deltaDays = 0;
+        $deltaSec = 0;
+        if (isset($fields['start_utc'])) {
+            $ctz = Time::zone((string) ($fields['tzid'] ?? $event['tzid']));
+            $was = Time::fromDb((string) $event['start_utc'])->setTimezone($ctz);
+            $now = Time::fromDb((string) $fields['start_utc'])->setTimezone($ctz);
+            $deltaDays = (int) (new \DateTimeImmutable($was->format('Y-m-d'), Time::utc()))->diff(new \DateTimeImmutable($now->format('Y-m-d'), Time::utc()))->format('%r%a');
+            $deltaSec = $now->getTimestamp() - $was->modify(($deltaDays >= 0 ? '+' : '') . $deltaDays . ' days')->getTimestamp();
+        }
+        $shift = static function (string $utc, string $tzid, bool $allDay) use ($deltaDays, $deltaSec): string {
+            $t = Time::fromDb($utc)->setTimezone(Time::zone($tzid))->modify(($deltaDays >= 0 ? '+' : '') . $deltaDays . ' days');
+            return Time::toDb($deltaSec !== 0 && !$allDay ? $t->modify(($deltaSec >= 0 ? '+' : '') . $deltaSec . ' seconds') : $t);
+        };
 
         $members = $this->db->all(
             'SELECT e.* FROM events e JOIN event_links l ON l.event_id = e.id
@@ -986,15 +1002,15 @@ final class Events
         );
 
         $beforeRows = array_merge([$event], $members);
-        $this->db->tx(function () use ($id, $fields, $members, $deltaSec): void {
+        $this->db->tx(function () use ($id, $fields, $members, $deltaDays, $deltaSec, $shift): void {
             if ($fields !== []) {
                 $this->db->update('events', $fields + ['updated_at' => Time::nowDb()], 'id = ?', [$id]);
             }
-            if ($deltaSec !== 0) {
+            if ($deltaDays !== 0 || $deltaSec !== 0) {
                 foreach ($members as $m) {
                     $this->db->update('events', [
-                        'start_utc' => Time::toDb(Time::fromDb((string) $m['start_utc'])->modify(($deltaSec >= 0 ? '+' : '') . $deltaSec . ' seconds')),
-                        'end_utc' => Time::toDb(Time::fromDb((string) $m['end_utc'])->modify(($deltaSec >= 0 ? '+' : '') . $deltaSec . ' seconds')),
+                        'start_utc' => $shift((string) $m['start_utc'], (string) $m['tzid'], (int) $m['all_day'] === 1),
+                        'end_utc' => $shift((string) $m['end_utc'], (string) $m['tzid'], (int) $m['all_day'] === 1),
                         'updated_at' => Time::nowDb(),
                     ], 'id = ?', [(int) $m['id']]);
                 }
@@ -1260,14 +1276,14 @@ final class Events
         $duration = Recurrence::durationSeconds($master);
         $allDay = (int) $master['all_day'] === 1;
 
-        $oldRrule = Recurrence::setUntil((string) $master['rrule'], Recurrence::splitUntil($instStart), $allDay);
+        $oldRrule = Recurrence::setUntil((string) $master['rrule'], Recurrence::splitUntil($instStart), $allDay, (string) $master['tzid']);
 
         $newMaster = $this->copyForChild($master);
         $newMaster['uid'] = Ids::ulid();
         $newMaster['created_via'] = ActivityContext::get(); // the splitter, not the original creator
         $newMaster['start_utc'] = Time::toDb($instStart);
         $newMaster['end_utc'] = Time::toDb($instStart->add(new \DateInterval('PT' . $duration . 'S')));
-        $newMaster['rrule'] = $this->stripCount((string) $master['rrule']);
+        $newMaster['rrule'] = $this->followingRrule($master, $instanceUtc);
         $newMaster['exdates_json'] = $this->exdatesFrom($master, $instanceUtc);
         $newMaster = array_merge($newMaster, $this->columnPatch($newMaster, $in));
         if (isset($in['rrule']) && $in['rrule'] !== null && $in['rrule'] !== '') {
@@ -1393,7 +1409,7 @@ final class Events
         $masterId = (int) $master['id'];
         $instStart = Time::fromDb($instanceUtc);
         $allDay = (int) $master['all_day'] === 1;
-        $newRrule = Recurrence::setUntil((string) $master['rrule'], Recurrence::splitUntil($instStart), $allDay);
+        $newRrule = Recurrence::setUntil((string) $master['rrule'], Recurrence::splitUntil($instStart), $allDay, (string) $master['tzid']);
         $movedOverrides = $this->db->all(
             'SELECT * FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc >= ? AND deleted_at IS NULL',
             [$masterId, $instanceUtc]
@@ -1496,14 +1512,54 @@ final class Events
         }
     }
 
-    /** Explicit thumbs feedback ('up'|'down'); pure training signal, no undo. */
-    public function recordFeedback(int $userId, int $id, string $signal): void
+    /**
+     * Explicit thumbs feedback ('up'|'down'); pure training signal, no undo.
+     * The newest signal is the event's current one (ranking reads it that
+     * way), so repeating it adds nothing and is ignored (#107); the other
+     * thumb switches it. Returns the event's feedback after the call.
+     */
+    public function recordFeedback(int $userId, int $id, string $signal): string
     {
         if (!in_array($signal, ['up', 'down'], true)) {
             throw HttpError::badRequest('signal must be up|down');
         }
         $this->get($userId, $id); // ownership + existence
-        $this->db->insert('feedback_signals', ['user_id' => $userId, 'event_id' => $id, 'kind' => $signal]);
+        if (($this->feedbackFor([$id])[$id] ?? null) !== $signal) {
+            $this->db->insert('feedback_signals', ['user_id' => $userId, 'event_id' => $id, 'kind' => $signal]);
+        }
+        return $signal;
+    }
+
+    /**
+     * The current thumbs state of each event: its newest up/down signal, from
+     * the thumbs or from triage (going or interested counts as up, hiding as
+     * down). Only feed events take feedback, so only they are looked up.
+     *
+     * @param list<int> $ids @return array<int, string> event id => up|down
+     */
+    private function feedbackFor(array $ids): array
+    {
+        if ($ids === []) {
+            return [];
+        }
+        [$in, $params] = Db::in($ids);
+        $out = [];
+        foreach ($this->db->all("SELECT event_id, kind FROM feedback_signals WHERE event_id IN $in AND kind IN ('up', 'down') ORDER BY id", $params) as $r) {
+            $out[(int) $r['event_id']] = (string) $r['kind'];
+        }
+        return $out;
+    }
+
+    /** @param list<array> $rows @return list<int> ids of the feed events among them */
+    private static function feedIds(array $rows): array
+    {
+        $ids = [];
+        foreach ($rows as $r) {
+            if ((string) ($r['source'] ?? '') === 'feed') {
+                $ids[(int) $r['id']] = true;
+            }
+        }
+        return array_keys($ids);
     }
 
     // ---- Serialization ------------------------------------------------
@@ -1519,6 +1575,7 @@ final class Events
         $links = $this->labels->forEvents([(int) $row['id']]);
         $links['containers'] = $this->trips->containersFor([(int) $row['id']]);
         $links['dupes'] = $this->duplicates()->linkedFor([self::seriesId($row)]);
+        $links['feedback'] = $this->feedbackFor(self::feedIds([$row]));
         return $this->serialize($row, Time::fromDb((string) $row['start_utc']), Time::fromDb((string) $row['end_utc']), $links, full: true);
     }
 
@@ -1538,6 +1595,7 @@ final class Events
         $links = $this->labels->forEvents($ids);
         $links['containers'] = $this->trips->containersFor($ids);
         $links['dupes'] = $this->duplicates()->linkedFor(array_values(array_unique(array_map(self::seriesId(...), $rows))));
+        $links['feedback'] = $this->feedbackFor(self::feedIds($rows));
         return array_map(
             fn(array $row) => $this->serialize($row, Time::fromDb((string) $row['start_utc']), Time::fromDb((string) $row['end_utc']), $links, full: false),
             $rows
@@ -1657,6 +1715,8 @@ final class Events
             'relationship' => self::relationship((string) $row['attendance'], (string) $row['status'], (string) ($calMeta['role'] ?? 'mine')),
             'icon' => isset($row['icon']) && $row['icon'] !== '' ? (string) $row['icon'] : null,
             'score' => isset($row['score']) && $row['score'] !== null ? (float) $row['score'] : null,
+            // Thumbs (feed events): 'up' or 'down' once given, so the buttons show it (#107).
+            'feedback' => $links['feedback'][$id] ?? null,
             'reminders' => $reminders,
             // List-shape bits, sent only when true (null is omitted): they let
             // the popover draw a correctly sized skeleton for the rows the
@@ -1773,6 +1833,16 @@ final class Events
             : (int) $current['all_day'] === 1;
         if (array_key_exists('allDay', $in)) {
             $fields['all_day'] = $allDay ? 1 : 0;
+        }
+        // An all-day event stored as UTC dates (imports, Google, CalDAV) that
+        // becomes timed with no zone given takes the owner's Home zone: kept
+        // at UTC, a repeating 9:00 moved an hour at every DST change (audit, 0.9.14).
+        if (!isset($in['tzid']) && !$allDay && (int) $current['all_day'] === 1 && Time::normalizeTzid($tzid) === 'UTC') {
+            $home = $this->userTzid((int) $current['user_id']);
+            if ($home !== 'UTC') {
+                $tzid = $home;
+                $fields['tzid'] = $home;
+            }
         }
 
         if (isset($in['start']) || isset($in['end'])) {
@@ -1947,10 +2017,26 @@ final class Events
         return $kept === [] ? null : json_encode($kept);
     }
 
-    private function stripCount(string $rrule): string
+    /**
+     * The rule for the part of a series from $instanceUtc on: a COUNT keeps
+     * what is left of it (occurrences before the split are the old series').
+     * Dropping it made "10 times" split on the 6th run on for ever (audit,
+     * 0.9.14). Skipped dates still count toward COUNT (RFC 5545), so the
+     * occurrences before the split are counted from the rule alone.
+     */
+    private function followingRrule(array $master, string $instanceUtc): string
     {
+        $rrule = (string) $master['rrule'];
         $parts = Recurrence::rruleParts($rrule);
-        unset($parts['COUNT']);
+        if (!isset($parts['COUNT'])) {
+            return $rrule;
+        }
+        try {
+            $before = count(Recurrence::sabreExpand(['exdates_json' => null] + $master, Time::fromDb((string) $master['start_utc']), Time::fromDb($instanceUtc)));
+        } catch (\Throwable) {
+            $before = 0;
+        }
+        $parts['COUNT'] = (string) max(1, (int) $parts['COUNT'] - $before);
         $out = [];
         foreach ($parts as $k => $v) {
             $out[] = $k . '=' . $v;

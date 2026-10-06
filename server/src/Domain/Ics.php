@@ -170,10 +170,7 @@ final class Ics
         if ($description !== null && $description !== '') {
             $out .= self::line('X-WR-CALDESC', self::escape($description));
         }
-        $stamp = Time::nowUtc()->format('Ymd\THis\Z');
-        foreach ($events as $ev) {
-            $out .= self::buildEvent($ev, $stamp);
-        }
+        $out .= self::buildBody($events);
         $out .= "END:VCALENDAR\r\n";
         return $out;
     }
@@ -191,32 +188,141 @@ final class Ics
         $out .= self::line('VERSION', '2.0');
         $out .= self::line('PRODID', self::PRODID);
         $out .= self::line('CALSCALE', 'GREGORIAN');
-        $stamp = Time::nowUtc()->format('Ymd\THis\Z');
-        foreach ($events as $ev) {
-            $out .= self::buildEvent($ev, $stamp);
-        }
+        $out .= self::buildBody($events);
         $out .= "END:VCALENDAR\r\n";
         return $out;
     }
 
-    private static function buildEvent(array $ev, string $stamp): string
+    /**
+     * The VTIMEZONEs the events use, then the events. A timed event goes out
+     * in its own zone (audit, 0.9.14): written as UTC, a weekly 9:00 meeting
+     * expanded in UTC elsewhere and moved an hour at every DST change, and a
+     * CalDAV round trip stored it back as UTC for good. An override takes its
+     * RECURRENCE-ID's type and zone from its series, so it still names the
+     * series' own occurrence when it changed between all-day and timed.
+     *
+     * @param list<array<string,mixed>> $events
+     */
+    private static function buildBody(array $events): string
     {
-        $allDay = (int) ($ev['all_day'] ?? 0) === 1;
-        $tz = Time::zone($ev['tzid'] ?? null);
+        $masters = [];
+        foreach ($events as $ev) {
+            if (empty($ev['recurrence_instance_utc'])) {
+                $masters[(string) ($ev['uid'] ?? '')] = $ev;
+            }
+        }
+        $zones = [];
+        foreach ($events as $ev) {
+            $series = !empty($ev['recurrence_instance_utc']) ? ($masters[(string) ($ev['uid'] ?? '')] ?? $ev) : $ev;
+            foreach ([$ev, $series] as $row) {
+                $z = self::zoneOf($row);
+                if ($z !== null) {
+                    $zones[$z] = true;
+                }
+            }
+        }
+        $out = '';
+        foreach (array_keys($zones) as $z) {
+            $out .= self::vtimezone($z);
+        }
+        $stamp = Time::nowUtc()->format('Ymd\THis\Z');
+        foreach ($events as $ev) {
+            $series = !empty($ev['recurrence_instance_utc']) ? ($masters[(string) ($ev['uid'] ?? '')] ?? null) : null;
+            $out .= self::buildEvent($ev, $stamp, $series);
+        }
+        return $out;
+    }
+
+    /** The zone a timed row is written in, or null for all-day and UTC rows (written as dates or Z). */
+    private static function zoneOf(array $row): ?string
+    {
+        if ((int) ($row['all_day'] ?? 0) === 1) {
+            return null;
+        }
+        $z = Time::normalizeTzid((string) ($row['tzid'] ?? 'UTC'));
+        return $z === 'UTC' ? null : $z;
+    }
+
+    /** A date-time property value for a row's shape: a date, a zoned local time, or UTC. */
+    private static function dateProp(string $name, string $utc, array $shape): string
+    {
+        $t = Time::fromDb($utc);
+        if ((int) ($shape['all_day'] ?? 0) === 1) {
+            return self::fold($name . ';VALUE=DATE:' . $t->setTimezone(Time::zone($shape['tzid'] ?? null))->format('Ymd')) . "\r\n";
+        }
+        $z = self::zoneOf($shape);
+        return $z !== null
+            ? self::fold($name . ';TZID=' . $z . ':' . $t->setTimezone(new \DateTimeZone($z))->format('Ymd\THis')) . "\r\n"
+            : self::line($name, $t->format('Ymd\THis\Z'));
+    }
+
+    /**
+     * A VTIMEZONE for an IANA zone, from PHP's zone data: its two yearly
+     * changes as STANDARD/DAYLIGHT rules (nth or last weekday of a month, as
+     * every zone with regular DST has them), one STANDARD for a zone without
+     * DST, or the actual changes of the surrounding years for an irregular one.
+     */
+    private static function vtimezone(string $tzid): string
+    {
+        $zone = new \DateTimeZone($tzid);
+        $year = (int) Time::nowUtc()->format('Y');
+        $fmtOff = static fn(int $s): string => ($s < 0 ? '-' : '+') . sprintf('%02d%02d', intdiv(abs($s), 3600), intdiv(abs($s) % 3600, 60));
+        $out = "BEGIN:VTIMEZONE\r\n" . self::line('TZID', $tzid);
+        $all = $zone->getTransitions((new \DateTimeImmutable(($year - 1) . '-01-01', Time::utc()))->getTimestamp(), (new \DateTimeImmutable(($year + 6) . '-01-01', Time::utc()))->getTimestamp());
+        $changes = array_values(array_slice($all ?: [], 1));
+        $thisYear = array_values(array_filter($changes, static fn($t) => (int) gmdate('Y', $t['ts']) === $year));
+        $component = static function (array $t, int $from, ?string $rrule, string $dtstart) use ($fmtOff): string {
+            $kind = $t['isdst'] ? 'DAYLIGHT' : 'STANDARD';
+            $c = "BEGIN:$kind\r\n" . self::line('DTSTART', $dtstart) . self::line('TZOFFSETFROM', $fmtOff($from))
+                . self::line('TZOFFSETTO', $fmtOff((int) $t['offset']));
+            if ($rrule !== null) {
+                $c .= self::line('RRULE', $rrule);
+            }
+            if (!empty($t['abbr']) && preg_match('/^[A-Za-z]+$/', (string) $t['abbr'])) {
+                $c .= self::line('TZNAME', (string) $t['abbr']);
+            }
+            return $c . "END:$kind\r\n";
+        };
+        if ($changes === []) {
+            $off = (int) ($all[0]['offset'] ?? 0);
+            $out .= "BEGIN:STANDARD\r\n" . self::line('DTSTART', '19700101T000000') . self::line('TZOFFSETFROM', $fmtOff($off))
+                . self::line('TZOFFSETTO', $fmtOff($off)) . "END:STANDARD\r\n";
+        } elseif (count($thisYear) === 2) {
+            foreach ($changes as $i => $t) {
+                $from = $i === 0 ? (int) $all[0]['offset'] : (int) $changes[$i - 1]['offset'];
+                if ((int) gmdate('Y', $t['ts']) !== $year) {
+                    continue;
+                }
+                // The wall-clock moment of the change, in the offset it leaves.
+                $local = (new \DateTimeImmutable('@' . $t['ts']))->modify(($from >= 0 ? '+' : '-') . abs($from) . ' seconds');
+                $day = (int) $local->format('j');
+                $nth = $day + 7 > (int) $local->format('t') ? -1 : intdiv($day - 1, 7) + 1;
+                $wd = strtoupper(substr($local->format('D'), 0, 2));
+                $rrule = 'FREQ=YEARLY;BYMONTH=' . (int) $local->format('n') . ';BYDAY=' . $nth . $wd;
+                $out .= $component($t, $from, $rrule, $local->format('Ymd\THis'));
+            }
+        } else {
+            foreach ($changes as $i => $t) {
+                $from = $i === 0 ? (int) $all[0]['offset'] : (int) $changes[$i - 1]['offset'];
+                $local = (new \DateTimeImmutable('@' . $t['ts']))->modify(($from >= 0 ? '+' : '-') . abs($from) . ' seconds');
+                $out .= $component($t, $from, null, $local->format('Ymd\THis'));
+            }
+        }
+        return $out . "END:VTIMEZONE\r\n";
+    }
+
+    private static function buildEvent(array $ev, string $stamp, ?array $series = null): string
+    {
         $out = "BEGIN:VEVENT\r\n";
         $out .= self::line('UID', self::structural((string) $ev['uid']));
         $out .= self::line('DTSTAMP', $stamp);
-        if ($allDay) {
-            $start = Time::fromDb((string) $ev['start_utc'])->setTimezone($tz);
-            $end = Time::fromDb((string) $ev['end_utc'])->setTimezone($tz);
-            $out .= self::fold('DTSTART;VALUE=DATE:' . $start->format('Ymd')) . "\r\n";
-            $out .= self::fold('DTEND;VALUE=DATE:' . $end->format('Ymd')) . "\r\n";
-        } else {
-            $out .= self::line('DTSTART', Time::fromDb((string) $ev['start_utc'])->format('Ymd\THis\Z'));
-            $out .= self::line('DTEND', Time::fromDb((string) $ev['end_utc'])->format('Ymd\THis\Z'));
-        }
+        $out .= self::dateProp('DTSTART', (string) $ev['start_utc'], $ev);
+        $out .= self::dateProp('DTEND', (string) $ev['end_utc'], $ev);
+        // RECURRENCE-ID and EXDATE take the series' shape (RFC 5545 wants the
+        // value type of its DTSTART): dates for an all-day series, local times
+        // in its zone for a timed one.
         if (!empty($ev['recurrence_instance_utc'])) {
-            $out .= self::line('RECURRENCE-ID', Time::fromDb((string) $ev['recurrence_instance_utc'])->format('Ymd\THis\Z'));
+            $out .= self::dateProp('RECURRENCE-ID', (string) $ev['recurrence_instance_utc'], $series ?? $ev);
         }
         if (!empty($ev['rrule'])) {
             $out .= self::line('RRULE', self::structural((string) $ev['rrule']));
@@ -229,7 +335,7 @@ final class Ics
             }
         }
         foreach ($exdates as $ex) {
-            $out .= self::line('EXDATE', Time::fromDb((string) $ex)->format('Ymd\THis\Z'));
+            $out .= self::dateProp('EXDATE', (string) $ex, $ev);
         }
         $out .= self::line('SUMMARY', self::escape((string) ($ev['title'] ?? '')));
         if (!empty($ev['description'])) {
@@ -357,15 +463,22 @@ final class Ics
      *   start_utc, end_utc, all_day, tzid, rrule, exdates (list), status,
      *   recurrence_instance_utc, reminders (list of {minutes} from display VALARMs)
      */
-    public static function parse(string $ics): array
+    public static function parse(string $ics, ?string $floatingTzid = null): array
     {
         if (!class_exists(\Sabre\VObject\Reader::class)) {
             throw new \RuntimeException('sabre/vobject is not installed');
         }
         $vcal = \Sabre\VObject\Reader::read($ics, \Sabre\VObject\Reader::OPTION_FORGIVING | \Sabre\VObject\Reader::OPTION_IGNORE_INVALID_LINES);
+        // A floating time ("9:00", no zone) means 9:00 where the calendar is:
+        // the calendar's own X-WR-TIMEZONE when it names one, else the zone
+        // the caller knows (the owner's Home), else UTC. Read as UTC, it moved
+        // by the owner's whole offset.
+        $wr = isset($vcal->{'X-WR-TIMEZONE'}) ? trim((string) $vcal->{'X-WR-TIMEZONE'}) : '';
+        $floatName = $wr !== '' && Time::normalizeTzid($wr) !== 'UTC' ? Time::normalizeTzid($wr)
+            : ($floatingTzid !== null && $floatingTzid !== '' ? Time::normalizeTzid($floatingTzid) : 'UTC');
         $events = [];
         foreach ($vcal->select('VEVENT') as $vevent) {
-            $parsed = self::parseVevent($vevent);
+            $parsed = self::parseVevent($vevent, $floatName);
             if ($parsed !== null) {
                 $events[] = $parsed;
             }
@@ -373,7 +486,34 @@ final class Ics
         return $events;
     }
 
-    private static function parseVevent(object $vevent): ?array
+    /**
+     * A date or date-time property as UTC instants. DATE values are read
+     * literally as UTC midnights (sabre would apply a stray TZID to them);
+     * floating date-times in $readTz; zoned ones in their own zone.
+     *
+     * @return list<\DateTimeImmutable>
+     */
+    private static function utcInstants(object $prop, ?\DateTimeZone $readTz): array
+    {
+        if ($prop->getValueType() === 'DATE') {
+            $out = [];
+            foreach ($prop->getParts() as $part) {
+                $digits = substr((string) preg_replace('/\D/', '', (string) $part), 0, 8);
+                $d = \DateTimeImmutable::createFromFormat('!Ymd', $digits, Time::utc());
+                if ($d === false) {
+                    throw new \InvalidArgumentException('bad date: ' . $part);
+                }
+                $out[] = $d;
+            }
+            return $out;
+        }
+        return array_map(
+            static fn($dt) => \DateTimeImmutable::createFromInterface($dt)->setTimezone(Time::utc()),
+            $prop->getDateTimes($readTz)
+        );
+    }
+
+    private static function parseVevent(object $vevent, string $floatName = 'UTC'): ?array
     {
         if (!isset($vevent->DTSTART)) {
             return null;
@@ -382,18 +522,41 @@ final class Ics
         $isDate = $dtstart->getValueType() === 'DATE';
         $tzid = 'UTC';
         $param = $dtstart['TZID'] ?? null;
-        if ($param !== null) {
+        $floating = !$isDate && $param === null && method_exists($dtstart, 'isFloating') && $dtstart->isFloating();
+        // DATE values stay UTC midnights (the import convention); a floating
+        // time is read in $floatName; a zoned time in its own zone.
+        $readTz = $floating ? Time::zone($floatName) : ($isDate ? Time::utc() : null);
+        if ($isDate) {
+            // A date is a date: UTC midnight, labelled UTC, even when a sender
+            // attaches a TZID to it (not allowed on DATE values, but seen).
+        } elseif ($param !== null) {
             $tzid = Time::normalizeTzid((string) $param);
+            // Not an IANA name (Outlook's "Pacific Standard Time", a custom
+            // VTIMEZONE id): sabre has already resolved it to a real zone, so
+            // keep that one. Flattened to UTC, a repeating 9:00 meeting moved
+            // an hour at every DST change.
+            if ($tzid === 'UTC' && !in_array(strtoupper(trim((string) $param)), ['UTC', 'Z', 'GMT', 'ETC/UTC', 'ETC/GMT', 'ETC/UCT', 'UCT'], true)) {
+                try {
+                    $resolved = $dtstart->getDateTime()->getTimezone()->getName();
+                    if (str_contains($resolved, '/') && Time::normalizeTzid($resolved) !== 'UTC') {
+                        $tzid = Time::normalizeTzid($resolved);
+                    }
+                } catch (\Exception) {
+                    // keep UTC
+                }
+            }
+        } elseif ($floating) {
+            $tzid = $floatName;
         }
 
         try {
-            $start = \DateTimeImmutable::createFromInterface($dtstart->getDateTime())->setTimezone(Time::utc());
-        } catch (\Exception) {
+            $start = self::utcInstants($dtstart, $readTz)[0];
+        } catch (\Throwable) {
             return null;
         }
 
         if (isset($vevent->DTEND)) {
-            $end = \DateTimeImmutable::createFromInterface($vevent->DTEND->getDateTime())->setTimezone(Time::utc());
+            $end = self::utcInstants($vevent->DTEND, $readTz)[0];
         } elseif (isset($vevent->DURATION)) {
             try {
                 $end = $start->add(new \DateInterval((string) $vevent->DURATION));
@@ -424,8 +587,8 @@ final class Ics
         $exdates = [];
         if (isset($vevent->EXDATE)) {
             foreach ($vevent->select('EXDATE') as $exProp) {
-                foreach ($exProp->getDateTimes() as $exDt) {
-                    $exdates[] = \DateTimeImmutable::createFromInterface($exDt)->setTimezone(Time::utc())->format(Time::DB);
+                foreach (self::utcInstants($exProp, $readTz) as $exDt) {
+                    $exdates[] = $exDt->format(Time::DB);
                 }
             }
         }
@@ -433,9 +596,8 @@ final class Ics
         $recurrenceInstance = null;
         if (isset($vevent->{'RECURRENCE-ID'})) {
             try {
-                $recurrenceInstance = \DateTimeImmutable::createFromInterface($vevent->{'RECURRENCE-ID'}->getDateTime())
-                    ->setTimezone(Time::utc())->format(Time::DB);
-            } catch (\Exception) {
+                $recurrenceInstance = self::utcInstants($vevent->{'RECURRENCE-ID'}, $readTz)[0]->format(Time::DB);
+            } catch (\Throwable) {
                 $recurrenceInstance = null;
             }
         }

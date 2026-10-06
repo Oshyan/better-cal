@@ -4,6 +4,29 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.14 (2026-10-06)
+
+A clean install found one time zone bug; an audit of every place the app converts between UTC, an event's own zone, the Home zone and all-day dates found the rest. Events already stored are unaffected unless noted.
+
+Time zones:
+
+- **Repeating all-day events stay on their days.** One made in the app (or through the API without a time zone) anywhere west of UTC showed a day early: a weekly Wednesday event appeared on Tuesdays. Imported, Google and CalDAV events were not affected; they store all-day dates in UTC, where the two readings agree. Ending such a series with "this and following" no longer leaves the split day in the old series too.
+- **Feeds and CalDAV send timed events in their own zone.** A weekly 9:00 meeting went out as a UTC time, so calendar apps showed it at 8:00 after the clocks changed, and a CalDAV client saving it back stored it as UTC for good. Events now go out with their zone and its rules, and a series' skipped and edited days match its start (dates for all-day series).
+- **Imported times keep their zone.** Outlook's zone names ("Pacific Standard Time") were stored as UTC, so a repeating meeting from Outlook moved an hour at each DST change; and times with no zone at all were read as UTC. Now Outlook names map to the real zone, and zoneless times are read in the calendar's own zone, else your Home zone. A subscribed feed that sends zoneless times corrects itself at its next update.
+- **A repeat's end date stays put.** In the editor, "ends on Oct 20" came back as Oct 21 on every save west of UTC. All-day series now end on a plain date.
+- **Evening reminders for imported all-day events fire.** "6 PM that day" on an all-day event from an import or Google never fired west of UTC.
+- **An all-day event made timed takes your Home zone** instead of UTC, when it came from an import, Google or CalDAV.
+- **Moving a trip across a DST change keeps its events on their days and times.** They moved by the elapsed hours, so an all-day one could land a day off and a timed one an hour off.
+- **CalDAV all-day events sent as zoned midnights** stay on their day east of UTC; **duplicates** of an all-day event made in the app and its Google copy are found; a pasted **Google Calendar link** keeps its own time zone; **search** and **review** treat a series ending "on Oct 10" as running through that day in its own zone; **Google** occurrence ids for all-day series east of UTC name the right day.
+- **"This and following" on a series that repeats a set number of times** keeps the remaining count instead of running on for ever.
+
+Also:
+
+- **Thumbs up and down show your choice** (#107). The chosen one stays pressed and can't be sent twice; the other switches it.
+- **Month view fits the day's context to the width** (#108): weather, sun times and the rest show as many as fit, and "+N" only for what doesn't. Wide screens show them all.
+- **Signing in loads everything a page load does.** After signing in on the login screen, people, saved views, plugins, the review count and the device's time zone waited for the next reload.
+- **Sample data for a first look:** `php server/bin/demo-seed.php` fills an empty account with invented calendars, events and people around today (docs/install.md). The README screenshots are made from it.
+
 ## 0.9.13 (2026-10-05)
 
 Found in a clean install on a fresh machine, signing in to a brand-new account (#79):

@@ -763,6 +763,8 @@ div.bc-duration-exact { display: flex; align-items: center; gap: 10px; flex-wrap
 .bc-dayexpand-ctxtext { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bc-dayexpand-ctxtime { flex: none; font-style: normal; font-variant-numeric: tabular-nums; font-size: 11.5px; }
 .bc-ctx-token-time { font-style: normal; font-variant-numeric: tabular-nums; opacity: 0.8; }
+/* Measured but not shown: past what the month cell has room for (#108). */
+.bc-ctx-token.is-overflow { position: absolute; visibility: hidden; pointer-events: none; }
 .bc-ctx-more { flex: none; font-size: 10px; color: var(--fg-muted); padding: 3px 3px; border-radius: 4px; cursor: pointer; }
 .bc-ctx-more:hover { background: var(--bg-inset); color: var(--fg); }
 .bc-cell-head { position: relative; z-index: 2; display: flex; align-items: center; gap: 2px; height: 24px; padding-right: 2px; overflow: hidden; pointer-events: none; }
@@ -1071,6 +1073,13 @@ body.bc-dragging * { cursor: grabbing !important; }
   background: color-mix(in srgb, var(--accent) 14%, transparent);
 }
 .bc-triage-sep { width: 1px; height: 13px; background: var(--border); margin: 0 4px; flex: none; }
+/* A chosen thumb (#107) shows pressed and is not pressable again: no
+   disabled fade, no hover change. The other thumb switches the choice. */
+.bc-triage-btn.is-on:disabled, .bc-agenda-act.is-on:disabled, .bc-es-tool.is-on:disabled { opacity: 1; cursor: default; }
+.bc-triage-btn.is-on:disabled:hover { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.bc-es-tool.is-on:disabled { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.bc-es-mi.is-on { background: color-mix(in srgb, var(--accent) 10%, transparent); cursor: default; }
+.bc-es-mi.is-on, .bc-es-mi.is-on svg { color: var(--accent); }
 /* Thumbs feedback buttons carry an svg instead of a text glyph. */
 .bc-triage-thumb { display: inline-flex; align-items: center; padding-top: 2px; padding-bottom: 2px; }
 .bc-triage-thumb svg { display: block; }

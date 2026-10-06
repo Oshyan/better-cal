@@ -10,6 +10,12 @@ A self-hosted calendar built to fully replace Google Calendar: everything GCal d
 
 **[Full feature list → FEATURES.md](FEATURES.md)**
 
+![Month view: five calendars, repeating and one-off events, a four-day trip, and two people's away and busy times shown across the days they cover](docs/screenshots/month.webp)
+
+<p><img src="docs/screenshots/phone-month.webp" width="250" alt="The same month on a phone, three days to a row, with the bottom bar for views, search, new, filter and review"> <img src="docs/screenshots/command-palette.webp" width="560" alt="The command palette: type to find a view, a calendar or an action, or create an event from the text"></p>
+
+The screenshots use invented sample data; `php server/bin/demo-seed.php` loads the same into a fresh install.
+
 ## What this is, and isn't
 
 I wanted infinite scroll in a calendar. That's the whole origin story: Google Calendar has never had it, people have been asking for it for years, and one evening I sat down with Claude (Fable 5) to see how far a calendar with infinite scroll could get. By morning there was a working one. Within a week it had replaced Google Calendar for me outright, and by then it did a number of things GCal doesn't and probably never will: undo for everything, trips and people as real objects, a relationship to every event that tells "what am I doing" apart from "what could I do" and "what's the weather", feeds that are actually pleasant to live with, and an API that an agent can drive as well as I can.

@@ -96,7 +96,7 @@ final class QuickAdd
                         'start' => $draft['start'],
                         'end' => $draft['end'],
                         'allDay' => $draft['allDay'],
-                        'tzid' => $tz,
+                        'tzid' => $draft['tzid'] ?? $tz, // the link's own ctz when it has one (audit, 0.9.14)
                         'location' => $draft['location'],
                         'description' => $draft['description'],
                         'rrule' => $draft['rrule'],

@@ -77,7 +77,7 @@ final class DavIcs
 
     /**
      * Map one parsed VEVENT (Ics::parse output) onto events-table columns.
-     * DATE-valued events (all_day) are pinned to tzid UTC; EXDATEs collapse
+     * The zone is the one the start was read in; EXDATEs collapse
      * to exdates_json; empty rrule stays NULL.
      *
      * @param array<string,mixed> $parsed
@@ -96,7 +96,11 @@ final class DavIcs
             'start_utc' => (string) $parsed['start_utc'],
             'end_utc' => (string) $parsed['end_utc'],
             'all_day' => $allDay ? 1 : 0,
-            'tzid' => $allDay ? 'UTC' : Time::normalizeTzid((string) ($parsed['tzid'] ?? 'UTC')),
+            // The zone Ics::parse read the start in, all-day included: DATE
+            // values come back as UTC midnights with tzid UTC, and an all-day
+            // event sent as zoned midnights keeps that zone. Pinning those to
+            // UTC put them on the previous day east of UTC (audit, 0.9.14).
+            'tzid' => Time::normalizeTzid((string) ($parsed['tzid'] ?? 'UTC')),
             'rrule' => ($parsed['rrule'] ?? null) === '' ? null : ($parsed['rrule'] ?? null),
             'exdates_json' => $exdates === [] ? null : json_encode($exdates),
             'status' => (string) ($parsed['status'] ?? 'confirmed'),

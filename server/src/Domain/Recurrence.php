@@ -182,13 +182,18 @@ final class Recurrence
         return implode(';', $out);
     }
 
-    /** Replace COUNT with an UNTIL bound (used for "following" splits). */
-    public static function setUntil(string $rrule, \DateTimeImmutable $untilUtc, bool $allDay): string
+    /**
+     * Replace COUNT with an UNTIL bound (used for "following" splits). An
+     * all-day UNTIL is a date, taken in the series' own zone like its
+     * occurrences (sabreExpand); in UTC, a series west of UTC kept the day it
+     * was split at.
+     */
+    public static function setUntil(string $rrule, \DateTimeImmutable $untilUtc, bool $allDay, ?string $tzid = null): string
     {
         $parts = self::rruleParts($rrule);
         unset($parts['COUNT']);
         $parts['UNTIL'] = $allDay
-            ? $untilUtc->setTimezone(Time::utc())->format('Ymd')
+            ? $untilUtc->setTimezone(Time::zone($tzid))->format('Ymd')
             : $untilUtc->setTimezone(Time::utc())->format('Ymd\THis\Z');
         return self::joinParts($parts);
     }
@@ -345,7 +350,11 @@ final class Recurrence
 
         $out = [];
         try {
-            $it = new \Sabre\VObject\Recur\EventIterator($vcal, $uid, Time::utc());
+            // All-day dates are midnights in the event's own zone, as they are
+            // stored (Time::parseAllDay). Read in UTC, a series in a zone west
+            // of UTC came out a day early: midnight UTC is the evening before.
+            // A UTC-zoned series, as imports and CalDAV store them, is unchanged.
+            $it = new \Sabre\VObject\Recur\EventIterator($vcal, $uid, $allDay ? $tz : Time::utc());
             $it->fastForward(\DateTime::createFromImmutable($winStart));
             $count = 0;
             while ($it->valid() && $count < self::MAX_INSTANCES) {

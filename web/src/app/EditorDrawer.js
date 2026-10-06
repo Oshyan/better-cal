@@ -20,7 +20,7 @@ import { isEmptyHtml } from '../lib/richtext.js';
 import {
   parseISO, toInputValue, fromInputValue, toISOWithOffset, addDaysDate, pad, localTz,
   dateOfDayKey, eventDuration, instantFromWallTime, wallTimeInZone, sameClock, tzCity, tzOffsetLabel, zoneOptions, fmtRange,
-  allDayFields, allDayInputs, addDaysKey, diffDaysKey, fmtTime, fmtWeekdayShort, todayKey,
+  allDayFields, allDayInputs, addDaysKey, diffDaysKey, fmtTime, fmtWeekdayShort, todayKey, untilDayKey,
 } from '../lib/dates.js';
 import {
   TIMED_CHOICES, ALLDAY_CHOICES, REMINDER_UNITS, fmtOffsetMinutes, fmtReminder,
@@ -48,12 +48,15 @@ function toPeopleChips(names) {
     });
 }
 
-function buildRrule(r) {
+function buildRrule(r, allDay = false) {
   if (!r || r.freq === 'none') return null;
   const parts = ['FREQ=' + r.freq];
   if (r.interval > 1) parts.push('INTERVAL=' + r.interval);
   if (r.freq === 'WEEKLY' && r.byday && r.byday.length) parts.push('BYDAY=' + r.byday.join(','));
-  if (r.ends === 'until' && r.until) {
+  if (r.ends === 'until' && r.until && allDay) {
+    // A date series ends on a date (RFC 5545: UNTIL takes DTSTART's type).
+    parts.push('UNTIL=' + r.until.replace(/-/g, ''));
+  } else if (r.ends === 'until' && r.until) {
     const d = new Date(r.until + 'T23:59:59');
     parts.push('UNTIL=' + d.getUTCFullYear() + pad(d.getUTCMonth() + 1) + pad(d.getUTCDate()) + 'T' + pad(d.getUTCHours()) + pad(d.getUTCMinutes()) + '00Z');
   } else if (r.ends === 'count' && r.count > 0) {
@@ -73,7 +76,7 @@ function parseRrule(rrule) {
     if (k === 'COUNT') { r.ends = 'count'; r.count = Number(v) || 10; }
     if (k === 'UNTIL') {
       r.ends = 'until';
-      r.until = v.slice(0, 4) + '-' + v.slice(4, 6) + '-' + v.slice(6, 8);
+      r.until = untilDayKey(v);
     }
   }
   if (r.freq !== 'none' && r.ends === 'until' && !r.until) r.ends = 'never';
@@ -325,20 +328,24 @@ export function EditorDrawer() {
     // A blank new event starts at the next quarter hour, not at 5:39.
     const start = occ ? anchor(occ.start, occ.allDay) : (draft.start ? anchor(draft.start, !!draft.allDay) : new Date(Math.ceil(Date.now() / 900000) * 900000));
     const end = occ ? anchor(occ.end, occ.allDay) : (draft.end ? anchor(draft.end, !!draft.allDay) : new Date(start.getTime() + 3600000));
+    // A draft that names its own zone (a Google Calendar link's ctz) opens
+    // in that zone, so saving keeps it: a repeating 9:00 London meeting
+    // stays 9:00 in London (audit, 0.9.14).
+    const draftZone = !occ && draft.tzid && draft.tzid !== 'UTC' && !draft.allDay && !sameClock(draft.tzid, localTz()) ? draft.tzid : null;
     const initial = {
       title: occ ? occ.title : (draft.title || ''),
       // New events land on the draft's calendar, else the user's default
       // calendar (settings), else the first local calendar.
       calendarId: occ ? occ.calendarId : (draft.calendarId || defaultTargetCalendarId()),
-      start: toInputValue(start),
-      end: toInputValue(end),
+      start: draftZone ? wallTimeInZone(start, draftZone) : toInputValue(start),
+      end: draftZone ? wallTimeInZone(end, draftZone) : toInputValue(end),
       allDay: occ ? !!occ.allDay : !!draft.allDay,
       // The zone Start and End are read in. It opens as this device's zone,
       // which is how the fields above are filled, so nothing changes unless
       // the owner picks another; only then (tzTouched) is it also saved as the
       // event's zone. An untouched edit never rewrites a stored zone.
-      tz: localTz(),
-      tzTouched: false,
+      tz: draftZone || localTz(),
+      tzTouched: !!draftZone,
       isContainer: occ ? !!occ.isContainer : !!draft.isContainer,
       // Planned or Maybe, on my own calendars (status confirmed / tentative).
       rel: (occ ? occ.relationship : draft.relationship) === 'maybe' ? 'maybe' : 'planned',
@@ -587,7 +594,7 @@ export function EditorDrawer() {
       // duplicate. Proposed chips (id null) are blocked above, so every chip
       // here is a directory person the user confirmed.
       personIds: form.people.map((c) => c.id),
-      rrule: buildRrule(form.rrule),
+      rrule: buildRrule(form.rrule, form.allDay),
     };
     // A zone the owner picked becomes the event's own zone: it is what a
     // repeating event keeps its clock time in across DST changes. All-day

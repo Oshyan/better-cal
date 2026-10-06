@@ -51,7 +51,8 @@ const SWIPE_ACT_W = 52;
 const SWIPE_GROUP_GAP = 6;
 
 function TriageCluster({ occ, onSetAttendance, onFeedback }) {
-  const hasOn = TRIAGE_BUTTONS.some(([value]) => occ.relationship === value);
+  // A triage state or a thumb already given keeps the cluster showing.
+  const hasOn = TRIAGE_BUTTONS.some(([value]) => occ.relationship === value) || !!(onFeedback && occ.feedback);
   return html`<span
     class="bc-triage bc-agenda-triage${hasOn ? ' has-on' : ''}"
     role="group" aria-label="Triage and feedback"
@@ -64,8 +65,8 @@ function TriageCluster({ occ, onSetAttendance, onFeedback }) {
     ><${Icon} name=${iconName} size=${12} /></button>`)}
     ${onFeedback && html`<span class="bc-triage-sep" aria-hidden="true"></span>`}
     ${onFeedback && FEEDBACK_BUTTONS.map(([value, label]) => html`<button
-      key=${value} type="button" class="bc-triage-btn bc-triage-thumb"
-      title=${label} aria-label=${label}
+      key=${value} type="button" class=${'bc-triage-btn bc-triage-thumb' + (occ.feedback === value ? ' is-on' : '')}
+      title=${label} aria-label=${label} aria-pressed=${occ.feedback === value} disabled=${occ.feedback === value}
       onClick=${(e) => { e.stopPropagation(); onFeedback(occ, value); }}
     ><${ThumbIcon} dir=${value} size=${12} /></button>`)}
   </span>`;
@@ -502,8 +503,8 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
                     onClick=${(e) => { e.stopPropagation(); setSwiped(null); onSetAttendance(occ, value); }}
                   ><${Icon} name=${iconName} size=${16} /><span>${label}</span></button>`)}
                   ${onFeedback && FEEDBACK_BUTTONS.map(([value, label]) => html`<button
-                    key=${value} type="button" class=${'bc-agenda-act is-' + value}
-                    aria-label=${label}
+                    key=${value} type="button" class=${'bc-agenda-act is-' + value + (occ.feedback === value ? ' is-on' : '')}
+                    aria-label=${label} aria-pressed=${occ.feedback === value} disabled=${occ.feedback === value}
                     onClick=${(e) => { e.stopPropagation(); setSwiped(null); onFeedback(occ, value); }}
                   ><${ThumbIcon} dir=${value} size=${16} /></button>`)}
                 </span>`}

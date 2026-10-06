@@ -1,10 +1,9 @@
 // Login screen: email + password against POST /auth/login.
 
 import { html, useState } from '../../vendor/index.js';
-import { login, loadCalendars, loadConfig } from './api.js';
+import { login } from './api.js';
 import { set, state } from './store.js';
-import { runHandoff } from './handoff.js';
-import { resyncPush } from './push.js';
+import { loadSession, startSession } from './session.js';
 
 export function Login() {
   const [email, setEmail] = useState('');
@@ -22,15 +21,13 @@ export function Login() {
     setError('');
     try {
       await login(email, password);
-      await loadCalendars();
-      loadConfig(); // fire-and-forget
-      resyncPush(); // this browser's reminders survive a password reset
+      // The same session a page load starts (session.js): people, views,
+      // plugins, the device's zone and the rest, not just the calendars.
+      await loadSession();
       // A share or deep link that arrived while signed out is still owed.
       const handoff = state.pendingHandoff;
-      if (handoff) {
-        set({ pendingHandoff: null });
-        runHandoff(handoff).catch(() => { /* best-effort */ });
-      }
+      if (handoff) set({ pendingHandoff: null });
+      startSession(handoff);
     } catch (err) {
       setError(err.status === 401 ? 'Wrong email or password' : err.message);
     }

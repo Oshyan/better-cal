@@ -6,6 +6,7 @@ namespace BetterCal\Domain;
 
 use BetterCal\Http\HttpError;
 use BetterCal\Infra\Db;
+use BetterCal\Support\Time;
 
 /**
  * User settings stored in users.settings_json. The server stores and
@@ -15,6 +16,15 @@ use BetterCal\Infra\Db;
  */
 final class Settings
 {
+    /** The owner's Home zone as set, or null when none has been (a new account before its first sign-in). */
+    public static function homeTzid(Db $db, int $userId): ?string
+    {
+        $raw = $db->scalar('SELECT settings_json FROM users WHERE id = ?', [$userId]);
+        $settings = is_string($raw) ? json_decode($raw, true) : null;
+        $tz = is_array($settings) && is_string($settings['tz'] ?? null) ? trim($settings['tz']) : '';
+        return $tz !== '' ? Time::normalizeTzid($tz) : null;
+    }
+
     public const DEFAULTS = [
         'defaultView' => 'month',
         'defaultViewId' => null, // a saved view that "Default view" (0) applies; null = the built-in reset

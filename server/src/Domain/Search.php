@@ -117,8 +117,12 @@ final class Search
             return false;
         }
         if (preg_match('/UNTIL=(\d{8})(T(\d{6}))?/i', $rrule, $m) === 1) {
-            $until = substr($m[1], 0, 4) . '-' . substr($m[1], 4, 2) . '-' . substr($m[1], 6, 2)
-                . ' ' . (isset($m[3]) ? substr($m[3], 0, 2) . ':' . substr($m[3], 2, 2) . ':' . substr($m[3], 4, 2) : '23:59:59');
+            $date = substr($m[1], 0, 4) . '-' . substr($m[1], 4, 2) . '-' . substr($m[1], 6, 2);
+            // A date-only UNTIL runs to the end of that day in the event's own
+            // zone, not in UTC (audit, 0.9.14).
+            $until = isset($m[3]) && $m[3] !== ''
+                ? $date . ' ' . substr($m[3], 0, 2) . ':' . substr($m[3], 2, 2) . ':' . substr($m[3], 4, 2)
+                : Time::toDb((new \DateTimeImmutable($date . ' 23:59:59', Time::zone((string) ($row['tzid'] ?? 'UTC'))))->setTimezone(Time::utc()));
             return $until >= $nowSql;
         }
         return true;

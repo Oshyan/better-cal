@@ -120,7 +120,7 @@ final class CalendarsController
             throw new HttpError('import_too_large', $problem . '. ' . $how, 413);
         }
         try {
-            $parsed = Ics::parse($ics);
+            $parsed = Ics::parse($ics, \BetterCal\Domain\Settings::homeTzid($this->db, (int) $req->user['id']));
         } catch (\Throwable $e) {
             throw HttpError::badRequest('Could not parse ICS: ' . $e->getMessage(), 'invalid_ics');
         }

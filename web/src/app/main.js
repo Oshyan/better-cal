@@ -2,17 +2,11 @@
 
 import { html, render } from '../../vendor/index.js';
 import { App } from './App.js';
-import { set, state, toast } from './store.js';
-import { saveSetting } from './actions.js';
-import { fetchMe, loadCalendars, loadSavedViews, loadConfig, loadPeople, loadPlugins, loadReviewCount, loadSystemHealth, api } from './api.js';
-import { announceSystemHealth } from './system.js';
-import { installHoverPrefetch } from './prefetch.js';
-import { armQuietReload, restoreDraftsAfterBoot, installActivityTracking } from './drafts.js';
-import { installResumeSaving, restoreResume, recordStart } from './resume.js';
-import { preloadRichText } from './RichText.js';
-import { loadLeaflet } from './eventparts.js';
-import { localTz, sameClock, tzCity, tzOffsetLabel } from '../lib/dates.js';
-import { handleEventLink, resyncPush, offerPushOnThisDevice } from './push.js';
+import { set, toast } from './store.js';
+import { fetchMe } from './api.js';
+import { loadSession, startSession } from './session.js';
+import { armQuietReload } from './drafts.js';
+import { restoreResume, recordStart } from './resume.js';
 import { takeHandoff, runHandoff } from './handoff.js';
 import './install.js'; // keeps the browser's one-time install prompt for the welcome
 import {
@@ -29,25 +23,8 @@ async function boot() {
     // later write needs, and the settings that decide which view and window
     // the app opens on.
     await fetchMe();
-    // Everything after it is independent — each was awaited in turn purely by
-    // habit, which cost a full round trip per call (~85ms each) before the app
-    // could render. Only calendars genuinely gate first paint: without them
-    // events would draw in placeholder colours.
-    await Promise.all([
-      loadCalendars(),
-      loadSavedViews().catch(() => { /* views are non-critical at boot */ }),
-      loadConfig().catch(() => { /* map tiles fall back to OSM */ }),
-      loadPeople().catch(() => { /* people are non-critical at boot */ }),
-      loadSystemHealth(), // own catch inside; feeds the boot notices and the device banner
-      loadPlugins(), // ops listing feeds the sidebar layer toggles; own catch inside
-      loadReviewCount(),
-      // Tell the server our timezone once. The browser has always known it;
-      // worker-side code (plugins building local times) had no way to.
-      (state.settings.tz ? Promise.resolve() : saveSetting('tz', localTz()).catch(() => {})),
-      // And where this device is now, whenever that changes: mail naming no
-      // place is read on this clock (a booking email while travelling).
-      (state.settings.hereTz === localTz() ? Promise.resolve() : saveSetting('hereTz', localTz()).catch(() => {})),
-    ]);
+    // Everything else a session needs, shared with signing in (session.js).
+    await loadSession();
     authed = true;
   } catch (e) {
     // 401 already flipped authed=false; anything else lands on login too.
@@ -60,77 +37,7 @@ async function boot() {
   try { if (history.state && history.state.bcDrawer) history.replaceState(null, ''); } catch { /* fine */ }
   if (authed && !handoff) restoreResume();
   set({ booted: true, pendingHandoff: authed ? null : handoff });
-  if (authed) {
-    installResumeSaving();
-    // Where this device is, kept current while the app stays open (0.9.1):
-    // reminder text reads on this clock, so a trip shouldn't wait for a
-    // restart to be noticed.
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible' && state.settings.hereTz !== localTz()) saveSetting('hereTz', localTz()).catch(() => {});
-    });
-    // Notification deep link (/?event=instanceId): open that event's detail.
-    handleEventLink().catch(() => { /* best-effort */ });
-    runHandoff(handoff).catch(() => { /* best-effort */ });
-    resyncPush(); // own catch; keeps this device registered after a reset
-    offerPushOnThisDevice(); // own catch; a reinstalled phone signs back up
-    // One-time notices for failures that change what the calendar shows.
-    announceSystemHealth();
-    announceAwayFromHome();
-    // Whatever was in progress when the page last unloaded comes back:
-    // an editor with its form, or quick add with its text.
-    installActivityTracking();
-    restoreDraftsAfterBoot();
-    // Prefetch on intent (hover/focus on a chip), and warm the two lazily
-    // loaded scripts at idle so the FIRST editor and the FIRST interactive
-    // map are as fast as later ones. Skipped when the browser says the user
-    // wants to save data.
-    installHoverPrefetch();
-    // "Idle" to requestIdleCallback means the CPU, not the network: on a
-    // slow link it fired the moment the events window started downloading
-    // and the scripts competed with it for the same 1 Mbps. So: only after
-    // the first window has landed, a beat later, and never on a link the
-    // browser itself calls 2g/3g or where the user asked to save data.
-    const conn = navigator.connection || {};
-    const slowLink = conn.saveData || /(^|-)2g$|^3g$/.test(conn.effectiveType || '');
-    if (!slowLink) {
-      const idle = window.requestIdleCallback || ((fn) => setTimeout(fn, 2500));
-      const whenWindowLanded = () => new Promise((resolve) => {
-        if (state.loadedRanges.length > 0) { resolve(); return; }
-        const t = setInterval(() => { if (state.loadedRanges.length > 0) { clearInterval(t); resolve(); } }, 500);
-        setTimeout(() => { clearInterval(t); resolve(); }, 15000); // give up waiting, not preloading
-      });
-      whenWindowLanded().then(() => setTimeout(() => idle(() => {
-        preloadRichText().catch(() => {});
-        loadLeaflet().catch(() => {});
-      }, { timeout: 8000 }), 2000));
-    }
-  }
-}
-
-// The screen follows this device's clock; settings.tz is the owner's Home zone,
-// which the server uses for all-day reminder times and for events created on
-// their behalf. When the two differ (travel, or a new device elsewhere) say so
-// once per pairing, with the one-tap change: silently keeping Home is right for
-// a trip and wrong for a move, and only the owner knows which this is.
-const TZ_NOTICE_KEY = 'bc-tz-notice';
-function announceAwayFromHome() {
-  const home = state.settings.tz;
-  const device = localTz();
-  if (!home || sameClock(home, device)) return;
-  const pairing = home + '|' + device;
-  try {
-    if (localStorage.getItem(TZ_NOTICE_KEY) === pairing) return;
-    localStorage.setItem(TZ_NOTICE_KEY, pairing);
-  } catch { /* private mode: the notice simply shows each load */ }
-  toast(
-    'This device is on ' + tzCity(device) + ' time (' + tzOffsetLabel(device) + '). Home is still ' + tzCity(home)
-      + ' (' + tzOffsetLabel(home) + '): all-day reminders follow Home. Times on screen follow this device.',
-    {
-      duration: 20000,
-      actions: [{ label: 'Make ' + tzCity(device) + ' Home', run: () => saveSetting('tz', device) }],
-      dismissLabel: 'Keep ' + tzCity(home),
-    },
-  );
+  if (authed) startSession(handoff);
 }
 
 // Installed-PWA launches. The manifest asks for focus-existing: opening the

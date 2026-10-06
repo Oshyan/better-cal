@@ -115,10 +115,13 @@ final class GoogleWriter
      * all-day). Patching or deleting that id is how "this occurrence only"
      * is said to the API.
      */
-    public static function instanceId(string $masterGoogleId, string $instanceUtc, bool $allDay): string
+    public static function instanceId(string $masterGoogleId, string $instanceUtc, bool $allDay, ?string $tzid = null): string
     {
         $dt = Time::fromDb($instanceUtc);
-        return $masterGoogleId . '_' . ($allDay ? $dt->format('Ymd') : $dt->format('Ymd\THis\Z'));
+        // An all-day occurrence is named by its date in the series' zone, the
+        // date body() sends Google; its UTC date is the day before east of
+        // UTC (audit, 0.9.14).
+        return $masterGoogleId . '_' . ($allDay ? $dt->setTimezone(Time::zone($tzid))->format('Ymd') : $dt->format('Ymd\THis\Z'));
     }
 
     /**

@@ -552,10 +552,26 @@ export async function setAttendance(occ, attendance, scope) {
 
 // Thumbs feedback on feed events: pure training signal for ranking (PRD 5.8).
 // Optimistic: toast immediately, fire-and-forget the write; no undo needed.
+// Thumbs are a state, not a counter (#107): the chosen one shows pressed on
+// every occurrence of the event, pressing it again does nothing, and the
+// other one switches the choice.
+function markFeedback(eventId, feedback) {
+  for (const [id, o] of state.occ) {
+    if (o.eventId === eventId) state.occ.set(id, { ...o, feedback });
+  }
+  set({ occVersion: state.occVersion + 1 });
+}
 export function sendFeedback(occ, signal) {
+  const current = state.occ.get(occ.instanceId) || occ;
+  if (current.feedback === signal) return;
+  const before = current.feedback || null;
+  markFeedback(occ.eventId, signal);
   toast(signal === 'up' ? 'Noted: more like this' : 'Noted: less like this', { duration: 2500 });
   api('/events/' + occ.eventId + '/feedback', { method: 'POST', body: { signal } })
-    .catch((e) => toast('Feedback failed: ' + e.message, { error: true }));
+    .catch((e) => {
+      markFeedback(occ.eventId, before);
+      toast('Feedback failed: ' + e.message, { error: true });
+    });
 }
 
 export { undo, refreshWindow };

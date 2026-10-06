@@ -179,11 +179,11 @@ final class EventsController
 
     public function feedback(Request $req, array $params): Response
     {
-        $this->events->recordFeedback(
+        $feedback = $this->events->recordFeedback(
             (int) $req->user['id'],
             (int) $params['id'],
             (string) ($req->str('signal') ?? '')
         );
-        return Response::json(['ok' => true]);
+        return Response::json(['ok' => true, 'feedback' => $feedback]);
     }
 }

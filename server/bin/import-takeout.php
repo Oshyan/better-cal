@@ -62,7 +62,7 @@ foreach ($files as $i => $path) {
         continue;
     }
     try {
-        $parsed = Ics::parse($ics);
+        $parsed = Ics::parse($ics, BetterCal\Domain\Settings::homeTzid($db, $userId));
     } catch (\Throwable $e) {
         echo "skip (parse error): $name — {$e->getMessage()}\n";
         continue;

@@ -54,7 +54,7 @@ final class Feeds
             if ($problem !== null) {
                 throw new \RuntimeException(str_replace('calendar file', 'feed', $problem) . '; it was not read');
             }
-            $parsed = Ics::parse($ics);
+            $parsed = Ics::parse($ics, Settings::homeTzid($this->db, (int) $calendar['user_id']));
             $count = $this->sync($calendar, $parsed);
             $this->pollSucceeded($calendar, count($parsed), $count);
             return $count;

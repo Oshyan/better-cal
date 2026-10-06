@@ -159,5 +159,6 @@ Sign-in attempts are rate limited per network address. If something on another a
 
 - `https://your-host/api/v1/health` should return `{"ok":true,"db":true,...}`.
 - `php server/bin/smoke.php` checks that the events window, a single event and the calendar list serialize against your real data.
+- To look around before moving anything in, `php server/bin/demo-seed.php` fills an empty account with invented sample calendars, events and people, dated around today. It refuses to run once the account has events of its own.
 - CalDAV clients connect to `https://your-host/dav/` with your email and either your password or an API token (`php server/bin/token.php --create --name="My phone"`). See [caldav.md](caldav.md).
 - Set your Home time zone under Settings, General. The screen always follows the device you are using; Home is the clock all-day reminders fire on and the zone of events created for you by email, plugins and the API.

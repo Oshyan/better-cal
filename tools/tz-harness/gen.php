@@ -39,9 +39,11 @@ foreach ($zones as $zone) {
                 $n++;
                 $uid = "case-$n@example.test";
                 $tz = new DateTimeZone($zone);
+                // All-day events are stored as UTC dates, tzid UTC (0.9.16).
+                $rowZone = $allDay ? 'UTC' : $zone;
                 if ($allDay) {
-                    $s = Time::parseAllDay($date, $zone);
-                    $e = $s->setTimezone($tz)->modify('+1 day')->setTime(0, 0)->setTimezone(Time::utc());
+                    $s = Time::parseAllDay($date, 'UTC');
+                    $e = $s->modify('+1 day');
                 } else {
                     $s = Time::parseIso($date . 'T' . $time . ':00', $zone);
                     $e = $s->add(new DateInterval('PT1H'));
@@ -56,7 +58,7 @@ foreach ($zones as $zone) {
                     $rrule = preg_replace('/UNTIL=@\+\d+/', 'UNTIL=' . $u, $rule);
                 }
                 $master = [
-                    'id' => $n, 'uid' => $uid, 'title' => "Case $n", 'all_day' => $allDay ? 1 : 0, 'tzid' => $zone,
+                    'id' => $n, 'uid' => $uid, 'title' => "Case $n", 'all_day' => $allDay ? 1 : 0, 'tzid' => $rowZone,
                     'start_utc' => Time::toDb($s), 'end_utc' => Time::toDb($e), 'rrule' => $rrule, 'exdates_json' => null,
                     'status' => 'confirmed', 'description' => null, 'location' => null, 'url' => null, 'reminders_json' => null,
                 ];
@@ -67,7 +69,7 @@ foreach ($zones as $zone) {
                     $key = static function (DateTimeImmutable $occ) use ($allDay, $zone): string {
                         // What the client sends as instanceStart, then requireInstance().
                         if ($allDay) {
-                            return Time::toDb(Time::parseAllDay($occ->setTimezone(new DateTimeZone($zone))->format('Y-m-d') . 'T00:00:00+00:00', $zone));
+                            return Time::toDb(Time::parseAllDay($occ->setTimezone(Time::utc())->format('Y-m-d') . 'T00:00:00+00:00', 'UTC'));
                         }
                         return Time::toDb(Time::parseIso(Time::iso($occ->setTimezone(new DateTimeZone($zone))), $zone));
                     };
@@ -75,7 +77,7 @@ foreach ($zones as $zone) {
                     $o = $first[3];
                     $shift = $allDay ? 'P1D' : 'PT2H';
                     $overrides[] = [
-                        'id' => 100000 + $n, 'uid' => $uid, 'title' => "Case $n moved", 'all_day' => $allDay ? 1 : 0, 'tzid' => $zone,
+                        'id' => 100000 + $n, 'uid' => $uid, 'title' => "Case $n moved", 'all_day' => $allDay ? 1 : 0, 'tzid' => $rowZone,
                         'start_utc' => Time::toDb($o['start']->add(new DateInterval($shift))), 'end_utc' => Time::toDb($o['end']->add(new DateInterval($shift))),
                         'rrule' => null, 'exdates_json' => null, 'recurrence_instance_utc' => $key($o['start']), 'recurrence_parent_id' => $n,
                         'status' => 'confirmed', 'description' => null, 'location' => null, 'url' => null, 'reminders_json' => null,

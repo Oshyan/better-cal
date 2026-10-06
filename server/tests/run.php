@@ -932,6 +932,8 @@ check('search upcoming: an event that has not ended', \BetterCal\Domain\Search::
 check('search upcoming: one that ended is past', !\BetterCal\Domain\Search::isUpcoming(['end_utc' => '2026-10-03 11:00:00', 'rrule' => null], $nowSql));
 check('search upcoming: an open-ended series is upcoming', \BetterCal\Domain\Search::isUpcoming(['end_utc' => '2025-01-01 10:00:00', 'rrule' => 'FREQ=WEEKLY'], $nowSql));
 check('search upcoming: a date-only end runs to the end of that day in its zone', \BetterCal\Domain\Search::isUpcoming(['end_utc' => '2026-09-01 08:00:00', 'all_day' => 1, 'tzid' => 'America/Los_Angeles', 'rrule' => 'FREQ=DAILY;UNTIL=20261010'], '2026-10-11 03:00:00'));
+check('search upcoming: today\'s all-day event is upcoming until the day ends on the Home clock', \BetterCal\Domain\Search::isUpcoming(['end_utc' => '2026-10-11 00:00:00', 'all_day' => 1, 'tzid' => 'UTC', 'rrule' => null], '2026-10-11 01:00:00', '2026-10-10 18:00:00'));
+check('search upcoming: and over once it has', !\BetterCal\Domain\Search::isUpcoming(['end_utc' => '2026-10-11 00:00:00', 'all_day' => 1, 'tzid' => 'UTC', 'rrule' => null], '2026-10-11 08:00:00', '2026-10-11 01:00:00'));
 check('search upcoming: a series past its UNTIL is past', !\BetterCal\Domain\Search::isUpcoming(['end_utc' => '2025-01-01 10:00:00', 'rrule' => 'FREQ=WEEKLY;UNTIL=20260101T000000Z'], $nowSql));
 check('search upcoming: a series with UNTIL ahead is upcoming', \BetterCal\Domain\Search::isUpcoming(['end_utc' => '2025-01-01 10:00:00', 'rrule' => 'FREQ=DAILY;UNTIL=20261231'], $nowSql));
 // A stand-in expander (sabre is not installed for these tests): weekly from the series start.
@@ -1322,6 +1324,14 @@ checkEq('all-day weekly in UTC unchanged', ['2026-08-31 00:00:00', '2026-09-02 0
     checkEq('all-day UTC event made timed takes the Home zone', ['America/Los_Angeles', '2026-10-26 16:00:00'], [$fCols['tzid'] ?? null, $fCols['start_utc'] ?? null]);
     $fCols = $fPatch->invoke($fEvents, ['tzid' => 'Europe/Paris'] + $fImported, ['allDay' => false, 'start' => '2026-10-26T09:00:00+01:00', 'end' => '2026-10-26T10:00:00+01:00']);
     check('all-day event in a zone made timed keeps its zone', !isset($fCols['tzid']));
+    // 0.9.16: all-day events are stored as UTC dates, tzid UTC.
+    $fCols = $fPatch->invoke($fEvents, ['all_day' => 0, 'tzid' => 'America/Los_Angeles', 'start_utc' => '2026-10-10 16:00:00', 'end_utc' => '2026-10-10 17:00:00'] + $fImported, ['allDay' => true, 'start' => '2026-10-10', 'end' => '2026-10-11']);
+    checkEq('timed made all-day is stored as UTC dates', ['UTC', '2026-10-10 00:00:00', '2026-10-11 00:00:00'], [$fCols['tzid'] ?? null, $fCols['start_utc'] ?? null, $fCols['end_utc'] ?? null]);
+    $fCols = $fPatch->invoke($fEvents, ['tzid' => 'America/Los_Angeles', 'start_utc' => '2026-10-10 07:00:00', 'end_utc' => '2026-10-11 07:00:00', 'rrule' => null] + $fImported, ['title' => 'x']);
+    checkEq('an old local-midnight all-day event becomes UTC dates when edited', ['UTC', '2026-10-10 00:00:00', '2026-10-11 00:00:00'], [$fCols['tzid'] ?? null, $fCols['start_utc'] ?? null, $fCols['end_utc'] ?? null]);
+    $fCols = $fPatch->invoke($fEvents, $fImported, ['title' => 'x']);
+    check('a UTC all-day event edited keeps its dates untouched', !isset($fCols['start_utc']) && !isset($fCols['tzid']));
+
     // 0.9.15: an "All events" edit made from one occurrence changes the series
     // by what changed for that occurrence, not by making it the first.
     $fRebase = (new ReflectionClass(BetterCal\Domain\Events::class))->getMethod('rebaseSeriesEdit');
@@ -1389,9 +1399,11 @@ checkEq('all-day weekly in UTC unchanged', ['2026-08-31 00:00:00', '2026-09-02 0
             foreach (['01:30', '09:00', 'day'] as $when) {
                 foreach (['2026-10-19', '2026-03-16'] as $date) { // Mondays
                     $allDay = $when === 'day';
-                    $s = $allDay ? Time::parseAllDay($date, $z) : (new DateTimeImmutable($date . ' ' . $when, $tz))->setTimezone(Time::utc());
-                    $e = $allDay ? Time::parseAllDay((new DateTimeImmutable($date))->modify('+1 day')->format('Y-m-d'), $z) : $s->modify('+1 hour');
-                    $master = ['id' => 1, 'uid' => 'rt', 'title' => 'Round trip', 'all_day' => $allDay ? 1 : 0, 'tzid' => $z, 'start_utc' => Time::toDb($s), 'end_utc' => Time::toDb($e), 'rrule' => $rule, 'status' => 'confirmed', 'exdates_json' => null, 'recurrence_parent_id' => null];
+                    // All-day rows as they are stored: UTC dates, tzid UTC (0.9.16).
+                    $rowZone = $allDay ? 'UTC' : $z;
+                    $s = $allDay ? Time::parseAllDay($date, 'UTC') : (new DateTimeImmutable($date . ' ' . $when, $tz))->setTimezone(Time::utc());
+                    $e = $allDay ? $s->modify('+1 day') : $s->modify('+1 hour');
+                    $master = ['id' => 1, 'uid' => 'rt', 'title' => 'Round trip', 'all_day' => $allDay ? 1 : 0, 'tzid' => $rowZone, 'start_utc' => Time::toDb($s), 'end_utc' => Time::toDb($e), 'rrule' => $rule, 'status' => 'confirmed', 'exdates_json' => null, 'recurrence_parent_id' => null];
                     $win = [$s->modify('-1 day'), $s->modify('+200 days')];
                     $occs = $rtRec->expand($master, [], $win[0], $win[1]);
                     if (count($occs) < 6) {
@@ -1410,7 +1422,7 @@ checkEq('all-day weekly in UTC unchanged', ['2026-08-31 00:00:00', '2026-09-02 0
                     }
                     $master['exdates_json'] = json_encode([$occs[$pick - 1]['instanceUtc']]);
                     $ovStart = Time::fromDb($occs[$pick]['instanceUtc'])->modify($allDay ? '+0 seconds' : '+60 minutes');
-                    $override = ['id' => 2, 'uid' => 'rt', 'title' => 'Edited', 'all_day' => $master['all_day'], 'tzid' => $z, 'start_utc' => Time::toDb($ovStart),
+                    $override = ['id' => 2, 'uid' => 'rt', 'title' => 'Edited', 'all_day' => $master['all_day'], 'tzid' => $rowZone, 'start_utc' => Time::toDb($ovStart),
                         'end_utc' => Time::toDb($ovStart->modify($allDay ? '+1 day' : '+1 hour')), 'rrule' => null, 'status' => 'confirmed', 'recurrence_parent_id' => 1, 'recurrence_instance_utc' => $occs[$pick]['instanceUtc']];
                     $before = array_map($rtKey, $rtRec->expand($master, [$override], $win[0], $win[1]));
                     $rows = [];
@@ -1427,9 +1439,8 @@ checkEq('all-day weekly in UTC unchanged', ['2026-08-31 00:00:00', '2026-09-02 0
                         }
                     }
                     $after = $m2 === null ? [] : array_map($rtKey, $rtRec->expand($m2, $o2, $win[0], $win[1]));
-                    // Compared away from the window's edges: an all-day day stored
-                    // as a UTC midnight after the trip can sit on the other side of
-                    // an edge instant (the two all-day conventions, 0.9.16).
+                    // Compared away from the window's edges, where a long event can
+                    // straddle the window bound differently in the two expansions.
                     $inner = [Time::toDb($win[0]->modify('+2 days')), Time::toDb($win[1]->modify('-2 days'))];
                     $keep = static fn(string $k): bool => ($k[0] === 'D' ? substr($k, 1) . ' 12:00:00' : substr($k, 1)) > $inner[0] && ($k[0] === 'D' ? substr($k, 1) . ' 12:00:00' : substr($k, 1)) < $inner[1];
                     $before = array_values(array_filter($before, $keep));
@@ -1445,6 +1456,34 @@ checkEq('all-day weekly in UTC unchanged', ['2026-08-31 00:00:00', '2026-09-02 0
         }
     }
     checkEq('round trip: export, re-import, same occurrences (' . $rtCases . ' series)', [], array_slice($rtBad, 0, 5));
+}
+
+// Migration 035 (0.9.16): all-day events stored as local midnights move to UTC
+// dates, with their skipped and edited days; every occurrence keeps its date.
+{
+    $mgdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $mgdb->run("CREATE TABLE events (id INTEGER PRIMARY KEY, calendar_id INTEGER, uid TEXT, title TEXT, start_utc TEXT, end_utc TEXT, all_day INTEGER, tzid TEXT, rrule TEXT, exdates_json TEXT, recurrence_parent_id INTEGER, recurrence_instance_utc TEXT, updated_at TEXT)");
+    $mgdb->run("INSERT INTO events VALUES (1, 1, 's', 'Series', '2026-10-05 07:00:00', '2026-10-06 07:00:00', 1, 'America/Los_Angeles', 'FREQ=WEEKLY;UNTIL=20261124T075959Z', '[\"2026-10-12 07:00:00\"]', NULL, NULL, NULL)");
+    $mgdb->run("INSERT INTO events VALUES (2, 1, 's', 'Moved', '2026-10-20 07:00:00', '2026-10-21 07:00:00', 1, 'America/Los_Angeles', NULL, NULL, 1, '2026-10-19 07:00:00', NULL)");
+    $mgdb->run("INSERT INTO events VALUES (3, 1, 'o', 'One day', '2026-11-03 15:00:00', '2026-11-04 15:00:00', 1, 'Asia/Tokyo', NULL, NULL, NULL, NULL, NULL)");
+    $mgDates = static function () use ($mgdb): array {
+        $m = $mgdb->one('SELECT * FROM events WHERE id = 1');
+        $ovs = $mgdb->all('SELECT * FROM events WHERE recurrence_parent_id = 1');
+        $out = [];
+        foreach ((new Recurrence())->expand($m, $ovs, Time::fromDb('2026-09-01 00:00:00'), Time::fromDb('2027-01-01 00:00:00')) as $o) {
+            $out[] = $o['start']->setTimezone(Time::zone((string) $o['row']['tzid']))->format('m-d') . ' ' . $o['row']['title'];
+        }
+        $one = $mgdb->one('SELECT * FROM events WHERE id = 3');
+        $out[] = Time::fromDb((string) $one['start_utc'])->setTimezone(Time::zone((string) $one['tzid']))->format('m-d') . ' ' . $one['title'];
+        return $out;
+    };
+    $mgBefore = $mgDates();
+    $mgMsg = (require __DIR__ . '/../migrations/035_allday_utc_dates.php')($mgdb);
+    checkEq('migration 035: every occurrence keeps its date', $mgBefore, $mgDates());
+    checkEq('migration 035: all stored as UTC dates', 0, (int) $mgdb->one("SELECT COUNT(*) AS n FROM events WHERE tzid <> 'UTC' OR start_utc NOT LIKE '% 00:00:00'")['n']);
+    checkEq('migration 035: a UTC-time UNTIL becomes its date', 'FREQ=WEEKLY;UNTIL=20261123', $mgdb->one('SELECT rrule FROM events WHERE id = 1')['rrule']);
+    check('migration 035: reports what it did', str_contains($mgMsg, '2 all-day events') && str_contains($mgMsg, '2 skipped or edited days'));
+    check('migration 035: running again changes nothing', str_contains((require __DIR__ . '/../migrations/035_allday_utc_dates.php')($mgdb), '0 all-day events'));
 }
 
 // Shared text patterns (0.9.15): one copy in web/src/lib/patterns.js, read by
@@ -2194,13 +2233,13 @@ $cols = DavIcs::eventColumns([
 ]);
 checkEq('dav DATE maps to all_day=1', 1, $cols['all_day']);
 checkEq('dav DATE keeps tzid UTC', 'UTC', $cols['tzid']);
-// Parsed from the wire (0.9.14): a DATE stays a UTC midnight even with a stray
-// TZID, and an all-day event sent as zoned midnights keeps its zone, so it
-// stays on its day east of UTC.
+// Parsed from the wire: a DATE stays a UTC midnight even with a stray TZID
+// (0.9.14), and an all-day event sent as zoned midnights becomes the same
+// dates at UTC midnight, so it stays on its day east of UTC (0.9.16).
 $davDate = Ics::parse("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:d1\r\nDTSTART;VALUE=DATE;TZID=Asia/Tokyo:20261010\r\nDTEND;VALUE=DATE:20261011\r\nSUMMARY:x\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")[0];
 checkEq('dav DATE with stray TZID is a UTC midnight', ['2026-10-10 00:00:00', 'UTC'], [$davDate['start_utc'], $davDate['tzid']]);
 $davZoned = DavIcs::eventColumns(Ics::parse("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:z1\r\nDTSTART;TZID=Asia/Tokyo:20261010T000000\r\nDTEND;TZID=Asia/Tokyo:20261011T000000\r\nSUMMARY:x\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")[0]);
-checkEq('dav zoned-midnight all-day keeps its zone', [1, 'Asia/Tokyo', '2026-10-09 15:00:00'], [$davZoned['all_day'], $davZoned['tzid'], $davZoned['start_utc']]);
+checkEq('dav zoned-midnight all-day is stored as its UTC date (0.9.16)', [1, 'UTC', '2026-10-10 00:00:00'], [$davZoned['all_day'], $davZoned['tzid'], $davZoned['start_utc']]);
 // Import (audit #2): a Windows zone name keeps the zone sabre resolved, and a
 // floating time is read in the calendar's X-WR-TIMEZONE or the Home zone.
 $winTz = Ics::parse("BEGIN:VCALENDAR\r\nBEGIN:VTIMEZONE\r\nTZID:Pacific Standard Time\r\nBEGIN:STANDARD\r\nDTSTART:16011104T020000\r\nRRULE:FREQ=YEARLY;BYDAY=1SU;BYMONTH=11\r\nTZOFFSETFROM:-0700\r\nTZOFFSETTO:-0800\r\nEND:STANDARD\r\nBEGIN:DAYLIGHT\r\nDTSTART:16010311T020000\r\nRRULE:FREQ=YEARLY;BYDAY=2SU;BYMONTH=3\r\nTZOFFSETFROM:-0800\r\nTZOFFSETTO:-0700\r\nEND:DAYLIGHT\r\nEND:VTIMEZONE\r\nBEGIN:VEVENT\r\nUID:w1\r\nDTSTART;TZID=Pacific Standard Time:20261012T090000\r\nDTEND;TZID=Pacific Standard Time:20261012T100000\r\nRRULE:FREQ=WEEKLY\r\nSUMMARY:x\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")[0];

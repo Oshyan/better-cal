@@ -625,6 +625,23 @@ final class Ics
                 $allDay = true;
             }
         }
+        // All-day events are stored one way (0.9.16): each date as a UTC
+        // midnight, tzid UTC, as DATE values already are. One sent as zoned
+        // midnights becomes the same dates; its skipped dates and occurrence
+        // id follow below.
+        $zonedDay = null;
+        if ($allDay && !$isDate) {
+            $zonedDay = Time::zone($tzid);
+            $asDate = static fn(\DateTimeImmutable $t): \DateTimeImmutable => new \DateTimeImmutable($t->setTimezone($zonedDay)->format('Y-m-d'), Time::utc());
+            $start = $asDate($start);
+            $end = $asDate($end);
+            if ($end <= $start) {
+                $end = $start->modify('+1 day');
+            }
+            $tzid = 'UTC';
+        }
+        $dayOf = static fn(\DateTimeImmutable $t): \DateTimeImmutable => $zonedDay === null ? $t
+            : new \DateTimeImmutable($t->setTimezone($zonedDay)->format('Y-m-d'), Time::utc());
 
         // Every path that turns ICS into rows comes through here (feeds,
         // imports, CalDAV, mail): the RRULE is made safe once, at the door.
@@ -634,7 +651,7 @@ final class Ics
         if (isset($vevent->EXDATE)) {
             foreach ($vevent->select('EXDATE') as $exProp) {
                 foreach (self::utcInstants($exProp, $readTz) as $exDt) {
-                    $exdates[] = $exDt->format(Time::DB);
+                    $exdates[] = $dayOf($exDt)->format(Time::DB);
                 }
             }
         }
@@ -642,7 +659,7 @@ final class Ics
         $recurrenceInstance = null;
         if (isset($vevent->{'RECURRENCE-ID'})) {
             try {
-                $recurrenceInstance = self::utcInstants($vevent->{'RECURRENCE-ID'}, $readTz)[0]->format(Time::DB);
+                $recurrenceInstance = $dayOf(self::utcInstants($vevent->{'RECURRENCE-ID'}, $readTz)[0])->format(Time::DB);
             } catch (\Throwable) {
                 $recurrenceInstance = null;
             }

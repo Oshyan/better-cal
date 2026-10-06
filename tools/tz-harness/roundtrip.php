@@ -23,7 +23,8 @@ foreach ($cases as $c) {
     // representation drift
     $origEx = $c['exdates'] ? json_decode($c['exdates'], true) : [];
     $d = [];
-    if ($master['tzid'] !== $c['zone']) $d[] = 'tzid ' . $c['zone'] . '->' . $master['tzid'];
+    $stored = $c['time'] === 'allday' ? 'UTC' : $c['zone']; // all-day rows are stored as UTC dates (0.9.16)
+    if ($master['tzid'] !== $stored) $d[] = 'tzid ' . $stored . '->' . $master['tzid'];
     if ($master['exdates_json'] !== null && json_decode($master['exdates_json'], true) !== $origEx) $d[] = 'exdate key';
     if ($c['override'] !== null && ($ovs[0]['recurrence_instance_utc'] ?? null) !== $c['override']) $d[] = 'override key';
     foreach ($d as $k) { $bucket = ($c['allDay'] ? 'allday ' : 'timed ') . preg_replace('/ [^ ]+->/', ' ->', $k); $repr[$bucket] = ($repr[$bucket] ?? 0) + 1; }

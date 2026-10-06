@@ -720,6 +720,11 @@ final class Events
             ? Time::normalizeTzid((string) $in['tzid'])
             : $this->userTzid($userId);
         $allDay = filter_var($in['allDay'] ?? false, FILTER_VALIDATE_BOOL);
+        // All-day events are dates, stored one way (0.9.16): UTC midnights,
+        // tzid UTC, as imports, Google and CalDAV store them.
+        if ($allDay) {
+            $tzid = 'UTC';
+        }
         [$startUtc, $endUtc] = $this->parseTimes($in, $allDay, $tzid, null);
 
         $rrule = null;
@@ -2012,23 +2017,38 @@ final class Events
             }
         }
 
-        if (isset($in['start']) || isset($in['end'])) {
+        // All-day events are dates, stored one way (0.9.16): UTC midnights,
+        // tzid UTC. The zone the stored boundaries are dated in is kept for
+        // the conversion: the event's own zone for a timed event becoming
+        // all-day, and for an all-day event stored the old way (local
+        // midnights), which is converted the first time it's edited.
+        $floorTz = Time::zone($tzid);
+        $legacyDay = false;
+        if ($allDay) {
+            $legacyDay = (int) $current['all_day'] === 1 && Time::normalizeTzid((string) $current['tzid']) !== 'UTC';
+            if (Time::normalizeTzid((string) $current['tzid']) !== 'UTC' || isset($in['tzid'])) {
+                $fields['tzid'] = 'UTC';
+            }
+            $tzid = 'UTC';
+        }
+
+        if (isset($in['start']) || isset($in['end']) || $legacyDay) {
             $curStart = Time::fromDb((string) $current['start_utc']);
             $curEnd = Time::fromDb((string) $current['end_utc']);
             if ($allDay) {
                 // A SENT boundary is a date and is read literally
                 // (Time::parseAllDay). A boundary that was not sent is the
-                // stored instant, floored to its date in the event's zone:
-                // that is what turns a timed event into an all-day one.
-                $tz = Time::zone($tzid);
+                // stored instant's date in the zone it was stored in: that is
+                // what turns a timed event into an all-day one.
+                $asDate = static fn(\DateTimeImmutable $t): \DateTimeImmutable => new \DateTimeImmutable($t->setTimezone($floorTz)->format('Y-m-d'), Time::utc());
                 $newStart = isset($in['start'])
-                    ? self::allDayBoundary((string) $in['start'], $tzid)
-                    : $curStart->setTimezone($tz)->setTime(0, 0)->setTimezone(Time::utc());
+                    ? self::allDayBoundary((string) $in['start'], 'UTC')
+                    : $asDate($curStart);
                 $newEnd = isset($in['end'])
-                    ? self::allDayBoundary((string) $in['end'], $tzid)
-                    : $curEnd->setTimezone($tz)->setTime(0, 0)->setTimezone(Time::utc());
+                    ? self::allDayBoundary((string) $in['end'], 'UTC')
+                    : $asDate($curEnd);
                 if ($newEnd <= $newStart) {
-                    $newEnd = self::nextMidnight($newStart, $tzid);
+                    $newEnd = self::nextMidnight($newStart, 'UTC');
                 }
             } else {
                 $newStart = isset($in['start']) ? Time::parseIso((string) $in['start'], $tzid) : $curStart;

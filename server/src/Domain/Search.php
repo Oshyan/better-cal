@@ -54,10 +54,11 @@ final class Search
             $rows = $this->db->all("SELECT * FROM events WHERE $where ORDER BY start_utc DESC LIMIT $limit", $params);
         }
         $now = $this->nowSql($opts);
+        $dayNow = $this->dayNowSql($userId, $now);
         $out = [];
         foreach ($rows as $row) {
             unset($row['relevance']);
-            $row['_upcoming'] = self::isUpcoming($row, $now);
+            $row['_upcoming'] = self::isUpcoming($row, $now, $dayNow);
             if (($opts['when'] ?? 'all') === 'upcoming' && !$row['_upcoming']) {
                 continue; // a series whose UNTIL has passed
             }
@@ -106,10 +107,30 @@ final class Search
         return $n;
     }
 
-    /** Not yet ended, or a series still running ('YYYY-MM-DD HH:MM:SS' UTC now). Pure. */
-    public static function isUpcoming(array $row, string $nowSql): bool
+    /**
+     * Now as an all-day date compares (0.9.16): all-day events are stored as
+     * UTC dates, so "is today's all-day event over" asks what date and time it
+     * is on the owner's Home clock, written as if it were UTC. Measured in UTC
+     * instead, today's all-day event ended at 5 PM in Los Angeles.
+     */
+    private function dayNowSql(int $userId, string $nowSql): string
     {
-        if ((string) ($row['end_utc'] ?? '') >= $nowSql) {
+        $home = Settings::homeTzid($this->db, $userId);
+        return $home === null ? $nowSql : Time::fromDb($nowSql)->setTimezone(Time::zone($home))->format('Y-m-d H:i:s');
+    }
+
+    /**
+     * Not yet ended, or a series still running ('YYYY-MM-DD HH:MM:SS' UTC now).
+     * $dayNowSql: now on the Home clock, for all-day events (see dayNowSql). Pure.
+     */
+    public static function isUpcoming(array $row, string $nowSql, ?string $dayNowSql = null): bool
+    {
+        if ((int) ($row['all_day'] ?? 0) === 1 && $dayNowSql !== null && Time::normalizeTzid((string) ($row['tzid'] ?? 'UTC')) === 'UTC') {
+            $nowSql = $dayNowSql;
+            if ((string) ($row['end_utc'] ?? '') > $nowSql) {
+                return true;
+            }
+        } elseif ((string) ($row['end_utc'] ?? '') >= $nowSql) {
             return true;
         }
         $rrule = (string) ($row['rrule'] ?? '');
@@ -198,13 +219,14 @@ final class Search
         $base = 'user_id = ? AND deleted_at IS NULL';
         $baseParams = [$userId];
         $now = $this->nowSql($opts);
+        $dayNow = $this->dayNowSql($userId, $now);
         $when = $opts['when'] ?? 'all';
         if ($when === 'upcoming') {
-            $base .= " AND (end_utc >= ? OR (rrule IS NOT NULL AND rrule <> ''))";
-            $baseParams[] = $now;
+            $base .= " AND ((all_day = 1 AND end_utc > ?) OR (all_day = 0 AND end_utc >= ?) OR (rrule IS NOT NULL AND rrule <> ''))";
+            array_push($baseParams, $dayNow, $now);
         } elseif ($when === 'past') {
-            $base .= " AND end_utc < ?";
-            $baseParams[] = $now;
+            $base .= " AND ((all_day = 1 AND end_utc <= ?) OR (all_day = 0 AND end_utc < ?))";
+            array_push($baseParams, $dayNow, $now);
         }
         if (isset($opts['calendarId']) && $opts['calendarId'] !== null) {
             $base .= ' AND calendar_id = ?';

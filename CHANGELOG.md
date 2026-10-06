@@ -4,6 +4,13 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.16 (2026-10-06)
+
+- **All-day events are stored one way.** An all-day event is a date, and every path now stores it the same way: as UTC midnights, the way imports, Google and CalDAV already did. Events made in the app used to be stored as midnights in a time zone instead. Both showed on the right days, but a phone editing such a series over CalDAV switched it to the other form, which rebuilt its edited days as new entries and dropped their tags, people and reminders. A migration converts the existing ones, with their skipped and edited days, and every occurrence keeps its date.
+- **Search's "upcoming" uses your Home clock for all-day events,** so today's all-day event stays upcoming until the day ends where you are, not at midnight UTC (5 PM in Los Angeles).
+
+Operators: migration 035 runs on deploy; it reports how many all-day events it converted.
+
 ## 0.9.15 (2026-10-06)
 
 A second look at time zones, this time against independent calendar engines (a Python one built on the zone database, and ical.js, which Thunderbird and Nextcloud use) over about 3,800 generated repeating events. The core held up: every repeat came out the same, apart from cases the standard leaves undefined. What it found was in the code around it.

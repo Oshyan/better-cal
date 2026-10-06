@@ -96,10 +96,9 @@ final class DavIcs
             'start_utc' => (string) $parsed['start_utc'],
             'end_utc' => (string) $parsed['end_utc'],
             'all_day' => $allDay ? 1 : 0,
-            // The zone Ics::parse read the start in, all-day included: DATE
-            // values come back as UTC midnights with tzid UTC, and an all-day
-            // event sent as zoned midnights keeps that zone. Pinning those to
-            // UTC put them on the previous day east of UTC (audit, 0.9.14).
+            // The zone Ics::parse read the start in. All-day events come back
+            // as their dates at UTC midnight, tzid UTC, however they were sent
+            // (DATE values, or zoned midnights, converted by date: 0.9.16).
             'tzid' => Time::normalizeTzid((string) ($parsed['tzid'] ?? 'UTC')),
             'rrule' => ($parsed['rrule'] ?? null) === '' ? null : ($parsed['rrule'] ?? null),
             'exdates_json' => $exdates === [] ? null : json_encode($exdates),

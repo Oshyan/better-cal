@@ -32,7 +32,7 @@ Security is taken seriously here, which for a one-person project means verified 
 - **Three full security scans** of the whole codebase so far (Codex Security in August and September 2026, Claude Security on 2026-09-23), each with independent verification of every finding.
 - **Every finding fixed**, deployed and verified on the reference install, with the fix commit naming the finding. The 2026-09-23 round found 29 issues (none High or Critical); all were fixed the same day.
 - **Adversarial review of the fixes themselves**: three further passes looked for incomplete fixes, bypasses and regressions the fixes introduced, and those were fixed too (0.1.6 to 0.1.8).
-- **Published advisories**: each finding is a [GitHub security advisory](https://github.com/Oshyan/better-cal/security/advisories) with the affected and patched versions.
+- **Published advisories**: the 2026-09-23 findings were published as GitHub security advisories; [SECURITY.md](SECURITY.md#past-advisories) lists each with the affected and patched versions.
 - A test suite that runs on every change and before every deploy, including regression tests for the security fixes.
 
 [SECURITY.md](SECURITY.md) has the details, the residual risks that were accepted rather than fixed, the design trade-offs made on purpose (such as staying signed in on your own devices, and what to do if one is lost), and how to report a problem privately.

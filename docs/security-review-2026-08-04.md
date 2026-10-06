@@ -1,7 +1,7 @@
 # Better-Cal manual security lead validation
 
 Date: 2026-08-04  
-Repository revision: `ea1ef19a6e710ba6d91a7fddbbef3963a5ab91dc`  
+Repository revision: `d4e0a6133a54037877efc64d1a4a29e317efc82c`  
 Scope: all 75 candidate rows from the two incomplete Codex Security discovery ledgers  
 Method: independent source/control/sink tracing, attack-path calibration, duplicate reconciliation, bounded local reproduction, existing tests, and inspection of locked dependencies in a disposable copy
 

@@ -17,7 +17,7 @@ Include what you found, how to reproduce it, and what you think it allows. You w
 - **2026-09-12**: a full Codex Security scan of the repository, reconciled against the earlier findings and recorded in [issue #24](https://github.com/Oshyan/better-cal/issues/24): 17 active findings, 9 Medium and 8 Low, none High or Critical, one of them new (BC-21).
 - **2026-09-17 to 2026-09-22**: every finding from both rounds fixed, deployed and verified on the reference install; each fix commit names the finding it closes (BC-01 through BC-21). Issue #24 records the disposition of each. Three client-rendering verification tasks (how mobile calendar apps, ICS subscribers and mail clients render descriptions) moved to issue #58 as evidence to gather, not as known vulnerabilities. 0.9.7 made them moot by fixing the cause instead: descriptions from feeds and Google, stored as they arrived, now leave Better-Cal through the same HTML allowlist the app displays them with (plain formatting and http(s) links only), with plain text that holds no markup, on every export path (outbound feeds, CalDAV, files). 0.9.8 then made storage clean too: every way an event arrives (the app, the API, email, plugins, CalDAV, feeds, Google sync, the Takeout import) stores only allowlisted HTML, and a migration cleaned what was already stored. Display and export still clean as a second layer.
 
-- **2026-09-23**: a Claude Security scan of the whole repository at revision `fa580be` (high effort, three-verifier panel on every candidate): 29 findings, 9 Medium and 20 Low, none High or Critical. All were fixed in releases 0.1.1 to 0.1.5, deployed and verified on the reference install the same day. Three adversarial reviews of those fixes followed; the gaps and regressions they found were fixed in 0.1.6 to 0.1.8. Each finding is tracked as a GitHub security advisory with its affected and patched versions. **0.2.0 is the first release with the whole pass in it.**
+- **2026-09-23**: a Claude Security scan of the whole repository at revision `14f98fe` (high effort, three-verifier panel on every candidate): 29 findings, 9 Medium and 20 Low, none High or Critical. All were fixed in releases 0.1.1 to 0.1.5, deployed and verified on the reference install the same day. Three adversarial reviews of those fixes followed; the gaps and regressions they found were fixed in 0.1.6 to 0.1.8. Each Medium finding was published as its own GitHub security advisory and the Low ones as one combined advisory; [Past advisories](#past-advisories) below lists them with the affected and patched versions. **0.2.0 is the first release with the whole pass in it.**
 
 Known residuals, accepted and documented rather than fixed:
 
@@ -26,6 +26,22 @@ Known residuals, accepted and documented rather than fixed:
 - The deploy script leaves `.env` root-owned, but the app user owns the directory it sits in, so this is not a hard boundary.
 
 These scans cover the code as of release 0.1.5 (2026-09-23). Changes since then have had tests, including regression tests for every fixed finding, and review as they were made, but not yet a full scan. Anything you find is worth telling us about.
+
+### Past advisories
+
+Published on 2026-09-23 as GitHub security advisories. They belonged to the repository's earlier history, which was rewritten on 2026-10-05, so they are kept here as the record.
+
+| Severity | Advisory | Affected | Fixed in |
+|---|---|---|---|
+| Medium | Any successful sign-in reset the source's failed-password count, allowing unlimited guessing | 0.1.0 and earlier | 0.1.1 |
+| Medium | An absurd repeat-rule interval from a subscribed feed made every events request fail | 0.1.0 and earlier | 0.1.1 |
+| Medium | Dev-instance clone step of the deploy script: the web app's user could reach the database root account, the root password appeared on a command line, and revoked credentials carried over into the dev copy | 0.1.1 and earlier | 0.1.2 |
+| Medium | Push subscriptions outlived a password reset and API-token revocation | 0.1.5 and earlier | 0.1.6 |
+| Medium | A leaked token or stolen session could create a public feed address that survived revocation | 0.1.6 and earlier | 0.1.7 |
+| Medium | A "/" in an external iCalendar UID broke CalDAV object paths | 0.1.6 and earlier | 0.1.7 |
+| Medium | A quadratic regular expression over mail HTML from outside stalled the mail worker | 0.1.6 and earlier | 0.1.7 |
+| Medium | Subscribed ICS feeds were parsed without a limit on events or bytes | 0.1.7 and earlier | 0.1.8 |
+| Low | The 20 Low findings of the 2026-09-23 scan, combined (timing, throttle races, prompt-injection surfaces, ReDoS, an SSRF deny-list gap and others) | 0.1.7 and earlier | 0.1.8 |
 
 ## Design trade-offs
 

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace BetterCal\Http\Controllers;
 
 use BetterCal\Domain\ApiTokens;
+use BetterCal\Domain\Auth;
 use BetterCal\Http\HttpError;
 use BetterCal\Http\Request;
 use BetterCal\Http\Response;
@@ -25,7 +26,11 @@ final class TokensController
     {
         $this->requireSession($req);
         try {
-            $created = $this->tokens->create((int) $req->user['id'], (string) ($req->str('name') ?? ''));
+            $created = $this->tokens->createForSession(
+                (int) $req->user['id'],
+                (string) ($req->str('name') ?? ''),
+                $req->cookies[Auth::COOKIE] ?? null,
+            );
         } catch (\InvalidArgumentException $e) {
             throw HttpError::badRequest($e->getMessage());
         }
@@ -40,10 +45,11 @@ final class TokensController
     public function delete(Request $req, array $params): Response
     {
         $this->requireSession($req);
-        if (!$this->tokens->revoke((int) $req->user['id'], (int) $params['id'])) {
+        $impact = $this->tokens->revokeWithImpact((int) $req->user['id'], (int) $params['id']);
+        if ($impact === null) {
             throw HttpError::notFound('No such token');
         }
-        return Response::json(['ok' => true]);
+        return Response::json(['ok' => true, 'subscriptionsPaused' => $impact['subscriptionsPaused']]);
     }
 
     /** Token management is session-only: a bearer token must not mint or revoke tokens. */

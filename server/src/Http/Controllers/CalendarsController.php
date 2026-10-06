@@ -64,7 +64,8 @@ final class CalendarsController
             $userId,
             ['name' => $name, 'color' => $req->body['color'] ?? null],
             kind: 'subscribed',
-            sourceUrl: $url
+            sourceUrl: $url,
+            creatorTokenId: $req->authMethod === 'token' ? $req->tokenId : null,
         );
         try {
             $this->feeds->poll((int) $calendar['id']);
@@ -87,6 +88,13 @@ final class CalendarsController
             throw new HttpError('feed_fetch_failed', $e->getMessage(), 502);
         }
         return Response::json(['ok' => true, 'imported' => $imported]);
+    }
+
+    /** Explicit owner review/rebinding for a paused token or legacy subscription. */
+    public function claimSubscription(Request $req, array $params): Response
+    {
+        $req->requireSession('Keeping this subscription active');
+        return Response::json($this->calendars->claimSubscription((int) $req->user['id'], (int) $params['id']));
     }
 
     /** Multipart ICS file import into a new local calendar. */

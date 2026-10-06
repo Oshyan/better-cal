@@ -48,10 +48,11 @@ final class GoogleSync
         $googleCalendarId = (string) $calendar['google_calendar_id'];
         // The access role decides whether writes are allowed (GoogleWriter).
         // Calendars added before it was recorded learn it on their next poll.
+        $learnedRole = null;
         if (empty($calendar['google_access_role'])) {
             foreach ($this->auth->listCalendars($account) as $entry) {
                 if ($entry['id'] === $googleCalendarId) {
-                    $this->db->update('calendars', ['google_access_role' => $entry['accessRole']], 'id = ?', [$calendarId]);
+                    $learnedRole = $entry['accessRole'];
                     break;
                 }
             }
@@ -59,12 +60,12 @@ final class GoogleSync
         $syncToken = $calendar['google_sync_token'] !== null ? (string) $calendar['google_sync_token'] : null;
 
         try {
-            [$items, $nextToken] = $this->listEvents($googleCalendarId, $access, $syncToken);
+            [$items, $nextToken] = $this->listEvents($account, $googleCalendarId, $access, $syncToken);
         } catch (GoneException) {
             // Google forgot our token (it does after a while, and after some
             // kinds of change). Start over: a full list is the truth.
             $syncToken = null;
-            [$items, $nextToken] = $this->listEvents($googleCalendarId, $access, null);
+            [$items, $nextToken] = $this->listEvents($account, $googleCalendarId, $access, null);
         }
 
         $changes = self::toParsedList($items);
@@ -76,12 +77,22 @@ final class GoogleSync
                 [$calendarId]
             )), $changes);
         }
-        $count = $this->feeds->sync($calendar, $snapshot);
-        if ($nextToken !== null) {
-            $this->db->update('calendars', ['google_sync_token' => $nextToken], 'id = ?', [$calendarId]);
-        }
-        $this->feeds->pollSucceeded($calendar, count($snapshot), $count);
-        return $count;
+        return $this->db->tx(function () use ($account, $calendar, $calendarId, $learnedRole, $snapshot, $nextToken): int {
+            // The last HTTP request may have been in flight when reset landed.
+            // Lock the account before any local finalization: if reset won,
+            // nothing can restore its cleared role or success health; if this
+            // wins, reset waits and overwrites these writes afterwards.
+            $this->auth->assertUsable($account, true);
+            if ($learnedRole !== null) {
+                $this->db->update('calendars', ['google_access_role' => $learnedRole], 'id = ?', [$calendarId]);
+            }
+            $count = $this->feeds->sync($calendar, $snapshot);
+            if ($nextToken !== null) {
+                $this->db->update('calendars', ['google_sync_token' => $nextToken], 'id = ?', [$calendarId]);
+            }
+            $this->feeds->pollSucceeded($calendar, count($snapshot), $count);
+            return $count;
+        });
     }
 
     // ---- Google API ---------------------------------------------------------
@@ -90,13 +101,16 @@ final class GoogleSync
      * @return array{0:list<array>,1:?string} items and the next sync token
      * @throws GoneException when Google says the sync token is stale (410)
      */
-    private function listEvents(string $googleCalendarId, string $access, ?string $syncToken): array
+    private function listEvents(array $account, string $googleCalendarId, string $access, ?string $syncToken): array
     {
         $http = new HttpClient(requestBudget: 60, userAgent: 'Better-Cal/0.1 (+google-connector)', maxBytes: 20 * 1024 * 1024);
         $items = [];
         $pageToken = null;
         $nextSync = null;
         do {
+            // A compromise reset may commit between pages. Permit only the
+            // request already in flight, never the rest of a long listing.
+            $this->auth->assertUsable($account);
             $params = ['maxResults' => (string) self::PAGE_SIZE, 'showDeleted' => 'true', 'singleEvents' => 'false'];
             if ($syncToken !== null) {
                 $params['syncToken'] = $syncToken;

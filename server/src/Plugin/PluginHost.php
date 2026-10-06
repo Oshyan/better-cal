@@ -648,6 +648,7 @@ final class PluginHost
             'color' => preg_match('/^#[0-9a-fA-F]{6}$/', $color) === 1 ? $color : '#5b8dd9',
             'kind' => 'plugin',
             'plugin_id' => $this->pluginId,
+            'subscription_authority' => \BetterCal\Domain\SubscriptionAuthority::OWNER,
         ]);
         (new Undo($this->db))->record(
             $this->userId,

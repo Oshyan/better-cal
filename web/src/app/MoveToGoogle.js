@@ -9,6 +9,7 @@ import { html, useState, useEffect } from '../../vendor/index.js';
 import { api, loadCalendars } from './api.js';
 import { toast } from './store.js';
 import { Icon } from '../ui/icons.js';
+import { usePasswordStepUp } from './PasswordStepUp.js';
 
 export function MoveToGoogle({ cal }) {
   const [google, setGoogle] = useState(null); // {configured, accounts}
@@ -18,6 +19,7 @@ export function MoveToGoogle({ cal }) {
   const [target, setTarget] = useState('new'); // 'new' or a Google calendar id
   const [lists, setLists] = useState({}); // accountId -> the account's calendars
   const [busy, setBusy] = useState(false);
+  const stepUp = usePasswordStepUp();
 
   useEffect(() => {
     api('/google/status').then((d) => {
@@ -58,14 +60,27 @@ export function MoveToGoogle({ cal }) {
   // Calendars this account may edit that aren't here already; never the
   // account's main calendar, where this one's events would mix with everything.
   const usable = (lists[accountId] || []).filter((c) => (c.accessRole === 'owner' || c.accessRole === 'writer') && !c.calendarId && c.kind !== 'feed' && !c.primary);
-  const needsReconnect = target === 'new' && account && !account.canCreateCalendars;
+  const needsReconnect = account && (account.reauthRequired || (target === 'new' && !account.canCreateCalendars));
+
+  const reconnect = async () => {
+    setBusy(true);
+    try {
+      const d = await stepUp.run('reconnect this Google account', () => api('/google/connect', { method: 'POST' }));
+      if (d && d.url) window.location.href = d.url;
+    } catch (e) {
+      toast(e.message || 'Could not reconnect Google', { error: true });
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const start = async () => {
     setBusy(true);
     try {
-      const d = await api('/calendars/' + cal.id + '/move-to-google', {
+      const d = await stepUp.run('move this calendar to Google', () => api('/calendars/' + cal.id + '/move-to-google', {
         method: 'POST', body: { accountId, googleCalendarId: target === 'new' ? null : target },
-      });
+      }));
+      if (!d) return;
       setMove(d);
       if (d.status === 'done') {
         toast('Moved to Google. Share it from Google Calendar: its settings, Share with specific people.');
@@ -86,9 +101,13 @@ export function MoveToGoogle({ cal }) {
 
   return html`<div class="bc-calset-field bc-move">
     <span class="bc-calset-label">Google</span>
-    ${move && move.status === 'failed' && html`<span class="bc-calset-value bc-move-error">
+    ${move && move.status === 'failed' && !move.cancelled && html`<span class="bc-calset-value bc-move-error">
       The move stopped: ${move.error || 'unknown error'}. ${move.done} of ${move.total} uploaded so far; trying again continues from there.
       <button type="button" class="bc-btn" disabled=${busy} onClick=${start}>Try again</button>
+    </span>`}
+    ${move && move.status === 'failed' && move.cancelled && html`<span class="bc-calset-value bc-move-error">
+      This move was stopped by the account security reset. ${move.done} of ${move.total} events may already exist at Google; Better-Cal will not resume it automatically.
+      <button type="button" class="bc-btn" disabled=${busy} onClick=${() => setOpen(true)}>Set up a new move…</button>
     </span>`}
     ${accounts.length === 0 && html`<span class="bc-calset-value">To share this calendar with people who use Google Calendar, connect a Google account first (Settings, Connections).</span>`}
     ${accounts.length > 0 && !open && !(move && move.status === 'failed') && html`<button type="button" class="bc-btn" onClick=${() => setOpen(true)}>
@@ -110,12 +129,13 @@ export function MoveToGoogle({ cal }) {
         </select>
       </label>
       ${target !== 'new' && html`<p class="bc-move-note">Best into an empty calendar: what's already in it will show up here as well.</p>`}
-      ${needsReconnect && html`<p class="bc-move-note">Google needs your permission once more before Better-Cal can create calendars there.
-        <a class="bc-btn" href="/api/v1/google/connect">Reconnect ${account.email}</a></p>`}
+      ${needsReconnect && html`<p class="bc-move-note">${account.reauthRequired ? 'Google access was paused by the account security reset.' : 'Google needs your permission once more before Better-Cal can create calendars there.'}
+        <button type="button" class="bc-btn" disabled=${busy} onClick=${reconnect}>Reconnect ${account.email}</button></p>`}
       <div class="bc-move-actions">
         <button type="button" class="bc-btn bc-btn-primary" disabled=${busy || needsReconnect} onClick=${start}>Move to Google</button>
         <button type="button" class="bc-btn" onClick=${() => setOpen(false)}>Cancel</button>
       </div>
     </div>`}
+    ${stepUp.prompt}
   </div>`;
 }

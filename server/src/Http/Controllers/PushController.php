@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace BetterCal\Http\Controllers;
 
+use BetterCal\Domain\Auth;
 use BetterCal\Domain\PushSubscriptions;
 use BetterCal\Domain\Settings;
 use BetterCal\Http\HttpError;
@@ -69,7 +70,13 @@ final class PushController
     {
         // A device registered with an API token belongs to that token: revoking
         // or expiry of the token removes it (migration 029).
-        $this->subscriptions->subscribe((int) $req->user['id'], $req->body, !empty($req->body['resync']), $req->authMethod === 'token' ? $req->tokenId : null);
+        $this->subscriptions->subscribe(
+            (int) $req->user['id'],
+            $req->body,
+            !empty($req->body['resync']),
+            $req->authMethod === 'token' ? $req->tokenId : null,
+            $req->authMethod === 'session' ? ($req->cookies[Auth::COOKIE] ?? null) : null,
+        );
         return Response::json(['ok' => true]);
     }
 

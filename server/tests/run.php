@@ -3693,6 +3693,103 @@ require __DIR__ . '/plugins.php';
     checkEq('guard: source comes from the request, IPv6 as its /64', '2001:db8:1:2::/64', $guard->source(['REMOTE_ADDR' => '2001:db8:1:2::77']));
 }
 
+// Migration 036 is deliberately restart-safe: MySQL implicitly commits each
+// ALTER TABLE, so a process may stop after any one of them but before the
+// schema_migrations record is written.
+{
+    $migdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $migdb->run('CREATE TABLE sessions (token_hash TEXT PRIMARY KEY, created_at TEXT, last_seen_at TEXT)');
+    $migdb->run('CREATE TABLE google_accounts (id INTEGER PRIMARY KEY, status TEXT)');
+    $migdb->run('CREATE TABLE calendar_moves (id INTEGER PRIMARY KEY, status TEXT)');
+    $migdb->run("INSERT INTO sessions (token_hash, created_at, last_seen_at) VALUES ('old', '2026-10-06 12:00:00', '2026-10-06 12:30:00')");
+    $migrate036 = require __DIR__ . '/../migrations/036_google_compromise_recovery.php';
+    $migrate036($migdb);
+    $migrate036($migdb);
+    $columns = static fn(string $table): array => array_column($migdb->all('PRAGMA table_info(`' . $table . '`)'), 'name');
+    check('migration 036: every compromise-recovery column exists after a restart',
+        in_array('authenticated_at', $columns('sessions'), true)
+        && in_array('reauth_required_at', $columns('google_accounts'), true)
+        && in_array('cancelled_at', $columns('calendar_moves'), true));
+    checkEq('migration 036: rerunning preserves and backfills the session sign-in time', '2026-10-06 12:00:00',
+        $migdb->scalar("SELECT authenticated_at FROM sessions WHERE token_hash = 'old'"));
+}
+
+// Migration 037 makes historical ICS subscriptions a one-time, fail-closed
+// review instead of guessing that an unknown row was owner-created.
+{
+    $migdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $migdb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, kind TEXT, provider TEXT, source_url TEXT)');
+    $migdb->run("INSERT INTO calendars (id, kind, provider, source_url) VALUES
+        (1, 'subscribed', 'ics', 'https://example.com/feed.ics'),
+        (2, 'subscribed', 'google', NULL),
+        (3, 'local', 'ics', NULL)");
+    $migrate037 = require __DIR__ . '/../migrations/037_subscription_authority.php';
+    $migrate037($migdb);
+    $migrate037($migdb);
+    $columns = array_column($migdb->all('PRAGMA table_info(`calendars`)'), 'name');
+    check('migration 037: authority columns exist after a restart',
+        in_array('subscription_authority', $columns, true) && in_array('created_by_token_id', $columns, true));
+    checkEq('migration 037: only historical ICS subscriptions await review', ['legacy_review', 'owner', 'owner'],
+        array_column($migdb->all('SELECT subscription_authority FROM calendars ORDER BY id'), 'subscription_authority'));
+    $migdb->run("INSERT INTO calendars (id, kind, provider, source_url) VALUES (4, 'subscribed', 'ics', 'https://example.com/restored.ics')");
+    checkEq('migration 037: an old undo snapshot restored without provenance fails closed', 'legacy_review',
+        $migdb->scalar('SELECT subscription_authority FROM calendars WHERE id = 4'));
+}
+
+// Token-created subscriptions remain as cached calendars, but every future
+// external effect follows the creating token's current lifetime.
+{
+    $sdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $sdb->run('CREATE TABLE users (id INTEGER PRIMARY KEY)');
+    $sdb->run('CREATE TABLE api_tokens (id INTEGER PRIMARY KEY, user_id INTEGER, expires_at TEXT)');
+    $sdb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, provider TEXT, source_url TEXT, subscription_authority TEXT, created_by_token_id INTEGER)');
+    $sdb->run('INSERT INTO users (id) VALUES (1), (2)');
+    $sdb->run("INSERT INTO api_tokens (id, user_id, expires_at) VALUES (1, 1, NULL), (2, 1, '2000-01-01 00:00:00'), (3, 2, NULL)");
+    $sdb->run("INSERT INTO calendars VALUES
+        (1, 1, 'subscribed', 'ics', 'https://example.com/owner.ics', 'owner', NULL),
+        (2, 1, 'subscribed', 'ics', 'https://example.com/live.ics', 'token', 1),
+        (3, 1, 'subscribed', 'ics', 'https://example.com/expired.ics', 'token', 2),
+        (4, 1, 'subscribed', 'ics', 'https://example.com/old.ics', 'legacy_review', NULL),
+        (5, 1, 'subscribed', 'ics', 'https://example.com/wrong-user.ics', 'token', 3)");
+    checkEq('subscription authority: creation binds only bearer-created ICS subscriptions', [
+        ['subscription_authority' => 'token', 'created_by_token_id' => 9],
+        ['subscription_authority' => 'owner', 'created_by_token_id' => null],
+        ['subscription_authority' => 'owner', 'created_by_token_id' => null],
+    ], [
+        BetterCal\Domain\SubscriptionAuthority::creationFields('subscribed', 'https://example.com/x.ics', null, 9),
+        BetterCal\Domain\SubscriptionAuthority::creationFields('subscribed', 'https://example.com/x.ics', null, null),
+        BetterCal\Domain\SubscriptionAuthority::creationFields('subscribed', null, ['accountId' => 1, 'calendarId' => 'g'], 9),
+    ]);
+    $states = [];
+    foreach ($sdb->all('SELECT * FROM calendars ORDER BY id') as $calendar) {
+        $state = BetterCal\Domain\SubscriptionAuthority::describe($sdb, $calendar);
+        $states[] = [$state['status'], $state['origin']];
+    }
+    checkEq('subscription authority: owner and live token continue; expired, legacy and wrong-user token pause', [
+        ['active', 'owner'], ['active', 'token'], ['paused', 'token'], ['paused', 'legacy_review'], ['paused', 'token'],
+    ], $states);
+    $missingAuthority = BetterCal\Domain\SubscriptionAuthority::describe($sdb, [
+        'id' => 9, 'user_id' => 1, 'kind' => 'subscribed', 'provider' => 'ics', 'source_url' => 'https://example.com/pre-migration.ics',
+    ]);
+    checkEq('subscription authority: missing provenance fails closed during a migration deploy window', ['paused', 'legacy_review'], [
+        $missingAuthority['status'], $missingAuthority['origin'],
+    ]);
+    $blockedCode = null;
+    try {
+        (new BetterCal\Domain\Feeds($sdb))->poll(3);
+    } catch (BetterCal\Http\HttpError $e) {
+        $blockedCode = $e->errorCode;
+    }
+    checkEq('subscription authority: the poll sink refuses before fetching an expired-token feed', 'subscription_authorization_revoked', $blockedCode);
+    $impact = (new BetterCal\Domain\ApiTokens($sdb))->revokeWithImpact(1, 1);
+    checkEq('subscription authority: revocation reports one paused subscription and preserves its calendar', [1, 1], [
+        $impact['subscriptionsPaused'],
+        (int) $sdb->scalar('SELECT COUNT(*) FROM calendars WHERE id = 2'),
+    ]);
+    checkEq('subscription authority: the same row becomes paused as soon as its token is gone', 'paused',
+        BetterCal\Domain\SubscriptionAuthority::describe($sdb, $sdb->one('SELECT * FROM calendars WHERE id = 2'))['status']);
+}
+
 // --- Password reset ends the sessions opened under the old password (BC-21) ---
 // A reset is the owner's response to "someone else may be in". Sessions last
 // 180 days and resolve() checks only hash + expiry, so the intruder's cookie
@@ -3700,10 +3797,13 @@ require __DIR__ . '/plugins.php';
 {
     $pdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
     $pdb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, password_hash TEXT, display_name TEXT, settings_json TEXT)');
-    $pdb->run('CREATE TABLE sessions (token_hash TEXT PRIMARY KEY, user_id INTEGER, csrf TEXT, expires_at TEXT, last_seen_at TEXT DEFAULT CURRENT_TIMESTAMP)');
-    $pdb->run('CREATE TABLE api_tokens (id INTEGER PRIMARY KEY, user_id INTEGER, token_hash TEXT)');
+    $pdb->run('CREATE TABLE sessions (token_hash TEXT PRIMARY KEY, user_id INTEGER, csrf TEXT, expires_at TEXT, last_seen_at TEXT DEFAULT CURRENT_TIMESTAMP, authenticated_at TEXT)');
+    $pdb->run('CREATE TABLE api_tokens (id INTEGER PRIMARY KEY, user_id INTEGER, token_hash TEXT, expires_at TEXT)');
     $pdb->run('CREATE TABLE push_subscriptions (id INTEGER PRIMARY KEY, user_id INTEGER, endpoint TEXT)');
-    $pdb->run('CREATE TABLE out_feeds (id INTEGER PRIMARY KEY, user_id INTEGER, token TEXT)');
+    $pdb->run('CREATE TABLE out_feeds (id INTEGER PRIMARY KEY, user_id INTEGER, token TEXT, created_by_token_id INTEGER)');
+    $pdb->run('CREATE TABLE google_accounts (id INTEGER PRIMARY KEY, user_id INTEGER, email TEXT, refresh_token_enc TEXT, scopes TEXT, status TEXT DEFAULT "ok", reauth_required_at TEXT, last_error TEXT)');
+    $pdb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, provider TEXT, source_url TEXT, subscription_authority TEXT, created_by_token_id INTEGER, google_account_id INTEGER, google_access_role TEXT, last_poll_status TEXT, last_poll_error TEXT)');
+    $pdb->run('CREATE TABLE calendar_moves (id INTEGER PRIMARY KEY, user_id INTEGER, status TEXT, cancelled_at TEXT, finished_at TEXT, error TEXT)');
     $pdb->run("INSERT INTO push_subscriptions (user_id, endpoint) VALUES (1, 'https://fcm.googleapis.com/a'), (1, 'https://attacker.example/b'), (2, 'https://fcm.googleapis.com/c')");
     $pdb->run("INSERT INTO out_feeds (user_id, token) VALUES (1, 'feed-one'), (2, 'feed-other')");
     $pdb->run("INSERT INTO users (id, email, password_hash, display_name) VALUES (1, 'owner@example.com', ?, 'Owner'), (2, 'other@example.com', ?, 'Other')", [
@@ -3711,12 +3811,69 @@ require __DIR__ . '/plugins.php';
         password_hash('other-password', PASSWORD_DEFAULT),
     ]);
     $pdb->run("INSERT INTO api_tokens (user_id, token_hash) VALUES (1, 'a'), (1, 'b'), (2, 'c')");
+    $pdb->run("INSERT INTO google_accounts (id, user_id, email, refresh_token_enc, scopes) VALUES (1, 1, 'owner@gmail.com', 'sealed-owner', 'scope'), (2, 2, 'other@gmail.com', 'sealed-other', 'scope')");
+    $pdb->run("INSERT INTO calendars (id, user_id, kind, provider, source_url, subscription_authority, created_by_token_id, google_account_id, google_access_role, last_poll_status) VALUES
+        (1, 1, 'subscribed', 'google', NULL, 'owner', NULL, 1, 'owner', 'ok'),
+        (2, 2, 'subscribed', 'google', NULL, 'owner', NULL, 2, 'writer', 'ok'),
+        (3, 1, 'subscribed', 'ics', 'https://example.com/agent.ics', 'token', 1, NULL, NULL, 'ok')");
+    $pdb->run("INSERT INTO calendar_moves (id, user_id, status) VALUES (1, 1, 'queued'), (2, 1, 'failed'), (3, 1, 'done'), (4, 2, 'running')");
     $pdb->run("UPDATE users SET settings_json = '{\"notifyEmail\":\"attacker@example.com\"}' WHERE id = 1");
     $pauth = new BetterCal\Domain\Auth($pdb, ['base_url' => 'https://cal.example.com']);
     $stolen = $pauth->login('owner@example.com', 'old-password');
     $mine = $pauth->login('owner@example.com', 'old-password');
     $bystander = $pauth->login('other@example.com', 'other-password');
     check('reset: sessions resolve before the reset', $pauth->resolve($stolen['token']) !== null && $pauth->resolve($mine['token']) !== null);
+    check('step-up: a fresh login counts as recent password authentication', $pauth->resolve($stolen['token'])['authenticatedAt'] !== null);
+    $oldAuth = BetterCal\Support\Time::toDb(BetterCal\Support\Time::nowUtc()->sub(new DateInterval('PT11M')));
+    $pdb->run('UPDATE sessions SET authenticated_at = ? WHERE user_id = 1', [$oldAuth]);
+    check('step-up: the wrong password does not refresh the session', !$pauth->confirmPassword(1, $stolen['token'], 'wrong-password'));
+    check('step-up: the right password refreshes only the current valid session', $pauth->confirmPassword(1, $stolen['token'], 'old-password'));
+    checkEq('step-up: confirming one browser does not refresh another browser', [$oldAuth, true], [
+        $pauth->resolve($mine['token'])['authenticatedAt'],
+        $pauth->resolve($stolen['token'])['authenticatedAt'] !== $oldAuth,
+    ]);
+    check('step-up: the exact fresh session passes a locked durable-boundary recheck',
+        BetterCal\Domain\Auth::assertRecentSession($pdb, 1, $stolen['token'], true)['token_hash'] === hash('sha256', $stolen['token']));
+    $staleDurableCode = null;
+    try {
+        BetterCal\Domain\Auth::assertRecentSession($pdb, 1, $mine['token'], true);
+    } catch (BetterCal\Http\HttpError $e) {
+        $staleDurableCode = $e->errorCode;
+    }
+    checkEq('step-up: the durable-boundary recheck also refuses a stale session', 'step_up_required', $staleDurableCode);
+    $stepReq = new BetterCal\Http\Request('POST', '/auth/step-up', [], ['password' => 'wrong-password'], [], [BetterCal\Domain\Auth::COOKIE => $stolen['token']]);
+    $stepReq->user = ['id' => 1, 'email' => 'owner@example.com'];
+    $stepReq->authMethod = 'session';
+    $stepResponse = (new BetterCal\Http\Controllers\AuthController($pauth))->stepUp($stepReq);
+    checkEq('step-up endpoint: a wrong password is 403 so the client keeps its valid session', [403, 'invalid_credentials'], [
+        $stepResponse->status,
+        json_decode($stepResponse->body, true)['error']['code'] ?? null,
+    ]);
+    $stepReq = new BetterCal\Http\Request('POST', '/auth/step-up', [], ['password' => 'old-password'], [], [BetterCal\Domain\Auth::COOKIE => $stolen['token']]);
+    $stepReq->user = ['id' => 1, 'email' => 'owner@example.com'];
+    $stepReq->authMethod = 'session';
+    checkEq('step-up endpoint: the current password succeeds without replacing the session', 200,
+        (new BetterCal\Http\Controllers\AuthController($pauth))->stepUp($stepReq)->status);
+    $recentReq = new BetterCal\Http\Request('POST', '/sensitive');
+    $recentReq->authMethod = 'session';
+    $recentReq->authenticatedAt = $pauth->resolve($stolen['token'])['authenticatedAt'];
+    $recentAllowed = true;
+    try {
+        $recentReq->requireRecentAuthentication('Doing the sensitive thing');
+    } catch (BetterCal\Http\HttpError) {
+        $recentAllowed = false;
+    }
+    check('step-up: a recently confirmed session passes the shared gate', $recentAllowed);
+    $staleReq = new BetterCal\Http\Request('POST', '/sensitive');
+    $staleReq->authMethod = 'session';
+    $staleReq->authenticatedAt = BetterCal\Support\Time::toDb(BetterCal\Support\Time::nowUtc()->sub(new DateInterval('PT11M')));
+    $staleCode = null;
+    try {
+        $staleReq->requireRecentAuthentication('Doing the sensitive thing');
+    } catch (BetterCal\Http\HttpError $e) {
+        $staleCode = $e->errorCode;
+    }
+    checkEq('step-up: a stale session gets the retryable password challenge', 'step_up_required', $staleCode);
 
     $revoked = $pauth->setPassword(1, 'new-password');
     checkEq('reset: both of the owner\'s sessions are reported revoked', 2, $revoked['sessions']);
@@ -3727,22 +3884,60 @@ require __DIR__ . '/plugins.php';
     check('reset: the owner\'s own old session is ended too', $pauth->resolve($mine['token']) === null);
     check('reset: another user\'s session is untouched', $pauth->resolve($bystander['token']) !== null);
     check('reset: the old password stops working', $pauth->login('owner@example.com', 'old-password') === null);
-    check('reset: the new password works', $pauth->login('owner@example.com', 'new-password') !== null);
+    $newSession = $pauth->login('owner@example.com', 'new-password');
+    check('reset: the new password works', $newSession !== null);
+    $revivedRequestCode = null;
+    try {
+        BetterCal\Domain\Auth::assertRecentSession($pdb, 1, $stolen['token'], true);
+    } catch (BetterCal\Http\HttpError $e) {
+        $revivedRequestCode = $e->errorCode;
+    }
+    checkEq('reset: a new login cannot revive an in-flight request from the deleted session', 'session_revoked', $revivedRequestCode);
     checkEq('reset: API tokens survive a routine reset', 2, (int) $pdb->scalar('SELECT COUNT(*) FROM api_tokens WHERE user_id = 1'));
+    checkEq('reset: routine password changes leave Google connected and moves retryable', [null, null, 'owner'], [
+        $pdb->scalar('SELECT reauth_required_at FROM google_accounts WHERE id = 1'),
+        $pdb->scalar('SELECT cancelled_at FROM calendar_moves WHERE id = 1'),
+        $pdb->scalar('SELECT google_access_role FROM calendars WHERE id = 1'),
+    ]);
 
     $revoked = $pauth->setPassword(1, 'newer-password', true);
     checkEq('reset --revoke-tokens: the session from the last login and both tokens go', [1, 2], [$revoked['sessions'], $revoked['tokens']]);
+    checkEq('reset --revoke-tokens: token-created ICS subscriptions pause without being deleted', [1, 1], [
+        $revoked['subscriptionsPaused'],
+        (int) $pdb->scalar('SELECT COUNT(*) FROM calendars WHERE id = 3'),
+    ]);
     check('reset --revoke-tokens: the owner\'s feed gets a new address (F6)', $revoked['feedsRotated'] === 1 && $pdb->scalar('SELECT token FROM out_feeds WHERE user_id = 1') !== 'feed-one');
     checkEq('reset --revoke-tokens: another user\'s feed keeps its address', 'feed-other', $pdb->scalar('SELECT token FROM out_feeds WHERE user_id = 2'));
     check('reset --revoke-tokens: a foreign reminder address is cleared (F6)', $revoked['notifyEmailReset'] && json_decode((string) $pdb->scalar('SELECT settings_json FROM users WHERE id = 1'), true)['notifyEmail'] === null);
     checkEq('reset --revoke-tokens: another user\'s token is untouched', 1, (int) $pdb->scalar('SELECT COUNT(*) FROM api_tokens WHERE user_id = 2'));
+    checkEq('reset --revoke-tokens: Google connections are quarantined and reported', [1, true, 'error'], [
+        $revoked['googleAccounts'],
+        $pdb->scalar('SELECT reauth_required_at FROM google_accounts WHERE id = 1') !== null,
+        $pdb->scalar('SELECT status FROM google_accounts WHERE id = 1'),
+    ]);
+    checkEq('reset --revoke-tokens: cached Google calendars stay but become read-only', [1, null, 'error'], [
+        (int) $pdb->scalar('SELECT COUNT(*) FROM calendars WHERE id = 1'),
+        $pdb->scalar('SELECT google_access_role FROM calendars WHERE id = 1'),
+        $pdb->scalar('SELECT last_poll_status FROM calendars WHERE id = 1'),
+    ]);
+    checkEq('reset --revoke-tokens: queued and retryable failed moves are durably cancelled, done is not', [2, true, true, null], [
+        $revoked['googleMoves'],
+        $pdb->scalar('SELECT cancelled_at FROM calendar_moves WHERE id = 1') !== null,
+        $pdb->scalar('SELECT cancelled_at FROM calendar_moves WHERE id = 2') !== null,
+        $pdb->scalar('SELECT cancelled_at FROM calendar_moves WHERE id = 3'),
+    ]);
+    checkEq('reset --revoke-tokens: another user\'s Google state is untouched', [null, 'writer', null], [
+        $pdb->scalar('SELECT reauth_required_at FROM google_accounts WHERE id = 2'),
+        $pdb->scalar('SELECT google_access_role FROM calendars WHERE id = 2'),
+        $pdb->scalar('SELECT cancelled_at FROM calendar_moves WHERE id = 4'),
+    ]);
 }
 
 // --- Device cookies: the owner's browsers get past the sign-in brake (#59) ---
 {
     $ddb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
     $ddb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, password_hash TEXT, display_name TEXT, settings_json TEXT)');
-    $ddb->run('CREATE TABLE sessions (token_hash TEXT PRIMARY KEY, user_id INTEGER, csrf TEXT, expires_at TEXT, last_seen_at TEXT DEFAULT CURRENT_TIMESTAMP)');
+    $ddb->run('CREATE TABLE sessions (token_hash TEXT PRIMARY KEY, user_id INTEGER, csrf TEXT, expires_at TEXT, last_seen_at TEXT DEFAULT CURRENT_TIMESTAMP, authenticated_at TEXT)');
     $ddb->run('CREATE TABLE trusted_devices (id INTEGER PRIMARY KEY, user_id INTEGER, token_hash TEXT UNIQUE, created_at TEXT, expires_at TEXT)');
     $ddb->run('CREATE TABLE rate_events (id INTEGER PRIMARY KEY, bucket TEXT, created_at TEXT)');
     $ddb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT)');
@@ -3850,13 +4045,17 @@ require __DIR__ . '/plugins.php';
 {
     $odb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
     $odb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, password_hash TEXT, display_name TEXT, settings_json TEXT)');
-    $odb->run('CREATE TABLE sessions (token_hash TEXT PRIMARY KEY, user_id INTEGER, csrf TEXT, expires_at TEXT, last_seen_at TEXT DEFAULT CURRENT_TIMESTAMP)');
+    $odb->run('CREATE TABLE sessions (token_hash TEXT PRIMARY KEY, user_id INTEGER, csrf TEXT, expires_at TEXT, last_seen_at TEXT DEFAULT CURRENT_TIMESTAMP, authenticated_at TEXT)');
     $odb->run('CREATE TABLE trusted_devices (id INTEGER PRIMARY KEY, user_id INTEGER, token_hash TEXT UNIQUE, created_at TEXT, expires_at TEXT)');
     $odb->run('CREATE TABLE push_subscriptions (id INTEGER PRIMARY KEY, user_id INTEGER, endpoint TEXT, endpoint_hash TEXT)');
     $odb->run('CREATE TABLE api_tokens (id INTEGER PRIMARY KEY, user_id INTEGER, token_hash TEXT)');
+    $odb->run('CREATE TABLE out_feeds (id INTEGER PRIMARY KEY, user_id INTEGER, token TEXT, name TEXT, scope_json TEXT, description TEXT, created_by_token_id INTEGER)');
     $odb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT)');
-    $odb->run("INSERT INTO users (id, email, password_hash) VALUES (1, 'owner@example.com', ?), (2, 'other@example.com', ?)", [
-        password_hash('pw', PASSWORD_DEFAULT), password_hash('pw2', PASSWORD_DEFAULT),
+    $odb->run("INSERT INTO users (id, email, password_hash, settings_json) VALUES (1, 'owner@example.com', ?, ?), (2, 'other@example.com', ?, ?)", [
+        password_hash('pw', PASSWORD_DEFAULT),
+        json_encode(['notifyEmail' => 'elsewhere@example.com', 'notifyEmailToken' => null]),
+        password_hash('pw2', PASSWORD_DEFAULT),
+        json_encode(['notifyEmail' => 'other-destination@example.com', 'notifyEmailToken' => null]),
     ]);
     $oauth = new BetterCal\Domain\Auth($odb, ['base_url' => 'https://cal.example.com']);
     $odev = new BetterCal\Domain\TrustedDevices($odb);
@@ -3873,7 +4072,9 @@ require __DIR__ . '/plugins.php';
         'https://fcm.googleapis.com/lost', hash('sha256', 'https://fcm.googleapis.com/lost'),
         'https://fcm.googleapis.com/theirs', hash('sha256', 'https://fcm.googleapis.com/theirs'),
     ]);
-    $odb->run("INSERT INTO api_tokens (user_id, token_hash) VALUES (1, 'k')");
+    $odb->run("INSERT INTO api_tokens (id, user_id, token_hash) VALUES (1, 1, 'k')");
+    $odb->run("INSERT INTO out_feeds (id, user_id, token, created_by_token_id) VALUES
+        (1, 1, 'session-feed', NULL), (2, 1, 'token-feed', 1), (3, 2, 'other-feed', NULL)");
     checkEq('sessions: the count leaves out this browser', 2, $oauth->otherSessionCount(1, $here['token']));
 
     $octl = new BetterCal\Http\Controllers\AuthController($oauth, null, $odev);
@@ -3886,22 +4087,94 @@ require __DIR__ . '/plugins.php';
     $cookies = [BetterCal\Domain\Auth::COOKIE => $here['token'], BetterCal\Domain\TrustedDevices::COOKIE => $hereDev];
     checkEq('sessions: the Account tab sees two other browsers', ['others' => 2], json_decode($octl->otherSessions($asOwner('GET', '/api/v1/auth/sessions', [], $cookies))->body, true));
     $r = $octl->signOutOthers($asOwner('POST', '/api/v1/auth/sign-out-others', ['keepPushHash' => $hereHash], $cookies));
-    checkEq('sign out elsewhere: counts what went', ['sessions' => 2, 'devices' => 1, 'pushDevices' => 1], json_decode($r->body, true));
+    $out = json_decode($r->body, true);
+    checkEq('sign out elsewhere: counts what went', ['sessions' => 2, 'devices' => 1, 'pushDevices' => 1, 'feedsRotated' => 1, 'notifyEmailReset' => true], $out);
     check('sign out elsewhere: the lost device and the laptop are signed out', $oauth->resolve($lost['token']) === null && $oauth->resolve($laptop['token']) === null);
     check('sign out elsewhere: this browser stays signed in', $oauth->resolve($here['token']) !== null);
     check('sign out elsewhere: only this browser is still remembered', $odev->find($hereDev, 'owner@example.com') !== null && $odev->find($lostDev, 'owner@example.com') === null);
     checkEq('sign out elsewhere: only this browser keeps push reminders', [$hereHash], array_column($odb->all('SELECT endpoint_hash FROM push_subscriptions WHERE user_id = 1'), 'endpoint_hash'));
     checkEq('sign out elsewhere: API keys are left alone', 1, (int) $odb->scalar('SELECT COUNT(*) FROM api_tokens WHERE user_id = 1'));
+    check('sign out elsewhere: session feed URL changes but the token-created URL does not',
+        $odb->scalar('SELECT token FROM out_feeds WHERE id = 1') !== 'session-feed'
+        && $odb->scalar('SELECT token FROM out_feeds WHERE id = 2') === 'token-feed');
+    checkEq('sign out elsewhere: custom reminder email returns to the account address', null,
+        json_decode((string) $odb->scalar('SELECT settings_json FROM users WHERE id = 1'), true)['notifyEmail']);
+    $recoveryTokenAfter = (string) $odb->scalar('SELECT token FROM out_feeds WHERE id = 1');
+    $staleRecoveryCode = null;
+    try {
+        $oauth->signOutOthers(1, $lost['token'], null, null);
+    } catch (BetterCal\Http\HttpError $e) {
+        $staleRecoveryCode = $e->errorCode;
+    }
+    checkEq('sign out elsewhere: a browser already revoked by recovery cannot run recovery or rotate channels again', ['session_revoked', $recoveryTokenAfter], [
+        $staleRecoveryCode,
+        $odb->scalar('SELECT token FROM out_feeds WHERE id = 1'),
+    ]);
+    $staleTokenCode = null;
+    try {
+        (new BetterCal\Domain\ApiTokens($odb))->createForSession(1, 'Too late', $lost['token']);
+    } catch (BetterCal\Http\HttpError $e) {
+        $staleTokenCode = $e->errorCode;
+    }
+    checkEq('sign out elsewhere: an already-authenticated lost-browser request cannot mint a replacement API key', ['session_revoked', 1], [
+        $staleTokenCode,
+        (int) $odb->scalar('SELECT COUNT(*) FROM api_tokens WHERE user_id = 1'),
+    ]);
+    $stalePushCode = null;
+    try {
+        (new BetterCal\Domain\PushSubscriptions($odb))->subscribe(1, [
+            'endpoint' => 'https://fcm.googleapis.com/too-late',
+            'keys' => ['p256dh' => 'YWJj', 'auth' => 'ZGVm'],
+        ], false, null, $lost['token']);
+    } catch (BetterCal\Http\HttpError $e) {
+        $stalePushCode = $e->errorCode;
+    }
+    checkEq('sign out elsewhere: an already-authenticated lost-browser request cannot restore push after recovery', ['session_revoked', 1], [
+        $stalePushCode,
+        (int) $odb->scalar('SELECT COUNT(*) FROM push_subscriptions WHERE user_id = 1'),
+    ]);
+    $racedFeedCode = null;
+    try {
+        $outFeeds = new BetterCal\Domain\OutFeeds(
+            $odb,
+            new BetterCal\Domain\Search($odb, new BetterCal\Domain\Labels($odb)),
+            ['base_url' => 'https://cal.example.com']
+        );
+        $outFeeds->create(1, ['name' => 'Too late', 'scope' => ['type' => 'all']], null, $lost['token']);
+    } catch (BetterCal\Http\HttpError $e) {
+        $racedFeedCode = $e->errorCode;
+    }
+    checkEq('sign out elsewhere: an already-authenticated lost-browser request cannot recreate a feed after rotation', ['session_revoked', 2], [
+        $racedFeedCode,
+        (int) $odb->scalar('SELECT COUNT(*) FROM out_feeds WHERE user_id = 1'),
+    ]);
+    $racedEmailCode = null;
+    try {
+        (new BetterCal\Domain\Settings($odb))->patch(1, ['notifyEmail' => 'too-late@example.com'], null, $lost['token']);
+    } catch (BetterCal\Http\HttpError $e) {
+        $racedEmailCode = $e->errorCode;
+    }
+    checkEq('sign out elsewhere: an already-authenticated lost-browser request cannot restore reminder email after reset', ['session_revoked', null], [
+        $racedEmailCode,
+        json_decode((string) $odb->scalar('SELECT settings_json FROM users WHERE id = 1'), true)['notifyEmail'],
+    ]);
     check('sign out elsewhere: another account is untouched', $oauth->resolve($theirs['token']) !== null
         && $odev->find($theirDev, 'other@example.com') !== null
-        && (int) $odb->scalar('SELECT COUNT(*) FROM push_subscriptions WHERE user_id = 2') === 1);
-    checkEq('sign out elsewhere: written to Activity, log-only', [['Signed out everywhere else: 2 other browsers signed out, 1 push device removed', null]],
+        && (int) $odb->scalar('SELECT COUNT(*) FROM push_subscriptions WHERE user_id = 2') === 1
+        && $odb->scalar('SELECT token FROM out_feeds WHERE id = 3') === 'other-feed'
+        && json_decode((string) $odb->scalar('SELECT settings_json FROM users WHERE id = 2'), true)['notifyEmail'] === 'other-destination@example.com');
+    checkEq('sign out elsewhere: written to Activity, log-only', [['Signed out everywhere else: 2 other browsers signed out, 1 push device removed, 1 public feed URL changed, reminder email reset to the account address', null]],
         array_map(static fn($m) => [$m['summary'], $m['before_json']], $odb->all("SELECT summary, before_json FROM mutations WHERE entity = 'system'")));
     // A malformed push hash keeps nothing rather than matching something odd.
     $again = $oauth->login('owner@example.com', 'pw');
+    $odb->run('UPDATE users SET settings_json = ? WHERE id = 1', [json_encode(['notifyEmail' => 'agent@example.com', 'notifyEmailToken' => 1])]);
     $odb->run('INSERT INTO push_subscriptions (user_id, endpoint, endpoint_hash) VALUES (1, ?, ?)', ['https://fcm.googleapis.com/x', hash('sha256', 'https://fcm.googleapis.com/x')]);
     $r = json_decode($octl->signOutOthers($asOwner('POST', '/api/v1/auth/sign-out-others', ['keepPushHash' => "' OR 1=1 --"], $cookies))->body, true);
     checkEq('sign out elsewhere: a malformed push hash is ignored, so every push device goes', [1, 2, 0], [$r['sessions'], $r['pushDevices'], (int) $odb->scalar('SELECT COUNT(*) FROM push_subscriptions WHERE user_id = 1')]);
+    checkEq('sign out elsewhere: a token-set reminder address remains bound to its separately managed key', [false, 'agent@example.com'], [
+        $r['notifyEmailReset'],
+        json_decode((string) $odb->scalar('SELECT settings_json FROM users WHERE id = 1'), true)['notifyEmail'],
+    ]);
     // An API token cannot do it (it must not be able to sign the owner out).
     $tokReq = new BetterCal\Http\Request('POST', '/api/v1/auth/sign-out-others', [], [], [], []);
     $tokReq->user = ['id' => 1, 'email' => 'owner@example.com'];
@@ -4010,18 +4283,81 @@ use BetterCal\Infra\Secrets;
     }
     check('secrets: wrong secret is refused', $wrong);
 
-    // OAuth state binds the callback to the user and expires.
+    // OAuth state binds the callback to the user and the exact browser session, and expires.
     $gcfg = ['session_secret' => 'secret-a', 'base_url' => 'https://cal.example', 'google' => ['client_id' => 'cid', 'client_secret' => 'cs']];
     $gauth = new GoogleAuth(new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]), $gcfg);
-    $state = $gauth->signState(7, 1_000_000);
-    check('google state: verifies for its user', $gauth->verifyState($state, 7, 1_000_100));
-    check('google state: rejected for another user', !$gauth->verifyState($state, 8, 1_000_100));
-    check('google state: rejected after expiry', !$gauth->verifyState($state, 7, 1_000_000 + 601));
-    check('google state: rejected when tampered', !$gauth->verifyState(substr($state, 0, -2) . 'zz', 7, 1_000_100));
+    $state = $gauth->signState(7, 'session-a', 1_000_000);
+    check('google state: verifies for its user and initiating session', $gauth->verifyState($state, 7, 'session-a', 1_000_100));
+    check('google state: rejected for another user', !$gauth->verifyState($state, 8, 'session-a', 1_000_100));
+    check('google state: rejected for another session of the same user', !$gauth->verifyState($state, 7, 'session-b', 1_000_100));
+    check('google state: rejected after expiry', !$gauth->verifyState($state, 7, 'session-a', 1_000_000 + 601));
+    check('google state: rejected when tampered', !$gauth->verifyState(substr($state, 0, -2) . 'zz', 7, 'session-a', 1_000_100));
     check('google auth url: carries scopes, offline access and the redirect', (static function () use ($gauth): bool {
-        $u = $gauth->authUrl(7);
+        $u = $gauth->authUrl(7, 'session-a');
         return str_contains($u, 'calendar.readonly') && str_contains($u, 'calendar.events') && str_contains($u, 'access_type=offline') && str_contains($u, rawurlencode('https://cal.example/api/v1/google/callback'));
     })());
+
+    // The compromise quarantine is distinct from an ordinary refresh error,
+    // and accessToken re-reads it so a stale worker snapshot cannot bypass it.
+    $gdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $gdb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT)');
+    $gdb->run('CREATE TABLE google_accounts (id INTEGER PRIMARY KEY, user_id INTEGER, email TEXT, refresh_token_enc TEXT, scopes TEXT, status TEXT, reauth_required_at TEXT, last_error TEXT, created_at TEXT)');
+    $gdb->run('CREATE TABLE sessions (token_hash TEXT PRIMARY KEY, user_id INTEGER, expires_at TEXT, authenticated_at TEXT)');
+    $gdb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, google_account_id INTEGER, last_polled_at TEXT, last_poll_status TEXT, last_poll_error TEXT)');
+    $gdb->run('CREATE TABLE calendar_moves (id INTEGER PRIMARY KEY, status TEXT, cancelled_at TEXT)');
+    $gdb->run("INSERT INTO users (id, email) VALUES (7, 'owner@example.com')");
+    $gdb->run('INSERT INTO google_accounts (id, user_id, email, refresh_token_enc, scopes, status, reauth_required_at, created_at) VALUES (1, 7, ?, ?, ?, ?, ?, ?)', [
+        'owner@gmail.com', Secrets::seal('1//refresh', 'secret-a'), GoogleAuth::SCOPES, 'error', BetterCal\Support\Time::nowDb(), BetterCal\Support\Time::nowDb(),
+    ]);
+    $gdb->run("INSERT INTO sessions (token_hash, user_id, expires_at, authenticated_at) VALUES (?, 7, '2099-01-01 00:00:00', ?)", [hash('sha256', 'session-a'), BetterCal\Support\Time::nowDb()]);
+    $gdb->run("INSERT INTO calendars (id, google_account_id, last_polled_at, last_poll_status, last_poll_error) VALUES (1, 1, '2026-10-06 12:00:00', 'error', 'paused')");
+    $qauth = new GoogleAuth($gdb, $gcfg);
+    $quarantineCode = null;
+    try {
+        $qauth->accessToken(['id' => 1, 'status' => 'ok', 'refresh_token_enc' => Secrets::seal('stale-copy', 'secret-a')]);
+    } catch (BetterCal\Http\HttpError $e) {
+        $quarantineCode = $e->errorCode;
+    }
+    checkEq('google quarantine: a stale account snapshot is refused before any token request', 'google_reconnect_needed', $quarantineCode);
+
+    // The final persistence boundary rechecks and locks the exact initiating
+    // session. A reset that deletes it cannot be raced by an OAuth callback.
+    $storeConnection = new ReflectionMethod(GoogleAuth::class, 'storeConnection');
+    $replacement = Secrets::seal('1//replacement', 'secret-a');
+    $reconnected = $storeConnection->invoke($qauth, 7, 'session-a', 'owner@gmail.com', $replacement, GoogleAuth::SCOPES);
+    checkEq('google reconnect: a live initiating session reuses the account row and clears quarantine', [1, null, 'never'], [
+        (int) $reconnected['id'],
+        $reconnected['reauth_required_at'],
+        $gdb->scalar('SELECT last_poll_status FROM calendars WHERE id = 1'),
+    ]);
+    $gdb->run('UPDATE google_accounts SET status = ?, reauth_required_at = ? WHERE id = 1', ['error', BetterCal\Support\Time::nowDb()]);
+    $gdb->run('DELETE FROM sessions WHERE user_id = 7');
+    $callbackCode = null;
+    try {
+        $storeConnection->invoke($qauth, 7, 'session-a', 'owner@gmail.com', Secrets::seal('1//too-late', 'secret-a'), GoogleAuth::SCOPES);
+    } catch (BetterCal\Http\HttpError $e) {
+        $callbackCode = $e->errorCode;
+    }
+    checkEq('google reconnect: a callback cannot persist after reset revoked its initiating session', ['oauth_session_expired', true, '1//replacement'], [
+        $callbackCode,
+        $gdb->scalar('SELECT reauth_required_at FROM google_accounts WHERE id = 1') !== null,
+        Secrets::open((string) $gdb->scalar('SELECT refresh_token_enc FROM google_accounts WHERE id = 1'), 'secret-a'),
+    ]);
+    $gdb->run('UPDATE google_accounts SET reauth_required_at = NULL WHERE id = 1');
+    checkEq('google quarantine: ordinary error state remains eligible for recovery', 1, (int) $qauth->assertUsable(['id' => 1])['id']);
+    $gdb->run("INSERT INTO calendar_moves (id, status, cancelled_at) VALUES (9, 'queued', ?)", [BetterCal\Support\Time::nowDb()]);
+    $qfeeds = new BetterCal\Domain\Feeds($gdb);
+    $qmover = new BetterCal\Domain\GoogleMove(
+        $gdb,
+        $qauth,
+        new BetterCal\Domain\GoogleWriter($gdb, $qauth, $qfeeds),
+        $qfeeds,
+        new BetterCal\Domain\Undo($gdb),
+        new BetterCal\Infra\JobQueue($gdb),
+    );
+    check('google move quarantine: a cancelled move is a terminal worker no-op', $qmover->run(9, 40));
+    checkEq('google move quarantine: a stale queued snapshot cannot overwrite cancellation with running', 'queued', $gdb->scalar('SELECT status FROM calendar_moves WHERE id = 9'));
+    check('google move quarantine: serialized state tells the client not to offer ordinary retry', BetterCal\Domain\GoogleMove::serialize(['id' => 9, 'status' => 'failed', 'cancelled_at' => '2026-10-06 12:00:00', 'total' => 10, 'done_count' => 3, 'error' => 'stopped', 'create_new' => 1, 'google_calendar_id' => null])['cancelled']);
     // What kind of calendar each list entry is, from the id and role Google gives.
     checkEq('google kind: primary is yours', 'yours', GoogleAuth::calendarKind('owner@example.com', 'owner', true));
     checkEq('google kind: owned secondary is yours', 'yours', GoogleAuth::calendarKind('abc@group.calendar.google.com', 'owner', false));

@@ -4,12 +4,17 @@ declare(strict_types=1);
 
 namespace BetterCal\Http;
 
+use BetterCal\Domain\Auth;
+use BetterCal\Support\Time;
+
 final class Request
 {
     public ?array $user = null;
     public ?string $csrf = null;
     /** 'session' or 'token' once authenticated; null on exempt routes. */
     public ?string $authMethod = null;
+    /** Last password verification for this browser session, as a UTC DB timestamp. */
+    public ?string $authenticatedAt = null;
     /** The API token this request authenticated with (authMethod 'token'), for binding what it creates. */
     public ?int $tokenId = null;
 
@@ -25,15 +30,32 @@ final class Request
     }
 
     /**
-     * Some things only a person signed in with the password may do, never a
-     * bearer token: anything that creates a standing channel out of the
-     * account (a push device, a public feed URL, where reminder email goes),
-     * because revoking the token would not close it (scan 2026-09-23, F5/F6).
+     * Actions whose meaning depends on a particular browser or an explicit
+     * person at the screen remain session-only (account recovery, token
+     * management, and Google consent). Supported token-created channels carry
+     * their token provenance and stop when that token does.
      */
     public function requireSession(string $what): void
     {
         if ($this->authMethod !== 'session') {
             throw HttpError::forbidden('session_required', $what . ': sign in with your password to do this; an API token cannot');
+        }
+    }
+
+    /** Require a password sign-in or confirmation in the last ten minutes. */
+    public function requireRecentAuthentication(string $what): void
+    {
+        $this->requireSession($what);
+        if ($this->authenticatedAt === null) {
+            throw HttpError::forbidden('step_up_required', 'Confirm your Better-Cal password to ' . lcfirst($what) . '.');
+        }
+        try {
+            $fresh = Time::fromDb($this->authenticatedAt) >= Time::nowUtc()->sub(new \DateInterval('PT' . Auth::STEP_UP_SECONDS . 'S'));
+        } catch (\Throwable) {
+            $fresh = false;
+        }
+        if (!$fresh) {
+            throw HttpError::forbidden('step_up_required', 'Confirm your Better-Cal password to ' . lcfirst($what) . '.');
         }
     }
 

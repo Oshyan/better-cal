@@ -54,9 +54,9 @@ These are deliberate choices, not oversights. Each makes daily use easier and co
 
 ### If a device is lost or stolen
 
-1. From a device you still have, open Settings, Account and choose **Sign out everywhere else** (since 0.2.4). This signs out every other browser, forgets every other remembered browser and stops push reminders to every other device. The browser you use stays signed in.
+1. From a device you still have, open Settings, Account and choose **Sign out everywhere else** (since 0.2.4). This signs out every other browser, forgets every other remembered browser, stops push reminders to every other device, gives every public calendar feed created while signed in a new URL, and sends reminder email back to the account address. The browser you use stays signed in. External calendars using an old feed URL need the replacement shown in Better-Cal.
 2. On the same page, revoke any API key the lost device held.
-3. If you think the password itself was seen, or you have no signed-in device left, reset it on the server: `php server/bin/seed.php --email=you@example.com`. It asks for the new password and does everything step 1 does, for every browser including yours. Adding `--revoke-tokens` also revokes every API key, gives your outbound feeds new addresses and sends reminder emails back to the account's own address.
+3. If you think the password itself was seen, or you have no signed-in device left, reset it on the server: `php server/bin/seed.php --email=you@example.com`. It asks for the new password and does everything step 1 does, for every browser including yours. Adding `--revoke-tokens` also revokes every API key, gives your outbound feeds new addresses, sends reminder emails back to the account's own address, pauses every connected Google account, and stops unfinished Google moves. Reconnect each Google account under Settings, Connections afterward; cached events stay visible while it is paused.
 
 ## Scope notes
 

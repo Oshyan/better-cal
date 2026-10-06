@@ -63,6 +63,15 @@ final class ApiTokens
         return ['id' => $id, 'name' => $name, 'token' => $token, 'createdAt' => Time::dbToIso($now)];
     }
 
+    /** Create through the web UI, rechecking the exact browser at commit time. */
+    public function createForSession(int $userId, string $name, ?string $sessionToken): array
+    {
+        return $this->db->tx(function () use ($userId, $name, $sessionToken): array {
+            Auth::assertSession($this->db, $userId, $sessionToken, true);
+            return $this->create($userId, $name);
+        });
+    }
+
     /** @return list<array{id:int,name:string,createdAt:string,lastUsedAt:?string}> */
     public function listAll(int $userId): array
     {
@@ -80,7 +89,30 @@ final class ApiTokens
 
     public function revoke(int $userId, int $id): bool
     {
-        return $this->db->run('DELETE FROM api_tokens WHERE id = ? AND user_id = ?', [$id, $userId])->rowCount() > 0;
+        return $this->revokeWithImpact($userId, $id) !== null;
+    }
+
+    /** @return ?array{subscriptionsPaused:int} null when the token does not exist */
+    public function revokeWithImpact(int $userId, int $id): ?array
+    {
+        return $this->db->tx(function () use ($userId, $id): ?array {
+            $lock = $this->db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
+            // Match compromise reset and durable channel creation: user first,
+            // then token. A token holder cannot keep recovery deadlocking by
+            // racing child-row inserts against token deletion.
+            $this->db->one('SELECT id FROM users WHERE id = ?' . $lock, [$userId]);
+            $token = $this->db->one('SELECT id FROM api_tokens WHERE id = ? AND user_id = ?' . $lock, [$id, $userId]);
+            if ($token === null) {
+                return null;
+            }
+            $paused = (int) $this->db->scalar(
+                "SELECT COUNT(*) FROM calendars WHERE user_id = ? AND kind = 'subscribed'
+                 AND COALESCE(provider, 'ics') = 'ics' AND subscription_authority = 'token' AND created_by_token_id = ?",
+                [$userId, $id]
+            );
+            $this->db->run('DELETE FROM api_tokens WHERE id = ? AND user_id = ?', [$id, $userId]);
+            return ['subscriptionsPaused' => $paused];
+        });
     }
 
     /** Resolve a bearer token to its user row (password hash removed); null if unknown or expired. */
@@ -91,6 +123,26 @@ final class ApiTokens
     public static function stillValid(\BetterCal\Infra\Db $db, int $tokenId): bool
     {
         return $db->scalar('SELECT 1 FROM api_tokens WHERE id = ? AND (expires_at IS NULL OR expires_at > ?)', [$tokenId, Time::nowDb()]) !== null;
+    }
+
+    /**
+     * Recheck a token where its durable effect is committed. A row lock makes
+     * concurrent creation and revocation serialize: either the effect commits
+     * first and the revoke pauses it, or the revoke wins and creation refuses.
+     */
+    public static function assertStillValid(Db $db, int $tokenId, int $userId, bool $forUpdate = false): void
+    {
+        $lock = $forUpdate && $db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
+        if ($lock !== '') {
+            $db->one('SELECT id FROM users WHERE id = ?' . $lock, [$userId]);
+        }
+        $valid = $db->scalar(
+            'SELECT 1 FROM api_tokens WHERE id = ? AND user_id = ? AND (expires_at IS NULL OR expires_at > ?)' . $lock,
+            [$tokenId, $userId, Time::nowDb()]
+        ) !== null;
+        if (!$valid) {
+            throw \BetterCal\Http\HttpError::conflict('token_revoked', 'The API key was revoked or expired before the change could be saved.');
+        }
     }
 
     public function resolve(string $token): ?array

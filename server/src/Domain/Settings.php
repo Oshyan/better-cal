@@ -97,7 +97,7 @@ final class Settings
     }
 
     /** Validate + merge the given keys into the stored settings; returns the merged result. */
-    public function patch(int $userId, array $in, ?int $tokenId = null): array
+    public function patch(int $userId, array $in, ?int $tokenId = null, ?string $sessionToken = null): array
     {
         unset($in['notifyEmailToken']);
         $updates = self::validate($in);
@@ -119,17 +119,28 @@ final class Settings
                 throw HttpError::badRequest('defaultViewId must reference one of your saved views');
             }
         }
-        $raw = $this->db->scalar('SELECT settings_json FROM users WHERE id = ?', [$userId]);
-        $stored = is_string($raw) ? json_decode($raw, true) : null;
-        $merged = array_merge(is_array($stored) ? $stored : [], $updates);
-        // Persist only known keys so stale/renamed keys never accumulate.
-        $merged = array_intersect_key($merged, self::DEFAULTS);
-        $this->db->update('users', ['settings_json' => json_encode($merged)], 'id = ?', [$userId]);
-        if (array_key_exists('notifyEmail', $updates) && ($updates['notifyEmail'] ?? null) !== (($stored['notifyEmail'] ?? null))) {
-            (new Undo($this->db))->record($userId, 'settings', $userId, 'update', null, null,
-                $updates['notifyEmail'] ? 'Reminder email now goes to ' . $updates['notifyEmail'] : 'Reminder email goes to the account address again');
-        }
-        return self::withDefaults($merged);
+        return $this->db->tx(function () use ($userId, $updates, $tokenId, $sessionToken): array {
+            if (array_key_exists('notifyEmail', $updates)) {
+                if ($tokenId === null) {
+                    // A request revoked by lost-device recovery must not write
+                    // the destination back after recovery has cleared it.
+                    Auth::assertSession($this->db, $userId, $sessionToken, true);
+                } else {
+                    ApiTokens::assertStillValid($this->db, $tokenId, $userId, true);
+                }
+            }
+            $raw = $this->db->scalar('SELECT settings_json FROM users WHERE id = ?', [$userId]);
+            $stored = is_string($raw) ? json_decode($raw, true) : null;
+            $merged = array_merge(is_array($stored) ? $stored : [], $updates);
+            // Persist only known keys so stale/renamed keys never accumulate.
+            $merged = array_intersect_key($merged, self::DEFAULTS);
+            $this->db->update('users', ['settings_json' => json_encode($merged)], 'id = ?', [$userId]);
+            if (array_key_exists('notifyEmail', $updates) && ($updates['notifyEmail'] ?? null) !== (($stored['notifyEmail'] ?? null))) {
+                (new Undo($this->db))->record($userId, 'settings', $userId, 'update', null, null,
+                    $updates['notifyEmail'] ? 'Reminder email now goes to ' . $updates['notifyEmail'] : 'Reminder email goes to the account address again');
+            }
+            return self::withDefaults($merged);
+        });
     }
 
     // ---- Pure helpers (unit-tested, no DB) -----------------------------

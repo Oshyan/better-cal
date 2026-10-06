@@ -4,6 +4,16 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.17 (2026-10-06)
+
+- **Lost-device recovery now closes session-created disclosure channels.** **Sign out everywhere else** still keeps this browser and its push reminders, but also gives every signed-in public calendar feed a new URL and returns a custom reminder address to the account email. The confirmation says that external calendar subscribers need the new URLs. API keys and the channels they created remain separately revocable.
+- **Calendar subscriptions created by an API key stop with that key.** Revoking or expiring the key pauses its recurring ICS fetches without deleting the calendar, cached events, folders, tags, or settings. Calendar settings can explicitly keep the subscription active as account-owned, adopt the cached copy as local, or delete it. Existing ICS subscriptions pause once for the same owner review because their historical creator cannot be recovered reliably.
+- **A compromise reset now stops every Google path too.** `server/bin/seed.php --revoke-tokens` pauses all connected Google accounts before it returns, stops unfinished calendar moves, prevents background polls and writes, and asks Google to revoke the refresh tokens. Cached calendar events stay visible; reconnect each account under Settings, Connections to resume. Partial moves are not silently retried, because events already copied to Google cannot be taken back automatically.
+- **Sensitive Google setup requires a recent password.** Connecting or reconnecting an account, adding one of its calendars, and starting or retrying a move ask for the Better-Cal password when the browser has not confirmed it in the last ten minutes. A fresh sign-in counts. Ordinary calendar use and synchronization do not prompt.
+- **Google consent belongs to one browser session.** An OAuth callback started in one signed-in browser can no longer be completed through another session for the same Better-Cal user.
+
+Operators: migration 036 adds the per-session confirmation time and the durable Google quarantine/move-cancellation markers. Migration 037 adds subscription-authority provenance and pauses existing ICS subscriptions for review. An ordinary password change still leaves Google connections alone; only the explicit `--revoke-tokens` compromise reset pauses them.
+
 ## 0.9.16 (2026-10-06)
 
 - **All-day events are stored one way.** An all-day event is a date, and every path now stores it the same way: as UTC midnights, the way imports, Google and CalDAV already did. Events made in the app used to be stored as midnights in a time zone instead. Both showed on the right days, but a phone editing such a series over CalDAV switched it to the other form, which rebuilt its edited days as new entries and dropped their tags, people and reminders. A migration converts the existing ones, with their skipped and edited days, and every occurrence keeps its date.

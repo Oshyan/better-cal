@@ -14,6 +14,8 @@ Bearer requests are CSRF-exempt (no cookie is involved, so there is nothing to f
 
 Tokens are stored sha256-hashed; the plaintext value is shown exactly once at creation. Optional `expires_at` is supported in the schema (NULL = never); tokens created via the API or CLI currently don't expire, so revoke them when done.
 
+Durable channels follow the token too. A public outbound feed or push device created by a token is removed when it is revoked; an inbound ICS subscription created by a token is paused, preserving its cached events for the owner to review. Direct refresh and background polling both stop. The owner can explicitly keep that subscription active from its calendar settings.
+
 ### Creating a token
 
 From the server shell (simplest for provisioning):

@@ -204,11 +204,21 @@ try {
                 $systemHealth->recordOk('job:' . $job['type'], 'job', null, HEALTH_JOB_LABELS[(string) $job['type']]);
             }
         } catch (\Throwable $e) {
-            $queue->markFailed($job, $e->getMessage());
-            if (isset(HEALTH_JOB_LABELS[(string) $job['type']])) {
-                $systemHealth->recordFailure('job:' . $job['type'], 'job', null, HEALTH_JOB_LABELS[(string) $job['type']], $e->getMessage());
+            if ((string) $job['type'] === 'feed_poll'
+                && $e instanceof BetterCal\Http\HttpError
+                && $e->errorCode === 'subscription_authorization_revoked'
+            ) {
+                // This is a durable security stop, not a transient fetch
+                // failure. Complete the stale queued job without retries.
+                $queue->markDone((int) $job['id']);
+                echo bc_ts() . ' feed_poll skipped: ' . $e->getMessage() . "\n";
+            } else {
+                $queue->markFailed($job, $e->getMessage());
+                if (isset(HEALTH_JOB_LABELS[(string) $job['type']])) {
+                    $systemHealth->recordFailure('job:' . $job['type'], 'job', null, HEALTH_JOB_LABELS[(string) $job['type']], $e->getMessage());
+                }
+                fwrite(STDERR, bc_ts() . ' job ' . $job['id'] . ' (' . $job['type'] . ') failed: ' . $e->getMessage() . "\n");
             }
-            fwrite(STDERR, bc_ts() . ' job ' . $job['id'] . ' (' . $job['type'] . ') failed: ' . $e->getMessage() . "\n");
         }
     }
 
@@ -221,11 +231,18 @@ try {
 function bc_enqueue_due_polls(Db $db, JobQueue $queue): void
 {
     $due = $db->all(
-        "SELECT id FROM calendars
-         WHERE kind = 'subscribed' AND (source_url IS NOT NULL OR provider = 'google')
-           AND (last_polled_at IS NULL
-                OR last_polled_at <= DATE_SUB(?, INTERVAL poll_interval_minutes MINUTE))",
-        [Time::nowDb()]
+        "SELECT c.id FROM calendars c
+         LEFT JOIN google_accounts ga ON ga.id = c.google_account_id
+         LEFT JOIN api_tokens creator_token ON creator_token.id = c.created_by_token_id AND creator_token.user_id = c.user_id
+         WHERE c.kind = 'subscribed'
+           AND ((COALESCE(c.provider, 'ics') <> 'google' AND c.source_url IS NOT NULL
+                 AND (c.subscription_authority = 'owner'
+                      OR (c.subscription_authority = 'token' AND creator_token.id IS NOT NULL
+                          AND (creator_token.expires_at IS NULL OR creator_token.expires_at > ?))))
+                OR (c.provider = 'google' AND ga.reauth_required_at IS NULL))
+           AND (c.last_polled_at IS NULL
+                OR c.last_polled_at <= DATE_SUB(?, INTERVAL poll_interval_minutes MINUTE))",
+        [Time::nowDb(), Time::nowDb()]
     );
     foreach ($due as $row) {
         $calendarId = (int) $row['id'];

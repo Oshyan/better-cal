@@ -6,7 +6,7 @@
 import { PHONE_QUERY } from '../lib/breakpoints.js';
 import { html, useState, useEffect, useMemo } from '../../vendor/index.js';
 import { useStore, toast, shallowEq, set } from './store.js';
-import { api, logout, loadSystemHealth } from './api.js';
+import { api, logout, loadSystemHealth, loadCalendars } from './api.js';
 import { fmtSince } from '../lib/since.js';
 import { adoptSettings } from './settings.js';
 import { saveSetting } from './actions.js';
@@ -184,10 +184,14 @@ function TokensSection() {
   const revoke = async (t) => {
     setBusy(true);
     try {
-      await api('/tokens/' + t.id, { method: 'DELETE' });
+      const result = await api('/tokens/' + t.id, { method: 'DELETE' });
       if (fresh && fresh.id === t.id) setFresh(null);
-      toast('Revoked "' + t.name + '". Anything using it stops working now.');
-      await load();
+      toast('Revoked "' + t.name + '". Anything using it stops working now.'
+        + (result.subscriptionsPaused ? ' Paused ' + result.subscriptionsPaused + ' calendar subscription' + (result.subscriptionsPaused === 1 ? '' : 's') + ' for review.' : ''));
+      await Promise.all([
+        load(),
+        result.subscriptionsPaused ? loadCalendars().catch(() => {}) : Promise.resolve(),
+      ]);
     } catch (err) {
       toast('Could not revoke: ' + err.message, { error: true });
     } finally {
@@ -244,14 +248,19 @@ function OtherBrowsersRow() {
     api('/auth/sessions').then((d) => setOthers(d.others)).catch(() => setOthers(null));
   }, []);
   const run = async () => {
-    if (!window.confirm('Sign out every other browser and device? They will need your password to sign in again, and stop getting push reminders until they do. This browser stays signed in. API keys are not affected.')) return;
+    if (!window.confirm('Sign out every other browser and device? They will need your password to sign in again, and stop getting push reminders until they do. Public calendar feeds created while signed in will get new URLs, so external calendars using the old URLs stop updating until you replace them. A custom reminder email will return to the account address. This browser stays signed in. API keys and things they created are not affected.')) return;
     setBusy(true);
     try {
       const keepPushHash = await currentEndpointHash().catch(() => null);
       const r = await api('/auth/sign-out-others', { method: 'POST', body: { keepPushHash } });
       setOthers(0);
+      if (r.notifyEmailReset) {
+        await api('/settings').then((current) => adoptSettings(current.settings)).catch(() => {});
+      }
       toast('Signed out ' + r.sessions + ' other browser' + (r.sessions === 1 ? '' : 's')
-        + (r.pushDevices ? ' and removed ' + r.pushDevices + ' push device' + (r.pushDevices === 1 ? '' : 's') : '') + '.');
+        + (r.pushDevices ? ' and removed ' + r.pushDevices + ' push device' + (r.pushDevices === 1 ? '' : 's') : '')
+        + (r.feedsRotated ? '. Changed ' + r.feedsRotated + ' public feed URL' + (r.feedsRotated === 1 ? '' : 's') : '')
+        + (r.notifyEmailReset ? '. Reminder email returned to the account address' : '') + '.');
     } catch (err) {
       toast('Could not sign out other browsers: ' + err.message, { error: true });
     } finally {
@@ -259,7 +268,7 @@ function OtherBrowsersRow() {
     }
   };
   const count = others === null ? '' : others === 0 ? 'No other browsers are signed in.' : others === 1 ? '1 other browser is signed in.' : others + ' other browsers are signed in.';
-  return html`<${Row} label="Other browsers" hint="If a device is lost or stolen, this signs it out, stops its push reminders, and stops it counting as a known device when sign-ins are paused. If it used an API key, revoke that below too.">
+  return html`<${Row} label="Other browsers" hint="If a device is lost or stolen, this signs it out, stops its push reminders, changes signed-in public feed URLs, and returns custom reminder email to the account address. External calendars need the new feed URLs. If the device used an API key, revoke that below too.">
     <span class="bc-set-value">${count}</span>
     <button type="button" class="bc-btn" disabled=${busy} onClick=${run}>Sign out everywhere else</button>
   <//>`;

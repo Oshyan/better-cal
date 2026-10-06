@@ -59,6 +59,32 @@ final class AuthController
             ->withCookie(Auth::COOKIE, '', $this->auth->cookieOptions(clear: true));
     }
 
+    /** Confirm the password for sensitive actions without creating a new session. */
+    public function stepUp(Request $req): Response
+    {
+        $req->requireSession('Confirming your password');
+        $email = (string) ($req->user['email'] ?? '');
+        $source = $this->guard?->source($_SERVER) ?? '';
+        $device = $this->devices?->find($req->cookies[TrustedDevices::COOKIE] ?? null, $email);
+        $wait = $this->guard?->begin($source, null, $device) ?? 0;
+        if ($wait > 0) {
+            return self::tooMany($wait, $this->guard?->refusal);
+        }
+        $ok = $this->auth->confirmPassword(
+            (int) $req->user['id'],
+            $req->cookies[Auth::COOKIE] ?? null,
+            (string) ($req->str('password') ?? '')
+        );
+        if (!$ok) {
+            $this->guard?->rejected($source, 'web');
+            // Unlike a login 401, this must not make the API client discard a
+            // still-valid session and all of its private caches.
+            return Response::error('invalid_credentials', 'Password is incorrect', 403);
+        }
+        $this->guard?->succeeded($source);
+        return Response::json(['ok' => true]);
+    }
+
     /** How many other browsers are signed in, for the Account tab. */
     public function otherSessions(Request $req): Response
     {

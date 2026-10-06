@@ -8,6 +8,7 @@
 import { html, useState, useEffect } from '../../vendor/index.js';
 import { useStore, toast } from './store.js';
 import { api, loadCalendars } from './api.js';
+import { usePasswordStepUp } from './PasswordStepUp.js';
 
 function Row({ label, hint, children }) {
   return html`<div class="bc-set-row">
@@ -27,12 +28,15 @@ export function GoogleConnector() {
   const [lists, setLists] = useState({});      // accountId -> [{id,name,accessRole,primary,color,calendarId}] | 'loading' | 'error'
   const [busy, setBusy] = useState(null);      // googleCalendarId or 'disconnect:<id>' in flight
   const [confirmDisconnect, setConfirmDisconnect] = useState(null);
+  const stepUp = usePasswordStepUp();
 
   const load = async () => {
     try {
       const d = await api('/google/status');
       setStatus(d);
-      for (const a of d.accounts || []) loadList(a.id);
+      for (const a of d.accounts || []) {
+        if (!a.reauthRequired) loadList(a.id);
+      }
     } catch (e) {
       setStatus({ configured: false, accounts: [], error: e.message });
     }
@@ -48,7 +52,17 @@ export function GoogleConnector() {
   };
   useEffect(() => { load(); }, []);
 
-  const connect = () => { window.location.href = '/api/v1/google/connect'; };
+  const connect = async () => {
+    setBusy('connect');
+    try {
+      const d = await stepUp.run('connect a Google account', () => api('/google/connect', { method: 'POST' }));
+      if (d && d.url) window.location.href = d.url;
+    } catch (e) {
+      toast('Could not connect Google: ' + e.message, { error: true });
+    } finally {
+      setBusy(null);
+    }
+  };
   const disconnect = async (a) => {
     setBusy('disconnect:' + a.id);
     try {
@@ -65,9 +79,10 @@ export function GoogleConnector() {
   const add = async (a, c) => {
     setBusy(c.id);
     try {
-      const cal = await api('/google/accounts/' + a.id + '/subscribe', {
+      const cal = await stepUp.run('add this Google calendar', () => api('/google/accounts/' + a.id + '/subscribe', {
         method: 'POST', body: { googleCalendarId: c.id, name: c.name, color: c.color || undefined, accessRole: c.accessRole },
-      });
+      }));
+      if (!cal) return;
       await loadCalendars();
       const n = cal.health && cal.health.eventCount;
       toast('Added "' + cal.name + '"' + (n != null ? ' (' + n + ' events)' : '') + '. It checks Google every ' + cal.pollIntervalMinutes + ' minutes.');
@@ -101,21 +116,25 @@ export function GoogleConnector() {
         <div class="bc-google-accounts">
           ${status.accounts.map((a) => html`<div class="bc-google-account" key=${a.id}>
             <span class="bc-google-email">${a.email}</span>
-            ${a.status !== 'ok' && html`<span class="bc-google-err" title=${a.error || ''}>needs reconnecting</span>`}
+            ${a.reauthRequired
+              ? html`<span class="bc-google-err" title=${a.error || ''}>paused by security reset</span>
+                  <button type="button" class="bc-link-btn" disabled=${busy === 'connect'} onClick=${connect}>Reconnect</button>`
+              : a.status !== 'ok' && html`<span class="bc-google-err" title=${a.error || ''}>needs reconnecting</span>`}
             ${confirmDisconnect === a.id
               ? html`<span class="bc-google-confirm">Disconnect? Its calendars stay, but stop updating.
                   <button type="button" class="bc-btn bc-btn-danger" disabled=${busy === 'disconnect:' + a.id} onClick=${() => disconnect(a)}>Disconnect</button>
                   <button type="button" class="bc-link-btn" onClick=${() => setConfirmDisconnect(null)}>Keep</button></span>`
               : html`<button type="button" class="bc-link-btn" onClick=${() => setConfirmDisconnect(a.id)}>Disconnect</button>`}
           </div>`)}
-          <button type="button" class="bc-btn" onClick=${connect}>${status.accounts.length ? 'Connect another account' : 'Connect a Google account'}</button>
+          <button type="button" class="bc-btn" disabled=${busy === 'connect'} onClick=${connect}>${status.accounts.length ? 'Connect another account' : 'Connect a Google account'}</button>
         </div>
       <//>
       ${status.accounts.map((a) => {
         const list = lists[a.id];
         return html`<div class="bc-google-block" key=${a.id}>
           <h3 class="bc-google-h">${status.accounts.length > 1 ? a.email : 'Calendars'}</h3>
-          ${(list === undefined || list === 'loading') && html`<span class="bc-set-value">Asking Google…</span>`}
+          ${a.reauthRequired && html`<span class="bc-set-value">Cached calendars stay visible, but Google syncing and editing are paused until this account is reconnected.</span>`}
+          ${!a.reauthRequired && (list === undefined || list === 'loading') && html`<span class="bc-set-value">Asking Google…</span>`}
           ${typeof list === 'string' && list.startsWith('error:') && html`<span class="bc-set-value bc-google-err">${list.slice(6)} <button type="button" class="bc-link-btn" onClick=${() => loadList(a.id)}>Retry</button></span>`}
           ${Array.isArray(list) && list.length === 0 && html`<span class="bc-set-value">Google lists no calendars for this account.</span>`}
           ${Array.isArray(list) && list.length > 0 && html`<table class="bc-sys-table bc-google-list">
@@ -132,6 +151,6 @@ export function GoogleConnector() {
         </div>`;
       })}
     `}
+    ${stepUp.prompt}
   </section>`;
 }
-

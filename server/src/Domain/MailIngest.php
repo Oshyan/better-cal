@@ -747,6 +747,7 @@ final class MailIngest
             'kind' => 'local',
             'color' => self::INVITE_COLOR,
             'visible' => 1,
+            'subscription_authority' => SubscriptionAuthority::OWNER,
         ]);
     }
 

@@ -66,42 +66,55 @@ final class PushSubscriptions
      * device that is new to the account is written to Activity, so a device
      * nobody remembers adding is visible.
      */
-    public function subscribe(int $userId, array $in, bool $resync = false, ?int $tokenId = null): void
+    public function subscribe(
+        int $userId,
+        array $in,
+        bool $resync = false,
+        ?int $tokenId = null,
+        ?string $sessionToken = null,
+    ): void
     {
         $sub = self::validate($in, $this->extraPushHosts);
         $hash = self::endpointHash($sub['endpoint']);
         $label = self::label($in['label'] ?? null);
-        $existed = $this->db->scalar('SELECT id FROM push_subscriptions WHERE endpoint_hash = ? AND user_id = ?', [$hash, $userId]) !== null;
-        if ($resync) {
-            // The quiet re-registration a browser does when it opens the app:
-            // it restores a device a password reset cleared, and nothing else.
-            // A device the owner removed stays removed, and an existing row
-            // keeps its failure state so a dead device can still be pruned.
-            // It does refresh what the device calls itself (0.6.7).
-            if ($existed && $label !== null) {
-                $this->db->run('UPDATE push_subscriptions SET device_label = ? WHERE endpoint_hash = ? AND user_id = ?', [$label, $hash, $userId]);
+        $this->db->tx(function () use ($userId, $sub, $hash, $label, $resync, $tokenId, $sessionToken): void {
+            if ($tokenId === null) {
+                Auth::assertSession($this->db, $userId, $sessionToken, true);
+            } else {
+                ApiTokens::assertStillValid($this->db, $tokenId, $userId, true);
             }
-            if ($existed || $this->db->scalar('SELECT 1 FROM push_removed WHERE user_id = ? AND endpoint_hash = ?', [$userId, $hash]) !== null) {
-                return;
+            $existed = $this->db->scalar('SELECT id FROM push_subscriptions WHERE endpoint_hash = ? AND user_id = ?', [$hash, $userId]) !== null;
+            if ($resync) {
+                // The quiet re-registration a browser does when it opens the app:
+                // it restores a device a password reset cleared, and nothing else.
+                // A device the owner removed stays removed, and an existing row
+                // keeps its failure state so a dead device can still be pruned.
+                // It does refresh what the device calls itself (0.6.7).
+                if ($existed && $label !== null) {
+                    $this->db->run('UPDATE push_subscriptions SET device_label = ? WHERE endpoint_hash = ? AND user_id = ?', [$label, $hash, $userId]);
+                }
+                if ($existed || $this->db->scalar('SELECT 1 FROM push_removed WHERE user_id = ? AND endpoint_hash = ?', [$userId, $hash]) !== null) {
+                    return;
+                }
+            } else {
+                $this->db->run('DELETE FROM push_removed WHERE user_id = ? AND endpoint_hash = ?', [$userId, $hash]);
             }
-        } else {
-            $this->db->run('DELETE FROM push_removed WHERE user_id = ? AND endpoint_hash = ?', [$userId, $hash]);
-        }
-        $this->db->run(
-            'INSERT INTO push_subscriptions (user_id, endpoint, endpoint_hash, p256dh, auth, last_used_at, created_by_token_id, device_label)
-             VALUES (?, ?, ?, ?, ?, NULL, ?, ?)
-             ON DUPLICATE KEY UPDATE
-               user_id = VALUES(user_id), endpoint = VALUES(endpoint),
-               p256dh = VALUES(p256dh), auth = VALUES(auth), failing_since = NULL,
-               created_by_token_id = VALUES(created_by_token_id),
-               device_label = COALESCE(VALUES(device_label), push_subscriptions.device_label)',
-            [$userId, $sub['endpoint'], self::endpointHash($sub['endpoint']), $sub['p256dh'], $sub['auth'], $tokenId, $label]
-        );
-        if (!$existed) {
-            $id = (int) $this->db->scalar('SELECT id FROM push_subscriptions WHERE endpoint_hash = ?', [self::endpointHash($sub['endpoint'])]);
-            (new Undo($this->db))->record($userId, 'push', $id, 'create', null, null,
-                'Registered a device for reminders (' . ($label ?? self::service($sub['endpoint'])) . ')' . ($tokenId !== null ? ', with an API token' : ''));
-        }
+            $this->db->run(
+                'INSERT INTO push_subscriptions (user_id, endpoint, endpoint_hash, p256dh, auth, last_used_at, created_by_token_id, device_label)
+                 VALUES (?, ?, ?, ?, ?, NULL, ?, ?)
+                 ON DUPLICATE KEY UPDATE
+                   user_id = VALUES(user_id), endpoint = VALUES(endpoint),
+                   p256dh = VALUES(p256dh), auth = VALUES(auth), failing_since = NULL,
+                   created_by_token_id = VALUES(created_by_token_id),
+                   device_label = COALESCE(VALUES(device_label), push_subscriptions.device_label)',
+                [$userId, $sub['endpoint'], $hash, $sub['p256dh'], $sub['auth'], $tokenId, $label]
+            );
+            if (!$existed) {
+                $id = (int) $this->db->scalar('SELECT id FROM push_subscriptions WHERE endpoint_hash = ?', [$hash]);
+                (new Undo($this->db))->record($userId, 'push', $id, 'create', null, null,
+                    'Registered a device for reminders (' . ($label ?? self::service($sub['endpoint'])) . ')' . ($tokenId !== null ? ', with an API token' : ''));
+            }
+        });
     }
 
     /**

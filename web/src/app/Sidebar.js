@@ -60,7 +60,9 @@ function healthBadge(cal) {
   const { status, content, error, lastPolledAt } = cal.health;
   const when = lastPolledAt ? ' (last poll ' + lastPolledAt + ')' : '';
   let tip = null;
-  if (status === 'error') tip = 'Feed error: ' + (error || 'unknown') + when;
+  if (cal.subscriptionAuthorization && cal.subscriptionAuthorization.status === 'paused') {
+    tip = 'Updates paused: ' + (cal.subscriptionAuthorization.reason || 'review this subscription') + when;
+  } else if (status === 'error') tip = 'Feed error: ' + (error || 'unknown') + when;
   else if (content === 'emptied') tip = 'Feed came back empty; it had events before. The source may have broken or revoked access' + when;
   else if (content === 'stale') tip = 'Feed is stale: nothing has changed for a while and nothing is upcoming' + when;
   if (!tip) return null;

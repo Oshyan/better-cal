@@ -23,6 +23,27 @@ final class Calendars
     public function listAll(int $userId): array
     {
         $calendars = $this->db->all('SELECT * FROM calendars WHERE user_id = ? ORDER BY position, id', [$userId]);
+        $tokenIds = array_values(array_unique(array_filter(array_map(
+            static fn(array $calendar): int => (int) ($calendar['created_by_token_id'] ?? 0),
+            $calendars
+        ))));
+        if ($tokenIds !== []) {
+            [$tokenIn, $tokenParams] = Db::in($tokenIds);
+            $live = array_fill_keys(array_map(
+                static fn(array $row): int => (int) $row['id'],
+                $this->db->all(
+                    "SELECT id FROM api_tokens WHERE user_id = ? AND id IN $tokenIn AND (expires_at IS NULL OR expires_at > ?)",
+                    [$userId, ...$tokenParams, Time::nowDb()]
+                )
+            ), true);
+            foreach ($calendars as &$calendar) {
+                $tokenId = (int) ($calendar['created_by_token_id'] ?? 0);
+                if ($tokenId > 0) {
+                    $calendar['_creator_token_live'] = isset($live[$tokenId]);
+                }
+            }
+            unset($calendar);
+        }
         $folders = $this->db->all('SELECT id, name, position FROM folders WHERE user_id = ? ORDER BY position, id', [$userId]);
         $tags = $this->db->all('SELECT id, name FROM tags WHERE user_id = ? ORDER BY name', [$userId]);
 
@@ -70,14 +91,27 @@ final class Calendars
     }
 
     /** @param array{accountId:int,calendarId:string,accessRole?:string}|null $google a Google-backed subscription (provider google) */
-    public function create(int $userId, array $in, string $kind = 'local', ?string $sourceUrl = null, ?array $google = null): array
+    public function create(
+        int $userId,
+        array $in,
+        string $kind = 'local',
+        ?string $sourceUrl = null,
+        ?array $google = null,
+        ?int $creatorTokenId = null,
+    ): array
     {
         $name = trim((string) ($in['name'] ?? ''));
         if ($name === '') {
             throw HttpError::badRequest('name is required');
         }
         $position = (int) ($this->db->scalar('SELECT COALESCE(MAX(position), -1) + 1 FROM calendars WHERE user_id = ?', [$userId]) ?? 0);
-        $id = $this->db->tx(function () use ($userId, $in, $name, $kind, $sourceUrl, $google, $position): int {
+        $id = $this->db->tx(function () use ($userId, $in, $name, $kind, $sourceUrl, $google, $creatorTokenId, $position): int {
+            if ($creatorTokenId !== null) {
+                // Authentication happened before the controller ran. Lock and
+                // recheck at the durable boundary so a concurrent revoke either
+                // pauses this newly committed subscription or wins first.
+                ApiTokens::assertStillValid($this->db, $creatorTokenId, $userId, true);
+            }
             $row = [
                 'user_id' => $userId,
                 'name' => mb_substr($name, 0, 160),
@@ -88,7 +122,7 @@ final class Calendars
                 // What the calendar is to the person (migration 026): things I
                 // do, things I could do, or information. Changeable later.
                 'role' => in_array($in['role'] ?? null, self::ROLES, true) ? $in['role'] : ($kind === 'subscribed' ? 'opportunities' : 'mine'),
-            ];
+            ] + SubscriptionAuthority::creationFields($kind, $sourceUrl, $google, $creatorTokenId);
             if ($google !== null) {
                 // Incremental sync is one small request when nothing changed,
                 // so a Google calendar can be checked far more often than an
@@ -217,13 +251,53 @@ final class Calendars
         // the calendar has no provider. This is the final step of a
         // migration (docs/migration.md).
         $this->db->run(
-            "UPDATE calendars SET kind = 'local', provider = 'ics', source_url = NULL, google_calendar_id = NULL,
+            "UPDATE calendars SET kind = 'local', provider = 'ics', source_url = NULL,
+                subscription_authority = 'owner', created_by_token_id = NULL, google_calendar_id = NULL,
                 google_access_role = NULL, google_sync_token = NULL, google_account_id = NULL,
                 role = CASE WHEN role = 'opportunities' THEN 'mine' ELSE role END,
                 last_poll_status = 'never', last_poll_error = NULL WHERE id = ?",
             [$id]
         );
         $this->db->run("UPDATE events SET source = 'local' WHERE calendar_id = ?", [$id]);
+        return $this->serializeById($userId, $id);
+    }
+
+    /**
+     * Explicitly make a paused ICS subscription account-owned. This is the
+     * review action for legacy rows and the recovery path after an API token
+     * is revoked; cached events and the source address are left untouched.
+     */
+    public function claimSubscription(int $userId, int $id): array
+    {
+        $before = $this->db->tx(function () use ($userId, $id): array {
+            $lock = $this->db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
+            $row = $this->db->one('SELECT * FROM calendars WHERE id = ? AND user_id = ?' . $lock, [$id, $userId]);
+            if ($row === null) {
+                throw HttpError::notFound('Calendar not found');
+            }
+            if ((string) $row['kind'] !== 'subscribed' || (string) ($row['provider'] ?? 'ics') !== 'ics') {
+                throw HttpError::badRequest('Only ICS subscriptions can be kept active this way');
+            }
+            $this->db->run(
+                "UPDATE calendars SET subscription_authority = 'owner', created_by_token_id = NULL WHERE id = ?",
+                [$id]
+            );
+            return $row;
+        });
+        $after = $this->get($userId, $id);
+        if (($before['subscription_authority'] ?? SubscriptionAuthority::OWNER) !== SubscriptionAuthority::OWNER
+            || ($before['created_by_token_id'] ?? null) !== null
+        ) {
+            $this->undo->record(
+                $userId,
+                'calendar',
+                $id,
+                'update',
+                ['calendars' => [$before]],
+                ['calendars' => [$after]],
+                'Kept subscription "' . (string) $after['name'] . '" active as an account-owned feed'
+            );
+        }
         return $this->serializeById($userId, $id);
     }
 
@@ -343,6 +417,7 @@ final class Calendars
         $subscribed = $c['kind'] === 'subscribed';
         $content = self::contentState($c, $feed['lastRaw'], $feed['everRaw'], $feed['hasUpcoming'], Time::nowUtc());
         $stale = $content === 'stale';
+        $subscriptionAuthorization = SubscriptionAuthority::describe($this->db, $c);
         return [
             'id' => (int) $c['id'],
             'name' => (string) $c['name'],
@@ -365,6 +440,7 @@ final class Calendars
             // write to (write-through, GoogleWriter). Feeds and plugin
             // calendars are content someone else owns.
             'editable' => $c['kind'] === 'local' || GoogleWriter::writable($c),
+            'subscriptionAuthorization' => $subscriptionAuthorization,
             'visible' => (int) $c['visible'] === 1,
             'position' => (int) $c['position'],
             'pollIntervalMinutes' => (int) $c['poll_interval_minutes'],

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace BetterCal\Domain;
 
+use BetterCal\Http\HttpError;
 use BetterCal\Infra\Db;
 use BetterCal\Support\Ids;
 use BetterCal\Support\Time;
@@ -12,6 +13,7 @@ final class Auth
 {
     public const COOKIE = 'bc_session';
     public const TTL_DAYS = 180;
+    public const STEP_UP_SECONDS = 600;
     /** A valid bcrypt hash of nothing in particular, verified against when the account does not exist. */
     public const DUMMY_HASH = '$2y$10$usesomesillystringfore7hnbRJHxXVLeakoG8K30oukPsA.ztMG';
 
@@ -60,6 +62,7 @@ final class Auth
             'token_hash' => hash('sha256', $token),
             'user_id' => (int) $user['id'],
             'csrf' => $csrf,
+            'authenticated_at' => Time::nowDb(),
             'expires_at' => Time::toDb($expires),
         ]);
         // Opportunistic cleanup of expired sessions.
@@ -103,7 +106,7 @@ final class Auth
      * addresses), and a reminder email destination that is not the account
      * address (F6).
      *
-     * @return array{sessions:int,tokens:int,pushDevices:int,trustedDevices:int,feedsRotated:int,notifyEmailReset:bool}
+     * @return array{sessions:int,tokens:int,pushDevices:int,trustedDevices:int,feedsRotated:int,notifyEmailReset:bool,subscriptionsPaused:int,googleAccounts:int,googleMoves:int}
      */
     public function setPassword(int $userId, string $password, bool $revokeTokens = false): array
     {
@@ -117,7 +120,16 @@ final class Auth
             $tokens = 0;
             $feeds = 0;
             $emailReset = false;
+            $subscriptionsPaused = 0;
+            $googleAccounts = 0;
+            $googleMoves = 0;
             if ($revokeTokens) {
+                $subscriptionsPaused = (int) $this->db->scalar(
+                    "SELECT COUNT(*) FROM calendars c JOIN api_tokens t ON t.id = c.created_by_token_id
+                     WHERE c.user_id = ? AND t.user_id = ? AND c.kind = 'subscribed'
+                       AND COALESCE(c.provider, 'ics') = 'ics' AND c.subscription_authority = 'token'",
+                    [$userId, $userId]
+                );
                 $tokens = $this->db->run('DELETE FROM api_tokens WHERE user_id = ?', [$userId])->rowCount();
                 foreach ($this->db->all('SELECT id FROM out_feeds WHERE user_id = ?', [$userId]) as $f) {
                     $this->db->run('UPDATE out_feeds SET token = ? WHERE id = ?', [Ids::feedToken(), (int) $f['id']]);
@@ -127,12 +139,115 @@ final class Auth
                 $s = is_string($raw) ? json_decode($raw, true) : null;
                 if (is_array($s) && !empty($s['notifyEmail'])) {
                     $s['notifyEmail'] = null;
+                    $s['notifyEmailToken'] = null;
                     $this->db->run('UPDATE users SET settings_json = ? WHERE id = ?', [json_encode($s), $userId]);
                     $emailReset = true;
                 }
+
+                // A Google refresh token is another standing credential, and
+                // a move already queued can keep exporting after every browser
+                // session is gone. Quarantine locally in this transaction;
+                // seed.php asks Google to revoke the tokens only after commit.
+                $now = Time::nowDb();
+                $googleAccounts = (int) $this->db->scalar('SELECT COUNT(*) FROM google_accounts WHERE user_id = ?', [$userId]);
+                $this->db->run(
+                    "UPDATE google_accounts
+                     SET reauth_required_at = ?, status = 'error', last_error = ?
+                     WHERE user_id = ?",
+                    [$now, 'Paused by the account compromise reset; reconnect this Google account to resume.', $userId]
+                );
+                // Lock moves before calendars, matching the worker's final
+                // move->calendar cutover order and avoiding a reset deadlock.
+                $googleMoves = $this->db->run(
+                    "UPDATE calendar_moves
+                     SET status = 'failed', cancelled_at = ?, finished_at = ?, error = ?
+                     WHERE user_id = ? AND status IN ('queued', 'running', 'failed') AND cancelled_at IS NULL",
+                    [$now, $now, 'Stopped by the account compromise reset. Events already uploaded to Google may remain there; start a new move after reconnecting.', $userId]
+                )->rowCount();
+                // Keep cached events and account/calendar identities, but make
+                // the calendars visibly read-only until a successful poll after
+                // reconnect learns their access role again.
+                $this->db->run(
+                    "UPDATE calendars
+                     SET google_access_role = NULL, last_poll_status = 'error', last_poll_error = ?
+                     WHERE user_id = ? AND provider = 'google'",
+                    ['Google access was paused by the account compromise reset; reconnect under Settings, Connections.', $userId]
+                );
             }
-            return ['sessions' => $sessions, 'tokens' => $tokens, 'pushDevices' => $push, 'trustedDevices' => $devices, 'feedsRotated' => $feeds, 'notifyEmailReset' => $emailReset];
+            return ['sessions' => $sessions, 'tokens' => $tokens, 'pushDevices' => $push, 'trustedDevices' => $devices, 'feedsRotated' => $feeds, 'notifyEmailReset' => $emailReset, 'subscriptionsPaused' => $subscriptionsPaused, 'googleAccounts' => $googleAccounts, 'googleMoves' => $googleMoves];
         });
+    }
+
+    /** Verify the current user's password and refresh only this browser session's step-up time. */
+    public function confirmPassword(int $userId, ?string $token, string $password): bool
+    {
+        if ($token === null || $token === '') {
+            return false;
+        }
+        $hash = $this->db->scalar('SELECT password_hash FROM users WHERE id = ?', [$userId]);
+        if (!is_string($hash) || !password_verify($password, $hash)) {
+            return false;
+        }
+        $tokenHash = hash('sha256', $token);
+        $session = $this->db->one(
+            'SELECT token_hash FROM sessions WHERE token_hash = ? AND user_id = ? AND expires_at > ?',
+            [$tokenHash, $userId, Time::nowDb()]
+        );
+        if ($session === null) {
+            return false;
+        }
+        $this->db->run('UPDATE sessions SET authenticated_at = ? WHERE token_hash = ?', [Time::nowDb(), $tokenHash]);
+        return true;
+    }
+
+    /**
+     * Recheck the exact browser session at a durable transaction boundary.
+     * Lock the user first, matching setPassword's user -> session order; the
+     * later Google account/calendar/move writes may take user FK locks too.
+     *
+     * @return array{token_hash:string,authenticated_at:?string}
+     */
+    public static function assertSession(Db $db, int $userId, ?string $token, bool $forUpdate = false): array
+    {
+        if ($token === null || $token === '') {
+            throw HttpError::conflict('session_revoked', 'This browser session ended before the sensitive change could be saved; sign in and try again.');
+        }
+        $lock = $forUpdate && $db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
+        $user = $db->one('SELECT id FROM users WHERE id = ?' . $lock, [$userId]);
+        if ($user === null) {
+            throw HttpError::conflict('session_revoked', 'This browser session ended before the sensitive change could be saved; sign in and try again.');
+        }
+        $session = $db->one(
+            'SELECT token_hash, authenticated_at FROM sessions WHERE token_hash = ? AND user_id = ? AND expires_at > ?' . $lock,
+            [hash('sha256', $token), $userId, Time::nowDb()]
+        );
+        if ($session === null) {
+            throw HttpError::conflict('session_revoked', 'This browser session ended before the sensitive change could be saved; sign in and try again.');
+        }
+        return $session;
+    }
+
+    /**
+     * The live session above must also have seen the password recently. The
+     * controller-level gate makes the normal case friendly; this locked check
+     * closes reset/reconnect races before the durable Google action is saved.
+     *
+     * @return array{token_hash:string,authenticated_at:?string}
+     */
+    public static function assertRecentSession(Db $db, int $userId, ?string $token, bool $forUpdate = false): array
+    {
+        $session = self::assertSession($db, $userId, $token, $forUpdate);
+        try {
+            $fresh = isset($session['authenticated_at'])
+                && $session['authenticated_at'] !== null
+                && Time::fromDb((string) $session['authenticated_at']) >= Time::nowUtc()->sub(new \DateInterval('PT' . self::STEP_UP_SECONDS . 'S'));
+        } catch (\Throwable) {
+            $fresh = false;
+        }
+        if (!$fresh) {
+            throw HttpError::forbidden('step_up_required', 'Confirm your Better-Cal password and try the Google change again.');
+        }
+        return $session;
     }
 
     /** How many browsers other than the one holding $token are signed in to this account. */
@@ -157,14 +272,21 @@ final class Auth
      *   other browsers register again when they next sign in, exactly as
      *   after a password reset, and the lost one cannot without signing in.
      *
-     * API tokens are separate credentials the owner manages one by one on
-     * the same page, so they are left alone. Written to Activity.
+     * API tokens and the channels they created are separate credentials the
+     * owner manages one by one on the same page, so they are left alone.
+     * Session-created public feeds and a custom reminder destination are not:
+     * they could have been left by the lost browser, and are rotated/reset.
+     * Written to Activity.
      *
-     * @return array{sessions:int,devices:int,pushDevices:int}
+     * @return array{sessions:int,devices:int,pushDevices:int,feedsRotated:int,notifyEmailReset:bool}
      */
     public function signOutOthers(int $userId, ?string $keepToken, ?int $keepDevice, ?string $keepPushHash): array
     {
         $out = $this->db->tx(function () use ($userId, $keepToken, $keepDevice, $keepPushHash): array {
+            // Serialize recovery with session-created channel writes. If a
+            // password reset or earlier recovery already ended this browser,
+            // it must not perform another partially authorized cleanup.
+            self::assertSession($this->db, $userId, $keepToken, true);
             $sessions = $this->db->run(
                 'DELETE FROM sessions WHERE user_id = ? AND token_hash <> ?',
                 [$userId, hash('sha256', (string) $keepToken)]
@@ -173,25 +295,45 @@ final class Auth
             $push = $keepPushHash === null
                 ? $this->db->run('DELETE FROM push_subscriptions WHERE user_id = ?', [$userId])->rowCount()
                 : $this->db->run('DELETE FROM push_subscriptions WHERE user_id = ? AND endpoint_hash <> ?', [$userId, $keepPushHash])->rowCount();
-            return ['sessions' => $sessions, 'devices' => $devices, 'pushDevices' => $push];
+            $feeds = 0;
+            foreach ($this->db->all('SELECT id FROM out_feeds WHERE user_id = ? AND created_by_token_id IS NULL', [$userId]) as $feed) {
+                $this->db->run('UPDATE out_feeds SET token = ? WHERE id = ?', [Ids::feedToken(), (int) $feed['id']]);
+                $feeds++;
+            }
+            $emailReset = false;
+            $raw = $this->db->scalar('SELECT settings_json FROM users WHERE id = ?', [$userId]);
+            $settings = is_string($raw) ? json_decode($raw, true) : null;
+            if (is_array($settings) && !empty($settings['notifyEmail']) && empty($settings['notifyEmailToken'])) {
+                $settings['notifyEmail'] = null;
+                $settings['notifyEmailToken'] = null;
+                $this->db->run('UPDATE users SET settings_json = ? WHERE id = ?', [json_encode($settings), $userId]);
+                $emailReset = true;
+            }
+            return ['sessions' => $sessions, 'devices' => $devices, 'pushDevices' => $push, 'feedsRotated' => $feeds, 'notifyEmailReset' => $emailReset];
         });
         $parts = [$out['sessions'] . ' other browser' . ($out['sessions'] === 1 ? '' : 's') . ' signed out'];
         if ($out['pushDevices'] > 0) {
             $parts[] = $out['pushDevices'] . ' push device' . ($out['pushDevices'] === 1 ? '' : 's') . ' removed';
+        }
+        if ($out['feedsRotated'] > 0) {
+            $parts[] = $out['feedsRotated'] . ' public feed URL' . ($out['feedsRotated'] === 1 ? '' : 's') . ' changed';
+        }
+        if ($out['notifyEmailReset']) {
+            $parts[] = 'reminder email reset to the account address';
         }
         (new Undo($this->db))->record($userId, 'system', 0, 'delete', null, null,
             'Signed out everywhere else: ' . implode(', ', $parts), $out);
         return $out;
     }
 
-    /** @return ?array{user:array,csrf:string} */
+    /** @return ?array{user:array,csrf:string,authenticatedAt:?string} */
     public function resolve(?string $token): ?array
     {
         if ($token === null || $token === '') {
             return null;
         }
         $row = $this->db->one(
-            'SELECT s.csrf, s.last_seen_at, s.token_hash, u.* FROM sessions s JOIN users u ON u.id = s.user_id
+            'SELECT s.csrf, s.last_seen_at, s.authenticated_at AS session_authenticated_at, s.token_hash, u.* FROM sessions s JOIN users u ON u.id = s.user_id
              WHERE s.token_hash = ? AND s.expires_at > ?',
             [hash('sha256', $token), Time::nowDb()]
         );
@@ -201,11 +343,14 @@ final class Auth
         $csrf = (string) $row['csrf'];
         $tokenHash = (string) $row['token_hash'];
         $lastSeen = (string) $row['last_seen_at'];
-        unset($row['csrf'], $row['last_seen_at'], $row['token_hash'], $row['password_hash']);
+        $authenticatedAt = isset($row['session_authenticated_at']) && $row['session_authenticated_at'] !== null
+            ? (string) $row['session_authenticated_at']
+            : null;
+        unset($row['csrf'], $row['last_seen_at'], $row['session_authenticated_at'], $row['token_hash'], $row['password_hash']);
         if (Time::fromDb($lastSeen) < Time::nowUtc()->sub(new \DateInterval('PT1H'))) {
             $this->db->run('UPDATE sessions SET last_seen_at = ? WHERE token_hash = ?', [Time::nowDb(), $tokenHash]);
         }
-        return ['user' => $row, 'csrf' => $csrf];
+        return ['user' => $row, 'csrf' => $csrf, 'authenticatedAt' => $authenticatedAt];
     }
 
     /** The device cookie (TrustedDevices): a year, sent only to the sign-in endpoints, never to scripts or other sites. */

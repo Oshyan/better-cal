@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace BetterCal\Http\Controllers;
 
+use BetterCal\Domain\Auth;
 use BetterCal\Domain\Calendars;
 use BetterCal\Domain\Feeds;
 use BetterCal\Domain\GoogleAuth;
@@ -38,11 +39,12 @@ final class GoogleController
      */
     public function moveToGoogle(Request $req, array $params): Response
     {
-        $req->requireSession('Moving a calendar to Google');
+        $req->requireRecentAuthentication('Moving a calendar to Google');
         $userId = (int) $req->user['id'];
         $accountId = (int) ($req->body['accountId'] ?? 0);
         $target = trim((string) ($req->str('googleCalendarId') ?? ''));
-        return Response::json($this->move->start($userId, (int) $params['id'], $accountId, $target !== '' ? $target : null));
+        $sessionToken = (string) ($req->cookies[Auth::COOKIE] ?? '');
+        return Response::json($this->move->start($userId, (int) $params['id'], $accountId, $sessionToken, $target !== '' ? $target : null));
     }
 
     public function moveStatus(Request $req, array $params): Response
@@ -61,13 +63,18 @@ final class GoogleController
 
     public function connect(Request $req): Response
     {
-        $req->requireSession('Connecting a Google account');
-        $url = $this->auth->authUrl((int) $req->user['id']);
+        $req->requireRecentAuthentication('Connecting a Google account');
+        $sessionToken = (string) ($req->cookies[\BetterCal\Domain\Auth::COOKIE] ?? '');
+        $url = $this->auth->authUrl((int) $req->user['id'], $sessionToken);
+        if ($req->method === 'POST') {
+            return Response::json(['url' => $url]);
+        }
         return Response::text('', 'text/plain; charset=utf-8', 302, ['Location' => $url]);
     }
 
     public function callback(Request $req): Response
     {
+        $req->requireSession('Connecting a Google account');
         $userId = (int) $req->user['id'];
         $land = static fn(string $q): Response => Response::text('', 'text/plain; charset=utf-8', 302, ['Location' => '/google?' . $q]);
         // The landing page shows a fixed message for a code, never text from
@@ -78,11 +85,12 @@ final class GoogleController
         }
         $state = (string) ($req->q('state') ?? '');
         $code = (string) ($req->q('code') ?? '');
-        if ($code === '' || !$this->auth->verifyState($state, $userId)) {
+        $sessionToken = (string) ($req->cookies[\BetterCal\Domain\Auth::COOKIE] ?? '');
+        if ($code === '' || !$this->auth->verifyState($state, $userId, $sessionToken)) {
             return $land('error=state');
         }
         try {
-            $this->auth->connect($userId, $code);
+            $this->auth->connect($userId, $code, $sessionToken);
         } catch (\Throwable $e) {
             error_log('google connect failed: ' . $e->getMessage());
             return $land('error=failed');
@@ -123,32 +131,40 @@ final class GoogleController
     /** Subscribe to one of the account's calendars; first sync happens now. */
     public function subscribe(Request $req, array $params): Response
     {
-        $req->requireSession('Adding a Google calendar');
+        $req->requireRecentAuthentication('Adding a Google calendar');
         $userId = (int) $req->user['id'];
         $account = $this->auth->account($userId, (int) $params['id']);
         $googleCalendarId = trim((string) ($req->str('googleCalendarId') ?? ''));
         if ($googleCalendarId === '') {
             throw HttpError::badRequest('googleCalendarId is required');
         }
-        $existing = $this->db->one(
-            'SELECT id FROM calendars WHERE user_id = ? AND google_account_id = ? AND google_calendar_id = ?',
-            [$userId, (int) $account['id'], $googleCalendarId]
-        );
-        if ($existing !== null) {
-            throw HttpError::conflict('already_subscribed', 'That calendar is already here');
-        }
         $name = trim((string) ($req->str('name') ?? ''));
         $role = (string) ($req->str('accessRole') ?? 'reader');
         if (!in_array($role, ['owner', 'writer', 'reader', 'freeBusyReader'], true)) {
             $role = 'reader';
         }
-        $calendar = $this->calendars->create(
-            $userId,
-            ['name' => $name !== '' ? $name : $googleCalendarId, 'color' => $req->body['color'] ?? null, 'folderIds' => $req->body['folderIds'] ?? null],
-            kind: 'subscribed',
-            sourceUrl: null,
-            google: ['accountId' => (int) $account['id'], 'calendarId' => $googleCalendarId, 'accessRole' => $role],
-        );
+        $sessionToken = (string) ($req->cookies[Auth::COOKIE] ?? '');
+        $calendar = $this->db->tx(function () use ($userId, $account, $googleCalendarId, $name, $req, $role, $sessionToken): array {
+            // Serialize the durable subscription with the exact initiating
+            // session and compromise quarantine. Reconnecting the account
+            // cannot revive a request whose session the reset deleted.
+            Auth::assertRecentSession($this->db, $userId, $sessionToken, true);
+            $account = $this->auth->assertUsable($account, true);
+            $existing = $this->db->one(
+                'SELECT id FROM calendars WHERE user_id = ? AND google_account_id = ? AND google_calendar_id = ?',
+                [$userId, (int) $account['id'], $googleCalendarId]
+            );
+            if ($existing !== null) {
+                throw HttpError::conflict('already_subscribed', 'That calendar is already here');
+            }
+            return $this->calendars->create(
+                $userId,
+                ['name' => $name !== '' ? $name : $googleCalendarId, 'color' => $req->body['color'] ?? null, 'folderIds' => $req->body['folderIds'] ?? null],
+                kind: 'subscribed',
+                sourceUrl: null,
+                google: ['accountId' => (int) $account['id'], 'calendarId' => $googleCalendarId, 'accessRole' => $role],
+            );
+        });
         try {
             $this->feeds->poll((int) $calendar['id']);
         } catch (\Throwable $e) {

@@ -20,6 +20,7 @@ declare(strict_types=1);
 require dirname(__DIR__) . '/src/bootstrap.php';
 
 use BetterCal\Domain\Auth;
+use BetterCal\Domain\GoogleAuth;
 use BetterCal\Infra\Db;
 
 $options = getopt('', ['email:', 'password:', 'name::', 'revoke-tokens']);
@@ -82,10 +83,16 @@ if ($existing !== null) {
     echo "Forgot {$revoked['trustedDevices']} remembered browser(s); each is remembered again when it signs in.\n";
     if ($revokeTokens) {
         echo "Revoked {$revoked['tokens']} API token(s); re-issue with bin/token.php --create.\n";
+        if ($revoked['subscriptionsPaused'] > 0) {
+            echo "Paused {$revoked['subscriptionsPaused']} ICS subscription(s) created by those tokens; review them in calendar settings.\n";
+        }
         echo "Gave {$revoked['feedsRotated']} outbound feed(s) new addresses; copy them again from Settings, Connections.\n";
         if ($revoked['notifyEmailReset']) {
             echo "Reminder email goes to the account address again (a different one had been set).\n";
         }
+        echo "Paused {$revoked['googleAccounts']} Google account connection(s) and stopped {$revoked['googleMoves']} unfinished move(s); reconnect each account under Settings, Connections.\n";
+        $remote = (new GoogleAuth($db, $cfg))->revokeQuarantinedTokens($userId);
+        echo "Asked Google to revoke {$remote['attempted']} refresh token(s); {$remote['confirmed']} revocation request(s) were confirmed. Local access is paused regardless.\n";
     } else {
         $kept = (int) $db->scalar('SELECT COUNT(*) FROM api_tokens WHERE user_id = ?', [$userId]);
         if ($kept > 0) {

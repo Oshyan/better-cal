@@ -46,7 +46,7 @@ final class GoogleMove
      * $googleCalendarId, use that existing calendar (one the account owns or
      * may edit) instead of creating one.
      */
-    public function start(int $userId, int $calendarId, int $accountId, ?string $googleCalendarId = null): array
+    public function start(int $userId, int $calendarId, int $accountId, string $sessionToken, ?string $googleCalendarId = null): array
     {
         $calendar = $this->db->one('SELECT * FROM calendars WHERE id = ? AND user_id = ?', [$calendarId, $userId]);
         if ($calendar === null) {
@@ -56,22 +56,50 @@ final class GoogleMove
             throw HttpError::badRequest('Only a calendar of your own here can be moved to Google');
         }
         $account = $this->auth->account($userId, $accountId);
+        $account = $this->auth->assertUsable($account);
 
         $latest = $this->latest($calendarId);
         if ($latest !== null && in_array($latest['status'], ['queued', 'running'], true)) {
             return $this->serialize($latest);
         }
-        if ($latest !== null && $latest['status'] === 'failed' && (int) $latest['google_account_id'] === $accountId
-            && ($googleCalendarId === null || $googleCalendarId === $latest['google_calendar_id'])) {
-            // Continue: what was uploaded stays uploaded.
-            $this->db->update('calendar_moves', ['status' => 'queued', 'error' => null, 'finished_at' => null], 'id = ?', [(int) $latest['id']]);
-            $moveId = (int) $latest['id'];
-        } else {
+        $retry = $latest !== null && $latest['status'] === 'failed' && ($latest['cancelled_at'] ?? null) === null
+            && (int) $latest['google_account_id'] === $accountId
+            && ($googleCalendarId === null || $googleCalendarId === $latest['google_calendar_id']);
+        if (!$retry) {
             if ($googleCalendarId === null && !GoogleAuth::canCreateCalendars($account)) {
                 throw new HttpError('google_reconnect_needed', 'Reconnect your Google account once to let Better-Cal create calendars there, or pick a Google calendar you already have.', 409);
             }
             if ($googleCalendarId !== null) {
                 $this->checkTarget($userId, $account, $googleCalendarId);
+            }
+        }
+
+        [$moveId, $started] = $this->db->tx(function () use ($userId, $calendarId, $accountId, $googleCalendarId, $account, $sessionToken): array {
+            // Serialize durable move creation/retry with the exact initiating
+            // session and quarantine. A reset/reconnect cannot revive the old
+            // request; if this commits first, reset cancels the new move.
+            Auth::assertRecentSession($this->db, $userId, $sessionToken, true);
+            $account = $this->auth->assertUsable($account, true);
+            $calendar = $this->db->one('SELECT * FROM calendars WHERE id = ? AND user_id = ?', [$calendarId, $userId]);
+            if ($calendar === null) {
+                throw HttpError::notFound('No such calendar');
+            }
+            if ((string) $calendar['kind'] !== 'local') {
+                throw HttpError::badRequest('Only a calendar of your own here can be moved to Google');
+            }
+            $latest = $this->latest($calendarId);
+            if ($latest !== null && in_array($latest['status'], ['queued', 'running'], true)) {
+                return [(int) $latest['id'], false];
+            }
+            if ($latest !== null && $latest['status'] === 'failed' && ($latest['cancelled_at'] ?? null) === null
+                && (int) $latest['google_account_id'] === $accountId
+                && ($googleCalendarId === null || $googleCalendarId === $latest['google_calendar_id'])) {
+                // Continue: what was uploaded stays uploaded.
+                $this->db->update('calendar_moves', ['status' => 'queued', 'error' => null, 'finished_at' => null], 'id = ?', [(int) $latest['id']]);
+                return [(int) $latest['id'], true];
+            }
+            if ($googleCalendarId === null && !GoogleAuth::canCreateCalendars($account)) {
+                throw new HttpError('google_reconnect_needed', 'Reconnect your Google account once to let Better-Cal create calendars there, or pick a Google calendar you already have.', 409);
             }
             // Events may still carry Google ids from an earlier life on
             // Google (a calendar adopted as local keeps them as history);
@@ -86,12 +114,19 @@ final class GoogleMove
                 'create_new' => $googleCalendarId === null ? 1 : 0,
                 'total' => $total,
             ]);
+            return [$moveId, true];
+        });
+        if ($started) {
+            $this->queue->enqueue('google_move', ['moveId' => $moveId]);
+            // Most calendars finish within the request; a big one carries on in
+            // the worker and the settings panel shows its progress.
+            $this->run($moveId, 12);
         }
-        $this->queue->enqueue('google_move', ['moveId' => $moveId]);
-        // Most calendars finish within the request; a big one carries on in
-        // the worker and the settings panel shows its progress.
-        $this->run($moveId, 12);
-        return $this->serialize($this->db->one('SELECT * FROM calendar_moves WHERE id = ?', [$moveId]));
+        $row = $this->db->one('SELECT * FROM calendar_moves WHERE id = ?', [$moveId]);
+        if ($row === null) {
+            throw HttpError::conflict('google_disconnected', 'The Google account was disconnected before the move could start.');
+        }
+        return $this->serialize($row);
     }
 
     public function status(int $userId, int $calendarId): ?array
@@ -111,7 +146,15 @@ final class GoogleMove
             return true;
         }
         $started = time();
-        $this->db->update('calendar_moves', ['status' => 'running'], 'id = ?', [$moveId]);
+        $this->db->run(
+            "UPDATE calendar_moves SET status = 'running'
+             WHERE id = ? AND status IN ('queued', 'running') AND cancelled_at IS NULL",
+            [$moveId]
+        );
+        $move = $this->db->one('SELECT * FROM calendar_moves WHERE id = ?', [$moveId]);
+        if ($move === null || ($move['cancelled_at'] ?? null) !== null || in_array($move['status'], ['done', 'failed'], true)) {
+            return true;
+        }
         $calendarId = (int) $move['calendar_id'];
         try {
             $calendar = $this->db->one('SELECT * FROM calendars WHERE id = ?', [$calendarId]);
@@ -124,6 +167,9 @@ final class GoogleMove
             }
             $googleCalendarId = $move['google_calendar_id'] !== null ? (string) $move['google_calendar_id'] : null;
             if ($googleCalendarId === null) {
+                if ($this->cancelled($moveId)) {
+                    return true;
+                }
                 $googleCalendarId = $this->auth->createCalendar($account, (string) $calendar['name'], $this->homeTz((int) $move['user_id']));
                 $this->db->update('calendar_moves', ['google_calendar_id' => $googleCalendarId], 'id = ?', [$moveId]);
             }
@@ -135,12 +181,18 @@ final class GoogleMove
                 if (time() - $started >= $budgetSeconds) {
                     return false;
                 }
+                if ($this->cancelled($moveId)) {
+                    return true;
+                }
                 $res = $this->writer->import($target, $row);
                 $this->uploaded($moveId, (int) $row['id'], (string) ($res['id'] ?? ''));
             }
             foreach ($this->pending($calendarId, masters: false) as $row) {
                 if (time() - $started >= $budgetSeconds) {
                     return false;
+                }
+                if ($this->cancelled($moveId)) {
+                    return true;
                 }
                 $master = $row['recurrence_parent_id'] !== null
                     ? $this->db->one('SELECT * FROM events WHERE id = ?', [(int) $row['recurrence_parent_id']])
@@ -155,7 +207,22 @@ final class GoogleMove
 
             // Everything is at Google: the calendar becomes a Google-backed
             // one, and the first sync matches every row by its UID.
-            $this->db->tx(function () use ($calendarId, $account, $googleCalendarId): void {
+            if ($this->cancelled($moveId)) {
+                return true;
+            }
+            $this->db->tx(function () use ($moveId, $calendarId, $account, $googleCalendarId): void {
+                // Claim completion with the same row the reset cancels. The
+                // conditional UPDATE is the race boundary: whichever commits
+                // first wins, so reset cannot land between the last check and
+                // the local cutover and then be overwritten by status='done'.
+                $finished = $this->db->run(
+                    "UPDATE calendar_moves SET status = 'done', finished_at = ?
+                     WHERE id = ? AND status = 'running' AND cancelled_at IS NULL",
+                    [Time::nowDb(), $moveId]
+                )->rowCount();
+                if ($finished !== 1) {
+                    throw new \RuntimeException('The move was stopped by the account compromise reset');
+                }
                 $this->db->update('calendars', [
                     'kind' => 'subscribed',
                     'provider' => 'google',
@@ -178,7 +245,6 @@ final class GoogleMove
                     [$calendarId, $calendarId]
                 );
             });
-            $this->db->update('calendar_moves', ['status' => 'done', 'finished_at' => Time::nowDb()], 'id = ?', [$moveId]);
             $count = (int) $this->db->scalar('SELECT done_count FROM calendar_moves WHERE id = ?', [$moveId]);
             $this->undo->record((int) $move['user_id'], 'calendar', $calendarId, 'update', null, null,
                 "Moved calendar '" . (string) $calendar['name'] . "' to Google (" . $count . ' event' . ($count === 1 ? '' : 's') . ')');
@@ -217,6 +283,13 @@ final class GoogleMove
         }
         $this->db->update('events', ['google_event_id' => $googleId], 'id = ?', [$eventId]);
         $this->db->run('UPDATE calendar_moves SET done_count = done_count + 1 WHERE id = ?', [$moveId]);
+    }
+
+    /** A compromise reset can land while this worker is between two uploads. */
+    private function cancelled(int $moveId): bool
+    {
+        $row = $this->db->one('SELECT cancelled_at FROM calendar_moves WHERE id = ?', [$moveId]);
+        return $row === null || ($row['cancelled_at'] ?? null) !== null;
     }
 
     private function checkTarget(int $userId, array $account, string $googleCalendarId): void
@@ -260,6 +333,7 @@ final class GoogleMove
         return [
             'id' => (int) $row['id'],
             'status' => (string) $row['status'],
+            'cancelled' => ($row['cancelled_at'] ?? null) !== null,
             'total' => (int) $row['total'],
             'done' => (int) $row['done_count'],
             'error' => $row['error'] !== null ? (string) $row['error'] : null,

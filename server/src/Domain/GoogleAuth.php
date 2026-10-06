@@ -50,8 +50,8 @@ final class GoogleAuth
 
     // ---- Consent -----------------------------------------------------------
 
-    /** Where to send the browser. The state ties the callback to this user. */
-    public function authUrl(int $userId): string
+    /** Where to send the browser. The state ties the callback to this user and session. */
+    public function authUrl(int $userId, string $sessionToken): string
     {
         $this->requireConfigured();
         return self::AUTH_URL . '?' . http_build_query([
@@ -64,20 +64,20 @@ final class GoogleAuth
             'access_type' => 'offline',
             'prompt' => 'consent',
             'include_granted_scopes' => 'true',
-            'state' => $this->signState($userId),
+            'state' => $this->signState($userId, $sessionToken),
         ]);
     }
 
-    /** Stateless CSRF binding: user id and expiry, HMAC'd with the session secret. */
-    public function signState(int $userId, ?int $now = null): string
+    /** Stateless CSRF binding: user id, expiry and the initiating browser session. */
+    public function signState(int $userId, string $sessionToken, ?int $now = null): string
     {
         $exp = ($now ?? time()) + self::STATE_TTL;
         $nonce = bin2hex(random_bytes(8));
         $payload = $userId . '.' . $exp . '.' . $nonce;
-        return $payload . '.' . hash_hmac('sha256', $payload, $this->stateKey());
+        return $payload . '.' . hash_hmac('sha256', $payload, $this->stateKey($sessionToken));
     }
 
-    public function verifyState(string $state, int $userId, ?int $now = null): bool
+    public function verifyState(string $state, int $userId, string $sessionToken, ?int $now = null): bool
     {
         $parts = explode('.', $state);
         if (count($parts) !== 4) {
@@ -85,7 +85,7 @@ final class GoogleAuth
         }
         [$uid, $exp, $nonce, $mac] = $parts;
         $payload = $uid . '.' . $exp . '.' . $nonce;
-        if (!hash_equals(hash_hmac('sha256', $payload, $this->stateKey()), $mac)) {
+        if ($sessionToken === '' || !hash_equals(hash_hmac('sha256', $payload, $this->stateKey($sessionToken)), $mac)) {
             return false;
         }
         return (int) $uid === $userId && (int) $exp >= ($now ?? time());
@@ -97,7 +97,7 @@ final class GoogleAuth
      *
      * @return array the account row
      */
-    public function connect(int $userId, string $code): array
+    public function connect(int $userId, string $code, string $sessionToken): array
     {
         $this->requireConfigured();
         $token = $this->tokenRequest([
@@ -119,17 +119,7 @@ final class GoogleAuth
         }
         $sealed = Secrets::seal($refresh, (string) $this->cfg['session_secret']);
         $scopes = (string) ($token['scope'] ?? self::SCOPES);
-        $existing = $this->db->one('SELECT * FROM google_accounts WHERE user_id = ? AND email = ?', [$userId, $email]);
-        if ($existing !== null) {
-            $this->db->update('google_accounts', [
-                'refresh_token_enc' => $sealed, 'scopes' => $scopes, 'status' => 'ok', 'last_error' => null,
-            ], 'id = ?', [(int) $existing['id']]);
-            return $this->db->one('SELECT * FROM google_accounts WHERE id = ?', [(int) $existing['id']]);
-        }
-        $id = $this->db->insert('google_accounts', [
-            'user_id' => $userId, 'email' => $email, 'refresh_token_enc' => $sealed, 'scopes' => $scopes,
-        ]);
-        return $this->db->one('SELECT * FROM google_accounts WHERE id = ?', [$id]);
+        return $this->storeConnection($userId, $sessionToken, $email, $sealed, $scopes);
     }
 
     /** Revoke at Google (best effort) and forget the token. Calendars stay; their next poll says why it failed. */
@@ -151,6 +141,9 @@ final class GoogleAuth
     public function accessToken(array $account): string
     {
         $this->requireConfigured();
+        // Re-read instead of trusting a worker/controller snapshot loaded
+        // before a compromise reset committed.
+        $account = $this->assertUsable($account);
         $refresh = Secrets::open((string) $account['refresh_token_enc'], (string) $this->cfg['session_secret']);
         try {
             $token = $this->tokenRequest([
@@ -163,10 +156,49 @@ final class GoogleAuth
             $this->db->update('google_accounts', ['status' => 'error', 'last_error' => mb_substr($e->getMessage(), 0, 2000)], 'id = ?', [(int) $account['id']]);
             throw $e;
         }
+        // The reset may have committed while Google's token endpoint was in
+        // flight. Do not hand the resulting access token to a later API call.
+        $account = $this->assertUsable($account);
         if (($account['status'] ?? 'ok') !== 'ok') {
             $this->db->update('google_accounts', ['status' => 'ok', 'last_error' => null], 'id = ?', [(int) $account['id']]);
         }
         return (string) $token['access_token'];
+    }
+
+    /** Reload and reject the distinct compromise-quarantine state before any Google request. */
+    public function assertUsable(array $account, bool $forUpdate = false): array
+    {
+        $id = (int) ($account['id'] ?? 0);
+        $lock = $forUpdate && $this->db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
+        $fresh = $id > 0 ? $this->db->one('SELECT * FROM google_accounts WHERE id = ?' . $lock, [$id]) : null;
+        if ($fresh === null) {
+            throw HttpError::conflict('google_disconnected', 'The Google account is disconnected; reconnect it under Settings, Connections.');
+        }
+        if (($fresh['reauth_required_at'] ?? null) !== null) {
+            throw HttpError::conflict('google_reconnect_needed', 'Google access was paused by the account compromise reset; reconnect this account under Settings, Connections.');
+        }
+        return $fresh;
+    }
+
+    /** Best-effort remote cleanup after local compromise quarantine has committed. */
+    public function revokeQuarantinedTokens(int $userId): array
+    {
+        $attempted = 0;
+        $confirmed = 0;
+        foreach ($this->db->all('SELECT * FROM google_accounts WHERE user_id = ? AND reauth_required_at IS NOT NULL', [$userId]) as $account) {
+            $attempted++;
+            try {
+                $refresh = Secrets::open((string) $account['refresh_token_enc'], (string) $this->cfg['session_secret']);
+                $r = $this->http()->postForm(self::REVOKE_URL, ['token' => $refresh]);
+                if ($r['status'] >= 200 && $r['status'] < 300) {
+                    $confirmed++;
+                }
+            } catch (\Throwable) {
+                // Local quarantine is already authoritative. Never roll it back
+                // because Google or the network was unavailable.
+            }
+        }
+        return ['attempted' => $attempted, 'confirmed' => $confirmed];
     }
 
     // ---- Reading ------------------------------------------------------------
@@ -204,6 +236,9 @@ final class GoogleAuth
         $out = [];
         $pageToken = null;
         do {
+            // A reset may land after accessToken() but before or between
+            // pages. At most the request already in flight may finish.
+            $this->assertUsable($account);
             $url = self::CALENDAR_LIST_URL . '?' . http_build_query(array_filter([
                 'minAccessRole' => 'reader', 'showHidden' => 'true', 'maxResults' => '250', 'pageToken' => $pageToken,
             ]));
@@ -269,6 +304,7 @@ final class GoogleAuth
             'id' => (int) $row['id'],
             'email' => (string) $row['email'],
             'status' => (string) $row['status'],
+            'reauthRequired' => ($row['reauth_required_at'] ?? null) !== null,
             'error' => $row['last_error'] !== null ? (string) $row['last_error'] : null,
             'canCreateCalendars' => self::canCreateCalendars($row),
             'connectedAt' => Time::dbToIso((string) $row['created_at']),
@@ -293,9 +329,49 @@ final class GoogleAuth
         return new HttpClient(requestBudget: 20, userAgent: 'Better-Cal/0.1 (+google-connector)');
     }
 
-    private function stateKey(): string
+    private function stateKey(string $sessionToken): string
     {
-        return hash('sha256', 'google-state|' . (string) $this->cfg['session_secret'], true);
+        $base = hash('sha256', 'google-state|' . (string) $this->cfg['session_secret'], true);
+        return hash_hmac('sha256', 'session|' . hash('sha256', $sessionToken), $base, true);
+    }
+
+    /**
+     * Persist a completed consent only while its initiating browser session
+     * still exists. The row lock shares the reset's session-delete boundary:
+     * if this wins, reset quarantines the account afterwards; if reset wins,
+     * this refuses to recreate or reactivate a durable Google credential.
+     */
+    private function storeConnection(int $userId, string $sessionToken, string $email, string $sealed, string $scopes): array
+    {
+        return $this->db->tx(function () use ($userId, $sessionToken, $email, $sealed, $scopes): array {
+            try {
+                // User then session: the same order as compromise reset, and
+                // before account writes that take a user FK lock.
+                Auth::assertSession($this->db, $userId, $sessionToken, true);
+            } catch (HttpError) {
+                throw HttpError::conflict('oauth_session_expired', 'The browser session that started Google consent is no longer signed in; start again.');
+            }
+
+            $existing = $this->db->one('SELECT * FROM google_accounts WHERE user_id = ? AND email = ?', [$userId, $email]);
+            if ($existing !== null) {
+                $this->db->update('google_accounts', [
+                    'refresh_token_enc' => $sealed, 'scopes' => $scopes, 'status' => 'ok', 'last_error' => null,
+                    'reauth_required_at' => null,
+                ], 'id = ?', [(int) $existing['id']]);
+                if (($existing['reauth_required_at'] ?? null) !== null) {
+                    $this->db->run(
+                        "UPDATE calendars SET last_polled_at = NULL, last_poll_status = 'never', last_poll_error = NULL
+                         WHERE google_account_id = ?",
+                        [(int) $existing['id']]
+                    );
+                }
+                return $this->db->one('SELECT * FROM google_accounts WHERE id = ?', [(int) $existing['id']]);
+            }
+            $id = $this->db->insert('google_accounts', [
+                'user_id' => $userId, 'email' => $email, 'refresh_token_enc' => $sealed, 'scopes' => $scopes,
+            ]);
+            return $this->db->one('SELECT * FROM google_accounts WHERE id = ?', [$id]);
+        });
     }
 
     private function requireConfigured(): void

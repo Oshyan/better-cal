@@ -115,6 +115,7 @@ function bc_handle_api(Request $request, array $cfg): void
 
         $router->add('POST', "$base/auth/login", [$authController, 'login']);
         $router->add('POST', "$base/auth/logout", [$authController, 'logout']);
+        $router->add('POST', "$base/auth/step-up", [$authController, 'stepUp']);
         $router->add('GET', "$base/auth/sessions", [$authController, 'otherSessions']);
         $router->add('POST', "$base/auth/sign-out-others", [$authController, 'signOutOthers']);
         $router->add('GET', "$base/me", [$authController, 'me']);
@@ -124,6 +125,7 @@ function bc_handle_api(Request $request, array $cfg): void
         $router->add('POST', "$base/calendars/import", [$calendarsController, 'import']);
         $router->add('POST', "$base/calendars", [$calendarsController, 'create']);
         $router->add('POST', "$base/calendars/:id/refresh", [$calendarsController, 'refresh']);
+        $router->add('POST', "$base/calendars/:id/claim-subscription", [$calendarsController, 'claimSubscription']);
         $router->add('PATCH', "$base/calendars/:id", [$calendarsController, 'patch']);
         $router->add('POST', "$base/calendars/:id/adopt", [$calendarsController, 'adopt']);
         $router->add('DELETE', "$base/calendars/:id", [$calendarsController, 'delete']);
@@ -261,6 +263,7 @@ function bc_handle_api(Request $request, array $cfg): void
         // Google Calendar connector (docs/google-calendar.md).
         $router->add('GET', "$base/google/status", [$googleController, 'status']);
         $router->add('GET', "$base/google/connect", [$googleController, 'connect']);
+        $router->add('POST', "$base/google/connect", [$googleController, 'connect']);
         $router->add('GET', "$base/google/callback", [$googleController, 'callback']);
         $router->add('POST', "$base/google/accounts/:id/disconnect", [$googleController, 'disconnect']);
         $router->add('GET', "$base/google/accounts/:id/calendars", [$googleController, 'calendars']);
@@ -307,6 +310,7 @@ function bc_handle_api(Request $request, array $cfg): void
                 $request->user = $session['user'];
                 $request->csrf = $session['csrf'];
                 $request->authMethod = 'session';
+                $request->authenticatedAt = $session['authenticatedAt'];
 
                 if (!in_array($request->method, ['GET', 'HEAD', 'OPTIONS'], true)
                     && !hash_equals($session['csrf'], (string) ($request->header('X-CSRF') ?? ''))

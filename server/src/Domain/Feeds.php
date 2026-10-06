@@ -41,6 +41,11 @@ final class Feeds
         if (!$google && empty($calendar['source_url'])) {
             throw HttpError::badRequest('Calendar is not a feed subscription');
         }
+        if (!$google) {
+            // The scheduler is only an optimization. Every direct refresh and
+            // already-queued job must stop here before making a network request.
+            SubscriptionAuthority::assertCanPoll($this->db, $calendar);
+        }
         try {
             if ($google) {
                 $cfg = $this->cfg ?? config();
@@ -55,10 +60,34 @@ final class Feeds
                 throw new \RuntimeException(str_replace('calendar file', 'feed', $problem) . '; it was not read');
             }
             $parsed = Ics::parse($ics, Settings::homeTzid($this->db, (int) $calendar['user_id']));
-            $count = $this->sync($calendar, $parsed);
-            $this->pollSucceeded($calendar, count($parsed), $count);
+            $count = $this->db->tx(function () use ($calendar, $parsed): int {
+                // A token can be revoked while the remote server is answering.
+                // Lock user -> token -> calendar, then reread every governing
+                // field. Revocation/reset or an owner adopting the feed either
+                // commits first and discards this response, or waits for sync.
+                SubscriptionAuthority::lockForPoll($this->db, $calendar);
+                $lock = $this->db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
+                $current = $this->db->one('SELECT * FROM calendars WHERE id = ?' . $lock, [(int) $calendar['id']]);
+                if ($current === null
+                    || (string) ($current['kind'] ?? '') !== 'subscribed'
+                    || (string) ($current['provider'] ?? 'ics') === 'google'
+                    || empty($current['source_url'])
+                ) {
+                    throw HttpError::conflict('subscription_authorization_revoked', 'This calendar no longer uses this feed; the fetched response was discarded.');
+                }
+                SubscriptionAuthority::lockForPoll($this->db, $current);
+                SubscriptionAuthority::assertCanPoll($this->db, $current);
+                $count = $this->sync($current, $parsed);
+                $this->pollSucceeded($current, count($parsed), $count);
+                return $count;
+            });
             return $count;
         } catch (\Throwable $e) {
+            if ($e instanceof HttpError && $e->errorCode === 'subscription_authorization_revoked') {
+                // Paused by policy, not a broken feed: leave its last actual
+                // poll health alone and let the UI show authorization state.
+                throw $e;
+            }
             $this->pollFailed($calendar, $e);
             throw $e;
         }

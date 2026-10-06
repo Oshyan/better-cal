@@ -213,6 +213,8 @@ final class GoogleWriter
         }
         try {
             $access = $this->auth->accessToken($account);
+        } catch (HttpError $e) {
+            throw $e;
         } catch (\RuntimeException $e) {
             throw new HttpError('google_write_failed', 'Google refused the sign-in: ' . $e->getMessage(), 502);
         }

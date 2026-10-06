@@ -82,10 +82,14 @@ switch ($mode) {
             fwrite(STDERR, "--revoke requires a numeric token id\n");
             exit(1);
         }
-        if (!$tokens->revoke($userId, $id)) {
+        $impact = $tokens->revokeWithImpact($userId, $id);
+        if ($impact === null) {
             fwrite(STDERR, "No token with id $id for {$user['email']}.\n");
             exit(1);
         }
         echo "Revoked token $id.\n";
+        if ($impact['subscriptionsPaused'] > 0) {
+            echo "Paused {$impact['subscriptionsPaused']} ICS subscription(s) created by it; review them in calendar settings.\n";
+        }
         break;
 }

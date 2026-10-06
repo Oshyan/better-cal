@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace BetterCal\Http\Controllers;
 
+use BetterCal\Domain\Auth;
 use BetterCal\Domain\OutFeeds;
 use BetterCal\Http\Request;
 use BetterCal\Http\Response;
@@ -25,7 +26,12 @@ final class OutFeedsController
 
     public function create(Request $req): Response
     {
-        return Response::json($this->outFeeds->create((int) $req->user['id'], $req->body, $req->authMethod === 'token' ? $req->tokenId : null), 201);
+        return Response::json($this->outFeeds->create(
+            (int) $req->user['id'],
+            $req->body,
+            $req->authMethod === 'token' ? $req->tokenId : null,
+            $req->authMethod === 'session' ? ($req->cookies[Auth::COOKIE] ?? null) : null,
+        ), 201);
     }
 
     public function delete(Request $req, array $params): Response

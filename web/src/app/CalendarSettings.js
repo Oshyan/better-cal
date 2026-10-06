@@ -49,6 +49,8 @@ export function CalendarSettings({ cal, folders, onClose }) {
   const [refreshing, setRefreshing] = useState(false);
 
   const subscribed = cal.kind === 'subscribed';
+  const subscriptionAuth = cal.subscriptionAuthorization;
+  const subscriptionPaused = !!(subscriptionAuth && subscriptionAuth.status === 'paused');
 
   const commitName = () => {
     const trimmed = name.trim();
@@ -81,6 +83,16 @@ export function CalendarSettings({ cal, folders, onClose }) {
 
   const remove = async () => {
     if (await deleteCalendar(cal)) onClose();
+  };
+
+  const keepSubscriptionActive = async () => {
+    try {
+      await api('/calendars/' + cal.id + '/claim-subscription', { method: 'POST' });
+      toast('Subscription kept active as an account-owned feed');
+      await loadCalendars();
+    } catch (e) {
+      toast('Could not resume subscription: ' + e.message, { error: true });
+    }
   };
 
   return html`<div class="bc-calset" role="group" aria-label=${'Settings for ' + cal.name}>
@@ -141,6 +153,10 @@ export function CalendarSettings({ cal, folders, onClose }) {
         ? html`<span class="bc-calset-url" title=${cal.googleCalendarId || ''}>Google Calendar, through your connected account (Settings, Connections)${cal.editable ? '; edits here go to Google' : '; view only at Google'}</span>`
         : html`<span class="bc-calset-url" title=${cal.sourceUrl}>${cal.sourceUrl}</span>`}
     </div>
+    ${subscriptionPaused && html`<div class="bc-calset-auth" role="alert">
+      <span>${subscriptionAuth.reason}</span>
+      <button type="button" class="bc-btn" onClick=${keepSubscriptionActive}>Keep active</button>
+    </div>`}
     <div class="bc-calset-field">
       <span class="bc-calset-label">Check for updates</span>
       <select
@@ -170,8 +186,8 @@ export function CalendarSettings({ cal, folders, onClose }) {
       <span>Group similar events</span>
     </label>
     <div class="bc-calset-field">
-      <button type="button" class="bc-btn" disabled=${refreshing} onClick=${refresh}>
-        ${refreshing ? 'Refreshing' : 'Refresh now'}
+      <button type="button" class="bc-btn" disabled=${refreshing || subscriptionPaused} onClick=${refresh}>
+        ${subscriptionPaused ? 'Updates paused' : refreshing ? 'Refreshing' : 'Refresh now'}
       </button>
     </div>
     <div class="bc-calset-status">${pollStatusLine(cal)}</div>

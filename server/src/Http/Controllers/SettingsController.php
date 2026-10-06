@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace BetterCal\Http\Controllers;
 
+use BetterCal\Domain\Auth;
 use BetterCal\Domain\Settings;
 use BetterCal\Http\Request;
 use BetterCal\Http\Response;
@@ -23,6 +24,11 @@ final class SettingsController
     {
         // A reminder address set with an API token is remembered with that token
         // and stops receiving mail once the token is revoked or expires (F6).
-        return Response::json(['settings' => $this->settings->patch((int) $req->user['id'], $req->body, $req->authMethod === 'token' ? $req->tokenId : null)]);
+        return Response::json(['settings' => $this->settings->patch(
+            (int) $req->user['id'],
+            $req->body,
+            $req->authMethod === 'token' ? $req->tokenId : null,
+            $req->authMethod === 'session' ? ($req->cookies[Auth::COOKIE] ?? null) : null,
+        )]);
     }
 }

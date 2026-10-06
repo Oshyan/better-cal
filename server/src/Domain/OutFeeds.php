@@ -37,7 +37,7 @@ final class OutFeeds
         );
     }
 
-    public function create(int $userId, array $in, ?int $tokenId = null): array
+    public function create(int $userId, array $in, ?int $tokenId = null, ?string $sessionToken = null): array
     {
         $name = trim((string) ($in['name'] ?? ''));
         if ($name === '') {
@@ -64,14 +64,23 @@ final class OutFeeds
             $normalized['q'] = $q;
         }
 
-        $id = $this->db->insert('out_feeds', [
-            'user_id' => $userId,
-            'token' => Ids::feedToken(),
-            'name' => mb_substr($name, 0, 160),
-            'scope_json' => json_encode($normalized),
-            'description' => isset($in['description']) ? trim((string) $in['description']) : null,
-            'created_by_token_id' => $tokenId,
-        ]);
+        $id = $this->db->tx(function () use ($userId, $name, $normalized, $in, $tokenId, $sessionToken): int {
+            if ($tokenId === null) {
+                // Close the resolve-then-revoke race: if lost-device recovery
+                // wins, this request cannot recreate a feed after rotation.
+                Auth::assertSession($this->db, $userId, $sessionToken, true);
+            } else {
+                ApiTokens::assertStillValid($this->db, $tokenId, $userId, true);
+            }
+            return $this->db->insert('out_feeds', [
+                'user_id' => $userId,
+                'token' => Ids::feedToken(),
+                'name' => mb_substr($name, 0, 160),
+                'scope_json' => json_encode($normalized),
+                'description' => isset($in['description']) ? trim((string) $in['description']) : null,
+                'created_by_token_id' => $tokenId,
+            ]);
+        });
         (new Undo($this->db))->record($userId, 'outfeed', (int) $id, 'create', null, null,
             'Created outbound feed "' . mb_substr($name, 0, 160) . '" (' . $normalized['type'] . ')' . ($tokenId !== null ? ', with an API token' : ''));
         return $this->serialize($this->db->one('SELECT * FROM out_feeds WHERE id = ?', [$id]));

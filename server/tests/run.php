@@ -1087,6 +1087,7 @@ check('vcal exdate exported in its zone', str_contains($calendar, 'EXDATE;TZID=A
 check('vcal all-day uses DATE value', str_contains($calendar, 'DTSTART;VALUE=DATE:20260802'));
 check('vcal ends properly', str_ends_with($calendar, "END:VCALENDAR\r\n"));
 
+if (class_exists(\Sabre\VObject\Reader::class)) { // needs sabre/vobject (the install job runs it)
 // Timed events go out in their own zone (audit #1, 0.9.14): a weekly 9:00 in
 // Los Angeles stays 9:00 across the November change in any client, and a
 // CalDAV round trip keeps the zone instead of storing it back as UTC.
@@ -1110,6 +1111,7 @@ $adTimedOv = Ics::buildObject([
     ['uid' => 'ad7', 'title' => 'G', 'start_utc' => '2026-10-12 21:00:00', 'end_utc' => '2026-10-12 23:00:00', 'all_day' => 0, 'tzid' => 'America/Los_Angeles', 'recurrence_instance_utc' => '2026-10-12 07:00:00', 'status' => 'confirmed'],
 ]);
 check('export: override of an all-day series keeps a date RECURRENCE-ID', str_contains($adTimedOv, 'RECURRENCE-ID;VALUE=DATE:20261012') && str_contains($adTimedOv, 'DTSTART;TZID=America/Los_Angeles:20261012T140000'));
+}
 
 // An all-day series exports its skipped dates and edited occurrences as dates
 // in its own zone, matching its DTSTART (0.9.14), and reads back the same.
@@ -1126,6 +1128,7 @@ $adObj = Ics::buildObject([$adSeries, $adOverride]);
 check('all-day series exdate is a local date', str_contains($adObj, 'EXDATE;VALUE=DATE:20260909'));
 check('all-day override recurrence-id is a local date', str_contains($adObj, 'RECURRENCE-ID;VALUE=DATE:20260916'));
 check('all-day series has no UTC-time exdate', !str_contains($adObj, 'EXDATE:2026'));
+if (class_exists(\Sabre\VObject\Reader::class)) { // needs sabre/vobject (the install job runs it)
 $adBack = Ics::parse($adObj);
 $adMaster = null;
 foreach ($adBack as $p) {
@@ -1134,6 +1137,7 @@ foreach ($adBack as $p) {
     }
 }
 checkEq('all-day series exdate reads back on the same date', '2026-09-09', $adMaster !== null && !empty($adMaster['exdates']) ? substr((string) $adMaster['exdates'][0], 0, 10) : null);
+}
 checkEq('all-day split ends the old series the day before, in its zone', 'FREQ=WEEKLY;BYDAY=WE;UNTIL=20260915', Recurrence::setUntil('FREQ=WEEKLY;BYDAY=WE', Recurrence::splitUntil(Time::fromDb('2026-09-16 07:00:00')), true, 'America/Los_Angeles'));
 checkEq('all-day split in UTC unchanged', 'FREQ=WEEKLY;BYDAY=WE;UNTIL=20260915', Recurrence::setUntil('FREQ=WEEKLY;BYDAY=WE', Recurrence::splitUntil(Time::fromDb('2026-09-16 00:00:00')), true, 'UTC'));
 $over = 0;
@@ -1266,6 +1270,7 @@ checkEq('non-recurring outside window emits none', 0, count($occs));
 // All-day series keep their dates in the event's own zone (0.9.14). Stored as
 // local midnights, they used to be read back as UTC midnights, a day early
 // anywhere west of UTC.
+if (class_exists(\Sabre\VObject\Reader::class)) { // needs sabre/vobject (the install job runs it)
 $adStarts = static fn(array $m, string $from, string $to): array => array_map(
     static fn($o) => Time::toDb($o['start']),
     Recurrence::sabreExpand($m, Time::fromDb($from), Time::fromDb($to))
@@ -1283,6 +1288,7 @@ $adTokyo = ['uid' => 'ad-tyo', 'tzid' => 'Asia/Tokyo', 'start_utc' => '2026-08-3
 checkEq('all-day weekly east of UTC stays on its days', ['2026-08-30 15:00:00', '2026-09-01 15:00:00'], $adStarts($adTokyo, '2026-08-30 00:00:00', '2026-09-05 00:00:00'));
 $adUtc = ['uid' => 'ad-utc', 'tzid' => 'UTC', 'start_utc' => '2026-08-31 00:00:00', 'end_utc' => '2026-09-01 00:00:00'] + $adLa;
 checkEq('all-day weekly in UTC unchanged', ['2026-08-31 00:00:00', '2026-09-02 00:00:00', '2026-09-09 00:00:00'], $adStarts($adUtc, '2026-08-30 00:00:00', '2026-09-12 00:00:00'));
+}
 
 // An all-day reminder on the Home clock can fire after the stored day ends in
 // UTC (audit #4, 0.9.14): "6 PM that day" in Los Angeles for an event stored
@@ -1366,7 +1372,9 @@ checkEq('all-day weekly in UTC unchanged', ['2026-08-31 00:00:00', '2026-09-02 0
     // "This and following" on a series with a COUNT keeps what is left of it.
     $fFollow = (new ReflectionClass(BetterCal\Domain\Events::class))->getMethod('followingRrule');
     $fSeries = ['id' => 9, 'uid' => 'c10', 'all_day' => 0, 'tzid' => 'America/Los_Angeles', 'start_utc' => '2026-10-05 16:00:00', 'end_utc' => '2026-10-05 17:00:00', 'rrule' => 'FREQ=WEEKLY;COUNT=10', 'exdates_json' => json_encode(['2026-10-12 16:00:00'])];
+if (class_exists(\Sabre\VObject\Reader::class)) { // needs sabre/vobject (the install job runs it)
     checkEq('split: 10 weekly split at the 6th leaves 5', 'FREQ=WEEKLY;COUNT=5', $fFollow->invoke($fEvents, $fSeries, '2026-11-09 17:00:00'));
+}
     checkEq('split: no COUNT, rule unchanged', 'FREQ=WEEKLY', $fFollow->invoke($fEvents, ['rrule' => 'FREQ=WEEKLY'] + $fSeries, '2026-11-09 17:00:00'));
     $fCount = static fn(): int => (int) $fdb->one('SELECT COUNT(*) AS n FROM feedback_signals')['n'];
     checkEq('thumbs: first up is recorded', 'up', $fEvents->recordFeedback(1, 1, 'up'));
@@ -1384,7 +1392,7 @@ checkEq('all-day weekly in UTC unchanged', ['2026-08-31 00:00:00', '2026-09-02 0
 // half-hour and southern ones, the repeated hour when clocks go back, all-day
 // and timed, with a skipped day and an edited one. The model's core was also
 // checked against independent engines (tools/tz-harness).
-{
+if (class_exists(\Sabre\VObject\Reader::class)) { // needs sabre/vobject (the install job runs it)
     $rtZones = ['America/Los_Angeles', 'America/New_York', 'Europe/London', 'Europe/Berlin', 'Asia/Kolkata', 'Asia/Tokyo', 'Australia/Sydney', 'Pacific/Auckland', 'America/Sao_Paulo', 'Australia/Lord_Howe', 'UTC', 'Pacific/Chatham'];
     $rtRules = ['FREQ=WEEKLY', 'FREQ=WEEKLY;BYDAY=MO,WE,FR', 'FREQ=DAILY;COUNT=40', 'FREQ=MONTHLY;BYMONTHDAY=15', 'FREQ=MONTHLY;BYDAY=-1SU'];
     $rtRec = new Recurrence();
@@ -1460,7 +1468,7 @@ checkEq('all-day weekly in UTC unchanged', ['2026-08-31 00:00:00', '2026-09-02 0
 
 // Migration 035 (0.9.16): all-day events stored as local midnights move to UTC
 // dates, with their skipped and edited days; every occurrence keeps its date.
-{
+if (class_exists(\Sabre\VObject\Reader::class)) { // needs sabre/vobject (the install job runs it)
     $mgdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
     $mgdb->run("CREATE TABLE events (id INTEGER PRIMARY KEY, calendar_id INTEGER, uid TEXT, title TEXT, start_utc TEXT, end_utc TEXT, all_day INTEGER, tzid TEXT, rrule TEXT, exdates_json TEXT, recurrence_parent_id INTEGER, recurrence_instance_utc TEXT, updated_at TEXT)");
     $mgdb->run("INSERT INTO events VALUES (1, 1, 's', 'Series', '2026-10-05 07:00:00', '2026-10-06 07:00:00', 1, 'America/Los_Angeles', 'FREQ=WEEKLY;UNTIL=20261124T075959Z', '[\"2026-10-12 07:00:00\"]', NULL, NULL, NULL)");
@@ -2236,6 +2244,7 @@ checkEq('dav DATE keeps tzid UTC', 'UTC', $cols['tzid']);
 // Parsed from the wire: a DATE stays a UTC midnight even with a stray TZID
 // (0.9.14), and an all-day event sent as zoned midnights becomes the same
 // dates at UTC midnight, so it stays on its day east of UTC (0.9.16).
+if (class_exists(\Sabre\VObject\Reader::class)) { // needs sabre/vobject (the install job runs it)
 $davDate = Ics::parse("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:d1\r\nDTSTART;VALUE=DATE;TZID=Asia/Tokyo:20261010\r\nDTEND;VALUE=DATE:20261011\r\nSUMMARY:x\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")[0];
 checkEq('dav DATE with stray TZID is a UTC midnight', ['2026-10-10 00:00:00', 'UTC'], [$davDate['start_utc'], $davDate['tzid']]);
 $davZoned = DavIcs::eventColumns(Ics::parse("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:z1\r\nDTSTART;TZID=Asia/Tokyo:20261010T000000\r\nDTEND;TZID=Asia/Tokyo:20261011T000000\r\nSUMMARY:x\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")[0]);
@@ -2250,6 +2259,7 @@ $floatWr = Ics::parse("BEGIN:VCALENDAR\r\nX-WR-TIMEZONE:Europe/London\r\nBEGIN:V
 checkEq('import: a floating time follows X-WR-TIMEZONE first', ['2026-10-12 08:00:00', 'Europe/London'], [$floatWr['start_utc'], $floatWr['tzid']]);
 $zTime = Ics::parse("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:u1\r\nDTSTART:20261012T090000Z\r\nDTEND:20261012T100000Z\r\nSUMMARY:x\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n", 'America/Los_Angeles')[0];
 checkEq('import: a UTC time is unchanged', ['2026-10-12 09:00:00', 'UTC'], [$zTime['start_utc'], $zTime['tzid']]);
+}
 checkEq('dav empty exdates -> null json', null, $cols['exdates_json']);
 checkEq('dav no rrule stays null', null, $cols['rrule']);
 

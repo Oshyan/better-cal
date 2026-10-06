@@ -10,11 +10,20 @@ A self-hosted calendar built to fully replace Google Calendar: everything GCal d
 
 **[Full feature list → FEATURES.md](FEATURES.md)**
 
-![Month view: five calendars, repeating and one-off events, a four-day trip, and two people's away and busy times shown across the days they cover](docs/screenshots/month.webp)
+<table>
+<tr>
+<td align="center"><a href="docs/screenshots/month.webp"><img src="docs/screenshots/month.webp" height="200" alt="Month view: five calendars, repeating and one-off events, a four-day trip, and two people's away and busy times shown across the days they cover"></a></td>
+<td align="center"><a href="docs/screenshots/phone-month.webp"><img src="docs/screenshots/phone-month.webp" height="200" alt="The same month on a phone, three days to a row, with the bottom bar for views, search, new, filter and review"></a></td>
+<td align="center"><a href="docs/screenshots/command-palette.webp"><img src="docs/screenshots/command-palette.webp" height="200" alt="The command palette: type to find a view, a calendar or an action, or create an event from the text"></a></td>
+</tr>
+<tr>
+<td align="center"><sub>Month view</sub></td>
+<td align="center"><sub>Phone</sub></td>
+<td align="center"><sub>Command palette</sub></td>
+</tr>
+</table>
 
-<p><img src="docs/screenshots/phone-month.webp" width="250" alt="The same month on a phone, three days to a row, with the bottom bar for views, search, new, filter and review"> <img src="docs/screenshots/command-palette.webp" width="560" alt="The command palette: type to find a view, a calendar or an action, or create an event from the text"></p>
-
-The screenshots use invented sample data; `php server/bin/demo-seed.php` loads the same into a fresh install.
+<sub>Click a screenshot for full size. Invented sample data; `php server/bin/demo-seed.php` loads the same into a fresh install.</sub>
 
 ## What this is, and isn't
 

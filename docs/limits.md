@@ -21,6 +21,7 @@ For a sense of what "one person" means here: on the calendar I run it on every d
 Imports, subscribed feeds, CalDAV objects, incoming email, skipped occurrences, description length and filter work all have caps that protect the server from oversized or hostile input. Each has a sensible default for one person and can be raised in `.env`; [`.env.example`](../.env.example) lists them (the `BETTERCAL_LIMIT_*` settings) with their defaults. The main ones:
 
 - An uploaded `.ics` file: 25 MiB and 20,000 events.
+- One JSON API request: 1 MiB (operator-adjustable up to a 4 MiB hard ceiling).
 - One subscribed feed: 20,000 events per poll (and 20 MiB, which isn't configurable).
 - One CalDAV object: 1 MiB, with up to 500 changed occurrences.
 - One incoming email: 5 MiB; up to 200 events in an emailed invitation.

@@ -7,12 +7,12 @@ namespace BetterCal\Support;
 /**
  * Work budgets: how much of anything the app will take in one go.
  *
- * Every entry here bounds input that someone ELSE wrote (a subscribed feed, an
- * emailed invitation, an imported file, a CalDAV client) before it turns into
- * parser memory, database writes or browser work. They are not quotas on the
- * owner; each default is far above what a real calendar produces, and the
- * point is that a hostile or broken input fails cleanly with a message
- * instead of taking the worker, the import or the tab down with it.
+ * Every entry here bounds input that someone ELSE wrote (a remote request, a
+ * subscribed feed, an emailed invitation, an imported file, a CalDAV client)
+ * before it turns into parser memory, database writes or browser work. They
+ * are not quotas on the owner; each default is far above what a real calendar
+ * produces, and the point is that a hostile or broken input fails cleanly with
+ * a message instead of taking the request, worker, import or tab down with it.
  *
  * One place, so an operator can see and tune all of them: each has an env
  * override (BETTERCAL_LIMIT_<NAME>, see .env.example), read by config() and
@@ -26,6 +26,10 @@ final class Limits
         // refused: a feed with one absurd event should still sync the rest.
         'DESCRIPTION_CHARS' => 65535,
         'URL_CHARS' => 2048,
+        // One JSON API request. Calendar-file imports are multipart and keep
+        // their own larger allowance below. This limit is enforced while the
+        // stream is read, before json_decode builds a second object graph.
+        'JSON_BODY_BYTES' => 1048576,    // 1 MiB
         // A calendar file someone uploads, and how many events it may hold.
         // Generous on purpose: a long-lived Google Calendar export is tens of
         // megabytes and well over ten thousand events, and importing one is
@@ -61,6 +65,7 @@ final class Limits
 
     /** Security ceilings: an operator may tune these budgets, but not remove the bound. */
     private const MAXIMUMS = [
+        'JSON_BODY_BYTES' => 4194304,    // 4 MiB; unauthenticated requests reach this boundary
         'EXDATE_VALUES_PER_EVENT' => 2048,
         'EXDATE_VALUES_PER_INPUT' => 8192,
     ];

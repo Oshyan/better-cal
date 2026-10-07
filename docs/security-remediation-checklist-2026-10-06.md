@@ -6,9 +6,10 @@ and its automated regression coverage are present in Git; it does **not** mean
 the behavior has been exercised against the deployed application or a live
 provider. Keep those two evidence layers separate.
 
-The checklist currently covers the high finding and the six medium findings
-selected for current-HEAD validation. It does not mark the rest of the full
-scan report as fixed; those findings still need triage and remediation rounds.
+The checklist began with the high finding and the six medium findings selected
+for current-HEAD validation, and now also records later remediation phases from
+the remaining scan backlog. It does not mark the rest of the full scan report
+as fixed; those findings still need triage and remediation rounds.
 
 ## Remediation status
 
@@ -37,15 +38,26 @@ database migration. Live behavior remains open until the practical check below.
 | F37 | Push-device inventory/removal require a browser session; token subscribe/unsubscribe is restricted to the exact creating token | Passed | [ ] |
 | F71 | System health returns an endpoint hash, never the raw push-service capability | Passed | [ ] |
 
-## Phase 6 candidate — deployment privilege boundaries
+## Phase 6 — deployment privilege boundaries
 
-This phase is implemented locally and awaiting release. It preserves the
-one-command production deploy and makes no application or database change.
+This phase shipped in release 0.9.25. It preserves the one-command production
+deploy and makes no application or database change. The first live backup and
+its off-host coverage were verified before the legacy backup directory was
+removed.
 
 | Scan finding | Remediation | Local automated verification | Live/deployed verification |
 |---|---|---:|---:|
-| F16 | Deploys do not mutate application, `.env`, development or document-root paths with root authority | Passed | [ ] |
-| F26 | App-controlled reads run as the app user; MySQL backups are serialized and published with mode `0600` in a validated root-owned directory | Passed | [ ] |
+| F16 | Deploys do not mutate application, `.env`, development or document-root paths with root authority | Passed | [x] |
+| F26 | App-controlled reads run as the app user; MySQL backups are serialized and published with mode `0600` in a validated root-owned directory | Passed | [x] |
+
+## Phase 7 — JSON request admission budget
+
+This phase is implemented and locally verified, but not yet released or
+deployed. It requires no database migration.
+
+| Scan finding | Remediation | Local automated verification | Live/deployed verification |
+|---|---|---:|---:|
+| F41 | JSON bodies are bounded while they are read, before routing, authentication or decoding; multipart calendar imports retain their separate allowance | Passed | [ ] |
 
 ## Completed local evidence
 
@@ -117,6 +129,16 @@ list for the owner.
   frontend smoke 653/0 in `America/Los_Angeles`, `UTC`, `Europe/Berlin`,
   `Asia/Kolkata` and `Pacific/Auckland`; frontend static 347/0; MCP 63/0;
   vendor manifest 10/10.
+- [x] Phase 7 applies a 1 MiB default JSON-body limit with a 4 MiB hard
+  ceiling. `Content-Length` is an early rejection hint, while the authoritative
+  stream read stops after the configured limit plus one byte, so missing,
+  false, overflowing and chunked lengths cannot bypass the bound.
+- [x] Phase 7 focused HTTP controls: exactly-at-limit JSON reached normal
+  routing; one byte over and chunked over-limit JSON returned 413; multipart
+  calendar import remained outside the JSON limit and reached authentication.
+- [x] Phase 7 server suite: 1,953 passed, 0 failed. Four changed PHP files pass
+  syntax checks. Independent read-only post-patch review found no concrete
+  source-backed bypass or regression.
 
 ## Remaining practical checks
 
@@ -184,18 +206,28 @@ testing of an imported repeating event is enough for that part.
 
 ### Deployment and backups (F16/F26)
 
-- [ ] On the first Phase 6 deployment, confirm the new app and database backups
+- [x] On the first Phase 6 deployment, confirm the new app and database backups
   are regular files owned by root with mode `0600` under the configured
   root-owned `BACKUP_DIR`, and that the ordinary deploy still completes without
   any additional prompt or manual step.
-- [ ] After verifying one new backup, deliberately archive or remove the legacy
+- [x] After verifying one new backup, deliberately archive or remove the legacy
   app-adjacent backup directory; it is not migrated automatically from an
   app-controlled pathname.
+
+### JSON request admission (F41)
+
+- [ ] After the Phase 7 deployment, verify a bounded over-limit JSON request
+  returns HTTP 413 while ordinary JSON and multipart calendar-import requests
+  continue to reach their normal routes. This is a deploy check, not an owner
+  exercise.
 
 ## Deployment closeout
 
 - [x] Deploy the exact reviewed commit with migrations 036 and 037.
-- [ ] Confirm the running Settings version and deployed Git revision.
+- [x] Confirm the running version and deployed revision through the production
+  `VERSION` file and hashes of the changed runtime files. The signed-in Settings
+  display remains an optional presentation check, not a deployment-integrity
+  check.
 - [x] Run the application smoke check and inspect worker, PHP and web-server
   logs for new recurrence, Google, subscription or deep-link errors.
 - [ ] Complete the short practical checks above and record pass, fail, partial
@@ -239,3 +271,25 @@ testing of an imported repeating event is enough for that part.
 - The broader private-address redirect matrix, forced provider-failure
   notifications, concurrent MySQL threshold transitions and one-hour email
   alert/recovery exercise remain open.
+
+## Phase 6 production and backup evidence — 2026-10-07
+
+- Release 0.9.25 was deployed from `ab9efa6c4f2f5c1c5d14e4c702c308c15e4a5f04`.
+  The production `VERSION` file reports 0.9.25, and the runtime files later
+  changed by `c466569` still match `ab9efa6`; the newer commit is not deployed.
+- The completed deploy created regular app and database archives in
+  `/home/bettercal-backups`. The directory was verified as `root:root` mode
+  `0700`, the archives as `root:root` mode `0600`, and both gzip streams passed
+  integrity checks. Production health, application smoke checks, and recent
+  worker, PHP and web-server logs were clean.
+- The Mac RAID pull now explicitly includes `/home/bettercal-backups`; the
+  tracked Web Hosting change is local commit `78820ea`. The deployed pull script
+  matched the reviewed source hash.
+- A targeted Better-Cal copy—not another whole-host snapshot—preserved the
+  current app archive, database dump and complete legacy archive on the RAID.
+  Source and RAID SHA-256 hashes matched, both tar archives were readable, and
+  the SQL dump had its completion marker.
+- Only after that targeted verification, `/home/bettercal/backups` was removed
+  as the unprivileged `bettercal` account. The root-private source remained
+  intact, backup monitoring returned healthy, and no incomplete snapshot or
+  deletion-staging directory remained.

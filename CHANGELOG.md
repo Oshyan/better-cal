@@ -4,6 +4,13 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.26 (2026-10-07)
+
+- **Oversized JSON requests are refused before they can consume a PHP worker.** JSON API bodies now have a 1 MiB default limit, enforced while the request stream is read and before routing, authentication or decoding. Missing, false and chunked content lengths cannot bypass it. Calendar-file imports keep their separate 25 MiB allowance.
+- **Requests to outside services identify Better-Cal and its purpose.** Feed polling, Google connections and place search now send an agent that includes the project URL, helping public providers distinguish legitimate traffic instead of rejecting the former generic identifier.
+
+Operators: `BETTERCAL_LIMIT_JSON_BODY_BYTES` can raise the JSON allowance when necessary, up to a 4 MiB hard ceiling. No database migration is required.
+
 ## 0.9.25 (2026-10-07)
 
 - **Production backups no longer trust application-controlled paths.** The deploy reads the app, `.env` and MySQL/MariaDB as the unprivileged application user, then publishes validated archives into a root-owned private directory. Backup files are mode `0600`, concurrent backup publication is refused, and unsafe or symlinked destinations stop the deploy.

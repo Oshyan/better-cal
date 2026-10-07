@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace BetterCal\Http;
 
 use BetterCal\Domain\Auth;
+use BetterCal\Support\Limits;
 use BetterCal\Support\Time;
 
 final class Request
@@ -88,19 +89,86 @@ final class Request
         $body = [];
         $contentType = $headers['content-type'] ?? '';
         if (str_contains($contentType, 'json')) {
-            $raw = file_get_contents('php://input');
-            if ($raw !== false && $raw !== '') {
-                $decoded = json_decode($raw, true);
-                if (!is_array($decoded)) {
-                    throw HttpError::badRequest('Request body is not valid JSON', 'invalid_json');
-                }
-                $body = $decoded;
+            $input = fopen('php://input', 'rb');
+            if ($input === false) {
+                throw HttpError::badRequest('Could not read request body', 'invalid_request');
+            }
+            try {
+                $body = self::jsonBodyFromStream($input, $_SERVER['CONTENT_LENGTH'] ?? null);
+            } finally {
+                fclose($input);
             }
         } elseif ($_POST !== []) {
             $body = $_POST;
         }
 
         return new self($method, $path, $_GET, $body, $headers, $_COOKIE, $_FILES);
+    }
+
+    /**
+     * Read and decode one JSON body without ever buffering more than the
+     * configured budget plus the byte needed to prove that it is oversized.
+     * Content-Length is only an early rejection hint: clients can omit it or a
+     * proxy can pass a streamed request, so the bytes read are authoritative.
+     *
+     * @param resource $input
+     * @return array<mixed>
+     */
+    public static function jsonBodyFromStream($input, mixed $declaredLength = null): array
+    {
+        if (!is_resource($input)) {
+            throw new \InvalidArgumentException('JSON request input must be a stream');
+        }
+
+        $limit = Limits::get('JSON_BODY_BYTES');
+        if (self::decimalExceeds($declaredLength, $limit)) {
+            throw self::jsonTooLarge($limit);
+        }
+
+        $raw = stream_get_contents($input, $limit + 1);
+        if ($raw === false) {
+            throw HttpError::badRequest('Could not read request body', 'invalid_request');
+        }
+        if (strlen($raw) > $limit) {
+            throw self::jsonTooLarge($limit);
+        }
+        if ($raw === '') {
+            return [];
+        }
+
+        $decoded = json_decode($raw, true);
+        if (!is_array($decoded)) {
+            throw HttpError::badRequest('Request body is not valid JSON', 'invalid_json');
+        }
+        return $decoded;
+    }
+
+    private static function decimalExceeds(mixed $value, int $limit): bool
+    {
+        if (is_int($value)) {
+            return $value > $limit;
+        }
+        if (!is_string($value)) {
+            return false;
+        }
+        $value = trim($value);
+        if (preg_match('/^\d+$/D', $value) !== 1) {
+            return false;
+        }
+        $value = ltrim($value, '0');
+        if ($value === '') {
+            return false;
+        }
+        $maximum = (string) $limit;
+        return strlen($value) > strlen($maximum)
+            || (strlen($value) === strlen($maximum) && strcmp($value, $maximum) > 0);
+    }
+
+    private static function jsonTooLarge(int $limit): HttpError
+    {
+        return HttpError::payloadTooLarge(
+            'JSON request body is too large (limit ' . number_format($limit) . ' bytes)'
+        );
     }
 
     public function header(string $name): ?string

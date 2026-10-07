@@ -39,4 +39,9 @@ class HttpError extends \RuntimeException
     {
         return new self($code, $message, 409);
     }
+
+    public static function payloadTooLarge(string $message): self
+    {
+        return new self('request_too_large', $message, 413);
+    }
 }

@@ -3802,6 +3802,55 @@ require __DIR__ . '/plugins.php';
     $_SERVER = ['REQUEST_METHOD' => 'GET', 'REQUEST_URI' => '/api/v1/me'];
     checkEq('request: no Authorization anywhere is null', null, BetterCal\Http\Request::fromGlobals()->header('Authorization'));
     $_SERVER = $serverBackup;
+
+    // JSON is parsed before routing and authentication, so its admission
+    // budget must be enforced by the request factory itself. Use a small test
+    // budget to exercise both declared and streamed/unknown-length requests.
+    $oldJsonLimit = Limits::get('JSON_BODY_BYTES');
+    Limits::configure(['JSON_BODY_BYTES' => PHP_INT_MAX]);
+    checkEq('request: JSON body override stays under its hard ceiling', 4 * 1024 * 1024, Limits::get('JSON_BODY_BYTES'));
+    Limits::configure(['JSON_BODY_BYTES' => 32]);
+    $readJson = static function (string $raw, mixed $declaredLength = null): array {
+        $stream = fopen('php://temp', 'w+b');
+        if ($stream === false) {
+            throw new RuntimeException('could not open JSON test stream');
+        }
+        fwrite($stream, $raw);
+        rewind($stream);
+        try {
+            return BetterCal\Http\Request::jsonBodyFromStream($stream, $declaredLength);
+        } finally {
+            fclose($stream);
+        }
+    };
+    $atLimit = '{"x":"' . str_repeat('a', 24) . '"}';
+    checkEq('request: JSON exactly at the byte budget passes', ['x' => str_repeat('a', 24)], $readJson($atLimit, '000032'));
+    checkEq('request: empty JSON body stays an empty object', [], $readJson('', null));
+    checkEq('request: an invalid Content-Length does not reject a bounded body', ['ok' => true], $readJson('{"ok":true}', 'not-a-number'));
+
+    $jsonError = static function (string $raw, mixed $declaredLength = null) use ($readJson): ?HttpError {
+        try {
+            $readJson($raw, $declaredLength);
+            return null;
+        } catch (HttpError $e) {
+            return $e;
+        }
+    };
+    $e = $jsonError('{}', '33');
+    checkEq('request: declared oversized JSON is 413', 413, $e?->status);
+    checkEq('request: oversized JSON uses a stable error code', 'request_too_large', $e?->errorCode);
+    $e = $jsonError('{}', str_repeat('9', 100));
+    checkEq('request: an overflowing declared length is safely refused', 413, $e?->status);
+    $e = $jsonError('{"x":"' . str_repeat('a', 25) . '"}', null);
+    checkEq('request: streamed JSON over the byte budget is 413', 413, $e?->status);
+    $e = $jsonError('{"x":"' . str_repeat('a', 25) . '"}', '1');
+    checkEq('request: a false small declared length cannot bypass the stream budget', 413, $e?->status);
+    $e = $jsonError('{bad', null);
+    checkEq('request: bounded malformed JSON remains a 400', 400, $e?->status);
+    checkEq('request: bounded malformed JSON keeps its error code', 'invalid_json', $e?->errorCode);
+    $e = $jsonError('"scalar"', null);
+    checkEq('request: a scalar JSON body remains invalid', 400, $e?->status);
+    Limits::configure(['JSON_BODY_BYTES' => $oldJsonLimit]);
 }
 
 // --- All-day boundaries are dates, not instants --------------------------------

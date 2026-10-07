@@ -84,8 +84,9 @@ This phase is implemented and verified for release 0.9.28. It adds migration
 
 ## Phase 10 — Google pagination and worker bounds
 
-This phase is implemented and locally verified for release 0.9.29. It has no
-database migration and has not yet been exercised against the live Google API.
+This phase was released and deployed in 0.9.29. It has no database migration.
+The ordinary production application smoke passed, but the Google-specific
+paths have not yet been exercised against the live Google API.
 
 | Scan finding | Remediation | Local automated verification | Live/deployed verification |
 |---|---|---:|---:|
@@ -219,7 +220,13 @@ list for the owner.
   syntax checks and the working-tree diff passes whitespace validation.
 - [x] Phase 10 independent post-patch review found no concrete remaining F1 or
   F62 bypass after prompting fixes for cached large-description memory and the
-  token-refresh deadline. No live provider request or deployment was performed.
+  token-refresh deadline. The review itself made no live provider request.
+- [x] Phase 10 release `0.9.29` (`564699f`) was pushed, tagged, published and
+  deployed. The bounded pre-deploy backup completed, Composer reported no known
+  advisories, no migration was pending, production health and the server-side
+  application smoke passed, and hashes for `VERSION`, the pagination budget and
+  Google sync matched the committed release. GitHub CI completed successfully.
+  The Google-specific practical exercise below remains intentionally unchecked.
 
 ## Remaining practical checks
 

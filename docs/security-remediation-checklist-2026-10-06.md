@@ -23,8 +23,8 @@ scan report as fixed; those findings still need triage and remediation rounds.
 | M6 | Geocoding redirects bypass the shared outbound-address policy | [x] | [x] | [ ] |
 
 Round 1 (H1) and Round 2 (M1/M5) shipped to `main` in `f58c682`. Phase 3
-(M3/M4) shipped in `8a3b7d3`. Phase 4 (M6) is implemented and locally verified
-in the current working tree; its deployed exercises remain deliberately open.
+(M3/M4) shipped in `8a3b7d3`. Phase 4 (M6) shipped in `d750f7d`. Its deployed
+exercises remain deliberately open.
 
 ## Completed local evidence
 

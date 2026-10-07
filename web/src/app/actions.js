@@ -991,7 +991,7 @@ export async function deleteCalendar(cal) {
   try {
     await api('/calendars/' + cal.id, { method: 'DELETE' });
     toast('Calendar deleted', { undoable: true });
-    await loadCalendars();
+    await Promise.allSettled([loadCalendars(), loadReviewCount()]);
     refreshWindow();
     return true;
   } catch (e) {

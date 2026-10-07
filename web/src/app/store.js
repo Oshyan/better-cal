@@ -49,7 +49,7 @@ export const state = {
   plugins: [],        // ops listing from GET /plugins
   pluginRanges: {},   // plugin id -> {truncated, ranges: [...]} for the loaded window
   pluginSeq: 0,       // bump to force a plugin ranges/list refetch
-  reviewCount: 0,     // everything awaiting a decision: held invitation changes, unanswered invitations, open proposals (sidebar badge)
+  reviewCount: 0,     // everything awaiting a decision, including paused calendar updates (sidebar badge)
   systemHealth: null, // GET /system/health: {rows, emailAlerts}; Settings panel, boot notices, device banner
   availSeq: 0,        // visible people's availability spans refetch trigger        // bumped on span/visibility changes to refetch availSpans
 

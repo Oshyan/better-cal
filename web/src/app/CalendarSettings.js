@@ -6,7 +6,7 @@
 
 import { html, useState } from '../../vendor/index.js';
 import { updateCalendar, refreshCalendar, deleteCalendar } from './actions.js';
-import { api, loadCalendars } from './api.js';
+import { api, loadCalendars, loadReviewCount } from './api.js';
 import { state, toast } from './store.js';
 import { parseHex, PALETTE } from '../lib/color.js';
 import { SchemaForm } from './SchemaForm.js';
@@ -88,8 +88,8 @@ export function CalendarSettings({ cal, folders, onClose }) {
   const keepSubscriptionActive = async () => {
     try {
       await api('/calendars/' + cal.id + '/claim-subscription', { method: 'POST' });
-      toast('Subscription kept active as an account-owned feed');
-      await loadCalendars();
+      toast('Calendar updates resumed');
+      await Promise.allSettled([loadCalendars(), loadReviewCount()]);
     } catch (e) {
       toast('Could not resume subscription: ' + e.message, { error: true });
     }
@@ -155,7 +155,7 @@ export function CalendarSettings({ cal, folders, onClose }) {
     </div>
     ${subscriptionPaused && html`<div class="bc-calset-auth" role="alert">
       <span>${subscriptionAuth.reason}</span>
-      <button type="button" class="bc-btn" onClick=${keepSubscriptionActive}>Keep active</button>
+      <button type="button" class="bc-btn" onClick=${keepSubscriptionActive}>Keep updating</button>
     </div>`}
     <div class="bc-calset-field">
       <span class="bc-calset-label">Check for updates</span>
@@ -202,7 +202,7 @@ export function CalendarSettings({ cal, folders, onClose }) {
           try {
             await api('/calendars/' + cal.id + '/adopt', { method: 'POST' });
             toast('Adopted as local calendar');
-            await loadCalendars();
+            await Promise.allSettled([loadCalendars(), loadReviewCount()]);
           } catch (e) {
             toast('Adopt failed: ' + e.message, { error: true });
           }

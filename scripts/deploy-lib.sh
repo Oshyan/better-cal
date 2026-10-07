@@ -51,17 +51,38 @@ ssh_open() {
 # removal, when ever needed, is a deliberate manual action on the server.
 deploy_rsync() {
   DEPLOY_TOUCHED=1
-  # Nothing git ignores is shipped (0.9.15): scratch folders, generated test
-  # data and local tooling stay on this machine. The explicit excludes stay
-  # as a backstop for the files that must never leave it.
-  rsync -az --no-owner --no-group \
-    --filter=':- .gitignore' \
+  # Ask Git for the source list instead of asking rsync to interpret every
+  # .gitignore. Rsync's filter syntax does not implement Git's nested negate
+  # rules correctly (tools/tz-harness/*.json hid its tracked package files).
+  # Tracked files always ship; untracked files ship only when Git says they
+  # are not ignored, preserving the deploy's established working-tree policy.
+  # The explicit excludes remain a final backstop for secrets and dependencies.
+  git -C "${ROOT_DIR}" ls-files --cached --others --exclude-standard -z | \
+  rsync -azr --no-owner --no-group \
+    --from0 --files-from=- \
     --exclude '.git' \
     --exclude '.credentials' \
+    --exclude '.credentials/***' \
     --exclude '.env' \
+    --include '.env.example' \
+    --exclude '.env.*' \
+    --exclude '.mcp.json' \
+    --exclude 'scripts/deploy.env' \
+    --exclude 'workfolder' \
+    --exclude 'workfolder/***' \
+    --exclude '.ygrep' \
+    --exclude '.ygrep/***' \
+    --exclude '.aws' \
+    --exclude '.aws/***' \
+    --exclude '.agents' \
+    --exclude '.agents/***' \
+    --exclude '.codex' \
+    --exclude '.codex/***' \
     --exclude '.DS_Store' \
     --exclude 'server/vendor' \
+    --exclude 'server/vendor/***' \
     --exclude 'node_modules' \
+    --exclude '**/node_modules/***' \
     -e "ssh ${SSH_OPTS[*]}" \
     --rsync-path="sudo -n -u ${APP_USER} rsync" \
     "${ROOT_DIR}/" "${REMOTE}:$1/"

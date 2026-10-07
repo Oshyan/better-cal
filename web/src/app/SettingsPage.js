@@ -6,7 +6,7 @@
 import { PHONE_QUERY } from '../lib/breakpoints.js';
 import { html, useState, useEffect, useMemo } from '../../vendor/index.js';
 import { useStore, toast, shallowEq, set } from './store.js';
-import { api, logout, loadSystemHealth, loadCalendars } from './api.js';
+import { api, logout, loadSystemHealth, loadCalendars, loadReviewCount } from './api.js';
 import { fmtSince } from '../lib/since.js';
 import { adoptSettings } from './settings.js';
 import { saveSetting } from './actions.js';
@@ -191,6 +191,7 @@ function TokensSection() {
       await Promise.all([
         load(),
         result.subscriptionsPaused ? loadCalendars().catch(() => {}) : Promise.resolve(),
+        result.subscriptionsPaused ? loadReviewCount() : Promise.resolve(),
       ]);
     } catch (err) {
       toast('Could not revoke: ' + err.message, { error: true });

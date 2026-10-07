@@ -103,7 +103,7 @@ function bc_handle_api(Request $request, array $cfg): void
         $proposalsDomain = new Domain\Proposals($db, $events, $trips);
         $pluginsController = new Controllers\PluginsController($pluginsDomain, $jobQueue, $proposalsDomain, $undo, $db);
         $proposalsController = new Controllers\ProposalsController($proposalsDomain);
-        $reviewController = new Controllers\ReviewController(new Domain\ReviewQueue($db, $events), $proposalsDomain, new Domain\Duplicates($db));
+        $reviewController = new Controllers\ReviewController(new Domain\ReviewQueue($db, $events), $proposalsDomain, $calendars, new Domain\Duplicates($db));
         $configController = new Controllers\ConfigController($settings, $cfg);
         $pushController = new Controllers\PushController($pushSubscriptions, $pushSender, $emailSender, $throttle, $db);
         $systemController = new Controllers\SystemController(new Domain\SystemHealth($db), $pushSubscriptions, $emailSender, $cfg);

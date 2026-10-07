@@ -43,14 +43,14 @@ final class SubscriptionAuthority
             return [
                 'status' => 'paused',
                 'origin' => self::LEGACY_REVIEW,
-                'reason' => 'This subscription predates authorization tracking. Review it and choose Keep active to resume updates.',
+                'reason' => 'Updates are paused because this feed was added before Better-Cal recorded who authorized subscriptions. Its saved events are still visible. Choose Keep updating if you recognize it, make it local to stop following the feed, or delete it.',
             ];
         }
         if ($origin !== self::TOKEN) {
             return [
                 'status' => 'paused',
                 'origin' => $origin,
-                'reason' => 'This subscription has an unknown authorization state and was paused safely.',
+                'reason' => 'Updates are paused because Better-Cal cannot verify who authorized this feed. Its saved events are still visible. Choose whether to keep updating, make it local, or delete it.',
             ];
         }
 
@@ -62,7 +62,7 @@ final class SubscriptionAuthority
                 : [
                     'status' => 'paused',
                     'origin' => self::TOKEN,
-                    'reason' => 'The API key that created this subscription was revoked or expired. Keep it active to make it account-owned.',
+                    'reason' => 'Updates are paused because the API key that added this feed was revoked or expired. Its saved events are still visible. Choose Keep updating to make it account-owned, make it local to stop following the feed, or delete it.',
                 ];
         }
         $lock = $forUpdate && $db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
@@ -81,7 +81,7 @@ final class SubscriptionAuthority
             : [
                 'status' => 'paused',
                 'origin' => self::TOKEN,
-                'reason' => 'The API key that created this subscription was revoked or expired. Keep it active to make it account-owned.',
+                'reason' => 'Updates are paused because the API key that added this feed was revoked or expired. Its saved events are still visible. Choose Keep updating to make it account-owned, make it local to stop following the feed, or delete it.',
             ];
     }
 

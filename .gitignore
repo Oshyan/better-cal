@@ -9,5 +9,6 @@ server/vendor/
 dist/
 better-cal-gcal-redirect-*.zip
 workfolder/
+.ygrep/
 # Deploy target of this checkout (scripts/deploy.env.example is the template)
 scripts/deploy.env

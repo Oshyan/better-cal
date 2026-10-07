@@ -55,18 +55,26 @@ async function applyVisibilityMap(entries) {
 // or nothing has changed in a long while and nothing is coming up (stale).
 // A feed that is simply empty, and always has been, is not a problem and
 // gets no badge; the settings line says "no events yet".
-function healthBadge(cal) {
+function healthBadge(cal, onOpen) {
   if (cal.kind !== 'subscribed' || !cal.health) return null;
   const { status, content, error, lastPolledAt } = cal.health;
   const when = lastPolledAt ? ' (last poll ' + lastPolledAt + ')' : '';
   let tip = null;
   if (cal.subscriptionAuthorization && cal.subscriptionAuthorization.status === 'paused') {
-    tip = 'Updates paused: ' + (cal.subscriptionAuthorization.reason || 'review this subscription') + when;
+    tip = (cal.subscriptionAuthorization.reason || 'Updates are paused until you review this subscription.') + when;
   } else if (status === 'error') tip = 'Feed error: ' + (error || 'unknown') + when;
   else if (content === 'emptied') tip = 'Feed came back empty; it had events before. The source may have broken or revoked access' + when;
   else if (content === 'stale') tip = 'Feed is stale: nothing has changed for a while and nothing is upcoming' + when;
   if (!tip) return null;
-  return html`<span class="bc-health" role="img" aria-label=${tip} title=${tip}><${Icon} name="warning" size=${12} /></span>`;
+  return html`<button
+    type="button"
+    class="bc-health"
+    aria-label=${'Attention needed for ' + cal.name + '. Open calendar options.'}
+    title=${tip + '. Click to open calendar options.'}
+    onPointerDown=${(e) => e.stopPropagation()}
+    onContextMenu=${(e) => { e.preventDefault(); e.stopPropagation(); }}
+    onClick=${(e) => { e.stopPropagation(); onOpen(); }}
+  ><${Icon} name="warning" size=${12} /></button>`;
 }
 
 // A plugin-owned calendar wears its plugin's declared decoration. Read from the
@@ -141,7 +149,7 @@ function CalendarRow({ cal, folders, open, onGear, soloed, onSolo, filedIn, phon
           title=${'Also listed in ' + filedIn.join(', ')}
         ><${Icon} name="folder" size=${11} /></span>`}
       </label>
-      ${healthBadge(cal)}
+      ${healthBadge(cal, onGear)}
       ${(!phone || soloed) && html`<button
         type="button"
         class="bc-icon-btn bc-cal-solo${soloed ? ' is-on' : ''}"

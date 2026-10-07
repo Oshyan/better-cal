@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace BetterCal\Http\Controllers;
 
+use BetterCal\Domain\Calendars;
 use BetterCal\Domain\Duplicates;
 use BetterCal\Domain\Proposals;
 use BetterCal\Domain\ReviewQueue;
@@ -14,17 +15,19 @@ use BetterCal\Support\Time;
 /**
  * The Review queue: everything waiting on the owner's decision, in one list.
  *
- * Three kinds, one shape. Each item says what it is, what it would do, and
+ * Five kinds, one shape. Each item says what it is, what it would do, and
  * carries its own `actions` ({name, label, method, path, body?}), so a client
- * (or an agent over the API) can act on any item without knowing the kinds:
+ * can act without hard-coding each kind's endpoints. A subscription claim is
+ * intentionally session-only and therefore omitted for bearer-token callers:
  *
  *   invite_change  an emailed change to an invitation already on the calendar,
  *                  held instead of applied (ReviewQueue; BC-07)
  *   rsvp           an invitation not answered yet (events.invite_json)
  *   proposal       a plan a plugin suggests (plugin_proposals)
  *   duplicate      two events that may be one, arriving by two routes (#9)
+ *   subscription   an ICS feed whose updates need an owner decision
  *
- * Only invite_change is stored by the queue itself; the other two live where
+ * Only invite_change is stored by the queue itself; the other four live where
  * they always did and keep their own endpoints, which the actions point at.
  */
 final class ReviewController
@@ -32,6 +35,7 @@ final class ReviewController
     public function __construct(
         private readonly ReviewQueue $queue,
         private readonly Proposals $proposals,
+        private readonly Calendars $calendars,
         private readonly ?Duplicates $duplicates = null,
     )
     {
@@ -88,6 +92,25 @@ final class ReviewController
                     self::action('tentative', 'Maybe', "/events/{$inv['eventId']}/rsvp", ['answer' => 'tentative']),
                     self::action('declined', 'Decline', "/events/{$inv['eventId']}/rsvp", ['answer' => 'declined']),
                 ],
+            ];
+        }
+        foreach ($this->calendars->subscriptionsAwaitingReview($userId) as $calendar) {
+            $authorization = $calendar['subscriptionAuthorization'];
+            $items[] = [
+                'key' => 'subscription:' . $calendar['id'],
+                'kind' => 'subscription',
+                'status' => 'open',
+                'title' => $calendar['name'],
+                'summary' => $authorization['reason'],
+                'createdAt' => null,
+                'eventId' => null,
+                'detail' => [
+                    'calendarId' => $calendar['id'],
+                    'origin' => $authorization['origin'],
+                ],
+                'actions' => $req->authMethod === 'session' ? [
+                    self::action('keep_updating', 'Keep updating', "/calendars/{$calendar['id']}/claim-subscription"),
+                ] : [],
             ];
         }
         foreach ($this->proposals->listFor($userId, $openOnly ? 'open' : 'all') as $p) {
@@ -164,6 +187,7 @@ final class ReviewController
             'rsvp' => count($this->queue->invitationsAwaitingReply($userId)),
             'proposal' => count($this->proposals->listFor($userId, 'open')),
             'duplicate' => count($this->duplicates?->possible($userId) ?? []),
+            'subscription' => count($this->calendars->subscriptionsAwaitingReview($userId)),
         ];
         return Response::json(['count' => array_sum($byKind), 'byKind' => $byKind]);
     }

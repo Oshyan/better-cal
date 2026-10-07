@@ -22,28 +22,10 @@ final class Calendars
     /** @return array{calendars:list<array>,folders:list<array>,tags:list<array>} */
     public function listAll(int $userId): array
     {
-        $calendars = $this->db->all('SELECT * FROM calendars WHERE user_id = ? ORDER BY position, id', [$userId]);
-        $tokenIds = array_values(array_unique(array_filter(array_map(
-            static fn(array $calendar): int => (int) ($calendar['created_by_token_id'] ?? 0),
-            $calendars
-        ))));
-        if ($tokenIds !== []) {
-            [$tokenIn, $tokenParams] = Db::in($tokenIds);
-            $live = array_fill_keys(array_map(
-                static fn(array $row): int => (int) $row['id'],
-                $this->db->all(
-                    "SELECT id FROM api_tokens WHERE user_id = ? AND id IN $tokenIn AND (expires_at IS NULL OR expires_at > ?)",
-                    [$userId, ...$tokenParams, Time::nowDb()]
-                )
-            ), true);
-            foreach ($calendars as &$calendar) {
-                $tokenId = (int) ($calendar['created_by_token_id'] ?? 0);
-                if ($tokenId > 0) {
-                    $calendar['_creator_token_live'] = isset($live[$tokenId]);
-                }
-            }
-            unset($calendar);
-        }
+        $calendars = $this->withCreatorTokenLiveness(
+            $this->db->all('SELECT * FROM calendars WHERE user_id = ? ORDER BY position, id', [$userId]),
+            $userId
+        );
         $folders = $this->db->all('SELECT id, name, position FROM folders WHERE user_id = ? ORDER BY position, id', [$userId]);
         $tags = $this->db->all('SELECT id, name FROM tags WHERE user_id = ? ORDER BY name', [$userId]);
 
@@ -79,6 +61,56 @@ final class Calendars
             ], $folders),
             'tags' => array_map(static fn(array $t) => ['id' => (int) $t['id'], 'name' => (string) $t['name']], $tags),
         ];
+    }
+
+    /** Add one bulk token-liveness lookup to rows that may be token-owned. */
+    private function withCreatorTokenLiveness(array $calendars, int $userId): array
+    {
+        $tokenIds = array_values(array_unique(array_filter(array_map(
+            static fn(array $calendar): int => (int) ($calendar['created_by_token_id'] ?? 0),
+            $calendars
+        ))));
+        if ($tokenIds !== []) {
+            [$tokenIn, $tokenParams] = Db::in($tokenIds);
+            $live = array_fill_keys(array_map(
+                static fn(array $row): int => (int) $row['id'],
+                $this->db->all(
+                    "SELECT id FROM api_tokens WHERE user_id = ? AND id IN $tokenIn AND (expires_at IS NULL OR expires_at > ?)",
+                    [$userId, ...$tokenParams, Time::nowDb()]
+                )
+            ), true);
+            foreach ($calendars as &$calendar) {
+                $tokenId = (int) ($calendar['created_by_token_id'] ?? 0);
+                if ($tokenId > 0) {
+                    $calendar['_creator_token_live'] = isset($live[$tokenId]);
+                }
+            }
+            unset($calendar);
+        }
+        return $calendars;
+    }
+
+    /** Calendars whose automatic ICS updates need an explicit owner decision. */
+    public function subscriptionsAwaitingReview(int $userId): array
+    {
+        $rows = $this->withCreatorTokenLiveness($this->db->all(
+            "SELECT * FROM calendars WHERE user_id = ? AND kind = 'subscribed'
+             AND COALESCE(provider, 'ics') = 'ics' ORDER BY position, id",
+            [$userId]
+        ), $userId);
+        $out = [];
+        foreach ($rows as $row) {
+            $authorization = SubscriptionAuthority::describe($this->db, $row);
+            if (($authorization['status'] ?? null) !== 'paused') {
+                continue;
+            }
+            $out[] = [
+                'id' => (int) $row['id'],
+                'name' => (string) $row['name'],
+                'subscriptionAuthorization' => $authorization,
+            ];
+        }
+        return $out;
     }
 
     public function get(int $userId, int $id): array

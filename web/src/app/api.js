@@ -142,8 +142,8 @@ export async function loadPlugins() {
   } catch (e) { /* the ops page retries on open */ }
 }
 
-// The sidebar badge: how many things are waiting on a decision (held invitation
-// changes, unanswered invitations, open plugin proposals).
+// The sidebar badge: how many things are waiting on a decision (paused calendar
+// updates, held invitation changes, unanswered invitations, open proposals).
 export async function loadReviewCount() {
   try {
     const d = await api('/review/count');

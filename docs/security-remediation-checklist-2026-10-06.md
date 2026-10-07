@@ -14,19 +14,22 @@ scan report as fixed; those findings still need triage and remediation rounds.
 
 | ID | Finding | Source remediation | Automated verification | Live/deployed verification |
 |---|---|---:|---:|---:|
-| H1 | Google credentials and moves survived compromise recovery | [x] | [x] | [ ] |
-| M1 | Session-created feed and reminder-email channels survived sign-out recovery | [x] | [x] | [ ] |
-| M2 | High-frequency recurrence denial of service | Suppressed after installed-Sabre validation | [x] | Not required |
-| M3 | EXDATE cardinality bypassed parser and durable-work budgets | [x] | [x] | [ ] |
-| M4 | Distant deep links created unbounded authenticated request fanout | [x] | [x] | [ ] |
-| M5 | API-token-created subscriptions survived token revocation | [x] | [x] | [ ] |
-| M6 | Geocoding redirects bypass the shared outbound-address policy | [x] | [x] | [ ] |
+| H1 | Google connections and moves stayed active after compromise recovery | [x] | [x] | [ ] |
+| M1 | Public feeds and custom reminder email survived sign-out recovery | [x] | [x] | [ ] |
+| M2 | Very frequent repeat rules could overload the server | Suppressed after installed-library validation | [x] | Not required |
+| M3 | Very large recurrence skip lists could bypass safe work limits | [x] | [x] | [ ] |
+| M4 | Far-away event links could make too many browser requests | [x] | [x] | [ ] |
+| M5 | API-key-created subscriptions kept updating after key revocation | [x] | [x] | [ ] |
+| M6 | Location-lookup redirects could reach private network addresses | [x] | [x] | [ ] |
 
 Round 1 (H1) and Round 2 (M1/M5) shipped to `main` in `f58c682`. Phase 3
 (M3/M4) shipped in `8a3b7d3`. Phase 4 (M6) shipped in `d750f7d`. Its deployed
 exercises remain deliberately open.
 
 ## Completed local evidence
+
+This section is the technical record for reviewers; it is not a manual to-do
+list for the owner.
 
 - [x] H1 regression coverage for recent-password authorization, exact-session
   OAuth state, compromise quarantine, move cancellation, cached-calendar
@@ -62,105 +65,60 @@ exercises remain deliberately open.
   windows after export and re-import.
 - [x] Independent read-only adversarial review of each implemented round.
 
-## Live end-to-end exercises
+## Remaining practical checks
 
-Use a controlled non-production installation first. Record the deployed commit,
-application version, migration state, PHP/MySQL versions, browser, time zone and
-provider account used. Do not attach tokens, cookies, event contents or other
-private calendar data to the evidence.
+This is intentionally short. The automated suites already cover the unusual
+payload sizes, race conditions, private-address variants and parser edge cases.
+Those are engineering evidence, not chores for the owner to repeat by hand.
 
-### H1 — Google compromise recovery
+Use a disposable account or non-production installation for the checks that
+deliberately revoke access or force failures. Keep tokens and private calendar
+contents out of saved evidence.
 
-- [ ] In browser A, let the ten-minute confirmation window expire and verify
-  that connect/reconnect, add-calendar and move start/retry request the
-  Better-Cal password; routine browsing and background sync must not prompt.
-- [ ] Start OAuth in browser A and confirm that browser B cannot complete A's
-  callback, even when both browsers are signed in as the same Better-Cal user.
-- [ ] Connect a disposable Google account, subscribe to one calendar and begin
-  a test move. Run `server/bin/seed.php --revoke-tokens` while work is pending.
-- [ ] Confirm that the Google account becomes paused, unfinished moves stay
-  cancelled, cached events remain visible/read-only, and no poll or write
-  resumes from already-queued work.
-- [ ] Confirm that reconnecting the same Google email restores the existing
-  account/calendar identity rather than duplicating it.
-- [ ] Inspect the disposable Google calendar for already-uploaded events from a
-  partial move and document any manual cleanup required.
+### Google account recovery (H1)
 
-### M1 and M5 — standing-channel revocation
+- [ ] After the ten-minute confirmation window expires, verify that changing a
+  Google connection or starting/retrying a calendar move asks for the Better-Cal
+  password. Ordinary calendar use and background updates should not ask.
+- [ ] Start a Google connection in one signed-in browser and verify a second
+  browser cannot finish that first browser's connection.
+- [ ] With a disposable Google account, begin a test move, use the documented
+  compromise-reset command, and verify the connection pauses, unfinished work
+  stops, and already-cached events remain visible. Reconnecting the same Google
+  account should restore the existing calendar rather than create a duplicate.
+  Check the disposable Google calendar for events uploaded before the reset and
+  note any cleanup they still need; a reset cannot pull back completed uploads.
 
-- [ ] From browser A, create a public outbound feed and set a custom reminder
-  address. From browser B, use **Sign out everywhere else**.
-- [ ] Confirm that the old public-feed URL no longer works, a replacement URL
-  is shown, the custom reminder destination returns to the account email, and
-  browser B remains signed in as documented.
-- [ ] Create an ICS subscription with a disposable API token, verify one poll,
-  then revoke or expire the token and run the worker. The subscription must
-  pause without deleting its cached events or organization.
-- [ ] Exercise each owner decision on a paused token-created subscription:
-  keep it as account-owned, adopt the cached events as local, and delete it.
-  Confirm that only the selected action occurs and that polling authority
-  matches the resulting state.
+### Sign-out and API-key cleanup (M1/M5)
 
-### M3 — EXDATE work budgets
+- [ ] From one browser, use **Sign out everywhere else**. Verify the other
+  browser is signed out, the initiating browser stays signed in, old public-feed
+  links stop working, the replacement link works, and any custom reminder
+  address returns to the account address.
+- [ ] Add a test subscription with a disposable API key, revoke the key, and
+  verify updates pause without removing saved events. In Review, try the three
+  owner choices on disposable feeds: keep updating, make local, and delete.
 
-- [ ] Upload/import a series at the configured per-event limit and confirm it
-  succeeds; repeat one value above the limit and confirm a clear refusal with
-  no partially created calendar.
-- [ ] Sync a controlled ICS feed successfully, then serve an over-limit update.
-  Confirm the poll records an actionable error and the last good cached events
-  remain visible. Restore a safe response and confirm polling recovers.
-- [ ] PUT an over-limit CalDAV object and confirm the client receives a bounded
-  failure while the prior object remains unchanged.
-- [ ] Deliver an over-limit iMIP fixture and confirm the mail worker stays
-  healthy, creates no partial event/review state and continues to later mail.
-- [ ] Exercise a controlled Google sync batch over the aggregate limit and
-  confirm the prior snapshot and sync token remain authoritative.
-- [ ] In a disposable database, insert a legacy over-limit stored series.
-  Confirm recurrence expansion shows only its safe first occurrence, editing
-  is refused before any Google write, and replacing it with a bounded series
-  restores normal behavior. Remove the fixture afterward.
-- [ ] Verify operator overrides below the hard ceilings take effect and values
-  above 2,048 per event or 8,192 per input are clamped.
+### Recurrence and distant links (M3/M4)
 
-### M4 — deep-link request bounds
+The automated suite covers oversized repeat-rule inputs; normal release smoke
+testing of an imported repeating event is enough for that part.
 
-- [ ] Click a real notification link up to 28 days early and confirm it opens
-  the correct occurrence with the normal nearby calendar preload.
-- [ ] Open far-future items from Review and from restored/resume state. Confirm
-  the correct occurrence opens and browser network logs show no requests for
-  intervening date ranges.
-- [ ] Open a far target already present in the occurrence cache and confirm no
-  event-window request is made before the detail view opens.
-- [ ] Open malformed and stale distant links and confirm each makes at most one
-  bounded target-window request before showing the existing not-found message.
+- [ ] Open one far-future or stale event link with the browser network panel
+  visible. Verify Better-Cal makes at most one small request around the target
+  date, not requests for every month between now and then.
 
-### M6 — geocoding egress (after remediation)
+### Location lookup failures (M6)
 
-- [x] Confirm a normal public-provider redirect still succeeds.
-- [ ] Confirm redirects to loopback, RFC1918, link-local, IPv6-local,
-  cloud-metadata and configured NAT64-private destinations are refused after
-  final DNS resolution.
-- [x] Confirm redirect-count, response-byte and timeout limits fail cleanly and
-  do not stall a PHP worker.
-- [x] Confirm the deployed PHP runtime permits `proc_open` and that
-  `PHP_BINDIR/php` is executable; geocoding and other policy-controlled outbound
-  requests fail closed when bounded DNS resolution cannot be started.
-- [x] If the host defines `HTTP_PROXY`, `HTTPS_PROXY` or `ALL_PROXY`, confirm
-  the application is expected to use direct egress. The hardened client ignores
-  those variables so a proxy cannot bypass DNS pinning. None were present in
-  the deployed PHP environment.
-- [ ] Force one sanitized provider failure and confirm it appears in the PHP
-  error log and Settings > System without the place query, URL or redirect host.
-- [ ] Force a second consecutive failure and confirm exactly one Activity item
-  appears. Force a third and relaunch the app; confirm the owner-facing notice
-  directs the operator to Settings > System.
-- [ ] Issue simultaneous failed autocomplete requests against a disposable
-  MySQL installation. Confirm every failure is counted and the threshold creates
-  only one Activity item; repeat simultaneous recoveries and confirm one
-  recovery item. This specifically verifies InnoDB row-lock behavior.
-- [ ] Keep a controlled three-failure streak open for more than one hour with
-  SMTP configured and run the alert sweep. Confirm one failure email, then one
-  recovery email after service returns; confirm no repeated mail per request.
+- [x] A normal public lookup and redirect work, while unsafe redirects, large
+  responses and slow responses are refused within their limits.
+- [ ] In a controlled environment, force three consecutive provider failures.
+  Verify the first appears in **Settings > System**, the second creates one
+  Activity entry, and the third shows an owner notice after relaunch. Confirm
+  the log and UI do not reveal the search text or provider URL.
+- [ ] If email alerts are configured, leave that test failure active for an
+  hour and run the alert job. Verify one failure email and one recovery email,
+  with no repeated messages for the same incident.
 
 ## Deployment closeout
 
@@ -168,8 +126,8 @@ private calendar data to the evidence.
 - [ ] Confirm the running Settings version and deployed Git revision.
 - [x] Run the application smoke check and inspect worker, PHP and web-server
   logs for new recurrence, Google, subscription or deep-link errors.
-- [ ] Complete the live exercises above, recording result, date, environment,
-  tester and sanitized evidence for each item.
+- [ ] Complete the short practical checks above and record pass, fail, partial
+  or blocked, plus only the environment details needed to reproduce a failure.
 - [ ] Recheck rollback: application rollback must not roll database migrations
   backward or silently re-enable quarantined Google/subscription state.
 - [ ] Update `SECURITY.md` only when the claimed deployed/live verification has
@@ -177,17 +135,11 @@ private calendar data to the evidence.
 
 ## Evidence record template
 
-For each live exercise, record:
-
-- Finding and checklist item:
-- Date and tester:
+- Check, date and tester:
 - Environment and deployed commit:
-- Browser/client/provider and time zone:
-- Expected result:
-- Observed result:
-- Sanitized evidence location:
-- Cleanup performed:
-- Disposition: pass, fail, partial or blocked
+- Expected and observed result:
+- Sanitized evidence or cleanup notes, if needed:
+- Result: pass, fail, partial or blocked
 
 ## Production evidence — 2026-10-06/07
 

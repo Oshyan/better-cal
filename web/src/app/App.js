@@ -139,7 +139,6 @@ export function App() {
   const manageCal = useStore((st) => st.manageCal);
   const tuckSetting = useStore((st) => st.settings.panelTucksSidebar);
   const popoverOpen = useStore((st) => !!st.popover);
-  useEffect(() => { if (manageCal && state.viewportNarrow) setSidebarOpen(true); }, [manageCal]);
   // Phone: Back closes the drawer, as it closes every other full-screen
   // surface (0.6.9); before, it left the app.
   useEffect(() => {
@@ -167,6 +166,15 @@ export function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     try { return localStorage.getItem('bc-sidebar-collapsed') === '1'; } catch { return false; }
   });
+  useEffect(() => {
+    if (!manageCal) return;
+    if (state.viewportNarrow) {
+      setSidebarOpen(true);
+    } else if (sidebarCollapsed) {
+      setSidebarCollapsed(false);
+      try { localStorage.setItem('bc-sidebar-collapsed', '0'); } catch { /* private mode */ }
+    }
+  }, [manageCal]); // Sidebar consumes manageCal after opening the settings panel.
   const toggleSidebar = () => {
     if (state.viewportNarrow) { setSidebarOpen(!sidebarOpen); return; }
     const next = !sidebarCollapsed;

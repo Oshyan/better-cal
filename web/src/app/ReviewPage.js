@@ -7,9 +7,12 @@
 //                  accept it.
 //   rsvp           an invitation you have not answered.
 //   proposal       a plan one of your plugins suggests.
+//   duplicate      two events that might be the same event.
+//   subscription   a feed whose automatic updates need your decision.
 //
 // The rule that makes it trustworthy, stated in the UI: an emailed change or a
-// suggested plan is not on the calendar until accepted, and accepting can be undone.
+// suggested plan is not on the calendar until accepted. A paused feed keeps its
+// saved events while the owner decides whether it should update again.
 //
 // Every item carries its own `actions` from the server ({label, method, path,
 // body}); this page runs them as given and does not need to know what a kind's
@@ -17,7 +20,7 @@
 
 import { html, useState, useEffect } from '../../vendor/index.js';
 import { set, toast, invalidateRecords } from './store.js';
-import { api, refreshWindow, loadReviewCount } from './api.js';
+import { api, refreshWindow, loadReviewCount, loadCalendars } from './api.js';
 import { openOccurrence } from './push.js';
 import { PageShell, EmptyState, Skeleton } from './PageShell.js';
 import { Icon } from '../ui/icons.js';
@@ -26,8 +29,8 @@ import { rsvpOutcome } from './actions.js';
 import { fmtSince } from '../lib/since.js';
 import { parseISO, dateOfDayKey, fmtRange, fmtDayMedium, fmtTime } from '../lib/dates.js';
 
-const KIND_LABEL = { invite_change: 'Invitation change', rsvp: 'Invitation', proposal: 'Proposal', duplicate: 'Possible duplicate' };
-const KIND_ICON = { invite_change: 'mail', rsvp: 'mail', proposal: 'proposals', duplicate: 'stack' };
+const KIND_LABEL = { invite_change: 'Invitation change', rsvp: 'Invitation', proposal: 'Proposal', duplicate: 'Possible duplicate', subscription: 'Calendar updates paused' };
+const KIND_ICON = { invite_change: 'mail', rsvp: 'mail', proposal: 'proposals', duplicate: 'stack', subscription: 'calendar' };
 
 // One side of a changed date. All-day values are bare dates; timed ones are
 // instants, shown on this device's clock like everything else on screen.
@@ -71,6 +74,9 @@ function ReviewCard({ item, onChanged }) {
         toast(out.text, { error: !!out.error });
       } else if (item.kind === 'duplicate') {
         toast(action.name === 'linked' ? 'Shown as one event from now on' : 'Kept as separate events');
+      } else if (item.kind === 'subscription') {
+        toast('Calendar updates resumed');
+        await loadCalendars().catch(() => {});
       } else {
         toast(
           accepted ? (d.method === 'CANCEL' ? 'Cancellation accepted' : 'Change applied') : 'Dismissed. Your calendar is unchanged',
@@ -89,12 +95,15 @@ function ReviewCard({ item, onChanged }) {
     }
   };
 
-  const open = item.link ? () => { set({ route: 'calendar' }); openOccurrence(item.link.instanceId, item.link.at); } : null;
+  const openOptions = item.kind === 'subscription' && d.calendarId
+    ? () => set({ route: 'calendar', manageCal: d.calendarId })
+    : null;
+  const open = item.link ? () => { set({ route: 'calendar' }); openOccurrence(item.link.instanceId, item.link.at); } : openOptions;
   return html`<div class=${'bc-review-card' + (item.status !== 'open' ? ' is-decided' : '')}>
     <div class="bc-review-head">
       <span class="bc-review-kind" title=${KIND_LABEL[item.kind]}><${Icon} name=${KIND_ICON[item.kind] || 'proposals'} size=${13} /></span>
       ${open
-        ? html`<button type="button" class="bc-link-btn bc-review-title" title="Open this event" onClick=${open}>${item.title}</button>`
+        ? html`<button type="button" class="bc-link-btn bc-review-title" title=${openOptions ? 'Open calendar options' : 'Open this event'} onClick=${open}>${item.title}</button>`
         : html`<span class="bc-review-title">${item.title}</span>`}
       ${item.kind === 'rsvp' && html`<span class="bc-review-when">${whenLine(d)}${d.location ? ' · ' + d.location : ''}</span>`}
       ${item.kind === 'duplicate' && html`<span class="bc-review-when">${d.a.start === d.b.start ? fmtWhen(d.a.start) : fmtWhen(d.a.start) + ' and ' + fmtWhen(d.b.start)}</span>`}
@@ -103,11 +112,11 @@ function ReviewCard({ item, onChanged }) {
     </div>
     <div class="bc-review-body">
       <span class="bc-review-summary">${item.summary}${item.kind === 'invite_change' && d.from ? html` <span class="bc-review-sender" title="The address this email came from. Email senders are not verified.">Sent from ${d.from}</span>` : ''}</span>
-      ${item.actions.length > 0 && html`<span class="bc-review-actions">${item.actions.map((a, i) => html`<button
+      ${(item.actions.length > 0 || openOptions) && html`<span class="bc-review-actions">${item.actions.map((a, i) => html`<button
         key=${a.name} type="button" disabled=${busy}
         class=${'bc-btn' + (i === 0 ? ' bc-btn-primary' : '')}
         onClick=${() => run(a)}
-      >${a.label}</button>`)}</span>`}
+      >${a.label}</button>`)}${openOptions && html`<button type="button" class="bc-btn" disabled=${busy} onClick=${openOptions}>Calendar options</button>`}</span>`}
     </div>
     ${item.kind === 'invite_change' && d.diff && d.diff.length > 0 && html`<${DiffRows} diff=${d.diff} />`}
   </div>`;
@@ -132,7 +141,7 @@ export function ReviewPage() {
 
   return html`<${PageShell}
     title="Review"
-    note="What is waiting on you: changes organizers emailed, invitations you have not answered, and plans your plugins suggest. An emailed change or a suggested plan is not on your calendar until you accept it, and accepting can be undone."
+    note="What is waiting on you: paused calendar updates, changes organizers emailed, invitations you have not answered, and plans your plugins suggest. Paused feeds keep their saved events until you decide what to do."
   >
     <div class="bc-proposal-filters">
       <button type="button" class="bc-srcchip${showDecided ? '' : ' is-on'}" onClick=${() => setShowDecided(false)}>Waiting</button>

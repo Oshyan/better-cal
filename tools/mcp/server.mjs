@@ -279,7 +279,7 @@ const TOOLS = [
   },
   {
     name: 'list_review',
-    description: 'The Review queue: everything waiting on the owner\'s decision. Kinds: invite_change (an organizer emailed a change or cancellation to an invitation already on the calendar; it is HELD, not applied, and detail.diff says what it would change), rsvp (an invitation not answered yet), proposal (a plan a plugin suggests). Each item has a key and its available actions.',
+    description: 'The Review queue: everything waiting on the owner\'s decision. Kinds include held invitation changes, unanswered invitations, plugin proposals, possible duplicates, and paused calendar subscriptions. Each item has a key and the actions available to this caller; subscription ownership decisions require a browser session.',
     inputSchema: {
       type: 'object',
       properties: {

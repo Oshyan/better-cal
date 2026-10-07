@@ -469,7 +469,14 @@ button:focus-visible, [tabindex]:focus-visible {
    ring color. One treatment for every surface that shows a calendar dot. */
 .bc-cal-dot.is-feed { background: transparent; border: 2px solid currentColor; }
 .bc-cal-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.bc-health { color: var(--warn); cursor: help; display: inline-flex; align-items: center; }
+.bc-health {
+  color: var(--warn); cursor: pointer; display: inline-flex; align-items: center;
+  border: none; border-radius: 4px; background: none; padding: 3px;
+}
+.bc-health:hover, .bc-health:focus-visible {
+  color: var(--warn-strong);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+}
 .bc-cal-gear { padding: 2px 4px; visibility: hidden; flex: none; }
 .bc-cal-row:hover .bc-cal-gear,
 .bc-cal-row:has(:focus-visible) .bc-cal-gear,

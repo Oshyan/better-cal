@@ -97,6 +97,25 @@ for (const file of files) {
     'geocoder failure notice must direct the owner to the health details');
 }
 
+// --- 5. calendar warnings lead to the decision surface --------------------
+// A warning triangle used to show a help cursor but did nothing. Keep the
+// sidebar affordance actionable, make touch long-press stay on that button,
+// and keep paused subscriptions represented in the Review inbox.
+{
+  const sidebar = readFileSync(join(root, 'app', 'Sidebar.js'), 'utf8');
+  const review = readFileSync(join(root, 'app', 'ReviewPage.js'), 'utf8');
+  const settings = readFileSync(join(root, 'app', 'SettingsPage.js'), 'utf8');
+  const check = (ok, msg) => { if (ok) passed++; else fail(msg); };
+  check(/function healthBadge\(cal, onOpen\)[\s\S]*?<button[\s\S]*?onClick=\$\{\(e\) => \{ e\.stopPropagation\(\); onOpen\(\); \}\}/.test(sidebar),
+    'calendar health warning must be a button that opens calendar options');
+  check(/class="bc-health"[\s\S]*?onPointerDown=.*?stopPropagation[\s\S]*?onContextMenu=.*?preventDefault.*?stopPropagation/.test(sidebar),
+    'calendar health warning must not trigger the phone row long-press menu');
+  check(review.includes("item.kind === 'subscription'") && review.includes("manageCal: d.calendarId") && review.includes('Calendar options'),
+    'paused subscriptions in Review must open their calendar options');
+  check(settings.includes('subscriptionsPaused ? loadReviewCount()'),
+    'revoking a key that pauses subscriptions must refresh the Review badge');
+}
+
 console.log('');
 console.log(passed + ' checks passed, ' + failed + ' failed (' + files.length + ' modules)');
 if (failed > 0) process.exit(1);

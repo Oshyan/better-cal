@@ -595,6 +595,10 @@ try {
     $dnsTimedOut = str_contains($e->getMessage(), 'DNS resolution deadline exceeded');
 }
 check('http resolver enforces its own wall-clock deadline', $dnsTimedOut && microtime(true) - $dnsStarted < 1.0);
+// Free public services block generic agents first; every agent we send names
+// the app's site (Photon returned 403s to "Better-Cal/0.1 (self-hosted)").
+check('http user agents lead to the app\'s site', str_contains(HttpClient::userAgentFor('geocoding'), 'https://github.com/Oshyan/better-cal')
+    && str_contains(HttpClient::USER_AGENT, 'https://github.com/Oshyan/better-cal'));
 // Without proc_open (some shared hosts) the lookup runs in-process; what it
 // finds is still judged by the same address policy before anything connects.
 $unbounded = (new ReflectionMethod(HttpClient::class, 'resolveUnbounded'))->invoke(null, 'localhost', 'test');

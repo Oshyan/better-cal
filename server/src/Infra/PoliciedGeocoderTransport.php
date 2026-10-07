@@ -15,7 +15,6 @@ final class PoliciedGeocoderTransport implements GeocoderTransport
 {
     private const PHOTON_ENDPOINT = 'https://photon.komoot.io/api';
     private const OPEN_METEO_ENDPOINT = 'https://geocoding-api.open-meteo.com/v1/search';
-    private const USER_AGENT = 'Better-Cal/0.1 (self-hosted)';
     private const TIMEOUT_MS = 3_000;
     private const MAX_BYTES = 1024 * 1024;
 
@@ -54,7 +53,7 @@ final class PoliciedGeocoderTransport implements GeocoderTransport
         }
         $http = new HttpClient(
             requestBudget: count($urls) * ($maxRedirects + 1),
-            userAgent: self::USER_AGENT,
+            userAgent: HttpClient::userAgentFor('geocoding'),
             maxBytes: self::MAX_BYTES,
             maxRedirects: $maxRedirects,
             connectTimeoutMs: self::TIMEOUT_MS,

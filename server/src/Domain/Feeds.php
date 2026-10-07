@@ -152,7 +152,7 @@ final class Feeds
         // common enough to want more than the default three.
         $http = new HttpClient(
             requestBudget: 8,
-            userAgent: 'Better-Cal/0.1 (+ics-subscriber)',
+            userAgent: HttpClient::userAgentFor('ics-subscriber'),
             maxBytes: self::MAX_BYTES,
             maxRedirects: 5,
         );

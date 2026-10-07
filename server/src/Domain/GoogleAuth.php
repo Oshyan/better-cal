@@ -341,7 +341,7 @@ final class GoogleAuth
 
     private function http(): HttpClient
     {
-        return new HttpClient(requestBudget: 20, userAgent: 'Better-Cal/0.1 (+google-connector)');
+        return new HttpClient(requestBudget: 20, userAgent: HttpClient::userAgentFor('google-connector'));
     }
 
     private function stateKey(string $sessionToken): string

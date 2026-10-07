@@ -19,6 +19,19 @@ namespace BetterCal\Infra;
  */
 final class HttpClient
 {
+    /**
+     * Who is asking, findable by search: free public services (Photon,
+     * Open-Meteo, MET Norway) block generic agents first when they are
+     * under abuse, and ask for one that leads to the app's site.
+     */
+    public const USER_AGENT = 'Better-Cal (+https://github.com/Oshyan/better-cal)';
+
+    /** The shared agent with what the request is for, e.g. "geocoding". */
+    public static function userAgentFor(string $purpose): string
+    {
+        return 'Better-Cal (+https://github.com/Oshyan/better-cal; ' . $purpose . ')';
+    }
+
     public const MAX_BYTES = 5 * 1024 * 1024;
     private const CONNECT_TIMEOUT_MS = 5_000;
     private const TOTAL_TIMEOUT_MS = 20_000;
@@ -36,7 +49,7 @@ final class HttpClient
      */
     public function __construct(
         private readonly int $requestBudget = 60,
-        private readonly string $userAgent = 'Better-Cal (+https://github.com/Oshyan/better-cal)',
+        private readonly string $userAgent = self::USER_AGENT,
         private readonly int $maxBytes = self::MAX_BYTES,
         private readonly int $maxRedirects = self::MAX_REDIRECTS,
         private readonly int $connectTimeoutMs = self::CONNECT_TIMEOUT_MS,

@@ -224,7 +224,7 @@ final class GoogleWriter
             throw new HttpError('google_write_failed', 'Google refused the sign-in: ' . $e->getMessage(), 502);
         }
         $url = sprintf(self::EVENTS_URL, rawurlencode((string) $calendar['google_calendar_id'])) . $path . '?sendUpdates=none';
-        $http = new HttpClient(requestBudget: 10, userAgent: 'Better-Cal/0.1 (+google-connector)');
+        $http = new HttpClient(requestBudget: 10, userAgent: HttpClient::userAgentFor('google-connector'));
         try {
             $r = $http->json($method, $url, $payload, ['Authorization: Bearer ' . $access]);
         } catch (\RuntimeException $e) {

@@ -103,7 +103,7 @@ final class GoogleSync
      */
     private function listEvents(array $account, string $googleCalendarId, string $access, ?string $syncToken): array
     {
-        $http = new HttpClient(requestBudget: 60, userAgent: 'Better-Cal/0.1 (+google-connector)', maxBytes: 20 * 1024 * 1024);
+        $http = new HttpClient(requestBudget: 60, userAgent: HttpClient::userAgentFor('google-connector'), maxBytes: 20 * 1024 * 1024);
         $items = [];
         $pageToken = null;
         $nextSync = null;

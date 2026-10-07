@@ -241,8 +241,7 @@ Found in a clean install on a fresh machine, signing in to a brand-new account (
   - an open search with its query;
   - the time of day in week and day view.
 
-  In the installed app this also survives the phone ending the app in the background (which starts it with a new session), for up to 30 minutes as before. A notification you tap to open the app still opens its own event.
-  Back keeps working after such a reload: a restored Settings section goes back to the list, then to the calendar, and a restored event opened from search goes back to the results.
+  In the installed app this also survives the phone ending the app in the background (which starts it with a new session), for up to 30 minutes as before. A notification you tap to open the app still opens its own event. Back keeps working after such a reload: a restored Settings section goes back to the list, then to the calendar, and a restored event opened from search goes back to the results.
 - **Settings, System lists why the app last started on this device:** a new version, the browser discarding it in the background, the phone ending it, or a plain launch. Kept on the device only. It shows which kind of reload is happening.
 
 ## 0.9.0 (2026-10-03)

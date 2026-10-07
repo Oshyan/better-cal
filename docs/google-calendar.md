@@ -88,14 +88,7 @@ Google puts invitations on the account's main calendar, so this needs that calen
 - Every later poll sends only the sync token and receives only what changed: new, edited, moved, cancelled. Nothing changed is one request with an empty answer. The changes are merged into the current snapshot and handed to the same materialisation the ICS feeds use (`Feeds::sync`), so upserts, deletions, the CalDAV change log, the Activity roll-up and the health states are identical to a feed's.
 - Google's cancelled instance of a recurring event becomes an `EXDATE` on the series here; a cancelled series is deleted whole.
 - When Google says the token is stale (HTTP 410, which happens after long gaps), the next poll is a full list again. Nothing is lost either way.
-- Event pages and a stale-token retry share one item, response-size, page and
-  elapsed-time budget. If an exceptionally large or non-progressing response
-  reaches a safety limit, Better-Cal keeps the last successful events and sync
-  token, records the reason on that calendar, and releases the worker for its
-  other jobs. The cached calendar's actual stored text size is checked before
-  it is loaded too, so a history of valid but unusually long descriptions
-  cannot exhaust the shared worker. See [Scale and limits](limits.md) for
-  defaults and operator settings.
+- Event pages and a stale-token retry share one item, response-size, page and elapsed-time budget. If an exceptionally large or non-progressing response reaches a safety limit, Better-Cal keeps the last successful events and sync token, records the reason on that calendar, and releases the worker for its other jobs. The cached calendar's actual stored text size is checked before it is loaded too, so a history of valid but unusually long descriptions cannot exhaust the shared worker. See [Scale and limits](limits.md) for defaults and operator settings.
 - Reminders are not synced; they are per-user on Google's side anyway. Guest lists are read only to recognise invitations (below).
 - The poll interval, stale threshold, "check now", and everything else in a calendar's settings work as for any feed.
 

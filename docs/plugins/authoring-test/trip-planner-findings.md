@@ -49,8 +49,7 @@ PATCH /plugins/trip-planner/settings  {"minDays":30}
 -> 400 {"error":{"code":"invalid_request",
         "message":"Invalid settings: {\"destination\":\"Give me a destination, or describe the trip in the box above.\"}"}}
 ```
-My rule is `if idea === '' && destination is not a place -> error`. `idea` *is* set in storage; it was absent from `$values`, so the rule saw an empty string and fired. The same probe also proves my `minDays > maxDays` rule did **not** fire (stored `maxDays` is 21), because `maxDays` was not in `$values` either.
-The consequences are worse than a false positive: with a required-field rule in place, **no single-field PATCH can ever succeed**, so the plugin becomes unconfigurable through the API. And a cross-field rule is silently dead rather than loudly wrong, which is the bad failure mode.
+My rule is `if idea === '' && destination is not a place -> error`. `idea` *is* set in storage; it was absent from `$values`, so the rule saw an empty string and fired. The same probe also proves my `minDays > maxDays` rule did **not** fire (stored `maxDays` is 21), because `maxDays` was not in `$values` either. The consequences are worse than a false positive: with a required-field rule in place, **no single-field PATCH can ever succeed**, so the plugin becomes unconfigurable through the API. And a cross-field rule is silently dead rather than loudly wrong, which is the bad failure mode.
 **Cost:** 6 probe requests and a rewrite of `validateSettings`. I had to delete the required-destination rule entirely and move it to a runtime warning, and guard every cross-field rule with `isset()` on both keys.
 **Fix:** The docs must say one sentence either way. If partial is intended: "`$values` contains only the fields being saved - guard cross-field rules with `isset()`, and do not write required-field rules here; enforce those in `runJob` as a warning." If it is a host bug, merge stored values before calling.
 
@@ -58,8 +57,7 @@ The consequences are worse than a false positive: with a required-field rule in 
 **Reality:** All three of these are rejected by the host with useful messages, so I did not have to write any of it:
 - `{"minDays":999}` -> `{"minDays":"maximum 90"}` (manifest `min`/`max` enforced)
 - `{"units":"Kelvin"}` -> `{"units":"must be one of F, C"}` (`select` options enforced)
-- `{"candidates":"three"}` -> `{"candidates":"must be a number"}` (types enforced)
-This is genuinely nice and the docs undersell it. Worth one line: "the host enforces `type`, `min`, `max` and `options` before `validateSettings` is called, so validate only what the schema cannot express."
+- `{"candidates":"three"}` -> `{"candidates":"must be a number"}` (types enforced) This is genuinely nice and the docs undersell it. Worth one line: "the host enforces `type`, `min`, `max` and `options` before `validateSettings` is called, so validate only what the schema cannot express."
 
 ### `PATCH /settings` returns the patch, `GET /plugins` returns the merge
 **Reality:** `PATCH` echoes back `{"settings":{"idea":"...","debug":true}}` - just what I sent. `GET /plugins` shows the full 15-key object with manifest defaults applied. Only stored keys are persisted; defaults are overlaid on read. Confirms `settings()` in a job gets defaults, which the docs do say ("stored over manifest defaults") - that part was accurate and I relied on it.
@@ -100,8 +98,7 @@ An author who trusts the field builds a URL with `latitude=991`. I now range-che
 
 ### SEVERE: the HTML allowlist for `detailHtml` / `rationaleHtml` is undocumented, and it is not the one you would guess
 **Needed:** Structured, legible reasoning in a proposal - headings, a small weather table, a link to the event that blocked a window.
-**Docs said:** "All text you pass through `syncEvents`, `replaceRanges`, or `replaceWarnings` is sanitized by the host (**the same allowlist as event descriptions**), server-side at write and again client-side at render. You ship data, never markup - `detailHtml` is the one rich field and it is sanitized both ways."
-That sentence points at an allowlist I have no way to read. I am a third-party author; "the same as event descriptions" is a pointer into source I do not have.
+**Docs said:** "All text you pass through `syncEvents`, `replaceRanges`, or `replaceWarnings` is sanitized by the host (**the same allowlist as event descriptions**), server-side at write and again client-side at render. You ship data, never markup - `detailHtml` is the one rich field and it is sanitized both ways." That sentence points at an allowlist I have no way to read. I am a third-party author; "the same as event descriptions" is a pointer into source I do not have.
 **Reality:** My `<h4>` headings silently vanished (text kept, tag dropped) and the proposal read as a wall of unstructured text. I had to measure the allowlist by shipping a probe string through `detailHtml` and reading it back via `GET /plugins/ranges`. Result:
 
 | | outcome |
@@ -134,8 +131,7 @@ The `div`-yes/`h4`-no and `ol`-yes/`table`-no combination is not guessable. Neit
 ### SEVERE: a date-only `start` in a proposal's `plan.events` silently becomes a TIMED midnight-to-midnight event
 **Needed:** All-day travel-day markers in the proposed plan. I have no idea what time the flight is, so inventing "09:00-17:00" is a lie the user has to correct.
 **Docs said:** For `syncEvents`: "`start`/`end` are `YYYY-MM-DD` for all-day (end exclusive) or ISO instants." For proposals: "each needs a `title` and a `start`" and the example shows ISO instants. Nothing about whether the `syncEvents` date convention carries over.
-**Reality:** `propose()` **accepts** `{'title':..., 'start':'2027-02-23', 'end':'2027-02-24'}` without complaint. On Accept it materialises as:
-`10293 | 2027-02-23T00:00:00-08:00 -> 2027-02-24T00:00:00-08:00 | allDay false`
+**Reality:** `propose()` **accepts** `{'title':..., 'start':'2027-02-23', 'end':'2027-02-24'}` without complaint. On Accept it materialises as: `10293 | 2027-02-23T00:00:00-08:00 -> 2027-02-24T00:00:00-08:00 | allDay false`
 - a 24-hour *timed* event. The same string means "all-day" in `syncEvents` and "midnight to midnight, timed" in `plan.events`. There appears to be **no way to propose an all-day event** except via the single `trip` key.
 **Cost:** A deliberate probe deploy plus an accept/undo cycle. Without probing I would have shipped either wrong-looking 24h blocks or (as I did) invented clock times with a "these are placeholders" apology in the description.
 **Fix:** State it: "`plan.events` are always timed; a date-only `start` is interpreted as local midnight. Only `trip` is created all-day." And ideally add an `allDay` flag to plan events.
@@ -175,8 +171,7 @@ The one wrinkle: a bracketed IPv6 literal fails at DNS rather than at the addres
 **Docs said:** "`sourceKey` - stable: re-running REPLACES your own open proposal" and "on a proposal the user already decided `propose()` silently no-ops and returns the old one - so check `myProposals(null)` first and skip decided keys".
 **Reality:** Those two sentences describe the trap without naming it. With a window-derived key:
 - nudge the horizon from 120 to 90 days, and "Oct 12–Nov 1" becomes "Oct 15–Nov 4" - a **new** key, so the old proposal stays open forever. After an afternoon of ordinary setting changes I had **five** open Trip Planner proposals suggesting overlapping trips, and no API to retract any of them. The `open` ones are dead weight the user must reject by hand.
-- with a *stable* key instead, one rejection permanently silences the plugin, because `propose()` no-ops on a decided key for good.
-There is no `withdraw()`/`retract()`/`replaceProposals()`. This is the one place the platform's otherwise-consistent "wholesale replace" model is missing: `replaceRanges` and `replaceWarnings` are wholesale, `propose` is an upsert with no delete.
+- with a *stable* key instead, one rejection permanently silences the plugin, because `propose()` no-ops on a decided key for good. There is no `withdraw()`/`retract()`/`replaceProposals()`. This is the one place the platform's otherwise-consistent "wholesale replace" model is missing: `replaceRanges` and `replaceWarnings` are wholesale, `propose` is an upsert with no delete.
 **Cost:** A full redesign late in the build. I ended up with a **generation counter in kv** - `sourceKey = trip-plan-g<N>` - so there is never more than one open proposal; a rejection burns generation N and the next run offers the next-best window under N+1. I also had to keep every offered window's dates in kv myself, because `myProposals()` returns only `{sourceKey, status}`, so "is this new window basically the one they already said no to?" is unanswerable from the host API alone.
 **Fix:** Add `withdrawProposal(sourceKey)` or make proposals wholesale like ranges. Failing that, document the generation-counter pattern explicitly - it is not obvious and every proposal-emitting plugin needs it.
 
@@ -200,8 +195,7 @@ There is no `withdraw()`/`retract()`/`replaceProposals()`. This is the one place
 
 ### The request's headline feature - "a separate AI chat mode" - is structurally unbuildable, and the docs say so clearly enough that I knew within five minutes
 **Docs said:** "Your plugin's code runs in exactly two places: inside a worker job (`runJob`), and inside the settings-validation hook (`validateSettings`)... It never runs during a page request. ...it is enforced structurally - there is no hook that runs your code on the render path."
-**Reality:** Correct, unambiguous, and it saved me from building the wrong thing. But it means a plugin can never be conversational: no request handler, no UI surface of its own, no way to render a chat box, no way to answer a user turn-by-turn. What a plugin *can* do is take a stored question and answer it on a schedule.
-So I mapped the request onto what exists:
+**Reality:** Correct, unambiguous, and it saved me from building the wrong thing. But it means a plugin can never be conversational: no request handler, no UI surface of its own, no way to render a chat box, no way to answer a user turn-by-turn. What a plugin *can* do is take a stored question and answer it on a schedule. So I mapped the request onto what exists:
 
 | The request | What the platform gives | Verdict |
 |---|---|---|
@@ -217,8 +211,7 @@ So I mapped the request onto what exists:
 ### SEVERE: plugins cannot see or call each other, and nothing in the docs says so
 **Needed:** The request literally says "can e.g. call the weather calendar plugin to get weather from a specific location". More modestly: read the Weather plugin's settings to default my destination to the user's home town, or reuse its forecast instead of fetching my own.
 **Docs said:** Nothing. There is no negative statement anywhere. `calendars()` returns plugin-owned calendars and even labels them `kind === 'plugin'`, and the eventsWindow section warns about the Weather plugin *by name* - so the docs establish that other plugins exist and are visible, then never say the relationship is read-only-through-the-calendar.
-**Reality:** The `PluginHost` surface has no `plugin(id)`, no cross-plugin settings read, no service registry. The only cross-plugin channel is: another plugin's materialised events show up in my `eventsWindow()`, as opaque titles. I could technically scrape "Weather" calendar event titles for a forecast; that is a string-parsing hack against a private format and I refused to build it. So I fetch Open-Meteo myself - which means on a machine with the Weather plugin installed, two plugins independently hit the same API for the same place.
-This is the gap between what people will ask for and what the platform's shape allows, and it is invisible until you go looking.
+**Reality:** The `PluginHost` surface has no `plugin(id)`, no cross-plugin settings read, no service registry. The only cross-plugin channel is: another plugin's materialised events show up in my `eventsWindow()`, as opaque titles. I could technically scrape "Weather" calendar event titles for a forecast; that is a string-parsing hack against a private format and I refused to build it. So I fetch Open-Meteo myself - which means on a machine with the Weather plugin installed, two plugins independently hit the same API for the same place. This is the gap between what people will ask for and what the platform's shape allows, and it is invisible until you go looking.
 **Fix:** State it in Trust or in the host API section: "Plugins cannot call or read each other. The only shared surface is the calendar itself." If cross-plugin reads are ever wanted, a declared `reads: ["weather"]` permission with a `$host->pluginData('weather')` accessor is the obvious shape.
 
 ### `calendars()` returns less than the calendar API does, and the missing field is the one I needed

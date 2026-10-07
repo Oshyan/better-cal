@@ -1,27 +1,18 @@
 # Benchmarking Better-Cal
 
-Notes from measuring this app, written down because every one of these cost real
-time to learn and one of them produced a bug report for a bug that did not exist.
+Notes from measuring this app, written down because every one of these cost real time to learn and one of them produced a bug report for a bug that did not exist.
 
-The theme: **most bad performance conclusions here came from a broken
-measurement, not a broken app.** Assume the instrument is wrong before you
-assume the code is.
+The theme: **most bad performance conclusions here came from a broken measurement, not a broken app.** Assume the instrument is wrong before you assume the code is.
 
 ## Traps that have actually bitten
 
 ### A background browser tab lies about frame rate
 
-Chrome suspends `requestAnimationFrame` entirely in a hidden tab and throttles
-`setTimeout` hard — measured on this app, a 16ms timer took **372ms**. Both
-symptoms read exactly like a stalled main thread: zero frames captured, and
-instrumentation scripts blowing their timeouts because inner loops run 20-40x
-slower than written.
+Chrome suspends `requestAnimationFrame` entirely in a hidden tab and throttles `setTimeout` hard — measured on this app, a 16ms timer took **372ms**. Both symptoms read exactly like a stalled main thread: zero frames captured, and instrumentation scripts blowing their timeouts because inner loops run 20-40x slower than written.
 
-This produced a filed issue claiming month scrolling froze the UI. It does not;
-re-measured visible, it holds a 16.6ms median frame with zero frames over 32ms.
+This produced a filed issue claiming month scrolling froze the UI. It does not; re-measured visible, it holds a 16.6ms median frame with zero frames over 32ms.
 
-**Always assert visibility inside the measuring script**, not by looking at the
-screen:
+**Always assert visibility inside the measuring script**, not by looking at the screen:
 
 ```js
 const t0 = performance.now();
@@ -34,69 +25,44 @@ await new Promise(r => setTimeout(r, 200));
 
 ### curl does not request compression
 
-`curl` sends no `Accept-Encoding` unless told, so it measures the **uncompressed**
-path. Browsers get brotli. On the events window that is 2.8 MB versus 188 KB —
-about 400ms of difference, which is larger than most things you would be trying
-to measure.
+`curl` sends no `Accept-Encoding` unless told, so it measures the **uncompressed** path. Browsers get brotli. On the events window that is 2.8 MB versus 188 KB — about 400ms of difference, which is larger than most things you would be trying to measure.
 
 ```bash
 curl -s -o /dev/null -w '%{time_starttransfer} %{time_total}\n' \
   -H 'Accept-Encoding: gzip, br' -H "$AUTH" "$URL"
 ```
 
-Compare encodings deliberately when that is the question; otherwise always send
-the header, because that is what a real client does.
+Compare encodings deliberately when that is the question; otherwise always send the header, because that is what a real client does.
 
 ### Reverse DNS is not a location
 
-A hosting provider can put its own home-country domain on every machine it
-owns, whatever continent the machine is on. One server measured here sat in the
-US and was confidently described as German on the strength of its hostname.
+A hosting provider can put its own home-country domain on every machine it owns, whatever continent the machine is on. One server measured here sat in the US and was confidently described as German on the strength of its hostname.
 
 `traceroute` answers it in seconds — watch the city codes in the hop names.
 
 ### Measure at the size the thing ships at
 
-A design comparison rendered in a viewer at a different zoom than the app made a
-2px underline look like 3px, and led to a whole exchange about a thickness
-difference that did not exist. If you are comparing visual weight, match the
-app's viewport and device pixel ratio, or you are comparing screenshots rather
-than designs.
+A design comparison rendered in a viewer at a different zoom than the app made a 2px underline look like 3px, and led to a whole exchange about a thickness difference that did not exist. If you are comparing visual weight, match the app's viewport and device pixel ratio, or you are comparing screenshots rather than designs.
 
 ### Comparing two apps means comparing them in one browser
 
-Numbers from the in-app Browser pane are not comparable to numbers from Chrome:
-different profile, extensions, cache state, window size, and whatever else is
-running. When benchmarking against another product, measure **both** in the same
-browser, back to back, and say what the dataset difference was — chip counts
-rarely match, and that usually matters more than the timings.
+Numbers from the in-app Browser pane are not comparable to numbers from Chrome: different profile, extensions, cache state, window size, and whatever else is running. When benchmarking against another product, measure **both** in the same browser, back to back, and say what the dataset difference was — chip counts rarely match, and that usually matters more than the timings.
 
 ### Sub-linear scaling means a fixed cost is hiding
 
-The events query looked "slow for large windows". It was not: 1 month cost 376ms
-and 12 months cost 582ms. Eleven times the work for 1.5x the time means almost
-all of it was fixed overhead — in this case sabre's `fastForward` walking a
-recurring series from its DTSTART to the window, once per master, per request.
+The events query looked "slow for large windows". It was not: 1 month cost 376ms and 12 months cost 582ms. Eleven times the work for 1.5x the time means almost all of it was fixed overhead — in this case sabre's `fastForward` walking a recurring series from its DTSTART to the window, once per master, per request.
 
-**Always measure at least three window sizes.** The shape of the curve tells you
-where to look far faster than a profiler does.
+**Always measure at least three window sizes.** The shape of the curve tells you where to look far faster than a profiler does.
 
 ### Changing layout changes everything that reasons about layout
 
-Raising month row height from ~116px to 182px silently broke month navigation:
-`stepAnchor` steps from the *dominant visible month*, which is computed over
-`round(viewH / rowH)` rows. Fewer, taller rows changed that count, a mostly
-off-screen row started carrying the vote, and Next-month appeared to do nothing.
+Raising month row height from ~116px to 182px silently broke month navigation: `stepAnchor` steps from the *dominant visible month*, which is computed over `round(viewH / rowH)` rows. Fewer, taller rows changed that count, a mostly off-screen row started carrying the vote, and Next-month appeared to do nothing.
 
-The row geometry itself was verified carefully. Nothing that *depended* on row
-count was re-tested. After any change to how much is on screen, re-run month
-stepping, the toolbar label, the mini-month, and window demand.
+The row geometry itself was verified carefully. Nothing that *depended* on row count was re-tested. After any change to how much is on screen, re-run month stepping, the toolbar label, the mini-month, and window demand.
 
 ### Check whether the work already exists
 
-A security audit was proposed and scoped before anyone noticed
-`docs/security-review-2026-08-04.md` already existed, with better analysis.
-Search `docs/` first.
+A security audit was proposed and scoped before anyone noticed `docs/security-review-2026-08-04.md` already existed, with better analysis. Search `docs/` first.
 
 ## Tools in the repo
 
@@ -110,13 +76,11 @@ php server/bin/profile-events.php --months=5 --runs=3
 php server/bin/profile-recurrence.php --months=5 --top=15
 ```
 
-Both run against real data and must be run on the server, since they need the
-app's database credentials and its installed dependencies.
+Both run against real data and must be run on the server, since they need the app's database credentials and its installed dependencies.
 
 ## Baselines
 
-Measured 2026-08-06 on the production box (4-core EPYC-Milan, ~40% loaded),
-from a client about 81ms RTT away. Conditions stated because they matter.
+Measured 2026-08-06 on the production box (4-core EPYC-Milan, ~40% loaded), from a client about 81ms RTT away. Conditions stated because they matter.
 
 | what | value | conditions |
 |---|---|---|
@@ -131,27 +95,15 @@ from a client about 81ms RTT away. Conditions stated because they matter.
 | payload | 373 bytes/occurrence | list shape after #15 (was 793: uid, timestamps, reminders, rrule, description, tzid moved to the single-event record; nulls and empty lists omitted) plus two bits, `hasReminders`/`hasDescription`, sent only when true (+25 B average) so the popover reserves space for what the record fills in. Single record fetched on open, ~400ms on a transatlantic link, RTT-dominated; prefetched on chip hover/focus and from the popover, and kept across window refreshes, so most opens are instant |
 | brotli ratio | 15x | 2.8 MB → 188 KB on a 5-month window |
 
-"Todoist on" is doing more work in those conditions than it looks. That
-calendar is a fossil of a 2019-2020 write-through sync whose 147 recurrence
-masters carry neither UNTIL nor COUNT, so it expands forever and supplies
-about **95% of every month's occurrences** (~700 of ~730, checked across
-2026-09, 2026-10, 2027-06 and 2030-01; see #49). These figures are therefore
-a recurrence-expansion benchmark far more than a mixed-workload one, which is
-useful — expansion is the dominant phase at 105ms of the 167ms — but it does
-mean occurrence counts here are not a typical user's, and anything tuned
-against per-day density is being tuned against the wrong distribution.
+"Todoist on" is doing more work in those conditions than it looks. That calendar is a fossil of a 2019-2020 write-through sync whose 147 recurrence masters carry neither UNTIL nor COUNT, so it expands forever and supplies about **95% of every month's occurrences** (~700 of ~730, checked across 2026-09, 2026-10, 2027-06 and 2030-01; see #49). These figures are therefore a recurrence-expansion benchmark far more than a mixed-workload one, which is useful — expansion is the dominant phase at 105ms of the 167ms — but it does mean occurrence counts here are not a typical user's, and anything tuned against per-day density is being tuned against the wrong distribution.
 
-If a number here moves by more than about 30%, something changed — check the
-measurement before concluding it was the code.
+If a number here moves by more than about 30%, something changed — check the measurement before concluding it was the code.
 
 ## Things that are not worth optimising
 
 Recorded so they are not rediscovered:
 
-- **SQL.** Masters plus overrides is 15ms; the window-overlap query is a full
-  table scan over 8,400 rows at 10ms. Indexing it would win nothing.
-- **`JSON.parse` on the client.** 5ms for 2.8 MB on a desktop. Worth revisiting
-  only for low-end mobile.
+- **SQL.** Masters plus overrides is 15ms; the window-overlap query is a full table scan over 8,400 rows at 10ms. Indexing it would win nothing.
+- **`JSON.parse` on the client.** 5ms for 2.8 MB on a desktop. Worth revisiting only for low-end mobile.
 - **`json_encode` server-side.** ~10ms.
-- **Round-trip latency.** ~81ms of every request is the speed of light to
-  Virginia and back. Not a configuration problem.
+- **Round-trip latency.** ~81ms of every request is the speed of light to Virginia and back. Not a configuration problem.

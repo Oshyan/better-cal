@@ -23,19 +23,8 @@ Imports, subscribed feeds, CalDAV objects, incoming email, skipped occurrences, 
 - An uploaded `.ics` file: 25 MiB and 20,000 events.
 - One JSON API request: 1 MiB (operator-adjustable up to a 4 MiB hard ceiling).
 - One ordinary ICS subscription: 20,000 events per poll (and 20 MiB, which isn't configurable).
-- One Google calendar poll: 20,000 remote resources, 32 MiB of decompressed
-  responses, 20 pages and 40 seconds, including any retry after Google expires
-  a sync token. The event count is lowered automatically when PHP's
-  `memory_limit` cannot safely carry the decoded changes, cached snapshot and
-  database sync structures at once; the stored snapshot's actual text/JSON
-  size is checked before it is loaded, so calendars with unusually large but
-  valid descriptions fail cleanly too. A refusal keeps the last successful
-  calendar and sync position, records the reason on the calendar, and lets the
-  worker continue. `BETTERCAL_LIMIT_GOOGLE_SYNC_*` settings can raise these
-  only to the hard ceilings in `.env.example`.
-- One Google account inventory: 5,000 calendars, 5 MiB, 20 pages and 20
-  seconds, including its access-token refresh. `BETTERCAL_LIMIT_GOOGLE_CALENDAR_LIST_*` settings have hard
-  ceilings as documented in `.env.example`.
+- One Google calendar poll: 20,000 remote resources, 32 MiB of decompressed responses, 20 pages and 40 seconds, including any retry after Google expires a sync token. The event count is lowered automatically when PHP's `memory_limit` cannot safely carry the decoded changes, cached snapshot and database sync structures at once; the stored snapshot's actual text/JSON size is checked before it is loaded, so calendars with unusually large but valid descriptions fail cleanly too. A refusal keeps the last successful calendar and sync position, records the reason on the calendar, and lets the worker continue. `BETTERCAL_LIMIT_GOOGLE_SYNC_*` settings can raise these only to the hard ceilings in `.env.example`.
+- One Google account inventory: 5,000 calendars, 5 MiB, 20 pages and 20 seconds, including its access-token refresh. `BETTERCAL_LIMIT_GOOGLE_CALENDAR_LIST_*` settings have hard ceilings as documented in `.env.example`.
 - One CalDAV object: 1 MiB, with up to 500 changed occurrences.
 - One incoming email: 5 MiB (operator-adjustable up to a 25 MiB hard ceiling); up to 200 events in an emailed invitation. Size is checked from IMAP metadata before display headers or bodies are decoded.
 - Public email in aggregate: 100 new events per rolling day, 25 per claimed sender, and 500 future/repeating mail-created events; paid mail reading is 20 model calls per hour, 50 per day, and 20 per claimed sender/day. Separate account-wide limits cannot be reset with a new From, Message-ID, or event UID. Review shows one aggregate notice when a limit is reached; the original email remains in the mailbox.

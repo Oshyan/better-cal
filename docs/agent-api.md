@@ -78,9 +78,7 @@ curl -s "$BC/quickadd" -X POST -H "$AUTH" -H 'Content-Type: application/json' \
   -d '{"text":"Standup tomorrow 9:30am for 15 minutes","tz":"America/Los_Angeles","commit":true}'
 ```
 
-Preview and commit calls use the same per-account/per-token model budget when
-AI parsing is needed. At capacity the request still succeeds with the basic
-parser; `draft.modelLimit` explains the temporary fallback and its retry time.
+Preview and commit calls use the same per-account/per-token model budget when AI parsing is needed. At capacity the request still succeeds with the basic parser; `draft.modelLimit` explains the temporary fallback and its retry time.
 
 Undo the last mutation:
 

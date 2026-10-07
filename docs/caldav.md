@@ -22,13 +22,13 @@ Auth is HTTP Basic, so it is only safe over TLS. The server is HTTPS-only; never
 ## What syncs
 
 - Every Better-Cal calendar appears as a CalDAV collection (`/dav/calendars/{email}/cal-{id}/`), with its name, color, and order.
-- Events sync both ways on **local** calendars: create, edit, move, delete, recurring rules (RRULE), skipped instances (EXDATE), and edited single occurrences (RECURRENCE-ID overrides) all round-trip. Fields carried: title, description, location, URL, status, start/end (all-day supported), timezone, recurrence. A rich description goes out as plain text in `DESCRIPTION` and allowlisted HTML (plain formatting and http(s) links) in `X-ALT-DESC`; one written by a client is cleaned the same way when it arrives.
+- Events sync both ways on **local** calendars: create, edit, move, delete, recurring rules (RRULE), skipped instances (EXDATE), and edited single occurrences (RECURRENCE-ID overrides) all round-trip. Fields carried: title, description, location, URL, status, start/end (all-day supported), timezone, recurrence. A timed event goes out in its own zone (`TZID` plus a `VTIMEZONE`); an all-day event, and its skipped or changed dates, go out as plain dates. A time a client sends with no zone is read in your Home zone, and a Windows zone name (Outlook's "Pacific Standard Time") is kept as the real zone it stands for. A rich description goes out as plain text in `DESCRIPTION` and allowlisted HTML (plain formatting and http(s) links) in `X-ALT-DESC`; one written by a client is cleaned the same way when it arrives.
 - Changes made via the web app, JSON API, or agents show up on your devices via efficient delta sync (sync-collection/ctag), and undo in the app propagates too.
-- Feed subscriptions poll hourly server-side; their events flow out to your devices on the same schedule.
+- Subscriptions are polled server-side (an ICS feed hourly by default, a connected Google calendar every 5 minutes; set per calendar under "Check for updates"); their events flow out to your devices after each poll.
 
 ## Read-only rules
 
-- **Subscribed (feed) calendars are read-only.** They are advertised to clients as read-only, and any write attempt is rejected with `403 Forbidden`. Edit or hide those events in the Better-Cal app instead (attendance/tags live only in Better-Cal and do not sync over CalDAV).
+- **Subscribed calendars (ICS feeds and connected Google calendars) are read-only.** A Google calendar you can edit in the app is still read-only over CalDAV. They are advertised to clients as read-only, and any write attempt is rejected with `403 Forbidden`. Edit or hide those events in the Better-Cal app instead (attendance/tags live only in Better-Cal and do not sync over CalDAV).
 - Creating or deleting whole calendars over CalDAV is not supported — do that in the app or API. Renaming a local calendar or changing its color from a client does work.
 - Better-Cal-only concepts (tags, people, attendance, filters, scores) do not appear in CalDAV and are preserved untouched when a client edits an event.
 
@@ -39,6 +39,6 @@ Auth is HTTP Basic, so it is only safe over TLS. The server is HTTPS-only; never
 - **403 on save:** you edited an event on a subscribed (feed) calendar, which is read-only over CalDAV. A 403 whose message mentions `max-resource-size` means the object itself was refused: one event with its changed occurrences may be at most 1 MiB and 500 overrides (`BETTERCAL_LIMIT_DAV_OBJECT_BYTES`, `BETTERCAL_LIMIT_DAV_OVERRIDES`). The size limit is published to clients as `CALDAV:max-resource-size`.
 - **429 Too Many Requests:** this network address sent too many wrong passwords (to CalDAV or the login form; they share a limit). Syncing resumes by itself within 15 minutes. It is a 429 rather than a 401 so the client does not decide the saved password is wrong.
 - **400 "Object URI must be <UID>.ics":** the client PUT a resource whose filename does not match the VEVENT UID. Mainstream clients (Apple, DAVx5, Thunderbird) always match; if you script against the endpoint, name objects `{uid}.ics`.
-- **Sync seems stale:** clients poll; pull-to-refresh (iOS) or force sync (DAVx5) fetches immediately. Server-side feed calendars only update when the hourly poll runs.
+- **Sync seems stale:** clients poll; pull-to-refresh (iOS) or force sync (DAVx5) fetches immediately. Subscribed calendars only update when their server-side poll runs (hourly by default for a feed).
 - **Plain HTTP:** Basic auth credentials are only sent over TLS; the server does not serve the DAV endpoint over http.
 - **Endpoint check:** `curl -u 'you@example.com:bc_...' https://cal.example.com/dav/` should return XML/HTML, not a 404. If nginx has not been configured with the `/dav` location yet, `https://cal.example.com/dav.php/` works as a fallback.

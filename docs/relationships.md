@@ -26,7 +26,7 @@ A role says what a calendar is to you. It sets the default relationship for ever
 | **Opportunities** | Things I could do. | Available | Event feeds, community calendars, Luma, Partiful, Meetup |
 | **Context** | Information. | Context | Weather, tides, sunset, holidays, other people's schedules |
 
-Defaults when a calendar is created: local calendars are Mine, subscriptions are Opportunities, plugin calendars are Context. Change any of them in the calendar's settings under "What this calendar is". Changing a role re-reads every event on the calendar immediately; nothing is rewritten.
+Defaults when a calendar is created: local calendars are Mine, subscriptions are Opportunities (a connected Google calendar counts as a subscription, even one of your own), plugin calendars are Context. Change any of them in the calendar's settings under "What this calendar is". Changing a role re-reads every event on the calendar immediately; nothing is rewritten.
 
 ## Changing one event
 
@@ -38,7 +38,7 @@ Open an event (popover or full detail). The **For me** dropdown lists what that 
 
 On a repeating event the dropdown asks which occurrences: this one, this and following, or the whole series, the same question every other change to a series asks.
 
-The agenda view has the same choices as three small buttons per row (Maybe, Planned, Hide).
+The agenda view puts three small buttons (Maybe, Planned, Hide) on each row from a subscribed calendar; on a phone, swipe the row left or tap its grip.
 
 Thumbs up and down on feed events are separate. They train the ranking and say nothing about whether you are going.
 
@@ -59,15 +59,16 @@ The toolbar has one menu, **Show: all** by default, with a checkbox per relation
 
 Hotkeys toggle each kind: **p** planned, **m** maybe, **a** available, **x** context. The command palette has the same four plus "Show only planned" and "Show all".
 
-A day where the filter hid something shows a small hollow ring after its day number, in every view, with the count in its tooltip. In month and agenda views a click on the ring clears the filter. Nothing disappears silently.
+A day where the filter hid something shows a small half-filled circle after its day number, in every view, with the count in its tooltip. In month and agenda views a click on it clears the filter. Nothing disappears silently.
 
 ## Where context is drawn
 
 Context is consulted, not attended: the weather, the AQI, when the sun sets, whether the tide is low at a useful hour. That is the first thing to read about a day and something you come back to, so it lives where the day is named rather than in the list of things to do.
 
-- **Month**: two tokens beside the day number, then "+N" which opens the expanded day, where context has its own section on top. A token is an icon for the kind of information plus the value: a cloud and "72/58" for "Oakland, CA: 72/58 fog", an air icon and "54" for "AQI 54 (Moderate)", a sunset icon and "7:10p". Hover for the full title, click for the event. The two hover controls of a day, expand (chevron) and add (+), sit together at the cell's top right. Context never takes a chip slot, so a day full of information still shows all its plans.
+- **Month**: as many tokens as fit beside the day number, then "+N" which opens the expanded day, where context has its own section on top. A token is an icon for the kind of information plus the value: a cloud and "72/58" for "Asheville, NC: 72/58 fog", an air icon and "54" for "AQI 54 (Moderate)", a sunset icon and "7:10p". Hover for the full title, click for the event. The two hover controls of a day, expand (chevron) and add (+), sit together at the cell's top right. Context never takes a chip slot, so a day full of information still shows all its plans. On a phone the full month has no room for tokens, so the expanded day lists them (the 3-day view shows one, the first).
 - **Icons**: a plugin sets one per event (`icon` in `syncEvents`; the host set includes sun, sunrise, sunset, air, tideHigh, tideLow, cloud, rain, snow, storm, thermometer, moon, flag, or any emoji). For feeds, which carry no icon, the host recognizes the common shapes in a title (a high/low pair with a condition word, AQI, sunset, sunrise, high or low tide, a holiday calendar) and otherwise shows the calendar's hollow square with the words.
-- **Times keep their place**: a moment on a calendar in another zone (Oakland's sunset while you are in London) reads in its own zone with the zone named, "7:10p PDT". Its position on the timeline is still the true instant.
+- **Holidays**: all-day context from a calendar whose name says holiday is a day label, not a token: its name is written after the date wherever a date is written ("Mon, Jan 1 · New Year's Day"). On the phone's full month it is a small flag after the day number.
+- **Times keep their place**: a moment on a calendar in another zone (a Seattle sunset while you are in Lisbon) reads in its own zone with the zone named, "7:10p PDT". Its position on the timeline is still the true instant.
 - **Week and day**: all-day context as tokens in the column header; a timed context event is a dashed hairline at its minute with a small label, never a block. Sunset at 7:10 is a moment, not a forty-minute appointment.
 - **Agenda**: the day's tokens ride on the day heading.
 

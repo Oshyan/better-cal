@@ -1,12 +1,13 @@
 # Email ingest: invites become events
 
-The worker polls the **calendar@example.com** mailbox (IMAP, every ~2 minutes) and turns messages into events on a local **Invitations** calendar, mirroring Gmail's own server-side behavior with a three-tier ladder:
+The worker polls the **calendar@example.com** mailbox (IMAP, every ~2 minutes) and turns messages into events on a local **Invitations** calendar, mirroring Gmail's own server-side behavior with a four-step ladder:
 
-1. **iMIP** — a `text/calendar` part or `.ics` attachment. A `METHOD:REQUEST` with a UID you do not have yet becomes an event. Organizer, attendees, and sequence land in `events.invite_json`. A REQUEST or `METHOD:CANCEL` for an invitation you ALREADY have is never applied on arrival: it is **held in the Review queue** (see below) until you accept or dismiss it.
+1. **iMIP** — a `text/calendar` part or `.ics` attachment. A `METHOD:REQUEST` (or `PUBLISH`) with a UID you do not have yet becomes an event. Organizer, attendees, and sequence land in `events.invite_json`. A REQUEST or `METHOD:CANCEL` for an invitation you ALREADY have is never applied on arrival: it is **held in the Review queue** (see below) until you accept or dismiss it.
 2. **schema.org markup** — JSON-LD `Event` / `*Reservation` blocks embedded in HTML by Eventbrite, Luma, airlines, OpenTable, etc. Deterministic, no ML.
-3. **LLM extraction** — Gemini over subject+text, only when tiers 1–2 found nothing **and** the subject looks eventish (invite/confirm/ticket/registration/rsvp/booking/reservation/event). Keeps ordinary mail off the calendar.
+3. **Add to Google Calendar links**: the `calendar.google.com` template link in an "Add to calendar" button. Also deterministic, and it survives a Gmail forward, which strips the markup but keeps links.
+4. **LLM extraction** — Gemini over subject+body, only when tiers 1–3 found nothing **and** the subject looks eventish (invite/confirm/ticket/registration/rsvp/booking/reservation/event). A body with no date in it at all is skipped without a call. Keeps ordinary mail off the calendar.
 
-Every processed message id is logged in `mail_ingest` (tier, outcome, event id) — nothing ingests twice; malformed messages are marked seen and skipped.
+Every processed message id is logged in `mail_ingest` (tier, outcome, event id) — nothing ingests twice; malformed messages are marked seen and logged (`skipped` or `error`), not retried.
 
 Anyone can send mail to the ingest address, so a message is sized before it is trusted. The worker lists unseen mail WITHOUT bodies and asks the server for each size; one over 5 MiB is never downloaded (outcome `skipped`, error "message too large to ingest"). Messages are handled one at a time rather than ten decoded at once, a calendar part over 1 MiB or holding more than 200 events is ignored, and text/HTML is cut to 512 KiB before extraction. A message is logged as `started` and marked seen BEFORE its body is downloaded and parsed: if parsing it kills the worker outright (out of memory cannot be caught), the next run does not walk into the same message again, and the `started` row that is left behind is how such a message shows up afterwards. An ordinary failure (a dropped connection) undoes both, so it is retried. The limits are `BETTERCAL_LIMIT_MAIL_*` in `.env`.
 
@@ -22,7 +23,7 @@ In-process DKIM verification (issue #25) could later let changes from a verifiab
 
 ## RSVP
 
-**Invitations and bookings are different things.** Only an iMIP `REQUEST` with an organizer is an invitation. A reservation, ticket or confirmation read from mail (the markup, Google-link and LLM tiers, and iMIP `PUBLISH`) is a booking: it lands on the calendar like any event, reads "Booking via <site>" in its details, and has no reply buttons, since there is nobody to answer.
+**Invitations and bookings are different things.** Only an iMIP `REQUEST` is an invitation. A reservation, ticket or confirmation read from mail (the markup, Google-link and LLM tiers, and iMIP `PUBLISH`) is a booking: it lands on the calendar like any event, reads "Booking via <site>" in its details, and has no reply buttons, since there is nobody to answer.
 
 **An invitation shows Accept / Maybe / Decline when a reply can go:** it names an organizer, and there is an account to send from (below) that is one of the invited addresses. When one of those is missing, the event says which instead of showing buttons: no organizer, no account to send from, or "replies would come from X, which isn't one of the invited addresses" (the organizer's calendar ignores a reply from an address it didn't invite). Invitations you can answer and haven't also appear on the Review page.
 

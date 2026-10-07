@@ -231,6 +231,9 @@ final class GoogleMove
                     'google_calendar_id' => $googleCalendarId,
                     'google_access_role' => 'owner',
                     'google_sync_token' => null,
+                    // Polled as often as any other Google calendar, not on
+                    // the hourly schedule it had as a local one.
+                    'poll_interval_minutes' => 5,
                     'last_poll_status' => 'never',
                     'last_poll_error' => null,
                 ], 'id = ?', [$calendarId]);

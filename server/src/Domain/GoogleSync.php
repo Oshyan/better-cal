@@ -38,11 +38,11 @@ final class GoogleSync
     {
         $calendarId = (int) $calendar['id'];
         if ($calendar['google_account_id'] === null) {
-            throw new \RuntimeException('Google account disconnected; reconnect it under Settings, Google, or delete this calendar');
+            throw new \RuntimeException('Google account disconnected; delete this calendar or adopt it as local, then add it again from Settings, Connections');
         }
         $account = $this->db->one('SELECT * FROM google_accounts WHERE id = ?', [(int) $calendar['google_account_id']]);
         if ($account === null) {
-            throw new \RuntimeException('Google account disconnected; reconnect it under Settings, Google, or delete this calendar');
+            throw new \RuntimeException('Google account disconnected; delete this calendar or adopt it as local, then add it again from Settings, Connections');
         }
         $access = $this->auth->accessToken($account);
         $googleCalendarId = (string) $calendar['google_calendar_id'];

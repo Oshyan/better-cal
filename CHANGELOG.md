@@ -4,6 +4,14 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.19 (2026-10-06)
+
+- **A calendar moved to Google is checked every five minutes,** like every other Google calendar. It kept the hourly schedule it had as a local calendar, so changes people made at Google took up to an hour to show here. Moved calendars still on that default are switched; one you set yourself stays.
+- **CalDAV refuses edits to plugin calendars.** The app and the API already did; a phone could still change or delete a plugin's events, and the plugin overwrote them on its next run.
+- **The "Google account disconnected" error says what actually works:** delete the calendar or adopt it as local, then add it again from Settings, Connections. It pointed to a Settings section that has since been renamed, and to reconnecting, which doesn't re-attach a calendar.
+
+Operators: migration 038 runs on deploy and reports how many moved calendars it switched.
+
 ## 0.9.18 (2026-10-06)
 
 - **A repeating event with too many occurrences to show says so.** A series is expanded up to 1,000 times per request (was 500), which covers a daily event across the two-year maximum the app ever asks for. A series that goes past that, something hourly for instance, used to be cut short without a word; now the app names it once ("repeats more often than one view can show"), and the events API lists it in a new `capped` field.

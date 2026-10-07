@@ -448,9 +448,17 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
     /** @param array<string,mixed> $calendar */
     private function assertWritable(array $calendar): void
     {
-        if ($calendar['kind'] === 'subscribed') {
-            throw new Forbidden('This calendar is a read-only feed subscription; changes must be made at the source');
+        if (!self::writableKind((string) $calendar['kind'])) {
+            throw new Forbidden($calendar['kind'] === 'plugin'
+                ? 'This calendar is managed by a plugin; its events are read-only'
+                : 'This calendar is a read-only feed subscription; changes must be made at the source');
         }
+    }
+
+    /** Feeds and plugin calendars are filled by their source; a client edit would be overwritten on the next sync. */
+    public static function writableKind(string $kind): bool
+    {
+        return $kind !== 'subscribed' && $kind !== 'plugin';
     }
 
     private static function emailFromPrincipal(string $principalUri): string

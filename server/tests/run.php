@@ -2571,6 +2571,9 @@ check('dav object ends with vcalendar', str_ends_with($obj, "END:VCALENDAR\r\n")
 if (class_exists(\Sabre\CalDAV\Backend\AbstractBackend::class)) {
     check('dav backend loads', class_exists(\BetterCal\Dav\CalendarBackend::class));
     check('dav backend has SyncSupport', is_subclass_of(\BetterCal\Dav\CalendarBackend::class, \Sabre\CalDAV\Backend\SyncSupport::class));
+    check('dav refuses writes to feed calendars', !\BetterCal\Dav\CalendarBackend::writableKind('subscribed'));
+    check('dav refuses writes to plugin calendars', !\BetterCal\Dav\CalendarBackend::writableKind('plugin'));
+    check('dav allows writes to local calendars', \BetterCal\Dav\CalendarBackend::writableKind('local'));
     check('dav auth backend loads', class_exists(\BetterCal\Dav\AuthBackend::class));
     check('dav principal backend loads', class_exists(\BetterCal\Dav\PrincipalBackend::class));
 }

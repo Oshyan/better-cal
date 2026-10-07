@@ -4,6 +4,14 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.23 (2026-10-06)
+
+- **Signing out stops reminders on that device.** The server removes only that browser's reminder destination with its session, while leaving the browser permission intact so signing back in restores reminders without another prompt. Other devices and email reminders are unchanged.
+- **API keys cannot inspect or disable browser reminder devices.** Device inventory and removal require a signed-in browser. An API key may still create and remove its own push subscription, but cannot overwrite a browser's or another key's subscription.
+- **System health no longer returns raw push-service endpoints.** It uses an endpoint hash to recognize the current device without exposing the delivery capability.
+
+No database migration is required.
+
 ## 0.9.22 (2026-10-06)
 
 - **Hosts without `proc_open` work again.** Since 0.9.17 every outbound request (feeds, Google, place search, plugins) looked up its address in a separate PHP process with a time limit, and a host that disables `proc_open` or has no command-line PHP binary (some shared hosts) failed every one of them. Those hosts now look up in-process: private addresses are refused exactly as before, only the time limit is lost, and the PHP error log says so once.

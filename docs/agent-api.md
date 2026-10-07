@@ -119,7 +119,7 @@ claude mcp add better-cal \
 | List calendars | `GET /calendars` | `list_calendars` | Includes folders, tags, feed health |
 | Undo last change | `POST /undo` | `undo` | Per user; each call undoes the most recent create, update or delete not yet undone, so repeating it steps further back (7-day snapshots); log-only entries are passed over |
 | Manage calendars/folders | `POST/PATCH/DELETE /calendars`, `/folders` | — | REST only for now |
-| Outbound feeds, push devices, reminder email address | `/outfeeds`, `/push/*`, `PATCH /settings` | — | REST; anything a token creates belongs to it and goes when the token is revoked. A token sees only the feed URLs it created. Linking a Google account needs a signed-in person. |
+| Outbound feeds, push subscriptions, reminder email address | `/outfeeds`, `POST /push/subscribe`, `POST /push/unsubscribe`, `PATCH /settings` | — | REST; anything a token creates belongs to that exact token and goes when the token is revoked. A token cannot list or remove browser-owned reminder devices; `/push/devices` is session-only. A token sees only the feed URLs it created. Linking a Google account needs a signed-in person. |
 | Manage tokens | `GET/POST/DELETE /tokens` | — | Session auth only, never bearer |
 
 ## Cron script sketch

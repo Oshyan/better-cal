@@ -27,14 +27,16 @@ export function fetchPushStatus() {
 }
 
 // This browser's own push endpoint, or null. The health payload names push
-// rows by endpoint; matching against this is how the app knows a failing
-// device is THE device it is running on, which is the only case worth a
-// banner rather than a line in Settings.
+// rows by a hash of the endpoint; matching against that hash is how the app
+// knows a failing device is THE device it is running on, which is the only
+// case worth a banner rather than a line in Settings.
 export async function currentPushEndpoint() {
   try {
     if (!pushSupported()) return null;
-    const reg = await navigator.serviceWorker.ready;
-    const sub = await reg.pushManager.getSubscription();
+    // getRegistration resolves to null when registration failed. `.ready`
+    // can wait forever in that state, which must never make Sign out hang.
+    const reg = await navigator.serviceWorker.getRegistration();
+    const sub = reg && await reg.pushManager.getSubscription();
     return sub ? sub.endpoint : null;
   } catch {
     return null;
@@ -168,10 +170,16 @@ export function removePushDevice(id) {
 }
 // sha256 of this browser's endpoint, to find it in the device list.
 export async function currentEndpointHash() {
-  const ep = await currentPushEndpoint();
-  if (!ep || !crypto.subtle) return null;
-  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(ep));
-  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+  try {
+    const ep = await currentPushEndpoint();
+    if (!ep || typeof crypto === 'undefined' || !crypto.subtle || typeof TextEncoder === 'undefined') return null;
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(ep));
+    return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+  } catch {
+    // A browser that cannot hash its endpoint must still be able to sign out;
+    // the server simply cannot identify and remove that one reminder row.
+    return null;
+  }
 }
 
 // Remove this browser's subscription on both ends.

@@ -116,6 +116,27 @@ for (const file of files) {
     'revoking a key that pauses subscriptions must refresh the Review badge');
 }
 
+// --- 6. sign-out and system health use opaque push identities --------------
+// Sign-out stops reminders at the server but deliberately keeps the browser's
+// PushManager subscription so signing in can quietly restore it. Health needs
+// only a hash to recognise this device; a raw endpoint is a delivery capability.
+{
+  const api = readFileSync(join(root, 'app', 'api.js'), 'utf8');
+  const settings = readFileSync(join(root, 'app', 'SettingsPage.js'), 'utf8');
+  const push = readFileSync(join(root, 'app', 'push.js'), 'utf8');
+  const system = readFileSync(join(root, 'app', 'system.js'), 'utf8');
+  const check = (ok, msg) => { if (ok) passed++; else fail(msg); };
+  check(/function logout\(pushEndpointHash = null\)[\s\S]*?body: pushEndpointHash \? \{ pushEndpointHash \} : \{\}/.test(api),
+    'logout API must send the current push endpoint hash when available');
+  check(settings.includes('logout(await currentEndpointHash())'),
+    'Settings sign-out must identify this browser push destination');
+  check(/function currentPushEndpoint\(\)[\s\S]*?serviceWorker\.getRegistration\(\)/.test(push)
+      && !/function currentPushEndpoint\(\)[\s\S]*?serviceWorker\.ready[\s\S]*?^}/m.test(push),
+    'reading the current push endpoint must not hang on serviceWorker.ready');
+  check(system.includes('currentEndpointHash') && system.includes('r.endpointHash === endpointHash') && !system.includes('r.endpoint === endpoint'),
+    'system health must match this device by an endpoint hash, not the raw endpoint');
+}
+
 console.log('');
 console.log(passed + ' checks passed, ' + failed + ' failed (' + files.length + ' modules)');
 if (failed > 0) process.exit(1);

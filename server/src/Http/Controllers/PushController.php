@@ -83,12 +83,14 @@ final class PushController
     /** GET /push/devices: every device reminders go to (session only). */
     public function devices(Request $req): Response
     {
+        $req->requireSession('Reviewing reminder devices');
         return Response::json(['devices' => $this->subscriptions->devices((int) $req->user['id'])]);
     }
 
     /** DELETE /push/devices/:id (session only). */
     public function removeDevice(Request $req, array $params): Response
     {
+        $req->requireSession('Removing a reminder device');
         $this->subscriptions->remove((int) $req->user['id'], (int) $params['id']);
         return Response::json(['ok' => true]);
     }
@@ -96,7 +98,11 @@ final class PushController
     /** POST /push/unsubscribe {endpoint} */
     public function unsubscribe(Request $req): Response
     {
-        $this->subscriptions->unsubscribe((int) $req->user['id'], (string) ($req->str('endpoint') ?? ''));
+        $this->subscriptions->unsubscribe(
+            (int) $req->user['id'],
+            (string) ($req->str('endpoint') ?? ''),
+            $req->authMethod === 'token' ? $req->tokenId : null,
+        );
         return Response::json(['ok' => true]);
     }
 

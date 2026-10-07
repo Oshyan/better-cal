@@ -70,11 +70,39 @@ final class Auth
         return ['token' => $token, 'csrf' => $csrf, 'user' => $user];
     }
 
-    public function logout(?string $token): void
+    /**
+     * End one browser session and, when supplied, stop reminders to that
+     * browser's current push endpoint in the same transaction. The push row
+     * is deliberately deleted without a push_removed tombstone: the browser
+     * keeps its PushManager subscription and may quietly register it again
+     * after the owner signs back in.
+     *
+     * @return int number of current-device push rows removed (zero or one)
+     */
+    public function logout(?string $token, ?string $pushEndpointHash = null): int
     {
-        if ($token !== null && $token !== '') {
-            $this->db->run('DELETE FROM sessions WHERE token_hash = ?', [hash('sha256', $token)]);
+        if ($token === null || $token === '') {
+            return 0;
         }
+        if ($pushEndpointHash !== null && preg_match('/^[0-9a-f]{64}$/', $pushEndpointHash) !== 1) {
+            throw HttpError::badRequest('pushEndpointHash must be a lowercase SHA-256 value', 'invalid_push_endpoint_hash');
+        }
+
+        $tokenHash = hash('sha256', $token);
+        return $this->db->tx(function () use ($tokenHash, $pushEndpointHash): int {
+            $lock = $this->db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
+            $session = $this->db->one('SELECT user_id FROM sessions WHERE token_hash = ?' . $lock, [$tokenHash]);
+            if ($session === null) {
+                return 0; // Already signed out (or reset) is an idempotent success.
+            }
+            $userId = (int) $session['user_id'];
+            $push = $pushEndpointHash === null ? 0 : $this->db->run(
+                'DELETE FROM push_subscriptions WHERE user_id = ? AND endpoint_hash = ?',
+                [$userId, $pushEndpointHash]
+            )->rowCount();
+            $this->db->run('DELETE FROM sessions WHERE token_hash = ? AND user_id = ?', [$tokenHash, $userId]);
+            return $push;
+        });
     }
 
     /**

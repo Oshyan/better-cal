@@ -683,7 +683,10 @@ export function SettingsPage() {
   const signOut = async () => {
     setBusy(true);
     try {
-      await logout();
+      // Remove only this browser's server-side reminder destination with the
+      // session. Keep its browser subscription so signing back in can restore
+      // reminders quietly, without another permission prompt.
+      await logout(await currentEndpointHash());
     } catch (e) {
       toast('Sign out failed: ' + e.message, { error: true });
       setBusy(false);

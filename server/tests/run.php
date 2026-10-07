@@ -3027,6 +3027,158 @@ checkEq('push defaults still allowed alongside extras', null, BetterCal\Infra\Pu
 }
 checkEq('push endpoint hash is sha256', hash('sha256', 'https://x.example/e'), PushSubscriptions::endpointHash('https://x.example/e'));
 
+// Phase 5: signing out stops this browser's reminders, token credentials may
+// administer only their own push channel, and health never returns a raw push
+// endpoint. This uses one small relational fixture so the preservation checks
+// cover neighbouring sessions, accounts and token owners too.
+{
+    $p5db = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $p5db->run('CREATE TABLE sessions (token_hash TEXT PRIMARY KEY, user_id INTEGER, csrf TEXT, authenticated_at TEXT, expires_at TEXT)');
+    $p5db->run('CREATE TABLE api_tokens (id INTEGER PRIMARY KEY, user_id INTEGER, expires_at TEXT NULL)');
+    $p5db->run('CREATE TABLE push_subscriptions (
+        id INTEGER PRIMARY KEY, user_id INTEGER, endpoint TEXT, endpoint_hash TEXT UNIQUE,
+        p256dh TEXT, auth TEXT, created_at TEXT, last_used_at TEXT, failing_since TEXT,
+        created_by_token_id INTEGER NULL, device_label TEXT NULL
+    )');
+    $p5db->run('CREATE TABLE push_removed (user_id INTEGER, endpoint_hash TEXT)');
+    $p5db->run('CREATE TABLE system_health (
+        subject TEXT PRIMARY KEY, kind TEXT, user_id INTEGER, label TEXT, status TEXT,
+        first_failed_at TEXT, last_failed_at TEXT, last_ok_at TEXT,
+        consecutive_failures INTEGER, last_error TEXT, alerted_at TEXT
+    )');
+
+    $currentSession = 'current-browser-session';
+    $otherSession = 'other-browser-session';
+    $foreignSession = 'foreign-browser-session';
+    foreach ([[1, $currentSession], [1, $otherSession], [2, $foreignSession]] as [$uid, $plain]) {
+        $p5db->run(
+            "INSERT INTO sessions (token_hash, user_id, csrf, authenticated_at, expires_at) VALUES (?, ?, 'csrf', '2026-10-06 12:00:00', '2099-01-01 00:00:00')",
+            [hash('sha256', $plain), $uid]
+        );
+    }
+    $p5db->run('INSERT INTO api_tokens (id, user_id, expires_at) VALUES (10, 1, NULL), (11, 1, NULL)');
+
+    $endpoints = [
+        1 => 'https://fcm.googleapis.com/fcm/send/current-browser',
+        2 => 'https://fcm.googleapis.com/fcm/send/other-browser',
+        3 => 'https://fcm.googleapis.com/fcm/send/foreign-browser',
+        4 => 'https://fcm.googleapis.com/fcm/send/token-a',
+        5 => 'https://fcm.googleapis.com/fcm/send/token-b',
+    ];
+    foreach ($endpoints as $id => $endpoint) {
+        $uid = $id === 3 ? 2 : 1;
+        $creator = $id === 4 ? 10 : ($id === 5 ? 11 : null);
+        $p5db->run(
+            "INSERT INTO push_subscriptions
+             (id, user_id, endpoint, endpoint_hash, p256dh, auth, created_at, last_used_at, failing_since, created_by_token_id, device_label)
+             VALUES (?, ?, ?, ?, 'old-key', 'old-auth', '2026-10-06 12:00:00', NULL, NULL, ?, ?)",
+            [$id, $uid, $endpoint, PushSubscriptions::endpointHash($endpoint), $creator, 'Device ' . $id]
+        );
+    }
+
+    $p5auth = new BetterCal\Domain\Auth($p5db, []);
+    checkEq(
+        'logout push: removes this browser push row',
+        1,
+        $p5auth->logout($currentSession, PushSubscriptions::endpointHash($endpoints[1]))
+    );
+    checkEq('logout push: removes only the exact session', null, $p5db->scalar('SELECT 1 FROM sessions WHERE token_hash = ?', [hash('sha256', $currentSession)]));
+    checkEq('logout push: preserves another browser session', 1, (int) $p5db->scalar('SELECT COUNT(*) FROM sessions WHERE token_hash = ?', [hash('sha256', $otherSession)]));
+    checkEq('logout push: preserves another account session', 1, (int) $p5db->scalar('SELECT COUNT(*) FROM sessions WHERE token_hash = ?', [hash('sha256', $foreignSession)]));
+    checkEq('logout push: preserves other reminder devices', [2, 3, 4, 5], array_map('intval', array_column($p5db->all('SELECT id FROM push_subscriptions ORDER BY id'), 'id')));
+    checkEq('logout push: does not make a removed-device tombstone', 0, (int) $p5db->scalar('SELECT COUNT(*) FROM push_removed'));
+
+    $legacySession = 'logout-without-push-identity';
+    $p5db->run(
+        "INSERT INTO sessions (token_hash, user_id, csrf, authenticated_at, expires_at) VALUES (?, 1, 'csrf', '2026-10-06 12:00:00', '2099-01-01 00:00:00')",
+        [hash('sha256', $legacySession)]
+    );
+    checkEq('logout push: omitted endpoint identity remains a valid logout', 0, $p5auth->logout($legacySession));
+    checkEq('logout push: omission leaves reminder devices alone', [2, 3, 4, 5], array_map('intval', array_column($p5db->all('SELECT id FROM push_subscriptions ORDER BY id'), 'id')));
+
+    $p5subs = new PushSubscriptions($p5db);
+    $p5pushController = new BetterCal\Http\Controllers\PushController(
+        $p5subs,
+        new BetterCal\Infra\PushSender([]),
+        new BetterCal\Infra\EmailSender([]),
+    );
+    $p5tokenReq = new BetterCal\Http\Request('GET', '/api/v1/push/devices');
+    $p5tokenReq->user = ['id' => 1, 'email' => 'owner@example.test'];
+    $p5tokenReq->authMethod = 'token';
+    $p5tokenReq->tokenId = 10;
+    foreach ([
+        'list' => static fn() => $p5pushController->devices($p5tokenReq),
+        'remove' => static fn() => $p5pushController->removeDevice($p5tokenReq, ['id' => 2]),
+    ] as $action => $call) {
+        try {
+            $call();
+            check("push device admin: token cannot $action devices", false);
+        } catch (HttpError $e) {
+            checkEq("push device admin: token $action is session-only", [403, 'session_required'], [$e->status, $e->errorCode]);
+        }
+    }
+    checkEq('push device admin: refused token removal has no side effect', 1, (int) $p5db->scalar('SELECT COUNT(*) FROM push_subscriptions WHERE id = 2'));
+    $p5sessionReq = new BetterCal\Http\Request('GET', '/api/v1/push/devices');
+    $p5sessionReq->user = ['id' => 1, 'email' => 'owner@example.test'];
+    $p5sessionReq->authMethod = 'session';
+    checkEq('push device admin: browser session can still list devices', 200, $p5pushController->devices($p5sessionReq)->status);
+
+    check('push token ownership: token cannot unsubscribe browser row', !$p5subs->unsubscribe(1, $endpoints[2], 10));
+    check('push token ownership: token cannot unsubscribe another token row', !$p5subs->unsubscribe(1, $endpoints[5], 10));
+    checkEq('push token ownership: refused unsubscribe preserves both rows', 2, (int) $p5db->scalar('SELECT COUNT(*) FROM push_subscriptions WHERE id IN (2, 5)'));
+    check('push token ownership: token can unsubscribe its own row', $p5subs->unsubscribe(1, $endpoints[4], 10));
+    checkEq('push token ownership: own unsubscribe removes the row', 0, (int) $p5db->scalar('SELECT COUNT(*) FROM push_subscriptions WHERE id = 4'));
+
+    foreach ([[2, 'browser-owned'], [5, 'different-token']] as [$id, $owner]) {
+        try {
+            $p5subs->subscribe(1, [
+                'endpoint' => $endpoints[$id],
+                'keys' => ['p256dh' => 'replacement-key', 'auth' => 'replacement-auth'],
+            ], false, 10);
+            check("push token ownership: cannot overwrite $owner row", false);
+        } catch (HttpError $e) {
+            checkEq("push token ownership: $owner collision is refused", [409, 'push_subscription_owned_elsewhere'], [$e->status, $e->errorCode]);
+        }
+    }
+    checkEq(
+        'push token ownership: collision leaves keys and owners unchanged',
+        [['old-key', null], ['old-key', 11]],
+        array_map(
+            static fn(array $r): array => [(string) $r['p256dh'], $r['created_by_token_id'] === null ? null : (int) $r['created_by_token_id']],
+            $p5db->all('SELECT p256dh, created_by_token_id FROM push_subscriptions WHERE id IN (2, 5) ORDER BY id')
+        )
+    );
+    $p5subs->subscribe(1, [
+        'endpoint' => $endpoints[5],
+        'keys' => ['p256dh' => 'same-token-key', 'auth' => 'same-token-auth'],
+        'label' => 'Renamed token device',
+    ], true, 11);
+    checkEq('push token ownership: the exact token may quietly refresh its label', 'Renamed token device', $p5db->scalar('SELECT device_label FROM push_subscriptions WHERE id = 5'));
+
+    $p5db->run(
+        "INSERT INTO system_health
+         (subject, kind, user_id, label, status, first_failed_at, last_failed_at, last_ok_at, consecutive_failures, last_error, alerted_at)
+         VALUES ('push:2', 'push', 1, 'Other browser', 'failing', '2026-10-06 12:00:00', '2026-10-06 12:00:00', NULL, 2, 'delivery failed', NULL)"
+    );
+    $p5system = new BetterCal\Http\Controllers\SystemController(
+        new SystemHealth($p5db),
+        $p5subs,
+        new BetterCal\Infra\EmailSender([]),
+        [],
+    );
+    $p5health = json_decode($p5system->health($p5sessionReq)->body, true);
+    checkEq('push health: identifies this device by endpoint hash', PushSubscriptions::endpointHash($endpoints[2]), $p5health['rows'][0]['endpointHash'] ?? null);
+    check(
+        'push health: never returns raw delivery capability fields',
+        !array_key_exists('endpoint', $p5health['rows'][0])
+        && !array_key_exists('p256dh', $p5health['rows'][0])
+        && !array_key_exists('auth', $p5health['rows'][0])
+        && !str_contains($p5system->health($p5sessionReq)->body, $endpoints[2])
+    );
+    $p5tokenHealth = $p5system->health($p5tokenReq)->body;
+    check('push health: bearer response is also hash-only', str_contains($p5tokenHealth, PushSubscriptions::endpointHash($endpoints[2])) && !str_contains($p5tokenHealth, $endpoints[2]));
+}
+
 // ---------------------------------------------------------------------------
 // Sanitize: description HTML allowlist (pure, no DB)
 // ---------------------------------------------------------------------------

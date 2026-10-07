@@ -25,15 +25,16 @@ final class SystemController
     {
         $userId = (int) $req->user['id'];
         $rows = $this->health->snapshot($userId);
-        // The client tells a push row is THIS device by endpoint; attach the
-        // user's own endpoints (nobody else's) so it can match.
-        $endpoints = [];
+        // The client tells a push row is THIS device by hashing its local
+        // endpoint. Never serialize the raw delivery capability merely so a
+        // browser can compare identities.
+        $endpointHashes = [];
         foreach ($this->subscriptions->forUser($userId) as $sub) {
-            $endpoints['push:' . $sub['id']] = (string) $sub['endpoint'];
+            $endpointHashes['push:' . $sub['id']] = (string) $sub['endpoint_hash'];
         }
         foreach ($rows as &$r) {
             if ($r['kind'] === 'push') {
-                $r['endpoint'] = $endpoints[$r['subject']] ?? null;
+                $r['endpointHash'] = $endpointHashes[$r['subject']] ?? null;
             }
         }
         unset($r);

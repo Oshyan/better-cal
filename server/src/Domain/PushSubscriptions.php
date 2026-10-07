@@ -83,7 +83,28 @@ final class PushSubscriptions
             } else {
                 ApiTokens::assertStillValid($this->db, $tokenId, $userId, true);
             }
-            $existed = $this->db->scalar('SELECT id FROM push_subscriptions WHERE endpoint_hash = ? AND user_id = ?', [$hash, $userId]) !== null;
+            // Endpoint hashes are globally unique. Lock the row (or its unique
+            // index gap) before deciding whether this credential may update
+            // it, so a token cannot race a browser/other token and take over
+            // its device by replacing the keys and creator id.
+            $lock = $this->db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
+            $existing = $this->db->one(
+                'SELECT id, user_id, created_by_token_id FROM push_subscriptions WHERE endpoint_hash = ?' . $lock,
+                [$hash]
+            );
+            if ($existing !== null) {
+                $existingUser = (int) $existing['user_id'];
+                $existingToken = $existing['created_by_token_id'] === null ? null : (int) $existing['created_by_token_id'];
+                $wrongAccount = $existingUser !== $userId;
+                $wrongTokenOwner = $tokenId !== null && $existingToken !== $tokenId;
+                if ($wrongAccount || $wrongTokenOwner) {
+                    throw HttpError::conflict(
+                        'push_subscription_owned_elsewhere',
+                        'This push subscription is already registered by another account or credential.'
+                    );
+                }
+            }
+            $existed = $existing !== null;
             if ($resync) {
                 // The quiet re-registration a browser does when it opens the app:
                 // it restores a device a password reset cleared, and nothing else.
@@ -195,15 +216,28 @@ final class PushSubscriptions
             'Removed a device from reminders (' . ($row['device_label'] ?? self::service((string) $row['endpoint'])) . ')');
     }
 
-    public function unsubscribe(int $userId, string $endpoint): bool
+    public function unsubscribe(int $userId, string $endpoint, ?int $tokenId = null): bool
     {
         if (trim($endpoint) === '') {
             return false;
         }
-        return $this->db->run(
-            'DELETE FROM push_subscriptions WHERE user_id = ? AND endpoint_hash = ?',
-            [$userId, self::endpointHash(trim($endpoint))]
-        )->rowCount() > 0;
+        $hash = self::endpointHash(trim($endpoint));
+        if ($tokenId === null) {
+            return $this->db->run(
+                'DELETE FROM push_subscriptions WHERE user_id = ? AND endpoint_hash = ?',
+                [$userId, $hash]
+            )->rowCount() > 0;
+        }
+        // A token may remove the standing channel it created, never a
+        // browser-owned or different-token device. A mismatch stays a quiet
+        // no-op so this idempotent endpoint does not become an ownership oracle.
+        return $this->db->tx(function () use ($userId, $hash, $tokenId): bool {
+            ApiTokens::assertStillValid($this->db, $tokenId, $userId, true);
+            return $this->db->run(
+                'DELETE FROM push_subscriptions WHERE user_id = ? AND endpoint_hash = ? AND created_by_token_id = ?',
+                [$userId, $hash, $tokenId]
+            )->rowCount() > 0;
+        });
     }
 
     public function hasAny(int $userId): bool

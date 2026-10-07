@@ -26,6 +26,17 @@ Round 1 (H1) and Round 2 (M1/M5) shipped to `main` in `f58c682`. Phase 3
 (M3/M4) shipped in `8a3b7d3`. Phase 4 (M6) shipped in `d750f7d`. Its deployed
 exercises remain deliberately open.
 
+## Phase 5 candidate — push privacy and credential boundaries
+
+This phase is implemented and verified for release 0.9.23. It requires no
+database migration. Live behavior remains open until the practical check below.
+
+| Scan finding | Remediation | Local automated verification | Live/deployed verification |
+|---|---|---:|---:|
+| F3 | Ordinary sign-out atomically removes only this browser's server-side reminder destination | Passed | [ ] |
+| F37 | Push-device inventory/removal require a browser session; token subscribe/unsubscribe is restricted to the exact creating token | Passed | [ ] |
+| F71 | System health returns an endpoint hash, never the raw push-service capability | Passed | [ ] |
+
 ## Completed local evidence
 
 This section is the technical record for reviewers; it is not a manual to-do
@@ -64,6 +75,16 @@ list for the owner.
 - [x] Time-zone harness: 3,840 generated cases and zero changed occurrence
   windows after export and re-import.
 - [x] Independent read-only adversarial review of each implemented round.
+- [x] Phase 5 focused relational controls cover exact-device logout, adjacent
+  session/device preservation, no logout tombstone, session-only device
+  administration, and exact-token subscribe/unsubscribe ownership.
+- [x] Phase 5 health and frontend controls cover hash-only device identity,
+  current-device sign-out, and non-blocking service-worker registration lookup.
+- [x] Phase 5 received an independent read-only post-patch review with no
+  concrete source-backed bypass or regression found.
+- [x] Phase 5 local suites: server 1,940/0; frontend smoke 653/0 in
+  `America/Los_Angeles`, `UTC`, `Europe/Berlin`, `Asia/Kolkata` and
+  `Pacific/Auckland`; frontend static 347/0; MCP 63/0; vendor manifest 10/10.
 
 ## Remaining practical checks
 
@@ -119,6 +140,15 @@ testing of an imported repeating event is enough for that part.
 - [ ] If email alerts are configured, leave that test failure active for an
   hour and run the alert job. Verify one failure email and one recovery email,
   with no repeated messages for the same incident.
+
+### Push lifecycle and authority (F3/F37/F71)
+
+- [ ] On a disposable browser/device with reminders enabled, sign out and
+  use another signed-in browser to confirm that the signed-out device disappears
+  from **Settings > Notifications** and receives no later reminder. Sign back in
+  on the first device and confirm it returns without a new browser permission
+  prompt. Other signed-in devices and email reminders should remain unchanged.
+  A notification already handed to the push service may arrive once.
 
 ## Deployment closeout
 

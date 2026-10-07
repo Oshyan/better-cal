@@ -90,9 +90,12 @@ export async function purgePrivateCaches() {
   } catch { /* storage unavailable (private mode): nothing was cached either */ }
 }
 
-export async function logout() {
+export async function logout(pushEndpointHash = null) {
   try {
-    await api('/auth/logout', { method: 'POST' });
+    await api('/auth/logout', {
+      method: 'POST',
+      body: pushEndpointHash ? { pushEndpointHash } : {},
+    });
   } finally {
     // Even when the request fails (offline), clear what is stored locally:
     // that is the half of signing out this device can always do. The caller

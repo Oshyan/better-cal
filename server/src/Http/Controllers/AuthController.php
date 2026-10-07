@@ -7,6 +7,7 @@ namespace BetterCal\Http\Controllers;
 use BetterCal\Domain\Auth;
 use BetterCal\Domain\LoginGuard;
 use BetterCal\Domain\TrustedDevices;
+use BetterCal\Http\HttpError;
 use BetterCal\Http\Request;
 use BetterCal\Http\Response;
 
@@ -54,7 +55,12 @@ final class AuthController
 
     public function logout(Request $req): Response
     {
-        $this->auth->logout($req->cookies[Auth::COOKIE] ?? null);
+        $req->requireSession('Signing out this browser');
+        $pushHash = $req->str('pushEndpointHash');
+        if ($pushHash !== null && preg_match('/^[0-9a-f]{64}$/', $pushHash) !== 1) {
+            throw HttpError::badRequest('pushEndpointHash must be a lowercase SHA-256 value', 'invalid_push_endpoint_hash');
+        }
+        $this->auth->logout($req->cookies[Auth::COOKIE] ?? null, $pushHash);
         return Response::json(['ok' => true])
             ->withCookie(Auth::COOKIE, '', $this->auth->cookieOptions(clear: true));
     }

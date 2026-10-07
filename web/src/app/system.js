@@ -13,7 +13,7 @@
 
 import { html, useState, useEffect } from '../../vendor/index.js';
 import { useStore, state, set, toast } from './store.js';
-import { currentPushEndpoint, enablePush } from './push.js';
+import { currentEndpointHash, enablePush } from './push.js';
 import { fmtSince } from '../lib/since.js';
 
 function failingRows(health) {
@@ -50,12 +50,12 @@ export function announceSystemHealth() {
 // the server; dismiss hides it for this session only.
 export function SystemBanner() {
   const health = useStore((s) => s.systemHealth);
-  const [endpoint, setEndpoint] = useState(null);
+  const [endpointHash, setEndpointHash] = useState(null);
   const [dismissed, setDismissed] = useState(false);
   const [busy, setBusy] = useState(false);
-  useEffect(() => { currentPushEndpoint().then(setEndpoint); }, [health]);
+  useEffect(() => { currentEndpointHash().then(setEndpointHash); }, [health]);
 
-  const mine = endpoint && failingRows(health).find((r) => r.kind === 'push' && r.endpoint === endpoint);
+  const mine = endpointHash && failingRows(health).find((r) => r.kind === 'push' && r.endpointHash === endpointHash);
   if (!mine || dismissed) return null;
 
   const fix = async () => {

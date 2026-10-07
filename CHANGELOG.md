@@ -4,6 +4,10 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.24 (2026-10-06)
+
+- **The month view's day-expand button says what it does:** "Show all of this day's events in full" instead of "Show this day's events here".
+
 ## 0.9.23 (2026-10-06)
 
 - **Signing out stops reminders on that device.** The server removes only that browser's reminder destination with its session, while leaving the browser permission intact so signing back in restores reminders without another prompt. Other devices and email reminders are unchanged.

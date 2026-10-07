@@ -808,8 +808,8 @@ function WeekRow({
         />`}
       </div>
       <button
-        type="button" class="bc-cell-headstrip" aria-label=${'List events on ' + k}
-        title="Show this day's events here"
+        type="button" class="bc-cell-headstrip" aria-label=${'Show all events on ' + k + ' in full'}
+        title="Show all of this day's events in full"
         onPointerDown=${(e) => e.stopPropagation()}
         onClick=${(e) => { e.stopPropagation(); if (onExpandDay) onExpandDay(k); }}
       ><span class="bc-headstrip-glyph" aria-hidden="true"><${Icon} name="chevronDown" size=${13} /></span></button>

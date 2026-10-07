@@ -25,7 +25,7 @@ What you will notice, so it is not a surprise:
 
 - Writes to Google say "can't be undone", before and after. They are real writes to a calendar that is Google's; there is no local snapshot to roll back to. Ordinary changes are fine; be a little deliberate with edits to a repeating series.
 - An event cannot be moved between a Google calendar and a local one yet. Copy works.
-- Inviting people is still Google's job. Better-Cal does not send invitations through Google. If your week involves sending invites, do that at Google and watch them appear here.
+- Inviting people is still Google's job. Better-Cal does not send invitations, by email or through Google. If your week involves sending invites, do that at Google and watch them appear here.
 
 To stop the test: toggle the extension off, and disconnect the account in Settings if you like. Nothing at Google has changed.
 
@@ -36,7 +36,7 @@ Once the test is comfortable, make Better-Cal the thing you open and Google the 
 - **Keep shared calendars at Google.** A family calendar, a partner's calendar, anything other people write to: leave it at Google and use it through the connector. It stays live for them and for you.
 - **Put new private things in a local calendar.** Anything nobody else needs to see can live here from the start. Local calendars have undo, tags, people, trips, reminders and everything else that does not survive the trip to Google.
 - **Phone**: install the app, or add the CalDAV account to Apple Calendar or DAVx5.
-- **Invitations**: set up the Gmail forward filter in `docs/email-ingest.md`, so invitations sent to your address turn into events here, and you can accept or decline from here with a proper reply. Invitations still show at Google too; answer from whichever side you are on.
+- **Invitations**: with your account's main Google calendar connected, the invitations Google puts on it show here with Accept / Maybe / Decline, and the answer is set at Google (see [google-calendar.md](google-calendar.md#invitations)). For invitations by email, set up the Gmail forward filter in `docs/email-ingest.md`, so they turn into events here; one that arrives with its calendar part can be answered from here with a proper reply once RSVP mail is set up (whether Gmail's forward keeps that part is not yet verified). Invitations still show at Google too; answer from whichever side you are on.
 - **Reminders**: turn on push or email reminders here and turn Google's notifications off, or you will get both.
 - **The same event twice** (a Takeout copy and the Google calendar it came from, a Luma feed and the confirmation you forwarded): Better-Cal shows it once, from the most live copy, and its details say "Also on <calendar>". Close matches it isn't sure of wait in Review as "Possible duplicate"; "Not the same" in either place shows both again. Nothing is merged or deleted, and only one copy reminds you.
 - **Stop opening Google Calendar.** That is the actual test. If you find yourself needing it, note what for; it is either a gap listed above or something worth an issue.
@@ -49,7 +49,7 @@ Going back is stopping.
 
 1. **Toggle off or uninstall the extension.** Links open at Google again immediately.
 2. **Anything on a Google calendar is already at Google.** You did not move it; you edited it in place.
-3. **Anything in a local calendar** that you want at Google: create an outbound feed for that calendar (Settings → Connections) and subscribe Google to its URL, or export it once by opening that URL and importing the file at Google. Or leave it; local calendars keep working through CalDAV whether or not you use the web app.
+3. **Anything in a local calendar** that you want at Google: move it there from its settings (**Move to Google…**), or create an outbound feed for that calendar (Settings → Connections) and subscribe Google to its URL, or export it once by opening that URL and importing the file at Google. Or leave it; local calendars keep working through CalDAV whether or not you use the web app.
 4. **Turn Google's notifications back on**, and disconnect the account here if you want the token revoked.
 
 Nothing you did in steps 1 and 2 needs undoing.
@@ -83,6 +83,6 @@ One local calendar per file, recurrence intact, safe to re-run. Use this instead
 | Step | To undo it |
 |---|---|
 | Connect Google, use the extension | Toggle the extension off, disconnect. Nothing changed at Google. |
-| Local calendars for private things | Subscribe Google to the calendar's outbound feed, or export it once. |
-| Adopt a calendar as local | Cannot be re-linked to the Google copy; export it and import at Google if you want it back there. Adopt one calendar at a time, when sure. |
+| Local calendars for private things | Move it to Google from its settings, subscribe Google to the calendar's outbound feed, or export it once. |
+| Adopt a calendar as local | Cannot be re-linked to the Google copy; move it to Google again (a new Google calendar) or export it and import at Google if you want it back there. Adopt one calendar at a time, when sure. |
 | Takeout import | Delete the imported calendars here; Google still has everything. |

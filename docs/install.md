@@ -12,7 +12,8 @@ If your host differs and something needs changing, please report it.
 
 ## Requirements
 
-- PHP 8.4 or newer (8.4.1 or later) with these extensions: `pdo_mysql`, `curl`, `mbstring`, `xml` (dom, simplexml, xmlreader, xmlwriter: CalDAV needs them), `zip`, plus `json`, `openssl`, `sodium` and `ctype`, which nearly every PHP build already has. `composer check-platform-reqs --lock --no-dev`, run in `server/`, lists anything missing.
+- PHP 8.4 or newer (8.4.1 or later) with these extensions: `pdo_mysql`, `curl`, `mbstring`, `xml` (dom, simplexml, xmlreader, xmlwriter: CalDAV needs them), `zip`, plus `json`, `openssl`, `sodium`, `ctype`, `iconv` and `fileinfo`, which nearly every PHP build already has. `composer check-platform-reqs --lock --no-dev`, run in `server/`, lists anything missing.
+  - `proc_open` must be allowed, and the PHP command-line binary installed in PHP's own bin directory (`php8.4-cli` below does this on Debian and Ubuntu). Every outbound request (feeds, Google, place search, plugins) looks up its address in a short-lived child process, so a slow DNS server cannot stall it; without one, those requests fail and Settings, System lists the failures. Some shared hosts disable `proc_open`. Outbound requests connect directly: proxy variables such as `HTTPS_PROXY` are ignored.
   - Shared hosting: pick PHP 8.4 or 8.5 in the host's panel (DreamHost, cPanel hosts and most others offer both).
   - Debian 13 and Ubuntu 26.04 ship PHP 8.4 and 8.5 respectively: `apt install php8.4-cli php8.4-mysql php8.4-curl php8.4-mbstring php8.4-xml php8.4-zip` (use `8.5` on Ubuntu 26.04), plus `libapache2-mod-php8.4` or `php8.4-fpm` for the web server.
   - Ubuntu 24.04 and Debian 12 ship older PHP. Add the widely used packages by Ondřej Surý first: `sudo add-apt-repository ppa:ondrej/php` on Ubuntu (Debian: https://packages.sury.org/php/), then the `php8.4-*` packages above.
@@ -20,7 +21,7 @@ If your host differs and something needs changing, please report it.
 - MySQL 8.0.19 or newer, or MariaDB 10.6 or newer, with one empty database and a user with full rights on it.
 - A cron entry (or any scheduler) that can run a PHP script every minute.
 - HTTPS. Sessions, the service worker and Web Push all require it.
-- Node 20+ only if you want to run the frontend tests or the MCP server. The app itself needs no build step.
+- Node 20+ only if you want to run the frontend tests, `scripts/deploy.sh` (which runs them) or the MCP server. The app itself needs no build step.
 
 ## Steps
 
@@ -34,7 +35,7 @@ If your host differs and something needs changing, please report it.
 8. Optional: `php server/bin/vapid.php --generate` and put the keys in `.env` to enable push reminders.
 9. Optional: the Google Calendar connector needs an OAuth client of your own, from a free Google Cloud project: about ten minutes, with direct links to each console page, in [google-calendar.md](google-calendar.md#one-time-setup-the-operator).
 
-Updating is: pull, `composer install --no-dev`, `php server/bin/migrate.php`. `scripts/deploy.sh` does this over rsync and ssh, runs every test suite first, and refuses to ship a red tree: copy `scripts/deploy.env.example` to `scripts/deploy.env`, fill in the host and paths, and run it. It assumes a Debian-style host with sudo, composer and cron; `scripts/deploy-dev.sh` ships any branch to a second, isolated install on the same host.
+Updating is: pull, `composer install --no-dev`, `php server/bin/migrate.php`. `scripts/deploy.sh` does this over rsync and ssh (nothing git ignores is copied). It runs the server, smoke and static suites and the vendor check first and refuses to ship a red tree, then backs up the app directory and the database on the server before changing anything, and finishes with the health check and `smoke.php`. To use it, copy `scripts/deploy.env.example` to `scripts/deploy.env`, fill in the host and paths, and run it. It assumes a Debian-style host with sudo, composer, mysqldump and cron; `scripts/deploy-dev.sh` ships any branch to a second, isolated install on the same host.
 
 ## Dependencies and advisories
 
@@ -139,7 +140,7 @@ This exact block was used in the clean-install test under mod_php: CalDAV, API t
 
 `[END]` rather than `[L]` matters: in a directory context `[L]` starts another rewrite pass, which would send `dav.php` on to `index.php`. This routes every request through PHP, including static files, so the symlinks and `FollowSymLinks` are not involved and the app's cache headers apply as they are.
 
-**On shared hosting, or anywhere you cannot edit the virtual host, there is nothing to add:** the repository ships `server/public/.htaccess` with the same routing, using the older way of passing the Authorization header, which works where `CGIPassAuth` is not allowed. The host only has to allow `FileInfo` overrides for that directory, which shared hosts do. Tested on Apache 2.4 with `AllowOverride FileInfo` and nothing else: every page, CalDAV and API tokens. It should behave the same on LiteSpeed, which reads `.htaccess` rewrites, but that hasn't been tried yet. With a virtual host like the one above (`AllowOverride None`), the file is ignored.
+**On shared hosting, or anywhere you cannot edit the virtual host, there is nothing to add:** the repository ships `server/public/.htaccess` with the same routing, using the older way of passing the Authorization header, which works where `CGIPassAuth` is not allowed. The host only has to allow `FileInfo` overrides for that directory, which shared hosts do. Tested on Apache 2.4 with `AllowOverride FileInfo` and nothing else: every page, CalDAV and API tokens. It has not yet been tried on an actual shared host (issue #22). It should behave the same on LiteSpeed, which reads `.htaccess` rewrites, but that hasn't been tried yet either. With a virtual host like the one above (`AllowOverride None`), the file is ignored.
 
 If the host forces the document root to a directory you do not control (`public_html`), make that directory a symlink to `server/public`, or put the repository beside it and symlink `index.php` and `dav.php` in; both files locate the rest of the app relative to their real path.
 
@@ -153,7 +154,7 @@ Sign-in attempts are rate limited per network address. If something on another a
 
 ## Protecting `.env`
 
-`.env` holds the database password and the session secret. Keep it readable by the PHP user and by nobody else: on shared hosting (Dreamhost, Bluehost and the like) that is `chmod 600 .env`, owned by your own account, which is also the user PHP runs as. Where you have root, `scripts/deploy.sh` goes a step further and makes it owned by root and only readable by the app's group, so the web app cannot rewrite its own configuration. Nothing in the app depends on either; it only needs to read the file.
+`.env` holds the database password and the session secret. Keep it readable by the PHP user and by nobody else: on shared hosting (Dreamhost, Bluehost and the like) that is `chmod 600 .env`, owned by your own account, which is also the user PHP runs as. When `scripts/deploy.sh` connects as root, it goes a step further and makes it owned by root and only readable by the app's group, so the web app cannot rewrite its own configuration. Nothing in the app depends on either; it only needs to read the file.
 
 ## After installing
 

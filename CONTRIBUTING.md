@@ -18,7 +18,7 @@ Honest answers are the promise. Some things will be declined because they are no
 
 ## Before you open a pull request
 
-Every suite must pass; CI runs them on every pull request and the deploy script refuses to ship if they fail.
+Every suite must pass; CI runs all four on every pull request, and the deploy script refuses to ship if any of the first three fail.
 
 ```bash
 php server/tests/run.php
@@ -27,9 +27,9 @@ node --experimental-vm-modules web/tests/static.mjs
 node tools/mcp/test.mjs
 ```
 
-The smoke suite is run under several time zones on deploy, so a test that only passes in yours will be caught. Add a test with any behaviour change: the server suite is plain PHP with no database (SQLite in memory where one is needed, so PHP needs `pdo_sqlite`: `php8.4-sqlite3` on Debian and Ubuntu), the smoke suite is plain Node.
+The smoke suite is run under several time zones on deploy, so a test that only passes in yours will be caught. Add a test with any behaviour change: the server suite is plain PHP with no database (SQLite in memory where one is needed, so PHP needs `pdo_sqlite`: `php8.4-sqlite3` on Debian and Ubuntu; the CalDAV and iCalendar checks also need `composer install` in `server/` and are skipped without it), the smoke suite is plain Node.
 
-Changing anything about repeating events, time zones, or import and export (`Recurrence`, `Ics`, `Time`, `web/src/lib/dates.js`)? Also run `tools/tz-harness/run.sh`, which checks about 3,800 series against two independent calendar engines (see its README). It needs uv and Node, so it isn't part of the deploy.
+Changing anything about repeating events, time zones, or import and export (`Recurrence`, `Ics`, `Time`, `web/src/lib/dates.js`)? Also run `tools/tz-harness/run.sh`, which checks about 3,800 series against two independent calendar engines (see its README). It needs Composer's libraries in `server/vendor`, uv and Node, so it isn't part of the deploy.
 
 A few habits the codebase keeps:
 

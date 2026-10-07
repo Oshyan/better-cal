@@ -20,11 +20,11 @@ scan report as fixed; those findings still need triage and remediation rounds.
 | M3 | EXDATE cardinality bypassed parser and durable-work budgets | [x] | [x] | [ ] |
 | M4 | Distant deep links created unbounded authenticated request fanout | [x] | [x] | [ ] |
 | M5 | API-token-created subscriptions survived token revocation | [x] | [x] | [ ] |
-| M6 | Geocoding redirects bypass the shared outbound-address policy | [ ] | [ ] | [ ] |
+| M6 | Geocoding redirects bypass the shared outbound-address policy | [x] | [x] | [ ] |
 
 Round 1 (H1) and Round 2 (M1/M5) shipped to `main` in `f58c682`. Phase 3
-(M3/M4) is in the commit containing this checklist. M6 is the next unresolved
-finding in the focused validation set.
+(M3/M4) shipped in `8a3b7d3`. Phase 4 (M6) is implemented and locally verified
+in the current working tree; its deployed exercises remain deliberately open.
 
 ## Completed local evidence
 
@@ -38,10 +38,25 @@ finding in the focused validation set.
   before Sabre parsing, while a 607-value representative control passes.
 - [x] M4 year-9999 control produces no broad window and one 72-hour target
   window; the legitimate 28-day reminder control keeps its existing preload.
-- [x] Server suite: 1,872 passed, 0 failed.
+- [x] M6 geocoding goes through one HTTPS-only transport with vetted and pinned
+  DNS answers at every redirect, direct egress that ignores ambient proxy
+  variables, an absolute DNS/connect/transfer deadline, per-response and
+  aggregate byte caps, and partial batch success.
+- [x] M6 hostile controls cover private and mixed DNS answers, HTTP downgrade,
+  proxy bypass, slow DNS, response budgets, IPv6 literal syntax, all-address
+  fallback and reflected-host log sanitization. Real Photon and Open-Meteo
+  requests succeeded; a public redirect succeeded while loopback and downgrade
+  redirects were refused before their destination connection.
+- [x] Geocoder failures use sanitized reason categories in the PHP error log.
+  The first failure appears in Settings, the second creates one Activity item,
+  the third causes an owner-facing launch notice, and the existing job alert
+  sweep emails a persistent three-failure streak after one hour. Recovery is
+  recorded once. Health transitions use a locked transaction so concurrent
+  requests cannot lose counts or duplicate Activity transitions.
+- [x] Server suite: 1,898 passed, 0 failed.
 - [x] Frontend smoke suite: 652 passed, 0 failed in each of
   `America/Los_Angeles`, `UTC` and `Pacific/Auckland`.
-- [x] Frontend static checks: 337 passed, 0 failed across 103 modules.
+- [x] Frontend static checks: 339 passed, 0 failed across 103 modules.
 - [x] MCP suite: 63 passed, 0 failed.
 - [x] Time-zone harness: 3,840 generated cases and zero changed occurrence
   windows after export and re-import.
@@ -127,6 +142,24 @@ private calendar data to the evidence.
   final DNS resolution.
 - [ ] Confirm redirect-count, response-byte and timeout limits fail cleanly and
   do not stall a PHP worker.
+- [ ] Confirm the deployed PHP runtime permits `proc_open` and that
+  `PHP_BINDIR/php` is executable; geocoding and other policy-controlled outbound
+  requests fail closed when bounded DNS resolution cannot be started.
+- [ ] If the host defines `HTTP_PROXY`, `HTTPS_PROXY` or `ALL_PROXY`, confirm
+  the application is expected to use direct egress. The hardened client ignores
+  those variables so a proxy cannot bypass DNS pinning.
+- [ ] Force one sanitized provider failure and confirm it appears in the PHP
+  error log and Settings > System without the place query, URL or redirect host.
+- [ ] Force a second consecutive failure and confirm exactly one Activity item
+  appears. Force a third and relaunch the app; confirm the owner-facing notice
+  directs the operator to Settings > System.
+- [ ] Issue simultaneous failed autocomplete requests against a disposable
+  MySQL installation. Confirm every failure is counted and the threshold creates
+  only one Activity item; repeat simultaneous recoveries and confirm one
+  recovery item. This specifically verifies InnoDB row-lock behavior.
+- [ ] Keep a controlled three-failure streak open for more than one hour with
+  SMTP configured and run the alert sweep. Confirm one failure email, then one
+  recovery email after service returns; confirm no repeated mail per request.
 
 ## Deployment closeout
 

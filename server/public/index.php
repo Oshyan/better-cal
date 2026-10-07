@@ -75,8 +75,9 @@ function bc_handle_api(Request $request, array $cfg): void
         $savedViews = new Domain\SavedViews($db, $undo);
         $outFeeds = new Domain\OutFeeds($db, $search, $cfg);
         $settings = new Domain\Settings($db);
-        $geocode = new Domain\Geocode($db);
-        $placeSearch = new Domain\PlaceSearch();
+        $geocoderTransport = new \BetterCal\Infra\PoliciedGeocoderTransport($db);
+        $geocode = new Domain\Geocode($db, $geocoderTransport);
+        $placeSearch = new Domain\PlaceSearch($geocoderTransport);
         $pushSubscriptions = new Domain\PushSubscriptions($db, $cfg['push']['extra_hosts']);
         $pushSender = new \BetterCal\Infra\PushSender($cfg);
         $emailSender = new \BetterCal\Infra\EmailSender($cfg);

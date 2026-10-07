@@ -28,6 +28,13 @@ export function announceSystemHealth() {
   if (filters) {
     toast('Prompt filters are not being evaluated (failing since ' + fmtSince(filters.firstFailedAt) + '). Events they would hide may be showing.', { error: true });
   }
+  const geocoders = rows.filter((r) => r.subject.startsWith('geocoder:') && r.consecutiveFailures >= 3);
+  if (geocoders.length === 1) {
+    toast(geocoders[0].label + ' has failed repeatedly since ' + fmtSince(geocoders[0].firstFailedAt)
+      + '. Some location lookups may fail. See Settings, System.', { error: true });
+  } else if (geocoders.length > 1) {
+    toast('Location lookup providers have failed repeatedly. Place suggestions and map pins may be unavailable. See Settings, System.', { error: true });
+  }
   const visibleIds = new Set(state.calendars.filter((c) => c.visible).map((c) => c.id));
   const feeds = rows.filter((r) => r.kind === 'feed' && r.consecutiveFailures >= 2
     && visibleIds.has(Number(r.subject.split(':')[1])));

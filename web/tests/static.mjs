@@ -84,6 +84,19 @@ for (const file of files) {
   check(/<meta name="referrer" content="strict-origin-when-cross-origin">/.test(html), 'index.html must set a referrer policy');
 }
 
+// --- 4. repeated geocoder failures reach the owner ------------------------
+// Transport failures stay out of the location-picker response, so the boot
+// health notice is the user-visible half of the server health streak.
+{
+  const web = join(root, '..');
+  const system = readFileSync(join(root, 'app', 'system.js'), 'utf8');
+  const check = (ok, msg) => { if (ok) passed++; else fail(msg); };
+  check(/subject\.startsWith\('geocoder:'\)[\s\S]*consecutiveFailures >= 3/.test(system),
+    'system health must announce geocoder failures only after a three-failure streak');
+  check(system.includes('See Settings, System.'),
+    'geocoder failure notice must direct the owner to the health details');
+}
+
 console.log('');
 console.log(passed + ' checks passed, ' + failed + ' failed (' + files.length + ' modules)');
 if (failed > 0) process.exit(1);

@@ -13,13 +13,14 @@ use BetterCal\Support\Time;
  * where the user will see them and email when a failure has lasted long
  * enough to be real.
  *
- * Subjects: 'job:<type>' (system-wide), 'feed:<calendarId>' and
- * 'push:<subscriptionId>' (per user). Callers report every outcome; this
- * class notices the moments that matter — a failing streak that has proved
- * itself (JOURNAL_AFTER consecutive failures; one bad fetch is weather, not
- * news) and the first success after such a streak — and writes exactly one
- * Activity entry for each. A streak that persists past a per-kind threshold
- * earns one email, and one more when it recovers; never one per failure.
+ * Subjects: 'job:<type>' and 'geocoder:<provider>' (system-wide), plus
+ * 'feed:<calendarId>' and 'push:<subscriptionId>' (per user). Callers report
+ * every outcome; this class notices the moments that matter — a failing
+ * streak that has proved itself (JOURNAL_AFTER consecutive failures; one bad
+ * fetch is weather, not news) and the first success after such a streak — and
+ * writes exactly one Activity entry for each. A streak that persists past a
+ * per-kind threshold earns one email, and one more when it recovers; never one
+ * per failure.
  * A single blip still lands in the table (Settings, System) and still
  * counts toward the email thresholds; it just does not become history.
  *
@@ -54,62 +55,76 @@ final class SystemHealth
     {
         $now = Time::nowDb();
         $error = mb_substr($error, 0, 2000);
-        $row = $this->db->one('SELECT * FROM system_health WHERE subject = ?', [$subject]);
-        if ($row === null) {
-            $this->db->insert('system_health', [
-                'subject' => $subject, 'kind' => $kind, 'user_id' => $userId, 'label' => mb_substr($label, 0, 160),
-                'status' => 'failing', 'first_failed_at' => $now, 'last_failed_at' => $now,
-                'consecutive_failures' => 1, 'last_error' => $error,
-            ]);
-            return true;
-        }
-        $transition = $row['status'] !== 'failing';
-        $streak = $transition ? 1 : (int) $row['consecutive_failures'] + 1;
-        $this->db->update('system_health', [
-            'label' => mb_substr($label, 0, 160),
-            'status' => 'failing',
-            'first_failed_at' => $transition ? $now : $row['first_failed_at'],
-            'last_failed_at' => $now,
-            'consecutive_failures' => $streak,
-            'last_error' => $error,
-            'alerted_at' => $transition ? null : $row['alerted_at'],
-        ], 'subject = ?', [$subject]);
-        // Journaled once, the moment the streak proves itself; a flaky
-        // upstream that fails one fetch in thirty never reaches Activity.
-        if ($streak === self::JOURNAL_AFTER) {
-            $this->journal($userId, "$label started failing: $error");
-        }
-        return $transition;
+        $label = mb_substr($label, 0, 160);
+        return $this->db->tx(function () use ($subject, $kind, $userId, $label, $error, $now): bool {
+            // The no-op upsert is the lock acquisition point. Concurrent
+            // request workers serialize on the subject before any reads,
+            // avoiding lost streak increments and duplicate Activity entries.
+            $this->ensureRow($subject, $kind, $userId, $label);
+            $row = $this->lockedRow($subject);
+            if ($row === null) {
+                throw new \RuntimeException('Could not create system health row');
+            }
+            $transition = $row['status'] !== 'failing';
+            $streak = $transition ? 1 : (int) $row['consecutive_failures'] + 1;
+            $this->db->update('system_health', [
+                'kind' => $kind,
+                'user_id' => $userId,
+                'label' => $label,
+                'status' => 'failing',
+                'first_failed_at' => $transition ? $now : $row['first_failed_at'],
+                'last_failed_at' => $now,
+                'consecutive_failures' => $streak,
+                'last_error' => $error,
+                'alerted_at' => $transition ? null : $row['alerted_at'],
+            ], 'subject = ?', [$subject]);
+            // Journaled once, the moment the locked streak proves itself; a
+            // flaky upstream that fails one fetch in thirty never reaches Activity.
+            if ($streak === self::JOURNAL_AFTER) {
+                $this->journal($userId, "$label started failing: $error");
+            }
+            return $transition;
+        });
     }
 
     /** @return bool true when this was the first success after a failing streak (recovery) */
-    public function recordOk(string $subject, string $kind, ?int $userId, string $label): bool
+    public function recordOk(string $subject, string $kind, ?int $userId, string $label, bool $create = true): bool
     {
         $now = Time::nowDb();
-        $row = $this->db->one('SELECT * FROM system_health WHERE subject = ?', [$subject]);
-        if ($row === null) {
-            $this->db->insert('system_health', [
-                'subject' => $subject, 'kind' => $kind, 'user_id' => $userId, 'label' => mb_substr($label, 0, 160),
-                'status' => 'ok', 'last_ok_at' => $now,
-            ]);
-            return false;
-        }
-        $recovered = $row['status'] === 'failing';
-        // A recovery is only news if the failure was.
-        $journaled = $recovered && (int) $row['consecutive_failures'] >= self::JOURNAL_AFTER;
-        // alerted_at survives recovery on purpose: the alert job reads it to
-        // know a failure email went out and a recovery email is owed, then
-        // clears it.
-        $this->db->update('system_health', [
-            'label' => mb_substr($label, 0, 160),
-            'status' => 'ok',
-            'last_ok_at' => $now,
-            'consecutive_failures' => 0,
-        ], 'subject = ?', [$subject]);
-        if ($journaled) {
-            $this->journal($userId, "$label recovered after " . self::describeStreak($row, $now));
-        }
-        return $recovered;
+        $label = mb_substr($label, 0, 160);
+        return $this->db->tx(function () use ($subject, $kind, $userId, $label, $create, $now): bool {
+            if ($create) {
+                $this->ensureRow($subject, $kind, $userId, $label);
+            }
+            $row = $this->lockedRow($subject);
+            if ($row === null) {
+                return false;
+            }
+            // High-frequency callers such as place autocomplete pass false:
+            // after a failure has recovered, healthy requests must become
+            // read-only instead of serializing forever on this global row.
+            if (!$create && $row['status'] !== 'failing') {
+                return false;
+            }
+            $recovered = $row['status'] === 'failing';
+            // A recovery is only news if the failure was.
+            $journaled = $recovered && (int) $row['consecutive_failures'] >= self::JOURNAL_AFTER;
+            // alerted_at survives recovery on purpose: the alert job reads it
+            // to know a failure email went out and a recovery email is owed,
+            // then clears it.
+            $this->db->update('system_health', [
+                'kind' => $kind,
+                'user_id' => $userId,
+                'label' => $label,
+                'status' => 'ok',
+                'last_ok_at' => $now,
+                'consecutive_failures' => 0,
+            ], 'subject = ?', [$subject]);
+            if ($journaled) {
+                $this->journal($userId, "$label recovered after " . self::describeStreak($row, $now));
+            }
+            return $recovered;
+        });
     }
 
     // ---- Reading ------------------------------------------------------
@@ -291,6 +306,36 @@ final class SystemHealth
     }
 
     // ---- Internals ----------------------------------------------------
+
+    private function ensureRow(string $subject, string $kind, ?int $userId, string $label): void
+    {
+        $params = [$subject, $kind, $userId, $label];
+        if ($this->driver() === 'mysql') {
+            $this->db->run(
+                'INSERT INTO system_health (subject, kind, user_id, label) VALUES (?, ?, ?, ?) '
+                . 'ON DUPLICATE KEY UPDATE subject = VALUES(subject)',
+                $params
+            );
+            return;
+        }
+        // The test suite uses SQLite. Its writer transaction supplies the
+        // serialization that InnoDB supplies with the upsert row lock.
+        $this->db->run(
+            'INSERT OR IGNORE INTO system_health (subject, kind, user_id, label) VALUES (?, ?, ?, ?)',
+            $params
+        );
+    }
+
+    private function lockedRow(string $subject): ?array
+    {
+        $lock = $this->driver() === 'mysql' ? ' FOR UPDATE' : '';
+        return $this->db->one('SELECT * FROM system_health WHERE subject = ?' . $lock, [$subject]);
+    }
+
+    private function driver(): string
+    {
+        return (string) $this->db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME);
+    }
 
     private function journal(?int $userId, string $summary): void
     {

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace BetterCal\Domain;
 
 use BetterCal\Http\HttpError;
+use BetterCal\Infra\GeocoderTransport;
 
 /**
  * Multi-candidate place autocomplete backed by photon.komoot.io (free, no
@@ -20,12 +21,13 @@ use BetterCal\Http\HttpError;
  */
 final class PlaceSearch
 {
-    private const ENDPOINT = 'https://photon.komoot.io/api';
-    private const TIMEOUT_SECONDS = 3;
-    private const USER_AGENT = 'Better-Cal/0.1 (self-hosted)';
     public const DEFAULT_LIMIT = 6;
     public const MAX_LIMIT = 10;
     public const FAR_KM = 500.0;
+
+    public function __construct(private readonly GeocoderTransport $transport)
+    {
+    }
 
     /**
      * Approximate centroids (city anchor) for major IANA zones. Coarse on
@@ -252,8 +254,7 @@ final class PlaceSearch
         $alt = self::ampersandVariant($q);
         $bodies = $this->fetchAll($alt === null ? [$params] : [['q' => $alt] + $params, $params]);
         $features = [];
-        foreach ($bodies as $body) {
-            $decoded = $body === null ? null : json_decode($body, true);
+        foreach ($bodies as $decoded) {
             if (is_array($decoded) && is_array($decoded['features'] ?? null)) {
                 array_push($features, ...$decoded['features']);
             }
@@ -311,90 +312,10 @@ final class PlaceSearch
     /**
      * Several provider fetches in parallel; each result null on failure.
      * @param list<array<string,mixed>> $paramSets
-     * @return list<?string>
+     * @return list<?array>
      */
     private function fetchAll(array $paramSets): array
     {
-        if (count($paramSets) === 1 || !function_exists('curl_multi_init')) {
-            return array_map(fn(array $p): ?string => $this->fetch($p), $paramSets);
-        }
-        $multi = curl_multi_init();
-        $handles = [];
-        foreach ($paramSets as $i => $p) {
-            $ch = $this->handle($p);
-            if ($ch === null) {
-                continue;
-            }
-            $handles[$i] = $ch;
-            curl_multi_add_handle($multi, $ch);
-        }
-        do {
-            $status = curl_multi_exec($multi, $running);
-            if ($running) {
-                curl_multi_select($multi, 0.5);
-            }
-        } while ($running && $status === CURLM_OK);
-        $out = [];
-        foreach ($paramSets as $i => $_) {
-            $ch = $handles[$i] ?? null;
-            if ($ch === null) {
-                $out[] = null;
-                continue;
-            }
-            $body = curl_multi_getcontent($ch);
-            $code = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
-            curl_multi_remove_handle($multi, $ch);
-            curl_close($ch);
-            $out[] = is_string($body) && $body !== '' && $code > 0 && $code < 400 ? $body : null;
-        }
-        curl_multi_close($multi);
-        return $out;
-    }
-
-    /** A configured curl handle for one provider request, or null. */
-    private function handle(array $params): ?\CurlHandle
-    {
-        $ch = curl_init(self::ENDPOINT . '?' . http_build_query($params));
-        if ($ch === false) {
-            return null;
-        }
-        curl_setopt_array($ch, [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_FOLLOWLOCATION => true,
-            CURLOPT_MAXREDIRS => 3,
-            CURLOPT_TIMEOUT => self::TIMEOUT_SECONDS,
-            CURLOPT_CONNECTTIMEOUT => self::TIMEOUT_SECONDS,
-            CURLOPT_USERAGENT => self::USER_AGENT,
-            CURLOPT_PROTOCOLS => CURLPROTO_HTTPS,
-            CURLOPT_REDIR_PROTOCOLS => CURLPROTO_HTTPS,
-        ]);
-        return $ch;
-    }
-
-    /** Raw provider fetch; null on any transport-level failure. */
-    private function fetch(array $params): ?string
-    {
-        $url = self::ENDPOINT . '?' . http_build_query($params);
-        $ch = curl_init($url);
-        if ($ch === false) {
-            return null;
-        }
-        curl_setopt_array($ch, [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_FOLLOWLOCATION => true,
-            CURLOPT_MAXREDIRS => 3,
-            CURLOPT_TIMEOUT => self::TIMEOUT_SECONDS,
-            CURLOPT_CONNECTTIMEOUT => self::TIMEOUT_SECONDS,
-            CURLOPT_USERAGENT => self::USER_AGENT,
-            CURLOPT_PROTOCOLS => CURLPROTO_HTTPS,
-            CURLOPT_REDIR_PROTOCOLS => CURLPROTO_HTTPS,
-        ]);
-        $body = curl_exec($ch);
-        $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
-        curl_close($ch);
-        if (!is_string($body) || $body === '' || $status >= 400) {
-            return null;
-        }
-        return $body;
+        return $this->transport->photon($paramSets);
     }
 }

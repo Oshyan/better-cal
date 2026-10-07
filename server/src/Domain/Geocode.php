@@ -6,6 +6,7 @@ namespace BetterCal\Domain;
 
 use BetterCal\Http\HttpError;
 use BetterCal\Infra\Db;
+use BetterCal\Infra\GeocoderTransport;
 
 /**
  * Forward geocoding proxy backed by photon.komoot.io (free, no key) with a
@@ -15,13 +16,12 @@ use BetterCal\Infra\Db;
  */
 final class Geocode
 {
-    private const ENDPOINT = 'https://photon.komoot.io/api';
-    private const TIMEOUT_SECONDS = 3;
-    private const USER_AGENT = 'Better-Cal/0.1 (self-hosted)';
     public const MAX_QUERY_LENGTH = 500;
 
-    public function __construct(private readonly Db $db)
-    {
+    public function __construct(
+        private readonly Db $db,
+        private readonly GeocoderTransport $transport,
+    ) {
     }
 
     // ---- Pure helpers (unit-tested, no DB, no network) -----------------
@@ -205,13 +205,10 @@ final class Geocode
      * Secondary provider: indexes English exonyms and reports population.
      *
      * Primary and secondary are deliberately two isolated pure decoders
-     * (mapResponse for the primary, secondaryOverride for this one) with the
-     * endpoint alongside each. Making the pair user-configurable later — so an
-     * operator can point primary at a keyed provider they prefer — is a config
-     * lookup plus one decoder per provider, not a rewrite. See GH #30.
+     * (mapResponse for the primary, secondaryOverride for this one). Making the
+     * pair user-configurable later is a transport/config change plus one
+     * decoder per provider, not a rewrite. See GH #30.
      */
-    private const SECONDARY_ENDPOINT = 'https://geocoding-api.open-meteo.com/v1/search';
-
     /**
      * A result at or below this rank is worth a second opinion. Set at `city`
      * because American "cities" of two thousand people routinely outrank world
@@ -288,28 +285,10 @@ final class Geocode
     /** Ask the secondary provider; null on any failure, so it can only help. */
     private function fetchSecondary(string $q): ?array
     {
-        $url = self::SECONDARY_ENDPOINT . '?' . http_build_query([
+        $decoded = $this->transport->openMeteo([
             'name' => $q, 'count' => 5, 'language' => 'en', 'format' => 'json',
         ]);
-        $ch = curl_init($url);
-        if ($ch === false) {
-            return null;
-        }
-        curl_setopt_array($ch, [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_FOLLOWLOCATION => false,
-            CURLOPT_TIMEOUT => self::TIMEOUT_SECONDS,
-            CURLOPT_CONNECTTIMEOUT => self::TIMEOUT_SECONDS,
-            CURLOPT_USERAGENT => self::USER_AGENT,
-            CURLOPT_PROTOCOLS => CURLPROTO_HTTPS,
-        ]);
-        $body = curl_exec($ch);
-        $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
-        curl_close($ch);
-        if (!is_string($body) || $body === '' || $status >= 400) {
-            return null;
-        }
-        return self::secondaryOverride(json_decode($body, true));
+        return $decoded !== null ? self::secondaryOverride($decoded) : null;
     }
 
     /**
@@ -495,12 +474,11 @@ final class Geocode
                 $params['lat'] = $biasLat;
                 $params['lon'] = $biasLng;
             }
-            $body = $this->fetch($params);
-            if ($body === null) {
+            $decoded = $this->fetch($params);
+            if ($decoded === null) {
                 // Transport failure: answer not-found, cache nothing.
                 return ['lat' => null, 'lng' => null, 'display' => null, 'kind' => null, 'transport' => true];
             }
-            $decoded = json_decode($body, true);
             if ($biasLat !== null && $biasLng !== null) {
                 $ranked = PlaceSearch::rank(PlaceSearch::mapFeatures($decoded, $biasLat, $biasLng));
                 $top = $ranked[0] ?? null;
@@ -553,30 +531,9 @@ final class Geocode
         return $mapped ?? ['lat' => null, 'lng' => null, 'display' => null, 'kind' => null];
     }
 
-    /** Raw provider fetch; null on any transport-level failure. */
-    private function fetch(array $params): ?string
+    /** Policied provider fetch; null on any transport-level failure. */
+    private function fetch(array $params): ?array
     {
-        $url = self::ENDPOINT . '?' . http_build_query($params);
-        $ch = curl_init($url);
-        if ($ch === false) {
-            return null;
-        }
-        curl_setopt_array($ch, [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_FOLLOWLOCATION => true,
-            CURLOPT_MAXREDIRS => 3,
-            CURLOPT_TIMEOUT => self::TIMEOUT_SECONDS,
-            CURLOPT_CONNECTTIMEOUT => self::TIMEOUT_SECONDS,
-            CURLOPT_USERAGENT => self::USER_AGENT,
-            CURLOPT_PROTOCOLS => CURLPROTO_HTTPS,
-            CURLOPT_REDIR_PROTOCOLS => CURLPROTO_HTTPS,
-        ]);
-        $body = curl_exec($ch);
-        $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
-        curl_close($ch);
-        if (!is_string($body) || $body === '' || $status >= 400) {
-            return null;
-        }
-        return $body;
+        return $this->transport->photon([$params])[0] ?? null;
     }
 }

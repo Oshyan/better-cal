@@ -26,6 +26,7 @@ use BetterCal\Http\HttpError;
 use BetterCal\Http\Router;
 use BetterCal\Infra\LlmGateway;
 use BetterCal\Infra\LlmTransport;
+use BetterCal\Infra\PoliciedGeocoderTransport;
 use BetterCal\Support\Ids;
 use BetterCal\Support\Limits;
 use BetterCal\Support\Time;
@@ -535,6 +536,172 @@ foreach (['8.8.8.8', '140.82.112.3', '2606:4700:4700::1111', '100.128.0.1', '2a0
     check('http policy allows ' . $ok, !HttpClient::isForbiddenIp($ok));
 }
 
+// The policy-aware batch path must make its address decision before any
+// connection. A mixed answer fails closed just like a wholly-private one.
+$batchPrivate = new HttpClient(
+    requestBudget: 3,
+    allowedSchemes: ['https'],
+    resolver: static fn(string $host): array => $host === 'mixed.example'
+        ? ['93.184.216.34', '127.0.0.1']
+        : ['169.254.169.254']
+);
+$batchRefused = $batchPrivate->getMany([
+    'https://private.example/path',
+    'https://mixed.example/path',
+    'http://public.example/downgrade',
+]);
+check('http batch refuses a private DNS answer', str_contains((string) $batchRefused[0]['error'], 'Refused private/internal'));
+check('http batch refuses a mixed public/private DNS answer', str_contains((string) $batchRefused[1]['error'], 'Refused private/internal'));
+check('http batch refuses a disallowed scheme', str_contains((string) $batchRefused[2]['error'], 'Refused URL scheme'));
+checkEq('http batch refuses before a connection consumes budget', 0, $batchPrivate->requestsUsed());
+
+// Pin every vetted answer so an unreachable first address does not discard a
+// healthy sibling. IPv6 literal hosts need brackets on both sides of the
+// CURLOPT_RESOLVE rule's host:port:addresses grammar.
+$destinationMethod = new ReflectionMethod(HttpClient::class, 'destination');
+$multiAddressClient = new HttpClient(
+    allowedSchemes: ['https'],
+    resolver: static fn(string $host, int $remainingMs): array => [
+        '2606:4700:4700::1111',
+        '8.8.8.8',
+    ]
+);
+$multiDestination = $destinationMethod->invoke(
+    $multiAddressClient,
+    'https://provider.example/path',
+    microtime(true) + 1
+);
+checkEq(
+    'http pinning retains every vetted address',
+    'provider.example:443:[2606:4700:4700::1111],8.8.8.8',
+    $multiDestination['resolve']
+);
+$literalDestination = $destinationMethod->invoke(
+    new HttpClient(allowedSchemes: ['https']),
+    'https://[2606:4700:4700::1111]/',
+    microtime(true) + 1
+);
+checkEq(
+    'http pinning brackets an IPv6 literal host',
+    '[2606:4700:4700::1111]:443:[2606:4700:4700::1111]',
+    $literalDestination['resolve']
+);
+$resolverMethod = new ReflectionMethod(HttpClient::class, 'resolveHost');
+$dnsStarted = microtime(true);
+$dnsTimedOut = false;
+try {
+    $resolverMethod->invoke(null, 'example.com', 1);
+} catch (RuntimeException $e) {
+    $dnsTimedOut = str_contains($e->getMessage(), 'DNS resolution deadline exceeded');
+}
+check('http resolver enforces its own wall-clock deadline', $dnsTimedOut && microtime(true) - $dnsStarted < 1.0);
+
+// libcurl automatically honors proxy environment variables unless explicitly
+// told not to. A proxy would resolve/connect the hostname outside our vetted
+// IP boundary, so prove that even an immediately reachable local proxy never
+// receives a CONNECT.
+$proxyServer = @stream_socket_server('tcp://127.0.0.1:0', $proxyErrno, $proxyError);
+if (is_resource($proxyServer)) {
+    $proxyAddress = (string) stream_socket_get_name($proxyServer, false);
+    $proxyVars = ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy', 'NO_PROXY', 'no_proxy'];
+    $oldProxyEnv = [];
+    foreach ($proxyVars as $proxyVar) {
+        $oldProxyEnv[$proxyVar] = getenv($proxyVar);
+        putenv($proxyVar);
+    }
+    try {
+        putenv('HTTPS_PROXY=http://' . $proxyAddress);
+        putenv('https_proxy=http://' . $proxyAddress);
+        putenv('ALL_PROXY=http://' . $proxyAddress);
+        putenv('all_proxy=http://' . $proxyAddress);
+        putenv('NO_PROXY=');
+        putenv('no_proxy=');
+        $proxyProbe = new HttpClient(
+            requestBudget: 1,
+            connectTimeoutMs: 75,
+            totalTimeoutMs: 100,
+            allowedSchemes: ['https'],
+            resolver: static fn(string $host, int $remainingMs): array => ['93.184.216.34']
+        );
+        $proxyProbe->getMany(['https://provider.example/']);
+        $proxiedConnection = @stream_socket_accept($proxyServer, 0);
+        check('http pinning disables environment proxy bypass', $proxiedConnection === false);
+        if (is_resource($proxiedConnection)) {
+            fclose($proxiedConnection);
+        }
+    } finally {
+        foreach ($oldProxyEnv as $proxyVar => $oldValue) {
+            if ($oldValue === false) {
+                putenv($proxyVar);
+            } else {
+                putenv($proxyVar . '=' . $oldValue);
+            }
+        }
+        fclose($proxyServer);
+    }
+} else {
+    check('http pinning disables environment proxy bypass', true, 'loopback listener unavailable; source path covered');
+}
+
+// The production geocoder transport uses the same batch boundary and records
+// an owner-visible health failure without putting the location query in logs.
+$gtdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+$gtdb->run('CREATE TABLE system_health (subject TEXT PRIMARY KEY, kind TEXT, user_id INTEGER, label TEXT, status TEXT DEFAULT "ok", first_failed_at TEXT, last_failed_at TEXT, last_ok_at TEXT, consecutive_failures INTEGER DEFAULT 0, last_error TEXT, alerted_at TEXT)');
+$gtdb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, settings_json TEXT)');
+$gtdb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT)');
+$gtdb->run("INSERT INTO users (id, email, settings_json) VALUES (1, 'owner@example.test', '{}')");
+$gtLogs = [];
+$gt = new PoliciedGeocoderTransport(
+    $gtdb,
+    static function (string $line) use (&$gtLogs): void { $gtLogs[] = $line; },
+    static fn(string $host): array => ['127.0.0.1']
+);
+$gtResult = $gt->photon([['q' => 'Private Home Address', 'limit' => 6]]);
+checkEq('geocoder policy failure returns a null item', [null], $gtResult);
+checkEq('geocoder policy failure is owner-visible health', 'failing', $gtdb->scalar('SELECT status FROM system_health WHERE subject = ?', ['geocoder:photon']));
+check('geocoder policy failure reaches sanitized error logging', str_contains(implode("\n", $gtLogs), 'request refused by outbound policy'));
+check('geocoder logs omit the location query', !str_contains(implode("\n", $gtLogs), 'Private Home Address'));
+$gt->photon([['q' => 'Second Private Address', 'limit' => 6]]);
+$gt->photon([['q' => 'Third Private Address', 'limit' => 6]]);
+checkEq('geocoder health counts a three-failure streak', 3, (int) $gtdb->scalar('SELECT consecutive_failures FROM system_health WHERE subject = ?', ['geocoder:photon']));
+checkEq('geocoder health journals one owner notice when the streak proves itself', 1, (int) $gtdb->scalar("SELECT COUNT(*) FROM mutations WHERE source = 'system'"));
+checkEq(
+    'geocoder log sanitizer replaces attacker-controlled transport text',
+    'provider network request failed',
+    PoliciedGeocoderTransport::safeError("failed at https://example.test/path?q=private\nnext")
+);
+foreach ([
+    'DNS resolution failed for Private-Home-Address.attacker.example',
+    'HTTP error for user:secret@attacker.example: encoded%20home%20address',
+    "connection failed for attacker.example\r\nInjected-Header: private",
+] as $hostileGeocoderError) {
+    $safeGeocoderError = PoliciedGeocoderTransport::safeError($hostileGeocoderError);
+    check('geocoder error category omits reflected private text',
+        !str_contains(strtolower($safeGeocoderError), 'private')
+        && !str_contains(strtolower($safeGeocoderError), 'secret')
+        && !str_contains(strtolower($safeGeocoderError), 'attacker'));
+}
+checkEq(
+    'geocoder policy failures retain a useful fixed category',
+    'request refused by outbound policy',
+    PoliciedGeocoderTransport::safeError('Refused private/internal address for attacker.example')
+);
+
+// Recovery is also a locked state transition: repeated healthy requests after
+// a proven streak create one Activity recovery, not one per request.
+$gth = new BetterCal\Domain\SystemHealth($gtdb);
+check('geocoder first recovery reports a transition', $gth->recordOk('geocoder:photon', 'job', null, 'Photon geocoding', false));
+$gtdb->run("CREATE TRIGGER geocoder_no_healthy_rewrite BEFORE UPDATE ON system_health WHEN OLD.subject = 'geocoder:photon' BEGIN SELECT RAISE(FAIL, 'healthy row was rewritten'); END");
+$healthyReadOnly = false;
+try {
+    $healthyReadOnly = !$gth->recordOk('geocoder:photon', 'job', null, 'Photon geocoding', false);
+} catch (Throwable) {
+    $healthyReadOnly = false;
+}
+$gtdb->run('DROP TRIGGER geocoder_no_healthy_rewrite');
+check('geocoder repeated health is read-only after recovery', $healthyReadOnly);
+checkEq('geocoder recovery journals exactly once', 2, (int) $gtdb->scalar("SELECT COUNT(*) FROM mutations WHERE source = 'system'"));
+
 // GH #21: feed fetching used raw cURL with FOLLOWLOCATION and no address
 // check, so a subscription URL could be walked to an internal address. It goes
 // through the policied client now — assert the refusal reaches the feed path
@@ -916,6 +1083,22 @@ checkEq('place search: "and" is also asked as "&"', 'Panda & Sons', \BetterCal\D
 checkEq('place search: "&" is also asked as "and"', 'Marks and Spencer', \BetterCal\Domain\PlaceSearch::ampersandVariant('Marks & Spencer'));
 checkEq('place search: no "and" means one query', null, \BetterCal\Domain\PlaceSearch::ampersandVariant('Zuni Cafe'));
 checkEq('place search: "and" inside a word is left alone', null, \BetterCal\Domain\PlaceSearch::ampersandVariant('Andalucia Bar'));
+$placeTransport = new class implements \BetterCal\Infra\GeocoderTransport {
+    public array $seen = [];
+    public function photon(array $paramSets): array
+    {
+        $this->seen = $paramSets;
+        return [null, ['features' => [[
+            'geometry' => ['coordinates' => [-3.195, 55.953]],
+            'properties' => ['name' => 'Panda and Sons', 'city' => 'Edinburgh', 'country' => 'United Kingdom'],
+        ]]]];
+    }
+    public function openMeteo(array $params): ?array { return null; }
+};
+$placeResults = (new \BetterCal\Domain\PlaceSearch($placeTransport))->search('Panda and Sons', null, null, 6);
+checkEq('place search keeps alternate spelling first in the parallel batch', 'Panda & Sons', $placeTransport->seen[0]['q'] ?? null);
+checkEq('place search keeps the original spelling second in the parallel batch', 'Panda and Sons', $placeTransport->seen[1]['q'] ?? null);
+checkEq('place search keeps a successful result when its sibling fails', 'Panda and Sons', $placeResults[0]['name'] ?? null);
 checkEq('push label: a device names itself', 'Pixel 9 Pro · Chrome app', \BetterCal\Domain\PushSubscriptions::label('Pixel 9 Pro · Chrome app'));
 checkEq('push label: control characters and runs of space go', 'Mac · Chrome', \BetterCal\Domain\PushSubscriptions::label("Mac\n\t·   Chrome"));
 checkEq('push label: capped at 80 characters', 80, mb_strlen(\BetterCal\Domain\PushSubscriptions::label(str_repeat('x', 200))));
@@ -3348,6 +3531,8 @@ require __DIR__ . '/plugins.php';
     $hdb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT)');
     $health = new SystemHealth($hdb);
     $entries = fn(): array => array_column($hdb->all('SELECT summary FROM mutations ORDER BY id'), 'summary');
+    $health->recordOk('geocoder:photon', 'job', null, 'Photon geocoding', false);
+    checkEq('health: frequent healthy geocoding does not create a row', 0, (int) $hdb->scalar('SELECT COUNT(*) FROM system_health'));
     $health->recordOk('feed:9', 'feed', 1, 'Feed: Hangs');
     $health->recordFailure('feed:9', 'feed', 1, 'Feed: Hangs', 'HTTP 404');
     checkEq('health: one failure is not journaled', [], $entries());

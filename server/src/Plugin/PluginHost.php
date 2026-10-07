@@ -19,6 +19,7 @@ use BetterCal\Infra\HttpClient;
 use BetterCal\Infra\JobQueue;
 use BetterCal\Infra\LlmGateway;
 use BetterCal\Infra\Notifier;
+use BetterCal\Infra\PoliciedGeocoderTransport;
 use BetterCal\Support\Time;
 
 /**
@@ -621,7 +622,8 @@ final class PluginHost
             // lookup() answers a single {lat,lng,display} map, not a hit list,
             // and signals "not found" by nulling the fields rather than by
             // returning empty. Indexing it like a list yields null every time.
-            $hit = (new Geocode($this->db))->lookup($query, $biasLat, $biasLng);
+            $hit = (new Geocode($this->db, new PoliciedGeocoderTransport($this->db)))
+                ->lookup($query, $biasLat, $biasLng);
             return isset($hit['lat'], $hit['lng']) ? $hit : null;
         } catch (\Throwable $e) {
             $this->log('geocode failed: ' . $e->getMessage());

@@ -44,7 +44,11 @@ $filters = new BetterCal\Domain\Filters($db, $undo, $queue);
 $trips = new BetterCal\Domain\Trips($db, $undo);
 $eventsDomain = new BetterCal\Domain\Events($db, new Recurrence(), $undo, $labels, $filters, $trips);
 $pluginsDomain = new BetterCal\Domain\Plugins($db);
-$geocodeSweep = new BetterCal\Domain\GeocodeSweep($db, new BetterCal\Domain\Geocode($db), new BetterCal\Domain\Settings($db));
+$geocodeSweep = new BetterCal\Domain\GeocodeSweep(
+    $db,
+    new BetterCal\Domain\Geocode($db, new BetterCal\Infra\PoliciedGeocoderTransport($db)),
+    new BetterCal\Domain\Settings($db)
+);
 $systemHealth = new BetterCal\Domain\SystemHealth($db);
 $emailSender = new EmailSender($cfg);
 

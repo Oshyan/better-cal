@@ -80,7 +80,7 @@ This phase is implemented and verified for release 0.9.28. It adds migration
 |---|---|---:|---:|
 | F5 | Prompt-filter calls reserve persistent account/calendar capacity; poll work is calendar-scoped, fail-open and limited to one model call per worker job | Passed | [ ] |
 | F52 | Quick Add model assists, including previews, reserve account/token/concurrency capacity before dispatch; deterministic parsing remains available | Passed | [ ] |
-| F73 (Gemini response portion) | Every Gemini caller shares an authoritative streamed response-byte cap | Passed | [ ] |
+| F73 (Gemini response portion) | Every Gemini caller shares an authoritative streamed response-byte cap | Passed | [x] |
 
 ## Completed local evidence
 
@@ -301,7 +301,7 @@ testing of an imported repeating event is enough for that part.
   fail-open event visibility, a delayed continuation rather than a failed job,
   and that a due reminder is claimed before the model-work backlog. Restore the
   normal limits and dismiss the notice after the exercise.
-- [ ] Confirm the deployed transport and configured response cap match the
+- [x] Confirm the deployed transport and configured response cap match the
   reviewed release. The real local cURL boundary test is sufficient unless a
   controlled production provider/proxy fixture can safely return an oversized
   response; do not disrupt the live provider merely to repeat that case.
@@ -427,3 +427,29 @@ testing of an imported repeating event is enough for that part.
   mail, quota, database or runtime failure. One unrelated geocoder HTTP failure
   and one unrelated nginx missing-file error were observed and remain covered
   by their existing operational handling.
+
+## Phase 9 production evidence — 2026-10-07
+
+- Release 0.9.28 was deployed from
+  `ecc1fad901942056584a75b79b3196faabab0cf1`; tag `v0.9.28` points to that
+  release commit and its GitHub release is published. Production reported
+  0.9.28, and `VERSION` plus every Phase 9 runtime file matched the release
+  commit by SHA-256.
+- Deploy preflight passed: server 2,009/0; frontend smoke 653/0 in five time
+  zones; frontend static 347/0; deploy-security 19/0; vendor manifest 10/10.
+  Composer reported no known dependency advisories. The private application
+  and database backup completed before migration 041 applied.
+- Production health and real-data smoke checks passed with 791 serialized
+  occurrences, one single-event record and 22 calendars. Migration recheck
+  reported nothing pending, the worker completed a healthy post-deploy cycle,
+  and the site error log was not modified during the deployment window.
+- The live schema has all eight expected `model_admissions` columns. Effective
+  limits match the documented defaults: Quick Add 4,000 characters; account
+  120/hour, 500/day and four concurrent; API token 30/hour, 150/day and two
+  concurrent; prompt filters account 40/hour and 200/day, calendar 20/hour and
+  100/day; Gemini response 1 MiB; admission retention 90 days.
+- The deployed Gemini transport hash and effective response limit match the
+  implementation whose real local cURL boundary test accepted the exact cap
+  and refused one byte over. No live provider was disrupted to manufacture an
+  oversized response. The temporary-low-limit Quick Add and feed-churn
+  exercises remain open.

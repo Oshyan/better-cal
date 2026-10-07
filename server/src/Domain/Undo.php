@@ -101,7 +101,10 @@ final class Undo
     public function undoLatest(int $userId): array
     {
         $mutation = $this->db->one(
-            'SELECT * FROM mutations WHERE user_id = ? AND undone = 0 AND before_json IS NOT NULL ORDER BY id DESC LIMIT 1',
+            // A creation has only an after snapshot; it is undone by deleting
+            // what it made. Requiring a before snapshot skipped it and undid
+            // the change before it instead. Log-only rows have neither.
+            'SELECT * FROM mutations WHERE user_id = ? AND undone = 0 AND (before_json IS NOT NULL OR after_json IS NOT NULL) ORDER BY id DESC LIMIT 1',
             [$userId]
         );
         if ($mutation === null) {

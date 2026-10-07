@@ -1509,6 +1509,22 @@ checkEq('all-day weekly in UTC unchanged', ['2026-08-31 00:00:00', '2026-09-02 0
     checkEq('reminders: evening reminder for a UTC-stored all-day day is due', ['1:20261010T000000Z:-1500'], array_map(static fn($d) => $d['key'], $rmDue));
 }
 
+// Undo right after a creation undoes the creation, not the change before it.
+{
+    $udb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $udb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT)');
+    $udb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT, undone INTEGER DEFAULT 0)');
+    $undo = new BetterCal\Domain\Undo($udb);
+    $udb->run("INSERT INTO events VALUES (1, 1, 1, 'a', 'Renamed')");
+    $undo->record(1, 'event', 1, 'update', ['events' => [['id' => 1, 'user_id' => 1, 'calendar_id' => 1, 'uid' => 'a', 'title' => 'Original']]], ['events' => [['id' => 1, 'user_id' => 1, 'calendar_id' => 1, 'uid' => 'a', 'title' => 'Renamed']]]);
+    $udb->run("INSERT INTO events VALUES (2, 1, 1, 'b', 'New one')");
+    $undo->record(1, 'event', 2, 'create', null, ['events' => [['id' => 2, 'user_id' => 1, 'calendar_id' => 1, 'uid' => 'b', 'title' => 'New one']]]);
+    $undo->record(1, 'event', 1, 'update', null, null, 'Updated at Google');
+    checkEq('undo latest: a creation is what gets undone', ['event', 'create'], array_values($undo->undoLatest(1)));
+    checkEq('undo latest: the created event is gone, the earlier edit stays', [['id' => 1, 'title' => 'Renamed']], $udb->all('SELECT id, title FROM events'));
+    checkEq('undo latest: the earlier edit is next in line', ['update', 0], [$udb->scalar("SELECT op FROM mutations WHERE undone = 0 AND (before_json IS NOT NULL OR after_json IS NOT NULL) ORDER BY id DESC LIMIT 1"), (int) $udb->scalar('SELECT undone FROM mutations WHERE id = 1')]);
+}
+
 // Thumbs are a state (#107): repeating the current one records nothing, the
 // other one switches it, and the newest signal (triage included) is current.
 {

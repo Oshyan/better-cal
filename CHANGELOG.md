@@ -4,6 +4,10 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.20 (2026-10-06)
+
+- **Undo right after creating something undoes that creation.** The Undo on the "Event created" toast (and the other "created" toasts, and an agent's `undo`) skipped the creation and reverted whatever you had changed before it, leaving the new event in place. It now removes what was just created. Found by the docs review.
+
 ## 0.9.19 (2026-10-06)
 
 - **A calendar moved to Google is checked every five minutes,** like every other Google calendar. It kept the hourly schedule it had as a local calendar, so changes people made at Google took up to an hour to show here. Moved calendars still on that default are switched; one you set yourself stays.

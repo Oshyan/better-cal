@@ -162,7 +162,7 @@ const TOOLS = [
   },
   {
     name: 'search_events',
-    description: 'Full-text search across all events (past included), ranked, newest window first.',
+    description: 'Full-text search across all events (past included), ranked by relevance, then newest first.',
     inputSchema: {
       type: 'object',
       properties: {

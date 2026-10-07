@@ -117,7 +117,7 @@ claude mcp add better-cal \
 | Attendance (going / interested / hide) | `POST /events/:id/attendance` | `set_attendance` | Works on read-only feed events; the MCP tool sets the whole series |
 | Review queue (held invitation changes, unanswered invitations, plugin proposals, possible duplicates) | `GET /review`, then an item's own `actions` | `list_review`, `decide_review` | Answering an invitation goes through `POST /events/:id/rsvp` |
 | List calendars | `GET /calendars` | `list_calendars` | Includes folders, tags, feed health |
-| Undo last change | `POST /undo` | `undo` | Per user; each call undoes the most recent update or delete not yet undone, so repeating it steps further back (7-day snapshots); a creation is undone from its Activity entry (`POST /activity/:id/undo`) |
+| Undo last change | `POST /undo` | `undo` | Per user; each call undoes the most recent create, update or delete not yet undone, so repeating it steps further back (7-day snapshots); log-only entries are passed over |
 | Manage calendars/folders | `POST/PATCH/DELETE /calendars`, `/folders` | — | REST only for now |
 | Outbound feeds, push devices, reminder email address | `/outfeeds`, `/push/*`, `PATCH /settings` | — | REST; anything a token creates belongs to it and goes when the token is revoked. A token sees only the feed URLs it created. Linking a Google account needs a signed-in person. |
 | Manage tokens | `GET/POST/DELETE /tokens` | — | Session auth only, never bearer |

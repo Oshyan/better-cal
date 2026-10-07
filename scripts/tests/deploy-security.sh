@@ -142,5 +142,15 @@ case "${helper_source}" in
   *) not_ok 'backup publication is not serialized with an exclusive lock' ;;
 esac
 
+# Production streams the helper to `bash -s`, where BASH_SOURCE[0] is unset.
+# It must enter backup_main and report the first missing input, not die while
+# deciding whether it was sourced.
+stdin_output="$(env -u APP_DIR -u APP_USER -u BACKUP_DIR bash -s \
+  < "${ROOT_DIR}/scripts/deploy-backup.sh" 2>&1 || true)"
+case "${stdin_output}" in
+  *'APP_DIR is required'*) ok ;;
+  *) not_ok 'backup helper does not start correctly when streamed to bash -s' ;;
+esac
+
 echo "Deploy security tests: ${passed} passed, ${failed} failed"
 [ "${failed}" -eq 0 ]

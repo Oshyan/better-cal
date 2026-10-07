@@ -287,6 +287,6 @@ backup_main() {
   trap - EXIT
 }
 
-if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
   backup_main "$@"
 fi

@@ -81,6 +81,7 @@ if [ "${SKIP_TESTS:-0}" != "1" ]; then
     TZ="${zone}" node "${ROOT_DIR}/web/tests/smoke.mjs" 2>/dev/null | tail -1
   done
   php "${ROOT_DIR}/server/tests/run.php" | tail -1
+  bash "${ROOT_DIR}/scripts/tests/deploy-security.sh" | tail -1
 fi
 
 stage "connect"
@@ -134,9 +135,12 @@ fi
 stage "composer + migrate (dev)"
 rssh "DEV_DIR='${DEV_DIR}' APP_USER='${APP_USER}' bash -s" <<'EOF'
 set -euo pipefail
-# Repairs strays only; rsync already wrote as APP_USER (see deploy.sh).
-find "${DEV_DIR}" ! -user "${APP_USER}" ! -path "${DEV_DIR}/.env" -exec chown -h "${APP_USER}:${APP_USER}" {} +
-if [ "$(id -u)" -eq 0 ] && [ -f "${DEV_DIR}/.env" ]; then chown "root:${APP_USER}" "${DEV_DIR}/.env"; chmod 640 "${DEV_DIR}/.env"; fi
+if sudo -n -u "${APP_USER}" -- test -L "${DEV_DIR}/.env" \
+  || ! sudo -n -u "${APP_USER}" -- test -f "${DEV_DIR}/.env" \
+  || ! sudo -n -u "${APP_USER}" -- test -r "${DEV_DIR}/.env"; then
+  echo "${DEV_DIR}/.env must be a readable regular file, not a symlink; provision it before deploying." >&2
+  exit 1
+fi
 sudo -u "${APP_USER}" bash -c "cd ${DEV_DIR}/server && composer install --no-dev --quiet --no-interaction"
 sudo -u "${APP_USER}" php "${DEV_DIR}/server/bin/migrate.php"
 EOF

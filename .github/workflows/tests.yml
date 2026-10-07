@@ -29,6 +29,8 @@ jobs:
         run: php -v && php -m | grep -Ei 'pdo_sqlite|sodium|mbstring|curl'
       - name: Server tests
         run: php server/tests/run.php
+      - name: Deploy privilege-boundary tests
+        run: bash scripts/tests/deploy-security.sh
 
   # A fresh install on the lowest PHP: Composer installs from the lock file
   # exactly as docs/install.md says, and the suite runs again with the real

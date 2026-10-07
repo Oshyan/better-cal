@@ -18,13 +18,14 @@ Honest answers are the promise. Some things will be declined because they are no
 
 ## Before you open a pull request
 
-Every suite must pass; CI runs all four on every pull request, and the deploy script refuses to ship if any of the first three fail.
+Every suite must pass; CI runs all five on every pull request, and the deploy script gates on the server, frontend, deploy-security and vendor checks.
 
 ```bash
 php server/tests/run.php
 TZ=America/Los_Angeles node web/tests/smoke.mjs
 node --experimental-vm-modules web/tests/static.mjs
 node tools/mcp/test.mjs
+bash scripts/tests/deploy-security.sh
 ```
 
 The smoke suite is run under several time zones on deploy, so a test that only passes in yours will be caught. Add a test with any behaviour change: the server suite is plain PHP with no database (SQLite in memory where one is needed, so PHP needs `pdo_sqlite`: `php8.4-sqlite3` on Debian and Ubuntu; the CalDAV and iCalendar checks also need `composer install` in `server/` and are skipped without it), the smoke suite is plain Node.

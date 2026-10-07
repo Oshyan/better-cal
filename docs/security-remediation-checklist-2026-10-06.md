@@ -37,6 +37,16 @@ database migration. Live behavior remains open until the practical check below.
 | F37 | Push-device inventory/removal require a browser session; token subscribe/unsubscribe is restricted to the exact creating token | Passed | [ ] |
 | F71 | System health returns an endpoint hash, never the raw push-service capability | Passed | [ ] |
 
+## Phase 6 candidate — deployment privilege boundaries
+
+This phase is implemented locally and awaiting release. It preserves the
+one-command production deploy and makes no application or database change.
+
+| Scan finding | Remediation | Local automated verification | Live/deployed verification |
+|---|---|---:|---:|
+| F16 | Deploys do not mutate application, `.env`, development or document-root paths with root authority | Passed | [ ] |
+| F26 | App-controlled reads run as the app user; MySQL backups are serialized and published with mode `0600` in a validated root-owned directory | Passed | [ ] |
+
 ## Completed local evidence
 
 This section is the technical record for reviewers; it is not a manual to-do
@@ -85,6 +95,28 @@ list for the owner.
 - [x] Phase 5 local suites: server 1,940/0; frontend smoke 653/0 in
   `America/Los_Angeles`, `UTC`, `Europe/Berlin`, `Asia/Kolkata` and
   `Pacific/Auckland`; frontend static 347/0; MCP 63/0; vendor manifest 10/10.
+- [x] Phase 6 deploy controls refuse writable and symlinked backup directories,
+  including a symlink disguised by a trailing slash; refuse a planted output
+  symlink without changing its target; preserve `0600` output mode; clean up
+  private temporary files on failure; and assert that neither production nor
+  development deploys perform privileged ownership or mode repair on `.env`.
+- [x] Phase 6 uses the committed deploy snapshot for its remote helper, validates
+  a canonical root-owned destination beneath `/home` or `/var/backups`, and runs
+  app archive, `.env` and MySQL source reads as `APP_USER`. The production helper
+  refuses SQLite DSNs instead of copying an app-selected pathname as root.
+- [x] A disposable Debian-host integration streamed the real app and MySQL
+  backup through the app identity, produced `root:root` directory/file modes
+  `0700`/`0600`, denied app-user writes, and passed gzip integrity. Separate
+  hostile controls refused a symlinked `.env`, all SQLite DSNs (including a
+  device path), an unsafe existing backup directory, `APP_USER=root`, and a
+  concurrent backup while the publication lock was held. Failure cleanup left
+  no partial output or private temporary file, and all test artifacts were
+  removed without deploying code. A separate disposable rotation check kept
+  exactly the newest five app and five database generations.
+- [x] Phase 6 local suites: deploy-security 18/0; server 1,940/0;
+  frontend smoke 653/0 in `America/Los_Angeles`, `UTC`, `Europe/Berlin`,
+  `Asia/Kolkata` and `Pacific/Auckland`; frontend static 347/0; MCP 63/0;
+  vendor manifest 10/10.
 
 ## Remaining practical checks
 
@@ -149,6 +181,16 @@ testing of an imported repeating event is enough for that part.
   on the first device and confirm it returns without a new browser permission
   prompt. Other signed-in devices and email reminders should remain unchanged.
   A notification already handed to the push service may arrive once.
+
+### Deployment and backups (F16/F26)
+
+- [ ] On the first Phase 6 deployment, confirm the new app and database backups
+  are regular files owned by root with mode `0600` under the configured
+  root-owned `BACKUP_DIR`, and that the ordinary deploy still completes without
+  any additional prompt or manual step.
+- [ ] After verifying one new backup, deliberately archive or remove the legacy
+  app-adjacent backup directory; it is not migrated automatically from an
+  app-controlled pathname.
 
 ## Deployment closeout
 

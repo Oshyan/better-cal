@@ -4,6 +4,13 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.25 (2026-10-07)
+
+- **Production backups no longer trust application-controlled paths.** The deploy reads the app, `.env` and MySQL/MariaDB as the unprivileged application user, then publishes validated archives into a root-owned private directory. Backup files are mode `0600`, concurrent backup publication is refused, and unsafe or symlinked destinations stop the deploy.
+- **Deploys no longer use root to repair files inside the application tree.** The app account already owns deployed code and now performs document-root changes too. A replaced or misconfigured `.env` stops with provisioning instructions instead of being changed through an app-controlled pathname.
+
+Operators: `BACKUP_DIR` defaults to `/home/bettercal-backups` and must be a root-owned mode-`0700` direct child of `/home` or `/var/backups`. Existing app-adjacent backups are not moved automatically; confirm one new backup and its off-host coverage before archiving the legacy directory. The production backup helper supports MySQL/MariaDB and deliberately refuses SQLite. Normal deployment remains one command and requires no new prompt. No database migration is required.
+
 ## 0.9.24 (2026-10-06)
 
 - **The month view's day-expand button says what it does:** "Show all of this day's events in full" instead of "Show this day's events here".

@@ -16,6 +16,7 @@ for v in REMOTE APP_USER APP_DIR HEALTH_URL; do
     exit 1
   fi
 done
+BACKUP_DIR="${BACKUP_DIR:-/home/bettercal-backups}"
 if [ -z "${DOCROOT:-}" ]; then
   echo "DOCROOT is not set (the web server's document root; see scripts/deploy.env.example)." >&2
   exit 1
@@ -69,41 +70,23 @@ if [ "${SKIP_TESTS:-0}" != "1" ]; then
   php "${DEPLOY_SNAPSHOT}/server/tests/run.php" | tail -1
   # Vendored frontend libraries must be exactly the pinned releases.
   node "${DEPLOY_SNAPSHOT}/scripts/vendor.mjs" --verify | tail -1
+  bash "${DEPLOY_SNAPSHOT}/scripts/tests/deploy-security.sh" | tail -1
 fi
 
 stage "connect"
 ssh_open
 
-# Back up before anything changes: the app directory and the database, into
-# backups/ beside the app, keeping the newest 5 of each. Database credentials
-# come from the app's own .env on the server and are never printed. A failed
-# backup stops the deploy; SKIP_BACKUP=1 skips it deliberately.
+# Back up before anything changes, keeping the newest 5 app and database
+# copies. The reviewed helper runs as root only to control the private output
+# directory; it drops to APP_USER for every read from the app, .env and the
+# database. A failed backup stops the deploy; SKIP_BACKUP=1 skips it deliberately.
 if [ "${SKIP_BACKUP:-0}" != "1" ]; then
   stage "backup"
-  rssh "APP_DIR='${APP_DIR}' bash -s" <<'BACKUP'
-set -euo pipefail
-envval() { grep -E "^$1=" "${APP_DIR}/.env" | head -1 | cut -d= -f2- | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'$/\1/"; }
-BK="$(dirname "${APP_DIR}")/backups"
-mkdir -p "${BK}"
-TS="$(date +%Y-%m-%dT%H%M%S%z)"
-tar czf "${BK}/bettercal-app-${TS}.tar.gz" --exclude=.git -C "$(dirname "${APP_DIR}")" "$(basename "${APP_DIR}")"
-DSN="$(envval BETTERCAL_DB_DSN)"
-case "${DSN}" in
-  mysql:*)
-    DB="$(printf '%s' "${DSN}" | sed -n 's/.*dbname=\([^;]*\).*/\1/p')"
-    HOST="$(printf '%s' "${DSN}" | sed -n 's/.*host=\([^;]*\).*/\1/p')"
-    MYSQL_PWD="$(envval BETTERCAL_DB_PASS)" mysqldump --single-transaction --no-tablespaces \
-      -h "${HOST:-localhost}" -u "$(envval BETTERCAL_DB_USER)" "${DB}" | gzip > "${BK}/bettercal-db-${TS}.sql.gz"
-    zcat "${BK}/bettercal-db-${TS}.sql.gz" | tail -1 | grep -q 'Dump completed' \
-      || { echo "database dump incomplete; not deploying" >&2; exit 1; } ;;
-  sqlite:*)
-    cp "${DSN#sqlite:}" "${BK}/bettercal-db-${TS}.sqlite" ;;
-  *)
-    echo "BETTERCAL_DB_DSN is neither mysql nor sqlite; database not backed up, not deploying" >&2; exit 1 ;;
-esac
-for kind in app db; do ls -1t "${BK}"/bettercal-${kind}-2* 2>/dev/null | tail -n +6 | xargs -r rm -f; done
-ls -1 "${BK}"/*"${TS}"* | sed 's|.*/|  |'
-BACKUP
+  printf -v app_dir_q '%q' "${APP_DIR}"
+  printf -v app_user_q '%q' "${APP_USER}"
+  printf -v backup_dir_q '%q' "${BACKUP_DIR}"
+  rssh "sudo -n env APP_DIR=${app_dir_q} APP_USER=${app_user_q} BACKUP_DIR=${backup_dir_q} bash -s" \
+    < "${DEPLOY_SNAPSHOT}/scripts/deploy-backup.sh"
 fi
 
 stage "rsync code"
@@ -112,23 +95,27 @@ deploy_rsync "${APP_DIR}" "${DEPLOY_SNAPSHOT}"
 stage "composer + migrate + link"
 rssh "APP_DIR='${APP_DIR}' DOCROOT='${DOCROOT}' APP_USER='${APP_USER}' bash -s" <<'EOF'
 set -euo pipefail
-# rsync already wrote everything as APP_USER; this only repairs strays (a file
-# a root shell left behind), and never touches .env.
-find "${APP_DIR}" ! -user "${APP_USER}" ! -path "${APP_DIR}/.env" -exec chown -h "${APP_USER}:${APP_USER}" {} +
-# The app reads its .env but must not be able to rewrite it: root owns it,
-# the app's group reads it (scan 2026-09-23, F1).
-if [ "$(id -u)" -eq 0 ] && [ -f "${APP_DIR}/.env" ]; then chown "root:${APP_USER}" "${APP_DIR}/.env"; chmod 640 "${APP_DIR}/.env"; fi
+# .env is provisioned once, outside deployment. Never repair it through this
+# APP_USER-owned directory: a substituted symlink must not become a root path.
+if sudo -n -u "${APP_USER}" -- test -L "${APP_DIR}/.env" \
+  || ! sudo -n -u "${APP_USER}" -- test -f "${APP_DIR}/.env" \
+  || ! sudo -n -u "${APP_USER}" -- test -r "${APP_DIR}/.env"; then
+  echo "${APP_DIR}/.env must be a readable regular file, not a symlink; provision it before deploying." >&2
+  exit 1
+fi
 sudo -u "${APP_USER}" bash -c "cd ${APP_DIR}/server && composer install --no-dev --quiet --no-interaction"
 # Known advisories against the locked PHP dependencies: reported, not blocking.
 # A finding means "look at it", not "roll back the deploy in progress".
 echo "-- composer audit --"
 sudo -u "${APP_USER}" bash -c "cd ${APP_DIR}/server && composer audit --no-dev --locked --no-interaction 2>&1 | tail -20" || true
 sudo -u "${APP_USER}" php "${APP_DIR}/server/bin/migrate.php"
-# Docroot -> app/server/public (replace real dir with symlink once)
-if [ ! -L "${DOCROOT}" ]; then
-  rm -rf "${DOCROOT}"
-  ln -s "${APP_DIR}/server/public" "${DOCROOT}"
-  chown -h "${APP_USER}:${APP_USER}" "${DOCROOT}"
+# Docroot -> app/server/public. Its parent belongs to APP_USER, so every
+# pathname operation there runs as APP_USER rather than lending root to a
+# replaceable path.
+current_docroot="$(sudo -n -u "${APP_USER}" -- readlink "${DOCROOT}" 2>/dev/null || true)"
+if [ "${current_docroot}" != "${APP_DIR}/server/public" ]; then
+  sudo -n -u "${APP_USER}" -- rm -rf "${DOCROOT}"
+  sudo -n -u "${APP_USER}" -- ln -s "${APP_DIR}/server/public" "${DOCROOT}"
 fi
 # Cron for worker (idempotent); the log sits beside the app directory.
 WORKER_LOG="$(dirname "${APP_DIR}")/worker.log"

@@ -94,6 +94,6 @@ Copy [`.env.example`](.env.example) to `.env` in the app root and fill it in. It
 
 ## Development
 
-- **Deploy:** `./scripts/deploy.sh` (tests, backup, rsync, composer, migrations, smoke check).
-- **Tests:** `php server/tests/run.php` (server, pure PHP), `node web/tests/smoke.mjs` (frontend logic; it passes in any time zone, and the deploy runs it under five), `node --experimental-vm-modules web/tests/static.mjs` (module graph) and `node tools/mcp/test.mjs` (MCP server). GitHub runs all of them on every push, plus a fresh install from the lock file on PHP 8.4, the minimum. For changes to repeating events, time zones or import and export, also run `tools/tz-harness/run.sh`.
+- **Deploy:** `./scripts/deploy.sh` (tests, root-private backup, rsync, composer, migrations, smoke check).
+- **Tests:** `php server/tests/run.php` (server, pure PHP), `node web/tests/smoke.mjs` (frontend logic; it passes in any time zone, and the deploy runs it under five), `node --experimental-vm-modules web/tests/static.mjs` (module graph), `node tools/mcp/test.mjs` (MCP server), and `bash scripts/tests/deploy-security.sh` (deploy privilege boundaries). GitHub runs all of them on every push, plus a fresh install from the lock file on PHP 8.4, the minimum. For changes to repeating events, time zones or import and export, also run `tools/tz-harness/run.sh`.
 - **Chrome extension** (sends Google Calendar "add to calendar" links here instead): `extension/`.

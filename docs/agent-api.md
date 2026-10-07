@@ -10,7 +10,7 @@ Agents authenticate with a personal access token in the `Authorization` header i
 Authorization: Bearer bc_<43 url-safe chars>
 ```
 
-Bearer requests are CSRF-exempt (no cookie is involved, so there is nothing to forge). Everything else about the API is identical to session auth, with one exception: the token management endpoints themselves (`/api/v1/tokens`) refuse bearer auth, so a leaked token cannot mint or revoke tokens.
+Bearer requests are CSRF-exempt (no cookie is involved, so there is nothing to forge). Everything else about the API is identical to session auth, except the endpoints that need a person signed in with a password, which answer a bearer token with 403 `session_required`: token management itself (`/api/v1/tokens`, so a leaked token cannot mint or revoke tokens), account recovery (`/auth/step-up`, `/auth/sessions`, `/auth/sign-out-others`), Google account linking and moves, and keeping a paused subscription (`POST /calendars/:id/claim-subscription`).
 
 Tokens are stored sha256-hashed; the plaintext value is shown exactly once at creation. Optional `expires_at` is supported in the schema (NULL = never); tokens created via the API or CLI currently don't expire, so revoke them when done.
 
@@ -84,7 +84,7 @@ Undo the last mutation:
 curl -s "$BC/undo" -X POST -H "$AUTH"
 ```
 
-Update / delete (recurring events need `scope`, and `instanceStart` for `this`/`following`):
+Update / delete (an update to a recurring event needs `scope`, a delete defaults to `all`; `this`/`following` also need `instanceStart`):
 
 ```sh
 curl -s "$BC/events/42" -X PATCH -H "$AUTH" -H 'Content-Type: application/json' \
@@ -108,15 +108,16 @@ claude mcp add better-cal \
 
 | Capability | REST | MCP tool | Notes |
 |---|---|---|---|
-| Read events in a window | `GET /events?start=&end=` | `list_events` | Recurring events pre-expanded |
+| Read events in a window | `GET /events?start=&end=` | `list_events` | Recurring events pre-expanded; at most two years per request, and a series past 1,000 occurrences in the window is named in `capped` ([limits.md](limits.md)) |
 | Search all events | `GET /search?q=` | `search_events` | FULLTEXT, past included |
 | Create event | `POST /events` | `create_event` | Supports `rrule` for recurrence |
 | NL quick add | `POST /quickadd` | `quick_add` | Draft by default; `commit:true` creates |
 | Edit event | `PATCH /events/:id` | `update_event` | `scope` required when recurring |
 | Delete event | `DELETE /events/:id` | `delete_event` | `scope`/`instanceStart` for instances |
-| RSVP / hide | `POST /events/:id/attendance` | `set_attendance` | Works on read-only feed events |
+| Attendance (going / interested / hide) | `POST /events/:id/attendance` | `set_attendance` | Works on read-only feed events; the MCP tool sets the whole series |
+| Review queue (held invitation changes, unanswered invitations, plugin proposals, possible duplicates) | `GET /review`, then an item's own `actions` | `list_review`, `decide_review` | Answering an invitation goes through `POST /events/:id/rsvp` |
 | List calendars | `GET /calendars` | `list_calendars` | Includes folders, tags, feed health |
-| Undo last change | `POST /undo` | `undo` | One level, per user |
+| Undo last change | `POST /undo` | `undo` | Per user; each call undoes the most recent update or delete not yet undone, so repeating it steps further back (7-day snapshots); a creation is undone from its Activity entry (`POST /activity/:id/undo`) |
 | Manage calendars/folders | `POST/PATCH/DELETE /calendars`, `/folders` | — | REST only for now |
 | Outbound feeds, push devices, reminder email address | `/outfeeds`, `/push/*`, `PATCH /settings` | — | REST; anything a token creates belongs to it and goes when the token is revoked. A token sees only the feed URLs it created. Linking a Google account needs a signed-in person. |
 | Manage tokens | `GET/POST/DELETE /tokens` | — | Session auth only, never bearer |

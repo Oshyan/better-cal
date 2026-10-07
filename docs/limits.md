@@ -13,7 +13,7 @@ For a sense of what "one person" means here: on the calendar I run it on every d
 - **About ten years either way of today in the scrolling views.** Month, week and day views scroll roughly ten years back and forward from today. Jumping to a date further out stops at the edge. Search and the API aren't limited this way.
 - **Busy days in month view.** A day shows about seven events on a tall window (fewer on a short one or a phone), then "+N more"; trips and people's away times stack two deep per week before they overflow into the day's expanded list. Nothing is dropped, it just takes a click.
 - **Outbound feeds hold 5,000 events.** A feed you publish covers the past year onward (plus every repeating series), in date order, up to 5,000 events. Past that, the furthest-out events are left off, and the feed doesn't say so yet. A feed made from a saved search holds up to 500 matches.
-- **Repeating rules:** an interval up to 1,000 and a COUNT up to 100,000.
+- **Repeating rules from outside** (feeds, imports, CalDAV, Google, email): an interval up to 1,000 and a COUNT up to 100,000. A rule past that arrives as a single event rather than a broken series.
 - **Reminders:** up to five per event, at most four weeks ahead.
 
 ## Limits you can change

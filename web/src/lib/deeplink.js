@@ -8,6 +8,10 @@
 import { toISOWithOffset } from './dates.js';
 
 const DAY_MS = 86400000;
+// A reminder may arrive 28 days early. Sixty days preserves that legitimate
+// near-term path while ensuring an attacker-controlled year cannot turn one
+// URL into thousands of paginated occurrence requests.
+const BROAD_WINDOW_DISTANCE_MS = 60 * DAY_MS;
 
 /** Epoch ms of the occurrence the deep link points at (best effort). */
 export function deepLinkAnchorMs(instanceId, atISO, nowMs) {
@@ -24,18 +28,19 @@ export function deepLinkAnchorMs(instanceId, atISO, nowMs) {
 
 /**
  * The two windows the deep-link handler loads:
- * - broad: spans now and the occurrence with margin, merged into the normal
- *   occurrence cache (the app wants this range anyway when anchor is near now)
+ * - broad: for nearby occurrences only, spans now and the occurrence with
+ *   margin and is merged into the normal occurrence cache
  * - tight: +/-36h around the occurrence, used for the targeted retry fetch
  */
 export function deepLinkWindows(instanceId, atISO, nowMs) {
   const anchorMs = deepLinkAnchorMs(instanceId, atISO, nowMs);
+  const nearby = Math.abs(anchorMs - nowMs) <= BROAD_WINDOW_DISTANCE_MS;
   return {
     anchorMs,
-    broad: {
+    broad: nearby ? {
       start: toISOWithOffset(new Date(Math.min(anchorMs, nowMs) - 2 * DAY_MS)),
       end: toISOWithOffset(new Date(Math.max(anchorMs, nowMs) + 16 * DAY_MS)),
-    },
+    } : null,
     tight: {
       start: toISOWithOffset(new Date(anchorMs - 1.5 * DAY_MS)),
       end: toISOWithOffset(new Date(anchorMs + 1.5 * DAY_MS)),

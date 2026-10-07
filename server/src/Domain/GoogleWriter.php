@@ -79,10 +79,10 @@ final class GoogleWriter
             $body['start'] = ['dateTime' => $start->format('Y-m-d\TH:i:sP'), 'timeZone' => $tz];
             $body['end'] = ['dateTime' => $end->format('Y-m-d\TH:i:sP'), 'timeZone' => $tz];
         }
-        $exdates = [];
-        if (!empty($row['exdates_json'])) {
-            $decoded = is_array($row['exdates_json']) ? $row['exdates_json'] : json_decode((string) $row['exdates_json'], true);
-            $exdates = is_array($decoded) ? array_values(array_map('strval', $decoded)) : [];
+        try {
+            $exdates = Recurrence::decodeExdates($row['exdates_json'] ?? null);
+        } catch (\InvalidArgumentException $e) {
+            throw HttpError::conflict('recurrence_exception_limit', $e->getMessage());
         }
         // Always present: an empty list is how a series stops being one.
         $body['recurrence'] = self::recurrenceLines(!empty($row['rrule']) ? (string) $row['rrule'] : null, $exdates, $allDay, $tz);
@@ -97,6 +97,11 @@ final class GoogleWriter
     {
         if ($rrule === null || $rrule === '') {
             return [];
+        }
+        try {
+            $exdatesUtc = Recurrence::validateExdates($exdatesUtc);
+        } catch (\InvalidArgumentException $e) {
+            throw HttpError::conflict('recurrence_exception_limit', $e->getMessage());
         }
         $lines = ['RRULE:' . $rrule];
         $zone = Time::zone($tz);

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace BetterCal\Domain;
 
 use BetterCal\Http\HttpError;
+use BetterCal\Support\Limits;
 use BetterCal\Support\Time;
 
 /**
@@ -37,6 +38,120 @@ final class Recurrence
     }
 
     /**
+     * Number of comma-packed EXDATE values in one unfolded content line.
+     * Raw entries count even when empty or duplicated: the parser still has to
+     * split and attempt them before Better-Cal can discard them.
+     */
+    public static function exdateValueCount(string $line): int
+    {
+        $colon = strpos($line, ':');
+        if ($colon === false) {
+            return 0;
+        }
+        $head = strtoupper(trim(substr($line, 0, $colon)));
+        $name = (string) strtok($head, ';');
+        // Sabre accepts RFC-style grouped property names (foo.EXDATE). The
+        // group is metadata; the final name is still the EXDATE property the
+        // parser will materialize.
+        $dot = strrpos($name, '.');
+        if ($dot !== false) {
+            $name = substr($name, $dot + 1);
+        }
+        if ($name !== 'EXDATE') {
+            return 0;
+        }
+        $value = substr($line, $colon + 1);
+        return $value === '' ? 0 : substr_count($value, ',') + 1;
+    }
+
+    /**
+     * Canonical per-series boundary for every representation (ICS, Google,
+     * REST, internal edits and stored JSON). Duplicate values still consume
+     * the admission budget, then collapse for ordinary recurrence work.
+     *
+     * @return list<string>
+     */
+    public static function validateExdates(mixed $values): array
+    {
+        if (!is_array($values)) {
+            return [];
+        }
+        $count = count($values);
+        $max = Limits::get('EXDATE_VALUES_PER_EVENT');
+        if ($count > $max) {
+            throw new \InvalidArgumentException(
+                'One event has ' . number_format($count) . ' skipped occurrences, over the limit of ' . number_format($max) . '. Split the series into smaller parts.'
+            );
+        }
+        return array_values(array_unique(array_map('strval', $values)));
+    }
+
+    /**
+     * Decode stored exdates without first materializing an unbounded legacy
+     * array. Dates cannot contain commas, so this conservative precheck is
+     * exact for every value Better-Cal stores.
+     *
+     * @return list<string>
+     */
+    public static function decodeExdates(mixed $encoded): array
+    {
+        if ($encoded === null || $encoded === '' || $encoded === []) {
+            return [];
+        }
+        if (is_array($encoded)) {
+            return self::validateExdates($encoded);
+        }
+        $raw = trim((string) $encoded);
+        if ($raw === '' || $raw === '[]') {
+            return [];
+        }
+        $estimate = self::encodedExdateValueCount($raw);
+        $max = Limits::get('EXDATE_VALUES_PER_EVENT');
+        if ($estimate > $max) {
+            throw new \InvalidArgumentException(
+                'Stored event has more than ' . number_format($max) . ' skipped occurrences and was quarantined from recurrence processing.'
+            );
+        }
+        $decoded = json_decode($raw, true);
+        return is_array($decoded) ? self::validateExdates($decoded) : [];
+    }
+
+    /** Raw stored-array cardinality without materializing the JSON values. */
+    public static function encodedExdateValueCount(mixed $encoded): int
+    {
+        if ($encoded === null || $encoded === '' || $encoded === []) {
+            return 0;
+        }
+        if (is_array($encoded)) {
+            return count($encoded);
+        }
+        $raw = trim((string) $encoded);
+        if ($raw === '' || $raw === '[]' || !str_starts_with($raw, '[') || !str_ends_with($raw, ']')) {
+            return 0;
+        }
+        // Better-Cal stores only UTC date strings, which cannot contain a
+        // comma. For a corrupt row this may over-count, which fails closed.
+        return substr_count($raw, ',') + 1;
+    }
+
+    /** @param list<array<string,mixed>> $events */
+    public static function assertExdateBatch(array $events): void
+    {
+        $total = 0;
+        foreach ($events as $event) {
+            $values = is_array($event['exdates'] ?? null) ? $event['exdates'] : [];
+            self::validateExdates($values);
+            $total += count($values);
+            $max = Limits::get('EXDATE_VALUES_PER_INPUT');
+            if ($total > $max) {
+                throw new \InvalidArgumentException(
+                    'This calendar input has more than ' . number_format($max) . ' skipped occurrences. Split it into smaller calendars.'
+                );
+            }
+        }
+    }
+
+    /**
      * Expand a master event row into occurrences within [winStart, winEnd).
      * Overrides replace their instances; exdates suppress theirs. Overrides
      * that moved into the window from an out-of-window instance are appended.
@@ -65,17 +180,10 @@ final class Recurrence
             }
         } else {
             $exdates = [];
-            if (!empty($master['exdates_json'])) {
-                $decoded = is_array($master['exdates_json'])
-                    ? $master['exdates_json']
-                    : json_decode((string) $master['exdates_json'], true);
-                if (is_array($decoded)) {
-                    $exdates = array_fill_keys(array_map('strval', $decoded), true);
-                }
-            }
             // One unexpandable row must never fail the whole window (or the
             // reminder scan): it shows as its first occurrence and is logged.
             try {
+                $exdates = array_fill_keys(self::decodeExdates($master['exdates_json'] ?? null), true);
                 $raw = ($this->expander)($master, $winStart, $winEnd);
             } catch (\Throwable $e) {
                 error_log('recurrence: event ' . ($master['id'] ?? '?') . ' could not be expanded: ' . $e->getMessage());

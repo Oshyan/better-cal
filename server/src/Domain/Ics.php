@@ -123,6 +123,43 @@ final class Ics
         if ($lines > $maxLines) {
             return 'The calendar file holds ' . number_format($lines) . ' lines, over the limit of ' . number_format($maxLines);
         }
+        // One legal content line may hide thousands of comma-separated EXDATE
+        // values. Count those work units before Sabre creates a property/date
+        // object for each one. Raw duplicates count because they cost work too.
+        $eventDepth = 0;
+        $eventValues = 0;
+        $totalValues = 0;
+        $maxPerEvent = Limits::get('EXDATE_VALUES_PER_EVENT');
+        $maxPerInput = Limits::get('EXDATE_VALUES_PER_INPUT');
+        foreach (explode("\n", $unfolded) as $line) {
+            $marker = strtoupper(trim($line));
+            if ($marker === 'BEGIN:VEVENT') {
+                if ($eventDepth === 0) {
+                    $eventValues = 0;
+                }
+                $eventDepth++;
+                continue;
+            }
+            if ($marker === 'END:VEVENT') {
+                $eventDepth = max(0, $eventDepth - 1);
+                continue;
+            }
+            if ($eventDepth === 0) {
+                continue;
+            }
+            $count = Recurrence::exdateValueCount($line);
+            if ($count === 0) {
+                continue;
+            }
+            $eventValues += $count;
+            $totalValues += $count;
+            if ($eventValues > $maxPerEvent) {
+                return 'One event holds ' . number_format($eventValues) . ' skipped occurrences, over the limit of ' . number_format($maxPerEvent);
+            }
+            if ($totalValues > $maxPerInput) {
+                return 'The calendar file holds ' . number_format($totalValues) . ' skipped occurrences, over the limit of ' . number_format($maxPerInput);
+            }
+        }
         return null;
     }
 
@@ -359,13 +396,7 @@ final class Ics
         if (!empty($ev['rrule'])) {
             $out .= self::line('RRULE', self::structural((string) $ev['rrule']));
         }
-        $exdates = [];
-        if (!empty($ev['exdates_json'])) {
-            $decoded = is_array($ev['exdates_json']) ? $ev['exdates_json'] : json_decode((string) $ev['exdates_json'], true);
-            if (is_array($decoded)) {
-                $exdates = $decoded;
-            }
-        }
+        $exdates = Recurrence::decodeExdates($ev['exdates_json'] ?? null);
         foreach ($exdates as $ex) {
             $out .= self::dateProp('EXDATE', (string) $ex, $ev);
         }
@@ -515,6 +546,7 @@ final class Ics
                 $events[] = $parsed;
             }
         }
+        Recurrence::assertExdateBatch($events);
         return $events;
     }
 
@@ -711,7 +743,7 @@ final class Ics
             'all_day' => $allDay ? 1 : 0,
             'tzid' => $tzid,
             'rrule' => $rrule,
-            'exdates' => array_values(array_unique($exdates)),
+            'exdates' => Recurrence::validateExdates($exdates),
             'status' => $status,
             'recurrence_instance_utc' => $recurrenceInstance,
             'reminders' => $reminders,

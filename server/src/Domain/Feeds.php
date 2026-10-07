@@ -186,7 +186,16 @@ final class Feeds
         if ($current !== null && in_array($col, ['all_day', 'recurrence_parent_id'], true)) {
             $current = (int) $current;
         }
-        if (in_array($col, ['invite_json', 'exdates_json'], true) && $current !== null && $value !== null
+        if ($col === 'exdates_json' && $current !== null && $value !== null) {
+            try {
+                return Recurrence::decodeExdates($current) == Recurrence::decodeExdates($value);
+            } catch (\InvalidArgumentException) {
+                // A legacy over-limit row is deliberately not decoded. Treat
+                // it as changed so a safe value from the feed can repair it.
+                return false;
+            }
+        }
+        if ($col === 'invite_json' && $current !== null && $value !== null
             && json_decode((string) $current, true) == json_decode((string) $value, true)) {
             return true;
         }
@@ -201,6 +210,11 @@ final class Feeds
      */
     public function sync(array $calendar, array $parsed, bool $journal = true): int
     {
+        // Keep direct callers inside the same boundary as Ics::parse. Google
+        // and tests can hand parsed shapes to this method without passing
+        // through the ICS preflight first.
+        Recurrence::assertExdateBatch($parsed);
+
         $calendarId = (int) $calendar['id'];
         $userId = (int) $calendar['user_id'];
 

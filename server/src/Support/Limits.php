@@ -46,8 +46,19 @@ final class Limits
         'MAIL_ICS_BYTES' => 1048576,     // 1 MiB per calendar part
         'MAIL_ICS_EVENTS' => 200,        // an invitation is one meeting plus its exceptions
         'MAIL_BODY_CHARS' => 524288,     // text/html handed to markup and LLM extraction
+        // Compact recurrence properties can hide thousands of comma-separated
+        // values on one admitted line. Count them before parser/object work,
+        // and keep one series from becoming a permanent expansion tax.
+        'EXDATE_VALUES_PER_EVENT' => 1024,
+        'EXDATE_VALUES_PER_INPUT' => 4096,
         // Regex filter evaluations per request or job, across all filters.
         'REGEX_EVALS' => 20000,
+    ];
+
+    /** Security ceilings: an operator may tune these budgets, but not remove the bound. */
+    private const MAXIMUMS = [
+        'EXDATE_VALUES_PER_EVENT' => 2048,
+        'EXDATE_VALUES_PER_INPUT' => 8192,
     ];
 
     /** @var array<string,int> */
@@ -69,7 +80,7 @@ final class Limits
     {
         foreach ($overrides as $name => $value) {
             if (isset(self::DEFAULTS[$name]) && is_numeric($value) && (int) $value >= 1) {
-                self::$values[$name] = (int) $value;
+                self::$values[$name] = min((int) $value, self::MAXIMUMS[$name] ?? PHP_INT_MAX);
             }
         }
     }

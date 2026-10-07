@@ -27,6 +27,7 @@ use BetterCal\Http\Router;
 use BetterCal\Infra\LlmGateway;
 use BetterCal\Infra\LlmTransport;
 use BetterCal\Support\Ids;
+use BetterCal\Support\Limits;
 use BetterCal\Support\Time;
 
 $GLOBALS['__pass'] = 0;
@@ -2204,6 +2205,68 @@ check('ics budget: extra carriage returns do not hide events', BetterCal\Domain\
 check('ics budget: lone-CR line endings are counted too', BetterCal\Domain\Ics::budgetProblem("BEGIN:VCALENDAR\r" . str_repeat("BEGIN:VEVENT\rEND:VEVENT\r", 3) . "END:VCALENDAR\r", 1 << 20, 2) !== null);
 check('ics budget: one event with a flood of lines is refused', BetterCal\Domain\Ics::budgetProblem("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\n" . str_repeat("X-A:1\r\n", 2000) . "END:VEVENT\r\nEND:VCALENDAR\r\n", 1 << 20, 10) !== null);
 checkEq('ics budget: an ordinary event passes', null, BetterCal\Domain\Ics::budgetProblem("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:a\r\nSUMMARY:x\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n", 1 << 20, 1));
+$oldExdateEventLimit = Limits::get('EXDATE_VALUES_PER_EVENT');
+$oldExdateInputLimit = Limits::get('EXDATE_VALUES_PER_INPUT');
+Limits::configure(['EXDATE_VALUES_PER_EVENT' => 999999, 'EXDATE_VALUES_PER_INPUT' => 999999]);
+checkEq('exdate budget: operator override stays under the per-event hard ceiling', 2048, Limits::get('EXDATE_VALUES_PER_EVENT'));
+checkEq('exdate budget: operator override stays under the per-input hard ceiling', 8192, Limits::get('EXDATE_VALUES_PER_INPUT'));
+Limits::configure(['EXDATE_VALUES_PER_EVENT' => 4, 'EXDATE_VALUES_PER_INPUT' => 6]);
+$exdateEvent = static fn(string $uid, string $properties): string => "BEGIN:VEVENT\r\nUID:$uid\r\nDTSTART:20260101T000000Z\r\nDTEND:20260101T010000Z\r\n$properties\r\nEND:VEVENT\r\n";
+$exdateCalendar = static fn(array $events): string => "BEGIN:VCALENDAR\r\n" . implode('', $events) . "END:VCALENDAR\r\n";
+$fourExdates = implode(',', array_fill(0, 4, '20260101T000000Z'));
+$fiveExdates = implode(',', array_fill(0, 5, '20260101T000000Z'));
+checkEq('exdate budget: an event at the configured value limit passes', null, Ics::budgetProblem($exdateCalendar([$exdateEvent('ok', 'EXDATE:' . $fourExdates)]), 1 << 20, 1));
+check('exdate budget: one comma-packed property over the limit is refused', str_contains((string) Ics::budgetProblem($exdateCalendar([$exdateEvent('packed', 'EXDATE:' . $fiveExdates)]), 1 << 20, 1), 'One event holds 5 skipped occurrences'));
+check('exdate budget: folded property values cannot bypass the limit', str_contains((string) Ics::budgetProblem($exdateCalendar([$exdateEvent('folded', "EXDATE:20260101T000000Z,20260101T000000Z,\r\n 20260101T000000Z,20260101T000000Z,20260101T000000Z")]), 1 << 20, 1), 'One event holds 5 skipped occurrences'));
+check('exdate budget: repeated mixed-case properties and duplicates count as parser work', str_contains((string) Ics::budgetProblem($exdateCalendar([$exdateEvent('repeated', "exdate:20260101T000000Z,20260101T000000Z,20260101T000000Z\r\nExDaTe;VALUE=DATE-TIME:20260101T000000Z,20260101T000000Z")]), 1 << 20, 1), 'One event holds 5 skipped occurrences'));
+check('exdate budget: grouped property names accepted by Sabre cannot bypass the preflight', str_contains((string) Ics::budgetProblem($exdateCalendar([$exdateEvent('grouped', 'vendor.EXDATE:' . $fiveExdates)]), 1 << 20, 1), 'One event holds 5 skipped occurrences'));
+$threeExdates = implode(',', array_fill(0, 3, '20260101T000000Z'));
+check('exdate budget: an input-wide flood across otherwise valid events is refused', str_contains((string) Ics::budgetProblem($exdateCalendar([
+    $exdateEvent('a', 'EXDATE:' . $threeExdates),
+    $exdateEvent('b', 'EXDATE:' . $threeExdates),
+    $exdateEvent('c', 'EXDATE:' . $threeExdates),
+]), 1 << 20, 3), 'calendar file holds 9 skipped occurrences'));
+$exdateRejected = false;
+try {
+    Recurrence::validateExdates(array_fill(0, 5, '2026-01-01 00:00:00'));
+} catch (\InvalidArgumentException $e) {
+    $exdateRejected = str_contains($e->getMessage(), 'over the limit of 4');
+}
+check('exdate budget: duplicate values still consume the raw admission budget', $exdateRejected);
+$storedExdateRejected = false;
+try {
+    Recurrence::decodeExdates(json_encode(array_fill(0, 5, '2026-01-01 00:00:00')));
+} catch (\InvalidArgumentException $e) {
+    $storedExdateRejected = str_contains($e->getMessage(), 'quarantined');
+}
+check('exdate budget: stored over-limit JSON is rejected before full decoding', $storedExdateRejected);
+checkEq('exdate budget: stored duplicates retain their raw work count', 5, Recurrence::encodedExdateValueCount(json_encode(array_fill(0, 5, '2026-01-01 00:00:00'))));
+$storedExpanderCalled = false;
+$guardedRecurrence = new Recurrence(static function () use (&$storedExpanderCalled): array {
+    $storedExpanderCalled = true;
+    return [];
+});
+$guardedOccurrences = $guardedRecurrence->expand([
+    'id' => 99,
+    'start_utc' => '2026-01-01 00:00:00',
+    'end_utc' => '2026-01-01 01:00:00',
+    'rrule' => 'FREQ=DAILY',
+    'exdates_json' => json_encode(array_fill(0, 5, '2026-01-01 00:00:00')),
+], [], new DateTimeImmutable('2025-12-31T00:00:00Z'), new DateTimeImmutable('2026-01-02T00:00:00Z'));
+check('exdate budget: a legacy over-limit row never reaches the recurrence engine', !$storedExpanderCalled);
+checkEq('exdate budget: a quarantined legacy row safely shows only its first occurrence', 1, count($guardedOccurrences));
+$batchRejected = false;
+try {
+    Recurrence::assertExdateBatch([
+        ['exdates' => array_fill(0, 3, 'a')],
+        ['exdates' => array_fill(0, 3, 'b')],
+        ['exdates' => ['c']],
+    ]);
+} catch (\InvalidArgumentException $e) {
+    $batchRejected = str_contains($e->getMessage(), 'more than 6');
+}
+check('exdate budget: parsed batches enforce the cumulative input limit', $batchRejected);
+Limits::configure(['EXDATE_VALUES_PER_EVENT' => $oldExdateEventLimit, 'EXDATE_VALUES_PER_INPUT' => $oldExdateInputLimit]);
 checkEq('feed budget: FEED_EVENTS when memory is plentiful', BetterCal\Support\Limits::get('FEED_EVENTS'), BetterCal\Support\Limits::feedEventBudget('-1', 0));
 checkEq('dav uid from object uri', 'ABC123', DavIcs::uidFromObjectUri('ABC123.ics'));
 $ulidUid = Ids::ulid();
@@ -4397,6 +4460,40 @@ use BetterCal\Infra\Secrets;
     ]);
     checkEq('google->parsed: rrule without the prefix', 'FREQ=WEEKLY;BYDAY=MO', $series['rrule']);
     checkEq('google->parsed: exdates resolved through the TZID to UTC', ['2026-09-28 08:00:00', '2026-10-05 08:00:00'], $series['exdates']);
+
+    $googleOldEventLimit = Limits::get('EXDATE_VALUES_PER_EVENT');
+    $googleOldInputLimit = Limits::get('EXDATE_VALUES_PER_INPUT');
+    Limits::configure(['EXDATE_VALUES_PER_EVENT' => 3, 'EXDATE_VALUES_PER_INPUT' => 4]);
+    $googleEventRejected = false;
+    try {
+        GoogleSync::toParsed([
+            'id' => 'too-many', 'iCalUID' => 'too-many@google.com', 'summary' => 'Large series',
+            'start' => ['dateTime' => '2026-09-21T09:00:00Z'],
+            'end' => ['dateTime' => '2026-09-21T10:00:00Z'],
+            'recurrence' => ['RRULE:FREQ=DAILY', 'EXDATE:20260922T090000Z,20260923T090000Z,20260924T090000Z,20260925T090000Z'],
+        ]);
+    } catch (\InvalidArgumentException $e) {
+        $googleEventRejected = str_contains($e->getMessage(), 'over the limit of 3');
+    }
+    check('google exdate budget: one comma-packed event is rejected before translation', $googleEventRejected);
+    $googleBatchRejected = false;
+    try {
+        $cancelled = [];
+        foreach (range(1, 5) as $n) {
+            $cancelled[] = [
+                'id' => 'gone-' . $n,
+                'iCalUID' => 'series@google.com',
+                'status' => 'cancelled',
+                'recurringEventId' => 'series',
+                'originalStartTime' => ['dateTime' => '2026-10-0' . $n . 'T09:00:00Z'],
+            ];
+        }
+        GoogleSync::toParsedList($cancelled);
+    } catch (\InvalidArgumentException $e) {
+        $googleBatchRejected = str_contains($e->getMessage(), 'more than 4');
+    }
+    check('google exdate budget: cancelled instances count toward the sync-batch limit', $googleBatchRejected);
+    Limits::configure(['EXDATE_VALUES_PER_EVENT' => $googleOldEventLimit, 'EXDATE_VALUES_PER_INPUT' => $googleOldInputLimit]);
 
     $exception = GoogleSync::toParsed([
         'id' => 'r1_20261012T080000Z', 'iCalUID' => 'r1@google.com', 'summary' => 'Standup (moved)', 'recurringEventId' => 'r1',

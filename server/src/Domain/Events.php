@@ -320,6 +320,9 @@ final class Events
     private function googleDeleteThis(int $userId, array $calendar, array $master, ?string $instanceStart): void
     {
         $instanceUtc = $this->requireInstance(['instanceStart' => $instanceStart], $master);
+        // Refuse before mutating Google: otherwise its delete could succeed
+        // while the local cache rejects the resulting exclusion list.
+        $this->withExdate($master, $instanceUtc);
         $allDay = (int) $master['all_day'] === 1;
         $override = $this->db->one(
             'SELECT * FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc = ? AND deleted_at IS NULL',
@@ -347,6 +350,12 @@ final class Events
 
     private function googleDeleteOverride(int $userId, array $calendar, array $override): void
     {
+        if (!empty($override['recurrence_parent_id'])) {
+            $parent = $this->db->one('SELECT * FROM events WHERE id = ?', [(int) $override['recurrence_parent_id']]);
+            if ($parent !== null) {
+                $this->withExdate($parent, (string) $override['recurrence_instance_utc']);
+            }
+        }
         $this->google()->delete($calendar, self::requireGoogleId($override));
         $this->google()->apply($calendar, [], [GoogleWriter::tombstone((string) $override['uid'], (string) $override['recurrence_instance_utc'])]);
         $this->googleJournal($userId, "Deleted one occurrence of '" . (string) $override['title'] . "'", $calendar, (int) $override['id']);
@@ -731,6 +740,19 @@ final class Events
         if (!empty($in['rrule'])) {
             $rrule = Recurrence::validateRrule((string) $in['rrule']);
         }
+        $exdates = [];
+        if ($rrule !== null && !empty($in['exdates']) && is_array($in['exdates'])) {
+            // Count before mapping/filtering: invalid and duplicate input still
+            // costs work and must not provide a cardinality bypass.
+            try {
+                $exdates = array_values(array_filter(
+                    Recurrence::validateExdates($in['exdates']),
+                    static fn(string $d): bool => preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $d) === 1,
+                ));
+            } catch (\InvalidArgumentException $e) {
+                throw HttpError::badRequest($e->getMessage(), 'recurrence_exception_limit');
+            }
+        }
 
         $row = [
             'user_id' => $userId,
@@ -752,9 +774,7 @@ final class Events
             'tzid' => $tzid,
             'rrule' => $rrule,
             // Only a copy of a series carries these in; the editor never sends them.
-            'exdates_json' => $rrule !== null && !empty($in['exdates']) && is_array($in['exdates'])
-                ? json_encode(array_values(array_filter(array_map('strval', $in['exdates']), static fn(string $d): bool => preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $d) === 1)))
-                : null,
+            'exdates_json' => $exdates === [] ? null : json_encode($exdates),
             'is_container' => filter_var($in['isContainer'] ?? false, FILTER_VALIDATE_BOOL) ? 1 : 0,
             'reminders_json' => array_key_exists('reminders', $in)
                 ? self::encodeReminders(Reminders::validateEventReminders($in['reminders']))
@@ -1334,10 +1354,7 @@ final class Events
             }
             $this->applyPeoplePatch($userId, $id, $in);
             if ($master !== null) {
-                $exdates = $this->decodeExdates($master);
-                if (!in_array((string) $instanceUtc, $exdates, true)) {
-                    $exdates[] = (string) $instanceUtc;
-                }
+                $exdates = $this->withExdate($master, (string) $instanceUtc);
                 $this->db->update('events', ['exdates_json' => json_encode($exdates), 'updated_at' => Time::nowDb()], 'id = ?', [(int) $master['id']]);
             }
             if ($existingOverrideId !== null) {
@@ -1555,10 +1572,7 @@ final class Events
     {
         $instanceUtc = $this->requireInstance(['instanceStart' => $instanceStart], $master);
         $masterId = (int) $master['id'];
-        $exdates = $this->decodeExdates($master);
-        if (!in_array($instanceUtc, $exdates, true)) {
-            $exdates[] = $instanceUtc;
-        }
+        $exdates = $this->withExdate($master, $instanceUtc);
         $override = $this->db->one(
             'SELECT * FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc = ? AND deleted_at IS NULL',
             [$masterId, $instanceUtc]
@@ -1610,10 +1624,7 @@ final class Events
         $instanceUtc = (string) $override['recurrence_instance_utc'];
         $this->db->tx(function () use ($parent, $override, $instanceUtc): void {
             if ($parent !== null) {
-                $exdates = $this->decodeExdates($parent);
-                if (!in_array($instanceUtc, $exdates, true)) {
-                    $exdates[] = $instanceUtc;
-                }
+                $exdates = $this->withExdate($parent, $instanceUtc);
                 $this->db->update('events', ['exdates_json' => json_encode($exdates), 'updated_at' => Time::nowDb()], 'id = ?', [(int) $parent['id']]);
             }
             $this->db->run('DELETE FROM events WHERE id = ?', [(int) $override['id']]);
@@ -2191,11 +2202,25 @@ final class Events
 
     private function decodeExdates(array $row): array
     {
-        if (empty($row['exdates_json'])) {
-            return [];
+        try {
+            return Recurrence::decodeExdates($row['exdates_json'] ?? null);
+        } catch (\InvalidArgumentException $e) {
+            throw HttpError::conflict('recurrence_exception_limit', $e->getMessage());
         }
-        $decoded = is_array($row['exdates_json']) ? $row['exdates_json'] : json_decode((string) $row['exdates_json'], true);
-        return is_array($decoded) ? array_values(array_map('strval', $decoded)) : [];
+    }
+
+    /** Add one skipped occurrence without allowing a series over its durable limit. */
+    private function withExdate(array $row, string $instanceUtc): array
+    {
+        $exdates = $this->decodeExdates($row);
+        if (!in_array($instanceUtc, $exdates, true)) {
+            $exdates[] = $instanceUtc;
+        }
+        try {
+            return Recurrence::validateExdates($exdates);
+        } catch (\InvalidArgumentException $e) {
+            throw HttpError::conflict('recurrence_exception_limit', $e->getMessage());
+        }
     }
 
     private function exdatesFrom(array $master, string $instanceUtc): ?string

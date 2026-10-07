@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace BetterCal\Dav;
 
 use BetterCal\Domain\Ics;
+use BetterCal\Domain\Recurrence;
 use BetterCal\Support\Time;
 
 /**
@@ -86,7 +87,7 @@ final class DavIcs
     public static function eventColumns(array $parsed): array
     {
         $allDay = (int) ($parsed['all_day'] ?? 0) === 1;
-        $exdates = is_array($parsed['exdates'] ?? null) ? $parsed['exdates'] : [];
+        $exdates = Recurrence::validateExdates($parsed['exdates'] ?? []);
         return [
             'title' => (string) ($parsed['title'] ?? ''),
             // Cleaned on the way in, like every other local edit (#58).

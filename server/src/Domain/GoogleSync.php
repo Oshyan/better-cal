@@ -152,7 +152,21 @@ final class GoogleSync
     public static function toParsedList(array $items): array
     {
         $out = [];
+        $work = 0;
+        $max = Limits::get('EXDATE_VALUES_PER_INPUT');
         foreach ($items as $item) {
+            $work += self::itemExdateValueCount($item);
+            // A cancelled recurring instance becomes one EXDATE when changes
+            // merge into the cached master, even though Google sends it as a
+            // separate resource rather than an EXDATE content line.
+            if (($item['status'] ?? '') === 'cancelled' && isset($item['originalStartTime'])) {
+                $work++;
+            }
+            if ($work > $max) {
+                throw new \InvalidArgumentException(
+                    'This Google sync batch has more than ' . number_format($max) . ' skipped occurrences and was not applied.'
+                );
+            }
             $parsed = self::toParsed($item);
             if ($parsed !== null) {
                 $out[] = $parsed;
@@ -163,6 +177,13 @@ final class GoogleSync
 
     public static function toParsed(array $item): ?array
     {
+        $rawExdates = self::itemExdateValueCount($item);
+        $maxExdates = Limits::get('EXDATE_VALUES_PER_EVENT');
+        if ($rawExdates > $maxExdates) {
+            throw new \InvalidArgumentException(
+                'One Google event has ' . number_format($rawExdates) . ' skipped occurrences, over the limit of ' . number_format($maxExdates) . '.'
+            );
+        }
         $uid = trim((string) ($item['iCalUID'] ?? ''));
         if ($uid === '') {
             $uid = trim((string) ($item['id'] ?? ''));
@@ -235,7 +256,7 @@ final class GoogleSync
             'all_day' => $allDay ? 1 : 0,
             'tzid' => $tzid,
             'rrule' => $rrule,
-            'exdates' => array_values(array_unique($exdates)),
+            'exdates' => Recurrence::validateExdates($exdates),
             'status' => $status,
             'recurrence_instance_utc' => $instance,
             'reminders' => [],
@@ -260,6 +281,7 @@ final class GoogleSync
      */
     public static function applyChanges(array $snapshot, array $changes): array
     {
+        Recurrence::assertExdateBatch($snapshot);
         $byKey = [];
         foreach ($snapshot as $ev) {
             $byKey[self::key($ev)] = $ev;
@@ -286,9 +308,11 @@ final class GoogleSync
             if (!isset($byKey[$masterKey])) {
                 continue;
             }
-            $byKey[$masterKey]['exdates'] = array_values(array_unique(array_merge($byKey[$masterKey]['exdates'] ?? [], $dates)));
+            $byKey[$masterKey]['exdates'] = Recurrence::validateExdates(array_merge($byKey[$masterKey]['exdates'] ?? [], $dates));
         }
-        return array_values($byKey);
+        $result = array_values($byKey);
+        Recurrence::assertExdateBatch($result);
+        return $result;
     }
 
     /**
@@ -301,14 +325,17 @@ final class GoogleSync
     public static function rowsToParsed(array $rows): array
     {
         $out = [];
+        $totalExdates = 0;
+        $maxExdates = Limits::get('EXDATE_VALUES_PER_INPUT');
         foreach ($rows as $r) {
-            $exdates = [];
-            if (!empty($r['exdates_json'])) {
-                $decoded = json_decode((string) $r['exdates_json'], true);
-                if (is_array($decoded)) {
-                    $exdates = array_values(array_map('strval', $decoded));
-                }
+            $encodedExdates = $r['exdates_json'] ?? null;
+            $totalExdates += Recurrence::encodedExdateValueCount($encodedExdates);
+            if ($totalExdates > $maxExdates) {
+                throw new \InvalidArgumentException(
+                    'The cached Google calendar has more than ' . number_format($maxExdates) . ' skipped occurrences and was not processed.'
+                );
             }
+            $exdates = Recurrence::decodeExdates($encodedExdates);
             $out[] = [
                 'uid' => (string) $r['uid'],
                 'title' => (string) $r['title'],
@@ -335,6 +362,16 @@ final class GoogleSync
     private static function key(array $ev): string
     {
         return $ev['uid'] . '|' . ($ev['recurrence_instance_utc'] ?? '');
+    }
+
+    /** Number of raw comma-packed EXDATE entries before allocating them. */
+    private static function itemExdateValueCount(array $item): int
+    {
+        $count = 0;
+        foreach ((array) ($item['recurrence'] ?? []) as $line) {
+            $count += Recurrence::exdateValueCount((string) $line);
+        }
+        return $count;
     }
 
     /** Google's {date} | {dateTime, timeZone} to a UTC instant; all-day dates are midnight UTC like Ics does. */

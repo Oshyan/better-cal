@@ -217,12 +217,20 @@ export async function handleEventLink() {
 // deleted since, 0.9.1).
 export async function openOccurrence(instanceId, at, { quiet = false } = {}) {
   const { broad, tight } = deepLinkWindows(instanceId, at, Date.now());
-  try {
-    await loadWindow(broad.start, broad.end);
-  } catch { /* cache may still hold it; the targeted retry below covers it */ }
+  // Review/resume links frequently point outside the visible calendar. Use a
+  // cached occurrence immediately instead of making any date-range request.
   if (state.occ.has(instanceId)) {
     openDetail(instanceId);
     return;
+  }
+  if (broad) {
+    try {
+      await loadWindow(broad.start, broad.end);
+    } catch { /* cache may still hold it; the targeted retry below covers it */ }
+    if (state.occ.has(instanceId)) {
+      openDetail(instanceId);
+      return;
+    }
   }
   // Not in the cache. Two known ways that happens even though the event
   // exists: (a) the calendar view issued its own window load concurrently and

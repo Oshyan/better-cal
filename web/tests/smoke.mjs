@@ -920,6 +920,19 @@ eq('deeplink: empty id falls back to now', deepLinkAnchorMs('', null, DL_NOW), D
     parseISO(w.broad.start).getTime() < Date.UTC(2026, 6, 30, 9, 0, 0) &&
     parseISO(w.broad.end).getTime() > DL_NOW);
 }
+// Untrusted or intentionally far dates never produce a now-to-anchor window.
+// The caller can do one bounded targeted lookup around the occurrence instead.
+{
+  const farAt = '9999-01-01T00:00:00Z';
+  const w = deepLinkWindows('7:99990101T000000Z', farAt, DL_NOW);
+  eq('deeplink: extreme future date has no broad window', null, w.broad);
+  eq('deeplink: extreme future lookup stays three days wide', 3 * 86400000,
+    parseISO(w.tight.end).getTime() - parseISO(w.tight.start).getTime());
+}
+{
+  const w = deepLinkWindows('7:20400101T000000Z', null, DL_NOW);
+  eq('deeplink: far legacy instance-id fallback has no broad window', null, w.broad);
+}
 
 console.log('--- time-relative state (timeState) ---');
 

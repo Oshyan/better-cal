@@ -122,9 +122,13 @@ final class CalendarsController
         $maxEvents = Limits::importEventBudget();
         $problem = Ics::budgetProblem($ics, $maxBytes, $maxEvents);
         if ($problem !== null) {
-            $how = $maxEvents < Limits::get('IMPORT_EVENTS')
-                ? 'This server has memory for about ' . number_format($maxEvents) . ' events at once: split the file, or raise PHP memory_limit.'
-                : 'Split the file, or raise BETTERCAL_LIMIT_IMPORT_EVENTS on the server.';
+            if (str_contains($problem, 'skipped occurrences')) {
+                $how = 'Split unusually exception-heavy repeating series into smaller parts, or adjust BETTERCAL_LIMIT_EXDATE_VALUES_PER_EVENT and BETTERCAL_LIMIT_EXDATE_VALUES_PER_INPUT within their hard ceilings.';
+            } else {
+                $how = $maxEvents < Limits::get('IMPORT_EVENTS')
+                    ? 'This server has memory for about ' . number_format($maxEvents) . ' events at once: split the file, or raise PHP memory_limit.'
+                    : 'Split the file, or raise BETTERCAL_LIMIT_IMPORT_EVENTS on the server.';
+            }
             throw new HttpError('import_too_large', $problem . '. ' . $how, 413);
         }
         try {

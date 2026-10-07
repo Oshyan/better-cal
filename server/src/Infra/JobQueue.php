@@ -36,11 +36,31 @@ final class JobQueue
     /** Is a job of this type with the given payload `hash` pending or running? */
     public function hasPendingWithHash(string $type, string $hash): bool
     {
+        $extract = $this->hashExpression();
         return $this->db->scalar(
             "SELECT id FROM jobs WHERE type = ? AND status IN ('pending', 'running')
-             AND JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.hash')) = ? LIMIT 1",
+             AND $extract = ? LIMIT 1",
             [$type, $hash]
         ) !== null;
+    }
+
+    /** Is a not-yet-running continuation with this stable hash already queued? */
+    public function hasQueuedWithHash(string $type, string $hash): bool
+    {
+        $extract = $this->hashExpression();
+        return $this->db->scalar(
+            "SELECT id FROM jobs WHERE type = ? AND status = 'pending'
+             AND $extract = ? LIMIT 1",
+            [$type, $hash]
+        ) !== null;
+    }
+
+    private function hashExpression(): string
+    {
+        $driver = (string) $this->db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME);
+        return $driver === 'sqlite'
+            ? "JSON_EXTRACT(payload_json, '$.hash')"
+            : "JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.hash'))";
     }
 
     public function hasActiveFeedPoll(int $calendarId): bool
@@ -52,11 +72,16 @@ final class JobQueue
         ) !== null;
     }
 
-    /** Claim the next due job (single-worker safe via conditional UPDATE). */
+    /**
+     * Claim the next due job (single-worker safe via conditional UPDATE).
+     * Reminder delivery goes first so a backlog of slow model-backed jobs can
+     * delay other background work but never a due notification.
+     */
     public function claimNext(): ?array
     {
         $job = $this->db->one(
-            "SELECT * FROM jobs WHERE status = 'pending' AND run_after <= ? ORDER BY run_after, id LIMIT 1",
+            "SELECT * FROM jobs WHERE status = 'pending' AND run_after <= ?
+             ORDER BY CASE WHEN type = 'reminder_scan' THEN 0 ELSE 1 END, run_after, id LIMIT 1",
             [Time::nowDb()]
         );
         if ($job === null) {

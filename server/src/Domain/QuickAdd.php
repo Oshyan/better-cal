@@ -7,6 +7,7 @@ namespace BetterCal\Domain;
 use BetterCal\Http\HttpError;
 use BetterCal\Infra\Db;
 use BetterCal\Infra\LlmGateway;
+use BetterCal\Support\Limits;
 use BetterCal\Support\Time;
 
 /**
@@ -26,6 +27,7 @@ final class QuickAdd
         private readonly Events $events,
         private readonly Settings $settings,
         private readonly ?People $people = null,
+        private readonly ?ModelAdmission $modelAdmission = null,
     ) {
     }
 
@@ -72,11 +74,18 @@ final class QuickAdd
     }
 
     /** @return array{draft:array, event:?array} */
-    public function run(int $userId, string $text, string $tz, bool $commit, ?int $calendarId): array
+    public function run(int $userId, string $text, string $tz, bool $commit, ?int $calendarId, ?int $tokenId = null): array
     {
         $text = trim($text);
         if ($text === '') {
             throw HttpError::badRequest('text is required');
+        }
+        if (mb_strlen($text) > Limits::get('MODEL_QUICKADD_CHARS')) {
+            throw new HttpError(
+                'quickadd_text_too_long',
+                'Quick Add text is too long (limit ' . number_format(Limits::get('MODEL_QUICKADD_CHARS')) . ' characters).',
+                413,
+            );
         }
         $tz = Time::normalizeTzid($tz);
         $now = Time::nowUtc();
@@ -146,19 +155,35 @@ final class QuickAdd
         $mode = (string) ($this->settings->forUser($userId)['nlParseMode'] ?? 'smart');
 
         $draft = null;
-        if (self::useLlm($mode, $fallback)) {
-            try {
-                $parsed = $this->llm->parseEvent($text, $now, $tz);
-                if ($parsed !== null) {
-                    $draft = self::mergeLlm($parsed, $fallback, $now->setTimezone(Time::zone($tz)))
-                        + ['confidence' => 0.9, 'source' => 'llm'];
+        $modelLimit = null;
+        if (self::useLlm($mode, $fallback) && $this->llm->isConfigured()) {
+            $admitter = $this->modelAdmission ?? new ModelAdmission($this->db);
+            $admission = $admitter->reserveQuickAdd($userId, $tokenId, $now);
+            if ($admission['allowed']) {
+                try {
+                    $parsed = $this->llm->parseEvent($text, $now, $tz);
+                    if ($parsed !== null) {
+                        $draft = self::mergeLlm($parsed, $fallback, $now->setTimezone(Time::zone($tz)))
+                            + ['confidence' => 0.9, 'source' => 'llm'];
+                    }
+                } catch (\Throwable $e) {
+                    error_log('quickadd llm failure: ' . $e->getMessage());
+                } finally {
+                    $admitter->finish($admission['reservationId']);
                 }
-            } catch (\Throwable $e) {
-                error_log('quickadd llm failure: ' . $e->getMessage());
+            } else {
+                $modelLimit = [
+                    'code' => $admission['code'],
+                    'message' => $admission['message'],
+                    'retryAt' => $admission['retryAt'],
+                ];
             }
         }
         $draft ??= $fallback;
         unset($draft['complete'], $draft['dateFound']); // parser-internal, not part of the draft contract
+        if ($modelLimit !== null) {
+            $draft['modelLimit'] = $modelLimit;
+        }
 
         $draft['calendarId'] = $this->resolveCalendarId($userId, $calendarId);
 

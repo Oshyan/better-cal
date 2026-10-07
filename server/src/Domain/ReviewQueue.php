@@ -28,12 +28,13 @@ use BetterCal\Support\Time;
  *
  * The Review page also lists plugin proposals, invitations awaiting an RSVP,
  * possible duplicates, and paused subscriptions. Held changes and bounded
- * mail-limit notices are stored here; the other kinds already have a home.
+ * mail/model-limit notices are stored here; the other kinds already have a home.
  */
 final class ReviewQueue
 {
     public const KIND_INVITE_CHANGE = 'invite_change';
     public const KIND_MAIL_LIMIT = 'mail_limit';
+    public const KIND_MODEL_LIMIT = 'model_limit';
 
     private const PREVIEW_CHARS = 400;
 
@@ -215,6 +216,64 @@ final class ReviewQueue
         });
     }
 
+    /**
+     * One bounded notice per calendar and capacity reason. Prompt verdicts are
+     * fail-open while delayed, so this explains the temporary behavior without
+     * turning normal quota deferral into a system failure.
+     */
+    public function holdModelLimit(
+        int $userId,
+        string $reason,
+        string $message,
+        string $retryAt,
+        int $calendarId,
+        string $calendarName,
+        int $batchSize,
+    ): int {
+        $sourceKey = mb_substr($reason . ':calendar:' . $calendarId, 0, 255);
+        return $this->db->tx(function () use ($userId, $reason, $message, $retryAt, $calendarId, $calendarName, $batchSize, $sourceKey): int {
+            $driver = (string) $this->db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME);
+            $this->db->scalar('SELECT id FROM users WHERE id = ?' . ($driver === 'mysql' ? ' FOR UPDATE' : ''), [$userId]);
+            $row = $this->db->one(
+                "SELECT * FROM review_items WHERE user_id = ? AND kind = ? AND source_key = ? AND status = 'open' ORDER BY id DESC LIMIT 1",
+                [$userId, self::KIND_MODEL_LIMIT, $sourceKey]
+            );
+            $payload = $row !== null ? self::payload($row) : [];
+            $count = max(0, (int) ($payload['count'] ?? 0)) + 1;
+            $name = mb_substr(trim($calendarName) ?: 'Subscribed calendar', 0, 300);
+            $summary = mb_substr(
+                $message . ' Events from “' . $name . '” remain visible; new or changed events pass through the filter until its queued checks run.'
+                . ($retryAt !== '' ? ' Processing will retry automatically.' : ''),
+                0,
+                1000
+            );
+            $payload = [
+                'reason' => mb_substr($reason, 0, 255),
+                'count' => $count,
+                'retryAt' => $retryAt !== '' ? $retryAt : null,
+                'calendarId' => $calendarId,
+                'calendarName' => $name,
+                'latestBatchSize' => max(0, $batchSize),
+            ];
+            if ($row !== null) {
+                $this->db->run(
+                    'UPDATE review_items SET title = ?, summary = ?, payload_json = ?, created_at = ? WHERE id = ?',
+                    ['AI filter processing paused', $summary, json_encode($payload, JSON_INVALID_UTF8_SUBSTITUTE | JSON_UNESCAPED_SLASHES), Time::nowDb(), (int) $row['id']]
+                );
+                return (int) $row['id'];
+            }
+            return $this->db->insert('review_items', [
+                'user_id' => $userId,
+                'kind' => self::KIND_MODEL_LIMIT,
+                'event_id' => null,
+                'source_key' => $sourceKey,
+                'title' => 'AI filter processing paused',
+                'summary' => $summary,
+                'payload_json' => json_encode($payload, JSON_INVALID_UTF8_SUBSTITUTE | JSON_UNESCAPED_SLASHES),
+            ]);
+        });
+    }
+
     // ---- Reading -------------------------------------------------------
 
     /** @return list<array<string,mixed>> newest first */
@@ -369,6 +428,17 @@ final class ReviewQueue
         $row = $this->requireOpen($userId, $id);
         if ((string) $row['kind'] !== self::KIND_MAIL_LIMIT) {
             throw HttpError::notFound('No such email-limit review item');
+        }
+        $this->close((int) $row['id'], 'dismissed');
+        return self::serialize($this->db->one('SELECT * FROM review_items WHERE id = ?', [$id]) ?? $row);
+    }
+
+    /** Dismiss an informational prompt-filter capacity notice. */
+    public function dismissModelLimit(int $userId, int $id): array
+    {
+        $row = $this->requireOpen($userId, $id);
+        if ((string) $row['kind'] !== self::KIND_MODEL_LIMIT) {
+            throw HttpError::notFound('No such model-limit review item');
         }
         $this->close((int) $row['id'], 'dismissed');
         return self::serialize($this->db->one('SELECT * FROM review_items WHERE id = ?', [$id]) ?? $row);

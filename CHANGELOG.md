@@ -4,6 +4,14 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.28 (2026-10-07)
+
+- **Quick Add cannot make unbounded paid model calls.** Browser previews, committed additions and API-token previews now reserve persistent account capacity before dispatch; tokens also receive smaller fairness limits. When capacity is full, the deterministic parser remains available and the draft explains that AI parsing is paused.
+- **Busy subscribed feeds cannot monopolize model processing.** Prompt-filter work has persistent account and per-calendar budgets, performs one calendar-homogeneous model call per worker job and yields to due reminders. Unevaluated events remain visible, delayed work retries automatically, and Review shows one bounded notice for affected calendars.
+- **Gemini responses have an authoritative streamed size limit.** Every model caller stops reading at the shared response-byte cap and uses its existing fallback instead of buffering an unbounded provider response.
+
+Operators: migration 041 adds the non-mail model-admission ledger. Default Quick Add limits are 120/500 model calls per rolling hour/day per account, 30/150 per API token and 4/2 concurrent per account/token. Prompt-filter defaults are 40/200 calls per hour/day per account and 20/100 per calendar. Quick Add input defaults to 4,000 characters, Gemini responses to 1 MiB, and admission records to 90-day retention. `BETTERCAL_LIMIT_MODEL_*` settings may tune these only within documented hard ceilings.
+
 ## 0.9.27 (2026-10-07)
 
 - **Public email can no longer create unbounded calendar data.** Every mail-ingest tier now shares persistent account-wide, claimed-sender and active-event capacity. Existing invitation changes and cancellations still reach Review without consuming new-event capacity.

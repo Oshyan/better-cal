@@ -26,6 +26,7 @@ use BetterCal\Http\HttpError;
 use BetterCal\Http\Router;
 use BetterCal\Infra\LlmGateway;
 use BetterCal\Infra\LlmTransport;
+use BetterCal\Infra\CurlLlmTransport;
 use BetterCal\Infra\PoliciedGeocoderTransport;
 use BetterCal\Support\Ids;
 use BetterCal\Support\Limits;
@@ -890,6 +891,13 @@ check('imip live event: equal sequence still allowed', $mayWhen('confirmed', 2)[
         [$notice['detail']['count'], $notice['detail']['latestSubject'], $notice['detail']['latestFrom']]);
     checkEq('review mail limit: kind-specific count', 1, $queue->openCount(1, BetterCal\Domain\ReviewQueue::KIND_MAIL_LIMIT));
     checkEq('review mail limit: dismissing it never needs an event', 'dismissed', $queue->dismissMailLimit(1, $mailNotice)['status']);
+    $modelNotice = $queue->holdModelLimit(1, 'model_calendar_hour', 'AI filter processing is temporarily paused.', '2026-10-08T12:00:00Z', 9, 'Concerts', 25);
+    checkEq('review model limit: repeated deferral updates one bounded notice', $modelNotice,
+        $queue->holdModelLimit(1, 'model_calendar_hour', 'AI filter processing is temporarily paused.', '2026-10-08T12:00:00Z', 9, 'Concerts', 10));
+    $modelItem = array_values(array_filter($queue->listFor(1), static fn(array $i): bool => $i['kind'] === 'model_limit'))[0];
+    checkEq('review model limit: aggregate keeps calendar and bounded latest batch context', [2, 9, 10],
+        [$modelItem['detail']['count'], $modelItem['detail']['calendarId'], $modelItem['detail']['latestBatchSize']]);
+    checkEq('review model limit: dismissing it never needs an event', 'dismissed', $queue->dismissModelLimit(1, $modelNotice)['status']);
 }
 
 $ldHtml = '<html><body><script type="application/ld+json">'
@@ -2053,6 +2061,14 @@ checkEq('pe payload event id', 7, $payload['eventId']);
 checkEq('pe payload local start', '2026-08-01T19:00:00-07:00', $payload['start']);
 checkEq('pe payload description excerpted', 301, mb_strlen($payload['description']));
 
+// The shared Gemini transport keeps exact-limit bytes and rejects the first
+// byte beyond it without retaining the over-limit chunk.
+$bounded = '';
+check('llm response cap: first chunk under the limit', CurlLlmTransport::appendBounded($bounded, '1234', 5));
+check('llm response cap: exact limit succeeds', CurlLlmTransport::appendBounded($bounded, '5', 5));
+check('llm response cap: one byte over is refused', !CurlLlmTransport::appendBounded($bounded, '6', 5));
+checkEq('llm response cap: refused bytes are not retained', '12345', $bounded);
+
 // Prompt dispositions from cached verdicts + precedence with keyword filters.
 $promptRow = ['id' => 101, 'calendar_id' => 3] + $occ;
 $pfHide = ['id' => 1, 'action' => 'hide', 'calendarIds' => null];
@@ -2068,6 +2084,181 @@ checkEq('pd hide beats dim', 'hide', Filters::promptDisposition($promptRow, [$pf
 $pfHl = ['id' => 4, 'action' => 'highlight', 'calendarIds' => null];
 $failAllHl = $failAll + [4 => [101 => true]];
 checkEq('pd fail -> highlight', 'highlight', Filters::promptDisposition($promptRow, [$pfHl], $failAllHl));
+
+// Non-mail model admission: persistent account/source windows, crash-safe
+// concurrency leases, and failed provider attempts that are not refunded.
+{
+    $mdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $mdb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, settings_json TEXT)');
+    $mdb->run('CREATE TABLE model_admissions (id INTEGER PRIMARY KEY, user_id INTEGER, operation TEXT, principal_kind TEXT, principal_key TEXT, admitted_at TEXT, lease_until TEXT, finished_at TEXT)');
+    $mdb->run("INSERT INTO users (id, settings_json) VALUES (1, '{}'), (2, '{}'), (3, '{}'), (4, '{}')");
+    $admission = new BetterCal\Domain\ModelAdmission($mdb);
+    $modelNow = new DateTimeImmutable('2026-10-07T12:00:00Z');
+
+    Limits::configure([
+        'MODEL_QUICKADD_PER_HOUR' => 10, 'MODEL_QUICKADD_PER_DAY' => 20,
+        'MODEL_QUICKADD_PER_TOKEN_HOUR' => 10, 'MODEL_QUICKADD_PER_TOKEN_DAY' => 20,
+        'MODEL_QUICKADD_CONCURRENT' => 1, 'MODEL_QUICKADD_PER_TOKEN_CONCURRENT' => 1,
+    ]);
+    $active = $admission->reserveQuickAdd(1, 7, $modelNow);
+    $busy = $admission->reserveQuickAdd(1, 7, $modelNow);
+    checkEq('model admission: active Quick Add lease caps concurrent calls', [true, false, 'model_account_concurrent'], [$active['allowed'], $busy['allowed'], $busy['code']]);
+    $admission->finish($active['reservationId'], $modelNow->add(new DateInterval('PT1S')));
+    $afterFinish = $admission->reserveQuickAdd(1, 7, $modelNow->add(new DateInterval('PT2S')));
+    check('model admission: finishing releases concurrency without refunding the attempt', $afterFinish['allowed']
+        && (int) $mdb->scalar("SELECT COUNT(*) FROM model_admissions WHERE user_id = 1 AND operation = 'quickadd'") === 2);
+    $admission->finish($afterFinish['reservationId'], $modelNow->add(new DateInterval('PT3S')));
+
+    Limits::configure([
+        'MODEL_QUICKADD_PER_HOUR' => 2, 'MODEL_QUICKADD_PER_DAY' => 20,
+        'MODEL_QUICKADD_PER_TOKEN_HOUR' => 10, 'MODEL_QUICKADD_PER_TOKEN_DAY' => 20,
+        'MODEL_QUICKADD_CONCURRENT' => 4, 'MODEL_QUICKADD_PER_TOKEN_CONCURRENT' => 2,
+    ]);
+    foreach ([11, 12] as $token) {
+        $r = $admission->reserveQuickAdd(2, $token, $modelNow);
+        $admission->finish($r['reservationId'], $modelNow);
+    }
+    $rotated = $admission->reserveQuickAdd(2, 13, $modelNow);
+    checkEq('model admission: rotating API tokens cannot bypass account capacity', [false, 'model_account_hour'], [$rotated['allowed'], $rotated['code']]);
+
+    Limits::configure(['MODEL_QUICKADD_PER_HOUR' => 1, 'MODEL_QUICKADD_PER_DAY' => 20]);
+    $nearExpiry = $admission->reserveQuickAdd(4, null, $modelNow->sub(new DateInterval('PT59M')));
+    $admission->finish($nearExpiry['reservationId'], $modelNow->sub(new DateInterval('PT58M')));
+    $nearExpiryDenied = $admission->reserveQuickAdd(4, null, $modelNow);
+    checkEq('model admission: retry time is the real rolling-window expiry', '2026-10-07T12:01:00+00:00', $nearExpiryDenied['retryAt']);
+
+    Limits::configure([
+        'MODEL_FILTER_PER_HOUR' => 2, 'MODEL_FILTER_PER_DAY' => 10,
+        'MODEL_FILTER_PER_CALENDAR_HOUR' => 1, 'MODEL_FILTER_PER_CALENDAR_DAY' => 5,
+    ]);
+    $c1 = $admission->reservePromptFilter(3, 100, $modelNow);
+    $admission->finish($c1['reservationId'], $modelNow);
+    $c1Again = $admission->reservePromptFilter(3, 100, $modelNow);
+    $c2 = $admission->reservePromptFilter(3, 200, $modelNow);
+    $admission->finish($c2['reservationId'], $modelNow);
+    $c3 = $admission->reservePromptFilter(3, 300, $modelNow);
+    checkEq('model admission: one calendar has a secondary prompt-filter brake', [false, 'model_calendar_hour'], [$c1Again['allowed'], $c1Again['code']]);
+    checkEq('model admission: rotating calendars cannot bypass account capacity', [true, false, 'model_account_hour'], [$c2['allowed'], $c3['allowed'], $c3['code']]);
+    $mdb->run("INSERT INTO model_admissions (user_id, operation, principal_kind, principal_key, admitted_at, lease_until, finished_at) VALUES (1, 'quickadd', 'session', 'old', '2025-01-01 00:00:00', '2025-01-01 00:01:00', '2025-01-01 00:00:30')");
+    checkEq('model admission: old accounting is pruned', 1, $admission->prune($modelNow));
+    Limits::reset();
+}
+
+// Quick Add reserves before even a preview call, charges a failed provider
+// response, then returns a clearly marked deterministic draft at the cap.
+{
+    $qadb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $qadb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, settings_json TEXT)');
+    $qadb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, position INTEGER, name TEXT)');
+    $qadb->run('CREATE TABLE model_admissions (id INTEGER PRIMARY KEY, user_id INTEGER, operation TEXT, principal_kind TEXT, principal_key TEXT, admitted_at TEXT, lease_until TEXT, finished_at TEXT)');
+    $qadb->run("INSERT INTO users (id, settings_json) VALUES (1, '{\"nlParseMode\":\"always\"}')");
+    $qadb->run("INSERT INTO calendars (id, user_id, kind, position, name) VALUES (10, 1, 'local', 0, 'Home')");
+    $qaTransport = new class implements LlmTransport {
+        public int $calls = 0;
+        public function post(string $url, array $headers, string $body, int $timeoutSeconds): ?string
+        {
+            $this->calls++;
+            return null;
+        }
+    };
+    $qaGateway = new LlmGateway(['gemini' => ['key' => 'test', 'model' => 'gemini-test']], $qaTransport);
+    $qa = new QuickAdd(
+        $qadb,
+        $qaGateway,
+        (new ReflectionClass(Events::class))->newInstanceWithoutConstructor(),
+        new Settings($qadb),
+        null,
+        new BetterCal\Domain\ModelAdmission($qadb),
+    );
+    Limits::configure([
+        'MODEL_QUICKADD_PER_HOUR' => 1, 'MODEL_QUICKADD_PER_DAY' => 10,
+        'MODEL_QUICKADD_PER_TOKEN_HOUR' => 10, 'MODEL_QUICKADD_PER_TOKEN_DAY' => 10,
+        'MODEL_QUICKADD_CONCURRENT' => 4, 'MODEL_QUICKADD_PER_TOKEN_CONCURRENT' => 2,
+    ]);
+    $previewOne = $qa->run(1, 'Dinner sometime', 'UTC', false, null, 77);
+    $previewTwo = $qa->run(1, 'Lunch sometime', 'UTC', false, null, 77);
+    checkEq('quick add model budget: failed preview call still consumes one reservation', [1, 'fallback'], [$qaTransport->calls, $previewOne['draft']['source']]);
+    checkEq('quick add model budget: exhausted preview uses marked deterministic fallback', ['fallback', 'model_account_hour'], [$previewTwo['draft']['source'], $previewTwo['draft']['modelLimit']['code']]);
+    $qadb->run("UPDATE users SET settings_json = '{\"nlParseMode\":\"never\"}' WHERE id = 1");
+    $deterministic = $qa->run(1, 'Dinner tomorrow 7pm', 'UTC', false, null, 77);
+    checkEq('quick add model budget: deterministic-only parse spends no capacity', [1, false], [$qaTransport->calls, isset($deterministic['draft']['modelLimit'])]);
+    Limits::configure(['MODEL_QUICKADD_CHARS' => 5]);
+    try {
+        $qa->run(1, '123456', 'UTC', false, null, 77);
+        check('quick add model budget: oversized semantic input refused before dispatch', false);
+    } catch (HttpError $e) {
+        checkEq('quick add model budget: oversized semantic input has a stable 413', [413, 'quickadd_text_too_long', 1], [$e->status, $e->errorCode, $qaTransport->calls]);
+    }
+    Limits::reset();
+}
+
+// Prompt work is calendar-homogeneous, one call per job, and budget denial is
+// a delayed successful continuation plus one bounded Review notice.
+{
+    $pedb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $pedb->run('CREATE TABLE users (id INTEGER PRIMARY KEY)');
+    $pedb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT)');
+    $pedb->run('CREATE TABLE filters (id INTEGER PRIMARY KEY, user_id INTEGER, enabled INTEGER, type TEXT, config_json TEXT, scope TEXT, scope_id INTEGER)');
+    $pedb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, title TEXT, description TEXT, location TEXT, start_utc TEXT, end_utc TEXT, tzid TEXT, source TEXT, deleted_at TEXT, rrule TEXT, created_at TEXT)');
+    $pedb->run('CREATE TABLE filter_evals (id INTEGER PRIMARY KEY, filter_id INTEGER, event_id INTEGER, verdict TEXT, score REAL, evaluated_at TEXT)');
+    $pedb->run('CREATE TABLE calendar_folders (calendar_id INTEGER, folder_id INTEGER)');
+    $pedb->run('CREATE TABLE model_admissions (id INTEGER PRIMARY KEY, user_id INTEGER, operation TEXT, principal_kind TEXT, principal_key TEXT, admitted_at TEXT, lease_until TEXT, finished_at TEXT)');
+    $pedb->run("CREATE TABLE jobs (id INTEGER PRIMARY KEY, type TEXT, payload_json TEXT, run_after TEXT, status TEXT, attempts INTEGER DEFAULT 0, last_error TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT DEFAULT CURRENT_TIMESTAMP)");
+    $pedb->run("CREATE TABLE review_items (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, event_id INTEGER, source_key TEXT, title TEXT, summary TEXT, payload_json TEXT, status TEXT DEFAULT 'open', created_at TEXT DEFAULT CURRENT_TIMESTAMP, decided_at TEXT)");
+    $pedb->run('INSERT INTO users (id) VALUES (1)');
+    $pedb->run("INSERT INTO calendars (id, user_id, name) VALUES (10, 1, 'Large feed'), (20, 1, 'Other feed')");
+    $pedb->run("INSERT INTO filters (id, user_id, enabled, type, config_json, scope) VALUES (1, 1, 1, 'prompt', '{\"prompt\":\"live music\"}', 'global')");
+    for ($i = 1; $i <= 35; $i++) {
+        $cal = $i <= 30 ? 10 : 20;
+        $pedb->run(
+            "INSERT INTO events (id, user_id, calendar_id, title, start_utc, end_utc, tzid, source, created_at) VALUES (?, 1, ?, ?, '2026-10-08 12:00:00', '2026-10-08 13:00:00', 'UTC', 'feed', '2026-10-07 12:00:00')",
+            [$i, $cal, 'Event ' . $i]
+        );
+    }
+    $peTransport = new class implements LlmTransport {
+        public int $calls = 0;
+        /** @var list<list<int>> */
+        public array $eventIds = [];
+        public function post(string $url, array $headers, string $body, int $timeoutSeconds): ?string
+        {
+            $this->calls++;
+            $request = json_decode($body, true);
+            $text = (string) ($request['contents'][0]['parts'][0]['text'] ?? '');
+            $json = substr($text, strpos($text, "\n") + 1);
+            $events = json_decode($json, true);
+            $this->eventIds[] = is_array($events) ? array_map(static fn(array $e): int => (int) $e['eventId'], $events) : [];
+            return json_encode(['candidates' => [['content' => ['parts' => [['text' => '{"results":[]}']]]]]]);
+        }
+    };
+    $peQueue = new BetterCal\Infra\JobQueue($pedb);
+    $peReview = new BetterCal\Domain\ReviewQueue($pedb, (new ReflectionClass(Events::class))->newInstanceWithoutConstructor());
+    $pe = new PromptEval(
+        $pedb,
+        new LlmGateway(['gemini' => ['key' => 'test', 'model' => 'gemini-test']], $peTransport),
+        $peQueue,
+        new BetterCal\Domain\ModelAdmission($pedb),
+        $peReview,
+    );
+    Limits::configure([
+        'MODEL_FILTER_PER_HOUR' => 1, 'MODEL_FILTER_PER_DAY' => 10,
+        'MODEL_FILTER_PER_CALENDAR_HOUR' => 10, 'MODEL_FILTER_PER_CALENDAR_DAY' => 10,
+    ]);
+    $pe->run();
+    checkEq('prompt budget: one model call per worker job', 1, $peTransport->calls);
+    check('prompt budget: a batch contains events from only one calendar', count($peTransport->eventIds[0]) === 5
+        && count(array_filter($peTransport->eventIds[0], static fn(int $id): bool => $id > 30)) === 5);
+    checkEq('prompt budget: one stable continuation is queued', 1, (int) $pedb->scalar("SELECT COUNT(*) FROM jobs WHERE type = 'filter_eval' AND status = 'pending'"));
+    $pedb->run('DELETE FROM jobs');
+    $pe->run();
+    checkEq('prompt budget: exhausted account capacity dispatches no second call', 1, $peTransport->calls);
+    checkEq('prompt budget: capacity denial queues one delayed continuation', 1, (int) $pedb->scalar("SELECT COUNT(*) FROM jobs WHERE type = 'filter_eval' AND status = 'pending' AND run_after > CURRENT_TIMESTAMP"));
+    $modelNotices = array_values(array_filter($peReview->listFor(1), static fn(array $i): bool => $i['kind'] === BetterCal\Domain\ReviewQueue::KIND_MODEL_LIMIT));
+    checkEq('prompt budget: one bounded Review notice names the affected calendar', [1, 20, 'Other feed'], [count($modelNotices), $modelNotices[0]['detail']['calendarId'] ?? null, $modelNotices[0]['detail']['calendarName'] ?? null]);
+    checkEq('prompt budget: unevaluated events remain fail-open', 0, (int) $pedb->scalar('SELECT COUNT(*) FROM filter_evals'));
+    $pedb->run("INSERT INTO jobs (type, payload_json, run_after, status) VALUES ('filter_eval', '{}', '2026-01-01 00:00:00', 'pending'), ('reminder_scan', '{}', '2026-01-01 00:00:01', 'pending')");
+    checkEq('prompt budget: due reminders outrank an older model-work backlog', 'reminder_scan', $peQueue->claimNext()['type'] ?? null);
+    Limits::reset();
+}
 checkEq('pd dim beats highlight', 'dim', Filters::promptDisposition($promptRow, [$pfHl, $pfDim], $failAllHl));
 checkEq('strongest hide wins', 'hide', Filters::strongest('dim', 'hide'));
 checkEq('strongest dim over null', 'dim', Filters::strongest(null, 'dim'));

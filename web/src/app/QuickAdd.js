@@ -413,6 +413,7 @@ export function QuickAdd() {
           title=${knownPerson(n) ? 'In your people' : 'Not in your people yet — you will be asked'}
         >with ${n}</span>`)}
         ${draft.source === 'fallback' && html`<span class="bc-qchip bc-qchip-fallback" title="Parsed without the language model">basic parse</span>`}
+        ${draft.modelLimit && html`<span class="bc-qchip bc-qchip-fallback" title=${draft.modelLimit.message || 'AI parsing is temporarily paused'}>AI paused</span>`}
       </div>`}
       ${(!draft || draft.intent !== 'availability') && html`<div class="bc-quickadd-strip">
         <div class=${'bc-qa-field bc-qa-date' + flashCls('dateKey')}>

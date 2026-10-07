@@ -110,8 +110,9 @@ final class Feeds
             if (!$this->queue->hasPending('geocode_sweep')) {
                 $this->queue->enqueue('geocode_sweep', []);
             }
-            if (!$this->queue->hasPending('filter_eval')) {
-                $this->queue->enqueue('filter_eval', []);
+            $filterHash = 'filter-calendar:' . $calendarId;
+            if (!$this->queue->hasPendingWithHash('filter_eval', $filterHash)) {
+                $this->queue->enqueue('filter_eval', ['calendarId' => $calendarId, 'hash' => $filterHash]);
             }
             if (!$this->queue->hasPending('rank_events')) {
                 $this->queue->enqueue('rank_events', []);

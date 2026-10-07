@@ -63,6 +63,22 @@ final class Limits
         'MAIL_LLM_PER_DAY' => 50,
         'MAIL_LLM_PER_SENDER_DAY' => 20,
         'MAIL_LOG_RETENTION_DAYS' => 90,
+        // Other paid model entry points. Quick Add keeps an account ceiling
+        // across sessions/tokens plus smaller per-token fairness limits;
+        // prompt filters keep an account ceiling across all feed calendars.
+        'MODEL_QUICKADD_CHARS' => 4000,
+        'MODEL_QUICKADD_PER_HOUR' => 120,
+        'MODEL_QUICKADD_PER_DAY' => 500,
+        'MODEL_QUICKADD_PER_TOKEN_HOUR' => 30,
+        'MODEL_QUICKADD_PER_TOKEN_DAY' => 150,
+        'MODEL_QUICKADD_CONCURRENT' => 4,
+        'MODEL_QUICKADD_PER_TOKEN_CONCURRENT' => 2,
+        'MODEL_FILTER_PER_HOUR' => 40,
+        'MODEL_FILTER_PER_DAY' => 200,
+        'MODEL_FILTER_PER_CALENDAR_HOUR' => 20,
+        'MODEL_FILTER_PER_CALENDAR_DAY' => 100,
+        'MODEL_RESPONSE_BYTES' => 1048576, // authoritative streamed cap, all Gemini callers
+        'MODEL_LOG_RETENTION_DAYS' => 90,
         // Compact recurrence properties can hide thousands of comma-separated
         // values on one admitted line. Count them before parser/object work,
         // and keep one series from becoming a permanent expansion tax.
@@ -83,6 +99,19 @@ final class Limits
         'MAIL_LLM_PER_DAY' => 250,
         'MAIL_LLM_PER_SENDER_DAY' => 100,
         'MAIL_LOG_RETENTION_DAYS' => 365,
+        'MODEL_QUICKADD_CHARS' => 16000,
+        'MODEL_QUICKADD_PER_HOUR' => 500,
+        'MODEL_QUICKADD_PER_DAY' => 2000,
+        'MODEL_QUICKADD_PER_TOKEN_HOUR' => 120,
+        'MODEL_QUICKADD_PER_TOKEN_DAY' => 500,
+        'MODEL_QUICKADD_CONCURRENT' => 12,
+        'MODEL_QUICKADD_PER_TOKEN_CONCURRENT' => 6,
+        'MODEL_FILTER_PER_HOUR' => 200,
+        'MODEL_FILTER_PER_DAY' => 1000,
+        'MODEL_FILTER_PER_CALENDAR_HOUR' => 100,
+        'MODEL_FILTER_PER_CALENDAR_DAY' => 500,
+        'MODEL_RESPONSE_BYTES' => 4194304,
+        'MODEL_LOG_RETENTION_DAYS' => 365,
         'EXDATE_VALUES_PER_EVENT' => 2048,
         'EXDATE_VALUES_PER_INPUT' => 8192,
     ];

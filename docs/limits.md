@@ -26,10 +26,13 @@ Imports, subscribed feeds, CalDAV objects, incoming email, skipped occurrences, 
 - One CalDAV object: 1 MiB, with up to 500 changed occurrences.
 - One incoming email: 5 MiB (operator-adjustable up to a 25 MiB hard ceiling); up to 200 events in an emailed invitation. Size is checked from IMAP metadata before display headers or bodies are decoded.
 - Public email in aggregate: 100 new events per rolling day, 25 per claimed sender, and 500 future/repeating mail-created events; paid mail reading is 20 model calls per hour, 50 per day, and 20 per claimed sender/day. Separate account-wide limits cannot be reset with a new From, Message-ID, or event UID. Review shows one aggregate notice when a limit is reached; the original email remains in the mailbox.
+- Quick Add model assist: 120 calls per rolling hour and 500 per day account-wide, with smaller 30/hour and 150/day shares for each API token and at most four concurrent calls (two per token). Preview calls count because they use the same paid model; deterministic parsing remains available when capacity is reached. Quick Add text is limited to 4,000 characters.
+- Plain-language prompt filters: 40 model batches per rolling hour and 200 per day account-wide, with 20/hour and 100/day for one subscribed calendar. One batch evaluates up to 25 events. Work above that waits and Review explains that unevaluated events remain visible until the queued checks run.
+- One Gemini response is streamed into at most 1 MiB; larger responses are abandoned and the caller uses its existing fallback. This protects Quick Add, prompt filters, ranking, mail extraction and model-enabled plugins at their shared transport boundary.
 - An event description: 65,535 characters, after which it's cut.
 
 An import that runs into one of these says which setting raises it.
 
 ## Background work
 
-The worker runs every minute and spreads slow work across runs: up to ten emails per run, and plain-language filters and ranking a few LLM calls at a time. On a busy day that means a new invitation can take a few minutes to appear, not that anything is skipped.
+The worker runs every minute and spreads slow work across runs: up to ten emails per run, one plain-language filter model call per job, and a few ranking calls at a time. On a busy day that means a new invitation or filter verdict can take a few minutes to appear, not that the calendar event is skipped.

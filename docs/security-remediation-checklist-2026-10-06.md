@@ -71,6 +71,17 @@ IMAP and MySQL. It adds migration 040.
 | F35 | Mail-only Gemini attempts reserve persistent hourly/daily capacity before dispatch; deterministic tiers remain independent | Passed | [x] |
 | Related low finding (retention portion) | Mail receipts and admission accounting are pruned after a bounded replay/diagnostic window | Passed | [x] |
 
+## Phase 9 — model admission and response bounds
+
+This phase is implemented and verified for release 0.9.28. It adds migration
+041. Live behavior remains open until the practical checks below.
+
+| Scan finding | Remediation | Local automated verification | Live/deployed verification |
+|---|---|---:|---:|
+| F5 | Prompt-filter calls reserve persistent account/calendar capacity; poll work is calendar-scoped, fail-open and limited to one model call per worker job | Passed | [ ] |
+| F52 | Quick Add model assists, including previews, reserve account/token/concurrency capacity before dispatch; deterministic parsing remains available | Passed | [ ] |
+| F73 (Gemini response portion) | Every Gemini caller shares an authoritative streamed response-byte cap | Passed | [ ] |
+
 ## Completed local evidence
 
 This section is the technical record for reviewers; it is not a manual to-do
@@ -164,6 +175,21 @@ list for the owner.
   provider returns, and the pinned Webklex message/attachment lifecycle. It
   found and prompted a generator-lifetime fix; the repeated real-Webklex probe
   then retained zero decoded messages at each yield with flat memory.
+- [x] Phase 9 focused controls cover persistent account, token and calendar
+  windows; active-call leases; account capacity across rotated tokens and
+  calendars; pre-dispatch preview charging; failed provider attempts; exact
+  rolling-window retry times; deterministic fallback; calendar-homogeneous
+  prompt batches; one-call job continuations; fail-open events; bounded Review
+  notices; reminder priority; input length and streamed response-byte limits.
+- [x] Phase 9 local suites: server 2,009/0; frontend smoke 653/0 in
+  `America/Los_Angeles`, `UTC`, `Europe/Berlin`, `Asia/Kolkata` and
+  `Pacific/Auckland`; frontend static 347/0; MCP 63/0; deploy-security 19/0;
+  vendor manifest 10/10. A real local HTTP/cURL probe retained an exact-limit
+  Gemini response and rejected a response one byte over the cap.
+- [x] Phase 9 independent post-patch review found no remaining security bypass
+  for F5, F52 or the Gemini-response portion of F73. It identified an overly
+  conservative retry timestamp; the implementation now reports the exact
+  oldest rolling-window or active-lease expiry, with regression coverage.
 
 ## Remaining practical checks
 
@@ -262,6 +288,23 @@ testing of an imported repeating event is enough for that part.
   is reached, later refusals update its bounded count/latest context instead of
   adding cards, Dismiss closes it, and the original messages remain available
   in the mailbox for manual handling.
+
+### Quick Add and prompt-filter model admission (F5/F52/F73)
+
+- [ ] After migration 041, use temporary low limits with a disposable account
+  to exercise simultaneous session and API-token Quick Add previews. Verify the
+  exact account/token/concurrency caps, that a failed provider attempt remains
+  charged, token rotation cannot reset account capacity, and the deterministic
+  draft remains available with the **AI paused** explanation.
+- [ ] Under a temporary low prompt-filter limit, refresh a disposable feed with
+  enough changed events to cross the limit. Verify one bounded Review notice,
+  fail-open event visibility, a delayed continuation rather than a failed job,
+  and that a due reminder is claimed before the model-work backlog. Restore the
+  normal limits and dismiss the notice after the exercise.
+- [ ] Confirm the deployed transport and configured response cap match the
+  reviewed release. The real local cURL boundary test is sufficient unless a
+  controlled production provider/proxy fixture can safely return an oversized
+  response; do not disrupt the live provider merely to repeat that case.
 
 ## Deployment closeout
 

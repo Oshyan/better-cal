@@ -21,7 +21,8 @@ final class QuickAddController
             (string) ($req->str('text') ?? ''),
             (string) ($req->str('tz') ?? 'UTC'),
             $req->bool('commit'),
-            isset($req->body['calendarId']) ? (int) $req->body['calendarId'] : null
+            isset($req->body['calendarId']) ? (int) $req->body['calendarId'] : null,
+            $req->authMethod === 'token' ? $req->tokenId : null,
         );
         $out = ['draft' => $result['draft']];
         if ($result['event'] !== null) {

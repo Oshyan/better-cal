@@ -34,7 +34,6 @@ define('WORKER_LOCK', 'bettercal_worker:' . ($lockM[1] ?? 'default'));
 $queue = new JobQueue($db);
 $feeds = new Feeds($db, $queue, $cfg);
 $llm = new LlmGateway($cfg);
-$promptEval = new PromptEval($db, $llm, $queue);
 $ranking = new Ranking($db, $llm, $queue);
 $reminders = new Reminders($db, new PushSubscriptions($db), new PushSender($cfg), new EmailSender($cfg), new Recurrence());
 // Mail ingest needs the full Events domain (create/patch invited events).
@@ -43,6 +42,13 @@ $labels = new BetterCal\Domain\Labels($db);
 $filters = new BetterCal\Domain\Filters($db, $undo, $queue);
 $trips = new BetterCal\Domain\Trips($db, $undo);
 $eventsDomain = new BetterCal\Domain\Events($db, new Recurrence(), $undo, $labels, $filters, $trips);
+$promptEval = new PromptEval(
+    $db,
+    $llm,
+    $queue,
+    new BetterCal\Domain\ModelAdmission($db),
+    new BetterCal\Domain\ReviewQueue($db, $eventsDomain),
+);
 $pluginsDomain = new BetterCal\Domain\Plugins($db);
 $geocodeSweep = new BetterCal\Domain\GeocodeSweep(
     $db,
@@ -98,10 +104,12 @@ try {
                     $eventIds = isset($payload['eventIds']) && is_array($payload['eventIds'])
                         ? array_map('intval', $payload['eventIds'])
                         : null;
-                    $evaluated = $promptEval->run($filterId, $eventIds);
+                    $calendarId = isset($payload['calendarId']) ? (int) $payload['calendarId'] : null;
+                    $evaluated = $promptEval->run($filterId, $eventIds, $calendarId);
                     echo bc_ts() . ' filter_eval'
                         . ($filterId !== null ? " filter=$filterId" : '')
                         . ($eventIds !== null ? ' events=' . count($eventIds) : '')
+                        . ($calendarId !== null ? " calendar=$calendarId" : '')
                         . " evaluated=$evaluated\n";
                     break;
                 case 'google_move':
@@ -205,8 +213,9 @@ try {
                     break;
                 case 'activity_prune':
                     $result = (new BetterCal\Domain\Activity($db))->prune();
+                    $modelAdmissions = (new BetterCal\Domain\ModelAdmission($db))->prune();
                     echo bc_ts() . ' activity_prune cleared=' . $result['snapshotsCleared']
-                        . ' deleted=' . $result['deleted'] . "\n";
+                        . ' deleted=' . $result['deleted'] . ' model_admissions=' . $modelAdmissions . "\n";
                     break;
                 default:
                     throw new \RuntimeException('Unknown job type: ' . $job['type']);

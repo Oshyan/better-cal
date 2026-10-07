@@ -30,14 +30,16 @@ final class PromptEval
     /** Sweep window: how far back/forward feed events are auto-evaluated. */
     public const WINDOW_YEARS_PAST = 2;
     public const WINDOW_YEARS_FUTURE = 3;
-    /** LLM calls per job run; leftovers continue in a follow-up job. */
-    private const MAX_CALLS_PER_RUN = 4;
+    /** One slow model call per job keeps reminders and other worker jobs moving. */
+    private const MAX_CALLS_PER_RUN = 1;
     private const DESCRIPTION_EXCERPT_CHARS = 300;
 
     public function __construct(
         private readonly Db $db,
         private readonly LlmGateway $llm,
         private readonly ?JobQueue $queue = null,
+        private readonly ?ModelAdmission $modelAdmission = null,
+        private readonly ?ReviewQueue $review = null,
     ) {
     }
 
@@ -50,7 +52,7 @@ final class PromptEval
      *
      * @param ?list<int> $eventIds restrict to these events (skips the window)
      */
-    public function run(?int $filterId = null, ?array $eventIds = null): int
+    public function run(?int $filterId = null, ?array $eventIds = null, ?int $calendarId = null): int
     {
         if (!$this->llm->isConfigured()) {
             return 0; // un-evaluated pairs are passes; nothing to retry
@@ -63,37 +65,79 @@ final class PromptEval
         }
         $filters = $this->db->all("SELECT * FROM filters WHERE $where ORDER BY id", $params);
 
-        $evaluated = 0;
-        $failures = 0;
-        $calls = 0;
-        $remaining = false;
+        // Materialize calendar-homogeneous tasks first. A global or folder
+        // filter must never charge one calendar for another calendar's events.
+        $tasks = [];
         foreach ($filters as $filter) {
             $config = json_decode((string) $filter['config_json'], true);
             if (!is_array($config) || trim((string) ($config['prompt'] ?? '')) === '') {
                 continue;
             }
-            $pending = $this->pendingEvents($filter, $eventIds);
-            foreach (self::batches($pending) as $batch) {
-                if ($calls >= self::MAX_CALLS_PER_RUN) {
-                    $remaining = true;
-                    break 2;
+            $byCalendar = [];
+            foreach ($this->pendingEvents($filter, $eventIds, $calendarId) as $row) {
+                $byCalendar[(int) $row['calendar_id']][] = $row;
+            }
+            foreach ($byCalendar as $sourceId => $rows) {
+                foreach (self::batches($rows) as $batch) {
+                    $tasks[] = [
+                        'filter' => $filter,
+                        'config' => $config,
+                        'userId' => (int) $filter['user_id'],
+                        'calendarId' => $sourceId,
+                        'calendarName' => (string) ($batch[0]['calendar_name'] ?? 'Subscribed calendar'),
+                        'batch' => $batch,
+                    ];
                 }
-                $calls++;
-                $payload = array_map(fn(array $row) => self::eventPayload($row), $batch);
+            }
+        }
+
+        $evaluated = 0;
+        $failures = 0;
+        $calls = 0;
+        $remaining = false;
+        $retryAt = null;
+        $blockedSources = [];
+        $admitter = $this->modelAdmission ?? new ModelAdmission($this->db);
+        foreach ($tasks as $index => $task) {
+            $sourceId = (int) $task['calendarId'];
+            if (isset($blockedSources[$sourceId])) {
+                $remaining = true;
+                continue;
+            }
+
+            $admission = $admitter->reservePromptFilter((int) $task['userId'], $sourceId);
+            if (!$admission['allowed']) {
+                $remaining = true;
+                $blockedSources[$sourceId] = true;
+                $retryAt = self::earlierRetry($retryAt, $admission['retryAt']);
+                $this->holdModelLimit($task, $admission);
+                if (str_starts_with((string) $admission['code'], 'model_account_')
+                    || $admission['code'] === 'model_admission_unavailable'
+                ) {
+                    break; // every other calendar is behind the same account gate
+                }
+                continue;
+            }
+
+            $calls++;
+            $payload = array_map(fn(array $row) => self::eventPayload($row), $task['batch']);
+            try {
                 $raw = $this->llm->evaluateFilterBatch(
-                    (string) $config['prompt'],
-                    isset($config['negativePrompt']) ? (string) $config['negativePrompt'] : null,
+                    (string) $task['config']['prompt'],
+                    isset($task['config']['negativePrompt']) ? (string) $task['config']['negativePrompt'] : null,
                     $payload
                 );
-                if ($raw === null) {
-                    $failures++;
-                    continue; // pairs stay pending; retried via job backoff
-                }
-                $threshold = isset($config['threshold']) ? (float) $config['threshold'] : null;
+            } finally {
+                $admitter->finish($admission['reservationId']);
+            }
+            if ($raw === null) {
+                $failures++;
+            } else {
+                $threshold = isset($task['config']['threshold']) ? (float) $task['config']['threshold'] : null;
                 $results = self::validateEvalResponse(['results' => $raw], array_column($payload, 'eventId'));
                 foreach ($results as $eventId => $result) {
                     $this->db->upsert('filter_evals', [
-                        'filter_id' => (int) $filter['id'],
+                        'filter_id' => (int) $task['filter']['id'],
                         'event_id' => $eventId,
                         'verdict' => self::verdictFor($result, $threshold),
                         'score' => $result['score'],
@@ -102,13 +146,16 @@ final class PromptEval
                     $evaluated++;
                 }
             }
+            $remaining = $index < count($tasks) - 1;
+            if ($calls >= self::MAX_CALLS_PER_RUN) {
+                break;
+            }
         }
 
         if ($failures > 0) {
             throw new \RuntimeException("$failures prompt-eval LLM batch(es) failed; pairs left pending");
         }
         if ($remaining && $this->queue !== null) {
-            // Continue in the next worker minute instead of overrunning this run.
             $payload = [];
             if ($filterId !== null) {
                 $payload['filterId'] = $filterId;
@@ -117,7 +164,17 @@ final class PromptEval
                 $payload['eventIds'] = array_values($eventIds);
                 $payload['hash'] = Filters::evalPayloadHash($eventIds);
             }
-            $this->queue->enqueue('filter_eval', $payload);
+            if ($calendarId !== null) {
+                $payload['calendarId'] = $calendarId;
+            }
+            $payload['hash'] ??= self::continuationHash($filterId, $calendarId);
+            // A quota denial is ordinary capacity deferral, not a failed job.
+            // A successful call continues immediately but sits behind jobs the
+            // worker already queued (notably reminder_scan).
+            $runAfter = $calls === 0 && $retryAt !== null ? Time::parseIso($retryAt) : null;
+            if (!$this->queue->hasQueuedWithHash('filter_eval', (string) $payload['hash'])) {
+                $this->queue->enqueue('filter_eval', $payload, $runAfter);
+            }
         }
         return $evaluated;
     }
@@ -132,7 +189,7 @@ final class PromptEval
      * @param ?list<int> $eventIds
      * @return list<array<string,mixed>>
      */
-    private function pendingEvents(array $filter, ?array $eventIds): array
+    private function pendingEvents(array $filter, ?array $eventIds, ?int $calendarId): array
     {
         $params = [(int) $filter['id'], (int) $filter['user_id']];
         if ($eventIds !== null) {
@@ -152,17 +209,71 @@ final class PromptEval
             $scopeSql = ' AND e.calendar_id IN (SELECT calendar_id FROM calendar_folders WHERE folder_id = ?)';
             $params[] = (int) $filter['scope_id'];
         }
+        $calendarSql = '';
+        if ($calendarId !== null) {
+            $calendarSql = ' AND e.calendar_id = ?';
+            $params[] = $calendarId;
+        }
         return $this->db->all(
-            "SELECT e.id, e.title, e.description, e.location, e.start_utc, e.tzid
+            "SELECT e.id, e.user_id, e.calendar_id, c.name AS calendar_name,
+                    e.title, e.description, e.location, e.start_utc, e.tzid
              FROM events e
+             JOIN calendars c ON c.id = e.calendar_id AND c.user_id = e.user_id
              LEFT JOIN filter_evals fe ON fe.filter_id = ? AND fe.event_id = e.id
              WHERE fe.id IS NULL AND e.user_id = ? AND e.source = 'feed' AND e.deleted_at IS NULL
                $windowSql
                $scopeSql
+               $calendarSql
              ORDER BY e.created_at DESC, e.id DESC
              LIMIT " . self::MAX_EVENTS_PER_FILTER,
             $params
         );
+    }
+
+    /** @param array<string,mixed> $task @param array<string,mixed> $admission */
+    private function holdModelLimit(array $task, array $admission): void
+    {
+        if ($this->review === null) {
+            return;
+        }
+        try {
+            $this->review->holdModelLimit(
+                (int) $task['userId'],
+                (string) $admission['code'],
+                (string) $admission['message'],
+                (string) ($admission['retryAt'] ?? ''),
+                (int) $task['calendarId'],
+                (string) $task['calendarName'],
+                count($task['batch']),
+            );
+        } catch (\Throwable $e) {
+            error_log('prompt filter limit notice failed: ' . get_class($e));
+        }
+    }
+
+    private static function earlierRetry(?string $current, ?string $candidate): ?string
+    {
+        if ($candidate === null || $candidate === '') {
+            return $current;
+        }
+        if ($current === null) {
+            return $candidate;
+        }
+        return Time::parseIso($candidate) < Time::parseIso($current) ? $candidate : $current;
+    }
+
+    private static function continuationHash(?int $filterId, ?int $calendarId): string
+    {
+        if ($filterId !== null && $calendarId !== null) {
+            return 'filter:' . $filterId . ':calendar:' . $calendarId;
+        }
+        if ($filterId !== null) {
+            return 'filter:' . $filterId;
+        }
+        if ($calendarId !== null) {
+            return 'filter-calendar:' . $calendarId;
+        }
+        return 'filter-global';
     }
 
     // ---- Pure helpers (unit-tested, no DB / no LLM) --------------------

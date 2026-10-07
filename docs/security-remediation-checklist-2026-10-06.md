@@ -52,12 +52,12 @@ removed.
 
 ## Phase 7 — JSON request admission budget
 
-This phase is implemented and locally verified, but not yet released or
-deployed. It requires no database migration.
+This phase shipped in release 0.9.26 and is verified in production. It requires
+no database migration.
 
 | Scan finding | Remediation | Local automated verification | Live/deployed verification |
 |---|---|---:|---:|
-| F41 | JSON bodies are bounded while they are read, before routing, authentication or decoding; multipart calendar imports retain their separate allowance | Passed | [ ] |
+| F41 | JSON bodies are bounded while they are read, before routing, authentication or decoding; multipart calendar imports retain their separate allowance | Passed | [x] |
 
 ## Completed local evidence
 
@@ -216,7 +216,7 @@ testing of an imported repeating event is enough for that part.
 
 ### JSON request admission (F41)
 
-- [ ] After the Phase 7 deployment, verify a bounded over-limit JSON request
+- [x] After the Phase 7 deployment, verify a bounded over-limit JSON request
   returns HTTP 413 while ordinary JSON and multipart calendar-import requests
   continue to reach their normal routes. This is a deploy check, not an owner
   exercise.
@@ -293,3 +293,15 @@ testing of an imported repeating event is enough for that part.
   as the unprivileged `bettercal` account. The root-private source remained
   intact, backup monitoring returned healthy, and no incomplete snapshot or
   deletion-staging directory remained.
+
+## Phase 7 production evidence — 2026-10-07
+
+- Release 0.9.26 was deployed from
+  `92910bc0cade41ecd7656615d371d2b338249b18`. Production reported 0.9.26 and
+  the SHA-256 hash of `server/src/Http/Request.php` matched the release commit.
+- A small unauthenticated JSON request and a multipart calendar-import request
+  both reached the normal authentication boundary and returned 401. An
+  over-limit chunked JSON request returned 413 with the stable
+  `request_too_large` error code.
+- The deploy preflight, dependency audit, migration check, health endpoint and
+  real-data smoke checks all passed. No database migration was needed.

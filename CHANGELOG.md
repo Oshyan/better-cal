@@ -4,6 +4,10 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.22 (2026-10-06)
+
+- **Hosts without `proc_open` work again.** Since 0.9.17 every outbound request (feeds, Google, place search, plugins) looked up its address in a separate PHP process with a time limit, and a host that disables `proc_open` or has no command-line PHP binary (some shared hosts) failed every one of them. Those hosts now look up in-process: private addresses are refused exactly as before, only the time limit is lost, and the PHP error log says so once.
+
 ## 0.9.21 (2026-10-06)
 
 - **Every open device refreshes after a change made anywhere.** Each successful change moves one per-person marker, and open devices check it every 30 seconds and when you come back to them. Before, renaming a person, editing an away or busy time, or a thumbs up or down didn't reach your other devices until a reload. Calendars reload with it.

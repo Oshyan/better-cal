@@ -595,6 +595,11 @@ try {
     $dnsTimedOut = str_contains($e->getMessage(), 'DNS resolution deadline exceeded');
 }
 check('http resolver enforces its own wall-clock deadline', $dnsTimedOut && microtime(true) - $dnsStarted < 1.0);
+// Without proc_open (some shared hosts) the lookup runs in-process; what it
+// finds is still judged by the same address policy before anything connects.
+$unbounded = (new ReflectionMethod(HttpClient::class, 'resolveUnbounded'))->invoke(null, 'localhost', 'test');
+check('http in-process fallback resolves, and what it finds is still refused when private',
+    in_array('127.0.0.1', $unbounded, true) && HttpClient::isForbiddenIp('127.0.0.1'));
 
 // libcurl automatically honors proxy environment variables unless explicitly
 // told not to. A proxy would resolve/connect the hostname outside our vetted

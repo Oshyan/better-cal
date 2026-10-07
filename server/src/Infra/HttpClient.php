@@ -507,16 +507,19 @@ final class HttpClient
         if (filter_var($host, FILTER_VALIDATE_IP) !== false) {
             return [$host];
         }
-        if (!function_exists('proc_open')) {
-            throw new \RuntimeException('Bounded DNS resolution is unavailable');
-        }
-
         // PHP's in-process DNS functions have no portable timeout control.
         // Isolate them in a tiny child so the caller's absolute deadline also
-        // covers a wedged or maliciously slow resolver.
+        // covers a wedged or maliciously slow resolver. Hosts that disable
+        // proc_open or lack the command-line binary (some shared hosts) look
+        // up in-process instead: the addresses are judged and pinned the same
+        // way, only the time limit is lost (the system resolver's own
+        // timeouts still apply).
         $php = PHP_BINDIR . DIRECTORY_SEPARATOR . 'php';
+        if (!function_exists('proc_open')) {
+            return self::resolveUnbounded($host, 'proc_open is disabled');
+        }
         if (!is_executable($php)) {
-            throw new \RuntimeException('Bounded DNS resolver executable is unavailable');
+            return self::resolveUnbounded($host, 'no PHP command-line binary at ' . $php);
         }
         $code = <<<'PHP'
 $host = $argv[1] ?? '';
@@ -546,7 +549,7 @@ PHP;
             ['bypass_shell' => true]
         );
         if (!is_resource($process)) {
-            throw new \RuntimeException('Could not start bounded DNS resolution');
+            return self::resolveUnbounded($host, 'the DNS helper process could not start');
         }
         fclose($pipes[0]);
         stream_set_blocking($pipes[1], false);
@@ -588,5 +591,35 @@ PHP;
             return [];
         }
         return is_array($ips) ? array_values(array_filter($ips, 'is_string')) : [];
+    }
+
+    private static bool $unboundedNoted = false;
+
+    /**
+     * The same lookup as the child's, in this process: no time limit of its
+     * own. The caller judges and pins the result exactly as before.
+     *
+     * @return list<string>
+     */
+    private static function resolveUnbounded(string $host, string $why): array
+    {
+        if (!self::$unboundedNoted) {
+            self::$unboundedNoted = true;
+            error_log('http: DNS lookups are not time-limited on this host (' . $why . '); see docs/install.md');
+        }
+        $ips = [];
+        foreach ((@dns_get_record($host, DNS_A | DNS_AAAA) ?: []) as $record) {
+            if (isset($record['ip'])) {
+                $ips[] = (string) $record['ip'];
+            } elseif (isset($record['ipv6'])) {
+                $ips[] = (string) $record['ipv6'];
+            }
+        }
+        if ($ips === []) {
+            foreach ((@gethostbynamel($host) ?: []) as $ip) {
+                $ips[] = (string) $ip;
+            }
+        }
+        return array_values(array_unique($ips));
     }
 }

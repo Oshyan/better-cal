@@ -187,7 +187,9 @@ final class Reminders
             $list = $allDay ? ($calendarDefaults['allDay'] ?? []) : ($calendarDefaults['timed'] ?? []);
             return [is_array($list) ? array_values($list) : [], 'calendar'];
         }
-        if ($calendarKind === 'subscribed') {
+        // Feeds and plugin calendars (sunsets, tides) don't inherit the global
+        // default; a reminder on one is set per event or per calendar.
+        if ($calendarKind === 'subscribed' || $calendarKind === 'plugin') {
             return [[], 'default'];
         }
         return [$allDay ? $globalAllDay : $globalTimed, 'default'];

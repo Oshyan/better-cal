@@ -1,7 +1,7 @@
 // Reminder helpers: offset formatting, all-day default conversion, and a
 // client-side mirror of the server's effective-reminder resolution (event
-// override > calendar default > global default; subscribed calendars never
-// inherit the global default). Pure module, smoke-tested in node.
+// override > calendar default > global default; subscribed and plugin calendars
+// never inherit the global default). Pure module, smoke-tested in node.
 
 // Offsets offered by the editor / settings selects (minutes before start;
 // for all-day events, before local midnight of the event date).
@@ -103,7 +103,7 @@ export function effectiveReminders({ override, calendarDefaults, settings, allDa
     const list = allDay ? (calendarDefaults.allDay || []) : (calendarDefaults.timed || []);
     return { reminders: list, source: 'calendar' };
   }
-  if (calendarKind === 'subscribed') return { reminders: [], source: 'default' };
+  if (calendarKind === 'subscribed' || calendarKind === 'plugin') return { reminders: [], source: 'default' };
   const s = settings || {};
   return {
     reminders: (allDay ? s.reminderAllDay : s.reminderTimed) || [],

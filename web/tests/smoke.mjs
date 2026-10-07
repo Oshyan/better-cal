@@ -881,6 +881,9 @@ eq('reminder effective global fallback allday',
 eq('reminder effective subscribed never inherits',
   effectiveReminders({ override: null, calendarDefaults: null, settings: remSettings, allDay: false, calendarKind: 'subscribed' }),
   { reminders: [], source: 'default' });
+eq('reminder effective plugin calendar never inherits',
+  effectiveReminders({ override: null, calendarDefaults: null, settings: remSettings, allDay: false, calendarKind: 'plugin' }),
+  { reminders: [], source: 'default' });
 
 console.log('--- notification deep-link windows ---');
 

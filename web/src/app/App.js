@@ -4,7 +4,7 @@ import { COMPACT_QUERY, COARSE_QUERY } from '../lib/breakpoints.js';
 import { html, useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback } from '../../vendor/index.js';
 import { useStore, set, state, calendarMeta, shallowEq, invalidateRecords } from './store.js';
 import { PHONE_QUERY } from '../lib/breakpoints.js';
-import { loadWindow, api, refreshWindow, loadPeople, retryWindowsNow } from './api.js';
+import { loadWindow, api, refreshWindow, loadPeople, loadCalendars, retryWindowsNow } from './api.js';
 import { hiddenDayCounts } from '../lib/relfilter.js';
 import {
   moveEvent, resizeEvent, sendFeedback, exitReschedule, googleBacked, setRelationship, showAllRel,
@@ -208,6 +208,7 @@ export function App() {
           if (cursor !== null && d.cursor !== cursor) {
             invalidateRecords(); // something changed somewhere; fetched records may be stale
             refreshWindow();
+            loadCalendars().catch(() => {});
             loadPeople().catch(() => {});
             set({ availSeq: state.availSeq + 1 });
           }

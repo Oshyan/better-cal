@@ -26,7 +26,6 @@ export const STATIC_COMMANDS = [
   { id: 'quickAdd', icon: 'quickadd', label: 'Quick add…', group: 'Create', hotkey: 'quickAdd', keywords: 'plain language natural' },
   { id: 'newPerson', icon: 'people', label: 'New person…', group: 'Create', prompt: true, keywords: 'add create people contact friend' },
 
-  { id: 'openDetail', icon: 'expand', label: 'Open full detail', group: 'Event', hotkey: 'openDetail', needs: 'occ' },
   { id: 'editEvent', icon: 'pencil', label: 'Edit event', group: 'Event', hotkey: 'editEvent', needs: 'occ' },
   { id: 'reschedule', icon: 'reschedule', label: 'Reschedule event', group: 'Event', hotkey: 'reschedule', needs: 'popover', keywords: 'move' },
   { id: 'deleteEvent', icon: 'trash', label: 'Delete event', group: 'Event', hotkey: 'deleteEvent', needs: 'occ', keywords: 'remove' },

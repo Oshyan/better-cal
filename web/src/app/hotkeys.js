@@ -31,7 +31,6 @@ export const HOTKEYS = [
   // Events
   { id: 'quickAdd', keys: ['c'], label: 'Quick add (plain language)', group: 'Events' },
   { id: 'newEvent', keys: ['n'], label: 'New event (full editor)', group: 'Events' },
-  { id: 'openDetail', keys: ['o'], label: 'Open full detail (popover open)', group: 'Events' },
   { id: 'editEvent', keys: ['e'], label: 'Edit event (popover or detail open)', group: 'Events' },
   { id: 'reschedule', keys: ['r'], label: 'Reschedule (popover open)', group: 'Events' },
   { id: 'deleteEvent', keys: ['Delete', 'Backspace'], display: ['Del'], label: 'Delete event (popover or detail open)', group: 'Events' },

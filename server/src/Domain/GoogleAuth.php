@@ -298,6 +298,21 @@ final class GoogleAuth
         return $accessRole === 'owner' ? 'yours' : 'shared';
     }
 
+    /**
+     * Pure. The role a newly added Google calendar starts with: your own
+     * calendars are things you do, Google's holidays and birthdays are
+     * information, and anything shared with you or copied from a feed is an
+     * opportunity, as an ICS subscription is. Changeable in its settings.
+     */
+    public static function defaultRole(string $kind): string
+    {
+        return match ($kind) {
+            'yours' => 'mine',
+            'google' => 'context',
+            default => 'opportunities',
+        };
+    }
+
     public static function serializeAccount(array $row): array
     {
         return [

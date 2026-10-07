@@ -159,7 +159,13 @@ final class GoogleController
             }
             return $this->calendars->create(
                 $userId,
-                ['name' => $name !== '' ? $name : $googleCalendarId, 'color' => $req->body['color'] ?? null, 'folderIds' => $req->body['folderIds'] ?? null],
+                [
+                    'name' => $name !== '' ? $name : $googleCalendarId,
+                    'color' => $req->body['color'] ?? null,
+                    'folderIds' => $req->body['folderIds'] ?? null,
+                    // A primary calendar's id is the account's email.
+                    'role' => GoogleAuth::defaultRole(GoogleAuth::calendarKind($googleCalendarId, $role, $googleCalendarId === strtolower((string) $account['email']))),
+                ],
                 kind: 'subscribed',
                 sourceUrl: null,
                 google: ['accountId' => (int) $account['id'], 'calendarId' => $googleCalendarId, 'accessRole' => $role],

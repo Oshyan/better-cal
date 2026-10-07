@@ -2679,6 +2679,10 @@ checkEq('rem effective global allday fallback', [$gAllDay, 'default'],
     Reminders::effective(null, null, $gTimed, $gAllDay, true));
 checkEq('rem effective subscribed never inherits global', [[], 'default'],
     Reminders::effective(null, null, $gTimed, $gAllDay, false, 'subscribed'));
+checkEq('rem effective plugin calendar never inherits global', [[], 'default'],
+    Reminders::effective(null, null, $gTimed, $gAllDay, false, 'plugin'));
+checkEq('rem effective plugin event reminder still applies', [[['minutes' => 10]], 'event'],
+    Reminders::effective([['minutes' => 10]], null, $gTimed, $gAllDay, false, 'plugin'));
 checkEq('rem effective subscribed calendar default applies', [[['minutes' => 30]], 'calendar'],
     Reminders::effective(null, $calDef, $gTimed, $gAllDay, false, 'subscribed'));
 
@@ -4646,6 +4650,9 @@ use BetterCal\Infra\Secrets;
     checkEq('google kind: someone else primary is shared', 'shared', GoogleAuth::calendarKind('friend@gmail.com', 'reader', false));
     checkEq('google kind: ICS import is a feed', 'feed', GoogleAuth::calendarKind('xyz@import.calendar.google.com', 'reader', false));
     checkEq('google kind: holidays are google', 'google', GoogleAuth::calendarKind('en.usa#holiday@group.v.calendar.google.com', 'reader', false));
+    checkEq('google role: your own calendars start as Mine, Google\'s as Context, shared and feed copies as Opportunities',
+        ['mine', 'context', 'opportunities', 'opportunities'],
+        array_map([GoogleAuth::class, 'defaultRole'], ['yours', 'google', 'shared', 'feed']));
 
     // Google event resources to the Ics::parse shape.
     $timed = GoogleSync::toParsed([

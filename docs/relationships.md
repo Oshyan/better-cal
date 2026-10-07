@@ -26,7 +26,7 @@ A role says what a calendar is to you. It sets the default relationship for ever
 | **Opportunities** | Things I could do. | Available | Event feeds, community calendars, Luma, Partiful, Meetup |
 | **Context** | Information. | Context | Weather, tides, sunset, holidays, other people's schedules |
 
-Defaults when a calendar is created: local calendars are Mine, subscriptions are Opportunities (a connected Google calendar counts as a subscription, even one of your own), plugin calendars are Context. Change any of them in the calendar's settings under "What this calendar is". Changing a role re-reads every event on the calendar immediately; nothing is rewritten.
+Defaults when a calendar is created: local calendars are Mine, subscriptions are Opportunities, plugin calendars are Context. A connected Google calendar starts by what it is: your own as Mine, one shared with you or copied from a feed as Opportunities, Google's holidays and birthdays as Context. Change any of them in the calendar's settings under "What this calendar is". Changing a role re-reads every event on the calendar immediately; nothing is rewritten.
 
 ## Changing one event
 

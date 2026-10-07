@@ -182,14 +182,20 @@ function bc_handle_api(Request $request, array $cfg): void
 
         // Change cursor: an opaque string that changes whenever the user's
         // events (via calendar synctokens — bumped by API, CalDAV, feed
-        // polls, and mail ingest), availability spans, or people change.
+        // polls, and mail ingest), availability spans, or people change,
+        // and after any successful write through the API (change_seq).
         // Clients poll it cheaply and refetch only when it moves.
         $router->add('GET', "$base/changes/cursor", function (Request $req) use ($db): Response {
             $userId = (int) $req->user['id'];
             $cal = $db->one('SELECT COALESCE(SUM(synctoken), 0) AS s, COUNT(*) AS c FROM calendars WHERE user_id = ?', [$userId]);
             $av = $db->one('SELECT COUNT(*) AS c, COALESCE(MAX(a.id), 0) AS m FROM availability a JOIN people p ON p.id = a.person_id WHERE p.user_id = ?', [$userId]);
             $people = $db->scalar('SELECT COUNT(*) FROM people WHERE user_id = ?', [$userId]);
-            return Response::json(['cursor' => $cal['s'] . ':' . $cal['c'] . ':' . $av['c'] . ':' . $av['m'] . ':' . $people]);
+            try {
+                $seq = (string) $db->scalar('SELECT change_seq FROM users WHERE id = ?', [$userId]);
+            } catch (\PDOException) {
+                $seq = '0'; // before migration 039
+            }
+            return Response::json(['cursor' => $cal['s'] . ':' . $cal['c'] . ':' . $av['c'] . ':' . $av['m'] . ':' . $people . ':' . $seq]);
         });
 
         $router->add('GET', "$base/people", [$peopleController, 'index']);
@@ -322,6 +328,16 @@ function bc_handle_api(Request $request, array $cfg): void
         }
 
         $response = ($match['handler'])($request, $match['params']);
+        // Any successful write moves the user's change marker, so every open
+        // device refreshes, whatever the write touched (#16). Reads don't.
+        if ($request->user !== null && $response->status < 400
+            && !in_array($request->method, ['GET', 'HEAD', 'OPTIONS'], true)) {
+            try {
+                $db->run('UPDATE users SET change_seq = change_seq + 1 WHERE id = ?', [(int) $request->user['id']]);
+            } catch (\PDOException) {
+                // Before migration 039: the other cursor parts still move.
+            }
+        }
         $response->send();
     } catch (HttpError $e) {
         Response::error($e->errorCode, $e->getMessage(), $e->status)->send();

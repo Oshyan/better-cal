@@ -7,7 +7,7 @@
 import { state, set } from './store.js';
 import {
   rosterViews, setView, cycleView, goToday, navigate, closeOverlays,
-  enterReschedule, openDetail, deleteEvent, stepPopoverSameDay, googleBacked, toggleRel, applyDefaultView, editFromView,
+  enterReschedule, deleteEvent, stepPopoverSameDay, googleBacked, toggleRel, applyDefaultView, editFromView,
 } from './actions.js';
 import { HOTKEYS } from './hotkeys.js';
 
@@ -52,11 +52,6 @@ export const handlers = {
   },
   quickAdd: () => set({ quickAddOpen: true }),
   newEvent: () => set({ editor: { mode: 'create', draft: {} }, popover: null }),
-  openDetail: () => {
-    if (!state.popover) return false;
-    openDetail(state.popover.instanceId);
-    return true;
-  },
   editEvent: () => {
     const occ = focusedOcc();
     if (!occ || isFeedOcc(occ)) return false;

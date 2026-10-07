@@ -12,7 +12,7 @@ It covers what I used Google Calendar for day to day, and adds a lot GCal doesn'
 - **Undo for any change**, from an activity log, for a week afterwards.
 - **Trips and people as real objects.** Type "Sam is away next week" and it shows as a band across the calendar.
 - **Saved views.** A view and its filters, back in one click.
-- **Plugins**, with a set included: weather and air quality, sunrise and sunset, tides, travel time ("leave by" bands before events you have to get to), planners that propose a free weekend day for an outing or the best window for a trip (nothing lands on your calendar until you accept), and a daily check that flags impossible back-to-backs.
+- **Plugins.** Weather (with air quality) and sunrise and sunset come included and show right in each day's header, no API key needed. A few earlier-stage ones ship too (tides, travel time, simple planners).
 - **Filters you write in plain English**, and subscribed calendars treated like an inbox instead of read-only wallpaper.
 - **Built for AI agents too.** A REST API and an MCP server, with everything an agent does labeled in the activity log.
 

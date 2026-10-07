@@ -136,18 +136,19 @@ private calendar data to the evidence.
 
 ### M6 — geocoding egress (after remediation)
 
-- [ ] Confirm a normal public-provider redirect still succeeds.
+- [x] Confirm a normal public-provider redirect still succeeds.
 - [ ] Confirm redirects to loopback, RFC1918, link-local, IPv6-local,
   cloud-metadata and configured NAT64-private destinations are refused after
   final DNS resolution.
-- [ ] Confirm redirect-count, response-byte and timeout limits fail cleanly and
+- [x] Confirm redirect-count, response-byte and timeout limits fail cleanly and
   do not stall a PHP worker.
-- [ ] Confirm the deployed PHP runtime permits `proc_open` and that
+- [x] Confirm the deployed PHP runtime permits `proc_open` and that
   `PHP_BINDIR/php` is executable; geocoding and other policy-controlled outbound
   requests fail closed when bounded DNS resolution cannot be started.
-- [ ] If the host defines `HTTP_PROXY`, `HTTPS_PROXY` or `ALL_PROXY`, confirm
+- [x] If the host defines `HTTP_PROXY`, `HTTPS_PROXY` or `ALL_PROXY`, confirm
   the application is expected to use direct egress. The hardened client ignores
-  those variables so a proxy cannot bypass DNS pinning.
+  those variables so a proxy cannot bypass DNS pinning. None were present in
+  the deployed PHP environment.
 - [ ] Force one sanitized provider failure and confirm it appears in the PHP
   error log and Settings > System without the place query, URL or redirect host.
 - [ ] Force a second consecutive failure and confirm exactly one Activity item
@@ -163,9 +164,9 @@ private calendar data to the evidence.
 
 ## Deployment closeout
 
-- [ ] Deploy the exact reviewed commit with migrations 036 and 037.
+- [x] Deploy the exact reviewed commit with migrations 036 and 037.
 - [ ] Confirm the running Settings version and deployed Git revision.
-- [ ] Run the application smoke check and inspect worker, PHP and web-server
+- [x] Run the application smoke check and inspect worker, PHP and web-server
   logs for new recurrence, Google, subscription or deep-link errors.
 - [ ] Complete the live exercises above, recording result, date, environment,
   tester and sanitized evidence for each item.
@@ -187,3 +188,30 @@ For each live exercise, record:
 - Sanitized evidence location:
 - Cleanup performed:
 - Disposition: pass, fail, partial or blocked
+
+## Production evidence — 2026-10-06/07
+
+- Commit: `196fb2c5ccdc70426701e1d679d2f8cf99b609cf` (`main` and
+  `origin/main` before deploy); application version: 0.9.17.
+- Deployment backup completed, migrations 036 and 037 applied, and 10 existing
+  ICS subscriptions were placed into owner review as designed.
+- Deploy preflight passed: server 1,898/0, frontend smoke 652/0 in five time
+  zones, frontend static 339/0, and the pinned vendor manifest.
+- Production smoke passed: health/database, 789-occurrence window, single-event
+  serialization and 22-calendar serialization.
+- Every changed runtime file under `server/` and `web/`, plus `VERSION`, matched
+  the local release commit by a combined SHA-256 manifest after deployment.
+- The deployed `VERSION` file reports 0.9.17. The Settings-screen check remains
+  open because it was not inspected through a signed-in browser in this pass.
+- A production lookup for a public landmark returned three results. A public
+  HTTPS redirect completed with HTTP 200. Controlled policy probes refused a
+  loopback destination and an HTTPS-to-HTTP redirect, stopped after the redirect
+  cap, stopped a 2 KiB response at a 1 KiB cap, and stopped a delayed response
+  after about 0.5 seconds.
+- The deployed PHP runtime exposes `proc_open`, `PHP_BINDIR/php` is executable,
+  and no `HTTP_PROXY`, `HTTPS_PROXY` or `ALL_PROXY` variables were present.
+- Worker output remained healthy after deploy; the PHP and nginx error-log tails
+  were empty. No private calendar data or credentials were retained as evidence.
+- The broader private-address redirect matrix, forced provider-failure
+  notifications, concurrent MySQL threshold transitions and one-hour email
+  alert/recovery exercise remain open.

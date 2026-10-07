@@ -61,15 +61,15 @@ no database migration.
 
 ## Phase 8 — public mail admission and paid-model budgets
 
-This phase is implemented for release 0.9.27 and awaits deployment and the live
-IMAP/MySQL exercises below. It adds migration 040.
+This phase shipped in release 0.9.27 and has been exercised against production
+IMAP and MySQL. It adds migration 040.
 
 | Scan finding | Remediation | Local automated verification | Live/deployed verification |
 |---|---|---:|---:|
-| F21 | IMAP UID and `RFC822.SIZE` preflight, transport-key poison checkpoint and Seen flag all precede one-at-a-time header/body materialization | Passed | [ ] |
-| F28 | Every new-event tier shares persistent account, sender and active-event admission; existing-event changes/cancellations remain outside that gate | Passed | [ ] |
-| F35 | Mail-only Gemini attempts reserve persistent hourly/daily capacity before dispatch; deterministic tiers remain independent | Passed | [ ] |
-| Related low finding (retention portion) | Mail receipts and admission accounting are pruned after a bounded replay/diagnostic window | Passed | [ ] |
+| F21 | IMAP UID and `RFC822.SIZE` preflight, transport-key poison checkpoint and Seen flag all precede one-at-a-time header/body materialization | Passed | [x] |
+| F28 | Every new-event tier shares persistent account, sender and active-event admission; existing-event changes/cancellations remain outside that gate | Passed | [x] |
+| F35 | Mail-only Gemini attempts reserve persistent hourly/daily capacity before dispatch; deterministic tiers remain independent | Passed | [x] |
+| Related low finding (retention portion) | Mail receipts and admission accounting are pruned after a bounded replay/diagnostic window | Passed | [x] |
 
 ## Completed local evidence
 
@@ -248,17 +248,17 @@ testing of an imported repeating event is enough for that part.
 
 ### Public mail admission (F21/F28/F35)
 
-- [ ] After migration 040, use disposable messages to verify production IMAP
+- [x] After migration 040, use disposable messages to verify production IMAP
   reports UIDVALIDITY and size, an oversize message is marked read without its
   Subject/From being recorded, an ordinary message ingests, and a forced
   retryable fetch failure returns the message to unread and removes its started
   receipt.
-- [ ] Against production MySQL with a disposable account, exercise concurrent
+- [x] Against production MySQL with a disposable account, exercise concurrent
   event and model admissions at a low temporary limit. Verify the exact cap is
   honored, a failed event transaction consumes no event reservation, a failed
   or null model response does consume its reservation, and rotated From and
   Message-ID values do not reset account-wide capacity.
-- [ ] Verify one **Email automation paused** item appears in Review when a limit
+- [x] Verify one **Email automation paused** item appears in Review when a limit
   is reached, later refusals update its bounded count/latest context instead of
   adding cards, Dismiss closes it, and the original messages remain available
   in the mailbox for manual handling.
@@ -347,3 +347,40 @@ testing of an imported repeating event is enough for that part.
   `request_too_large` error code.
 - The deploy preflight, dependency audit, migration check, health endpoint and
   real-data smoke checks all passed. No database migration was needed.
+
+## Phase 8 production evidence — 2026-10-07
+
+- Release 0.9.27 was deployed from
+  `3a5335815624f531840bc1d05e6c3017b96a6190`; tag `v0.9.27` points to that
+  release commit. Migration 040 applied, production reported 0.9.27, and the
+  SHA-256 hashes of `VERSION` and every Phase 8 runtime file matched the release
+  commit.
+- Deploy preflight passed: server 1,983/0; frontend smoke 653/0 in five time
+  zones; frontend static 347/0; MCP 63/0; deploy-security 19/0; vendor manifest
+  10/10. Composer reported no known dependency advisories. Production health,
+  migration and real-data smoke checks passed.
+- Twelve simultaneous event admissions at a temporary account limit of three
+  allowed exactly three and refused nine with `event_account_day`; three
+  reservations and three distinct senders were recorded. A failed create
+  transaction left zero reservations, and the active-event ceiling refused a
+  new event with `event_active`.
+- Ten simultaneous model admissions at a temporary hourly limit of two allowed
+  exactly two and refused eight with `llm_account_hour`, despite rotating
+  sender and message identities. A five-message end-to-end ingest exercise made
+  exactly two provider calls/reservations; the remaining three refusals updated
+  one bounded Review item, whose count, latest context and dismissal behavior
+  all matched the contract.
+- A real disposable IMAP exercise reported UIDVALIDITY. An over-limit message
+  was marked Seen without header identification or stored Subject/From. A
+  forced failure after header fetch restored Unseen and removed the checkpoint;
+  the same UID was then redelivered, recorded its sanitized header context and
+  marked Seen. Both messages remained in the mailbox until explicitly deleted
+  after verification.
+- A production retention exercise inserted one deliberately expired receipt
+  and admission record. The normal pruning path removed both, reporting one
+  pruned receipt and zero remaining rows.
+- All disposable users, database rows, mailbox messages and remote/local test
+  helpers were removed after verification. Worker logs contained no post-deploy
+  mail, quota, database or runtime failure. One unrelated geocoder HTTP failure
+  and one unrelated nginx missing-file error were observed and remain covered
+  by their existing operational handling.

@@ -4,7 +4,7 @@ Better-Cal is a self-hosted calendar built to replace Google Calendar outright: 
 
 ## Google Calendar parity, briefly
 
-Month, 3-week, 2-week, week, day, and agenda views. Multiple color-coded calendars with show/hide. Drag to create, move, and resize events. All-day and multi-day events. Full recurrence (rules, exceptions, "this event / all events" edits). Reminders with push and email delivery. ICS calendar subscriptions, file import, and export feeds. Fast search. Timezone-aware events. Keyboard shortcuts. Light/dark/system theme. Installable mobile PWA. Events read from forwarded email, and invitation replies (Accept / Maybe / Decline) that reach the organizer. Undo after an edit or delete. What it doesn't do: send invitations to guests, offer booking pages, or make video-call links. It answers invitations, and other people see your calendars through feeds, CalDAV, or a calendar moved to Google.
+Month, 3-week, 2-week, week, day, and agenda views. Multiple color-coded calendars with show/hide. Drag to create, move, and resize events. All-day and multi-day events. Full recurrence (rules, exceptions, "this event / all events" edits). Reminders with push and email delivery. ICS calendar subscriptions, file import, and export feeds. Fast search. Timezone-aware events. Keyboard shortcuts. Light/dark/system theme. Installable mobile PWA. Events read from forwarded email, and invitation replies (Accept / Maybe / Decline) that reach the organizer. Undo after an edit or delete. What it doesn't do (for now): send invitations to guests, offer booking pages, or create a video-call link for an event the way Google adds a Meet link (a meeting link you paste in works, with a Join button). It answers invitations, and other people see your calendars through feeds, CalDAV, or a calendar moved to Google.
 
 Multi-day events show their total duration beside the title on every visible segment, including trip bands and agenda entries. Labels use exact days, exact whole weeks, or `1mo` for 28–31 days (including 28); other lengths never round to weeks or months. Event and trip details place the same duration beside the dates with a middle dot, spelling out units except `mo`; tooltips and screen-reader labels give the exact duration, as do date editors. All-day events count calendar dates; timed events qualify at 24 elapsed hours and retain remaining hours/minutes/seconds. Labels update from dates without changing the saved title.
 
@@ -14,11 +14,11 @@ Multi-day events show their total duration beside the title on every visible seg
 
 2. **A full activity log, with undo for any change for 7 days.** Every change, whether you made it or an automation did, is journaled with its source (web, phone sync, feed poll, email ingest, agent API, import) and shown newest-first with filters and live text search. Any entry with a snapshot (your edits, phone sync, agent and email changes) can be undone for 7 days, individually, with a guard against clobbering newer edits; feed-poll summaries and edits that went to a connected Google calendar are log-only. Google Calendar has an undo for the last action and a trash for deleted events, but no record of what changed or what changed it, and no way to reverse last Tuesday's edit.
 
-3. **Trips and people are first-class objects.** Events can belong to a trip (a container spanning its members), and people are entities, not text: link them to events, click through to everything you share with someone, and track availability. Type "Sam is away next week" and it becomes away time for Sam, drawn as a band across the calendar, not a fake event.
+3. **Trips and people are first-class objects.** Events can belong to a trip (a container spanning its members), and people are entities, not text: link them to events, click through to everything you share with someone, and keep track of when they're away or busy, separate from your events. Type "Sam is away next week" and it becomes away time for Sam, drawn as a band across the calendar, not a fake event. It's your own record of what you know about someone's plans, not a view of their calendar, so it works for anyone, with or without a calendar you could see.
 
 4. **Natural language as a layer over everything, not just event entry.** Quick-add parses "Dinner with Alex fri 7pm at Luca's" instantly with a rule-based parser, escalating to an LLM only when needed and always guarded against LLM mistakes (past dates, dropped people, mangled titles). The same layer extends to organization: prompt filters take a rule in plain English ("hide corporate networking events") and apply it as a real filter alongside the live and folder-based filtering above. Availability statements, pasted event links, and a trainable ranker (learning from your thumbs and attendance) round it out.
 
-5. **Leaving Google without breaking your life.** Every "Add to Google Calendar" link on the web can land in Better-Cal instead: a Chrome extension redirects them, the /add deep link and paste-a-GCal-URL quick-add parse them, and the PWA registers as the webcal/ICS handler and share target on mobile (the thing Google never fixed on Android). One server command imports your entire Google export, subscribed feeds can be adopted as local calendars, and a calendar you still need Google users to see can be moved to Google and kept in place here. What Gmail did for you carries over too: forwarded event email becomes events, and RSVP replies go out from your own address.
+5. **Leaving Google without breaking your life.** Every "Add to Google Calendar" link on the web can land in Better-Cal instead: a Chrome extension redirects them, the /add deep link and paste-a-GCal-URL quick-add parse them, and the installed app is a share target on phones (share a page or text to it) and, in desktop Chrome and Edge, opens webcal links and .ics files. One server command imports your entire Google export, subscribed feeds can be adopted as local calendars, and a calendar you still need Google users to see can be moved to Google and kept in place here. What Gmail did for you carries over too: forwarded event email becomes events, and RSVP replies go out from your own address.
 
 6. **Agent-native and open by design.** A REST API with personal access tokens (no OAuth app to register) and an MCP server mean AI assistants can read and write your calendar as a peer, and their actions are labeled in the activity log and undoable like yours. CalDAV serves native phone and desktop clients, and an outbound ICS feed can share any slice of your data, down to a search result. It is plain PHP and MySQL on your own server: your data, your queries, no lock-in.
 
@@ -86,7 +86,7 @@ Multi-day events show their total duration beside the title on every visible seg
 
 - People are entities linked to events via the editor or quick-add "with X" clauses.
 - People page: usage stats, next event, notes, rename (renaming onto an existing person merges), delete, and a per-person event list that jumps the calendar.
-- Away and busy times per person, created in the UI or by typing "Sam away Aug 10-15" into quick-add.
+- Away and busy times per person, which you keep yourself (not read from their calendar), created in the UI or by typing "Sam away Aug 10-15" into quick-add.
 - They render as labeled bands across the calendar; a sidebar People section controls whose bands show (all / none / custom), with per-person solo.
 - Conflict awareness: the editor warns when you schedule an event with someone who is away.
 - Availability check API for agents ("is Sam free Thursday?").
@@ -137,7 +137,7 @@ Multi-day events show their total duration beside the title on every visible seg
 ### Leaving Google: link capture and migration
 
 - `/add` deep link accepts Google Calendar template URLs; a Chrome extension (MV3, declarative redirect) rewrites "Add to Google Calendar" links to it automatically.
-- Quick-add paste, PWA share target, a webcal protocol handler and an .ics file handler cover mobile, where GCal never let you subscribe by link.
+- Quick-add paste and the share target work on phones; the webcal and .ics handlers work in desktop Chrome and Edge (Android doesn't hand those links to installed web apps).
 - `/subscribe` deep link for one-tap feed subscriptions.
 - Bulk importer (a server command) for the Google Calendar settings export (or Takeout): one calendar per file, names cleaned from filename patterns, full recurrence preserved. Proven on a 10-calendar, 8,000+ event migration. In the app, any single .ics file imports from the sidebar or the welcome.
 - Feed adoption converts a subscribed calendar into a local editable one when you are ready to cut the cord.
@@ -160,7 +160,7 @@ Multi-day events show their total duration beside the title on every visible seg
 - Google connector (optional; each install sets up its own free Google Cloud client): connect a Google account to read the calendars you own, subscribe to or have been shared, including private shared ones no iCal address reaches. Where you can edit, changes go to Google first (write-through, not two-way sync).
 - Move a calendar to Google: a calendar that started here is created in your Google account with every event, no one is mailed, and it keeps its tags, people, reminders and trips. "Adopt as local calendar" brings it back.
 - Auto-refresh: open clients poll a cheap change cursor every 30 seconds, and at once when you come back to the tab, so changes from any device or automation show up without a reload.
-- Installable PWA with offline shell, share target, a webcal protocol handler, an .ics file handler, and a "New event" shortcut on its icon.
+- Installable PWA with offline shell, share target, a webcal protocol handler and an .ics file handler (desktop Chrome and Edge), and a "New event" shortcut on its icon.
 
 ### Plugins
 

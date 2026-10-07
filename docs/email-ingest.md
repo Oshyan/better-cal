@@ -47,14 +47,14 @@ App password: Google Account → Security → 2-Step Verification (must be on) �
 
 ## One-time Gmail setup (user actions)
 
-1. **Forwarding address**: Gmail → Settings → Forwarding → Add forwarding address → `calendar@example.com`. The confirmation code arrives in the calendar@ mailbox (Better-Cal's worker inbox — ask the agent to fish it out, or check via webmail).
+1. **Forwarding address**: Gmail → Settings → Forwarding → Add forwarding address → `calendar@example.com`. Gmail sends a confirmation code to that address, so it lands in the ingest mailbox itself: open the mailbox in its webmail or a mail app, and copy the code into Gmail. (The worker may already have marked it read.)
 2. **Filter**: Gmail → Settings → Filters → Create:
    - Matches: `has:attachment filename:ics OR from:(eventbrite.com OR lu.ma OR luma.com OR meetup.com OR splashthat.com OR opentable.com)`
    - Action: *Forward to* calendar@example.com. (Keep "skip inbox" OFF so Gmail retains your copy.)
    - Garden the sender list when a new platform shows up.
 3. **Stop Google shadow-adding**: Google Calendar → Settings → Events from Gmail → turn off "Show events automatically created by Gmail" (and in Gmail: Settings → General → Smart features, if you want it fully off).
 
-Anything registered directly with calendar@example.com skips all of this and just works (the domain wildcard already routes to the mailbox).
+You can also give the ingest address straight to a service (an event site's sign-up, a booking form) instead of your own address. Its mail then arrives without passing through Gmail, so no filter is needed for it.
 
 ## Config
 

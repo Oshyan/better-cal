@@ -24,7 +24,8 @@ Imports, subscribed feeds, CalDAV objects, incoming email, skipped occurrences, 
 - One JSON API request: 1 MiB (operator-adjustable up to a 4 MiB hard ceiling).
 - One subscribed feed: 20,000 events per poll (and 20 MiB, which isn't configurable).
 - One CalDAV object: 1 MiB, with up to 500 changed occurrences.
-- One incoming email: 5 MiB; up to 200 events in an emailed invitation.
+- One incoming email: 5 MiB (operator-adjustable up to a 25 MiB hard ceiling); up to 200 events in an emailed invitation. Size is checked from IMAP metadata before display headers or bodies are decoded.
+- Public email in aggregate: 100 new events per rolling day, 25 per claimed sender, and 500 future/repeating mail-created events; paid mail reading is 20 model calls per hour, 50 per day, and 20 per claimed sender/day. Separate account-wide limits cannot be reset with a new From, Message-ID, or event UID. Review shows one aggregate notice when a limit is reached; the original email remains in the mailbox.
 - An event description: 65,535 characters, after which it's cut.
 
 An import that runs into one of these says which setting raises it.

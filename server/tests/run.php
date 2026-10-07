@@ -847,6 +847,8 @@ check('imip live event: equal sequence still allowed', $mayWhen('confirmed', 2)[
     // Holding writes ONLY to the queue: there is no events table here at all,
     // so touching the calendar would be an error, not just a wrong answer.
     $rdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $rdb->run("CREATE TABLE users (id INTEGER PRIMARY KEY)");
+    $rdb->run("INSERT INTO users (id) VALUES (1), (2)");
     $rdb->run("CREATE TABLE review_items (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, event_id INTEGER, source_key TEXT, title TEXT, summary TEXT, payload_json TEXT, status TEXT DEFAULT 'open', created_at TEXT DEFAULT CURRENT_TIMESTAMP, decided_at TEXT)");
     $rdb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT)');
     $queue = new BetterCal\Domain\ReviewQueue($rdb, (new ReflectionClass(Events::class))->newInstanceWithoutConstructor());
@@ -880,6 +882,14 @@ check('imip live event: equal sequence still allowed', $mayWhen('confirmed', 2)[
         checkEq('review: another user\'s item is a 404, not a 403 (no existence leak)', 404, $e->status);
     }
     checkEq('review list all: superseded items stay out, decided ones show', ['open', 'dismissed'], array_column($queue->listFor(1, false), 'status'));
+    $mailNotice = $queue->holdMailLimit(1, 'llm_account_day', 'Automated email reading paused.', '2026-10-08T12:00:00Z', 'Ticket', 'sender@example.com');
+    checkEq('review mail limit: repeated mail updates one bounded notice', $mailNotice,
+        $queue->holdMailLimit(1, 'llm_account_day', 'Automated email reading paused.', '2026-10-08T12:00:00Z', 'Another ticket', 'other@example.com'));
+    $notice = array_values(array_filter($queue->listFor(1), static fn(array $i): bool => $i['kind'] === 'mail_limit'))[0];
+    checkEq('review mail limit: aggregate count and latest bounded context', [2, 'Another ticket', 'other@example.com'],
+        [$notice['detail']['count'], $notice['detail']['latestSubject'], $notice['detail']['latestFrom']]);
+    checkEq('review mail limit: kind-specific count', 1, $queue->openCount(1, BetterCal\Domain\ReviewQueue::KIND_MAIL_LIMIT));
+    checkEq('review mail limit: dismissing it never needs an event', 'dismissed', $queue->dismissMailLimit(1, $mailNotice)['status']);
 }
 
 $ldHtml = '<html><body><script type="application/ld+json">'
@@ -3987,6 +3997,10 @@ require __DIR__ . '/plugins.php';
     checkEq('limits: a valid override applies', 2097152, $L::get('DAV_OBJECT_BYTES'));
     checkEq('limits: zero is ignored, not applied', 20000, $L::get('IMPORT_EVENTS'));
     checkEq('limits: garbage is ignored', 20000, $L::get('REGEX_EVALS'));
+    $L::configure(['MAIL_BYTES' => PHP_INT_MAX, 'MAIL_EVENTS_PER_DAY' => PHP_INT_MAX, 'MAIL_LLM_PER_DAY' => PHP_INT_MAX, 'MAIL_LOG_RETENTION_DAYS' => PHP_INT_MAX]);
+    checkEq('limits: public-mail overrides retain hard ceilings', [26214400, 500, 250, 365], [
+        $L::get('MAIL_BYTES'), $L::get('MAIL_EVENTS_PER_DAY'), $L::get('MAIL_LLM_PER_DAY'), $L::get('MAIL_LOG_RETENTION_DAYS'),
+    ]);
     $L::reset();
     checkEq('limits: ini sizes', [268435456, 131072, 1073741824, 0, 0], array_map($L::iniBytes(...), ['256M', '128K', '1G', '-1', 'plenty']));
     checkEq('import budget: plenty of memory means the configured cap', 20000, $L::importEventBudget('2G', 50 * 1048576));
@@ -4026,7 +4040,7 @@ require __DIR__ . '/plugins.php';
 
     // BC-10: a message is recorded as started before its body is touched.
     $mdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
-    $mdb->run('CREATE TABLE mail_ingest (id INTEGER PRIMARY KEY, message_id TEXT UNIQUE, subject TEXT, from_addr TEXT, tier TEXT, outcome TEXT NOT NULL, event_id INTEGER, error TEXT, processed_at TEXT DEFAULT CURRENT_TIMESTAMP)');
+    $mdb->run('CREATE TABLE mail_ingest (id INTEGER PRIMARY KEY, transport_key TEXT UNIQUE, message_id TEXT UNIQUE, subject TEXT, from_addr TEXT, tier TEXT, outcome TEXT NOT NULL, event_id INTEGER, error TEXT, processed_at TEXT DEFAULT CURRENT_TIMESTAMP)');
     $mdb->run('CREATE TABLE review_items (id INTEGER PRIMARY KEY)');
     $mail = new MailIngest($mdb, (new ReflectionClass(Events::class))->newInstanceWithoutConstructor(), null);
     $env = ['messageId' => 'poison@example.test', 'subject' => 'Huge', 'from' => 'x@example.test'];
@@ -4043,6 +4057,160 @@ require __DIR__ . '/plugins.php';
     check('mail: and may not begin again', $mail->begin($env) === false);
     $direct = $mail->ingestMessage(1, ['messageId' => 'direct@example.test', 'subject' => 'No begin', 'from' => 'y@example.test', 'icsParts' => [], 'html' => null, 'text' => 'hello'], 'UTC');
     checkEq('mail: callers that never call begin() still get a log row', 1, (int) $mdb->scalar("SELECT COUNT(*) FROM mail_ingest WHERE message_id = 'direct@example.test'"));
+
+    check('mail transport: stable identity checkpoints before headers', $mail->beginTransport('imap-a'));
+    checkEq('mail transport: the pre-header row has no attacker display text', ['imap-a', null, null, 'started'], array_values($mdb->one("SELECT message_id, subject, from_addr, outcome FROM mail_ingest WHERE transport_key = 'imap-a'")));
+    check('mail transport: bounded RFC identity attaches after preflight', $mail->identifyTransport('imap-a', [
+        'messageId' => str_repeat('m', 400), 'subject' => str_repeat('s', 700), 'from' => str_repeat('f', 400),
+    ]));
+    checkEq('mail transport: stored headers are capped', [255, 500, 255], array_map('strlen', array_values($mdb->one("SELECT message_id, subject, from_addr FROM mail_ingest WHERE transport_key = 'imap-a'"))));
+    $mail->abortTransport('imap-a');
+    $mdb->run("INSERT INTO mail_ingest (message_id, outcome) VALUES ('same@example.test', 'skipped')");
+    check('mail transport: a redelivery gets its own pre-header checkpoint', $mail->beginTransport('imap-b'));
+    check('mail transport: RFC Message-ID still deduplicates across transport identities', !$mail->identifyTransport('imap-b', [
+        'messageId' => 'same@example.test', 'subject' => 'Again', 'from' => 'x@example.test',
+    ]));
+    checkEq('mail transport: duplicate placeholder is removed', 0, (int) $mdb->scalar("SELECT COUNT(*) FROM mail_ingest WHERE transport_key = 'imap-b'"));
+
+    // F21: transport metadata and poison checkpoint precede every display header.
+    $fetcher = new BetterCal\Infra\MailFetcher([]);
+    $trace = [];
+    $loaded = 0;
+    Limits::configure(['MAIL_BYTES' => 10]);
+    $oversizeCandidates = (static function () use (&$trace, &$loaded): Generator {
+        $trace[] = 'size';
+        yield [
+        'transportKey' => 'imap-big',
+        'size' => 11,
+        'load' => static function () use (&$loaded) { $loaded++; throw new RuntimeException('header must not load'); },
+        'markSeen' => static function () use (&$trace): void { $trace[] = 'seen'; },
+        'markUnseen' => static function () use (&$trace): void { $trace[] = 'unseen'; },
+        ];
+    })();
+    $oversize = iterator_to_array($fetcher->processCandidates($oversizeCandidates, static function (string $key) use (&$trace): bool { $trace[] = 'begin:' . $key; return true; }));
+    checkEq('mail fetch: size precedes checkpoint and Seen, with no headers', ['size', 'begin:imap-big', 'seen'], $trace);
+    checkEq('mail fetch: oversize never materializes a Message', 0, $loaded);
+    checkEq('mail fetch: oversize result uses bounded transport identity', ['imap-big', 11], [$oversize[0]['messageId'], $oversize[0]['oversize']]);
+
+    Limits::reset();
+    $trace = [];
+    $fakeMessage = new class(static function (string $step) use (&$trace): void { $trace[] = $step; }) {
+        public function __construct(private readonly Closure $step) {}
+        public function getMessageId(): string { ($this->step)('header'); return '<safe@example.test>'; }
+        public function getSubject(): string { return 'Dinner'; }
+        public function getDate(): string { return 'today'; }
+        public function getFrom(): array { return [(object) ['mail' => 'sender@example.test']]; }
+        public function parseBody(): void { ($this->step)('body'); }
+        public function getAttachments(): array { return []; }
+        public function getRawBody(): string { return ''; }
+        public function hasHTMLBody(): bool { return false; }
+        public function hasTextBody(): bool { return true; }
+        public function getTextBody(): string { return 'Dinner tomorrow'; }
+    };
+    $normal = iterator_to_array($fetcher->processCandidates([[
+        'transportKey' => 'imap-ok', 'size' => 100,
+        'load' => static function () use (&$trace, $fakeMessage): object { $trace[] = 'load'; return $fakeMessage; },
+        'markSeen' => static function () use (&$trace): void { $trace[] = 'seen'; },
+        'markUnseen' => static function () use (&$trace): void { $trace[] = 'unseen'; },
+    ]],
+        static function (string $key) use (&$trace): bool { $trace[] = 'begin'; return true; },
+        static function (string $key, array $env) use (&$trace): bool { $trace[] = 'identify'; return true; }
+    ));
+    checkEq('mail fetch: checkpoint and Seen precede one header and body', ['begin', 'seen', 'load', 'header', 'identify', 'body'], $trace);
+    checkEq('mail fetch: normal decomposition preserved', ['safe@example.test', 'Dinner tomorrow'], [$normal[0]['messageId'], $normal[0]['text']]);
+
+    // Webklex messages and attachments form reference cycles. The decoded
+    // object must be collectible before the generator suspends at yield, not
+    // merely after the whole ten-message batch has completed.
+    $weakMessage = null;
+    $cyclic = $fetcher->processCandidates([[
+        'transportKey' => 'imap-cycle', 'size' => 100,
+        'load' => static function () use (&$weakMessage): object {
+            $message = new class {
+                public object $cycle;
+                public function __construct() { $this->cycle = $this; }
+                public function getMessageId(): string { return '<cycle@example.test>'; }
+                public function getSubject(): string { return 'Cycle'; }
+                public function getDate(): string { return 'today'; }
+                public function getFrom(): array { return []; }
+                public function parseBody(): void {}
+                public function getAttachments(): array { return []; }
+                public function getRawBody(): string { return ''; }
+                public function hasHTMLBody(): bool { return false; }
+                public function hasTextBody(): bool { return false; }
+            };
+            $weakMessage = WeakReference::create($message);
+            return $message;
+        },
+        'markSeen' => static function (): void {},
+        'markUnseen' => static function (): void {},
+    ]]);
+    $cyclic->rewind();
+    check('mail fetch: decoded message cycles are released before each yielded result', $weakMessage?->get() === null);
+    $cyclic->next();
+
+    $trace = [];
+    $retried = iterator_to_array($fetcher->processCandidates([[
+        'transportKey' => 'imap-retry', 'size' => 100,
+        'load' => static function () use (&$trace): object { $trace[] = 'load'; throw new RuntimeException('temporary'); },
+        'markSeen' => static function () use (&$trace): void { $trace[] = 'seen'; },
+        'markUnseen' => static function () use (&$trace): void { $trace[] = 'unseen'; },
+    ]],
+        static function (string $key) use (&$trace): bool { $trace[] = 'begin'; return true; },
+        null,
+        static function (string $key) use (&$trace): void { $trace[] = 'abort'; }
+    ));
+    checkEq('mail fetch: retryable header failure restores Unseen and aborts checkpoint', ['begin', 'seen', 'load', 'unseen', 'abort'], $trace);
+    checkEq('mail fetch: retryable failure yields nothing', [], $retried);
+
+    // F28/F35: persistent account quotas cannot be reset with fresh message IDs,
+    // UIDs, or From values; event and paid-model capacities stay separate.
+    $qdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $qdb->run('CREATE TABLE users (id INTEGER PRIMARY KEY)');
+    $qdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, message_key TEXT, sender_key TEXT, admitted_at TEXT, UNIQUE(user_id, kind, message_key))');
+    $qdb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, created_via TEXT, deleted_at TEXT, recurrence_parent_id INTEGER, end_utc TEXT, rrule TEXT)');
+    $qdb->run('INSERT INTO users (id) VALUES (1), (2)');
+    $admission = new BetterCal\Domain\MailAdmission($qdb);
+    $quotaNow = new DateTimeImmutable('2026-10-07T12:00:00Z');
+    Limits::configure([
+        'MAIL_EVENTS_PER_DAY' => 2, 'MAIL_EVENTS_PER_SENDER_DAY' => 2, 'MAIL_ACTIVE_EVENTS' => 10,
+        'MAIL_LLM_PER_HOUR' => 2, 'MAIL_LLM_PER_DAY' => 10, 'MAIL_LLM_PER_SENDER_DAY' => 10,
+    ]);
+    $creates = 0;
+    foreach ([['m1', 'a@example.test'], ['m2', 'b@example.test']] as [$key, $from]) {
+        $d = $admission->createEvent(1, $key, $from, static function () use (&$creates): int { return ++$creates; }, $quotaNow);
+        check('mail event quota: below the account cap creates', $d['allowed']);
+    }
+    $blocked = $admission->createEvent(1, 'm3', 'rotated@example.test', static function () use (&$creates): int { return ++$creates; }, $quotaNow);
+    checkEq('mail event quota: rotating sender and identity cannot bypass account cap', [false, 'event_account_day', 2], [$blocked['allowed'], $blocked['code'], $creates]);
+    try {
+        Limits::configure(['MAIL_EVENTS_PER_DAY' => 10]);
+        $admission->createEvent(1, 'rollback', 'x@example.test', static function (): never { throw new RuntimeException('create failed'); }, $quotaNow);
+    } catch (RuntimeException) {
+    }
+    checkEq('mail event quota: a failed creation rolls back its reservation', 0,
+        (int) $qdb->scalar('SELECT COUNT(*) FROM mail_admissions WHERE message_key = ?', [hash('sha256', 'rollback')]));
+    $l1 = $admission->reserveLlm(1, 'llm-1', 'a@example.test', $quotaNow);
+    $l2 = $admission->reserveLlm(1, 'llm-2', 'b@example.test', $quotaNow);
+    $l3 = $admission->reserveLlm(1, 'llm-3', 'rotated@example.test', $quotaNow);
+    checkEq('mail LLM quota: paid calls stop at the global hourly ceiling across senders', [true, true, false, 'llm_account_hour'], [$l1['allowed'], $l2['allowed'], $l3['allowed'], $l3['code']]);
+    $eventAfterLlm = $admission->createEvent(1, 'event-after-llm', 'c@example.test', static fn(): int => 9, $quotaNow);
+    check('mail quotas: exhausted paid-model capacity does not consume deterministic event capacity', $eventAfterLlm['allowed']);
+    Limits::configure(['MAIL_EVENTS_PER_DAY' => 10, 'MAIL_EVENTS_PER_SENDER_DAY' => 1]);
+    $senderOne = $admission->createEvent(1, 'sender-1', 'same@example.test', static fn(): int => 10, $quotaNow);
+    $senderTwo = $admission->createEvent(1, 'sender-2', 'same@example.test', static fn(): int => 11, $quotaNow);
+    checkEq('mail event quota: one claimed sender has a secondary daily brake', [true, false, 'event_sender_day'], [$senderOne['allowed'], $senderTwo['allowed'], $senderTwo['code']]);
+    Limits::configure(['MAIL_LLM_PER_HOUR' => 10, 'MAIL_LLM_PER_DAY' => 10, 'MAIL_LLM_PER_SENDER_DAY' => 1]);
+    $senderLlmOne = $admission->reserveLlm(2, 'sender-llm-1', 'same@example.test', $quotaNow);
+    $senderLlmTwo = $admission->reserveLlm(2, 'sender-llm-2', 'same@example.test', $quotaNow);
+    checkEq('mail LLM quota: one claimed sender has a secondary paid-call brake', [true, false, 'llm_sender_day'], [$senderLlmOne['allowed'], $senderLlmTwo['allowed'], $senderLlmTwo['code']]);
+    Limits::configure(['MAIL_ACTIVE_EVENTS' => 1]);
+    $qdb->run("INSERT INTO events (id, user_id, created_via, end_utc) VALUES (1, 1, 'mail:imip', '2026-10-08 12:00:00')");
+    $activeBlocked = $admission->eventCapacity(1, 'new@example.test', $quotaNow);
+    checkEq('mail event quota: future mail-created events have a live capacity', [false, 'event_active'], [$activeBlocked['allowed'], $activeBlocked['code']]);
+    $qdb->run("INSERT INTO mail_admissions (user_id, kind, message_key, sender_key, admitted_at) VALUES (1, 'event', 'old', 'old', '2025-01-01 00:00:00')");
+    checkEq('mail quota: old accounting is pruned', 1, $admission->prune($quotaNow));
+    Limits::reset();
 
     // Mail is read on the clock of the event's place (an Edinburgh booking while
     // Home is Los Angeles), and the stored zone matches the stored moment.

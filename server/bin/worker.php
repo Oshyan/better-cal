@@ -133,11 +133,17 @@ try {
                         $tzSettings = is_string($tzRow) ? (json_decode($tzRow, true) ?: []) : [];
                         $tz = is_string($tzSettings['tz'] ?? null) && $tzSettings['tz'] !== '' ? $tzSettings['tz'] : 'UTC';
                         $hereTz = \BetterCal\Infra\LlmGateway::validZone($tzSettings['hereTz'] ?? null);
+                        $ingest->pruneReceipts();
                         $done = 0;
                         // begin/abort: a message is recorded as started before its
                         // body is downloaded, so one that crashes the worker is not
                         // walked into again on the next run (see MailFetcher).
-                        foreach ($fetcher->fetchUnseen(10, $ingest->begin(...), $ingest->abort(...)) as $msg) {
+                        foreach ($fetcher->fetchUnseen(
+                            10,
+                            $ingest->beginTransport(...),
+                            $ingest->identifyTransport(...),
+                            $ingest->abortTransport(...)
+                        ) as $msg) {
                             $r = $ingest->ingestMessage($uid, $msg, $tz, $hereTz);
                             // A held change waits for a decision, and the
                             // owner is not looking at the queue: tell them. One
@@ -158,7 +164,9 @@ try {
                                 }
                             }
                             echo bc_ts() . ' mail_ingest msg=' . substr($msg['messageId'], 0, 40)
-                                . ' tier=' . ($r['tier'] ?? '-') . ' outcome=' . $r['outcome'] . "\n";
+                                . ' tier=' . ($r['tier'] ?? '-') . ' outcome=' . $r['outcome']
+                                . ($r['error'] !== null ? ' reason=' . str_replace(["\r", "\n"], ' ', (string) $r['error']) : '')
+                                . "\n";
                             $done++;
                         }
                         if ($done === 0) {

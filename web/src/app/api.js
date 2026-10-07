@@ -146,7 +146,8 @@ export async function loadPlugins() {
 }
 
 // The sidebar badge: how many things are waiting on a decision (paused calendar
-// updates, held invitation changes, unanswered invitations, open proposals).
+// updates, held invitation changes, mail safety notices, unanswered invitations,
+// open proposals, and possible duplicates).
 export async function loadReviewCount() {
   try {
     const d = await api('/review/count');

@@ -5,6 +5,8 @@
 //                  an unauthenticated message, so it is HELD, shown here with
 //                  exactly what it would change, and applied only when you
 //                  accept it.
+//   mail_limit     public-mail automation reached a safety/cost limit; the
+//                  aggregate says how many messages were affected.
 //   rsvp           an invitation you have not answered.
 //   proposal       a plan one of your plugins suggests.
 //   duplicate      two events that might be the same event.
@@ -29,8 +31,8 @@ import { rsvpOutcome } from './actions.js';
 import { fmtSince } from '../lib/since.js';
 import { parseISO, dateOfDayKey, fmtRange, fmtDayMedium, fmtTime } from '../lib/dates.js';
 
-const KIND_LABEL = { invite_change: 'Invitation change', rsvp: 'Invitation', proposal: 'Proposal', duplicate: 'Possible duplicate', subscription: 'Calendar updates paused' };
-const KIND_ICON = { invite_change: 'mail', rsvp: 'mail', proposal: 'proposals', duplicate: 'stack', subscription: 'calendar' };
+const KIND_LABEL = { invite_change: 'Invitation change', mail_limit: 'Email automation paused', rsvp: 'Invitation', proposal: 'Proposal', duplicate: 'Possible duplicate', subscription: 'Calendar updates paused' };
+const KIND_ICON = { invite_change: 'mail', mail_limit: 'warning', rsvp: 'mail', proposal: 'proposals', duplicate: 'stack', subscription: 'calendar' };
 
 // One side of a changed date. All-day values are bare dates; timed ones are
 // instants, shown on this device's clock like everything else on screen.
@@ -77,6 +79,8 @@ function ReviewCard({ item, onChanged }) {
       } else if (item.kind === 'subscription') {
         toast('Calendar updates resumed');
         await loadCalendars().catch(() => {});
+      } else if (item.kind === 'mail_limit') {
+        toast('Email automation notice dismissed');
       } else {
         toast(
           accepted ? (d.method === 'CANCEL' ? 'Cancellation accepted' : 'Change applied') : 'Dismissed. Your calendar is unchanged',
@@ -141,7 +145,7 @@ export function ReviewPage() {
 
   return html`<${PageShell}
     title="Review"
-    note="What is waiting on you: paused calendar updates, changes organizers emailed, invitations you have not answered, and plans your plugins suggest. Paused feeds keep their saved events until you decide what to do."
+    note="What is waiting on you: paused calendar updates, changes organizers emailed, invitations you have not answered, email automation safety notices, and plans your plugins suggest. Paused feeds keep their saved events until you decide what to do."
   >
     <div class="bc-proposal-filters">
       <button type="button" class="bc-srcchip${showDecided ? '' : ' is-on'}" onClick=${() => setShowDecided(false)}>Waiting</button>

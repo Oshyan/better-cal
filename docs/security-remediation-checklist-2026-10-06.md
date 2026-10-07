@@ -59,6 +59,18 @@ no database migration.
 |---|---|---:|---:|
 | F41 | JSON bodies are bounded while they are read, before routing, authentication or decoding; multipart calendar imports retain their separate allowance | Passed | [x] |
 
+## Phase 8 — public mail admission and paid-model budgets
+
+This phase is implemented for release 0.9.27 and awaits deployment and the live
+IMAP/MySQL exercises below. It adds migration 040.
+
+| Scan finding | Remediation | Local automated verification | Live/deployed verification |
+|---|---|---:|---:|
+| F21 | IMAP UID and `RFC822.SIZE` preflight, transport-key poison checkpoint and Seen flag all precede one-at-a-time header/body materialization | Passed | [ ] |
+| F28 | Every new-event tier shares persistent account, sender and active-event admission; existing-event changes/cancellations remain outside that gate | Passed | [ ] |
+| F35 | Mail-only Gemini attempts reserve persistent hourly/daily capacity before dispatch; deterministic tiers remain independent | Passed | [ ] |
+| Related low finding (retention portion) | Mail receipts and admission accounting are pruned after a bounded replay/diagnostic window | Passed | [ ] |
+
 ## Completed local evidence
 
 This section is the technical record for reviewers; it is not a manual to-do
@@ -139,6 +151,19 @@ list for the owner.
 - [x] Phase 7 server suite: 1,953 passed, 0 failed. Four changed PHP files pass
   syntax checks. Independent read-only post-patch review found no concrete
   source-backed bypass or regression.
+- [x] Phase 8 focused controls cover IMAP size/checkpoint/Seen/header/body
+  ordering, oversize no-header handling, retry rollback, RFC Message-ID replay,
+  account and claimed-sender event/model ceilings, active-event capacity,
+  failed-create rollback, bounded aggregate Review notices and retention.
+- [x] Phase 8 server suite: 1,983 passed, 0 failed; frontend smoke 653/0 in
+  `America/Los_Angeles`, `UTC`, `Europe/Berlin`, `Asia/Kolkata` and
+  `Pacific/Auckland`; frontend static 347/0; MCP 63/0. All changed PHP files
+  pass syntax checks and the working-tree diff passes whitespace validation.
+- [x] Phase 8 independent post-patch review exercised all four event-creation
+  tiers under exhausted capacity, model-attempt reservation before failed/null
+  provider returns, and the pinned Webklex message/attachment lifecycle. It
+  found and prompted a generator-lifetime fix; the repeated real-Webklex probe
+  then retained zero decoded messages at each yield with flat memory.
 
 ## Remaining practical checks
 
@@ -220,6 +245,23 @@ testing of an imported repeating event is enough for that part.
   returns HTTP 413 while ordinary JSON and multipart calendar-import requests
   continue to reach their normal routes. This is a deploy check, not an owner
   exercise.
+
+### Public mail admission (F21/F28/F35)
+
+- [ ] After migration 040, use disposable messages to verify production IMAP
+  reports UIDVALIDITY and size, an oversize message is marked read without its
+  Subject/From being recorded, an ordinary message ingests, and a forced
+  retryable fetch failure returns the message to unread and removes its started
+  receipt.
+- [ ] Against production MySQL with a disposable account, exercise concurrent
+  event and model admissions at a low temporary limit. Verify the exact cap is
+  honored, a failed event transaction consumes no event reservation, a failed
+  or null model response does consume its reservation, and rotated From and
+  Message-ID values do not reset account-wide capacity.
+- [ ] Verify one **Email automation paused** item appears in Review when a limit
+  is reached, later refusals update its bounded count/latest context instead of
+  adding cards, Dismiss closes it, and the original messages remain available
+  in the mailbox for manual handling.
 
 ## Deployment closeout
 

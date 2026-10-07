@@ -15,20 +15,22 @@ use BetterCal\Support\Time;
 /**
  * The Review queue: everything waiting on the owner's decision, in one list.
  *
- * Five kinds, one shape. Each item says what it is, what it would do, and
+ * Six kinds, one shape. Each item says what it is, what it would do, and
  * carries its own `actions` ({name, label, method, path, body?}), so a client
  * can act without hard-coding each kind's endpoints. A subscription claim is
  * intentionally session-only and therefore omitted for bearer-token callers:
  *
  *   invite_change  an emailed change to an invitation already on the calendar,
  *                  held instead of applied (ReviewQueue; BC-07)
+ *   mail_limit     a bounded notice that public-mail automation hit a capacity
  *   rsvp           an invitation not answered yet (events.invite_json)
  *   proposal       a plan a plugin suggests (plugin_proposals)
  *   duplicate      two events that may be one, arriving by two routes (#9)
  *   subscription   an ICS feed whose updates need an owner decision
  *
- * Only invite_change is stored by the queue itself; the other four live where
- * they always did and keep their own endpoints, which the actions point at.
+ * invite_change and mail_limit are stored by the queue itself; the other four
+ * live where they always did and keep their own endpoints, which the actions
+ * point at.
  */
 final class ReviewController
 {
@@ -51,6 +53,22 @@ final class ReviewController
         $items = [];
         foreach ($this->queue->listFor($userId, $openOnly) as $c) {
             $open = $c['status'] === 'open';
+            if ($c['kind'] === ReviewQueue::KIND_MAIL_LIMIT) {
+                $items[] = [
+                    'key' => 'mail_limit:' . $c['id'],
+                    'kind' => 'mail_limit',
+                    'status' => $c['status'],
+                    'title' => $c['title'],
+                    'summary' => $c['summary'],
+                    'createdAt' => $c['createdAt'],
+                    'eventId' => null,
+                    'detail' => $c['detail'],
+                    'actions' => $open ? [
+                        self::action('dismiss', 'Dismiss', "/review/mail-limits/{$c['id']}/dismiss"),
+                    ] : [],
+                ];
+                continue;
+            }
             $items[] = [
                 'key' => 'invite_change:' . $c['id'],
                 'kind' => 'invite_change',
@@ -183,7 +201,8 @@ final class ReviewController
     {
         $userId = (int) $req->user['id'];
         $byKind = [
-            'invite_change' => $this->queue->openCount($userId),
+            'invite_change' => $this->queue->openCount($userId, ReviewQueue::KIND_INVITE_CHANGE),
+            'mail_limit' => $this->queue->openCount($userId, ReviewQueue::KIND_MAIL_LIMIT),
             'rsvp' => count($this->queue->invitationsAwaitingReply($userId)),
             'proposal' => count($this->proposals->listFor($userId, 'open')),
             'duplicate' => count($this->duplicates?->possible($userId) ?? []),
@@ -210,6 +229,11 @@ final class ReviewController
     public function dismissInviteChange(Request $req, array $params): Response
     {
         return Response::json(['item' => $this->queue->dismiss((int) $req->user['id'], (int) $params['id'])]);
+    }
+
+    public function dismissMailLimit(Request $req, array $params): Response
+    {
+        return Response::json(['item' => $this->queue->dismissMailLimit((int) $req->user['id'], (int) $params['id'])]);
     }
 
     /** @return array{name:string,label:string,method:string,path:string,body?:array<string,mixed>} */

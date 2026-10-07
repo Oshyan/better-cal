@@ -4,6 +4,15 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.27 (2026-10-07)
+
+- **Public email can no longer create unbounded calendar data.** Every mail-ingest tier now shares persistent account-wide, claimed-sender and active-event capacity. Existing invitation changes and cancellations still reach Review without consuming new-event capacity.
+- **Forwarded email cannot trigger unbounded paid model calls.** Mail-reading Gemini attempts reserve separate hourly and daily capacity before the request, including failed or empty responses. Deterministic iCalendar, schema.org and Google-template extraction remains available when model capacity is full.
+- **Oversized mail is rejected before its display headers are decoded.** The worker checks stable IMAP UID and server-reported size, records a poison-message checkpoint and marks the message read before materializing one message at a time. Decoded attachment cycles are released between messages.
+- **Capacity refusals are visible without creating notification spam.** Review shows one aggregate Email automation notice per reason, with a count and bounded latest-message context. The original email stays in the mailbox for manual handling.
+
+Operators: migration 040 adds the transport checkpoint and persistent mail-admission ledger. Defaults are 100 mail-created events per rolling day, 25 per claimed sender, 500 active future/repeating mail-created events, and 20/50 paid mail-reading calls per hour/day. `BETTERCAL_LIMIT_MAIL_*` settings may tune them only within documented hard ceilings. Mail receipt and admission history defaults to 90-day retention.
+
 ## 0.9.26 (2026-10-07)
 
 - **Oversized JSON requests are refused before they can consume a PHP worker.** JSON API bodies now have a 1 MiB default limit, enforced while the request stream is read and before routing, authentication or decoding. Missing, false and chunked content lengths cannot bypass it. Calendar-file imports keep their separate 25 MiB allowance.

@@ -6,6 +6,7 @@ namespace BetterCal\Infra;
 
 use BetterCal\Domain\Sanitize;
 use BetterCal\Support\Limits;
+use Webklex\PHPIMAP\IMAP;
 
 /**
  * IMAP transport for the mail ingest worker: fetches unseen messages from
@@ -17,9 +18,9 @@ use BetterCal\Support\Limits;
  * Anyone can send mail to the ingest address, so nothing about a message is
  * trusted until it has been sized (BC-10):
  *
- * - Headers first. The list is fetched WITHOUT bodies, and the server is asked
- *   for each message's size. One over Limits::MAIL_BYTES is never downloaded:
- *   it is marked seen and reported as skipped.
+ * - Size before headers. An IMAP UID search and RFC822.SIZE fetch happen before
+ *   a Message object exists. One over Limits::MAIL_BYTES is marked seen and
+ *   reported as skipped without decoding Subject, From, or Message-ID.
  * - One at a time. This is a generator: a body is downloaded, handed to the
  *   caller and dropped before the next one is fetched, instead of ten fully
  *   decoded messages sitting in an array.
@@ -43,13 +44,19 @@ final class MailFetcher
     }
 
     /**
-     * @param ?callable(array{messageId:string,subject:string,from:string}):bool $begin
-     *        called before a body is fetched; return false to skip the message
-     *        (already handled, or started before and never finished)
-     * @param ?callable(string):void $abort called with the messageId when fetching failed in a retryable way
-     * @return \Generator<int, array{messageId:string,subject:string,from:string,icsParts:list<string>,html:?string,text:?string,oversize?:int}>
+     * @param ?callable(string):bool $begin called with the stable IMAP transport
+     *        key before any display header is decoded
+     * @param ?callable(string,array{messageId:string,subject:string,from:string}):bool $identify
+     *        attaches bounded RFC header identity; false means Message-ID replay
+     * @param ?callable(string):void $abort called with the transport key after a retryable failure
+     * @return \Generator<int, array{transportKey:string,messageId:string,subject:string,from:string,icsParts:list<string>,html:?string,text:?string,oversize?:int}>
      */
-    public function fetchUnseen(int $limit = 10, ?callable $begin = null, ?callable $abort = null): \Generator
+    public function fetchUnseen(
+        int $limit = 10,
+        ?callable $begin = null,
+        ?callable $identify = null,
+        ?callable $abort = null,
+    ): \Generator
     {
         if (!$this->isConfigured() || !class_exists(\Webklex\PHPIMAP\ClientManager::class)) {
             return;
@@ -67,45 +74,119 @@ final class MailFetcher
         $client->connect();
         try {
             $inbox = $client->getFolder('INBOX');
-            $messages = $inbox->messages()->unseen()->setFetchBody(false)->leaveUnread()->limit($limit)->get();
-            foreach ($messages as $message) {
-                $envelope = null;
-                try {
-                    $envelope = self::envelope($message);
-                    $size = (int) $message->getSize();
-                    if ($size > Limits::get('MAIL_BYTES')) {
-                        $message->setFlag('Seen');
-                        yield $envelope + ['icsParts' => [], 'html' => null, 'text' => null, 'oversize' => $size];
-                        continue;
-                    }
-                    if ($begin !== null && $begin($envelope) === false) {
-                        $message->setFlag('Seen');
-                        continue;
-                    }
-                    // Seen BEFORE the body: see "No poison messages" above.
-                    $message->setFlag('Seen');
-                    $message->parseBody();
-                    $decomposed = $this->decompose($message, $envelope);
-                } catch (\Throwable $e) {
-                    // Caught means survivable (a dropped connection, a malformed
-                    // part): put it back so the next run tries again.
-                    error_log('mail ingest fetch failed: ' . $e->getMessage());
-                    try {
-                        $message->unsetFlag('Seen');
-                    } catch (\Throwable) {
-                    }
-                    if ($abort !== null && $envelope !== null) {
-                        $abort($envelope['messageId']);
-                    }
-                    continue;
-                }
-                yield $decomposed;
-                unset($decomposed);
+            $query = $inbox->messages()
+                ->unseen()
+                ->setFetchBody(false)
+                ->leaveUnread()
+                ->setSequence(IMAP::ST_UID);
+            // search() returns only integer UIDs. Query::get() is deliberately
+            // not used: Webklex batch-fetches and parses every RFC822 header in
+            // get(), even when setFetchBody(false) is set.
+            $uids = array_slice(array_values($query->search()->toArray()), 0, max(0, $limit));
+            if ($uids === []) {
+                return;
             }
+            $status = $inbox->status();
+            if (!isset($status['uidvalidity']) && !isset($status['UIDVALIDITY'])) {
+                throw new \RuntimeException('IMAP did not report UIDVALIDITY for INBOX');
+            }
+            $uidValidity = (string) ($status['uidvalidity'] ?? $status['UIDVALIDITY']);
+            $connection = $client->getConnection();
+            $sizes = $connection->sizes($uids, IMAP::ST_UID)->validatedData();
+            $mailbox = (string) ($this->cfg['imap']['host'] ?? '') . "\0"
+                . (string) ($this->cfg['imap']['user'] ?? '') . "\0INBOX\0" . $uidValidity;
+            $candidates = (static function () use ($uids, $sizes, $mailbox, $connection, $query): \Generator {
+                foreach ($uids as $uid) {
+                    $uid = (int) $uid;
+                    if (!array_key_exists($uid, $sizes) && !array_key_exists((string) $uid, $sizes)) {
+                        throw new \RuntimeException("IMAP did not report a size for UID $uid");
+                    }
+                    $size = (int) ($sizes[$uid] ?? $sizes[(string) $uid]);
+                    yield [
+                        'transportKey' => 'imap-' . hash('sha256', $mailbox . "\0" . $uid),
+                        'size' => $size,
+                        'load' => static fn(): object => $query->getMessageByUid($uid),
+                        'markSeen' => static fn() => $connection->store(['\\Seen'], $uid, $uid, '+', true, IMAP::ST_UID)->validatedData(),
+                        'markUnseen' => static fn() => $connection->store(['\\Seen'], $uid, $uid, '-', true, IMAP::ST_UID)->validatedData(),
+                    ];
+                }
+            })();
+            yield from $this->processCandidates($candidates, $begin, $identify, $abort);
         } finally {
             try {
                 $client->disconnect();
             } catch (\Throwable) {
+            }
+        }
+    }
+
+    /**
+     * Testable security boundary between cheap IMAP metadata and header/body
+     * materialization. Candidate closures keep Webklex details out of tests.
+     *
+     * @param iterable<array{transportKey:string,size:int,load:callable():object,markSeen:callable():mixed,markUnseen:callable():mixed}> $candidates
+     * @return \Generator<int, array{transportKey:string,messageId:string,subject:string,from:string,icsParts:list<string>,html:?string,text:?string,oversize?:int}>
+     */
+    public function processCandidates(
+        iterable $candidates,
+        ?callable $begin = null,
+        ?callable $identify = null,
+        ?callable $abort = null,
+    ): \Generator {
+        foreach ($candidates as $candidate) {
+            $key = $candidate['transportKey'];
+            $begun = false;
+            try {
+                if ($begin !== null && $begin($key) === false) {
+                    ($candidate['markSeen'])();
+                    continue;
+                }
+                $begun = true;
+                // Seen BEFORE header/body materialization: a fatal leaves the
+                // durable started row and prevents the next run retrying it.
+                ($candidate['markSeen'])();
+                $size = (int) $candidate['size'];
+                if ($size > Limits::get('MAIL_BYTES')) {
+                    yield [
+                        'transportKey' => $key,
+                        'messageId' => $key,
+                        'subject' => '',
+                        'from' => '',
+                        'icsParts' => [],
+                        'html' => null,
+                        'text' => null,
+                        'oversize' => $size,
+                    ];
+                    continue;
+                }
+                try {
+                    $message = ($candidate['load'])();
+                    $envelope = self::envelope($message);
+                    if ($identify !== null && $identify($key, $envelope) === false) {
+                        continue;
+                    }
+                    $message->parseBody();
+                    $result = ['transportKey' => $key] + $this->decompose($message, $envelope);
+                } finally {
+                    // A Webklex Message and its Attachment objects point back
+                    // to each other. Drop that cycle before suspending this
+                    // generator at yield, or decoded messages accumulate for
+                    // the whole batch even though their returned data is flat.
+                    unset($message);
+                    gc_collect_cycles();
+                }
+                yield $result;
+            } catch (\Throwable $e) {
+                // Caught means survivable (a dropped connection, malformed
+                // header/part): put it back so the next run may try again.
+                error_log('mail ingest fetch failed: ' . $e->getMessage());
+                try {
+                    ($candidate['markUnseen'])();
+                } catch (\Throwable) {
+                }
+                if ($begun && $abort !== null) {
+                    $abort($key);
+                }
             }
         }
     }
@@ -115,14 +196,21 @@ final class MailFetcher
     {
         $messageId = trim((string) $message->getMessageId(), " \t<>");
         if ($messageId === '') {
-            $messageId = 'no-id-' . sha1((string) $message->getSubject() . (string) $message->getDate());
+            $messageId = 'no-id-' . sha1(
+                mb_substr((string) $message->getSubject(), 0, 500)
+                . mb_substr((string) $message->getDate(), 0, 200)
+            );
         }
         $fromAttr = $message->getFrom();
         $from = '';
         if ($fromAttr && isset($fromAttr[0])) {
-            $from = strtolower((string) ($fromAttr[0]->mail ?? ''));
+            $from = mb_substr(strtolower((string) ($fromAttr[0]->mail ?? '')), 0, 255);
         }
-        return ['messageId' => $messageId, 'subject' => (string) $message->getSubject(), 'from' => $from];
+        return [
+            'messageId' => mb_substr($messageId, 0, 255),
+            'subject' => mb_substr((string) $message->getSubject(), 0, 500),
+            'from' => $from,
+        ];
     }
 
     /**

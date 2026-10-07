@@ -26,13 +26,14 @@ use BetterCal\Support\Time;
  * Events domain (same validation, same activity entry, same undo), and a newer
  * change for the same meeting replaces an older open one rather than stacking.
  *
- * The Review PAGE also lists plugin proposals and invitations awaiting an RSVP
- * (ReviewController assembles the three); only held changes are stored here,
- * because the other two already have a home.
+ * The Review page also lists plugin proposals, invitations awaiting an RSVP,
+ * possible duplicates, and paused subscriptions. Held changes and bounded
+ * mail-limit notices are stored here; the other kinds already have a home.
  */
 final class ReviewQueue
 {
     public const KIND_INVITE_CHANGE = 'invite_change';
+    public const KIND_MAIL_LIMIT = 'mail_limit';
 
     private const PREVIEW_CHARS = 400;
 
@@ -153,6 +154,67 @@ final class ReviewQueue
         });
     }
 
+    /**
+     * One bounded, owner-visible notice per mail limit. Repeated hostile mail
+     * updates a counter on the same row instead of growing Review without bound.
+     */
+    public function holdMailLimit(
+        int $userId,
+        string $reason,
+        string $message,
+        string $retryAt,
+        string $subject,
+        string $fromAddr,
+    ): int {
+        $reason = mb_substr($reason, 0, 255);
+        return $this->db->tx(function () use ($userId, $reason, $message, $retryAt, $subject, $fromAddr): int {
+            // The same account lock as MailAdmission makes concurrent denials
+            // update one aggregate instead of racing two open rows or counts.
+            $driver = (string) $this->db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME);
+            $this->db->scalar('SELECT id FROM users WHERE id = ?' . ($driver === 'mysql' ? ' FOR UPDATE' : ''), [$userId]);
+            $row = $this->db->one(
+                "SELECT * FROM review_items WHERE user_id = ? AND kind = ? AND source_key = ? AND status = 'open' ORDER BY id DESC LIMIT 1",
+                [$userId, self::KIND_MAIL_LIMIT, $reason]
+            );
+            $payload = $row !== null ? self::payload($row) : [];
+            $count = max(0, (int) ($payload['count'] ?? 0)) + 1;
+            $latestSubject = mb_substr(trim($subject), 0, 300);
+            $latestFrom = mb_substr(trim($fromAddr), 0, 255);
+            $latest = $latestSubject !== ''
+                ? ' Latest: “' . $latestSubject . '”' . ($latestFrom !== '' ? ' from ' . $latestFrom : '') . '.'
+                : ($latestFrom !== '' ? ' Latest sender: ' . $latestFrom . '.' : '');
+            $summary = mb_substr(
+                $message . ' ' . $count . ' email' . ($count === 1 ? ' was' : 's were')
+                . ' affected. No event was added; the original email remains in your mailbox.' . $latest,
+                0,
+                1000
+            );
+            $payload = [
+                'reason' => $reason,
+                'count' => $count,
+                'retryAt' => $retryAt !== '' ? $retryAt : null,
+                'latestSubject' => $latestSubject,
+                'latestFrom' => $latestFrom,
+            ];
+            if ($row !== null) {
+                $this->db->run(
+                    'UPDATE review_items SET summary = ?, payload_json = ?, created_at = ? WHERE id = ?',
+                    [$summary, json_encode($payload, JSON_INVALID_UTF8_SUBSTITUTE | JSON_UNESCAPED_SLASHES), Time::nowDb(), (int) $row['id']]
+                );
+                return (int) $row['id'];
+            }
+            return $this->db->insert('review_items', [
+                'user_id' => $userId,
+                'kind' => self::KIND_MAIL_LIMIT,
+                'event_id' => null,
+                'source_key' => $reason,
+                'title' => 'Email automation limit reached',
+                'summary' => $summary,
+                'payload_json' => json_encode($payload, JSON_INVALID_UTF8_SUBSTITUTE | JSON_UNESCAPED_SLASHES),
+            ]);
+        });
+    }
+
     // ---- Reading -------------------------------------------------------
 
     /** @return list<array<string,mixed>> newest first */
@@ -165,9 +227,14 @@ final class ReviewQueue
         return array_map(self::serialize(...), $rows);
     }
 
-    public function openCount(int $userId): int
+    public function openCount(int $userId, ?string $kind = null): int
     {
-        return (int) $this->db->scalar("SELECT COUNT(*) FROM review_items WHERE user_id = ? AND status = 'open'", [$userId]);
+        return $kind === null
+            ? (int) $this->db->scalar("SELECT COUNT(*) FROM review_items WHERE user_id = ? AND status = 'open'", [$userId])
+            : (int) $this->db->scalar(
+                "SELECT COUNT(*) FROM review_items WHERE user_id = ? AND kind = ? AND status = 'open'",
+                [$userId, $kind]
+            );
     }
 
     /** @return array<string,mixed> */
@@ -185,6 +252,7 @@ final class ReviewQueue
             'from' => (string) ($payload['from'] ?? ''),
             'organizer' => $payload['invite']['organizer'] ?? null,
             'diff' => is_array($payload['diff'] ?? null) ? $payload['diff'] : [],
+            'detail' => $payload,
             'createdAt' => Time::dbToIso((string) $row['created_at'], 'UTC'),
             'decidedAt' => !empty($row['decided_at']) ? Time::dbToIso((string) $row['decided_at'], 'UTC') : null,
         ];
@@ -276,6 +344,9 @@ final class ReviewQueue
     public function dismiss(int $userId, int $id): array
     {
         $row = $this->requireOpen($userId, $id);
+        if ((string) $row['kind'] !== self::KIND_INVITE_CHANGE) {
+            throw HttpError::notFound('No such invitation-change review item');
+        }
         $this->close((int) $row['id'], 'dismissed');
         // Dismissing is a decision worth a trace: "I saw the organizer's change
         // and kept my version" is exactly what someone looks for later.
@@ -289,6 +360,17 @@ final class ReviewQueue
             'Dismissed an emailed ' . (self::payload($row)['method'] === 'CANCEL' ? 'cancellation of' : 'change to') . ' "' . (string) $row['title'] . '"',
             ['from' => self::payload($row)['from'] ?? null, 'reviewItem' => (int) $row['id']]
         ));
+        return self::serialize($this->db->one('SELECT * FROM review_items WHERE id = ?', [$id]) ?? $row);
+    }
+
+    /** Dismiss an informational aggregate; it never mutates the calendar. */
+    public function dismissMailLimit(int $userId, int $id): array
+    {
+        $row = $this->requireOpen($userId, $id);
+        if ((string) $row['kind'] !== self::KIND_MAIL_LIMIT) {
+            throw HttpError::notFound('No such email-limit review item');
+        }
+        $this->close((int) $row['id'], 'dismissed');
         return self::serialize($this->db->one('SELECT * FROM review_items WHERE id = ?', [$id]) ?? $row);
     }
 

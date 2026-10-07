@@ -54,6 +54,15 @@ final class Limits
         'MAIL_ICS_BYTES' => 1048576,     // 1 MiB per calendar part
         'MAIL_ICS_EVENTS' => 200,        // an invitation is one meeting plus its exceptions
         'MAIL_BODY_CHARS' => 524288,     // text/html handed to markup and LLM extraction
+        // Public-mail aggregate budgets. Account-wide limits are the security
+        // boundary because From, Message-ID and iCalendar UID are spoofable.
+        'MAIL_EVENTS_PER_DAY' => 100,
+        'MAIL_EVENTS_PER_SENDER_DAY' => 25,
+        'MAIL_ACTIVE_EVENTS' => 500,
+        'MAIL_LLM_PER_HOUR' => 20,
+        'MAIL_LLM_PER_DAY' => 50,
+        'MAIL_LLM_PER_SENDER_DAY' => 20,
+        'MAIL_LOG_RETENTION_DAYS' => 90,
         // Compact recurrence properties can hide thousands of comma-separated
         // values on one admitted line. Count them before parser/object work,
         // and keep one series from becoming a permanent expansion tax.
@@ -66,6 +75,14 @@ final class Limits
     /** Security ceilings: an operator may tune these budgets, but not remove the bound. */
     private const MAXIMUMS = [
         'JSON_BODY_BYTES' => 4194304,    // 4 MiB; unauthenticated requests reach this boundary
+        'MAIL_BYTES' => 26214400,        // 25 MiB; size preflight keeps headers/bodies behind this
+        'MAIL_EVENTS_PER_DAY' => 500,
+        'MAIL_EVENTS_PER_SENDER_DAY' => 100,
+        'MAIL_ACTIVE_EVENTS' => 2000,
+        'MAIL_LLM_PER_HOUR' => 100,
+        'MAIL_LLM_PER_DAY' => 250,
+        'MAIL_LLM_PER_SENDER_DAY' => 100,
+        'MAIL_LOG_RETENTION_DAYS' => 365,
         'EXDATE_VALUES_PER_EVENT' => 2048,
         'EXDATE_VALUES_PER_INPUT' => 8192,
     ];

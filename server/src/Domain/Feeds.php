@@ -209,27 +209,36 @@ final class Feeds
      *
      * @param list<array<string,mixed>> $parsed
      */
-    public function sync(array $calendar, array $parsed, bool $journal = true): int
+    public function sync(array $calendar, array $parsed, bool $journal = true, ?float $deadline = null): int
     {
         // Keep direct callers inside the same boundary as Ics::parse. Google
         // and tests can hand parsed shapes to this method without passing
         // through the ICS preflight first.
         Recurrence::assertExdateBatch($parsed);
+        self::assertSyncDeadline($deadline);
 
         $calendarId = (int) $calendar['id'];
         $userId = (int) $calendar['user_id'];
 
         $existing = $this->db->all('SELECT * FROM events WHERE calendar_id = ?', [$calendarId]);
+        self::assertSyncDeadline($deadline);
         $existingByKey = [];
-        foreach ($existing as $row) {
+        foreach ($existing as $index => $row) {
+            if (($index & 127) === 0) {
+                self::assertSyncDeadline($deadline);
+            }
             $existingByKey[$row['uid'] . '|' . ($row['recurrence_instance_utc'] ?? '')] = $row;
         }
 
         // Masters first so overrides can resolve recurrence_parent_id.
         usort($parsed, static fn(array $a, array $b): int => ($a['recurrence_instance_utc'] === null ? 0 : 1) <=> ($b['recurrence_instance_utc'] === null ? 0 : 1));
+        self::assertSyncDeadline($deadline);
 
         $masterIdByUid = [];
-        foreach ($existing as $row) {
+        foreach ($existing as $index => $row) {
+            if (($index & 127) === 0) {
+                self::assertSyncDeadline($deadline);
+            }
             if ($row['recurrence_instance_utc'] === null) {
                 $masterIdByUid[(string) $row['uid']] = (int) $row['id'];
             }
@@ -242,8 +251,11 @@ final class Feeds
         $updatedEventIds = [];
         $addedTitles = [];
         $removedCount = 0;
-        $this->db->tx(function () use ($parsed, $existingByKey, &$masterIdByUid, &$seen, &$upserts, &$changedUids, &$newMasterUids, &$updatedEventIds, &$addedTitles, &$removedCount, $calendarId, $userId): void {
-            foreach ($parsed as $ev) {
+        $this->db->tx(function () use ($parsed, $existingByKey, &$masterIdByUid, &$seen, &$upserts, &$changedUids, &$newMasterUids, &$updatedEventIds, &$addedTitles, &$removedCount, $calendarId, $userId, $deadline): void {
+            foreach ($parsed as $index => $ev) {
+                if (($index & 127) === 0) {
+                    self::assertSyncDeadline($deadline);
+                }
                 $key = $ev['uid'] . '|' . ($ev['recurrence_instance_utc'] ?? '');
                 if (isset($seen[$key])) {
                     continue; // duplicate VEVENT in feed
@@ -334,7 +346,11 @@ final class Feeds
             // row the PERSON made on a series the feed still carries (going to
             // this week's meetup, a reminder for one day) is theirs, not the
             // feed's: it stays as long as its series does.
+            $removeIndex = 0;
             foreach ($existingByKey as $key => $row) {
+                if (($removeIndex++ & 127) === 0) {
+                    self::assertSyncDeadline($deadline);
+                }
                 if (isset($seen[$key])) {
                     continue;
                 }
@@ -345,10 +361,14 @@ final class Feeds
                 $changedUids[(string) $row['uid']] = true;
                 $removedCount++;
             }
+            self::assertSyncDeadline($deadline);
         });
 
         // CalDAV change journal: one entry per affected object (uid).
-        foreach (array_keys($changedUids) as $uid) {
+        foreach (array_keys($changedUids) as $index => $uid) {
+            if (($index & 127) === 0) {
+                self::assertSyncDeadline($deadline);
+            }
             $uid = (string) $uid;
             if (isset($newMasterUids[$uid])) {
                 ChangeLog::record($this->db, $calendarId, $uid, ChangeLog::OP_ADD);
@@ -398,6 +418,13 @@ final class Feeds
         }
 
         return $upserts;
+    }
+
+    private static function assertSyncDeadline(?float $deadline): void
+    {
+        if ($deadline !== null && microtime(true) >= $deadline) {
+            throw new \RuntimeException('Google calendar synchronization exceeded its elapsed-time safety limit; no changes were applied.');
+        }
     }
 
     private function recordStats(int $calendarId, int $rawCount): void

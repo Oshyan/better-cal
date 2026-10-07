@@ -30,6 +30,7 @@ use BetterCal\Infra\CurlLlmTransport;
 use BetterCal\Infra\PoliciedGeocoderTransport;
 use BetterCal\Support\Ids;
 use BetterCal\Support\Limits;
+use BetterCal\Support\RemotePaginationBudget;
 use BetterCal\Support\Time;
 
 $GLOBALS['__pass'] = 0;
@@ -605,6 +606,128 @@ check('http user agents lead to the app\'s site', str_contains(HttpClient::userA
 $unbounded = (new ReflectionMethod(HttpClient::class, 'resolveUnbounded'))->invoke(null, 'localhost', 'test');
 check('http in-process fallback resolves, and what it finds is still refused when private',
     in_array('127.0.0.1', $unbounded, true) && HttpClient::isForbiddenIp('127.0.0.1'));
+
+// A paginated remote operation spends one cumulative budget. Tokens are
+// opaque (including "0"), and a provider restart resets only token history.
+$paginationNow = 100.0;
+$pagination = new RemotePaginationBudget('Test pagination', 3, 3, 10, 110.0, 8, static fn(): float => $paginationNow);
+checkEq('pagination: first requested page is clamped to remaining items', 3, $pagination->beginPage(250));
+$pagination->consumeResponse('1234');
+checkEq('pagination: raw items are retained after validation', [['id' => 1], ['id' => 2]], $pagination->acceptItems([['id' => 1], ['id' => 2]]));
+checkEq('pagination: opaque zero token is valid', '0', $pagination->nextPageToken(['nextPageToken' => '0']));
+checkEq('pagination: later page size shrinks to remaining capacity', 1, $pagination->beginPage(250));
+$pagination->consumeResponse('123456');
+$pagination->acceptItems([['id' => 3]]);
+checkEq('pagination: exact byte/item ceilings pass on a terminal page', null, $pagination->nextPageToken([]));
+checkEq('pagination: counters span every page', [2, 3, 10], [$pagination->pagesUsed(), $pagination->itemsUsed(), $pagination->bytesUsed()]);
+$pagination->restartSequence();
+checkEq('pagination: provider restart preserves aggregate counters', [2, 3, 10], [$pagination->pagesUsed(), $pagination->itemsUsed(), $pagination->bytesUsed()]);
+
+$paginationError = static function (callable $fn, string $needle): bool {
+    try {
+        $fn();
+        return false;
+    } catch (RuntimeException $e) {
+        return str_contains($e->getMessage(), $needle);
+    }
+};
+$tokenBudget = new RemotePaginationBudget('Token pages', 5, 5, 100, 200.0, 3, static fn(): float => 100.0);
+$tokenBudget->beginPage(2);
+$tokenBudget->consumeResponse('{}');
+$tokenBudget->acceptItems([]);
+check('pagination: empty token is a controlled no-progress failure', $paginationError(
+    static fn() => $tokenBudget->nextPageToken(['nextPageToken' => '  ']),
+    'invalid empty page token'
+));
+check('pagination: non-string token is refused instead of cast', $paginationError(
+    static fn() => $tokenBudget->nextPageToken(['nextPageToken' => 1]),
+    'invalid page token'
+));
+check('pagination: oversized token is refused before URL construction', $paginationError(
+    static fn() => $tokenBudget->nextPageToken(['nextPageToken' => 'long']),
+    'oversized page token'
+));
+
+$cycleBudget = new RemotePaginationBudget('Cycle pages', 5, 5, 100, 200.0, 8, static fn(): float => 100.0);
+$cycleBudget->beginPage(2);
+$cycleBudget->consumeResponse('{}');
+$cycleBudget->acceptItems([]);
+checkEq('pagination: first continuation is accepted', 'A', $cycleBudget->nextPageToken(['nextPageToken' => 'A']));
+$cycleBudget->beginPage(2);
+$cycleBudget->consumeResponse('{}');
+$cycleBudget->acceptItems([]);
+check('pagination: direct repeated token is refused', $paginationError(
+    static fn() => $cycleBudget->nextPageToken(['nextPageToken' => 'A']),
+    'repeated a page token'
+));
+$cycleBudget->restartSequence();
+checkEq('pagination: a token may recur after an explicit provider restart', 'A', $cycleBudget->nextPageToken(['nextPageToken' => 'A']));
+
+$longCycleBudget = new RemotePaginationBudget('Long cycle', 5, 5, 100, 200.0, 8, static fn(): float => 100.0);
+$longCycleBudget->beginPage(1);
+$longCycleBudget->consumeResponse('{}');
+$longCycleBudget->acceptItems([]);
+$longCycleBudget->nextPageToken(['nextPageToken' => 'A']);
+$longCycleBudget->beginPage(1);
+$longCycleBudget->consumeResponse('{}');
+$longCycleBudget->acceptItems([]);
+$longCycleBudget->nextPageToken(['nextPageToken' => 'B']);
+$longCycleBudget->beginPage(1);
+$longCycleBudget->consumeResponse('{}');
+$longCycleBudget->acceptItems([]);
+check('pagination: A-B-A token cycle is refused before another request', $paginationError(
+    static fn() => $longCycleBudget->nextPageToken(['nextPageToken' => 'A']),
+    'repeated a page token'
+));
+
+$pageBudget = new RemotePaginationBudget('Page limit', 1, 5, 100, 200.0, 8, static fn(): float => 100.0);
+$pageBudget->beginPage(1);
+check('pagination: page limit is cumulative', $paginationError(
+    static fn() => $pageBudget->beginPage(1),
+    '1-page safety limit'
+));
+
+$limitBudget = new RemotePaginationBudget('Limit pages', 1, 1, 2, 200.0, 8, static fn(): float => 100.0);
+$limitBudget->beginPage(5);
+$limitBudget->consumeResponse('12');
+$limitBudget->acceptItems([['id' => 1]]);
+check('pagination: a continuation at the exact item cap is refused immediately', $paginationError(
+    static fn() => $limitBudget->nextPageToken(['nextPageToken' => 'B']),
+    '1-item safety limit'
+));
+check('pagination: byte cap plus one is refused before decode', $paginationError(
+    static fn() => (new RemotePaginationBudget('Byte pages', 1, 1, 2, 200.0, 8, static fn(): float => 100.0))->consumeResponse('123'),
+    'cumulative response limit'
+));
+$expiredBudget = new RemotePaginationBudget('Slow pages', 1, 1, 2, 100.0, 8, static fn(): float => 100.0);
+check('pagination: elapsed deadline is authoritative before a request', $paginationError(
+    static fn() => $expiredBudget->beginPage(1),
+    'elapsed-time safety limit'
+));
+
+$httpDeadline = new HttpClient(totalTimeoutMs: 20000, absoluteDeadline: microtime(true) + 2);
+$deadlineMethod = new ReflectionMethod(HttpClient::class, 'operationDeadline');
+$firstDeadline = $deadlineMethod->invoke($httpDeadline, null);
+usleep(1000);
+$secondDeadline = $deadlineMethod->invoke($httpDeadline, null);
+check('http: an owner deadline is fixed across sequential requests', abs($firstDeadline - $secondDeadline) < 0.000001);
+$byteClient = new HttpClient(maxTotalBytes: 3);
+$admitBytes = new ReflectionMethod(HttpClient::class, 'admitResponseBytes');
+checkEq('http: cumulative bytes accept the exact client-lifetime cap', [true, true, 3], [
+    $admitBytes->invoke($byteClient, 2),
+    $admitBytes->invoke($byteClient, 1),
+    $byteClient->responseBytesUsed(),
+]);
+check('http: the next sequential response byte is refused', $admitBytes->invoke($byteClient, 1) === false);
+check('http: an overflowed client stays closed', $admitBytes->invoke($byteClient, 1) === false);
+
+$expiredSync = new BetterCal\Domain\Feeds(new BetterCal\Infra\Db([
+    'dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null,
+]));
+check('feed materialization: an expired Google deadline stops before database work', $paginationError(
+    static fn() => $expiredSync->sync(['id' => 1, 'user_id' => 1], [], true, microtime(true) - 1),
+    'elapsed-time safety limit'
+));
 
 // libcurl automatically honors proxy environment variables unless explicitly
 // told not to. A proxy would resolve/connect the hostname outside our vetted
@@ -4193,11 +4316,38 @@ require __DIR__ . '/plugins.php';
         $L::get('MAIL_BYTES'), $L::get('MAIL_EVENTS_PER_DAY'), $L::get('MAIL_LLM_PER_DAY'), $L::get('MAIL_LOG_RETENTION_DAYS'),
     ]);
     $L::reset();
+    $L::configure([
+        'GOOGLE_SYNC_EVENTS' => PHP_INT_MAX,
+        'GOOGLE_SYNC_BYTES' => PHP_INT_MAX,
+        'GOOGLE_SYNC_PAGES' => PHP_INT_MAX,
+        'GOOGLE_SYNC_SECONDS' => PHP_INT_MAX,
+        'GOOGLE_CALENDAR_LIST_ITEMS' => PHP_INT_MAX,
+    ]);
+    checkEq('limits: Google pagination overrides retain hard ceilings', [50000, 67108864, 60, 45, 10000], [
+        $L::get('GOOGLE_SYNC_EVENTS'), $L::get('GOOGLE_SYNC_BYTES'), $L::get('GOOGLE_SYNC_PAGES'),
+        $L::get('GOOGLE_SYNC_SECONDS'), $L::get('GOOGLE_CALENDAR_LIST_ITEMS'),
+    ]);
+    $L::reset();
     checkEq('limits: ini sizes', [268435456, 131072, 1073741824, 0, 0], array_map($L::iniBytes(...), ['256M', '128K', '1G', '-1', 'plenty']));
     checkEq('import budget: plenty of memory means the configured cap', 20000, $L::importEventBudget('2G', 50 * 1048576));
     checkEq('import budget: unlimited memory means the configured cap', 20000, $L::importEventBudget('-1', 50 * 1048576));
     checkEq('import budget: a 128M PHP can hold about 8,000 parsed events', intdiv(128 * 1048576 - 16 * 1048576 - 16 * 1048576, 12288), $L::importEventBudget('128M', 16 * 1048576));
     checkEq('import budget: never below a usable floor', 100, $L::importEventBudget('32M', 31 * 1048576));
+    checkEq('Google budget: unlimited memory keeps the configured event cap', 20000, $L::googleEventBudget('-1', 16 * 1048576));
+    checkEq('Google budget: 768M production-shaped memory keeps a conservative headroom',
+        intdiv(768 * 1048576 - 2 * 1048576 - 32 * 1048576, 40960),
+        $L::googleEventBudget('768M', 2 * 1048576));
+    checkEq('Google budget: memory pressure cannot be hidden by an unsafe floor', 0, $L::googleEventBudget('64M', 63 * 1048576));
+    checkEq('Google cached snapshot: ordinary persisted text fits its measured working set', null,
+        $L::googleSnapshotMemoryProblem(2400, 2 * 1048576, '128M', 2 * 1048576));
+    check('Google cached snapshot: valid-but-large descriptions are refused before SELECT *', str_contains(
+        (string) $L::googleSnapshotMemoryProblem(1457, 1457 * 65535, '128M', 2 * 1048576),
+        'Increase PHP memory_limit or reduce the calendar size'
+    ));
+    check('Google cached snapshot: exhausted headroom is a controlled refusal', str_contains(
+        (string) $L::googleSnapshotMemoryProblem(1, 1, '64M', 63 * 1048576),
+        '0.0 MiB is safely available'
+    ));
 
     // BC-11: a careless pattern meets text written for it.
     Filters::resetRegexBudget();
@@ -5170,6 +5320,36 @@ use BetterCal\Infra\Secrets;
         $u = $gauth->authUrl(7, 'session-a');
         return str_contains($u, 'calendar.readonly') && str_contains($u, 'calendar.events') && str_contains($u, 'access_type=offline') && str_contains($u, rawurlencode('https://cal.example/api/v1/google/callback'));
     })());
+    $expiredList = null;
+    try {
+        $gauth->listCalendars(['id' => 1], microtime(true) - 1);
+    } catch (\RuntimeException $e) {
+        $expiredList = $e->getMessage();
+    }
+    check('google calendar list: an expired owner deadline stops before token refresh',
+        is_string($expiredList) && str_contains($expiredList, 'elapsed-time safety limit'));
+
+    // The production preflight is one aggregate, not a SELECT * disguised as
+    // a size check. Exercise its current variable-width schema expression on
+    // SQLite so a renamed column cannot silently break the guard.
+    $memoryDb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $memoryDb->run('CREATE TABLE events (
+        calendar_id INTEGER, deleted_at TEXT, uid TEXT, title TEXT, description TEXT, location TEXT,
+        url TEXT, tzid TEXT, rrule TEXT, exdates_json TEXT, status TEXT, source TEXT, attendance TEXT,
+        style_json TEXT, dynamic_json TEXT, reminders_json TEXT, invite_json TEXT, created_via TEXT,
+        google_event_id TEXT, icon TEXT
+    )');
+    $memoryDb->run("INSERT INTO events (calendar_id, uid, title, description, tzid, status, source, attendance, created_via)
+        VALUES (7, 'u', 'T', 'ordinary text', 'UTC', 'confirmed', 'feed', 'none', 'feed')");
+    $memorySync = new GoogleSync($memoryDb, new GoogleAuth($memoryDb, $gcfg), new BetterCal\Domain\Feeds($memoryDb));
+    $snapshotGuard = new ReflectionMethod(GoogleSync::class, 'assertCachedSnapshotFits');
+    try {
+        $snapshotGuard->invoke($memorySync, 7, 10, microtime(true) + 2);
+        $snapshotGuardWorks = true;
+    } catch (\Throwable) {
+        $snapshotGuardWorks = false;
+    }
+    check('google cached snapshot: production aggregate checks stored variable payload without materialising it', $snapshotGuardWorks);
 
     // The compromise quarantine is distinct from an ordinary refresh error,
     // and accessToken re-reads it so a stale worker snapshot cannot bypass it.
@@ -5243,6 +5423,24 @@ use BetterCal\Infra\Secrets;
         ['mine', 'context', 'opportunities', 'opportunities'],
         array_map([GoogleAuth::class, 'defaultRole'], ['yours', 'google', 'shared', 'feed']));
 
+    $syncTokenMethod = new ReflectionMethod(GoogleSync::class, 'terminalSyncToken');
+    checkEq('google pagination: a valid terminal sync token is accepted', 'sync-1', $syncTokenMethod->invoke(null, ['nextSyncToken' => 'sync-1'], null));
+    checkEq('google pagination: a nonterminal page has no durable sync position', null, $syncTokenMethod->invoke(null, [], 'next-page'));
+    foreach ([
+        'missing terminal token' => [[], null],
+        'empty terminal token' => [['nextSyncToken' => ' '], null],
+        'oversized terminal token' => [['nextSyncToken' => str_repeat('x', 256)], null],
+        'premature terminal token' => [['nextSyncToken' => 'sync-1'], 'next-page'],
+    ] as $label => [$tokenData, $nextPage]) {
+        $refused = false;
+        try {
+            $syncTokenMethod->invoke(null, $tokenData, $nextPage);
+        } catch (RuntimeException $e) {
+            $refused = str_contains($e->getMessage(), 'sync token');
+        }
+        check("google pagination: $label is refused", $refused);
+    }
+
     // Google event resources to the Ics::parse shape.
     $timed = GoogleSync::toParsed([
         'id' => 'abc', 'iCalUID' => 'abc@google.com', 'status' => 'confirmed', 'summary' => 'Dinner',
@@ -5307,6 +5505,17 @@ use BetterCal\Infra\Secrets;
         $googleBatchRejected = str_contains($e->getMessage(), 'more than 4');
     }
     check('google exdate budget: cancelled instances count toward the sync-batch limit', $googleBatchRejected);
+    $sharedWork = 0;
+    $pageOne = array_slice($cancelled, 0, 3);
+    $pageTwo = array_slice($cancelled, 3, 2);
+    GoogleSync::toParsedList($pageOne, null, $sharedWork);
+    $googlePagedBatchRejected = false;
+    try {
+        GoogleSync::toParsedList($pageTwo, null, $sharedWork);
+    } catch (\InvalidArgumentException $e) {
+        $googlePagedBatchRejected = str_contains($e->getMessage(), 'more than 4');
+    }
+    check('google exdate budget: page-by-page parsing shares one batch counter', $googlePagedBatchRejected);
     Limits::configure(['EXDATE_VALUES_PER_EVENT' => $googleOldEventLimit, 'EXDATE_VALUES_PER_INPUT' => $googleOldInputLimit]);
 
     $exception = GoogleSync::toParsed([
@@ -5340,6 +5549,23 @@ use BetterCal\Infra\Secrets;
     checkEq('merge: cancelled instance became an EXDATE on the series', ['2026-09-28 08:00:00', '2026-10-05 08:00:00', '2026-10-19 08:00:00'], $byUid['r1@google.com|']['exdates']);
     $gone = GoogleSync::applyChanges($merged, [['cancelled' => true, 'uid' => 'r1@google.com', 'recurrence_instance_utc' => null]]);
     check('merge: cancelling the series removes master and exception', count(array_filter($gone, static fn(array $e): bool => $e['uid'] === 'r1@google.com')) === 0);
+    $atGoogleCap = GoogleSync::applyChanges([$timed], [array_merge($timed, ['title' => 'Updated'])], 1);
+    checkEq('merge budget: an update at the exact snapshot cap remains allowed', 'Updated', $atGoogleCap[0]['title']);
+    $googleMergeRejected = false;
+    try {
+        GoogleSync::applyChanges([$timed], [GoogleSync::toParsed([
+            'id' => 'over-cap', 'iCalUID' => 'over-cap@google.com', 'summary' => 'Over cap',
+            'start' => ['date' => '2026-12-01'], 'end' => ['date' => '2026-12-02'],
+        ])], 1);
+    } catch (RuntimeException $e) {
+        $googleMergeRejected = str_contains($e->getMessage(), 'safe limit of 1');
+    }
+    check('merge budget: one new event over the final snapshot cap is refused', $googleMergeRejected);
+    checkEq('merge budget: deletion at the exact cap remains allowed', [], GoogleSync::applyChanges(
+        [$timed],
+        [['cancelled' => true, 'uid' => $timed['uid'], 'recurrence_instance_utc' => null]],
+        1,
+    ));
 
     // Rows back to the parsed shape (what the incremental merge starts from).
     $rows = GoogleSync::rowsToParsed([[

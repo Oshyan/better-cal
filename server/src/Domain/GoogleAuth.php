@@ -8,6 +8,8 @@ use BetterCal\Http\HttpError;
 use BetterCal\Infra\Db;
 use BetterCal\Infra\HttpClient;
 use BetterCal\Infra\Secrets;
+use BetterCal\Support\Limits;
+use BetterCal\Support\RemotePaginationBudget;
 use BetterCal\Support\Time;
 
 /**
@@ -138,8 +140,9 @@ final class GoogleAuth
     // ---- Tokens -----------------------------------------------------------
 
     /** A fresh access token for this account (one refresh grant per call). */
-    public function accessToken(array $account): string
+    public function accessToken(array $account, ?float $absoluteDeadline = null): string
     {
+        self::assertWithinDeadline($absoluteDeadline, 'Google token refresh');
         $this->requireConfigured();
         // Re-read instead of trusting a worker/controller snapshot loaded
         // before a compromise reset committed.
@@ -151,13 +154,14 @@ final class GoogleAuth
                 'client_id' => $this->cfg['google']['client_id'],
                 'client_secret' => $this->cfg['google']['client_secret'],
                 'grant_type' => 'refresh_token',
-            ]);
+            ], $absoluteDeadline);
         } catch (\RuntimeException $e) {
             $this->db->update('google_accounts', ['status' => 'error', 'last_error' => mb_substr($e->getMessage(), 0, 2000)], 'id = ?', [(int) $account['id']]);
             throw $e;
         }
         // The reset may have committed while Google's token endpoint was in
         // flight. Do not hand the resulting access token to a later API call.
+        self::assertWithinDeadline($absoluteDeadline, 'Google token refresh');
         $account = $this->assertUsable($account);
         if (($account['status'] ?? 'ok') !== 'ok') {
             $this->db->update('google_accounts', ['status' => 'ok', 'last_error' => null], 'id = ?', [(int) $account['id']]);
@@ -230,20 +234,77 @@ final class GoogleAuth
      *
      * @return list<array{id:string,name:string,accessRole:string,primary:bool,color:?string,kind:string}>
      */
-    public function listCalendars(array $account): array
+    public function listCalendars(array $account, ?float $outerDeadline = null): array
     {
-        $access = $this->accessToken($account);
+        $deadline = microtime(true) + Limits::get('GOOGLE_CALENDAR_LIST_SECONDS');
+        if ($outerDeadline !== null) {
+            $deadline = min($deadline, $outerDeadline);
+        }
+        self::assertWithinDeadline($deadline, 'Google calendar list');
+        try {
+            // Token refresh is part of this operation, not a separate 20s
+            // prelude that can double its elapsed-time budget.
+            $access = $this->accessToken($account, $deadline);
+        } catch (\RuntimeException $e) {
+            if (microtime(true) >= $deadline || str_contains(strtolower($e->getMessage()), 'deadline')) {
+                throw new \RuntimeException(
+                    'Google calendar list exceeded its elapsed-time safety limit; no partial list was used.',
+                    previous: $e,
+                );
+            }
+            throw $e;
+        }
+        $budget = new RemotePaginationBudget(
+            'Google calendar list',
+            Limits::get('GOOGLE_CALENDAR_LIST_PAGES'),
+            Limits::get('GOOGLE_CALENDAR_LIST_ITEMS'),
+            Limits::get('GOOGLE_CALENDAR_LIST_BYTES'),
+            $deadline,
+        );
+        $http = $this->http(
+            requestBudget: Limits::get('GOOGLE_CALENDAR_LIST_PAGES'),
+            maxBytes: Limits::get('GOOGLE_CALENDAR_LIST_BYTES'),
+            maxTotalBytes: Limits::get('GOOGLE_CALENDAR_LIST_BYTES'),
+            absoluteDeadline: $deadline,
+        );
         $out = [];
         $pageToken = null;
         do {
             // A reset may land after accessToken() but before or between
             // pages. At most the request already in flight may finish.
             $this->assertUsable($account);
-            $url = self::CALENDAR_LIST_URL . '?' . http_build_query(array_filter([
-                'minAccessRole' => 'reader', 'showHidden' => 'true', 'maxResults' => '250', 'pageToken' => $pageToken,
-            ]));
-            $data = $this->http()->getJson($url, ['Authorization: Bearer ' . $access]);
-            foreach ($data['items'] ?? [] as $item) {
+            $params = [
+                'minAccessRole' => 'reader',
+                'showHidden' => 'true',
+                'maxResults' => (string) $budget->beginPage(250),
+            ];
+            if ($pageToken !== null) {
+                // Page tokens are opaque: the valid token "0" must not be
+                // dropped by falsey-value filtering.
+                $params['pageToken'] = $pageToken;
+            }
+            $url = self::CALENDAR_LIST_URL . '?' . http_build_query($params);
+            try {
+                $r = $http->get($url, ['Authorization: Bearer ' . $access, 'Accept: application/json']);
+            } catch (\RuntimeException $e) {
+                $budget->assertWithinDeadline();
+                if (str_contains($e->getMessage(), 'response budget') || str_contains($e->getMessage(), 'Response exceeded')) {
+                    throw new \RuntimeException(
+                        'Google calendar list exceeded its response-size safety limit; no partial list was used.',
+                        previous: $e,
+                    );
+                }
+                throw $e;
+            }
+            $budget->consumeResponse($r['body']);
+            $data = json_decode($r['body'], true);
+            if ($r['status'] < 200 || $r['status'] >= 300 || !is_array($data)) {
+                $error = is_array($data) ? ($data['error'] ?? null) : null;
+                $why = is_array($error) ? (string) ($error['message'] ?? '') : (is_string($error) ? $error : '');
+                throw new \RuntimeException('Google calendar list API: HTTP ' . $r['status'] . ($why !== '' ? " ($why)" : ''));
+            }
+            $items = $budget->acceptItems($data['items'] ?? []);
+            foreach ($items as $item) {
                 $out[] = [
                     'id' => (string) $item['id'],
                     'name' => (string) ($item['summaryOverride'] ?? $item['summary'] ?? $item['id']),
@@ -253,7 +314,7 @@ final class GoogleAuth
                     'kind' => self::calendarKind((string) $item['id'], (string) ($item['accessRole'] ?? 'reader'), !empty($item['primary'])),
                 ];
             }
-            $pageToken = isset($data['nextPageToken']) ? (string) $data['nextPageToken'] : null;
+            $pageToken = $budget->nextPageToken($data);
         } while ($pageToken !== null);
         $order = ['yours' => 0, 'shared' => 1, 'feed' => 2, 'google' => 3];
         usort($out, static fn(array $a, array $b): int => [$order[$a['kind']], $b['primary'], strtolower($a['name'])] <=> [$order[$b['kind']], $a['primary'], strtolower($b['name'])]);
@@ -328,9 +389,11 @@ final class GoogleAuth
 
     // ---- Internals ----------------------------------------------------------
 
-    private function tokenRequest(array $fields): array
+    private function tokenRequest(array $fields, ?float $absoluteDeadline = null): array
     {
-        $r = $this->http()->postForm(self::TOKEN_URL, $fields);
+        self::assertWithinDeadline($absoluteDeadline, 'Google token request');
+        $r = $this->http(absoluteDeadline: $absoluteDeadline)->postForm(self::TOKEN_URL, $fields);
+        self::assertWithinDeadline($absoluteDeadline, 'Google token request');
         $data = json_decode($r['body'], true);
         if ($r['status'] < 200 || $r['status'] >= 300 || !is_array($data)) {
             $why = is_array($data) ? (string) ($data['error_description'] ?? $data['error'] ?? '') : '';
@@ -339,9 +402,27 @@ final class GoogleAuth
         return $data;
     }
 
-    private function http(): HttpClient
+    private static function assertWithinDeadline(?float $deadline, string $operation): void
     {
-        return new HttpClient(requestBudget: 20, userAgent: HttpClient::userAgentFor('google-connector'));
+        if ($deadline !== null && microtime(true) >= $deadline) {
+            throw new \RuntimeException($operation . ' exceeded its elapsed-time safety limit');
+        }
+    }
+
+    private function http(
+        int $requestBudget = 20,
+        int $maxBytes = HttpClient::MAX_BYTES,
+        ?int $maxTotalBytes = null,
+        ?float $absoluteDeadline = null,
+    ): HttpClient
+    {
+        return new HttpClient(
+            requestBudget: $requestBudget,
+            userAgent: HttpClient::userAgentFor('google-connector'),
+            maxBytes: $maxBytes,
+            maxTotalBytes: $maxTotalBytes,
+            absoluteDeadline: $absoluteDeadline,
+        );
     }
 
     private function stateKey(string $sessionToken): string

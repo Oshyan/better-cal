@@ -7,6 +7,7 @@ namespace BetterCal\Domain;
 use BetterCal\Infra\Db;
 use BetterCal\Infra\HttpClient;
 use BetterCal\Support\Limits;
+use BetterCal\Support\RemotePaginationBudget;
 use BetterCal\Support\Time;
 
 /**
@@ -36,7 +37,15 @@ final class GoogleSync
     /** @return int upserted count (Feeds::sync's return) */
     public function poll(array $calendar): int
     {
+        $deadline = microtime(true) + Limits::get('GOOGLE_SYNC_SECONDS');
+        $eventLimit = Limits::googleEventBudget();
         $calendarId = (int) $calendar['id'];
+        if ($eventLimit < 1) {
+            throw new \RuntimeException(
+                'Google calendar synchronization cannot start because this PHP worker has no safe memory capacity;'
+                . ' increase PHP memory_limit. The existing calendar and sync position were kept unchanged.'
+            );
+        }
         if ($calendar['google_account_id'] === null) {
             throw new \RuntimeException('Google account disconnected; delete this calendar or adopt it as local, then add it again from Settings, Connections');
         }
@@ -44,13 +53,18 @@ final class GoogleSync
         if ($account === null) {
             throw new \RuntimeException('Google account disconnected; delete this calendar or adopt it as local, then add it again from Settings, Connections');
         }
-        $access = $this->auth->accessToken($account);
+        // Check the actual stored payload before any remote request. A count
+        // alone is not enough: individually valid 64 KiB descriptions can
+        // make SELECT * fatal long before the event ceiling is reached.
+        $this->assertCachedSnapshotFits($calendarId, $eventLimit, $deadline);
+        $access = $this->auth->accessToken($account, $deadline);
+        self::assertWithinDeadline($deadline);
         $googleCalendarId = (string) $calendar['google_calendar_id'];
         // The access role decides whether writes are allowed (GoogleWriter).
         // Calendars added before it was recorded learn it on their next poll.
         $learnedRole = null;
         if (empty($calendar['google_access_role'])) {
-            foreach ($this->auth->listCalendars($account) as $entry) {
+            foreach ($this->auth->listCalendars($account, $deadline) as $entry) {
                 if ($entry['id'] === $googleCalendarId) {
                     $learnedRole = $entry['accessRole'];
                     break;
@@ -58,26 +72,67 @@ final class GoogleSync
             }
         }
         $syncToken = $calendar['google_sync_token'] !== null ? (string) $calendar['google_sync_token'] : null;
+        $budget = new RemotePaginationBudget(
+            'Google calendar sync',
+            Limits::get('GOOGLE_SYNC_PAGES'),
+            $eventLimit,
+            Limits::get('GOOGLE_SYNC_BYTES'),
+            $deadline,
+        );
+        $http = new HttpClient(
+            requestBudget: Limits::get('GOOGLE_SYNC_PAGES'),
+            userAgent: HttpClient::userAgentFor('google-connector'),
+            maxBytes: min(20 * 1024 * 1024, Limits::get('GOOGLE_SYNC_BYTES')),
+            maxTotalBytes: Limits::get('GOOGLE_SYNC_BYTES'),
+            absoluteDeadline: $deadline,
+        );
+        $exdateWork = 0;
 
         try {
-            [$items, $nextToken] = $this->listEvents($account, $googleCalendarId, $access, $syncToken);
+            [$changes, $nextToken] = $this->listEvents(
+                $account,
+                $googleCalendarId,
+                $access,
+                $syncToken,
+                $http,
+                $budget,
+                $exdateWork,
+            );
         } catch (GoneException) {
             // Google forgot our token (it does after a while, and after some
             // kinds of change). Start over: a full list is the truth.
             $syncToken = null;
-            [$items, $nextToken] = $this->listEvents($account, $googleCalendarId, $access, null);
+            $budget->restartSequence();
+            [$changes, $nextToken] = $this->listEvents(
+                $account,
+                $googleCalendarId,
+                $access,
+                null,
+                $http,
+                $budget,
+                $exdateWork,
+            );
         }
 
-        $changes = self::toParsedList($items);
         if ($syncToken === null) {
-            $snapshot = self::applyChanges([], $changes);
+            $snapshot = self::applyChanges([], $changes, $eventLimit, $deadline);
         } else {
-            $snapshot = self::applyChanges(self::rowsToParsed($this->db->all(
+            // Re-evaluate with the parsed remote changes already resident:
+            // this is the precise point before PDO would materialise rows.
+            $this->assertCachedSnapshotFits($calendarId, $eventLimit, $deadline);
+            self::assertWithinDeadline($deadline);
+            $rows = $this->db->all(
                 'SELECT * FROM events WHERE calendar_id = ? AND deleted_at IS NULL',
                 [$calendarId]
-            )), $changes);
+            );
+            $cached = self::rowsToParsed($rows, $eventLimit, $deadline);
+            unset($rows);
+            $snapshot = self::applyChanges($cached, $changes, $eventLimit, $deadline);
+            unset($cached);
         }
-        return $this->db->tx(function () use ($account, $calendar, $calendarId, $learnedRole, $snapshot, $nextToken): int {
+        unset($changes);
+        self::assertWithinDeadline($deadline);
+        return $this->db->tx(function () use ($account, $calendar, $calendarId, $eventLimit, $learnedRole, $snapshot, $nextToken, $deadline): int {
             // The last HTTP request may have been in flight when reset landed.
             // Lock the account before any local finalization: if reset won,
             // nothing can restore its cleared role or success health; if this
@@ -86,10 +141,14 @@ final class GoogleSync
             if ($learnedRole !== null) {
                 $this->db->update('calendars', ['google_access_role' => $learnedRole], 'id = ?', [$calendarId]);
             }
-            $count = $this->feeds->sync($calendar, $snapshot);
-            if ($nextToken !== null) {
-                $this->db->update('calendars', ['google_sync_token' => $nextToken], 'id = ?', [$calendarId]);
-            }
+            // Feeds::sync loads and indexes every stored row (including a
+            // soft-deleted one), while the new snapshot is still resident.
+            // Re-query under the account lock immediately before that load.
+            $this->assertCachedSnapshotFits($calendarId, $eventLimit, $deadline);
+            self::assertWithinDeadline($deadline);
+            $count = $this->feeds->sync($calendar, $snapshot, true, $deadline);
+            self::assertWithinDeadline($deadline);
+            $this->db->update('calendars', ['google_sync_token' => $nextToken], 'id = ?', [$calendarId]);
             $this->feeds->pollSucceeded($calendar, count($snapshot), $count);
             return $count;
         });
@@ -98,20 +157,30 @@ final class GoogleSync
     // ---- Google API ---------------------------------------------------------
 
     /**
-     * @return array{0:list<array>,1:?string} items and the next sync token
+     * @return array{0:list<array>,1:string} parsed changes and the next sync token
      * @throws GoneException when Google says the sync token is stale (410)
      */
-    private function listEvents(array $account, string $googleCalendarId, string $access, ?string $syncToken): array
-    {
-        $http = new HttpClient(requestBudget: 60, userAgent: HttpClient::userAgentFor('google-connector'), maxBytes: 20 * 1024 * 1024);
-        $items = [];
+    private function listEvents(
+        array $account,
+        string $googleCalendarId,
+        string $access,
+        ?string $syncToken,
+        HttpClient $http,
+        RemotePaginationBudget $budget,
+        int &$exdateWork,
+    ): array {
+        $changes = [];
         $pageToken = null;
         $nextSync = null;
         do {
             // A compromise reset may commit between pages. Permit only the
             // request already in flight, never the rest of a long listing.
             $this->auth->assertUsable($account);
-            $params = ['maxResults' => (string) self::PAGE_SIZE, 'showDeleted' => 'true', 'singleEvents' => 'false'];
+            $params = [
+                'maxResults' => (string) $budget->beginPage(self::PAGE_SIZE),
+                'showDeleted' => 'true',
+                'singleEvents' => 'false',
+            ];
             if ($syncToken !== null) {
                 $params['syncToken'] = $syncToken;
             }
@@ -119,24 +188,53 @@ final class GoogleSync
                 $params['pageToken'] = $pageToken;
             }
             $url = sprintf(self::EVENTS_URL, rawurlencode($googleCalendarId)) . '?' . http_build_query($params);
-            $r = $http->get($url, ['Authorization: Bearer ' . $access, 'Accept: application/json']);
+            try {
+                $r = $http->get($url, ['Authorization: Bearer ' . $access, 'Accept: application/json']);
+            } catch (\RuntimeException $e) {
+                // Translate the shared transport's intentionally generic
+                // ceilings into the calendar error the owner will actually see.
+                $budget->assertWithinDeadline();
+                if (str_contains($e->getMessage(), 'cumulative response budget')) {
+                    throw new \RuntimeException(
+                        'Google calendar sync exceeded its ' . round(Limits::get('GOOGLE_SYNC_BYTES') / 1048576, 1)
+                        . ' MiB cumulative response limit; the existing calendar and sync position were kept unchanged.',
+                        previous: $e,
+                    );
+                }
+                if (str_contains($e->getMessage(), 'Response exceeded')) {
+                    $pageMiB = min(20 * 1024 * 1024, Limits::get('GOOGLE_SYNC_BYTES')) / 1048576;
+                    throw new \RuntimeException(
+                        'Google calendar sync returned one page over its ' . round($pageMiB, 1)
+                        . ' MiB safety limit; the existing calendar and sync position were kept unchanged.',
+                        previous: $e,
+                    );
+                }
+                throw $e;
+            }
+            $budget->consumeResponse($r['body']);
             if ($r['status'] === 410) {
                 throw new GoneException();
             }
             $data = json_decode($r['body'], true);
             if ($r['status'] < 200 || $r['status'] >= 300 || !is_array($data)) {
-                $why = is_array($data) ? (string) ($data['error']['message'] ?? '') : '';
+                $error = is_array($data) ? ($data['error'] ?? null) : null;
+                $why = is_array($error) ? (string) ($error['message'] ?? '') : (is_string($error) ? $error : '');
                 throw new \RuntimeException('Google Calendar API: HTTP ' . $r['status'] . ($why !== '' ? " ($why)" : ''));
             }
-            foreach ($data['items'] ?? [] as $item) {
-                $items[] = $item;
+            $items = $budget->acceptItems($data['items'] ?? []);
+            $pageToken = $budget->nextPageToken($data);
+            $candidate = self::terminalSyncToken($data, $pageToken);
+            if ($candidate !== null) {
+                $nextSync = $candidate;
             }
-            $pageToken = isset($data['nextPageToken']) ? (string) $data['nextPageToken'] : null;
-            if (isset($data['nextSyncToken'])) {
-                $nextSync = (string) $data['nextSyncToken'];
+            $pageChanges = self::toParsedList($items, $budget->deadline(), $exdateWork);
+            foreach ($pageChanges as $change) {
+                $changes[] = $change;
             }
+            unset($r, $data, $items, $pageChanges);
         } while ($pageToken !== null);
-        return [$items, $nextSync];
+
+        return [$changes, $nextSync];
     }
 
     // ---- Shape translation (pure, unit-tested) ---------------------------------
@@ -149,12 +247,15 @@ final class GoogleSync
      * @param list<array> $items
      * @return list<array>
      */
-    public static function toParsedList(array $items): array
+    public static function toParsedList(array $items, ?float $deadline = null, ?int &$work = null): array
     {
         $out = [];
-        $work = 0;
+        $work ??= 0;
         $max = Limits::get('EXDATE_VALUES_PER_INPUT');
-        foreach ($items as $item) {
+        foreach ($items as $index => $item) {
+            if (($index & 63) === 0) {
+                self::assertWithinDeadline($deadline);
+            }
             $work += self::itemExdateValueCount($item);
             // A cancelled recurring instance becomes one EXDATE when changes
             // merge into the cached master, even though Google sends it as a
@@ -172,6 +273,7 @@ final class GoogleSync
                 $out[] = $parsed;
             }
         }
+        self::assertWithinDeadline($deadline);
         return $out;
     }
 
@@ -279,29 +381,52 @@ final class GoogleSync
      * @param list<array> $changes
      * @return list<array>
      */
-    public static function applyChanges(array $snapshot, array $changes): array
+    public static function applyChanges(
+        array $snapshot,
+        array $changes,
+        ?int $maxEvents = null,
+        ?float $deadline = null,
+    ): array
     {
+        $maxEvents ??= PHP_INT_MAX;
+        if (count($snapshot) > $maxEvents) {
+            throw new \RuntimeException(self::eventLimitMessage($maxEvents, 'cached Google calendar'));
+        }
         Recurrence::assertExdateBatch($snapshot);
         $byKey = [];
-        foreach ($snapshot as $ev) {
-            $byKey[self::key($ev)] = $ev;
+        $keysByUid = [];
+        foreach ($snapshot as $index => $ev) {
+            if (($index & 127) === 0) {
+                self::assertWithinDeadline($deadline);
+            }
+            $key = self::key($ev);
+            $byKey[$key] = $ev;
+            $keysByUid[(string) $ev['uid']][$key] = true;
         }
         $pendingExdates = [];
-        foreach ($changes as $ev) {
+        foreach ($changes as $index => $ev) {
+            if (($index & 127) === 0) {
+                self::assertWithinDeadline($deadline);
+            }
             if (!empty($ev['cancelled'])) {
                 if ($ev['recurrence_instance_utc'] === null) {
-                    foreach (array_keys($byKey) as $k) {
-                        if (str_starts_with((string) $k, $ev['uid'] . '|')) {
-                            unset($byKey[$k]);
-                        }
+                    foreach (array_keys($keysByUid[(string) $ev['uid']] ?? []) as $key) {
+                        unset($byKey[$key]);
                     }
+                    unset($keysByUid[(string) $ev['uid']]);
                 } else {
-                    unset($byKey[self::key($ev)]);
+                    $key = self::key($ev);
+                    unset($byKey[$key], $keysByUid[(string) $ev['uid']][$key]);
                     $pendingExdates[$ev['uid']][] = $ev['recurrence_instance_utc'];
                 }
                 continue;
             }
-            $byKey[self::key($ev)] = $ev;
+            $key = self::key($ev);
+            if (!isset($byKey[$key]) && count($byKey) >= $maxEvents) {
+                throw new \RuntimeException(self::eventLimitMessage($maxEvents, 'Google calendar'));
+            }
+            $byKey[$key] = $ev;
+            $keysByUid[(string) $ev['uid']][$key] = true;
         }
         foreach ($pendingExdates as $uid => $dates) {
             $masterKey = $uid . '|';
@@ -311,7 +436,11 @@ final class GoogleSync
             $byKey[$masterKey]['exdates'] = Recurrence::validateExdates(array_merge($byKey[$masterKey]['exdates'] ?? [], $dates));
         }
         $result = array_values($byKey);
+        if (count($result) > $maxEvents) {
+            throw new \RuntimeException(self::eventLimitMessage($maxEvents, 'Google calendar'));
+        }
         Recurrence::assertExdateBatch($result);
+        self::assertWithinDeadline($deadline);
         return $result;
     }
 
@@ -322,12 +451,19 @@ final class GoogleSync
      * @param list<array> $rows
      * @return list<array>
      */
-    public static function rowsToParsed(array $rows): array
+    public static function rowsToParsed(array $rows, ?int $maxEvents = null, ?float $deadline = null): array
     {
+        $maxEvents ??= PHP_INT_MAX;
+        if (count($rows) > $maxEvents) {
+            throw new \RuntimeException(self::eventLimitMessage($maxEvents, 'cached Google calendar'));
+        }
         $out = [];
         $totalExdates = 0;
         $maxExdates = Limits::get('EXDATE_VALUES_PER_INPUT');
-        foreach ($rows as $r) {
+        foreach ($rows as $index => $r) {
+            if (($index & 127) === 0) {
+                self::assertWithinDeadline($deadline);
+            }
             $encodedExdates = $r['exdates_json'] ?? null;
             $totalExdates += Recurrence::encodedExdateValueCount($encodedExdates);
             if ($totalExdates > $maxExdates) {
@@ -356,12 +492,81 @@ final class GoogleSync
                 ? ['invite_json' => is_array($r['invite_json']) ? json_encode($r['invite_json']) : (string) $r['invite_json']]
                 : []);
         }
+        self::assertWithinDeadline($deadline);
         return $out;
     }
 
     private static function key(array $ev): string
     {
         return $ev['uid'] . '|' . ($ev['recurrence_instance_utc'] ?? '');
+    }
+
+    /**
+     * Guard both the active snapshot count and the real variable-width bytes
+     * before any SELECT * can construct the cached calendar in PHP memory.
+     */
+    private function assertCachedSnapshotFits(int $calendarId, int $eventLimit, ?float $deadline): void
+    {
+        self::assertWithinDeadline($deadline);
+        $metrics = $this->db->one(
+            "SELECT
+                COALESCE(SUM(CASE WHEN deleted_at IS NULL THEN 1 ELSE 0 END), 0) AS active_count,
+                COUNT(*) AS row_count,
+                COALESCE(SUM(
+                    COALESCE(LENGTH(uid), 0) + COALESCE(LENGTH(title), 0)
+                    + COALESCE(LENGTH(description), 0) + COALESCE(LENGTH(location), 0)
+                    + COALESCE(LENGTH(url), 0) + COALESCE(LENGTH(tzid), 0)
+                    + COALESCE(LENGTH(rrule), 0) + COALESCE(LENGTH(exdates_json), 0)
+                    + COALESCE(LENGTH(status), 0) + COALESCE(LENGTH(source), 0)
+                    + COALESCE(LENGTH(attendance), 0) + COALESCE(LENGTH(style_json), 0)
+                    + COALESCE(LENGTH(dynamic_json), 0) + COALESCE(LENGTH(reminders_json), 0)
+                    + COALESCE(LENGTH(invite_json), 0) + COALESCE(LENGTH(created_via), 0)
+                    + COALESCE(LENGTH(google_event_id), 0) + COALESCE(LENGTH(icon), 0)
+                ), 0) AS payload_bytes
+             FROM events WHERE calendar_id = ?",
+            [$calendarId],
+        ) ?? ['active_count' => 0, 'row_count' => 0, 'payload_bytes' => 0];
+        self::assertWithinDeadline($deadline);
+        $activeCount = (int) $metrics['active_count'];
+        if ($activeCount > $eventLimit) {
+            throw new \RuntimeException(self::eventLimitMessage($eventLimit, 'cached Google calendar'));
+        }
+        $problem = Limits::googleSnapshotMemoryProblem(
+            (int) $metrics['row_count'],
+            (int) $metrics['payload_bytes'],
+        );
+        if ($problem !== null) {
+            throw new \RuntimeException($problem);
+        }
+    }
+
+    private static function assertWithinDeadline(?float $deadline): void
+    {
+        if ($deadline !== null && microtime(true) >= $deadline) {
+            throw new \RuntimeException('Google calendar synchronization exceeded its elapsed-time safety limit; the existing calendar and sync position were kept unchanged.');
+        }
+    }
+
+    private static function eventLimitMessage(int $limit, string $subject): string
+    {
+        return ucfirst($subject) . ' has more than the safe limit of ' . number_format($limit)
+            . ' events for this server; the existing calendar and sync position were kept unchanged.';
+    }
+
+    /** Validate Google's only durable position marker before local writes. */
+    private static function terminalSyncToken(array $data, ?string $pageToken): ?string
+    {
+        if ($pageToken !== null) {
+            if (array_key_exists('nextSyncToken', $data)) {
+                throw new \RuntimeException('Google calendar sync returned a sync token before its final page; the existing data was kept unchanged.');
+            }
+            return null;
+        }
+        $candidate = $data['nextSyncToken'] ?? null;
+        if (!is_string($candidate) || trim($candidate) === '' || strlen($candidate) > 255) {
+            throw new \RuntimeException('Google calendar sync ended without a valid sync token; the existing data was kept unchanged.');
+        }
+        return $candidate;
     }
 
     /** Number of raw comma-packed EXDATE entries before allocating them. */

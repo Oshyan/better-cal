@@ -4,6 +4,13 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.29 (2026-10-07)
+
+- **A broken or exceptionally large Google calendar cannot monopolize the shared worker.** One poll now shares item, response-size, page, elapsed-time and memory bounds across every page and a stale-token retry. Cached events and the previous sync position remain intact when a safety limit is reached, the calendar reports why it paused, and the worker continues to its other jobs.
+- **Google calendar discovery cannot reset its safety budget on every page.** Account inventory uses one cumulative pagination and transport budget, detects non-progressing page tokens, and includes access-token refresh in the same deadline. It remains all-or-nothing, so an incomplete list is never presented as complete.
+
+Operators: Google event polls default to 20,000 remote resources, 32 MiB of decompressed responses, 20 pages and 40 seconds. Calendar inventory defaults to 5,000 calendars, 5 MiB, 20 pages and 20 seconds. The event allowance is lowered when PHP memory cannot safely hold the live and cached snapshots, including the cached rows' actual text and JSON size. `BETTERCAL_LIMIT_GOOGLE_*` settings may tune these only within documented hard ceilings. No database migration is required.
+
 ## 0.9.28 (2026-10-07)
 
 - **Quick Add cannot make unbounded paid model calls.** Browser previews, committed additions and API-token previews now reserve persistent account capacity before dispatch; tokens also receive smaller fairness limits. When capacity is full, the deterministic parser remains available and the draft explains that AI parsing is paused.

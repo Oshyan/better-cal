@@ -42,6 +42,21 @@ final class Limits
         // worker's memory on every poll (scan 2026-09-23, F8). Also capped by
         // the memory PHP really has, see feedEventBudget().
         'FEED_EVENTS' => 20000,
+        // One Google poll is a paginated, decoded JSON operation rather than
+        // a single preflightable ICS file. Bound the complete operation — and
+        // any stale-token retry — across items, decompressed bytes, pages and
+        // elapsed time. googleEventBudget() lowers the item cap further when
+        // the PHP process does not have enough memory for the pipeline's
+        // concurrent decoded/parsed/database representations.
+        'GOOGLE_SYNC_EVENTS' => 20000,
+        'GOOGLE_SYNC_BYTES' => 33554432,       // 32 MiB cumulative
+        'GOOGLE_SYNC_PAGES' => 20,
+        'GOOGLE_SYNC_SECONDS' => 40,
+        // Account calendar inventory is smaller, but is remote pagination too.
+        'GOOGLE_CALENDAR_LIST_ITEMS' => 5000,
+        'GOOGLE_CALENDAR_LIST_BYTES' => 5242880, // 5 MiB cumulative
+        'GOOGLE_CALENDAR_LIST_PAGES' => 20,
+        'GOOGLE_CALENDAR_LIST_SECONDS' => 20,
         // One outbound feed you publish. Calendar apps fetch it on their own
         // schedule and each fetch builds the whole file; over the cap the
         // oldest past events are left off first (#110).
@@ -91,6 +106,14 @@ final class Limits
     /** Security ceilings: an operator may tune these budgets, but not remove the bound. */
     private const MAXIMUMS = [
         'JSON_BODY_BYTES' => 4194304,    // 4 MiB; unauthenticated requests reach this boundary
+        'GOOGLE_SYNC_EVENTS' => 50000,
+        'GOOGLE_SYNC_BYTES' => 67108864,
+        'GOOGLE_SYNC_PAGES' => 60,
+        'GOOGLE_SYNC_SECONDS' => 45,
+        'GOOGLE_CALENDAR_LIST_ITEMS' => 10000,
+        'GOOGLE_CALENDAR_LIST_BYTES' => 20971520,
+        'GOOGLE_CALENDAR_LIST_PAGES' => 60,
+        'GOOGLE_CALENDAR_LIST_SECONDS' => 30,
         'MAIL_BYTES' => 26214400,        // 25 MiB; size preflight keeps headers/bodies behind this
         'MAIL_EVENTS_PER_DAY' => 500,
         'MAIL_EVENTS_PER_SENDER_DAY' => 100,
@@ -143,6 +166,16 @@ final class Limits
     /** Measured: a parsed event costs about 8 KB of object graph; budget 12 KB for the rows built from it. */
     private const BYTES_PER_PARSED_EVENT = 12288;
     private const MEMORY_HEADROOM = 16777216; // 16 MiB left for everything else in the request
+    // Google sync holds parsed changes, the prior snapshot and Feeds::sync's
+    // database/index structures at once. A synthetic 5,000-item page measured
+    // about 3 KiB/item for only raw+parsed shapes; 40 KiB plus 32 MiB headroom
+    // conservatively bounds ordinary rows. Persisted text needs a second,
+    // actual-size check: one maximum description can be much larger than the
+    // per-item allowance even though it is individually valid.
+    private const BYTES_PER_GOOGLE_EVENT = 40960;
+    private const GOOGLE_MEMORY_HEADROOM = 33554432;
+    private const GOOGLE_CACHED_ROW_OVERHEAD = 24576;
+    private const GOOGLE_CACHED_PAYLOAD_COPIES = 3;
 
     /**
      * How many events an import may hold HERE: the configured cap, lowered to
@@ -169,6 +202,55 @@ final class Limits
     public static function feedEventBudget(?string $memoryLimit = null, ?int $usedBytes = null): int
     {
         return min(self::get('FEED_EVENTS'), self::importEventBudget($memoryLimit, $usedBytes));
+    }
+
+    /** How many Google resources this process can safely carry through one poll. */
+    public static function googleEventBudget(?string $memoryLimit = null, ?int $usedBytes = null): int
+    {
+        $configured = self::get('GOOGLE_SYNC_EVENTS');
+        $limit = self::iniBytes($memoryLimit ?? (string) ini_get('memory_limit'));
+        if ($limit <= 0) {
+            return $configured;
+        }
+        $free = $limit - ($usedBytes ?? memory_get_usage(true)) - self::GOOGLE_MEMORY_HEADROOM;
+        return max(0, min($configured, intdiv(max(0, $free), self::BYTES_PER_GOOGLE_EVENT)));
+    }
+
+    /**
+     * Explain when materialising a cached Google snapshot is unsafe here.
+     *
+     * The database aggregate supplies the actual bytes in variable-width
+     * columns. During a poll those strings can coexist in the PDO result,
+     * parsed snapshot and Feeds index, so reserve three copies plus measured
+     * per-row PHP-array overhead. The estimate is deliberately conservative:
+     * refusing a poll keeps the prior calendar intact, while an OOM would kill
+     * the shared worker before it could record the actionable error.
+     */
+    public static function googleSnapshotMemoryProblem(
+        int $eventCount,
+        int $payloadBytes,
+        ?string $memoryLimit = null,
+        ?int $usedBytes = null,
+    ): ?string {
+        $limit = self::iniBytes($memoryLimit ?? (string) ini_get('memory_limit'));
+        if ($limit <= 0) {
+            return null;
+        }
+        $available = $limit - ($usedBytes ?? memory_get_usage(true)) - self::GOOGLE_MEMORY_HEADROOM;
+        $needed = max(0, $eventCount) * self::GOOGLE_CACHED_ROW_OVERHEAD
+            + max(0, $payloadBytes) * self::GOOGLE_CACHED_PAYLOAD_COPIES;
+        if ($available >= $needed) {
+            return null;
+        }
+        return 'The cached Google calendar needs about ' . self::memoryMiB($needed)
+            . ' MiB of working memory, but only ' . self::memoryMiB(max(0, $available))
+            . ' MiB is safely available. Increase PHP memory_limit or reduce the calendar size;'
+            . ' the existing calendar and sync position were kept unchanged.';
+    }
+
+    private static function memoryMiB(int $bytes): string
+    {
+        return number_format($bytes / 1048576, 1, '.', '');
     }
 
     /** "256M" -> bytes; "-1" and garbage -> 0 (no usable limit). */

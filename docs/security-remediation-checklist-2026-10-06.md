@@ -82,6 +82,16 @@ This phase is implemented and verified for release 0.9.28. It adds migration
 | F52 | Quick Add model assists, including previews, reserve account/token/concurrency capacity before dispatch; deterministic parsing remains available | Passed | [ ] |
 | F73 (Gemini response portion) | Every Gemini caller shares an authoritative streamed response-byte cap | Passed | [x] |
 
+## Phase 10 — Google pagination and worker bounds
+
+This phase is implemented and locally verified for release 0.9.29. It has no
+database migration and has not yet been exercised against the live Google API.
+
+| Scan finding | Remediation | Local automated verification | Live/deployed verification |
+|---|---|---:|---:|
+| F1 | One Google event poll, including a stale-token retry, shares cumulative event, memory, response-byte, page and elapsed-time bounds; a controlled refusal keeps the prior snapshot and sync token | Passed | [ ] |
+| F62 | Calendar-list pagination uses one HTTP client and one cumulative item, byte, page, time and token-progress budget | Passed | [ ] |
+
 ## Completed local evidence
 
 This section is the technical record for reviewers; it is not a manual to-do
@@ -190,6 +200,26 @@ list for the owner.
   for F5, F52 or the Gemini-response portion of F73. It identified an overly
   conservative retry timestamp; the implementation now reports the exact
   oldest rolling-window or active-lease expiry, with regression coverage.
+- [x] Phase 10 gives each Google event poll one cumulative item, decompressed-
+  byte, page and elapsed-time budget across every page and an HTTP 410 retry.
+  Opaque page tokens are bounded and cycle-checked, a terminal sync token is
+  required, and over-limit work stops before changing events, access role,
+  health success state or the previous sync position.
+- [x] Phase 10 checks both process headroom and the cached calendar's actual
+  stored variable-width payload before either full database materialization.
+  The preflight includes active and soft-deleted rows; a valid-but-large
+  description control is refused rather than exhausting a 128 MiB worker.
+- [x] Phase 10 calendar inventory uses one client and cumulative budget for all
+  pages. Access-token refresh is included in the same absolute elapsed-time
+  deadline, and an already-expired owner deadline stops before network access.
+- [x] Phase 10 local suites: server 2,051/0 under a 128 MiB memory limit;
+  frontend smoke 653/0 in `America/Los_Angeles`, `UTC`, `Europe/Berlin`,
+  `Asia/Kolkata` and `Pacific/Auckland`; frontend static 347/0; MCP 63/0;
+  deploy-security 19/0; vendor manifest 10/10. All changed PHP files pass
+  syntax checks and the working-tree diff passes whitespace validation.
+- [x] Phase 10 independent post-patch review found no concrete remaining F1 or
+  F62 bypass after prompting fixes for cached large-description memory and the
+  token-refresh deadline. No live provider request or deployment was performed.
 
 ## Remaining practical checks
 
@@ -214,6 +244,14 @@ contents out of saved evidence.
   account should restore the existing calendar rather than create a duplicate.
   Check the disposable Google calendar for events uploaded before the reset and
   note any cleanup they still need; a reset cannot pull back completed uploads.
+
+### Google pagination and worker release (F1/F62)
+
+- [ ] After deployment, open Settings → Connections once and refresh one
+  representative connected Google calendar. Confirm the complete calendar list
+  appears and the calendar returns to a successful “last checked” state. There
+  is no need to manufacture an oversized calendar or broken page-token cycle;
+  those failure paths are covered by the automated controls above.
 
 ### Sign-out and API-key cleanup (M1/M5)
 

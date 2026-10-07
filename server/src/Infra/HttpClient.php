@@ -38,6 +38,8 @@ final class HttpClient
     private const MAX_REDIRECTS = 3;
 
     private int $used = 0;
+    private int $totalBytesUsed = 0;
+    private bool $totalBytesOverflow = false;
 
     /** @var array<string,list<string>> */
     private array $resolvedHosts = [];
@@ -57,12 +59,18 @@ final class HttpClient
         private readonly array $allowedSchemes = ['http', 'https'],
         private readonly ?int $maxTotalBytes = null,
         private readonly ?\Closure $resolver = null,
+        private readonly ?float $absoluteDeadline = null,
     ) {
     }
 
     public function requestsUsed(): int
     {
         return $this->used;
+    }
+
+    public function responseBytesUsed(): int
+    {
+        return $this->totalBytesUsed;
     }
 
     /**
@@ -147,7 +155,7 @@ final class HttpClient
         }
         $results = array_fill(0, count($urls), null);
         $batch = (object) ['bytes' => 0, 'overflow' => false];
-        $deadline = microtime(true) + max(1, $this->totalTimeoutMs) / 1000;
+        $deadline = $this->operationDeadline();
         if (!function_exists('curl_multi_init')) {
             foreach (array_values($urls) as $index => $url) {
                 if (!is_string($url)) {
@@ -171,6 +179,9 @@ final class HttpClient
 
         $start = function (int $index, string $url, int $hop) use (&$active, &$results, $batch, $deadline, $multi, $headers): void {
             try {
+                if ($this->totalBytesOverflow) {
+                    throw new \RuntimeException('HTTP cumulative response budget exceeded');
+                }
                 if ($this->used >= $this->requestBudget) {
                     throw new \RuntimeException('HTTP request budget exhausted (' . $this->requestBudget . ')');
                 }
@@ -204,7 +215,7 @@ final class HttpClient
                             $transfer->overflow = true;
                             return 0;
                         }
-                        if ($this->maxTotalBytes !== null && $batch->bytes + $bytes > $this->maxTotalBytes) {
+                        if (!$this->admitResponseBytes($bytes)) {
                             $transfer->batchOverflow = true;
                             $batch->overflow = true;
                             return 0;
@@ -274,7 +285,7 @@ final class HttpClient
                     continue;
                 }
                 if ($transfer->batchOverflow) {
-                    $results[$state['index']] = ['status' => 0, 'body' => '', 'error' => 'HTTP batch response budget exceeded'];
+                    $results[$state['index']] = ['status' => 0, 'body' => '', 'error' => 'HTTP cumulative response budget exceeded'];
                     continue;
                 }
                 if ((int) $info['result'] !== CURLE_OK) {
@@ -299,7 +310,7 @@ final class HttpClient
 
             if ($batch->overflow) {
                 foreach ($active as $state) {
-                    $results[$state['index']] = ['status' => 0, 'body' => '', 'error' => 'HTTP batch response budget exceeded'];
+                    $results[$state['index']] = ['status' => 0, 'body' => '', 'error' => 'HTTP cumulative response budget exceeded'];
                     curl_multi_remove_handle($multi, $state['handle']);
                 }
                 $active = [];
@@ -365,9 +376,12 @@ final class HttpClient
         ?object $batch = null,
     ): array
     {
-        $deadline ??= microtime(true) + max(1, $this->totalTimeoutMs) / 1000;
+        $deadline = $this->operationDeadline($deadline);
         $maxHops = $method === 'GET' ? $this->maxRedirects : 0;
         for ($hop = 0; $hop <= $maxHops; $hop++) {
+            if ($this->totalBytesOverflow) {
+                throw new \RuntimeException('HTTP cumulative response budget exceeded');
+            }
             if ($this->used >= $this->requestBudget) {
                 throw new \RuntimeException('HTTP request budget exhausted (' . $this->requestBudget . ')');
             }
@@ -382,6 +396,7 @@ final class HttpClient
             $ch = curl_init($url);
             $response = '';
             $overflow = false;
+            $totalOverflow = false;
             if ($method !== 'GET') {
                 curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);
                 if ($body !== null) {
@@ -399,15 +414,17 @@ final class HttpClient
                 CURLOPT_PROTOCOLS => $this->protocolMask(),
                 CURLOPT_RESOLVE => [$destination['resolve']],
                 CURLOPT_PROXY => '',
-                CURLOPT_WRITEFUNCTION => function ($c, string $chunk) use (&$response, &$overflow, $batch): int {
+                CURLOPT_WRITEFUNCTION => function ($c, string $chunk) use (&$response, &$overflow, &$totalOverflow, $batch): int {
                     $bytes = strlen($chunk);
                     if (strlen($response) + $bytes > $this->maxBytes) {
                         $overflow = true;
                         return 0; // abort transfer: response too large
                     }
-                    if ($batch !== null && $this->maxTotalBytes !== null
-                        && $batch->bytes + $bytes > $this->maxTotalBytes) {
-                        $batch->overflow = true;
+                    if (!$this->admitResponseBytes($bytes)) {
+                        $totalOverflow = true;
+                        if ($batch !== null) {
+                            $batch->overflow = true;
+                        }
                         return 0;
                     }
                     $response .= $chunk;
@@ -425,8 +442,8 @@ final class HttpClient
             if ($overflow) {
                 throw new \RuntimeException('Response exceeded ' . round($this->maxBytes / 1048576, 1) . ' MB cap');
             }
-            if ($batch !== null && $batch->overflow) {
-                throw new \RuntimeException('HTTP batch response budget exceeded');
+            if ($totalOverflow || ($batch !== null && $batch->overflow)) {
+                throw new \RuntimeException('HTTP cumulative response budget exceeded');
             }
             if ($err !== null && $status === 0) {
                 throw new \RuntimeException('HTTP error for ' . $host . ': ' . $err);
@@ -438,6 +455,28 @@ final class HttpClient
             return ['status' => $status, 'body' => $response];
         }
         throw new \RuntimeException('Too many redirects');
+    }
+
+    /** Each call keeps its normal timeout but may never outlive its owner. */
+    private function operationDeadline(?float $requested = null): float
+    {
+        $deadline = $requested ?? (microtime(true) + max(1, $this->totalTimeoutMs) / 1000);
+        if ($this->absoluteDeadline !== null) {
+            $deadline = min($deadline, $this->absoluteDeadline);
+        }
+        return $deadline;
+    }
+
+    /** Charge decompressed bytes across this client's whole lifetime. */
+    private function admitResponseBytes(int $bytes): bool
+    {
+        if ($this->maxTotalBytes !== null
+            && ($this->totalBytesOverflow || $this->totalBytesUsed + $bytes > $this->maxTotalBytes)) {
+            $this->totalBytesOverflow = true;
+            return false;
+        }
+        $this->totalBytesUsed += $bytes;
+        return true;
     }
 
     /** @return array{host:string,resolve:string} */

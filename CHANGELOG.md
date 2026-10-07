@@ -4,6 +4,11 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.18 (2026-10-06)
+
+- **A repeating event with too many occurrences to show says so.** A series is expanded up to 1,000 times per request (was 500), which covers a daily event across the two-year maximum the app ever asks for. A series that goes past that, something hourly for instance, used to be cut short without a word; now the app names it once ("repeats more often than one view can show"), and the events API lists it in a new `capped` field.
+- **[Scale and limits](docs/limits.md)** says who Better-Cal is sized for (one person's calendar) and which limits you might run into.
+
 ## 0.9.17 (2026-10-06)
 
 - **Exception-heavy repeating calendars fail safely instead of consuming unbounded work.** ICS files, feeds, emailed invitations, CalDAV, Google sync, API-created events, and stored series now share limits of 1,024 skipped occurrences per event and 4,096 per input or sync batch, with non-removable hard ceilings. Ordinary calendars are unaffected; an unusually large or broken series is rejected with an actionable error and the last good subscribed-calendar copy remains visible.

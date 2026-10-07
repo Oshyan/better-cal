@@ -1433,7 +1433,7 @@ check('recur stray override appended', in_array('2026-03-02 18:00:00', array_map
 $floodExpander = static function (array $master): array {
     $out = [];
     $s = Time::fromDb((string) $master['start_utc']);
-    for ($i = 0; $i < 600; $i++) {
+    for ($i = 0; $i < Recurrence::MAX_INSTANCES + 100; $i++) {
         $out[] = ['start' => $s->add(new DateInterval('PT' . $i . 'H')), 'end' => $s->add(new DateInterval('PT' . ($i + 1) . 'H'))];
     }
     return $out;
@@ -1442,7 +1442,21 @@ $capRec = new Recurrence($floodExpander);
 $capMaster = $master;
 $capMaster['exdates_json'] = null;
 $occs = $capRec->expand($capMaster, [], Time::fromDb('2026-01-01 00:00:00'), Time::fromDb('2027-01-01 00:00:00'));
-checkEq('recur capped at 500 instances', 500, count($occs));
+checkEq('recur capped at MAX_INSTANCES', Recurrence::MAX_INSTANCES, count($occs));
+// #23: the cap covers a daily series across the widest window, and a series
+// that hits it is reported rather than cut silently.
+check('recur cap covers two years of a daily series', Recurrence::MAX_INSTANCES >= 2 * 366);
+checkEq('recur capped series is reported', [(int) $capMaster['id']], $capRec->capped());
+check('recur a series under the cap is not reported', (new Recurrence($floodExpander))->capped() === []);
+if (class_exists(\Sabre\VObject\Reader::class)) { // needs sabre/vobject (the install job runs it)
+    $hourly = ['id' => 77, 'uid' => 'hourly', 'all_day' => 0, 'tzid' => 'UTC', 'start_utc' => '2026-01-01 00:00:00', 'end_utc' => '2026-01-01 00:30:00', 'rrule' => 'FREQ=HOURLY', 'exdates_json' => null];
+    $hRec = new Recurrence();
+    $hOcc = $hRec->expand($hourly, [], Time::fromDb('2026-01-01 00:00:00'), Time::fromDb('2026-03-01 00:00:00'));
+    checkEq('recur an hourly series over two months stops at the cap and is reported', [Recurrence::MAX_INSTANCES, [77]], [count($hOcc), $hRec->capped()]);
+    $dRec = new Recurrence();
+    $dOcc = $dRec->expand(['id' => 78, 'uid' => 'daily', 'rrule' => 'FREQ=DAILY'] + $hourly, [], Time::fromDb('2026-01-01 00:00:00'), Time::fromDb('2027-12-31 00:00:00'));
+    checkEq('recur a daily series across two years is complete and not reported', [729, []], [count($dOcc), $dRec->capped()]);
+}
 
 // Non-recurring passthrough.
 $single = ['id' => 20, 'uid' => 'u2', 'title' => 'Once', 'start_utc' => '2026-01-10 01:00:00', 'end_utc' => '2026-01-10 02:00:00', 'rrule' => null, 'all_day' => 0, 'tzid' => 'UTC'];

@@ -39,7 +39,7 @@ Self-hosting is table stakes: plain PHP and MySQL on the server, a no-build Prea
 
 I wanted infinite scroll in a calendar. That's really the whole origin story: Google's (and almost everyone else's) month and week views have never had it, and I've always found pagination needlessly jarring and limiting. So I sent Claude (Fable 5) on an overnight, one-shot mission to build a calendar app from scratch (something that used to be notoriously difficult, hence libraries like FullCalendar), with infinite scroll as the headline differentiator. By morning there was a working one. Within a week it had replaced Google Calendar for me, and by then it did quite a few things GCal doesn't (and probably never will): undo for any change, not just the last one, trips and people as real objects, a relationship to every event that tells "what am I doing" apart from "what could I do" and "what's the weather", and feeds that are actually pleasant to live with.
 
-So it's built for one person's daily use, and it runs my real calendar every day. It's single-user by design: one login, one owner, and everyone else reaches it through CalDAV, shared feeds and invitations. I develop it in the open because there's no reason not to, not because it's a product. That means no support commitment, no roadmap promises and no compatibility guarantee between versions (though every update brings its own migrations).
+So it's built for one person's daily use, and it runs my real calendar every day. It's single-user by design: one login, one owner, and everyone else reaches it through CalDAV, shared feeds and invitations. It's sized for one person's calendar too, not a team's or a very heavy user's; [Scale and limits](docs/limits.md) has the numbers. I develop it in the open because there's no reason not to, not because it's a product. That means no support commitment, no roadmap promises and no compatibility guarantee between versions (though every update brings its own migrations).
 
 What I focused on:
 
@@ -85,6 +85,7 @@ MIT (see [LICENSE](LICENSE)). Use it, fork it, host it, sell it. If you build so
 - [CalDAV](docs/caldav.md)
 - [Email ingest](docs/email-ingest.md)
 - [Moving from Google Calendar](docs/migration.md): try it without changing anything at Google, run both for a while, switch fully, or go back
+- [Scale and limits](docs/limits.md): who it's sized for, and the limits you might run into
 - Roadmap: the [GitHub issues](https://github.com/Oshyan/better-cal/issues). There's no separate roadmap document.
 
 ## Configuration

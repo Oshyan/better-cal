@@ -206,6 +206,20 @@ const iso = (ms) => toISOWithOffset(new Date(ms));
 // and those years looked empty. Longer spans go out as pieces under the cap.
 const MAX_SPAN_MS = 700 * 864e5;
 
+// A series with more occurrences in one window than the server will expand
+// (1,000; an hourly series, say) is named in the response instead of quietly
+// coming back short (#23). Said once per series per page.
+const cappedSeen = new Set();
+function noteCapped(ids) {
+  for (const id of ids) {
+    if (cappedSeen.has(id)) continue;
+    cappedSeen.add(id);
+    let title = '';
+    for (const o of state.occ.values()) if (o.eventId === id) { title = o.title; break; }
+    toast(`"${title || 'A repeating event'}" repeats more often than one view can show; some of its occurrences here aren't displayed.`, { duration: 10000 });
+  }
+}
+
 async function fetchRange(s, e) {
   if (e - s > MAX_SPAN_MS) {
     const parts = [];
@@ -223,6 +237,7 @@ async function fetchRange(s, e) {
       signal: ctrl ? ctrl.signal : undefined,
     });
     mergeWindow(startISO, endISO, data.events || []);
+    if (Array.isArray(data.capped) && data.capped.length) noteCapped(data.capped);
   } catch (err) {
     if (!err || err.code !== 'aborted') throw err;
   } finally {

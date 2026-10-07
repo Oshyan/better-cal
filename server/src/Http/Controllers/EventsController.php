@@ -52,7 +52,10 @@ final class EventsController
             $req->q('q'),
             filter_var($req->q('includeHidden', '0'), FILTER_VALIDATE_BOOL)
         );
-        return Response::json(['events' => $occurrences]);
+        // A series with more occurrences in this window than the per-series
+        // cap is named, so a client can say so instead of showing fewer (#23).
+        $capped = $this->events->cappedSeries();
+        return Response::json(['events' => $occurrences] + ($capped !== [] ? ['capped' => $capped] : []));
     }
 
     public function create(Request $req): Response

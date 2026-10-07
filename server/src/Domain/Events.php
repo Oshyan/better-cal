@@ -674,6 +674,12 @@ final class Events
 
     // ---- CRUD ---------------------------------------------------------
 
+    /** Series whose occurrences were cut short at Recurrence::MAX_INSTANCES in this request (#23). */
+    public function cappedSeries(): array
+    {
+        return $this->recurrence->capped();
+    }
+
     public function get(int $userId, int $id): array
     {
         $row = $this->db->one('SELECT * FROM events WHERE id = ? AND user_id = ? AND deleted_at IS NULL', [$id, $userId]);

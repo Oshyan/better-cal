@@ -15,7 +15,10 @@ use BetterCal\Support\Time;
  */
 final class Recurrence
 {
-    public const MAX_INSTANCES = 500;
+    // Per series per query. 1,000 covers a daily series across the widest
+    // window the API allows (two years), so the app's own requests never hit
+    // it; a series that does (hourly, say) is reported, not cut silently (#23).
+    public const MAX_INSTANCES = 1000;
 
     private const ALLOWED_RRULE_KEYS = [
         'FREQ', 'UNTIL', 'COUNT', 'INTERVAL', 'BYSECOND', 'BYMINUTE', 'BYHOUR',
@@ -26,9 +29,18 @@ final class Recurrence
     /** @var callable(array,\DateTimeImmutable,\DateTimeImmutable):list<array{start:\DateTimeImmutable,end:\DateTimeImmutable}> */
     private $expander;
 
+    /** @var array<int, true> series cut short at MAX_INSTANCES by expand() */
+    private array $capped = [];
+
     public function __construct(?callable $expander = null)
     {
         $this->expander = $expander ?? [self::class, 'sabreExpand'];
+    }
+
+    /** Ids of the series expand() has cut short at MAX_INSTANCES since this object was made. */
+    public function capped(): array
+    {
+        return array_keys($this->capped);
     }
 
     /** Frozen contract: instanceId = eventId + ":" + occurrenceStartUtc (Ymd\THis\Z). */
@@ -194,6 +206,7 @@ final class Recurrence
             $count = 0;
             foreach ($raw as $inst) {
                 if (++$count > self::MAX_INSTANCES) {
+                    $this->capped[(int) ($master['id'] ?? 0)] = true;
                     break;
                 }
                 $instanceUtc = Time::toDb($inst['start']);
@@ -523,7 +536,8 @@ final class Recurrence
             $it = new \Sabre\VObject\Recur\EventIterator($vcal, $uid, $allDay ? $tz : Time::utc());
             $it->fastForward(\DateTime::createFromImmutable($winStart));
             $count = 0;
-            while ($it->valid() && $count < self::MAX_INSTANCES) {
+            // One past the cap, so expand() can tell a series that has more.
+            while ($it->valid() && $count <= self::MAX_INSTANCES) {
                 $occStart = \DateTimeImmutable::createFromInterface($it->getDtStart())->setTimezone(Time::utc());
                 if ($occStart >= $winEnd) {
                     break;

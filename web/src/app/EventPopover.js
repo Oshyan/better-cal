@@ -340,8 +340,9 @@ export function EventPopover() {
       // instead of only closing; a tap anywhere else closes it and does nothing more. Controls
       // inside a row (its swipe actions) never take a press through.
       const inPanel = insideAny(panelRef);
+      // Context tokens and marks (weather, sunset) open the same way.
       const toEvent = (t) => t && t.closest
-        && t.closest('[data-instance]') && !t.closest('.bc-agenda-acts, .bc-agenda-grip');
+        && t.closest('[data-instance], .bc-ctx-token, .bc-ctx-mark-label') && !t.closest('.bc-agenda-acts, .bc-agenda-grip');
       stop = onOutsidePress((t) => inPanel(t) || toEvent(t), () => set({ popover: null }));
       document.addEventListener('keydown', onKey, true);
     }

@@ -7,14 +7,16 @@ namespace BetterCal\Domain;
 use BetterCal\Http\HttpError;
 use BetterCal\Infra\Db;
 use BetterCal\Support\Ids;
+use BetterCal\Support\Limits;
 use BetterCal\Support\Time;
 
 /** Outbound ICS feeds: token URLs scoped to all events, one calendar, or a saved search. */
 final class OutFeeds
 {
     private const SCOPE_TYPES = ['all', 'calendar', 'search'];
-    private const MAX_EVENTS = 5000;
     private const LOOKBACK = 'P1Y';
+    /** A saved-search feed holds the search's own top results. */
+    public const SEARCH_LIMIT = 500;
 
     public function __construct(
         private readonly Db $db,
@@ -32,7 +34,7 @@ final class OutFeeds
     public function listAll(int $userId, ?int $viewerTokenId = null): array
     {
         return array_map(
-            fn(array $row) => $this->serialize($row, $viewerTokenId === null || (int) ($row['created_by_token_id'] ?? 0) === $viewerTokenId),
+            fn(array $row) => $this->serialize($row, $viewerTokenId === null || (int) ($row['created_by_token_id'] ?? 0) === $viewerTokenId) + $this->size($row),
             $this->db->all('SELECT * FROM out_feeds WHERE user_id = ? ORDER BY id', [$userId])
         );
     }
@@ -109,22 +111,9 @@ final class OutFeeds
         }
         $userId = (int) $feed['user_id'];
         $scope = json_decode((string) $feed['scope_json'], true) ?: ['type' => 'all'];
-        $cutoff = Time::toDb(Time::nowUtc()->sub(new \DateInterval(self::LOOKBACK)));
-        $limit = self::MAX_EVENTS;
-
-        $events = match ($scope['type'] ?? 'all') {
-            'calendar' => $this->db->all(
-                "SELECT * FROM events WHERE user_id = ? AND calendar_id = ? AND deleted_at IS NULL
-                 AND (end_utc >= ? OR rrule IS NOT NULL) ORDER BY start_utc LIMIT $limit",
-                [$userId, (int) ($scope['calendarId'] ?? 0), $cutoff]
-            ),
-            'search' => $this->search->search($userId, (string) ($scope['q'] ?? ''), 500, excerpt: false),
-            default => $this->db->all(
-                "SELECT * FROM events WHERE user_id = ? AND deleted_at IS NULL AND attendance <> 'hidden'
-                 AND (end_utc >= ? OR rrule IS NOT NULL) ORDER BY start_utc LIMIT $limit",
-                [$userId, $cutoff]
-            ),
-        };
+        $events = ($scope['type'] ?? 'all') === 'search'
+            ? $this->search->search($userId, (string) ($scope['q'] ?? ''), self::SEARCH_LIMIT, excerpt: false)
+            : $this->nearest($userId, $scope, Limits::get('OUTFEED_EVENTS'));
 
         // Trip relationships export as RELATED-TO lines (same treatment as
         // CalDAV objects): decorate rows with member/container uids.
@@ -141,6 +130,60 @@ final class OutFeeds
         unset($ev);
 
         return Ics::buildCalendar((string) $feed['name'], $this->describeScope($feed, $scope), $events);
+    }
+
+    /**
+     * What an "all" or "calendar" feed covers: events that ended within the
+     * last year or later, and every repeating series.
+     *
+     * @return array{0:string,1:list<int|string>}
+     */
+    private function coverage(int $userId, array $scope): array
+    {
+        $cutoff = Time::toDb(Time::nowUtc()->sub(new \DateInterval(self::LOOKBACK)));
+        if (($scope['type'] ?? 'all') === 'calendar') {
+            return ['user_id = ? AND calendar_id = ? AND deleted_at IS NULL AND (end_utc >= ? OR rrule IS NOT NULL)',
+                [$userId, (int) ($scope['calendarId'] ?? 0), $cutoff]];
+        }
+        return ["user_id = ? AND deleted_at IS NULL AND attendance <> 'hidden' AND (end_utc >= ? OR rrule IS NOT NULL)",
+            [$userId, $cutoff]];
+    }
+
+    /**
+     * Up to $max events, nearest to today: everything ongoing or ahead (and
+     * every series) first, then the most recent past. Over the cap, the
+     * oldest past events are left off, never the upcoming ones (#110).
+     */
+    private function nearest(int $userId, array $scope, int $max): array
+    {
+        [$where, $params] = $this->coverage($userId, $scope);
+        $now = Time::nowDb();
+        $ahead = $this->db->all(
+            "SELECT * FROM events WHERE $where AND (end_utc >= ? OR rrule IS NOT NULL) ORDER BY start_utc LIMIT $max",
+            [...$params, $now]
+        );
+        $room = $max - count($ahead);
+        $past = $room > 0 ? $this->db->all(
+            "SELECT * FROM events WHERE $where AND end_utc < ? AND rrule IS NULL ORDER BY start_utc DESC LIMIT $room",
+            [...$params, $now]
+        ) : [];
+        $events = [...$past, ...$ahead];
+        usort($events, static fn(array $a, array $b): int => strcmp((string) $a['start_utc'], (string) $b['start_utc']));
+        return $events;
+    }
+
+    /** How many events a feed covers and how many it holds, for its card in Settings. */
+    private function size(array $row): array
+    {
+        $scope = json_decode((string) $row['scope_json'], true) ?: ['type' => 'all'];
+        if (($scope['type'] ?? 'all') === 'search') {
+            return ['eventCount' => null, 'eventLimit' => self::SEARCH_LIMIT];
+        }
+        [$where, $params] = $this->coverage((int) $row['user_id'], $scope);
+        return [
+            'eventCount' => (int) $this->db->scalar("SELECT COUNT(*) FROM events WHERE $where", $params),
+            'eventLimit' => Limits::get('OUTFEED_EVENTS'),
+        ];
     }
 
     private function describeScope(array $feed, array $scope): string

@@ -33,6 +33,20 @@ fi
 # One shared ssh connection, loud failures (see the file for why).
 source "${ROOT_DIR}/scripts/deploy-lib.sh"
 
+# Production ships the commit, not the working tree: uncommitted edits (a
+# second session's half-finished work included) never reach the server, and
+# the tests below run on exactly the files that ship. Commit first, then deploy.
+DEPLOY_COMMIT="$(git -C "${ROOT_DIR}" rev-parse HEAD)"
+DEPLOY_SNAPSHOT="$(mktemp -d /tmp/bc-deploy.XXXXXX)"
+git -C "${ROOT_DIR}" archive "${DEPLOY_COMMIT}" | tar -x -C "${DEPLOY_SNAPSHOT}"
+# Composer's libraries aren't in the commit; the sabre-backed tests need them.
+[ -d "${ROOT_DIR}/server/vendor" ] && ln -s "${ROOT_DIR}/server/vendor" "${DEPLOY_SNAPSHOT}/server/vendor"
+echo "Deploying $(git -C "${ROOT_DIR}" log -1 --format='%h %s' "${DEPLOY_COMMIT}") (version $(cat "${DEPLOY_SNAPSHOT}/VERSION"))"
+UNCOMMITTED="$(git -C "${ROOT_DIR}" status --porcelain | wc -l | tr -d ' ')"
+if [ "${UNCOMMITTED}" != "0" ]; then
+  echo "  ${UNCOMMITTED} uncommitted change(s) in the working tree are not included."
+fi
+
 # Pre-flight gate. Every live break so far (blank app from a stray import, a
 # dead "+ New" button, a frozen agenda) was a broken reference that a test run
 # would have caught — but deploy never ran the tests. It does now. Set
@@ -43,18 +57,18 @@ source "${ROOT_DIR}/scripts/deploy-lib.sh"
 # (server/src/Http/AppShell.php), so the committed files are what ships.
 if [ "${SKIP_TESTS:-0}" != "1" ]; then
   echo "== pre-flight tests =="
-  node --experimental-vm-modules "${ROOT_DIR}/web/tests/static.mjs" 2>/dev/null | tail -1
+  node --experimental-vm-modules "${DEPLOY_SNAPSHOT}/web/tests/static.mjs" 2>/dev/null | tail -1
   # The frontend works in the viewer's zone, so the suite runs in several: west
   # and east of UTC, UTC itself, a half-hour offset, and a southern-hemisphere
   # DST zone past +12. It used to pass only in Pacific time, which hid all-day
   # events moving a day for anyone east of their event's zone.
   for zone in America/Los_Angeles UTC Europe/Berlin Asia/Kolkata Pacific/Auckland; do
     printf '%-20s ' "${zone}"
-    TZ="${zone}" node "${ROOT_DIR}/web/tests/smoke.mjs" 2>/dev/null | tail -1
+    TZ="${zone}" node "${DEPLOY_SNAPSHOT}/web/tests/smoke.mjs" 2>/dev/null | tail -1
   done
-  php "${ROOT_DIR}/server/tests/run.php" | tail -1
+  php "${DEPLOY_SNAPSHOT}/server/tests/run.php" | tail -1
   # Vendored frontend libraries must be exactly the pinned releases.
-  node "${ROOT_DIR}/scripts/vendor.mjs" --verify | tail -1
+  node "${DEPLOY_SNAPSHOT}/scripts/vendor.mjs" --verify | tail -1
 fi
 
 stage "connect"
@@ -93,7 +107,7 @@ BACKUP
 fi
 
 stage "rsync code"
-deploy_rsync "${APP_DIR}"
+deploy_rsync "${APP_DIR}" "${DEPLOY_SNAPSHOT}"
 
 stage "composer + migrate + link"
 rssh "APP_DIR='${APP_DIR}' DOCROOT='${DOCROOT}' APP_USER='${APP_USER}' bash -s" <<'EOF'

@@ -121,10 +121,10 @@ export function GoogleConnector() {
                   <button type="button" class="bc-link-btn" disabled=${busy === 'connect'} onClick=${connect}>Reconnect</button>`
               : a.status !== 'ok' && html`<span class="bc-google-err" title=${a.error || ''}>needs reconnecting</span>`}
             ${confirmDisconnect === a.id
-              ? html`<span class="bc-google-confirm">Disconnect? Its calendars stay, but stop updating.
+              ? html`<span class="bc-google-confirm">Disconnect? Its calendars stay, but stop updating.${(a.unfinishedMoves || []).map((m) => html` <strong>This also stops moving "${m.calendarName}" to Google${m.total ? ' (' + m.done + ' of ' + m.total + ' uploaded)' : ''}: it stays here as it was, and anything already uploaded stays in the Google calendar.</strong>`)}
                   <button type="button" class="bc-btn bc-btn-danger" disabled=${busy === 'disconnect:' + a.id} onClick=${() => disconnect(a)}>Disconnect</button>
                   <button type="button" class="bc-link-btn" onClick=${() => setConfirmDisconnect(null)}>Keep</button></span>`
-              : html`<button type="button" class="bc-link-btn" onClick=${() => setConfirmDisconnect(a.id)}>Disconnect</button>`}
+              : html`<button type="button" class="bc-link-btn" onClick=${() => { setConfirmDisconnect(a.id); load(); }}>Disconnect</button>`}
           </div>`)}
           <button type="button" class="bc-btn" disabled=${busy === 'connect'} onClick=${connect}>${status.accounts.length ? 'Connect another account' : 'Connect a Google account'}</button>
         </div>

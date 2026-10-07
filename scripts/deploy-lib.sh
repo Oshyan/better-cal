@@ -49,16 +49,36 @@ ssh_open() {
 # later chown is needed. -a's owner/group are dropped (they would be the Mac's).
 # No --delete by explicit policy (the user has been burned by it); stale-file
 # removal, when ever needed, is a deliberate manual action on the server.
+#
+# deploy_rsync DEST [SNAPSHOT]. With SNAPSHOT (a `git archive` of
+# DEPLOY_COMMIT, made by deploy.sh), exactly that commit's files ship, and
+# nothing uncommitted can: a second session's half-finished edits in the
+# working tree once came close to production. Without it (deploy-dev.sh), the
+# working tree ships as before.
 deploy_rsync() {
   DEPLOY_TOUCHED=1
+  local src="${ROOT_DIR}"
+  local extra=()
+  if [ -n "${2:-}" ]; then
+    src="$2"
+    # git archive stamps every file with the commit time, so size and mtime
+    # can't tell an edited file from an untouched one: compare contents.
+    extra=(--checksum)
+  fi
   # Ask Git for the source list instead of asking rsync to interpret every
   # .gitignore. Rsync's filter syntax does not implement Git's nested negate
   # rules correctly (tools/tz-harness/*.json hid its tracked package files).
-  # Tracked files always ship; untracked files ship only when Git says they
-  # are not ignored, preserving the deploy's established working-tree policy.
+  # From a snapshot: the commit's files. From the working tree: tracked files,
+  # plus untracked ones Git says are not ignored.
   # The explicit excludes remain a final backstop for secrets and dependencies.
-  git -C "${ROOT_DIR}" ls-files --cached --others --exclude-standard -z | \
-  rsync -azr --no-owner --no-group \
+  {
+    if [ -n "${2:-}" ]; then
+      git -C "${ROOT_DIR}" ls-tree -r -z --name-only "${DEPLOY_COMMIT}"
+    else
+      git -C "${ROOT_DIR}" ls-files --cached --others --exclude-standard -z
+    fi
+  } | \
+  rsync -azr --no-owner --no-group "${extra[@]}" \
     --from0 --files-from=- \
     --exclude '.git' \
     --exclude '.credentials' \
@@ -85,7 +105,7 @@ deploy_rsync() {
     --exclude '**/node_modules/***' \
     -e "ssh ${SSH_OPTS[*]}" \
     --rsync-path="sudo -n -u ${APP_USER} rsync" \
-    "${ROOT_DIR}/" "${REMOTE}:$1/"
+    "${src}/" "${REMOTE}:$1/"
 }
 
 deploy_on_exit() {
@@ -93,6 +113,7 @@ deploy_on_exit() {
   ssh -o "ControlPath=${SSH_CTL_DIR}/ctl" -O exit "${REMOTE}" >/dev/null 2>&1 || true
   rm -f "${SSH_CTL_DIR}/ctl"
   rmdir "${SSH_CTL_DIR}" 2>/dev/null || true
+  case "${DEPLOY_SNAPSHOT:-}" in /tmp/bc-deploy.*) rm -rf "${DEPLOY_SNAPSHOT}" ;; esac
   [ "${rc}" -eq 0 ] && return
   echo >&2
   if [ "${DEPLOY_TOUCHED}" = "1" ]; then

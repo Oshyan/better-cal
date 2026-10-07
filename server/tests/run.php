@@ -1509,6 +1509,26 @@ checkEq('all-day weekly in UTC unchanged', ['2026-08-31 00:00:00', '2026-09-02 0
     checkEq('reminders: evening reminder for a UTC-stored all-day day is due', ['1:20261010T000000Z:-1500'], array_map(static fn($d) => $d['key'], $rmDue));
 }
 
+// An outbound feed over its cap keeps the events nearest today: the oldest
+// past ones are left off, never the upcoming ones (#110).
+{
+    $odb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $odb->run("CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, title TEXT, start_utc TEXT, end_utc TEXT, rrule TEXT, attendance TEXT DEFAULT 'none', deleted_at TEXT)");
+    $now = Time::nowUtc();
+    $at = static fn(int $days): string => Time::toDb($now->modify(($days >= 0 ? '+' : '') . $days . ' days'));
+    foreach ([-300 => 'old past', -10 => 'recent past', 5 => 'soon', 40 => 'later', -2000 => 'old series'] as $d => $title) {
+        $odb->run('INSERT INTO events (user_id, calendar_id, title, start_utc, end_utc, rrule) VALUES (1, 1, ?, ?, ?, ?)',
+            [$title, $at($d), $at($d), $title === 'old series' ? 'FREQ=WEEKLY' : null]);
+    }
+    $oRc = new ReflectionClass(BetterCal\Domain\OutFeeds::class);
+    $oFeeds = $oRc->newInstanceWithoutConstructor();
+    $oRc->getProperty('db')->setValue($oFeeds, $odb);
+    $oTitles = static fn(int $max): array => array_map(static fn(array $e): string => $e['title'], $oRc->getMethod('nearest')->invoke($oFeeds, 1, ['type' => 'all'], $max));
+    checkEq('outfeed: under the cap, everything in the last year and every series, in date order', ['old series', 'old past', 'recent past', 'soon', 'later'], $oTitles(10));
+    checkEq('outfeed: over the cap, the oldest past events go first', ['old series', 'recent past', 'soon', 'later'], $oTitles(4));
+    checkEq('outfeed: a cap smaller than what is ahead keeps the nearest upcoming', ['old series', 'soon'], $oTitles(2));
+}
+
 // Undo right after a creation undoes the creation, not the change before it.
 {
     $udb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);

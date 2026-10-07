@@ -4,6 +4,19 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.21 (2026-10-06)
+
+- **Every open device refreshes after a change made anywhere.** Each successful change moves one per-person marker, and open devices check it every 30 seconds and when you come back to them. Before, renaming a person, editing an away or busy time, or a thumbs up or down didn't reach your other devices until a reload. Calendars reload with it.
+- **Clicking a weather, sunset or other context item while an event is open opens it,** the way clicking another event does. It used to take a second click: the first one only closed the open event.
+- **Plugin calendars don't get your default reminders,** so turning on sunsets doesn't mean a reminder every evening. A reminder set on one of their events still works.
+- **A Google calendar you add starts with the right role:** yours as Mine, Google's holidays and birthdays as Context, one shared with you or copied from a feed as Opportunities. Before, every Google calendar started as Opportunities, your own primary included. Calendars already added keep theirs.
+- **Disconnecting a Google account says when it would stop a move to Google,** with how many events were already uploaded, before you confirm.
+- **A feed you publish keeps the events nearest today.** Over its 5,000-event cap it used to leave off the furthest-out ones without a word; now the oldest past events go first, the feed's card in Settings says when it's trimmed, and `BETTERCAL_LIMIT_OUTFEED_EVENTS` raises the cap.
+- **Paused calendar subscriptions wait in Review,** as "Calendar updates paused", with **Keep updating** right there (from a browser; an API key can't decide it).
+- The `o` shortcut and its "Open full detail" command are gone; the full-page view they opened was removed in 0.7.2.
+
+Operators: migration 039 adds the change marker. `scripts/deploy.sh` now ships the last commit, not the working tree: commit before deploying, and uncommitted edits are left out (it says how many). Its tests run on exactly the files that ship.
+
 ## 0.9.20 (2026-10-06)
 
 - **Undo right after creating something undoes that creation.** The Undo on the "Event created" toast (and the other "created" toasts, and an agent's `undo`) skipped the creation and reverted whatever you had changed before it, leaving the new event in place. It now removes what was just created. Found by the docs review.

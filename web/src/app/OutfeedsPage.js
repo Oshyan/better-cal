@@ -131,6 +131,7 @@ export function OutfeedsSection() {
             <span class="bc-badge">${scopeLabel(f.scope)}</span>
           </div>
           ${f.description && html`<div class="bc-card-sub">${f.description}</div>`}
+          ${f.eventCount != null && f.eventCount > f.eventLimit && html`<div class="bc-card-sub">Covers ${f.eventCount.toLocaleString()} events; the ${f.eventLimit.toLocaleString()} nearest to today are included (BETTERCAL_LIMIT_OUTFEED_EVENTS raises it).</div>`}
           <code class="bc-outfeed-url" title=${f.url}>${f.url}</code>
         </div>
         <div class="bc-card-actions">

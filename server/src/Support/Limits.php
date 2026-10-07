@@ -38,6 +38,10 @@ final class Limits
         // worker's memory on every poll (scan 2026-09-23, F8). Also capped by
         // the memory PHP really has, see feedEventBudget().
         'FEED_EVENTS' => 20000,
+        // One outbound feed you publish. Calendar apps fetch it on their own
+        // schedule and each fetch builds the whole file; over the cap the
+        // oldest past events are left off first (#110).
+        'OUTFEED_EVENTS' => 5000,
         // One CalDAV object (one event plus its overrides) from a client.
         'DAV_OBJECT_BYTES' => 1048576,   // 1 MiB
         'DAV_OVERRIDES' => 500,

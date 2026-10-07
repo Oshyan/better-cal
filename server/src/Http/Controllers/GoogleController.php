@@ -55,10 +55,26 @@ final class GoogleController
     public function status(Request $req): Response
     {
         $userId = (int) $req->user['id'];
-        return Response::json([
-            'configured' => $this->auth->configured(),
-            'accounts' => array_map([GoogleAuth::class, 'serializeAccount'], $this->auth->accounts($userId)),
-        ]);
+        // Moves to Google that haven't finished, per account: disconnecting
+        // cancels them, and the confirmation says so before it happens.
+        $unfinished = [];
+        foreach ($this->db->all(
+            "SELECT m.google_account_id, m.status, m.total, m.done_count, c.name FROM calendar_moves m
+             JOIN calendars c ON c.id = m.calendar_id
+             WHERE m.user_id = ? AND m.status IN ('queued', 'running', 'failed') AND m.cancelled_at IS NULL
+             ORDER BY m.id",
+            [$userId]
+        ) as $m) {
+            $unfinished[(int) $m['google_account_id']][] = [
+                'calendarName' => (string) $m['name'], 'status' => (string) $m['status'],
+                'done' => (int) $m['done_count'], 'total' => (int) $m['total'],
+            ];
+        }
+        $accounts = array_map(
+            static fn(array $a): array => GoogleAuth::serializeAccount($a) + ['unfinishedMoves' => $unfinished[(int) $a['id']] ?? []],
+            $this->auth->accounts($userId)
+        );
+        return Response::json(['configured' => $this->auth->configured(), 'accounts' => $accounts]);
     }
 
     public function connect(Request $req): Response

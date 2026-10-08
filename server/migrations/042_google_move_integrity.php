@@ -158,12 +158,45 @@ return static function (Db $db): string {
     } else {
         if (!$hasColumn('active_calendar_id')) {
             $db->run(
-                "ALTER TABLE `calendar_moves` ADD COLUMN `active_calendar_id` BIGINT UNSIGNED
-                 GENERATED ALWAYS AS (
-                    CASE WHEN `status` IN ('queued', 'running') AND `cancelled_at` IS NULL THEN `calendar_id` ELSE NULL END
-                 ) STORED AFTER `current_event_marker`"
+                'ALTER TABLE `calendar_moves` ADD COLUMN `active_calendar_id` BIGINT UNSIGNED NULL AFTER `current_event_marker`'
             );
             $added++;
+        }
+        // A STORED generated column would be attractive here, but adding one
+        // rebuilds this table on MySQL 8.4. Existing foreign keys are then
+        // re-created and some valid upgraded schemas are rejected with 1215.
+        // A normal nullable key plus BEFORE triggers preserves the same
+        // database-owned invariant without rebuilding the table.
+        $activeExtra = strtolower((string) $db->scalar(
+            "SELECT EXTRA FROM information_schema.COLUMNS
+             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'calendar_moves' AND COLUMN_NAME = 'active_calendar_id'"
+        ));
+        $activeGenerated = str_contains($activeExtra, 'generated');
+        if (!$activeGenerated) {
+            $db->run(
+                "UPDATE calendar_moves
+                 SET active_calendar_id = CASE
+                    WHEN status IN ('queued', 'running') AND cancelled_at IS NULL THEN calendar_id
+                    ELSE NULL END"
+            );
+            if (!$hasTrigger('trg_calendar_moves_active_key_insert')) {
+                $db->run(
+                    "CREATE TRIGGER trg_calendar_moves_active_key_insert
+                     BEFORE INSERT ON calendar_moves FOR EACH ROW
+                     SET NEW.active_calendar_id = CASE
+                        WHEN NEW.status IN ('queued', 'running') AND NEW.cancelled_at IS NULL THEN NEW.calendar_id
+                        ELSE NULL END"
+                );
+            }
+            if (!$hasTrigger('trg_calendar_moves_active_key_update')) {
+                $db->run(
+                    "CREATE TRIGGER trg_calendar_moves_active_key_update
+                     BEFORE UPDATE ON calendar_moves FOR EACH ROW
+                     SET NEW.active_calendar_id = CASE
+                        WHEN NEW.status IN ('queued', 'running') AND NEW.cancelled_at IS NULL THEN NEW.calendar_id
+                        ELSE NULL END"
+                );
+            }
         }
         if (!$hasIndex('uq_calendar_moves_active')) {
             $db->run('CREATE UNIQUE INDEX `uq_calendar_moves_active` ON `calendar_moves` (`active_calendar_id`)');

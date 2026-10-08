@@ -4,6 +4,12 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.35 (2026-10-07)
+
+- **Migration 042 no longer rebuilds the existing Google-move table to add its active-move uniqueness key.** MySQL 8.4 could reject that rebuild while re-creating valid historical foreign keys. A normal nullable key maintained by database insert/update triggers enforces the same one-active-move rule without rebuilding the table.
+
+Operators: this fixes the migration failure possible in 0.9.33–0.9.34. The migration is restart-safe; an interrupted deployment retains its pause marker and rerunning 0.9.35 completes the remaining steps.
+
 ## 0.9.34 (2026-10-07)
 
 - **The one-time migration-042 deployment can pause and restore worker scheduling when its temporary files are private to the privileged deploy identity.** The filtered schedule is now passed to the application user's `crontab` over standard input instead of asking that user to open the privileged temporary pathname.

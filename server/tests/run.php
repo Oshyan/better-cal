@@ -5281,6 +5281,12 @@ require __DIR__ . '/plugins.php';
     $mdb->run("INSERT INTO calendar_moves (user_id, calendar_id, google_account_id, status, total, done_count) VALUES (1, 2, 7, 'running', 2, 1)");
     $legacyMoveId = (int) $mdb->pdo()->lastInsertId();
     $migrate042 = require __DIR__ . '/../migrations/042_google_move_integrity.php';
+    $migration042Source = (string) file_get_contents(__DIR__ . '/../migrations/042_google_move_integrity.php');
+    check('migration 042: MySQL active-move key avoids a generated-column table rebuild',
+        !str_contains($migration042Source, 'GENERATED ALWAYS AS'));
+    check('migration 042: MySQL keeps the active-move key database-owned with insert and update triggers',
+        str_contains($migration042Source, 'trg_calendar_moves_active_key_insert')
+        && str_contains($migration042Source, 'trg_calendar_moves_active_key_update'));
     $migrate042($mdb);
     $migrate042($mdb);
     $moveColumns = array_column($mdb->all('PRAGMA table_info(`calendar_moves`)'), 'name');

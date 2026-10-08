@@ -2706,12 +2706,14 @@ if (class_exists(\Sabre\VObject\Reader::class)) { // needs sabre/vobject (the in
         $fRequireInstance->invoke($fEvents, ['instanceStart' => '2026-11-03T09:00:00-08:00'], $fMon));
 }
     $fEdit = static fn(string $s, string $e): array => ['scope' => 'all', 'instanceStart' => '2026-11-02T09:00:00-08:00', 'title' => 'Renamed', 'start' => $s, 'end' => $e];
+if (class_exists(\Sabre\VObject\Reader::class)) { // rebase now proves the occurrence through sabre/vobject
     $fOut = $fRebase->invoke($fEvents, $fMon, $fEdit('2026-11-02T09:00:00-08:00', '2026-11-02T10:00:00-08:00'));
     check('series edit from a later occurrence, times untouched: the series start stays', !isset($fOut['start']) && $fOut['title'] === 'Renamed');
     $fOut = $fRebase->invoke($fEvents, $fMon, $fEdit('2026-11-02T10:00:00-08:00', '2026-11-02T11:30:00-08:00'));
     checkEq('series edit to 10:00 moves the series start to 10:00 on its own first day', ['2026-10-05T10:00:00-07:00', '2026-10-05T11:30:00-07:00'], [$fOut['start'], $fOut['end']]);
     $fOut = $fRebase->invoke($fEvents, $fMon, $fEdit('2026-11-03T09:00:00-08:00', '2026-11-03T10:00:00-08:00'));
     checkEq('series edit a day later moves the series a day later', '2026-10-06T09:00:00-07:00', $fOut['start']);
+}
     $fShift = (new ReflectionClass(BetterCal\Domain\Events::class))->getMethod('seriesKeyShift');
     $fMap = $fShift->invoke(null, $fMon, ['start_utc' => '2026-10-05 17:00:00', 'end_utc' => '2026-10-05 18:00:00'] + $fMon);
     checkEq('series moved to 10:00: skipped and edited days keep their place, across DST', ['2026-10-12 17:00:00', '2026-11-02 18:00:00'], [$fMap('2026-10-12 16:00:00'), $fMap('2026-11-02 17:00:00')]);
@@ -2729,8 +2731,10 @@ if (class_exists(\Sabre\VObject\Reader::class)) { // needs sabre/vobject (the in
     check('pattern ignores bounds', Recurrence::pattern('FREQ=WEEKLY;BYDAY=MO;COUNT=8') === Recurrence::pattern('FREQ=WEEKLY;UNTIL=20261201;BYDAY=MO'));
     $fAlign = (new ReflectionClass(BetterCal\Domain\Events::class))->getMethod('alignedStart');
     checkEq('align: a Thursday 9:00 start of a Mon/Wed/Fri series moves to Friday 9:00', ['start_utc' => '2026-10-09 16:00:00', 'end_utc' => '2026-10-09 17:00:00'], $fAlign->invoke(null, ['rrule' => 'FREQ=WEEKLY;BYDAY=MO,WE,FR', 'start_utc' => '2026-10-08 16:00:00', 'end_utc' => '2026-10-08 17:00:00'] + $fMon));
+if (class_exists(\Sabre\VObject\Reader::class)) { // rebase now proves the occurrence through sabre/vobject
     $fOut = $fRebase->invoke($fEvents, ['rrule' => 'FREQ=WEEKLY;BYDAY=MO'] + $fMon, $fEdit('2026-11-03T09:00:00-08:00', '2026-11-03T10:00:00-08:00'));
     checkEq('series moved Monday to Tuesday: its day moves too', ['2026-10-06T09:00:00-07:00', 'FREQ=WEEKLY;BYDAY=TU'], [$fOut['start'], $fOut['rrule'] ?? null]);
+}
 
     // "This and following" on a series with a COUNT keeps what is left of it.
     $fFollow = (new ReflectionClass(BetterCal\Domain\Events::class))->getMethod('followingRrule');

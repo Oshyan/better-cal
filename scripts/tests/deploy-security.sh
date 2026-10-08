@@ -144,6 +144,7 @@ if [[ "${deploy_source}" == *'migration-applied.php'* \
   && "${deploy_source}" == *'bootstrap_present'* \
   && "${deploy_source}" == *'sudo -n test ! -e'* \
   && "${deploy_source}" == *'crontab -l'* \
+  && "${deploy_source}" == *'crontab - <"${cron_after}"'* \
   && "${deploy_source}" == *'process_status'* \
   && "${deploy_source}" == *'pgrep -u'* ]]; then
   ok

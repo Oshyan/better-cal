@@ -4,6 +4,12 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.34 (2026-10-07)
+
+- **The one-time migration-042 deployment can pause and restore worker scheduling when its temporary files are private to the privileged deploy identity.** The filtered schedule is now passed to the application user's `crontab` over standard input instead of asking that user to open the privileged temporary pathname.
+
+Operators: this fixes the first-upgrade deployment path introduced in 0.9.33. An interrupted attempt keeps its restart marker; rerun the 0.9.34 deploy with `MOVE_INTEGRITY_QUIESCED=1` to finish the migration and restore request and worker traffic.
+
 ## 0.9.33 (2026-10-07)
 
 - **Moving a local calendar to Google is now one coherent operation.** Calendar, event, CalDAV, trip and Undo changes cannot race the upload or silently disappear from the destination. The calendar is briefly read-only while moving; if an upload stops partway through, choose **Try again** or **Stop move and keep local** before editing it again.

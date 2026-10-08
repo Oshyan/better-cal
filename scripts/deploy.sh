@@ -158,7 +158,9 @@ else
   : >"${cron_before}"
 fi
 awk -v worker="${APP_DIR}/server/bin/worker.php" 'index($0, worker) == 0' "${cron_before}" >"${cron_after}"
-sudo -n -u "${APP_USER}" -- crontab "${cron_after}"
+# The shell creates this private temporary as the privileged deploy identity.
+# Feed it over stdin so crontab never asks APP_USER to open a root-owned path.
+sudo -n -u "${APP_USER}" -- crontab - <"${cron_after}"
 sudo -n -u "${APP_USER}" -- crontab -l >"${cron_before}"
 if awk -v worker="${APP_DIR}/server/bin/worker.php" 'index($0, worker) > 0 { found=1 } END { exit found ? 0 : 1 }' "${cron_before}"; then
   echo "Worker scheduling is still active; traffic was not treated as quiesced." >&2

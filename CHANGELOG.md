@@ -4,6 +4,14 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.30 (2026-10-07)
+
+- **A first-time emailed invitation waits in Review before it becomes an event.** Choose **Add to calendar** to create it (no reply is sent); Accept, Maybe and Decline work as before after that. Updates to an invitation you already have are applied in order, and a change claiming to come from a different organizer waits for your choice. Bookings, tickets and confirmations read from email still land automatically. At most 100 invitations can wait at once.
+- **No real personal data in the code, tests or docs.** Examples, test data and notes that had been built from the maintainer's own calendar, mail, trips and server now use invented people, places and numbers. Two plugin defaults changed with it: **visit-intents** starts with an empty wishlist, and **tides** has no default station (set one in the plugin's settings; until then it fetches nothing). Its daylight low-tide window now uses your own time zone instead of a fixed Pacific offset.
+- The quick-add and editor placeholders and the test push notification use invented places.
+
+Operators: no migration. If you use the tides plugin without having set a station, set one (the old built-in default station is gone). `scripts/deploy.sh` now copies Composer's libraries into its test snapshot instead of linking them, so the pre-flight tests run the exact commit being shipped (before, they could load the working tree's code).
+
 ## 0.9.29 (2026-10-07)
 
 - **A broken or exceptionally large Google calendar cannot monopolize the shared worker.** One poll now shares item, response-size, page, elapsed-time and memory bounds across every page and a stale-token retry. Cached events and the previous sync position remain intact when a safety limit is reached, the calendar reports why it paused, and the worker continues to its other jobs.

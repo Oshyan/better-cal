@@ -434,7 +434,7 @@ final class HttpClient
                     return $bytes;
                 },
             ]);
-            curl_exec($ch);
+            $completed = curl_exec($ch);
             $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
             $redirect = (string) (curl_getinfo($ch, CURLINFO_REDIRECT_URL) ?: '');
             $err = curl_errno($ch) !== 0 ? curl_error($ch) : null;
@@ -445,8 +445,11 @@ final class HttpClient
             if ($totalOverflow || ($batch !== null && $batch->overflow)) {
                 throw new \RuntimeException('HTTP cumulative response budget exceeded');
             }
-            if ($err !== null && $status === 0) {
-                throw new \RuntimeException('HTTP error for ' . $host . ': ' . $err);
+            // Headers (including a 200) can arrive before a timeout, reset or
+            // short Content-Length. A partial body is never a successful
+            // response; callers may otherwise reconcile it as authoritative.
+            if ($completed === false || $err !== null) {
+                throw new \RuntimeException('HTTP error for ' . $host . ($err !== null ? ': ' . $err : ''));
             }
             if ($status >= 300 && $status < 400 && $redirect !== '') {
                 $url = $redirect; // loop re-runs full policy on the new URL

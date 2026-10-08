@@ -265,14 +265,22 @@ final class Geocode
             if ((int) ($r['population'] ?? 0) < self::SECONDARY_MIN_POPULATION) {
                 continue; // small place: no better than what we already have
             }
+            try {
+                $coords = Coordinates::pair($r['latitude'], $r['longitude']);
+            } catch (\InvalidArgumentException) {
+                continue;
+            }
+            if ($coords === null) {
+                continue;
+            }
             $parts = array_filter([
                 is_string($r['name'] ?? null) ? $r['name'] : null,
                 is_string($r['admin1'] ?? null) ? $r['admin1'] : null,
                 is_string($r['country'] ?? null) ? $r['country'] : null,
             ]);
             return [
-                'lat' => (float) $r['latitude'],
-                'lng' => (float) $r['longitude'],
+                'lat' => $coords[0],
+                'lng' => $coords[1],
                 'display' => implode(', ', $parts),
                 // This provider only indexes populated places, and it only
                 // overrides on a major one, so anything reaching here is a city.
@@ -312,6 +320,14 @@ final class Geocode
         if (!is_array($coords) || count($coords) < 2 || !is_numeric($coords[0]) || !is_numeric($coords[1])) {
             return null;
         }
+        try {
+            $point = Coordinates::pair($coords[1], $coords[0]);
+        } catch (\InvalidArgumentException) {
+            return null;
+        }
+        if ($point === null) {
+            return null;
+        }
         $props = is_array($feature['properties'] ?? null) ? $feature['properties'] : [];
         $parts = [];
         foreach (['name', 'street', 'city', 'state', 'country'] as $key) {
@@ -321,8 +337,8 @@ final class Geocode
             }
         }
         return [
-            'lat' => (float) $coords[1],
-            'lng' => (float) $coords[0],
+            'lat' => $point[0],
+            'lng' => $point[1],
             'display' => implode(', ', $parts),
             // What sort of place this is, so a caller can tell a region from a
             // spot without running its own geocoder to find out.
@@ -341,9 +357,17 @@ final class Geocode
         if (!isset($row['lat'], $row['lng'])) {
             return ['lat' => null, 'lng' => null, 'display' => null, 'kind' => null];
         }
+        try {
+            $point = Coordinates::pair($row['lat'], $row['lng']);
+        } catch (\InvalidArgumentException) {
+            return ['lat' => null, 'lng' => null, 'display' => null, 'kind' => null];
+        }
+        if ($point === null) {
+            return ['lat' => null, 'lng' => null, 'display' => null, 'kind' => null];
+        }
         return [
-            'lat' => (float) $row['lat'],
-            'lng' => (float) $row['lng'],
+            'lat' => $point[0],
+            'lng' => $point[1],
             'display' => isset($row['display']) ? (string) $row['display'] : null,
             'kind' => isset($row['kind']) && $row['kind'] !== null ? (string) $row['kind'] : null,
         ];

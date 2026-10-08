@@ -10,7 +10,7 @@ import { api } from './api.js';
 import { PinIcon } from '../ui/icons.js';
 import { fmtDateFull, untilDayKey, dateOfDayKey } from '../lib/dates.js';
 import { splitUrlTail } from '../lib/richtext.js';
-import { mapMosaic, stadiaStyle, mapTilerStyle, isPendingLocation } from '../lib/maps.js';
+import { mapMosaic, stadiaStyle, mapTilerStyle, isPendingLocation, validCoordinates } from '../lib/maps.js';
 
 // --- recurrence in words ----------------------------------------------------
 
@@ -155,22 +155,23 @@ export function MiniMap({ lat, lng, location }) {
   const [img, setImg] = useState('loading'); // 'loading' | 'ok' | 'error'
   const loadedRef = useRef(0);
   const dark = state.darkMode;
-  const mosaic = mapMosaic(lat, lng, {
+  const point = validCoordinates(lat, lng);
+  const mosaic = point && mapMosaic(point.lat, point.lng, {
     maptilerKey: state.config && state.config.maptilerKey,
     style: state.settings && state.settings.mapStyle,
     retina: (window.devicePixelRatio || 1) > 1,
     dark,
   });
-  const wantLeaflet = interactive || img === 'error' || !mosaic;
+  const wantLeaflet = !!point && (interactive || img === 'error' || !mosaic);
   const tileLoaded = () => { if (mosaic && ++loadedRef.current >= mosaic.tiles.length) setImg('ok'); };
 
   useEffect(() => {
-    if (!wantLeaflet) return undefined;
+    if (!wantLeaflet || !point) return undefined;
     let disposed = false;
     loadLeaflet().then((L) => {
       if (disposed || !elRef.current) return;
       const map = L.map(elRef.current, {
-        center: [lat, lng],
+        center: [point.lat, point.lng],
         zoom: 15,
         dragging: false,
         scrollWheelZoom: false,
@@ -189,7 +190,7 @@ export function MiniMap({ lat, lng, location }) {
         iconAnchor: [12, 41],
         shadowSize: [41, 41],
       });
-      L.marker([lat, lng], { icon, title: location || '' }).addTo(map);
+      L.marker([point.lat, point.lng], { icon, title: location || '' }).addTo(map);
       mapRef.current = map;
       if (interactive) enableOn(map, L);
     }).catch(() => { /* no map is a fine map */ });
@@ -200,7 +201,7 @@ export function MiniMap({ lat, lng, location }) {
         mapRef.current = null;
       }
     };
-  }, [lat, lng, wantLeaflet, dark]); // eslint-disable-line
+  }, [point && point.lat, point && point.lng, wantLeaflet, dark]); // eslint-disable-line
 
   const enable = () => {
     setInteractive(true);
@@ -208,6 +209,7 @@ export function MiniMap({ lat, lng, location }) {
     if (map && window.L) enableOn(map, window.L);
   };
 
+  if (!point) return null;
   return html`<div class="bc-map-wrap">
     ${wantLeaflet
       ? html`<div class="bc-map" ref=${elRef}></div>`
@@ -251,8 +253,9 @@ export function useEventGeo(occ, active) {
   const location = occ ? occ.location : null;
   useEffect(() => {
     if (!instanceId || !occ) { setGeo(null); return undefined; }
-    if (occ.locationLat != null && occ.locationLng != null) {
-      setGeo({ status: 'ok', lat: occ.locationLat, lng: occ.locationLng });
+    const stored = validCoordinates(occ.locationLat, occ.locationLng);
+    if (stored) {
+      setGeo({ status: 'ok', ...stored });
       return undefined;
     }
     if (!location || !location.trim() || isPendingLocation(location)) { setGeo(null); return undefined; }
@@ -272,19 +275,20 @@ export function useEventGeo(occ, active) {
     api('/geocode?' + params)
       .then((res) => {
         if (!alive) return;
-        if (res && res.lat != null && res.lng != null) {
-          setGeo({ status: 'ok', lat: res.lat, lng: res.lng });
+        const point = res && validCoordinates(res.lat, res.lng);
+        if (point) {
+          setGeo({ status: 'ok', ...point });
           if (occ.source === 'local') {
             // Persist quietly; failure just means we geocode again next time.
             api('/events/' + occ.eventId, {
               method: 'PATCH',
               body: {
-                locationLat: res.lat,
-                locationLng: res.lng,
+                locationLat: point.lat,
+                locationLng: point.lng,
                 ...(occ.recurring ? { scope: 'all' } : {}),
               },
             }).catch(() => {});
-            patchOccurrence(occ.instanceId, { locationLat: res.lat, locationLng: res.lng });
+            patchOccurrence(occ.instanceId, { locationLat: point.lat, locationLng: point.lng });
           }
         } else {
           setGeo({ status: 'none' });

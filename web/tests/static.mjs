@@ -159,6 +159,18 @@ for (const file of files) {
     'system health must match this device by an endpoint hash, not the raw endpoint');
 }
 
+// --- 8. stored event data cannot set unbounded client loop/navigation work --
+{
+  const reschedule = readFileSync(join(root, 'ui', 'RescheduleMode.js'), 'utf8');
+  const sheet = readFileSync(join(root, 'app', 'EventSheetBody.js'), 'utf8');
+  const check = (ok, msg) => { if (ok) passed++; else fail(msg); };
+  check(reschedule.includes("scope.querySelectorAll('[data-day]')") && !reschedule.includes('i <= spanDays'),
+    'reschedule highlighting must walk rendered cells, not every stored event day');
+  check(sheet.includes('const sourceUrl = safeWebUrl(occ.url)') && sheet.includes("window.open(sourceUrl, '_blank', 'noopener')")
+      && sheet.includes('href=${sourceUrl}') && !sheet.includes("window.open(occ.url") && !sheet.includes('href=${occ.url}'),
+    'event source navigation must revalidate legacy stored URLs at the click sink');
+}
+
 console.log('');
 console.log(passed + ' checks passed, ' + failed + ' failed (' + files.length + ' modules)');
 if (failed > 0) process.exit(1);

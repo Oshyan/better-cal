@@ -19,6 +19,15 @@ final class Recurrence
     // window the API allows (two years), so the app's own requests never hit
     // it; a series that does (hourly, say) is reported, not cut silently (#23).
     public const MAX_INSTANCES = 1000;
+    public const MAX_RRULE_BYTES = 2048;
+    public const MAX_RRULE_PARTS = 16;
+    public const MAX_RRULE_VALUES = 366;
+    public const MAX_RRULE_TOTAL_VALUES = 512;
+    /** Maximum raw selector combinations an accepted rule may ask the iterator to consider. */
+    public const MAX_RRULE_CANDIDATES = 4096;
+    /** Largest INTERVAL / COUNT accepted from outside. Anything beyond is not a real calendar. */
+    public const MAX_INTERVAL = 1000;
+    public const MAX_COUNT = 100000;
 
     private const ALLOWED_RRULE_KEYS = [
         'FREQ', 'UNTIL', 'COUNT', 'INTERVAL', 'BYSECOND', 'BYMINUTE', 'BYHOUR',
@@ -248,6 +257,9 @@ final class Recurrence
         if ($rrule === '') {
             throw HttpError::badRequest('Empty RRULE', 'invalid_rrule');
         }
+        if (strlen($rrule) > self::MAX_RRULE_BYTES) {
+            throw HttpError::badRequest('RRULE is too long', 'invalid_rrule');
+        }
         $parts = self::rruleParts($rrule);
         if (!isset($parts['FREQ']) || !in_array($parts['FREQ'], self::FREQS, true)) {
             throw HttpError::badRequest('RRULE must contain a valid FREQ', 'invalid_rrule');
@@ -260,12 +272,25 @@ final class Recurrence
                 throw HttpError::badRequest("Empty RRULE value for $key", 'invalid_rrule');
             }
         }
-        if (isset($parts['INTERVAL']) && (!ctype_digit($parts['INTERVAL']) || (int) $parts['INTERVAL'] < 1)) {
-            throw HttpError::badRequest('Invalid RRULE INTERVAL', 'invalid_rrule');
+        if (isset($parts['INTERVAL'])) {
+            $interval = $parts['INTERVAL'];
+            if (!ctype_digit($interval) || strlen($interval) > 6) {
+                throw HttpError::badRequest('Invalid RRULE INTERVAL', 'invalid_rrule');
+            }
+            if ((int) $interval < 1 || (int) $interval > self::MAX_INTERVAL) {
+                throw HttpError::badRequest('RRULE INTERVAL is too large', 'invalid_rrule');
+            }
         }
-        if (isset($parts['COUNT']) && (!ctype_digit($parts['COUNT']) || (int) $parts['COUNT'] < 1)) {
-            throw HttpError::badRequest('Invalid RRULE COUNT', 'invalid_rrule');
+        if (isset($parts['COUNT'])) {
+            $count = $parts['COUNT'];
+            if (!ctype_digit($count) || strlen($count) > 6) {
+                throw HttpError::badRequest('Invalid RRULE COUNT', 'invalid_rrule');
+            }
+            if ((int) $count < 1 || (int) $count > self::MAX_COUNT) {
+                throw HttpError::badRequest('RRULE COUNT is too large', 'invalid_rrule');
+            }
         }
+        self::validatePartValues($parts);
         $normalized = self::joinParts($parts);
         if (class_exists(\Sabre\VObject\Recur\RRuleIterator::class)) {
             try {
@@ -280,8 +305,15 @@ final class Recurrence
     /** @return array<string,string> */
     public static function rruleParts(string $rrule): array
     {
+        if (strlen($rrule) > self::MAX_RRULE_BYTES) {
+            throw HttpError::badRequest('RRULE is too long', 'invalid_rrule');
+        }
         $parts = [];
-        foreach (explode(';', strtoupper(trim($rrule))) as $piece) {
+        $pieces = explode(';', strtoupper(trim($rrule)));
+        if (count($pieces) > self::MAX_RRULE_PARTS) {
+            throw HttpError::badRequest('RRULE has too many parts', 'invalid_rrule');
+        }
+        foreach ($pieces as $piece) {
             if ($piece === '') {
                 continue;
             }
@@ -289,9 +321,73 @@ final class Recurrence
                 throw HttpError::badRequest("Malformed RRULE part: $piece", 'invalid_rrule');
             }
             [$k, $v] = explode('=', $piece, 2);
-            $parts[trim($k)] = trim($v);
+            $k = trim($k);
+            if (array_key_exists($k, $parts)) {
+                throw HttpError::badRequest("Duplicate RRULE part: $k", 'invalid_rrule');
+            }
+            $parts[$k] = trim($v);
         }
         return $parts;
+    }
+
+    /** @param array<string,string> $parts */
+    private static function validatePartValues(array $parts): void
+    {
+        $total = 0;
+        $candidateProduct = 1;
+        $numericRanges = [
+            'BYSECOND' => [0, 60], 'BYMINUTE' => [0, 59], 'BYHOUR' => [0, 23],
+            'BYMONTHDAY' => [-31, 31], 'BYYEARDAY' => [-366, 366],
+            'BYWEEKNO' => [-53, 53], 'BYMONTH' => [1, 12], 'BYSETPOS' => [-366, 366],
+        ];
+        foreach ($parts as $key => $value) {
+            if (!str_starts_with($key, 'BY')) {
+                continue;
+            }
+            $values = explode(',', $value);
+            $total += count($values);
+            if (count($values) > self::MAX_RRULE_VALUES || $total > self::MAX_RRULE_TOTAL_VALUES) {
+                throw HttpError::badRequest('RRULE has too many list values', 'invalid_rrule');
+            }
+            // Output caps do not bound the iterator's work: BY* lists are
+            // combined before BYSETPOS and before occurrences are yielded.
+            // Bound that cross-product without multiplying past PHP_INT_MAX.
+            // BYSETPOS selects from candidates rather than creating them.
+            if ($key !== 'BYSETPOS') {
+                $count = count($values);
+                if ($candidateProduct > intdiv(self::MAX_RRULE_CANDIDATES, $count)) {
+                    throw HttpError::badRequest('RRULE creates too many candidate combinations', 'invalid_rrule');
+                }
+                $candidateProduct *= $count;
+            }
+            foreach ($values as $item) {
+                if ($item === '') {
+                    throw HttpError::badRequest("Invalid RRULE $key value", 'invalid_rrule');
+                }
+                if ($key === 'BYDAY') {
+                    if (preg_match('/^([+-]?\d{1,2})?(MO|TU|WE|TH|FR|SA|SU)$/', $item, $m) !== 1
+                        || (isset($m[1]) && $m[1] !== '' && ((int) $m[1] === 0 || abs((int) $m[1]) > 53))
+                    ) {
+                        throw HttpError::badRequest('Invalid RRULE BYDAY value', 'invalid_rrule');
+                    }
+                    continue;
+                }
+                [$min, $max] = $numericRanges[$key] ?? [null, null];
+                if ($min === null || preg_match('/^[+-]?\d+$/', $item) !== 1) {
+                    throw HttpError::badRequest("Invalid RRULE $key value", 'invalid_rrule');
+                }
+                $number = (int) $item;
+                if ($number < $min || $number > $max || ($number === 0 && !in_array($key, ['BYSECOND', 'BYMINUTE', 'BYHOUR'], true))) {
+                    throw HttpError::badRequest("Invalid RRULE $key value", 'invalid_rrule');
+                }
+            }
+        }
+        if (isset($parts['WKST']) && preg_match('/^(MO|TU|WE|TH|FR|SA|SU)$/', $parts['WKST']) !== 1) {
+            throw HttpError::badRequest('Invalid RRULE WKST', 'invalid_rrule');
+        }
+        if (isset($parts['UNTIL']) && preg_match('/^\d{8}(T\d{6}Z?)?$/', $parts['UNTIL']) !== 1) {
+            throw HttpError::badRequest('Invalid RRULE UNTIL', 'invalid_rrule');
+        }
     }
 
     private static function joinParts(array $parts): string
@@ -420,10 +516,6 @@ final class Recurrence
      *
      * @return int periods to advance (0 = leave DTSTART alone)
      */
-    /** Largest INTERVAL / COUNT accepted from outside. Anything beyond is not a real calendar. */
-    public const MAX_INTERVAL = 1000;
-    public const MAX_COUNT = 100000;
-
     /**
      * An RRULE from a feed, an import, CalDAV, Google or mail, made safe to
      * store and expand: null (no recurrence, so the event stays as a single
@@ -439,17 +531,11 @@ final class Recurrence
         if ($rrule === '') {
             return null;
         }
-        $parts = self::rruleParts($rrule);
-        foreach (['INTERVAL' => self::MAX_INTERVAL, 'COUNT' => self::MAX_COUNT] as $key => $max) {
-            if (!isset($parts[$key])) {
-                continue;
-            }
-            $v = $parts[$key];
-            if (!ctype_digit($v) || strlen($v) > 6 || (int) $v < 1 || (int) $v > $max) {
-                return null;
-            }
+        try {
+            return self::validateRrule($rrule);
+        } catch (\Throwable) {
+            return null;
         }
-        return $rrule;
     }
 
     public static function skippablePeriods(string $rrule, \DateTimeImmutable $dtStart, \DateTimeImmutable $target): int
@@ -471,7 +557,11 @@ final class Recurrence
         if ($freq !== 'DAILY' && $freq !== 'WEEKLY') {
             return 0;
         }
-        $interval = max(1, (int) ($parts['INTERVAL'] ?? 1));
+        $rawInterval = $parts['INTERVAL'] ?? '1';
+        if (!ctype_digit($rawInterval) || strlen($rawInterval) > 6) {
+            return 0;
+        }
+        $interval = max(1, (int) $rawInterval);
         if ($interval > self::MAX_INTERVAL) {
             return 0; // rows stored before safeRrule existed: no skipping, never overflow
         }

@@ -11,10 +11,10 @@ namespace BetterCal\Support;
  */
 final class Patterns
 {
-    /** @var array{meetings:list<array{name:string,pattern:string}>,pendingLocation:list<string>}|null */
+    /** @var array{meetings:list<array{name:string,hosts:list<string>,subdomains:bool}>,pendingLocation:list<string>}|null */
     private static ?array $data = null;
 
-    /** @return array{meetings:list<array{name:string,pattern:string}>,pendingLocation:list<string>} */
+    /** @return array{meetings:list<array{name:string,hosts:list<string>,subdomains:bool}>,pendingLocation:list<string>} */
     public static function all(): array
     {
         if (self::$data === null) {
@@ -36,9 +36,32 @@ final class Patterns
     /** The first meeting link in $text: [url, provider name], or null. */
     public static function meetingLink(string $text): ?array
     {
-        foreach (self::all()['meetings'] as $m) {
-            if (preg_match(self::regex((string) $m['pattern']), $text, $hit) === 1) {
-                return [rtrim($hit[0], '.,;)'), (string) $m['name']];
+        preg_match_all('~https://[^\s<>"\')]+~i', $text, $matches);
+        foreach ($matches[0] ?? [] as $candidate) {
+            $url = rtrim((string) $candidate, '.,;:!?]');
+            if ($url === '' || strlen($url) > 2048) {
+                continue;
+            }
+            $parts = parse_url($url);
+            if (!is_array($parts)
+                || strtolower((string) ($parts['scheme'] ?? '')) !== 'https'
+                || trim((string) ($parts['host'] ?? '')) === ''
+                || isset($parts['user']) || isset($parts['pass']) || isset($parts['port'])
+                || !isset($parts['path']) || $parts['path'] === '' || $parts['path'] === '/'
+            ) {
+                continue;
+            }
+            $host = strtolower((string) $parts['host']);
+            if (str_ends_with($host, '.')) {
+                continue;
+            }
+            foreach (self::all()['meetings'] as $m) {
+                foreach ((array) ($m['hosts'] ?? []) as $base) {
+                    $base = strtolower((string) $base);
+                    if ($host === $base || (!empty($m['subdomains']) && str_ends_with($host, '.' . $base))) {
+                        return [$url, (string) $m['name']];
+                    }
+                }
             }
         }
         return null;

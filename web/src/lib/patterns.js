@@ -3,15 +3,15 @@
 // different set of meeting links and "address comes later" phrases than the
 // app). The server reads this file as JSON (server/src/Support/Patterns.php),
 // so after the comments it must stay exactly `export default <JSON>;`.
-// Patterns are strings, case-insensitive, written to mean the same in
-// JavaScript and PCRE: no lookbehind, no named groups, no \d-style shorthand
-// beyond \s and \w.
+// Meeting providers are classified from parsed HTTPS hostnames, never from a
+// provider-looking substring. pendingLocation patterns are strings,
+// case-insensitive, and work the same in JavaScript and PCRE.
 export default {
   "meetings": [
-    { "name": "Zoom", "pattern": "https?://[\\w.-]*zoom\\.us/[^\\s<>\"')]+" },
-    { "name": "Google Meet", "pattern": "https?://meet\\.google\\.com/[^\\s<>\"')]+" },
-    { "name": "Teams", "pattern": "https?://teams\\.(?:microsoft|live)\\.com/[^\\s<>\"')]+" },
-    { "name": "Webex", "pattern": "https?://[\\w.-]*webex\\.com/[^\\s<>\"')]+" }
+    { "name": "Zoom", "hosts": ["zoom.us"], "subdomains": true },
+    { "name": "Google Meet", "hosts": ["meet.google.com"], "subdomains": false },
+    { "name": "Teams", "hosts": ["teams.microsoft.com", "teams.live.com"], "subdomains": false },
+    { "name": "Webex", "hosts": ["webex.com"], "subdomains": true }
   ],
   "pendingLocation": [
     "^(the\\s+)?(location|address|venue)\\s+(is\\s+|will\\s+be\\s+)?(available|shown|revealed|shared|visible|sent|provided)\\s+(once|after|when|upon|to)\\b",

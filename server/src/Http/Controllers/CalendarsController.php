@@ -175,7 +175,7 @@ final class CalendarsController
                     'created_via' => 'import',
                     'uid' => $ev['uid'],
                     'title' => $ev['title'],
-                    'description' => $ev['description'],
+                    'description' => \BetterCal\Domain\Sanitize::description($ev['description']),
                     'location' => $ev['location'],
                     'url' => $ev['url'],
                     'start_utc' => $ev['start_utc'],

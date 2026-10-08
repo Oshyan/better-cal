@@ -4,6 +4,14 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.37 (2026-10-08)
+
+- **Untrusted calendar data is normalized before activation or expensive work.** Event links activate only for absolute web URLs; meeting links require the provider's actual HTTPS hostname; impossible coordinates never reach map work; and descriptions remain inert across import and export.
+- **Malformed or adversarial calendar snapshots can no longer turn into destructive or unbounded work.** Recurrence rules have structural and candidate-work budgets, malformed rules are isolated to their event, interrupted or incomplete feed downloads preserve the last good snapshot, and extreme event durations are clipped to loaded and rendered UI work instead of being walked day by day.
+- Existing unsafe URL, recurrence, and coordinate fields are normalized during upgrade without deleting their events.
+
+Operators: migration 043 cleans only unsafe legacy scalar fields. Ordinary HTTP(S) source links, provider meeting links, valid coordinates, ordinary repeat rules, and long events continue to work. Exceptionally complex repeat rules may become non-recurring; incomplete feeds now report a temporary error rather than reconciling a partial snapshot.
+
 ## 0.9.36 (2026-10-07)
 
 - **Duplicate detection can no longer turn a dense imported or subscribed calendar into an all-pairs worker load.** Scans now use bounded, resumable slices; persistent linked groups and Review suggestions have separate storage and read ceilings; and a sustained backlog appears in System Health instead of monopolizing background work.

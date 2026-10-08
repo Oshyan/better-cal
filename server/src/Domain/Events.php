@@ -2182,10 +2182,13 @@ final class Events
         }
         foreach (['locationLat' => 'location_lat', 'locationLng' => 'location_lng'] as $key => $col) {
             if (array_key_exists($key, $in)) {
-                if ($in[$key] !== null && !is_numeric($in[$key])) {
-                    throw HttpError::badRequest("$key must be a number or null");
+                try {
+                    $fields[$col] = $key === 'locationLat'
+                        ? Coordinates::latitude($in[$key])
+                        : Coordinates::longitude($in[$key]);
+                } catch (\InvalidArgumentException $e) {
+                    throw HttpError::badRequest($key . ' ' . preg_replace('/^(latitude|longitude) /', '', $e->getMessage()));
                 }
-                $fields[$col] = $in[$key] === null ? null : (float) $in[$key];
             }
         }
         if (array_key_exists('status', $in) && $in['status'] !== null) {
@@ -2213,10 +2216,13 @@ final class Events
         if (!array_key_exists($key, $in) || $in[$key] === null) {
             return null;
         }
-        if (!is_numeric($in[$key])) {
-            throw HttpError::badRequest("$key must be a number or null");
+        try {
+            return $key === 'locationLat'
+                ? Coordinates::latitude($in[$key])
+                : Coordinates::longitude($in[$key]);
+        } catch (\InvalidArgumentException $e) {
+            throw HttpError::badRequest($key . ' ' . preg_replace('/^(latitude|longitude) /', '', $e->getMessage()));
         }
-        return (float) $in[$key];
     }
 
     /** null (inherit) stays NULL; [] and lists persist as JSON. */
@@ -2346,11 +2352,10 @@ final class Events
         return implode(';', $out);
     }
 
-    /** A URL as stored: no control characters (it is exported unescaped), bounded, null when nothing is left. */
+    /** Only bounded absolute web URLs are stored as event source links. */
     private static function cleanUrl(string $url): ?string
     {
-        $url = Ics::clip(Ics::structural(trim($url)), Limits::get('URL_CHARS'));
-        return $url !== '' ? $url : null;
+        return Ics::webUrl($url);
     }
 
     private function statusOrDefault(mixed $status): string

@@ -27,11 +27,23 @@ export function mapTilerStyle(style, dark) {
   return base + '-dark';
 }
 
-export function mapMosaic(lat, lng, { width = 640, height = 200, zoom = 15, maptilerKey = null, style = null, retina = true, dark = false } = {}) {
+export function validCoordinates(lat, lng) {
   if (lat == null || lng == null) return null;
+  const y = Number(lat);
+  const x = Number(lng);
+  if (!Number.isFinite(y) || !Number.isFinite(x) || y < -90 || y > 90 || x < -180 || x > 180) return null;
+  return { lat: y, lng: x };
+}
+
+export function mapMosaic(lat, lng, { width = 640, height = 200, zoom = 15, maptilerKey = null, style = null, retina = true, dark = false } = {}) {
+  const point = validCoordinates(lat, lng);
+  if (!point || !Number.isFinite(width) || !Number.isFinite(height) || width < 1 || height < 1 || width > 4096 || height > 4096
+    || !Number.isInteger(zoom) || zoom < 0 || zoom > 22) return null;
   const n = 2 ** zoom;
-  const latRad = (Number(lat) * Math.PI) / 180;
-  const xt = ((Number(lng) + 180) / 360) * n;
+  // Web Mercator stops short of the geographic poles.
+  const mercatorLat = Math.max(-85.05112878, Math.min(85.05112878, point.lat));
+  const latRad = (mercatorLat * Math.PI) / 180;
+  const xt = ((point.lng + 180) / 360) * n;
   const yt = ((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) * n;
   const cx = xt * 256;
   const cy = yt * 256;
@@ -68,12 +80,12 @@ const COORD_TEXT = /^-?\d+(\.\d+)?\s*,\s*-?\d+(\.\d+)?$/;
 export function gmapsUrl(location, lat, lng) {
   const text = (location || '').trim();
   const findable = text !== '' && !isPendingLocation(text) && !/^https?:\/\//i.test(text) && !COORD_TEXT.test(text);
-  const hasCoords = lat != null && lng != null && Number.isFinite(Number(lat)) && Number.isFinite(Number(lng));
-  if (findable && hasCoords) {
-    return `https://www.google.com/maps/search/${encodeURIComponent(text).replace(/%20/g, '+')}/@${Number(lat)},${Number(lng)},17z`;
+  const point = validCoordinates(lat, lng);
+  if (findable && point) {
+    return `https://www.google.com/maps/search/${encodeURIComponent(text).replace(/%20/g, '+')}/@${point.lat},${point.lng},17z`;
   }
-  if (!findable && hasCoords) {
-    return `https://www.google.com/maps/search/?api=1&query=${Number(lat)},${Number(lng)}`;
+  if (!findable && point) {
+    return `https://www.google.com/maps/search/?api=1&query=${point.lat},${point.lng}`;
   }
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(text)}`;
 }

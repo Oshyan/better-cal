@@ -173,6 +173,9 @@ final class Feeds
         if (!str_contains($body, 'BEGIN:VCALENDAR')) {
             throw new \RuntimeException('Response is not an ICS calendar');
         }
+        if (!Ics::completeCalendar($body)) {
+            throw new \RuntimeException('Feed fetch failed: incomplete ICS calendar');
+        }
         return $body;
     }
 

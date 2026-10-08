@@ -91,6 +91,33 @@ final class Ics
         return (string) preg_replace('/[\x00-\x1F\x7F]+/', '', $value);
     }
 
+    /** A bounded absolute HTTP(S) event URL, or null for every other scheme/form. */
+    public static function webUrl(?string $value): ?string
+    {
+        $url = self::clip(self::structural(trim((string) $value)), Limits::get('URL_CHARS'));
+        if ($url === '' || preg_match('#^https?://#i', $url) !== 1) {
+            return null;
+        }
+        $parts = parse_url($url);
+        if (!is_array($parts)
+            || !in_array(strtolower((string) ($parts['scheme'] ?? '')), ['http', 'https'], true)
+            || trim((string) ($parts['host'] ?? '')) === ''
+        ) {
+            return null;
+        }
+        return $url;
+    }
+
+    /** True only when a fetched calendar has a complete top-level closing line. */
+    public static function completeCalendar(string $ics): bool
+    {
+        $normalized = preg_replace('/\r*\n|\r+/', "\n", $ics) ?? $ics;
+        $trimmed = trim($normalized, " \t\n\xEF\xBB\xBF");
+        return preg_match('/^BEGIN:VCALENDAR[ \t]*$/mi', $trimmed) === 1
+            && preg_match('/^END:VCALENDAR[ \t]*$/mi', $trimmed) === 1
+            && preg_match('/(?:^|\n)END:VCALENDAR[ \t]*$/i', $trimmed) === 1;
+    }
+
     /**
      * Why this calendar file is too much to parse, or null. Checked on the raw
      * text BEFORE a parser materializes anything, because the parser is where
@@ -415,21 +442,19 @@ final class Ics
             // entity-escaped in the source (some clients, Google among
             // them, read DESCRIPTION as HTML).
             $description = (string) $ev['description'];
+            $out .= self::line('DESCRIPTION', self::escape(Sanitize::inertText($description)));
             if (Sanitize::isHtml($description)) {
-                $out .= self::line('DESCRIPTION', self::escape(Sanitize::inertText($description)));
                 $html = Sanitize::html($description);
                 if ($html !== '') {
                     $out .= self::fold('X-ALT-DESC;FMTTYPE=text/html:' . self::escape($html)) . "\r\n";
                 }
-            } else {
-                $out .= self::line('DESCRIPTION', self::escape($description));
             }
         }
         if (!empty($ev['location'])) {
             $out .= self::line('LOCATION', self::escape((string) $ev['location']));
         }
-        if (!empty($ev['url'])) {
-            $out .= self::line('URL', self::structural((string) $ev['url']));
+        if (($url = self::webUrl(isset($ev['url']) ? (string) $ev['url'] : null)) !== null) {
+            $out .= self::line('URL', $url);
         }
         // Trip relationships (RFC 5545 RELATED-TO): containers list member
         // uids as RELTYPE=CHILD, members list container uids as
@@ -531,6 +556,7 @@ final class Ics
         if (!class_exists(\Sabre\VObject\Reader::class)) {
             throw new \RuntimeException('sabre/vobject is not installed');
         }
+        $ics = self::normalizeEventRrules($ics);
         $vcal = \Sabre\VObject\Reader::read($ics, \Sabre\VObject\Reader::OPTION_FORGIVING | \Sabre\VObject\Reader::OPTION_IGNORE_INVALID_LINES);
         // A floating time ("9:00", no zone) means 9:00 where the calendar is:
         // the calendar's own X-WR-TIMEZONE when it names one, else the zone
@@ -548,6 +574,59 @@ final class Ics
         }
         Recurrence::assertExdateBatch($events);
         return $events;
+    }
+
+    /**
+     * Validate VEVENT recurrence lines before Sabre constructs properties.
+     * Sabre throws while parsing some malformed RRULE values, before the
+     * per-event tolerant normalizer can downgrade them to non-recurring.
+     * Unfold once, retain at most one accepted rule per event, and omit a bad
+     * optional rule so valid sibling events still import.
+     */
+    private static function normalizeEventRrules(string $ics): string
+    {
+        $normalized = preg_replace('/\r*\n|\r+/', "\n", $ics) ?? $ics;
+        $unfolded = preg_replace('/\n[ \t]/', '', $normalized) ?? $normalized;
+        $out = [];
+        $eventDepth = 0;
+        $keptRrule = false;
+        foreach (explode("\n", $unfolded) as $line) {
+            $marker = strtoupper(trim($line));
+            if ($marker === 'BEGIN:VEVENT') {
+                if ($eventDepth === 0) {
+                    $keptRrule = false;
+                }
+                $eventDepth++;
+                $out[] = $line;
+                continue;
+            }
+            if ($marker === 'END:VEVENT') {
+                $eventDepth = max(0, $eventDepth - 1);
+                $out[] = $line;
+                continue;
+            }
+            if ($eventDepth > 0) {
+                $colon = strpos($line, ':');
+                if ($colon !== false) {
+                    $head = strtoupper(trim(substr($line, 0, $colon)));
+                    $name = (string) strtok($head, ';');
+                    $dot = strrpos($name, '.');
+                    if ($dot !== false) {
+                        $name = substr($name, $dot + 1);
+                    }
+                    if ($name === 'RRULE') {
+                        $safe = $keptRrule ? null : Recurrence::safeRrule(substr($line, $colon + 1));
+                        if ($safe !== null) {
+                            $out[] = 'RRULE:' . $safe;
+                            $keptRrule = true;
+                        }
+                        continue;
+                    }
+                }
+            }
+            $out[] = $line;
+        }
+        return implode("\r\n", $out);
     }
 
     /**
@@ -735,9 +814,11 @@ final class Ics
             'title' => mb_substr((string) ($vevent->SUMMARY ?? ''), 0, 500),
             // Long fields are cut, not refused: one absurd event in a feed must
             // not stop the rest of it syncing (Limits::DESCRIPTION_CHARS).
-            'description' => isset($vevent->DESCRIPTION) ? self::clip((string) $vevent->DESCRIPTION, Limits::get('DESCRIPTION_CHARS')) : null,
+            'description' => isset($vevent->DESCRIPTION)
+                ? Sanitize::description(self::clip((string) $vevent->DESCRIPTION, Limits::get('DESCRIPTION_CHARS')))
+                : null,
             'location' => isset($vevent->LOCATION) ? mb_substr((string) $vevent->LOCATION, 0, 500) : null,
-            'url' => isset($vevent->URL) ? (self::clip(self::structural((string) $vevent->URL), Limits::get('URL_CHARS')) ?: null) : null,
+            'url' => isset($vevent->URL) ? self::webUrl((string) $vevent->URL) : null,
             'start_utc' => $start->format(Time::DB),
             'end_utc' => $end->format(Time::DB),
             'all_day' => $allDay ? 1 : 0,

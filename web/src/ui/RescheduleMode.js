@@ -16,7 +16,7 @@
 
 import { html, useState, useRef, useMemo, useEffect, useLayoutEffect } from '../../vendor/index.js';
 import {
-  epochDayOfKey, keyOfEpochDay, dateOfDayKey, parseISO,
+  epochDayOfKey, dateOfDayKey, parseISO,
   fmtMonthShort, fmtDayMedium, fmtTime,
 } from '../lib/dates.js';
 import {
@@ -196,9 +196,12 @@ export function RescheduleOverlay({ occ, cal, onDropConfirmed, onExit }) {
       const spanDays = epochDayOfKey(endKey) - epochDayOfKey(startKey);
       const scope = info.dayEl.closest('.bc-month-scroll') || document;
       const startEd = epochDayOfKey(info.key);
-      for (let i = 0; i <= spanDays; i++) {
-        const cell = scope.querySelector(`[data-day="${keyOfEpochDay(startEd + i)}"]`);
-        if (cell) {
+      const endEd = startEd + Math.max(0, spanDays);
+      // Calendar data may span centuries, but only rendered cells can be
+      // highlighted. Walk that bounded set instead of one day per stored span.
+      for (const cell of scope.querySelectorAll('[data-day]')) {
+        const cellEd = epochDayOfKey(cell.dataset.day);
+        if (cellEd >= startEd && cellEd <= endEd) {
           cell.classList.add('bc-drop-target');
           highlighted.push(cell);
         }

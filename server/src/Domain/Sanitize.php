@@ -182,9 +182,25 @@ final class Sanitize
     public static function inertText(?string $text): string
     {
         $t = self::toText($text);
-        for ($i = 0; $i < 3 && self::isHtml($t); $i++) {
-            $t = trim(html_entity_decode(strip_tags($t), ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+        for ($i = 0; $i < 3; $i++) {
+            $decoded = html_entity_decode($t, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+            if (self::isHtml($decoded)) {
+                $decoded = self::toText($decoded);
+            }
+            if ($decoded === $t) {
+                break;
+            }
+            $t = trim($decoded);
         }
+        // A fourth or deeper encoding layer can otherwise leave "&lt;tag"
+        // for a consumer that performs one more entity decode. Break any
+        // remaining chain at its first ampersand. Ordinary entities have
+        // already been decoded above, so this affects only nested input.
+        $t = (string) preg_replace(
+            '/&(?=(?:amp|#0*38|#x0*26|lt|#0*60|#x0*3c);)/i',
+            '& ',
+            $t
+        );
         return self::isHtml($t) ? (string) preg_replace('/<(?=\/?[a-zA-Z])/', '< ', $t) : $t;
     }
 

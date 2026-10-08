@@ -16,7 +16,8 @@ import {
   dayKeysOfRow, isWeekendEpochDay, dominantMonthOfRow, dominantMonthOfRows,
 } from '../src/ui/monthmath.js';
 import { contrastText, withAlpha, parseHex, inkColor, luminance } from '../src/lib/color.js';
-import { mapMosaic, stadiaStyle, mapTilerStyle, isPendingLocation, gmapsUrl } from '../src/lib/maps.js';
+import { mapMosaic, stadiaStyle, mapTilerStyle, isPendingLocation, gmapsUrl, validCoordinates } from '../src/lib/maps.js';
+import { safeWebUrl, meetingLinkInText } from '../src/lib/urls.js';
 import { baseTitle, groupOccurrences, itemMatchesFilter, isGroupId } from '../src/ui/grouping.js';
 import { collapseDuplicates } from '../src/ui/duplicates.js';
 import { sortByMatch } from '../src/lib/rank.js';
@@ -1006,7 +1007,23 @@ eq('richtext: strip list items separate', stripToText('<ul><li>a</li><li>b</li><
 eq('richtext: strip inline formatting seamless', stripToText('<b>bold</b> and <i>italic</i>'), 'bold and italic');
 eq('richtext: strip decodes entities', stripToText('<p>a &amp; b &lt;ok&gt;</p>'), 'a & b <ok>');
 eq('richtext: strip drops script bodies', stripToText('<script>alert(1)</script><p>fine</p>'), 'fine');
+{
+  const malformedSuffix = stripToText('<p>fine</p>' + '<a'.repeat(20000));
+  assert('richtext: malformed tag suffix stays text without rescanning',
+    malformedSuffix.startsWith('fine\n<a<a') && malformedSuffix.length === 40005);
+}
 eq('richtext: strip empty input', stripToText(''), '');
+
+eq('event URL: absolute HTTPS is active', safeWebUrl('https://example.test/events/7'), 'https://example.test/events/7');
+eq('event URL: absolute HTTP remains compatible', safeWebUrl('http://example.test/events/7'), 'http://example.test/events/7');
+for (const unsafe of ['javascript:alert(1)', 'data:text/html,x', 'file:///tmp/x', '//example.test/x', '/relative']) {
+  eq('event URL: unsafe form is inert ' + unsafe, safeWebUrl(unsafe), null);
+}
+eq('meeting: legitimate Zoom subdomain is branded', meetingLinkInText('Join https://us02web.zoom.us/j/123')?.name, 'Zoom');
+eq('meeting: exact Google Meet host is branded', meetingLinkInText('https://meet.google.com/abc-defg-hij')?.name, 'Google Meet');
+for (const lookalike of ['https://evilzoom.us/j/123', 'https://zoom.us.evil.example/j/123', 'https://attacker.example/zoom.us/j/123', 'https://zoom.us@attacker.example/j/123', 'http://zoom.us/j/123']) {
+  eq('meeting: lookalike stays unbranded ' + lookalike, meetingLinkInText(lookalike), null);
+}
 
 // isEmptyHtml: squire's empty document shapes count as empty.
 assert('richtext: empty div-br is empty', isEmptyHtml('<div><br></div>'));
@@ -1161,6 +1178,16 @@ eq('buildAgendaGroups group day keys',
     buildAgendaGroups([], { gaps: true, loaded: [] }), []);
   eq('gaps: without the option, empty days are still skipped',
     buildAgendaGroups([before, trip, after]).map((g) => g.dayKey), ['2026-06-28', '2026-06-30', '2026-07-06', '2026-07-09']);
+
+  const extreme = {
+    instanceId: 'extreme', calendarId: 'c1', title: 'Long span', allDay: true,
+    start: '1000-01-01T00:00:00+00:00', end: '9999-12-31T00:00:00+00:00',
+  };
+  const bounded = buildAgendaGroups([extreme], { gaps: true, loaded: [[ed(2026, 6, 1), ed(2026, 6, 7)]] });
+  assert('gaps: extreme event work is bounded by the loaded week', bounded.length <= 7);
+  eq('gaps: extreme event keeps visible continuation boundaries',
+    bounded.filter((g) => !g.gap).map((g) => [g.dayKey, g.rows[0].kind]),
+    [['2026-06-01', 'start'], ['2026-06-07', 'end']]);
 }
 
 // Synthesized start day: header plus the single start row.
@@ -1373,6 +1400,11 @@ console.log('--- chronological ordering across timezone offsets ---');
   assert('mosaic: retina tiles by default', r.tiles[0].url.includes('@2x'));
   assert('mosaic: MapTiler when a key is given', mapMosaic(0, 0, { zoom: 1, maptilerKey: 'k', style: 'streets-v2' }).tiles[0].url.startsWith('https://api.maptiler.com/maps/streets-v2/1/'));
   eq('mosaic: no coordinates, no mosaic', mapMosaic(null, null), null);
+  for (const [lat, lng] of [[91, 0], [-91, 0], [0, 181], [0, -181], [1e308, 1e308], [NaN, 0], [Infinity, 0]]) {
+    eq('mosaic: invalid coordinate pair is inert ' + lat + ',' + lng, mapMosaic(lat, lng), null);
+  }
+  eq('coordinates: boundary pair is valid', validCoordinates(90, -180), { lat: 90, lng: -180 });
+  assert('mosaic: accepted coordinate has a fixed small tile set', mapMosaic(90, 180).tiles.length <= 8);
   // Tiles follow the theme: Stadia's dark style, MapTiler's dark twin where
   // one exists, the same style where it does not.
   assert('mosaic: dark ground picks the dark Stadia style', mapMosaic(0, 0, { zoom: 1, dark: true }).tiles[0].url.includes('/tiles/alidade_smooth_dark/'));

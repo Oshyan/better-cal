@@ -160,6 +160,14 @@ final class PlaceSearch
             if (!is_array($coords) || count($coords) < 2 || !is_numeric($coords[0]) || !is_numeric($coords[1])) {
                 continue;
             }
+            try {
+                $point = Coordinates::pair($coords[1], $coords[0]);
+            } catch (\InvalidArgumentException) {
+                continue;
+            }
+            if ($point === null) {
+                continue;
+            }
             $props = is_array($feature['properties'] ?? null) ? $feature['properties'] : [];
             $name = trim((string) ($props['name'] ?? ''));
             $address = self::composeAddress($props);
@@ -169,8 +177,7 @@ final class PlaceSearch
             if ($name === '') {
                 continue;
             }
-            $lat = (float) $coords[1];
-            $lng = (float) $coords[0];
+            [$lat, $lng] = $point;
             // Photon repeats places across OSM layers; keep the first of each.
             $dedupe = mb_strtolower($name . '|' . $address);
             if (isset($seen[$dedupe])) {

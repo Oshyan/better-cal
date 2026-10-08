@@ -25,7 +25,7 @@ import {
   parseISO, dateOfDayKey, addDaysDate, toISOWithOffset, occDayKey, fmtTime,
 } from '../lib/dates.js';
 import { dayRangeDraft, dayRangeLabel } from '../lib/quickcreate.js';
-import { gmapsUrl } from '../lib/maps.js';
+import { gmapsUrl, validCoordinates } from '../lib/maps.js';
 
 // "Jun 3 · 9:00 AM" / "Jun 3 · all day" for member and picker rows.
 function fmtWhen(occ) {
@@ -47,10 +47,12 @@ function fmtWhen(occ) {
 function tripPoints(occ, members) {
   const pts = [];
   members.forEach((m, i) => {
-    if (m.locationLat != null && m.locationLng != null) pts.push({ lat: Number(m.locationLat), lng: Number(m.locationLng), n: i + 1, title: m.title || '' });
+    const point = validCoordinates(m.locationLat, m.locationLng);
+    if (point) pts.push({ ...point, n: i + 1, title: m.title || '' });
   });
-  if (pts.length === 0 && occ.locationLat != null && occ.locationLng != null) {
-    pts.push({ lat: Number(occ.locationLat), lng: Number(occ.locationLng), n: null, title: occ.location || '' });
+  if (pts.length === 0) {
+    const point = validCoordinates(occ.locationLat, occ.locationLng);
+    if (point) pts.push({ ...point, n: null, title: occ.location || '' });
   }
   return pts;
 }

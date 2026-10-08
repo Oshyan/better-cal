@@ -69,34 +69,77 @@ function dayRows(b) {
 // empty day and a day not fetched yet are different claims. The list covers
 // the loaded days too, not only the days that have events, so a day with
 // nothing on it at the edge of what's loaded is still a place to land.
+function normalizeLoaded(loaded) {
+  if (!loaded) return null;
+  const sorted = loaded
+    .filter((r) => Array.isArray(r) && Number.isFinite(r[0]) && Number.isFinite(r[1]) && r[0] <= r[1])
+    .map(([a, b]) => [Math.trunc(a), Math.trunc(b)])
+    .sort((a, b) => a[0] - b[0]);
+  const out = [];
+  for (const range of sorted) {
+    const last = out[out.length - 1];
+    if (last && range[0] <= last[1] + 1) last[1] = Math.max(last[1], range[1]);
+    else out.push(range);
+  }
+  return out;
+}
+
 function withGaps(keys, byDay, occurrences, { rowH, headH, sepH, gapH, loaded }) {
+  const ranges = normalizeLoaded(loaded);
+  let first = keys.length ? epochDayOfKey(keys[0]) : Infinity;
+  let last = keys.length ? epochDayOfKey(keys[keys.length - 1]) : -Infinity;
+  if (ranges) {
+    if (ranges.length === 0) return [];
+    // Loaded windows, not attacker-controlled event endpoints, own the Split
+    // list's finite extent. Boundary rows were clipped to these same edges.
+    first = ranges[0][0];
+    last = ranges[ranges.length - 1][1];
+  }
+  if (!Number.isFinite(first) || !Number.isFinite(last)) return [];
   const spans = [];
   for (const occ of occurrences) {
     if (occ.attendance === 'hidden') continue;
     const { startKey, endKey } = occurrenceDaySpan(occ);
-    if (startKey !== endKey) spans.push([epochDayOfKey(startKey), epochDayOfKey(endKey)]);
+    const a = Math.max(first, epochDayOfKey(startKey));
+    const b = Math.min(last, epochDayOfKey(endKey));
+    if (a < b) spans.push([a, b]);
   }
-  const held = (d) => !loaded || loaded.some(([a, b]) => a <= d && d <= b);
-  let first = keys.length ? epochDayOfKey(keys[0]) : Infinity;
-  let last = keys.length ? epochDayOfKey(keys[keys.length - 1]) : -Infinity;
-  if (loaded) for (const [a, b] of loaded) { first = Math.min(first, a); last = Math.max(last, b); }
-  if (!Number.isFinite(first) || !Number.isFinite(last)) return [];
+  let rangeIndex = 0;
+  const heldRange = (d) => {
+    if (!ranges) return null;
+    while (rangeIndex < ranges.length && ranges[rangeIndex][1] < d) rangeIndex++;
+    const range = ranges[rangeIndex];
+    return range && range[0] <= d && d <= range[1] ? range : null;
+  };
+  const keyDays = keys.map(epochDayOfKey);
+  let keyIndex = 0;
   const entries = [];
   let d = first;
   while (d <= last) {
+    while (keyIndex < keyDays.length && keyDays[keyIndex] < d) keyIndex++;
     const k = keyOfEpochDay(d);
     if (byDay.has(k)) {
       entries.push({ dayKey: k, rows: dayRows(byDay.get(k)) });
       d++;
       continue;
     }
-    const isHeld = held(d);
+    const range = heldRange(d);
+    const isHeld = !ranges || range !== null;
     let e = d;
-    while (e < last) {
-      const nk = keyOfEpochDay(e + 1);
-      if (byDay.has(nk) || held(e + 1) !== isHeld) break;
-      if (isHeld && nk.slice(0, 7) !== k.slice(0, 7)) break;
-      e++;
+    if (!isHeld && ranges) {
+      // One unloaded row can cover millennia; jump to the next loaded/event
+      // boundary instead of testing every intervening date.
+      const nextLoaded = ranges[rangeIndex]?.[0] ?? (last + 1);
+      const nextEvent = keyDays[keyIndex] ?? (last + 1);
+      e = Math.min(last, nextLoaded - 1, nextEvent - 1);
+    } else {
+      const heldEnd = range ? range[1] : last;
+      while (e < heldEnd) {
+        const nk = keyOfEpochDay(e + 1);
+        if (byDay.has(nk)) break;
+        if (nk.slice(0, 7) !== k.slice(0, 7)) break;
+        e++;
+      }
     }
     const covered = isHeld && spans.some(([a, b]) => a < d && b > e);
     entries.push({ dayKey: k, gapTo: keyOfEpochDay(e), gap: true, unloaded: !isHeld, covered, rows: [] });
@@ -123,14 +166,26 @@ export function buildAgendaGroups(occurrences, opts = {}) {
     if (!b) byDay.set(k, (b = { starts: [], ends: [], normals: [] }));
     return b;
   };
+  const ranges = opts.gaps ? normalizeLoaded(opts.loaded) : null;
+  const loadedFirst = ranges && ranges.length ? ranges[0][0] : null;
+  const loadedLast = ranges && ranges.length ? ranges[ranges.length - 1][1] : null;
   for (const occ of occurrences) {
     if (occ.attendance === 'hidden') continue;
     const { startKey, endKey } = occurrenceDaySpan(occ);
+    let startDay = epochDayOfKey(startKey);
+    let endDay = epochDayOfKey(endKey);
+    if (loadedFirst !== null && loadedLast !== null) {
+      if (endDay < loadedFirst || startDay > loadedLast) continue;
+      startDay = Math.max(startDay, loadedFirst);
+      endDay = Math.min(endDay, loadedLast);
+    }
+    const shownStart = keyOfEpochDay(startDay);
+    const shownEnd = keyOfEpochDay(endDay);
     if (occ.end && startKey !== endKey) {
-      bucket(startKey).starts.push(occ);
-      bucket(endKey).ends.push(occ);
+      bucket(shownStart).starts.push(occ);
+      bucket(shownEnd).ends.push(occ);
     } else {
-      bucket(startKey).normals.push(occ);
+      bucket(shownStart).normals.push(occ);
     }
   }
   const keys = [...byDay.keys()].sort();
@@ -234,4 +289,3 @@ export function washRects(groups, opts = {}) {
     }))
     .sort((a, b) => b.heightPx - a.heightPx);
 }
-

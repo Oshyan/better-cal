@@ -364,14 +364,14 @@ final class GoogleSync
         $link = isset($item['source']['url']) && preg_match('#^https?://#i', (string) $item['source']['url']) === 1
             ? (string) $item['source']['url']
             : (isset($item['htmlLink']) ? (string) $item['htmlLink'] : null);
-        $url = $link !== null ? Ics::clip(Ics::structural($link), Limits::get('URL_CHARS')) : null;
+        $url = Ics::webUrl($link);
 
         return [
             'uid' => $uid,
             'title' => mb_substr($title === '' ? '(No title)' : $title, 0, 500),
             'description' => $description !== null && $description !== '' ? Ics::clip($description, Limits::get('DESCRIPTION_CHARS')) : null,
             'location' => isset($item['location']) && trim((string) $item['location']) !== '' ? mb_substr((string) $item['location'], 0, 500) : null,
-            'url' => $url !== null && $url !== '' ? $url : null,
+            'url' => $url,
             'start_utc' => $start->format(Time::DB),
             'end_utc' => $end->format(Time::DB),
             'all_day' => $allDay ? 1 : 0,

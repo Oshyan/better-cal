@@ -70,13 +70,34 @@ function dropBlocks(text) {
   return out + text.slice(pos);
 }
 
+// Remove closed tag-shaped regions in one forward pass. A regex like
+// /<[^>]+>/ retries from every '<' when no later '>' exists, making a long
+// malformed suffix quadratic on the browser main thread.
+function stripTags(text) {
+  let out = '';
+  let copyFrom = 0;
+  let tagAt = -1;
+  for (let i = 0; i < text.length; i++) {
+    if (tagAt === -1 && text[i] === '<' && /[a-zA-Z/]/.test(text[i + 1] || '')) {
+      out += text.slice(copyFrom, i);
+      tagAt = i;
+      continue;
+    }
+    if (tagAt !== -1 && text[i] === '>') {
+      copyFrom = i + 1;
+      tagAt = -1;
+    }
+  }
+  return tagAt === -1 ? out + text.slice(copyFrom) : out + text.slice(tagAt);
+}
+
 export function stripToText(text) {
   if (typeof text !== 'string' || text === '') return '';
   if (!hasHtml(text)) return text;
   let s = dropBlocks(text);
   s = s.replace(/<br\s*\/?>/gi, '\n');
   s = s.replace(/<\/(p|div|li|ul|ol|h[1-6]|blockquote|tr)\s*>/gi, '\n');
-  s = s.replace(/<[^>]+>/g, '');
+  s = stripTags(s);
   s = s.replace(/&nbsp;/gi, ' ')
     .replace(/&lt;/gi, '<')
     .replace(/&gt;/gi, '>')

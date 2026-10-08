@@ -11,6 +11,7 @@ use BetterCal\Dav\ChangeLog;
 use BetterCal\Dav\DavIcs;
 use BetterCal\Domain\ApiTokens;
 use BetterCal\Domain\Calendars;
+use BetterCal\Domain\Coordinates;
 use BetterCal\Domain\FallbackParser;
 use BetterCal\Domain\Geocode;
 use BetterCal\Domain\GeocodeSweep;
@@ -2057,6 +2058,13 @@ foreach (explode("\r\n", $folded) as $line) {
 check('ics folded lines <= 75 octets', $maxLen <= 75, "max was $maxLen");
 check('ics fold never splits utf8', $validUtf8);
 checkEq('ics short line not folded', 'SUMMARY:short', Ics::fold('SUMMARY:short'));
+checkEq('event URL keeps absolute https', 'https://example.test/events/7', Ics::webUrl(' https://example.test/events/7 '));
+checkEq('event URL keeps absolute http for compatible feeds', 'http://example.test/events/7', Ics::webUrl('http://example.test/events/7'));
+foreach (['javascript:alert(1)', 'data:text/html,x', 'file:///tmp/x', '//example.test/x', '/relative'] as $unsafeUrl) {
+    checkEq('event URL rejects non-web form ' . $unsafeUrl, null, Ics::webUrl($unsafeUrl));
+}
+check('complete ICS accepts a normal calendar', Ics::completeCalendar("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n"));
+check('complete ICS rejects a truncated calendar', !Ics::completeCalendar("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nEND:VEVENT\r\n"));
 
 $calendar = Ics::buildCalendar('My Feed', 'This feed contains only events matching: yoga', [
     [
@@ -2081,7 +2089,30 @@ check('vcal exdate exported in its zone', str_contains($calendar, 'EXDATE;TZID=A
 check('vcal all-day uses DATE value', str_contains($calendar, 'DTSTART;VALUE=DATE:20260802'));
 check('vcal ends properly', str_ends_with($calendar, "END:VCALENDAR\r\n"));
 
+$encodedDescription = Ics::unfold(Ics::buildObject([[
+    'uid' => 'encoded-description', 'title' => 'Encoded',
+    'description' => '&lt;img src=x onerror=alert(1)&gt;Visible',
+    'start_utc' => '2026-08-01 17:00:00', 'end_utc' => '2026-08-01 18:00:00',
+    'all_day' => 0, 'tzid' => 'UTC', 'status' => 'confirmed',
+]]));
+check('export: entity-encoded markup is not emitted as active-looking DESCRIPTION', !str_contains($encodedDescription, 'DESCRIPTION:&lt;img'));
+check('export: entity-encoded markup keeps its inert text', str_contains($encodedDescription, 'DESCRIPTION:Visible'));
+$unsafeEventUrl = Ics::buildObject([[
+    'uid' => 'unsafe-url', 'title' => 'Unsafe URL', 'url' => 'javascript:alert(1)',
+    'start_utc' => '2026-08-01 17:00:00', 'end_utc' => '2026-08-01 18:00:00',
+    'all_day' => 0, 'tzid' => 'UTC', 'status' => 'confirmed',
+]]);
+check('export: legacy unsafe event URL is omitted', !str_contains($unsafeEventUrl, "\r\nURL:"));
+
 if (class_exists(\Sabre\VObject\Reader::class)) { // needs sabre/vobject (the install job runs it)
+$untrustedIcs = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\n"
+    . "BEGIN:VEVENT\r\nUID:bad-rule\r\nSUMMARY:One\r\nDTSTART:20260801T170000Z\r\nDTEND:20260801T180000Z\r\nRRULE:FREQ=DAILY;NOT-A-RULE\r\nDESCRIPTION:<p onclick=bad>Visible<script>hidden</script></p>\r\nURL:javascript:alert(1)\r\nEND:VEVENT\r\n"
+    . "BEGIN:VEVENT\r\nUID:ordinary\r\nSUMMARY:Two\r\nDTSTART:20260802T170000Z\r\nDTEND:20260802T180000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+$untrustedParsed = Ics::parse($untrustedIcs);
+checkEq('ics parse: malformed external RRULE is local to its event', [null, null], array_column($untrustedParsed, 'rrule'));
+checkEq('ics parse: multipart path receives a sanitized description', '<p>Visible</p>', $untrustedParsed[0]['description']);
+checkEq('ics parse: unsafe event URL is neutralized', null, $untrustedParsed[0]['url']);
+checkEq('ics parse: a malformed event does not hide its valid sibling', ['One', 'Two'], array_column($untrustedParsed, 'title'));
 // Timed events go out in their own zone (audit #1, 0.9.14): a weekly 9:00 in
 // Los Angeles stays 9:00 across the November change in any client, and a
 // CalDAV round trip keeps the zone instead of storing it back as UTC.
@@ -2105,6 +2136,23 @@ $adTimedOv = Ics::buildObject([
     ['uid' => 'ad7', 'title' => 'G', 'start_utc' => '2026-10-12 21:00:00', 'end_utc' => '2026-10-12 23:00:00', 'all_day' => 0, 'tzid' => 'America/Los_Angeles', 'recurrence_instance_utc' => '2026-10-12 07:00:00', 'status' => 'confirmed'],
 ]);
 check('export: override of an all-day series keeps a date RECURRENCE-ID', str_contains($adTimedOv, 'RECURRENCE-ID;VALUE=DATE:20261012') && str_contains($adTimedOv, 'DTSTART;TZID=America/Los_Angeles:20261012T140000'));
+}
+
+// Migration 043 removes unsafe legacy scalar fields without deleting events.
+{
+    $m43db = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $m43db->run('CREATE TABLE events (id INTEGER PRIMARY KEY, calendar_id INTEGER, uid TEXT, url TEXT, rrule TEXT, location_lat REAL, location_lng REAL, updated_at TEXT)');
+    $m43db->run("INSERT INTO events VALUES (1, 1, 'unsafe', 'javascript:alert(1)', 'FREQ=DAILY;BROKEN', 91, 1.7e308, NULL)");
+    $m43db->run("INSERT INTO events VALUES (2, 1, 'safe', 'https://example.test/e/2', 'FREQ=WEEKLY;BYDAY=MO', 45.5, -122.6, NULL)");
+    $m43msg = (require __DIR__ . '/../migrations/043_event_input_cleanup.php')($m43db);
+    checkEq('migration 043: unsafe legacy fields cleared',
+        ['url' => null, 'rrule' => null, 'location_lat' => null, 'location_lng' => null],
+        $m43db->one('SELECT url, rrule, location_lat, location_lng FROM events WHERE id = 1'));
+    checkEq('migration 043: valid legacy fields retained',
+        ['url' => 'https://example.test/e/2', 'rrule' => 'FREQ=WEEKLY;BYDAY=MO', 'location_lat' => 45.5, 'location_lng' => -122.6],
+        $m43db->one('SELECT url, rrule, location_lat, location_lng FROM events WHERE id = 2'));
+    check('migration 043: reports one normalized event', str_contains($m43msg, '1 event normalized'));
+    check('migration 043: running again changes nothing', str_contains((require __DIR__ . '/../migrations/043_event_input_cleanup.php')($m43db), '0 events normalized'));
 }
 
 // An all-day series exports its skipped dates and edited occurrences as dates
@@ -2266,6 +2314,24 @@ if (class_exists(\Sabre\VObject\Reader::class)) { // needs sabre/vobject (the in
     $dRec = new Recurrence();
     $dOcc = $dRec->expand(['id' => 78, 'uid' => 'daily', 'rrule' => 'FREQ=DAILY'] + $hourly, [], Time::fromDb('2026-01-01 00:00:00'), Time::fromDb('2027-12-31 00:00:00'));
     checkEq('recur a daily series across two years is complete and not reported', [729, []], [count($dOcc), $dRec->capped()]);
+
+    // The pinned iterator has its own 3,500-generation ceiling before our
+    // output loop. Lock that dependency-bound safety property in: a legacy
+    // sub-daily series from years ago must terminate promptly, not walk from
+    // its origin to the requested window. This preserves recent, legitimate
+    // hourly recurrences while guarding a future dependency change.
+    foreach (['SECONDLY', 'MINUTELY', 'HOURLY'] as $frequency) {
+        $legacy = [
+            'id' => 79, 'uid' => 'legacy-' . strtolower($frequency), 'all_day' => 0, 'tzid' => 'UTC',
+            'start_utc' => '2010-01-01 00:00:00', 'end_utc' => '2010-01-01 00:30:00',
+            'rrule' => 'FREQ=' . $frequency,
+        ];
+        $legacyStarted = hrtime(true);
+        $legacyOut = Recurrence::sabreExpand($legacy, Time::fromDb('2026-10-08 00:00:00'), Time::fromDb('2026-10-09 00:00:00'));
+        $legacyElapsed = (hrtime(true) - $legacyStarted) / 1_000_000_000;
+        checkEq("recur an old $frequency series stops at the dependency work ceiling", [], $legacyOut);
+        check("recur an old $frequency series returns within one second", $legacyElapsed < 1.0, "took {$legacyElapsed}s");
+    }
 }
 
 // Non-recurring passthrough.
@@ -2545,6 +2611,11 @@ if (class_exists(\Sabre\VObject\Reader::class)) { // needs sabre/vobject (the in
     check('patterns: the shared file reads as JSON on the server', count($pt['meetings']) >= 4 && count($pt['pendingLocation']) >= 3);
     checkEq('patterns: a Zoom link is a meeting', ['https://example.zoom.us/j/123456', 'Zoom'], BetterCal\Support\Patterns::meetingLink('Join at https://example.zoom.us/j/123456.'));
     checkEq('patterns: a Teams link is a meeting', 'Teams', BetterCal\Support\Patterns::meetingLink('https://teams.microsoft.com/l/meetup-join/abc')[1] ?? null);
+    foreach (['https://evilzoom.us/j/123', 'https://zoom.us.evil.example/j/123', 'https://attacker.example/zoom.us/j/123', 'https://zoom.us@attacker.example/j/123', 'http://zoom.us/j/123'] as $lookalike) {
+        checkEq('patterns: lookalike is not provider-branded ' . $lookalike, null, BetterCal\Support\Patterns::meetingLink($lookalike));
+    }
+    checkEq('patterns: exact Zoom host is accepted', 'Zoom', BetterCal\Support\Patterns::meetingLink('https://zoom.us/j/123')[1] ?? null);
+    checkEq('patterns: Webex subdomain is accepted', 'Webex', BetterCal\Support\Patterns::meetingLink('https://tenant.webex.com/meet/sample')[1] ?? null);
     check('patterns: "address after RSVP" is pending', BetterCal\Support\Patterns::isPendingLocation('Location available once RSVP\'d'));
     check('patterns: a registration desk is a place, not pending', !BetterCal\Support\Patterns::isPendingLocation('Registration desk, Hall B'));
     checkEq('reminder links: the push Join button uses the shared list', 'https://meet.google.com/abc-defg-hij', BetterCal\Domain\Reminders::links(['location' => 'https://meet.google.com/abc-defg-hij', 'url' => null, 'description' => null])['join'] ?? null);
@@ -2552,6 +2623,16 @@ if (class_exists(\Sabre\VObject\Reader::class)) { // needs sabre/vobject (the in
 
 // Instance id contract (frozen format).
 checkEq('instanceId format', '10:20260105T180000Z', Recurrence::instanceId(10, Time::fromDb('2026-01-05 18:00:00')));
+
+checkEq('coordinates: valid pair retained', [45.5, -122.6], Coordinates::pair('45.5', '-122.6'));
+foreach ([[91, 0], [-91, 0], [0, 181], [0, -181], ['1e999', 0]] as [$lat, $lng]) {
+    try {
+        Coordinates::pair($lat, $lng);
+        check('coordinates: invalid pair refused', false, json_encode([$lat, $lng]));
+    } catch (InvalidArgumentException) {
+        check('coordinates: invalid pair refused', true);
+    }
+}
 
 // --- DTSTART skip-ahead (GH #10) -------------------------------------------
 // The optimisation is only sound if the instants are IDENTICAL with and
@@ -2653,6 +2734,15 @@ checkEq('safeRrule: absurd INTERVAL drops the recurrence', null, Recurrence::saf
 checkEq('safeRrule: INTERVAL over the cap drops it', null, Recurrence::safeRrule('FREQ=DAILY;INTERVAL=1001'));
 checkEq('safeRrule: absurd COUNT drops it', null, Recurrence::safeRrule('FREQ=DAILY;COUNT=999999999'));
 checkEq('safeRrule: non-numeric INTERVAL drops it', null, Recurrence::safeRrule('FREQ=DAILY;INTERVAL=abc'));
+checkEq('safeRrule: malformed segment never escapes', null, Recurrence::safeRrule('FREQ=DAILY;NOT-A-RULE'));
+checkEq('safeRrule: duplicate part drops the rule', null, Recurrence::safeRrule('FREQ=DAILY;BYDAY=MO;BYDAY=TU'));
+checkEq('safeRrule: oversized list drops the rule', null, Recurrence::safeRrule('FREQ=YEARLY;BYYEARDAY=' . implode(',', range(1, Recurrence::MAX_RRULE_VALUES + 1))));
+checkEq('safeRrule: selector cross-product over the work limit drops the rule', null, Recurrence::safeRrule(
+    'FREQ=YEARLY;BYMONTH=' . implode(',', range(1, 12))
+    . ';BYMONTHDAY=' . implode(',', range(1, 31))
+    . ';BYHOUR=' . implode(',', range(0, 23))
+));
+checkEq('safeRrule: oversized text drops the rule', null, Recurrence::safeRrule('FREQ=YEARLY;BYDAY=' . str_repeat('MO,', 1000) . 'TU'));
 checkEq('safeRrule: empty is no rule', null, Recurrence::safeRrule('  '));
 checkEq('skip: a stored absurd INTERVAL skips nothing and does not throw', 0, Recurrence::skippablePeriods('FREQ=WEEKLY;INTERVAL=99999999999999999999', $farStart, $skipTarget));
 {
@@ -2678,7 +2768,12 @@ checkEq('setUntil replaces COUNT', 'FREQ=WEEKLY;UNTIL=20260201T000000Z', Recurre
 checkEq('setUntil all-day uses DATE', 'FREQ=DAILY;UNTIL=20260201', Recurrence::setUntil('FREQ=DAILY', Time::fromDb('2026-02-01 00:00:00'), true));
 checkEq('splitUntil is instance minus 1s', '2026-01-18 17:59:59', Time::toDb(Recurrence::splitUntil(Time::fromDb('2026-01-18 18:00:00'))));
 checkEq('validateRrule normalizes case', 'FREQ=WEEKLY;BYDAY=MO,WE', Recurrence::validateRrule('freq=weekly;byday=mo,we'));
-foreach (['', 'FOO=BAR', 'FREQ=SOMETIMES', 'FREQ=WEEKLY;INTERVAL=0', 'FREQ=WEEKLY;NOPE=1', 'FREQ'] as $bad) {
+$boundedComplexRule = 'FREQ=YEARLY;BYMONTH=' . implode(',', range(1, 8))
+    . ';BYMONTHDAY=' . implode(',', range(1, 16))
+    . ';BYHOUR=' . implode(',', range(0, 7))
+    . ';BYMINUTE=0,15,30,45;BYSETPOS=1';
+checkEq('validateRrule accepts the candidate-work boundary', $boundedComplexRule, Recurrence::validateRrule($boundedComplexRule));
+foreach (['', 'FOO=BAR', 'FREQ=SOMETIMES', 'FREQ=WEEKLY;INTERVAL=0', 'FREQ=WEEKLY;NOPE=1', 'FREQ', 'FREQ=MONTHLY;BYMONTHDAY=32', 'FREQ=WEEKLY;BYDAY=0MO'] as $bad) {
     try {
         Recurrence::validateRrule($bad);
         check("validateRrule rejects '$bad'", false);
@@ -3106,6 +3201,11 @@ $geoShape = Geocode::mapResponse(['features' => [[
 check('geo lookup answers a map, not a hit list', !array_is_list($geoShape));
 check('geo lookup map has no index 0 to read', !isset($geoShape[0]));
 check('geo lookup map carries lat/lng directly', isset($geoShape['lat'], $geoShape['lng']));
+checkEq('geo provider drops out-of-range coordinates', null, Geocode::mapResponse(['features' => [[
+    'geometry' => ['coordinates' => [1.7e308, 45]], 'properties' => ['name' => 'Invalid'],
+]]]));
+checkEq('geo cache drops legacy out-of-range coordinates', ['lat' => null, 'lng' => null, 'display' => null, 'kind' => null],
+    Geocode::resultFromRow(['lat' => 91, 'lng' => 0, 'display' => 'Invalid']));
 checkEq('geo bias cell rounds to integer degrees', '42,-88', Geocode::biasCell(41.88, -87.63));
 checkEq('geo bias cell none without bias', 'none', Geocode::biasCell(null, null));
 // Picking among same-named places. The primary provider orders "Lisbon" as
@@ -3159,6 +3259,10 @@ checkEq('geo secondary: a major city overrides', 'Lisbon, Lisbon District, Portu
         ['name' => 'Lisbon', 'admin1' => 'Lisbon District', 'country' => 'Portugal',
          'latitude' => 38.72, 'longitude' => -9.14, 'population' => 517802],
     ]])['display']);
+checkEq('geo secondary: impossible coordinates are ignored', null,
+    Geocode::secondaryOverride(['results' => [[
+        'name' => 'Invalid', 'latitude' => 91, 'longitude' => 0, 'population' => 500000,
+    ]]]));
 check('geo secondary: a small place does not override',
     Geocode::secondaryOverride(['results' => [
         ['name' => 'Hawaii', 'country' => 'Guatemala', 'latitude' => 14.0, 'longitude' => -90.8],
@@ -4316,6 +4420,14 @@ check('migration 034 is a PHP migration the runner can call', is_callable($clean
     checkEq('migration 034: running again changes nothing', '0 descriptions cleaned', $cleanMigration($mdb));
 }
 checkEq('inert text: nested escapes stay inert', false, Sanitize::isHtml(Sanitize::inertText('<p>&amp;amp;lt;b onmouseover=x&amp;amp;gt;hi</p>')));
+checkEq('inert text: encoded active tag is removed', 'Visible', Sanitize::inertText('&lt;img src=x onerror=alert(1)&gt;Visible'));
+$fourDeepTag = '&amp;amp;amp;lt;img src=x onerror=alert(1)&amp;amp;amp;gt;Visible';
+$fourDeepInert = Sanitize::inertText($fourDeepTag);
+check('inert text: decode-limit-plus-one cannot become markup downstream',
+    !Sanitize::isHtml($fourDeepInert)
+    && !Sanitize::isHtml(html_entity_decode($fourDeepInert, ENT_QUOTES | ENT_HTML5, 'UTF-8')));
+checkEq('inert text: benign entities remain readable', 'Fish & chips', Sanitize::inertText('Fish &amp; chips'));
+checkEq('inert text: angle-bracket prose remains prose', 'a < b and b > c', Sanitize::inertText('a < b and b > c'));
 checkEq('caldav write: a description is cleaned on the way in', '<p>hi</p>', BetterCal\Dav\DavIcs::eventColumns(['title' => 't', 'start_utc' => '2026-08-01 17:00:00', 'end_utc' => '2026-08-01 18:00:00', 'description' => '<p onclick="x()">hi<script>y()</script></p>'])['description']);
 
 // ---------------------------------------------------------------------------

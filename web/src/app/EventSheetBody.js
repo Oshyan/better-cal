@@ -23,21 +23,17 @@ import { fmtRange, zoneNote, fmtDateFull, fmtTime, parseISO, startMs } from '../
 import { fmtReminder } from '../lib/reminders.js';
 import { stripToText, hasHtml, sanitizeHtml } from '../lib/richtext.js';
 import { gmapsUrl, isPendingLocation } from '../lib/maps.js';
-import PATTERNS from '../lib/patterns.js';
+import { meetingLinkInText, safeWebUrl } from '../lib/urls.js';
 import { onOutsidePress, insideAny } from '../ui/outside.js';
 
 // Video meetings: the link is a Join button, not an address. The providers
 // are shared with the server's push notifications (lib/patterns.js).
-const MEETINGS = PATTERNS.meetings.map((m) => [new RegExp(m.pattern, 'i'), m.name]);
-
 /** The first video-meeting link in the location, link or description: {url, name}. */
 export function meetingLink(occ) {
   for (const text of [occ.location, occ.url, occ.description && stripToText(occ.description)]) {
     if (!text) continue;
-    for (const [re, name] of MEETINGS) {
-      const m = String(text).match(re);
-      if (m) return { url: m[0].replace(/[.,;:]+$/, ''), name };
-    }
+    const meeting = meetingLinkInText(String(text));
+    if (meeting) return meeting;
   }
   return null;
 }
@@ -232,7 +228,8 @@ function MoreMenu({ occ, cal, isFeed, onClose, onDelete, onCopy, phone = false, 
   const context = cal && cal.role === 'context';
   const head = (content) => html`<div class="bc-es-mh" role="presentation">${content}</div>`;
   const calName = (cal && cal.name) || 'Calendar';
-  const host = occ.url ? sourceHost(occ.url) : '';
+  const sourceUrl = safeWebUrl(occ.url);
+  const host = sourceUrl ? sourceHost(sourceUrl) : '';
   return html`<div class=${'bc-es-menu' + (phone ? ' is-phone' : '')} role="menu" ref=${ref}>
     ${phone && !isFeed && onMove && item('reschedule', 'Move to another time', onMove)}
     ${phone && isFeed && !context && item(html`<${ThumbIcon} dir="up" size=${18} />`, 'More like this', () => sendFeedback(occ, 'up'), '', occ.feedback === 'up' ? 'Chosen' : null, occ.feedback === 'up')}
@@ -242,10 +239,10 @@ function MoreMenu({ occ, cal, isFeed, onClose, onDelete, onCopy, phone = false, 
       ${head(html`<i style=${'background:' + (cal.color || 'var(--border-strong)')}></i>Calendar: ${calName}`)}
       ${item('settings', 'Calendar settings', () => set({ popover: null, manageCal: cal.id }))}
       ${cal.visible && item('eyeOff', 'Hide this calendar', () => { set({ popover: null }); toggleCalendarVisible(cal); toast(calName + ' hidden. Show it again from the sidebar.', { duration: 4000 }); })}`}
-    ${occ.url && html`<hr />
+    ${sourceUrl && html`<hr />
       ${head(html`Source: ${host || 'web page'}`)}
-      ${item('arrowUpRight', host ? 'Open on ' + host : 'Open the source page', () => window.open(occ.url, '_blank', 'noopener'), '', 'new tab')}
-      ${item('link', host ? 'Copy the ' + host + ' link' : 'Copy the source link', () => copyText(occ.url, host ? host + ' link' : 'Source link'))}`}
+      ${item('arrowUpRight', host ? 'Open on ' + host : 'Open the source page', () => window.open(sourceUrl, '_blank', 'noopener'), '', 'new tab')}
+      ${item('link', host ? 'Copy the ' + host + ' link' : 'Copy the source link', () => copyText(sourceUrl, host ? host + ' link' : 'Source link'))}`}
     ${!isFeed && html`<hr />`}
     ${!isFeed && item('trash', 'Delete…', onDelete, 'is-danger', occ.recurring ? 'asks which ones' : null)}
   </div>`;
@@ -257,6 +254,7 @@ export function EventSheetBody({ occ, cal, isFeed, full, panel = false, onFull, 
   const close = () => set({ popover: null });
   const color = (cal && cal.color) || '#888';
   const meet = meetingLink(occ);
+  const sourceUrl = safeWebUrl(occ.url);
   const loc = (occ.location || '').trim();
   const locIsMeeting = meet && loc && loc.includes(meet.url.slice(0, 24));
   const role = (cal && cal.role) || (isFeed ? 'opportunities' : 'mine');
@@ -398,9 +396,9 @@ export function EventSheetBody({ occ, cal, isFeed, full, panel = false, onFull, 
       </div>`}
       ${occ.tags && occ.tags.length > 0 && html`<div class="bc-es-tags">${occ.tags.map((t) => '#' + t).join(' ')}</div>`}
       ${desc}
-      ${occ.url && !(meet && occ.url.includes(meet.url.slice(0, 24))) && html`<div class="bc-es-row">
-        <${Icon} name="link" size=${20} /><div class="bc-es-rt">${hostOf(occ.url)}</div>
-        <a class="bc-es-rowbtn" href=${occ.url} target="_blank" rel="noopener noreferrer">Open <${Icon} name="arrowUpRight" size=${14} /></a>
+      ${sourceUrl && !(meet && sourceUrl.includes(meet.url.slice(0, 24))) && html`<div class="bc-es-row">
+        <${Icon} name="link" size=${20} /><div class="bc-es-rt">${hostOf(sourceUrl)}</div>
+        <a class="bc-es-rowbtn" href=${sourceUrl} target="_blank" rel="noopener noreferrer">Open <${Icon} name="arrowUpRight" size=${14} /></a>
       </div>`}
       ${full && html`<${EventPluginData} eventId=${occ.eventId} readOnly=${isFeed} />`}
       ${full && isFeed && cal && html`<div class="bc-es-row">

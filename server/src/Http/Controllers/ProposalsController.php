@@ -26,12 +26,20 @@ final class ProposalsController
 
     public function accept(Request $req, array $params): Response
     {
-        return Response::json($this->proposals->accept((int) $req->user['id'], (int) $params['id']));
+        return Response::json($this->proposals->accept(
+            (int) $req->user['id'],
+            (int) $params['id'],
+            (string) ($req->str('reviewToken') ?? '')
+        ));
     }
 
     public function reject(Request $req, array $params): Response
     {
-        return Response::json(['proposal' => $this->proposals->reject((int) $req->user['id'], (int) $params['id'])]);
+        return Response::json(['proposal' => $this->proposals->reject(
+            (int) $req->user['id'],
+            (int) $params['id'],
+            (string) ($req->str('reviewToken') ?? '')
+        )]);
     }
 
     public function undoAccept(Request $req, array $params): Response

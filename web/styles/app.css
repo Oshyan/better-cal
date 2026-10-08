@@ -2988,6 +2988,8 @@ button.bc-review-title { color: var(--fg); padding: 0; }
 .bc-proposal-when { flex: none; width: 190px; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
 .bc-proposal-what { font-weight: 600; }
 .bc-proposal-where { color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bc-proposal-calendar { margin-left: auto; color: var(--fg-muted); font-size: 11.5px; white-space: nowrap; }
+.bc-proposal-target-error { margin: 0 0 8px; color: var(--danger); font-size: 12px; }
 .bc-proposal-actions { display: flex; gap: 8px; }
 /* Inline chips: the activity page's filter row stacks because it leads with a
    full-width search input, which this page does not have. */

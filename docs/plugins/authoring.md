@@ -212,9 +212,12 @@ Enforced plan rules — breaking one throws out of `propose()`, which fails the 
 
 - `events` must be non-empty and at most 50; each needs a `title` and a `start`.
 - `trip`, if present, needs `title`, `start`, and `end`. It is always created all-day and as a container.
-- Events land on the user's default local calendar unless you pass `calendarId`.
+- Events land on the user's default local calendar unless you pass the id of a
+  different **local** calendar. Proposal acceptance never writes directly to a
+  subscribed, Google-backed or plugin-managed calendar. The Review card names
+  every resolved destination before the owner decides.
 
-A plan event takes `{title, start, end?, allDay?, location?, description?, calendarId?}`. **`allDay` defaults to false**, so a date-only `start` like `'2026-09-05'` becomes a *timed* midnight-to-midnight event rather than an all-day one — unlike `syncEvents`, which infers all-day from the date shape. Pass `allDay => true` explicitly.
+A plan event takes `{title, start, end?, allDay?, location?, description?, calendarId?}`. `calendarId`, when present, must name one of the owner's local calendars. **`allDay` defaults to false**, so a date-only `start` like `'2026-09-05'` becomes a *timed* midnight-to-midnight event rather than an all-day one — unlike `syncEvents`, which infers all-day from the date shape. Pass `allDay => true` explicitly.
 
 `withdrawProposal(string $sourceKey): bool` retracts one of your own **open** proposals, returning true if it removed one. Decided proposals are left alone: an accepted plan is on the calendar and a rejection is the user's answer, and neither is yours to erase. Use it when your answer moves — a plugin that proposed a weekend which is no longer free should take the suggestion back rather than leave the user to dismiss it.
 

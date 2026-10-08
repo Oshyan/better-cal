@@ -78,14 +78,27 @@ This phase was released and deployed in 0.9.29. It has no database migration. Th
 
 ## Phase 11 — emailed invitation trust and pending revision order
 
-This phase is implemented locally and awaiting release. It requires no database
-migration. First-time emailed invitations now require an owner decision before
-event creation; ordinary booking extraction remains automatic.
+This phase shipped in release 0.9.30. It requires no database migration.
+First-time emailed invitations now require an owner decision before event
+creation; ordinary booking extraction remains automatic. The live end-to-end
+invitation exercise remains open below.
 
 | Scan finding | Remediation | Local automated verification | Live/deployed verification |
 |---|---|---:|---:|
 | F10 | An unknown-UID iMIP REQUEST becomes a Review candidate under rolling admission and a 100-open-decision hard cap; only **Add to calendar** creates the event and establishes the organizer anchor | Passed | [ ] |
 | F61 | Trusted existing-invitation revisions are ordered under an account lock; legacy-untrusted claims remain parallel until the owner chooses one; decision rechecks/mutation/closure are atomic | Passed | [ ] |
+
+## Phase 12 — proposal decision integrity
+
+This phase shipped in release 0.9.31. It requires no database migration.
+Proposal decisions are bound to the exact reviewed revision and resolved local
+destinations; acceptance and grouped undo are all-or-nothing.
+
+| Scan finding | Remediation | Local automated verification | Live/deployed verification |
+|---|---|---:|---:|
+| F29 | Proposal acceptance, event creation, trip links, mutation records and final state share one transaction and account lock | Passed | [ ] |
+| F6 | Proposal destinations are disclosed and restricted to owner-local calendars; external and plugin-managed targets fail closed | Passed | [ ] |
+| F56 | Accept and Dismiss require the token for the exact rendered revision; changed proposals return `proposal_changed` | Passed | [ ] |
 
 ## Completed local evidence
 
@@ -130,6 +143,9 @@ This section is the technical record for reviewers; it is not a manual to-do lis
 - [x] Phase 11 focused controls cover first-arrival hold-without-event, competing same-UID claims, owner-established organizer trust, no implicit RSVP, legacy-untrusted parallel candidates, exact replay coalescing, pending-sequence ordering after trust, stale displayed-diff refresh, double-decision refusal, Google ownership isolation, PUBLISH booking preservation, and a persistent 100-open-decision hard ceiling that does not block ordinary bookings.
 - [x] Phase 11 local suites: server 2,080/0 under a 128 MiB memory limit; frontend smoke 653/0 in `America/Los_Angeles`, `UTC`, `Europe/Berlin`, `Asia/Kolkata` and `Pacific/Auckland`; frontend static 349/0 across 103 modules; MCP 64/0. All changed PHP files pass syntax checks and the working-tree diff passes whitespace validation. No time-zone harness was required because this phase does not change repeat rules, time-zone handling, import or export.
 - [x] Phase 11 independent read-only post-patch review found no remaining source-backed F10/F61 bypass or adjacent regression after prompting fixes for legacy pending-sequence suppression, unbounded persistent invitation candidates, and acceptance of pre-patch Review rows without the new classification marker. A live MySQL concurrency exercise remains a deployment-layer check, not completed local evidence.
+- [x] Phase 12 focused controls cover implicit and explicit local destinations, unsafe legacy targets, stale accept and dismiss tokens, late validation and final-state rollback, changed calendar authority, double decisions, complete grouped undo, expired undo records and owner edits made after acceptance.
+- [x] Phase 12 local suites: server 2,110/0 under a 128 MiB memory limit; frontend smoke 653/0 in `America/Los_Angeles`, `UTC`, `Europe/Berlin`, `Asia/Kolkata` and `Pacific/Auckland`; frontend static 353/0 across 103 modules; MCP 67/0; deploy-security 19/0; vendor manifest 10/10. All changed PHP and JavaScript files pass syntax checks, and no time-zone harness was required because this phase does not change repeat rules, time-zone handling, import or export.
+- [x] Phase 12 independent read-only post-patch review confirmed the local-calendar restriction and revision binding across REST, Review, browser and MCP paths. It prompted fixes so expired mutation records cannot falsely reopen an accepted proposal and a later owner edit blocks grouped undo instead of being overwritten. A live two-connection MySQL concurrency exercise remains a deployment-layer check, not completed local evidence.
 
 ## Remaining practical checks
 
@@ -150,6 +166,10 @@ Use a disposable account or non-production installation for the checks that deli
 ### Emailed invitation review (F10/F61)
 
 - [ ] After deployment, use one disposable emailed `REQUEST`: confirm it appears in Review before any event exists, **Add to calendar** creates it without sending a reply, and the ordinary Accept / Maybe / Decline choice appears afterward. There is no need to manufacture forged UIDs, extreme sequences or acceptance races; those paths are covered by automated controls.
+
+### Plugin proposal decisions (F29/F6/F56)
+
+- [ ] After deployment, create one disposable plugin proposal and confirm its destination calendar is named before acceptance. Accept it once, then use Proposal **Undo** immediately and confirm the created items are removed together and the proposal reopens. There is no need to manufacture stale plans, expired undo records, owner-edit conflicts or concurrent decisions; those paths are covered by automated controls.
 
 ### Sign-out and API-key cleanup (M1/M5)
 

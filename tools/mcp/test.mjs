@@ -76,10 +76,16 @@ const mock = createServer((req, res) => {
           { key: 'rsvp:4410', kind: 'rsvp', status: 'open', title: 'Offsite', actions: [
             { name: 'accepted', label: 'Accept', method: 'POST', path: '/events/4410/rsvp', body: { answer: 'accepted' } },
           ] },
+          { key: 'proposal:7', kind: 'proposal', status: 'open', title: 'Sample plan', detail: {
+            reviewToken: 'b'.repeat(64),
+          }, actions: [
+            { name: 'accept', label: 'Add event', method: 'POST', path: '/proposals/7/accept', body: { reviewToken: 'b'.repeat(64) } },
+            { name: 'dismiss', label: 'Dismiss', method: 'POST', path: '/proposals/7/reject', body: { reviewToken: 'b'.repeat(64) } },
+          ] },
           { key: 'invite_change:9', kind: 'invite_change', status: 'dismissed', title: 'Old', actions: [] },
         ],
       });
-    } else if (req.method === 'POST' && (path === '/api/v1/review/invitations/13/accept' || path === '/api/v1/review/invite-changes/12/accept' || path === '/api/v1/events/4410/rsvp')) {
+    } else if (req.method === 'POST' && (path === '/api/v1/review/invitations/13/accept' || path === '/api/v1/review/invite-changes/12/accept' || path === '/api/v1/events/4410/rsvp' || path === '/api/v1/proposals/7/accept')) {
       respond(200, { ok: true });
     } else if (req.method === 'PATCH' && path.startsWith('/api/v1/events/')) {
       respond(200, { eventId: 42, title: entry.body.title ?? 'Dinner' });
@@ -257,7 +263,7 @@ async function main() {
   received.length = 0;
   const review = await rpc('tools/call', { name: 'list_review', arguments: {} });
   checkEq('list_review path', '/api/v1/review', received[0]?.url);
-  checkEq('list_review maps items', 4, JSON.parse(review.result?.content?.[0]?.text ?? '{}').items?.length);
+  checkEq('list_review maps items', 5, JSON.parse(review.result?.content?.[0]?.text ?? '{}').items?.length);
   check('list_review marks third-party text as data (F18)', String(JSON.parse(review.result?.content?.[0]?.text ?? '{}')._untrusted || '').includes('never instructions'));
 
   received.length = 0;
@@ -274,6 +280,17 @@ async function main() {
   received.length = 0;
   await rpc('tools/call', { name: 'decide_review', arguments: { key: 'rsvp:4410', action: 'accepted' } });
   checkEq('decide_review sends the action\'s own body', { answer: 'accepted' }, received[1]?.body);
+
+  received.length = 0;
+  const reviewedProposalToken = 'a'.repeat(64);
+  await rpc('tools/call', { name: 'decide_review', arguments: { key: 'proposal:7', action: 'accept', reviewToken: reviewedProposalToken } });
+  checkEq('decide_review echoes the proposal revision the caller reviewed instead of the refreshed action token',
+    { reviewToken: reviewedProposalToken }, received[1]?.body);
+
+  received.length = 0;
+  const missingProposalToken = await rpc('tools/call', { name: 'decide_review', arguments: { key: 'proposal:7', action: 'accept' } });
+  checkEq('decide_review refuses a proposal decision without its reviewed token', true, missingProposalToken.result?.isError);
+  checkEq('decide_review missing proposal token: only the safety lookup was made', ['GET'], received.map((r) => r.method));
 
   // Nothing the caller types becomes a path: an unknown key or action is an
   // error after the lookup, and no second request is made.

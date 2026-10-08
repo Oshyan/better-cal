@@ -290,12 +290,13 @@ const TOOLS = [
   },
   {
     name: 'decide_review',
-    description: 'Act on one Review item: pass its key and one of ITS action names, both exactly as list_review returned them (e.g. accept / dismiss for invite_new, invite_change and proposal; accepted / tentative / declined for rsvp). Accepting invite_new adds it without replying; accepting invite_change applies the organizer\'s change. Dismissing leaves the calendar unchanged. Decisions about the owner\'s calendar should reflect what the owner asked for.',
+    description: 'Act on one Review item: pass its key and one of ITS action names, both exactly as list_review returned them (e.g. accept / dismiss for invite_new, invite_change and proposal; accepted / tentative / declined for rsvp). For a proposal, also echo detail.reviewToken from the list_review result you actually reviewed; a changed proposal must be reviewed again. Accepting invite_new adds it without replying; accepting invite_change applies the organizer\'s change. Dismissing leaves the calendar unchanged. Decisions about the owner\'s calendar should reflect what the owner asked for.',
     inputSchema: {
       type: 'object',
       properties: {
         key: { type: 'string', description: 'Item key from list_review, e.g. "invite_change:12" or "rsvp:4410"' },
         action: { type: 'string', description: 'One of the item\'s action names from list_review' },
+        reviewToken: { type: 'string', pattern: '^[a-f0-9]{64}$', description: 'Required for proposal decisions: detail.reviewToken from the proposal version you reviewed' },
       },
       required: ['key', 'action'],
     },
@@ -311,7 +312,16 @@ const TOOLS = [
         const names = (item.actions || []).map((x) => x.name).join(', ') || 'none (already decided)';
         throw new Error(`Item ${a.key} has no action ${JSON.stringify(a.action)}; available: ${names}`);
       }
-      return api(action.method || 'POST', action.path, { body: action.body ?? {} });
+      let body = action.body ?? {};
+      if (item.kind === 'proposal' && (a.action === 'accept' || a.action === 'dismiss')) {
+        if (typeof a.reviewToken !== 'string' || !/^[a-f0-9]{64}$/.test(a.reviewToken)) {
+          throw new Error('Proposal decisions require reviewToken from the list_review result you reviewed');
+        }
+        // Keep the server-owned path, but never replace the caller's reviewed
+        // revision with the token from this safety re-fetch.
+        body = { ...body, reviewToken: a.reviewToken };
+      }
+      return api(action.method || 'POST', action.path, { body });
     },
   },
   {

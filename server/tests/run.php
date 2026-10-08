@@ -1127,7 +1127,7 @@ check('imip live event: equal sequence still allowed', $mayWhen('confirmed', 2)[
     $adb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
     $adb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, settings_json TEXT)');
     $adb->run("INSERT INTO users VALUES (1, '{\"tz\":\"UTC\"}')");
-    $adb->run("CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, color TEXT, kind TEXT DEFAULT 'local', provider TEXT DEFAULT 'ics', visible INTEGER DEFAULT 1, subscription_authority TEXT, settings_json TEXT, role TEXT DEFAULT 'mine', created_at TEXT DEFAULT CURRENT_TIMESTAMP, synctoken INTEGER DEFAULT 1)");
+    $adb->run("CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, color TEXT, kind TEXT DEFAULT 'local', provider TEXT DEFAULT 'ics', plugin_id TEXT, visible INTEGER DEFAULT 1, position INTEGER DEFAULT 0, subscription_authority TEXT, settings_json TEXT, role TEXT DEFAULT 'mine', created_at TEXT DEFAULT CURRENT_TIMESTAMP, synctoken INTEGER DEFAULT 1)");
     $adb->run("CREATE TABLE events (
         id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, description TEXT, location TEXT,
         location_lat REAL, location_lng REAL, geocoded_at TEXT, url TEXT, start_utc TEXT, end_utc TEXT, all_day INTEGER,
@@ -1143,8 +1143,9 @@ check('imip live event: equal sequence still allowed', $mayWhen('confirmed', 2)[
     $adb->run('CREATE TABLE event_links (id INTEGER PRIMARY KEY, container_id INTEGER, event_id INTEGER, position INTEGER)');
     $adb->run('CREATE TABLE event_duplicates (id INTEGER PRIMARY KEY, event_a INTEGER, event_b INTEGER, status TEXT)');
     $adb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, message_key TEXT, sender_key TEXT, admitted_at TEXT, UNIQUE(user_id, kind, message_key))');
-    $adb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT)');
+    $adb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT, undone INTEGER DEFAULT 0, created_at TEXT DEFAULT CURRENT_TIMESTAMP)');
     $adb->run("CREATE TABLE review_items (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, event_id INTEGER, source_key TEXT, title TEXT, summary TEXT, payload_json TEXT, status TEXT DEFAULT 'open', created_at TEXT DEFAULT CURRENT_TIMESTAMP, decided_at TEXT)");
+    $adb->run("CREATE TABLE plugin_proposals (id INTEGER PRIMARY KEY, plugin_id TEXT, user_id INTEGER, source_key TEXT, title TEXT, summary TEXT, rationale_html TEXT, plan_json TEXT, status TEXT DEFAULT 'open', created_at TEXT DEFAULT CURRENT_TIMESTAMP, decided_at TEXT, accepted_run_id TEXT, UNIQUE(plugin_id, source_key))");
     $undoA = new BetterCal\Domain\Undo($adb);
     $labelsA = new BetterCal\Domain\Labels($adb);
     $eventsA = new BetterCal\Domain\Events(
@@ -1241,6 +1242,245 @@ check('imip live event: equal sequence still allowed', $mayWhen('confirmed', 2)[
     ]);
     checkEq('imip booking control: PUBLISH retains direct event creation', ['created', 2, 2], [
         $published[0], $published[1], (int) $adb->scalar('SELECT COUNT(*) FROM events'),
+    ]);
+
+    // Phase 12: the proposal object the owner reviewed is the exact object the
+    // server may materialize. Destinations are explicit owner-local calendars,
+    // the decision is revision-bound, and every local side effect joins one
+    // outer transaction with the proposal state transition.
+    $adb->run("INSERT INTO calendars (id, user_id, name, color, kind, position) VALUES (10, 1, 'Planning', '#4477aa', 'local', -10)");
+    $adb->run("INSERT INTO calendars (id, user_id, name, color, kind, plugin_id, position) VALUES (11, 1, 'Generated', '#8855aa', 'plugin', 'sample-feed', 10)");
+    $adb->run("INSERT INTO calendars (id, user_id, name, color, kind, provider, position) VALUES (12, 1, 'External', '#558855', 'subscribed', 'google', 20)");
+    $adb->run("UPDATE users SET settings_json = '{\"tz\":\"UTC\",\"defaultCalendarId\":10}' WHERE id = 1");
+    $tripsA = new BetterCal\Domain\Trips($adb, $undoA);
+    $proposalsA = new BetterCal\Domain\Proposals($adb, $eventsA, $tripsA);
+    $proposalInput = static fn(string $sourceKey, string $title = 'Sample plan', ?array $events = null): array => [
+        'sourceKey' => $sourceKey,
+        'title' => $title,
+        'summary' => 'A short plan for review.',
+        'rationaleHtml' => '<p>Two ordinary calendar items.</p>',
+        'plan' => ['events' => $events ?? [[
+            'title' => 'First item',
+            'start' => '2026-12-01T18:00:00+00:00',
+            'end' => '2026-12-01T19:00:00+00:00',
+        ]]],
+    ];
+
+    $firstProposal = $proposalsA->upsert(1, 'sample-planner', $proposalInput('revision'));
+    checkEq('proposal review: implicit destination is fixed and disclosed at creation', [10, 10, 'Planning', true, 64], [
+        $firstProposal['plan']['events'][0]['calendarId'] ?? null,
+        $firstProposal['destinations']['events'][0]['calendarId'] ?? null,
+        $firstProposal['destinations']['events'][0]['calendarName'] ?? null,
+        $firstProposal['acceptAllowed'] ?? null,
+        strlen((string) ($firstProposal['reviewToken'] ?? '')),
+    ]);
+    $gappedEvents = [4 => ['title' => 'Filtered item', 'start' => '2026-12-01T20:00:00+00:00']];
+    $gappedProposal = $proposalsA->upsert(1, 'sample-planner', $proposalInput('gapped-list', 'Filtered plan', $gappedEvents));
+    checkEq('proposal review: a filtered PHP event list is normalized without losing its destination', [0, 10], [
+        array_key_first($gappedProposal['plan']['events']),
+        $gappedProposal['plan']['events'][0]['calendarId'] ?? null,
+    ]);
+
+    foreach ([11 => 'plugin', 12 => 'subscribed'] as $calendarId => $label) {
+        try {
+            $proposalsA->upsert(1, 'sample-planner', $proposalInput('blocked-' . $label, 'Blocked target', [[
+                'title' => 'Targeted item', 'start' => '2026-12-02T18:00:00+00:00', 'calendarId' => $calendarId,
+            ]]));
+            check('proposal target: ' . $label . ' calendar is refused before storage', false);
+        } catch (HttpError $e) {
+            checkEq('proposal target: ' . $label . ' calendar is refused before storage', [400, 'proposal_local_calendar_required'], [$e->status, $e->errorCode]);
+        }
+    }
+
+    $replacedProposal = $proposalsA->upsert(1, 'sample-planner', $proposalInput('revision', 'Updated sample plan'));
+    $eventsBeforeStale = (int) $adb->scalar('SELECT COUNT(*) FROM events');
+    try {
+        $proposalsA->accept(1, (int) $firstProposal['id'], (string) $firstProposal['reviewToken']);
+        check('proposal review: stale accept is refused', false);
+    } catch (HttpError $e) {
+        checkEq('proposal review: stale accept is refused', [409, 'proposal_changed'], [$e->status, $e->errorCode]);
+    }
+    checkEq('proposal review: stale accept writes nothing and leaves proposal open', [$eventsBeforeStale, 'open'], [
+        (int) $adb->scalar('SELECT COUNT(*) FROM events'),
+        $adb->scalar('SELECT status FROM plugin_proposals WHERE id = ?', [$firstProposal['id']]),
+    ]);
+
+    $dismissFirst = $proposalsA->upsert(1, 'sample-planner', $proposalInput('dismiss-revision', 'First dismiss view'));
+    $dismissCurrent = $proposalsA->upsert(1, 'sample-planner', $proposalInput('dismiss-revision', 'Updated dismiss view'));
+    try {
+        $proposalsA->reject(1, (int) $dismissFirst['id'], (string) $dismissFirst['reviewToken']);
+        check('proposal review: stale dismiss is refused', false);
+    } catch (HttpError $e) {
+        checkEq('proposal review: stale dismiss is refused', [409, 'proposal_changed'], [$e->status, $e->errorCode]);
+    }
+    $dismissedCurrent = $proposalsA->reject(1, (int) $dismissCurrent['id'], (string) $dismissCurrent['reviewToken']);
+    checkEq('proposal review: current dismiss token decides exactly that revision', 'rejected', $dismissedCurrent['status']);
+
+    $rollbackProposal = $proposalsA->upsert(1, 'sample-planner', $proposalInput('rollback', 'Rollback plan', [
+        ['title' => 'Valid first item', 'start' => '2026-12-03T18:00:00+00:00'],
+        ['title' => 'Invalid second item', 'start' => 'not-a-time'],
+    ]));
+    $rollbackBefore = [
+        (int) $adb->scalar('SELECT COUNT(*) FROM events'),
+        (int) $adb->scalar('SELECT COUNT(*) FROM mutations'),
+    ];
+    try {
+        $proposalsA->accept(1, (int) $rollbackProposal['id'], (string) $rollbackProposal['reviewToken']);
+        check('proposal transaction: late event validation failure is refused', false);
+    } catch (Throwable) {
+        check('proposal transaction: late event validation failure is refused', true);
+    }
+    checkEq('proposal transaction: late failure rolls back earlier event, journal and decision', [$rollbackBefore[0], $rollbackBefore[1], 'open', null], [
+        (int) $adb->scalar('SELECT COUNT(*) FROM events'),
+        (int) $adb->scalar('SELECT COUNT(*) FROM mutations'),
+        $adb->scalar('SELECT status FROM plugin_proposals WHERE id = ?', [$rollbackProposal['id']]),
+        $adb->scalar('SELECT accepted_run_id FROM plugin_proposals WHERE id = ?', [$rollbackProposal['id']]),
+    ]);
+
+    $commitFailure = $proposalsA->upsert(1, 'sample-planner', [
+        'sourceKey' => 'commit-failure', 'title' => 'Commit failure plan',
+        'plan' => [
+            'trip' => ['title' => 'Sample container', 'start' => '2026-12-05', 'end' => '2026-12-07'],
+            'events' => [
+                ['title' => 'Morning item', 'start' => '2026-12-05T09:00:00+00:00'],
+                ['title' => 'Evening item', 'start' => '2026-12-06T18:00:00+00:00'],
+            ],
+        ],
+    ]);
+    $commitBefore = [
+        (int) $adb->scalar('SELECT COUNT(*) FROM events'),
+        (int) $adb->scalar('SELECT COUNT(*) FROM mutations'),
+        (int) $adb->scalar('SELECT COUNT(*) FROM event_links'),
+    ];
+    $adb->run("CREATE TRIGGER reject_proposal_accept BEFORE UPDATE OF status ON plugin_proposals WHEN NEW.status = 'accepted' BEGIN SELECT RAISE(FAIL, 'injected proposal update failure'); END");
+    try {
+        $proposalsA->accept(1, (int) $commitFailure['id'], (string) $commitFailure['reviewToken']);
+        check('proposal transaction: final state-write failure is surfaced', false);
+    } catch (Throwable) {
+        check('proposal transaction: final state-write failure is surfaced', true);
+    }
+    $adb->run('DROP TRIGGER reject_proposal_accept');
+    checkEq('proposal transaction: final state-write failure rolls back events, trip links and journals', [$commitBefore[0], $commitBefore[1], $commitBefore[2], 'open'], [
+        (int) $adb->scalar('SELECT COUNT(*) FROM events'),
+        (int) $adb->scalar('SELECT COUNT(*) FROM mutations'),
+        (int) $adb->scalar('SELECT COUNT(*) FROM event_links'),
+        $adb->scalar('SELECT status FROM plugin_proposals WHERE id = ?', [$commitFailure['id']]),
+    ]);
+
+    $destinationChanged = $proposalsA->upsert(1, 'sample-planner', $proposalInput('destination-change', 'Destination change plan'));
+    $adb->run("UPDATE calendars SET kind = 'plugin' WHERE id = 10");
+    try {
+        $proposalsA->accept(1, (int) $destinationChanged['id'], (string) $destinationChanged['reviewToken']);
+        check('proposal destination: changed calendar authority requires fresh review', false);
+    } catch (HttpError $e) {
+        checkEq('proposal destination: changed calendar authority requires fresh review', [409, 'proposal_changed'], [$e->status, $e->errorCode]);
+    }
+    $adb->run("UPDATE calendars SET kind = 'local' WHERE id = 10");
+
+    $acceptedProposal = $proposalsA->accept(1, (int) $replacedProposal['id'], (string) $replacedProposal['reviewToken']);
+    $acceptedEventCount = (int) $adb->scalar('SELECT COUNT(*) FROM events');
+    try {
+        $proposalsA->accept(1, (int) $replacedProposal['id'], (string) $replacedProposal['reviewToken']);
+        check('proposal transaction: a second accept is refused', false);
+    } catch (HttpError $e) {
+        checkEq('proposal transaction: a second accept is refused', [409, 'proposal_decided'], [$e->status, $e->errorCode]);
+    }
+    checkEq('proposal transaction: a second accept creates no duplicate', [$acceptedEventCount, 'accepted', 1], [
+        (int) $adb->scalar('SELECT COUNT(*) FROM events'),
+        $adb->scalar('SELECT status FROM plugin_proposals WHERE id = ?', [$replacedProposal['id']]),
+        count($acceptedProposal['created']['eventIds'] ?? []),
+    ]);
+
+    // A pre-patch row can name an unsafe target. It remains visible so the
+    // owner can dismiss it, but acceptance rechecks and refuses the target.
+    $legacyId = $adb->insert('plugin_proposals', [
+        'plugin_id' => 'sample-planner', 'user_id' => 1, 'source_key' => 'legacy-external',
+        'title' => 'Legacy external plan', 'summary' => null, 'rationale_html' => null,
+        'plan_json' => json_encode(['events' => [['title' => 'External item', 'start' => '2026-12-04T18:00:00+00:00', 'calendarId' => 12]]]),
+    ]);
+    $legacyView = array_values(array_filter($proposalsA->listFor(1), static fn(array $p): bool => $p['id'] === $legacyId))[0];
+    checkEq('proposal legacy target: unsafe row is visible but not actionable', [false, 'External'], [
+        $legacyView['acceptAllowed'], $legacyView['destinations']['events'][0]['calendarName'] ?? null,
+    ]);
+    try {
+        $proposalsA->accept(1, $legacyId, (string) $legacyView['reviewToken']);
+        check('proposal legacy target: acceptance is refused', false);
+    } catch (HttpError $e) {
+        checkEq('proposal legacy target: acceptance is refused', [409, 'proposal_target_invalid'], [$e->status, $e->errorCode]);
+    }
+
+    $undoProposal = $proposalsA->upsert(1, 'sample-planner', [
+        'sourceKey' => 'strict-undo', 'title' => 'Grouped proposal', 'summary' => 'A reversible local plan.',
+        'plan' => [
+            'events' => [
+                ['title' => 'First session', 'start' => '2026-12-10T09:00:00+00:00', 'end' => '2026-12-10T10:00:00+00:00'],
+                ['title' => 'Second session', 'start' => '2026-12-10T11:00:00+00:00', 'end' => '2026-12-10T12:00:00+00:00'],
+                ['title' => 'Third session', 'start' => '2026-12-10T13:00:00+00:00', 'end' => '2026-12-10T14:00:00+00:00'],
+            ],
+        ],
+    ]);
+    $undoAccepted = $proposalsA->accept(1, (int) $undoProposal['id'], (string) $undoProposal['reviewToken']);
+    $runMutations = $adb->all('SELECT id, before_json, after_json FROM mutations WHERE run_id = ? ORDER BY id', [$undoAccepted['runId']]);
+    check('proposal undo: accepted plan has several grouped mutations', count($runMutations) >= 3);
+    $firstRunMutation = $runMutations[0];
+    $adb->run('UPDATE mutations SET before_json = NULL, after_json = NULL WHERE id = ?', [$firstRunMutation['id']]);
+    $eventIdsBeforeFailedUndo = $undoAccepted['created']['eventIds'];
+    try {
+        $proposalsA->undoAccept(1, (int) $undoProposal['id']);
+        check('proposal undo: an incomplete grouped undo is refused', false);
+    } catch (HttpError $e) {
+        checkEq('proposal undo: an incomplete grouped undo is refused', [409, 'proposal_undo_incomplete'], [$e->status, $e->errorCode]);
+    }
+    [$undoIdsSql, $undoIdsParams] = BetterCal\Infra\Db::in($eventIdsBeforeFailedUndo);
+    checkEq('proposal undo: failed reversal rolls back deletions, mutation flags and proposal state', [count($eventIdsBeforeFailedUndo), 0, 'accepted'], [
+        (int) $adb->scalar("SELECT COUNT(*) FROM events WHERE id IN $undoIdsSql", $undoIdsParams),
+        (int) $adb->scalar('SELECT COUNT(*) FROM mutations WHERE run_id = ? AND undone = 1', [$undoAccepted['runId']]),
+        $adb->scalar('SELECT status FROM plugin_proposals WHERE id = ?', [$undoProposal['id']]),
+    ]);
+    $adb->run('UPDATE mutations SET before_json = ?, after_json = ? WHERE id = ?', [
+        $firstRunMutation['before_json'], $firstRunMutation['after_json'], $firstRunMutation['id'],
+    ]);
+    $undoResult = $proposalsA->undoAccept(1, (int) $undoProposal['id']);
+    checkEq('proposal undo: complete grouped reversal removes every plan event and reopens once', [0, 'open', 0, true], [
+        (int) $adb->scalar("SELECT COUNT(*) FROM events WHERE id IN $undoIdsSql", $undoIdsParams),
+        $adb->scalar('SELECT status FROM plugin_proposals WHERE id = ?', [$undoProposal['id']]),
+        $undoResult['skipped'],
+        $undoResult['undone'] >= 3,
+    ]);
+
+    $editedProposal = $proposalsA->upsert(1, 'sample-planner', $proposalInput('edited-before-undo', 'Editable plan'));
+    $editedAccepted = $proposalsA->accept(1, (int) $editedProposal['id'], (string) $editedProposal['reviewToken']);
+    $editedEventId = (int) $editedAccepted['created']['eventIds'][0];
+    $eventsA->patch(1, $editedEventId, ['title' => 'Owner-edited item']);
+    $editMutationId = (int) $adb->scalar(
+        'SELECT id FROM mutations WHERE user_id = 1 AND entity = ? AND entity_id = ? AND run_id IS NULL ORDER BY id DESC LIMIT 1',
+        ['event', $editedEventId]
+    );
+    try {
+        $proposalsA->undoAccept(1, (int) $editedProposal['id']);
+        check('proposal undo: a later owner edit blocks grouped reversal', false);
+    } catch (HttpError $e) {
+        checkEq('proposal undo: a later owner edit blocks grouped reversal', [409, 'proposal_undo_incomplete'], [$e->status, $e->errorCode]);
+    }
+    checkEq('proposal undo: blocked reversal preserves the edited event and accepted state', ['Owner-edited item', 'accepted', 0, 0], [
+        $adb->scalar('SELECT title FROM events WHERE id = ?', [$editedEventId]),
+        $adb->scalar('SELECT status FROM plugin_proposals WHERE id = ?', [$editedProposal['id']]),
+        (int) $adb->scalar('SELECT COUNT(*) FROM mutations WHERE run_id = ? AND undone = 1', [$editedAccepted['runId']]),
+        (int) $adb->scalar('SELECT undone FROM mutations WHERE id = ?', [$editMutationId]),
+    ]);
+    $expiredProposal = $proposalsA->upsert(1, 'sample-planner', $proposalInput('expired-undo', 'Expired undo plan'));
+    $expiredAccepted = $proposalsA->accept(1, (int) $expiredProposal['id'], (string) $expiredProposal['reviewToken']);
+    $expiredEventId = (int) $expiredAccepted['created']['eventIds'][0];
+    $adb->run('DELETE FROM mutations WHERE run_id = ?', [$expiredAccepted['runId']]);
+    try {
+        $proposalsA->undoAccept(1, (int) $expiredProposal['id']);
+        check('proposal undo: expired run records cannot falsely reopen a proposal', false);
+    } catch (HttpError $e) {
+        checkEq('proposal undo: expired run records cannot falsely reopen a proposal', [409, 'proposal_undo_incomplete'], [$e->status, $e->errorCode]);
+    }
+    checkEq('proposal undo: expired records leave the event and accepted state intact', [1, 'accepted'], [
+        (int) $adb->scalar('SELECT COUNT(*) FROM events WHERE id = ?', [$expiredEventId]),
+        $adb->scalar('SELECT status FROM plugin_proposals WHERE id = ?', [$expiredProposal['id']]),
     ]);
 }
 

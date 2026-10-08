@@ -158,10 +158,15 @@ final class ReviewController
             $n = count($p['plan']['events'] ?? []);
             $actions = [];
             if ($p['status'] === 'open') {
-                $actions = [
-                    self::action('accept', 'Add ' . $n . ' event' . ($n === 1 ? '' : 's') . (!empty($p['plan']['trip']) ? ' as a trip' : ''), "/proposals/{$p['id']}/accept"),
-                    self::action('dismiss', 'Dismiss', "/proposals/{$p['id']}/reject"),
-                ];
+                $actions = array_values(array_filter([
+                    $p['acceptAllowed'] ? self::action(
+                        'accept',
+                        'Add ' . $n . ' event' . ($n === 1 ? '' : 's') . (!empty($p['plan']['trip']) ? ' as a trip' : ''),
+                        "/proposals/{$p['id']}/accept",
+                        ['reviewToken' => $p['reviewToken']]
+                    ) : null,
+                    self::action('dismiss', 'Dismiss', "/proposals/{$p['id']}/reject", ['reviewToken' => $p['reviewToken']]),
+                ]));
             } elseif ($p['status'] === 'accepted') {
                 $actions = [self::action('undo', 'Undo, remove these again', "/proposals/{$p['id']}/undo")];
             }

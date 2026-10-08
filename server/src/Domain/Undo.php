@@ -149,25 +149,37 @@ final class Undo
     }
 
     /**
-     * Undo every mutation a plugin run made, newest first. Forced per entry:
-     * within one run a later mutation legitimately supersedes an earlier one,
-     * which the stale-undo guard would otherwise refuse.
+     * Undo every mutation a plugin run made, newest first. In strict mode,
+     * each entry keeps the stale-undo guard: newer entries from this same run
+     * have already been marked undone, while a later owner edit remains live
+     * and aborts the group instead of being overwritten.
+     * Strict mode lets a caller wrap the whole group in one outer transaction:
+     * the first non-undoable entry aborts instead of committing a partial undo.
      *
      * @return array{undone:int,skipped:int}
      */
-    public function undoRun(int $userId, string $runId): array
+    public function undoRun(int $userId, string $runId, bool $strict = false): array
     {
         $rows = $this->db->all(
             'SELECT id FROM mutations WHERE user_id = ? AND run_id = ? AND undone = 0 ORDER BY id DESC',
             [$userId, $runId]
         );
+        if ($strict && $rows === []) {
+            throw HttpError::badRequest(
+                'This run no longer has undo records',
+                'not_undoable'
+            );
+        }
         $undone = 0;
         $skipped = 0;
         foreach ($rows as $row) {
             try {
-                $this->undoById($userId, (int) $row['id'], true);
+                $this->undoById($userId, (int) $row['id'], !$strict);
                 $undone++;
-            } catch (\Throwable) {
+            } catch (\Throwable $e) {
+                if ($strict) {
+                    throw $e;
+                }
                 $skipped++; // log-only entries and already-undone rows
             }
         }

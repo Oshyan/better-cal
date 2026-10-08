@@ -4,6 +4,14 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.31 (2026-10-07)
+
+- **Plugin proposals now show exactly which local calendar each item will use.** Accept and Dismiss apply only to the proposal version that was reviewed; if a plugin changes the plan or its destination, Better-Cal asks for a fresh review instead of applying the replacement silently.
+- **Proposal acceptance and Undo are all-or-nothing.** A failed item cannot leave part of a plan behind or allow a duplicate retry. Undo also refuses to overwrite a later owner edit or reopen a proposal after its undo records expire.
+- Proposal plans can no longer write directly to subscribed, Google-backed or plugin-managed calendars. The bundled planners already use local calendars and continue to work unchanged.
+
+Operators: no migration. Direct API and MCP clients must echo the proposal's `reviewToken` when accepting or dismissing it. Third-party plugins that explicitly targeted a non-local calendar must create a local proposal instead.
+
 ## 0.9.30 (2026-10-07)
 
 - **A first-time emailed invitation waits in Review before it becomes an event.** Choose **Add to calendar** to create it (no reply is sent); Accept, Maybe and Decline work as before after that. Updates to an invitation you already have are applied in order, and a change claiming to come from a different organizer waits for your choice. Bookings, tickets and confirmations read from email still land automatically. At most 100 invitations can wait at once.

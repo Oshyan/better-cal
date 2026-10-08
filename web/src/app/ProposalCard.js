@@ -14,7 +14,11 @@ import { sanitizeHtml } from '../lib/richtext.js';
 import { isPendingLocation } from '../lib/maps.js';
 import { parseISO, dateOfDayKey, fmtDateFull, fmtTime } from '../lib/dates.js';
 
-function planLine(ev) {
+function calendarLabel(destination) {
+  return destination?.calendarName || 'Unavailable calendar';
+}
+
+function planLine(ev, destination) {
   const allDay = String(ev.start).length === 10 || ev.allDay;
   // An all-day start is a date: parsed as an instant it is UTC midnight, which
   // is the evening before anywhere west of UTC.
@@ -23,6 +27,7 @@ function planLine(ev) {
     <span class="bc-proposal-when">${fmtDateFull(s)}${allDay ? '' : ' ' + fmtTime(s)}</span>
     <span class="bc-proposal-what">${ev.title}</span>
     ${ev.location && html`<span class="bc-proposal-where" title=${isPendingLocation(ev.location) ? ev.location : undefined}>${isPendingLocation(ev.location) ? 'Location after RSVP' : ev.location}</span>`}
+    <span class="bc-proposal-calendar" title="Destination calendar">${calendarLabel(destination)}</span>
   </li>`;
 }
 
@@ -31,17 +36,21 @@ export function ProposalCard({ p, onChanged }) {
   const [open, setOpen] = useState(true);
   const plan = p.plan || {};
   const events = plan.events || [];
+  const destinations = p.destinations || {};
 
-  const act = async (path, okMsg, after) => {
+  const act = async (path, okMsg, after, body) => {
     setBusy(true);
     try {
-      const r = await api('/proposals/' + p.id + path, { method: 'POST' });
+      const r = await api('/proposals/' + p.id + path, { method: 'POST', body });
       toast(typeof okMsg === 'function' ? okMsg(r) : okMsg, { undoable: false });
       refreshWindow();
       await onChanged();
       if (after) after(r);
     } catch (e) {
       toast(e.message || 'Failed', { error: true });
+      if (e.code === 'proposal_changed' || e.code === 'proposal_target_invalid') {
+        await onChanged();
+      }
     } finally {
       setBusy(false);
     }
@@ -52,8 +61,10 @@ export function ProposalCard({ p, onChanged }) {
     (r) => 'Added ' + (r.created?.eventIds?.length || 0) + ' event'
       + ((r.created?.eventIds?.length || 0) === 1 ? '' : 's')
       + (r.created?.tripId ? ' as a trip' : ''),
+    null,
+    { reviewToken: p.reviewToken },
   );
-  const reject = () => act('/reject', 'Dismissed');
+  const reject = () => act('/reject', 'Dismissed', null, { reviewToken: p.reviewToken });
   const undo = () => act('/undo', 'Put back. The proposal is open again');
 
   return html`<div class="bc-proposal${p.status !== 'open' ? ' is-' + p.status : ''}">
@@ -69,11 +80,12 @@ export function ProposalCard({ p, onChanged }) {
     ${p.summary && html`<p class="bc-proposal-summary">${p.summary}</p>`}
     ${open && html`<div class="bc-proposal-body">
       ${p.rationaleHtml && html`<div class="bc-proposal-why bc-rich" dangerouslySetInnerHTML=${{ __html: sanitizeHtml(p.rationaleHtml) }}></div>`}
-      ${plan.trip && html`<div class="bc-proposal-trip"><${Icon} name="trip" size=${12} /> ${plan.trip.title}</div>`}
-      <ul class="bc-proposal-list">${events.map((ev, i) => html`${planLine(ev, i)}`)}</ul>
+      ${plan.trip && html`<div class="bc-proposal-trip"><${Icon} name="trip" size=${12} /> ${plan.trip.title}<span class="bc-proposal-calendar" title="Destination calendar">${calendarLabel(destinations.trip)}</span></div>`}
+      <ul class="bc-proposal-list">${events.map((ev, i) => html`${planLine(ev, destinations.events?.[i])}`)}</ul>
+      ${p.status === 'open' && !p.acceptAllowed && html`<p class="bc-proposal-target-error" role="status">${p.acceptError || 'This proposal cannot be added to its selected calendar.'}</p>`}
       <div class="bc-proposal-actions">
         ${p.status === 'open' && html`
-          <button type="button" class="bc-btn bc-btn-primary" disabled=${busy} onClick=${accept}>
+          <button type="button" class="bc-btn bc-btn-primary" disabled=${busy || !p.acceptAllowed} onClick=${accept}>
             Add ${events.length} event${events.length === 1 ? '' : 's'}${plan.trip ? ' as a trip' : ''}
           </button>
           <button type="button" class="bc-btn" disabled=${busy} onClick=${reject}>Dismiss</button>

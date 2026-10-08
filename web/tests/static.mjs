@@ -120,7 +120,25 @@ for (const file of files) {
     'revoking a key that pauses subscriptions must refresh the Review badge');
 }
 
-// --- 6. sign-out and system health use opaque push identities --------------
+// --- 6. proposal decisions stay bound to what Review displayed -------------
+// A card must disclose its resolved calendar, echo its exact revision token,
+// and refresh rather than retrying silently if the proposal changed.
+{
+  const proposal = readFileSync(join(root, 'app', 'ProposalCard.js'), 'utf8');
+  const reviewController = readFileSync(join(root, '..', '..', 'server', 'src', 'Http', 'Controllers', 'ReviewController.php'), 'utf8');
+  const check = (ok, msg) => { if (ok) passed++; else fail(msg); };
+  check(proposal.includes('Destination calendar') && proposal.includes('destinations.events?.[i]'),
+    'proposal cards must show each resolved destination calendar');
+  check(proposal.includes('{ reviewToken: p.reviewToken }') && proposal.includes("e.code === 'proposal_changed'"),
+    'proposal decisions must echo the reviewed token and refresh changed cards');
+  check(proposal.includes('disabled=${busy || !p.acceptAllowed}') && proposal.includes('bc-proposal-target-error'),
+    'proposal cards must disable acceptance and explain an unavailable target');
+  check(reviewController.includes("['reviewToken' => $p['reviewToken']]")
+      && reviewController.includes("$p['acceptAllowed'] ? self::action("),
+    'Review proposal actions must carry the displayed token and omit unsafe acceptance');
+}
+
+// --- 7. sign-out and system health use opaque push identities --------------
 // Sign-out stops reminders at the server but deliberately keeps the browser's
 // PushManager subscription so signing in can quietly restore it. Health needs
 // only a hash to recognise this device; a raw endpoint is a delivery capability.

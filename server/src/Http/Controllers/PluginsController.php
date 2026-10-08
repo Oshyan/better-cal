@@ -37,18 +37,21 @@ final class PluginsController
 
     public function enable(Request $req, array $params): Response
     {
+        $req->requireSession('Plugin management');
         $this->plugins->enable((string) $params['id']);
         return Response::json(['ok' => true]);
     }
 
     public function disable(Request $req, array $params): Response
     {
+        $req->requireSession('Plugin management');
         $this->plugins->disable((string) $params['id']);
         return Response::json(['ok' => true]);
     }
 
     public function uninstall(Request $req, array $params): Response
     {
+        $req->requireSession('Plugin management');
         $deleteCalendars = filter_var($req->body['deleteCalendars'] ?? false, FILTER_VALIDATE_BOOL);
         $impact = $this->plugins->uninstall((int) $req->user['id'], (string) $params['id'], $deleteCalendars);
         return Response::json(['ok' => true, 'purged' => $impact]);
@@ -56,11 +59,13 @@ final class PluginsController
 
     public function saveSettings(Request $req, array $params): Response
     {
+        $req->requireSession('Plugin management');
         return Response::json(['settings' => $this->plugins->saveSettings((string) $params['id'], is_array($req->body) ? $req->body : [])]);
     }
 
     public function saveCalendarSettings(Request $req, array $params): Response
     {
+        $req->requireSession('Plugin management');
         return Response::json(['settings' => $this->plugins->saveCalendarSettings(
             (int) $req->user['id'],
             (int) $params['calendarId'],
@@ -72,22 +77,35 @@ final class PluginsController
     /** "Run now": enqueue every job (or one, via ?job=) for the worker's next tick. */
     public function runNow(Request $req, array $params): Response
     {
+        $req->requireSession('Plugin management');
         $id = (string) $params['id'];
         $only = isset($req->query['job']) ? (string) $req->query['job'] : null;
         $m = $this->plugins->manifest($id);
         if ($m === null) {
             throw HttpError::badRequest('Unknown plugin');
         }
-        $queued = [];
+        $jobIds = [];
         foreach (($m['jobs'] ?? []) as $job) {
             $jobId = (string) $job['id'];
             if ($only !== null && $jobId !== $only) {
                 continue;
             }
-            $this->queue->enqueue('plugin_job', ['plugin' => $id, 'job' => $jobId]);
-            $queued[] = $jobId;
+            $jobIds[] = $jobId;
         }
-        return Response::json(['queued' => $queued]);
+        if ($only !== null && $jobIds === []) {
+            throw HttpError::badRequest('Unknown plugin job', 'unknown_plugin_job');
+        }
+        $result = $this->queue->enqueuePluginJobs((int) $req->user['id'], $id, $jobIds, true);
+        if ($result['status'] === 'disabled') {
+            throw HttpError::conflict('plugin_disabled', 'Enable this plugin before running it.');
+        }
+        if ($result['status'] === 'capacity') {
+            throw new HttpError('plugin_run_capacity', 'Too many plugin jobs are already waiting. Let them finish before running more.', 429);
+        }
+        if ($result['status'] === 'rate') {
+            throw new HttpError('plugin_run_rate_limited', 'Too many manual plugin runs were requested. Try again later.', 429);
+        }
+        return Response::json(['queued' => $result['queued'], 'alreadyQueued' => $result['alreadyQueued']]);
     }
 
     public function warnings(Request $req, array $params): Response
@@ -119,6 +137,7 @@ final class PluginsController
     /** Save the user's answers to one plugin's event-scope controls (C8). */
     public function saveEventData(Request $req, array $params): Response
     {
+        $req->requireSession('Plugin management');
         $eventId = (int) $params['id'];
         $pluginId = (string) $params['pluginId'];
         $this->requireOwnedEvent($req, $eventId);
@@ -157,6 +176,7 @@ final class PluginsController
     /** Reverse every mutation one plugin run made, newest first. */
     public function undoRun(Request $req, array $params): Response
     {
+        $req->requireSession('Plugin management');
         $result = $this->undo->undoRun((int) $req->user['id'], (string) $params['runId']);
         return Response::json($result);
     }

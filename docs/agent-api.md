@@ -117,7 +117,7 @@ claude mcp add better-cal \
 | Edit event | `PATCH /events/:id` | `update_event` | `scope` required when recurring |
 | Delete event | `DELETE /events/:id` | `delete_event` | `scope`/`instanceStart` for instances |
 | Attendance (going / interested / hide) | `POST /events/:id/attendance` | `set_attendance` | Works on read-only feed events; the MCP tool sets the whole series |
-| Review queue (held invitation changes, unanswered invitations, plugin proposals, possible duplicates) | `GET /review`, then an item's own `actions` | `list_review`, `decide_review` | Answering an invitation goes through `POST /events/:id/rsvp` |
+| Review queue (held invitation changes, unanswered invitations, plugin proposals, possible duplicates) | `GET /review` | `list_review` | Tokens can list Review items but receive no decision actions. Accept, dismiss, RSVP, proposal and duplicate decisions require a signed-in browser session. |
 | List calendars | `GET /calendars` | `list_calendars` | Includes folders, tags and feed health; stored ICS source capabilities are redacted unless this token created the subscription |
 | Undo last change | `POST /undo` | `undo` | Per user; each call undoes the most recent create, update or delete not yet undone, so repeating it steps further back (7-day snapshots); log-only entries are passed over |
 | Manage calendars/folders | `POST/PATCH/DELETE /calendars`, `/folders` | — | REST only for now |

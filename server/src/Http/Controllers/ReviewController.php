@@ -16,9 +16,8 @@ use BetterCal\Support\Time;
  * The Review queue: everything waiting on the owner's decision, in one list.
  *
  * Eight kinds, one shape. Each item says what it is, what it would do, and
- * carries its own `actions` ({name, label, method, path, body?}), so a client
- * can act without hard-coding each kind's endpoints. A subscription claim is
- * intentionally session-only and therefore omitted for bearer-token callers:
+ * carries its own `actions` ({name, label, method, path, body?}) for a signed-in
+ * browser. Bearer-token callers can inspect the queue but receive no actions:
  *
  *   invite_new     a first-time emailed invitation, held before event creation
  *   invite_change  an emailed change to an invitation already on the calendar,
@@ -50,6 +49,7 @@ final class ReviewController
     {
         $userId = (int) $req->user['id'];
         $openOnly = (string) ($req->query['status'] ?? 'open') !== 'all';
+        $canDecide = $req->authMethod === 'session';
         $this->queue->closeOrphans($userId);
 
         $items = [];
@@ -66,7 +66,7 @@ final class ReviewController
                     'createdAt' => $c['createdAt'],
                     'eventId' => null,
                     'detail' => $c['detail'],
-                    'actions' => $open ? [
+                    'actions' => $open && $canDecide ? [
                         self::action('dismiss', 'Dismiss', $isModel
                             ? "/review/model-limits/{$c['id']}/dismiss"
                             : "/review/mail-limits/{$c['id']}/dismiss"),
@@ -97,7 +97,7 @@ final class ReviewController
                     'location' => $fields['location'] ?? null,
                     'decidedAt' => $c['decidedAt'],
                 ],
-                'actions' => $open ? [
+                'actions' => $open && $canDecide ? [
                     self::action('accept', $isNew ? 'Add to calendar' : ($c['method'] === 'CANCEL' ? 'Accept cancellation' : 'Accept change'), $isNew
                         ? "/review/invitations/{$c['id']}/accept"
                         : "/review/invite-changes/{$c['id']}/accept"),
@@ -128,11 +128,11 @@ final class ReviewController
                 'createdAt' => $inv['createdAt'],
                 'eventId' => $inv['eventId'],
                 'detail' => $inv,
-                'actions' => [
+                'actions' => $canDecide ? [
                     self::action('accepted', 'Accept', "/events/{$inv['eventId']}/rsvp", ['answer' => 'accepted']),
                     self::action('tentative', 'Maybe', "/events/{$inv['eventId']}/rsvp", ['answer' => 'tentative']),
                     self::action('declined', 'Decline', "/events/{$inv['eventId']}/rsvp", ['answer' => 'declined']),
-                ],
+                ] : [],
             ];
         }
         foreach ($this->calendars->subscriptionsAwaitingReview($userId) as $calendar) {
@@ -149,7 +149,7 @@ final class ReviewController
                     'calendarId' => $calendar['id'],
                     'origin' => $authorization['origin'],
                 ],
-                'actions' => $req->authMethod === 'session' ? [
+                'actions' => $canDecide ? [
                     self::action('keep_updating', 'Keep updating', "/calendars/{$calendar['id']}/claim-subscription"),
                 ] : [],
             ];
@@ -157,7 +157,7 @@ final class ReviewController
         foreach ($this->proposals->listFor($userId, $openOnly ? 'open' : 'all') as $p) {
             $n = count($p['plan']['events'] ?? []);
             $actions = [];
-            if ($p['status'] === 'open') {
+            if ($p['status'] === 'open' && $canDecide) {
                 $actions = array_values(array_filter([
                     $p['acceptAllowed'] ? self::action(
                         'accept',
@@ -167,7 +167,7 @@ final class ReviewController
                     ) : null,
                     self::action('dismiss', 'Dismiss', "/proposals/{$p['id']}/reject", ['reviewToken' => $p['reviewToken']]),
                 ]));
-            } elseif ($p['status'] === 'accepted') {
+            } elseif ($p['status'] === 'accepted' && $canDecide) {
                 $actions = [self::action('undo', 'Undo, remove these again', "/proposals/{$p['id']}/undo")];
             }
             $items[] = [
@@ -201,14 +201,14 @@ final class ReviewController
                 'kind' => 'duplicate',
                 'status' => 'open',
                 'title' => $a['title'],
-                'summary' => "Possibly the same event, $where" . ($a['title'] !== $b['title'] ? " (\"{$a['title']}\" and \"{$b['title']}\")" : '') . '. The same event shows once.',
+                'summary' => "Possibly the same event, $where" . ($a['title'] !== $b['title'] ? " (\"{$a['title']}\" and \"{$b['title']}\")" : '') . '. Confirming will make it show once.',
                 'createdAt' => Time::dbToIso((string) $p['created_at'], 'UTC'),
                 'eventId' => $a['eventId'],
                 'detail' => ['pairId' => (int) $p['id'], 'a' => $a, 'b' => $b],
-                'actions' => [
+                'actions' => $canDecide ? [
                     self::action('linked', 'Same event', "/duplicates/{$p['id']}", ['status' => 'linked']),
                     self::action('dismissed', 'Not the same', "/duplicates/{$p['id']}", ['status' => 'dismissed']),
-                ],
+                ] : [],
             ];
         }
 
@@ -244,6 +244,7 @@ final class ReviewController
     /** POST /duplicates/:id {status: linked|dismissed}: the owner's word on a pair. */
     public function decideDuplicate(Request $req, array $params): Response
     {
+        $req->requireSession('Review decisions');
         if ($this->duplicates === null) {
             return Response::json(['ok' => false], 404);
         }
@@ -253,31 +254,37 @@ final class ReviewController
 
     public function acceptInviteChange(Request $req, array $params): Response
     {
+        $req->requireSession('Review decisions');
         return Response::json($this->queue->accept((int) $req->user['id'], (int) $params['id']));
     }
 
     public function dismissInviteChange(Request $req, array $params): Response
     {
+        $req->requireSession('Review decisions');
         return Response::json(['item' => $this->queue->dismiss((int) $req->user['id'], (int) $params['id'])]);
     }
 
     public function acceptInvitation(Request $req, array $params): Response
     {
+        $req->requireSession('Review decisions');
         return Response::json($this->queue->accept((int) $req->user['id'], (int) $params['id']));
     }
 
     public function dismissInvitation(Request $req, array $params): Response
     {
+        $req->requireSession('Review decisions');
         return Response::json(['item' => $this->queue->dismiss((int) $req->user['id'], (int) $params['id'])]);
     }
 
     public function dismissMailLimit(Request $req, array $params): Response
     {
+        $req->requireSession('Review decisions');
         return Response::json(['item' => $this->queue->dismissMailLimit((int) $req->user['id'], (int) $params['id'])]);
     }
 
     public function dismissModelLimit(Request $req, array $params): Response
     {
+        $req->requireSession('Review decisions');
         return Response::json(['item' => $this->queue->dismissModelLimit((int) $req->user['id'], (int) $params['id'])]);
     }
 

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace BetterCal\Http\Controllers;
 
 use BetterCal\Domain\Auth;
+use BetterCal\Domain\ExternalActionAdmission;
 use BetterCal\Domain\PushSubscriptions;
 use BetterCal\Domain\Settings;
 use BetterCal\Http\HttpError;
@@ -162,6 +163,13 @@ final class PushController
             (string) ($req->user['email'] ?? ''),
             $this->db
         );
+        if ($this->db === null) {
+            throw new HttpError('email_admission_unavailable', 'Email safety accounting is unavailable. Try again later.', 503);
+        }
+        $admitted = (new ExternalActionAdmission($this->db))->admitEmail((int) $req->user['id'], $to, null);
+        if (!$admitted['admitted']) {
+            throw new HttpError('email_safety_limit', 'The email safety limit has been reached. Try again later.', 429);
+        }
         $ok = $this->email->sendReminder($to, [
             'title' => 'Better-Cal test email',
             'body' => 'Email notifications are working.',

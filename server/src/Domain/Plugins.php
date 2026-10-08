@@ -440,6 +440,7 @@ final class Plugins
     public function disable(string $id, ?string $reason = null): void
     {
         $this->db->run('UPDATE plugins SET enabled = 0, disabled_reason = ? WHERE id = ?', [$reason, $id]);
+        $this->cancelPendingJobs($id, 'cancelled because the plugin was disabled');
     }
 
     /**
@@ -449,6 +450,7 @@ final class Plugins
      */
     public function uninstall(int $userId, string $id, bool $deleteCalendars): array
     {
+        $this->cancelPendingJobs($id, 'cancelled because the plugin was uninstalled');
         $impact = $this->impact($userId, $id);
         $cals = $this->db->all("SELECT id, name FROM calendars WHERE user_id = ? AND kind = 'plugin' AND plugin_id = ?", [$userId, $id]);
         foreach ($cals as $cal) {
@@ -499,6 +501,18 @@ final class Plugins
             );
         });
         return $impact;
+    }
+
+    private function cancelPendingJobs(string $id, string $reason): void
+    {
+        $extract = $this->db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'sqlite'
+            ? "JSON_EXTRACT(payload_json, '$.plugin')"
+            : "JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.plugin'))";
+        $this->db->run(
+            "UPDATE jobs SET status = 'failed', last_error = ?
+             WHERE type = 'plugin_job' AND status = 'pending' AND $extract = ?",
+            [$reason, $id]
+        );
     }
 
     // ---- settings -------------------------------------------------------

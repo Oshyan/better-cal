@@ -140,13 +140,27 @@ final class Duplicates
         $sameTitle = self::normTitle((string) $a['title']) !== '' && self::normTitle((string) $a['title']) === self::normTitle((string) $b['title']);
         // "Lunch" at noon on two calendars may be two people's lunches: ask.
         $generic = count($w = self::words(self::normTitle((string) $a['title']))) === 1 && in_array($w[0], self::GENERIC, true);
-        if ($sameTitle && !$generic && $when === 'same' && (int) $a['calendar_id'] !== (int) $b['calendar_id']) {
+        if ($sameTitle && !$generic && $when === 'same'
+            && (int) $a['calendar_id'] !== (int) $b['calendar_id']
+            && self::trustedLocal($a) && self::trustedLocal($b)
+        ) {
             return ['status' => 'linked', 'basis' => 'title'];
         }
         if ($sameTitle || self::similarTitles((string) $a['title'], (string) $b['title'])) {
             return ['status' => 'possible', 'basis' => 'similar'];
         }
         return null;
+    }
+
+    /** Only owner-controlled local lineage may auto-link on title and time. */
+    private static function trustedLocal(array $row): bool
+    {
+        $via = (string) ($row['created_via'] ?? '');
+        return (string) ($row['source'] ?? '') === 'local'
+            && (string) ($row['calendar_kind'] ?? '') === 'local'
+            && (string) ($row['calendar_provider'] ?? '') === 'ics'
+            && !str_starts_with($via, 'mail:')
+            && !str_starts_with($via, 'plugin:');
     }
 
     /**
@@ -359,7 +373,9 @@ final class Duplicates
         $from = Time::toDb($now->sub(new \DateInterval(self::SCAN_BACK)));
         $to = Time::toDb($now->add(new \DateInterval(self::SCAN_AHEAD)));
         $rows = $this->db->all(
-            "SELECT e.id, e.calendar_id, e.uid, e.title, e.start_utc, e.all_day, e.tzid
+            "SELECT e.id, e.calendar_id, e.uid, e.title, e.start_utc, e.all_day, e.tzid,
+                    e.source, e.created_via, c.kind AS calendar_kind,
+                    COALESCE(c.provider, 'ics') AS calendar_provider
              FROM events e JOIN calendars c ON c.id = e.calendar_id
              WHERE $base AND e.rrule IS NULL AND e.start_utc >= ? AND e.start_utc < ? AND e.id > ?
              ORDER BY e.id LIMIT " . ($maxRows + 1),
@@ -400,7 +416,9 @@ final class Duplicates
             }
             $start = Time::fromDb((string) $row['start_utc']);
             $candidates = $this->db->all(
-                "SELECT e.id, e.calendar_id, e.uid, e.title, e.start_utc, e.all_day, e.tzid
+                "SELECT e.id, e.calendar_id, e.uid, e.title, e.start_utc, e.all_day, e.tzid,
+                        e.source, e.created_via, c.kind AS calendar_kind,
+                        COALESCE(c.provider, 'ics') AS calendar_provider
                  FROM events e JOIN calendars c ON c.id = e.calendar_id
                  WHERE $base AND e.rrule IS NULL AND e.id <> ? AND e.uid <> ?
                    AND e.start_utc >= ? AND e.start_utc <= ?

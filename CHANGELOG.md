@@ -4,6 +4,14 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.39 (2026-10-08)
+
+- **Externally visible actions now share durable authority and workload boundaries.** Reminder, notification and test email use persistent account, recipient and installation budgets; repeated plugin jobs coalesce behind rate and capacity limits; and core calendar work stays ahead of discretionary plugin work.
+- **Owner decisions stay with the signed-in owner.** API tokens and MCP can inspect Review but cannot accept, dismiss, RSVP, decide duplicates or proposals, or manage plugins. These consequential actions now require a browser session at the server boundary.
+- **Calendar mutations preserve source authority.** Occurrence edits must identify a generated, non-skipped instance; a trip cannot bulk-move externally managed members; and different-UID external matches wait for owner confirmation before copies collapse or reminders are suppressed.
+
+Operators: migration 044 adds persistent external-action admission, cancels pending plugin jobs created before the new queue boundary, and reopens unconfirmed external title/time links for Review. Existing enabled plugins and detached recurrence exceptions are preserved because their historical provenance cannot be reconstructed safely; review the enabled-plugin list once after upgrading. Excess scheduled email is dropped with a System status notice while push continues independently. Tunable limits are documented in `.env.example` and `docs/limits.md`.
+
 ## 0.9.38 (2026-10-08)
 
 - **Dense calendar data can no longer multiply into unbounded server or browser work.** Event windows share cumulative recurrence, elapsed-time and stored-data budgets; the browser bounds request fan-out, retained occurrences and rendered day layouts; and reminder scans advance through one durable cursor chain without spawning duplicate work.

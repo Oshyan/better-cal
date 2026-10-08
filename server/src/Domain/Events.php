@@ -1027,18 +1027,22 @@ final class Events
         }
         $movingMembers = !empty($in['moveMembers']) && (int) ($event['is_container'] ?? 0) === 1;
         $memberCalendarIds = [];
+        $memberAuthority = [];
         if ($movingMembers) {
             foreach ($this->db->all(
-                'SELECT DISTINCT e.calendar_id FROM events e JOIN event_links l ON l.event_id = e.id WHERE l.container_id = ? AND e.deleted_at IS NULL',
+                'SELECT e.id, e.calendar_id, e.source, c.kind, COALESCE(c.provider, \'ics\') AS provider
+                 FROM events e JOIN event_links l ON l.event_id = e.id JOIN calendars c ON c.id = e.calendar_id
+                 WHERE l.container_id = ? AND e.deleted_at IS NULL ORDER BY e.id',
                 [$id]
             ) as $row) {
                 $memberCalendarIds[] = (int) $row['calendar_id'];
+                $memberAuthority[] = [(int) $row['id'], (int) $row['calendar_id'], (string) $row['source'], (string) $row['kind'], (string) $row['provider']];
             }
             $calendarIds = array_merge($calendarIds, $memberCalendarIds);
         }
         sort($memberCalendarIds, SORT_NUMERIC);
         $memberCalendarIds = array_values(array_unique($memberCalendarIds));
-        $this->db->tx(function () use ($userId, $id, $in, $calendarIds, $movingMembers, $memberCalendarIds, $event, $snapshotChanging): void {
+        $this->db->tx(function () use ($userId, $id, $in, $calendarIds, $movingMembers, $memberCalendarIds, $memberAuthority, $event, $snapshotChanging): void {
             $locked = CalendarMoveGuard::lockCalendars($this->db, $calendarIds);
             $localIds = [];
             foreach ($locked as $calendarId => $calendar) {
@@ -1059,19 +1063,39 @@ final class Events
                 throw HttpError::conflict('event_changed', 'This event changed calendars; reload it and try again.');
             }
             if ($movingMembers) {
-                $freshMemberCalendarIds = array_map(
-                    static fn(array $row): int => (int) $row['calendar_id'],
-                    $this->db->all(
-                        'SELECT DISTINCT e.calendar_id FROM events e JOIN event_links l ON l.event_id = e.id WHERE l.container_id = ? AND e.deleted_at IS NULL ORDER BY e.calendar_id',
-                        [$id]
-                    )
+                $lockSuffix = $this->db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
+                $freshRows = $this->db->all(
+                    'SELECT e.id, e.calendar_id, e.source, c.kind, COALESCE(c.provider, \'ics\') AS provider
+                     FROM event_links l JOIN events e ON e.id = l.event_id JOIN calendars c ON c.id = e.calendar_id
+                     WHERE l.container_id = ? AND e.deleted_at IS NULL ORDER BY e.id' . $lockSuffix,
+                    [$id]
                 );
-                if ($freshMemberCalendarIds !== $memberCalendarIds) {
+                $freshAuthority = array_map(
+                    static fn(array $row): array => [(int) $row['id'], (int) $row['calendar_id'], (string) $row['source'], (string) $row['kind'], (string) $row['provider']],
+                    $freshRows
+                );
+                if ($freshAuthority !== $memberAuthority) {
                     throw HttpError::conflict('event_changed', 'This trip changed while it was being moved; reload it and try again.');
+                }
+                foreach ($freshRows as $member) {
+                    if (!self::tripMemberContentWritable($member)) {
+                        throw HttpError::forbidden(
+                            'trip_member_readonly',
+                            'This trip includes an externally managed event. Move the trip without its members, or move that event through its own calendar.'
+                        );
+                    }
                 }
             }
             $this->patchLocked($userId, $id, $in);
         });
+    }
+
+    /** A bulk time shift is a content write, not local relationship metadata. */
+    private static function tripMemberContentWritable(array $member): bool
+    {
+        return (string) ($member['source'] ?? '') === 'local'
+            && (string) ($member['kind'] ?? '') === 'local'
+            && (string) ($member['provider'] ?? '') === 'ics';
     }
 
     private function patchLocked(int $userId, int $id, array $in): void
@@ -2405,10 +2429,61 @@ final class Events
         // "<date>T00:00:00+00:00", which as an INSTANT is only the occurrence
         // for a series stored in UTC; for a series in any other zone it named
         // no occurrence at all.
-        if ((int) ($master['all_day'] ?? 0) === 1) {
-            return Time::toDb(self::allDayBoundary((string) $raw, (string) $master['tzid']));
+        try {
+            $instance = (int) ($master['all_day'] ?? 0) === 1
+                ? self::allDayBoundary((string) $raw, (string) $master['tzid'])
+                : Time::parseIso((string) $raw, (string) $master['tzid']);
+        } catch (\InvalidArgumentException $e) {
+            throw HttpError::badRequest($e->getMessage(), 'invalid_recurrence_instance');
         }
-        return Time::toDb(Time::parseIso((string) $raw, (string) $master['tzid']));
+        $key = Time::toDb($instance);
+
+        // Preserve legitimate detached instances created before this policy
+        // (including provider exceptions whose master rule later changed),
+        // but never create a new arbitrary child from an unproven timestamp.
+        if ($this->db->scalar(
+            'SELECT id FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc = ? AND deleted_at IS NULL LIMIT 1',
+            [(int) $master['id'], $key]
+        ) !== null) {
+            return $key;
+        }
+
+        $horizon = Limits::get('RECURRENCE_MUTATION_HORIZON_DAYS');
+        $now = Time::nowUtc();
+        if ($instance < $now->sub(new \DateInterval('P' . $horizon . 'D'))
+            || $instance > $now->add(new \DateInterval('P' . $horizon . 'D'))
+        ) {
+            throw new HttpError(
+                'invalid_recurrence_instance',
+                'That occurrence is outside the supported editing horizon.',
+                422
+            );
+        }
+        if (empty($master['rrule'])) {
+            throw new HttpError('invalid_recurrence_instance', 'That timestamp is not an occurrence of this series.', 422);
+        }
+        Recurrence::validateRrule((string) $master['rrule']);
+        try {
+            $matches = $this->recurrence->expand(
+                $master,
+                [],
+                $instance,
+                $instance->add(new \DateInterval('PT1S')),
+                new ExpansionBudget(1, 4, 1.0),
+            );
+        } catch (WorkBudgetExceeded $e) {
+            throw new HttpError(
+                'recurrence_validation_limited',
+                'This occurrence could not be verified within the recurrence safety budget. Try a nearer occurrence.',
+                422
+            );
+        }
+        foreach ($matches as $match) {
+            if ((string) $match['instanceUtc'] === $key) {
+                return $key;
+            }
+        }
+        throw new HttpError('invalid_recurrence_instance', 'That timestamp is not an occurrence of this series.', 422);
     }
 
     private function copyForChild(array $master): array

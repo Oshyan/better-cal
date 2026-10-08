@@ -1602,7 +1602,11 @@ check('rsvp reply keeps sequence', str_contains($reply, 'SEQUENCE:2'));
     check('dup similar: "Bellwether" and "Dinner at Bellwether"', $D::similarTitles('Bellwether', 'Dinner at Bellwether'));
     check('dup similar: one short common word is not enough', !$D::similarTitles('Lunch', 'Lunch with Bob'));
     check('dup similar: different events', !$D::similarTitles('Board meeting', 'Birthday party'));
-    $ev = static fn(int $id, int $cal, string $title, string $start, int $allDay = 0, string $tz = 'America/Los_Angeles'): array => ['id' => $id, 'calendar_id' => $cal, 'title' => $title, 'start_utc' => $start, 'all_day' => $allDay, 'tzid' => $tz];
+    $ev = static fn(int $id, int $cal, string $title, string $start, int $allDay = 0, string $tz = 'America/Los_Angeles'): array => [
+        'id' => $id, 'calendar_id' => $cal, 'title' => $title, 'start_utc' => $start,
+        'all_day' => $allDay, 'tzid' => $tz, 'source' => 'local', 'created_via' => 'web',
+        'calendar_kind' => 'local', 'calendar_provider' => 'ics',
+    ];
     checkEq('dup when: same instant', 'same', $D::when($ev(1, 1, 'x', '2026-10-10 02:00:00'), $ev(2, 2, 'x', '2026-10-10 02:00:00')));
     checkEq('dup when: 20 minutes apart is near', 'near', $D::when($ev(1, 1, 'x', '2026-10-10 02:00:00'), $ev(2, 2, 'x', '2026-10-10 02:20:00')));
     check('dup when: two hours apart is not', $D::when($ev(1, 1, 'x', '2026-10-10 02:00:00'), $ev(2, 2, 'x', '2026-10-10 04:00:00')) === null);
@@ -1612,6 +1616,10 @@ check('rsvp reply keeps sequence', str_contains($reply, 'SEQUENCE:2'));
     checkEq('dup when: a Tokyo all-day day and a Tokyo morning on it', 'near', $D::when($ev(1, 1, 'x', '2026-10-09 15:00:00', 1, 'Asia/Tokyo'), $ev(2, 2, 'x', '2026-10-10 01:00:00', 0, 'Asia/Tokyo')));
     check('dup when: all-day days a day apart are not the same', $D::when($ev(1, 1, 'x', '2026-10-10 07:00:00', 1), $ev(2, 2, 'x', '2026-10-11 00:00:00', 1, 'UTC')) === null);
     checkEq('dup classify: same title, same moment, two calendars links', 'linked', $D::classify($ev(1, 1, 'Reservation at Vela', '2026-10-10 02:00:00'), $ev(2, 2, 'Vela', '2026-10-10 02:00:00'))['status']);
+    checkEq('dup classify: external different-UID match waits for owner review', 'possible', $D::classify(
+        $ev(1, 1, 'Reservation at Vela', '2026-10-10 02:00:00'),
+        array_merge($ev(2, 2, 'Vela', '2026-10-10 02:00:00'), ['source' => 'feed', 'calendar_kind' => 'subscribed', 'calendar_provider' => 'google'])
+    )['status']);
     checkEq('dup classify: the same on one calendar only asks', 'possible', $D::classify($ev(1, 1, 'Vela', '2026-10-10 02:00:00'), $ev(2, 1, 'Vela', '2026-10-10 02:00:00'))['status']);
     checkEq('dup classify: near in time only asks', 'possible', $D::classify($ev(1, 1, 'Vela', '2026-10-10 02:00:00'), $ev(2, 2, 'Vela', '2026-10-10 02:15:00'))['status']);
     checkEq('dup classify: "Lunch" on two calendars at noon only asks', 'possible', $D::classify($ev(1, 1, 'Lunch', '2026-10-10 19:00:00'), $ev(2, 2, 'Lunch', '2026-10-10 19:00:00'))['status']);
@@ -1626,7 +1634,7 @@ check('rsvp reply keeps sequence', str_contains($reply, 'SEQUENCE:2'));
     $ddb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
     $ddb->run("CREATE TABLE users (id INTEGER PRIMARY KEY)");
     $ddb->run("CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, kind TEXT, role TEXT, provider TEXT)");
-    $ddb->run("CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, start_utc TEXT, end_utc TEXT, all_day INTEGER DEFAULT 0, tzid TEXT DEFAULT 'UTC', rrule TEXT, recurrence_instance_utc TEXT, recurrence_parent_id INTEGER, status TEXT DEFAULT 'confirmed', is_container INTEGER DEFAULT 0, deleted_at TEXT, invite_json TEXT, reminders_json TEXT)");
+    $ddb->run("CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, start_utc TEXT, end_utc TEXT, all_day INTEGER DEFAULT 0, tzid TEXT DEFAULT 'UTC', rrule TEXT, recurrence_instance_utc TEXT, recurrence_parent_id INTEGER, status TEXT DEFAULT 'confirmed', is_container INTEGER DEFAULT 0, deleted_at TEXT, invite_json TEXT, reminders_json TEXT, source TEXT DEFAULT 'local', created_via TEXT DEFAULT 'web')");
     $ddb->run("CREATE TABLE event_duplicates (id INTEGER PRIMARY KEY, user_id INTEGER, event_a INTEGER, event_b INTEGER, status TEXT, basis TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, decided_at TEXT)");
     $ddb->run("CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)");
     $ddb->run("INSERT INTO users (id) VALUES (1)");
@@ -1649,24 +1657,28 @@ check('rsvp reply keeps sequence', str_contains($reply, 'SEQUENCE:2'));
     $ins(60, 1, 'mine-1', 'Monthly Meetup: October!');
     $ins(61, 1, 'mine-2', 'Monthly Meetup: October!');
     $ins(62, 4, 'luma-9', 'Monthly Meetup: October!');
+    $ddb->run("UPDATE events SET created_via = 'mail:llm' WHERE id = 20");
+    $ddb->run("UPDATE events SET source = 'feed', created_via = 'feed' WHERE calendar_id IN (2, 4)");
+    $ddb->run("UPDATE events SET created_via = 'plugin:weather' WHERE calendar_id = 5");
     $D::markDistinct($ddb, 1, 51, 50);
     $dups = new BetterCal\Domain\Duplicates($ddb);
     checkEq('dup preview: find records nothing', 0, (int) $ddb->scalar("SELECT COUNT(*) FROM event_duplicates WHERE status <> 'dismissed'") + 0 * count($dups->find(1)));
-    checkEq('dup scan: sure by UID and by title, one to ask', ['linked' => 4, 'possible' => 1], $dups->scan(1));
+    checkEq('dup scan: same UID links; different-UID external matches wait for review', ['linked' => 1, 'possible' => 5], $dups->scan(1));
     $pairs = $ddb->all('SELECT event_a, event_b, status, basis FROM event_duplicates ORDER BY event_a');
     checkEq('dup scan: the pairs', [
         ['event_a' => 10, 'event_b' => 11, 'status' => 'linked', 'basis' => 'uid'],
-        ['event_a' => 20, 'event_b' => 21, 'status' => 'linked', 'basis' => 'title'],
+        ['event_a' => 20, 'event_b' => 21, 'status' => 'possible', 'basis' => 'similar'],
         ['event_a' => 30, 'event_b' => 31, 'status' => 'possible', 'basis' => 'similar'],
         ['event_a' => 50, 'event_b' => 51, 'status' => 'dismissed', 'basis' => 'owner'],
-        ['event_a' => 60, 'event_b' => 62, 'status' => 'linked', 'basis' => 'title'],
-        ['event_a' => 61, 'event_b' => 62, 'status' => 'linked', 'basis' => 'title'],
+        ['event_a' => 60, 'event_b' => 61, 'status' => 'possible', 'basis' => 'similar'],
+        ['event_a' => 60, 'event_b' => 62, 'status' => 'possible', 'basis' => 'similar'],
+        ['event_a' => 61, 'event_b' => 62, 'status' => 'possible', 'basis' => 'similar'],
     ], array_map(static fn(array $r): array => ['event_a' => (int) $r['event_a'], 'event_b' => (int) $r['event_b'], 'status' => $r['status'], 'basis' => $r['basis']], $pairs));
     checkEq('dup scan: nothing new the second time', ['linked' => 0, 'possible' => 0], $dups->scan(1));
-    check('dup scan: two copies already one through a third are not asked about', $ddb->scalar('SELECT id FROM event_duplicates WHERE event_a = 60 AND event_b = 61') === null);
+    check('dup scan: no different-UID external match is silently collapsed', (int) $ddb->scalar("SELECT COUNT(*) FROM event_duplicates WHERE basis = 'title' AND status = 'linked'") === 0);
     check('dup scan: logged once in Activity as dedup', (int) $ddb->scalar("SELECT COUNT(*) FROM mutations WHERE source = 'dedup'") === 1);
     $linked = $dups->linkedFor([10, 21]);
-    check('dup linked: each copy names the other and its calendar', $linked[10][0]['eventId'] === 11 && $linked[10][0]['calendarId'] === 2 && $linked[21][0]['eventId'] === 20);
+    check('dup linked: same UID names the other calendar; unreviewed external match is absent', $linked[10][0]['eventId'] === 11 && $linked[10][0]['calendarId'] === 2 && !isset($linked[21]));
     $rows = [];
     foreach ($ddb->all('SELECT * FROM events WHERE id IN (10, 11, 20, 21)') as $r) {
         $rows[(int) $r['id']] = $r;
@@ -1674,20 +1686,21 @@ check('rsvp reply keeps sequence', str_contains($reply, 'SEQUENCE:2'));
     $cals = [1 => ['provider' => 'ics', 'kind' => 'local'], 2 => ['provider' => 'google', 'kind' => 'subscribed'], 3 => ['provider' => 'ics', 'kind' => 'local'], 4 => ['provider' => 'ics', 'kind' => 'subscribed']];
     $quiet = $dups->silenced($rows, static fn(array $r): bool => $r['reminders_json'] !== null || (int) $r['calendar_id'] === 3, $cals);
     check('dup reminders: the copy with reminders speaks though Google ranks higher', !isset($quiet[10]) && isset($quiet[11]));
-    check('dup reminders: of two with reminders, the better-ranked speaks', isset($quiet[20]) xor isset($quiet[21]));
-    $possibleId = (int) $ddb->scalar("SELECT id FROM event_duplicates WHERE status = 'possible'");
+    check('dup reminders: unreviewed external matches silence neither copy', !isset($quiet[20]) && !isset($quiet[21]));
+    $externalPairId = (int) $ddb->scalar('SELECT id FROM event_duplicates WHERE event_a = 20 AND event_b = 21');
+    $dups->decide(1, $externalPairId, 'linked');
+    checkEq('dup decide: owner confirmation links the external pair', 'linked', $ddb->scalar('SELECT status FROM event_duplicates WHERE id = ?', [$externalPairId]));
+    $possibleId = (int) $ddb->scalar("SELECT id FROM event_duplicates WHERE status = 'possible' AND event_a = 30 AND event_b = 31");
     $dups->decide(1, $possibleId, 'dismissed');
     checkEq('dup decide: dismissed by the owner', 'dismissed', $ddb->scalar('SELECT status FROM event_duplicates WHERE id = ?', [$possibleId]));
     $hiddenHub = $dups->linkedFor([60, 61]);
-    check('dup linked: visible spokes share a component when their hub is outside the window',
-        isset($hiddenHub[60][0]['groupId'], $hiddenHub[61][0]['groupId'])
-        && $hiddenHub[60][0]['groupId'] === $hiddenHub[61][0]['groupId']);
+    check('dup linked: unreviewed possible spokes are not a hidden transitive group', $hiddenHub === []);
     $spokes = [];
     foreach ($ddb->all('SELECT * FROM events WHERE id IN (60, 61)') as $r) {
         $spokes[(int) $r['id']] = $r;
     }
     $spokeQuiet = $dups->silenced($spokes, static fn(array $_r): bool => true, $cals);
-    checkEq('dup reminders: one visible spoke stays quiet when the sparse hub is absent', 1, count($spokeQuiet));
+    checkEq('dup reminders: possible spokes both keep their reminders', 0, count($spokeQuiet));
 
     // Phase 15 / F7: external calendars can put many distinct events at one
     // timestamp. Every worker slice must remain bounded and resumable rather
@@ -1726,16 +1739,16 @@ check('rsvp reply keeps sequence', str_contains($reply, 'SEQUENCE:2'));
     ]);
     $budgetDb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
     $budgetDb->run('CREATE TABLE users (id INTEGER PRIMARY KEY)');
-    $budgetDb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, kind TEXT, role TEXT)');
-    $budgetDb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, start_utc TEXT, all_day INTEGER, tzid TEXT, rrule TEXT, recurrence_instance_utc TEXT, status TEXT, is_container INTEGER, deleted_at TEXT)');
+    $budgetDb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, kind TEXT, role TEXT, provider TEXT)');
+    $budgetDb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, start_utc TEXT, all_day INTEGER, tzid TEXT, rrule TEXT, recurrence_instance_utc TEXT, status TEXT, is_container INTEGER, deleted_at TEXT, source TEXT, created_via TEXT)');
     $budgetDb->run('CREATE TABLE event_duplicates (id INTEGER PRIMARY KEY, user_id INTEGER, event_a INTEGER, event_b INTEGER, status TEXT, basis TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, decided_at TEXT, UNIQUE(event_a, event_b))');
     $budgetDb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)');
     $budgetDb->run('INSERT INTO users VALUES (1)');
-    $budgetDb->run("INSERT INTO calendars VALUES (1, 1, 'Example A', 'subscribed', 'mine'), (2, 1, 'Example B', 'subscribed', 'mine')");
+    $budgetDb->run("INSERT INTO calendars VALUES (1, 1, 'Example A', 'subscribed', 'mine', 'ics'), (2, 1, 'Example B', 'subscribed', 'mine', 'ics')");
     $denseStart = Time::nowUtc()->add(new DateInterval('P5D'))->format('Y-m-d H:i:s');
     for ($id = 1; $id <= 80; $id++) {
         $budgetDb->run(
-            "INSERT INTO events VALUES (?, 1, ?, ?, 'Sample gathering', ?, 0, 'UTC', NULL, NULL, 'confirmed', 0, NULL)",
+            "INSERT INTO events VALUES (?, 1, ?, ?, 'Sample gathering', ?, 0, 'UTC', NULL, NULL, 'confirmed', 0, NULL, 'feed', 'feed')",
             [$id, ($id % 2) + 1, 'sample-' . $id, $denseStart]
         );
     }
@@ -1804,7 +1817,7 @@ check('rsvp reply keeps sequence', str_contains($reply, 'SEQUENCE:2'));
     $budgetDb->run("UPDATE events SET deleted_at = '2026-01-01 00:00:00' WHERE id <= 80");
     foreach ([81, 82] as $id) {
         $budgetDb->run(
-            "INSERT INTO events VALUES (?, 1, 1, ?, 'Fresh example', ?, 0, 'UTC', NULL, NULL, 'confirmed', 0, NULL)",
+            "INSERT INTO events VALUES (?, 1, 1, ?, 'Fresh example', ?, 0, 'UTC', NULL, NULL, 'confirmed', 0, NULL, 'feed', 'feed')",
             [$id, 'fresh-' . $id, $denseStart]
         );
     }
@@ -1820,14 +1833,14 @@ check('rsvp reply keeps sequence', str_contains($reply, 'SEQUENCE:2'));
     Limits::configure(['DUPLICATE_LINKED_EDGES' => 3]);
     $rotateDb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
     $rotateDb->run('CREATE TABLE users (id INTEGER PRIMARY KEY)');
-    $rotateDb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, role TEXT)');
-    $rotateDb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, start_utc TEXT, all_day INTEGER, tzid TEXT, rrule TEXT, recurrence_instance_utc TEXT, status TEXT, is_container INTEGER, deleted_at TEXT)');
+    $rotateDb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, role TEXT, provider TEXT)');
+    $rotateDb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, start_utc TEXT, all_day INTEGER, tzid TEXT, rrule TEXT, recurrence_instance_utc TEXT, status TEXT, is_container INTEGER, deleted_at TEXT, source TEXT, created_via TEXT)');
     $rotateDb->run('CREATE TABLE event_duplicates (id INTEGER PRIMARY KEY, user_id INTEGER, event_a INTEGER, event_b INTEGER, status TEXT, basis TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, decided_at TEXT, UNIQUE(event_a, event_b))');
     $rotateDb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)');
     $rotateDb->run('INSERT INTO users VALUES (1)');
-    $rotateDb->run("INSERT INTO calendars VALUES (1, 1, 'subscribed', 'mine'), (2, 1, 'subscribed', 'mine')");
+    $rotateDb->run("INSERT INTO calendars VALUES (1, 1, 'local', 'mine', 'ics'), (2, 1, 'local', 'mine', 'ics')");
     foreach ([[1, 1, 'Alpha'], [2, 1, 'Beta'], [3, 2, 'Alpha'], [4, 2, 'Beta']] as [$id, $cal, $title]) {
-        $rotateDb->run("INSERT INTO events VALUES (?, 1, ?, ?, ?, ?, 0, 'UTC', NULL, NULL, 'confirmed', 0, NULL)", [$id, $cal, 'rotate-' . $id, $title, $denseStart]);
+        $rotateDb->run("INSERT INTO events VALUES (?, 1, ?, ?, ?, ?, 0, 'UTC', NULL, NULL, 'confirmed', 0, NULL, 'local', 'web')", [$id, $cal, 'rotate-' . $id, $title, $denseStart]);
     }
     $rotating = new BetterCal\Domain\Duplicates($rotateDb);
     $rotating->scan(1);
@@ -1848,16 +1861,16 @@ check('rsvp reply keeps sequence', str_contains($reply, 'SEQUENCE:2'));
     Limits::configure(['DUPLICATE_LINKED_EDGES' => 100]);
     $uidDb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
     $uidDb->run('CREATE TABLE users (id INTEGER PRIMARY KEY)');
-    $uidDb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, role TEXT)');
-    $uidDb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, start_utc TEXT, all_day INTEGER, tzid TEXT, rrule TEXT, recurrence_instance_utc TEXT, status TEXT, is_container INTEGER, deleted_at TEXT)');
+    $uidDb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, role TEXT, provider TEXT)');
+    $uidDb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, start_utc TEXT, all_day INTEGER, tzid TEXT, rrule TEXT, recurrence_instance_utc TEXT, status TEXT, is_container INTEGER, deleted_at TEXT, source TEXT, created_via TEXT)');
     $uidDb->run('CREATE TABLE event_duplicates (id INTEGER PRIMARY KEY, user_id INTEGER, event_a INTEGER, event_b INTEGER, status TEXT, basis TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, decided_at TEXT, UNIQUE(event_a, event_b))');
     $uidDb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)');
     $uidDb->run('INSERT INTO users VALUES (1)');
-    $uidDb->run("INSERT INTO calendars VALUES (1, 1, 'local', 'mine'), (2, 1, 'subscribed', 'mine')");
+    $uidDb->run("INSERT INTO calendars VALUES (1, 1, 'local', 'mine', 'ics'), (2, 1, 'subscribed', 'mine', 'ics')");
     for ($id = 1; $id <= 40; $id++) {
         $uidDb->run(
-            "INSERT INTO events VALUES (?, 1, ?, 'shared-example-uid', 'Sample series', ?, 0, 'UTC', NULL, NULL, 'confirmed', 0, NULL)",
-            [$id, ($id % 2) + 1, $denseStart]
+            "INSERT INTO events VALUES (?, 1, ?, 'shared-example-uid', 'Sample series', ?, 0, 'UTC', NULL, NULL, 'confirmed', 0, NULL, ?, ?)",
+            [$id, ($id % 2) + 1, $denseStart, ($id % 2) + 1 === 1 ? 'local' : 'feed', ($id % 2) + 1 === 1 ? 'web' : 'feed']
         );
     }
     $uidScanner = new BetterCal\Domain\Duplicates($uidDb);
@@ -2641,7 +2654,7 @@ checkEq('all-day weekly in UTC unchanged', ['2026-08-31 00:00:00', '2026-09-02 0
 // other one switches it, and the newest signal (triage included) is current.
 {
     $fdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
-    $fdb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, source TEXT, deleted_at TEXT)');
+    $fdb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, source TEXT, deleted_at TEXT, recurrence_parent_id INTEGER, recurrence_instance_utc TEXT)');
     $fdb->run("CREATE TABLE feedback_signals (id INTEGER PRIMARY KEY, user_id INTEGER, event_id INTEGER, kind TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)");
     $fdb->run("INSERT INTO events (id, user_id, source) VALUES (1, 1, 'feed'), (2, 1, 'feed')");
     $fUndo = new BetterCal\Domain\Undo($fdb);
@@ -2668,6 +2681,30 @@ checkEq('all-day weekly in UTC unchanged', ['2026-08-31 00:00:00', '2026-09-02 0
     // by what changed for that occurrence, not by making it the first.
     $fRebase = (new ReflectionClass(BetterCal\Domain\Events::class))->getMethod('rebaseSeriesEdit');
     $fMon = ['id' => 7, 'uid' => 'mon', 'user_id' => 1, 'all_day' => 0, 'tzid' => 'America/Los_Angeles', 'start_utc' => '2026-10-05 16:00:00', 'end_utc' => '2026-10-05 17:00:00', 'rrule' => 'FREQ=WEEKLY;COUNT=8', 'recurrence_parent_id' => null, 'exdates_json' => null];
+    $fRequireInstance = (new ReflectionClass(BetterCal\Domain\Events::class))->getMethod('requireInstance');
+if (class_exists(\Sabre\VObject\Reader::class)) { // needs sabre/vobject (the install job runs it)
+    checkEq('recurrence mutation: a generated instance is accepted', '2026-11-02 17:00:00',
+        $fRequireInstance->invoke($fEvents, ['instanceStart' => '2026-11-02T09:00:00-08:00'], $fMon));
+    try {
+        $fRequireInstance->invoke($fEvents, ['instanceStart' => '2026-11-03T09:00:00-08:00'], $fMon);
+        check('recurrence mutation: an off-rule timestamp is refused', false);
+    } catch (BetterCal\Http\HttpError $e) {
+        checkEq('recurrence mutation: an off-rule timestamp is refused', [422, 'invalid_recurrence_instance'], [$e->status, $e->errorCode]);
+    }
+    try {
+        $fRequireInstance->invoke(
+            $fEvents,
+            ['instanceStart' => '2026-10-19T09:00:00-07:00'],
+            ['exdates_json' => json_encode(['2026-10-19 16:00:00'])] + $fMon
+        );
+        check('recurrence mutation: a skipped occurrence is refused', false);
+    } catch (BetterCal\Http\HttpError $e) {
+        checkEq('recurrence mutation: a skipped occurrence is refused', 'invalid_recurrence_instance', $e->errorCode);
+    }
+    $fdb->run("INSERT INTO events (id, user_id, source, recurrence_parent_id, recurrence_instance_utc) VALUES (8, 1, 'local', 7, '2026-11-03 17:00:00')");
+    checkEq('recurrence mutation: a pre-existing detached exception stays addressable', '2026-11-03 17:00:00',
+        $fRequireInstance->invoke($fEvents, ['instanceStart' => '2026-11-03T09:00:00-08:00'], $fMon));
+}
     $fEdit = static fn(string $s, string $e): array => ['scope' => 'all', 'instanceStart' => '2026-11-02T09:00:00-08:00', 'title' => 'Renamed', 'start' => $s, 'end' => $e];
     $fOut = $fRebase->invoke($fEvents, $fMon, $fEdit('2026-11-02T09:00:00-08:00', '2026-11-02T10:00:00-08:00'));
     check('series edit from a later occurrence, times untouched: the series start stays', !isset($fOut['start']) && $fOut['title'] === 'Renamed');
@@ -7407,6 +7444,157 @@ use BetterCal\Domain\GoogleWriter;
     }
     checkEq('events window: twenty years is refused, not quietly cut to two', 400, $status);
     check('events window: the refusal says to ask in pieces', str_contains($message, 'in pieces'));
+}
+
+// --- Phase 19: durable admission and browser-only decision authority ---
+{
+    Limits::configure([
+        'NOTIFY_EMAILS_PER_CYCLE' => 2,
+        'NOTIFY_EMAILS_PER_ACCOUNT_HOUR' => 10,
+        'NOTIFY_EMAILS_PER_ACCOUNT_DAY' => 20,
+        'NOTIFY_EMAILS_PER_RECIPIENT_HOUR' => 10,
+        'NOTIFY_EMAILS_PER_RECIPIENT_DAY' => 20,
+        'NOTIFY_EMAILS_PER_INSTALL_HOUR' => 20,
+        'NOTIFY_EMAILS_PER_INSTALL_DAY' => 40,
+        'PLUGIN_MANUAL_RUNS_PER_HOUR' => 2,
+        'PLUGIN_MANUAL_RUNS_PER_DAY' => 2,
+        'PLUGIN_ACTIVE_JOBS' => 2,
+    ]);
+    $xadb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $xadb->run('CREATE TABLE users (id INTEGER PRIMARY KEY)');
+    $xadb->run('INSERT INTO users VALUES (1)');
+    $xadb->run('CREATE TABLE external_action_lock (id INTEGER PRIMARY KEY)');
+    $xadb->run('INSERT INTO external_action_lock VALUES (1)');
+    $xadb->run('CREATE TABLE external_action_admissions (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, subject_key TEXT, cycle_key TEXT, admitted_at TEXT)');
+    $emailAdmission = new BetterCal\Domain\ExternalActionAdmission($xadb);
+    $at = new DateTimeImmutable('2026-10-08T12:00:00Z');
+    check('email admission: first attempt is reserved', $emailAdmission->admitEmail(1, 'Owner@Example.com', 'cycle-one', $at)['admitted']);
+    check('email admission: recipient normalization does not reset capacity', $emailAdmission->admitEmail(1, ' owner@example.com ', 'cycle-one', $at)['admitted']);
+    $emailDenied = $emailAdmission->admitEmail(1, 'other@example.com', 'cycle-one', $at);
+    checkEq('email admission: a scan cycle stops at its persistent cap', [false, 'cycle'], [$emailDenied['admitted'], $emailDenied['reason']]);
+    $missingAdmission = new BetterCal\Domain\ExternalActionAdmission(new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]));
+    checkEq('email admission: unavailable accounting fails closed', [false, 'accounting_unavailable'], array_values(array_intersect_key(
+        $missingAdmission->admitEmail(1, 'owner@example.com', 'cycle-two', $at),
+        ['admitted' => true, 'reason' => true]
+    )));
+    Limits::configure(['NOTIFY_EMAILS_PER_ACCOUNT_HOUR' => 2]);
+    $xadb->run('DELETE FROM external_action_admissions');
+    $testEmailNow = BetterCal\Support\Time::nowUtc();
+    $emailAdmission->record(1, BetterCal\Domain\ExternalActionAdmission::REMINDER_EMAIL, 'test-one', null, $testEmailNow);
+    $emailAdmission->record(1, BetterCal\Domain\ExternalActionAdmission::REMINDER_EMAIL, 'test-two', null, $testEmailNow);
+    $testEmailController = new BetterCal\Http\Controllers\PushController(
+        new BetterCal\Domain\PushSubscriptions($xadb),
+        new BetterCal\Infra\PushSender([]),
+        new BetterCal\Infra\EmailSender(['smtp' => ['host' => 'smtp.invalid', 'from' => 'alerts@example.test']]),
+        null,
+        $xadb,
+    );
+    $testEmailRequest = new BetterCal\Http\Request('POST', '/api/v1/push/test-email');
+    $testEmailRequest->user = ['id' => 1, 'email' => 'owner@example.test', 'settings_json' => '{}'];
+    try {
+        $testEmailController->testEmail($testEmailRequest);
+        check('email admission: explicit test email shares the persistent account budget', false);
+    } catch (BetterCal\Http\HttpError $e) {
+        checkEq('email admission: explicit test email shares the persistent account budget', [429, 'email_safety_limit'], [$e->status, $e->errorCode]);
+    }
+
+    $migDb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $migDb->run('CREATE TABLE users (id INTEGER PRIMARY KEY)');
+    $migDb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, kind TEXT, provider TEXT)');
+    $migDb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, calendar_id INTEGER, source TEXT, created_via TEXT)');
+    $migDb->run('CREATE TABLE event_duplicates (id INTEGER PRIMARY KEY, event_a INTEGER, event_b INTEGER, status TEXT, basis TEXT)');
+    // Simulate a prior interrupted DDL migration: the lock table exists but
+    // its singleton row was never inserted.
+    $migDb->run('CREATE TABLE external_action_lock (id INTEGER PRIMARY KEY)');
+    $migDb->run('CREATE TABLE jobs (id INTEGER PRIMARY KEY, type TEXT, status TEXT, last_error TEXT)');
+    $migDb->run('INSERT INTO users VALUES (1)');
+    $migDb->run("INSERT INTO calendars VALUES (1, 'local', 'ics'), (2, 'subscribed', 'google'), (3, 'local', 'ics')");
+    $migDb->run("INSERT INTO events VALUES (1, 1, 'local', 'web'), (2, 2, 'feed', 'feed'), (3, 1, 'local', 'web'), (4, 3, 'local', 'import')");
+    $migDb->run("INSERT INTO event_duplicates VALUES (1, 1, 2, 'linked', 'title'), (2, 3, 4, 'linked', 'title')");
+    $migDb->run("INSERT INTO jobs VALUES (1, 'plugin_job', 'pending', NULL), (2, 'plugin_job', 'running', NULL), (3, 'feed_poll', 'pending', NULL)");
+    $apply044 = require dirname(__DIR__) . '/migrations/044_external_action_admission.php';
+    $apply044($migDb);
+    checkEq('migration 044: only external heuristic links reopen for Review', ['possible', 'linked'],
+        array_column($migDb->all('SELECT status FROM event_duplicates ORDER BY id'), 'status'));
+    checkEq('migration 044: durable admission tables and singleton lock exist', [1, 1], [
+        (int) $migDb->scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'external_action_admissions'"),
+        (int) $migDb->scalar('SELECT COUNT(*) FROM external_action_lock WHERE id = 1'),
+    ]);
+    checkEq('migration 044: old pending plugin backlog is cancelled without touching running or core jobs',
+        ['failed', 'running', 'pending'], array_column($migDb->all('SELECT status FROM jobs ORDER BY id'), 'status'));
+
+    $xadb->run('CREATE TABLE plugins (id TEXT PRIMARY KEY, enabled INTEGER)');
+    $xadb->run("INSERT INTO plugins VALUES ('sample', 1), ('disabled', 0)");
+    $xadb->run("CREATE TABLE jobs (
+        id INTEGER PRIMARY KEY, type TEXT, payload_json TEXT, run_after TEXT, attempts INTEGER DEFAULT 0,
+        status TEXT, last_error TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )");
+    $queue = new BetterCal\Infra\JobQueue($xadb);
+    $firstJobs = $queue->enqueuePluginJobs(1, 'sample', ['refresh', 'summarize'], true, $at);
+    checkEq('plugin admission: first identities queue atomically', ['refresh', 'summarize'], $firstJobs['queued']);
+    $coalesced = $queue->enqueuePluginJobs(1, 'sample', ['refresh'], true, $at);
+    checkEq('plugin admission: an active identity coalesces without another admission', [[], ['refresh']], [$coalesced['queued'], $coalesced['alreadyQueued']]);
+    checkEq('plugin admission: duplicate request did not charge the rolling rate', 2,
+        (int) $xadb->scalar("SELECT COUNT(*) FROM external_action_admissions WHERE kind = 'plugin_manual_run'"));
+    $queue->markDone((int) $xadb->scalar("SELECT id FROM jobs WHERE JSON_EXTRACT(payload_json, '$.job') = 'refresh'"));
+    $rateDenied = $queue->enqueuePluginJobs(1, 'sample', ['publish'], true, $at);
+    checkEq('plugin admission: finished jobs do not bypass the rolling manual rate', 'rate', $rateDenied['status']);
+    checkEq('plugin admission: a disabled plugin creates no work', 'disabled', $queue->enqueuePluginJobs(1, 'disabled', ['refresh'], true, $at)['status']);
+    checkEq('plugin admission: rejected runs leave the durable queue unchanged', 2, (int) $xadb->scalar('SELECT COUNT(*) FROM jobs'));
+
+    $xadb->run("INSERT INTO jobs (type, payload_json, run_after, status) VALUES ('feed_poll', '{}', '2026-01-01 00:00:00', 'pending')");
+    $xadb->run("INSERT INTO jobs (type, payload_json, run_after, status) VALUES ('reminder_scan', '{}', '2026-01-01 00:00:00', 'pending')");
+    $claimedTypes = [];
+    for ($i = 0; $i < 3; $i++) {
+        $claimed = $queue->claimNext();
+        $claimedTypes[] = $claimed['type'] ?? null;
+        if ($claimed !== null) {
+            $queue->markDone((int) $claimed['id']);
+        }
+    }
+    checkEq('plugin queue: reminders and core work are claimed before plugin work', ['reminder_scan', 'feed_poll', 'plugin_job'], $claimedTypes);
+
+    $tokenReq = new BetterCal\Http\Request('POST', '/api/v1/review');
+    $tokenReq->authMethod = 'token';
+    $tokenReq->user = ['id' => 1];
+    $withoutConstructor = static fn(string $class): object => (new ReflectionClass($class))->newInstanceWithoutConstructor();
+    $decisionCalls = [
+        [new BetterCal\Http\Controllers\ReviewController(
+            $withoutConstructor(BetterCal\Domain\ReviewQueue::class),
+            $withoutConstructor(BetterCal\Domain\Proposals::class),
+            $withoutConstructor(BetterCal\Domain\Calendars::class),
+            $withoutConstructor(BetterCal\Domain\Duplicates::class),
+        ), 'decideDuplicate', ['id' => 1]],
+        [new BetterCal\Http\Controllers\ProposalsController($withoutConstructor(BetterCal\Domain\Proposals::class)), 'accept', ['id' => 1]],
+        [new BetterCal\Http\Controllers\EventsController(
+            $withoutConstructor(BetterCal\Domain\Events::class),
+            $withoutConstructor(BetterCal\Domain\Trips::class),
+            $withoutConstructor(BetterCal\Domain\Rsvp::class),
+        ), 'rsvp', ['id' => 1]],
+        [new BetterCal\Http\Controllers\PluginsController(
+            $withoutConstructor(BetterCal\Domain\Plugins::class),
+            $withoutConstructor(BetterCal\Infra\JobQueue::class),
+        ), 'enable', ['id' => 'sample']],
+    ];
+    foreach ($decisionCalls as [$controller, $method, $params]) {
+        try {
+            $controller->$method($tokenReq, $params);
+            check("session authority: token cannot call $method", false);
+        } catch (BetterCal\Http\HttpError $e) {
+            checkEq("session authority: token cannot call $method", [403, 'session_required'], [$e->status, $e->errorCode]);
+        }
+    }
+
+    $tripPolicy = (new ReflectionClass(BetterCal\Domain\Events::class))->getMethod('tripMemberContentWritable');
+    check('trip move: local member content is writable', $tripPolicy->invoke(null, ['source' => 'local', 'kind' => 'local', 'provider' => 'ics']));
+    foreach ([
+        ['source' => 'feed', 'kind' => 'subscribed', 'provider' => 'ics'],
+        ['source' => 'feed', 'kind' => 'subscribed', 'provider' => 'google'],
+        ['source' => 'local', 'kind' => 'plugin', 'provider' => 'ics'],
+    ] as $readonlyMember) {
+        check('trip move: externally managed member content is refused', !$tripPolicy->invoke(null, $readonlyMember));
+    }
+    Limits::reset();
 }
 
 $pass = $GLOBALS['__pass'];

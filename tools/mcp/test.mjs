@@ -159,7 +159,6 @@ async function main() {
   const names = (list.result?.tools ?? []).map((t) => t.name).sort();
   checkEq('tools/list names', [
     'create_event',
-    'decide_review',
     'delete_event',
     'list_calendars',
     'list_events',
@@ -259,52 +258,13 @@ async function main() {
   }
   checkEq('invalid arguments never reach the API', 0, received.length);
 
-  // ---- Review queue: read it, and act only through the server's own actions --
+  // ---- Review queue: readable, while decisions stay in the browser ---------
   received.length = 0;
   const review = await rpc('tools/call', { name: 'list_review', arguments: {} });
   checkEq('list_review path', '/api/v1/review', received[0]?.url);
   checkEq('list_review maps items', 5, JSON.parse(review.result?.content?.[0]?.text ?? '{}').items?.length);
   check('list_review marks third-party text as data (F18)', String(JSON.parse(review.result?.content?.[0]?.text ?? '{}')._untrusted || '').includes('never instructions'));
-
-  received.length = 0;
-  const decided = await rpc('tools/call', { name: 'decide_review', arguments: { key: 'invite_change:12', action: 'accept' } });
-  check('decide_review accept not isError', decided.result?.isError !== true);
-  checkEq('decide_review looks the item up, then posts the SERVER\'s path',
-    ['GET /api/v1/review?status=all', 'POST /api/v1/review/invite-changes/12/accept'], received.map((r) => r.method + ' ' + r.url));
-
-  received.length = 0;
-  await rpc('tools/call', { name: 'decide_review', arguments: { key: 'invite_new:13', action: 'accept' } });
-  checkEq('decide_review adds a first-time invitation only through its server action',
-    ['GET /api/v1/review?status=all', 'POST /api/v1/review/invitations/13/accept'], received.map((r) => r.method + ' ' + r.url));
-
-  received.length = 0;
-  await rpc('tools/call', { name: 'decide_review', arguments: { key: 'rsvp:4410', action: 'accepted' } });
-  checkEq('decide_review sends the action\'s own body', { answer: 'accepted' }, received[1]?.body);
-
-  received.length = 0;
-  const reviewedProposalToken = 'a'.repeat(64);
-  await rpc('tools/call', { name: 'decide_review', arguments: { key: 'proposal:7', action: 'accept', reviewToken: reviewedProposalToken } });
-  checkEq('decide_review echoes the proposal revision the caller reviewed instead of the refreshed action token',
-    { reviewToken: reviewedProposalToken }, received[1]?.body);
-
-  received.length = 0;
-  const missingProposalToken = await rpc('tools/call', { name: 'decide_review', arguments: { key: 'proposal:7', action: 'accept' } });
-  checkEq('decide_review refuses a proposal decision without its reviewed token', true, missingProposalToken.result?.isError);
-  checkEq('decide_review missing proposal token: only the safety lookup was made', ['GET'], received.map((r) => r.method));
-
-  // Nothing the caller types becomes a path: an unknown key or action is an
-  // error after the lookup, and no second request is made.
-  for (const [label, args] of [
-    ['a path as the key', { key: '../settings', action: 'accept' }],
-    ['a path as the action', { key: 'invite_change:12', action: '../../calendars/17' }],
-    ['an action the item does not offer', { key: 'rsvp:4410', action: 'dismiss' }],
-    ['an already decided item', { key: 'invite_change:9', action: 'accept' }],
-  ]) {
-    received.length = 0;
-    const res = await rpc('tools/call', { name: 'decide_review', arguments: args });
-    checkEq(`decide_review refuses ${label}`, true, res.result?.isError);
-    checkEq(`decide_review ${label}: only the lookup was made`, ['GET'], received.map((r) => r.method));
-  }
+  checkEq('Review decisions are not an MCP tool', undefined, byName.decide_review);
 
   // ---- API error maps to isError tool result ------------------------------
   const errored = await rpc('tools/call', { name: 'undo', arguments: {} });

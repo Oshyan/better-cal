@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 namespace BetterCal\Infra;
 
+use BetterCal\Domain\ExternalActionAdmission;
 use BetterCal\Domain\PushSubscriptions;
 use BetterCal\Domain\Reminders;
 use BetterCal\Domain\Settings;
+use BetterCal\Domain\SystemHealth;
 
 /**
  * Send one ad-hoc notification to the user, honouring their channel setting.
@@ -76,11 +78,33 @@ final class Notifier
         $emailed = false;
         if ($plan['email'] && $email->isConfigured()) {
             $to = Settings::notifyDestination($settings, (string) $user['email'], $this->db);
-            $emailed = $email->sendReminder($to, [
-                'title' => $payload['title'],
-                'body' => $payload['body'],
-                'url' => $payload['url'],
-            ]);
+            $admitted = (new ExternalActionAdmission($this->db))->admitEmail($userId, $to, null);
+            $health = new SystemHealth($this->db);
+            if ($admitted['admitted']) {
+                $emailed = $email->sendReminder($to, [
+                    'title' => $payload['title'],
+                    'body' => $payload['body'],
+                    'url' => $payload['url'],
+                ]);
+                try {
+                    $health->recordOk('notification-email-budget:' . $userId, 'job', $userId, 'Notification email delivery', false);
+                } catch (\Throwable $e) {
+                    error_log('notification email health recovery could not be recorded: ' . $e->getMessage());
+                }
+            } else {
+                try {
+                    $health->recordFailure(
+                        'notification-email-budget:' . $userId,
+                        'job',
+                        $userId,
+                        'Notification email delivery',
+                        'An ad-hoc notification email was suppressed because the persistent delivery safety limit was reached.'
+                    );
+                } catch (\Throwable $e) {
+                    error_log('notification email health failure could not be recorded: ' . $e->getMessage());
+                }
+                error_log('notification email safety budget suppressed one delivery attempt for user ' . $userId);
+            }
         }
         return ['push' => $delivered, 'email' => $emailed];
     }

@@ -114,6 +114,7 @@ final class EventsController
 
     public function rsvp(Request $req, array $params): Response
     {
+        $req->requireSession('Invitation replies');
         if ($this->rsvp === null) {
             throw HttpError::notFound('RSVP unavailable');
         }

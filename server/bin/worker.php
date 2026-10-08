@@ -235,7 +235,7 @@ try {
                     $cycleId = isset($payload['cycleId']) && is_string($payload['cycleId'])
                         ? substr($payload['cycleId'], 0, 40)
                         : bin2hex(random_bytes(12));
-                    $result = $reminders->scan($scanNow, $cursor);
+                    $result = $reminders->scan($scanNow, $cursor + ['cycleId' => $cycleId]);
                     if ($result['more'] && is_array($result['cursor'])) {
                         // Continue promptly inside this worker's 50-second
                         // envelope. If it runs out, the pending slice resumes
@@ -252,13 +252,14 @@ try {
                     }
                     echo bc_ts() . ' reminder_scan sent=' . $result['sent'] . ' failed=' . $result['failed']
                         . ' emailed=' . ($result['emailed'] ?? 0)
+                        . ' email_suppressed=' . ($result['emailSuppressed'] ?? 0)
                         . ($result['more'] ? ' continued=1' : '') . "\n";
                     break;
                 case 'plugin_job':
                     // Plugin code runs ONLY here (and in explicit settings
                     // validation): budgeted, health-recorded, circuit-broken.
                     $payload = json_decode((string) $job['payload_json'], true) ?: [];
-                    $uidP = (int) ($db->scalar('SELECT id FROM users ORDER BY id LIMIT 1') ?? 0);
+                    $uidP = (int) ($payload['userId'] ?? ($db->scalar('SELECT id FROM users ORDER BY id LIMIT 1') ?? 0));
                     $r = $pluginsDomain->runJob($uidP, (string) ($payload['plugin'] ?? ''), (string) ($payload['job'] ?? ''));
                     echo bc_ts() . ' plugin_job ' . ($payload['plugin'] ?? '?') . '/' . ($payload['job'] ?? '?')
                         . ' outcome=' . $r['outcome'] . (isset($r['durationMs']) ? ' ' . $r['durationMs'] . 'ms' : '')
@@ -281,8 +282,10 @@ try {
                 case 'activity_prune':
                     $result = (new BetterCal\Domain\Activity($db))->prune();
                     $modelAdmissions = (new BetterCal\Domain\ModelAdmission($db))->prune();
+                    $externalAdmissions = (new BetterCal\Domain\ExternalActionAdmission($db))->prune();
                     echo bc_ts() . ' activity_prune cleared=' . $result['snapshotsCleared']
-                        . ' deleted=' . $result['deleted'] . ' model_admissions=' . $modelAdmissions . "\n";
+                        . ' deleted=' . $result['deleted'] . ' model_admissions=' . $modelAdmissions
+                        . ' external_action_admissions=' . $externalAdmissions . "\n";
                     break;
                 default:
                     throw new \RuntimeException('Unknown job type: ' . $job['type']);
@@ -376,11 +379,14 @@ function bc_enqueue_recurring(Db $db, JobQueue $queue): void
 
     // Plugin jobs: manifests declare intervals; staleness is judged from
     // plugin_runs (a failing job still respects its interval). Cap per tick.
-    $duePlugin = array_slice((new BetterCal\Domain\Plugins($db))->dueJobs(), 0, 4);
+    $duePlugin = (new BetterCal\Domain\Plugins($db))->dueJobs();
+    $userId = (int) ($db->scalar('SELECT id FROM users ORDER BY id LIMIT 1') ?? 0);
+    $newPluginJobs = 0;
     foreach ($duePlugin as $dj) {
-        $hash = 'plugin:' . $dj['plugin'] . ':' . $dj['job'];
-        if (!$queue->hasPendingWithHash('plugin_job', $hash)) {
-            $queue->enqueue('plugin_job', ['plugin' => $dj['plugin'], 'job' => $dj['job'], 'hash' => $hash]);
+        $admitted = $queue->enqueuePluginJobs($userId, (string) $dj['plugin'], [(string) $dj['job']]);
+        $newPluginJobs += count($admitted['queued']);
+        if ($newPluginJobs >= 4) {
+            break;
         }
     }
 }

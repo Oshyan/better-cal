@@ -290,6 +290,15 @@ The automated suite covers oversized repeat-rule inputs; normal release smoke te
 - [ ] Exercise two simultaneous starts and a browser/worker overlap against a disposable calendar on production MySQL. Confirm one active move row, one executor lease, one remote calendar and one imported copy per event. Use a controlled test environment or network fault; do not kill the shared production worker or disrupt a real calendar merely to manufacture the race.
 - [ ] Simulate response loss after remote calendar creation and after one accepted event import, each before local ID persistence. Confirm the same calendar/event is recovered without another create/import. Verify the calendar-description marker is cleared, the private event marker is not displayed as event content, and neither marker nor any account/calendar details appear in retained evidence.
 
+### Phase 19 durable actions and owner decisions (F12/F19/F32/F38/F42/F50/F70)
+
+- [ ] With temporary low notification-email limits, verify the exact persistent cycle/account/recipient/installation cap under concurrent attempts. SMTP failures must stay charged, suppressed email must appear in **Settings > System**, and push must continue independently. Restore the normal limits after the exercise.
+- [ ] From an API token, confirm Review still lists items but exposes no actions, and direct Review/RSVP/proposal/duplicate decision requests return `403 session_required` with no side effects. Repeat one disposable decision in the signed-in browser and confirm it succeeds.
+- [ ] Run one enabled plugin job twice quickly and confirm the second request reports it as already queued rather than adding a row. Verify a disabled or unknown job queues nothing and an ordinary core worker job is claimed before plugin work. Plugin management with an API token must return `403 session_required`.
+- [ ] Review the enabled-plugin list once after deployment and disable or uninstall anything unexpected. Older plugin rows have no reliable record of whether a browser session or API token originally enabled them, so the migration preserves the current enabled state rather than guessing and interrupting known-good automation.
+- [ ] On disposable events, confirm a real generated repeat occurrence can be edited while an off-rule or skipped timestamp is rejected without creating an override. Move an all-local disposable trip with its members, then add a disposable subscribed member and confirm the same bulk move is rejected atomically while moving only the trip remains available.
+- [ ] Confirm a different-UID external/local exact title-and-time match appears in Review and neither copy is hidden nor loses reminders before confirmation. Confirming **Same event** should then restore the normal single-display/reminder behavior; same-UID copies should continue linking automatically.
+
 ## Deployment closeout
 
 - [x] Deploy the exact reviewed commit with migrations 036 and 037.

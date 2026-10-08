@@ -287,7 +287,7 @@ final class Reminders
      * double-sends.
      *
      * @param array{userId?:int,phase?:string,afterId?:int,limited?:bool} $cursor
-     * @return array{sent:int, failed:int, emailed:int, more:bool, cursor:?array}
+     * @return array{sent:int, failed:int, emailed:int, emailSuppressed:int, more:bool, cursor:?array}
      */
     public function scan(?\DateTimeImmutable $now = null, array $cursor = []): array
     {
@@ -301,20 +301,26 @@ final class Reminders
         $pushReady = $this->sender->configured();
         $emailReady = $this->email->isConfigured();
         if (!$pushReady && !$emailReady) {
-            return ['sent' => 0, 'failed' => 0, 'emailed' => 0, 'more' => false, 'cursor' => null];
+            return ['sent' => 0, 'failed' => 0, 'emailed' => 0, 'emailSuppressed' => 0, 'more' => false, 'cursor' => null];
         }
         $subsByUser = $pushReady ? $this->subscriptions->allByUser() : [];
 
         $sent = 0;
         $failed = 0;
         $emailed = 0;
+        $emailSuppressed = 0;
+        $emailAdmitted = false;
+        $emailAdmission = new ExternalActionAdmission($this->db);
+        $cycleKey = is_string($cursor['cycleId'] ?? null) && $cursor['cycleId'] !== ''
+            ? (string) $cursor['cycleId']
+            : Time::toDb($now);
         $cursorUser = max(0, (int) ($cursor['userId'] ?? 0));
         $user = $this->db->one(
             'SELECT id, email, settings_json FROM users WHERE id >= ? ORDER BY id LIMIT 1',
             [$cursorUser > 0 ? $cursorUser : 1]
         );
         if ($user === null) {
-            return ['sent' => 0, 'failed' => 0, 'emailed' => 0, 'more' => false, 'cursor' => null];
+            return ['sent' => 0, 'failed' => 0, 'emailed' => 0, 'emailSuppressed' => 0, 'more' => false, 'cursor' => null];
         }
         $userId = (int) $user['id'];
         $sameUser = $cursorUser === $userId;
@@ -334,7 +340,7 @@ final class Reminders
             $wantsEmail = $emailReady && $channel !== 'push';
             if (!$wantsPush && !$wantsEmail) {
                 $next = $nextUserCursor();
-                return ['sent' => 0, 'failed' => 0, 'emailed' => 0, 'more' => $next !== null, 'cursor' => $next];
+                return ['sent' => 0, 'failed' => 0, 'emailed' => 0, 'emailSuppressed' => 0, 'more' => $next !== null, 'cursor' => $next];
             }
             $hasLiveSub = array_filter($subs, static fn(array $s): bool => ($s['failing_since'] ?? null) === null) !== [];
 
@@ -396,17 +402,36 @@ final class Reminders
                 }
                 $plan = self::channelPlan($channel, $hasLiveSub, $outcomes);
                 if ($wantsEmail && $plan['email'] && $emailTo !== '') {
-                    // Email failures log inside sendReminder and never block
-                    // the scan; the dedup row above stays either way.
-                    if ($this->email->sendReminder($emailTo, $due['payload'])) {
-                        $emailed++;
+                    $admitted = $emailAdmission->admitEmail($userId, $emailTo, $cycleKey, $now);
+                    if (!$admitted['admitted']) {
+                        $emailSuppressed++;
+                    } else {
+                        $emailAdmitted = true;
+                        // Email failures log inside sendReminder and never
+                        // block the scan. The reservation and dedup row stay:
+                        // failures must not become a quota or retry bypass.
+                        if ($this->email->sendReminder($emailTo, $due['payload'])) {
+                            $emailed++;
+                        }
                     }
                 }
             }
+        if ($emailSuppressed > 0) {
+            $this->health->recordFailure(
+                'reminder-email-budget:' . $userId,
+                'job',
+                $userId,
+                'Reminder email delivery',
+                'Some reminder emails were suppressed because the persistent delivery safety limit was reached. Push delivery continued where configured.'
+            );
+            error_log('reminder email safety budget suppressed ' . $emailSuppressed . ' delivery attempt(s) for user ' . $userId);
+        } elseif ($emailAdmitted) {
+            $this->health->recordOk('reminder-email-budget:' . $userId, 'job', $userId, 'Reminder email delivery', false);
+        }
         $next = $slice['more']
             ? ['userId' => $userId, 'phase' => $slice['phase'], 'afterId' => $slice['afterId'], 'limited' => $cycleLimited]
             : $nextUserCursor();
-        return ['sent' => $sent, 'failed' => $failed, 'emailed' => $emailed, 'more' => $next !== null, 'cursor' => $next];
+        return ['sent' => $sent, 'failed' => $failed, 'emailed' => $emailed, 'emailSuppressed' => $emailSuppressed, 'more' => $next !== null, 'cursor' => $next];
     }
 
     /**

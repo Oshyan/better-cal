@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace BetterCal\Infra;
 
+use BetterCal\Domain\ExternalActionAdmission;
+use BetterCal\Support\Limits;
 use BetterCal\Support\Time;
 
 final class JobQueue
@@ -22,6 +24,96 @@ final class JobQueue
             'run_after' => Time::toDb($runAfter ?? Time::nowUtc()),
             'status' => 'pending',
         ]);
+    }
+
+    /**
+     * Atomically coalesce and admit plugin jobs. Both the scheduler and the
+     * browser's Run now action use this boundary, so concurrent submissions
+     * cannot create duplicate durable work.
+     *
+     * @param list<string> $jobIds
+     * @return array{status:string,queued:list<string>,alreadyQueued:list<string>,retryAt:?string}
+     */
+    public function enqueuePluginJobs(
+        int $userId,
+        string $pluginId,
+        array $jobIds,
+        bool $manual = false,
+        ?\DateTimeImmutable $now = null,
+    ): array {
+        $now ??= Time::nowUtc();
+        $jobIds = array_values(array_unique(array_filter(array_map('strval', $jobIds), static fn(string $id): bool => $id !== '')));
+        return $this->db->tx(function () use ($userId, $pluginId, $jobIds, $manual, $now): array {
+            $admission = new ExternalActionAdmission($this->db);
+            $admission->lock();
+            if ($this->db->scalar('SELECT id FROM plugins WHERE id = ? AND enabled = 1', [$pluginId]) === null) {
+                return ['status' => 'disabled', 'queued' => [], 'alreadyQueued' => [], 'retryAt' => null];
+            }
+
+            $queued = [];
+            $already = [];
+            $new = [];
+            $extract = $this->hashExpression();
+            foreach ($jobIds as $jobId) {
+                $hash = 'plugin:' . $pluginId . ':' . $jobId;
+                if ($this->db->scalar(
+                    "SELECT id FROM jobs WHERE type = 'plugin_job' AND status IN ('pending', 'running') AND $extract = ? LIMIT 1",
+                    [$hash]
+                ) !== null) {
+                    $already[] = $jobId;
+                    continue;
+                }
+                $new[] = ['job' => $jobId, 'hash' => $hash];
+            }
+            if ($new === []) {
+                return ['status' => 'ok', 'queued' => [], 'alreadyQueued' => $already, 'retryAt' => null];
+            }
+
+            $active = (int) ($this->db->scalar(
+                "SELECT COUNT(*) FROM jobs WHERE type = 'plugin_job' AND status IN ('pending', 'running')"
+            ) ?? 0);
+            if ($active + count($new) > Limits::get('PLUGIN_ACTIVE_JOBS')) {
+                return ['status' => 'capacity', 'queued' => [], 'alreadyQueued' => $already, 'retryAt' => null];
+            }
+
+            if ($manual) {
+                $hour = Time::toDb($now->sub(new \DateInterval('PT1H')));
+                $day = Time::toDb($now->sub(new \DateInterval('P1D')));
+                $hourly = $admission->count(
+                    'user_id = ? AND kind = ? AND admitted_at > ?',
+                    [$userId, ExternalActionAdmission::PLUGIN_MANUAL_RUN, $hour]
+                );
+                $daily = $admission->count(
+                    'user_id = ? AND kind = ? AND admitted_at > ?',
+                    [$userId, ExternalActionAdmission::PLUGIN_MANUAL_RUN, $day]
+                );
+                if ($hourly + count($new) > Limits::get('PLUGIN_MANUAL_RUNS_PER_HOUR')
+                    || $daily + count($new) > Limits::get('PLUGIN_MANUAL_RUNS_PER_DAY')
+                ) {
+                    return [
+                        'status' => 'rate',
+                        'queued' => [],
+                        'alreadyQueued' => $already,
+                        'retryAt' => Time::toDb($now->add(new \DateInterval('PT1H'))),
+                    ];
+                }
+            }
+
+            foreach ($new as $item) {
+                if ($manual) {
+                    $admission->record($userId, ExternalActionAdmission::PLUGIN_MANUAL_RUN, $item['hash'], null, $now);
+                }
+                $this->enqueue('plugin_job', [
+                    'userId' => $userId,
+                    'plugin' => $pluginId,
+                    'job' => $item['job'],
+                    'hash' => $item['hash'],
+                    'manual' => $manual,
+                ], $now);
+                $queued[] = $item['job'];
+            }
+            return ['status' => 'ok', 'queued' => $queued, 'alreadyQueued' => $already, 'retryAt' => null];
+        });
     }
 
     /** Is any job of this type pending or running (any payload)? */
@@ -93,7 +185,7 @@ final class JobQueue
     {
         $job = $this->db->one(
             "SELECT * FROM jobs WHERE status = 'pending' AND run_after <= ?
-             ORDER BY CASE WHEN type = 'reminder_scan' THEN 0 ELSE 1 END, run_after, id LIMIT 1",
+             ORDER BY CASE WHEN type = 'reminder_scan' THEN 0 WHEN type = 'plugin_job' THEN 2 ELSE 1 END, run_after, id LIMIT 1",
             [Time::nowDb()]
         );
         if ($job === null) {

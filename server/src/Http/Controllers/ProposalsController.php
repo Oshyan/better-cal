@@ -26,6 +26,7 @@ final class ProposalsController
 
     public function accept(Request $req, array $params): Response
     {
+        $req->requireSession('Proposal decisions');
         return Response::json($this->proposals->accept(
             (int) $req->user['id'],
             (int) $params['id'],
@@ -35,6 +36,7 @@ final class ProposalsController
 
     public function reject(Request $req, array $params): Response
     {
+        $req->requireSession('Proposal decisions');
         return Response::json(['proposal' => $this->proposals->reject(
             (int) $req->user['id'],
             (int) $params['id'],
@@ -44,6 +46,7 @@ final class ProposalsController
 
     public function undoAccept(Request $req, array $params): Response
     {
+        $req->requireSession('Proposal decisions');
         return Response::json($this->proposals->undoAccept((int) $req->user['id'], (int) $params['id']));
     }
 }

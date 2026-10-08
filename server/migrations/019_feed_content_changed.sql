@@ -3,7 +3,7 @@
 --
 -- "Stale" used to mean "the feed contained zero events on every poll in the
 -- window, or the last poll errored". That is presence, not change: a dead
--- calendar that keeps serving the same fifty events from 2023 was never stale,
+-- calendar that keeps serving the same old events for years was never stale,
 -- and a freshly subscribed empty feed was stale on its first poll. Staleness
 -- is now judged against this column: unchanged for stale_after_days AND
 -- nothing upcoming. Empty and went-empty are reported as their own states.

@@ -32,7 +32,7 @@ final class LlmGateway
      *
      * With $placeZone (mail), the model also names the zone the event happens
      * in, judged from its address, venue or city, and the times are read as
-     * the clock there: a restaurant booking in Edinburgh is 3 PM Edinburgh time
+     * the clock there: a restaurant booking in Lisbon is 3 PM Lisbon time
      * whatever zone the owner's Home is. With no place clue it is $hereTz (where
      * the owner was last seen), else $tz. The result then carries 'tzid'.
      * Quick-add leaves it off: there the owner types times on their own clock.
@@ -54,13 +54,13 @@ final class LlmGateway
             . ($placeZone
                 ? "if no end is given, default to one hour after start; start and end are the LOCAL wall-clock time "
                     . "where the event happens, as ISO8601 WITHOUT any offset (e.g. 2026-10-02T15:00:00), exactly as the "
-                    . "text states them; timezone is the IANA zone of the event's place (e.g. Europe/London for Edinburgh), "
+                    . "text states them; timezone is the IANA zone of the event's place (e.g. Europe/Lisbon for Lisbon), "
                     . "judged from its address, venue or city, or from an explicit zone in the text (\"3pm ET\"); if the text "
                     . "gives no place or zone, timezone is " . ($hereTz ?? $tz) . "; "
                 : "if no end is given, default to one hour after start; start and end must be ISO8601 with UTC offset; ")
             . "the title is the text minus only its date and time phrases: keep the place and the companions in it "
-            . "(\"Lunch at The Pig's Ear at 12pm\" -> title \"Lunch at The Pig's Ear\", location \"The Pig's Ear\"; "
-            . "\"Cocktails with Virginia at 4pm\" -> title \"Cocktails with Virginia\", NOT \"Cocktails\"); only a "
+            . "(\"Lunch at The Captain's Table at 12pm\" -> title \"Lunch at The Captain's Table\", location \"The Captain's Table\"; "
+            . "\"Cocktails with Alex at 4pm\" -> title \"Cocktails with Alex\", NOT \"Cocktails\"); only a "
             . "street address leaves the title for the location field; "
             . "location is a place name or empty string; personNames are people mentioned as companions "
             . "(e.g. \"with Sam\" -> [\"Sam\"], also listed in personNames while staying in the title).\n"

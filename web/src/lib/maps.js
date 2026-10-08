@@ -61,7 +61,7 @@ export function mapMosaic(lat, lng, { width = 640, height = 200, zoom = 15, mapt
 // and address, searched with the map already at its stored coordinates: Google
 // opens that place's card (hours, phone, reviews, Directions) rather than a
 // dropped pin on a bare lat/lng, and the coordinates keep an ambiguous text
-// ("43 Charlotte Street") from resolving in another city. Coordinates alone
+// ("100 Main Street") from resolving in another city. Coordinates alone
 // only when the text says nothing findable (empty, "available once RSVP'd", a
 // link, or itself a pair of numbers); the text alone when nothing is stored.
 const COORD_TEXT = /^-?\d+(\.\d+)?\s*,\s*-?\d+(\.\d+)?$/;

@@ -1,16 +1,17 @@
 # Shared by scripts/deploy.sh and scripts/deploy-dev.sh; sourced after
 # deploy.env is loaded (needs REMOTE and HEALTH_URL).
 #
-# Why this exists (2026-09-25): a brute-force storm against the host's sshd
-# kept more than 10 unauthenticated connections open, so sshd's MaxStartups
-# (10:30:100) randomly dropped new ones, ours included. A deploy opened a fresh
-# ssh connection per step; one was dropped after rsync had already rewritten
-# the code, the remote chown never ran, and nginx's disable_symlinks owner
-# check 404ed the whole site until a re-run. Now:
+# Why this exists: when many unauthenticated connections are open (a
+# brute-force run against sshd, say), sshd's MaxStartups setting can randomly
+# drop new ones, ours included. A deploy that opens a fresh ssh connection per
+# step can then lose one after rsync has already rewritten the code, so the
+# remote chown never runs and nginx's disable_symlinks owner check 404s the
+# whole site until a re-run. Now:
 #   - one ssh connection, opened with retries before anything changes, carries
 #     every later step (rsync included), so a drop can only happen up front;
 #   - rsync writes as the app user (deploy_rsync), so files are right the
-#     moment they land, whatever rsync the Mac has (openrsync has no --chown);
+#     moment they land, whatever the local machine's rsync is (openrsync has
+#     no --chown);
 #   - any failure after the server was touched says so, loudly.
 
 DEPLOY_STAGE="pre-flight"
@@ -46,9 +47,9 @@ ssh_open() {
 
 # rsync of the working tree into $1 on the server. The receiving rsync runs as
 # APP_USER, so every file it writes is owned by the app from the start and no
-# later chown is needed. -a's owner/group are dropped (they would be the Mac's).
-# No --delete by explicit policy (the user has been burned by it); stale-file
-# removal, when ever needed, is a deliberate manual action on the server.
+# later chown is needed. -a's owner/group are dropped (they would be the local
+# machine's). No --delete, by policy; stale-file removal, when ever needed, is
+# a deliberate manual action on the server.
 #
 # deploy_rsync DEST [SNAPSHOT]. With SNAPSHOT (a `git archive` of
 # DEPLOY_COMMIT, made by deploy.sh), exactly that commit's files ship, and

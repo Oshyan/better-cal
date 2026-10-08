@@ -1002,7 +1002,7 @@ assert('richtext: plain text is not empty', !isEmptyHtml('note'));
 console.log('--- battery tip ---');
 
 // Android-only guidance; the copy must name the settings path users follow.
-assert('batterytip: applies on Android UA', batteryTipApplies('Mozilla/5.0 (Linux; Android 15; Pixel 9) Chrome/126'));
+assert('batterytip: applies on Android UA', batteryTipApplies('Mozilla/5.0 (Linux; Android 15; K) Chrome/126'));
 assert('batterytip: not on iPhone', !batteryTipApplies('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)'));
 assert('batterytip: not on desktop', !batteryTipApplies('Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5)'));
 assert('batterytip: empty UA no-op', !batteryTipApplies(''));
@@ -1295,15 +1295,15 @@ console.log('--- chronological ordering across timezone offsets ---');
 // being two and a half hours earlier. This is what put a 10 AM event at the
 // bottom of the day-expand list.
 {
-  const utcTen = { start: '2026-08-18T17:00:00+00:00', title: 'Aquarium' };     // 10:00 local
-  const localNoon = { start: '2026-08-18T12:30:00-07:00', title: 'Cleaners' };  // 12:30 local
-  const localTwo = { start: '2026-08-18T14:00:00-07:00', title: 'Weeklies' };   // 14:00 local
+  const utcTen = { start: '2026-08-18T17:00:00+00:00', title: 'Team sync' };    // 10:00 local
+  const localNoon = { start: '2026-08-18T12:30:00-07:00', title: 'Errand' };    // 12:30 local
+  const localTwo = { start: '2026-08-18T14:00:00-07:00', title: 'Review' };     // 14:00 local
   assert('naive string compare gets it wrong', utcTen.start > localNoon.start);
   assert('startMs orders by instant', startMs(utcTen) < startMs(localNoon));
   eq(
     'byStart sorts mixed offsets chronologically',
     [localTwo, localNoon, utcTen].sort(byStart).map((o) => o.title).join(','),
-    'Aquarium,Cleaners,Weeklies',
+    'Team sync,Errand,Review',
   );
 }
 
@@ -1352,7 +1352,7 @@ console.log('--- chronological ordering across timezone offsets ---');
   eq('mosaic: first tile is at the left edge', m.tiles[0].left, 0);
   assert('mosaic: tile url carries z/x/y', m.tiles[0].url.endsWith('/1/0/0.png'));
   eq('mosaic: pin sits at the centre, anchored bottom-middle', JSON.stringify(m.pin), JSON.stringify({ left: 512 / 2 - 12, top: 256 / 2 - 41 }));
-  const r = mapMosaic(37.5, -122.47, { width: 640, height: 200, zoom: 15 });
+  const r = mapMosaic(45.52, -122.68, { width: 640, height: 200, zoom: 15 });
   assert('mosaic: a real point at zoom 15 needs 3-4 columns and 1-2 rows', r.tiles.length >= 3 && r.tiles.length <= 8);
   assert('mosaic: retina tiles by default', r.tiles[0].url.includes('@2x'));
   assert('mosaic: MapTiler when a key is given', mapMosaic(0, 0, { zoom: 1, maptilerKey: 'k', style: 'streets-v2' }).tiles[0].url.startsWith('https://api.maptiler.com/maps/streets-v2/1/'));
@@ -1505,7 +1505,7 @@ console.log('--- chronological ordering across timezone offsets ---');
     'RSVP to see location', 'Register to view the address', 'Location: TBA', 'Venue TBD']) {
     eq('pending location: ' + t, isPendingLocation(t), true);
   }
-  for (const t of ['15 Calton Hill, Edinburgh', 'Location Bar & Grill, Oakland', 'The RSVP Lounge', 'https://zoom.us/j/1', '', null]) {
+  for (const t of ['100 Main St, Springfield', 'Location Bar & Grill, Denver', 'The RSVP Lounge', 'https://zoom.us/j/1', '', null]) {
     eq('a real place is not pending: ' + String(t), isPendingLocation(t), false);
   }
 }
@@ -1751,20 +1751,20 @@ console.log('');
 // --- context tokens: what the day's header says --------------------------------
 {
   const at = (d, h, m = 0) => new Date(2026, 8, d, h, m).toISOString();
-  const weather = { instanceId: 'w', relationship: 'context', allDay: true, start: '2026-09-20', end: '2026-09-21', title: 'Oakland, CA: 72/58 fog' };
-  const aqi = { instanceId: 'q', relationship: 'context', allDay: true, start: '2026-09-20', end: '2026-09-21', title: 'Oakland, CA: AQI 54 (Moderate)' };
+  const weather = { instanceId: 'w', relationship: 'context', allDay: true, start: '2026-09-20', end: '2026-09-21', title: 'Portland, OR: 72/58 fog' };
+  const aqi = { instanceId: 'q', relationship: 'context', allDay: true, start: '2026-09-20', end: '2026-09-21', title: 'Portland, OR: AQI 54 (Moderate)' };
   const sunset = { instanceId: 's', relationship: 'context', allDay: false, start: at(20, 19, 10), end: at(20, 19, 20), title: 'Sunset' };
   const tide = { instanceId: 't', relationship: 'context', allDay: false, start: at(20, 14, 15), end: at(20, 14, 25), title: 'Low tide: 0.8 ft' };
-  const away = { instanceId: 'a', relationship: 'context', allDay: true, start: '2026-09-19', end: '2026-09-22', title: 'Rider in LA' };
+  const away = { instanceId: 'a', relationship: 'context', allDay: true, start: '2026-09-19', end: '2026-09-22', title: 'Sam in Denver' };
   const plan = { instanceId: 'p', relationship: 'planned', allDay: false, start: at(20, 10), end: at(20, 11), title: 'Dentist' };
   const plug = { instanceId: 'g', relationship: 'context', allDay: true, start: '2026-09-20', end: '2026-09-21', title: 'Rain likely (60%)', icon: 'rain', tzid: 'UTC' };
   eq('context token: weather pair with a condition word', [contextToken(weather).icon, contextToken(weather).text], ['cloud', '72/58']);
-  eq('context token: a long-range normal keeps its tilde and gets the thermometer', [contextToken({ allDay: true, title: 'Oakland, CA: ~80/58 avg' }).icon, contextToken({ allDay: true, title: 'Oakland, CA: ~80/58 avg' }).text], ['thermometer', '~80/58']);
+  eq('context token: a long-range normal keeps its tilde and gets the thermometer', [contextToken({ allDay: true, title: 'Portland, OR: ~80/58 avg' }).icon, contextToken({ allDay: true, title: 'Portland, OR: ~80/58 avg' }).text], ['thermometer', '~80/58']);
   eq('context token: clear skies are the sun; wind is the air icon', [contextToken({ allDay: true, title: '96/66 clear' }).icon, contextToken({ allDay: true, title: '70/55 windy' }).icon], ['sun', 'air']);
   eq('context token: AQI keeps the number, the category goes to the tooltip', [contextToken(aqi).icon, contextToken(aqi).text], ['air', '54']);
   eq('context token: a sunset is its icon and time', [contextToken(sunset).icon, contextToken(sunset).text, contextToken(sunset).time], ['sunset', '', '7:10p']);
   eq('context token: low tide keeps its height', [contextToken(tide).icon, contextToken(tide).text], ['tideLow', '0.8 ft']);
-  eq('context token: unrecognized text keeps its words and the calendar square', [contextToken(away).icon, contextToken(away).text], [null, 'Rider in LA']);
+  eq('context token: unrecognized text keeps its words and the calendar square', [contextToken(away).icon, contextToken(away).text], [null, 'Sam in Denver']);
   eq('context token: a holiday calendar gets the flag', contextToken({ allDay: true, title: 'Labor Day' }, { name: 'US Holidays' }).icon, 'flag');
   eq('context token: a plugin tide keeps its icon and shows the height', [contextToken({ allDay: false, start: at(20, 14, 0), end: at(20, 14, 0), title: 'High tide 5.2 ft', icon: 'tideHigh' }).icon, contextToken({ allDay: false, start: at(20, 14, 0), end: at(20, 14, 0), title: 'High tide 5.2 ft', icon: 'tideHigh' }).text], ['tideHigh', '5.2 ft']);
   eq('context token: a plugin weather day keeps its icon and shows the pair', [contextToken({ allDay: true, title: '64°/57° rain', icon: 'rain' }).icon, contextToken({ allDay: true, title: '64°/57° rain', icon: 'rain' }).text], ['rain', '64/57']);
@@ -1778,7 +1778,7 @@ console.log('');
   eq('context by day: plans are not context', byDay.get('2026-09-20').some((o) => o.instanceId === 'p'), false);
   eq('withoutContext: leaves only the plans', withoutContext([weather, sunset, plan]).map((o) => o.instanceId), ['p']);
   // A holiday is a day label, written with the date, not a token.
-  const cals = { 1: { name: 'US Holidays' }, 2: { name: 'Oakland weather' } };
+  const cals = { 1: { name: 'US Holidays' }, 2: { name: 'Portland weather' } };
   const hol = { instanceId: 'h', calendarId: 1, relationship: 'context', allDay: true, start: '2026-10-12', end: '2026-10-13', title: 'Columbus Day' };
   const wx = { ...weather, calendarId: 2, start: '2026-10-12', end: '2026-10-13' };
   eq('day labels: a holiday calendar day is a label on its day', [...dayLabelsByDay([hol, wx], cals).get('2026-10-12')].map((o) => o.instanceId), ['h']);
@@ -1870,11 +1870,11 @@ console.log('');
 
 // --- Google Maps links: the place by name, anchored at its coordinates ---
 eq('gmaps: name and coordinates open the place there',
-  gmapsUrl('Panda & Sons, 79 Queen Street, Edinburgh', 55.9532068, -3.2069716),
-  'https://www.google.com/maps/search/Panda+%26+Sons%2C+79+Queen+Street%2C+Edinburgh/@55.9532068,-3.2069716,17z');
+  gmapsUrl('Harbor Hall & Bar, 100 Main Street, Chicago', 41.8781136, -87.6297982),
+  'https://www.google.com/maps/search/Harbor+Hall+%26+Bar%2C+100+Main+Street%2C+Chicago/@41.8781136,-87.6297982,17z');
 eq('gmaps: a slash in the name stays inside the query', gmapsUrl('Bar 1/2', 1, 2), 'https://www.google.com/maps/search/Bar+1%2F2/@1,2,17z');
-eq('gmaps: pending text falls back to the coordinates', gmapsUrl("Location available once RSVP'd", 37.7, -122.4), 'https://www.google.com/maps/search/?api=1&query=37.7,-122.4');
-eq('gmaps: coordinate text uses the coordinates', gmapsUrl('37.7, -122.4', 37.7, -122.4), 'https://www.google.com/maps/search/?api=1&query=37.7,-122.4');
-eq('gmaps: text alone is a search', gmapsUrl('Zuni Cafe', null, null), 'https://www.google.com/maps/search/?api=1&query=Zuni%20Cafe');
+eq('gmaps: pending text falls back to the coordinates', gmapsUrl("Location available once RSVP'd", 45.5, -122.6), 'https://www.google.com/maps/search/?api=1&query=45.5,-122.6');
+eq('gmaps: coordinate text uses the coordinates', gmapsUrl('45.5, -122.6', 45.5, -122.6), 'https://www.google.com/maps/search/?api=1&query=45.5,-122.6');
+eq('gmaps: text alone is a search', gmapsUrl('Example Cafe', null, null), 'https://www.google.com/maps/search/?api=1&query=Example%20Cafe');
 console.log(passed + ' passed, ' + failed + ' failed');
 if (failed > 0) process.exit(1);

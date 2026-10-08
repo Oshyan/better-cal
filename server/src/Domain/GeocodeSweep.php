@@ -44,8 +44,8 @@ final class GeocodeSweep
 
     /**
      * Grouping key for "the same address": whitespace-collapsed, case-folded,
-     * typographic quotes folded to ASCII. Two feeds wrote "Oakland's" and
-     * "Oakland’s" for one venue and it cost two lookups.
+     * typographic quotes folded to ASCII. Two feeds wrote "Sam's Diner" and
+     * "Sam’s Diner" for one venue and it cost two lookups.
      */
     public static function normalizeLocation(string $location): string
     {

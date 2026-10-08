@@ -14,14 +14,14 @@ The underlying conviction, from the source notes: the hard part of a schedule is
 
 Assembled and deduplicated from audio note transcripts plus one written note:
 
-- 2026-03-11 "My own calendar tool" (Easy Voice Recorder; the original note: infinite scroll, day expansion, folders and LLM filters, Google sync-back, day quality coloring, NL input, location autocomplete, travel planning, tides/weather/AQI generators)
-- 2026-03-13 "Misc tool ideas" (Easy Voice Recorder; person-linked events without invitations, per-person availability tracking)
-- 2026-05-30 "Calendar Tool Feature Ideas and UI Critiques" (day view value, recently-added surfacing, NL search idea, mobile event-detail priority)
-- 2026-05-31 "Critique of Edge OS App and Calendar Features" (past-event filtering, list view performance, ICS subscription feeds, external RSVP links)
-- 2026-07-10 "Ideas for a Custom Calendar Application" (the core note: saved views/modes, folders and tags, trainable filters, reschedule interactions, feed ingestion service, venue view, shared UI library)
-- 2026-07-16 "Prioritizing Work on Hangs and Edge Citizens Apps" (create event from URL: Luma, Partiful, Eventbrite)
-- 2026-07-22 "Indecision is the Core Problem, Not Scheduling" (decision support as design driver)
-- Written note: "Fancier Calendar Items, Dynamic, Styling" (dynamic event content, weather integration, custom per-event styling)
+- 2026-03-11 original idea note (infinite scroll, day expansion, folders and LLM filters, Google sync-back, day quality coloring, NL input, location autocomplete, travel planning, tides/weather/AQI generators)
+- 2026-03-13 misc tool ideas note (person-linked events without invitations, per-person availability tracking)
+- 2026-05-30 UI critique note (day view value, recently-added surfacing, NL search idea, mobile event-detail priority)
+- 2026-05-31 note critiquing another event app (past-event filtering, list view performance, ICS subscription feeds, external RSVP links)
+- 2026-07-10 core ideas note (saved views/modes, folders and tags, trainable filters, reschedule interactions, feed ingestion service, venue view, shared UI library)
+- 2026-07-16 note on creating events from URLs (Luma, Partiful, Eventbrite)
+- 2026-07-22 note on indecision as the core problem (decision support as design driver)
+- Written note on fancier calendar items (dynamic event content, weather integration, custom per-event styling)
 
 **UI reference implementation:** a Discourse Events Calendar plugin from a separate, private project (with its own PRD, implementation guide and plugin evaluation alongside it). Its UI/UX was developed through extensive testing against a FullCalendar benchmark implementation that was evaluated and rejected. The language/framework will differ here, but its view layouts, interaction patterns, and the evaluation doc's findings are the starting point for `bettercal-ui` design decisions.
 
@@ -30,7 +30,7 @@ Assembled and deduplicated from audio note transcripts plus one written note:
 1. **Input and editing must be faster than Google Calendar.** Natural language creation, single-keystroke actions, drag interactions that do the right thing. Any edit reachable in one or two interactions.
 2. **The calendar is a decision-support tool.** Ranking, filtering, and planning modes are first-class, not bolted on.
 3. **Smart defaults over configuration.** Past events filtered out automatically. Sensible views out of the box. Options exist but are not required.
-4. **Performance is a feature.** No unbounded list loads (the EdgeOS failure). Windowed queries, virtualized rendering, lazy loading everywhere. Interactions render in under 100ms.
+4. **Performance is a feature.** No unbounded list loads (the failure seen in another event app). Windowed queries, virtualized rendering, lazy loading everywhere. Interactions render in under 100ms.
 5. **Standards first, custom when justified.** ICS and CalDAV for interop. Custom formats and fields only where the standard is genuinely inadequate (dynamic content, styling), with graceful degradation when exported.
 6. **Own the UI layer.** FullCalendar was evaluated in the Discourse plugin work and discarded. Better-Cal gets a custom rendering engine, structured as a standalone library that can eventually be shared with the Discourse calendar plugin.
 7. **Desktop and mobile are both primary.** Mobile is not a degraded afterthought; event details, triage, and quick edits must be excellent on a phone.
@@ -82,7 +82,7 @@ The goal of Phase 1 is that Google Calendar can be abandoned for daily personal 
 
 **5.2 Event creation and editing (the speed centerpiece)**
 
-- **Natural language quick-add**: a single always-available input (hotkey: `c` or `/`) that accepts "Dinner with Sam next Thursday 7pm at Zuni" and creates the event. LLM-parsed with a deterministic chrono-style parser fallback; parse preview shown inline before commit; sub-second round trip. NL parsing also works inside the title field of the normal editor.
+- **Natural language quick-add**: a single always-available input (hotkey: `c` or `/`) that accepts "Dinner with Sam next Thursday 7pm at Luna Trattoria" and creates the event. LLM-parsed with a deterministic chrono-style parser fallback; parse preview shown inline before commit; sub-second round trip. NL parsing also works inside the title field of the normal editor.
 - **Location autocomplete**: the location field autocompletes against a places API (Google Places, or Nominatim/Photon for a free tier) and stores the resolved name plus address. The original note singles out Google Calendar's absence of this as "insane".
 - Click-drag on any grid to create; single click for default-duration event with inline title editing (no modal for the common case).
 - Drag to move; drag either end of any event, including multi-day events in month/multi-week views, to extend or contract it in place. This is an explicit fix for Google Calendar's forced length preservation.
@@ -112,7 +112,7 @@ The goal of Phase 1 is that Google Calendar can be abandoned for daily personal 
 
 **5.6 Mobile web**
 
-- Fully responsive; bottom-sheet event details on mobile with information priority: what/when/where and description visible without scrolling; secondary actions collapsed. This directly addresses the 05-30 critique of both EdgeOS and the Discourse plugin.
+- Fully responsive; bottom-sheet event details on mobile with information priority: what/when/where and description visible without scrolling; secondary actions collapsed. This directly addresses the 05-30 critique of both another event app and the Discourse plugin.
 - Touch drag to move/resize with long-press initiation; quick-add prominent.
 - Installable PWA.
 
@@ -157,7 +157,7 @@ The goal of Phase 1 is that Google Calendar can be abandoned for daily personal 
 
 - A server-side **dynamic provider** plugin API: a provider binds to an event or a calendar and refreshes its content/appearance on a schedule. Reference providers:
   - **Weather**: forecast events or day-header badges with proper condition icons (custom icon set, not generic emoji), auto-updating.
-  - **Tides / sun / AQI / surf**: port the existing TideCal and WeatherCal project concepts in as native providers, replacing the clunky parameterized-ICS approach the original note complains about. Users subscribe to exactly the data layers they want.
+  - **Tides / sun / AQI / surf**: port the concepts from earlier tide and weather feed experiments in as native providers, replacing the clunky parameterized-ICS approach the original note complains about. Users subscribe to exactly the data layers they want.
   - **Countdown / live status**: e.g. days-until on deadline events.
   - **Birthdays / contacts**: import from CardDAV or Google Contacts as a generated calendar.
 - Providers manage their own API budgets: batch fetches (a week of forecast per call), delta updates, per-provider rate limits, so third-party API credits are used efficiently.
@@ -184,7 +184,7 @@ The goal of Phase 1 is that Google Calendar can be abandoned for daily personal 
 
 **5.15 Feed-fetcher companion service ("any page becomes a calendar")**
 
-- A separate, well-maintained service whose sole job is turning arbitrary event listing pages (the Mellow Kava Bars and Art Labs of the world) into reliable ICS feeds by any means necessary: JSON-LD, microdata, per-site scrapers, LLM page extraction.
+- A separate, well-maintained service whose sole job is turning arbitrary event listing pages (small venues and community spaces) into reliable ICS feeds by any means necessary: JSON-LD, microdata, per-site scrapers, LLM page extraction.
 - Maintains per-source fetch strategies, verifies feeds still work, flags breakage, and serves normalized ICS that Better-Cal (or anything else) subscribes to.
 - Separate deliverable with its own PRD; Better-Cal only needs its ICS output. Candidate for general public usefulness.
 
@@ -209,8 +209,8 @@ The goal of Phase 1 is that Google Calendar can be abandoned for daily personal 
 
 **5.18b Email-to-event ingest** (user request 2026-07-31)
 
-- CC or forward an email to a dedicated address (a dedicated mailbox or a subaddress) and Better-Cal parses it with the LLM to create the appropriate event or events from the text and context. Example: "we're all set for the campground June 1-12th" creates that multi-day event; correspondents mentioned or addressed (Mick, identified by his email address) are linked as People on the event, and optionally receive an invitation.
-- Ingest path: IMAP polling of the mailbox from the worker (mxroute-compatible), or a forwarding pipe later. Confidence gating: low-confidence parses land in an inbox/review state rather than silently creating events.
+- CC or forward an email to a dedicated address (a dedicated mailbox or a subaddress) and Better-Cal parses it with the LLM to create the appropriate event or events from the text and context. Example: "we're all set for the campsite for a week in June" creates that multi-day event; correspondents mentioned or addressed (Sam Sample, identified by their email address) are linked as People on the event, and optionally receive an invitation.
+- Ingest path: IMAP polling of the mailbox from the worker (any standard IMAP host), or a forwarding pipe later. Confidence gating: low-confidence parses land in an inbox/review state rather than silently creating events.
 - People matching by email address becomes part of the Person record (add email column when building this).
 
 **5.18c Agent access: API tokens and MCP** (user request 2026-07-31; tokens shipped in v0)
@@ -269,7 +269,7 @@ Dogfooding is the test plan: the milestone 3 gate forces real usage early, and e
 ## 9. Decisions (resolved 2026-07-30)
 
 1. **DB**: MariaDB/MySQL on the host (FULLTEXT works on both).
-2. **LLM provider**: Gemini Flash via existing API key to start; `LlmGateway` keeps Anthropic API and headless Claude CLI as swappable backends (Claude CLI could be installed on the box later).
+2. **LLM provider**: Gemini Flash to start; `LlmGateway` keeps Anthropic API and headless Claude CLI as swappable backends.
 3. **Auth/tenancy**: single user per instance, password + long-lived session. Vision is self-host for everyone, open source eventually; instances interchange via calendar subscriptions, not shared multi-user hosting. Schema keeps `user_id` so multi-user is never foreclosed.
 4. **Geocoding**: start free (Photon/Nominatim or a free commercial tier), swappable behind an interface. Reference the earlier Discourse Places plugin work (private) for provider experience already gathered.
 5. **Discourse plugin reference**: mine the Discourse Events Calendar plugin (private) for view layouts and interaction patterns (hard-won, tested against FullCalendar and won), but do not inherit Discourse-specific constraints or unpolished areas; port judgment, not cruft.

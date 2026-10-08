@@ -4,7 +4,7 @@ Upload zip: `better-cal-gcal-redirect-2.1.0.zip`, attached to the GitHub release
 
 Version 2.1 adds an optional new event key (a `chrome.commands` entry with no suggested key: off until the user sets one; it opens `<address>/new` in a small window; no new permissions). The summary, description, single purpose and test instructions below are updated for it.
 
-Version 2.0 is generic: the Better-Cal address is set in the extension's options (dynamic declarativeNetRequest rules built from it, `storage` permission for the address). The listing text, the permission justifications and the test instructions below are the 2.0 versions. Distribution: set Regions to **All regions** (1.x was accidentally United States only, which made the item "not available" from anywhere else, including to its own developer abroad).
+Version 2.0 is generic: the Better-Cal address is set in the extension's options (dynamic declarativeNetRequest rules built from it, `storage` permission for the address). The listing text, the permission justifications and the test instructions below are the 2.0 versions. Distribution: set Regions to **All regions** (1.x was accidentally United States only, which made the item "not available" from anywhere else, including to users outside the US).
 
 ## Store listing tab
 

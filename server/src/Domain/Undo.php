@@ -70,7 +70,7 @@ final class Undo
 
     /**
      * Human line for the activity feed when the caller didn't provide one:
-     * "Added event 'Dinner at Zuni' (Aug 14)". Pure.
+     * "Added event 'Dinner at Luna' (Aug 14)". Pure.
      */
     public static function defaultSummary(string $entity, string $op, ?array $before, ?array $after): string
     {

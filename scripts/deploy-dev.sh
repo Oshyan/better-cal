@@ -4,30 +4,25 @@ set -euo pipefail
 # Dev-instance deploy: ships the CURRENT branch (any branch) to an isolated
 # dev copy (DEV_DIR / DEV_HEALTH_URL in scripts/deploy.env). The dev instance
 # is a full second install — own directory, own database, own .env — sharing
-# only the host, the TLS certificate, and the PHP-FPM pool. The CLONE_DB step
-# assumes a CloudPanel host (clpctl for the MySQL root password); elsewhere,
-# set MYSQL_ROOT_PASSWORD.
+# only the host, the TLS certificate, and the PHP-FPM pool. For the MySQL root
+# password the CLONE_DB step uses MYSQL_ROOT_PASSWORD when set; otherwise it
+# falls back to CloudPanel's clpctl, one supported host option.
 #
-# PORT 9443 IS CLOSED AT THE FIREWALL by default, so the URL above will time out
-# until you reopen it. That is deliberate: dev serves a CLONE of production's
+# Keep the dev port closed at your firewall by default, so the URL above times
+# out until you open it. That is deliberate: dev serves a CLONE of production's
 # events and people. The clone step strips sessions, API tokens, push devices,
 # outbound feeds and Google links, and dev should have its own
 # BETTERCAL_SESSION_SECRET, so no production credential works on it; the data
 # itself is still real, which is reason enough not to leave a second door open
 # between branches.
 #
-# Open it only while you are actually testing, and close it again after:
-#   hcloud firewall add-rule <firewall-name> --direction in --protocol tcp \
-#     --port 9443 --source-ips 0.0.0.0/0 --source-ips ::/0
-#   hcloud firewall delete-rule <firewall-name> --direction in --protocol tcp \
-#     --port 9443 --source-ips 0.0.0.0/0 --source-ips ::/0
-#
-# Better still, scope it to your own address the way port 8443 already is,
-# rather than to 0.0.0.0/0.
+# Open the dev port in your firewall only while you are actually testing (for
+# example with your cloud provider's CLI), ideally scoped to your own address
+# rather than to everyone, and close it again after.
 #
 # Everything else survives closure: the code, the database and the vhost stay
-# in place (~42 MB total), nothing is scheduled against dev (the worker cron
-# points only at prod), so a closed dev costs nothing and revives instantly.
+# in place, nothing is scheduled against dev (the worker cron points only at
+# prod), so a closed dev costs nothing and revives instantly.
 #
 # Isolation properties worth knowing:
 #   - Mail ingest, reminder email, RSVP SMTP, and Web Push are OFF in dev by
@@ -37,8 +32,8 @@ set -euo pipefail
 #   - The worker cron only points at the prod path. Run the dev worker by
 #     hand when testing background jobs:
 #       ssh "$REMOTE" sudo -u "$APP_USER" php "$DEV_DIR/server/bin/worker.php"
-#   - Same SESSION_SECRET as prod plus a cloned sessions table means the
-#     browser session you already have works on :9443 without logging in.
+#   - Production sessions are not cloned, so sign in to dev separately on
+#     its own port.
 #
 # CLONE_DB=1 re-clones production data into bettercal_dev (drops dev data).
 # SKIP_TESTS=1 skips the local pre-flight suites.

@@ -213,9 +213,9 @@ The automated suite covers oversized repeat-rule inputs; normal release smoke te
 ## Production evidence — 2026-10-06/07
 
 - Commit: `196fb2c5ccdc70426701e1d679d2f8cf99b609cf` (`main` and `origin/main` before deploy); application version: 0.9.17.
-- Deployment backup completed, migrations 036 and 037 applied, and 10 existing ICS subscriptions were placed into owner review as designed.
+- Deployment backup completed, migrations 036 and 037 applied, and existing ICS subscriptions were placed into owner review as designed.
 - Deploy preflight passed: server 1,898/0, frontend smoke 652/0 in five time zones, frontend static 339/0, and the pinned vendor manifest.
-- Production smoke passed: health/database, 789-occurrence window, single-event serialization and 22-calendar serialization.
+- Production smoke passed: health/database, a real-data occurrence window, single-event serialization and full calendar-list serialization.
 - Every changed runtime file under `server/` and `web/`, plus `VERSION`, matched the local release commit by a combined SHA-256 manifest after deployment.
 - The deployed `VERSION` file reports 0.9.17. The Settings-screen check remains open because it was not inspected through a signed-in browser in this pass.
 - A production lookup for a public landmark returned three results. A public HTTPS redirect completed with HTTP 200. Controlled policy probes refused a loopback destination and an HTTPS-to-HTTP redirect, stopped after the redirect cap, stopped a 2 KiB response at a 1 KiB cap, and stopped a delayed response after about 0.5 seconds.
@@ -226,10 +226,10 @@ The automated suite covers oversized repeat-rule inputs; normal release smoke te
 ## Phase 6 production and backup evidence — 2026-10-07
 
 - Release 0.9.25 was deployed from `ab9efa6c4f2f5c1c5d14e4c702c308c15e4a5f04`. The production `VERSION` file reports 0.9.25, and the runtime files later changed by `c466569` still match `ab9efa6`; the newer commit is not deployed.
-- The completed deploy created regular app and database archives in `/home/bettercal-backups`. The directory was verified as `root:root` mode `0700`, the archives as `root:root` mode `0600`, and both gzip streams passed integrity checks. Production health, application smoke checks, and recent worker, PHP and web-server logs were clean.
-- The Mac RAID pull now explicitly includes `/home/bettercal-backups`; the tracked Web Hosting change is local commit `78820ea`. The deployed pull script matched the reviewed source hash.
-- A targeted Better-Cal copy—not another whole-host snapshot—preserved the current app archive, database dump and complete legacy archive on the RAID. Source and RAID SHA-256 hashes matched, both tar archives were readable, and the SQL dump had its completion marker.
-- Only after that targeted verification, `/home/bettercal/backups` was removed as the unprivileged `bettercal` account. The root-private source remained intact, backup monitoring returned healthy, and no incomplete snapshot or deletion-staging directory remained.
+- The completed deploy created regular app and database archives in the configured root-owned `BACKUP_DIR`. The directory was verified as `root:root` mode `0700`, the archives as `root:root` mode `0600`, and both gzip streams passed integrity checks. Production health, application smoke checks, and recent worker, PHP and web-server logs were clean.
+- Off-host backup coverage was extended to the new `BACKUP_DIR` and verified; the deployed pull script matched the reviewed source hash.
+- A targeted Better-Cal copy, not another whole-host snapshot, preserved the current app archive, database dump and complete legacy archive in the off-host copy. Source and off-host SHA-256 hashes matched, both tar archives were readable, and the SQL dump had its completion marker.
+- Only after that targeted verification, the legacy app-adjacent backup directory was removed as the unprivileged app user. The root-private source remained intact, backup monitoring returned healthy, and no incomplete snapshot or deletion-staging directory remained.
 
 ## Phase 7 production evidence — 2026-10-07
 
@@ -251,6 +251,6 @@ The automated suite covers oversized repeat-rule inputs; normal release smoke te
 
 - Release 0.9.28 was deployed from `ecc1fad901942056584a75b79b3196faabab0cf1`; tag `v0.9.28` points to that release commit and its GitHub release is published. Production reported 0.9.28, and `VERSION` plus every Phase 9 runtime file matched the release commit by SHA-256.
 - Deploy preflight passed: server 2,009/0; frontend smoke 653/0 in five time zones; frontend static 347/0; deploy-security 19/0; vendor manifest 10/10. Composer reported no known dependency advisories. The private application and database backup completed before migration 041 applied.
-- Production health and real-data smoke checks passed with 791 serialized occurrences, one single-event record and 22 calendars. Migration recheck reported nothing pending, the worker completed a healthy post-deploy cycle, and the site error log was not modified during the deployment window.
+- Production health and real-data smoke checks passed with a real-data occurrence window, one single-event record and the full calendar list. Migration recheck reported nothing pending, the worker completed a healthy post-deploy cycle, and the site error log was not modified during the deployment window.
 - The live schema has all eight expected `model_admissions` columns. Effective limits match the documented defaults: Quick Add 4,000 characters; account 120/hour, 500/day and four concurrent; API token 30/hour, 150/day and two concurrent; prompt filters account 40/hour and 200/day, calendar 20/hour and 100/day; Gemini response 1 MiB; admission retention 90 days.
 - The deployed Gemini transport hash and effective response limit match the implementation whose real local cURL boundary test accepted the exact cap and refused one byte over. No live provider was disrupted to manufacture an oversized response. The temporary-low-limit Quick Add and feed-churn exercises remain open.

@@ -70,11 +70,11 @@ $tz = 'America/Los_Angeles';
 $now = new DateTimeImmutable('2026-07-30T10:00:00', new DateTimeZone($tz));
 $p = static fn(string $text): array => FallbackParser::parse($text, $tz, $now);
 
-$d = $p('Dinner with Sam next thursday 7pm at Zuni');
-checkEq('fp1 title keeps with-clause and place', 'Dinner with Sam at Zuni', $d['title']);
+$d = $p('Dinner with Sam next thursday 7pm at Luna');
+checkEq('fp1 title keeps with-clause and place', 'Dinner with Sam at Luna', $d['title']);
 checkEq('fp1 start', '2026-08-06T19:00:00-07:00', $d['start']);
 checkEq('fp1 end', '2026-08-06T20:00:00-07:00', $d['end']);
-checkEq('fp1 location', 'Zuni', $d['location']);
+checkEq('fp1 location', 'Luna', $d['location']);
 checkEq('fp1 people', ['Sam'], $d['personNames']);
 checkEq('fp1 source', 'fallback', $d['source']);
 check('fp1 confidence in range', $d['confidence'] > 0.5 && $d['confidence'] <= 0.95);
@@ -214,9 +214,9 @@ check('fp32 untitled stays below llm-skip threshold', $d['confidence'] < QuickAd
 
 // People + title rework: the with-clause stays in the title (title = input
 // minus date/time/location phrases only); personNames parses the clause.
-$d = $p('dinner with the Sages at 6PM today'); // exact user screenshot input
-checkEq('fp33 screenshot title keeps with-clause', 'Dinner with the Sages', $d['title']);
-checkEq('fp33 screenshot people keep article as group name', ['The Sages'], $d['personNames']);
+$d = $p('dinner with the Examples at 6PM today'); // lowercase, article-led group name
+checkEq('fp33 screenshot title keeps with-clause', 'Dinner with the Examples', $d['title']);
+checkEq('fp33 screenshot people keep article as group name', ['The Examples'], $d['personNames']);
 checkEq('fp33 screenshot start 6 PM today', '2026-07-30T18:00:00-07:00', $d['start']);
 checkEq('fp33 screenshot end', '2026-07-30T19:00:00-07:00', $d['end']);
 checkEq('fp33 screenshot not allDay', false, $d['allDay']);
@@ -234,47 +234,47 @@ $d = $p("Coffee with Mary-Jane O'Brien friday 9am");
 checkEq('fp36 hyphen and apostrophe name kept whole', ["Mary-Jane O'Brien"], $d['personNames']);
 checkEq('fp36 title', "Coffee with Mary-Jane O'Brien", $d['title']);
 
-$d = $p('Dinner with the Sages and Sam tomorrow 6pm');
-checkEq('fp37 group plus person', ['The Sages', 'Sam'], $d['personNames']);
-checkEq('fp37 title', 'Dinner with the Sages and Sam', $d['title']);
+$d = $p('Dinner with the Examples and Sam tomorrow 6pm');
+checkEq('fp37 group plus person', ['The Examples', 'Sam'], $d['personNames']);
+checkEq('fp37 title', 'Dinner with the Examples and Sam', $d['title']);
 
-$d = $p('Dinner with Sam, Alex and Pat at Delfina tomorrow 7pm');
+$d = $p('Dinner with Sam, Alex and Pat at Saffron tomorrow 7pm');
 checkEq('fp38 people list with location', ['Sam', 'Alex', 'Pat'], $d['personNames']);
-checkEq('fp38 location', 'Delfina', $d['location']);
-checkEq('fp38 title keeps the place', 'Dinner with Sam, Alex and Pat at Delfina', $d['title']);
+checkEq('fp38 location', 'Saffron', $d['location']);
+checkEq('fp38 title keeps the place', 'Dinner with Sam, Alex and Pat at Saffron', $d['title']);
 
-$d = $p('Dinner at Zuni with Sam tomorrow 7pm');
-checkEq('fp39 location before with-clause', 'Zuni', $d['location']);
+$d = $p('Dinner at Luna with Sam tomorrow 7pm');
+checkEq('fp39 location before with-clause', 'Luna', $d['location']);
 checkEq('fp39 people', ['Sam'], $d['personNames']);
-checkEq('fp39 title keeps the place', 'Dinner at Zuni with Sam', $d['title']);
+checkEq('fp39 title keeps the place', 'Dinner at Luna with Sam', $d['title']);
 
-$d = $p("Lunch at The Pig's Ear at 12PM");
-checkEq('fp41 a venue stays in the title', "Lunch at The Pig's Ear", $d['title']);
-checkEq('fp41 and fills the location', "The Pig's Ear", $d['location']);
-$d = $p('Coffee @ Blue Bottle tomorrow 3pm');
-checkEq('fp42 "@" reads as "at" in the title', 'Coffee at Blue Bottle', $d['title']);
-checkEq('fp42 location', 'Blue Bottle', $d['location']);
-check('qa over-stripped: "Lunch" from "Lunch at The Pig\'s Ear"', QuickAdd::overStripped('Lunch', "Lunch at The Pig's Ear"));
-check('qa over-stripped: a different title is not', !QuickAdd::overStripped('Brunch', "Lunch at The Pig's Ear"));
-check('qa over-stripped: an equal-length title is not', !QuickAdd::overStripped('Lunch at Pigs', "Lunch at The"));
+$d = $p("Lunch at The Captain's Table at 12PM");
+checkEq('fp41 a venue stays in the title', "Lunch at The Captain's Table", $d['title']);
+checkEq('fp41 and fills the location', "The Captain's Table", $d['location']);
+$d = $p('Coffee @ Example Cafe tomorrow 3pm');
+checkEq('fp42 "@" reads as "at" in the title', 'Coffee at Example Cafe', $d['title']);
+checkEq('fp42 location', 'Example Cafe', $d['location']);
+check('qa over-stripped: "Lunch" from "Lunch at The Captain\'s Table"', QuickAdd::overStripped('Lunch', "Lunch at The Captain's Table"));
+check('qa over-stripped: a different title is not', !QuickAdd::overStripped('Brunch', "Lunch at The Captain's Table"));
+check('qa over-stripped: an equal-length title is not', !QuickAdd::overStripped('Lunch at Capt', "Lunch at The"));
 
 $d = $p('the standup tomorrow 9am');
 checkEq('fp40 leading article sentence-cased only', 'The standup', $d['title']);
 checkEq('fp40 no people', [], $d['personNames']);
 
-$d = $p('meet at 6pm at The Ferry Building tomorrow');
+$d = $p('meet at 6pm at The Old Mill tomorrow');
 checkEq('fp41 at-time wins over at-location', '2026-07-31T18:00:00-07:00', $d['start']);
-checkEq('fp41 multi-word capitalized location intact', 'The Ferry Building', $d['location']);
-checkEq('fp41 title sentence-cased, place kept', 'Meet at The Ferry Building', $d['title']);
+checkEq('fp41 multi-word capitalized location intact', 'The Old Mill', $d['location']);
+checkEq('fp41 title sentence-cased, place kept', 'Meet at The Old Mill', $d['title']);
 
 $d = $p('Drinks at 8pm');
 checkEq('fp42 at-time is a time not a location', null, $d['location']);
 checkEq('fp42 start', '2026-07-30T20:00:00-07:00', $d['start']);
 
-$d = $p('Picnic at Golden Gate Park saturday');
-checkEq('fp43 multi-word location', 'Golden Gate Park', $d['location']);
+$d = $p('Picnic at Riverside Park saturday');
+checkEq('fp43 multi-word location', 'Riverside Park', $d['location']);
 checkEq('fp43 allDay', true, $d['allDay']);
-checkEq('fp43 title keeps the place', 'Picnic at Golden Gate Park', $d['title']);
+checkEq('fp43 title keeps the place', 'Picnic at Riverside Park', $d['title']);
 
 $d = $p('Call at 14:30 tomorrow');
 checkEq('fp44 24h at-time wins', '2026-07-31T14:30:00-07:00', $d['start']);
@@ -343,7 +343,7 @@ check('fp leftover temporal words cap confidence', $d['confidence'] <= 0.5);
 
 use BetterCal\Domain\People;
 
-checkEq('people name trims + collapses whitespace', 'Virginia Miller', People::normalizeName("  Virginia \n Miller  "));
+checkEq('people name trims + collapses whitespace', 'Alex Example', People::normalizeName("  Alex \n Example  "));
 checkEq('people name caps length', People::MAX_NAME, mb_strlen(People::normalizeName(str_repeat('a', 300))));
 $threw = false;
 try {
@@ -403,7 +403,7 @@ $schema = [
     ['key' => 'loc', 'type' => 'location'],
     ['key' => 'note', 'type' => 'text'],
 ];
-[$cv, $ce] = Plugins::validateAgainstSchema($schema, ['days' => 10, 'units' => 'C', 'on' => 'true', 'loc' => ['name' => 'SF', 'lat' => 37.77, 'lng' => -122.42], 'note' => 'hi']);
+[$cv, $ce] = Plugins::validateAgainstSchema($schema, ['days' => 10, 'units' => 'C', 'on' => 'true', 'loc' => ['name' => 'Denver', 'lat' => 39.74, 'lng' => -104.99], 'note' => 'hi']);
 checkEq('plugin settings: clean pass has no errors', [], $ce);
 checkEq('plugin settings: toggle coerces', true, $cv['on']);
 checkEq('plugin settings: number kept numeric', 10, $cv['days']);
@@ -441,9 +441,9 @@ check('plugin settings: null clears toggle', array_key_exists('on', $cvNull) && 
 check('plugin settings: null clears number', array_key_exists('days', $cvNull) && $cvNull['days'] === null);
 
 // Coordinates were accepted unchecked, so lat 991 stored fine.
-[, $ceGeo] = Plugins::validateAgainstSchema($schema, ['loc' => ['name' => 'nowhere', 'lat' => 991, 'lng' => -122.4]]);
+[, $ceGeo] = Plugins::validateAgainstSchema($schema, ['loc' => ['name' => 'nowhere', 'lat' => 991, 'lng' => -104.9]]);
 check('plugin settings: out-of-range latitude refused', isset($ceGeo['loc']));
-[, $ceGeo2] = Plugins::validateAgainstSchema($schema, ['loc' => ['name' => 'nowhere', 'lat' => 37.7, 'lng' => 900]]);
+[, $ceGeo2] = Plugins::validateAgainstSchema($schema, ['loc' => ['name' => 'nowhere', 'lat' => 39.7, 'lng' => 900]]);
 check('plugin settings: out-of-range longitude refused', isset($ceGeo2['loc']));
 
 // (string) on an array is the literal "Array", so a structured value sent to a
@@ -954,20 +954,20 @@ check('imip live event: equal sequence still allowed', $mayWhen('confirmed', 2)[
     $stored = [
         'id' => 40, 'title' => 'Planning dinner', 'status' => 'confirmed', 'all_day' => 0, 'tzid' => 'America/Los_Angeles',
         'start_utc' => '2026-10-02 02:00:00', 'end_utc' => '2026-10-02 04:00:00', // Oct 1, 7-9 PM Pacific
-        'location' => 'Zuni Cafe', 'description' => '<p>Bring the <b>deck</b>.</p>', 'rrule' => null,
+        'location' => 'Example Cafe', 'description' => '<p>Bring the <b>deck</b>.</p>', 'rrule' => null,
     ];
     $same = [
         'title' => 'Planning dinner', 'start' => '2026-10-01T19:00:00-07:00', 'end' => '2026-10-01T21:00:00-07:00',
-        'allDay' => false, 'tzid' => 'America/Los_Angeles', 'location' => 'Zuni Cafe', 'description' => '<p>Bring the <b>deck</b>.</p>', 'rrule' => null,
+        'allDay' => false, 'tzid' => 'America/Los_Angeles', 'location' => 'Example Cafe', 'description' => '<p>Bring the <b>deck</b>.</p>', 'rrule' => null,
     ];
     checkEq('review diff: a re-send that changes nothing is not a decision', [], $rq::inviteDiff($stored, 'REQUEST', $same));
     checkEq('review diff: the same instant written in another zone is not a change', [],
         $rq::inviteDiff($stored, 'REQUEST', ['start' => '2026-10-02T03:00:00+01:00', 'end' => '2026-10-02T05:00:00+01:00'] + $same));
-    $moved = $rq::inviteDiff($stored, 'REQUEST', ['start' => '2026-10-03T19:00:00-07:00', 'end' => '2026-10-03T21:00:00-07:00', 'location' => 'Nopa'] + $same);
+    $moved = $rq::inviteDiff($stored, 'REQUEST', ['start' => '2026-10-03T19:00:00-07:00', 'end' => '2026-10-03T21:00:00-07:00', 'location' => 'Corner Bistro'] + $same);
     checkEq('review diff: a moved meeting lists exactly what moved', ['start', 'end', 'location'], array_column($moved, 'field'));
     checkEq('review diff: shows the stored start in the event\'s own zone', '2026-10-01T19:00:00-07:00', $moved[0]['from']);
     checkEq('review diff: and the proposed one', '2026-10-03T19:00:00-07:00', $moved[0]['to']);
-    checkEq('review diff: location from -> to', ['Zuni Cafe', 'Nopa'], [$moved[2]['from'], $moved[2]['to']]);
+    checkEq('review diff: location from -> to', ['Example Cafe', 'Corner Bistro'], [$moved[2]['from'], $moved[2]['to']]);
     $desc = $rq::inviteDiff($stored, 'REQUEST', ['description' => '<p>Bring the   <i>budget</i> instead.</p>'] + $same);
     checkEq('review diff: description is compared and previewed as plain text', ['Bring the deck.', 'Bring the budget instead.'], [$desc[0]['from'], $desc[0]['to']]);
     checkEq('review diff: markup-only description edits are not a change', [], $rq::inviteDiff($stored, 'REQUEST', ['description' => '<div>Bring the deck.</div>'] + $same));
@@ -990,7 +990,7 @@ check('imip live event: equal sequence still allowed', $mayWhen('confirmed', 2)[
     $queue = new BetterCal\Domain\ReviewQueue($rdb, (new ReflectionClass(Events::class))->newInstanceWithoutConstructor());
     $alice = ['organizer' => ['email' => 'alice@example.com', 'name' => 'Alice'], 'sequence' => 3, 'attendees' => []];
     checkEq('review hold: a no-op message creates no item', null, $queue->holdInviteChange(1, $stored, 'uid-1', 'REQUEST', $same, $alice, 'alice@example.com'));
-    $first = $queue->holdInviteChange(1, $stored, 'uid-1', 'REQUEST', ['location' => 'Nopa'] + $same, $alice, 'alice@example.com');
+    $first = $queue->holdInviteChange(1, $stored, 'uid-1', 'REQUEST', ['location' => 'Corner Bistro'] + $same, $alice, 'alice@example.com');
     check('review hold: a real change is held', is_int($first) && $first > 0);
     $stalePending = $queue->holdInviteChange(1, $stored, 'uid-1', 'REQUEST', ['location' => 'Old place'] + $same, ['sequence' => 2] + $alice, 'alice@example.com');
     checkEq('review hold: a lower pending sequence cannot replace the newer one', [null, [$first]], [$stalePending, array_column($queue->listFor(1), 'id')]);
@@ -1247,13 +1247,13 @@ check('imip live event: equal sequence still allowed', $mayWhen('confirmed', 2)[
 $ldHtml = '<html><body><script type="application/ld+json">'
     . json_encode(['@context' => 'https://schema.org', '@type' => 'Event', 'name' => 'Concert Night',
         'startDate' => '2026-09-12T19:30:00-07:00', 'endDate' => '2026-09-12T22:00:00-07:00',
-        'location' => ['@type' => 'Place', 'name' => 'The Fillmore', 'address' => ['streetAddress' => '1805 Geary Blvd', 'addressLocality' => 'San Francisco']],
+        'location' => ['@type' => 'Place', 'name' => 'Harbor Hall', 'address' => ['streetAddress' => '100 Main St', 'addressLocality' => 'Springfield']],
         'url' => 'https://example.com/tix'])
     . '</script></body></html>';
 $ld = MailIngest::extractLdJsonEvents($ldHtml);
 checkEq('ldjson event name', 'Concert Night', $ld[0]['title']);
 checkEq('ldjson start', '2026-09-12T19:30:00-07:00', $ld[0]['start']);
-checkEq('ldjson location composed', 'The Fillmore, 1805 Geary Blvd, San Francisco', $ld[0]['location']);
+checkEq('ldjson location composed', 'Harbor Hall, 100 Main St, Springfield', $ld[0]['location']);
 checkEq('ldjson url', 'https://example.com/tix', $ld[0]['url']);
 
 $resHtml = '<script type="application/ld+json">' . json_encode([
@@ -1284,10 +1284,10 @@ check('llm gate blocks ordinary mail', !MailIngest::llmGateAllows('Re: lunch tom
 
 // Embedded GCal link tier (survives Gmail forwards that strip JSON-LD)
 $ebHtml = '<a href="https://www.google.com/maps">map</a> '
-    . '<a href="https://calendar.google.com/calendar/render?action=TEMPLATE&amp;text=The%20Feels&amp;dates=20260815T170000Z%2F20260817T000000Z&amp;location=The%20Fold">Add to Google</a>';
+    . '<a href="https://calendar.google.com/calendar/render?action=TEMPLATE&amp;text=Spring%20Retreat&amp;dates=20260415T170000Z%2F20260417T000000Z&amp;location=Harbor%20Hall">Add to Google</a>';
 $links = MailIngest::extractGcalLinks($ebHtml);
 checkEq('gcal link extracted from html', 1, count($links));
-check('gcal link entities decoded', str_contains($links[0], '&text=The%20Feels'));
+check('gcal link entities decoded', str_contains($links[0], '&text=Spring%20Retreat'));
 checkEq('no gcal links -> empty', [], MailIngest::extractGcalLinks('<p>plain</p>'));
 
 $fwd = "---Sig line--- ---------- Forwarded message --------- From: Eventbrite <noreply@order.eventbrite.com> Date: Mon, Aug 3, 2026 at 7:09 AM Subject: Your Tickets To: <me@example.com> Saturday, August 15, 2026 at 10:00 AM";
@@ -1354,9 +1354,9 @@ check('rsvp reply keeps sequence', str_contains($reply, 'SEQUENCE:2'));
 // Duplicates (#9): the same event arriving by two routes.
 {
     $D = BetterCal\Domain\Duplicates::class;
-    checkEq('dup title: booking prefix and (note) go', 'kinkally', $D::normTitle('Reservation at Kinkally (2 people)'));
+    checkEq('dup title: booking prefix and (note) go', 'bellwether', $D::normTitle('Reservation at Bellwether (2 people)'));
     checkEq('dup title: invitation prefix goes', 'team sync', $D::normTitle('Updated invitation: Team sync'));
-    check('dup similar: "Kinkally" and "Dinner at Kinkally"', $D::similarTitles('Kinkally', 'Dinner at Kinkally'));
+    check('dup similar: "Bellwether" and "Dinner at Bellwether"', $D::similarTitles('Bellwether', 'Dinner at Bellwether'));
     check('dup similar: one short common word is not enough', !$D::similarTitles('Lunch', 'Lunch with Bob'));
     check('dup similar: different events', !$D::similarTitles('Board meeting', 'Birthday party'));
     $ev = static fn(int $id, int $cal, string $title, string $start, int $allDay = 0, string $tz = 'America/Los_Angeles'): array => ['id' => $id, 'calendar_id' => $cal, 'title' => $title, 'start_utc' => $start, 'all_day' => $allDay, 'tzid' => $tz];
@@ -1368,9 +1368,9 @@ check('rsvp reply keeps sequence', str_contains($reply, 'SEQUENCE:2'));
     checkEq('dup when: an app all-day day and its Google copy are the same', 'same', $D::when($ev(1, 1, 'x', '2026-10-10 07:00:00', 1), $ev(2, 2, 'x', '2026-10-10 00:00:00', 1, 'UTC')));
     checkEq('dup when: a Tokyo all-day day and a Tokyo morning on it', 'near', $D::when($ev(1, 1, 'x', '2026-10-09 15:00:00', 1, 'Asia/Tokyo'), $ev(2, 2, 'x', '2026-10-10 01:00:00', 0, 'Asia/Tokyo')));
     check('dup when: all-day days a day apart are not the same', $D::when($ev(1, 1, 'x', '2026-10-10 07:00:00', 1), $ev(2, 2, 'x', '2026-10-11 00:00:00', 1, 'UTC')) === null);
-    checkEq('dup classify: same title, same moment, two calendars links', 'linked', $D::classify($ev(1, 1, 'Reservation at Noto', '2026-10-10 02:00:00'), $ev(2, 2, 'Noto', '2026-10-10 02:00:00'))['status']);
-    checkEq('dup classify: the same on one calendar only asks', 'possible', $D::classify($ev(1, 1, 'Noto', '2026-10-10 02:00:00'), $ev(2, 1, 'Noto', '2026-10-10 02:00:00'))['status']);
-    checkEq('dup classify: near in time only asks', 'possible', $D::classify($ev(1, 1, 'Noto', '2026-10-10 02:00:00'), $ev(2, 2, 'Noto', '2026-10-10 02:15:00'))['status']);
+    checkEq('dup classify: same title, same moment, two calendars links', 'linked', $D::classify($ev(1, 1, 'Reservation at Vela', '2026-10-10 02:00:00'), $ev(2, 2, 'Vela', '2026-10-10 02:00:00'))['status']);
+    checkEq('dup classify: the same on one calendar only asks', 'possible', $D::classify($ev(1, 1, 'Vela', '2026-10-10 02:00:00'), $ev(2, 1, 'Vela', '2026-10-10 02:00:00'))['status']);
+    checkEq('dup classify: near in time only asks', 'possible', $D::classify($ev(1, 1, 'Vela', '2026-10-10 02:00:00'), $ev(2, 2, 'Vela', '2026-10-10 02:15:00'))['status']);
     checkEq('dup classify: "Lunch" on two calendars at noon only asks', 'possible', $D::classify($ev(1, 1, 'Lunch', '2026-10-10 19:00:00'), $ev(2, 2, 'Lunch', '2026-10-10 19:00:00'))['status']);
     check('dup classify: unrelated titles at one time are not a pair', $D::classify($ev(1, 1, 'Dentist', '2026-10-10 02:00:00'), $ev(2, 2, 'Standup', '2026-10-10 02:00:00')) === null);
     checkEq('dup rank: Google beats local beats feed beats a booking', [4, 3, 2, 1], [
@@ -1387,7 +1387,7 @@ check('rsvp reply keeps sequence', str_contains($reply, 'SEQUENCE:2'));
     $ddb->run("CREATE TABLE event_duplicates (id INTEGER PRIMARY KEY, user_id INTEGER, event_a INTEGER, event_b INTEGER, status TEXT, basis TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, decided_at TEXT)");
     $ddb->run("CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)");
     $ddb->run("INSERT INTO users (id) VALUES (1)");
-    $ddb->run("INSERT INTO calendars VALUES (1, 1, 'Takeout', 'local', 'mine', 'ics'), (2, 1, 'Google', 'subscribed', 'mine', 'google'), (3, 1, 'Invitations', 'local', 'mine', 'ics'), (4, 1, 'Luma', 'subscribed', 'opportunities', 'ics'), (5, 1, 'Weather', 'plugin', 'context', 'ics')");
+    $ddb->run("INSERT INTO calendars VALUES (1, 1, 'Imported', 'local', 'mine', 'ics'), (2, 1, 'Google', 'subscribed', 'mine', 'google'), (3, 1, 'Invitations', 'local', 'mine', 'ics'), (4, 1, 'Events feed', 'subscribed', 'opportunities', 'ics'), (5, 1, 'Weather', 'plugin', 'context', 'ics')");
     $soon = BetterCal\Support\Time::nowUtc()->add(new DateInterval('P3D'))->format('Y-m-d') . ' 02:00:00';
     $soonEnd = substr($soon, 0, 11) . '03:00:00';
     $ins = static fn(int $id, int $cal, string $uid, string $title, ?string $rrule = null, ?string $invite = null, ?string $rem = null) => $ddb->run(
@@ -1396,16 +1396,16 @@ check('rsvp reply keeps sequence', str_contains($reply, 'SEQUENCE:2'));
     );
     $ins(10, 1, 'g-1@google.com', 'Book club', 'FREQ=WEEKLY', null, '[{"minutes":30}]');
     $ins(11, 2, 'g-1@google.com', 'Book club', 'FREQ=WEEKLY');
-    $ins(20, 3, 'mail-abc', 'Reservation at Noto', null, '{"kind":"booking","method":"llm"}');
-    $ins(21, 4, 'luma-1', 'Noto');
-    $ins(30, 4, 'luma-2', 'Coffee with Ana');
-    $ins(31, 4, 'luma-3', 'Coffee w/ Ana');
-    $ins(40, 5, 'w-1', 'Noto');
+    $ins(20, 3, 'mail-abc', 'Reservation at Vela', null, '{"kind":"booking","method":"llm"}');
+    $ins(21, 4, 'luma-1', 'Vela');
+    $ins(30, 4, 'luma-2', 'Coffee with Pat');
+    $ins(31, 4, 'luma-3', 'Coffee w/ Pat');
+    $ins(40, 5, 'w-1', 'Vela');
     $ins(50, 1, 'copy-src', 'Planning');
     $ins(51, 3, 'copy-dst', 'Planning');
-    $ins(60, 1, 'mine-1', 'Sweaty Hour: October!');
-    $ins(61, 1, 'mine-2', 'Sweaty Hour: October!');
-    $ins(62, 4, 'luma-9', 'Sweaty Hour: October!');
+    $ins(60, 1, 'mine-1', 'Monthly Meetup: October!');
+    $ins(61, 1, 'mine-2', 'Monthly Meetup: October!');
+    $ins(62, 4, 'luma-9', 'Monthly Meetup: October!');
     $D::markDistinct($ddb, 1, 51, 50);
     $dups = new BetterCal\Domain\Duplicates($ddb);
     checkEq('dup preview: find records nothing', 0, (int) $ddb->scalar("SELECT COUNT(*) FROM event_duplicates WHERE status <> 'dismissed'") + 0 * count($dups->find(1)));
@@ -1443,16 +1443,16 @@ check('rsvp reply keeps sequence', str_contains($reply, 'SEQUENCE:2'));
 
 use BetterCal\Domain\GcalLink;
 
-$lumaUrl = 'https://calendar.google.com/calendar/render?action=TEMPLATE&dates=20260809T160000Z%2F20260810T050000Z&details=Get%20up-to-date%20information%20at%3A%20https%3A%2F%2Fluma.com%2Fthe-noe6&location=540%20Laguna%20St%2C%20San%20Francisco%20%2B%20Full%20Space&text=The%20Commons%20Public%20Hours%20%E2%98%95';
+$lumaUrl = 'https://calendar.google.com/calendar/render?action=TEMPLATE&dates=20260809T160000Z%2F20260810T050000Z&details=Get%20up-to-date%20information%20at%3A%20https%3A%2F%2Fluma.com%2Fexample-evt&location=100%20Main%20St%2C%20Springfield%20%2B%20Garden%20Room&text=Open%20Studio%20Hours%20%E2%98%95';
 check('gcal detects render links', GcalLink::isTemplateUrl($lumaUrl));
 check('gcal detects eventedit links', GcalLink::isTemplateUrl('https://calendar.google.com/calendar/u/0/r/eventedit?text=Hi&dates=20260101/20260102'));
 check('gcal detects with surrounding whitespace', GcalLink::isTemplateUrl('  ' . $lumaUrl . '  '));
 check('gcal rejects plain text', !GcalLink::isTemplateUrl('Lunch with Ada Friday noon'));
 check('gcal rejects other google urls', !GcalLink::isTemplateUrl('https://calendar.google.com/calendar/r?cid=abc'));
 
-checkEq('place search: "and" is also asked as "&"', 'Panda & Sons', \BetterCal\Domain\PlaceSearch::ampersandVariant('Panda and Sons'));
+checkEq('place search: "and" is also asked as "&"', 'Smith & Sons', \BetterCal\Domain\PlaceSearch::ampersandVariant('Smith and Sons'));
 checkEq('place search: "&" is also asked as "and"', 'Marks and Spencer', \BetterCal\Domain\PlaceSearch::ampersandVariant('Marks & Spencer'));
-checkEq('place search: no "and" means one query', null, \BetterCal\Domain\PlaceSearch::ampersandVariant('Zuni Cafe'));
+checkEq('place search: no "and" means one query', null, \BetterCal\Domain\PlaceSearch::ampersandVariant('Example Cafe'));
 checkEq('place search: "and" inside a word is left alone', null, \BetterCal\Domain\PlaceSearch::ampersandVariant('Andalucia Bar'));
 $placeTransport = new class implements \BetterCal\Infra\GeocoderTransport {
     public array $seen = [];
@@ -1460,17 +1460,17 @@ $placeTransport = new class implements \BetterCal\Infra\GeocoderTransport {
     {
         $this->seen = $paramSets;
         return [null, ['features' => [[
-            'geometry' => ['coordinates' => [-3.195, 55.953]],
-            'properties' => ['name' => 'Panda and Sons', 'city' => 'Edinburgh', 'country' => 'United Kingdom'],
+            'geometry' => ['coordinates' => [-9.137, 38.711]],
+            'properties' => ['name' => 'Smith and Sons', 'city' => 'Lisbon', 'country' => 'Portugal'],
         ]]]];
     }
     public function openMeteo(array $params): ?array { return null; }
 };
-$placeResults = (new \BetterCal\Domain\PlaceSearch($placeTransport))->search('Panda and Sons', null, null, 6);
-checkEq('place search keeps alternate spelling first in the parallel batch', 'Panda & Sons', $placeTransport->seen[0]['q'] ?? null);
-checkEq('place search keeps the original spelling second in the parallel batch', 'Panda and Sons', $placeTransport->seen[1]['q'] ?? null);
-checkEq('place search keeps a successful result when its sibling fails', 'Panda and Sons', $placeResults[0]['name'] ?? null);
-checkEq('push label: a device names itself', 'Pixel 9 Pro · Chrome app', \BetterCal\Domain\PushSubscriptions::label('Pixel 9 Pro · Chrome app'));
+$placeResults = (new \BetterCal\Domain\PlaceSearch($placeTransport))->search('Smith and Sons', null, null, 6);
+checkEq('place search keeps alternate spelling first in the parallel batch', 'Smith & Sons', $placeTransport->seen[0]['q'] ?? null);
+checkEq('place search keeps the original spelling second in the parallel batch', 'Smith and Sons', $placeTransport->seen[1]['q'] ?? null);
+checkEq('place search keeps a successful result when its sibling fails', 'Smith and Sons', $placeResults[0]['name'] ?? null);
+checkEq('push label: a device names itself', 'Android phone · Chrome app', \BetterCal\Domain\PushSubscriptions::label('Android phone · Chrome app'));
 checkEq('push label: control characters and runs of space go', 'Mac · Chrome', \BetterCal\Domain\PushSubscriptions::label("Mac\n\t·   Chrome"));
 checkEq('push label: capped at 80 characters', 80, mb_strlen(\BetterCal\Domain\PushSubscriptions::label(str_repeat('x', 200))));
 checkEq('push label: nothing, or not text, is no label', [null, null], [\BetterCal\Domain\PushSubscriptions::label('  '), \BetterCal\Domain\PushSubscriptions::label(['x'])]);
@@ -1504,12 +1504,12 @@ check('search: a weekly series shows its next date', $nx !== null && $nx[0] === 
 $pv = \BetterCal\Domain\Search::previousOccurrence(['id' => 1, 'start_utc' => '2026-01-05 17:00:00', 'end_utc' => '2026-01-05 18:00:00', 'rrule' => 'FREQ=WEEKLY', 'tzid' => 'UTC', 'all_day' => 0], $nowSql, $weekly);
 check('search: under Past, a running weekly series shows its latest past date', $pv !== null && $pv[0] === '2026-09-28 17:00:00');
 $g = GcalLink::parse($lumaUrl, 'America/Los_Angeles');
-checkEq('gcal luma title', 'The Commons Public Hours ☕', $g['title']);
+checkEq('gcal luma title', 'Open Studio Hours ☕', $g['title']);
 checkEq('gcal luma start (UTC->LA)', '2026-08-09T09:00:00-07:00', $g['start']);
 checkEq('gcal luma end', '2026-08-09T22:00:00-07:00', $g['end']);
 check('gcal luma is timed', !$g['allDay']);
-checkEq('gcal luma location', '540 Laguna St, San Francisco + Full Space', $g['location']);
-check('gcal luma description carries link', str_contains($g['description'], 'https://luma.com/the-noe6'));
+checkEq('gcal luma location', '100 Main St, Springfield + Garden Room', $g['location']);
+check('gcal luma description carries link', str_contains($g['description'], 'https://luma.com/example-evt'));
 checkEq('gcal luma source', 'gcal-link', $g['source']);
 
 $g = GcalLink::parse('https://calendar.google.com/calendar/render?action=TEMPLATE&text=Offsite&dates=20260901/20260903', 'America/Los_Angeles');
@@ -1533,11 +1533,11 @@ $ai = QuickAdd::awayIntent('John is away Aug 10 to 15');
 checkEq('qa away intent name', 'John', $ai['name']);
 checkEq('qa away intent kind', 'away', $ai['kind']);
 checkEq('qa away intent rest', 'Aug 10 to 15', $ai['rest']);
-checkEq('qa away intent full name', 'Virginia Miller', QuickAdd::awayIntent('Virginia Miller will be out next week')['name']);
+checkEq('qa away intent full name', 'Alex Example', QuickAdd::awayIntent('Alex Example will be out next week')['name']);
 checkEq('qa busy stays busy', 'busy', QuickAdd::awayIntent('Sam is busy Friday')['kind']);
 checkEq('qa here maps to here', 'here', QuickAdd::awayIntent('Ada is here next week')['kind']);
-checkEq('qa in town maps to here', 'here', QuickAdd::awayIntent('Marcus in town Aug 10-15')['kind']);
-checkEq('qa visiting maps to here', 'here', QuickAdd::awayIntent('Virginia is visiting Friday')['kind']);
+checkEq('qa in town maps to here', 'here', QuickAdd::awayIntent('Pat in town Aug 10-15')['kind']);
+checkEq('qa visiting maps to here', 'here', QuickAdd::awayIntent('Alex is visiting Friday')['kind']);
 checkEq('qa back maps to here', 'here', QuickAdd::awayIntent('John is back Monday')['kind']);
 checkEq('qa traveling means away', 'away', QuickAdd::awayIntent('Ada traveling Sep 1-5')['kind']);
 checkEq('qa bare gone form parses', 'Sam', QuickAdd::awayIntent('Sam gone Tuesday to Friday')['name']);
@@ -1568,8 +1568,8 @@ $mkLlm = static fn(array $over = []) => $over + [
     'allDay' => false, 'location' => null, 'personNames' => [],
 ];
 $mkFb = static fn(array $over = []) => $over + [
-    'title' => 'Cocktails with Virginia', 'start' => '2026-08-03T16:00:00-07:00', 'end' => '2026-08-03T17:00:00-07:00',
-    'allDay' => false, 'location' => null, 'personNames' => ['Virginia'],
+    'title' => 'Cocktails with Alex', 'start' => '2026-08-03T16:00:00-07:00', 'end' => '2026-08-03T17:00:00-07:00',
+    'allDay' => false, 'location' => null, 'personNames' => ['Alex'],
     'confidence' => 0.6, 'source' => 'fallback', 'complete' => false, 'dateFound' => false,
 ];
 
@@ -1585,17 +1585,17 @@ checkEq('qam unparseable LLM start falls back', '2026-08-03T16:00:00-07:00', $m[
 
 $m = QuickAdd::mergeLlm($mkLlm(), $mkFb(), $mergeNow);
 checkEq('qam future LLM start is kept', '2026-08-04T16:00:00-07:00', $m['start']);
-checkEq('qam stripped with-clause restores fallback title', 'Cocktails with Virginia', $m['title']);
-checkEq('qam personNames union pulls fallback people', ['Virginia'], $m['personNames']);
+checkEq('qam stripped with-clause restores fallback title', 'Cocktails with Alex', $m['title']);
+checkEq('qam personNames union pulls fallback people', ['Alex'], $m['personNames']);
 
-$m = QuickAdd::mergeLlm($mkLlm(['title' => 'Cocktails with Virginia Miller', 'personNames' => ['Virginia Miller']]), $mkFb(), $mergeNow);
-checkEq('qam LLM title with with-clause is kept', 'Cocktails with Virginia Miller', $m['title']);
-checkEq('qam union dedupes case-insensitively but keeps distinct names', ['Virginia Miller', 'Virginia'], $m['personNames']);
+$m = QuickAdd::mergeLlm($mkLlm(['title' => 'Cocktails with Alex Example', 'personNames' => ['Alex Example']]), $mkFb(), $mergeNow);
+checkEq('qam LLM title with with-clause is kept', 'Cocktails with Alex Example', $m['title']);
+checkEq('qam union dedupes case-insensitively but keeps distinct names', ['Alex Example', 'Alex'], $m['personNames']);
 
-$m = QuickAdd::mergeLlm($mkLlm(), $mkFb(['location' => 'Zuni Cafe']), $mergeNow);
-checkEq('qam location backfills from fallback', 'Zuni Cafe', $m['location']);
-$m = QuickAdd::mergeLlm($mkLlm(['location' => 'Tartine']), $mkFb(['location' => 'Zuni Cafe']), $mergeNow);
-checkEq('qam LLM location wins when present', 'Tartine', $m['location']);
+$m = QuickAdd::mergeLlm($mkLlm(), $mkFb(['location' => 'Example Cafe']), $mergeNow);
+checkEq('qam location backfills from fallback', 'Example Cafe', $m['location']);
+$m = QuickAdd::mergeLlm($mkLlm(['location' => 'Corner Bistro']), $mkFb(['location' => 'Example Cafe']), $mergeNow);
+checkEq('qam LLM location wins when present', 'Corner Bistro', $m['location']);
 
 // ---------------------------------------------------------------------------
 // ICS escaping and folding
@@ -2256,7 +2256,7 @@ $occ = [
     'calendar_id' => 3,
     'title' => 'Yoga Class at the Studio',
     'description' => "Vinyasa flow.\nBring a mat and water.",
-    'location' => 'Mission Cultural Center',
+    'location' => 'Riverside Cultural Center',
 ];
 $kw = static fn(string $pattern, ?array $fields = null): array => [
     'type' => 'keyword',
@@ -2272,7 +2272,7 @@ check('flt keyword matches mid-word', Filters::evaluate($occ, $kw('ULTUR')));
 check('flt keyword no match', !Filters::evaluate($occ, $kw('pottery')));
 check('flt keyword field selection excludes', !Filters::evaluate($occ, $kw('mat and water', ['title'])));
 check('flt keyword description-only field matches', Filters::evaluate($occ, $kw('mat and water', ['description'])));
-check('flt keyword location field matches', Filters::evaluate($occ, $kw('mission', ['location'])));
+check('flt keyword location field matches', Filters::evaluate($occ, $kw('riverside', ['location'])));
 checkEq('flt keyword unknown field names never match', false, Filters::evaluate($occ, $kw('yoga', ['url'])));
 check('flt keyword empty pattern never matches', !Filters::evaluate($occ, $kw('')));
 check('flt keyword unicode case fold', Filters::evaluate(['title' => 'CAFÉ night'], $kw('café')));
@@ -2398,8 +2398,8 @@ checkEq('pe verdict null score falls back to bool', 'pass', PromptEval::verdictF
 
 // eventPayload: compact shape, description excerpt.
 $payload = PromptEval::eventPayload([
-    'id' => 7, 'title' => 'Salsa Night', 'description' => str_repeat('x', 400),
-    'location' => 'El Valenciano', 'start_utc' => '2026-08-02 02:00:00', 'tzid' => 'America/Los_Angeles',
+    'id' => 7, 'title' => 'Trivia Night', 'description' => str_repeat('x', 400),
+    'location' => 'Corner Bistro', 'start_utc' => '2026-08-02 02:00:00', 'tzid' => 'America/Los_Angeles',
 ]);
 checkEq('pe payload event id', 7, $payload['eventId']);
 checkEq('pe payload local start', '2026-08-01T19:00:00-07:00', $payload['start']);
@@ -2638,36 +2638,36 @@ checkEq('pe sweep window years', [2, 3], [PromptEval::WINDOW_YEARS_PAST, PromptE
 // Geocode: normalization, hashing, response mapping, negative cache (pure)
 // ---------------------------------------------------------------------------
 
-checkEq('geo normalize trims + collapses whitespace', 'Zuni Cafe, San Francisco', Geocode::normalize("  Zuni   Cafe,\n San Francisco  "));
+checkEq('geo normalize trims + collapses whitespace', 'Example Cafe, Portland', Geocode::normalize("  Example   Cafe,\n Portland  "));
 checkEq('geo normalize caps length', Geocode::MAX_QUERY_LENGTH, mb_strlen(Geocode::normalize(str_repeat('a', 600))));
 // Easier forms of a decorated address, tried when the full text finds nothing.
-checkEq('geo variants drop a trailing parenthetical', ['111 Conselyea St, Brooklyn, NY 11211, USA'], Geocode::variants('111 Conselyea St, Brooklyn, NY 11211, USA (The Lounge)'));
-checkEq('geo variants drop brackets anywhere', ['5 Main St, Oakland, CA'], Geocode::variants('[Upstairs] 5 Main St (rear door), Oakland, CA'));
-checkEq('geo variants start at the street number after a venue name', ['111 Conselyea St, Brooklyn, NY'], Geocode::variants('The Lounge, 111 Conselyea St, Brooklyn, NY'));
-checkEq('geo variants: both, in order', ['The Lounge, 111 Conselyea St, Brooklyn', '111 Conselyea St, Brooklyn'], Geocode::variants('The Lounge (2nd floor), 111 Conselyea St, Brooklyn'));
-checkEq('geo variants: nothing to simplify', [], Geocode::variants('Zuni Cafe, San Francisco'));
-checkEq('geo variants: a leading street number is already the address', [], Geocode::variants('1680 Mission St, San Francisco'));
+checkEq('geo variants drop a trailing parenthetical', ['450 Elm St, Portland, OR 97205, USA'], Geocode::variants('450 Elm St, Portland, OR 97205, USA (The Lounge)'));
+checkEq('geo variants drop brackets anywhere', ['5 Main St, Denver, CO'], Geocode::variants('[Upstairs] 5 Main St (rear door), Denver, CO'));
+checkEq('geo variants start at the street number after a venue name', ['450 Elm St, Portland, OR'], Geocode::variants('The Lounge, 450 Elm St, Portland, OR'));
+checkEq('geo variants: both, in order', ['The Lounge, 450 Elm St, Portland', '450 Elm St, Portland'], Geocode::variants('The Lounge (2nd floor), 450 Elm St, Portland'));
+checkEq('geo variants: nothing to simplify', [], Geocode::variants('Example Cafe, Portland'));
+checkEq('geo variants: a leading street number is already the address', [], Geocode::variants('1680 Elm St, Portland'));
 checkEq('geo variants: range numbers count', ['12-14 Rue Oberkampf, Paris'], Geocode::variants('Le Bar, 12-14 Rue Oberkampf, Paris'));
-checkEq('geo hash whitespace-insensitive', Geocode::queryHash('Zuni  Cafe'), Geocode::queryHash(' Zuni Cafe '));
-checkEq('geo hash case-insensitive', Geocode::queryHash('ZUNI CAFE'), Geocode::queryHash('zuni cafe'));
-check('geo hash differs for different queries', Geocode::queryHash('Zuni Cafe') !== Geocode::queryHash('Tartine'));
+checkEq('geo hash whitespace-insensitive', Geocode::queryHash('Example  Cafe'), Geocode::queryHash(' Example Cafe '));
+checkEq('geo hash case-insensitive', Geocode::queryHash('EXAMPLE CAFE'), Geocode::queryHash('example cafe'));
+check('geo hash differs for different queries', Geocode::queryHash('Example Cafe') !== Geocode::queryHash('Corner Bistro'));
 check('geo hash is 64 hex chars', preg_match('/^[0-9a-f]{64}$/', Geocode::queryHash('anything')) === 1);
-check('geo hash differs across bias regions', Geocode::queryHash('SFO', 37.77, -122.42) !== Geocode::queryHash('SFO', 55.68, 12.57));
-checkEq('geo hash stable within a bias cell', Geocode::queryHash('SFO', 37.61, -122.38), Geocode::queryHash('SFO', 37.77, -122.42));
-check('geo hash unbiased differs from biased', Geocode::queryHash('SFO') !== Geocode::queryHash('SFO', 37.77, -122.42));
+check('geo hash differs across bias regions', Geocode::queryHash('ORD', 41.88, -87.63) !== Geocode::queryHash('ORD', 55.68, 12.57));
+checkEq('geo hash stable within a bias cell', Geocode::queryHash('ORD', 41.98, -87.90), Geocode::queryHash('ORD', 41.88, -87.63));
+check('geo hash unbiased differs from biased', Geocode::queryHash('ORD') !== Geocode::queryHash('ORD', 41.88, -87.63));
 // PluginHost::geocode() shipped broken for the whole of v1/v2: it indexed
 // lookup()'s answer as $hits[0], but lookup() returns a single {lat,lng,display}
 // map with no key 0, so every plugin geocode silently returned null. Two
 // independent plugin authors hit it. Pin the return shape so the list/map
 // confusion cannot come back.
 $geoShape = Geocode::mapResponse(['features' => [[
-    'geometry' => ['coordinates' => [-122.513625, 37.780252]],
-    'properties' => ['name' => 'Sutro Baths', 'city' => 'San Francisco', 'country' => 'United States'],
+    'geometry' => ['coordinates' => [-122.6765, 45.5231]],
+    'properties' => ['name' => 'Riverside Park', 'city' => 'Portland', 'country' => 'United States'],
 ]]]);
 check('geo lookup answers a map, not a hit list', !array_is_list($geoShape));
 check('geo lookup map has no index 0 to read', !isset($geoShape[0]));
 check('geo lookup map carries lat/lng directly', isset($geoShape['lat'], $geoShape['lng']));
-checkEq('geo bias cell rounds to integer degrees', '38,-122', Geocode::biasCell(37.77, -122.42));
+checkEq('geo bias cell rounds to integer degrees', '42,-88', Geocode::biasCell(41.88, -87.63));
 checkEq('geo bias cell none without bias', 'none', Geocode::biasCell(null, null));
 // Picking among same-named places. The primary provider orders "Lisbon" as
 // eight American towns; significance ranking has to reach past them, without
@@ -2692,9 +2692,9 @@ checkEq('geo pick: city outranks county', 'city', Geocode::pickFeature(['feature
     $feat('Florence', 'place', 'county'), $feat('Florence', 'place', 'city'),
 ]], 'Florence')['properties']['osm_value']);
 // No exact-name candidate: an address or venue. Provider order must stand.
-checkEq('geo pick: address keeps provider order', 'Zuni Café', Geocode::pickFeature(['features' => [
-    $feat('Zuni Café', 'amenity', 'restaurant'), $feat('Market Street', 'highway', 'secondary'),
-]], '1658 Market St, San Francisco')['properties']['name']);
+checkEq('geo pick: address keeps provider order', 'Example Café', Geocode::pickFeature(['features' => [
+    $feat('Example Café', 'amenity', 'restaurant'), $feat('Main Street', 'highway', 'secondary'),
+]], '100 Main St, Springfield')['properties']['name']);
 check('geo pick: empty feature list yields null', Geocode::pickFeature(['features' => []], 'x') === null);
 check('geo pick: junk payload yields null', Geocode::pickFeature('nonsense', 'x') === null);
 
@@ -2708,9 +2708,9 @@ check('geo doubt: a state does not',
 check('geo doubt: a country does not',
     !Geocode::shouldConsultSecondary($feat('Portugal', 'place', 'country')));
 check('geo doubt: a venue never does',
-    !Geocode::shouldConsultSecondary($feat('Zuni Café', 'amenity', 'restaurant')));
+    !Geocode::shouldConsultSecondary($feat('Example Café', 'amenity', 'restaurant')));
 check('geo doubt: a street never does',
-    !Geocode::shouldConsultSecondary($feat('Market Street', 'highway', 'secondary')));
+    !Geocode::shouldConsultSecondary($feat('Main Street', 'highway', 'secondary')));
 check('geo doubt: nothing found invites one', Geocode::shouldConsultSecondary(null));
 
 // The secondary may only override with a genuinely major place, which is what
@@ -2738,28 +2738,28 @@ check('geo secondary: it skips small hits to find a major one',
 check('geo secondary: junk yields null', Geocode::secondaryOverride('nope') === null);
 check('geo secondary: no results yields null', Geocode::secondaryOverride(['results' => []]) === null);
 
-check('geo airport code: SFO', Geocode::isAirportCode('SFO'));
+check('geo airport code: ORD', Geocode::isAirportCode('ORD'));
 check('geo airport code: trims whitespace', Geocode::isAirportCode(' KOA '));
-check('geo airport code: lowercase is not one', !Geocode::isAirportCode('sfo'));
+check('geo airport code: lowercase is not one', !Geocode::isAirportCode('ord'));
 check('geo airport code: mixed case is not one', !Geocode::isAirportCode('Gym'));
-check('geo airport code: longer text is not one', !Geocode::isAirportCode('SFO Airport'));
-check('geo airport code: digits are not one', !Geocode::isAirportCode('SF1'));
-$sfoAirport = Geocode::airport('SFO');
-check('geo airport SFO is in the Bay Area', $sfoAirport !== null && abs($sfoAirport['lat'] - 37.62) < 0.1 && abs($sfoAirport['lng'] + 122.37) < 0.1);
-checkEq('geo airport SFO display', 'San Francisco International Airport, San Francisco, US', $sfoAirport['display']);
+check('geo airport code: longer text is not one', !Geocode::isAirportCode('ORD Airport'));
+check('geo airport code: digits are not one', !Geocode::isAirportCode('OR1'));
+$ordAirport = Geocode::airport('ORD');
+check('geo airport ORD is in Chicago', $ordAirport !== null && abs($ordAirport['lat'] - 41.98) < 0.1 && abs($ordAirport['lng'] + 87.90) < 0.1);
+checkEq('geo airport ORD display', 'Chicago O\'Hare International Airport, Chicago, US', $ordAirport['display']);
 $koaAirport = Geocode::airport('KOA');
 check('geo airport KOA is on the Big Island', $koaAirport !== null && abs($koaAirport['lat'] - 19.74) < 0.1 && abs($koaAirport['lng'] + 156.05) < 0.1);
 checkEq('geo airport unknown code -> null', null, Geocode::airport('QQZ'));
-checkEq('geo airport non-code -> null', null, Geocode::airport('Zuni Cafe'));
+checkEq('geo airport non-code -> null', null, Geocode::airport('Example Cafe'));
 
 $photon = ['features' => [[
-    'geometry' => ['coordinates' => [-122.4216, 37.7739]],
-    'properties' => ['name' => 'Zuni Cafe', 'city' => 'San Francisco', 'state' => 'California', 'country' => 'United States'],
+    'geometry' => ['coordinates' => [-122.6765, 45.5231]],
+    'properties' => ['name' => 'Example Cafe', 'city' => 'Portland', 'state' => 'Oregon', 'country' => 'United States'],
 ]]];
 $geo = Geocode::mapResponse($photon);
-checkEq('geo map lat from GeoJSON [lng,lat]', 37.7739, $geo['lat']);
-checkEq('geo map lng from GeoJSON [lng,lat]', -122.4216, $geo['lng']);
-checkEq('geo map display joins parts', 'Zuni Cafe, San Francisco, California, United States', $geo['display']);
+checkEq('geo map lat from GeoJSON [lng,lat]', 45.5231, $geo['lat']);
+checkEq('geo map lng from GeoJSON [lng,lat]', -122.6765, $geo['lng']);
+checkEq('geo map display joins parts', 'Example Cafe, Portland, Oregon, United States', $geo['display']);
 checkEq('geo map dedupes repeated parts', 'Berlin, Germany', Geocode::mapResponse(['features' => [[
     'geometry' => ['coordinates' => [13.4, 52.5]],
     'properties' => ['name' => 'Berlin', 'city' => 'Berlin', 'country' => 'Germany'],
@@ -2772,8 +2772,8 @@ checkEq('geo map non-numeric coordinates -> null', null, Geocode::mapResponse(['
 checkEq('geo negative cache row -> all-null result', ['lat' => null, 'lng' => null, 'display' => null, 'kind' => null], Geocode::resultFromRow(['lat' => null, 'lng' => null, 'display' => null]));
 checkEq(
     'geo positive cache row round-trips',
-    ['lat' => 37.7739, 'lng' => -122.4216, 'display' => 'Zuni Cafe', 'kind' => 'restaurant'],
-    Geocode::resultFromRow(['lat' => '37.7739', 'lng' => '-122.4216', 'display' => 'Zuni Cafe', 'kind' => 'restaurant'])
+    ['lat' => 45.5231, 'lng' => -122.6765, 'display' => 'Example Cafe', 'kind' => 'restaurant'],
+    Geocode::resultFromRow(['lat' => '45.5231', 'lng' => '-122.6765', 'display' => 'Example Cafe', 'kind' => 'restaurant'])
 );
 // A row cached before the kind column existed still round-trips, as null.
 checkEq(
@@ -2896,7 +2896,7 @@ $envelope = static fn(array $json): string => json_encode([
     'candidates' => [['content' => ['parts' => [['text' => json_encode($json)]]]]],
 ]);
 $gw = new LlmGateway(['gemini' => ['key' => 'test-key', 'model' => 'gemini-test-model']], $fakeTransport);
-$batchEvent = ['eventId' => 1, 'title' => 'Salsa Night', 'description' => null, 'location' => null, 'start' => '2026-08-01T19:00:00-07:00'];
+$batchEvent = ['eventId' => 1, 'title' => 'Trivia Night', 'description' => null, 'location' => null, 'start' => '2026-08-01T19:00:00-07:00'];
 
 $fakeTransport->reply = $envelope(['results' => [['eventId' => 1, 'pass' => true, 'score' => 0.8]]]);
 checkEq(
@@ -2910,8 +2910,8 @@ check('gw eval sent negative prompt', str_contains((string) $fakeTransport->requ
     // F19 (scan 2026-09-23): the user's instructions and the third-party event text travel apart.
     $sent = json_decode((string) $fakeTransport->requests[0]['body'], true);
     check('gw eval: instructions are the system instruction', str_contains((string) ($sent['system_instruction']['parts'][0]['text'] ?? ''), 'dance events'));
-    check('gw eval: event text is its own user turn, marked untrusted', str_contains((string) ($sent['contents'][0]['parts'][0]['text'] ?? ''), 'untrusted') && str_contains((string) ($sent['contents'][0]['parts'][0]['text'] ?? ''), 'Salsa Night'));
-    check('gw eval: event text is not in the instructions', !str_contains((string) ($sent['system_instruction']['parts'][0]['text'] ?? ''), 'Salsa Night'));
+    check('gw eval: event text is its own user turn, marked untrusted', str_contains((string) ($sent['contents'][0]['parts'][0]['text'] ?? ''), 'untrusted') && str_contains((string) ($sent['contents'][0]['parts'][0]['text'] ?? ''), 'Trivia Night'));
+    check('gw eval: event text is not in the instructions', !str_contains((string) ($sent['system_instruction']['parts'][0]['text'] ?? ''), 'Trivia Night'));
     $gemma = new LlmGateway(['gemini' => ['key' => 'k', 'model' => 'gemma-3-27b-it']], $fakeTransport);
     $fakeTransport->reply = $envelope(['results' => []]);
     $gemma->evaluateFilterBatch('dance events', null, [$batchEvent]);
@@ -3311,12 +3311,12 @@ checkEq('rem instance key format', '42:20260807T190000Z:10', Reminders::instance
 
 // Notification payload.
 $payloadRow = [
-    'id' => 42, 'title' => 'Dinner', 'location' => 'Zuni Cafe',
+    'id' => 42, 'title' => 'Dinner', 'location' => 'Example Cafe',
     'tzid' => 'America/Los_Angeles', 'all_day' => 0,
 ];
 $pl = Reminders::payload($payloadRow, $startUtc, false);
 checkEq('rem payload title', 'Dinner', $pl['title']);
-checkEq('rem payload body time + location', 'Fri, Aug 7, 12:00 PM · Zuni Cafe', $pl['body']);
+checkEq('rem payload body time + location', 'Fri, Aug 7, 12:00 PM · Example Cafe', $pl['body']);
 checkEq('rem payload tag is instanceId', '42:20260807T190000Z', $pl['tag']);
 checkEq(
     'rem payload url deep link carries event + at',
@@ -3328,8 +3328,8 @@ checkEq(
     1,
     preg_match('#^/\?event=\d+%3A\d{8}T\d{6}Z&at=\d{4}-\d{2}-\d{2}T\d{2}%3A\d{2}%3A\d{2}Z$#', $pl['url'])
 );
-$lk = Reminders::links(['location' => "Panda & Sons, 79 Queen Street, Edinburgh", 'location_lat' => 55.9532068, 'location_lng' => -3.2069716]);
-checkEq('notify links: a place opens by name at its coordinates', 'https://www.google.com/maps/search/Panda+%26+Sons%2C+79+Queen+Street%2C+Edinburgh/@55.9532068,-3.2069716,17z', $lk['map']);
+$lk = Reminders::links(['location' => "Smith & Sons, 12 Rua Augusta, Lisbon", 'location_lat' => 38.7097068, 'location_lng' => -9.1365716]);
+checkEq('notify links: a place opens by name at its coordinates', 'https://www.google.com/maps/search/Smith+%26+Sons%2C+12+Rua+Augusta%2C+Lisbon/@38.7097068,-9.1365716,17z', $lk['map']);
 checkEq('notify links: no call, no Join', null, $lk['join']);
 $lk = Reminders::links(['location' => 'https://us02web.zoom.us/j/123456?pwd=abc', 'description' => null]);
 checkEq('notify links: a Zoom location is Join', 'https://us02web.zoom.us/j/123456?pwd=abc', $lk['join']);
@@ -3338,22 +3338,22 @@ $lk = Reminders::links(['location' => 'Office', 'description' => 'Dial in: https
 checkEq('notify links: a Meet link in the description is Join', 'https://meet.google.com/abc-defg-hij', $lk['join']);
 $lk = Reminders::links(['location' => "Location available once RSVP'd"]);
 checkEq('notify links: a pending location has no Map', null, $lk['map']);
-$lk = Reminders::links(['location' => 'Zuni Cafe']);
-checkEq('notify links: text alone is a search', 'https://www.google.com/maps/search/?api=1&query=Zuni%20Cafe', $lk['map']);
+$lk = Reminders::links(['location' => 'Example Cafe']);
+checkEq('notify links: text alone is a search', 'https://www.google.com/maps/search/?api=1&query=Example%20Cafe', $lk['map']);
 $plAllDay = Reminders::payload(['id' => 7, 'title' => 'Fair', 'location' => null, 'tzid' => 'America/Los_Angeles', 'all_day' => 1], $allDayLa, true);
 checkEq('rem payload allday body', 'Fri, Aug 7 · All day', $plAllDay['body']);
 // 0.9.1: the text reads on the device's zone. An imported flight stored in UTC
-// at 11:45Z, read in London (BST): 12:45 PM, not 11:45 AM.
-$flightUtc = new DateTimeImmutable('2026-10-04 11:45:00', new DateTimeZone('UTC'));
-$flight = ['id' => 9, 'title' => 'Flight', 'location' => 'London LHR', 'tzid' => 'UTC', 'all_day' => 0];
-checkEq('rem payload: a UTC-stored event reads on the device zone', 'Sun, Oct 4, 12:45 PM · London LHR', Reminders::payload($flight, $flightUtc, false, 'Europe/London')['body']);
-checkEq('rem payload: 24-hour setting', 'Sun, Oct 4, 12:45 · London LHR', Reminders::payload($flight, $flightUtc, false, 'Europe/London', true)['body']);
-checkEq('rem payload: an event zone with another clock says it too', 'Sun, Oct 4, 12:45 PM (4:45 AM in Los Angeles) · London LHR',
-    Reminders::payload(['tzid' => 'America/Los_Angeles'] + $flight, $flightUtc, false, 'Europe/London')['body']);
-checkEq('rem payload: the same clock says nothing more', 'Sun, Oct 4, 12:45 PM · London LHR',
-    Reminders::payload(['tzid' => 'Europe/Dublin'] + $flight, $flightUtc, false, 'Europe/London')['body']);
-checkEq('rem payload: another day names it', 'Sun, Oct 4, 11:45 PM (Mon 9:45 AM in Sydney) · London LHR',
-    Reminders::payload(['tzid' => 'Australia/Sydney'] + $flight, new DateTimeImmutable('2026-10-04 22:45:00', new DateTimeZone('UTC')), false, 'Europe/London')['body']);
+// at 11:45Z, read in Lisbon (summer time): 12:45 PM, not 11:45 AM.
+$flightUtc = new DateTimeImmutable('2026-10-11 11:45:00', new DateTimeZone('UTC'));
+$flight = ['id' => 9, 'title' => 'Flight', 'location' => 'Lisbon LIS', 'tzid' => 'UTC', 'all_day' => 0];
+checkEq('rem payload: a UTC-stored event reads on the device zone', 'Sun, Oct 11, 12:45 PM · Lisbon LIS', Reminders::payload($flight, $flightUtc, false, 'Europe/Lisbon')['body']);
+checkEq('rem payload: 24-hour setting', 'Sun, Oct 11, 12:45 · Lisbon LIS', Reminders::payload($flight, $flightUtc, false, 'Europe/Lisbon', true)['body']);
+checkEq('rem payload: an event zone with another clock says it too', 'Sun, Oct 11, 12:45 PM (4:45 AM in Los Angeles) · Lisbon LIS',
+    Reminders::payload(['tzid' => 'America/Los_Angeles'] + $flight, $flightUtc, false, 'Europe/Lisbon')['body']);
+checkEq('rem payload: the same clock says nothing more', 'Sun, Oct 11, 12:45 PM · Lisbon LIS',
+    Reminders::payload(['tzid' => 'Europe/Dublin'] + $flight, $flightUtc, false, 'Europe/Lisbon')['body']);
+checkEq('rem payload: another day names it', 'Sun, Oct 11, 11:45 PM (Mon 9:45 AM in Sydney) · Lisbon LIS',
+    Reminders::payload(['tzid' => 'Australia/Sydney'] + $flight, new DateTimeImmutable('2026-10-11 22:45:00', new DateTimeZone('UTC')), false, 'Europe/Lisbon')['body']);
 checkEq(
     'rem payload allday url at is occurrence start utc',
     '/?event=' . rawurlencode('7:20260807T070000Z') . '&at=' . rawurlencode('2026-08-07T07:00:00Z'),
@@ -3395,7 +3395,7 @@ checkEq('chan fallback no live sub emails', ['push' => true, 'email' => true],
 $msg = EmailSender::buildMessage($pl, 'https://cal.example.com');
 checkEq('email subject carries title', 'Reminder: Dinner', $msg['subject']);
 check('email html carries local time', str_contains($msg['html'], 'Fri, Aug 7, 12:00 PM'));
-check('email html carries location', str_contains($msg['html'], 'Zuni Cafe'));
+check('email html carries location', str_contains($msg['html'], 'Example Cafe'));
 $absLink = 'https://cal.example.com/?event=' . rawurlencode('42:20260807T190000Z') . '&at=' . rawurlencode('2026-08-07T19:00:00Z');
 check('email html button link absolute', str_contains($msg['html'], 'href="' . htmlspecialchars($absLink, ENT_QUOTES, 'UTF-8') . '"'));
 check('email text alt carries title and link', str_contains($msg['text'], 'Dinner') && str_contains($msg['text'], $absLink));
@@ -3882,41 +3882,41 @@ check('ps centroid ids are real IANA zones with sane coords', $psValid);
 // composeAddress: street + housenumber, city, state, country; concise.
 checkEq(
     'ps address full',
-    '1658 Market Street, San Francisco, California, United States',
-    PlaceSearch::composeAddress(['housenumber' => '1658', 'street' => 'Market Street', 'city' => 'San Francisco', 'state' => 'California', 'country' => 'United States'])
+    '450 Elm Street, Portland, Oregon, United States',
+    PlaceSearch::composeAddress(['housenumber' => '450', 'street' => 'Elm Street', 'city' => 'Portland', 'state' => 'Oregon', 'country' => 'United States'])
 );
-checkEq('ps address street only', 'Market Street, San Francisco', PlaceSearch::composeAddress(['street' => 'Market Street', 'city' => 'San Francisco']));
+checkEq('ps address street only', 'Elm Street, Portland', PlaceSearch::composeAddress(['street' => 'Elm Street', 'city' => 'Portland']));
 checkEq('ps address city dedupes name', 'Germany', PlaceSearch::composeAddress(['name' => 'Berlin', 'city' => 'Berlin', 'country' => 'Germany']));
 checkEq('ps address dedupes repeated parts', 'Singapore', PlaceSearch::composeAddress(['city' => 'Singapore', 'state' => 'Singapore', 'country' => 'Singapore', 'name' => 'Zoo']));
 checkEq('ps address empty props', '', PlaceSearch::composeAddress([]));
 
-// distanceKm: SF -> LA is roughly 560 km; zero distance to self.
-$dSfLa = PlaceSearch::distanceKm(37.77, -122.42, 34.05, -118.24);
-check('ps distance SF-LA plausible', $dSfLa > 540 && $dSfLa < 580, "got $dSfLa");
+// distanceKm: Portland -> Seattle is roughly 235 km; zero distance to self.
+$dPdxSea = PlaceSearch::distanceKm(45.52, -122.68, 47.61, -122.33);
+check('ps distance Portland-Seattle plausible', $dPdxSea > 220 && $dPdxSea < 250, "got $dPdxSea");
 check('ps distance to self is zero', PlaceSearch::distanceKm(10.0, 20.0, 10.0, 20.0) < 0.001);
 
 // mapFeatures: shape, GeoJSON [lng,lat] order, dedupe, bias distance + far flag.
 $psPhoton = ['features' => [
     [
-        'geometry' => ['coordinates' => [-122.4216, 37.7739]],
-        'properties' => ['name' => 'Zuni Cafe', 'housenumber' => '1658', 'street' => 'Market Street', 'city' => 'San Francisco', 'state' => 'California', 'country' => 'United States'],
+        'geometry' => ['coordinates' => [-122.6765, 45.5231]],
+        'properties' => ['name' => 'Example Cafe', 'housenumber' => '450', 'street' => 'Elm Street', 'city' => 'Portland', 'state' => 'Oregon', 'country' => 'United States'],
     ],
     [ // duplicate of the first (other OSM layer): dropped
-        'geometry' => ['coordinates' => [-122.4216, 37.7739]],
-        'properties' => ['name' => 'Zuni Cafe', 'housenumber' => '1658', 'street' => 'Market Street', 'city' => 'San Francisco', 'state' => 'California', 'country' => 'United States'],
+        'geometry' => ['coordinates' => [-122.6765, 45.5231]],
+        'properties' => ['name' => 'Example Cafe', 'housenumber' => '450', 'street' => 'Elm Street', 'city' => 'Portland', 'state' => 'Oregon', 'country' => 'United States'],
     ],
     [
         'geometry' => ['coordinates' => [151.21, -33.87]],
-        'properties' => ['name' => 'Zuni', 'city' => 'Sydney', 'country' => 'Australia'],
+        'properties' => ['name' => 'Example', 'city' => 'Sydney', 'country' => 'Australia'],
     ],
     ['geometry' => ['coordinates' => ['x', 'y']], 'properties' => ['name' => 'Broken']],
 ]];
-$psMapped = PlaceSearch::mapFeatures($psPhoton, 37.77, -122.42);
+$psMapped = PlaceSearch::mapFeatures($psPhoton, 45.52, -122.68);
 checkEq('ps map count after dedupe + invalid drop', 2, count($psMapped));
-checkEq('ps map lat from GeoJSON', 37.7739, $psMapped[0]['lat']);
-checkEq('ps map lng from GeoJSON', -122.4216, $psMapped[0]['lng']);
-checkEq('ps map display', 'Zuni Cafe, 1658 Market Street, San Francisco, California, United States', $psMapped[0]['display']);
-checkEq('ps map city extracted', 'San Francisco', $psMapped[0]['city']);
+checkEq('ps map lat from GeoJSON', 45.5231, $psMapped[0]['lat']);
+checkEq('ps map lng from GeoJSON', -122.6765, $psMapped[0]['lng']);
+checkEq('ps map display', 'Example Cafe, 450 Elm Street, Portland, Oregon, United States', $psMapped[0]['display']);
+checkEq('ps map city extracted', 'Portland', $psMapped[0]['city']);
 check('ps map near candidate not far', $psMapped[0]['far'] === false && $psMapped[0]['distanceKm'] < 5);
 check('ps map antipodal candidate flagged far', $psMapped[1]['far'] === true && $psMapped[1]['distanceKm'] > 10000);
 checkEq('ps map garbage -> empty', [], PlaceSearch::mapFeatures('garbage', null, null));
@@ -3944,10 +3944,10 @@ checkEq('ps rank empty', [], PlaceSearch::rank([]));
 // Settings: home location + map style keys
 // ---------------------------------------------------------------------------
 
-checkEq('set homeLat validated', ['homeLat' => 37.77], Settings::validate(['homeLat' => 37.77]));
-checkEq('set homeLng string accepted', ['homeLng' => -122.42], Settings::validate(['homeLng' => '-122.42']));
+checkEq('set homeLat validated', ['homeLat' => 39.74], Settings::validate(['homeLat' => 39.74]));
+checkEq('set homeLng string accepted', ['homeLng' => -104.99], Settings::validate(['homeLng' => '-104.99']));
 checkEq('set homeLat null clears', ['homeLat' => null], Settings::validate(['homeLat' => null]));
-checkEq('set homeLabel trimmed', ['homeLabel' => 'San Francisco'], Settings::validate(['homeLabel' => '  San Francisco  ']));
+checkEq('set homeLabel trimmed', ['homeLabel' => 'Denver'], Settings::validate(['homeLabel' => '  Denver  ']));
 checkEq('set homeLabel blank becomes null', ['homeLabel' => null], Settings::validate(['homeLabel' => '   ']));
 checkEq('set mapStyle validated', ['mapStyle' => 'dataviz'], Settings::validate(['mapStyle' => 'dataviz']));
 checkEq('set mapStyle default', 'streets-v2', Settings::withDefaults([])['mapStyle']);
@@ -4104,8 +4104,8 @@ checkEq('activity with() passes through return value', 'value', $returned);
 
 checkEq(
     'activity summary: event create with date',
-    "Added event 'Dinner at Zuni' (Aug 14)",
-    Undo::defaultSummary('event', 'create', null, ['events' => [['title' => 'Dinner at Zuni', 'start_utc' => '2026-08-14 02:00:00']]])
+    "Added event 'Dinner at Luna' (Aug 14)",
+    Undo::defaultSummary('event', 'create', null, ['events' => [['title' => 'Dinner at Luna', 'start_utc' => '2026-08-14 02:00:00']]])
 );
 checkEq(
     'activity summary: delete names from before side',
@@ -4146,7 +4146,7 @@ checkEq(
     checkEq('failure email: subject names the one thing', 'Better-Cal: Prompt filter evaluation has been failing', $mail['subject']);
     check('failure email: times read as a person would say them, in their zone', str_contains($mail['text'], 'Sun, Sep 13, 2026 at 3:00 AM PDT'), $mail['text']);
     check('failure email: says it is one per streak', str_contains($mail['text'], 'one email per failing streak'));
-    $two = SystemHealth::buildFailureEmail([$row(), $row(['subject' => 'feed:31', 'kind' => 'feed', 'label' => 'Feed: Luma'])], $now, new DateTimeZone('UTC'), '');
+    $two = SystemHealth::buildFailureEmail([$row(), $row(['subject' => 'feed:31', 'kind' => 'feed', 'label' => 'Feed: Events'])], $now, new DateTimeZone('UTC'), '');
     checkEq('failure email: several things, counted', 'Better-Cal: 2 things have been failing', $two['subject']);
     checkEq('device label: apple push', 'Reminders to Safari / Apple device (added 2026-09-01)', \BetterCal\Domain\PushSubscriptions::labelFor(['endpoint' => 'https://web.push.apple.com/QAbc', 'created_at' => '2026-09-01 10:00:00']));
     checkEq('device label: fcm', 'Reminders to Chrome / Android (added 2026-09-01)', \BetterCal\Domain\PushSubscriptions::labelFor(['endpoint' => 'https://fcm.googleapis.com/fcm/send/x', 'created_at' => '2026-09-01 10:00:00']));
@@ -4156,10 +4156,10 @@ checkEq(
 // Geocode plausibility guard: a free-text description whose best match lies
 // far from the bias is a bad guess, not an answer. Addresses and names pass.
 {
-    check('implausible: long description, far, not a place-level kind', Geocode::implausible("a temple mansion in oakland's ivy hill", 'locality', 3300.0));
-    check('implausible: near is always fine', !Geocode::implausible("a temple mansion in oakland's ivy hill", 'locality', 12.0));
-    check('implausible: an address with a comma may be anywhere', !Geocode::implausible('15 calton hill, edinburgh, eh1 3bj', 'house', 8300.0));
-    check('implausible: a short name may be anywhere', !Geocode::implausible('heathrow terminal 5', 'building', 8600.0));
+    check('implausible: long description, far, not a place-level kind', Geocode::implausible('a converted warehouse in the old mill district', 'locality', 3300.0));
+    check('implausible: near is always fine', !Geocode::implausible('a converted warehouse in the old mill district', 'locality', 12.0));
+    check('implausible: an address with a comma may be anywhere', !Geocode::implausible('12 rua augusta, lisbon, 1100-053', 'house', 8300.0));
+    check('implausible: a short name may be anywhere', !Geocode::implausible('central bus station', 'building', 8600.0));
     check('implausible: a bare place name may be anywhere', !Geocode::implausible('tokyo', 'city', 8300.0));
     check('implausible: a long name that IS a place-level kind is allowed', !Geocode::implausible('hawaii volcanoes national park hawaii', 'national_park', 3800.0));
     check('implausible: exactly the threshold is not beyond it', !Geocode::implausible('some long description of a venue', 'locality', 1500.0));
@@ -4169,17 +4169,17 @@ checkEq(
 // ---------------------------------------------------------------------------
 // Geocode sweep: the pure parts. Grouping key and bias precedence.
 {
-    checkEq('sweep key: whitespace collapsed and case folded', 'pillar point harbor, half moon bay', GeocodeSweep::normalizeLocation("  Pillar   Point\tHarbor, Half Moon Bay \n"));
-    checkEq('sweep key: same address, different spacing, one group', GeocodeSweep::normalizeLocation('15 Calton Hill, Edinburgh'), GeocodeSweep::normalizeLocation('15  Calton Hill,  EDINBURGH'));
-    checkEq('sweep key: curly and straight apostrophes are one address', GeocodeSweep::normalizeLocation("A Temple Mansion in Oakland’s Ivy Hill"), GeocodeSweep::normalizeLocation("a temple mansion in oakland's ivy hill"));
-    checkEq('sweep bias: home location wins', [37.8, -122.27], GeocodeSweep::biasFor(['homeLat' => 37.8, 'homeLng' => -122.27, 'tz' => 'Europe/London'], 'Asia/Tokyo'));
+    checkEq('sweep key: whitespace collapsed and case folded', 'old mill marina, lakeside', GeocodeSweep::normalizeLocation("  Old   Mill\tMarina, Lakeside \n"));
+    checkEq('sweep key: same address, different spacing, one group', GeocodeSweep::normalizeLocation('12 Rua Augusta, Lisbon'), GeocodeSweep::normalizeLocation('12  Rua Augusta,  LISBON'));
+    checkEq('sweep key: curly and straight apostrophes are one address', GeocodeSweep::normalizeLocation("Sam’s Diner on the Riverfront"), GeocodeSweep::normalizeLocation("sam's diner on the riverfront"));
+    checkEq('sweep bias: home location wins', [39.74, -104.99], GeocodeSweep::biasFor(['homeLat' => 39.74, 'homeLng' => -104.99, 'tz' => 'Europe/Paris'], 'Asia/Tokyo'));
     $tzBias = GeocodeSweep::biasFor(['homeLat' => null, 'homeLng' => null], 'America/Los_Angeles');
     check('sweep bias: falls back to the event zone centroid', $tzBias[0] !== null && $tzBias[1] !== null && $tzBias[1] < -100, json_encode($tzBias));
     checkEq('sweep bias: nothing known means no bias', [null, null], GeocodeSweep::biasFor([], null));
-    check('sweep: a URL is not an address', GeocodeSweep::isUrlLocation('https://luma.com/max0yr6g'));
+    check('sweep: a URL is not an address', GeocodeSweep::isUrlLocation('https://luma.com/abc123xy'));
     check('sweep: a www link is not an address', GeocodeSweep::isUrlLocation('www.zoom.us/j/123'));
-    check('sweep: an address containing a link is still an address', !GeocodeSweep::isUrlLocation('Mox, 1680 Mission St (map: https://x.y)'));
-    check('sweep: a plain address is an address', !GeocodeSweep::isUrlLocation('15 Calton Hill, Edinburgh'));
+    check('sweep: an address containing a link is still an address', !GeocodeSweep::isUrlLocation('Harbor Hall, 100 Main St (map: https://x.y)'));
+    check('sweep: a plain address is an address', !GeocodeSweep::isUrlLocation('12 Rua Augusta, Lisbon'));
 }
 
 // ---------------------------------------------------------------------------
@@ -4224,17 +4224,17 @@ checkEq(
     $override = [
         'tzid' => 'America/Los_Angeles', 'all_day' => 0,
         'start_utc' => '2026-09-11 17:00:00', 'end_utc' => '2026-09-11 18:00:00',
-        'rrule' => null, 'recurrence_parent_id' => 16563, 'recurrence_instance_utc' => '2026-09-15 19:30:00',
+        'rrule' => null, 'recurrence_parent_id' => 7, 'recurrence_instance_utc' => '2026-09-15 19:30:00',
     ];
     $payload = [
         'start' => '2026-09-11T12:00:00-07:00', 'end' => '2026-09-11T13:00:00-07:00',
-        'rrule' => 'FREQ=WEEKLY;INTERVAL=2;BYDAY=TU', 'isContainer' => true, 'title' => 'Cleaners',
+        'rrule' => 'FREQ=WEEKLY;INTERVAL=2;BYDAY=TU', 'isContainer' => true, 'title' => 'Team sync',
     ];
     $fields = $columnPatch($override, $payload, true);
     check('override patch: series rrule is not written onto the instance row', !array_key_exists('rrule', $fields), json_encode($fields));
     check('override patch: the trip flag is not written onto the instance row', !array_key_exists('is_container', $fields));
     checkEq('override patch: the move itself still lands', '2026-09-11 19:00:00', $fields['start_utc'] ?? null);
-    checkEq('override patch: title still lands', 'Cleaners', $fields['title'] ?? null);
+    checkEq('override patch: title still lands', 'Team sync', $fields['title'] ?? null);
     $master = $columnPatch($override, $payload, false);
     checkEq('master patch: the same payload does set rrule on a non-override', 'FREQ=WEEKLY;INTERVAL=2;BYDAY=TU', $master['rrule'] ?? null);
 }
@@ -4263,8 +4263,8 @@ require __DIR__ . '/plugins.php';
 }
 
 // --- Job queue: stalled jobs -------------------------------------------------
-// A worker that dies mid-job leaves the row 'running' forever (production had
-// one from July 31). Reaping treats it as a failed attempt: retried with
+// A worker that dies mid-job leaves the row 'running' forever (one install had
+// a row stuck for weeks). Reaping treats it as a failed attempt: retried with
 // backoff, or failed for good once attempts are spent.
 {
     $qdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
@@ -4555,7 +4555,7 @@ require __DIR__ . '/plugins.php';
     checkEq('import budget: a 128M PHP can hold about 8,000 parsed events', intdiv(128 * 1048576 - 16 * 1048576 - 16 * 1048576, 12288), $L::importEventBudget('128M', 16 * 1048576));
     checkEq('import budget: never below a usable floor', 100, $L::importEventBudget('32M', 31 * 1048576));
     checkEq('Google budget: unlimited memory keeps the configured event cap', 20000, $L::googleEventBudget('-1', 16 * 1048576));
-    checkEq('Google budget: 768M production-shaped memory keeps a conservative headroom',
+    checkEq('Google budget: a 768M memory limit keeps a conservative headroom',
         intdiv(768 * 1048576 - 2 * 1048576 - 32 * 1048576, 40960),
         $L::googleEventBudget('768M', 2 * 1048576));
     checkEq('Google budget: memory pressure cannot be hidden by an unsafe floor', 0, $L::googleEventBudget('64M', 63 * 1048576));
@@ -4787,22 +4787,22 @@ require __DIR__ . '/plugins.php';
     checkEq('mail quota: old accounting is pruned', 1, $admission->prune($quotaNow));
     Limits::reset();
 
-    // Mail is read on the clock of the event's place (an Edinburgh booking while
+    // Mail is read on the clock of the event's place (a Lisbon booking while
     // Home is Los Angeles), and the stored zone matches the stored moment.
-    $w = MailIngest::draftWhen(['start' => '2026-10-02T15:00:00', 'end' => '2026-10-02T17:00:00', 'tzid' => 'Europe/London'], 'America/Los_Angeles');
-    checkEq('mail zone: a draft in Edinburgh is 3 PM there, not 3 PM Home', ['2026-10-02T14:00:00Z', '2026-10-02T16:00:00Z', 'Europe/London'],
+    $w = MailIngest::draftWhen(['start' => '2026-10-02T15:00:00', 'end' => '2026-10-02T17:00:00', 'tzid' => 'Europe/Lisbon'], 'America/Los_Angeles');
+    checkEq('mail zone: a draft in Lisbon is 3 PM there, not 3 PM Home', ['2026-10-02T14:00:00Z', '2026-10-02T16:00:00Z', 'Europe/Lisbon'],
         [$w[0]->format('Y-m-d\TH:i:s\Z'), $w[1]->format('Y-m-d\TH:i:s\Z'), $w[3]]);
     $w = MailIngest::draftWhen(['start' => '2026-10-02T15:00:00'], 'America/Los_Angeles');
     checkEq('mail zone: no zone in the draft reads it on Home, not PHP\'s default', ['2026-10-02T22:00:00Z', 'America/Los_Angeles'], [$w[0]->format('Y-m-d\TH:i:s\Z'), $w[3]]);
-    $w = MailIngest::draftWhen(['start' => '2026-10-02T15:00:00-04:00', 'tzid' => 'Europe/London'], 'America/Los_Angeles');
+    $w = MailIngest::draftWhen(['start' => '2026-10-02T15:00:00-04:00', 'tzid' => 'Europe/Lisbon'], 'America/Los_Angeles');
     checkEq('mail zone: an explicit offset is still the moment', '2026-10-02T19:00:00Z', $w[0]->format('Y-m-d\TH:i:s\Z'));
     $w = MailIngest::draftWhen(['start' => '2026-10-02T15:00:00', 'tzid' => 'Mars/Olympus'], 'America/Los_Angeles');
     checkEq('mail zone: a made-up zone falls back to Home', 'America/Los_Angeles', $w[3]);
     check('mail zone: an unreadable start is no draft', MailIngest::draftWhen(['start' => 'soon'], 'UTC') === null);
-    checkEq('mail zone: validZone takes real IANA names only', ['Europe/London', null, null, 'UTC'],
-        [BetterCal\Infra\LlmGateway::validZone('Europe/London'), BetterCal\Infra\LlmGateway::validZone('London'), BetterCal\Infra\LlmGateway::validZone(null), BetterCal\Infra\LlmGateway::validZone('UTC')]);
-    $g = GcalLink::parse('https://calendar.google.com/calendar/render?action=TEMPLATE&text=Call&dates=20260901T100000/20260901T110000&ctz=Europe/London', 'America/Los_Angeles');
-    checkEq('mail zone: a Google link keeps its ctz as the event zone', 'Europe/London', $g['tzid']);
+    checkEq('mail zone: validZone takes real IANA names only', ['Europe/Lisbon', null, null, 'UTC'],
+        [BetterCal\Infra\LlmGateway::validZone('Europe/Lisbon'), BetterCal\Infra\LlmGateway::validZone('Lisbon'), BetterCal\Infra\LlmGateway::validZone(null), BetterCal\Infra\LlmGateway::validZone('UTC')]);
+    $g = GcalLink::parse('https://calendar.google.com/calendar/render?action=TEMPLATE&text=Call&dates=20260901T100000/20260901T110000&ctz=Europe/Lisbon', 'America/Los_Angeles');
+    checkEq('mail zone: a Google link keeps its ctz as the event zone', 'Europe/Lisbon', $g['tzid']);
 }
 
 // --- Sign-in throttle (BC-05/BC-06, issue #20) ----------------------------------
@@ -5649,7 +5649,7 @@ use BetterCal\Infra\Secrets;
     // What kind of calendar each list entry is, from the id and role Google gives.
     checkEq('google kind: primary is yours', 'yours', GoogleAuth::calendarKind('owner@example.com', 'owner', true));
     checkEq('google kind: owned secondary is yours', 'yours', GoogleAuth::calendarKind('abc@group.calendar.google.com', 'owner', false));
-    checkEq('google kind: writer on a secondary is shared', 'shared', GoogleAuth::calendarKind('05bdc@group.calendar.google.com', 'writer', false));
+    checkEq('google kind: writer on a secondary is shared', 'shared', GoogleAuth::calendarKind('abc123@group.calendar.google.com', 'writer', false));
     checkEq('google kind: someone else primary is shared', 'shared', GoogleAuth::calendarKind('friend@gmail.com', 'reader', false));
     checkEq('google kind: ICS import is a feed', 'feed', GoogleAuth::calendarKind('xyz@import.calendar.google.com', 'reader', false));
     checkEq('google kind: holidays are google', 'google', GoogleAuth::calendarKind('en.usa#holiday@group.v.calendar.google.com', 'reader', false));
@@ -5678,14 +5678,14 @@ use BetterCal\Infra\Secrets;
     // Google event resources to the Ics::parse shape.
     $timed = GoogleSync::toParsed([
         'id' => 'abc', 'iCalUID' => 'abc@google.com', 'status' => 'confirmed', 'summary' => 'Dinner',
-        'description' => 'Table for four', 'location' => 'Dishoom, Covent Garden', 'htmlLink' => 'https://www.google.com/calendar/event?eid=abc',
-        'start' => ['dateTime' => '2026-09-21T19:00:00+01:00', 'timeZone' => 'Europe/London'],
-        'end' => ['dateTime' => '2026-09-21T21:00:00+01:00', 'timeZone' => 'Europe/London'],
+        'description' => 'Table for four', 'location' => 'Example Cafe, Baixa', 'htmlLink' => 'https://www.google.com/calendar/event?eid=abc',
+        'start' => ['dateTime' => '2026-09-21T19:00:00+01:00', 'timeZone' => 'Europe/Lisbon'],
+        'end' => ['dateTime' => '2026-09-21T21:00:00+01:00', 'timeZone' => 'Europe/Lisbon'],
     ]);
     checkEq('google->parsed: uid is the iCalUID', 'abc@google.com', $timed['uid']);
     checkEq('google->parsed: timed start in UTC', '2026-09-21 18:00:00', $timed['start_utc']);
     checkEq('google->parsed: timed end in UTC', '2026-09-21 20:00:00', $timed['end_utc']);
-    checkEq('google->parsed: tzid from the event', 'Europe/London', $timed['tzid']);
+    checkEq('google->parsed: tzid from the event', 'Europe/Lisbon', $timed['tzid']);
     checkEq('google->parsed: not all-day', 0, $timed['all_day']);
     checkEq('google->parsed: event link becomes the url', 'https://www.google.com/calendar/event?eid=abc', $timed['url']);
     checkEq('google->parsed: no instance for a plain event', null, $timed['recurrence_instance_utc']);
@@ -5700,9 +5700,9 @@ use BetterCal\Infra\Secrets;
 
     $series = GoogleSync::toParsed([
         'id' => 'r1', 'iCalUID' => 'r1@google.com', 'summary' => 'Standup',
-        'start' => ['dateTime' => '2026-09-21T09:00:00+01:00', 'timeZone' => 'Europe/London'],
-        'end' => ['dateTime' => '2026-09-21T09:15:00+01:00', 'timeZone' => 'Europe/London'],
-        'recurrence' => ['RRULE:FREQ=WEEKLY;BYDAY=MO', 'EXDATE;TZID=Europe/London:20260928T090000,20261005T090000', 'RDATE;VALUE=DATE:20261101'],
+        'start' => ['dateTime' => '2026-09-21T09:00:00+01:00', 'timeZone' => 'Europe/Lisbon'],
+        'end' => ['dateTime' => '2026-09-21T09:15:00+01:00', 'timeZone' => 'Europe/Lisbon'],
+        'recurrence' => ['RRULE:FREQ=WEEKLY;BYDAY=MO', 'EXDATE;TZID=Europe/Lisbon:20260928T090000,20261005T090000', 'RDATE;VALUE=DATE:20261101'],
     ]);
     checkEq('google->parsed: rrule without the prefix', 'FREQ=WEEKLY;BYDAY=MO', $series['rrule']);
     checkEq('google->parsed: exdates resolved through the TZID to UTC', ['2026-09-28 08:00:00', '2026-10-05 08:00:00'], $series['exdates']);
@@ -5754,9 +5754,9 @@ use BetterCal\Infra\Secrets;
 
     $exception = GoogleSync::toParsed([
         'id' => 'r1_20261012T080000Z', 'iCalUID' => 'r1@google.com', 'summary' => 'Standup (moved)', 'recurringEventId' => 'r1',
-        'originalStartTime' => ['dateTime' => '2026-10-12T09:00:00+01:00', 'timeZone' => 'Europe/London'],
-        'start' => ['dateTime' => '2026-10-12T10:00:00+01:00', 'timeZone' => 'Europe/London'],
-        'end' => ['dateTime' => '2026-10-12T10:15:00+01:00', 'timeZone' => 'Europe/London'],
+        'originalStartTime' => ['dateTime' => '2026-10-12T09:00:00+01:00', 'timeZone' => 'Europe/Lisbon'],
+        'start' => ['dateTime' => '2026-10-12T10:00:00+01:00', 'timeZone' => 'Europe/Lisbon'],
+        'end' => ['dateTime' => '2026-10-12T10:15:00+01:00', 'timeZone' => 'Europe/Lisbon'],
     ]);
     checkEq('google->parsed: exception keeps the series uid', 'r1@google.com', $exception['uid']);
     checkEq('google->parsed: exception instance is the original start in UTC', '2026-10-12 08:00:00', $exception['recurrence_instance_utc']);
@@ -5804,7 +5804,7 @@ use BetterCal\Infra\Secrets;
     // Rows back to the parsed shape (what the incremental merge starts from).
     $rows = GoogleSync::rowsToParsed([[
         'uid' => 'r1@google.com', 'title' => 'Standup', 'description' => null, 'location' => null, 'url' => null,
-        'start_utc' => '2026-09-21 08:00:00', 'end_utc' => '2026-09-21 08:15:00', 'all_day' => '0', 'tzid' => 'Europe/London',
+        'start_utc' => '2026-09-21 08:00:00', 'end_utc' => '2026-09-21 08:15:00', 'all_day' => '0', 'tzid' => 'Europe/Lisbon',
         'rrule' => 'FREQ=WEEKLY;BYDAY=MO', 'exdates_json' => '["2026-09-28 08:00:00"]', 'status' => 'confirmed', 'recurrence_instance_utc' => null,
     ]]);
     checkEq('rows->parsed: exdates decoded', ['2026-09-28 08:00:00'], $rows[0]['exdates']);
@@ -5816,27 +5816,27 @@ use BetterCal\Domain\GoogleWriter;
 
 {
     $timed = GoogleWriter::body([
-        'title' => 'Dinner', 'description' => 'Table for four', 'location' => 'Dishoom', 'status' => 'confirmed',
-        'start_utc' => '2026-09-21 18:00:00', 'end_utc' => '2026-09-21 20:00:00', 'all_day' => 0, 'tzid' => 'Europe/London',
+        'title' => 'Dinner', 'description' => 'Table for four', 'location' => 'Example Cafe', 'status' => 'confirmed',
+        'start_utc' => '2026-09-21 18:00:00', 'end_utc' => '2026-09-21 20:00:00', 'all_day' => 0, 'tzid' => 'Europe/Lisbon',
         'rrule' => null, 'exdates_json' => null,
     ]);
-    checkEq('google body: timed start in the event zone with the zone named', ['dateTime' => '2026-09-21T19:00:00+01:00', 'timeZone' => 'Europe/London'], $timed['start']);
-    checkEq('google body: timed end', ['dateTime' => '2026-09-21T21:00:00+01:00', 'timeZone' => 'Europe/London'], $timed['end']);
-    checkEq('google body: summary/location carried', ['Dinner', 'Dishoom'], [$timed['summary'], $timed['location']]);
+    checkEq('google body: timed start in the event zone with the zone named', ['dateTime' => '2026-09-21T19:00:00+01:00', 'timeZone' => 'Europe/Lisbon'], $timed['start']);
+    checkEq('google body: timed end', ['dateTime' => '2026-09-21T21:00:00+01:00', 'timeZone' => 'Europe/Lisbon'], $timed['end']);
+    checkEq('google body: summary/location carried', ['Dinner', 'Example Cafe'], [$timed['summary'], $timed['location']]);
     checkEq('google body: no recurrence is an empty list', [], $timed['recurrence']);
     check('google body: attendees and reminders are never sent', !isset($timed['attendees']) && !isset($timed['reminders']));
 
     // All-day rows created here hold midnight in the event zone (07:00 UTC for Pacific); Google wants the date.
-    $allDay = GoogleWriter::body(['title' => 'Yorkshire', 'start_utc' => '2026-09-21 07:00:00', 'end_utc' => '2026-09-25 07:00:00', 'all_day' => 1, 'tzid' => 'America/Los_Angeles']);
-    checkEq('google body: all-day dates from the event zone', [['date' => '2026-09-21'], ['date' => '2026-09-25']], [$allDay['start'], $allDay['end']]);
-    $allDayUtc = GoogleWriter::body(['title' => 'Bath', 'start_utc' => '2026-09-24 00:00:00', 'end_utc' => '2026-09-27 00:00:00', 'all_day' => 1, 'tzid' => 'UTC']);
-    checkEq('google body: all-day dates for a Google-origin row (UTC midnight)', [['date' => '2026-09-24'], ['date' => '2026-09-27']], [$allDayUtc['start'], $allDayUtc['end']]);
+    $allDay = GoogleWriter::body(['title' => 'Conference', 'start_utc' => '2026-03-09 07:00:00', 'end_utc' => '2026-03-13 07:00:00', 'all_day' => 1, 'tzid' => 'America/Los_Angeles']);
+    checkEq('google body: all-day dates from the event zone', [['date' => '2026-03-09'], ['date' => '2026-03-13']], [$allDay['start'], $allDay['end']]);
+    $allDayUtc = GoogleWriter::body(['title' => 'Retreat', 'start_utc' => '2026-03-12 00:00:00', 'end_utc' => '2026-03-15 00:00:00', 'all_day' => 1, 'tzid' => 'UTC']);
+    checkEq('google body: all-day dates for a Google-origin row (UTC midnight)', [['date' => '2026-03-12'], ['date' => '2026-03-15']], [$allDayUtc['start'], $allDayUtc['end']]);
 
     $series = GoogleWriter::body([
-        'title' => 'Standup', 'start_utc' => '2026-09-21 08:00:00', 'end_utc' => '2026-09-21 08:15:00', 'all_day' => 0, 'tzid' => 'Europe/London',
+        'title' => 'Standup', 'start_utc' => '2026-09-21 08:00:00', 'end_utc' => '2026-09-21 08:15:00', 'all_day' => 0, 'tzid' => 'Europe/Lisbon',
         'rrule' => 'FREQ=WEEKLY;BYDAY=MO', 'exdates_json' => '["2026-09-28 08:00:00"]', 'status' => 'tentative',
     ]);
-    checkEq('google body: recurrence carries RRULE and zoned EXDATE', ['RRULE:FREQ=WEEKLY;BYDAY=MO', 'EXDATE;TZID=Europe/London:20260928T090000'], $series['recurrence']);
+    checkEq('google body: recurrence carries RRULE and zoned EXDATE', ['RRULE:FREQ=WEEKLY;BYDAY=MO', 'EXDATE;TZID=Europe/Lisbon:20260928T090000'], $series['recurrence']);
     checkEq('google body: tentative survives', 'tentative', $series['status']);
     checkEq('google recurrence: all-day EXDATE is a date', ['RRULE:FREQ=DAILY', 'EXDATE;VALUE=DATE:20260928'], GoogleWriter::recurrenceLines('FREQ=DAILY', ['2026-09-28 00:00:00'], true, 'UTC'));
 
@@ -5968,11 +5968,11 @@ use BetterCal\Domain\GoogleWriter;
     checkEq('weather: daily max AQI per local date', ['2026-09-24' => 61, '2026-09-25' => 40], $weather::dailyMaxAqi(['2026-09-24T01:00', '2026-09-24T15:00', '2026-09-25T09:00', '2026-09-25T10:00'], [30, 60.6, null, 40]));
     checkEq('weather: AQI categories', ['Good', 'Moderate', 'Unhealthy for sensitive groups', 'Hazardous'], [$weather::aqiCategory(50), $weather::aqiCategory(51), $weather::aqiCategory(120), $weather::aqiCategory(400)]);
     $sun = require dirname(__DIR__) . '/plugins/sun/Plugin.php';
-    $oak = $sun::sunTimes(37.8044, -122.2712, '2026-09-24', 1);
-    checkEq('sun: one sunrise and one sunset for Oakland on 2026-09-24', ['sunrise', 'sunset'], array_column($oak, 'kind'));
-    $local = array_map(static fn(array $x): string => (new DateTimeImmutable('@' . $x['at']))->setTimezone(new DateTimeZone('America/Los_Angeles'))->format('H:i'), $oak);
-    check('sun: Oakland sunrise near 7:00 and sunset near 19:00 local', $local[0] >= '06:45' && $local[0] <= '07:15' && $local[1] >= '18:50' && $local[1] <= '19:20', implode(' / ', $local));
-    checkEq('sun: dated by the local day', '2026-09-24', $oak[1]['date']);
+    $den = $sun::sunTimes(39.7392, -104.9903, '2026-09-24', 1);
+    checkEq('sun: one sunrise and one sunset for Denver on 2026-09-24', ['sunrise', 'sunset'], array_column($den, 'kind'));
+    $local = array_map(static fn(array $x): string => (new DateTimeImmutable('@' . $x['at']))->setTimezone(new DateTimeZone('America/Denver'))->format('H:i'), $den);
+    check('sun: Denver sunrise near 6:50 and sunset near 18:55 local', $local[0] >= '06:35' && $local[0] <= '07:05' && $local[1] >= '18:40' && $local[1] <= '19:10', implode(' / ', $local));
+    checkEq('sun: dated by the local day', '2026-09-24', $den[1]['date']);
     checkEq('sun: polar night yields no events that day', [], $sun::sunTimes(78.2, 15.6, '2026-12-21', 1));
     $syd = $sun::sunTimes(-33.87, 151.21, '2026-09-24', 1);
     checkEq('sun: works east of Greenwich too (Sydney)', ['sunrise', 'sunset'], array_column($syd, 'kind'));

@@ -1,10 +1,10 @@
 # Lessons from the Discourse Events Calendar Plugin (reference review, 2026-07-30)
 
-Distilled from a deep review of a private Discourse Events Calendar plugin and its docs corpus. This is the transferable knowledge base for bettercal-ui and the Better-Cal backend. File/line references point into that plugin's repo, which is not public.
+Distilled from a deep review of a private Discourse Events Calendar plugin and its docs corpus. This is the transferable knowledge base for bettercal-ui and the Better-Cal backend.
 
 ## Why FullCalendar was rejected (avoid the same traps)
 
-Source: `docs/fullcalendar-vs-custom-evaluation-2026-04-30.md` (a reversal of the pro-FullCalendar PRD position, reached by actually building it; FullCalendar was fully deleted 2026-05-24, commit b45deda).
+Source: that plugin's FullCalendar-versus-custom evaluation (a reversal of the pro-FullCalendar PRD position, reached by actually building it; FullCalendar was later removed from the plugin entirely).
 
 1. The Premium licensing wall sat on exactly the differentiating feature (resource/venue views). Never adopt an engine whose paid tier covers your differentiator.
 2. The default visual model was generic; the restyling tax exceeded the engine savings.
@@ -24,12 +24,12 @@ What FullCalendar was genuinely ahead on (build these carefully ourselves): date
 - **State-signature dedupe**: join all filter/range dimensions into one string; skip refetch when it matches last-loaded or in-flight.
 - **Timezone normalization**: alias PDT/PST/etc to IANA zones, validate via Intl probe, cascade to UTC. Real data contains abbreviations.
 
-## Layout algorithms (portable, from `controllers/discourse-events-calendar.js`)
+## Layout algorithms (portable, from the plugin's calendar controller)
 
-- **Time-grid overlap packer** (`:753-855`): clamp to visible window → enforce 15-min interaction floor and separate 30-min minimum VISUAL height (short events stay clickable) → sort start asc, end desc (longest first) → cluster via running end high-water mark (using inflated visual end in collision detection) → greedy lane reuse (first lane with end <= start) → emit percentage top/height and lane-based left/width. No column expansion into free space; predictable but leaves whitespace, extend if desired.
-- **Block geometry** (`:670-679`), pointer→minute snap (`:652-668`), drag-draft normalization with inverted-drag handling (`:687-732`).
-- **Day fan-out**: multi-day events pushed into every day bucket they overlap (`:1798-1854`). NOTE: the plugin renders multi-day events as per-day chips with NO spanning bars; Better-Cal is building true week-row segment spanning, which goes beyond the reference.
-- **All-day heuristic** (`:734-751`): all_day flag OR >=23h fully covering the day.
+- **Time-grid overlap packer**: clamp to visible window → enforce 15-min interaction floor and separate 30-min minimum VISUAL height (short events stay clickable) → sort start asc, end desc (longest first) → cluster via running end high-water mark (using inflated visual end in collision detection) → greedy lane reuse (first lane with end <= start) → emit percentage top/height and lane-based left/width. No column expansion into free space; predictable but leaves whitespace, extend if desired.
+- **Block geometry**, pointer→minute snap, drag-draft normalization with inverted-drag handling.
+- **Day fan-out**: multi-day events pushed into every day bucket they overlap. NOTE: the plugin renders multi-day events as per-day chips with NO spanning bars; Better-Cal is building true week-row segment spanning, which goes beyond the reference.
+- **All-day heuristic**: all_day flag OR >=23h fully covering the day.
 - **Deterministic per-day sort**: [max(start, dayStart), start desc-end, title]; client and server comparators must match or overflow counts desync.
 
 ## Performance patterns

@@ -68,7 +68,7 @@ Multi-day events show their total duration beside the title on every visible seg
 - Dedicated reschedule mode (press `r`, or Move on an open event): the event becomes a pointer-following ghost, you scroll or jump anywhere on the calendar (months or years away), and click to drop it. Recurring events move this occurrence only.
 - Full editor: rich text descriptions, location with geocoded place search (biased to where your calendar puts you that day, then your device and Home), people, tags, per-event reminders, recurrence editor, calendar picker with each calendar's colour, trip membership, and For me (Planned, or Maybe, which saves the event as tentative).
 - Typed dates and times in the editor ("fri", "10/5", "7p", "noon"), a quarter-hour list for times, and an end that keeps the event's length when the start moves.
-- Per-event time zone: enter a time as it reads somewhere else ("3 PM New York" from a laptop in London). The editor shows what that is on your device before you save, the detail view shows both clocks afterwards, and a repeating event keeps its time in its own zone across DST changes. All-day events are dates and stay on the same day in every zone.
+- Per-event time zone: enter a time as it reads somewhere else ("3 PM New York" from a laptop in Lisbon). The editor shows what that is on your device before you save, the detail view shows both clocks afterwards, and a repeating event keeps its time in its own zone across DST changes. All-day events are dates and stay on the same day in every zone.
 - Dirty-state confirmation so entered details are never silently lost.
 - Events open in a side panel on a desktop (the sheet on a phone) that holds everything: when, the invitation reply, where with Directions or Join, reminders, people, map, description, plugin data and the source. A fixed toolbar (Edit, Move, More, For me) and `[` / `]` to step through the day's events.
 - Copy an event to another calendar from More.
@@ -130,7 +130,7 @@ Multi-day events show their total duration beside the title on every visible seg
 - RSVP buttons send real iMIP replies via your own SMTP (e.g. your Gmail), so responses come from you. They appear only where a reply can go; otherwise the event says why (no organizer, no account to send from, or you weren't the invited address). A failed send keeps your answer and offers Retry.
 - Invitations on a connected Google calendar are answered at Google, which tells the organizer.
 - Bookings (a reservation, ticket or confirmation) read "Booking via" the site instead of offering replies that could never send.
-- Emailed times are read on the clock of the place they're about ("3 PM" for an Edinburgh booking is Edinburgh time), else the zone your device last reported, then Home.
+- Emailed times are read on the clock of the place they're about ("3 PM" for a Tokyo booking is Tokyo time), else the zone your device last reported, then Home.
 - Ingested events carry the invitation panel (organizer, attendees, your status) and land on an Invitations calendar.
 - Per-message ingest log (a database table) with tier and outcome for debugging.
 

@@ -25,7 +25,7 @@ export function compactTime(d, tz) {
   return fmtTimeIn(d, tz).replace(':00', '').replace(/\s?AM$/i, 'a').replace(/\s?PM$/i, 'p');
 }
 
-// A place-bound moment (sunset in Oakland) keeps its own clock: when the
+// A place-bound moment (sunset in Portland) keeps its own clock: when the
 // event's zone reads a different time from the device's, the token says
 // which zone. Plugin events are stored as UTC instants and carry no place,
 // so they show device time with no suffix.
@@ -40,7 +40,7 @@ function clip(s, max) {
   return s.length > max ? s.slice(0, max - 1).trimEnd() + '…' : s;
 }
 
-/** The title without a source prefix: "Oakland, CA: 72/58 fog" -> "72/58 fog". */
+/** The title without a source prefix: "Portland, OR: 72/58 fog" -> "72/58 fog". */
 export function contextText(occ) {
   const t = (occ.title || '').trim();
   const i = t.indexOf(': ');

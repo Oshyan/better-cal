@@ -543,7 +543,7 @@ return new class implements PluginInterface {
             $out['minDays'] = $out['maxDays'] = (int)$m[1] * $unit($m[2]);
         }
 
-        // "visit my sister in Chicago" - the place is after "in", not after "visit"
+        // "visit my friend in Chicago" - the place is after "in", not after "visit"
         $stop = '(?:[,.;]|\s+(?:in|for|next|this|during|over|around|sometime|and)\b|$)';
         if (preg_match('/\b(?:visit(?:ing)?|see(?:ing)?)\s+(?:my|his|her|their|our|the)\s+\w+\s+in\s+(.+?)' . $stop . '/', $s, $m)) {
             $out['destName'] = trim($m[1]);
@@ -1583,9 +1583,9 @@ return new class implements PluginInterface {
 
     /**
      * Show the year only when it is not obvious. `date('Y')` would be the
-     * SERVER's year (Berlin here), which is the same class of mistake the docs
-     * warn about for `date_default_timezone_get()`, so the current year comes
-     * from the user's clock via runJob.
+     * server's year (which may be a different zone), which is the same
+     * class of mistake the docs warn about for `date_default_timezone_get()`,
+     * so the current year comes from the user's clock via runJob.
      */
     private function prettySpan(string $a, string $b): string
     {

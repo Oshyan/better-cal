@@ -19,14 +19,14 @@
     {
       "key": "station",
       "type": "text",
-      "label": "NOAA station id",
-      "default": "9414290"
+      "label": "NOAA station id (e.g. 8518750 for The Battery, New York)",
+      "default": ""
     },
     {
       "key": "stationName",
       "type": "text",
       "label": "Station name (label only)",
-      "default": "San Francisco"
+      "default": ""
     },
     {
       "key": "days",

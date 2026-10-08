@@ -139,7 +139,7 @@ final class PushSubscriptions
     }
 
     /**
-     * What a device calls itself ("Pixel 9 Pro · Chrome app"): the browser's
+     * What a device calls itself ("Android phone · Chrome app"): the browser's
      * own words, so it is cleaned rather than trusted. Printable text only,
      * one line, at most 80 characters; null when nothing is left.
      */

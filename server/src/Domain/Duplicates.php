@@ -67,7 +67,7 @@ final class Duplicates
 
     /**
      * Titles close enough to be one event: nearly all the words of the
-     * shorter appear in the longer ("Kinkally" and "Dinner at Kinkally").
+     * shorter appear in the longer ("Bellwether" and "Dinner at Bellwether").
      * One short common word alone ("Lunch") is not enough.
      */
     public static function similarTitles(string $a, string $b): bool
@@ -85,7 +85,7 @@ final class Duplicates
         if (count($short) >= 2) {
             return true;
         }
-        // One word: a name ("Kinkally"), not a kind of event ("Lunch").
+        // One word: a name ("Bellwether"), not a kind of event ("Lunch").
         return mb_strlen($short[0]) >= 5 && !in_array($short[0], self::GENERIC, true);
     }
 

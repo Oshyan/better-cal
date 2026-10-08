@@ -393,7 +393,7 @@ export function QuickAdd() {
       <input
         ref=${inputRef}
         class="bc-quickadd-input"
-        placeholder="Dinner with Sam next Thursday 7pm at Zuni"
+        placeholder="Dinner with Sam next Thursday 7pm at Luna Trattoria"
         value=${text}
         onInput=${onInput}
         aria-label="Describe the event"

@@ -117,7 +117,7 @@ A second look at time zones, this time against independent calendar engines (a P
 - **A weekly series starts on a day it repeats on.** Starting a Mon/Wed/Fri series on a Thursday was undefined, and calendar apps disagreed about it; such a start now moves to the next listed day.
 - **The repeated hour when clocks go back.** A change to an occurrence in that hour could come back an hour off from a calendar app, or show twice east of UTC. It is now written unambiguously and read as the standard says.
 - **Older events in Thunderbird and Outlook.** The time zone rules sent with feeds and CalDAV started this year, so those apps had no offset for anything earlier; they now start in 1970, as Google's and Outlook's do.
-- **Dragging an event that keeps its own zone** moves it by days on its own clock: a London 9:00 dragged a week from a device in Los Angeles stays 9:00 in London. A repeat's end date is read and written on the event's clock too.
+- **Dragging an event that keeps its own zone** moves it by days on its own clock: a Lisbon 9:00 dragged a week from a device in Los Angeles stays 9:00 in Lisbon. A repeat's end date is read and written on the event's clock too.
 - **Meeting links and "address after RSVP" text** are recognized the same way by the app and by push notifications (one shared list); a location like "Registration desk, Hall B" is no longer mistaken for "address after RSVP" in a notification.
 
 For contributors: a round-trip check (export, re-import, expand: same occurrences, 360 series) now runs with every test and deploy, and `tools/tz-harness` runs the full cross-check against the independent engines.
@@ -233,7 +233,7 @@ Found in a clean install on a fresh machine, signing in to a brand-new account (
 
 ## 0.9.1 (2026-10-04)
 
-- **Reminders say the time on your clock.** A reminder's time was written in the event's own time zone. Events imported from Google Takeout are stored in UTC, so a 12:45 PM flight in London (summer time) was announced as 11:45 AM. Reminders, by push and by email, now read on the zone your device last reported (then your Home zone), the way the app shows times. An event that keeps a zone of its own whose clock differs adds that time: "12:45 PM (4:45 AM in Los Angeles)". They also follow the 12- or 24-hour setting.
+- **Reminders say the time on your clock.** A reminder's time was written in the event's own time zone. Events imported from Google Takeout are stored in UTC, so an afternoon flight in another time zone was announced an hour early: the stored UTC time was read without that zone's summer-time offset. Reminders, by push and by email, now read on the zone your device last reported (then your Home zone), the way the app shows times. An event that keeps a zone of its own whose clock differs adds that time in parentheses, on the event's own clock. They also follow the 12- or 24-hour setting.
 - **The app keeps track of where your device is while it stays open,** not only when it starts, so reminders follow you on a trip.
 - **Coming back after a reload puts you exactly where you were.** As well as the view, day, filter and saved view, it now brings back:
   - the page you were on, and the Settings section;
@@ -308,10 +308,10 @@ Trips, in step with events.
 
 - **A trip opens where an event does:** the side panel on a desktop, the sheet on a phone, with the same toolbar, Back and stepping. It used to open as a small card in the middle of the screen on a desktop and a sparse page on a phone.
 - **It leads with the trip:** its dates and length, its place with Directions, its events as rows that say when, what and where, and a map numbering the places of its events (on a phone, once the sheet is pulled up, as with an event's map).
-- **Opening one of its events keeps the way back:** "‹ London trip" above the event, and Back on a phone returns to the trip.
+- **Opening one of its events keeps the way back:** "‹ Trip name" above the event, and Back on a phone returns to the trip.
 - **Edit and Add events** are in the desktop toolbar; New event in this trip, the calendar's settings and Delete trip are in More. On a phone, Edit and More sit beside the title and Add events under the list.
 - **Removing an event from a trip asks first,** from that event's own row (its ⋯), instead of a bare x beside it.
-- **Adding events offers yours:** your planned and maybe events during the trip, on calendars you show, never weather or sunset entries; feed suggestions on request. A three-week trip through a busy city offered 241 candidates before, 29 now.
+- **Adding events offers yours:** your planned and maybe events during the trip, on calendars you show, never weather or sunset entries; feed suggestions on request. A long trip offered hundreds of candidates before, a few dozen now.
 
 ## 0.6.10 (2026-10-03)
 
@@ -335,7 +335,7 @@ Search, the sidebar and Settings on phones.
 
 ## 0.6.7 (2026-10-03)
 
-- **Reminder devices are named:** "Pixel 9 Pro · Chrome app", "Mac · Chrome", "iPhone · Safari app". Every Chromium browser on every platform uses Google's push service, so the list used to call a phone and a desktop the same thing, "Chrome, Edge or Android". A device now says what it is when it signs up, and one signed up earlier names itself the next time the app opens there. Until then its entry says so. Entries also say when no reminder has reached them yet, and the Activity log uses the names.
+- **Reminder devices are named:** "Android phone · Chrome app", "Windows · Chrome", "iPhone · Safari app". Every Chromium browser on every platform uses Google's push service, so the list used to call a phone and a desktop the same thing, "Chrome, Edge or Android". A device now says what it is when it signs up, and one signed up earlier names itself the next time the app opens there. Until then its entry says so. Entries also say when no reminder has reached them yet, and the Activity log uses the names.
 
 ## 0.6.6 (2026-10-03)
 
@@ -364,8 +364,8 @@ Search, the sidebar and Settings on phones.
 ## 0.6.2 (2026-10-03)
 
 - **For me on a repeating event asks right where you tapped.** The choice of this occurrence, this and following, or all of them opens under the switch on the phone sheet; it used to open at the top of the sheet, out of view whenever the sheet had scrolled, so Planned and Maybe seemed to do nothing.
-- **Quick fill keeps the place in the title.** "Lunch at The Pig's Ear at 12PM" is titled "Lunch at The Pig's Ear", with The Pig's Ear in Location too. Only date and time phrases leave the title now ("Coffee @ Blue Bottle" reads "Coffee at Blue Bottle"). The AI reading follows the same rule, and when it drops words the text kept, the plain reading's title wins.
-- **A place quick fill finds opens the Location choices,** biased to where you'll be, so you pick the right Pig's Ear rather than leaving it to a later guess. Nothing is picked for you. While you type it only opens; Enter or Fill moves the cursor there to pick with the arrows and Enter.
+- **Quick fill keeps the place in the title.** "Lunch at Luna Trattoria at 12PM" is titled "Lunch at Luna Trattoria", with Luna Trattoria in Location too. Only date and time phrases leave the title now ("Coffee @ Example Cafe" reads "Coffee at Example Cafe"). The AI reading follows the same rule, and when it drops words the text kept, the plain reading's title wins.
+- **A place quick fill finds opens the Location choices,** biased to where you'll be, so you pick the right Luna Trattoria rather than leaving it to a later guess. Nothing is picked for you. While you type it only opens; Enter or Fill moves the cursor there to pick with the arrows and Enter.
 - **A new event starts in the quick-fill box;** editing an event starts in the title.
 - **Toasts:** ten seconds when there's an Undo (six otherwise), with a thin countdown along the bottom; the toast leaves when it runs out, and a tap on its message dismisses it. On a phone it's bigger, Undo is a real button, and the close button never wraps to its own line.
 - **Day lists line up:** every row's dot and title start at the same place, whether the chip is tinted, timed or runs overnight. An event that continues past the day shows a chevron inside the chip's edge instead of an angled cut, which broke the gold "happening" ring and the trip outline into floating tips.
@@ -396,7 +396,7 @@ Creating events on phones.
 
 - **The location dropdown no longer waits for your device's position.** Each search used to ask the browser where you are first, when location was allowed. A browser can stay silent (Chrome on a Mac with Location Services off for it), and then the dropdown never came. Search now goes out at once with the best place already known, and a fresh position is fetched in the background for the next search.
 - **Location search looks near where your calendar puts you on that date:** the planned event with a known place nearest in time to the one you're editing (within a day and a half; a stay spanning it counts first). A dinner added during a trip searches near the trip. Then your device's position, your device's time zone when you're away from Home, your Home location, and the zone.
-- **"and" and "&" find the same place.** "Panda and Sons" finds "Panda & Sons" (both spellings are asked at once).
+- **"and" and "&" find the same place.** "Smith and Sons" finds "Smith & Sons" (both spellings are asked at once).
 - **The panel and sidebar ease over 300ms** instead of 220ms.
 
 ## 0.5.8 (2026-09-26)
@@ -407,12 +407,12 @@ Creating events on phones.
 
 ## 0.5.7 (2026-09-26)
 
-- **Forwarded emails are read on the clock of the place they're about.** A booking in Edinburgh is 3 PM Edinburgh time whatever your Home zone is: the reader names the zone of the event's address, venue or city (or a zone the email states, like "3pm ET"), and the event keeps that zone. An email naming no place is read on the clock where your device last was, then Home. "Add to Google Calendar" links keep their own zone too, and a time without an offset is never read on the server's clock. Before this, emailed events were all stamped with Home's zone, so a correct 3 PM in Edinburgh also said "7:00 AM in Los Angeles".
+- **Forwarded emails are read on the clock of the place they're about.** A booking in Tokyo is 3 PM Tokyo time whatever your Home zone is: the reader names the zone of the event's address, venue or city (or a zone the email states, like "3pm ET"), and the event keeps that zone. An email naming no place is read on the clock where your device last was, then Home. "Add to Google Calendar" links keep their own zone too, and a time without an offset is never read on the server's clock. Before this, emailed events were all stamped with Home's zone, so a correct 3 PM in Tokyo also said "11:00 PM in Los Angeles" for the day before.
 - **The app tells the server where you are** (your device's time zone) whenever it changes, for the rule above.
 - **The event panel's actions sit in a fixed toolbar at the top:** Edit and Move with their words, Copy and More as icons, For me on the right. It is the same height for every event, so stepping through a day never moves a button or the details under it.
 - **The calendar eases over when the event panel opens or closes,** and the sidebar slides out and back instead of vanishing (220ms; off with reduced motion). The sidebar keeps its width as it slides, so nothing inside it reflows.
 - **The event editor has labels on the left and one line per field,** grouped by thin rules instead of boxes: a large title, Calendar, Start, End, then All day, the length and the time zone on one line; Location, Link and Description; People, Tags, For me and the trip box; Reminders and Repeat. Create and Cancel stay pinned at the bottom however long the form is. The natural-language box is one line.
-- **The time zone is a visible control in the editor,** a globe chip naming the zone ("London time") that opens the zone list. It was a plain link before, and easy to miss.
+- **The time zone is a visible control in the editor,** a globe chip naming the zone ("Lisbon time") that opens the zone list. It was a plain link before, and easy to miss.
 - **Deploys keep the newest 5 backups** of the app and the database, not 20.
 
 ## 0.5.6 (2026-09-26)
@@ -434,7 +434,7 @@ Creating events on phones.
 
 ## 0.5.4 (2026-09-26)
 
-- **Addresses with extra words now find their place on the map.** Feeds often decorate an address: "111 Conselyea St, Brooklyn, NY 11211, USA (The Lounge)", "[Upstairs] 5 Main St", or a venue name ahead of the street. When the full text finds nothing, Better-Cal now tries it without the bracketed parts, and then from the street number on, and uses the first that resolves. Addresses that had already been marked "couldn't place" get the retry too: the map appears the next time the event is opened, and the background matching picks them up on its next pass.
+- **Addresses with extra words now find their place on the map.** Feeds often decorate an address: "123 Example St, Springfield, NY 10000, USA (The Lounge)", "[Upstairs] 5 Main St", or a venue name ahead of the street. When the full text finds nothing, Better-Cal now tries it without the bracketed parts, and then from the street number on, and uses the first that resolves. Addresses that had already been marked "couldn't place" get the retry too: the map appears the next time the event is opened, and the background matching picks them up on its next pass.
 
 ## 0.5.3 (2026-09-26)
 

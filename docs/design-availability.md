@@ -4,7 +4,7 @@ Status: designed, not yet built. Decisions below were confirmed by Oshyan (2026-
 
 ## 1. Semantics: both kinds, "away" is primary
 
-Away spans are the primary use case (Oshyan consults an "away" note before inviting people to events today). Busy is also supported, distinguished visually — color/iconography/pill status, not separate features. The schema's `kind ENUM('away','busy')` already models this. If UI budget forces a choice at any layer, away wins.
+Away spans are the primary use case (the common case is checking who is away before inviting people to events). Busy is also supported, distinguished visually — color/iconography/pill status, not separate features. The schema's `kind ENUM('away','busy')` already models this. If UI budget forces a choice at any layer, away wins.
 
 Rendering direction: person spans render like quiet trip-style backdrop bands on the calendar (opt-in per person, see §3), always visible on the person's card in the People page, and reflected as status where the person's name appears (e.g. a small "away" pill on people rows).
 

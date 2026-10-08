@@ -66,6 +66,23 @@ foreach ($bundled as $id) {
     check("plugin $id: validateSettings accepts an empty patch", $p->validateSettings([]) === []);
 }
 
+// Defaults ship empty: no place list and no tide station belong to anyone in
+// particular, so a fresh install starts with nothing and the user fills it in.
+$defaultOf = static function (array $m, string $key): mixed {
+    foreach ($m['settings'] ?? [] as $f) {
+        if (($f['key'] ?? null) === $key) {
+            return $f['default'] ?? null;
+        }
+    }
+    return null;
+};
+checkEq('visit-intents: the wishlist starts empty', '', $defaultOf($manifestOf('visit-intents'), 'wishlist'));
+checkEq('tides: no default station', '', $defaultOf($manifestOf('tides'), 'station'));
+$tidesPlugin = loadPlugin('tides');
+checkEq('tides: an empty station is accepted (not set up yet)', [], $tidesPlugin->validateSettings(['station' => '']));
+checkEq('tides: a 7-digit station is accepted', [], $tidesPlugin->validateSettings(['station' => '8518750']));
+check('tides: a malformed station is refused', isset($tidesPlugin->validateSettings(['station' => '12ab'])['station']));
+
 // ---------------------------------------------------------------------------
 // visit-intents: wishlist parsing, hours, interval maths
 // ---------------------------------------------------------------------------
@@ -73,19 +90,19 @@ foreach ($bundled as $id) {
 $vi = loadPlugin('visit-intents');
 
 $parsed = callPrivate($vi, 'parseWishlist', [
-    "Zuni Cafe | 1658 Market St, San Francisco CA | 120 | Tu-Su 11:30-22:00 | url:https://zunicafe.com | note:Roast chicken\n"
-    . "Berkeley Rose Garden | 1200 Euclid Ave, Berkeley CA | 60 | 24/7\n"
+    "Example Cafe | 100 Main St, Springfield IL | 120 | Tu-Su 11:30-22:00 | url:https://example.com/cafe | note:Order the special early\n"
+    . "Riverside Rose Garden | 200 Park Ave, Springfield IL | 60 | 24/7\n"
     . "\n"
     . "   \n"
-    . "SFMOMA | 151 3rd St | 150 | We-Mo 10:00-17:00 | before:2026-09-07",
+    . "City Art Museum | 300 Gallery Rd | 150 | We-Mo 10:00-17:00 | before:2026-12-31",
 ]);
 checkEq('visit-intents: parses three places, skipping blank lines', 3, count($parsed['places']));
-$zuni = $parsed['places'][0];
-checkEq('visit-intents: name parsed', 'Zuni Cafe', $zuni['name']);
-checkEq('visit-intents: duration parsed as minutes', 120, $zuni['durMinutes']);
-check('visit-intents: url captured', str_contains((string) ($zuni['url'] ?? ''), 'zunicafe.com'));
-check('visit-intents: note captured', str_contains((string) ($zuni['note'] ?? ''), 'Roast chicken'));
-checkEq('visit-intents: before: deadline captured', '2026-09-07', $parsed['places'][2]['before'] ?? null);
+$cafe = $parsed['places'][0];
+checkEq('visit-intents: name parsed', 'Example Cafe', $cafe['name']);
+checkEq('visit-intents: duration parsed as minutes', 120, $cafe['durMinutes']);
+check('visit-intents: url captured', str_contains((string) ($cafe['url'] ?? ''), 'example.com/cafe'));
+check('visit-intents: note captured', str_contains((string) ($cafe['note'] ?? ''), 'special early'));
+checkEq('visit-intents: before: deadline captured', '2026-12-31', $parsed['places'][2]['before'] ?? null);
 
 // A line with only a name is still a place: hours and duration are optional.
 $loose = callPrivate($vi, 'parseWishlist', ["Somewhere Vague"]);

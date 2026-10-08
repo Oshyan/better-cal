@@ -16,8 +16,10 @@ return new class implements PluginInterface {
 
     public function validateSettings(array $values): array
     {
-        if (isset($values['station']) && preg_match('/^\d{7}$/', (string) $values['station']) !== 1) {
-            return ['station' => 'NOAA station ids are 7 digits (e.g. 9414290 for San Francisco)'];
+        // Empty is allowed: it is the default, and it means "not set up yet".
+        if (isset($values['station']) && trim((string) $values['station']) !== ''
+            && preg_match('/^\d{7}$/', trim((string) $values['station'])) !== 1) {
+            return ['station' => 'NOAA station ids are 7 digits (e.g. 8518750 for The Battery, New York)'];
         }
         return [];
     }
@@ -25,7 +27,13 @@ return new class implements PluginInterface {
     public function runJob(PluginHost $host, string $jobId): void
     {
         $s = $host->settings();
-        $station = (string) ($s['station'] ?? '9414290');
+        $station = trim((string) ($s['station'] ?? ''));
+        if ($station === '') {
+            // No default station: tides only mean something for a coast the
+            // user picked. Nothing to fetch until one is set.
+            $host->log('No NOAA station set; nothing to fetch.');
+            return;
+        }
         $name = trim((string) ($s['stationName'] ?? '')) ?: ('station ' . $station);
         $days = max(1, min(30, (int) ($s['days'] ?? 14)));
         $begin = gmdate('Ymd');
@@ -50,6 +58,7 @@ return new class implements PluginInterface {
             throw new \RuntimeException('NOAA: ' . ($data['error']['message'] ?? 'unknown error') . ' (station ' . $station . ')');
         }
         $preds = $data['predictions'] ?? [];
+        $tz = $host->timezone();
         $events = [];
         $ranges = [];
         foreach ($preds as $p) {
@@ -70,11 +79,13 @@ return new class implements PluginInterface {
                 'description' => $word . ' tide of ' . number_format($v, 1) . ' ft (MLLW) at ' . $name . '. NOAA station ' . $station . '.',
             ];
             // Daylight low-tide window: a band around lows that land 8:00-18:00
-            // in the station's rough local day (approximated from longitude-free
-            // GMT-7/8; good enough for a planning glance, labeled as such).
+            // in the station's rough local day (approximated by the user's own
+            // zone, on the assumption that the station they chose is near
+            // them; good enough for a planning glance, labeled as such).
             if ($type === 'L' && ($s['daylightBands'] ?? true)) {
                 $ts = strtotime($iso);
-                $localHour = (int) gmdate('G', $ts - 7 * 3600);
+                $local = (new \DateTimeImmutable('@' . $ts))->setTimezone($tz);
+                $localHour = (int) $local->format('G');
                 if ($localHour >= 8 && $localHour <= 18) {
                     $ranges[] = [
                         'sourceKey' => 'lowwin-' . $station . '-' . gmdate('Ymd-Hi', $ts),
@@ -83,7 +94,7 @@ return new class implements PluginInterface {
                         'label' => 'Low tide ' . number_format($v, 1) . ' ft',
                         'color' => self::CAL_COLOR,
                         'detailHtml' => '<p><strong>Daylight low tide</strong> at ' . htmlspecialchars($name) . ': '
-                            . number_format($v, 1) . ' ft around ' . gmdate('g:i A', $ts - 7 * 3600)
+                            . number_format($v, 1) . ' ft around ' . $local->format('g:i A')
                             . ' local. Good tidepooling / beach walking window (±90 min).</p>',
                     ];
                 }

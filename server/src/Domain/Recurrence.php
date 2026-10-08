@@ -396,7 +396,7 @@ final class Recurrence
      *
      * sabre's EventIterator only walks forward: fastForward() steps one
      * occurrence at a time from DTSTART until it reaches the target. For a
-     * daily series begun seven years ago that is ~2,500 iterations on every
+     * daily series begun years ago that is thousands of iterations on every
      * request, and it grows by one a day forever. Measured on real data, that
      * walk was 86% of expansion time and expansion was 87% of the whole events
      * query.
@@ -406,8 +406,9 @@ final class Recurrence
      * — this trades no correctness for the speedup. Deliberately conservative:
      *
      *  - Only DAILY and WEEKLY. MONTHLY/YEARLY iterate at most ~12 times a
-     *    year, so their walk is already cheap (measured: 105 monthly masters
-     *    cost 40ms total), and month arithmetic has end-of-month traps.
+     *    year, so their walk is already cheap (measured: about a hundred
+     *    monthly masters cost tens of milliseconds in all), and month
+     *    arithmetic has end-of-month traps.
      *  - Never with COUNT: the rule means "N occurrences from DTSTART", so
      *    moving DTSTART would silently change which instances exist. UNTIL is
      *    an absolute bound and is unaffected.

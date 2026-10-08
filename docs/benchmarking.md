@@ -36,7 +36,7 @@ Compare encodings deliberately when that is the question; otherwise always send 
 
 ### Reverse DNS is not a location
 
-A hosting provider can put its own home-country domain on every machine it owns, whatever continent the machine is on. One server measured here sat in the US and was confidently described as German on the strength of its hostname.
+A hosting provider can put its own home-country domain on every machine it owns, whatever continent the machine is on. One server measured here was confidently placed in the wrong country on the strength of its hostname.
 
 `traceroute` answers it in seconds — watch the city codes in the hop names.
 
@@ -80,22 +80,22 @@ Both run against real data and must be run on the server, since they need the ap
 
 ## Baselines
 
-Measured 2026-08-06 on the production box (4-core EPYC-Milan, ~40% loaded), from a client about 81ms RTT away. Conditions stated because they matter.
+Measured 2026-08-06 on the production install (a small 4-core virtual server, about 40% loaded), from a client about 81ms round trip away. Conditions stated because they matter.
 
 | what | value | conditions |
 |---|---|---|
-| `Events::window` | 167ms median | 5-month window, 3,585 occurrences, Todoist on |
+| `Events::window` | 167ms median | 5-month window, 3,585 occurrences, task calendar on |
 | — recurrence expansion | 105ms | the dominant phase; SQL is only 15ms |
 | `/events` end to end | 476ms | browser, brotli; TTFB 317, body 171, parse 5 |
 | cold load, fully loaded | ~950ms | warm HTTP cache, 1500x800 |
 | — first contentful paint | ~436ms | |
 | — modules finished | ~370ms | 61 modules, modulepreload generated |
-| month scroll | 16.6ms median frame | 0 frames >32ms, 1500x800, Todoist on |
+| month scroll | 16.6ms median frame | 0 frames >32ms, 1500x800, task calendar on |
 | month step (next/prev) | 16-28ms | |
-| payload | 373 bytes/occurrence | list shape after #15 (was 793: uid, timestamps, reminders, rrule, description, tzid moved to the single-event record; nulls and empty lists omitted) plus two bits, `hasReminders`/`hasDescription`, sent only when true (+25 B average) so the popover reserves space for what the record fills in. Single record fetched on open, ~400ms on a transatlantic link, RTT-dominated; prefetched on chip hover/focus and from the popover, and kept across window refreshes, so most opens are instant |
+| payload | 373 bytes/occurrence | list shape after #15 (was 793: uid, timestamps, reminders, rrule, description, tzid moved to the single-event record; nulls and empty lists omitted) plus two bits, `hasReminders`/`hasDescription`, sent only when true (+25 B average) so the popover reserves space for what the record fills in. Single record fetched on open, ~400ms on a long-distance link, RTT-dominated; prefetched on chip hover/focus and from the popover, and kept across window refreshes, so most opens are instant |
 | brotli ratio | 15x | 2.8 MB → 188 KB on a 5-month window |
 
-"Todoist on" is doing more work in those conditions than it looks. That calendar is a fossil of a 2019-2020 write-through sync whose 147 recurrence masters carry neither UNTIL nor COUNT, so it expands forever and supplies about **95% of every month's occurrences** (~700 of ~730, checked across 2026-09, 2026-10, 2027-06 and 2030-01; see #49). These figures are therefore a recurrence-expansion benchmark far more than a mixed-workload one, which is useful — expansion is the dominant phase at 105ms of the 167ms — but it does mean occurrence counts here are not a typical user's, and anything tuned against per-day density is being tuned against the wrong distribution.
+"Task calendar on" is doing more work in those conditions than it looks. That calendar is left over from an old two-way sync with a task app, and its 147 recurrence masters carry neither UNTIL nor COUNT, so it expands forever and supplies about **95% of every month's occurrences** (~700 of ~730, checked across 2026-09, 2026-10, 2027-06 and 2030-01; see #49). These figures are therefore a recurrence-expansion benchmark far more than a mixed-workload one, which is useful — expansion is the dominant phase at 105ms of the 167ms — but it does mean occurrence counts here are not a typical user's, and anything tuned against per-day density is being tuned against the wrong distribution.
 
 If a number here moves by more than about 30%, something changed — check the measurement before concluding it was the code.
 
@@ -106,4 +106,4 @@ Recorded so they are not rediscovered:
 - **SQL.** Masters plus overrides is 15ms; the window-overlap query is a full table scan over 8,400 rows at 10ms. Indexing it would win nothing.
 - **`JSON.parse` on the client.** 5ms for 2.8 MB on a desktop. Worth revisiting only for low-end mobile.
 - **`json_encode` server-side.** ~10ms.
-- **Round-trip latency.** ~81ms of every request is the speed of light to Virginia and back. Not a configuration problem.
+- **Round-trip latency.** ~81ms of every request is the round trip between the client and the server's region. Not a configuration problem.

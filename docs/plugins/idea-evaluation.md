@@ -80,7 +80,7 @@ The survey already made the right call: extraction lives outside Better-Cal. Two
 
 ### Task manager integrations (sync adapter)
 
-Decomposes into three very different things. Read-only display of tasks with dates: already works today via ICS feeds (the Todoist calendar in production arrived that way), or via a v2 custom-source plugin for providers without feeds; near-zero cost. Completion write-back: per-provider auth and conflict semantics, medium cost, unclear demand; questionable. Scheduling tasks into calendar blocks: that is the C21 solver; out of scope.
+Decomposes into three very different things. Read-only display of tasks with dates: already works today via ICS feeds (a task app's calendar on the reference install arrived that way), or via a v2 custom-source plugin for providers without feeds; near-zero cost. Completion write-back: per-provider auth and conflict semantics, medium cost, unclear demand; questionable. Scheduling tasks into calendar blocks: that is the C21 solver; out of scope.
 
 ### Restaurant Visit Planner → Place Visit Planner (Visit Intents)
 

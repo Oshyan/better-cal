@@ -76,6 +76,10 @@ const TIGHT_COL_W = 64;
 const PHONE_BAR_LANES = 3;
 const PHONE_BAR_PITCH = 17;
 const PHONE_MORE_H = 13;
+const ALLDAY_LANES_MAX = 20;
+const TIMED_COLUMNS_MAX = 12;
+const TIMED_EVENTS_PER_DAY = 250;
+const TIMED_CONTEXT_PER_DAY = 100;
 
 function minutesOfDay(d) {
   return d.getHours() * 60 + d.getMinutes();
@@ -411,9 +415,11 @@ export function TimeGrid({
   // continues past that day (same cue as the day-expand list).
   const vAllDay = useMemo(() => {
     if (!vstack) return null;
+    const storeMax = phone ? V_ALLDAY_MAX_PHONE : V_ALLDAY_MAX;
     return days.map((k) => {
       const ed = epochDayOfKey(k);
       const out = [];
+      let total = 0;
       for (const occ of occurrences) {
         if (occ.attendance === 'hidden' || isContext(occ)) continue;
         const { startKey, endKey } = occurrenceDaySpan(occ);
@@ -421,11 +427,15 @@ export function TimeGrid({
         const s = epochDayOfKey(startKey);
         const e = epochDayOfKey(endKey);
         if (s > ed || e < ed) continue;
-        out.push({ occ, seg: { contLeft: s < ed, contRight: e > ed }, dayOf: e > s ? [ed - s + 1, e - s + 1] : null });
+        total++;
+        if (out.length < storeMax) {
+          out.push({ occ, seg: { contLeft: s < ed, contRight: e > ed }, dayOf: e > s ? [ed - s + 1, e - s + 1] : null });
+        }
       }
+      out.overflow = total - out.length;
       return out;
     });
-  }, [vstack, days, occurrences]);
+  }, [vstack, phone, days, occurrences]);
 
   // All-day lanes keep one top-to-bottom order while you scroll: lanes are
   // assigned over everything loaded by real dates (earlier start first, then
@@ -443,29 +453,35 @@ export function TimeGrid({
       items.push({ id: occ.instanceId, startCol: epochDayOfKey(startKey), endCol: epochDayOfKey(endKey), trip: !!occ.isContainer });
     }
     items.sort((a, b) => (b.trip - a.trip) || String(a.id).localeCompare(String(b.id)));
-    return assignLanes(items); // stable sort inside: start, then longer, then this order
+    return assignLanes(items, ALLDAY_LANES_MAX); // stable sort inside: start, then longer, then this order
   }, [infinite, occurrences]);
   const barLanes = useMemo(() => {
     if (!globalLanes) {
-      return assignLanes(allDayBars.map((b) => ({ id: b.occ.instanceId, startCol: b.seg.startCol, endCol: b.seg.endCol })));
+      return assignLanes(
+        allDayBars.map((b) => ({ id: b.occ.instanceId, startCol: b.seg.startCol, endCol: b.seg.endCol })),
+        ALLDAY_LANES_MAX,
+      );
     }
-    const used = [...new Set(allDayBars.map((b) => globalLanes.get(b.occ.instanceId)))].sort((a, b) => a - b);
+    const used = [...new Set(allDayBars.map((b) => globalLanes.get(b.occ.instanceId)).filter((l) => l < ALLDAY_LANES_MAX))].sort((a, b) => a - b);
     const compact = new Map(used.map((l, i) => [l, i]));
-    return new Map(allDayBars.map((b) => [b.occ.instanceId, compact.get(globalLanes.get(b.occ.instanceId))]));
+    return new Map(allDayBars.map((b) => {
+      const lane = globalLanes.get(b.occ.instanceId);
+      return [b.occ.instanceId, lane < ALLDAY_LANES_MAX ? compact.get(lane) : ALLDAY_LANES_MAX];
+    }));
   }, [globalLanes, allDayBars]);
   let barLaneCount = 0;
-  for (const l of barLanes.values()) barLaneCount = Math.max(barLaneCount, l + 1);
+  for (const l of barLanes.values()) if (l < ALLDAY_LANES_MAX) barLaneCount = Math.max(barLaneCount, l + 1);
   const phoneWeek = infinite && phone;
-  // Phone week: bars past the last lane are counted per day for its "+N".
+  const visibleBarLanes = phoneWeek ? PHONE_BAR_LANES : ALLDAY_LANES_MAX;
+  // Bars past the last useful lane are counted per day for its "+N".
   const moreByCol = useMemo(() => {
-    if (!phoneWeek) return null;
     const m = new Map();
     for (const b of allDayBars) {
-      if (barLanes.get(b.occ.instanceId) < PHONE_BAR_LANES) continue;
+      if (barLanes.get(b.occ.instanceId) < visibleBarLanes) continue;
       for (let c = b.seg.startCol; c <= b.seg.endCol; c++) m.set(c, (m.get(c) || 0) + 1);
     }
-    return m;
-  }, [phoneWeek, allDayBars, barLanes]);
+    return m.size ? m : null;
+  }, [allDayBars, barLanes, visibleBarLanes]);
 
   // Overlap layout per day column (see layout.js for the algorithm).
   const layoutByDay = useMemo(() => timedByDay.map((list) => {
@@ -478,7 +494,7 @@ export function TimeGrid({
         endMin: Math.min(MINUTES_DAY, minutesOfDay(e) || (dayKeyOf(e) !== dayKeyOf(s) ? MINUTES_DAY : minutesOfDay(e))),
       };
     });
-    return layoutOverlaps(items);
+    return layoutOverlaps(items, 30, { maxColumns: TIMED_COLUMNS_MAX, maxItems: TIMED_EVENTS_PER_DAY });
   }), [timedByDay]);
 
   // Initial vertical scroll: when anchored on today, land just above the
@@ -914,7 +930,7 @@ export function TimeGrid({
   const lanePitch = phoneWeek ? PHONE_BAR_PITCH : 24;
   const barSlot = ({ occ, seg }) => {
     const lane = barLanes.get(occ.instanceId);
-    if (phoneWeek && lane >= PHONE_BAR_LANES) return null;
+    if (lane >= visibleBarLanes) return null;
     const left = (epochDayOfKey(days[0]) - minDay + seg.startCol) * colW;
     return html`<div
     key=${occ.instanceId}
@@ -931,7 +947,9 @@ export function TimeGrid({
   // the day's full list.
   const moreSlots = moreByCol ? [...moreByCol].map(([c, n]) => html`<button
     type="button" key=${'more' + c} class="bc-tg-allday-more"
-    style=${`left:${(epochDayOfKey(days[0]) - minDay + c) * colW}px;width:${colW}px;top:${PHONE_BAR_LANES * PHONE_BAR_PITCH}px`}
+    style=${infinite
+      ? `left:${(epochDayOfKey(days[0]) - minDay + c) * colW}px;width:${colW}px;top:${visibleBarLanes * lanePitch}px`
+      : `left:${(c / days.length) * 100}%;width:${100 / days.length}%;top:${visibleBarLanes * lanePitch}px`}
     title=${n + ' more all-day on this day'}
     onPointerDown=${(e) => e.stopPropagation()}
     onClick=${(e) => { e.stopPropagation(); if (onExpandDay) onExpandDay(days[c]); }}
@@ -946,6 +964,8 @@ export function TimeGrid({
   const dayCols = days.map((k, i) => {
     const ed = epochDayOfKey(k);
     const inRange = rangeSel && ed >= rangeSel.a && ed <= rangeSel.b;
+    const timedContext = (ctxByDay.get(k) || []).filter((o) => !o.allDay);
+    const hiddenTimed = layoutByDay[i].overflow + Math.max(0, timedContext.length - TIMED_CONTEXT_PER_DAY);
     return html`<div
     key=${k}
     class="bc-tg-col${k === tKey ? ' is-today' : ''}${infinite && isWeekendEpochDay(ed) ? ' is-weekend' : ''}${infinite && k.endsWith('-01') ? ' is-month-start' : ''}${inRange ? ' is-range-draft' : ''}"
@@ -973,7 +993,13 @@ export function TimeGrid({
         onEdgePointerDown=${(edge, e) => dragResize(item.occ, edge, e)}
       />`;
     })}
-    ${(ctxByDay.get(k) || []).filter((o) => !o.allDay).map((occ) => html`<${ContextMark}
+    ${hiddenTimed > 0 && html`<button
+      type="button" class="bc-tg-density-more"
+      title=${hiddenTimed + ' more events on this day'}
+      onPointerDown=${(e) => e.stopPropagation()}
+      onClick=${(e) => { e.stopPropagation(); if (onExpandDay) onExpandDay(k); }}
+    >+${hiddenTimed} more</button>`}
+    ${timedContext.slice(0, TIMED_CONTEXT_PER_DAY).map((occ) => html`<${ContextMark}
       key=${occ.instanceId} occ=${occ} cal=${calendars[occ.calendarId]}
       top=${(minutesOfDay(parseISO(occ.start)) / 60) * HOUR_H} onOpen=${onOpenEvent}
     />`)}
@@ -1041,11 +1067,11 @@ export function TimeGrid({
                     note=${phone && dayOf ? `day ${dayOf[0]} of ${dayOf[1]}` : null}
                     dimmed=${dimSet && dimSet.has(occ.instanceId)} nowMs=${nowMs} onOpen=${onOpenEvent}
                   />`)}
-                  ${bars.length > vMax && html`<button
+                  ${bars.overflow > 0 && html`<button
                     type="button" class="bc-vday-more"
                     title="List everything on this day"
                     onClick=${() => onExpandDay && onExpandDay(k)}
-                  >+${bars.length - vMax} more</button>`}
+                  >+${bars.overflow} more</button>`}
                 </div>
               </header>`}
               <div class="bc-tg-vday-body">
@@ -1083,7 +1109,7 @@ export function TimeGrid({
       // One steady height on phones: lanes coming and going as you scroll
       // sideways would move the whole grid up and down.
       ? PHONE_BAR_LANES * PHONE_BAR_PITCH + 3 + PHONE_MORE_H
-      : (alldayOpen ? Math.max(1, barLaneCount) : 1) * 24 + (barLaneCount > 1 ? 20 : 6)}px`}>
+          : (alldayOpen ? Math.max(1, barLaneCount) : 1) * 24 + (moreByCol || barLaneCount > 1 ? 20 : 6)}px`}>
       <div class="bc-tg-gutter bc-tg-allday-label">
         ${!phoneWeek && 'all day'}
         ${barLaneCount > 1 && !phoneWeek && html`<button
@@ -1097,7 +1123,7 @@ export function TimeGrid({
       </div>
       ${infinite
         ? html`<div class="bc-tg-hclip"><div class="bc-tg-htrack" ref=${alldayTrackRef} style=${`width:${totalW}px`} onPointerDown=${dragCreateAllDay}>${alldayMonthLines}${allDayBars.map(barSlot)}${moreSlots}</div></div>`
-        : html`<div class="bc-tg-allday-lane" onPointerDown=${dragCreateAllDay}>${allDayBars.map(barSlot)}</div>`}
+        : html`<div class="bc-tg-allday-lane" onPointerDown=${dragCreateAllDay}>${allDayBars.map(barSlot)}${moreSlots}</div>`}
     </div>`}
     <div class="bc-tg-scroll" ref=${scrollRef}>
       <div class="bc-tg-body" style=${`height:${24 * HOUR_H}px`}>

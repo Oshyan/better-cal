@@ -2,7 +2,7 @@
 // 401 -> login, and monotonic request ids for window loads and search so
 // out-of-order responses never render.
 
-import { state, set, mergeWindow, missingRanges, patchOccurrence, invalidateRecords, toast } from './store.js';
+import { state, set, mergeWindow, pruneOccurrenceCache, missingRanges, patchOccurrence, invalidateRecords, toast } from './store.js';
 import { toISOWithOffset } from '../lib/dates.js';
 import { adoptSettings } from './settings.js';
 import { clearEditorDraft, clearQuickAddText } from './drafts.js';
@@ -207,7 +207,8 @@ const iso = (ms) => toISOWithOffset(new Date(ms));
 // The server answers at most about two years per query (Events.php
 // MAX_WINDOW_SECONDS) and cuts a longer one short without saying so. The
 // whole asked-for span was then marked loaded, so the rest was never fetched
-// and those years looked empty. Longer spans go out as pieces under the cap.
+// and those years looked empty. The app now refuses a wider aggregate request
+// and asks the caller to narrow it instead of creating a chunk fan-out.
 const MAX_SPAN_MS = 700 * 864e5;
 
 // A series with more occurrences in one window than the server will expand
@@ -226,10 +227,7 @@ function noteCapped(ids) {
 
 async function fetchRange(s, e) {
   if (e - s > MAX_SPAN_MS) {
-    const parts = [];
-    for (let a = s; a < e; a += MAX_SPAN_MS) parts.push(fetchRange(a, Math.min(e, a + MAX_SPAN_MS)));
-    await Promise.all(parts);
-    return;
+    throw new ApiError('event_window_too_large', 'This date range is too wide to load safely. Narrow it and try again.', 422);
   }
   const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
   const entry = { start: s, end: e, ctrl };
@@ -262,6 +260,18 @@ let retryStep = 0;
 const failedWindows = new Map(); // "start|end" -> {start, end} (ISO), retried together
 
 function windowFailed(startISO, endISO, err) {
+  if (err && err.code === 'event_window_too_large') {
+    failedWindows.delete(startISO + '|' + endISO);
+    if (failedWindows.size === 0 && retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+    if (lastWindow && (lastWindow.start !== startISO || lastWindow.end !== endISO)) return;
+    set({
+      windowStatus: {
+        kind: 'limited',
+        message: err.message || 'This date range contains too many events or repeating occurrences. Narrow the visible dates or calendars.',
+      },
+    });
+    return;
+  }
   failedWindows.set(startISO + '|' + endISO, { start: startISO, end: endISO });
   // Scrolling while offline asks for window after window; the newest few are
   // enough to retry (a retry that lands covers the view the person is on).
@@ -274,11 +284,47 @@ function windowFailed(startISO, endISO, err) {
 }
 
 function windowLoaded(startISO, endISO) {
+  const s = new Date(startISO).getTime();
+  const e = new Date(endISO).getTime();
+  const current = !!lastWindow && lastWindow.start === startISO && lastWindow.end === endISO;
+  if (current && state.loadedRanges.some((r) => r.start <= s && r.end >= e)) {
+    const pruned = pruneOccurrenceCache(startISO, endISO, { activeWindow: lastWindow });
+    if (pruned === 'limited') {
+      failedWindows.delete(startISO + '|' + endISO);
+      set({
+        windowStatus: {
+          kind: 'limited',
+          message: 'This date range contains too many events to retain safely. Narrow the visible dates or calendars.',
+        },
+      });
+      return;
+    }
+  }
   failedWindows.delete(startISO + '|' + endISO);
+  // An older request may land after the person has navigated elsewhere. It
+  // can satisfy its own cache gap, but must not clear or replace the current
+  // view's loading/error state.
+  if (!current) return;
   if (failedWindows.size > 0) return;
   retryStep = 0;
   if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
   if (state.windowStatus) set({ windowStatus: null });
+}
+
+function boundCacheAfterMerge(requestStart, requestEnd) {
+  if (!lastWindow) return;
+  const result = pruneOccurrenceCache(lastWindow.start, lastWindow.end, {
+    activeWindow: lastWindow,
+    markLoaded: false,
+  });
+  const current = lastWindow.start === requestStart && lastWindow.end === requestEnd;
+  if (current && result === 'limited') {
+    throw new ApiError(
+      'event_window_too_large',
+      'This date range contains too many events to retain safely. Narrow the visible dates or calendars.',
+      422,
+    );
+  }
 }
 
 // Try every failed window again now (the Retry button, coming back online).
@@ -297,6 +343,14 @@ export async function loadWindow(startISO, endISO, { force = false } = {}) {
   lastWindow = { start: startISO, end: endISO };
   const s = new Date(startISO).getTime();
   const e = new Date(endISO).getTime();
+  if (!(e > s) || e - s > MAX_SPAN_MS) {
+    windowFailed(startISO, endISO, new ApiError(
+      'event_window_too_large',
+      'This date range is too wide to load safely. Narrow it and try again.',
+      422,
+    ));
+    return;
+  }
   // Only a cold load says "Loading": later windows arrive while the calendar
   // already shows something, and a pill flickering on every scroll is noise.
   const cold = state.loadedRanges.length === 0 && !state.windowStatus;
@@ -306,6 +360,7 @@ export async function loadWindow(startISO, endISO, { force = false } = {}) {
     if (cold) set({ windowStatus: { kind: 'loading' } });
     try {
       await fetchRange(s, e);
+      boundCacheAfterMerge(startISO, endISO);
       windowLoaded(startISO, endISO);
     } catch (err) {
       windowFailed(startISO, endISO, err);
@@ -326,10 +381,17 @@ export async function loadWindow(startISO, endISO, { force = false } = {}) {
   // its way. Either way this window no longer counts as failed.
   if (gaps.length === 0) { windowLoaded(startISO, endISO); return; }
   if (cold) set({ windowStatus: { kind: 'loading' } });
-  const results = await Promise.allSettled(gaps.map((g) => fetchRange(g.start, g.end)));
-  const failed = results.find((r) => r.status === 'rejected');
-  if (failed) windowFailed(startISO, endISO, failed.reason);
-  else windowLoaded(startISO, endISO);
+  // A fragmented cache can contain many holes. Read them sequentially so one
+  // view request cannot create an unbounded burst of simultaneous responses.
+  try {
+    for (const gap of gaps) {
+      await fetchRange(gap.start, gap.end);
+      boundCacheAfterMerge(startISO, endISO);
+    }
+    windowLoaded(startISO, endISO);
+  } catch (err) {
+    windowFailed(startISO, endISO, err);
+  }
 }
 
 // The window carries what the grid draws. Description, cadence, reminders,
@@ -369,11 +431,13 @@ export function ensureFullOccurrence(instanceId) {
 // Refetch the most recently requested window (after mutations/undo).
 export async function refreshWindow() {
   if (!lastWindow) return;
+  const refreshStart = lastWindow.start;
+  const refreshEnd = lastWindow.end;
   windowReqId++;
   const id = windowReqId;
   // In pieces under the server's cap, like any other window (fetchRange).
-  const s = new Date(lastWindow.start).getTime();
-  const e = new Date(lastWindow.end).getTime();
+  const s = new Date(refreshStart).getTime();
+  const e = new Date(refreshEnd).getTime();
   for (let a = s; a < e; a += MAX_SPAN_MS) {
     const b = Math.min(e, a + MAX_SPAN_MS);
     const params = new URLSearchParams({ start: iso(a), end: iso(b) });
@@ -381,8 +445,10 @@ export async function refreshWindow() {
       const data = await api('/events?' + params.toString());
       if (id !== windowReqId) return;
       mergeWindow(iso(a), iso(b), data.events || []);
+      boundCacheAfterMerge(refreshStart, refreshEnd);
     } catch (err) {
       // A failed refresh only leaves slightly stale data; not fatal.
+      if (err && err.code === 'event_window_too_large') windowFailed(refreshStart, refreshEnd, err);
     }
   }
 }

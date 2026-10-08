@@ -180,27 +180,38 @@ final class Trips
      * @param list<int> $eventIds
      * @return array{children:array<int,list<string>>,parents:array<int,list<string>>}
      */
-    public static function relatedUidMap(Db $db, array $eventIds): array
+    public static function relatedUidMap(Db $db, array $eventIds, ?int $maxLinks = null): array
     {
         $out = ['children' => [], 'parents' => []];
         if ($eventIds === []) {
             return $out;
         }
         [$in, $params] = Db::in($eventIds);
-        foreach ($db->all(
+        $limitSql = $maxLinks === null ? '' : ' LIMIT ' . (max(0, $maxLinks) + 1);
+        $childRows = $db->all(
             "SELECT l.container_id, m.uid FROM event_links l JOIN events m ON m.id = l.event_id
              WHERE l.container_id IN $in AND m.deleted_at IS NULL
-             ORDER BY l.position, l.id",
+             ORDER BY l.position, l.id$limitSql",
             $params
-        ) as $row) {
+        );
+        if ($maxLinks !== null && count($childRows) > $maxLinks) {
+            throw new \LengthException('Too many event relationships to serialize safely');
+        }
+        foreach ($childRows as $row) {
             $out['children'][(int) $row['container_id']][] = (string) $row['uid'];
         }
-        foreach ($db->all(
+        $remaining = $maxLinks === null ? null : $maxLinks - count($childRows);
+        $limitSql = $remaining === null ? '' : ' LIMIT ' . (max(0, $remaining) + 1);
+        $parentRows = $db->all(
             "SELECT l.event_id, c.uid FROM event_links l JOIN events c ON c.id = l.container_id
              WHERE l.event_id IN $in AND c.deleted_at IS NULL AND c.is_container = 1
-             ORDER BY l.position, l.id",
+             ORDER BY l.position, l.id$limitSql",
             $params
-        ) as $row) {
+        );
+        if ($remaining !== null && count($parentRows) > $remaining) {
+            throw new \LengthException('Too many event relationships to serialize safely');
+        }
+        foreach ($parentRows as $row) {
             $out['parents'][(int) $row['event_id']][] = (string) $row['uid'];
         }
         return $out;

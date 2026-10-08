@@ -708,7 +708,7 @@ final class Plugins
             // Every mutation this run makes carries $runId, so the ops page can
             // offer one "Undo this run" that reverses the batch in one act.
             ActivityContext::withRun('plugin:' . $id, $runId, fn() => $instance->runJob($host, $jobId));
-            if ($host->overBudget()) {
+            if ($host->overBudget() && !$host->committedSyncWithinBudget()) {
                 $outcome = 'timeout';
                 $error = 'exceeded ' . PluginHost::RUN_BUDGET_SECONDS . 's soft budget';
             }

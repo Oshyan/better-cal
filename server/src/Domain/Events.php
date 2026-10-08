@@ -8,8 +8,10 @@ use BetterCal\Dav\ChangeLog;
 use BetterCal\Http\HttpError;
 use BetterCal\Infra\Db;
 use BetterCal\Support\Ids;
+use BetterCal\Support\ExpansionBudget;
 use BetterCal\Support\Limits;
 use BetterCal\Support\Time;
+use BetterCal\Support\WorkBudgetExceeded;
 
 final class Events
 {
@@ -20,6 +22,12 @@ final class Events
     private const NEW_WINDOW_HOURS = 24;
     private const SCOPES = ['this', 'following', 'all'];
     private const ATTENDANCE = ['none', 'interested', 'going', 'hidden'];
+    private const WINDOW_SIZE_SQL = "LENGTH(COALESCE(uid, '')) + LENGTH(COALESCE(title, ''))
+        + LENGTH(COALESCE(description, '')) + LENGTH(COALESCE(location, '')) + LENGTH(COALESCE(url, ''))
+        + LENGTH(COALESCE(tzid, '')) + LENGTH(COALESCE(rrule, '')) + LENGTH(COALESCE(exdates_json, ''))
+        + LENGTH(COALESCE(reminders_json, '')) + LENGTH(COALESCE(style_json, ''))
+        + LENGTH(COALESCE(dynamic_json, '')) + LENGTH(COALESCE(invite_json, ''))
+        + LENGTH(COALESCE(google_event_id, '')) + LENGTH(COALESCE(created_via, '')) + LENGTH(COALESCE(icon, ''))";
     /** Relationship words accepted where an attendance is (the stored enum stays as it was). */
     private const ATTENDANCE_ALIASES = ['planned' => 'going', 'maybe' => 'interested', 'available' => 'none', 'hidden' => 'hidden'];
 
@@ -456,6 +464,7 @@ final class Events
         ?array $calendarIds,
         ?string $q,
         bool $includeHidden,
+        ?ExpansionBudget $expansionBudget = null,
     ): array {
         if ($end <= $start) {
             throw HttpError::badRequest('end must be after start');
@@ -464,51 +473,72 @@ final class Events
             $end = $start->add(new \DateInterval('PT' . self::MAX_WINDOW_SECONDS . 'S'));
         }
 
-        $qContext = $this->queryContext($userId, $q);
-
-        $params = [$userId, Time::toDb($end), Time::toDb($start), Time::toDb($end)];
-        $sql = 'SELECT * FROM events WHERE user_id = ? AND deleted_at IS NULL AND recurrence_parent_id IS NULL
-                AND ((rrule IS NULL AND start_utc < ? AND end_utc > ?) OR (rrule IS NOT NULL AND start_utc < ?))';
-        $sql .= $this->windowFilters($params, $calendarIds, $qContext, $includeHidden);
-        $masters = $this->db->all($sql, $params);
-
-        $masterIds = array_map(static fn($r) => (int) $r['id'], $masters);
-        [$in, $inParams] = Db::in($masterIds !== [] ? $masterIds : [0]);
-        $ovParams = [$userId, ...$inParams, Time::toDb($end), Time::toDb($start)];
-        $ovSql = "SELECT * FROM events WHERE user_id = ? AND deleted_at IS NULL AND recurrence_parent_id IS NOT NULL
-                  AND (recurrence_parent_id IN $in OR (start_utc < ? AND end_utc > ?))";
-        // Overrides come regardless of attendance: a hidden override must
-        // still replace its instance (and then drop out below), or the
-        // master's version of that day would show through the hiding.
-        $ovSql .= $this->windowFilters($ovParams, $calendarIds, null, true);
-        $overrides = $this->db->all($ovSql, $ovParams);
-
-        $ovByParent = [];
-        foreach ($overrides as $ov) {
-            $ovByParent[(int) $ov['recurrence_parent_id']][] = $ov;
-        }
-
-        $expanded = [];
-        $seenParents = [];
-        foreach ($masters as $master) {
-            $mid = (int) $master['id'];
-            $seenParents[$mid] = true;
-            foreach ($this->recurrence->expand($master, $ovByParent[$mid] ?? [], $start, $end) as $occ) {
-                $expanded[] = $occ;
+        $expansionBudget ??= ExpansionBudget::standard();
+        try {
+            // Refuse dense windows at the database boundary. Charging rows
+            // only after Db::all() had already materialized them left the
+            // request open to the exact memory spike the expansion budget is
+            // meant to prevent.
+            $masterLimit = $expansionBudget->candidateRowLimit();
+            $qContext = $this->queryContext($userId, $q, $masterLimit);
+            $params = [$userId, Time::toDb($end), Time::toDb($start), Time::toDb($end)];
+            $sql = 'SELECT id FROM events WHERE user_id = ? AND deleted_at IS NULL AND recurrence_parent_id IS NULL
+                    AND ((rrule IS NULL AND start_utc < ? AND end_utc > ?) OR (rrule IS NOT NULL AND start_utc < ?))';
+            $sql .= $this->windowFilters($params, $calendarIds, $qContext, $includeHidden);
+            $sql .= ' LIMIT ' . ($masterLimit + 1);
+            $masterIds = array_map(
+                static fn(array $row): int => (int) $row['id'],
+                $this->db->all($sql, $params)
+            );
+            if (count($masterIds) > $masterLimit) {
+                throw new WorkBudgetExceeded('too many stored event candidates');
             }
-        }
-        // Overrides in-window whose master was not selected (series otherwise out of range).
-        foreach ($ovByParent as $parentId => $ovs) {
-            if (isset($seenParents[$parentId])) {
-                continue;
+            $masters = $this->windowRowsWithinBudget($masterIds);
+            $expansionBudget->checkpoint();
+
+            $overrides = $this->windowOverrides(
+                $userId,
+                $masterIds,
+                $start,
+                $end,
+                $calendarIds,
+                $expansionBudget->occurrenceLimit(),
+                $expansionBudget,
+            );
+            $ovByParent = [];
+            foreach ($overrides as $ov) {
+                $ovByParent[(int) $ov['recurrence_parent_id']][] = $ov;
             }
-            foreach ($ovs as $ov) {
-                $ovStart = Time::fromDb((string) $ov['start_utc']);
-                $ovEnd = Time::fromDb((string) $ov['end_utc']);
-                if ($ovStart < $end && $ovEnd > $start) {
-                    $expanded[] = ['row' => $ov, 'start' => $ovStart, 'end' => $ovEnd, 'instanceUtc' => Time::toDb($ovStart)];
+
+            $expanded = [];
+            $seenParents = [];
+            foreach ($masters as $master) {
+                $mid = (int) $master['id'];
+                $seenParents[$mid] = true;
+                foreach ($this->recurrence->expand($master, $ovByParent[$mid] ?? [], $start, $end, $expansionBudget) as $occ) {
+                    $expanded[] = $occ;
                 }
             }
+            // Overrides in-window whose master was not selected (series otherwise out of range).
+            foreach ($ovByParent as $parentId => $ovs) {
+                if (isset($seenParents[$parentId])) {
+                    continue;
+                }
+                foreach ($ovs as $ov) {
+                    $ovStart = Time::fromDb((string) $ov['start_utc']);
+                    $ovEnd = Time::fromDb((string) $ov['end_utc']);
+                    if ($ovStart < $end && $ovEnd > $start) {
+                        $expansionBudget->occurrence();
+                        $expanded[] = ['row' => $ov, 'start' => $ovStart, 'end' => $ovEnd, 'instanceUtc' => Time::toDb($ovStart)];
+                    }
+                }
+            }
+        } catch (WorkBudgetExceeded $e) {
+            throw new HttpError(
+                'event_window_too_large',
+                'This calendar window has too many events or repeating occurrences to process safely. Narrow the dates or calendars and try again.',
+                422,
+            );
         }
 
         if (!$includeHidden) {
@@ -627,13 +657,104 @@ final class Events
     }
 
     /**
+     * Load recurrence exceptions without one unbounded query or an enormous
+     * IN list. In-window exceptions are loaded once; exceptions outside the
+     * window are needed only for selected masters and arrive in small chunks.
+     *
+     * @param list<int> $masterIds
+     * @return list<array>
+     */
+    private function windowOverrides(
+        int $userId,
+        array $masterIds,
+        \DateTimeImmutable $start,
+        \DateTimeImmutable $end,
+        ?array $calendarIds,
+        int $limit,
+        ExpansionBudget $budget,
+    ): array {
+        $endDb = Time::toDb($end);
+        $startDb = Time::toDb($start);
+        $params = [$userId, $endDb, $startDb];
+        $sql = 'SELECT id FROM events WHERE user_id = ? AND deleted_at IS NULL
+                AND recurrence_parent_id IS NOT NULL AND start_utc < ? AND end_utc > ?';
+        // Hidden overrides still have to replace the corresponding generated
+        // occurrence, after which attendance filtering can remove them.
+        $sql .= $this->windowFilters($params, $calendarIds, null, true);
+        $sql .= ' LIMIT ' . ($limit + 1);
+        $rows = $this->db->all($sql, $params);
+        if (count($rows) > $limit) {
+            throw new WorkBudgetExceeded('too many stored recurrence exceptions');
+        }
+        $byId = [];
+        foreach ($rows as $row) {
+            $byId[(int) $row['id']] = true;
+        }
+        $budget->checkpoint();
+
+        foreach (array_chunk($masterIds, 250) as $chunk) {
+            $remaining = $limit - count($byId);
+            [$in, $inParams] = Db::in($chunk);
+            $params = [$userId, ...$inParams, $startDb, $endDb, $endDb, $startDb];
+            $sql = "SELECT id FROM events WHERE user_id = ? AND deleted_at IS NULL
+                    AND recurrence_parent_id IN $in
+                    AND recurrence_instance_utc >= ? AND recurrence_instance_utc < ?
+                    AND NOT (start_utc < ? AND end_utc > ?)";
+            $sql .= $this->windowFilters($params, $calendarIds, null, true);
+            $sql .= ' LIMIT ' . ($remaining + 1);
+            $extra = $this->db->all($sql, $params);
+            if (count($extra) > $remaining) {
+                throw new WorkBudgetExceeded('too many stored recurrence exceptions');
+            }
+            foreach ($extra as $row) {
+                $byId[(int) $row['id']] = true;
+            }
+            $budget->checkpoint();
+        }
+
+        return $this->windowRowsWithinBudget(array_keys($byId));
+    }
+
+    /**
+     * Load admitted event rows under an actual stored-text/JSON byte budget.
+     * Size checks and row fetches share one transaction snapshot so a
+     * concurrent edit cannot grow a candidate after admission.
+     *
+     * @param list<int> $ids
+     * @return list<array>
+     */
+    private function windowRowsWithinBudget(array $ids): array
+    {
+        if ($ids === []) {
+            return [];
+        }
+        return $this->db->tx(function () use ($ids): array {
+            $bytes = 0;
+            $rows = [];
+            $limit = Limits::get('EVENT_WINDOW_BYTES');
+            foreach (array_chunk($ids, 250) as $chunk) {
+                [$in, $params] = Db::in($chunk);
+                $bytes += (int) $this->db->scalar(
+                    'SELECT COALESCE(SUM(' . self::WINDOW_SIZE_SQL . "), 0) FROM events WHERE id IN $in",
+                    $params
+                );
+                if ($bytes > $limit) {
+                    throw new WorkBudgetExceeded('stored event candidates are too large');
+                }
+                array_push($rows, ...$this->db->all("SELECT * FROM events WHERE id IN $in", $params));
+            }
+            return $rows;
+        });
+    }
+
+    /**
      * Resolve a q= text query into SQL-ready context: LIKE text match plus
      * tag-name matches; a query equal to or prefixed with `#` searches tags
      * only (mirrors GET /search).
      *
      * @return array{like:?string,tagOnly:bool,tagEventIds:list<int>}|null null = no query
      */
-    private function queryContext(int $userId, ?string $q): ?array
+    private function queryContext(int $userId, ?string $q, ?int $limit = null): ?array
     {
         $q = $q !== null ? trim($q) : '';
         if ($q === '') {
@@ -641,10 +762,14 @@ final class Events
         }
         $tagOnly = str_starts_with($q, '#');
         $term = $tagOnly ? trim(mb_substr($q, 1)) : $q;
+        $tagEventIds = $term !== '' ? $this->labels->eventIdsForTagQuery($userId, $term, $limit) : [];
+        if ($limit !== null && count($tagEventIds) > $limit) {
+            throw new WorkBudgetExceeded('too many tag-matched event candidates');
+        }
         return [
             'like' => $tagOnly || $term === '' ? null : '%' . addcslashes($term, '%_\\') . '%',
             'tagOnly' => $tagOnly,
-            'tagEventIds' => $term !== '' ? $this->labels->eventIdsForTagQuery($userId, $term) : [],
+            'tagEventIds' => $tagEventIds,
         ];
     }
 

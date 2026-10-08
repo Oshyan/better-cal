@@ -58,17 +58,27 @@ return new class implements PluginInterface {
             throw new \RuntimeException('NOAA: ' . ($data['error']['message'] ?? 'unknown error') . ' (station ' . $station . ')');
         }
         $preds = $data['predictions'] ?? [];
+        if (!is_array($preds) || count($preds) > $days * 8 + 16) {
+            throw new \RuntimeException('NOAA returned more tide predictions than requested');
+        }
         $tz = $host->timezone();
         $events = [];
         $ranges = [];
+        $requestStart = strtotime($begin . ' 00:00:00 UTC');
+        $requestEnd = strtotime($end . ' 23:59:59 UTC');
         foreach ($preds as $p) {
             $t = (string) ($p['t'] ?? '');          // "2026-08-07 04:33" GMT
             $v = (float) ($p['v'] ?? 0);
             $type = (string) ($p['type'] ?? '');
-            if ($t === '') {
+            if ($t === '' || !in_array($type, ['H', 'L'], true)
+                || preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/', $t) !== 1) {
                 continue;
             }
             $iso = str_replace(' ', 'T', $t) . ':00Z';
+            $predictionTs = strtotime($iso);
+            if ($predictionTs === false || $predictionTs < $requestStart - 86400 || $predictionTs > $requestEnd + 86400) {
+                continue;
+            }
             $word = $type === 'H' ? 'High' : 'Low';
             $events[] = [
                 'sourceKey' => 'tide-' . $station . '-' . preg_replace('/\D/', '', $t),

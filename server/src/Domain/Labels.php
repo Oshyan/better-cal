@@ -148,19 +148,20 @@ final class Labels
      *
      * @return list<int>
      */
-    public function eventIdsForTagQuery(int $userId, string $term): array
+    public function eventIdsForTagQuery(int $userId, string $term, ?int $limit = null): array
     {
         $term = trim($term);
         if ($term === '') {
             return [];
         }
         $like = '%' . addcslashes($term, '%_\\') . '%';
-        $rows = $this->db->all(
-            'SELECT DISTINCT et.event_id FROM event_tags et
+        $sql = 'SELECT DISTINCT et.event_id FROM event_tags et
              JOIN tags t ON t.id = et.tag_id
-             WHERE t.user_id = ? AND t.name LIKE ?',
-            [$userId, $like]
-        );
+             WHERE t.user_id = ? AND t.name LIKE ?';
+        if ($limit !== null) {
+            $sql .= ' LIMIT ' . max(1, $limit + 1);
+        }
+        $rows = $this->db->all($sql, [$userId, $like]);
         return array_map(static fn(array $row): int => (int) $row['event_id'], $rows);
     }
 

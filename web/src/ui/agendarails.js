@@ -84,7 +84,15 @@ function normalizeLoaded(loaded) {
   return out;
 }
 
-function withGaps(keys, byDay, occurrences, { rowH, headH, sepH, gapH, loaded }) {
+function visibleDayRows(bucket, maxRowsPerDay) {
+  const all = dayRows(bucket);
+  if (!Number.isFinite(maxRowsPerDay) || all.length <= maxRowsPerDay) {
+    return { rows: all, overflow: 0 };
+  }
+  return { rows: all.slice(0, maxRowsPerDay), overflow: all.length - maxRowsPerDay };
+}
+
+function withGaps(keys, byDay, occurrences, { rowH, headH, sepH, gapH, loaded, maxRowsPerDay }) {
   const ranges = normalizeLoaded(loaded);
   let first = keys.length ? epochDayOfKey(keys[0]) : Infinity;
   let last = keys.length ? epochDayOfKey(keys[keys.length - 1]) : -Infinity;
@@ -119,7 +127,7 @@ function withGaps(keys, byDay, occurrences, { rowH, headH, sepH, gapH, loaded })
     while (keyIndex < keyDays.length && keyDays[keyIndex] < d) keyIndex++;
     const k = keyOfEpochDay(d);
     if (byDay.has(k)) {
-      entries.push({ dayKey: k, rows: dayRows(byDay.get(k)) });
+      entries.push({ dayKey: k, ...visibleDayRows(byDay.get(k), maxRowsPerDay) });
       d++;
       continue;
     }
@@ -149,7 +157,7 @@ function withGaps(keys, byDay, occurrences, { rowH, headH, sepH, gapH, loaded })
   let prevEnd = null;
   for (const g of entries) {
     g.monthStart = prevEnd !== null && prevEnd.slice(0, 7) !== g.dayKey.slice(0, 7);
-    g.height = (g.gap ? gapH : headH + g.rows.length * rowH) + (g.monthStart ? sepH : 0);
+    g.height = (g.gap ? gapH : headH + (g.rows.length + (g.overflow ? 1 : 0)) * rowH) + (g.monthStart ? sepH : 0);
     g.top = offset;
     offset += g.height;
     prevEnd = g.gapTo || g.dayKey;
@@ -190,16 +198,24 @@ export function buildAgendaGroups(occurrences, opts = {}) {
   }
   const keys = [...byDay.keys()].sort();
   const sepH = opts.sepH ?? AGENDA_MONTH_SEP_H;
-  if (opts.gaps) return withGaps(keys, byDay, occurrences, { rowH, headH, sepH, gapH: opts.gapH ?? AGENDA_GAP_H, loaded: opts.loaded });
+  const maxRowsPerDay = opts.maxRowsPerDay ?? Infinity;
+  if (opts.gaps) return withGaps(keys, byDay, occurrences, {
+    rowH,
+    headH,
+    sepH,
+    gapH: opts.gapH ?? AGENDA_GAP_H,
+    loaded: opts.loaded,
+    maxRowsPerDay,
+  });
   let offset = 0;
   return keys.map((k, i) => {
-    const rows = dayRows(byDay.get(k));
+    const { rows, overflow } = visibleDayRows(byDay.get(k), maxRowsPerDay);
     // A month separator is a real band inside the group that opens the month,
     // not an overlay: its height has to be in the layout or it draws on top
     // of the previous day's last row.
     const monthStart = i > 0 && keys[i - 1].slice(0, 7) !== k.slice(0, 7);
-    const height = headH + rows.length * rowH + (monthStart ? sepH : 0);
-    const g = { dayKey: k, rows, top: offset, height, monthStart };
+    const height = headH + (rows.length + (overflow ? 1 : 0)) * rowH + (monthStart ? sepH : 0);
+    const g = { dayKey: k, rows, overflow, top: offset, height, monthStart };
     offset += height;
     return g;
   });
@@ -215,23 +231,27 @@ export function buildAgendaGroups(occurrences, opts = {}) {
 // presentation-free without it).
 // Returns [{instanceId, calendarId, title, isTrip, topPx, heightPx, lane, color}].
 // Pixel range of every multi-day span, start pill top to end pill bottom.
-// Shared by the rails (which add lanes and a cap) and the background washes
-// (which take all of them). Returns [{occ, topPx, heightPx}], top-down.
+// Shared by the rails and background washes, which apply independent render
+// caps. Returns [{occ, topPx, heightPx}], top-down.
 export function spanPixelRanges(groups, opts = {}) {
   const rowH = opts.rowH ?? AGENDA_ROW_H;
   const headH = opts.headH ?? AGENDA_HEAD_H;
   const sepH = opts.sepH ?? AGENDA_MONTH_SEP_H;
-  const byKey = new Map(groups.map((g) => [g.dayKey, g]));
+  const ends = new Map();
+  for (const group of groups) {
+    group.rows.forEach((row, index) => {
+      if (row.kind === 'end') ends.set(row.occ.instanceId, { group, index });
+    });
+  }
   const spans = [];
   for (const g of groups) {
     g.rows.forEach((row, i) => {
       if (row.kind !== 'start') return;
       const occ = row.occ;
-      const { endKey } = occurrenceDaySpan(occ);
-      const eg = byKey.get(endKey);
-      if (!eg) return; // boundary group missing: rows only, no rail
-      const ei = eg.rows.findIndex((r) => r.kind === 'end' && r.occ.instanceId === occ.instanceId);
-      if (ei < 0) return;
+      const end = ends.get(occ.instanceId);
+      if (!end) return; // boundary row omitted or missing: rows only, no rail
+      const eg = end.group;
+      const ei = end.index;
       // Full pill coverage: the 20px chip is centered in the 36px row (8px
       // insets), so the bar runs from the TOP of the start pill to the BOTTOM
       // of the end pill. Anything shorter visibly stops mid-pill because chip
@@ -250,14 +270,14 @@ export function spanPixelRanges(groups, opts = {}) {
 
 export function railRanges(groups, opts = {}) {
   const maxLanes = opts.maxLanes ?? MAX_RAIL_LANES;
-  const spans = spanPixelRanges(groups, opts);
+  const spans = opts.spans ?? spanPixelRanges(groups, opts);
   const laneBottoms = []; // per-lane occupied bottom px
   const out = [];
   for (const s of spans) {
     let lane = laneBottoms.findIndex((bottom) => bottom <= s.topPx);
-    if (lane === -1) { lane = laneBottoms.length; laneBottoms.push(0); }
+    if (lane === -1 && laneBottoms.length < maxLanes) { lane = laneBottoms.length; laneBottoms.push(0); }
+    if (lane === -1) continue;
     laneBottoms[lane] = s.topPx + s.heightPx;
-    if (lane >= maxLanes) continue; // overflow: no rail for this one
     out.push({
       instanceId: s.occ.instanceId,
       calendarId: s.occ.calendarId,
@@ -280,12 +300,14 @@ export function railRanges(groups, opts = {}) {
 // Returns [{instanceId, topPx, heightPx, color}], longest-first so shorter
 // spans layer above longer ones.
 export function washRects(groups, opts = {}) {
-  return spanPixelRanges(groups, opts)
+  const maxRects = opts.maxRects ?? 100;
+  return (opts.spans ?? spanPixelRanges(groups, opts))
     .map((s) => ({
       instanceId: s.occ.instanceId,
       topPx: s.topPx,
       heightPx: s.heightPx,
       color: opts.colorOf ? opts.colorOf(s.occ) : undefined,
     }))
-    .sort((a, b) => b.heightPx - a.heightPx);
+    .sort((a, b) => b.heightPx - a.heightPx)
+    .slice(0, maxRects);
 }

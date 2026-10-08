@@ -24,6 +24,46 @@ import { localTz } from '../lib/dates.js';
 const SESSION_KEY = 'bc-handoff';
 const CACHE_NAME = 'bc-handoff';
 const CACHE_KEY = '/__handoff';
+const MAX_HANDOFF_BYTES = 20480;
+const MAX_SHARE_CHARS = 4000;
+
+async function boundedResponseText(res, maxBytes = MAX_HANDOFF_BYTES) {
+  const hinted = Number(res.headers.get('Content-Length') || 0);
+  if (Number.isFinite(hinted) && hinted > maxBytes) throw new Error('handoff too large');
+  if (!res.body || typeof res.body.getReader !== 'function') throw new Error('handoff is not stream-readable');
+  const reader = res.body.getReader();
+  const chunks = [];
+  let bytes = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    bytes += value.byteLength;
+    if (bytes > maxBytes) {
+      try { await reader.cancel(); } catch { /* already closed */ }
+      throw new Error('handoff too large');
+    }
+    chunks.push(value);
+  }
+  const body = new Uint8Array(bytes);
+  let offset = 0;
+  for (const chunk of chunks) { body.set(chunk, offset); offset += chunk.byteLength; }
+  return new TextDecoder('utf-8', { fatal: true }).decode(body);
+}
+
+export function normalizeShareParams(value) {
+  if (!value || typeof value !== 'object') return null;
+  const out = {};
+  let total = 0;
+  for (const key of ['title', 'text', 'url']) {
+    const field = value[key];
+    if (field == null || field === '') continue;
+    if (typeof field !== 'string' || field.length > MAX_SHARE_CHARS) return null;
+    total += field.length;
+    if (total > MAX_SHARE_CHARS) return null;
+    out[key] = field;
+  }
+  return out;
+}
 
 /** @returns {Promise<{path:string, search?:string, params?:object}|null>} */
 export async function takeHandoff() {
@@ -31,6 +71,7 @@ export async function takeHandoff() {
     const raw = sessionStorage.getItem(SESSION_KEY);
     if (raw) {
       sessionStorage.removeItem(SESSION_KEY);
+      if (raw.length > MAX_HANDOFF_BYTES) return null;
       const h = JSON.parse(raw);
       if (h && typeof h.path === 'string') return h;
     }
@@ -41,7 +82,7 @@ export async function takeHandoff() {
     const res = await cache.match(CACHE_KEY);
     if (!res) return null;
     await cache.delete(CACHE_KEY);
-    const h = await res.json();
+    const h = JSON.parse(await boundedResponseText(res));
     return h && typeof h.path === 'string' ? h : null;
   } catch {
     return null;
@@ -50,6 +91,10 @@ export async function takeHandoff() {
 
 export async function runHandoff(handoff) {
   if (!handoff) return;
+  if (handoff.error) {
+    toast(String(handoff.error).slice(0, 200), { error: true });
+    return;
+  }
   const { path } = handoff;
   const params = new URLSearchParams(handoff.search || '');
 
@@ -103,7 +148,11 @@ export async function runHandoff(handoff) {
     if (params.get('connected')) toast('Google account connected. Pick the calendars to add below.');
     else if (params.get('error')) toast(GOOGLE_ERRORS[params.get('error')] || 'Google sign-in did not complete. Try again.', { error: true });
   } else if (path === '/share') {
-    const p = handoff.params || {};
+    const p = normalizeShareParams(handoff.params);
+    if (p === null) {
+      toast('That shared item was too large or invalid, so it was not opened.', { error: true });
+      return;
+    }
     const shared = [p.url, p.text, p.title].filter(Boolean).join(' ').trim();
     // First URL in the shared payload decides the route.
     const m = shared.match(/https?:\/\/\S+|webcal:\/\/\S+/i);

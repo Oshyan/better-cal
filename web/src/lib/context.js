@@ -159,7 +159,9 @@ export function dayLabelsByDay(occurrences, calendars) {
 
 /** The label's words: the titles, source prefix dropped, joined. */
 export function dayLabelText(occs) {
-  return occs.map((o) => contextText(o) || '(untitled)').join(' · ');
+  const shown = occs.slice(0, 20).map((o) => contextText(o) || '(untitled)');
+  if (occs.length > shown.length) shown.push(`+${occs.length - shown.length} more`);
+  return shown.join(' · ');
 }
 
 export function contextByDay(occurrences, calendars) {

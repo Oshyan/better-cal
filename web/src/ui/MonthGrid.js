@@ -716,9 +716,12 @@ function WeekRow({
   // On a desktop they fit the cell's width (#108): a wide screen shows them
   // all, not two and "+N".
   const ctxMax = mobile ? (columns >= 7 ? 0 : 1) : Infinity;
-  const bandLanes = assignLanes(bandList.map((b) => ({ id: b.occ.instanceId + ':' + b.seg.startCol, startCol: b.seg.startCol, endCol: b.seg.endCol })));
+  const bandLanes = assignLanes(
+    bandList.map((b) => ({ id: b.occ.instanceId + ':' + b.seg.startCol, startCol: b.seg.startCol, endCol: b.seg.endCol })),
+    MAX_BAND_LANES,
+  );
   let bandLaneCount = 0;
-  for (const l of bandLanes.values()) bandLaneCount = Math.max(bandLaneCount, l + 1);
+  for (const l of bandLanes.values()) if (l < MAX_BAND_LANES) bandLaneCount = Math.max(bandLaneCount, l + 1);
   const shownBandLanes = Math.min(bandLaneCount, MAX_BAND_LANES);
   const bandOffset = shownBandLanes * bandH;
   const bandExtraByCol = new Array(columns).fill(0);
@@ -742,11 +745,14 @@ function WeekRow({
   const cap = Math.min(capacity, Math.max(1, Math.floor((rowH - CELL_HEAD - bandOffset - 4) / chipRow)));
 
   const barList = bars || [];
-  const lanes = assignLanes(barList.map((b) => ({ id: b.occ.instanceId + ':' + b.seg.startCol, startCol: b.seg.startCol, endCol: b.seg.endCol })));
+  const maxBarLanes = Math.max(1, cap - 1);
+  const lanes = assignLanes(
+    barList.map((b) => ({ id: b.occ.instanceId + ':' + b.seg.startCol, startCol: b.seg.startCol, endCol: b.seg.endCol })),
+    maxBarLanes,
+  );
   let barLaneCount = 0;
-  for (const l of lanes.values()) barLaneCount = Math.max(barLaneCount, l + 1);
-  const maxBarLanes = Math.min(barLaneCount, Math.max(1, cap - 1));
-  const chipStartLane = Math.min(barLaneCount, maxBarLanes);
+  for (const l of lanes.values()) if (l < maxBarLanes) barLaneCount = Math.max(barLaneCount, l + 1);
+  const chipStartLane = barLaneCount;
   // Hidden bar segments count toward each covered day's overflow.
   const extraByCol = new Array(columns).fill(0);
   const visibleBars = [];

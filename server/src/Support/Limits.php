@@ -7,12 +7,11 @@ namespace BetterCal\Support;
 /**
  * Work budgets: how much of anything the app will take in one go.
  *
- * Every entry here bounds input that someone ELSE wrote (a remote request, a
- * subscribed feed, an emailed invitation, an imported file, a CalDAV client)
- * before it turns into parser memory, database writes or browser work. They
- * are not quotas on the owner; each default is far above what a real calendar
- * produces, and the point is that a hostile or broken input fails cleanly with
- * a message instead of taking the request, worker, import or tab down with it.
+ * Entries here bound externally supplied input and aggregate work/output that
+ * such input can trigger before it turns into parser memory, database writes,
+ * worker starvation or browser work. They are not quotas on the owner; each
+ * default is far above ordinary use, and the point is that a hostile or broken
+ * input fails cleanly instead of taking a request, worker, import or tab down.
  *
  * One place, so an operator can see and tune all of them: each has an env
  * override (BETTERCAL_LIMIT_<NAME>, see .env.example), read by config() and
@@ -37,6 +36,11 @@ final class Limits
         // really has, see importEventBudget().
         'IMPORT_BYTES' => 26214400,      // 25 MiB
         'IMPORT_EVENTS' => 20000,
+        // One operator-run Takeout migration. Files still commit one at a
+        // time, but an accidentally selected export root cannot turn into an
+        // unbounded filesystem walk/read job.
+        'TAKEOUT_FILES' => 1000,
+        'TAKEOUT_TOTAL_BYTES' => 1073741824, // 1 GiB of admitted .ics files
         // One subscribed feed, per poll. Parsing is bounded before it starts,
         // like an import: a hostile feed of tiny events otherwise exhausted the
         // worker's memory on every poll (scan 2026-09-23, F8). Also capped by
@@ -61,6 +65,21 @@ final class Limits
         // schedule and each fetch builds the whole file; over the cap the
         // oldest past events are left off first (#110).
         'OUTFEED_EVENTS' => 5000,
+        'OUTFEED_BYTES' => 16777216,      // 16 MiB complete generated calendar
+        'OUTFEED_RELATIONS' => 20000,
+        // One recurrence-consuming operation, shared across every series it
+        // visits. The per-series 1,000-instance guard remains a separate,
+        // user-visible condition.
+        'EXPANSION_SERIES' => 5000,
+        'EXPANSION_OCCURRENCES' => 10000,
+        'EXPANSION_SECONDS' => 8,
+        'EVENT_WINDOW_BYTES' => 33554432, // 32 MiB of stored candidate text/JSON
+        // Plugins get smaller read/write snapshots than the interactive
+        // calendar. Whole-snapshot syncs reject rather than truncate, because
+        // truncation would delete the unseen tail.
+        'PLUGIN_WINDOW_EVENTS' => 5000,
+        'PLUGIN_SYNC_EVENTS' => 2000,
+        'PLUGIN_SYNC_BYTES' => 8388608,   // 8 MiB of scalar input
         // One CalDAV object (one event plus its overrides) from a client.
         'DAV_OBJECT_BYTES' => 1048576,   // 1 MiB
         'DAV_OVERRIDES' => 500,
@@ -124,6 +143,10 @@ final class Limits
     /** Security ceilings: an operator may tune these budgets, but not remove the bound. */
     private const MAXIMUMS = [
         'JSON_BODY_BYTES' => 4194304,    // 4 MiB; unauthenticated requests reach this boundary
+        'IMPORT_BYTES' => 104857600,
+        'IMPORT_EVENTS' => 50000,
+        'TAKEOUT_FILES' => 5000,
+        'TAKEOUT_TOTAL_BYTES' => 4294967296,
         'GOOGLE_SYNC_EVENTS' => 50000,
         'GOOGLE_SYNC_BYTES' => 67108864,
         'GOOGLE_SYNC_PAGES' => 60,
@@ -132,6 +155,16 @@ final class Limits
         'GOOGLE_CALENDAR_LIST_BYTES' => 20971520,
         'GOOGLE_CALENDAR_LIST_PAGES' => 60,
         'GOOGLE_CALENDAR_LIST_SECONDS' => 30,
+        'OUTFEED_EVENTS' => 10000,
+        'OUTFEED_BYTES' => 33554432,
+        'OUTFEED_RELATIONS' => 50000,
+        'EXPANSION_SERIES' => 10000,
+        'EXPANSION_OCCURRENCES' => 25000,
+        'EXPANSION_SECONDS' => 15,
+        'EVENT_WINDOW_BYTES' => 67108864,
+        'PLUGIN_WINDOW_EVENTS' => 10000,
+        'PLUGIN_SYNC_EVENTS' => 5000,
+        'PLUGIN_SYNC_BYTES' => 16777216,
         'MAIL_BYTES' => 26214400,        // 25 MiB; size preflight keeps headers/bodies behind this
         'MAIL_EVENTS_PER_DAY' => 500,
         'MAIL_EVENTS_PER_SENDER_DAY' => 100,

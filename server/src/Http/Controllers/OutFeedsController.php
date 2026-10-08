@@ -45,9 +45,18 @@ final class OutFeedsController
     }
 
     /** Public, unauthenticated: GET /feed/{token}.ics */
-    public function publicFeed(string $token): Response
+    public function publicFeed(string $token, bool $headOnly = false): Response
     {
-        $ics = $this->outFeeds->renderByToken($token);
+        try {
+            $ics = $this->outFeeds->renderByToken($token, $headOnly);
+        } catch (\LengthException) {
+            return Response::text(
+                'This published calendar is too large to generate safely. Reduce its scope or publish a narrower search.',
+                'text/plain; charset=utf-8',
+                413,
+                ['Cache-Control' => 'no-store'],
+            );
+        }
         if ($ics === null) {
             return Response::text('Not found', 'text/plain; charset=utf-8', 404);
         }

@@ -30,9 +30,11 @@ use BetterCal\Infra\LlmTransport;
 use BetterCal\Infra\CurlLlmTransport;
 use BetterCal\Infra\PoliciedGeocoderTransport;
 use BetterCal\Support\Ids;
+use BetterCal\Support\ExpansionBudget;
 use BetterCal\Support\Limits;
 use BetterCal\Support\RemotePaginationBudget;
 use BetterCal\Support\Time;
+use BetterCal\Support\WorkBudgetExceeded;
 
 $GLOBALS['__pass'] = 0;
 $GLOBALS['__fail'] = 0;
@@ -2341,6 +2343,126 @@ checkEq('non-recurring emits one occurrence', 1, count($occs));
 $occs = $rec->expand($single, [], Time::fromDb('2027-01-01 00:00:00'), Time::fromDb('2027-02-01 00:00:00'));
 checkEq('non-recurring outside window emits none', 0, count($occs));
 
+// One aggregate budget is shared across every series in an operation. Exact
+// limits remain usable; the first unit over stops before more output is built.
+{
+    $clock = 100.0;
+    $budget = new ExpansionBudget(2, 3, 5.0, static function () use (&$clock): float { return $clock; });
+    $budget->beginSeries();
+    $budget->beginSeries();
+    $budget->occurrence(3);
+    checkEq('recurrence budget: exact series and occurrence limits are admitted', ['series' => 2, 'occurrences' => 3], $budget->usage());
+    checkEq('recurrence budget: stored candidate admission combines the independent ceilings', [5, 3], [$budget->candidateRowLimit(), $budget->occurrenceLimit()]);
+    try {
+        $budget->occurrence();
+        check('recurrence budget: first occurrence over is refused', false);
+    } catch (WorkBudgetExceeded) {
+        check('recurrence budget: first occurrence over is refused', true);
+    }
+
+    $clockBudget = new ExpansionBudget(10, 10, 5.0, static function () use (&$clock): float { return $clock; });
+    $clock = 105.0;
+    $clockBudget->checkpoint();
+    check('recurrence budget: exact elapsed-time limit is admitted', true);
+    $clock = 105.001;
+    try {
+        $clockBudget->checkpoint();
+        check('recurrence budget: elapsed work over the limit is refused', false);
+    } catch (WorkBudgetExceeded) {
+        check('recurrence budget: elapsed work over the limit is refused', true);
+    }
+
+    $oneOccurrence = new Recurrence(static function (array $master, DateTimeImmutable $start): array {
+        return [['start' => $start, 'end' => $start->modify('+1 hour')]];
+    });
+    $shared = new ExpansionBudget(10, 1, 60.0);
+    $repeat = array_replace($single, ['rrule' => 'FREQ=DAILY']);
+    $oneOccurrence->expand($repeat, [], $win[0], $win[1], $shared);
+    try {
+        $oneOccurrence->expand(array_replace($repeat, ['id' => 21, 'uid' => 'u3']), [], $win[0], $win[1], $shared);
+        check('recurrence budget: separate series cannot reset the operation cap', false);
+    } catch (WorkBudgetExceeded) {
+        check('recurrence budget: separate series cannot reset the operation cap', true);
+    }
+}
+
+// Dense stored rows are refused by bounded SQL reads, before expansion or
+// serialization materializes the complete matching set.
+{
+    $wdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $wdb->run('CREATE TABLE events (
+        id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, deleted_at TEXT,
+        recurrence_parent_id INTEGER, rrule TEXT, start_utc TEXT, end_utc TEXT
+    )');
+    foreach ([1, 2, 3] as $id) {
+        $wdb->run("INSERT INTO events VALUES (?, 1, 1, NULL, NULL, NULL, '2026-01-10 10:00:00', '2026-01-10 11:00:00')", [$id]);
+    }
+    $wundo = new BetterCal\Domain\Undo($wdb);
+    $wevents = new BetterCal\Domain\Events(
+        $wdb,
+        new Recurrence(),
+        $wundo,
+        new BetterCal\Domain\Labels($wdb),
+        new Filters($wdb, $wundo),
+        new BetterCal\Domain\Trips($wdb, $wundo),
+    );
+    try {
+        $wevents->window(
+            1,
+            Time::fromDb('2026-01-01 00:00:00'),
+            Time::fromDb('2026-02-01 00:00:00'),
+            null,
+            null,
+            true,
+            new ExpansionBudget(1, 1, 60.0),
+        );
+        check('event window admission: master rows over the aggregate budget are refused before expansion', false);
+    } catch (HttpError $e) {
+        checkEq('event window admission: master rows over the aggregate budget are refused before expansion', [422, 'event_window_too_large'], [$e->status, $e->errorCode]);
+    }
+
+    $wdb->run('DELETE FROM events');
+    foreach ([11, 12] as $id) {
+        $wdb->run("INSERT INTO events VALUES (?, 1, 1, NULL, 7, NULL, '2026-01-10 10:00:00', '2026-01-10 11:00:00')", [$id]);
+    }
+    $overrideLoader = (new ReflectionClass(BetterCal\Domain\Events::class))->getMethod('windowOverrides');
+    try {
+        $overrideLoader->invoke(
+            $wevents,
+            1,
+            [],
+            Time::fromDb('2026-01-01 00:00:00'),
+            Time::fromDb('2026-02-01 00:00:00'),
+            null,
+            1,
+            new ExpansionBudget(10, 10, 60.0),
+        );
+        check('event window admission: recurrence exceptions have a DB-level aggregate cap', false);
+    } catch (WorkBudgetExceeded) {
+        check('event window admission: recurrence exceptions have a DB-level aggregate cap', true);
+    }
+
+    $wbdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $wbdb->run("CREATE TABLE events (
+        id INTEGER PRIMARY KEY, uid TEXT, title TEXT, description TEXT, location TEXT, url TEXT,
+        tzid TEXT, rrule TEXT, exdates_json TEXT, reminders_json TEXT, style_json TEXT,
+        dynamic_json TEXT, invite_json TEXT, google_event_id TEXT, created_via TEXT, icon TEXT
+    )");
+    $wbdb->run("INSERT INTO events (id, uid, title, description) VALUES (1, 'sample-uid', 'Sample event', ?)", [str_repeat('x', 128)]);
+    $wbRc = new ReflectionClass(BetterCal\Domain\Events::class);
+    $wbEvents = $wbRc->newInstanceWithoutConstructor();
+    $wbRc->getProperty('db')->setValue($wbEvents, $wbdb);
+    Limits::configure(['EVENT_WINDOW_BYTES' => 64]);
+    try {
+        $wbRc->getMethod('windowRowsWithinBudget')->invoke($wbEvents, [1]);
+        check('event window admission: stored text and JSON bytes are checked before full rows are loaded', false);
+    } catch (WorkBudgetExceeded) {
+        check('event window admission: stored text and JSON bytes are checked before full rows are loaded', true);
+    } finally {
+        Limits::reset();
+    }
+}
+
 // All-day series keep their dates in the event's own zone (0.9.14). Stored as
 // local midnights, they used to be read back as UTC midnights, a day early
 // anywhere west of UTC.
@@ -2371,7 +2493,7 @@ checkEq('all-day weekly in UTC unchanged', ['2026-08-31 00:00:00', '2026-09-02 0
     $rmdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
     $rmdb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, settings_json TEXT)');
     $rmdb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, provider TEXT, settings_json TEXT)');
-    $rmdb->run("CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, start_utc TEXT, end_utc TEXT, all_day INTEGER, tzid TEXT, rrule TEXT, exdates_json TEXT, recurrence_instance_utc TEXT, recurrence_parent_id INTEGER, status TEXT DEFAULT 'confirmed', attendance TEXT DEFAULT 'none', deleted_at TEXT, reminders_json TEXT, location TEXT, url TEXT, description TEXT)");
+    $rmdb->run("CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, start_utc TEXT, end_utc TEXT, all_day INTEGER, tzid TEXT, rrule TEXT, exdates_json TEXT, recurrence_instance_utc TEXT, recurrence_parent_id INTEGER, status TEXT DEFAULT 'confirmed', source TEXT DEFAULT 'local', attendance TEXT DEFAULT 'none', deleted_at TEXT, reminders_json TEXT, location TEXT, location_lat REAL, location_lng REAL, url TEXT, description TEXT)");
     $rmdb->run('CREATE TABLE event_duplicates (id INTEGER PRIMARY KEY, event_a INTEGER, event_b INTEGER, status TEXT)');
     $rmdb->run('INSERT INTO users VALUES (1, ?, ?)', ['owner@example.com', json_encode(['tz' => 'America/Los_Angeles', 'reminderAllDay' => [['daysBefore' => 0, 'time' => '18:00']]])]);
     $rmdb->run("INSERT INTO calendars VALUES (1, 1, 'local', 'ics', NULL)");
@@ -2383,13 +2505,27 @@ checkEq('all-day weekly in UTC unchanged', ['2026-08-31 00:00:00', '2026-09-02 0
     }
     $rmDue = $rmRc->getMethod('dueForUser')->invoke($rm, 1, Time::fromDb('2026-10-11 01:00:30'));
     checkEq('reminders: evening reminder for a UTC-stored all-day day is due', ['1:20261010T000000Z:-1500'], array_map(static fn($d) => $d['key'], $rmDue));
+
+    for ($id = 2; $id <= 252; $id++) {
+        $rmdb->run("INSERT INTO events (id, user_id, calendar_id, uid, title, start_utc, end_utc, all_day, tzid)
+                    VALUES (?, 1, 1, ?, 'Sample day', '2026-10-10 00:00:00', '2026-10-11 00:00:00', 1, 'UTC')", [$id, 'sample-' . $id]);
+    }
+    $sliceMethod = $rmRc->getMethod('dueForUserSlice');
+    $firstSlice = $sliceMethod->invoke($rm, 1, Time::fromDb('2026-10-11 01:00:30'), 'masters', 0);
+    $secondSlice = $sliceMethod->invoke($rm, 1, Time::fromDb('2026-10-11 01:00:30'), $firstSlice['phase'], $firstSlice['afterId']);
+    checkEq('reminders: a dense stored set advances through bounded durable slices',
+        [[true, 'masters', 250, 250], [true, 'overrides', 0, 2]],
+        [
+            [$firstSlice['more'], $firstSlice['phase'], $firstSlice['afterId'], count($firstSlice['due'])],
+            [$secondSlice['more'], $secondSlice['phase'], $secondSlice['afterId'], count($secondSlice['due'])],
+        ]);
 }
 
 // An outbound feed over its cap keeps the events nearest today: the oldest
 // past ones are left off, never the upcoming ones (#110).
 {
     $odb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
-    $odb->run("CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, title TEXT, start_utc TEXT, end_utc TEXT, rrule TEXT, attendance TEXT DEFAULT 'none', deleted_at TEXT)");
+    $odb->run("CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, description TEXT, location TEXT, url TEXT, start_utc TEXT, end_utc TEXT, all_day INTEGER DEFAULT 0, tzid TEXT DEFAULT 'UTC', rrule TEXT, exdates_json TEXT, reminders_json TEXT, status TEXT DEFAULT 'confirmed', recurrence_instance_utc TEXT, attendance TEXT DEFAULT 'none', deleted_at TEXT)");
     $now = Time::nowUtc();
     $at = static fn(int $days): string => Time::toDb($now->modify(($days >= 0 ? '+' : '') . $days . ' days'));
     foreach ([-300 => 'old past', -10 => 'recent past', 5 => 'soon', 40 => 'later', -2000 => 'old series'] as $d => $title) {
@@ -2403,6 +2539,86 @@ checkEq('all-day weekly in UTC unchanged', ['2026-08-31 00:00:00', '2026-09-02 0
     checkEq('outfeed: under the cap, everything in the last year and every series, in date order', ['old series', 'old past', 'recent past', 'soon', 'later'], $oTitles(10));
     checkEq('outfeed: over the cap, the oldest past events go first', ['old series', 'recent past', 'soon', 'later'], $oTitles(4));
     checkEq('outfeed: a cap smaller than what is ahead keeps the nearest upcoming', ['old series', 'soon'], $oTitles(2));
+
+}
+
+// Relationship expansion is separately bounded before a public feed can
+// materialize an arbitrarily large RELATED-TO map.
+{
+    $rdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $rdb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, uid TEXT, deleted_at TEXT, is_container INTEGER DEFAULT 0)');
+    $rdb->run('CREATE TABLE event_links (id INTEGER PRIMARY KEY, container_id INTEGER, event_id INTEGER, position INTEGER)');
+    $rdb->run("INSERT INTO events (id, uid, is_container) VALUES (1, 'trip-1', 1), (2, 'member-2', 0), (3, 'member-3', 0), (4, 'member-4', 0)");
+    $rdb->run('INSERT INTO event_links (container_id, event_id, position) VALUES (1, 2, 0), (1, 3, 1), (1, 4, 2)');
+    checkEq('outfeed relationships: exact limit is admitted', 3,
+        count(BetterCal\Domain\Trips::relatedUidMap($rdb, [1], 3)['children'][1]));
+    try {
+        BetterCal\Domain\Trips::relatedUidMap($rdb, [1], 2);
+        check('outfeed relationships: first link over is refused', false);
+    } catch (LengthException) {
+        check('outfeed relationships: first link over is refused', true);
+    }
+}
+
+// The public boundary refuses an oversized source set before relationship or
+// ICS copies are built, and returns the same controlled result for GET/HEAD.
+{
+    $fdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $fdb->run("CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, description TEXT, location TEXT, url TEXT, start_utc TEXT, end_utc TEXT, all_day INTEGER DEFAULT 0, tzid TEXT DEFAULT 'UTC', rrule TEXT, exdates_json TEXT, reminders_json TEXT, status TEXT DEFAULT 'confirmed', recurrence_instance_utc TEXT, attendance TEXT DEFAULT 'none', deleted_at TEXT, is_container INTEGER DEFAULT 0, dynamic_json TEXT)");
+    $fdb->run('CREATE TABLE event_links (id INTEGER PRIMARY KEY, container_id INTEGER, event_id INTEGER, position INTEGER)');
+    $fdb->run('CREATE TABLE out_feeds (id INTEGER PRIMARY KEY, user_id INTEGER, token TEXT, name TEXT, scope_json TEXT, description TEXT, created_by_token_id INTEGER)');
+    $fdb->run("INSERT INTO out_feeds (user_id, token, name, scope_json) VALUES (1, 'sample-token-1234567890', 'Sample feed', '{\"type\":\"all\"}')");
+    $fdb->run("INSERT INTO events (user_id, calendar_id, uid, title, description, start_utc, end_utc) VALUES (1, 1, 'sample-uid', 'Sample event', ?, '2026-10-01 10:00:00', '2026-10-01 11:00:00')", [str_repeat('x', 600)]);
+    Limits::configure(['OUTFEED_BYTES' => 900]);
+    $feedDomain = new BetterCal\Domain\OutFeeds($fdb, new BetterCal\Domain\Search($fdb, new BetterCal\Domain\Labels($fdb)), []);
+    $feedController = new BetterCal\Http\Controllers\OutFeedsController($feedDomain);
+    $feedGet = $feedController->publicFeed('sample-token-1234567890');
+    $feedHead = $feedController->publicFeed('sample-token-1234567890', true);
+    checkEq('outfeed source budget: oversized GET and HEAD fail in a small controlled response',
+        [[413, 'no-store'], [413, 'no-store']],
+        [[$feedGet->status, $feedGet->headers['Cache-Control'] ?? null], [$feedHead->status, $feedHead->headers['Cache-Control'] ?? null]]);
+    $fdb->run('UPDATE events SET description = ?, dynamic_json = ?', ['Short note', str_repeat('z', 1000000)]);
+    $projected = $feedDomain->renderByToken('sample-token-1234567890');
+    check('outfeed source budget: a large non-exported JSON field is never loaded into or copied through the feed path',
+        is_string($projected) && strlen($projected) < 900 && !str_contains($projected, str_repeat('z', 100)));
+    Limits::reset();
+}
+
+// A sync that passed its final in-transaction deadline check is not reported
+// as a timeout merely because commit/return crossed the outer wall-clock edge;
+// additional work after that short edge is still a timeout.
+{
+    $hostRc = new ReflectionClass(BetterCal\Plugin\PluginHost::class);
+    $host = $hostRc->newInstanceWithoutConstructor();
+    $hostRc->getProperty('startedAt')->setValue($host, microtime(true) - 61.0);
+    $hostRc->getProperty('committedSyncAt')->setValue($host, microtime(true));
+    check('plugin sync deadline: an immediately returned safe commit is not reclassified as failed',
+        $host->overBudget() && $host->committedSyncWithinBudget());
+    $hostRc->getProperty('committedSyncAt')->setValue($host, microtime(true) - 3.0);
+    check('plugin sync deadline: later plugin work remains a timeout', !$host->committedSyncWithinBudget());
+
+    $psdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $psdb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, plugin_id TEXT)');
+    $psdb->run('CREATE TABLE events (
+        id INTEGER PRIMARY KEY, calendar_id INTEGER, uid TEXT, title TEXT, start_utc TEXT, end_utc TEXT,
+        all_day INTEGER, description TEXT, location TEXT, deleted_at TEXT
+    )');
+    $psdb->run("INSERT INTO calendars VALUES (1, 1, 'plugin', 'sample')");
+    $psdb->run("INSERT INTO events VALUES (1, 1, 'plg-sample-one', 'Sample event',
+        '2026-10-08 10:00:00', '2026-10-08 11:00:00', 0, NULL, NULL, NULL)");
+    $atomicHost = $hostRc->newInstanceWithoutConstructor();
+    foreach (['db' => $psdb, 'userId' => 1, 'pluginId' => 'sample', 'startedAt' => microtime(true)] as $property => $value) {
+        $hostRc->getProperty($property)->setValue($atomicHost, $value);
+    }
+    try {
+        // The missing mutations table makes the activity write fail after
+        // deletion. The event must return with the rest of the transaction.
+        $atomicHost->syncEvents(1, []);
+        check('plugin sync atomicity: a post-deletion failure aborts the sync', false);
+    } catch (Throwable) {
+        checkEq('plugin sync atomicity: a post-deletion failure restores the prior snapshot', 1,
+            (int) $psdb->scalar('SELECT COUNT(*) FROM events WHERE id = 1'));
+    }
 }
 
 // Undo right after a creation undoes the creation, not the change before it.
@@ -3134,7 +3350,11 @@ checkEq('pd fail -> highlight', 'highlight', Filters::promptDisposition($promptR
     checkEq('prompt budget: one bounded Review notice names the affected calendar', [1, 20, 'Other feed'], [count($modelNotices), $modelNotices[0]['detail']['calendarId'] ?? null, $modelNotices[0]['detail']['calendarName'] ?? null]);
     checkEq('prompt budget: unevaluated events remain fail-open', 0, (int) $pedb->scalar('SELECT COUNT(*) FROM filter_evals'));
     $pedb->run("INSERT INTO jobs (type, payload_json, run_after, status) VALUES ('filter_eval', '{}', '2026-01-01 00:00:00', 'pending'), ('reminder_scan', '{}', '2026-01-01 00:00:01', 'pending')");
-    checkEq('prompt budget: due reminders outrank an older model-work backlog', 'reminder_scan', $peQueue->claimNext()['type'] ?? null);
+    $claimedReminder = $peQueue->claimNext();
+    checkEq('prompt budget: due reminders outrank an older model-work backlog', 'reminder_scan', $claimedReminder['type'] ?? null);
+    check('reminder cycle: a running slice suppresses a second root', $peQueue->hasPending('reminder_scan'));
+    $peQueue->markDone((int) $claimedReminder['id']);
+    check('reminder cycle: a completed final slice allows the next root', !$peQueue->hasPending('reminder_scan'));
     Limits::reset();
 }
 checkEq('pd dim beats highlight', 'dim', Filters::promptDisposition($promptRow, [$pfHl, $pfDim], $failAllHl));
@@ -5100,6 +5320,34 @@ require __DIR__ . '/plugins.php';
         Ics::budgetProblem("BEGIN:VEVENT\r\nDESCRIPTION:see BEGIN:VEVENT in the docs\r\nBEGIN:VALARM\r\nEND:VALARM\r\nEND:VEVENT\r\n", 1000, 1));
     checkEq('mail: a calendar-sized "invitation" is not parsed at all', null, MailIngest::parseImip($cal($L::get('MAIL_ICS_EVENTS') + 1)));
 
+    $admissionPath = tempnam(sys_get_temp_dir(), 'bc-ics-');
+    $admissionBody = $cal(2);
+    file_put_contents($admissionPath, $admissionBody);
+    $admitted = Ics::readAdmittedFile($admissionPath, strlen($admissionBody), 2);
+    checkEq('file admission: exact byte and event limits are readable', [null, $admissionBody], [$admitted['problem'], $admitted['content']]);
+    $refused = Ics::readAdmittedFile($admissionPath, strlen($admissionBody) - 1, 2);
+    check('file admission: first byte over is refused before parsing', $refused['content'] === null && str_contains((string) $refused['problem'], 'over'));
+    $linkPath = $admissionPath . '-link';
+    if (@symlink($admissionPath, $linkPath)) {
+        check('file admission: symbolic links are not followed', Ics::readAdmittedFile($linkPath, 100000, 10)['content'] === null);
+        unlink($linkPath);
+    }
+    unlink($admissionPath);
+
+    $calendarRow = [
+        'uid' => 'sample-1', 'title' => 'Sample event', 'start_utc' => '2026-10-01 10:00:00',
+        'end_utc' => '2026-10-01 11:00:00', 'all_day' => 0, 'tzid' => 'UTC', 'status' => 'confirmed',
+    ];
+    $calendarText = Ics::buildCalendar('Sample calendar', null, [$calendarRow]);
+    checkEq('outfeed output: exact serialized byte budget is admitted', strlen($calendarText),
+        strlen(Ics::buildCalendar('Sample calendar', null, [$calendarRow], strlen($calendarText))));
+    try {
+        Ics::buildCalendar('Sample calendar', null, [$calendarRow], strlen($calendarText) - 1);
+        check('outfeed output: first serialized byte over is refused', false);
+    } catch (LengthException) {
+        check('outfeed output: first serialized byte over is refused', true);
+    }
+
     // Limits: one block, overridable, and a typo cannot zero a limit.
     $L::reset();
     checkEq('limits: default', 1048576, $L::get('DAV_OBJECT_BYTES'));
@@ -5122,6 +5370,19 @@ require __DIR__ . '/plugins.php';
     checkEq('limits: Google pagination overrides retain hard ceilings', [50000, 67108864, 60, 45, 10000], [
         $L::get('GOOGLE_SYNC_EVENTS'), $L::get('GOOGLE_SYNC_BYTES'), $L::get('GOOGLE_SYNC_PAGES'),
         $L::get('GOOGLE_SYNC_SECONDS'), $L::get('GOOGLE_CALENDAR_LIST_ITEMS'),
+    ]);
+    $L::reset();
+    $L::configure([
+        'TAKEOUT_FILES' => PHP_INT_MAX,
+        'TAKEOUT_TOTAL_BYTES' => PHP_INT_MAX,
+        'OUTFEED_BYTES' => PHP_INT_MAX,
+        'OUTFEED_RELATIONS' => PHP_INT_MAX,
+        'EXPANSION_OCCURRENCES' => PHP_INT_MAX,
+        'PLUGIN_SYNC_EVENTS' => PHP_INT_MAX,
+    ]);
+    checkEq('limits: aggregate-work overrides retain hard ceilings', [5000, 4294967296, 33554432, 50000, 25000, 5000], [
+        $L::get('TAKEOUT_FILES'), $L::get('TAKEOUT_TOTAL_BYTES'), $L::get('OUTFEED_BYTES'),
+        $L::get('OUTFEED_RELATIONS'), $L::get('EXPANSION_OCCURRENCES'), $L::get('PLUGIN_SYNC_EVENTS'),
     ]);
     $L::reset();
     checkEq('limits: ini sizes', [268435456, 131072, 1073741824, 0, 0], array_map($L::iniBytes(...), ['256M', '128K', '1G', '-1', 'plenty']));
@@ -7009,6 +7270,12 @@ use BetterCal\Domain\GoogleWriter;
         checkEq('weather: icon for code ' . $code . ' passes the host check', null, BetterCal\Domain\Plugins::iconError($weather::describe($code)[0]));
     }
     checkEq('weather: daily max AQI per local date', ['2026-09-24' => 61, '2026-09-25' => 40], $weather::dailyMaxAqi(['2026-09-24T01:00', '2026-09-24T15:00', '2026-09-25T09:00', '2026-09-25T10:00'], [30, 60.6, null, 40]));
+    try {
+        $weather::dailyMaxAqi(['2026-09-24T01:00', '2026-09-24T02:00', '2026-09-24T03:00'], [10, 20, 30], 2);
+        check('weather: provider sample amplification is refused', false);
+    } catch (RuntimeException) {
+        check('weather: provider sample amplification is refused', true);
+    }
     checkEq('weather: AQI categories', ['Good', 'Moderate', 'Unhealthy for sensitive groups', 'Hazardous'], [$weather::aqiCategory(50), $weather::aqiCategory(51), $weather::aqiCategory(120), $weather::aqiCategory(400)]);
     $sun = require dirname(__DIR__) . '/plugins/sun/Plugin.php';
     $den = $sun::sunTimes(39.7392, -104.9903, '2026-09-24', 1);
@@ -7021,6 +7288,64 @@ use BetterCal\Domain\GoogleWriter;
     checkEq('sun: works east of Greenwich too (Sydney)', ['sunrise', 'sunset'], array_column($syd, 'kind'));
     checkEq('sun: the manifest is valid', [], BetterCal\Domain\Plugins::manifestErrors(json_decode((string) file_get_contents(dirname(__DIR__) . '/plugins/sun/plugin.json'), true)));
     checkEq('weather: the manifest is still valid', [], BetterCal\Domain\Plugins::manifestErrors(json_decode((string) file_get_contents(dirname(__DIR__) . '/plugins/weather/plugin.json'), true)));
+}
+
+// Plugin snapshots are admitted before writes and replaced atomically. A bad
+// later row must roll back an earlier update rather than leaving a mixed old/new
+// calendar that the next snapshot could then delete from.
+{
+    $pdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $pdb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, plugin_id TEXT)');
+    $pdb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, description TEXT, location TEXT, start_utc TEXT, end_utc TEXT, all_day INTEGER, tzid TEXT, icon TEXT, source TEXT, created_via TEXT, deleted_at TEXT, updated_at TEXT)');
+    $pdb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT, calendar_ids_json TEXT, undone INTEGER DEFAULT 0, created_at TEXT DEFAULT CURRENT_TIMESTAMP)');
+    $pdb->run("INSERT INTO calendars VALUES (1, 1, 'plugin', 'sample')");
+    $pdb->run("INSERT INTO events (id, user_id, calendar_id, uid, title, start_utc, end_utc, all_day, tzid, source, created_via) VALUES (1, 1, 1, 'plg-sample-first', 'Original', '2026-10-01 00:00:00', '2026-10-02 00:00:00', 1, 'UTC', 'local', 'plugin:sample')");
+    $host = new BetterCal\Plugin\PluginHost($pdb, 'sample', 1, new BetterCal\Infra\HttpClient(), [], []);
+    try {
+        $host->syncEvents(1, [
+            ['sourceKey' => 'first', 'title' => 'Changed', 'start' => '2026-10-01', 'allDay' => true],
+            ['sourceKey' => 'broken', 'title' => 'Broken', 'start' => 'not-a-date', 'allDay' => true],
+        ]);
+        check('plugin sync: invalid later row fails the snapshot', false);
+    } catch (Throwable) {
+        check('plugin sync: invalid later row fails the snapshot', true);
+    }
+    checkEq('plugin sync: failed snapshot rolls back every row change', ['Original', 1], [
+        $pdb->scalar("SELECT title FROM events WHERE uid = 'plg-sample-first'"),
+        (int) $pdb->scalar('SELECT COUNT(*) FROM events'),
+    ]);
+
+    Limits::configure(['PLUGIN_SYNC_EVENTS' => 1]);
+    try {
+        $host->syncEvents(1, [
+            ['sourceKey' => 'a', 'title' => 'A', 'start' => '2026-10-01', 'allDay' => true],
+            ['sourceKey' => 'b', 'title' => 'B', 'start' => '2026-10-02', 'allDay' => true],
+        ]);
+        check('plugin sync: first event over the configured cap is refused', false);
+    } catch (RuntimeException) {
+        check('plugin sync: first event over the configured cap is refused', true);
+    }
+    checkEq('plugin sync: count refusal preserves the old snapshot', ['Original'], array_column($pdb->all('SELECT title FROM events'), 'title'));
+
+    Limits::configure(['PLUGIN_SYNC_EVENTS' => 2]);
+    checkEq('plugin sync: an exact event-count limit replaces the snapshot atomically', [2, 0, 1], $host->syncEvents(1, [
+        ['sourceKey' => 'a', 'title' => 'A', 'start' => '2026-10-01', 'allDay' => true],
+        ['sourceKey' => 'b', 'title' => 'B', 'start' => '2026-10-02', 'allDay' => true],
+    ]));
+    checkEq('plugin sync: exact-limit snapshot is complete', ['A', 'B'], array_column($pdb->all('SELECT title FROM events ORDER BY title'), 'title'));
+
+    Limits::configure(['PLUGIN_SYNC_BYTES' => 512]);
+    try {
+        $host->syncEvents(1, [[
+            'sourceKey' => 'large', 'title' => 'Large', 'description' => str_repeat('x', 600),
+            'start' => '2026-10-03', 'allDay' => true,
+        ]]);
+        check('plugin sync: aggregate input bytes over the cap are refused', false);
+    } catch (RuntimeException) {
+        check('plugin sync: aggregate input bytes over the cap are refused', true);
+    }
+    checkEq('plugin sync: byte refusal preserves the complete prior snapshot', ['A', 'B'], array_column($pdb->all('SELECT title FROM events ORDER BY title'), 'title'));
+    Limits::reset();
 }
 
 // --- Standing channels out of the account are for a person, not a token ---

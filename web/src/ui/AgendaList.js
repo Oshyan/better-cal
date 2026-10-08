@@ -26,7 +26,7 @@ import { onOutsidePress } from './outside.js';
 import { ThumbIcon, TripBadge, PinIcon, Icon } from './icons.js';
 import { gmapsUrl, isPendingLocation } from '../lib/maps.js';
 import {
-  buildAgendaGroups, railRanges, washRects, dayOfSpanLabel,
+  buildAgendaGroups, railRanges, washRects, spanPixelRanges, dayOfSpanLabel,
   AGENDA_ROW_H as ROW_H, AGENDA_HEAD_H as HEAD_H,
 } from './agendarails.js';
 import { withAlpha } from '../lib/color.js';
@@ -49,6 +49,9 @@ const FEEDBACK_BUTTONS = [
 // feedback thumbs apart from the triage actions.
 const SWIPE_ACT_W = 52;
 const SWIPE_GROUP_GAP = 6;
+const AGENDA_ROWS_PER_DAY = 250;
+const AGENDA_FLAT_CHUNK = 250;
+const AGENDA_WASHES_MAX = 100;
 
 function TriageCluster({ occ, onSetAttendance, onFeedback }) {
   // A triage state or a thumb already given keeps the cluster showing.
@@ -134,7 +137,7 @@ function calColorOf(calendars, occ) {
 // Split view); loaded: the held windows ([{start, end}] ms), so a run never
 // fetched reads "not loaded yet" rather than "nothing on". apiRef: receives
 // {el, groups, ...} for a caller that links another scroller to this one.
-export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, scrollKey, scrollSeq, onOpenEvent, onSetAttendance, onFeedback, onCreateDay, onRequestWindow, onVisibleMonthChange, emptyLabel, gapFrom, hiddenDays, onShowHidden, gaps = false, loaded = null, apiRef }) {
+export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, scrollKey, scrollSeq, onOpenEvent, onSetAttendance, onFeedback, onCreateDay, onExpandDay, onRequestWindow, onVisibleMonthChange, emptyLabel, gapFrom, hiddenDays, onShowHidden, gaps = false, loaded = null, apiRef }) {
   const scrollRef = useRef(null);
   const [win, setWin] = useState({ top: 0, height: 800 });
   const flat = sortMode === 'match';
@@ -174,28 +177,46 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
   const labelsByDay = useMemo(() => dayLabelsByDay(occurrences, calendars), [occurrences, calendars]);
   const groups = useMemo(() => {
     if (flat) {
-      // Match order: one flat section preserving the caller's ranked order.
+      // Match order: bounded virtualized chunks preserve the caller's ranked
+      // order without mounting every result merely because one giant group
+      // intersects the viewport.
       const rows = occurrences
         .filter((occ) => occ.attendance !== 'hidden')
         .map((occ) => ({ kind: 'normal', occ }));
-      return rows.length === 0 ? [] : [{ dayKey: null, rows, top: 0, height: rows.length * rowH }];
+      const chunks = [];
+      for (let i = 0; i < rows.length; i += AGENDA_FLAT_CHUNK) {
+        const chunk = rows.slice(i, i + AGENDA_FLAT_CHUNK);
+        chunks.push({ dayKey: null, groupKey: `match:${i}`, rows: chunk, top: i * rowH, height: chunk.length * rowH });
+      }
+      return chunks;
     }
-    if (!gaps) return buildAgendaGroups(withoutContext(occurrences), metrics);
+    if (!gaps) return buildAgendaGroups(withoutContext(occurrences), { ...metrics, maxRowsPerDay: AGENDA_ROWS_PER_DAY });
     const heldDays = loaded
       ? loaded.map((r) => [epochDayOfKey(dayKeyOf(new Date(r.start))), epochDayOfKey(dayKeyOf(new Date(r.end - 1)))])
       : null;
-    return buildAgendaGroups(withoutContext(occurrences), { ...metrics, gaps: true, loaded: heldDays });
+    return buildAgendaGroups(withoutContext(occurrences), {
+      ...metrics,
+      gaps: true,
+      loaded: heldDays,
+      maxRowsPerDay: AGENDA_ROWS_PER_DAY,
+    });
   }, [occurrences, flat, gaps, loaded, metrics, rowH]);
 
   // Rails and header suffixes only exist in day-grouped mode; match mode
   // reorders rows, so a vertical span would connect unrelated positions.
+  const spans = useMemo(() => (flat ? [] : spanPixelRanges(groups, metrics)), [groups, flat, metrics]);
   const rails = useMemo(
-    () => (flat ? [] : railRanges(groups, { ...metrics, colorOf: (occ) => calColorOf(calendars, occ) })),
-    [groups, flat, calendars, metrics],
+    () => (flat ? [] : railRanges(groups, { ...metrics, spans, colorOf: (occ) => calColorOf(calendars, occ) })),
+    [groups, spans, flat, calendars, metrics],
   );
   const washes = useMemo(
-    () => (flat ? [] : washRects(groups, { ...metrics, colorOf: (occ) => calColorOf(calendars, occ) })),
-    [groups, flat, calendars, metrics],
+    () => (flat ? [] : washRects(groups, {
+      ...metrics,
+      spans,
+      maxRects: AGENDA_WASHES_MAX,
+      colorOf: (occ) => calColorOf(calendars, occ),
+    })),
+    [groups, spans, flat, calendars, metrics],
   );
 
   const totalH = groups.length ? groups[groups.length - 1].top + groups[groups.length - 1].height : 0;
@@ -426,7 +447,7 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
       ${groups.map((g) => {
         const visible = g.top + g.height >= visStart && g.top <= visEnd;
         return html`<section
-          key=${g.dayKey === null ? 'match' : g.dayKey}
+          key=${g.groupKey || g.dayKey}
           class="bc-agenda-group${g.dayKey === tKey ? ' is-today' : ''}${g.gap ? ' is-gap' : ''}"
           data-day=${g.dayKey && !g.gap ? g.dayKey : undefined}
           style=${`top:${g.top}px;height:${g.height}px`}
@@ -553,6 +574,12 @@ export function AgendaList({ occurrences, calendars, dimSet, nowMs, sortMode, sc
             ${occ.location && html`<${AgendaLocation} location=${occ.location} lat=${occ.locationLat} lng=${occ.locationLng} />`}
           </div>`;
           })}
+          ${visible && g.overflow > 0 && html`<button
+            type="button"
+            class="bc-agenda-overflow"
+            style=${`height:${rowH}px`}
+            onClick=${() => onExpandDay && onExpandDay(g.dayKey)}
+          >+${g.overflow} more on this day</button>`}
         </section>`;
       })}
     </div>

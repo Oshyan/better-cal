@@ -54,8 +54,11 @@ return new class implements PluginInterface {
      * @param list<int|float|null> $values
      * @return array<string,int> date => max AQI
      */
-    public static function dailyMaxAqi(array $times, array $values): array
+    public static function dailyMaxAqi(array $times, array $values, int $maxSamples = 144): array
     {
+        if (count($times) > $maxSamples) {
+            throw new \RuntimeException('Air-quality provider returned more hourly samples than requested');
+        }
         $out = [];
         foreach ($times as $i => $t) {
             $v = $values[$i] ?? null;
@@ -105,6 +108,9 @@ return new class implements PluginInterface {
         );
         $daily = $data['daily'] ?? [];
         $dates = $daily['time'] ?? [];
+        if (!is_array($dates) || count($dates) > $days + 2) {
+            throw new \RuntimeException('Weather provider returned more forecast days than requested');
+        }
         $codes = $daily['weather_code'] ?? [];
         $his = $daily['temperature_2m_max'] ?? [];
         $los = $daily['temperature_2m_min'] ?? [];
@@ -112,7 +118,16 @@ return new class implements PluginInterface {
 
         $events = [];
         $warnings = [];
+        $requestStart = strtotime('-1 day 00:00:00 UTC');
+        $requestEnd = strtotime('+' . ($days + 1) . ' days 00:00:00 UTC');
         foreach ($dates as $i => $date) {
+            if (!is_string($date) || preg_match('/^\d{4}-\d{2}-\d{2}$/', $date) !== 1) {
+                throw new \RuntimeException('Weather provider returned an invalid forecast date');
+            }
+            $dateTs = strtotime($date . ' 00:00:00 UTC');
+            if ($dateTs === false || $dateTs < $requestStart || $dateTs > $requestEnd) {
+                throw new \RuntimeException('Weather provider returned a forecast outside the requested window');
+            }
             $code = (int) ($codes[$i] ?? 0);
             [$icon, $words] = self::describe($code);
             $hi = isset($his[$i]) ? (string) round((float) $his[$i]) : '?';
@@ -147,7 +162,8 @@ return new class implements PluginInterface {
                         'forecast_days' => min($days, 5),
                     ])
                 );
-                foreach (self::dailyMaxAqi($aq['hourly']['time'] ?? [], $aq['hourly']['us_aqi'] ?? []) as $date => $aqi) {
+                $aqDays = min($days, 5);
+                foreach (self::dailyMaxAqi($aq['hourly']['time'] ?? [], $aq['hourly']['us_aqi'] ?? [], $aqDays * 24 + 24) as $date => $aqi) {
                     $cat = self::aqiCategory($aqi);
                     $events[] = [
                         'sourceKey' => 'aqi-' . $date,

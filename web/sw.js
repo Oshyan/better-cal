@@ -35,6 +35,12 @@ const API_TIMEOUT_MS = 5000;
 // one activating before the page has collected it.
 const HANDOFF_CACHE = 'bc-handoff';
 const HANDOFF_KEY = '/__handoff';
+// URL encoding can expand one decoded Unicode character to nine bytes. This
+// remains a small hard transport ceiling while still admitting the documented
+// 4,000-character decoded payload for non-ASCII text.
+const SHARE_RAW_BYTES = 65536;
+const SHARE_FIELD_CHARS = 4000;
+const SHARE_TOTAL_CHARS = 4000;
 
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
@@ -154,20 +160,105 @@ async function cacheFirst(request) {
 // before it cleaned up (BC-18). Instead the form body is read here, parked in
 // the handoff cache for the page to collect once (src/app/handoff.js), and the
 // browser is sent to a bare "/". Nothing about the share leaves the device.
-async function shareTarget(request) {
+async function readShareBody(request) {
+  const hinted = Number(request.headers.get('Content-Length') || 0);
+  if (Number.isFinite(hinted) && hinted > SHARE_RAW_BYTES) throw new Error('too_large');
+  if (!request.body || typeof request.body.getReader !== 'function') throw new Error('unstreamable');
+  const reader = request.body.getReader();
+  const chunks = [];
+  let bytes = 0;
   try {
-    const form = await request.formData();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bytes += value.byteLength;
+      if (bytes > SHARE_RAW_BYTES) throw new Error('too_large');
+      chunks.push(value);
+    }
+  } catch (e) {
+    try { await reader.cancel(); } catch { /* already closed */ }
+    throw e;
+  }
+  const body = new Uint8Array(bytes);
+  let offset = 0;
+  for (const chunk of chunks) { body.set(chunk, offset); offset += chunk.byteLength; }
+  return new TextDecoder('utf-8', { fatal: true }).decode(body);
+}
+
+function trustedShareRequest(request) {
+  const fetchSite = request.headers.get('Sec-Fetch-Site');
+  const origin = request.headers.get('Origin');
+  return fetchSite !== 'cross-site'
+    && (!origin || origin === 'null' || origin === self.location.origin);
+}
+
+function discardShareBody(request) {
+  try {
+    const cancelled = request.body && request.body.cancel();
+    if (cancelled && typeof cancelled.catch === 'function') cancelled.catch(() => {});
+  } catch { /* already locked or closed */ }
+}
+
+let shareBusy = false;
+
+async function storeShare(request) {
+  const cache = await caches.open(HANDOFF_CACHE);
+  // A failed new handoff must never replay content left by an older share.
+  await cache.delete(HANDOFF_KEY);
+
+  try {
+    const contentType = (request.headers.get('Content-Type') || '').toLowerCase();
+    if (!contentType.startsWith('application/x-www-form-urlencoded')) throw new Error('content_type');
+    const form = new URLSearchParams(await readShareBody(request));
     const params = {};
+    let total = 0;
     for (const k of ['title', 'text', 'url']) {
       const v = form.get(k);
-      if (typeof v === 'string' && v) params[k] = v;
+      if (typeof v !== 'string' || !v) continue;
+      if (v.length > SHARE_FIELD_CHARS) throw new Error('too_large');
+      total += v.length;
+      if (total > SHARE_TOTAL_CHARS) throw new Error('too_large');
+      params[k] = v;
     }
-    const cache = await caches.open(HANDOFF_CACHE);
     await cache.put(HANDOFF_KEY, new Response(JSON.stringify({ path: '/share', params }), {
       headers: { 'Content-Type': 'application/json' },
     }));
-  } catch { /* unreadable body: land in the app with nothing to hand off */ }
-  return Response.redirect('/', 303);
+  } catch {
+    await cache.put(HANDOFF_KEY, new Response(JSON.stringify({
+      path: '/share', error: 'That shared item was too large or could not be read, so it was not opened.',
+    }), { headers: { 'Content-Type': 'application/json' } }));
+  }
+}
+
+async function shareTarget(request) {
+  // Reject untrusted forms before touching the one-shot handoff. A denial is
+  // not redirected into the app because that navigation could consume a
+  // legitimate share already waiting there.
+  if (!trustedShareRequest(request)) {
+    discardShareBody(request);
+    return new Response('Share request refused.', {
+      status: 403,
+      headers: { 'Cache-Control': 'no-store', 'Content-Type': 'text/plain; charset=utf-8' },
+    });
+  }
+  // One active body is the aggregate memory boundary. Ordinary OS share-sheet
+  // use is sequential; a truly simultaneous second share gets an explicit
+  // retry response instead of being retained in an unbounded promise queue or
+  // overwriting the first share's one-shot cache entry.
+  if (shareBusy) {
+    discardShareBody(request);
+    return new Response('Another share is still being received. Try again.', {
+      status: 429,
+      headers: { 'Cache-Control': 'no-store', 'Content-Type': 'text/plain; charset=utf-8', 'Retry-After': '1' },
+    });
+  }
+  shareBusy = true;
+  // Cache Storage can be unavailable or out of quota. The share cannot be
+  // handed off then, but its contents must still stay out of the URL and the
+  // browser must still land on the bare app root.
+  try { await storeShare(request); } catch { /* nothing persisted */ }
+  finally { shareBusy = false; }
+  return new Response(null, { status: 303, headers: { Location: '/', 'Cache-Control': 'no-store' } });
 }
 
 // --- Web Push reminders -----------------------------------------------------

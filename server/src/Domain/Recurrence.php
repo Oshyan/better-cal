@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace BetterCal\Domain;
 
 use BetterCal\Http\HttpError;
+use BetterCal\Support\ExpansionBudget;
 use BetterCal\Support\Limits;
 use BetterCal\Support\Time;
+use BetterCal\Support\WorkBudgetExceeded;
 
 /**
  * The single recurrence expansion engine. Expansion happens in the event's
@@ -35,7 +37,7 @@ final class Recurrence
     ];
     private const FREQS = ['SECONDLY', 'MINUTELY', 'HOURLY', 'DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY'];
 
-    /** @var callable(array,\DateTimeImmutable,\DateTimeImmutable):list<array{start:\DateTimeImmutable,end:\DateTimeImmutable}> */
+    /** @var callable(array,\DateTimeImmutable,\DateTimeImmutable,?ExpansionBudget=):list<array{start:\DateTimeImmutable,end:\DateTimeImmutable}> */
     private $expander;
 
     /** @var array<int, true> series cut short at MAX_INSTANCES by expand() */
@@ -181,10 +183,20 @@ final class Recurrence
      * @param list<array<string,mixed>> $overrides rows with recurrence_instance_utc
      * @return list<array{row:array,start:\DateTimeImmutable,end:\DateTimeImmutable,instanceUtc:string}>
      */
-    public function expand(array $master, array $overrides, \DateTimeImmutable $winStart, \DateTimeImmutable $winEnd): array
+    public function expand(
+        array $master,
+        array $overrides,
+        \DateTimeImmutable $winStart,
+        \DateTimeImmutable $winEnd,
+        ?ExpansionBudget $budget = null,
+    ): array
     {
         $result = [];
         $consumed = [];
+
+        if (!empty($master['rrule'])) {
+            $budget?->beginSeries();
+        }
 
         $ovByInstance = [];
         foreach ($overrides as $ov) {
@@ -197,6 +209,7 @@ final class Recurrence
             $start = Time::fromDb((string) $master['start_utc']);
             $end = Time::fromDb((string) $master['end_utc']);
             if ($start < $winEnd && $end > $winStart) {
+                $budget?->occurrence();
                 $result[] = ['row' => $master, 'start' => $start, 'end' => $end, 'instanceUtc' => Time::toDb($start)];
             }
         } else {
@@ -205,7 +218,9 @@ final class Recurrence
             // reminder scan): it shows as its first occurrence and is logged.
             try {
                 $exdates = array_fill_keys(self::decodeExdates($master['exdates_json'] ?? null), true);
-                $raw = ($this->expander)($master, $winStart, $winEnd);
+                $raw = ($this->expander)($master, $winStart, $winEnd, $budget);
+            } catch (WorkBudgetExceeded $e) {
+                throw $e;
             } catch (\Throwable $e) {
                 error_log('recurrence: event ' . ($master['id'] ?? '?') . ' could not be expanded: ' . $e->getMessage());
                 $s0 = Time::fromDb((string) $master['start_utc']);
@@ -214,6 +229,7 @@ final class Recurrence
             }
             $count = 0;
             foreach ($raw as $inst) {
+                $budget?->occurrence();
                 if (++$count > self::MAX_INSTANCES) {
                     $this->capped[(int) ($master['id'] ?? 0)] = true;
                     break;
@@ -243,6 +259,9 @@ final class Recurrence
             $ovStart = Time::fromDb((string) $ov['start_utc']);
             $ovEnd = Time::fromDb((string) $ov['end_utc']);
             if ($ovStart < $winEnd && $ovEnd > $winStart) {
+                // An override whose generated master instance was absent still
+                // consumes aggregate result work.
+                $budget?->occurrence();
                 $result[] = ['row' => $ov, 'start' => $ovStart, 'end' => $ovEnd, 'instanceUtc' => (string) $instanceUtc];
             }
         }
@@ -581,7 +600,12 @@ final class Recurrence
      *
      * @return list<array{start:\DateTimeImmutable,end:\DateTimeImmutable}>
      */
-    public static function sabreExpand(array $master, \DateTimeImmutable $winStart, \DateTimeImmutable $winEnd): array
+    public static function sabreExpand(
+        array $master,
+        \DateTimeImmutable $winStart,
+        \DateTimeImmutable $winEnd,
+        ?ExpansionBudget $budget = null,
+    ): array
     {
         if (!class_exists(\Sabre\VObject\Component\VCalendar::class)) {
             throw new \RuntimeException('sabre/vobject is not installed');
@@ -626,6 +650,7 @@ final class Recurrence
             // A UTC-zoned series, as imports and CalDAV store them, is unchanged.
             $it = new \Sabre\VObject\Recur\EventIterator($vcal, $uid, $allDay ? $tz : Time::utc());
             $it->fastForward(\DateTime::createFromImmutable($winStart));
+            $budget?->checkpoint();
             $count = 0;
             // One past the cap, so expand() can tell a series that has more.
             while ($it->valid() && $count <= self::MAX_INSTANCES) {
@@ -636,8 +661,11 @@ final class Recurrence
                 $occEnd = \DateTimeImmutable::createFromInterface($it->getDtEnd())->setTimezone(Time::utc());
                 $out[] = ['start' => $occStart, 'end' => $occEnd];
                 $count++;
+                $budget?->checkpoint();
                 $it->next();
             }
+        } catch (WorkBudgetExceeded $e) {
+            throw $e;
         } catch (\Throwable $e) {
             error_log('recurrence expansion failed for event ' . ($master['id'] ?? '?') . ': ' . $e->getMessage());
         }

@@ -3,7 +3,7 @@
 // while open.
 
 import { PHONE_QUERY } from '../lib/breakpoints.js';
-import { html, useRef, useEffect } from '../../vendor/index.js';
+import { html, useRef, useState, useMemo, useEffect } from '../../vendor/index.js';
 import { dateOfDayKey, fmtDayLong, parseISO, fmtTime, epochDayOfKey, byStart } from '../lib/dates.js';
 import { EventChip } from './EventChip.js';
 import { occurrenceDaySpan } from './monthmath.js';
@@ -12,6 +12,8 @@ import { TokenIcon, DayLabel } from './ContextStrip.js';
 import { isContext, isDayLabel, contextToken, contextText, contextTitle } from '../lib/context.js';
 
 export const MOBILE_QUERY = PHONE_QUERY;
+const EVENTS_PER_PAGE = 200;
+const CONTEXT_PER_PAGE = 100;
 
 export function isMobile() {
   return window.matchMedia(MOBILE_QUERY).matches;
@@ -28,6 +30,13 @@ export function anchorPanel(anchorRect, panelW, panelH, margin = 8) {
 
 export function DayExpand({ dayKey, anchorRect, occurrences, calendars, dimSet, nowMs, onOpenEvent, onOpenDetail, onNew, onClose }) {
   const panelRef = useRef(null);
+  const [eventPage, setEventPage] = useState(0);
+  const [contextPage, setContextPage] = useState(0);
+
+  useEffect(() => {
+    setEventPage(0);
+    setContextPage(0);
+  }, [dayKey]);
 
   useEffect(() => {
     const onKey = (e) => {
@@ -47,14 +56,20 @@ export function DayExpand({ dayKey, anchorRect, occurrences, calendars, dimSet, 
   // Context (weather, sunset, tides) sits in its own section on top: the
   // state of the day first, then what is planned.
   const labels = occurrences.filter((o) => isDayLabel(o, calendars));
-  const ctx = occurrences.filter((o) => isContext(o) && !isDayLabel(o, calendars)).sort((a, b) => {
+  const ctxAll = useMemo(() => occurrences.filter((o) => isContext(o) && !isDayLabel(o, calendars)).sort((a, b) => {
     if (a.allDay !== b.allDay) return a.allDay ? -1 : 1;
     return byStart(a, b);
-  });
-  const sorted = occurrences.filter((o) => !isContext(o)).sort((a, b) => {
+  }), [occurrences, calendars]);
+  const sortedAll = useMemo(() => occurrences.filter((o) => !isContext(o)).sort((a, b) => {
     if (a.allDay !== b.allDay) return a.allDay ? -1 : 1;
     return byStart(a, b);
-  });
+  }), [occurrences]);
+  const eventPages = Math.max(1, Math.ceil(sortedAll.length / EVENTS_PER_PAGE));
+  const contextPages = Math.max(1, Math.ceil(ctxAll.length / CONTEXT_PER_PAGE));
+  const safeEventPage = Math.min(eventPage, eventPages - 1);
+  const safeContextPage = Math.min(contextPage, contextPages - 1);
+  const sorted = sortedAll.slice(safeEventPage * EVENTS_PER_PAGE, (safeEventPage + 1) * EVENTS_PER_PAGE);
+  const ctx = ctxAll.slice(safeContextPage * CONTEXT_PER_PAGE, (safeContextPage + 1) * CONTEXT_PER_PAGE);
 
   const mobile = isMobile();
   let style = '';
@@ -96,8 +111,13 @@ export function DayExpand({ dayKey, anchorRect, occurrences, calendars, dimSet, 
               ${tk.time && html`<span class="bc-dayexpand-ctxtime">${tk.time}${tk.zone ? ' ' + tk.zone : ''}</span>`}
             </button>`;
           })}
+          ${contextPages > 1 && html`<div class="bc-dayexpand-pager">
+            <button type="button" class="bc-link-btn" disabled=${safeContextPage === 0} onClick=${() => setContextPage(safeContextPage - 1)}>Previous context</button>
+            <span>${safeContextPage * CONTEXT_PER_PAGE + 1}–${Math.min(ctxAll.length, (safeContextPage + 1) * CONTEXT_PER_PAGE)} of ${ctxAll.length}</span>
+            <button type="button" class="bc-link-btn" disabled=${safeContextPage + 1 >= contextPages} onClick=${() => setContextPage(safeContextPage + 1)}>Next context</button>
+          </div>`}
         </div>`}
-        ${sorted.length === 0 && html`<div class="bc-empty">${ctx.length ? 'Nothing planned' : 'No events this day'}</div>`}
+        ${sortedAll.length === 0 && html`<div class="bc-empty">${ctxAll.length ? 'Nothing planned' : 'No events this day'}</div>`}
         ${sorted.map((occ) => {
           // All-day and multi-day events keep the tinted full-width chip (dot
           // + title) and gain angled ends where the event continues past this
@@ -124,6 +144,11 @@ export function DayExpand({ dayKey, anchorRect, occurrences, calendars, dimSet, 
             ><${Icon} name="arrowUpRight" size=${13} /></button>`}
           </div>`;
         })}
+        ${eventPages > 1 && html`<div class="bc-dayexpand-pager">
+          <button type="button" class="bc-link-btn" disabled=${safeEventPage === 0} onClick=${() => setEventPage(safeEventPage - 1)}>Previous events</button>
+          <span>${safeEventPage * EVENTS_PER_PAGE + 1}–${Math.min(sortedAll.length, (safeEventPage + 1) * EVENTS_PER_PAGE)} of ${sortedAll.length}</span>
+          <button type="button" class="bc-link-btn" disabled=${safeEventPage + 1 >= eventPages} onClick=${() => setEventPage(safeEventPage + 1)}>Next events</button>
+        </div>`}
       </div>
     </div>
   </div>`;

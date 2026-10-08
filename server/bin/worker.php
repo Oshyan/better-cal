@@ -224,9 +224,35 @@ try {
                     }
                     break;
                 case 'reminder_scan':
-                    $result = $reminders->scan();
+                    $cursor = isset($payload['cursor']) && is_array($payload['cursor']) ? $payload['cursor'] : [];
+                    try {
+                        $scanNow = isset($payload['scanNow']) && is_string($payload['scanNow'])
+                            ? Time::fromDb($payload['scanNow'])
+                            : Time::nowUtc();
+                    } catch (\Throwable) {
+                        $scanNow = Time::nowUtc();
+                    }
+                    $cycleId = isset($payload['cycleId']) && is_string($payload['cycleId'])
+                        ? substr($payload['cycleId'], 0, 40)
+                        : bin2hex(random_bytes(12));
+                    $result = $reminders->scan($scanNow, $cursor);
+                    if ($result['more'] && is_array($result['cursor'])) {
+                        // Continue promptly inside this worker's 50-second
+                        // envelope. If it runs out, the pending slice resumes
+                        // next minute. The stable cycle clock prevents later
+                        // slices from aging past the reminder grace window;
+                        // notified_instances key makes replay after a crash
+                        // safe, and the durable cursor prevents a dense prefix
+                        // from starving later reminders.
+                        $queue->enqueue('reminder_scan', [
+                            'cycleId' => $cycleId,
+                            'scanNow' => Time::toDb($scanNow),
+                            'cursor' => $result['cursor'],
+                        ]);
+                    }
                     echo bc_ts() . ' reminder_scan sent=' . $result['sent'] . ' failed=' . $result['failed']
-                        . ' emailed=' . ($result['emailed'] ?? 0) . "\n";
+                        . ' emailed=' . ($result['emailed'] ?? 0)
+                        . ($result['more'] ? ' continued=1' : '') . "\n";
                     break;
                 case 'plugin_job':
                     // Plugin code runs ONLY here (and in explicit settings
@@ -323,9 +349,16 @@ function bc_enqueue_recurring(Db $db, JobQueue $queue): void
 {
     bc_enqueue_if_stale($db, $queue, 'rank_events', 'PT1H');
     bc_enqueue_if_stale($db, $queue, 'filter_eval', 'P1D');
-    // Every worker run (cron fires each minute); 50s so the previous run's
-    // job never suppresses this minute's scan.
-    bc_enqueue_if_stale($db, $queue, 'reminder_scan', 'PT50S');
+    // A dense reminder cycle carries a durable cursor across jobs. Never seed
+    // another root while any slice is pending/running: parallel cursor chains
+    // would repeatedly rescan the prefix and grow the priority queue.
+    if (!$queue->hasPending('reminder_scan')) {
+        $now = Time::nowUtc();
+        bc_enqueue_if_stale($db, $queue, 'reminder_scan', 'PT50S', [
+            'cycleId' => bin2hex(random_bytes(12)),
+            'scanNow' => Time::toDb($now),
+        ]);
+    }
     // Mail ingest polls the calendar@ mailbox every ~2 minutes.
     bc_enqueue_if_stale($db, $queue, 'mail_ingest', 'PT2M');
     // Activity retention: snapshots kept 7 days, log rows 90 (docs/api-contract.md).
@@ -352,14 +385,14 @@ function bc_enqueue_recurring(Db $db, JobQueue $queue): void
     }
 }
 
-function bc_enqueue_if_stale(Db $db, JobQueue $queue, string $type, string $interval): void
+function bc_enqueue_if_stale(Db $db, JobQueue $queue, string $type, string $interval, array $payload = []): void
 {
     $recent = $db->scalar(
         'SELECT id FROM jobs WHERE type = ? AND created_at > ? LIMIT 1',
         [$type, Time::toDb(Time::nowUtc()->sub(new DateInterval($interval)))]
     );
     if ($recent === null) {
-        $queue->enqueue($type, []);
+        $queue->enqueue($type, $payload);
     }
 }
 

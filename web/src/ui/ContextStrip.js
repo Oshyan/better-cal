@@ -7,6 +7,9 @@ import { html, useState, useLayoutEffect, useRef } from '../../vendor/index.js';
 import { Icon } from './icons.js';
 import { contextToken, contextTitle, HOST_ICON, dayLabelText } from '../lib/context.js';
 
+const CONTEXT_RENDER_MAX = 100;
+const CONTEXT_OVERFLOW_TITLE_MAX = 20;
+
 function open(onOpen, occ, e) {
   e.stopPropagation();
   if (onOpen) onOpen(occ.instanceId, e.currentTarget.getBoundingClientRect());
@@ -53,7 +56,9 @@ function Token({ occ, cal, onOpen, zone = true, overflow = false }) {
 export function ContextStrip({ occs, calendars, max = Infinity, fit = null, more = true, onOpen, onMore, zone = true }) {
   const ref = useRef(null);
   const [fitCount, setFitCount] = useState(null);
-  const key = occs ? occs.map((o) => o.instanceId).join('|') : '';
+  const key = occs && occs.length
+    ? `${occs.length}:${occs[0].instanceId}:${occs[occs.length - 1].instanceId}`
+    : '';
   useLayoutEffect(() => {
     if (fit === null || !ref.current) return undefined;
     const strip = ref.current;
@@ -79,13 +84,16 @@ export function ContextStrip({ occs, calendars, max = Infinity, fit = null, more
     return () => ro.disconnect();
   }, [fit, key]); // eslint-disable-line
   if (!occs || occs.length === 0) return null;
-  const limit = Math.min(occs.length, fit !== null ? (fitCount ?? occs.length) : max);
+  const rendered = occs.slice(0, CONTEXT_RENDER_MAX);
+  const limit = Math.min(rendered.length, fit !== null ? (fitCount ?? rendered.length) : max);
   const rest = occs.length - limit;
+  const overflowTitles = occs.slice(limit, limit + CONTEXT_OVERFLOW_TITLE_MAX).map((o) => contextTitle(o));
+  if (rest > overflowTitles.length) overflowTitles.push(`…and ${rest - overflowTitles.length} more`);
   return html`<span class="bc-ctxstrip" role="list" aria-label="Context for this day" ref=${ref}>
-    ${occs.map((occ, i) => (fit !== null || i < limit) && html`<${Token} key=${occ.instanceId} occ=${occ} cal=${calendars && calendars[occ.calendarId]} onOpen=${onOpen} zone=${zone} overflow=${i >= limit} />`)}
+    ${rendered.map((occ, i) => (fit !== null || i < limit) && html`<${Token} key=${occ.instanceId} occ=${occ} cal=${calendars && calendars[occ.calendarId]} onOpen=${onOpen} zone=${zone} overflow=${i >= limit} />`)}
     ${more && rest > 0 && html`<span
       role="button" tabindex="0" class="bc-ctx-more"
-      title=${occs.slice(limit).map((o) => contextTitle(o)).join('\n')}
+      title=${overflowTitles.join('\n')}
       onPointerDown=${(e) => e.stopPropagation()}
       onClick=${(e) => { e.stopPropagation(); if (onMore) onMore(); }}
       onKeyDown=${(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); if (onMore) onMore(); } }}

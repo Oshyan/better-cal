@@ -8,7 +8,10 @@ use BetterCal\Http\HttpError;
 use BetterCal\Infra\Db;
 use BetterCal\Infra\EmailSender;
 use BetterCal\Infra\PushSender;
+use BetterCal\Support\ExpansionBudget;
+use BetterCal\Support\Limits;
 use BetterCal\Support\Time;
+use BetterCal\Support\WorkBudgetExceeded;
 
 /**
  * Reminders: validation of per-event overrides and default shapes, the
@@ -43,6 +46,12 @@ final class Reminders
     private const FIRE_GRACE = 'PT1H';
     private const NOTIFIED_RETENTION = 'P7D';
     private const FAILING_SUBSCRIPTION_TTL = 'P3D';
+    private const MASTER_SLICE = 250;
+    private const OVERRIDE_SLICE = 500;
+    private const ROW_PROJECTION = 'id, user_id, calendar_id, uid, title,
+        SUBSTR(description, 1, 8192) AS description, location, location_lat, location_lng, url,
+        start_utc, end_utc, all_day, tzid, rrule, exdates_json, recurrence_parent_id,
+        recurrence_instance_utc, status, source, attendance, reminders_json';
 
     private readonly SystemHealth $health;
 
@@ -277,9 +286,10 @@ final class Reminders
      * regardless of channel, so a retry after a partial success never
      * double-sends.
      *
-     * @return array{sent:int, failed:int, emailed:int}
+     * @param array{userId?:int,phase?:string,afterId?:int,limited?:bool} $cursor
+     * @return array{sent:int, failed:int, emailed:int, more:bool, cursor:?array}
      */
-    public function scan(?\DateTimeImmutable $now = null): array
+    public function scan(?\DateTimeImmutable $now = null, array $cursor = []): array
     {
         $now = $now ?? Time::nowUtc();
         $this->db->run(
@@ -291,16 +301,31 @@ final class Reminders
         $pushReady = $this->sender->configured();
         $emailReady = $this->email->isConfigured();
         if (!$pushReady && !$emailReady) {
-            return ['sent' => 0, 'failed' => 0, 'emailed' => 0];
+            return ['sent' => 0, 'failed' => 0, 'emailed' => 0, 'more' => false, 'cursor' => null];
         }
         $subsByUser = $pushReady ? $this->subscriptions->allByUser() : [];
 
         $sent = 0;
         $failed = 0;
         $emailed = 0;
-        foreach ($this->db->all('SELECT id, email, settings_json FROM users') as $user) {
-            $userId = (int) $user['id'];
-            $stored = is_string($user['settings_json'] ?? null) ? json_decode((string) $user['settings_json'], true) : null;
+        $cursorUser = max(0, (int) ($cursor['userId'] ?? 0));
+        $user = $this->db->one(
+            'SELECT id, email, settings_json FROM users WHERE id >= ? ORDER BY id LIMIT 1',
+            [$cursorUser > 0 ? $cursorUser : 1]
+        );
+        if ($user === null) {
+            return ['sent' => 0, 'failed' => 0, 'emailed' => 0, 'more' => false, 'cursor' => null];
+        }
+        $userId = (int) $user['id'];
+        $sameUser = $cursorUser === $userId;
+        $phase = $sameUser && ($cursor['phase'] ?? '') === 'overrides' ? 'overrides' : 'masters';
+        $afterId = $sameUser ? max(0, (int) ($cursor['afterId'] ?? 0)) : 0;
+        $nextUserCursor = function () use ($userId): ?array {
+            $next = (int) ($this->db->scalar('SELECT id FROM users WHERE id > ? ORDER BY id LIMIT 1', [$userId]) ?? 0);
+            return $next > 0 ? ['userId' => $next, 'phase' => 'masters', 'afterId' => 0] : null;
+        };
+
+        $stored = is_string($user['settings_json'] ?? null) ? json_decode((string) $user['settings_json'], true) : null;
             $settings = Settings::withDefaults(is_array($stored) ? $stored : []);
             $channel = (string) $settings['notifyChannel'];
             $emailTo = Settings::notifyDestination($settings, (string) $user['email'], $this->db);
@@ -308,11 +333,28 @@ final class Reminders
             $wantsPush = $channel !== 'email' && $subs !== [];
             $wantsEmail = $emailReady && $channel !== 'push';
             if (!$wantsPush && !$wantsEmail) {
-                continue; // nothing could deliver; skip the expansion work
+                $next = $nextUserCursor();
+                return ['sent' => 0, 'failed' => 0, 'emailed' => 0, 'more' => $next !== null, 'cursor' => $next];
             }
             $hasLiveSub = array_filter($subs, static fn(array $s): bool => ($s['failing_since'] ?? null) === null) !== [];
 
-            foreach ($this->dueForUser($userId, $now) as $due) {
+            $slice = $this->dueForUserSlice($userId, $now, $phase, $afterId);
+            $dueForUser = $slice['due'];
+            $cycleLimited = !empty($cursor['limited']) || $slice['limited'];
+            if ($slice['limited']) {
+                $this->health->recordFailure(
+                    'reminder-budget:' . $userId,
+                    'job',
+                    $userId,
+                    'Reminder expansion',
+                    'One reminder slice exceeded its safe event, recurrence, or time budget. Later slices will continue automatically.'
+                );
+                error_log('reminder expansion budget reached for user ' . $userId . ' at ' . $phase . ':' . $afterId);
+            } elseif (!$slice['more'] && $phase === 'overrides' && !$cycleLimited) {
+                $this->health->recordOk('reminder-budget:' . $userId, 'job', $userId, 'Reminder expansion', false);
+            }
+
+            foreach ($dueForUser as $due) {
                 $inserted = $this->db->run(
                     'INSERT IGNORE INTO notified_instances (instance_key, sent_at) VALUES (?, ?)',
                     [$due['key'], Time::toDb($now)]
@@ -361,8 +403,10 @@ final class Reminders
                     }
                 }
             }
-        }
-        return ['sent' => $sent, 'failed' => $failed, 'emailed' => $emailed];
+        $next = $slice['more']
+            ? ['userId' => $userId, 'phase' => $slice['phase'], 'afterId' => $slice['afterId'], 'limited' => $cycleLimited]
+            : $nextUserCursor();
+        return ['sent' => $sent, 'failed' => $failed, 'emailed' => $emailed, 'more' => $next !== null, 'cursor' => $next];
     }
 
     /**
@@ -372,6 +416,18 @@ final class Reminders
      * @return list<array{key:string, payload:array}>
      */
     private function dueForUser(int $userId, \DateTimeImmutable $now): array
+    {
+        return $this->dueForUserSlice($userId, $now, 'masters', 0)['due'];
+    }
+
+    /**
+     * One durable reminder-work slice. The worker carries the returned cursor
+     * in the next job, so a dense account cannot make every later reminder
+     * restart behind the same over-budget prefix.
+     *
+     * @return array{due:list<array{key:string,payload:array}>,more:bool,phase:string,afterId:int,limited:bool}
+     */
+    private function dueForUserSlice(int $userId, \DateTimeImmutable $now, string $phase, int $afterId): array
     {
         $grace = $now->sub(new \DateInterval(self::FIRE_GRACE));
         // Occurrences are collected from a day and more back: an all-day
@@ -407,23 +463,68 @@ final class Reminders
         $this->viewTz = $hereTzid ?? $homeTzid;
         $this->h24 = (string) ($userSettings['timeFormat'] ?? '12') === '24';
 
-        // Masters + standalone events whose occurrences can start in the
-        // window (mirrors Events::window's selection, without user filters).
-        $params = [$userId, Time::toDb($winEnd), Time::toDb($winStart), Time::toDb($winEnd)];
-        $masters = $this->db->all(
-            "SELECT * FROM events WHERE user_id = ? AND deleted_at IS NULL AND recurrence_parent_id IS NULL
-             AND attendance <> 'hidden' AND status <> 'cancelled'
-             AND ((rrule IS NULL AND start_utc < ? AND end_utc > ?) OR (rrule IS NOT NULL AND start_utc < ?))",
-            $params
-        );
-        $masterIds = array_map(static fn($r) => (int) $r['id'], $masters);
-        [$in, $inParams] = Db::in($masterIds !== [] ? $masterIds : [0]);
-        $overrides = $this->db->all(
-            "SELECT * FROM events WHERE user_id = ? AND deleted_at IS NULL AND recurrence_parent_id IS NOT NULL
-             AND attendance <> 'hidden' AND status <> 'cancelled'
-             AND (recurrence_parent_id IN $in OR (start_utc < ? AND end_utc > ?))",
-            [$userId, ...$inParams, Time::toDb($winEnd), Time::toDb($winStart)]
-        );
+        $phase = $phase === 'overrides' ? 'overrides' : 'masters';
+        $limited = false;
+        $more = false;
+        if ($phase === 'masters') {
+            // Masters + standalone events whose occurrences can start in the
+            // window (mirrors Events::window's selection, without filters).
+            $params = [$userId, $afterId, Time::toDb($winEnd), Time::toDb($winStart), Time::toDb($winEnd)];
+            $masters = $this->db->all(
+                'SELECT ' . self::ROW_PROJECTION . " FROM events
+                 WHERE user_id = ? AND id > ? AND deleted_at IS NULL AND recurrence_parent_id IS NULL
+                   AND attendance <> 'hidden' AND status <> 'cancelled'
+                   AND ((rrule IS NULL AND start_utc < ? AND end_utc > ?) OR (rrule IS NOT NULL AND start_utc < ?))
+                 ORDER BY id LIMIT " . (self::MASTER_SLICE + 1),
+                $params
+            );
+            $more = count($masters) > self::MASTER_SLICE;
+            if ($more) {
+                array_pop($masters);
+            }
+            $masterIds = array_map(static fn(array $row): int => (int) $row['id'], $masters);
+            $lastSelectedId = $masterIds !== [] ? max($masterIds) : $afterId;
+            if ($masterIds !== []) {
+                [$in, $inParams] = Db::in($masterIds);
+                $overrides = $this->db->all(
+                    'SELECT ' . self::ROW_PROJECTION . " FROM events
+                     WHERE user_id = ? AND deleted_at IS NULL AND recurrence_parent_id IN $in
+                       AND attendance <> 'hidden' AND status <> 'cancelled'
+                       AND ((start_utc < ? AND end_utc > ?)
+                            OR (recurrence_instance_utc >= ? AND recurrence_instance_utc < ?))
+                     ORDER BY id LIMIT " . (Limits::get('EXPANSION_OCCURRENCES') + 1),
+                    [$userId, ...$inParams, Time::toDb($winEnd), Time::toDb($winStart), Time::toDb($winStart), Time::toDb($winEnd)]
+                );
+                if (count($overrides) > Limits::get('EXPANSION_OCCURRENCES')) {
+                    // Skip only this bounded slice and continue after it; a
+                    // durable health row tells the owner what was missed.
+                    $overrides = [];
+                    $masters = [];
+                    $limited = true;
+                    $more = true;
+                }
+            } else {
+                $overrides = [];
+            }
+        } else {
+            $masters = [];
+            $lastSelectedId = $afterId;
+            $overrides = $this->db->all(
+                'SELECT ' . self::ROW_PROJECTION . ' FROM events
+                 WHERE user_id = ? AND id > ? AND deleted_at IS NULL AND recurrence_parent_id IS NOT NULL
+                   AND attendance <> \'hidden\' AND status <> \'cancelled\'
+                   AND start_utc < ? AND end_utc > ?
+                 ORDER BY id LIMIT ' . (self::OVERRIDE_SLICE + 1),
+                [$userId, $afterId, Time::toDb($winEnd), Time::toDb($winStart)]
+            );
+            $more = count($overrides) > self::OVERRIDE_SLICE;
+            if ($more) {
+                array_pop($overrides);
+            }
+            if ($overrides !== []) {
+                $lastSelectedId = max(array_map(static fn(array $row): int => (int) $row['id'], $overrides));
+            }
+        }
         $ovByParent = [];
         foreach ($overrides as $ov) {
             $ovByParent[(int) $ov['recurrence_parent_id']][] = $ov;
@@ -447,12 +548,51 @@ final class Reminders
 
         $due = [];
         $seenParents = [];
+        $budget = ExpansionBudget::standard();
+        $processedId = $limited ? $lastSelectedId : $afterId;
         foreach ($masters as $master) {
+            $processedId = (int) $master['id'];
             $seenParents[(int) $master['id']] = true;
             if (isset($quiet[(int) $master['id']])) {
                 continue;
             }
-            $occs = $this->recurrence->expand($master, $ovByParent[(int) $master['id']] ?? [], $winStart, $winEnd);
+            $masterCal = $calendars[(int) $master['calendar_id']] ?? ['kind' => 'local', 'defaults' => null];
+            [$masterEntries] = self::effective(
+                self::decode($master['reminders_json'] ?? null),
+                $masterCal['defaults'],
+                $globalTimed,
+                $globalAllDay,
+                (int) $master['all_day'] === 1,
+                $masterCal['kind'],
+            );
+            $mayRemind = $masterEntries !== [];
+            if (!$mayRemind) {
+                foreach ($ovByParent[(int) $master['id']] ?? [] as $override) {
+                    $overrideCal = $calendars[(int) $override['calendar_id']] ?? $masterCal;
+                    [$overrideEntries] = self::effective(
+                        self::decode($override['reminders_json'] ?? null),
+                        $overrideCal['defaults'],
+                        $globalTimed,
+                        $globalAllDay,
+                        (int) $override['all_day'] === 1,
+                        $overrideCal['kind'],
+                    );
+                    if ($overrideEntries !== []) {
+                        $mayRemind = true;
+                        break;
+                    }
+                }
+            }
+            if (!$mayRemind) {
+                continue;
+            }
+            try {
+                $occs = $this->recurrence->expand($master, $ovByParent[(int) $master['id']] ?? [], $winStart, $winEnd, $budget);
+            } catch (WorkBudgetExceeded) {
+                $limited = true;
+                $more = true;
+                break;
+            }
             foreach ($occs as $occ) {
                 $this->collectDue($occ['row'], $occ['start'], $calendars, $globalTimed, $globalAllDay, $now, $grace, $due, $homeTzid);
             }
@@ -466,11 +606,20 @@ final class Reminders
             foreach ($ovs as $ov) {
                 $ovStart = Time::fromDb((string) $ov['start_utc']);
                 if ($ovStart < $winEnd && Time::fromDb((string) $ov['end_utc']) > $winStart) {
+                    $budget->occurrence();
                     $this->collectDue($ov, $ovStart, $calendars, $globalTimed, $globalAllDay, $now, $grace, $due, $homeTzid);
                 }
             }
         }
-        return $due;
+        if ($phase === 'masters') {
+            if ($limited || $more) {
+                return ['due' => $due, 'more' => true, 'phase' => 'masters', 'afterId' => $processedId, 'limited' => $limited];
+            }
+            // A final bounded phase picks up an in-window exception whose
+            // master itself did not qualify for the master query.
+            return ['due' => $due, 'more' => true, 'phase' => 'overrides', 'afterId' => 0, 'limited' => false];
+        }
+        return ['due' => $due, 'more' => $more, 'phase' => 'overrides', 'afterId' => $lastSelectedId, 'limited' => false];
     }
 
     /** @param list<array{key:string,payload:array}> $due */

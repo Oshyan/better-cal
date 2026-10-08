@@ -773,6 +773,7 @@ export function App() {
         scrollKey: s.anchor, scrollSeq: s.scrollSeq,
         onVisibleMonthChange,
         onOpenEvent,
+        onExpandDay,
         onSetAttendance: (occ, v) => setRelationship(occ, occ.relationship === v ? 'available' : v),
         onFeedback: sendFeedback,
         onCreateDay: (k) => onCreateRange(dayRangeDraft(k, k)),
@@ -869,6 +870,7 @@ export function App() {
         scrollSeq=${s.scrollSeq}
         onVisibleMonthChange=${onVisibleMonthChange}
         onOpenEvent=${onOpenEvent}
+        onExpandDay=${onExpandDay}
         onSetAttendance=${(occ, v) => setRelationship(occ, occ.relationship === v ? 'available' : v)}
         onFeedback=${sendFeedback}
         onCreateDay=${(k) => onCreateRange(dayRangeDraft(k, k))}
@@ -907,10 +909,13 @@ export function App() {
 
   const reschedActive = !!(resched && reschedOcc);
   const ws = s.windowStatus;
-  const windowNote = ws && html`<div class=${'bc-winstatus' + (ws.kind === 'failed' ? ' is-failed' : '')} role=${ws.kind === 'failed' ? 'alert' : 'status'}>
+  const windowProblem = ws && (ws.kind === 'failed' || ws.kind === 'limited');
+  const windowNote = ws && html`<div class=${'bc-winstatus' + (windowProblem ? ' is-failed' : '')} role=${windowProblem ? 'alert' : 'status'}>
     ${ws.kind === 'loading'
       ? 'Loading events…'
-      : html`<span>${ws.offline ? 'Offline, and these dates are not saved on this device.' : 'Could not load events.'} Retrying…</span>
+      : ws.kind === 'limited'
+        ? html`<span>${ws.message}</span>`
+        : html`<span>${ws.offline ? 'Offline, and these dates are not saved on this device.' : 'Could not load events.'} Retrying…</span>
         <button type="button" class="bc-link-btn" onClick=${retryWindowsNow}>Retry now</button>`}
   </div>`;
 

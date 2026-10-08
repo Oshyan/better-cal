@@ -103,7 +103,7 @@ final class OutFeeds
     }
 
     /** Render the public .ics for a feed token; null when the token is unknown. */
-    public function renderByToken(string $token): ?string
+    public function renderByToken(string $token, bool $headOnly = false): ?string
     {
         $feed = $this->db->one('SELECT * FROM out_feeds WHERE token = ?', [$token]);
         if ($feed === null) {
@@ -116,13 +116,49 @@ final class OutFeeds
         }
         $userId = (int) $feed['user_id'];
         $scope = json_decode((string) $feed['scope_json'], true) ?: ['type' => 'all'];
-        $events = ($scope['type'] ?? 'all') === 'search'
-            ? $this->search->search($userId, (string) ($scope['q'] ?? ''), self::SEARCH_LIMIT, excerpt: false)
-            : $this->nearest($userId, $scope, Limits::get('OUTFEED_EVENTS'));
+        try {
+            if (($scope['type'] ?? 'all') === 'search') {
+                // Search/ranking needs only recurrence timing and ids. Load
+                // the exportable fields afterwards through the same bounded,
+                // projected row loader used by other feed scopes.
+                $hits = $this->search->search(
+                    $userId,
+                    (string) ($scope['q'] ?? ''),
+                    self::SEARCH_LIMIT,
+                    excerpt: false,
+                    projection: self::SEARCH_PROJECTION,
+                );
+                $times = [];
+                foreach ($hits as $hit) {
+                    $times[(int) $hit['id']] = [(string) $hit['start_utc'], (string) $hit['end_utc']];
+                }
+                $events = $this->loadRowsWithinBudget(array_keys($times));
+                foreach ($events as &$event) {
+                    if (isset($times[(int) $event['id']])) {
+                        [$event['start_utc'], $event['end_utc']] = $times[(int) $event['id']];
+                    }
+                }
+                unset($event);
+            } else {
+                $events = $this->nearest($userId, $scope, Limits::get('OUTFEED_EVENTS'));
+            }
+        } catch (HttpError $e) {
+            if ($e->errorCode === 'event_search_too_large') {
+                throw new \LengthException('Published search feed exceeded its recurrence budget');
+            }
+            throw $e;
+        }
+        if ($headOnly) {
+            return '';
+        }
 
         // Trip relationships export as RELATED-TO lines (same treatment as
         // CalDAV objects): decorate rows with member/container uids.
-        $related = Trips::relatedUidMap($this->db, array_map(static fn(array $e): int => (int) $e['id'], $events));
+        $related = Trips::relatedUidMap(
+            $this->db,
+            array_map(static fn(array $e): int => (int) $e['id'], $events),
+            Limits::get('OUTFEED_RELATIONS'),
+        );
         foreach ($events as &$ev) {
             $id = (int) $ev['id'];
             if (!empty($related['children'][$id])) {
@@ -134,7 +170,12 @@ final class OutFeeds
         }
         unset($ev);
 
-        return Ics::buildCalendar((string) $feed['name'], $this->describeScope($feed, $scope), $events);
+        return Ics::buildCalendar(
+            (string) $feed['name'],
+            $this->describeScope($feed, $scope),
+            $events,
+            Limits::get('OUTFEED_BYTES'),
+        );
     }
 
     /**
@@ -164,18 +205,61 @@ final class OutFeeds
         [$where, $params] = $this->coverage($userId, $scope);
         $now = Time::nowDb();
         $ahead = $this->db->all(
-            "SELECT * FROM events WHERE $where AND (end_utc >= ? OR rrule IS NOT NULL) ORDER BY start_utc LIMIT $max",
+            "SELECT id FROM events WHERE $where AND (end_utc >= ? OR rrule IS NOT NULL) ORDER BY start_utc LIMIT $max",
             [...$params, $now]
         );
         $room = $max - count($ahead);
         $past = $room > 0 ? $this->db->all(
-            "SELECT * FROM events WHERE $where AND end_utc < ? AND rrule IS NULL ORDER BY start_utc DESC LIMIT $room",
+            "SELECT id FROM events WHERE $where AND end_utc < ? AND rrule IS NULL ORDER BY start_utc DESC LIMIT $room",
             [...$params, $now]
         ) : [];
-        $events = [...$past, ...$ahead];
+        $ids = array_map(static fn(array $r): int => (int) $r['id'], [...$past, ...$ahead]);
+        $events = $this->loadRowsWithinBudget($ids);
         usort($events, static fn(array $a, array $b): int => strcmp((string) $a['start_utc'], (string) $b['start_utc']));
         return $events;
     }
+
+    /** @param list<int> $ids @return list<array<string,mixed>> */
+    private function loadRowsWithinBudget(array $ids): array
+    {
+        if ($ids === []) {
+            return [];
+        }
+        return $this->db->tx(function () use ($ids): array {
+            $sourceLimit = max(1, intdiv(Limits::get('OUTFEED_BYTES'), 3));
+            $bytes = 0;
+            $rows = [];
+            foreach (array_chunk($ids, 250) as $chunk) {
+                [$in, $params] = Db::in($chunk);
+                // The size check and projected fetch share one transaction
+                // snapshot, so a concurrent edit cannot grow a row between
+                // admission and materialization.
+                $bytes += (int) $this->db->scalar(
+                    "SELECT COALESCE(SUM(" . self::SOURCE_SIZE_SQL . "), 0) FROM events WHERE id IN $in",
+                    $params
+                );
+                if ($bytes > $sourceLimit) {
+                    throw new \LengthException('Published calendar is too large to generate safely');
+                }
+                array_push($rows, ...$this->db->all(
+                    'SELECT ' . self::SOURCE_PROJECTION . " FROM events WHERE id IN $in",
+                    $params
+                ));
+            }
+            return $rows;
+        });
+    }
+
+    private const SOURCE_PROJECTION = 'id, uid, title, description, location, url, start_utc, end_utc,
+        all_day, tzid, rrule, exdates_json, reminders_json, status, recurrence_instance_utc';
+    private const SEARCH_PROJECTION = [
+        'id', 'uid', 'start_utc', 'end_utc', 'all_day', 'tzid', 'rrule', 'exdates_json',
+    ];
+    private const SOURCE_SIZE_SQL = "LENGTH(COALESCE(uid, '')) + LENGTH(COALESCE(title, ''))
+        + LENGTH(COALESCE(description, '')) + LENGTH(COALESCE(location, '')) + LENGTH(COALESCE(url, ''))
+        + LENGTH(COALESCE(start_utc, '')) + LENGTH(COALESCE(end_utc, '')) + LENGTH(COALESCE(tzid, ''))
+        + LENGTH(COALESCE(rrule, '')) + LENGTH(COALESCE(exdates_json, '')) + LENGTH(COALESCE(reminders_json, ''))
+        + LENGTH(COALESCE(status, '')) + LENGTH(COALESCE(recurrence_instance_utc, ''))";
 
     /** How many events a feed covers and how many it holds, for its card in Settings. */
     private function size(array $row): array

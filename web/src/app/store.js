@@ -81,7 +81,9 @@ export const state = {
   loadedRanges: [], // [{start, end}] ms epochs, merged
   // Event window loading as the view needs to show it: null (nothing to say),
   // {kind:'loading'} on a cold load, {kind:'failed', offline, retryAt} when a
-  // window request failed and a retry is scheduled (api.js).
+  // window request failed and a retry is scheduled, or {kind:'limited',
+  // message} when the requested range exceeded a server work budget and must
+  // be narrowed rather than retried unchanged (api.js).
   windowStatus: null,
 
   view: 'month', // month | weeks3 | weeks2 | week | day | agenda | split
@@ -239,6 +241,7 @@ export function invalidateRecords(eventId = null) {
 // Record fields that ALSO ride the list shape (when non-null); dropping them
 // on invalidate would blank a location the list itself supplied.
 const LIST_KEEP = { url: 1, location: 1, locationLat: 1, locationLng: 1, invite: 1, styleJson: 1 };
+const OCCURRENCE_CACHE_MAX = 25000;
 
 export function mergeWindow(startISO, endISO, events) {
   const s = new Date(startISO).getTime();
@@ -266,6 +269,53 @@ export function mergeWindow(startISO, endISO, events) {
   }
   state.loadedRanges = mergeRanges([...state.loadedRanges, { start: s, end: e }]);
   set({ occVersion: state.occVersion + 1 });
+}
+
+// The view cache used to grow for the lifetime of the tab as someone scrolled
+// through time. Every top-level render then mapped and sorted that complete
+// history. Once the hard ceiling is crossed, keep the just-completed window
+// (plus in-progress optimistic edits) and make older dates fetchable again.
+// The server admits fewer rows than this for one window, so normal navigation
+// retains its nearby cache and never reaches the fallback trimming loop.
+export function pruneOccurrenceCache(startISO, endISO, {
+  max = OCCURRENCE_CACHE_MAX,
+  activeWindow = null,
+  markLoaded = true,
+} = {}) {
+  if (activeWindow && (activeWindow.start !== startISO || activeWindow.end !== endISO)) return 'stale';
+  if (state.occ.size <= max) return false;
+  const s = new Date(startISO).getTime();
+  const e = new Date(endISO).getTime();
+  let active = 0;
+  let optimistic = 0;
+  for (const occ of state.occ.values()) {
+    if (occ._optimistic) { optimistic++; continue; }
+    const a = new Date(occ.start).getTime();
+    const b = new Date(occ.end).getTime();
+    if (a < e && b > s) active++;
+  }
+  // Never silently evict part of a range and then call that range complete.
+  // This is defensive against a stale/newer server with a looser response
+  // cap; current servers admit far fewer than this in one client window.
+  if (active + optimistic > max) {
+    for (const [id, occ] of state.occ) if (!occ._optimistic) state.occ.delete(id);
+    state.loadedRanges = [];
+    set({ occVersion: state.occVersion + 1 });
+    return 'limited';
+  }
+  for (const [id, occ] of state.occ) {
+    if (occ._optimistic) continue;
+    const a = new Date(occ.start).getTime();
+    const b = new Date(occ.end).getTime();
+    if (!(a < e && b > s)) state.occ.delete(id);
+  }
+  state.loadedRanges = markLoaded
+    ? [{ start: s, end: e }]
+    : state.loadedRanges
+      .map((range) => ({ start: Math.max(s, range.start), end: Math.min(e, range.end) }))
+      .filter((range) => range.end > range.start);
+  set({ occVersion: state.occVersion + 1 });
+  return 'pruned';
 }
 
 export function rangeCovered(startISO, endISO) {

@@ -190,6 +190,43 @@ final class Ics
         return null;
     }
 
+    /**
+     * Admit a local calendar file before parser work. The metadata check avoids
+     * reading an obviously oversized file; the content check is authoritative
+     * if the file changed between stat and read.
+     *
+     * @return array{content:?string,problem:?string,bytes:int}
+     */
+    public static function readAdmittedFile(string $path, int $maxBytes, int $maxEvents): array
+    {
+        $stat = @lstat($path);
+        if ($stat === false || !is_file($path) || is_link($path)) {
+            return ['content' => null, 'problem' => 'The calendar path is not a regular file', 'bytes' => 0];
+        }
+        $bytes = max(0, (int) ($stat['size'] ?? 0));
+        if ($bytes > $maxBytes) {
+            return ['content' => null, 'problem' => 'The calendar file is ' . self::mib($bytes) . ', over the ' . self::mib($maxBytes) . ' limit', 'bytes' => $bytes];
+        }
+        $stream = @fopen($path, 'rb');
+        if ($stream === false) {
+            return ['content' => null, 'problem' => 'The calendar file could not be read', 'bytes' => $bytes];
+        }
+        try {
+            $opened = fstat($stream);
+            if ($opened === false || (((int) ($opened['mode'] ?? 0)) & 0170000) !== 0100000) {
+                return ['content' => null, 'problem' => 'The calendar path is not a regular file', 'bytes' => 0];
+            }
+            $content = stream_get_contents($stream, $maxBytes + 1);
+        } finally {
+            fclose($stream);
+        }
+        if ($content === false) {
+            return ['content' => null, 'problem' => 'The calendar file could not be read', 'bytes' => $bytes];
+        }
+        $problem = self::budgetProblem($content, $maxBytes, $maxEvents);
+        return ['content' => $problem === null ? $content : null, 'problem' => $problem, 'bytes' => strlen($content)];
+    }
+
     /** The incoming UID made safe and bounded, or a fresh one when nothing usable is left. */
     public static function uidOrNew(string $uid): string
     {
@@ -224,7 +261,7 @@ final class Ics
      *
      * @param list<array<string,mixed>> $events DB event rows
      */
-    public static function buildCalendar(string $name, ?string $description, array $events): string
+    public static function buildCalendar(string $name, ?string $description, array $events, ?int $maxBytes = null): string
     {
         $out = "BEGIN:VCALENDAR\r\n";
         $out .= self::line('VERSION', '2.0');
@@ -234,8 +271,13 @@ final class Ics
         if ($description !== null && $description !== '') {
             $out .= self::line('X-WR-CALDESC', self::escape($description));
         }
-        $out .= self::buildBody($events);
-        $out .= "END:VCALENDAR\r\n";
+        $tail = "END:VCALENDAR\r\n";
+        $bodyLimit = $maxBytes === null ? null : max(0, $maxBytes - strlen($out) - strlen($tail));
+        $out .= self::buildBody($events, $bodyLimit);
+        $out .= $tail;
+        if ($maxBytes !== null && strlen($out) > $maxBytes) {
+            throw new \LengthException('Generated calendar exceeds its output budget');
+        }
         return $out;
     }
 
@@ -267,7 +309,7 @@ final class Ics
      *
      * @param list<array<string,mixed>> $events
      */
-    private static function buildBody(array $events): string
+    private static function buildBody(array $events, ?int $maxBytes = null): string
     {
         $masters = [];
         foreach ($events as $ev) {
@@ -287,14 +329,22 @@ final class Ics
         }
         $out = '';
         foreach (array_keys($zones) as $z) {
-            $out .= self::vtimezone($z);
+            self::appendBounded($out, self::vtimezone($z), $maxBytes);
         }
         $stamp = Time::nowUtc()->format('Ymd\THis\Z');
         foreach ($events as $ev) {
             $series = !empty($ev['recurrence_instance_utc']) ? ($masters[(string) ($ev['uid'] ?? '')] ?? null) : null;
-            $out .= self::buildEvent($ev, $stamp, $series);
+            self::appendBounded($out, self::buildEvent($ev, $stamp, $series), $maxBytes);
         }
         return $out;
+    }
+
+    private static function appendBounded(string &$out, string $chunk, ?int $maxBytes): void
+    {
+        if ($maxBytes !== null && strlen($out) + strlen($chunk) > $maxBytes) {
+            throw new \LengthException('Generated calendar exceeds its output budget');
+        }
+        $out .= $chunk;
     }
 
     /** The zone a timed row is written in, or null for all-day and UTC rows (written as dates or Z). */

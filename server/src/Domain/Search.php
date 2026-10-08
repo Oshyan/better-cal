@@ -4,8 +4,11 @@ declare(strict_types=1);
 
 namespace BetterCal\Domain;
 
+use BetterCal\Http\HttpError;
 use BetterCal\Infra\Db;
+use BetterCal\Support\ExpansionBudget;
 use BetterCal\Support\Time;
+use BetterCal\Support\WorkBudgetExceeded;
 
 final class Search
 {
@@ -37,7 +40,14 @@ final class Search
      *
      * @return list<array> event rows
      */
-    public function search(int $userId, string $q, int $limit = 50, bool $excerpt = true, array $opts = []): array
+    public function search(
+        int $userId,
+        string $q,
+        int $limit = 50,
+        bool $excerpt = true,
+        array $opts = [],
+        ?array $projection = null,
+    ): array
     {
         $plan = $this->plan($userId, $q, $opts);
         if ($plan === null) {
@@ -45,16 +55,29 @@ final class Search
         }
         $limit = max(1, $limit); // feeds ask for 500; the search route caps at 200
         [$where, $params, $order, $select, $selectParams] = $plan;
+        $columns = '*';
+        if ($projection !== null) {
+            $allowed = [
+                'id', 'uid', 'title', 'description', 'location', 'url', 'start_utc', 'end_utc',
+                'all_day', 'tzid', 'rrule', 'exdates_json', 'recurrence_instance_utc', 'status',
+                'reminders_json',
+            ];
+            if ($projection === [] || array_diff($projection, $allowed) !== []) {
+                throw new \LogicException('Invalid internal search projection');
+            }
+            $columns = implode(', ', array_values(array_unique($projection)));
+        }
         $rows = $this->db->all(
-            "SELECT *$select FROM events WHERE $where ORDER BY $order LIMIT $limit",
+            "SELECT $columns$select FROM events WHERE $where ORDER BY $order LIMIT $limit",
             [...$selectParams, ...$params]
         );
         if ($rows === [] && $plan['fallback'] !== null) {
             [$where, $params] = $plan['fallback'];
-            $rows = $this->db->all("SELECT * FROM events WHERE $where ORDER BY start_utc DESC LIMIT $limit", $params);
+            $rows = $this->db->all("SELECT $columns FROM events WHERE $where ORDER BY start_utc DESC LIMIT $limit", $params);
         }
         $now = $this->nowSql($opts);
         $dayNow = $this->dayNowSql($userId, $now);
+        $expansionBudget = ExpansionBudget::standard();
         $out = [];
         foreach ($rows as $row) {
             unset($row['relevance']);
@@ -65,7 +88,11 @@ final class Search
             if (($opts['when'] ?? 'all') === 'past' && $row['_upcoming']) {
                 // A series still running matched Past by its first date: show
                 // its latest occurrence that has ended (0.7.4), not its next.
-                $prev = self::previousOccurrence($row, $now);
+                try {
+                    $prev = self::previousOccurrence($row, $now, null, $expansionBudget);
+                } catch (WorkBudgetExceeded) {
+                    throw new HttpError('event_search_too_large', 'This search has too many repeating occurrences to process safely. Narrow the search and try again.', 422);
+                }
                 if ($prev === null) {
                     continue;
                 }
@@ -73,7 +100,11 @@ final class Search
                 $row['_upcoming'] = false;
             } elseif ($row['_upcoming'] && !empty($row['rrule']) && (string) $row['end_utc'] < $now) {
                 // A series that began in the past: show (and open) its next date, not its first.
-                $next = self::nextOccurrence($row, $now);
+                try {
+                    $next = self::nextOccurrence($row, $now, null, $expansionBudget);
+                } catch (WorkBudgetExceeded) {
+                    throw new HttpError('event_search_too_large', 'This search has too many repeating occurrences to process safely. Narrow the search and try again.', 422);
+                }
                 if ($next === null) {
                     if (($opts['when'] ?? 'all') === 'upcoming') {
                         continue;
@@ -150,11 +181,18 @@ final class Search
     }
 
     /** [start, end] of a series' first occurrence ending after $nowSql, within two years; null when there is none. */
-    public static function nextOccurrence(array $row, string $nowSql, ?Recurrence $recurrence = null): ?array
+    public static function nextOccurrence(
+        array $row,
+        string $nowSql,
+        ?Recurrence $recurrence = null,
+        ?ExpansionBudget $budget = null,
+    ): ?array
     {
         $from = Time::fromDb($nowSql);
         try {
-            $occs = ($recurrence ?? new Recurrence())->expand($row, [], $from, $from->modify('+2 years'));
+            $occs = ($recurrence ?? new Recurrence())->expand($row, [], $from, $from->modify('+2 years'), $budget);
+        } catch (WorkBudgetExceeded $e) {
+            throw $e;
         } catch (\Throwable) {
             return null;
         }
@@ -167,11 +205,18 @@ final class Search
     }
 
     /** [start, end] of a series' latest occurrence that ended by $nowSql, within two years; null when there is none. */
-    public static function previousOccurrence(array $row, string $nowSql, ?Recurrence $recurrence = null): ?array
+    public static function previousOccurrence(
+        array $row,
+        string $nowSql,
+        ?Recurrence $recurrence = null,
+        ?ExpansionBudget $budget = null,
+    ): ?array
     {
         $to = Time::fromDb($nowSql);
         try {
-            $occs = ($recurrence ?? new Recurrence())->expand($row, [], $to->modify('-2 years'), $to);
+            $occs = ($recurrence ?? new Recurrence())->expand($row, [], $to->modify('-2 years'), $to, $budget);
+        } catch (WorkBudgetExceeded $e) {
+            throw $e;
         } catch (\Throwable) {
             return null;
         }

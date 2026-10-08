@@ -34,7 +34,7 @@ if (preg_match('#^/feed/([A-Za-z0-9_-]{20,64})\.ics$#', $request->path, $m)) {
     try {
         $db = new Db($cfg['db']);
         $outFeeds = new Domain\OutFeeds($db, new Domain\Search($db, new Domain\Labels($db)), $cfg);
-        (new Controllers\OutFeedsController($outFeeds))->publicFeed($m[1])->send();
+        (new Controllers\OutFeedsController($outFeeds))->publicFeed($m[1], $request->method === 'HEAD')->send();
     } catch (\Throwable $e) {
         error_log('feed render error: ' . $e->getMessage());
         Response::text('Server error', 'text/plain; charset=utf-8', 500)->send();

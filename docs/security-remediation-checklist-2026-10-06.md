@@ -198,6 +198,9 @@ This section is the technical record for reviewers; it is not a manual to-do lis
 - [x] Phase 17 bounds long-span Split/Move work to loaded or rendered days; activates only absolute HTTP(S) event links; classifies meeting providers by parsed HTTPS host; bounds RRULE structure, values and selector combinations; refuses incomplete feed transfers/snapshots; keeps outbound and imported descriptions inert; contains malformed RRULEs to their event; and rejects impossible coordinates before storage, provider use or map rendering. Migration 043 cleans unsafe legacy URL, recurrence and coordinate fields without removing events.
 - [x] Phase 17 local suites: server 2,244/0; frontend smoke 680/0 in `America/Los_Angeles`, `UTC`, `Europe/Berlin`, `Asia/Kolkata` and `Pacific/Auckland`; frontend static 356/0 across 104 modules; MCP 67/0; deploy-security 21/0; vendor manifest 10/10. The 3,840-case time-zone differential harness matched its expected baseline: zero unexplained Python-oracle mismatches, 25 known ical.js differences and zero export/re-import occurrence changes. Touched PHP and JavaScript files pass syntax checks, the working-tree diff passes whitespace validation and the repository privacy guard reports no findings.
 - [x] Phase 17 independent read-only review found no material residual in eight of nine boundaries. Its proposed legacy sub-daily recurrence bypass was disproved against the pinned iterator: old secondly, minutely and hourly rules each stopped at the dependency's fixed 3,500-generation ceiling in about 2–5 ms. A committed under-one-second regression guard now detects any future dependency change; recent legitimate hourly recurrences remain supported.
+- [x] Phase 18 bounds dense event selection, cumulative recurrence work, browser request/cache/rendering work, published-feed source and output size, Takeout directory admission, plugin window and snapshot replacement, and native share handoff. Refused windows and snapshots fail as a whole rather than being presented or committed partially.
+- [x] Phase 18 local suites: server 2,278/0; frontend smoke 711/0; frontend static 356/0 across 104 modules. The 3,840-case time-zone/export-import harness reported zero occurrence changes after export and re-import. Touched PHP files pass syntax checks, the working-tree diff passes whitespace validation, and the repository privacy guard reports no findings.
+- [x] Phase 18 independent read-only review passed the published-feed, Takeout, plugin-sync and share-target boundaries. It prompted follow-up fixes for browser gap fan-out, incomplete cache coverage, stale window completion and duplicate reminder cursor chains; focused regression tests cover the corrected boundaries.
 
 ## Remaining practical checks
 
@@ -222,6 +225,12 @@ Use a disposable account or non-production installation for the checks that deli
 ### Emailed invitation review (F10/F61)
 
 - [ ] After deployment, use one disposable emailed `REQUEST`: confirm it appears in Review before any event exists, **Add to calendar** creates it without sending a reply, and the ordinary Accept / Maybe / Decline choice appears afterward. There is no need to manufacture forged UIDs, extreme sequences or acceptance races; those paths are covered by automated controls.
+
+### Aggregate work boundaries (Phase 18)
+
+- [ ] In a disposable dense view, confirm overflow remains usable through **+N more** and that a deliberately over-budget window asks for narrower dates or calendars rather than showing a partial result as complete.
+- [ ] Observe one real multi-slice reminder cycle and confirm it advances through one continuation chain without duplicate notifications or duplicate queued roots.
+- [ ] On an installed device, share an ordinary item and a near-limit multibyte item into the app; confirm each is consumed once and a simultaneous second share receives a retry response.
 
 ### Plugin proposal decisions (F29/F6/F56)
 

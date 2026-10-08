@@ -4,23 +4,27 @@
 
 Better-Cal is meant to replace a standard, individual, one-person Google Calendar. It isn't meant for enterprise use or for extremely heavy users (thousands of events a week, dozens of busy shared calendars, a whole team on one install). If you need that, feel free to fork it; the limits below are where you'd start.
 
-For a sense of what "one person" means here: on the calendar I run it on every day, a five-month month-view window holds roughly 3,700 occurrences and comes back from the server in about 160 ms.
+For a sense of what "one person" means here: a normal multi-month view may contain thousands of occurrences, and the defaults leave substantial room above that while still bounding pathological inputs.
 
 ## Limits you might notice
 
 - **1,000 occurrences per repeating series per request.** That covers a daily event across the widest window the app ever asks for (two years), so normal use never hits it. A series that does (something hourly, say) shows its first 1,000 occurrences in that range, and the app tells you which series was cut short instead of quietly showing fewer. API callers get the same report as a `capped` list of event ids.
-- **Two years per request.** The events API refuses a window longer than two years instead of cutting it short; ask for longer spans in pieces. The app does this on its own.
+- **Up to 700 days per app load.** The events API has a roughly two-year ceiling; the app keeps one requested window below 700 days and asks you to narrow a wider one instead of launching an unbounded set of parallel chunks.
 - **About ten years either way of today in the scrolling views.** Month, week and day views scroll roughly ten years back and forward from today. Jumping to a date further out stops at the edge. Search and the API aren't limited this way.
 - **Busy days in month view.** A day shows about seven events on a tall window (fewer on a short one or a phone), then "+N more"; trips and people's away times stack two deep per week before they overflow into the day's expanded list. Nothing is dropped, it just takes a click.
 - **Outbound feeds hold 5,000 events.** A feed you publish covers the past year onward (plus every repeating series), up to 5,000 events. Past that, the oldest past events are left off first, never upcoming ones, and the feed's card in Settings says so; `BETTERCAL_LIMIT_OUTFEED_EVENTS` raises the cap. A feed made from a saved search holds the search's top 500 matches.
+- **Dense event windows fail as a whole, not partially.** One operation may visit 5,000 repeating series, generate 10,000 occurrences, spend eight seconds on recurrence work, and admit 32 MiB of stored event text/JSON by default. If any aggregate limit is reached, the app asks for narrower dates or fewer calendars rather than presenting an incomplete window as complete.
+- **Published feeds are at most 16 MiB.** Source rows and trip relationships are admitted before serialization, and generation stops with a small `413` response if the complete `.ics` would exceed its budget.
 - **Repeating rules from outside** (feeds, imports, CalDAV, Google, email): an interval up to 1,000 and a COUNT up to 100,000. A rule past that arrives as a single event rather than a broken series.
-- **Reminders:** up to five per event, at most four weeks ahead.
+- **Reminders:** up to five per event, at most four weeks ahead. Dense calendars are scanned in durable 250-event slices; completed slices send normally, continuation slices run immediately while worker time remains, and unfinished work resumes in the next worker run without starting a duplicate scan cycle.
+- **Plugins:** one `eventsWindow()` call returns at most 5,000 occurrences by default. A complete `syncEvents()` snapshot is at most 2,000 events and 8 MiB of scalar event data; a refusal or mid-sync error keeps the previous snapshot intact.
 
 ## Limits you can change
 
 Imports, subscribed feeds, CalDAV objects, incoming email, skipped occurrences, description length and filter work all have caps that protect the server from oversized or hostile input. Each has a sensible default for one person and can be raised in `.env`; [`.env.example`](../.env.example) lists them (the `BETTERCAL_LIMIT_*` settings) with their defaults. The main ones:
 
 - An uploaded `.ics` file: 25 MiB and 20,000 events.
+- One command-line Takeout migration: 1,000 new `.ics` files and 1 GiB in aggregate by default, with the normal per-file import limits still applied. Each calendar commits separately, so a failed file can be corrected and the command safely resumed without redoing completed calendars.
 - One JSON API request: 1 MiB (operator-adjustable up to a 4 MiB hard ceiling).
 - One ordinary ICS subscription: 20,000 events per poll (and 20 MiB, which isn't configurable).
 - One Google calendar poll: 20,000 remote resources, 32 MiB of decompressed responses, 20 pages and 40 seconds, including any retry after Google expires a sync token. The event count is lowered automatically when PHP's `memory_limit` cannot safely carry the decoded changes, cached snapshot and database sync structures at once; the stored snapshot's actual text/JSON size is checked before it is loaded, so calendars with unusually large but valid descriptions fail cleanly too. A refusal keeps the last successful calendar and sync position, records the reason on the calendar, and lets the worker continue. `BETTERCAL_LIMIT_GOOGLE_SYNC_*` settings can raise these only to the hard ceilings in `.env.example`.

@@ -105,7 +105,7 @@ Three things about the timestamps that will bite you otherwise:
 - **All-day occurrences come back as `YYYY-MM-DDT00:00:00+00:00`** — a literal calendar date pinned at `+00:00`, not an instant. Do **not** timezone-convert it; converting slides Saturday into Friday west of UTC. Its `end` is exclusive.
 - `lat`/`lng` are renamed from the event's `locationLat`/`locationLng`, and are null unless the event has resolved coordinates.
 
-The window is **not capped** — it returns every occurrence in the range you ask for, the same set the calendar itself renders. Ask for the narrowest range you can, since a year-wide window on a busy calendar is several thousand occurrences and you are spending the 60 s run budget to expand them.
+The window returns every admitted occurrence in the range you ask for, up to the operation's shared recurrence budget and the default 5,000-occurrence plugin window limit. A larger result is refused with an error instead of being returned partially; ask for a narrower range and continue in another call. Operators can tune `BETTERCAL_LIMIT_PLUGIN_WINDOW_EVENTS` within its documented hard ceiling.
 
 **The window includes plugin-owned calendars.** Anything judging "is this day free?" must skip `kind === 'plugin'` from `calendars()`, or the Weather plugin's one-all-day-event-per-day makes every day look occupied. Consider also offering a `calendarSettings` toggle so the user can exclude their own chore or task calendars — recurring all-day chores are all-day events too, and they are not what "this day is taken" means.
 

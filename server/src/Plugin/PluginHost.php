@@ -20,6 +20,8 @@ use BetterCal\Infra\JobQueue;
 use BetterCal\Infra\LlmGateway;
 use BetterCal\Infra\Notifier;
 use BetterCal\Infra\PoliciedGeocoderTransport;
+use BetterCal\Support\ExpansionBudget;
+use BetterCal\Support\Limits;
 use BetterCal\Support\Time;
 
 /**
@@ -39,6 +41,7 @@ final class PluginHost
     /** @var list<string> */
     private array $log = [];
     private float $startedAt;
+    private ?float $committedSyncAt = null;
 
     public function __construct(
         private readonly Db $db,
@@ -98,6 +101,15 @@ final class PluginHost
     public function overBudget(): bool
     {
         return $this->budgetRemaining() <= 0.0;
+    }
+
+    /** A sync transaction reached its final checkpoint and committed safely. */
+    public function committedSyncWithinBudget(): bool
+    {
+        // syncEvents reserves two seconds at its final checkpoint. Crossing
+        // the outer soft deadline only in the immediate commit/return edge is
+        // therefore not a failed run; additional plugin work still times out.
+        return $this->committedSyncAt !== null && microtime(true) - $this->committedSyncAt < 2.0;
     }
 
     // ---- config ---------------------------------------------------------
@@ -194,8 +206,12 @@ final class PluginHost
             Time::parseIso($endIso),
             null,
             null,
-            false
+            false,
+            ExpansionBudget::standard(Limits::get('PLUGIN_WINDOW_EVENTS')),
         );
+        if (count($occs) > Limits::get('PLUGIN_WINDOW_EVENTS')) {
+            throw new \RuntimeException('eventsWindow: the requested window contains too many events; narrow it before reading');
+        }
         return array_map(static fn(array $o) => [
             'eventId' => $o['eventId'],
             'calendarId' => $o['calendarId'],
@@ -677,6 +693,15 @@ final class PluginHost
      */
     public function syncEvents(int $calendarId, array $events): array
     {
+        $maxEvents = Limits::get('PLUGIN_SYNC_EVENTS');
+        if (count($events) > $maxEvents) {
+            throw new \RuntimeException('syncEvents: plugin returned ' . number_format(count($events))
+                . ' events, over the safe limit of ' . number_format($maxEvents) . '; the existing snapshot was kept');
+        }
+        $inputBytes = self::eventInputBytes($events, Limits::get('PLUGIN_SYNC_BYTES'));
+        if ($inputBytes > Limits::get('PLUGIN_SYNC_BYTES')) {
+            throw new \RuntimeException('syncEvents: plugin event data is too large; the existing snapshot was kept');
+        }
         $cal = $this->db->one(
             "SELECT id FROM calendars WHERE id = ? AND user_id = ? AND kind = 'plugin' AND plugin_id = ?",
             [$calendarId, $this->userId, $this->pluginId]
@@ -684,76 +709,131 @@ final class PluginHost
         if ($cal === null) {
             throw new \RuntimeException('syncEvents: calendar ' . $calendarId . ' is not owned by ' . $this->pluginId);
         }
-        $existing = [];
-        foreach ($this->db->all('SELECT id, uid, title, start_utc, end_utc, all_day, description, location FROM events WHERE calendar_id = ? AND deleted_at IS NULL', [$calendarId]) as $r) {
-            $existing[(string) $r['uid']] = $r;
-        }
-        $added = 0;
-        $updated = 0;
-        $seen = [];
-        foreach ($events as $ev) {
-            $key = 'plg-' . $this->pluginId . '-' . mb_substr((string) ($ev['sourceKey'] ?? ''), 0, 100);
-            if (($ev['sourceKey'] ?? '') === '' || isset($seen[$key])) {
-                continue;
+        $result = $this->db->tx(function () use ($calendarId, $events, $maxEvents): array {
+            // Check and load the existing snapshot inside the same transaction
+            // so a concurrent writer cannot grow it between admission and
+            // materialization.
+            $stored = $this->db->one(
+                "SELECT COUNT(*) AS n, COALESCE(SUM(LENGTH(COALESCE(uid, '')) + LENGTH(COALESCE(title, ''))
+                    + LENGTH(COALESCE(description, '')) + LENGTH(COALESCE(location, ''))), 0) AS bytes
+                 FROM events WHERE calendar_id = ? AND deleted_at IS NULL",
+                [$calendarId]
+            );
+            if ((int) ($stored['n'] ?? 0) > $maxEvents || (int) ($stored['bytes'] ?? 0) > Limits::get('PLUGIN_SYNC_BYTES')) {
+                throw new \RuntimeException('syncEvents: the stored plugin snapshot is over the safe repair limit; no rows were changed');
             }
-            $seen[$key] = true;
-            [$startUtc, $endUtc, $allDay] = self::spanToUtc($ev);
-            $cols = [
-                'title' => mb_substr(Sanitize::toText((string) ($ev['title'] ?? '')), 0, 500),
-                'description' => isset($ev['description']) ? Sanitize::description((string) $ev['description']) : null,
-                'location' => isset($ev['location']) ? mb_substr(Sanitize::toText((string) $ev['location']), 0, 300) : null,
-                'start_utc' => $startUtc,
-                'end_utc' => $endUtc,
-                'all_day' => $allDay ? 1 : 0,
-                'tzid' => 'UTC',
-                // Per-event icon (host name or one glyph); a bad one is dropped, not fatal.
-                'icon' => isset($ev['icon']) && \BetterCal\Domain\Plugins::iconError($ev['icon']) === null ? trim((string) $ev['icon']) : null,
-            ];
-            $cur = $existing[$key] ?? null;
-            if ($cur === null) {
-                $this->db->insert('events', $cols + [
-                    'user_id' => $this->userId,
-                    'calendar_id' => $calendarId,
-                    'uid' => $key,
-                    'source' => 'local',
-                    'created_via' => 'plugin:' . $this->pluginId,
-                ]);
-                $added++;
-            } else {
-                $changed = [];
-                foreach ($cols as $c => $v) {
-                    if ((string) ($cur[$c] ?? '') !== (string) ($v ?? '')) {
-                        $changed[$c] = $v;
+            $existing = [];
+            foreach ($this->db->all('SELECT id, uid, title, start_utc, end_utc, all_day, description, location FROM events WHERE calendar_id = ? AND deleted_at IS NULL', [$calendarId]) as $r) {
+                $existing[(string) $r['uid']] = $r;
+            }
+            $added = 0;
+            $updated = 0;
+            $seen = [];
+            foreach ($events as $ev) {
+                if ($this->budgetRemaining() <= 2.0) {
+                    throw new \RuntimeException('syncEvents: plugin run reached its time budget; all event changes were rolled back');
+                }
+                $key = 'plg-' . $this->pluginId . '-' . mb_substr((string) ($ev['sourceKey'] ?? ''), 0, 100);
+                if (($ev['sourceKey'] ?? '') === '' || isset($seen[$key])) {
+                    continue;
+                }
+                $seen[$key] = true;
+                [$startUtc, $endUtc, $allDay] = self::spanToUtc($ev);
+                $cols = [
+                    'title' => mb_substr(Sanitize::toText((string) ($ev['title'] ?? '')), 0, 500),
+                    'description' => isset($ev['description']) ? Sanitize::description((string) $ev['description']) : null,
+                    'location' => isset($ev['location']) ? mb_substr(Sanitize::toText((string) $ev['location']), 0, 300) : null,
+                    'start_utc' => $startUtc,
+                    'end_utc' => $endUtc,
+                    'all_day' => $allDay ? 1 : 0,
+                    'tzid' => 'UTC',
+                    // Per-event icon (host name or one glyph); a bad one is dropped, not fatal.
+                    'icon' => isset($ev['icon']) && \BetterCal\Domain\Plugins::iconError($ev['icon']) === null ? trim((string) $ev['icon']) : null,
+                ];
+                $cur = $existing[$key] ?? null;
+                if ($cur === null) {
+                    $this->db->insert('events', $cols + [
+                        'user_id' => $this->userId,
+                        'calendar_id' => $calendarId,
+                        'uid' => $key,
+                        'source' => 'local',
+                        'created_via' => 'plugin:' . $this->pluginId,
+                    ]);
+                    $added++;
+                } else {
+                    $changed = [];
+                    foreach ($cols as $c => $v) {
+                        if ((string) ($cur[$c] ?? '') !== (string) ($v ?? '')) {
+                            $changed[$c] = $v;
+                        }
+                    }
+                    if ($changed !== []) {
+                        $changed['updated_at'] = Time::nowDb();
+                        $this->db->update('events', $changed, 'id = ?', [(int) $cur['id']]);
+                        $updated++;
                     }
                 }
-                if ($changed !== []) {
-                    $changed['updated_at'] = Time::nowDb();
-                    $this->db->update('events', $changed, 'id = ?', [(int) $cur['id']]);
-                    $updated++;
+            }
+            $removed = 0;
+            foreach ($existing as $uid => $r) {
+                if (!isset($seen[$uid])) {
+                    if ($this->budgetRemaining() <= 2.0) {
+                        throw new \RuntimeException('syncEvents: plugin run reached its time budget; all event changes were rolled back');
+                    }
+                    $this->db->run('DELETE FROM events WHERE id = ?', [(int) $r['id']]);
+                    $removed++;
+                }
+            }
+            if ($this->budgetRemaining() <= 2.0) {
+                throw new \RuntimeException('syncEvents: plugin run reached its time budget; all event changes were rolled back');
+            }
+            if ($added + $updated + $removed > 0) {
+                ActivityContext::with('plugin:' . $this->pluginId, function () use ($calendarId, $added, $updated, $removed): void {
+                    (new Undo($this->db))->record(
+                        $this->userId,
+                        'calendar',
+                        $calendarId,
+                        'update',
+                        null,
+                        null,
+                        ucfirst($this->pluginId) . ' sync: ' . $added . ' added, ' . $updated . ' updated, ' . $removed . ' removed'
+                    );
+                });
+            }
+            // Last checkpoint before the transaction callback returns to its
+            // commit boundary. A timeout here rolls every upsert, deletion,
+            // and Activity row back together.
+            if ($this->budgetRemaining() <= 2.0) {
+                throw new \RuntimeException('syncEvents: plugin run reached its time budget; all event changes were rolled back');
+            }
+            return [$added, $updated, $removed];
+        });
+        $this->committedSyncAt = microtime(true);
+        return $result;
+    }
+
+    /** Count scalar data before writes without creating a second JSON copy. */
+    private static function eventInputBytes(array $events, int $stopAfter): int
+    {
+        $bytes = 0;
+        $fields = ['sourceKey', 'title', 'start', 'end', 'allDay', 'description', 'location', 'icon'];
+        foreach ($events as $event) {
+            if (!is_array($event)) {
+                return $stopAfter + 1;
+            }
+            foreach ($fields as $field) {
+                $value = $event[$field] ?? null;
+                if (is_scalar($value)) {
+                    $bytes += strlen((string) $value);
+                    if ($bytes > $stopAfter) {
+                        return $bytes;
+                    }
+                } elseif ($value !== null) {
+                    return $stopAfter + 1;
                 }
             }
         }
-        $removed = 0;
-        foreach ($existing as $uid => $r) {
-            if (!isset($seen[$uid])) {
-                $this->db->run('DELETE FROM events WHERE id = ?', [(int) $r['id']]);
-                $removed++;
-            }
-        }
-        if ($added + $updated + $removed > 0) {
-            ActivityContext::with('plugin:' . $this->pluginId, function () use ($calendarId, $added, $updated, $removed): void {
-                (new Undo($this->db))->record(
-                    $this->userId,
-                    'calendar',
-                    $calendarId,
-                    'update',
-                    null,
-                    null,
-                    ucfirst($this->pluginId) . ' sync: ' . $added . ' added, ' . $updated . ' updated, ' . $removed . ' removed'
-                );
-            });
-        }
-        return [$added, $updated, $removed];
+        return $bytes;
     }
 
     // ---- output: overlay ranges ----------------------------------------

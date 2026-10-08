@@ -24,7 +24,7 @@ import { sortByMatch } from '../src/lib/rank.js';
 import { parseJumpText, jumpGranularity } from '../src/lib/jumpparse.js';
 import { parseClockText, resolveClock, minsToHHMM, hhmmToMins, parseDateText, durationLabel } from '../src/lib/whenparse.js';
 import { monthWeeks, stepMonthOf } from '../src/lib/minimonth.js';
-import { missingRanges } from '../src/app/store.js';
+import { state as storeState, missingRanges, pruneOccurrenceCache } from '../src/app/store.js';
 import {
   normalizeDayRange, dayRangeDraft, dayRangeLabel, timeRangeLabel, chipPosition,
   dragCreateMode, allDayRangeDraft,
@@ -49,6 +49,7 @@ import { hasHtml, stripToText, isEmptyHtml, splitUrlTail, safeLinkMatcher } from
 import { batteryTipApplies, BATTERY_TIP_BODY, BATTERY_TIP_TITLE } from '../src/lib/batterytip.js';
 import { fuzzyScore, rankByFuzzy } from '../src/lib/fuzzy.js';
 import { STATIC_COMMANDS, COMMAND_GROUPS, MANAGE_ITEMS, VIEW_LABELS, VIEW_ICONS } from '../src/app/commanddefs.js';
+import { normalizeShareParams } from '../src/app/handoff.js';
 
 let passed = 0;
 let failed = 0;
@@ -438,6 +439,15 @@ const L6 = layoutOverlaps([
 ]);
 assert('longest-first at same start', L6.find((e) => e.id === 'long').col === 0);
 
+const boundedItems = layoutOverlaps(Array.from({ length: 12 }, (_, i) => ({
+  id: `item-${i}`, startMin: i * 60, endMin: i * 60 + 30,
+})), 30, { maxItems: 10, maxColumns: 4 });
+eq('overlap layout: exact item cap is rendered and the remainder counted', [boundedItems.length, boundedItems.overflow], [10, 2]);
+const boundedColumns = layoutOverlaps(Array.from({ length: 8 }, (_, i) => ({
+  id: `overlap-${i}`, startMin: 60, endMin: 180,
+})), 30, { maxItems: 20, maxColumns: 3 });
+eq('overlap layout: column cap bounds lane state and counts hidden events', [boundedColumns.length, boundedColumns.overflow, Math.max(...boundedColumns.map((e) => e.cols))], [3, 5, 3]);
+
 // 35. Lane assignment packs bars greedily.
 const lanes = assignLanes([
   { id: 'a', startCol: 0, endCol: 2 },
@@ -445,6 +455,8 @@ const lanes = assignLanes([
   { id: 'c', startCol: 3, endCol: 6 },
 ]);
 eq('assignLanes greedy packing', [lanes.get('a'), lanes.get('b'), lanes.get('c')], [0, 1, 0]);
+const boundedLanes = assignLanes(Array.from({ length: 5 }, (_, i) => ({ id: `lane-${i}`, startCol: 0, endCol: 6 })), 2);
+eq('assignLanes: overflow uses one sentinel without growing lane state', [...boundedLanes.values()], [0, 1, 2, 2, 2]);
 
 // 36. rangesOverlap half-open semantics.
 assert('rangesOverlap half-open', !rangesOverlap(0, 10, 10, 20) && rangesOverlap(0, 11, 10, 20));
@@ -1293,6 +1305,15 @@ eq('lane overflow drops the 4th rail', railRanges(stackedGroups).length, 3);
 assert('overflow keeps start/end rows',
   stackedGroups[0].rows.length === 4 && stackedGroups[1].rows.length === 4);
 
+const denseDay = Array.from({ length: 7 }, (_, i) => ({
+  instanceId: `dense-${i}`, calendarId: 'c1', title: `Example ${i}`,
+  allDay: false, start: localISO(2026, 6, 8, 9, i), end: localISO(2026, 6, 8, 10, i),
+}));
+const denseGroups = buildAgendaGroups(denseDay, { maxRowsPerDay: 5 });
+eq('dense agenda: row cap preserves an exact overflow count and bounded height',
+  [denseGroups[0].rows.length, denseGroups[0].overflow, denseGroups[0].height],
+  [5, 2, 40 + 6 * 36]);
+
 // Non-overlapping spans reuse lane 0.
 const sequential = railRanges(buildAgendaGroups([
   { instanceId: 'q1', calendarId: 'c1', title: 'A', allDay: true, start: '2026-06-01T00:00:00+00:00', end: '2026-06-03T00:00:00+00:00' },
@@ -1302,7 +1323,7 @@ eq('sequential rails share lane 0', sequential.map((r) => r.lane), [0, 0]);
 
 // Washes are bounded by each span's own pills, not by whole days, so two
 // overlapping spans produce three visible tones (first alone, both, second
-// alone). Rails cap at MAX_RAIL_LANES; washes never do.
+// alone). Rails and decorative washes each have independent hard caps.
 const wash = washRects(railGroups);
 eq('one wash per span', wash.length, railRanges(railGroups).length);
 eq('wash matches its rail geometry',
@@ -1313,6 +1334,12 @@ assert('washes are ordered longest first',
 eq('every overlapping span gets a wash even past the rail lane cap',
   washRects(stackedGroups).length, 4);
 assert('rails still cap at three lanes', railRanges(stackedGroups).length === 3);
+const manySpans = Array.from({ length: 120 }, (_, i) => ({
+  instanceId: `wash-${i}`, calendarId: 'c1', title: `Span ${i}`, allDay: true,
+  start: '2026-06-01T00:00:00+00:00', end: '2026-06-05T00:00:00+00:00',
+}));
+eq('agenda washes stop at their independent render cap',
+  washRects(buildAgendaGroups(manySpans)).length, 100);
 eq('no washes without spans', washRects(buildAgendaGroups([railSingle])).length, 0);
 
 console.log('--- color utils ---');
@@ -1382,6 +1409,65 @@ console.log('--- chronological ordering across timezone offsets ---');
   eq('gaps: stepping a 5-month window asks for 1 month', stepped.length, 1);
   assert('gaps: and that month is the new tail',
     stepped[0].start === 5 * MONTH && stepped[0].end === 6 * MONTH);
+}
+
+// A long-lived tab must not retain every date it has ever visited. Trimming
+// keeps the complete active window, including a multi-day event that began
+// before it, and never discards an optimistic edit in progress.
+{
+  storeState.occ.clear();
+  storeState.loadedRanges = [{ start: 0, end: Date.UTC(2030, 0, 1) }];
+  const add = (id, start, end, extra = {}) => storeState.occ.set(id, { instanceId: id, start, end, ...extra });
+  add('old-a', '2025-01-01T10:00:00Z', '2025-01-01T11:00:00Z');
+  add('old-b', '2025-02-01T10:00:00Z', '2025-02-01T11:00:00Z');
+  add('inside', '2026-04-10T10:00:00Z', '2026-04-10T11:00:00Z');
+  add('spanning', '2026-03-30T10:00:00Z', '2026-04-02T11:00:00Z');
+  add('draft', '2025-03-01T10:00:00Z', '2025-03-01T11:00:00Z', { _optimistic: true });
+  assert('window cache: crossing the cap prunes retained history',
+    pruneOccurrenceCache('2026-04-01T00:00:00Z', '2026-05-01T00:00:00Z', { max: 3 }));
+  eq('window cache: the active window, overlapping span, and optimistic draft remain',
+    [...storeState.occ.keys()].sort(), ['draft', 'inside', 'spanning']);
+  eq('window cache: only the complete active range remains marked loaded',
+    storeState.loadedRanges, [{ start: Date.parse('2026-04-01T00:00:00Z'), end: Date.parse('2026-05-01T00:00:00Z') }]);
+  storeState.occ.clear();
+  storeState.loadedRanges = [];
+
+  add('history-c', '2025-01-01T10:00:00Z', '2025-01-01T11:00:00Z');
+  add('history-d', '2025-02-01T10:00:00Z', '2025-02-01T11:00:00Z');
+  add('partial', '2026-04-05T10:00:00Z', '2026-04-05T11:00:00Z');
+  storeState.loadedRanges = [
+    { start: Date.parse('2026-03-01T00:00:00Z'), end: Date.parse('2026-04-10T00:00:00Z') },
+    { start: Date.parse('2026-04-20T00:00:00Z'), end: Date.parse('2026-06-01T00:00:00Z') },
+  ];
+  eq('window cache: intermediate pruning preserves only ranges actually loaded so far',
+    pruneOccurrenceCache('2026-04-01T00:00:00Z', '2026-05-01T00:00:00Z', { max: 2, markLoaded: false }),
+    'pruned');
+  eq('window cache: intermediate pruning never marks the unfinished full window loaded', storeState.loadedRanges, [
+    { start: Date.parse('2026-04-01T00:00:00Z'), end: Date.parse('2026-04-10T00:00:00Z') },
+    { start: Date.parse('2026-04-20T00:00:00Z'), end: Date.parse('2026-05-01T00:00:00Z') },
+  ]);
+  storeState.occ.clear();
+  storeState.loadedRanges = [];
+
+  for (let i = 0; i < 4; i++) {
+    add('dense-' + i, `2026-04-${String(10 + i).padStart(2, '0')}T10:00:00Z`, `2026-04-${String(10 + i).padStart(2, '0')}T11:00:00Z`);
+  }
+  eq('window cache: an active range over the cap is refused rather than silently truncated',
+    pruneOccurrenceCache('2026-04-01T00:00:00Z', '2026-05-01T00:00:00Z', { max: 3 }), 'limited');
+  eq('window cache: a refused dense range is neither rendered partially nor marked loaded',
+    [storeState.occ.size, storeState.loadedRanges.length], [0, 0]);
+
+  add('current', '2026-06-10T10:00:00Z', '2026-06-10T11:00:00Z');
+  add('history-a', '2025-01-01T10:00:00Z', '2025-01-01T11:00:00Z');
+  add('history-b', '2025-02-01T10:00:00Z', '2025-02-01T11:00:00Z');
+  eq('window cache: a stale completion cannot choose the retained window',
+    pruneOccurrenceCache('2026-04-01T00:00:00Z', '2026-05-01T00:00:00Z', {
+      max: 2,
+      activeWindow: { start: '2026-06-01T00:00:00Z', end: '2026-07-01T00:00:00Z' },
+    }), 'stale');
+  eq('window cache: stale completion leaves the current and historical cache untouched', storeState.occ.size, 3);
+  storeState.occ.clear();
+  storeState.loadedRanges = [];
 }
 
 {
@@ -1558,6 +1644,20 @@ console.log('--- chronological ordering across timezone offsets ---');
   }
 }
 
+// --- Web Share Target: bounded one-shot handoff --------------------------------
+{
+  eq('share handoff: ordinary fields are preserved',
+    normalizeShareParams({ title: 'Example', text: 'Meet at 10', url: 'https://example.com/item' }),
+    { title: 'Example', text: 'Meet at 10', url: 'https://example.com/item' });
+  eq('share handoff: exact aggregate character limit is accepted',
+    normalizeShareParams({ text: 'x'.repeat(4000) })?.text.length, 4000);
+  eq('share handoff: a field over the character limit is refused',
+    normalizeShareParams({ text: 'x'.repeat(4001) }), null);
+  eq('share handoff: combined fields over the aggregate limit are refused',
+    normalizeShareParams({ title: 'x'.repeat(2000), text: 'y'.repeat(2001) }), null);
+  eq('share handoff: non-string fields are refused', normalizeShareParams({ text: 42 }), null);
+}
+
 // --- Event windows: a failed load is shown and retried, not left blank (#48) ---
 {
   const realFetch = globalThis.fetch;
@@ -1569,6 +1669,9 @@ console.log('--- chronological ordering across timezone offsets ---');
     calls++;
     if (mode === 'offline') {
       return new Response(JSON.stringify({ error: { code: 'offline', message: 'Offline and not cached' } }), { status: 503, headers: { 'Content-Type': 'application/json' } });
+    }
+    if (mode === 'limited') {
+      return new Response(JSON.stringify({ error: { code: 'event_window_too_large', message: 'Narrow this date range.' } }), { status: 422, headers: { 'Content-Type': 'application/json' } });
     }
     return new Response(JSON.stringify({ events: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } });
   };
@@ -1602,6 +1705,21 @@ console.log('--- chronological ordering across timezone offsets ---');
   eq('window: a cold load says it is loading', st.windowStatus && st.windowStatus.kind, 'loading');
   await loading;
   eq('window: and stops saying so when it lands', st.windowStatus, null);
+  put({ loadedRanges: [], windowStatus: null });
+  mode = 'limited';
+  await loadWindow('2028-03-01T00:00:00-08:00', '2028-04-01T00:00:00-07:00');
+  eq('window: a server work limit is explained without scheduling a retry',
+    [st.windowStatus && st.windowStatus.kind, st.windowStatus && st.windowStatus.message, st.windowStatus && st.windowStatus.retryAt],
+    ['limited', 'Narrow this date range.', undefined]);
+  const limitedCalls = calls;
+  retryWindowsNow();
+  await new Promise((r) => setTimeout(r, 20));
+  eq('window: Retry now does not repeat an unchanged over-budget request', calls, limitedCalls);
+  mode = 'online';
+  const beforeWide = calls;
+  await loadWindow('2020-01-01T00:00:00Z', '2022-01-01T00:00:00Z');
+  eq('window: a client request over 700 days is refused without a request fan-out',
+    [calls, st.windowStatus && st.windowStatus.kind], [beforeWide, 'limited']);
   globalThis.fetch = realFetch;
 }
 
@@ -1622,7 +1740,7 @@ console.log('--- chronological ordering across timezone offsets ---');
   const swSource = fillWorker('bc-test00000000', ['/', '/assets/src/app/main.js']);
   assert('sw template: the committed file has the unversioned placeholder', /const VERSION = 'bc-unversioned';/.test(swTemplate) && swSource.includes("const VERSION = 'bc-test00000000';"));
 
-  const makeWorker = (source = swSource) => {
+  const makeWorker = (source = swSource, { failHandoffWrites = false } = {}) => {
     const stores = new Map(); // cache name -> Map(url -> Response)
     const keyOf = (r) => (typeof r === 'string' ? r : r.url);
     const caches = {
@@ -1631,7 +1749,14 @@ console.log('--- chronological ordering across timezone offsets ---');
       open: async (name) => {
         if (!stores.has(name)) stores.set(name, new Map());
         const m = stores.get(name);
-        return { put: async (req, res) => { m.set(keyOf(req), res); } };
+        return {
+          put: async (req, res) => {
+            if (failHandoffWrites && name === 'bc-handoff') throw new Error('quota');
+            m.set(keyOf(req), res);
+          },
+          match: async (req) => (m.has(keyOf(req)) ? m.get(keyOf(req)).clone() : undefined),
+          delete: async (req) => m.delete(keyOf(req)),
+        };
       },
       match: async (req) => {
         for (const m of stores.values()) if (m.has(keyOf(req))) return m.get(keyOf(req)).clone();
@@ -1648,7 +1773,8 @@ console.log('--- chronological ordering across timezone offsets ---');
       fetch: async (req) => net.respond(keyOf(req)),
       // A worker resolves relative URLs against its origin; Node's Request does not.
       Response, Request: class extends Request { constructor(u, o) { super(typeof u === 'string' && u.startsWith('/') ? 'https://cal.example.com' + u : u, o); } },
-      URL, Promise, JSON, setTimeout, clearTimeout, console: { warn: () => {}, log: () => {} },
+      URL, URLSearchParams, TextDecoder, Uint8Array, Promise, JSON, setTimeout, clearTimeout,
+      console: { warn: () => {}, log: () => {} },
     };
     vm.runInNewContext(source, sandbox);
     const get = (path) => new Promise((resolve) => {
@@ -1659,6 +1785,18 @@ console.log('--- chronological ordering across timezone offsets ---');
       let done = Promise.resolve();
       handlers.message({ data, waitUntil: (p) => { done = p; } });
       await done;
+    };
+    const postShare = (body, headers = {}) => new Promise((resolve) => {
+      const request = new Request('https://cal.example.com/share', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', ...headers },
+        body,
+      });
+      handlers.fetch({ request, respondWith: (p) => resolve(p) });
+    });
+    const handoff = async () => {
+      const response = stores.get('bc-handoff')?.get('/__handoff');
+      return response ? response.clone().json() : null;
     };
     const settle = () => new Promise((r) => setTimeout(r, 5)); // let the un-awaited cache write land
     // Dispatch a fetch and report whether the worker took it (respondWith) or left it to the network.
@@ -1673,11 +1811,53 @@ console.log('--- chronological ordering across timezone offsets ---');
       handlers[type]({ waitUntil: (p) => { done = p; } });
       await done;
     };
-    return { stores, net, get, message, settle, takes, lifecycle };
+    return { stores, net, get, postShare, handoff, message, settle, takes, lifecycle };
   };
   const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
   const offline = () => { throw new TypeError('Failed to fetch'); };
   const apiCached = (w) => [...w.stores.entries()].filter(([k]) => k.endsWith('-api')).reduce((n, [, m]) => n + m.size, 0);
+
+  // Native Web Share payloads stay local, one-shot, and bounded before the
+  // app's quick-add parser ever sees them.
+  {
+    const w = makeWorker();
+    const response = await w.postShare('title=Example&text=Meet+at+10', { Origin: 'null' });
+    eq('sw share: native share is redirected to a bare root',
+      [response.status, response.headers.get('Location')], [303, '/']);
+    eq('sw share: ordinary fields are cached once for the app', await w.handoff(), {
+      path: '/share', params: { title: 'Example', text: 'Meet at 10' },
+    });
+
+    await w.postShare('text=' + encodeURIComponent('x'.repeat(4000)), { Origin: 'null' });
+    eq('sw share: exact decoded character limit is accepted', (await w.handoff()).params.text.length, 4000);
+    await w.postShare('text=' + encodeURIComponent('é'.repeat(4000)), { Origin: 'null' });
+    eq('sw share: the decoded character limit also accepts non-ASCII text', (await w.handoff()).params.text.length, 4000);
+    await w.postShare('text=' + encodeURIComponent('x'.repeat(4001)), { Origin: 'null' });
+    assert('sw share: decoded content over the limit replaces old content with a visible error',
+      !!(await w.handoff()).error);
+
+    await w.postShare('padding=' + 'x'.repeat(65536), { Origin: 'null' });
+    assert('sw share: raw encoded body over the byte limit is refused visibly', !!(await w.handoff()).error);
+
+    await w.postShare('text=old', { Origin: 'null' });
+    const foreign = await w.postShare('text=foreign', { Origin: 'https://other.example' });
+    eq('sw share: a cross-site form is rejected before touching a legitimate handoff',
+      [foreign.status, await w.handoff()], [403, { path: '/share', params: { text: 'old' } }]);
+
+    const concurrent = await Promise.all([
+      w.postShare('text=first', { Origin: 'null' }),
+      w.postShare('text=second', { Origin: 'null' }),
+    ]);
+    eq('sw share: a simultaneous second body is rejected instead of queued or overwriting',
+      [concurrent.map((r) => r.status), await w.handoff()],
+      [[303, 429], { path: '/share', params: { text: 'first' } }]);
+
+    const noCache = makeWorker(swSource, { failHandoffWrites: true });
+    const noCacheResponse = await noCache.postShare('text=Example', { Origin: 'null' });
+    eq('sw share: cache failure still keeps content out of the URL and lands at root',
+      [noCacheResponse.status, noCacheResponse.headers.get('Location'), await noCache.handoff()],
+      [303, '/', null]);
+  }
 
   // Baseline: the offline calendar still works while signed in.
   {

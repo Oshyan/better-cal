@@ -4,6 +4,14 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.38 (2026-10-08)
+
+- **Dense calendar data can no longer multiply into unbounded server or browser work.** Event windows share cumulative recurrence, elapsed-time and stored-data budgets; the browser bounds request fan-out, retained occurrences and rendered day layouts; and reminder scans advance through one durable cursor chain without spawning duplicate work.
+- **Bulk and public data paths now have aggregate, atomic limits.** Published feeds admit projected source data before bounded serialization, Takeout migrations preflight the complete remaining input and commit one calendar at a time, and plugin snapshot replacement rolls back additions, updates, deletions and Activity together on refusal or failure.
+- **Native share handoff is bounded before it reaches application state.** Cross-site requests are rejected, request bodies and decoded fields have explicit ceilings, and a simultaneous second share is asked to retry instead of being queued or overwriting the first.
+
+Operators: no migration. Ordinary calendars, feeds, imports, plugins and shares keep their existing successful behavior. Exceptionally dense views ask for narrower dates or calendars instead of appearing complete with missing data; oversized published feeds return `413`; and the new aggregate limits can be tuned within the hard ceilings documented in `.env.example` and `docs/limits.md`.
+
 ## 0.9.37 (2026-10-08)
 
 - **Untrusted calendar data is normalized before activation or expensive work.** Event links activate only for absolute web URLs; meeting links require the provider's actual HTTPS hostname; impossible coordinates never reach map work; and descriptions remain inert across import and export.

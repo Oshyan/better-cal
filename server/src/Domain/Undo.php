@@ -40,10 +40,11 @@ final class Undo
      * @param array<string,list<array>>|null $beforeTables
      * @param array<string,list<array>>|null $afterTables
      */
-    public function record(int $userId, string $entity, int $entityId, string $op, ?array $beforeTables, ?array $afterTables, ?string $summary = null, ?array $details = null): void
+    public function record(int $userId, string $entity, int $entityId, string $op, ?array $beforeTables, ?array $afterTables, ?string $summary = null, ?array $details = null, array $calendarIds = []): void
     {
+        $mutationId = 0;
         try {
-            $this->db->insert('mutations', [
+            $mutationId = $this->db->insert('mutations', [
                 'user_id' => $userId,
                 'entity' => $entity,
                 'entity_id' => $entityId,
@@ -57,7 +58,7 @@ final class Undo
             ]);
         } catch (\PDOException $e) {
             // Pre-011 schema during a rolling deploy: fall back to core columns.
-            $this->db->insert('mutations', [
+            $mutationId = $this->db->insert('mutations', [
                 'user_id' => $userId,
                 'entity' => $entity,
                 'entity_id' => $entityId,
@@ -65,6 +66,57 @@ final class Undo
                 'before_json' => $beforeTables === null ? null : json_encode(['tables' => $beforeTables], JSON_INVALID_UTF8_SUBSTITUTE),
                 'after_json' => $afterTables === null ? null : json_encode(['tables' => $afterTables], JSON_INVALID_UTF8_SUBSTITUTE),
             ]);
+        }
+        $this->recordCalendarRefs($mutationId, $beforeTables, $afterTables, $calendarIds);
+    }
+
+    /** @param list<int> $explicitCalendarIds */
+    private function recordCalendarRefs(int $mutationId, ?array $beforeTables, ?array $afterTables, array $explicitCalendarIds = []): void
+    {
+        $ids = array_map('intval', $explicitCalendarIds);
+        foreach ([$beforeTables, $afterTables] as $tables) {
+            if (!is_array($tables)) {
+                continue;
+            }
+            foreach ($tables['events'] ?? [] as $row) {
+                if (is_array($row) && isset($row['calendar_id'])) {
+                    $ids[] = (int) $row['calendar_id'];
+                }
+            }
+            foreach ($tables['calendars'] ?? [] as $row) {
+                if (is_array($row) && isset($row['id'])) {
+                    $ids[] = (int) $row['id'];
+                }
+            }
+        }
+        try {
+            foreach (array_values(array_unique(array_filter($ids, static fn(int $id): bool => $id > 0))) as $calendarId) {
+                $this->db->insert('mutation_calendar_refs', [
+                    'mutation_id' => $mutationId,
+                    'calendar_id' => $calendarId,
+                ]);
+            }
+            if ($ids !== []) {
+                [$in, $params] = Db::in(array_values(array_unique(array_filter($ids, static fn(int $id): bool => $id > 0))));
+                $googleBacked = $params !== [] && $this->db->scalar(
+                    "SELECT id FROM calendars WHERE id IN $in AND kind = 'subscribed' AND provider = 'google' LIMIT 1",
+                    $params
+                ) !== null;
+                if ($googleBacked) {
+                    // Google-backed edits are activity-only by design. Make
+                    // that permanent so adopt-back-to-local cannot revive a
+                    // provider-cache snapshot created after the move.
+                    $this->db->update('mutations', ['before_json' => null, 'after_json' => null], 'id = ?', [$mutationId]);
+                }
+            }
+        } catch (\PDOException $e) {
+            $message = strtolower($e->getMessage());
+            if ((string) $e->getCode() === '42S02'
+                || str_contains($message, 'no such table: mutation_calendar_refs')
+                || str_contains($message, 'no such table: calendars')) {
+                return; // rolling-install and narrow-test compatibility
+            }
+            throw $e;
         }
     }
 
@@ -192,8 +244,48 @@ final class Undo
 
         $before = self::tables($mutation['before_json']);
         $after = self::tables($mutation['after_json']);
+        $calendarIds = [];
+        foreach ([$before, $after] as $snapshot) {
+            foreach ($snapshot['events'] ?? [] as $row) {
+                if (isset($row['calendar_id'])) {
+                    $calendarIds[] = (int) $row['calendar_id'];
+                }
+            }
+            foreach ($snapshot['calendars'] ?? [] as $row) {
+                if (isset($row['id'])) {
+                    $calendarIds[] = (int) $row['id'];
+                }
+            }
+        }
 
-        $this->db->tx(function () use ($mutation, $before, $after): void {
+        $this->db->tx(function () use ($mutation, $before, $after, $calendarIds): void {
+            CalendarMoveGuard::lockAndAssertMutable($this->db, $calendarIds);
+            foreach (array_values(array_unique($calendarIds)) as $calendarId) {
+                $calendar = CalendarMoveGuard::lockCalendar($this->db, $calendarId);
+                if ($calendar !== null && (string) $calendar['kind'] === 'subscribed'
+                    && (string) ($calendar['provider'] ?? '') === 'google') {
+                    // Google-backed rows are a provider cache. Restoring any
+                    // old full-row snapshot locally would be overwritten on
+                    // poll and can resurrect the pre-move source/provider
+                    // state, including cross-calendar trip snapshots that a
+                    // cutover could not find by mutation.entity_id alone.
+                    throw HttpError::badRequest('Google calendar changes cannot be undone here', 'not_undoable');
+                }
+            }
+            // GoogleMove finalization clears undo snapshots under the same
+            // calendar lock. Re-read after acquiring it so an undo request
+            // that began just before cutover cannot apply its stale copy to
+            // the newly Google-backed cache.
+            $current = $this->db->one(
+                'SELECT before_json, after_json, undone FROM mutations WHERE id = ?',
+                [$mutation['id']]
+            );
+            if ($current === null || (int) $current['undone'] === 1
+                || ($current['before_json'] === null && $current['after_json'] === null)
+                || $current['before_json'] !== $mutation['before_json']
+                || $current['after_json'] !== $mutation['after_json']) {
+                throw HttpError::badRequest('This entry can no longer be undone', 'not_undoable');
+            }
             // Delete rows created by the mutation (present in after, absent from before).
             foreach (array_reverse(self::TABLE_ORDER) as $table) {
                 $beforeKeys = [];

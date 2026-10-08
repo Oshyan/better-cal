@@ -3406,6 +3406,30 @@ if (class_exists(\Sabre\CalDAV\Backend\AbstractBackend::class)) {
     check('dav allows writes to local calendars', \BetterCal\Dav\CalendarBackend::writableKind('local'));
     check('dav auth backend loads', class_exists(\BetterCal\Dav\AuthBackend::class));
     check('dav principal backend loads', class_exists(\BetterCal\Dav\PrincipalBackend::class));
+
+    $moveDavDb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $moveDavDb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, settings_json TEXT)');
+    $moveDavDb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, name TEXT, color TEXT)');
+    $moveDavDb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, calendar_id INTEGER, uid TEXT, deleted_at TEXT, recurrence_parent_id INTEGER, recurrence_instance_utc TEXT)');
+    $moveDavDb->run('CREATE TABLE calendar_moves (id INTEGER PRIMARY KEY, calendar_id INTEGER, status TEXT, cancelled_at TEXT)');
+    $moveDavDb->run("INSERT INTO users VALUES (1, '{}')");
+    $moveDavDb->run("INSERT INTO calendars VALUES (1, 1, 'local', 'Sample calendar', '#336699')");
+    $moveDavDb->run("INSERT INTO calendar_moves VALUES (1, 1, 'running', NULL)");
+    $moveDav = new BetterCal\Dav\CalendarBackend($moveDavDb, new BetterCal\Domain\Undo($moveDavDb));
+    $deleteConflict = false;
+    try {
+        $moveDav->deleteCalendarObject(1, 'sample-event.ics');
+    } catch (\Sabre\DAV\Exception\Conflict) {
+        $deleteConflict = true;
+    }
+    check('dav move guard: DELETE reports temporary conflict before changing rows', $deleteConflict);
+    $putConflict = false;
+    try {
+        $moveDav->createCalendarObject(1, 'sample-event.ics', "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//EN\r\nBEGIN:VEVENT\r\nUID:sample-event\r\nDTSTAMP:20260101T000000Z\r\nDTSTART:20260102T100000Z\r\nDTEND:20260102T110000Z\r\nSUMMARY:Sample event\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n");
+    } catch (\Sabre\DAV\Exception\Conflict) {
+        $putConflict = true;
+    }
+    check('dav move guard: PUT reports temporary conflict before changing rows', $putConflict);
 }
 
 // ---------------------------------------------------------------------------
@@ -5234,6 +5258,288 @@ require __DIR__ . '/plugins.php';
         $migdb->scalar('SELECT subscription_authority FROM calendars WHERE id = 4'));
 }
 
+// Migration 042 and the shared move boundary make move creation, execution and
+// calendar writes one serialized state machine.
+{
+    $mdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $mdb->run('CREATE TABLE calendars (
+        id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, provider TEXT,
+        google_account_id INTEGER, google_calendar_id TEXT
+    )');
+    $mdb->run('CREATE TABLE calendar_moves (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, calendar_id INTEGER,
+        google_account_id INTEGER, google_calendar_id TEXT, create_new INTEGER DEFAULT 1,
+        status TEXT DEFAULT "queued", total INTEGER DEFAULT 0, done_count INTEGER DEFAULT 0,
+        error TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, finished_at TEXT, cancelled_at TEXT
+    )');
+    $mdb->run("INSERT INTO calendars VALUES (1, 1, 'local', NULL, NULL, NULL), (2, 1, 'local', NULL, NULL, NULL)");
+    $mdb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, deleted_at TEXT, is_container INTEGER, rrule TEXT, recurrence_parent_id INTEGER, google_event_id TEXT)');
+    $mdb->run("INSERT INTO events VALUES (10, 1, 1, NULL, 0, NULL, NULL, NULL)");
+    $mdb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, undone INTEGER DEFAULT 0)');
+    $legacyCrossSnapshot = json_encode(['tables' => ['events' => [['id' => 20, 'calendar_id' => 2, 'uid' => 'legacy-shape']]]]);
+    $mdb->run("INSERT INTO mutations (id, user_id, entity, entity_id, op, before_json, after_json) VALUES (99, 1, 'event', 10, 'update', ?, ?)", [$legacyCrossSnapshot, $legacyCrossSnapshot]);
+    $mdb->run("INSERT INTO calendar_moves (user_id, calendar_id, google_account_id, status, total, done_count) VALUES (1, 2, 7, 'running', 2, 1)");
+    $legacyMoveId = (int) $mdb->pdo()->lastInsertId();
+    $migrate042 = require __DIR__ . '/../migrations/042_google_move_integrity.php';
+    $migrate042($mdb);
+    $migrate042($mdb);
+    $moveColumns = array_column($mdb->all('PRAGMA table_info(`calendar_moves`)'), 'name');
+    check('migration 042: restart-safe ownership and recovery columns exist',
+        count(array_intersect([
+            'runner_token', 'lease_expires_at', 'remote_marker', 'remote_create_started_at',
+            'remote_reconciled_at', 'current_event_id', 'current_event_marker',
+        ], $moveColumns)) === 7);
+    check('migration 042: calendar binding generation exists after a restart',
+        in_array('google_binding_version', array_column($mdb->all('PRAGMA table_info(`calendars`)'), 'name'), true));
+    checkEq('migration 042: historical cross-calendar Undo snapshots are indexed for permanent cutover pruning', 1,
+        (int) $mdb->scalar('SELECT COUNT(*) FROM mutation_calendar_refs WHERE mutation_id = 99 AND calendar_id = 2'));
+    $legacyMove = $mdb->one('SELECT status, cancelled_at, remote_marker, error FROM calendar_moves WHERE id = ?', [$legacyMoveId]);
+    check('migration 042: an unfinished pre-marker move is cancelled instead of resumed ambiguously',
+        ($legacyMove['status'] ?? null) === 'failed'
+        && ($legacyMove['cancelled_at'] ?? null) !== null
+        && ($legacyMove['remote_marker'] ?? null) === null
+        && str_starts_with((string) ($legacyMove['error'] ?? ''), 'Stopped by the move-integrity upgrade;'));
+
+    $unmarkedActiveBlocked = false;
+    try {
+        $mdb->run("INSERT INTO calendar_moves (user_id, calendar_id, status) VALUES (1, 1, 'queued')");
+    } catch (PDOException) {
+        $unmarkedActiveBlocked = true;
+    }
+    check('migration 042: database refuses active work without a durable recovery marker', $unmarkedActiveBlocked);
+    $mdb->run("INSERT INTO calendar_moves (user_id, calendar_id, status, remote_marker) VALUES (1, 1, 'queued', '11111111111111111111111111111111')");
+    $duplicateBlocked = false;
+    try {
+        $mdb->run("INSERT INTO calendar_moves (user_id, calendar_id, status, remote_marker) VALUES (1, 1, 'running', '22222222222222222222222222222222')");
+    } catch (PDOException) {
+        $duplicateBlocked = true;
+    }
+    check('migration 042: database permits only one active move for a calendar', $duplicateBlocked);
+    $mdb->run("INSERT INTO calendar_moves (user_id, calendar_id, status) VALUES (1, 1, 'failed')");
+    checkEq('migration 042: historical/terminal move rows remain representable', 2,
+        (int) $mdb->scalar('SELECT COUNT(*) FROM calendar_moves WHERE calendar_id = 1'));
+
+    $guardCode = null;
+    try {
+        $mdb->tx(function () use ($mdb): void {
+            BetterCal\Domain\CalendarMoveGuard::lockAndAssertMutable($mdb, [1]);
+        });
+    } catch (HttpError $e) {
+        $guardCode = $e->errorCode;
+    }
+    checkEq('move guard: the latest retryable failure freezes snapshot writes', 'calendar_moving', $guardCode);
+    $moveUndo = new BetterCal\Domain\Undo($mdb);
+    $moveEvents = new BetterCal\Domain\Events(
+        $mdb,
+        new BetterCal\Domain\Recurrence(),
+        $moveUndo,
+        new BetterCal\Domain\Labels($mdb),
+        new BetterCal\Domain\Filters($mdb, $moveUndo),
+        new BetterCal\Domain\Trips($mdb, $moveUndo),
+    );
+    foreach ([
+        'create' => static fn() => $moveEvents->create(1, ['calendarId' => 1]),
+        'patch' => static fn() => $moveEvents->patch(1, 10, ['title' => 'Changed']),
+        'delete' => static fn() => $moveEvents->deleteEvent(1, 10, null, null),
+    ] as $verb => $operation) {
+        $eventCode = null;
+        try {
+            $operation();
+        } catch (HttpError $e) {
+            $eventCode = $e->errorCode;
+        }
+        checkEq("move guard: JSON event $verb is refused at the shared boundary", 'calendar_moving', $eventCode);
+    }
+    $deleteCode = null;
+    try {
+        (new BetterCal\Domain\Calendars($mdb, new BetterCal\Domain\Undo($mdb), new BetterCal\Domain\Labels($mdb)))->delete(1, 1);
+    } catch (HttpError $e) {
+        $deleteCode = $e->errorCode;
+    }
+    checkEq('move guard: calendar deletion cannot cascade away resumable state', 'calendar_moving', $deleteCode);
+    $snapshot = json_encode(['tables' => ['events' => [['id' => 10, 'calendar_id' => 1, 'uid' => 'sample-event']]]]);
+    $mdb->run("INSERT INTO mutations (id, user_id, entity, entity_id, op, before_json, after_json) VALUES (1, 1, 'event', 10, 'update', ?, ?)", [$snapshot, $snapshot]);
+    $undoCode = null;
+    try {
+        (new BetterCal\Domain\Undo($mdb))->undoById(1, 1, true);
+    } catch (HttpError $e) {
+        $undoCode = $e->errorCode;
+    }
+    checkEq('move guard: Undo cannot bypass the same snapshot boundary', 'calendar_moving', $undoCode);
+    (new BetterCal\Domain\Undo($mdb))->record(1, 'event', 10, 'update', ['events' => [['id' => 10, 'calendar_id' => 1]]], ['events' => [['id' => 10, 'calendar_id' => 2]]]);
+    checkEq('move guard: new cross-calendar Undo snapshots index every referenced calendar', [1, 2],
+        array_map('intval', array_column($mdb->all('SELECT calendar_id FROM mutation_calendar_refs WHERE mutation_id = (SELECT MAX(id) FROM mutations) ORDER BY calendar_id'), 'calendar_id')));
+    $mdb->run("UPDATE calendar_moves SET cancelled_at = '2026-01-01 00:00:00' WHERE calendar_id = 1 AND status = 'failed'");
+    // The older queued row becomes latest again only after removing the later
+    // terminal row, demonstrating the guard follows the latest lifecycle.
+    $mdb->run("UPDATE calendar_moves SET status = 'done' WHERE calendar_id = 1 AND status = 'queued'");
+    BetterCal\Domain\CalendarMoveGuard::lockAndAssertMutable($mdb, [1]);
+    check('move guard: completed/cancelled lifecycle restores writes', true);
+    $mdb->run("UPDATE calendars SET kind = 'subscribed', provider = 'google' WHERE id = 1");
+    $googleUndoCode = null;
+    try {
+        (new BetterCal\Domain\Undo($mdb))->undoById(1, 1, true);
+    } catch (HttpError $e) {
+        $googleUndoCode = $e->errorCode;
+    }
+    checkEq('move guard: a cross-calendar snapshot cannot restore a Google-backed cache', 'not_undoable', $googleUndoCode);
+    $mdb->run("UPDATE calendars SET kind = 'local', provider = NULL WHERE id = 1");
+
+    $mdb->run("INSERT INTO calendar_moves (user_id, calendar_id, status, lease_expires_at, remote_marker) VALUES (1, 2, 'queued', NULL, '33333333333333333333333333333333')");
+    $moveId = (int) $mdb->pdo()->lastInsertId();
+    $cfg = ['base_url' => 'https://calendar.example.test', 'session_secret' => str_repeat('x', 32), 'google' => ['client_id' => '', 'client_secret' => '']];
+    $auth = new BetterCal\Domain\GoogleAuth($mdb, $cfg);
+    $feeds = new BetterCal\Domain\Feeds($mdb);
+    $mdb->run('CREATE TABLE jobs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT, payload_json TEXT, run_after TEXT,
+        status TEXT DEFAULT "pending", attempts INTEGER DEFAULT 0, last_error TEXT,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )');
+    $queue = new BetterCal\Infra\JobQueue($mdb);
+    $mover = new BetterCal\Domain\GoogleMove(
+        $mdb,
+        $auth,
+        new BetterCal\Domain\GoogleWriter($mdb, $auth, $feeds),
+        $feeds,
+        new BetterCal\Domain\Undo($mdb),
+        $queue,
+    );
+    $claim = new ReflectionMethod($mover, 'claim');
+    $first = $claim->invoke($mover, $moveId);
+    check('move lease: the queued move has exactly one first owner', is_array($first) && is_string($first['token'] ?? null));
+    checkEq('move lease: a concurrent runner sees busy before any remote work', BetterCal\Domain\GoogleMove::RESULT_BUSY,
+        $mover->run($moveId, 1));
+    $mdb->run("UPDATE calendar_moves SET lease_expires_at = '2000-01-01 00:00:00' WHERE id = ?", [$moveId]);
+    $second = $claim->invoke($mover, $moveId);
+    check('move lease: an expired owner is recoverable under a new token',
+        is_array($second) && ($second['token'] ?? null) !== ($first['token'] ?? null));
+    $ownedUpdate = new ReflectionMethod($mover, 'updateOwnedMove');
+    $staleRejected = false;
+    try {
+        $ownedUpdate->invoke($mover, $moveId, (string) $first['token'], ['error' => 'stale']);
+    } catch (Throwable) {
+        $staleRejected = true;
+    }
+    check('move lease: a stale owner cannot persist progress or failure', $staleRejected);
+    $continue = new ReflectionMethod($mover, 'continueLater');
+    checkEq('move lease: the current owner alone can release a continuation', BetterCal\Domain\GoogleMove::RESULT_MORE,
+        $continue->invoke($mover, $moveId, (string) $second['token']));
+    $mdb->run("INSERT INTO jobs (type, payload_json, run_after, status) VALUES ('google_move', ?, CURRENT_TIMESTAMP, 'running')", [json_encode(['moveId' => $moveId])]);
+    $ensureJob = new ReflectionMethod($mover, 'ensureMoveJob');
+    $ensureJob->invoke($mover, $moveId);
+    $ensureJob->invoke($mover, $moveId);
+    checkEq('move scheduling: a running old attempt still gets exactly one pending recovery job', 1,
+        (int) $mdb->scalar("SELECT COUNT(*) FROM jobs WHERE type = 'google_move' AND status = 'pending'"));
+    checkEq('move recovery marker: one exact opaque marker recovers its remote id', 'remote-1',
+        BetterCal\Domain\GoogleMove::recoveredCalendarId([
+            ['id' => 'other', 'description' => 'ordinary description'],
+            ['id' => 'remote-1', 'description' => 'Better-Cal move recovery: abc123'],
+        ], 'abc123'));
+    checkEq('move recovery marker: no exact marker means create once', null,
+        BetterCal\Domain\GoogleMove::recoveredCalendarId([['id' => 'other', 'description' => 'ordinary description']], 'abc123'));
+    $ambiguousMarker = false;
+    try {
+        BetterCal\Domain\GoogleMove::recoveredCalendarId([
+            ['id' => 'remote-1', 'description' => 'Better-Cal move recovery: abc123'],
+            ['id' => 'remote-2', 'description' => 'Better-Cal move recovery: abc123'],
+        ], 'abc123');
+    } catch (RuntimeException) {
+        $ambiguousMarker = true;
+    }
+    check('move recovery marker: ambiguous remote state fails closed', $ambiguousMarker);
+    $eventMarker = BetterCal\Domain\GoogleMove::eventRecoveryMarker('move-marker', 10);
+    check('move event recovery marker: deterministic and event-specific',
+        strlen($eventMarker) === 64
+        && $eventMarker === BetterCal\Domain\GoogleMove::eventRecoveryMarker('move-marker', 10)
+        && $eventMarker !== BetterCal\Domain\GoogleMove::eventRecoveryMarker('move-marker', 11));
+    checkEq('move event recovery marker: exact private marker and UID recover one accepted import', 'remote-event-1',
+        BetterCal\Domain\GoogleWriter::recoveredImport([
+            ['id' => 'wrong-uid', 'iCalUID' => 'other', 'extendedProperties' => ['private' => ['betterCalMove' => $eventMarker]]],
+            ['id' => 'remote-event-1', 'iCalUID' => 'sample-event', 'extendedProperties' => ['private' => ['betterCalMove' => $eventMarker]]],
+        ], $eventMarker, 'sample-event')['id'] ?? null);
+    checkEq('move event recovery marker: a missing match fails closed instead of authorizing another import', null,
+        BetterCal\Domain\GoogleWriter::recoveredImport([], $eventMarker, 'sample-event'));
+    $ambiguousEventMarker = false;
+    try {
+        BetterCal\Domain\GoogleWriter::recoveredImport([
+            ['id' => 'remote-event-1', 'iCalUID' => 'sample-event', 'extendedProperties' => ['private' => ['betterCalMove' => $eventMarker]]],
+            ['id' => 'remote-event-2', 'iCalUID' => 'sample-event', 'extendedProperties' => ['private' => ['betterCalMove' => $eventMarker]]],
+        ], $eventMarker, 'sample-event');
+    } catch (RuntimeException) {
+        $ambiguousEventMarker = true;
+    }
+    check('move event recovery marker: ambiguous response-loss state fails closed', $ambiguousEventMarker);
+    checkEq('move status: retry retains the original Google account identity', 7,
+        BetterCal\Domain\GoogleMove::serialize(['id' => 1, 'google_account_id' => 7, 'status' => 'failed', 'cancelled_at' => null, 'error' => 'temporary', 'total' => 1, 'done_count' => 0, 'create_new' => 1, 'google_calendar_id' => null])['googleAccountId']);
+    $expectedBinding = ['kind' => 'subscribed', 'provider' => 'google', 'google_account_id' => 7, 'google_calendar_id' => 'sample-source', 'google_binding_version' => 3];
+    check('google poll finalization: exact current binding accepts the fetched response',
+        BetterCal\Domain\GoogleSync::sameBinding($expectedBinding, $expectedBinding));
+    check('google poll finalization: adopt or rebinding discards the stale fetched response',
+        !BetterCal\Domain\GoogleSync::sameBinding($expectedBinding, array_replace($expectedBinding, ['kind' => 'local']))
+        && !BetterCal\Domain\GoogleSync::sameBinding($expectedBinding, array_replace($expectedBinding, ['google_calendar_id' => 'different-source']))
+        && !BetterCal\Domain\GoogleSync::sameBinding($expectedBinding, array_replace($expectedBinding, ['google_binding_version' => 4])));
+
+    $mdb->run("INSERT INTO events VALUES (20, 1, 2, NULL, 0, NULL, NULL, NULL)");
+    $third = $claim->invoke($mover, $moveId);
+    $beginImport = new ReflectionMethod($mover, 'beginImport');
+    $beginImport->invoke($mover, $moveId, (string) $third['token'], 20, $eventMarker);
+    checkEq('move event recovery: intent is durable before the remote import', [20, $eventMarker], [
+        (int) $mdb->scalar('SELECT current_event_id FROM calendar_moves WHERE id = ?', [$moveId]),
+        (string) $mdb->scalar('SELECT current_event_marker FROM calendar_moves WHERE id = ?', [$moveId]),
+    ]);
+    $uploaded = new ReflectionMethod($mover, 'uploaded');
+    $uploaded->invoke($mover, $moveId, (string) $third['token'], 20, 'remote-event-20', true);
+    checkEq('move event recovery: recovered id and progress commit with intent clearance', ['remote-event-20', null, null], [
+        $mdb->scalar('SELECT google_event_id FROM events WHERE id = 20'),
+        $mdb->scalar('SELECT current_event_id FROM calendar_moves WHERE id = ?', [$moveId]),
+        $mdb->scalar('SELECT current_event_marker FROM calendar_moves WHERE id = ?', [$moveId]),
+    ]);
+
+    $targetCheck = new ReflectionMethod($mover, 'assertTargetAvailable');
+    $mdb->run("INSERT INTO calendars (id, user_id, kind, provider, google_account_id, google_calendar_id) VALUES (3, 1, 'subscribed', 'google', 7, 'reserved-target')");
+    $calendarTargetBlocked = false;
+    try {
+        $targetCheck->invoke($mover, 1, 7, 2, 'reserved-target');
+    } catch (HttpError $e) {
+        $calendarTargetBlocked = $e->errorCode === 'google_calendar_in_use';
+    }
+    check('move target reservation: an existing subscribed target is refused under the account lock', $calendarTargetBlocked);
+    $mdb->run("UPDATE calendar_moves SET google_account_id = 7, google_calendar_id = 'moving-target', status = 'failed', runner_token = NULL, lease_expires_at = NULL WHERE id = ?", [$moveId]);
+    $moveTargetBlocked = false;
+    try {
+        $targetCheck->invoke($mover, 1, 7, 1, 'moving-target');
+    } catch (HttpError $e) {
+        $moveTargetBlocked = $e->errorCode === 'google_calendar_in_use';
+    }
+    check('move target reservation: another unfinished move keeps its target reserved', $moveTargetBlocked);
+}
+
+// Trip membership and a bulk member move share calendar locks. Membership
+// snapshots also name every affected calendar so Google cutover permanently
+// retires their Undo entries.
+{
+    $tdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $tdb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, provider TEXT, synctoken INTEGER DEFAULT 1)');
+    $tdb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, is_container INTEGER, updated_at TEXT, deleted_at TEXT)');
+    $tdb->run('CREATE TABLE event_links (id INTEGER PRIMARY KEY AUTOINCREMENT, container_id INTEGER, event_id INTEGER, position INTEGER)');
+    $tdb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT, undone INTEGER DEFAULT 0)');
+    $tdb->run('CREATE TABLE mutation_calendar_refs (mutation_id INTEGER, calendar_id INTEGER, PRIMARY KEY (mutation_id, calendar_id))');
+    $tdb->run("INSERT INTO calendars VALUES (1, 1, 'local', 'ics', 1), (2, 1, 'local', 'ics', 1)");
+    $tdb->run("INSERT INTO events VALUES
+        (10, 1, 1, 'sample-trip', 1, '2026-01-01 00:00:00', NULL),
+        (20, 1, 2, 'sample-member', 0, '2026-01-01 00:00:00', NULL)");
+    $tripUndo = new BetterCal\Domain\Undo($tdb);
+    $tripDomain = new BetterCal\Domain\Trips($tdb, $tripUndo);
+    $tripDomain->attach(1, 10, 20);
+    checkEq('trip move boundary: attach records both locked calendar references', [1, 2],
+        array_map('intval', array_column($tdb->all('SELECT calendar_id FROM mutation_calendar_refs ORDER BY calendar_id'), 'calendar_id')));
+    $tripDomain->detach(1, 10, 20);
+    checkEq('trip move boundary: detach remains serialized and removes only the relationship', [0, 2], [
+        (int) $tdb->scalar('SELECT COUNT(*) FROM event_links'),
+        (int) $tdb->scalar('SELECT COUNT(*) FROM events'),
+    ]);
+}
+
 // Token-created subscriptions remain as cached calendars, but every future
 // external effect follows the creating token's current lifetime.
 {
@@ -6063,7 +6369,7 @@ use BetterCal\Infra\Secrets;
         new BetterCal\Domain\Undo($gdb),
         new BetterCal\Infra\JobQueue($gdb),
     );
-    check('google move quarantine: a cancelled move is a terminal worker no-op', $qmover->run(9, 40));
+    checkEq('google move quarantine: a cancelled move is a terminal worker no-op', BetterCal\Domain\GoogleMove::RESULT_DONE, $qmover->run(9, 40));
     checkEq('google move quarantine: a stale queued snapshot cannot overwrite cancellation with running', 'queued', $gdb->scalar('SELECT status FROM calendar_moves WHERE id = 9'));
     check('google move quarantine: serialized state tells the client not to offer ordinary retry', BetterCal\Domain\GoogleMove::serialize(['id' => 9, 'status' => 'failed', 'cancelled_at' => '2026-10-06 12:00:00', 'total' => 10, 'done_count' => 3, 'error' => 'stopped', 'create_new' => 1, 'google_calendar_id' => null])['cancelled']);
     // What kind of calendar each list entry is, from the id and role Google gives.

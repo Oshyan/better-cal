@@ -24,6 +24,7 @@ use BetterCal\Support\Time;
 final class GoogleWriter
 {
     private const EVENTS_URL = 'https://www.googleapis.com/calendar/v3/calendars/%s/events';
+    private const MOVE_RECOVERY_PROPERTY = 'betterCalMove';
     /** Event columns Google owns; everything else on a row is local metadata. */
     public const GOOGLE_COLUMNS = ['title', 'description', 'location', 'start_utc', 'end_utc', 'all_day', 'tzid', 'rrule', 'exdates_json', 'status'];
 
@@ -152,9 +153,40 @@ final class GoogleWriter
 
     // ---- Calls ----------------------------------------------------------------
 
-    public function import(array $calendar, array $row): array
+    public function import(array $calendar, array $row, ?string $recoveryMarker = null): array
     {
-        return $this->call($calendar, 'POST', '/import', self::importBody($row));
+        $body = self::importBody($row);
+        if ($recoveryMarker !== null && $recoveryMarker !== '') {
+            // Private extended properties are not displayed as event content.
+            // The opaque value makes an accepted import discoverable if the
+            // PHP process dies before its Google id is saved locally.
+            $body['extendedProperties'] = ['private' => [self::MOVE_RECOVERY_PROPERTY => $recoveryMarker]];
+        }
+        return $this->call($calendar, 'POST', '/import', $body);
+    }
+
+    public function findImportedByMarker(array $calendar, string $marker, string $icalUid): ?array
+    {
+        $data = $this->call($calendar, 'GET', '', null, [
+            'privateExtendedProperty' => self::MOVE_RECOVERY_PROPERTY . '=' . $marker,
+            'iCalUID' => $icalUid,
+            'showDeleted' => 'false',
+            'maxResults' => '2',
+        ]);
+        return self::recoveredImport($data['items'] ?? [], $marker, $icalUid);
+    }
+
+    /** @param list<array> $items */
+    public static function recoveredImport(array $items, string $marker, string $icalUid): ?array
+    {
+        $matches = array_values(array_filter($items, static function (array $item) use ($marker, $icalUid): bool {
+            return (string) ($item['iCalUID'] ?? '') === $icalUid
+                && hash_equals($marker, (string) ($item['extendedProperties']['private'][self::MOVE_RECOVERY_PROPERTY] ?? ''));
+        }));
+        if (count($matches) > 1) {
+            throw new \RuntimeException('Google returned more than one event for the move recovery marker');
+        }
+        return $matches[0] ?? null;
     }
 
     public function insert(array $calendar, array $row): array
@@ -210,7 +242,7 @@ final class GoogleWriter
         return ['cancelled' => true, 'uid' => $uid, 'recurrence_instance_utc' => $instanceUtc];
     }
 
-    private function call(array $calendar, string $method, string $path, ?array $payload): array
+    private function call(array $calendar, string $method, string $path, ?array $payload, array $query = []): array
     {
         $account = $this->db->one('SELECT * FROM google_accounts WHERE id = ?', [(int) $calendar['google_account_id']]);
         if ($account === null) {
@@ -223,7 +255,13 @@ final class GoogleWriter
         } catch (\RuntimeException $e) {
             throw new HttpError('google_write_failed', 'Google refused the sign-in: ' . $e->getMessage(), 502);
         }
-        $url = sprintf(self::EVENTS_URL, rawurlencode((string) $calendar['google_calendar_id'])) . $path . '?sendUpdates=none';
+        if ($method !== 'GET') {
+            $query = ['sendUpdates' => 'none'] + $query;
+        }
+        $url = sprintf(self::EVENTS_URL, rawurlencode((string) $calendar['google_calendar_id'])) . $path;
+        if ($query !== []) {
+            $url .= '?' . http_build_query($query, '', '&', PHP_QUERY_RFC3986);
+        }
         $http = new HttpClient(requestBudget: 10, userAgent: HttpClient::userAgentFor('google-connector'));
         try {
             $r = $http->json($method, $url, $payload, ['Authorization: Bearer ' . $access]);

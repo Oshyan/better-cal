@@ -134,7 +134,28 @@ final class GoogleAuth
         } catch (\Throwable) {
             // Already revoked, or unreachable: the row goes regardless.
         }
-        $this->db->run('DELETE FROM google_accounts WHERE id = ?', [(int) $account['id']]);
+        $this->db->tx(function () use ($userId, $account): void {
+            $lock = $this->db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
+            // Calendar -> account -> move is the same order as polling,
+            // write-through, move start and compromise reset. The FK delete
+            // then cannot deadlock a writer by acquiring the parent first.
+            $this->db->all(
+                'SELECT id FROM calendars WHERE user_id = ? AND google_account_id = ? ORDER BY id' . $lock,
+                [$userId, (int) $account['id']]
+            );
+            $fresh = $this->db->one(
+                'SELECT id FROM google_accounts WHERE id = ? AND user_id = ?' . $lock,
+                [(int) $account['id'], $userId]
+            );
+            if ($fresh === null) {
+                return;
+            }
+            $this->db->all(
+                'SELECT id FROM calendar_moves WHERE google_account_id = ? ORDER BY id' . $lock,
+                [(int) $account['id']]
+            );
+            $this->db->run('DELETE FROM google_accounts WHERE id = ?', [(int) $account['id']]);
+        });
     }
 
     // ---- Tokens -----------------------------------------------------------
@@ -232,9 +253,9 @@ final class GoogleAuth
      * else's, shared with you), feed (Google's own copy of an ICS
      * subscription, always behind the source), google (holidays, birthdays).
      *
-     * @return list<array{id:string,name:string,accessRole:string,primary:bool,color:?string,kind:string}>
+     * @return list<array{id:string,name:string,accessRole:string,primary:bool,color:?string,kind:string,description?:string}>
      */
-    public function listCalendars(array $account, ?float $outerDeadline = null): array
+    public function listCalendars(array $account, ?float $outerDeadline = null, bool $includeDescription = false): array
     {
         $deadline = microtime(true) + Limits::get('GOOGLE_CALENDAR_LIST_SECONDS');
         if ($outerDeadline !== null) {
@@ -305,7 +326,7 @@ final class GoogleAuth
             }
             $items = $budget->acceptItems($data['items'] ?? []);
             foreach ($items as $item) {
-                $out[] = [
+                $entry = [
                     'id' => (string) $item['id'],
                     'name' => (string) ($item['summaryOverride'] ?? $item['summary'] ?? $item['id']),
                     'accessRole' => (string) ($item['accessRole'] ?? 'reader'),
@@ -313,6 +334,14 @@ final class GoogleAuth
                     'color' => isset($item['backgroundColor']) ? (string) $item['backgroundColor'] : null,
                     'kind' => self::calendarKind((string) $item['id'], (string) ($item['accessRole'] ?? 'reader'), !empty($item['primary'])),
                 ];
+                // Internal move recovery needs the Calendar resource's
+                // read-only description. Ordinary controller responses omit
+                // it so a short-lived reconciliation marker is never exposed
+                // as application data.
+                if ($includeDescription) {
+                    $entry['description'] = (string) ($item['description'] ?? '');
+                }
+                $out[] = $entry;
             }
             $pageToken = $budget->nextPageToken($data);
         } while ($pageToken !== null);
@@ -332,16 +361,33 @@ final class GoogleAuth
      * Create a secondary calendar owned by this account; returns its id.
      * Needs calendar.app.created (canCreateCalendars).
      */
-    public function createCalendar(array $account, string $name, string $tzid): string
+    public function createCalendar(array $account, string $name, string $tzid, ?string $description = null): string
     {
         $access = $this->accessToken($account);
-        $r = $this->http()->json('POST', self::CALENDARS_URL, ['summary' => $name, 'timeZone' => $tzid], ['Authorization: Bearer ' . $access]);
+        $body = ['summary' => $name, 'timeZone' => $tzid];
+        if ($description !== null) {
+            $body['description'] = $description;
+        }
+        $r = $this->http()->json('POST', self::CALENDARS_URL, $body, ['Authorization: Bearer ' . $access]);
         $data = json_decode($r['body'], true);
         if ($r['status'] < 200 || $r['status'] >= 300 || !is_array($data) || empty($data['id'])) {
             $why = is_array($data) ? (string) ($data['error']['message'] ?? '') : '';
             throw new \RuntimeException('Google would not create the calendar: HTTP ' . $r['status'] . ($why !== '' ? " ($why)" : ''));
         }
         return (string) $data['id'];
+    }
+
+    /** Clear the temporary recovery marker once its remote id is durable. */
+    public function updateCalendarDescription(array $account, string $calendarId, string $description): void
+    {
+        $access = $this->accessToken($account);
+        $url = self::CALENDARS_URL . '/' . rawurlencode($calendarId);
+        $r = $this->http()->json('PATCH', $url, ['description' => $description], ['Authorization: Bearer ' . $access]);
+        $data = json_decode($r['body'], true);
+        if ($r['status'] < 200 || $r['status'] >= 300 || !is_array($data)) {
+            $why = is_array($data) ? (string) ($data['error']['message'] ?? '') : '';
+            throw new \RuntimeException('Google would not finish preparing the calendar: HTTP ' . $r['status'] . ($why !== '' ? " ($why)" : ''));
+        }
     }
 
     /** Pure; unit-tested. See listCalendars() for what each kind means. */

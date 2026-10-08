@@ -78,17 +78,114 @@ fi
 stage "connect"
 ssh_open
 
+# Migration 042 closes a response-loss ambiguity in the old Google-move
+# executor. An already-loaded old PHP request cannot be made safe by new code
+# or by a later UPDATE, so its first rollout must pause both request and worker
+# traffic. Refuse the ordinary in-place deploy unless the operator explicitly
+# approves that one-time automated pause; later deploys pass automatically.
+printf -v app_dir_q '%q' "${APP_DIR}"
+printf -v app_user_q '%q' "${APP_USER}"
+move_integrity_applied=1
+move_integrity_rollout=0
+move_integrity_pause_marker="${APP_DIR}/.deploy-move-integrity-paused"
+printf -v move_integrity_pause_marker_q '%q' "${move_integrity_pause_marker}"
+move_integrity_was_paused="$(rssh "if sudo -n test -f ${move_integrity_pause_marker_q}; then printf 1; elif sudo -n test ! -e ${move_integrity_pause_marker_q}; then printf 0; else exit 2; fi")"
+bootstrap_present="$(rssh "if sudo -n test -f ${app_dir_q}/server/src/bootstrap.php; then printf 1; elif sudo -n test ! -e ${app_dir_q}/server/src/bootstrap.php; then printf 0; else exit 2; fi")"
+if [ "${bootstrap_present}" = "1" ]; then
+  move_integrity_applied="$(rssh "sudo -n -u ${app_user_q} env APP_DIR=${app_dir_q} MIGRATION_FILE=042_google_move_integrity.php php" \
+    < "${DEPLOY_SNAPSHOT}/scripts/migration-applied.php")"
+fi
+if [ "${move_integrity_was_paused}" = "1" ]; then
+  move_integrity_rollout=1
+elif [ "${move_integrity_applied}" != "1" ]; then
+  if [ "${MOVE_INTEGRITY_QUIESCED:-0}" != "1" ]; then
+    echo "Migration 042 requires a one-time quiesced rollout. Rerun with MOVE_INTEGRITY_QUIESCED=1 to let deploy pause request/worker traffic after the backup." >&2
+    exit 1
+  fi
+  move_integrity_rollout=1
+fi
+if [ "${move_integrity_rollout}" = "1" ] && [ -z "${PHP_FPM_SERVICE:-}" ]; then
+  echo "PHP_FPM_SERVICE is required so the quiesced rollout can control request traffic." >&2
+  exit 1
+fi
+
 # Back up before anything changes, keeping the newest 5 app and database
 # copies. The reviewed helper runs as root only to control the private output
 # directory; it drops to APP_USER for every read from the app, .env and the
 # database. A failed backup stops the deploy; SKIP_BACKUP=1 skips it deliberately.
 if [ "${SKIP_BACKUP:-0}" != "1" ]; then
   stage "backup"
-  printf -v app_dir_q '%q' "${APP_DIR}"
-  printf -v app_user_q '%q' "${APP_USER}"
   printf -v backup_dir_q '%q' "${BACKUP_DIR}"
   rssh "sudo -n env APP_DIR=${app_dir_q} APP_USER=${app_user_q} BACKUP_DIR=${backup_dir_q} bash -s" \
     < "${DEPLOY_SNAPSHOT}/scripts/deploy-backup.sh"
+fi
+
+if [ "${move_integrity_rollout}" = "1" ]; then
+  stage "quiesce move-integrity migration"
+  DEPLOY_TOUCHED=1
+  rssh "APP_DIR='${APP_DIR}' APP_USER='${APP_USER}' PHP_FPM_SERVICE='${PHP_FPM_SERVICE}' bash -s" <<'EOF'
+set -euo pipefail
+# Graceful service stop drains current PHP requests. Remove only this app's
+# worker line, then wait for a worker already in its bounded run to finish.
+sudo -n -u "${APP_USER}" -- touch "${APP_DIR}/.deploy-move-integrity-paused"
+load_state="$(sudo -n systemctl show --property=LoadState --value "${PHP_FPM_SERVICE}")"
+if [ "${load_state}" != "loaded" ]; then
+  echo "Configured PHP-FPM service is not loaded; traffic was not treated as quiesced." >&2
+  exit 1
+fi
+sudo -n systemctl stop "${PHP_FPM_SERVICE}"
+active_state="$(sudo -n systemctl show --property=ActiveState --value "${PHP_FPM_SERVICE}")"
+if [ "${active_state}" != "inactive" ]; then
+  echo "PHP-FPM did not reach the inactive state; traffic was not treated as quiesced." >&2
+  exit 1
+fi
+if ! command -v crontab >/dev/null 2>&1 || ! command -v pgrep >/dev/null 2>&1; then
+  echo "crontab and pgrep are required to verify worker quiescence." >&2
+  exit 1
+fi
+cron_before="$(mktemp)"
+cron_after="$(mktemp)"
+cleanup_cron_files() { rm -f "${cron_before}" "${cron_after}"; }
+trap cleanup_cron_files EXIT
+if sudo -n -u "${APP_USER}" -- crontab -l >"${cron_before}" 2>/dev/null; then
+  :
+else
+  cron_status=$?
+  if [ "${cron_status}" -ne 1 ]; then
+    echo "Could not inspect the application user's crontab; worker traffic was not treated as quiesced." >&2
+    exit 1
+  fi
+  : >"${cron_before}"
+fi
+awk -v worker="${APP_DIR}/server/bin/worker.php" 'index($0, worker) == 0' "${cron_before}" >"${cron_after}"
+sudo -n -u "${APP_USER}" -- crontab "${cron_after}"
+sudo -n -u "${APP_USER}" -- crontab -l >"${cron_before}"
+if awk -v worker="${APP_DIR}/server/bin/worker.php" 'index($0, worker) > 0 { found=1 } END { exit found ? 0 : 1 }' "${cron_before}"; then
+  echo "Worker scheduling is still active; traffic was not treated as quiesced." >&2
+  exit 1
+fi
+deadline=$((SECONDS + 75))
+while true; do
+  if pgrep -u "${APP_USER}" -f "${APP_DIR}/server/bin/[w]orker.php" >/dev/null; then
+    process_status=0
+  else
+    process_status=$?
+  fi
+  if [ "${process_status}" -eq 0 ]; then
+    if [ "${SECONDS}" -ge "${deadline}" ]; then
+      echo "An application worker did not finish within 75 seconds; request and worker traffic remain paused." >&2
+      exit 1
+    fi
+    sleep 2
+    continue
+  fi
+  if [ "${process_status}" -eq 1 ]; then
+    break
+  fi
+  echo "Could not inspect application worker processes; traffic was not treated as quiesced." >&2
+  exit 1
+done
+EOF
 fi
 
 stage "rsync code"
@@ -123,6 +220,13 @@ fi
 WORKER_LOG="$(dirname "${APP_DIR}")/worker.log"
 sudo -u "${APP_USER}" bash -c "crontab -l 2>/dev/null | grep -q worker.php || (crontab -l 2>/dev/null; echo \"* * * * * php ${APP_DIR}/server/bin/worker.php >> ${WORKER_LOG} 2>&1\") | crontab -"
 EOF
+
+if [ "${move_integrity_rollout}" = "1" ]; then
+  stage "resume request traffic"
+  printf -v fpm_service_q '%q' "${PHP_FPM_SERVICE}"
+  rssh "sudo -n systemctl start ${fpm_service_q}"
+  rssh "sudo -n -u ${app_user_q} -- rm -f ${move_integrity_pause_marker_q}"
+fi
 
 # --- CalDAV nginx block (one-time manual change; NOT applied by this script) --
 # The /dav endpoint is served by server/public/dav.php (sabre/dav). Add this

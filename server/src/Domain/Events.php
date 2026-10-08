@@ -689,35 +689,30 @@ final class Events
         return $row;
     }
 
-    /**
-     * A calendar on its way to Google (0.9.4, #55) takes no edits until the
-     * upload is done: a change made mid-upload could miss Google entirely.
-     * It takes seconds for most calendars.
-     */
-    private function assertNotMoving(int $calendarId): void
+    /** @return array occurrence for the created event (first instance) */
+    public function create(int $userId, array $in): array
     {
-        try {
-            $moving = $this->db->scalar(
-                "SELECT id FROM calendar_moves WHERE calendar_id = ? AND status IN ('queued', 'running') LIMIT 1",
-                [$calendarId]
-            );
-        } catch (\PDOException) {
-            return; // no moves table (an install mid-upgrade, the test database)
-        }
-        if ($moving !== null) {
-            throw new HttpError('calendar_moving', 'This calendar is being moved to Google; it takes edits again once the upload finishes.', 409);
-        }
+        $calendarId = (int) ($in['calendarId'] ?? 0);
+        return $this->db->tx(function () use ($userId, $in, $calendarId): array {
+            $calendar = CalendarMoveGuard::lockCalendar($this->db, $calendarId);
+            if ($calendar !== null && (int) $calendar['user_id'] === $userId && (string) $calendar['kind'] === 'local') {
+                CalendarMoveGuard::assertMutableLocked($this->db, $calendarId);
+            }
+            // Keep the row lock through the sink even for a subscription. It
+            // prevents adopt() from changing its authority between this
+            // decision and a Google/local write.
+            return $this->createLocked($userId, $in);
+        });
     }
 
     /** @return array occurrence for the created event (first instance) */
-    public function create(int $userId, array $in): array
+    private function createLocked(int $userId, array $in): array
     {
         $calendarId = (int) ($in['calendarId'] ?? 0);
         $calendar = $this->db->one('SELECT * FROM calendars WHERE id = ? AND user_id = ?', [$calendarId, $userId]);
         if ($calendar === null) {
             throw HttpError::badRequest('Unknown calendarId');
         }
-        $this->assertNotMoving($calendarId);
         $google = $calendar['kind'] === 'subscribed' && GoogleWriter::writable($calendar) ? $calendar : null;
         if ($calendar['kind'] === 'subscribed' && $google === null) {
             throw HttpError::forbidden('feed_readonly', 'Cannot create events on a subscribed calendar');
@@ -897,18 +892,72 @@ final class Events
     public function patch(int $userId, int $id, array $in): void
     {
         $event = $this->get($userId, $id);
+        $editKeys = array_diff(array_keys($in), ['scope', 'instanceStart', 'tagNames', 'reminders']);
+        $structuralScope = !empty($event['rrule']) && empty($event['recurrence_parent_id'])
+            && in_array((string) ($in['scope'] ?? ''), ['this', 'following'], true);
+        $snapshotChanging = $editKeys !== [] || $structuralScope;
+        $calendarIds = [(int) $event['calendar_id']];
+        if (isset($in['calendarId'])) {
+            $calendarIds[] = (int) $in['calendarId'];
+        }
+        $movingMembers = !empty($in['moveMembers']) && (int) ($event['is_container'] ?? 0) === 1;
+        $memberCalendarIds = [];
+        if ($movingMembers) {
+            foreach ($this->db->all(
+                'SELECT DISTINCT e.calendar_id FROM events e JOIN event_links l ON l.event_id = e.id WHERE l.container_id = ? AND e.deleted_at IS NULL',
+                [$id]
+            ) as $row) {
+                $memberCalendarIds[] = (int) $row['calendar_id'];
+            }
+            $calendarIds = array_merge($calendarIds, $memberCalendarIds);
+        }
+        sort($memberCalendarIds, SORT_NUMERIC);
+        $memberCalendarIds = array_values(array_unique($memberCalendarIds));
+        $this->db->tx(function () use ($userId, $id, $in, $calendarIds, $movingMembers, $memberCalendarIds, $event, $snapshotChanging): void {
+            $locked = CalendarMoveGuard::lockCalendars($this->db, $calendarIds);
+            $localIds = [];
+            foreach ($locked as $calendarId => $calendar) {
+                if ((string) $calendar['kind'] === 'local') {
+                    $localIds[] = $calendarId;
+                }
+            }
+            if ($snapshotChanging) {
+                foreach ($localIds as $calendarId) {
+                    CalendarMoveGuard::assertMutableLocked($this->db, $calendarId);
+                }
+            }
+            // Tags/reminders stay editable during a move, but every involved
+            // row is still locked so its Undo snapshot cannot straddle final
+            // cutover or an adopt-from-subscription authority transition.
+            $fresh = $this->get($userId, $id);
+            if ((int) $fresh['calendar_id'] !== (int) $event['calendar_id']) {
+                throw HttpError::conflict('event_changed', 'This event changed calendars; reload it and try again.');
+            }
+            if ($movingMembers) {
+                $freshMemberCalendarIds = array_map(
+                    static fn(array $row): int => (int) $row['calendar_id'],
+                    $this->db->all(
+                        'SELECT DISTINCT e.calendar_id FROM events e JOIN event_links l ON l.event_id = e.id WHERE l.container_id = ? AND e.deleted_at IS NULL ORDER BY e.calendar_id',
+                        [$id]
+                    )
+                );
+                if ($freshMemberCalendarIds !== $memberCalendarIds) {
+                    throw HttpError::conflict('event_changed', 'This trip changed while it was being moved; reload it and try again.');
+                }
+            }
+            $this->patchLocked($userId, $id, $in);
+        });
+    }
+
+    private function patchLocked(int $userId, int $id, array $in): void
+    {
+        $event = $this->get($userId, $id);
         if (isset($in['calendarId']) && !self::isCalendarChange($event, $in)) {
             unset($in['calendarId']);
         }
         // Reminders are user-local metadata (like tags), so feed events accept
         // them even though their feed-derived content is read-only.
         $editKeys = array_diff(array_keys($in), ['scope', 'instanceStart', 'tagNames', 'reminders']);
-        if ($editKeys !== []) {
-            $this->assertNotMoving((int) $event['calendar_id']);
-            if (isset($in['calendarId'])) {
-                $this->assertNotMoving((int) $in['calendarId']);
-            }
-        }
         $google = $event['source'] === 'feed' ? $this->googleCalendarFor((int) $event['calendar_id']) : null;
         if ($event['source'] === 'feed' && $editKeys !== [] && $google === null) {
             throw HttpError::forbidden('feed_readonly', 'Feed events are read-only except attendance, tags and reminders');
@@ -1516,7 +1565,23 @@ final class Events
     public function deleteEvent(int $userId, int $id, ?string $scope, ?string $instanceStart): void
     {
         $event = $this->get($userId, $id);
-        $this->assertNotMoving((int) $event['calendar_id']);
+        $this->db->tx(function () use ($userId, $id, $scope, $instanceStart, $event): void {
+            $calendarId = (int) $event['calendar_id'];
+            $calendar = CalendarMoveGuard::lockCalendar($this->db, $calendarId);
+            if ($calendar !== null && (string) $calendar['kind'] === 'local') {
+                CalendarMoveGuard::assertMutableLocked($this->db, $calendarId);
+            }
+            $fresh = $this->get($userId, $id);
+            if ((int) $fresh['calendar_id'] !== $calendarId) {
+                throw HttpError::conflict('event_changed', 'This event changed calendars; reload it and try again.');
+            }
+            $this->deleteEventLocked($userId, $id, $scope, $instanceStart);
+        });
+    }
+
+    private function deleteEventLocked(int $userId, int $id, ?string $scope, ?string $instanceStart): void
+    {
+        $event = $this->get($userId, $id);
         $google = $event['source'] === 'feed' ? $this->googleCalendarFor((int) $event['calendar_id']) : null;
         if ($event['source'] === 'feed' && $google === null) {
             throw HttpError::forbidden('feed_readonly', 'Feed events cannot be deleted; hide them instead');
@@ -1657,6 +1722,25 @@ final class Events
      * master and every override.
      */
     public function setAttendance(int $userId, int $id, string $attendance, ?string $scope = null, ?string $instanceStart = null): void
+    {
+        $event = $this->get($userId, $id);
+        $structural = !empty($event['rrule']) && empty($event['recurrence_parent_id'])
+            && in_array($scope, ['this', 'following'], true);
+        $this->db->tx(function () use ($userId, $id, $attendance, $scope, $instanceStart, $event, $structural): void {
+            $calendarId = (int) $event['calendar_id'];
+            $calendar = CalendarMoveGuard::lockCalendar($this->db, $calendarId);
+            if ($structural && $calendar !== null && (string) $calendar['kind'] === 'local') {
+                CalendarMoveGuard::assertMutableLocked($this->db, $calendarId);
+            }
+            $fresh = $this->get($userId, $id);
+            if ((int) $fresh['calendar_id'] !== $calendarId) {
+                throw HttpError::conflict('event_changed', 'This event changed calendars; reload it and try again.');
+            }
+            $this->setAttendanceLocked($userId, $id, $attendance, $scope, $instanceStart);
+        });
+    }
+
+    private function setAttendanceLocked(int $userId, int $id, string $attendance, ?string $scope = null, ?string $instanceStart = null): void
     {
         $attendance = self::ATTENDANCE_ALIASES[$attendance] ?? $attendance;
         if (!in_array($attendance, self::ATTENDANCE, true)) {

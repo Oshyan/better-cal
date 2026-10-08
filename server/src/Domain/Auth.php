@@ -177,6 +177,15 @@ final class Auth
                 // session is gone. Quarantine locally in this transaction;
                 // seed.php asks Google to revoke the tokens only after commit.
                 $now = Time::nowDb();
+                if ($this->db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'mysql') {
+                    // Every move path takes calendar before move. Lock every
+                    // affected calendar in stable order before cancelling its
+                    // move so reset cannot deadlock a final cutover.
+                    $this->db->all(
+                        'SELECT id FROM calendars WHERE user_id = ? ORDER BY id FOR UPDATE',
+                        [$userId]
+                    );
+                }
                 $googleAccounts = (int) $this->db->scalar('SELECT COUNT(*) FROM google_accounts WHERE user_id = ?', [$userId]);
                 $this->db->run(
                     "UPDATE google_accounts
@@ -184,8 +193,8 @@ final class Auth
                      WHERE user_id = ?",
                     [$now, 'Paused by the account compromise reset; reconnect this Google account to resume.', $userId]
                 );
-                // Lock moves before calendars, matching the worker's final
-                // move->calendar cutover order and avoiding a reset deadlock.
+                // Calendar rows were locked first, matching move starts,
+                // snapshot writers and worker finalization.
                 $googleMoves = $this->db->run(
                     "UPDATE calendar_moves
                      SET status = 'failed', cancelled_at = ?, finished_at = ?, error = ?

@@ -153,13 +153,15 @@ final class CalendarsController
         if ($name === '') {
             $name = pathinfo((string) ($file['name'] ?? 'Imported'), PATHINFO_FILENAME) ?: 'Imported';
         }
-        $calendar = $this->calendars->create($userId, ['name' => $name]);
-        $calendarId = (int) $calendar['id'];
-
-        $imported = 0;
-        $masterIdByUid = [];
         usort($parsed, static fn(array $a, array $b): int => ($a['recurrence_instance_utc'] === null ? 0 : 1) <=> ($b['recurrence_instance_utc'] === null ? 0 : 1));
-        $this->db->tx(function () use ($parsed, $userId, $calendarId, &$imported, &$masterIdByUid): void {
+        [$calendarId, $imported] = $this->db->tx(function () use ($parsed, $userId, $name): array {
+            // The new calendar and every imported row become visible in one
+            // commit. A concurrent move cannot discover/count a half-imported
+            // calendar between two transactions.
+            $calendar = $this->calendars->create($userId, ['name' => $name]);
+            $calendarId = (int) $calendar['id'];
+            $imported = 0;
+            $masterIdByUid = [];
             $seen = [];
             foreach ($parsed as $ev) {
                 $key = $ev['uid'] . '|' . ($ev['recurrence_instance_utc'] ?? '');
@@ -196,6 +198,7 @@ final class CalendarsController
                 }
                 $imported++;
             }
+            return [$calendarId, $imported];
         });
 
         $out = $this->calendars->serializeById($userId, $calendarId);

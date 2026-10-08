@@ -72,6 +72,18 @@ final class JobQueue
         ) !== null;
     }
 
+    public function hasQueuedGoogleMove(int $moveId): bool
+    {
+        $extract = $this->db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'sqlite'
+            ? "CAST(JSON_EXTRACT(payload_json, '$.moveId') AS TEXT)"
+            : "JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.moveId'))";
+        return $this->db->scalar(
+            "SELECT id FROM jobs WHERE type = 'google_move' AND status = 'pending'
+             AND $extract = ? LIMIT 1",
+            [(string) $moveId]
+        ) !== null;
+    }
+
     /**
      * Claim the next due job (single-worker safe via conditional UPDATE).
      * Reminder delivery goes first so a backlog of slow model-backed jobs can

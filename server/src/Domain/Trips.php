@@ -80,44 +80,38 @@ final class Trips
 
     public function attach(int $userId, int $containerId, int $eventId): void
     {
-        $container = $this->ownedEvent($userId, $containerId);
-        $member = $this->ownedEvent($userId, $eventId);
-        self::assertLinkable($container, $member);
-
-        if ($this->db->scalar('SELECT id FROM event_links WHERE container_id = ? AND event_id = ?', [$containerId, $eventId]) !== null) {
-            return; // already attached: idempotent, nothing to journal
-        }
-
-        $before = $this->linkRows($containerId);
-        $this->db->tx(function () use ($containerId, $eventId): void {
+        $this->db->tx(function () use ($userId, $containerId, $eventId): void {
+            [$container, $member, $calendarIds] = $this->lockEvents($userId, $containerId, $eventId);
+            self::assertLinkable($container, $member);
+            if ($this->db->scalar('SELECT id FROM event_links WHERE container_id = ? AND event_id = ?', [$containerId, $eventId]) !== null) {
+                return; // already attached: idempotent, nothing to journal
+            }
+            $before = $this->linkRows($containerId);
             $position = (int) $this->db->scalar(
                 'SELECT COALESCE(MAX(position) + 1, 0) FROM event_links WHERE container_id = ?',
                 [$containerId]
             );
             $this->db->insert('event_links', ['container_id' => $containerId, 'event_id' => $eventId, 'position' => $position]);
             $this->touchEvents([$containerId, $eventId]);
+            $this->undo->record($userId, 'event_links', $containerId, 'create', ['event_links' => $before], ['event_links' => $this->linkRows($containerId)], calendarIds: $calendarIds);
+            $this->journalBoth($container, $member);
         });
-        $this->undo->record($userId, 'event_links', $containerId, 'create', ['event_links' => $before], ['event_links' => $this->linkRows($containerId)]);
-        $this->journalBoth($container, $member);
     }
 
     public function detach(int $userId, int $containerId, int $eventId): void
     {
-        $container = $this->ownedEvent($userId, $containerId);
-        $link = $this->db->one('SELECT * FROM event_links WHERE container_id = ? AND event_id = ?', [$containerId, $eventId]);
-        if ($link === null) {
-            throw HttpError::notFound('Event is not part of this trip');
-        }
-
-        $before = $this->linkRows($containerId);
-        $this->db->tx(function () use ($link, $containerId, $eventId): void {
+        $this->db->tx(function () use ($userId, $containerId, $eventId): void {
+            [$container, $member, $calendarIds] = $this->lockEvents($userId, $containerId, $eventId, true);
+            $link = $this->db->one('SELECT * FROM event_links WHERE container_id = ? AND event_id = ?', [$containerId, $eventId]);
+            if ($link === null) {
+                throw HttpError::notFound('Event is not part of this trip');
+            }
+            $before = $this->linkRows($containerId);
             $this->db->run('DELETE FROM event_links WHERE id = ?', [(int) $link['id']]);
             $this->touchEvents([$containerId, $eventId]);
+            $this->undo->record($userId, 'event_links', $containerId, 'delete', ['event_links' => $before], ['event_links' => $this->linkRows($containerId)], calendarIds: $calendarIds);
+            $this->journalBoth($container, $member);
         });
-        $this->undo->record($userId, 'event_links', $containerId, 'delete', ['event_links' => $before], ['event_links' => $this->linkRows($containerId)]);
-        // The member may be soft-deleted (detach still valid); its uid/calendar remain journalable.
-        $member = $this->db->one('SELECT calendar_id, uid FROM events WHERE id = ?', [$eventId]);
-        $this->journalBoth($container, $member);
     }
 
     // ---- Reads ---------------------------------------------------------
@@ -222,6 +216,39 @@ final class Trips
             throw HttpError::notFound('Event not found');
         }
         return $row;
+    }
+
+    /**
+     * Lock both calendars, then prove the events still belong to those exact
+     * rows. Event moves and trip membership edits take the same locks, so a
+     * bulk trip move cannot gain an unguarded member after its calendar set
+     * was chosen.
+     *
+     * @return array{0:array<string,mixed>,1:array<string,mixed>,2:list<int>}
+     */
+    private function lockEvents(int $userId, int $containerId, int $eventId, bool $allowDeletedMember = false): array
+    {
+        $container = $this->ownedEvent($userId, $containerId);
+        $member = $allowDeletedMember
+            ? $this->db->one('SELECT * FROM events WHERE id = ? AND user_id = ?', [$eventId, $userId])
+            : $this->ownedEvent($userId, $eventId);
+        if ($member === null) {
+            throw HttpError::notFound('Event not found');
+        }
+        $calendarIds = array_values(array_unique([(int) $container['calendar_id'], (int) $member['calendar_id']]));
+        sort($calendarIds, SORT_NUMERIC);
+        CalendarMoveGuard::lockCalendars($this->db, $calendarIds);
+        $freshContainer = $this->ownedEvent($userId, $containerId);
+        $freshMember = $allowDeletedMember
+            ? $this->db->one('SELECT * FROM events WHERE id = ? AND user_id = ?', [$eventId, $userId])
+            : $this->ownedEvent($userId, $eventId);
+        if ($freshMember === null
+            || (int) $freshContainer['calendar_id'] !== (int) $container['calendar_id']
+            || (int) $freshMember['calendar_id'] !== (int) $member['calendar_id']
+        ) {
+            throw HttpError::conflict('event_changed', 'This trip changed while it was being updated; reload it and try again.');
+        }
+        return [$freshContainer, $freshMember, $calendarIds];
     }
 
     /** @return list<array> current link rows of a container, for undo snapshots */

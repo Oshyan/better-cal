@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace BetterCal\Dav;
 
+use BetterCal\Domain\CalendarMoveGuard;
 use BetterCal\Domain\Ics;
 use BetterCal\Domain\Trips;
 use BetterCal\Domain\Undo;
@@ -15,6 +16,7 @@ use Sabre\CalDAV\Backend\SyncSupport;
 use Sabre\CalDAV\Plugin as CalDAVPlugin;
 use Sabre\CalDAV\Xml\Property\SupportedCalendarComponentSet;
 use Sabre\DAV\Exception\BadRequest;
+use Sabre\DAV\Exception\Conflict;
 use Sabre\DAV\Exception\Forbidden;
 use Sabre\DAV\PropPatch;
 
@@ -106,7 +108,15 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
                     $fields['color'] = '#' . strtolower($m[1]);
                 }
                 if ($fields !== []) {
-                    $this->db->update('calendars', $fields, 'id = ?', [(int) $calendar['id']]);
+                    $this->db->tx(function () use ($calendar, $fields, $mutations): void {
+                        CalendarMoveGuard::lockCalendar($this->db, (int) $calendar['id']);
+                        $fresh = $this->calendarRow((int) $calendar['id']);
+                        if ((string) $fresh['kind'] === 'local' && array_key_exists('{DAV:}displayname', $mutations)) {
+                            $this->assertMoveMutable((int) $calendar['id']);
+                        }
+                        $this->assertWritable($fresh);
+                        $this->db->update('calendars', $fields, 'id = ?', [(int) $calendar['id']]);
+                    });
                 }
                 return true;
             }
@@ -225,6 +235,19 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
     {
         $calendar = $this->calendarRow($calendarId);
         $this->assertWritable($calendar);
+        return $this->db->tx(function () use ($calendarId, $objectUri) {
+            $fresh = CalendarMoveGuard::lockCalendar($this->db, (int) $calendarId);
+            if ($fresh !== null && (string) $fresh['kind'] === 'local') {
+                $this->assertMoveMutable((int) $calendarId);
+            }
+            return $this->deleteCalendarObjectLocked($calendarId, $objectUri);
+        });
+    }
+
+    private function deleteCalendarObjectLocked($calendarId, $objectUri)
+    {
+        $calendar = $this->calendarRow($calendarId);
+        $this->assertWritable($calendar);
         $uid = DavIcs::uidFromObjectUri((string) $objectUri);
         if ($uid === null) {
             return;
@@ -284,24 +307,27 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
             throw new BadRequest('Object URI must be "<UID>.ics" matching the VEVENT UID');
         }
 
-        $userId = (int) $calendar['user_id'];
-        $existing = $this->db->all(
-            'SELECT * FROM events WHERE calendar_id = ? AND uid = ?',
-            [$calendarId, $uid]
-        );
-        $existingMaster = null;
-        $existingByInstance = [];
-        foreach ($existing as $row) {
-            if ($row['recurrence_instance_utc'] === null && $row['recurrence_parent_id'] === null) {
-                $existingMaster = $row;
-            } elseif ($row['recurrence_instance_utc'] !== null) {
-                $existingByInstance[(string) $row['recurrence_instance_utc']] = $row;
+        return $this->db->tx(function () use ($masters, $parsedOverrides, $calendarId, $uid): ?string {
+            $this->assertMoveMutable($calendarId);
+            $calendar = $this->calendarRow($calendarId);
+            $this->assertWritable($calendar);
+            $userId = (int) $calendar['user_id'];
+            $existing = $this->db->all(
+                'SELECT * FROM events WHERE calendar_id = ? AND uid = ?',
+                [$calendarId, $uid]
+            );
+            $existingMaster = null;
+            $existingByInstance = [];
+            foreach ($existing as $row) {
+                if ($row['recurrence_instance_utc'] === null && $row['recurrence_parent_id'] === null) {
+                    $existingMaster = $row;
+                } elseif ($row['recurrence_instance_utc'] !== null) {
+                    $existingByInstance[(string) $row['recurrence_instance_utc']] = $row;
+                }
             }
-        }
-        $beforeRows = array_values(array_filter($existing, static fn(array $r): bool => $r['deleted_at'] === null));
-        $isNewObject = $existingMaster === null || $existingMaster['deleted_at'] !== null;
+            $beforeRows = array_values(array_filter($existing, static fn(array $r): bool => $r['deleted_at'] === null));
+            $isNewObject = $existingMaster === null || $existingMaster['deleted_at'] !== null;
 
-        $masterId = $this->db->tx(function () use ($masters, $parsedOverrides, $existingMaster, $existingByInstance, $calendarId, $userId, $uid): int {
             $now = Time::nowDb();
             $masterCols = DavIcs::eventColumns($masters[0]);
             if ($existingMaster !== null) {
@@ -346,26 +372,24 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
                     $this->db->run('DELETE FROM events WHERE id = ?', [(int) $row['id']]);
                 }
             }
-            return $masterId;
+            $afterRows = $this->db->all(
+                'SELECT * FROM events WHERE calendar_id = ? AND uid = ? AND deleted_at IS NULL',
+                [$calendarId, $uid]
+            );
+            $this->undo->record(
+                $userId,
+                'event',
+                $masterId,
+                $isNewObject ? 'create' : 'update',
+                $beforeRows === [] ? null : ['events' => $beforeRows],
+                ['events' => $afterRows]
+            );
+            ChangeLog::record($this->db, $calendarId, $uid, $isNewObject ? ChangeLog::OP_ADD : ChangeLog::OP_MODIFY);
+
+            // We re-serialize on read, so the stored bytes differ from the PUT
+            // body: per sabre's contract we must not return an etag here.
+            return null;
         });
-
-        $afterRows = $this->db->all(
-            'SELECT * FROM events WHERE calendar_id = ? AND uid = ? AND deleted_at IS NULL',
-            [$calendarId, $uid]
-        );
-        $this->undo->record(
-            $userId,
-            'event',
-            $masterId,
-            $isNewObject ? 'create' : 'update',
-            $beforeRows === [] ? null : ['events' => $beforeRows],
-            ['events' => $afterRows]
-        );
-        ChangeLog::record($this->db, $calendarId, $uid, $isNewObject ? ChangeLog::OP_ADD : ChangeLog::OP_MODIFY);
-
-        // We re-serialize on read, so the stored bytes differ from the PUT
-        // body: per sabre's contract we must not return an etag here.
-        return null;
     }
 
     // ---- Sync (RFC 6578) ----------------------------------------------
@@ -452,6 +476,19 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
             throw new Forbidden($calendar['kind'] === 'plugin'
                 ? 'This calendar is managed by a plugin; its events are read-only'
                 : 'This calendar is a read-only feed subscription; changes must be made at the source');
+        }
+    }
+
+    /** Moving is temporary, so CalDAV reports 409 rather than permanent read-only 403. */
+    private function assertMoveMutable(int $calendarId): void
+    {
+        try {
+            CalendarMoveGuard::lockAndAssertMutable($this->db, [$calendarId]);
+        } catch (\BetterCal\Http\HttpError $e) {
+            if ($e->errorCode === 'calendar_moving') {
+                throw new Conflict($e->getMessage());
+            }
+            throw $e;
         }
     }
 

@@ -118,11 +118,16 @@ try {
                     $moveId = (int) ($payload['moveId'] ?? 0);
                     $googleAuth = new BetterCal\Domain\GoogleAuth($db, $cfg);
                     $mover = new BetterCal\Domain\GoogleMove($db, $googleAuth, new BetterCal\Domain\GoogleWriter($db, $googleAuth, $feeds), $feeds, $undo, $queue);
-                    $over = $mover->run($moveId, 40);
-                    if (!$over) {
+                    $result = $mover->run($moveId, 40);
+                    if ($result === BetterCal\Domain\GoogleMove::RESULT_MORE) {
                         $queue->enqueue('google_move', ['moveId' => $moveId]);
+                    } elseif ($result === BetterCal\Domain\GoogleMove::RESULT_BUSY) {
+                        // The browser request may own the short first lease.
+                        // Keep one recovery job so a killed PHP request cannot
+                        // strand the move after its lease expires.
+                        $queue->enqueue('google_move', ['moveId' => $moveId], Time::nowUtc()->modify('+2 minutes'));
                     }
-                    echo bc_ts() . " google_move move=$moveId " . ($over ? 'finished' : 'continuing') . "\n";
+                    echo bc_ts() . " google_move move=$moveId $result\n";
                     break;
                 case 'duplicate_scan':
             $dup = (new BetterCal\Domain\Duplicates($db))->scanAll();

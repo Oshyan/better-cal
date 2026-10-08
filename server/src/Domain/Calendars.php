@@ -193,6 +193,21 @@ final class Calendars
 
     public function patch(int $userId, int $id, array $in, ?int $viewerTokenId = null): array
     {
+        return $this->db->tx(function () use ($userId, $id, $in, $viewerTokenId): array {
+            $calendar = CalendarMoveGuard::lockCalendar($this->db, $id);
+            if ($calendar === null || (int) $calendar['user_id'] !== $userId) {
+                throw HttpError::notFound('No such calendar');
+            }
+            if ((string) $calendar['kind'] === 'local' && array_key_exists('name', $in)) {
+                CalendarMoveGuard::assertMutableLocked($this->db, $id);
+            }
+            return $this->patchLocked($userId, $id, $in, $viewerTokenId);
+        });
+    }
+
+    /** Calendar lock, mutation and Undo publication share one transaction for local calendars. */
+    private function patchLocked(int $userId, int $id, array $in, ?int $viewerTokenId): array
+    {
         $before = $this->get($userId, $id);
         $beforeLinks = [
             'calendar_folders' => $this->db->all('SELECT * FROM calendar_folders WHERE calendar_id = ?', [$id]),
@@ -276,27 +291,31 @@ final class Calendars
      */
     public function adopt(int $userId, int $id): array
     {
-        $row = $this->db->one('SELECT * FROM calendars WHERE id = ? AND user_id = ?', [$id, $userId]);
-        if ($row === null) {
-            throw HttpError::notFound('No such calendar');
-        }
-        if ((string) $row['kind'] !== 'subscribed') {
-            throw HttpError::badRequest('Only subscribed calendars can be adopted');
-        }
-        // Adopting a Google calendar makes it wholly ours: the link to Google
-        // goes too, so it stops polling AND stops writing through. The
-        // events keep their Google ids as history; nothing reads them once
-        // the calendar has no provider. This is the final step of a
-        // migration (docs/migration.md).
-        $this->db->run(
-            "UPDATE calendars SET kind = 'local', provider = 'ics', source_url = NULL,
-                subscription_authority = 'owner', created_by_token_id = NULL, google_calendar_id = NULL,
-                google_access_role = NULL, google_sync_token = NULL, google_account_id = NULL,
-                role = CASE WHEN role = 'opportunities' THEN 'mine' ELSE role END,
-                last_poll_status = 'never', last_poll_error = NULL WHERE id = ?",
-            [$id]
-        );
-        $this->db->run("UPDATE events SET source = 'local' WHERE calendar_id = ?", [$id]);
+        $this->db->tx(function () use ($userId, $id): void {
+            CalendarMoveGuard::lockAndAssertMutable($this->db, [$id]);
+            $row = $this->db->one('SELECT * FROM calendars WHERE id = ? AND user_id = ?', [$id, $userId]);
+            if ($row === null) {
+                throw HttpError::notFound('No such calendar');
+            }
+            if ((string) $row['kind'] !== 'subscribed') {
+                throw HttpError::badRequest('Only subscribed calendars can be adopted');
+            }
+            // Adopting a Google calendar makes it wholly ours: the link to Google
+            // goes too, so it stops polling AND stops writing through. The
+            // events keep their Google ids as history; nothing reads them once
+            // the calendar has no provider. This is the final step of a
+            // migration (docs/migration.md).
+            $this->db->run(
+                "UPDATE calendars SET kind = 'local', provider = 'ics', source_url = NULL,
+                    subscription_authority = 'owner', created_by_token_id = NULL, google_calendar_id = NULL,
+                    google_access_role = NULL, google_sync_token = NULL, google_account_id = NULL,
+                    google_binding_version = google_binding_version + 1,
+                    role = CASE WHEN role = 'opportunities' THEN 'mine' ELSE role END,
+                    last_poll_status = 'never', last_poll_error = NULL WHERE id = ?",
+                [$id]
+            );
+            $this->db->run("UPDATE events SET source = 'local' WHERE calendar_id = ?", [$id]);
+        });
         return $this->serializeById($userId, $id);
     }
 
@@ -341,21 +360,25 @@ final class Calendars
 
     public function delete(int $userId, int $id): void
     {
-        $calendar = $this->get($userId, $id);
-        $events = $this->db->all('SELECT * FROM events WHERE calendar_id = ?', [$id]);
-        $before = [
-            'calendars' => [$calendar],
-            'calendar_folders' => $this->db->all('SELECT * FROM calendar_folders WHERE calendar_id = ?', [$id]),
-            'calendar_tags' => $this->db->all('SELECT * FROM calendar_tags WHERE calendar_id = ?', [$id]),
-            'events' => $events,
-        ];
-        $eventIds = array_map(static fn($e) => (int) $e['id'], $events);
-        if ($eventIds !== []) {
-            [$in, $params] = Db::in($eventIds);
-            $before['event_tags'] = $this->db->all("SELECT * FROM event_tags WHERE event_id IN $in", $params);
-            $before['event_people'] = $this->db->all("SELECT * FROM event_people WHERE event_id IN $in", $params);
-        }
-        $this->db->run('DELETE FROM calendars WHERE id = ?', [$id]);
+        $before = $this->db->tx(function () use ($userId, $id): array {
+            CalendarMoveGuard::lockAndAssertMutable($this->db, [$id]);
+            $calendar = $this->get($userId, $id);
+            $events = $this->db->all('SELECT * FROM events WHERE calendar_id = ?', [$id]);
+            $before = [
+                'calendars' => [$calendar],
+                'calendar_folders' => $this->db->all('SELECT * FROM calendar_folders WHERE calendar_id = ?', [$id]),
+                'calendar_tags' => $this->db->all('SELECT * FROM calendar_tags WHERE calendar_id = ?', [$id]),
+                'events' => $events,
+            ];
+            $eventIds = array_map(static fn($e) => (int) $e['id'], $events);
+            if ($eventIds !== []) {
+                [$in, $params] = Db::in($eventIds);
+                $before['event_tags'] = $this->db->all("SELECT * FROM event_tags WHERE event_id IN $in", $params);
+                $before['event_people'] = $this->db->all("SELECT * FROM event_people WHERE event_id IN $in", $params);
+            }
+            $this->db->run('DELETE FROM calendars WHERE id = ?', [$id]);
+            return $before;
+        });
         $this->undo->record($userId, 'calendar', $id, 'delete', $before, null);
     }
 

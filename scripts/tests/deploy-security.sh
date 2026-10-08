@@ -109,6 +109,7 @@ fi
 deploy_source="$(cat "${ROOT_DIR}/scripts/deploy.sh")"
 dev_source="$(cat "${ROOT_DIR}/scripts/deploy-dev.sh")"
 helper_source="$(cat "${ROOT_DIR}/scripts/deploy-backup.sh")"
+migration_check_source="$(cat "${ROOT_DIR}/scripts/migration-applied.php")"
 case "${deploy_source}" in
   *'chown "root:${APP_USER}" "${APP_DIR}/.env"'*|*'chmod 640 "${APP_DIR}/.env"'*)
     not_ok 'production deploy still mutates .env as root' ;;
@@ -131,6 +132,27 @@ esac
 case "${deploy_source}" in
   *'sudo -n env APP_DIR='*'scripts/deploy-backup.sh'*) ok ;;
   *) not_ok 'production deploy does not run the reviewed backup helper through sudo' ;;
+esac
+if [[ "${deploy_source}" == *'migration-applied.php'* \
+  && "${deploy_source}" == *'042_google_move_integrity.php'* \
+  && "${deploy_source}" == *'MOVE_INTEGRITY_QUIESCED'* \
+  && "${deploy_source}" == *'.deploy-move-integrity-paused'* \
+  && "${deploy_source}" == *'systemctl stop'* \
+  && "${deploy_source}" == *'systemctl start'* \
+  && "${deploy_source}" == *'LoadState'* \
+  && "${deploy_source}" == *'ActiveState'* \
+  && "${deploy_source}" == *'bootstrap_present'* \
+  && "${deploy_source}" == *'sudo -n test ! -e'* \
+  && "${deploy_source}" == *'crontab -l'* \
+  && "${deploy_source}" == *'process_status'* \
+  && "${deploy_source}" == *'pgrep -u'* ]]; then
+  ok
+else
+  not_ok 'production deploy does not require a quiesced first rollout for migration 042'
+fi
+case "${migration_check_source}" in
+  *'MIGRATION_FILE'*'schema_migrations'*) ok ;;
+  *) not_ok 'migration rollout gate does not read the authoritative migration ledger' ;;
 esac
 case "${helper_source}" in
   *'env MYSQL_PWD='*) not_ok 'database password is still placed in a privileged argv' ;;

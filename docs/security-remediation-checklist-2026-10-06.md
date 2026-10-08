@@ -111,6 +111,21 @@ This phase shipped in release 0.9.32. It requires no database migration.
 | F53 | A bearer token can delete only outbound feeds created by that exact token; inaccessible ids use the ordinary not-found response | Passed | [ ] |
 | F31 residual | Creating an API key requires recent password confirmation, rechecked under the durable write transaction | Passed | [ ] |
 
+## Phase 14 — Google move and mutation integrity
+
+This phase ships in release 0.9.33 and adds migration 042. Its first rollout
+must briefly quiesce request and worker traffic; after the ordinary backup, the
+production deploy gracefully stops request traffic, pauses worker scheduling,
+waits for an active worker, migrates, restores both, and refuses the first run
+unless that one-time pause was explicitly approved. Later deploys have no
+added step.
+
+| Scan finding | Remediation | Local automated verification | Live/deployed verification |
+|---|---|---:|---:|
+| F17 | Calendar/event/CalDAV/trip writers, feed finalization and Undo share canonical calendar locks with move start/cutover; stale provider responses are discarded by a monotonic binding generation | Passed | [ ] |
+| F36 | One active move, one leased executor and durable remote calendar/event recovery markers are enforced across browser/worker overlap and response loss | Passed | [ ] |
+| F36 rollout boundary | Active unmarked moves are forbidden by the database; ambiguous pre-upgrade work is stopped, and the first migration requires verified quiescence | Passed | [ ] |
+
 ## Completed local evidence
 
 This section is the technical record for reviewers; it is not a manual to-do list for the owner.
@@ -160,6 +175,9 @@ This section is the technical record for reviewers; it is not a manual to-do lis
 - [x] Phase 13 focused controls cover browser-only Google inventory, creator-specific subscription-address visibility across list and mutation responses, owner/token outbound-feed deletion boundaries, recent-password API-key creation, session revocation before durable creation and unchanged privileged local key creation.
 - [x] Phase 13 local suites: server 2,124/0; frontend smoke 653/0 in `America/Los_Angeles`, `UTC`, `Europe/Berlin`, `Asia/Kolkata` and `Pacific/Auckland`; frontend static 353/0 across 103 modules; MCP 67/0. All changed PHP files pass syntax checks, the working-tree diff passes whitespace validation and the repository privacy guard reports no findings. No time-zone harness was required because this phase does not change repeat rules, time-zone handling, import or export.
 - [x] Phase 13 independent read-only post-patch review found no remaining source-backed bypass or adjacent regression in the four authorization boundaries. The browser password-prompt interaction and a live MySQL password-reset/token-write race remain deployment-layer checks, not completed local evidence.
+- [x] Phase 14 focused controls cover calendar/event/CalDAV/trip mutation exclusion, failed-move freeze and explicit stop, one leased executor, active-move database invariants, exact target reservation, calendar and per-event response-loss recovery, restart repair, stale provider-response rejection, binding-generation ABA protection, account disconnect, and Undo across every referenced calendar.
+- [x] Phase 14 local suites: server 2,164/0; frontend smoke 653/0; frontend static 353/0 across 103 modules; deploy-security 21/0. Touched PHP and shell files pass syntax checks, the working-tree diff passes whitespace validation and the repository privacy guard reports no findings.
+- [x] Phase 14 independent read-only post-patch review found F17 fixed and the application-level F36 controls complete. Its deployment follow-up now treats service, cron and process-inspection errors as failures rather than evidence of quiescence. Live MySQL concurrency and Google response-loss exercises remain deployment-layer checks.
 
 ## Remaining practical checks
 
@@ -176,6 +194,10 @@ Use a disposable account or non-production installation for the checks that deli
 ### Google pagination and worker release (F1/F62)
 
 - [ ] After deployment, open Settings → Connections once and refresh one representative connected Google calendar. Confirm the complete calendar list appears and the calendar returns to a successful “last checked” state. There is no need to manufacture an oversized calendar or broken page-token cycle; those failure paths are covered by the automated controls above.
+
+### Google calendar move integrity (F17/F36)
+
+- [ ] With a disposable local calendar, start one move and confirm it is read-only only while the upload is active, completes once, and then edits normally through Google. In a separate disposable attempt, stop a failed move and confirm local editing returns with the partial-copy warning. Response-loss ambiguity, executor overlap and lock races are covered by automated controls and do not need to be manufactured manually.
 
 ### Emailed invitation review (F10/F61)
 
@@ -230,6 +252,14 @@ The automated suite covers oversized repeat-rule inputs; normal release smoke te
 - [ ] After migration 041, use temporary low limits with a disposable account to exercise simultaneous session and API-token Quick Add previews. Verify the exact account/token/concurrency caps, that a failed provider attempt remains charged, token rotation cannot reset account capacity, and the deterministic draft remains available with the **AI paused** explanation.
 - [ ] Under a temporary low prompt-filter limit, refresh a disposable feed with enough changed events to cross the limit. Verify one bounded Review notice, fail-open event visibility, a delayed continuation rather than a failed job, and that a due reminder is claimed before the model-work backlog. Restore the normal limits and dismiss the notice after the exercise.
 - [x] Confirm the deployed transport and configured response cap match the reviewed release. The real local cURL boundary test is sufficient unless a controlled production provider/proxy fixture can safely return an oversized response; do not disrupt the live provider merely to repeat that case.
+
+### Google move integrity (F17/F36)
+
+- [ ] For the first migration-042 rollout only, approve the deploy's explicit quiescence step. Confirm it takes the backup first, then pauses request/worker traffic, waits for any active worker, records migration 042, restores both services and completes the normal smoke check. Later deploys require no added step.
+- [ ] After deployment, move one disposable local calendar containing a single disposable event. While it is queued or running, confirm an app edit and a CalDAV edit receive the temporary `calendar_moving`/HTTP 409 refusal; after completion, confirm ordinary Google-backed editing works.
+- [ ] In a controlled failure exercise, stop a move after at least one item uploads. Confirm the calendar remains protected while the failed move is retryable, **Try again** resumes it, and **Stop move and keep local** restores local editing while clearly warning that partial Google data may need manual removal.
+- [ ] Exercise two simultaneous starts and a browser/worker overlap against a disposable calendar on production MySQL. Confirm one active move row, one executor lease, one remote calendar and one imported copy per event. Use a controlled test environment or network fault; do not kill the shared production worker or disrupt a real calendar merely to manufacture the race.
+- [ ] Simulate response loss after remote calendar creation and after one accepted event import, each before local ID persistence. Confirm the same calendar/event is recovered without another create/import. Verify the calendar-description marker is cleared, the private event marker is not displayed as event content, and neither marker nor any account/calendar details appear in retained evidence.
 
 ## Deployment closeout
 

@@ -280,6 +280,7 @@ function bc_handle_api(Request $request, array $cfg): void
         $router->add('GET', "$base/google/accounts/:id/calendars", [$googleController, 'calendars']);
         $router->add('POST', "$base/google/accounts/:id/subscribe", [$googleController, 'subscribe']);
         $router->add('POST', "$base/calendars/:id/move-to-google", [$googleController, 'moveToGoogle']);
+        $router->add('DELETE', "$base/calendars/:id/move-to-google", [$googleController, 'stopMove']);
         $router->add('GET', "$base/calendars/:id/move-to-google", [$googleController, 'moveStatus']);
         $router->add('POST', "$base/push/test", [$pushController, 'test']);
         $router->add('POST', "$base/push/test-email", [$pushController, 'testEmail']);

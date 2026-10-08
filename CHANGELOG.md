@@ -4,6 +4,14 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.33 (2026-10-07)
+
+- **Moving a local calendar to Google is now one coherent operation.** Calendar, event, CalDAV, trip and Undo changes cannot race the upload or silently disappear from the destination. The calendar is briefly read-only while moving; if an upload stops partway through, choose **Try again** or **Stop move and keep local** before editing it again.
+- **Interrupted Google responses no longer risk creating duplicate calendars or events.** Moves use exclusive worker leases and private recovery markers, verify the exact remote object before resuming, and reject ambiguous recovery instead of guessing. Stopping a partial move explains that its Google copy may need manual removal.
+- Existing unfinished moves that lack the new recovery evidence are stopped safely during the upgrade and shown for review rather than resumed automatically.
+
+Operators: migration 042 adds Google-move integrity and mutation-reference state. Its first upgrade on an existing installation requires `MOVE_INTEGRITY_QUIESCED=1` and `PHP_FPM_SERVICE` in the ignored deployment configuration; after the normal backup, `scripts/deploy.sh` automatically pauses and verifies request/worker traffic, migrates, and resumes it. Clean installations and later deployments do not take this pause.
+
 ## 0.9.32 (2026-10-07)
 
 - **API keys no longer inherit browser-only access.** They cannot inspect the connected Google account's remote calendar list, see another credential's private subscription address, or delete an outbound feed they did not create. Browser owners keep their existing account-wide access, and an API key can still manage the subscriptions and outbound feeds it created.

@@ -33,9 +33,9 @@ final class GoogleController
 
     /**
      * Move a local calendar to Google (#55): body {accountId, googleCalendarId?}.
-     * Without googleCalendarId Better-Cal creates the Google calendar. Small
-     * calendars finish within the request; a big one carries on in the
-     * worker, and GET reports its progress.
+     * Without googleCalendarId Better-Cal creates the Google calendar. The
+     * request may do the first bounded slice; the worker owns every
+     * continuation, and GET reports progress.
      */
     public function moveToGoogle(Request $req, array $params): Response
     {
@@ -50,6 +50,12 @@ final class GoogleController
     public function moveStatus(Request $req, array $params): Response
     {
         return Response::json(['move' => $this->move->status((int) $req->user['id'], (int) $params['id'])]);
+    }
+
+    public function stopMove(Request $req, array $params): Response
+    {
+        $req->requireRecentAuthentication('Stopping a Google calendar move');
+        return Response::json($this->move->abandon((int) $req->user['id'], (int) $params['id']));
     }
 
     public function status(Request $req): Response
@@ -173,6 +179,15 @@ final class GoogleController
             );
             if ($existing !== null) {
                 throw HttpError::conflict('already_subscribed', 'That calendar is already here');
+            }
+            $moving = $this->db->scalar(
+                "SELECT id FROM calendar_moves
+                 WHERE google_account_id = ? AND google_calendar_id = ?
+                   AND status IN ('queued', 'running', 'failed') AND cancelled_at IS NULL LIMIT 1",
+                [(int) $account['id'], $googleCalendarId]
+            );
+            if ($moving !== null) {
+                throw HttpError::conflict('google_calendar_in_use', 'That Google calendar is reserved by an unfinished move');
             }
             return $this->calendars->create(
                 $userId,

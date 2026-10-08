@@ -77,8 +77,13 @@ export function MoveToGoogle({ cal }) {
   const start = async () => {
     setBusy(true);
     try {
+      const retrying = move && move.status === 'failed' && !move.cancelled;
+      const selectedAccountId = retrying ? move.googleAccountId : accountId;
+      const selectedTarget = retrying
+        ? (move.createdNew ? null : move.googleCalendarId)
+        : (target === 'new' ? null : target);
       const d = await stepUp.run('move this calendar to Google', () => api('/calendars/' + cal.id + '/move-to-google', {
-        method: 'POST', body: { accountId, googleCalendarId: target === 'new' ? null : target },
+        method: 'POST', body: { accountId: selectedAccountId, googleCalendarId: selectedTarget },
       }));
       if (!d) return;
       setMove(d);
@@ -88,8 +93,25 @@ export function MoveToGoogle({ cal }) {
       }
     } catch (e) {
       toast(e.message || 'Could not start the move', { error: true });
+    } finally {
+      setBusy(false);
     }
-    setBusy(false);
+  };
+
+  const stop = async () => {
+    setBusy(true);
+    try {
+      const d = await stepUp.run('stop this Google calendar move', () => api('/calendars/' + cal.id + '/move-to-google', {
+        method: 'DELETE',
+      }));
+      if (!d) return;
+      setMove(d);
+      toast('Move stopped. This calendar is editable again; remove any partial copy you do not want from Google Calendar.');
+    } catch (e) {
+      toast(e.message || 'Could not stop the move', { error: true });
+    } finally {
+      setBusy(false);
+    }
   };
 
   if (running) {
@@ -102,10 +124,19 @@ export function MoveToGoogle({ cal }) {
   return html`<div class="bc-calset-field bc-move">
     <span class="bc-calset-label">Google</span>
     ${move && move.status === 'failed' && !move.cancelled && html`<span class="bc-calset-value bc-move-error">
-      The move stopped: ${move.error || 'unknown error'}. ${move.done} of ${move.total} uploaded so far; trying again continues from there.
+      The move stopped: ${move.error || 'unknown error'}. ${move.done} of ${move.total} uploaded so far. This calendar stays read-only until you continue or stop the move, so a partial upload cannot overwrite later edits.
       <button type="button" class="bc-btn" disabled=${busy} onClick=${start}>Try again</button>
+      <button type="button" class="bc-btn" disabled=${busy} onClick=${stop}>Stop move and keep local</button>
     </span>`}
-    ${move && move.status === 'failed' && move.cancelled && html`<span class="bc-calset-value bc-move-error">
+    ${move && move.status === 'failed' && move.cancelled && move.stoppedByOwner && html`<span class="bc-calset-value bc-move-error">
+      You stopped this move. This calendar is editable here again. ${move.done} of ${move.total} events may remain at Google; remove the partial copy there if you do not want it.
+      <button type="button" class="bc-btn" disabled=${busy} onClick=${() => setOpen(true)}>Set up a new move…</button>
+    </span>`}
+    ${move && move.status === 'failed' && move.cancelled && move.stoppedByUpgrade && html`<span class="bc-calset-value bc-move-error">
+      This unfinished move came from an older version and was stopped safely during the security upgrade. Some events may remain at Google; review that partial copy before setting up a new move.
+      <button type="button" class="bc-btn" disabled=${busy} onClick=${() => setOpen(true)}>Set up a new move…</button>
+    </span>`}
+    ${move && move.status === 'failed' && move.cancelled && !move.stoppedByOwner && !move.stoppedByUpgrade && html`<span class="bc-calset-value bc-move-error">
       This move was stopped by the account security reset. ${move.done} of ${move.total} events may already exist at Google; Better-Cal will not resume it automatically.
       <button type="button" class="bc-btn" disabled=${busy} onClick=${() => setOpen(true)}>Set up a new move…</button>
     </span>`}

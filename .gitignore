@@ -12,3 +12,4 @@ workfolder/
 .ygrep/
 # Deploy target of this checkout (scripts/deploy.env.example is the template)
 scripts/deploy.env
+.deploy-move-integrity-paused

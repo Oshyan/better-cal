@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace BetterCal\Domain;
 
+use BetterCal\Http\HttpError;
 use BetterCal\Infra\Db;
 use BetterCal\Infra\HttpClient;
 use BetterCal\Support\Limits;
@@ -133,25 +134,43 @@ final class GoogleSync
         unset($changes);
         self::assertWithinDeadline($deadline);
         return $this->db->tx(function () use ($account, $calendar, $calendarId, $eventLimit, $learnedRole, $snapshot, $nextToken, $deadline): int {
+            // Adopt and every event writer serialize on this row. Re-read the
+            // complete Google binding after the fetch so a response from the
+            // old authority can never land in a newly-local, moving calendar.
+            $current = CalendarMoveGuard::lockCalendar($this->db, $calendarId);
+            if (!self::sameBinding($calendar, $current)) {
+                throw HttpError::conflict('subscription_authorization_revoked', 'This calendar no longer uses that Google source; the fetched response was discarded.');
+            }
             // The last HTTP request may have been in flight when reset landed.
-            // Lock the account before any local finalization: if reset won,
-            // nothing can restore its cleared role or success health; if this
-            // wins, reset waits and overwrites these writes afterwards.
+            // The calendar comes first, matching compromise reset and event
+            // writers; then the account lock makes reset/finalization atomic.
             $this->auth->assertUsable($account, true);
             if ($learnedRole !== null) {
                 $this->db->update('calendars', ['google_access_role' => $learnedRole], 'id = ?', [$calendarId]);
+                $current['google_access_role'] = $learnedRole;
             }
             // Feeds::sync loads and indexes every stored row (including a
             // soft-deleted one), while the new snapshot is still resident.
             // Re-query under the account lock immediately before that load.
             $this->assertCachedSnapshotFits($calendarId, $eventLimit, $deadline);
             self::assertWithinDeadline($deadline);
-            $count = $this->feeds->sync($calendar, $snapshot, true, $deadline);
+            $count = $this->feeds->sync($current, $snapshot, true, $deadline);
             self::assertWithinDeadline($deadline);
             $this->db->update('calendars', ['google_sync_token' => $nextToken], 'id = ?', [$calendarId]);
-            $this->feeds->pollSucceeded($calendar, count($snapshot), $count);
+            $this->feeds->pollSucceeded($current, count($snapshot), $count);
             return $count;
         });
+    }
+
+    /** Does a fetched response still belong to the exact subscribed Google source? */
+    public static function sameBinding(array $expected, ?array $current): bool
+    {
+        return $current !== null
+            && (string) ($current['kind'] ?? '') === 'subscribed'
+            && (string) ($current['provider'] ?? '') === 'google'
+            && (int) ($current['google_account_id'] ?? 0) === (int) ($expected['google_account_id'] ?? 0)
+            && (string) ($current['google_calendar_id'] ?? '') === (string) ($expected['google_calendar_id'] ?? '')
+            && (int) ($current['google_binding_version'] ?? 0) === (int) ($expected['google_binding_version'] ?? 0);
     }
 
     // ---- Google API ---------------------------------------------------------

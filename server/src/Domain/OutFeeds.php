@@ -88,13 +88,18 @@ final class OutFeeds
         return $this->serialize($this->db->one('SELECT * FROM out_feeds WHERE id = ?', [$id]));
     }
 
-    public function delete(int $userId, int $id): void
+    /** The signed-in owner may delete any feed; a token may delete only its own. */
+    public function delete(int $userId, int $id, ?int $viewerTokenId = null): void
     {
-        $row = $this->db->one('SELECT * FROM out_feeds WHERE id = ? AND user_id = ?', [$id, $userId]);
-        if ($row === null) {
+        $where = 'id = ? AND user_id = ?';
+        $params = [$id, $userId];
+        if ($viewerTokenId !== null) {
+            $where .= ' AND created_by_token_id = ?';
+            $params[] = $viewerTokenId;
+        }
+        if ($this->db->run("DELETE FROM out_feeds WHERE $where", $params)->rowCount() !== 1) {
             throw HttpError::notFound('Feed not found');
         }
-        $this->db->run('DELETE FROM out_feeds WHERE id = ?', [$id]);
     }
 
     /** Render the public .ics for a feed token; null when the token is unknown. */

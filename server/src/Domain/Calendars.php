@@ -19,8 +19,13 @@ final class Calendars
     ) {
     }
 
-    /** @return array{calendars:list<array>,folders:list<array>,tags:list<array>} */
-    public function listAll(int $userId): array
+    /**
+     * @param ?int $viewerTokenId the API token asking, or null for the signed-in owner.
+     *   Private ICS source addresses are capabilities, so a token sees only an
+     *   address it supplied when it created that subscription.
+     * @return array{calendars:list<array>,folders:list<array>,tags:list<array>}
+     */
+    public function listAll(int $userId, ?int $viewerTokenId = null): array
     {
         $calendars = $this->withCreatorTokenLiveness(
             $this->db->all('SELECT * FROM calendars WHERE user_id = ? ORDER BY position, id', [$userId]),
@@ -52,7 +57,8 @@ final class Calendars
                     $c,
                     $folderIdsByCal[(int) $c['id']] ?? [],
                     $tagNamesByCal[(int) $c['id']] ?? [],
-                    $feedFactsByCal[(int) $c['id']] ?? self::NO_FEED_FACTS
+                    $feedFactsByCal[(int) $c['id']] ?? self::NO_FEED_FACTS,
+                    $viewerTokenId,
                 ),
                 $calendars
             ),
@@ -185,7 +191,7 @@ final class Calendars
         return $this->serializeById($userId, $id);
     }
 
-    public function patch(int $userId, int $id, array $in): array
+    public function patch(int $userId, int $id, array $in, ?int $viewerTokenId = null): array
     {
         $before = $this->get($userId, $id);
         $beforeLinks = [
@@ -257,7 +263,7 @@ final class Calendars
             'calendar_folders' => $this->db->all('SELECT * FROM calendar_folders WHERE calendar_id = ?', [$id]),
             'calendar_tags' => $this->db->all('SELECT * FROM calendar_tags WHERE calendar_id = ?', [$id]),
         ]);
-        return $this->serializeById($userId, $id);
+        return $this->serializeById($userId, $id, $viewerTokenId);
     }
 
     /** Delete calendar + events. Fully captured in the mutation log, so undo restores everything. */
@@ -353,7 +359,7 @@ final class Calendars
         $this->undo->record($userId, 'calendar', $id, 'delete', $before, null);
     }
 
-    public function serializeById(int $userId, int $id): array
+    public function serializeById(int $userId, int $id, ?int $viewerTokenId = null): array
     {
         $row = $this->get($userId, $id);
         $folderIds = array_map(
@@ -366,7 +372,13 @@ final class Calendars
         );
         [$in, $params] = Db::in([$id]);
         $factsRow = $this->db->one(self::feedFactsSql($in), $params);
-        return $this->serialize($row, $folderIds, $tagNames, $factsRow !== null ? self::feedFacts($factsRow) : self::NO_FEED_FACTS);
+        return $this->serialize(
+            $row,
+            $folderIds,
+            $tagNames,
+            $factsRow !== null ? self::feedFacts($factsRow) : self::NO_FEED_FACTS,
+            $viewerTokenId,
+        );
     }
 
     // ---- Feed health --------------------------------------------------
@@ -444,7 +456,7 @@ final class Calendars
     }
 
     /** @param array{lastRaw:int,everRaw:int,hasUpcoming:bool} $feed */
-    private function serialize(array $c, array $folderIds, array $tagNames, array $feed): array
+    private function serialize(array $c, array $folderIds, array $tagNames, array $feed, ?int $viewerTokenId = null): array
     {
         $subscribed = $c['kind'] === 'subscribed';
         $content = self::contentState($c, $feed['lastRaw'], $feed['everRaw'], $feed['hasUpcoming'], Time::nowUtc());
@@ -457,7 +469,10 @@ final class Calendars
             'kind' => (string) $c['kind'],
             'pluginId' => isset($c['plugin_id']) && $c['plugin_id'] !== null ? (string) $c['plugin_id'] : null,
             'pluginSettings' => self::pluginSettingsFor($c['settings_json'] !== null ? (string) $c['settings_json'] : null),
-            'sourceUrl' => $c['source_url'] !== null ? (string) $c['source_url'] : null,
+            'sourceUrl' => $c['source_url'] !== null
+                && ($viewerTokenId === null || (int) ($c['created_by_token_id'] ?? 0) === $viewerTokenId)
+                    ? (string) $c['source_url']
+                    : null,
             // ics (an address we fetch) or google (a calendar read through the
             // user's connected account); local calendars carry ics by default
             // and the client ignores it for them.

@@ -273,7 +273,7 @@ final class Auth
             $fresh = false;
         }
         if (!$fresh) {
-            throw HttpError::forbidden('step_up_required', 'Confirm your Better-Cal password and try the Google change again.');
+            throw HttpError::forbidden('step_up_required', 'Confirm your Better-Cal password and try the sensitive change again.');
         }
         return $session;
     }

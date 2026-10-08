@@ -24,7 +24,10 @@ final class CalendarsController
 
     public function index(Request $req): Response
     {
-        return Response::json($this->calendars->listAll($this->userId($req)));
+        return Response::json($this->calendars->listAll(
+            $this->userId($req),
+            $req->authMethod === 'token' ? $req->tokenId : null,
+        ));
     }
 
     public function create(Request $req): Response
@@ -34,7 +37,12 @@ final class CalendarsController
 
     public function patch(Request $req, array $params): Response
     {
-        return Response::json($this->calendars->patch($this->userId($req), (int) $params['id'], $req->body));
+        return Response::json($this->calendars->patch(
+            $this->userId($req),
+            (int) $params['id'],
+            $req->body,
+            $req->authMethod === 'token' ? $req->tokenId : null,
+        ));
     }
 
     public function adopt(Request $req, array $params): Response
@@ -72,7 +80,11 @@ final class CalendarsController
         } catch (\Throwable $e) {
             error_log('initial feed poll failed for calendar ' . $calendar['id'] . ': ' . $e->getMessage());
         }
-        return Response::json($this->calendars->serializeById($userId, (int) $calendar['id']), 201);
+        return Response::json($this->calendars->serializeById(
+            $userId,
+            (int) $calendar['id'],
+            $req->authMethod === 'token' ? $req->tokenId : null,
+        ), 201);
     }
 
     public function refresh(Request $req, array $params): Response

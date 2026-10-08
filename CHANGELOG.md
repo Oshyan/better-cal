@@ -4,6 +4,13 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.32 (2026-10-07)
+
+- **API keys no longer inherit browser-only access.** They cannot inspect the connected Google account's remote calendar list, see another credential's private subscription address, or delete an outbound feed they did not create. Browser owners keep their existing account-wide access, and an API key can still manage the subscriptions and outbound feeds it created.
+- **Creating an API key in Settings now requires recent password confirmation.** If the browser has not confirmed the Better-Cal password during the previous ten minutes, the existing password prompt appears and retries the creation in place. Existing keys and privileged local key creation are unchanged.
+
+Operators: no migration. API clients that relied on browser-only Google inventory or cross-credential feed management must use an authenticated browser session or the credential that created the resource.
+
 ## 0.9.31 (2026-10-07)
 
 - **Plugin proposals now show exactly which local calendar each item will use.** Accept and Dismiss apply only to the proposal version that was reviewed; if a plugin changes the plan or its destination, Better-Cal asks for a fresh review instead of applying the replacement silently.

@@ -10,7 +10,7 @@ Agents authenticate with a personal access token in the `Authorization` header i
 Authorization: Bearer bc_<43 url-safe chars>
 ```
 
-Bearer requests are CSRF-exempt (no cookie is involved, so there is nothing to forge). Everything else about the API is identical to session auth, except the endpoints that need a person signed in with a password, which answer a bearer token with 403 `session_required`: token management itself (`/api/v1/tokens`, so a leaked token cannot mint or revoke tokens), account recovery (`/auth/step-up`, `/auth/sessions`, `/auth/sign-out-others`), Google account linking and moves, and keeping a paused subscription (`POST /calendars/:id/claim-subscription`).
+Bearer requests are CSRF-exempt (no cookie is involved, so there is nothing to forge). Most data operations are identical to session auth. Endpoints that need a person signed in with a password answer a bearer token with 403 `session_required`: token management itself (`/api/v1/tokens`, so a leaked token cannot mint or revoke tokens), account recovery (`/auth/step-up`, `/auth/sessions`, `/auth/sign-out-others`), Google account linking, remote calendar discovery and moves, and keeping a paused subscription (`POST /calendars/:id/claim-subscription`). Calendar responses redact stored ICS source capabilities except for a subscription that exact token created. A token can delete only the outbound feeds and reminder devices it created.
 
 Tokens are stored sha256-hashed; the plaintext value is shown exactly once at creation. Optional `expires_at` is supported in the schema (NULL = never); tokens created via the API or CLI currently don't expire, so revoke them when done.
 
@@ -26,7 +26,7 @@ php server/bin/token.php --list
 php server/bin/token.php --revoke=3
 ```
 
-Or over HTTP from a logged-in session (session cookie + `X-CSRF` header required):
+Or over HTTP from a logged-in session (session cookie + `X-CSRF` header and password confirmation within the last ten minutes required):
 
 ```sh
 curl -s https://cal.example.com/api/v1/tokens -X POST \
@@ -118,11 +118,11 @@ claude mcp add better-cal \
 | Delete event | `DELETE /events/:id` | `delete_event` | `scope`/`instanceStart` for instances |
 | Attendance (going / interested / hide) | `POST /events/:id/attendance` | `set_attendance` | Works on read-only feed events; the MCP tool sets the whole series |
 | Review queue (held invitation changes, unanswered invitations, plugin proposals, possible duplicates) | `GET /review`, then an item's own `actions` | `list_review`, `decide_review` | Answering an invitation goes through `POST /events/:id/rsvp` |
-| List calendars | `GET /calendars` | `list_calendars` | Includes folders, tags, feed health |
+| List calendars | `GET /calendars` | `list_calendars` | Includes folders, tags and feed health; stored ICS source capabilities are redacted unless this token created the subscription |
 | Undo last change | `POST /undo` | `undo` | Per user; each call undoes the most recent create, update or delete not yet undone, so repeating it steps further back (7-day snapshots); log-only entries are passed over |
 | Manage calendars/folders | `POST/PATCH/DELETE /calendars`, `/folders` | — | REST only for now |
-| Outbound feeds, push subscriptions, reminder email address | `/outfeeds`, `POST /push/subscribe`, `POST /push/unsubscribe`, `PATCH /settings` | — | REST; anything a token creates belongs to that exact token and goes when the token is revoked. A token cannot list or remove browser-owned reminder devices; `/push/devices` is session-only. A token sees only the feed URLs it created. Linking a Google account needs a signed-in person. |
-| Manage tokens | `GET/POST/DELETE /tokens` | — | Session auth only, never bearer |
+| Outbound feeds, push subscriptions, reminder email address | `/outfeeds`, `POST /push/subscribe`, `POST /push/unsubscribe`, `PATCH /settings` | — | REST; anything a token creates belongs to that exact token and goes when the token is revoked. A token cannot list or remove browser-owned reminder devices; `/push/devices` is session-only. A token sees and can delete only the outbound feeds it created. Google account linking and remote calendar discovery need a signed-in person. |
+| Manage tokens | `GET/POST/DELETE /tokens` | — | Session auth only, never bearer; creation requires recent password confirmation |
 
 ## Cron script sketch
 

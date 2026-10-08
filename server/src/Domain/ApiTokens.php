@@ -63,11 +63,11 @@ final class ApiTokens
         return ['id' => $id, 'name' => $name, 'token' => $token, 'createdAt' => Time::dbToIso($now)];
     }
 
-    /** Create through the web UI, rechecking the exact browser at commit time. */
+    /** Create through the web UI, rechecking recent password proof at commit time. */
     public function createForSession(int $userId, string $name, ?string $sessionToken): array
     {
         return $this->db->tx(function () use ($userId, $name, $sessionToken): array {
-            Auth::assertSession($this->db, $userId, $sessionToken, true);
+            Auth::assertRecentSession($this->db, $userId, $sessionToken, true);
             return $this->create($userId, $name);
         });
     }

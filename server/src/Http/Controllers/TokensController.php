@@ -24,7 +24,7 @@ final class TokensController
 
     public function create(Request $req): Response
     {
-        $this->requireSession($req);
+        $req->requireRecentAuthentication('Creating an API key');
         try {
             $created = $this->tokens->createForSession(
                 (int) $req->user['id'],

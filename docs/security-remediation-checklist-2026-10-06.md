@@ -100,6 +100,17 @@ destinations; acceptance and grouped undo are all-or-nothing.
 | F6 | Proposal destinations are disclosed and restricted to owner-local calendars; external and plugin-managed targets fail closed | Passed | [ ] |
 | F56 | Accept and Dismiss require the token for the exact rendered revision; changed proposals return `proposal_changed` | Passed | [ ] |
 
+## Phase 13 — bearer-token authority boundaries
+
+This phase shipped in release 0.9.32. It requires no database migration.
+
+| Scan finding | Remediation | Local automated verification | Live/deployed verification |
+|---|---|---:|---:|
+| F9 | Remote Google calendar discovery requires an interactive browser session before the stored provider credential is used | Passed | [ ] |
+| F11 | Calendar responses disclose a private ICS source address only to the browser owner or the exact token that supplied it | Passed | [ ] |
+| F53 | A bearer token can delete only outbound feeds created by that exact token; inaccessible ids use the ordinary not-found response | Passed | [ ] |
+| F31 residual | Creating an API key requires recent password confirmation, rechecked under the durable write transaction | Passed | [ ] |
+
 ## Completed local evidence
 
 This section is the technical record for reviewers; it is not a manual to-do list for the owner.
@@ -146,6 +157,9 @@ This section is the technical record for reviewers; it is not a manual to-do lis
 - [x] Phase 12 focused controls cover implicit and explicit local destinations, unsafe legacy targets, stale accept and dismiss tokens, late validation and final-state rollback, changed calendar authority, double decisions, complete grouped undo, expired undo records and owner edits made after acceptance.
 - [x] Phase 12 local suites: server 2,110/0 under a 128 MiB memory limit; frontend smoke 653/0 in `America/Los_Angeles`, `UTC`, `Europe/Berlin`, `Asia/Kolkata` and `Pacific/Auckland`; frontend static 353/0 across 103 modules; MCP 67/0; deploy-security 19/0; vendor manifest 10/10. All changed PHP and JavaScript files pass syntax checks, and no time-zone harness was required because this phase does not change repeat rules, time-zone handling, import or export.
 - [x] Phase 12 independent read-only post-patch review confirmed the local-calendar restriction and revision binding across REST, Review, browser and MCP paths. It prompted fixes so expired mutation records cannot falsely reopen an accepted proposal and a later owner edit blocks grouped undo instead of being overwritten. A live two-connection MySQL concurrency exercise remains a deployment-layer check, not completed local evidence.
+- [x] Phase 13 focused controls cover browser-only Google inventory, creator-specific subscription-address visibility across list and mutation responses, owner/token outbound-feed deletion boundaries, recent-password API-key creation, session revocation before durable creation and unchanged privileged local key creation.
+- [x] Phase 13 local suites: server 2,124/0; frontend smoke 653/0 in `America/Los_Angeles`, `UTC`, `Europe/Berlin`, `Asia/Kolkata` and `Pacific/Auckland`; frontend static 353/0 across 103 modules; MCP 67/0. All changed PHP files pass syntax checks, the working-tree diff passes whitespace validation and the repository privacy guard reports no findings. No time-zone harness was required because this phase does not change repeat rules, time-zone handling, import or export.
+- [x] Phase 13 independent read-only post-patch review found no remaining source-backed bypass or adjacent regression in the four authorization boundaries. The browser password-prompt interaction and a live MySQL password-reset/token-write race remain deployment-layer checks, not completed local evidence.
 
 ## Remaining practical checks
 
@@ -170,6 +184,10 @@ Use a disposable account or non-production installation for the checks that deli
 ### Plugin proposal decisions (F29/F6/F56)
 
 - [ ] After deployment, create one disposable plugin proposal and confirm its destination calendar is named before acceptance. Accept it once, then use Proposal **Undo** immediately and confirm the created items are removed together and the proposal reopens. There is no need to manufacture stale plans, expired undo records, owner-edit conflicts or concurrent decisions; those paths are covered by automated controls.
+
+### API-key creation (F31 residual)
+
+- [ ] After the ten-minute confirmation window expires, create one disposable API key and confirm the password prompt retries in place and shows the new key once. Revoke it afterward. The Google, source-URL and outbound-feed authorization matrices are covered by automated tests and do not need separate manual exercises.
 
 ### Sign-out and API-key cleanup (M1/M5)
 

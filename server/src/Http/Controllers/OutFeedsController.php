@@ -36,7 +36,11 @@ final class OutFeedsController
 
     public function delete(Request $req, array $params): Response
     {
-        $this->outFeeds->delete((int) $req->user['id'], (int) $params['id']);
+        $this->outFeeds->delete(
+            (int) $req->user['id'],
+            (int) $params['id'],
+            $req->authMethod === 'token' ? $req->tokenId : null,
+        );
         return Response::json(['ok' => true]);
     }
 

@@ -5686,6 +5686,186 @@ require __DIR__ . '/plugins.php';
     check('sign out elsewhere: refused to an API token', $refused !== null);
 }
 
+// --- Phase 13: bearer credentials do not inherit browser-only capabilities ---
+{
+    // Google inventory spends a separately connected credential and is a
+    // browser-session operation. The guard must run before account/provider
+    // lookup so a token learns nothing from differing downstream errors.
+    $gdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $googleController = new BetterCal\Http\Controllers\GoogleController(
+        $gdb,
+        (new ReflectionClass(BetterCal\Domain\GoogleAuth::class))->newInstanceWithoutConstructor(),
+        (new ReflectionClass(BetterCal\Domain\Calendars::class))->newInstanceWithoutConstructor(),
+        (new ReflectionClass(BetterCal\Domain\Feeds::class))->newInstanceWithoutConstructor(),
+        (new ReflectionClass(BetterCal\Domain\GoogleMove::class))->newInstanceWithoutConstructor(),
+    );
+    $googleTokenReq = new BetterCal\Http\Request('GET', '/api/v1/google/accounts/1/calendars');
+    $googleTokenReq->user = ['id' => 1, 'email' => 'alex@example.test'];
+    $googleTokenReq->authMethod = 'token';
+    $googleTokenCode = null;
+    try {
+        $googleController->calendars($googleTokenReq, ['id' => 1]);
+    } catch (BetterCal\Http\HttpError $e) {
+        $googleTokenCode = [$e->status, $e->errorCode];
+    }
+    checkEq('phase 13: a bearer token cannot spend the connected Google credential for remote inventory', [403, 'session_required'], $googleTokenCode);
+
+    // Source URLs can be upstream bearer capabilities. Sessions see them all;
+    // a token sees only the address it supplied itself, including in PATCH
+    // responses rather than only the main list response.
+    $cdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $sqlite = $cdb->pdo();
+    $createSqliteFunction = static function (string $name, callable $callback, int $args) use ($sqlite): void {
+        if ($sqlite instanceof \Pdo\Sqlite) {
+            $sqlite->createFunction($name, $callback, $args);
+        } else {
+            @$sqlite->sqliteCreateFunction($name, $callback, $args);
+        }
+    };
+    $createSqliteFunction('UTC_TIMESTAMP', static fn(): string => Time::nowDb(), 0);
+    $createSqliteFunction('DATE_FORMAT', static fn(string $value, string $format): string => $value, 2);
+    $createSqliteFunction('SUBSTRING_INDEX', static fn(string $value, string $delimiter, int $count): string => $value, 3);
+    $cdb->run('CREATE TABLE calendars (
+        id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, color TEXT, kind TEXT, source_url TEXT,
+        plugin_id TEXT, settings_json TEXT, provider TEXT, role TEXT, google_calendar_id TEXT,
+        google_access_role TEXT, visible INTEGER, position INTEGER, poll_interval_minutes INTEGER,
+        stale_after_days INTEGER, last_polled_at TEXT, last_poll_status TEXT, last_poll_error TEXT,
+        content_changed_at TEXT, created_at TEXT, subscription_authority TEXT, created_by_token_id INTEGER
+    )');
+    $cdb->run('CREATE TABLE folders (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, position INTEGER)');
+    $cdb->run('CREATE TABLE tags (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT)');
+    $cdb->run('CREATE TABLE calendar_folders (calendar_id INTEGER, folder_id INTEGER)');
+    $cdb->run('CREATE TABLE calendar_tags (calendar_id INTEGER, tag_id INTEGER)');
+    $cdb->run('CREATE TABLE feed_stats (calendar_id INTEGER, poll_date TEXT, raw_count INTEGER)');
+    $cdb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, calendar_id INTEGER, end_utc TEXT, deleted_at TEXT, rrule TEXT)');
+    $cdb->run('CREATE TABLE api_tokens (id INTEGER PRIMARY KEY, user_id INTEGER, expires_at TEXT)');
+    $cdb->run('CREATE TABLE mutations (
+        id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT,
+        before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT
+    )');
+    $cdb->run('INSERT INTO api_tokens (id, user_id, expires_at) VALUES (11, 1, NULL), (22, 1, NULL)');
+    $calendarInsert = 'INSERT INTO calendars (
+        id, user_id, name, color, kind, source_url, settings_json, provider, role, visible, position,
+        poll_interval_minutes, stale_after_days, last_poll_status, created_at, subscription_authority, created_by_token_id
+    ) VALUES (?, 1, ?, ?, \'subscribed\', ?, \'{}\', \'ics\', \'opportunities\', 1, ?, 60, 60, \'never\', ?, ?, ?)';
+    $cdb->run($calendarInsert, [1, 'Owner feed', '#112233', 'https://feeds.example.test/private-owner.ics?key=owner-secret', 0, Time::nowDb(), 'owner', null]);
+    $cdb->run($calendarInsert, [2, 'Agent feed', '#445566', 'https://feeds.example.test/private-agent.ics?key=agent-secret', 1, Time::nowDb(), 'token', 11]);
+    $calendarDomain = new BetterCal\Domain\Calendars(
+        $cdb,
+        new BetterCal\Domain\Undo($cdb),
+        new BetterCal\Domain\Labels($cdb),
+    );
+    $sessionCalendars = $calendarDomain->listAll(1)['calendars'];
+    $creatorCalendars = $calendarDomain->listAll(1, 11)['calendars'];
+    $otherCalendars = $calendarDomain->listAll(1, 22)['calendars'];
+    checkEq('phase 13: the signed-in owner still sees all subscription source addresses', [
+        'https://feeds.example.test/private-owner.ics?key=owner-secret',
+        'https://feeds.example.test/private-agent.ics?key=agent-secret',
+    ], array_column($sessionCalendars, 'sourceUrl'));
+    checkEq('phase 13: a token sees only the subscription source address it originally supplied', [
+        null,
+        'https://feeds.example.test/private-agent.ics?key=agent-secret',
+    ], array_column($creatorCalendars, 'sourceUrl'));
+    checkEq('phase 13: an unrelated token sees no stored subscription capabilities', [null, null], array_column($otherCalendars, 'sourceUrl'));
+    checkEq('phase 13: a harmless token PATCH cannot recover an unrelated source address', null,
+        $calendarDomain->patch(1, 1, ['visible' => false], 11)['sourceUrl']);
+    checkEq('phase 13: a token PATCH preserves access to its own supplied source address',
+        'https://feeds.example.test/private-agent.ics?key=agent-secret',
+        $calendarDomain->patch(1, 2, ['visible' => false], 11)['sourceUrl']);
+
+    // Delete authorization uses one scoped statement: inaccessible and absent
+    // feeds have the same 404, while sessions retain account-owner authority.
+    $fdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $fdb->run('CREATE TABLE out_feeds (id INTEGER PRIMARY KEY, user_id INTEGER, token TEXT, created_by_token_id INTEGER)');
+    $fdb->run("INSERT INTO out_feeds VALUES
+        (1, 1, 'owner-feed', NULL),
+        (2, 1, 'first-token-feed', 11),
+        (3, 1, 'second-token-feed', 22),
+        (4, 2, 'other-account-feed', NULL)");
+    $outFeeds = new BetterCal\Domain\OutFeeds(
+        $fdb,
+        new BetterCal\Domain\Search($fdb, new BetterCal\Domain\Labels($fdb)),
+        ['base_url' => 'https://calendar.example.test'],
+    );
+    $deleteErrors = [];
+    foreach ([1, 3, 4, 999] as $feedId) {
+        try {
+            $outFeeds->delete(1, $feedId, 11);
+            $deleteErrors[] = null;
+        } catch (BetterCal\Http\HttpError $e) {
+            $deleteErrors[] = [$e->status, $e->errorCode, $e->getMessage()];
+        }
+    }
+    check('phase 13: owner, sibling-token, foreign-account and absent feed ids are indistinguishable to a token',
+        count(array_unique(array_map('serialize', $deleteErrors))) === 1 && $deleteErrors[0][0] === 404);
+    checkEq('phase 13: refused token deletes leave every inaccessible feed intact', [1, 3, 4],
+        array_map('intval', array_column($fdb->all('SELECT id FROM out_feeds WHERE id IN (1,3,4) ORDER BY id'), 'id')));
+    $outFeeds->delete(1, 2, 11);
+    checkEq('phase 13: a token can still delete the outbound feed it created', 0,
+        (int) $fdb->scalar('SELECT COUNT(*) FROM out_feeds WHERE id = 2'));
+    $outFeeds->delete(1, 1);
+    checkEq('phase 13: the signed-in owner can still delete an account-owned outbound feed', 0,
+        (int) $fdb->scalar('SELECT COUNT(*) FROM out_feeds WHERE id = 1'));
+
+    // API-key creation has a friendly controller precheck and repeats the
+    // recent-password check under the transaction that writes the credential.
+    $tdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $tdb->run('CREATE TABLE users (id INTEGER PRIMARY KEY)');
+    $tdb->run('CREATE TABLE sessions (token_hash TEXT PRIMARY KEY, user_id INTEGER, csrf TEXT, expires_at TEXT, last_seen_at TEXT, authenticated_at TEXT)');
+    $tdb->run('CREATE TABLE api_tokens (
+        id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, token_hash TEXT, created_at TEXT,
+        last_used_at TEXT, expires_at TEXT
+    )');
+    $tdb->run('INSERT INTO users (id) VALUES (1)');
+    $freshAt = Time::nowDb();
+    $staleAt = Time::toDb(Time::nowUtc()->sub(new DateInterval('PT11M')));
+    $expires = Time::toDb(Time::nowUtc()->add(new DateInterval('PT1H')));
+    $tdb->run('INSERT INTO sessions (token_hash, user_id, csrf, expires_at, authenticated_at) VALUES (?, 1, ?, ?, ?), (?, 1, ?, ?, ?)', [
+        hash('sha256', 'fresh-session'), 'csrf-a', $expires, $freshAt,
+        hash('sha256', 'stale-session'), 'csrf-b', $expires, $staleAt,
+    ]);
+    $apiTokens = new BetterCal\Domain\ApiTokens($tdb);
+    $tokensController = new BetterCal\Http\Controllers\TokensController($apiTokens);
+    $staleCreateReq = new BetterCal\Http\Request('POST', '/api/v1/tokens', [], ['name' => 'Automation key'], [], [BetterCal\Domain\Auth::COOKIE => 'stale-session']);
+    $staleCreateReq->user = ['id' => 1, 'email' => 'alex@example.test'];
+    $staleCreateReq->authMethod = 'session';
+    $staleCreateReq->authenticatedAt = $staleAt;
+    $staleCreateCode = null;
+    try {
+        $tokensController->create($staleCreateReq);
+    } catch (BetterCal\Http\HttpError $e) {
+        $staleCreateCode = $e->errorCode;
+    }
+    checkEq('phase 13: stale browser authentication requests password confirmation before key creation', ['step_up_required', 0], [
+        $staleCreateCode,
+        (int) $tdb->scalar('SELECT COUNT(*) FROM api_tokens'),
+    ]);
+    $freshCreateReq = new BetterCal\Http\Request('POST', '/api/v1/tokens', [], ['name' => 'Automation key'], [], [BetterCal\Domain\Auth::COOKIE => 'fresh-session']);
+    $freshCreateReq->user = ['id' => 1, 'email' => 'alex@example.test'];
+    $freshCreateReq->authMethod = 'session';
+    $freshCreateReq->authenticatedAt = $freshAt;
+    $freshCreate = $tokensController->create($freshCreateReq);
+    $freshCreateBody = json_decode($freshCreate->body, true);
+    check('phase 13: recent password authentication still creates and reveals one valid key',
+        $freshCreate->status === 201
+        && BetterCal\Domain\ApiTokens::isValidFormat((string) ($freshCreateBody['token'] ?? ''))
+        && (int) $tdb->scalar('SELECT COUNT(*) FROM api_tokens') === 1);
+    $tdb->run('DELETE FROM sessions WHERE token_hash = ?', [hash('sha256', 'fresh-session')]);
+    $revokedCreateCode = null;
+    try {
+        $apiTokens->createForSession(1, 'Too late', 'fresh-session');
+    } catch (BetterCal\Http\HttpError $e) {
+        $revokedCreateCode = $e->errorCode;
+    }
+    checkEq('phase 13: a session revoked before the durable write cannot mint a key', ['session_revoked', 1], [
+        $revokedCreateCode,
+        (int) $tdb->scalar('SELECT COUNT(*) FROM api_tokens'),
+    ]);
+    $apiTokens->create(1, 'Privileged local provisioning');
+    checkEq('phase 13: privileged local token provisioning remains available without a browser session', 2,
+        (int) $tdb->scalar('SELECT COUNT(*) FROM api_tokens'));
+}
+
 // --- App shell: preload block and service-worker version, filled in when served ---
 {
     $AS = BetterCal\Http\AppShell::class;

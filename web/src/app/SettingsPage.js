@@ -14,6 +14,7 @@ import { recentStarts } from './resume.js';
 import { PageShell } from './PageShell.js';
 import { Icon } from '../ui/icons.js';
 import { GoogleConnector } from './GoogleConnector.js';
+import { usePasswordStepUp } from './PasswordStepUp.js';
 import { OutfeedsSection } from './OutfeedsPage.js';
 import { PlaceInput, pickFillText, placeBias } from './PlaceInput.js';
 import { allowDeviceLocation, deviceLocationPermission } from './devicelocation.js';
@@ -162,6 +163,7 @@ function TokensSection() {
   const [fresh, setFresh] = useState(null); // {id, name, token}: shown once, until dismissed
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
+  const stepUp = usePasswordStepUp();
   const load = () => api('/tokens').then((d) => setTokens(d.tokens || [])).catch(() => setTokens([]));
   useEffect(() => { load(); }, []);
 
@@ -170,7 +172,8 @@ function TokensSection() {
     if (!name.trim()) return;
     setBusy(true);
     try {
-      const d = await api('/tokens', { method: 'POST', body: { name: name.trim() } });
+      const d = await stepUp.run('create an API key', () => api('/tokens', { method: 'POST', body: { name: name.trim() } }));
+      if (!d) return;
       setFresh(d);
       setCopied(false);
       setName('');
@@ -236,6 +239,7 @@ function TokensSection() {
         <button type="button" class="bc-link-btn" onClick=${() => setFresh(null)}>Done</button>
       </div>
     <//>`}
+    ${stepUp.prompt}
   </section>`;
 }
 

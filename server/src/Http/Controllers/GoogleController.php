@@ -124,6 +124,7 @@ final class GoogleController
     /** The account's calendars at Google, annotated with which are already subscribed here. */
     public function calendars(Request $req, array $params): Response
     {
+        $req->requireSession('Viewing calendars available through Google');
         $userId = (int) $req->user['id'];
         $account = $this->auth->account($userId, (int) $params['id']);
         try {

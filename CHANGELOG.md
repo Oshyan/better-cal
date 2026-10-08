@@ -4,6 +4,15 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.40 (2026-10-08)
+
+- **Stored calendar capabilities are protected at rest.** Subscription source addresses and published-feed tokens are purpose-bound and encrypted; Undo history no longer retains usable copies. Existing feed addresses keep working through migration 045.
+- **Development clones are sanitized before publication.** Production authentication, Google connections, push devices, outbound feeds, active jobs and plugin integration state never enter the live dev database. Ordinary receive-only ICS subscriptions remain usable by default after being re-encrypted for dev; operators can explicitly strip them instead.
+- **Development isolation is secure by default without making it mandatory.** `DEV_ISOLATION_MODE=strict` requires separate Unix, database and PHP-FPM identities. Explicit `shared` mode permits reuse with a warning on every deploy and never stops a shared PHP service or changes database accounts. External integrations have a separate warned opt-in.
+- **Deployment and runtime helper boundaries are narrower.** Removed release plugins are quarantined without deleting operator additions, application-shell cache state cannot introduce private API paths or follow a planted symlink, IPv4-mapped/NAT64 private destinations stay blocked, and account seeding no longer accepts passwords in process arguments.
+
+Operators: migration 045 needs one explicitly quiesced rollout so plaintext legacy feed capabilities cannot be used during conversion. Run the first deployment with `FEED_CREDENTIALS_QUIESCED=1`; later deployments do not pause for it. The three dev policy flags and their tradeoffs are documented in `docs/install.md` and `scripts/deploy.env.example`. No external account or plugin integration configuration is copied into a dev clone; reconnect or reconfigure those deliberately when testing them.
+
 ## 0.9.39 (2026-10-08)
 
 - **Externally visible actions now share durable authority and workload boundaries.** Reminder, notification and test email use persistent account, recipient and installation budgets; repeated plugin jobs coalesce behind rate and capacity limits; and core calendar work stays ahead of discretionary plugin work.

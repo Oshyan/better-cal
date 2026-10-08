@@ -109,7 +109,9 @@ function networkFirstWithTimeout(request, cacheName, timeoutMs) {
     let settled = false;
     const epoch = apiEpoch;
     const timer = timeoutMs ? setTimeout(async () => {
-      const cached = await caches.match(request);
+      // Private responses may only come from the private API cache. Searching
+      // every cache would let a poisoned/legacy shell cache survive logout.
+      const cached = await (await caches.open(cacheName)).match(request);
       if (cached && !settled) { settled = true; resolve(cached); }
     }, timeoutMs) : null;
     fetch(request).then(async (res) => {
@@ -127,7 +129,7 @@ function networkFirstWithTimeout(request, cacheName, timeoutMs) {
       if (!settled) { settled = true; resolve(res); }
     }).catch(async () => {
       if (timer) clearTimeout(timer);
-      const cached = await caches.match(request);
+      const cached = await (await caches.open(cacheName)).match(request);
       if (!settled) {
         settled = true;
         resolve(cached || new Response(JSON.stringify({ error: { code: 'offline', message: 'Offline and not cached' } }), {

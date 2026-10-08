@@ -6,6 +6,7 @@ namespace BetterCal\Domain;
 
 use BetterCal\Http\HttpError;
 use BetterCal\Infra\Db;
+use BetterCal\Infra\FeedCredentials;
 use BetterCal\Support\Ids;
 use BetterCal\Support\Time;
 
@@ -160,7 +161,14 @@ final class Auth
                 );
                 $tokens = $this->db->run('DELETE FROM api_tokens WHERE user_id = ?', [$userId])->rowCount();
                 foreach ($this->db->all('SELECT id FROM out_feeds WHERE user_id = ?', [$userId]) as $f) {
-                    $this->db->run('UPDATE out_feeds SET token = ? WHERE id = ?', [Ids::feedToken(), (int) $f['id']]);
+                    $protected = FeedCredentials::protectOutboundToken(
+                        Ids::feedToken(),
+                        (string) ($this->cfg['session_secret'] ?? '')
+                    );
+                    $this->db->run(
+                        'UPDATE out_feeds SET token = ?, token_sealed = ? WHERE id = ?',
+                        [$protected['hash'], $protected['sealed'], (int) $f['id']]
+                    );
                     $feeds++;
                 }
                 $raw = $this->db->scalar('SELECT settings_json FROM users WHERE id = ?', [$userId]);
@@ -334,7 +342,14 @@ final class Auth
                 : $this->db->run('DELETE FROM push_subscriptions WHERE user_id = ? AND endpoint_hash <> ?', [$userId, $keepPushHash])->rowCount();
             $feeds = 0;
             foreach ($this->db->all('SELECT id FROM out_feeds WHERE user_id = ? AND created_by_token_id IS NULL', [$userId]) as $feed) {
-                $this->db->run('UPDATE out_feeds SET token = ? WHERE id = ?', [Ids::feedToken(), (int) $feed['id']]);
+                $protected = FeedCredentials::protectOutboundToken(
+                    Ids::feedToken(),
+                    (string) ($this->cfg['session_secret'] ?? '')
+                );
+                $this->db->run(
+                    'UPDATE out_feeds SET token = ?, token_sealed = ? WHERE id = ?',
+                    [$protected['hash'], $protected['sealed'], (int) $feed['id']]
+                );
                 $feeds++;
             }
             $emailReset = false;

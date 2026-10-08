@@ -78,14 +78,14 @@ fi
 stage "connect"
 ssh_open
 
-# Migration 042 closes a response-loss ambiguity in the old Google-move
-# executor. An already-loaded old PHP request cannot be made safe by new code
-# or by a later UPDATE, so its first rollout must pause both request and worker
-# traffic. Refuse the ordinary in-place deploy unless the operator explicitly
-# approves that one-time automated pause; later deploys pass automatically.
+# Migrations that change an old/new-code authority boundary need one quiesced
+# first rollout. 042 closes an in-flight Google-move ambiguity; 045 replaces
+# plaintext feed credentials with incompatible sealed/verifier forms. An
+# already-loaded old request cannot safely overlap either conversion.
 printf -v app_dir_q '%q' "${APP_DIR}"
 printf -v app_user_q '%q' "${APP_USER}"
 move_integrity_applied=1
+feed_credentials_applied=1
 move_integrity_rollout=0
 move_integrity_pause_marker="${APP_DIR}/.deploy-move-integrity-paused"
 printf -v move_integrity_pause_marker_q '%q' "${move_integrity_pause_marker}"
@@ -94,12 +94,21 @@ bootstrap_present="$(rssh "if sudo -n test -f ${app_dir_q}/server/src/bootstrap.
 if [ "${bootstrap_present}" = "1" ]; then
   move_integrity_applied="$(rssh "sudo -n -u ${app_user_q} env APP_DIR=${app_dir_q} MIGRATION_FILE=042_google_move_integrity.php php" \
     < "${DEPLOY_SNAPSHOT}/scripts/migration-applied.php")"
+  feed_credentials_applied="$(rssh "sudo -n -u ${app_user_q} env APP_DIR=${app_dir_q} MIGRATION_FILE=045_feed_credentials.php php" \
+    < "${DEPLOY_SNAPSHOT}/scripts/migration-applied.php")"
 fi
 if [ "${move_integrity_was_paused}" = "1" ]; then
   move_integrity_rollout=1
 elif [ "${move_integrity_applied}" != "1" ]; then
   if [ "${MOVE_INTEGRITY_QUIESCED:-0}" != "1" ]; then
     echo "Migration 042 requires a one-time quiesced rollout. Rerun with MOVE_INTEGRITY_QUIESCED=1 to let deploy pause request/worker traffic after the backup." >&2
+    exit 1
+  fi
+  move_integrity_rollout=1
+fi
+if [ "${feed_credentials_applied}" != "1" ]; then
+  if [ "${FEED_CREDENTIALS_QUIESCED:-0}" != "1" ]; then
+    echo "Migration 045 requires a one-time quiesced rollout. Rerun with FEED_CREDENTIALS_QUIESCED=1 to let deploy pause request/worker traffic after the backup." >&2
     exit 1
   fi
   move_integrity_rollout=1
@@ -192,6 +201,7 @@ fi
 
 stage "rsync code"
 deploy_rsync "${APP_DIR}" "${DEPLOY_SNAPSHOT}"
+reconcile_release_plugins "${APP_DIR}" "${DEPLOY_SNAPSHOT}" "${APP_USER}"
 
 stage "composer + migrate + link"
 rssh "APP_DIR='${APP_DIR}' DOCROOT='${DOCROOT}' APP_USER='${APP_USER}' bash -s" <<'EOF'
@@ -218,9 +228,17 @@ if [ "${current_docroot}" != "${APP_DIR}/server/public" ]; then
   sudo -n -u "${APP_USER}" -- rm -rf "${DOCROOT}"
   sudo -n -u "${APP_USER}" -- ln -s "${APP_DIR}/server/public" "${DOCROOT}"
 fi
-# Cron for worker (idempotent); the log sits beside the app directory.
+EOF
+
+disable_missing_plugins "${APP_DIR}" "${APP_USER}"
+
+# Restore/create the worker schedule only after removed plugin rows and pending
+# jobs are disabled. A plugin-retirement deploy pauses this exact cron line
+# before moving code, so re-adding it earlier would reopen a one-minute race.
+rssh "APP_DIR='${APP_DIR}' APP_USER='${APP_USER}' bash -s" <<'EOF'
+set -euo pipefail
 WORKER_LOG="$(dirname "${APP_DIR}")/worker.log"
-sudo -u "${APP_USER}" bash -c "crontab -l 2>/dev/null | grep -q worker.php || (crontab -l 2>/dev/null; echo \"* * * * * php ${APP_DIR}/server/bin/worker.php >> ${WORKER_LOG} 2>&1\") | crontab -"
+sudo -u "${APP_USER}" bash -c "crontab -l 2>/dev/null | grep -Fq '${APP_DIR}/server/bin/worker.php' || (crontab -l 2>/dev/null; echo \"* * * * * php ${APP_DIR}/server/bin/worker.php >> ${WORKER_LOG} 2>&1\") | crontab -"
 EOF
 
 if [ "${move_integrity_rollout}" = "1" ]; then

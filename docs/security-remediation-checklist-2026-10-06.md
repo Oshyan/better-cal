@@ -299,6 +299,12 @@ The automated suite covers oversized repeat-rule inputs; normal release smoke te
 - [ ] On disposable events, confirm a real generated repeat occurrence can be edited while an off-rule or skipped timestamp is rejected without creating an override. Move an all-local disposable trip with its members, then add a disposable subscribed member and confirm the same bulk move is rejected atomically while moving only the trip remains available.
 - [ ] Confirm a different-UID external/local exact title-and-time match appears in Review and neither copy is hidden nor loses reminders before confirmation. Confirming **Same event** should then restore the normal single-display/reminder behavior; same-UID copies should continue linking automatically.
 
+### Phase 20 host and credential boundaries (F14/F20/F22/F24/F34/F43/F48/F51/F69/F77)
+
+- [ ] On the first migration-045 rollout only, approve the deploy's explicit quiescence step. Confirm one existing subscribed calendar still shows its address and updates, and one existing published feed keeps the same URL and content. Later deploys require no credential-migration pause.
+- [ ] Exercise both documented dev policies once. In the recommended `strict` mode, verify the dev web worker has its own Unix/database/FPM identities and cannot read or query production. In explicitly warned `shared` mode, verify the deploy never stops a shared FPM service or locks/revokes a shared DB account. For either mode, a clone must accept only the dev login, retain and re-encrypt ordinary ICS subscriptions by default, strip production sessions/tokens/push/outbound feeds/Google connections, disable and clear copied plugin integrations/active jobs, and honor the optional subscription-strip and external-service switches. Reconnect or reconfigure an external integration explicitly when testing it in dev. Ordinary later dev deploys stay one command.
+- [ ] In a disposable deployment fixture, remove one Git-managed test plugin and retain one server-only custom plugin. Confirm only the removed release plugin is quarantined and disabled. No production plugin deletion exercise is required. App-cache poisoning, NAT64 classification and CLI argument refusal are covered by automated tests.
+
 ## Deployment closeout
 
 - [x] Deploy the exact reviewed commit with migrations 036 and 037.

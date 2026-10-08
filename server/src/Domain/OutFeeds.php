@@ -6,6 +6,7 @@ namespace BetterCal\Domain;
 
 use BetterCal\Http\HttpError;
 use BetterCal\Infra\Db;
+use BetterCal\Infra\FeedCredentials;
 use BetterCal\Support\Ids;
 use BetterCal\Support\Limits;
 use BetterCal\Support\Time;
@@ -74,9 +75,14 @@ final class OutFeeds
             } else {
                 ApiTokens::assertStillValid($this->db, $tokenId, $userId, true);
             }
+            $protected = FeedCredentials::protectOutboundToken(
+                Ids::feedToken(),
+                (string) ($this->cfg['session_secret'] ?? '')
+            );
             return $this->db->insert('out_feeds', [
                 'user_id' => $userId,
-                'token' => Ids::feedToken(),
+                'token' => $protected['hash'],
+                'token_sealed' => $protected['sealed'],
                 'name' => mb_substr($name, 0, 160),
                 'scope_json' => json_encode($normalized),
                 'description' => isset($in['description']) ? trim((string) $in['description']) : null,
@@ -105,7 +111,7 @@ final class OutFeeds
     /** Render the public .ics for a feed token; null when the token is unknown. */
     public function renderByToken(string $token, bool $headOnly = false): ?string
     {
-        $feed = $this->db->one('SELECT * FROM out_feeds WHERE token = ?', [$token]);
+        $feed = $this->db->one('SELECT * FROM out_feeds WHERE token = ?', [hash('sha256', $token)]);
         if ($feed === null) {
             return null;
         }
@@ -291,7 +297,12 @@ final class OutFeeds
         return [
             'id' => (int) $row['id'],
             'name' => (string) $row['name'],
-            'url' => $showUrl ? $this->cfg['base_url'] . '/feed/' . $row['token'] . '.ics' : null,
+            'url' => $showUrl
+                ? $this->cfg['base_url'] . '/feed/' . FeedCredentials::openOutboundToken(
+                    (string) ($row['token_sealed'] ?? ''),
+                    (string) ($this->cfg['session_secret'] ?? '')
+                ) . '.ics'
+                : null,
             'viaToken' => !empty($row['created_by_token_id']),
             'scope' => json_decode((string) $row['scope_json'], true),
             'description' => $row['description'] !== null ? (string) $row['description'] : null,

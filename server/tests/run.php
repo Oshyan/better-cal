@@ -7,6 +7,13 @@ declare(strict_types=1);
 
 require dirname(__DIR__) . '/src/bootstrap.php';
 
+// Credential-storage migrations need the same application secret as runtime.
+// CI intentionally has no .env, so provide an invented test-only value there.
+if (($testSessionSecret = getenv('BETTERCAL_SESSION_SECRET')) === false || $testSessionSecret === '') {
+    putenv('BETTERCAL_SESSION_SECRET=better-cal-test-session-secret');
+    $_ENV['BETTERCAL_SESSION_SECRET'] = 'better-cal-test-session-secret';
+}
+
 use BetterCal\Dav\ChangeLog;
 use BetterCal\Dav\DavIcs;
 use BetterCal\Domain\ApiTokens;
@@ -566,10 +573,9 @@ checkEq('http batch refuses before a connection consumes budget', 0, $batchPriva
 $destinationMethod = new ReflectionMethod(HttpClient::class, 'destination');
 $multiAddressClient = new HttpClient(
     allowedSchemes: ['https'],
-    resolver: static fn(string $host, int $remainingMs): array => [
-        '2606:4700:4700::1111',
-        '8.8.8.8',
-    ]
+    resolver: static fn(string $host, int $remainingMs): array => $host === 'ipv4only.arpa'
+        ? ['192.0.0.170', '192.0.0.171']
+        : ['2606:4700:4700::1111', '8.8.8.8']
 );
 $multiDestination = $destinationMethod->invoke(
     $multiAddressClient,
@@ -582,7 +588,12 @@ checkEq(
     $multiDestination['resolve']
 );
 $literalDestination = $destinationMethod->invoke(
-    new HttpClient(allowedSchemes: ['https']),
+    new HttpClient(
+        allowedSchemes: ['https'],
+        resolver: static fn(string $host, int $remainingMs): array => $host === 'ipv4only.arpa'
+            ? ['192.0.0.170', '192.0.0.171']
+            : [$host],
+    ),
     'https://[2606:4700:4700::1111]/',
     microtime(true) + 1
 );
@@ -591,6 +602,51 @@ checkEq(
     '[2606:4700:4700::1111]:443:[2606:4700:4700::1111]',
     $literalDestination['resolve']
 );
+$nat64Resolver = static fn(string $host, int $remainingMs): array => match ($host) {
+    'ipv4only.arpa' => ['2001:db9:64::c000:aa', '2001:db9:64::c000:ab'],
+    'private-via-nat64.example' => ['2001:db9:64::a00:5'],
+    'public-via-nat64.example' => ['2001:db9:64::808:808'],
+    default => [],
+};
+$nat64Client = new HttpClient(allowedSchemes: ['https'], resolver: $nat64Resolver);
+$nat64PrivateRefused = false;
+try {
+    $destinationMethod->invoke($nat64Client, 'https://private-via-nat64.example/', microtime(true) + 1);
+} catch (RuntimeException $e) {
+    $nat64PrivateRefused = str_contains($e->getMessage(), 'translates to 10.0.0.5');
+}
+check('http policy discovers a network-specific NAT64 prefix and refuses its private IPv4 target', $nat64PrivateRefused);
+checkEq(
+    'http policy keeps a public IPv4 destination reachable through the discovered NAT64 prefix',
+    'public-via-nat64.example:443:[2001:db9:64::808:808]',
+    $destinationMethod->invoke($nat64Client, 'https://public-via-nat64.example/', microtime(true) + 1)['resolve']
+);
+$rfc6052Extract = new ReflectionMethod(HttpClient::class, 'extractRfc6052Ipv4');
+$rfc6052Examples = [
+    32 => '2001:db8:c000:221::',
+    40 => '2001:db8:1c0:2:21::',
+    48 => '2001:db8:122:c000:2:2100::',
+    56 => '2001:db8:122:3c0:0:221::',
+    64 => '2001:db8:122:344:c0:2:2100:0',
+    96 => '2001:db8:122:344::c000:221',
+];
+foreach ($rfc6052Examples as $prefixLength => $address) {
+    checkEq('http policy extracts RFC 6052 /' . $prefixLength . ' layout', '192.0.2.33',
+        inet_ntop($rfc6052Extract->invoke(null, inet_pton($address), $prefixLength)));
+}
+$oneAnchorClient = new HttpClient(
+    allowedSchemes: ['https'],
+    resolver: static fn(string $host, int $remainingMs): array => $host === 'ipv4only.arpa'
+        ? ['2001:db9:64::c000:aa']
+        : ['2001:4860:4860::8888'],
+);
+$oneAnchorRefused = false;
+try {
+    $destinationMethod->invoke($oneAnchorClient, 'https://single-anchor.example/', microtime(true) + 1);
+} catch (RuntimeException $e) {
+    $oneAnchorRefused = str_contains($e->getMessage(), 'no verifiable RFC 7050');
+}
+check('http policy refuses an unverified NAT64 prefix learned from only one RFC 7050 anchor', $oneAnchorRefused);
 $resolverMethod = new ReflectionMethod(HttpClient::class, 'resolveHost');
 $dnsStarted = microtime(true);
 $dnsTimedOut = false;
@@ -2579,19 +2635,25 @@ checkEq('all-day weekly in UTC unchanged', ['2026-08-31 00:00:00', '2026-09-02 0
     $fdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
     $fdb->run("CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, description TEXT, location TEXT, url TEXT, start_utc TEXT, end_utc TEXT, all_day INTEGER DEFAULT 0, tzid TEXT DEFAULT 'UTC', rrule TEXT, exdates_json TEXT, reminders_json TEXT, status TEXT DEFAULT 'confirmed', recurrence_instance_utc TEXT, attendance TEXT DEFAULT 'none', deleted_at TEXT, is_container INTEGER DEFAULT 0, dynamic_json TEXT)");
     $fdb->run('CREATE TABLE event_links (id INTEGER PRIMARY KEY, container_id INTEGER, event_id INTEGER, position INTEGER)');
-    $fdb->run('CREATE TABLE out_feeds (id INTEGER PRIMARY KEY, user_id INTEGER, token TEXT, name TEXT, scope_json TEXT, description TEXT, created_by_token_id INTEGER)');
-    $fdb->run("INSERT INTO out_feeds (user_id, token, name, scope_json) VALUES (1, 'sample-token-1234567890', 'Sample feed', '{\"type\":\"all\"}')");
+    $fdb->run('CREATE TABLE out_feeds (id INTEGER PRIMARY KEY, user_id INTEGER, token TEXT, token_sealed TEXT, name TEXT, scope_json TEXT, description TEXT, created_by_token_id INTEGER)');
+    $outfeedSecret = str_repeat('s', 32);
+    $outfeedToken = 'sample-token-1234567890';
+    $protectedOutfeed = BetterCal\Infra\FeedCredentials::protectOutboundToken($outfeedToken, $outfeedSecret);
+    $fdb->run("INSERT INTO out_feeds (user_id, token, token_sealed, name, scope_json) VALUES (1, ?, ?, 'Sample feed', '{\"type\":\"all\"}')",
+        [$protectedOutfeed['hash'], $protectedOutfeed['sealed']]);
     $fdb->run("INSERT INTO events (user_id, calendar_id, uid, title, description, start_utc, end_utc) VALUES (1, 1, 'sample-uid', 'Sample event', ?, '2026-10-01 10:00:00', '2026-10-01 11:00:00')", [str_repeat('x', 600)]);
     Limits::configure(['OUTFEED_BYTES' => 900]);
-    $feedDomain = new BetterCal\Domain\OutFeeds($fdb, new BetterCal\Domain\Search($fdb, new BetterCal\Domain\Labels($fdb)), []);
+    $feedDomain = new BetterCal\Domain\OutFeeds($fdb, new BetterCal\Domain\Search($fdb, new BetterCal\Domain\Labels($fdb)), [
+        'base_url' => 'https://calendar.example.test', 'session_secret' => $outfeedSecret,
+    ]);
     $feedController = new BetterCal\Http\Controllers\OutFeedsController($feedDomain);
-    $feedGet = $feedController->publicFeed('sample-token-1234567890');
-    $feedHead = $feedController->publicFeed('sample-token-1234567890', true);
+    $feedGet = $feedController->publicFeed($outfeedToken);
+    $feedHead = $feedController->publicFeed($outfeedToken, true);
     checkEq('outfeed source budget: oversized GET and HEAD fail in a small controlled response',
         [[413, 'no-store'], [413, 'no-store']],
         [[$feedGet->status, $feedGet->headers['Cache-Control'] ?? null], [$feedHead->status, $feedHead->headers['Cache-Control'] ?? null]]);
     $fdb->run('UPDATE events SET description = ?, dynamic_json = ?', ['Short note', str_repeat('z', 1000000)]);
-    $projected = $feedDomain->renderByToken('sample-token-1234567890');
+    $projected = $feedDomain->renderByToken($outfeedToken);
     check('outfeed source budget: a large non-exported JSON field is never loaded into or copied through the feed path',
         is_string($projected) && strlen($projected) < 900 && !str_contains($projected, str_repeat('z', 100)));
     Limits::reset();
@@ -6223,12 +6285,17 @@ require __DIR__ . '/plugins.php';
     $pdb->run('CREATE TABLE sessions (token_hash TEXT PRIMARY KEY, user_id INTEGER, csrf TEXT, expires_at TEXT, last_seen_at TEXT DEFAULT CURRENT_TIMESTAMP, authenticated_at TEXT)');
     $pdb->run('CREATE TABLE api_tokens (id INTEGER PRIMARY KEY, user_id INTEGER, token_hash TEXT, expires_at TEXT)');
     $pdb->run('CREATE TABLE push_subscriptions (id INTEGER PRIMARY KEY, user_id INTEGER, endpoint TEXT)');
-    $pdb->run('CREATE TABLE out_feeds (id INTEGER PRIMARY KEY, user_id INTEGER, token TEXT, created_by_token_id INTEGER)');
+    $pdb->run('CREATE TABLE out_feeds (id INTEGER PRIMARY KEY, user_id INTEGER, token TEXT, token_sealed TEXT, created_by_token_id INTEGER)');
     $pdb->run('CREATE TABLE google_accounts (id INTEGER PRIMARY KEY, user_id INTEGER, email TEXT, refresh_token_enc TEXT, scopes TEXT, status TEXT DEFAULT "ok", reauth_required_at TEXT, last_error TEXT)');
     $pdb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, provider TEXT, source_url TEXT, subscription_authority TEXT, created_by_token_id INTEGER, google_account_id INTEGER, google_access_role TEXT, last_poll_status TEXT, last_poll_error TEXT)');
     $pdb->run('CREATE TABLE calendar_moves (id INTEGER PRIMARY KEY, user_id INTEGER, status TEXT, cancelled_at TEXT, finished_at TEXT, error TEXT)');
     $pdb->run("INSERT INTO push_subscriptions (user_id, endpoint) VALUES (1, 'https://fcm.googleapis.com/a'), (1, 'https://attacker.example/b'), (2, 'https://fcm.googleapis.com/c')");
-    $pdb->run("INSERT INTO out_feeds (user_id, token) VALUES (1, 'feed-one'), (2, 'feed-other')");
+    $resetSecret = str_repeat('r', 32);
+    $ownerFeedBefore = BetterCal\Infra\FeedCredentials::protectOutboundToken('feed-one', $resetSecret);
+    $otherFeedBefore = BetterCal\Infra\FeedCredentials::protectOutboundToken('feed-other', $resetSecret);
+    $pdb->run('INSERT INTO out_feeds (user_id, token, token_sealed) VALUES (1, ?, ?), (2, ?, ?)', [
+        $ownerFeedBefore['hash'], $ownerFeedBefore['sealed'], $otherFeedBefore['hash'], $otherFeedBefore['sealed'],
+    ]);
     $pdb->run("INSERT INTO users (id, email, password_hash, display_name) VALUES (1, 'owner@example.com', ?, 'Owner'), (2, 'other@example.com', ?, 'Other')", [
         password_hash('old-password', PASSWORD_DEFAULT),
         password_hash('other-password', PASSWORD_DEFAULT),
@@ -6241,7 +6308,10 @@ require __DIR__ . '/plugins.php';
         (3, 1, 'subscribed', 'ics', 'https://example.com/agent.ics', 'token', 1, NULL, NULL, 'ok')");
     $pdb->run("INSERT INTO calendar_moves (id, user_id, status) VALUES (1, 1, 'queued'), (2, 1, 'failed'), (3, 1, 'done'), (4, 2, 'running')");
     $pdb->run("UPDATE users SET settings_json = '{\"notifyEmail\":\"attacker@example.com\"}' WHERE id = 1");
-    $pauth = new BetterCal\Domain\Auth($pdb, ['base_url' => 'https://cal.example.com']);
+    $pauth = new BetterCal\Domain\Auth($pdb, [
+        'base_url' => 'https://calendar.example.test',
+        'session_secret' => $resetSecret,
+    ]);
     $stolen = $pauth->login('owner@example.com', 'old-password');
     $mine = $pauth->login('owner@example.com', 'old-password');
     $bystander = $pauth->login('other@example.com', 'other-password');
@@ -6302,7 +6372,7 @@ require __DIR__ . '/plugins.php';
     checkEq('reset: both of the owner\'s sessions are reported revoked', 2, $revoked['sessions']);
     checkEq('reset: every push device of the owner goes (F5)', [2, 0], [$revoked['pushDevices'], (int) $pdb->scalar('SELECT COUNT(*) FROM push_subscriptions WHERE user_id = 1')]);
     checkEq('reset: another user\'s push device stays', 1, (int) $pdb->scalar('SELECT COUNT(*) FROM push_subscriptions WHERE user_id = 2'));
-    checkEq('reset: a routine reset keeps feed addresses and the email setting', ['feed-one', 0, false], [$pdb->scalar('SELECT token FROM out_feeds WHERE user_id = 1'), $revoked['feedsRotated'], $revoked['notifyEmailReset']]);
+    checkEq('reset: a routine reset keeps feed addresses and the email setting', [$ownerFeedBefore['hash'], 0, false], [$pdb->scalar('SELECT token FROM out_feeds WHERE user_id = 1'), $revoked['feedsRotated'], $revoked['notifyEmailReset']]);
     check('reset: a session opened under the old password no longer resolves', $pauth->resolve($stolen['token']) === null);
     check('reset: the owner\'s own old session is ended too', $pauth->resolve($mine['token']) === null);
     check('reset: another user\'s session is untouched', $pauth->resolve($bystander['token']) !== null);
@@ -6329,8 +6399,14 @@ require __DIR__ . '/plugins.php';
         $revoked['subscriptionsPaused'],
         (int) $pdb->scalar('SELECT COUNT(*) FROM calendars WHERE id = 3'),
     ]);
-    check('reset --revoke-tokens: the owner\'s feed gets a new address (F6)', $revoked['feedsRotated'] === 1 && $pdb->scalar('SELECT token FROM out_feeds WHERE user_id = 1') !== 'feed-one');
-    checkEq('reset --revoke-tokens: another user\'s feed keeps its address', 'feed-other', $pdb->scalar('SELECT token FROM out_feeds WHERE user_id = 2'));
+    $rotatedFeed = $pdb->one('SELECT token, token_sealed FROM out_feeds WHERE user_id = 1');
+    check('reset --revoke-tokens: the owner\'s feed gets a new protected address (F6)',
+        $revoked['feedsRotated'] === 1
+        && $rotatedFeed['token'] !== $ownerFeedBefore['hash']
+        && strlen((string) $rotatedFeed['token']) === 64
+        && BetterCal\Infra\Secrets::isSealed((string) $rotatedFeed['token_sealed'])
+        && BetterCal\Infra\FeedCredentials::openOutboundToken((string) $rotatedFeed['token_sealed'], $resetSecret) !== 'feed-one');
+    checkEq('reset --revoke-tokens: another user\'s feed keeps its address verifier', $otherFeedBefore['hash'], $pdb->scalar('SELECT token FROM out_feeds WHERE user_id = 2'));
     check('reset --revoke-tokens: a foreign reminder address is cleared (F6)', $revoked['notifyEmailReset'] && json_decode((string) $pdb->scalar('SELECT settings_json FROM users WHERE id = 1'), true)['notifyEmail'] === null);
     checkEq('reset --revoke-tokens: another user\'s token is untouched', 1, (int) $pdb->scalar('SELECT COUNT(*) FROM api_tokens WHERE user_id = 2'));
     checkEq('reset --revoke-tokens: Google connections are quarantined and reported', [1, true, 'error'], [
@@ -6472,7 +6548,7 @@ require __DIR__ . '/plugins.php';
     $odb->run('CREATE TABLE trusted_devices (id INTEGER PRIMARY KEY, user_id INTEGER, token_hash TEXT UNIQUE, created_at TEXT, expires_at TEXT)');
     $odb->run('CREATE TABLE push_subscriptions (id INTEGER PRIMARY KEY, user_id INTEGER, endpoint TEXT, endpoint_hash TEXT)');
     $odb->run('CREATE TABLE api_tokens (id INTEGER PRIMARY KEY, user_id INTEGER, token_hash TEXT)');
-    $odb->run('CREATE TABLE out_feeds (id INTEGER PRIMARY KEY, user_id INTEGER, token TEXT, name TEXT, scope_json TEXT, description TEXT, created_by_token_id INTEGER)');
+    $odb->run('CREATE TABLE out_feeds (id INTEGER PRIMARY KEY, user_id INTEGER, token TEXT, token_sealed TEXT, name TEXT, scope_json TEXT, description TEXT, created_by_token_id INTEGER)');
     $odb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT)');
     $odb->run("INSERT INTO users (id, email, password_hash, settings_json) VALUES (1, 'owner@example.com', ?, ?), (2, 'other@example.com', ?, ?)", [
         password_hash('pw', PASSWORD_DEFAULT),
@@ -6480,7 +6556,11 @@ require __DIR__ . '/plugins.php';
         password_hash('pw2', PASSWORD_DEFAULT),
         json_encode(['notifyEmail' => 'other-destination@example.com', 'notifyEmailToken' => null]),
     ]);
-    $oauth = new BetterCal\Domain\Auth($odb, ['base_url' => 'https://cal.example.com']);
+    $recoverySecret = str_repeat('o', 32);
+    $oauth = new BetterCal\Domain\Auth($odb, [
+        'base_url' => 'https://calendar.example.test',
+        'session_secret' => $recoverySecret,
+    ]);
     $odev = new BetterCal\Domain\TrustedDevices($odb);
     $here = $oauth->login('owner@example.com', 'pw');
     $lost = $oauth->login('owner@example.com', 'pw');
@@ -6496,8 +6576,15 @@ require __DIR__ . '/plugins.php';
         'https://fcm.googleapis.com/theirs', hash('sha256', 'https://fcm.googleapis.com/theirs'),
     ]);
     $odb->run("INSERT INTO api_tokens (id, user_id, token_hash) VALUES (1, 1, 'k')");
-    $odb->run("INSERT INTO out_feeds (id, user_id, token, created_by_token_id) VALUES
-        (1, 1, 'session-feed', NULL), (2, 1, 'token-feed', 1), (3, 2, 'other-feed', NULL)");
+    $sessionFeedBefore = BetterCal\Infra\FeedCredentials::protectOutboundToken('session-feed', $recoverySecret);
+    $tokenFeedBefore = BetterCal\Infra\FeedCredentials::protectOutboundToken('token-feed', $recoverySecret);
+    $otherRecoveryFeed = BetterCal\Infra\FeedCredentials::protectOutboundToken('other-feed', $recoverySecret);
+    $odb->run('INSERT INTO out_feeds (id, user_id, token, token_sealed, created_by_token_id) VALUES
+        (1, 1, ?, ?, NULL), (2, 1, ?, ?, 1), (3, 2, ?, ?, NULL)', [
+        $sessionFeedBefore['hash'], $sessionFeedBefore['sealed'],
+        $tokenFeedBefore['hash'], $tokenFeedBefore['sealed'],
+        $otherRecoveryFeed['hash'], $otherRecoveryFeed['sealed'],
+    ]);
     checkEq('sessions: the count leaves out this browser', 2, $oauth->otherSessionCount(1, $here['token']));
 
     $octl = new BetterCal\Http\Controllers\AuthController($oauth, null, $odev);
@@ -6517,9 +6604,11 @@ require __DIR__ . '/plugins.php';
     check('sign out elsewhere: only this browser is still remembered', $odev->find($hereDev, 'owner@example.com') !== null && $odev->find($lostDev, 'owner@example.com') === null);
     checkEq('sign out elsewhere: only this browser keeps push reminders', [$hereHash], array_column($odb->all('SELECT endpoint_hash FROM push_subscriptions WHERE user_id = 1'), 'endpoint_hash'));
     checkEq('sign out elsewhere: API keys are left alone', 1, (int) $odb->scalar('SELECT COUNT(*) FROM api_tokens WHERE user_id = 1'));
+    $sessionFeedAfter = $odb->one('SELECT token, token_sealed FROM out_feeds WHERE id = 1');
     check('sign out elsewhere: session feed URL changes but the token-created URL does not',
-        $odb->scalar('SELECT token FROM out_feeds WHERE id = 1') !== 'session-feed'
-        && $odb->scalar('SELECT token FROM out_feeds WHERE id = 2') === 'token-feed');
+        $sessionFeedAfter['token'] !== $sessionFeedBefore['hash']
+        && BetterCal\Infra\FeedCredentials::openOutboundToken((string) $sessionFeedAfter['token_sealed'], $recoverySecret) !== 'session-feed'
+        && $odb->scalar('SELECT token FROM out_feeds WHERE id = 2') === $tokenFeedBefore['hash']);
     checkEq('sign out elsewhere: custom reminder email returns to the account address', null,
         json_decode((string) $odb->scalar('SELECT settings_json FROM users WHERE id = 1'), true)['notifyEmail']);
     $recoveryTokenAfter = (string) $odb->scalar('SELECT token FROM out_feeds WHERE id = 1');
@@ -6584,7 +6673,7 @@ require __DIR__ . '/plugins.php';
     check('sign out elsewhere: another account is untouched', $oauth->resolve($theirs['token']) !== null
         && $odev->find($theirDev, 'other@example.com') !== null
         && (int) $odb->scalar('SELECT COUNT(*) FROM push_subscriptions WHERE user_id = 2') === 1
-        && $odb->scalar('SELECT token FROM out_feeds WHERE id = 3') === 'other-feed'
+        && $odb->scalar('SELECT token FROM out_feeds WHERE id = 3') === $otherRecoveryFeed['hash']
         && json_decode((string) $odb->scalar('SELECT settings_json FROM users WHERE id = 2'), true)['notifyEmail'] === 'other-destination@example.com');
     checkEq('sign out elsewhere: written to Activity, log-only', [['Signed out everywhere else: 2 other browsers signed out, 1 push device removed, 1 public feed URL changed, reminder email reset to the account address', null]],
         array_map(static fn($m) => [$m['summary'], $m['before_json']], $odb->all("SELECT summary, before_json FROM mutations WHERE entity = 'system'")));
@@ -6673,30 +6762,51 @@ require __DIR__ . '/plugins.php';
         id, user_id, name, color, kind, source_url, settings_json, provider, role, visible, position,
         poll_interval_minutes, stale_after_days, last_poll_status, created_at, subscription_authority, created_by_token_id
     ) VALUES (?, 1, ?, ?, \'subscribed\', ?, \'{}\', \'ics\', \'opportunities\', 1, ?, 60, 60, \'never\', ?, ?, ?)';
-    $cdb->run($calendarInsert, [1, 'Owner feed', '#112233', 'https://feeds.example.test/private-owner.ics?key=owner-secret', 0, Time::nowDb(), 'owner', null]);
-    $cdb->run($calendarInsert, [2, 'Agent feed', '#445566', 'https://feeds.example.test/private-agent.ics?key=agent-secret', 1, Time::nowDb(), 'token', 11]);
+    $feedStorageSecret = str_repeat('f', 32);
+    $ownerSource = 'https://feeds.example.test/private-owner.ics?key=owner-secret';
+    $agentSource = 'https://feeds.example.test/private-agent.ics?key=agent-secret';
+    $cdb->run($calendarInsert, [1, 'Owner feed', '#112233', BetterCal\Infra\FeedCredentials::sealSourceUrl($ownerSource, $feedStorageSecret), 0, Time::nowDb(), 'owner', null]);
+    $cdb->run($calendarInsert, [2, 'Agent feed', '#445566', BetterCal\Infra\FeedCredentials::sealSourceUrl($agentSource, $feedStorageSecret), 1, Time::nowDb(), 'token', 11]);
     $calendarDomain = new BetterCal\Domain\Calendars(
         $cdb,
         new BetterCal\Domain\Undo($cdb),
         new BetterCal\Domain\Labels($cdb),
+        $feedStorageSecret,
     );
     $sessionCalendars = $calendarDomain->listAll(1)['calendars'];
     $creatorCalendars = $calendarDomain->listAll(1, 11)['calendars'];
     $otherCalendars = $calendarDomain->listAll(1, 22)['calendars'];
     checkEq('phase 13: the signed-in owner still sees all subscription source addresses', [
-        'https://feeds.example.test/private-owner.ics?key=owner-secret',
-        'https://feeds.example.test/private-agent.ics?key=agent-secret',
+        $ownerSource,
+        $agentSource,
     ], array_column($sessionCalendars, 'sourceUrl'));
     checkEq('phase 13: a token sees only the subscription source address it originally supplied', [
         null,
-        'https://feeds.example.test/private-agent.ics?key=agent-secret',
+        $agentSource,
     ], array_column($creatorCalendars, 'sourceUrl'));
     checkEq('phase 13: an unrelated token sees no stored subscription capabilities', [null, null], array_column($otherCalendars, 'sourceUrl'));
     checkEq('phase 13: a harmless token PATCH cannot recover an unrelated source address', null,
         $calendarDomain->patch(1, 1, ['visible' => false], 11)['sourceUrl']);
     checkEq('phase 13: a token PATCH preserves access to its own supplied source address',
-        'https://feeds.example.test/private-agent.ics?key=agent-secret',
+        $agentSource,
         $calendarDomain->patch(1, 2, ['visible' => false], 11)['sourceUrl']);
+    $createdSource = 'https://feeds.example.test/new.ics?token=new-secret';
+    $createdCalendar = $calendarDomain->create(1, ['name' => 'New sample feed'], 'subscribed', $createdSource);
+    $storedSource = (string) $cdb->scalar('SELECT source_url FROM calendars WHERE id = ?', [$createdCalendar['id']]);
+    $storedMutation = (string) $cdb->scalar('SELECT after_json FROM mutations ORDER BY id DESC LIMIT 1');
+    check('phase 20: a new subscription and its Undo snapshot contain no plaintext feed credential',
+        BetterCal\Infra\Secrets::isSealed($storedSource)
+        && !str_contains($storedSource, 'new-secret')
+        && !str_contains($storedMutation, 'new-secret'));
+    checkEq('phase 20: the authorized owner still receives the original source URL',
+        $createdSource, $createdCalendar['sourceUrl']);
+    $longSourceRefused = false;
+    try {
+        $calendarDomain->create(1, ['name' => 'Oversized sample feed'], 'subscribed', 'https://feeds.example.test/?' . str_repeat('x', 8_193));
+    } catch (BetterCal\Http\HttpError $e) {
+        $longSourceRefused = $e->status === 400 && str_contains($e->getMessage(), '8192');
+    }
+    check('phase 20: subscription credentials have a clear pre-encryption storage bound', $longSourceRefused);
 
     // Delete authorization uses one scoped statement: inaccessible and absent
     // feeds have the same 404, while sessions retain account-owner authority.
@@ -6838,6 +6948,25 @@ require __DIR__ . '/plugins.php';
     file_put_contents("$root/src/app/lazy.js", "export default 22;\n");
     $t = new BetterCal\Http\AppShell($root, $cache, $extra);
     check('app shell: any file under web/ recomputes, even one outside the shell', $t->state()['version'] === $v2 && $t->computed);
+    $poisoned = json_decode((string) file_get_contents($cache), true);
+    $poisoned['shell'][] = '/api/v1/me';
+    file_put_contents($cache, json_encode($poisoned));
+    $t = new BetterCal\Http\AppShell($root, $cache, $extra);
+    $safeState = $t->state();
+    check('app shell: cached state cannot introduce private API paths',
+        $t->computed && !in_array('/api/v1/me', $safeState['shell'], true));
+    file_put_contents($cache, str_repeat('x', 300_000));
+    $t = new BetterCal\Http\AppShell($root, $cache, $extra);
+    check('app shell: an oversized cache is refused before JSON decoding', $t->state()['version'] === $v2 && $t->computed);
+    $sentinel = $root . '-sentinel';
+    file_put_contents($sentinel, 'unchanged');
+    unlink($cache);
+    symlink($sentinel, $cache);
+    $t = new BetterCal\Http\AppShell($root, $cache, $extra);
+    $symlinkState = $t->state();
+    checkEq('app shell: a cache symlink is replaced without writing through it', ['unchanged', $v2, true], [
+        file_get_contents($sentinel), $symlinkState['version'], $t->computed,
+    ]);
     file_put_contents($cache, '{not json');
     $t = new BetterCal\Http\AppShell($root, $cache, $extra);
     checkEq('app shell: a corrupt cache file is recomputed, not trusted', [$v2, true], [$t->state()['version'], $t->computed]);
@@ -6846,7 +6975,7 @@ require __DIR__ . '/plugins.php';
     checkEq('app shell: without the markers the text is left alone', 'no markers here', $AS::fillWorker('no markers here', 'bc-x', ['/']));
 
     ini_set('error_log', (string) $savedLog);
-    foreach ([$cache, $root . '-errors.log'] as $f) {
+    foreach ([$cache, $root . '-errors.log', $sentinel] as $f) {
         @unlink($f);
     }
     $rm = static function (string $dir) use (&$rm): void {
@@ -6885,6 +7014,173 @@ use BetterCal\Infra\Secrets;
         $wrong = true;
     }
     check('secrets: wrong secret is refused', $wrong);
+    $sourceCredential = BetterCal\Infra\FeedCredentials::sealSourceUrl(
+        'https://feeds.example.test/calendar.ics?token=invented',
+        'secret-a'
+    );
+    check('feed credentials: a stored subscription URL is not plaintext',
+        !str_contains($sourceCredential, 'feeds.example.test'));
+    checkEq('feed credentials: the correct purpose restores the subscription URL',
+        'https://feeds.example.test/calendar.ics?token=invented',
+        BetterCal\Infra\FeedCredentials::openSourceUrl($sourceCredential, 'secret-a'));
+    $purposeSwapRefused = false;
+    try {
+        BetterCal\Infra\FeedCredentials::openOutboundToken($sourceCredential, 'secret-a');
+    } catch (RuntimeException) {
+        $purposeSwapRefused = true;
+    }
+    check('feed credentials: ciphertext cannot be moved between credential fields', $purposeSwapRefused);
+
+    $migrationDb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $migrationDb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, source_url TEXT)');
+    $migrationDb->run('CREATE TABLE out_feeds (id INTEGER PRIMARY KEY, token TEXT)');
+    $migrationDb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, before_json TEXT, after_json TEXT)');
+    $legacySource = 'https://feeds.example.test/sample.ics?token=invented';
+    $legacyToken = 'invented-outbound-token';
+    $migrationDb->run('INSERT INTO calendars VALUES (1, ?)', [$legacySource]);
+    $migrationDb->run('INSERT INTO out_feeds VALUES (1, ?)', [$legacyToken]);
+    $legacySnapshot = json_encode(['tables' => ['calendars' => [['id' => 1, 'source_url' => $legacySource]]]]);
+    $migrationDb->run('INSERT INTO mutations VALUES (1, ?, ?)', [$legacySnapshot, $legacySnapshot]);
+    $feedMigration = require __DIR__ . '/../migrations/045_feed_credentials.php';
+    $firstMigrationNote = $feedMigration($migrationDb);
+    $secondMigrationNote = $feedMigration($migrationDb);
+    $migratedSource = (string) $migrationDb->scalar('SELECT source_url FROM calendars WHERE id = 1');
+    $migratedFeed = $migrationDb->one('SELECT token, token_sealed FROM out_feeds WHERE id = 1');
+    $migratedSnapshot = (string) $migrationDb->scalar('SELECT after_json FROM mutations WHERE id = 1');
+    check('feed credential migration: live rows and Undo snapshots contain no usable plaintext',
+        BetterCal\Infra\Secrets::isSealed($migratedSource)
+        && !str_contains($migratedSource, 'token=invented')
+        && $migratedFeed['token'] === hash('sha256', $legacyToken)
+        && BetterCal\Infra\Secrets::isSealed((string) $migratedFeed['token_sealed'])
+        && !str_contains($migratedSnapshot, 'token=invented'));
+    checkEq('feed credential migration: protected values still reconstruct the existing capabilities',
+        [$legacySource, $legacyToken], [
+            BetterCal\Infra\FeedCredentials::openSourceUrl($migratedSource, config()['session_secret']),
+            BetterCal\Infra\FeedCredentials::openOutboundToken((string) $migratedFeed['token_sealed'], config()['session_secret']),
+        ]);
+    check('feed credential migration: rerunning is a no-op after an interrupted deployment retry',
+        str_starts_with($firstMigrationNote, '1 subscription credential, 1 outbound capability, and 2 Undo snapshots protected')
+        && str_starts_with($secondMigrationNote, '0 subscription credentials, 0 outbound capabilities, and 0 Undo snapshots protected'));
+
+    // A dev clone is sanitized in a private staging schema before it can
+    // replace the live dev database. Ordinary receive-only ICS subscriptions
+    // survive with their URLs re-encrypted under dev's distinct secret.
+    require_once __DIR__ . '/../../scripts/sanitize-dev-clone.php';
+    checkEq('dev clone: staging DSN replacement preserves connection options',
+        'mysql:host=127.0.0.1;dbname=bc_dev_stage_sample;charset=utf8mb4',
+        bcDevCloneDsnForDatabase(
+            'mysql:host=127.0.0.1;dbname=bettercal;charset=utf8mb4',
+            'bc_dev_stage_sample',
+        ));
+    $cloneFixture = static function (string $prodSecret, bool $corrupt = false): PDO {
+        $pdo = new PDO('sqlite::memory:');
+        $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+        $pdo->exec('CREATE TABLE users (id INTEGER PRIMARY KEY, password_hash TEXT)');
+        foreach (['sessions', 'trusted_devices', 'api_tokens', 'push_subscriptions', 'out_feeds', 'google_accounts'] as $table) {
+            $pdo->exec('CREATE TABLE `' . $table . '` (id INTEGER PRIMARY KEY)');
+            $pdo->exec('INSERT INTO `' . $table . '` (id) VALUES (1)');
+        }
+        $pdo->exec('CREATE TABLE calendars (
+            id INTEGER PRIMARY KEY, kind TEXT, provider TEXT, source_url TEXT,
+            subscription_authority TEXT, created_by_token_id INTEGER,
+            google_calendar_id TEXT, google_access_role TEXT,
+            google_sync_token TEXT, google_account_id INTEGER, settings_json TEXT
+        )');
+        $pdo->exec('CREATE TABLE mutations (id INTEGER PRIMARY KEY, before_json TEXT, after_json TEXT)');
+        $pdo->exec('CREATE TABLE plugins (
+            id TEXT PRIMARY KEY, enabled INTEGER, settings_json TEXT,
+            consecutive_failures INTEGER, disabled_reason TEXT
+        )');
+        $pdo->exec('CREATE TABLE plugin_kv (plugin_id TEXT, k TEXT, v_json TEXT)');
+        $pdo->exec('CREATE TABLE http_cache (url_hash TEXT, url TEXT)');
+        $pdo->exec('CREATE TABLE plugin_runs (id INTEGER PRIMARY KEY, log_tail TEXT)');
+        $pdo->exec('CREATE TABLE jobs (
+            id INTEGER PRIMARY KEY, type TEXT, payload_json TEXT, status TEXT, last_error TEXT
+        )');
+        $pdo->exec("INSERT INTO users VALUES (1, 'production-hash')");
+        $pdo->exec("INSERT INTO mutations VALUES (1, '{\"credential\":\"old\"}', '{\"credential\":\"old\"}')");
+        $pdo->exec("INSERT INTO plugins VALUES ('sample-plugin', 1, '{\"apiKey\":\"invented\"}', 2, NULL)");
+        $pdo->exec("INSERT INTO plugin_kv VALUES ('sample-plugin', 'credential', '{\"token\":\"invented\"}')");
+        $pdo->exec("INSERT INTO http_cache VALUES ('sample-hash', 'https://service.example.test/?key=invented')");
+        $pdo->exec("INSERT INTO plugin_runs VALUES (1, 'request detail')");
+        $pdo->exec("INSERT INTO jobs VALUES
+            (1, 'plugin_job', '{\"plugin\":\"sample-plugin\"}', 'pending', NULL),
+            (2, 'feed_poll', '{\"calendarId\":1}', 'running', NULL),
+            (3, 'completed', '{\"result\":\"kept\"}', 'done', NULL)");
+        $raw = 'https://feeds.example.test/plain.ics?token=sample';
+        $sealed = $corrupt ? 'v1:not-valid-base64' : bcDevCloneSealSource(
+            'https://feeds.example.test/protected.ics?token=sample',
+            $prodSecret,
+        );
+        $insert = $pdo->prepare('INSERT INTO calendars VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+        $insert->execute([1, 'subscribed', 'ics', $raw, 'owner', null, null, null, null, null, '{}']);
+        $insert->execute([2, 'subscribed', 'ics', $sealed, 'token', 7, null, null, null, null, '{}']);
+        $insert->execute([3, 'subscribed', 'google', null, 'owner', null, 'remote', 'writer', 'sync', 1, '{}']);
+        $insert->execute([
+            4, 'local', 'ics', 'https://feeds.example.test/misplaced.ics', 'owner', null, null, null, null, null,
+            '{"groupSimilar":true,"plugins":{"sample-plugin":{"apiKey":"invented"}}}',
+        ]);
+        return $pdo;
+    };
+    $prodCloneSecret = 'production-clone-secret';
+    $devCloneSecret = 'development-clone-secret';
+    $cloneDb = $cloneFixture($prodCloneSecret);
+    $cloneResult = bcSanitizeDevClone($cloneDb, $prodCloneSecret, $devCloneSecret, 'dev-only-password', false);
+    $retainedCloneRows = $cloneDb->query('SELECT id, kind, provider, source_url, subscription_authority, created_by_token_id FROM calendars ORDER BY id')->fetchAll(PDO::FETCH_ASSOC);
+    checkEq('dev clone: default preservation retains both ordinary ICS subscriptions', 2, $cloneResult['subscriptions']);
+    checkEq('dev clone: raw and production-sealed URLs are re-encrypted for dev', [
+        'https://feeds.example.test/plain.ics?token=sample',
+        'https://feeds.example.test/protected.ics?token=sample',
+    ], [
+        bcDevCloneOpenSource((string) $retainedCloneRows[0]['source_url'], $devCloneSecret),
+        bcDevCloneOpenSource((string) $retainedCloneRows[1]['source_url'], $devCloneSecret),
+    ]);
+    $productionCannotOpenClone = false;
+    try {
+        bcDevCloneOpenSource((string) $retainedCloneRows[1]['source_url'], $prodCloneSecret);
+    } catch (RuntimeException) {
+        $productionCannotOpenClone = true;
+    }
+    check('dev clone: retained URLs no longer open with the production secret', $productionCannotOpenClone);
+    checkEq('dev clone: subscription authority remains unchanged after API tokens are removed',
+        [['owner', null], ['token', 7]],
+        array_map(static fn(array $row): array => [$row['subscription_authority'], $row['created_by_token_id']], array_slice($retainedCloneRows, 0, 2)));
+    check('dev clone: Google state and misplaced local URLs become inert',
+        $retainedCloneRows[2]['kind'] === 'local'
+        && $retainedCloneRows[2]['provider'] === 'ics'
+        && $retainedCloneRows[3]['source_url'] === null);
+    check('dev clone: only the dev login works and Undo payloads are cleared',
+        password_verify('dev-only-password', (string) $cloneDb->query('SELECT password_hash FROM users')->fetchColumn())
+        && $cloneDb->query('SELECT before_json FROM mutations')->fetchColumn() === null);
+    $clonePlugin = $cloneDb->query('SELECT enabled, settings_json, disabled_reason FROM plugins')->fetch(PDO::FETCH_ASSOC);
+    $cloneCalendarSettings = json_decode((string) $cloneDb->query('SELECT settings_json FROM calendars WHERE id = 4')->fetchColumn(), true);
+    check('dev clone: copied plugin integrations and queued external work are inert',
+        (int) $clonePlugin['enabled'] === 0
+        && $clonePlugin['settings_json'] === null
+        && str_contains((string) $clonePlugin['disabled_reason'], 'development clone')
+        && (int) $cloneDb->query('SELECT COUNT(*) FROM plugin_kv')->fetchColumn() === 0
+        && (int) $cloneDb->query('SELECT COUNT(*) FROM http_cache')->fetchColumn() === 0
+        && (int) $cloneDb->query("SELECT COUNT(*) FROM jobs WHERE status IN ('pending', 'running')")->fetchColumn() === 0
+        && $cloneDb->query('SELECT log_tail FROM plugin_runs')->fetchColumn() === null
+        && $cloneCalendarSettings === ['groupSimilar' => true]);
+
+    $corruptCloneDb = $cloneFixture($prodCloneSecret, true);
+    $corruptCloneRefused = false;
+    try {
+        bcSanitizeDevClone($corruptCloneDb, $prodCloneSecret, $devCloneSecret, 'dev-only-password', false);
+    } catch (RuntimeException) {
+        $corruptCloneRefused = true;
+    }
+    check('dev clone: corrupt retained credentials abort and roll back before publication',
+        $corruptCloneRefused
+        && (int) $corruptCloneDb->query('SELECT COUNT(*) FROM sessions')->fetchColumn() === 1
+        && (int) $corruptCloneDb->query('SELECT enabled FROM plugins')->fetchColumn() === 1
+        && $corruptCloneDb->query('SELECT password_hash FROM users')->fetchColumn() === 'production-hash');
+    $strippedClone = bcSanitizeDevClone($corruptCloneDb, $prodCloneSecret, $devCloneSecret, 'dev-only-password', true);
+    check('dev clone: explicit stripping discards even corrupt subscriptions without retaining credentials',
+        $strippedClone['stripped']
+        && $strippedClone['subscriptions'] === 0
+        && (int) $corruptCloneDb->query("SELECT COUNT(*) FROM calendars WHERE kind = 'subscribed'")->fetchColumn() === 0);
 
     // OAuth state binds the callback to the user and the exact browser session, and expires.
     $gcfg = ['session_secret' => 'secret-a', 'base_url' => 'https://cal.example', 'google' => ['client_id' => 'cid', 'client_secret' => 'cs']];

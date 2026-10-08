@@ -1888,6 +1888,18 @@ console.log('--- chronological ordering across timezone offsets ---');
     eq('sw: after sign-out, offline events are not answered either', (await w.get('/api/v1/events?start=a&end=b')).status, 503);
   }
 
+  // A legacy or poisoned shell cache must never satisfy a private API request.
+  {
+    const w = makeWorker();
+    w.stores.set('bc-test00000000-shell', new Map());
+    const shell = w.stores.get('bc-test00000000-shell');
+    shell.set('https://cal.example.com/api/v1/me', json({ user: { email: 'wrong-cache@example.com' }, csrf: 'SHELL-CSRF' }));
+    w.net.respond = offline;
+    const me = await w.get('/api/v1/me');
+    eq('sw: offline private API ignores a matching response in the shell cache', me.status, 503);
+    assert('sw: shell cache poisoning cannot disclose its private-looking response', !(await me.text()).includes('SHELL-CSRF'));
+  }
+
   // A 401 means the session is gone (expired, or revoked by a password reset).
   {
     const w = makeWorker();

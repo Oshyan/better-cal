@@ -35,7 +35,7 @@ CREATE TABLE calendars (
   name VARCHAR(160) NOT NULL,
   color CHAR(7) NOT NULL DEFAULT '#4a7dff',
   kind ENUM('local','subscribed') NOT NULL DEFAULT 'local',
-  source_url TEXT NULL,
+  source_url MEDIUMTEXT NULL,
   poll_interval_minutes INT NOT NULL DEFAULT 60,
   last_polled_at DATETIME NULL,
   last_poll_status ENUM('ok','error','never') NOT NULL DEFAULT 'never',
@@ -180,7 +180,8 @@ CREATE TABLE saved_views (
 CREATE TABLE out_feeds (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   user_id BIGINT UNSIGNED NOT NULL,
-  token CHAR(43) NOT NULL UNIQUE,
+  token CHAR(64) NOT NULL UNIQUE,
+  token_sealed TEXT NOT NULL,
   name VARCHAR(160) NOT NULL,
   scope_json JSON NOT NULL,
   description TEXT NULL,

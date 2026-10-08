@@ -24,10 +24,10 @@ namespace BetterCal\Http;
  * release tags out of step with what shipped. Here, the committed files stay
  * templates and never change on their own.
  *
- * Cost: the result is cached in a file (the system temp directory) together
+ * Cost: the result is cached in an app-owned private runtime directory together
  * with a signature of every file under web/ (size, mtime, ctime, inode), so a
  * request checks about 150 stat()s and reads one small file; any change
- * recomputes it once. If the temp directory is not writable, every request
+ * recomputes it once. If the runtime directory is not writable, every request
  * recomputes it, which takes a few milliseconds.
  *
  * The raw template (served without this, e.g. a web server sending web/sw.js
@@ -42,6 +42,7 @@ final class AppShell
     public const SW_START = '// @generated-shell:start (filled in by the server: server/src/Http/AppShell.php)';
     public const SW_END = '// @generated-shell:end';
     private const ENTRY = 'src/app/main.js';
+    private const CACHE_MAX_BYTES = 262_144;
 
     /**
      * Everything a cold start or an offline open needs beyond the module
@@ -68,10 +69,19 @@ final class AppShell
     ) {
     }
 
-    /** The production instance: cached per web root, so two installs on one host never share a cache. */
+    /** The production instance: cached outside shared temporary storage. */
     public static function forWebRoot(string $webRoot): self
     {
-        return new self($webRoot, rtrim(sys_get_temp_dir(), '/\\') . '/bettercal-shell-' . substr(sha1($webRoot), 0, 12) . '.json');
+        $dir = dirname($webRoot) . '/.runtime-cache';
+        if (!is_dir($dir)) {
+            @mkdir($dir, 0700);
+            @chmod($dir, 0700);
+        }
+        $cache = self::safeCacheDirectory($dir) ? $dir . '/app-shell.json' : null;
+        if ($cache === null) {
+            error_log('app shell: private runtime cache is unavailable; computing responses without a disk cache');
+        }
+        return new self($webRoot, $cache);
     }
 
     /** web/index.html with the preload block filled in. */
@@ -98,23 +108,17 @@ final class AppShell
     {
         $this->computed = false;
         $sig = $this->signature();
-        if ($this->cacheFile !== null && is_file($this->cacheFile)) {
-            $cached = json_decode((string) @file_get_contents($this->cacheFile), true);
-            if (is_array($cached) && ($cached['sig'] ?? null) === $sig
-                && is_string($cached['version'] ?? null) && is_array($cached['modules'] ?? null) && is_array($cached['shell'] ?? null)) {
+        if ($this->cacheFile !== null && $this->safeCacheFile()) {
+            $raw = @file_get_contents($this->cacheFile, false, null, 0, self::CACHE_MAX_BYTES + 1);
+            $cached = is_string($raw) && strlen($raw) <= self::CACHE_MAX_BYTES ? json_decode($raw, true) : null;
+            if (is_array($cached) && ($cached['sig'] ?? null) === $sig && self::validCacheState($cached)) {
                 return ['version' => $cached['version'], 'modules' => $cached['modules'], 'shell' => $cached['shell']];
             }
         }
         $this->computed = true;
         $state = $this->compute();
         if ($this->cacheFile !== null) {
-            // Write then rename, so a concurrent request never reads half a file.
-            $tmp = $this->cacheFile . '.' . getmypid() . '.tmp';
-            if (@file_put_contents($tmp, json_encode(['sig' => $sig] + $state, JSON_UNESCAPED_SLASHES)) !== false) {
-                if (!@rename($tmp, $this->cacheFile)) {
-                    @unlink($tmp);
-                }
-            }
+            $this->writeCache(json_encode(['sig' => $sig] + $state, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
         }
         return $state;
     }
@@ -253,6 +257,88 @@ final class AppShell
     private function read(string $rel): string
     {
         return (string) @file_get_contents($this->webRoot . '/' . $rel);
+    }
+
+    private static function safeCacheDirectory(string $dir): bool
+    {
+        if (!function_exists('posix_geteuid')) {
+            return false;
+        }
+        $st = @lstat($dir);
+        if ($st === false || ($st['mode'] & 0170000) !== 0040000 || ($st['mode'] & 0022) !== 0) {
+            return false;
+        }
+        return (int) $st['uid'] === posix_geteuid();
+    }
+
+    /** Existing cache must be a small, app-owned, non-writable regular file. */
+    private function safeCacheFile(): bool
+    {
+        if ($this->cacheFile === null || !self::safeCacheDirectory(dirname($this->cacheFile))) {
+            return false;
+        }
+        $st = @lstat($this->cacheFile);
+        if ($st === false || ($st['mode'] & 0170000) !== 0100000 || ($st['mode'] & 0022) !== 0
+            || (int) $st['size'] > self::CACHE_MAX_BYTES) {
+            return false;
+        }
+        return (int) $st['uid'] === posix_geteuid();
+    }
+
+    private static function validCacheState(array $cached): bool
+    {
+        if (!is_string($cached['version'] ?? null)
+            || preg_match('/^bc-[0-9a-f]{12}$/', $cached['version']) !== 1
+            || !is_array($cached['modules'] ?? null) || !is_array($cached['shell'] ?? null)
+            || count($cached['modules']) > 1_000 || count($cached['shell']) > 1_000) {
+            return false;
+        }
+        foreach ($cached['modules'] as $url) {
+            if (!is_string($url) || strlen($url) > 2_048 || !str_starts_with($url, '/assets/')) {
+                return false;
+            }
+        }
+        foreach ($cached['shell'] as $url) {
+            if (!is_string($url) || strlen($url) > 2_048 || ($url !== '/' && !str_starts_with($url, '/assets/'))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Exclusive random staging plus rename; never follow a pre-created path. */
+    private function writeCache(string $payload): void
+    {
+        if (strlen($payload) > self::CACHE_MAX_BYTES || $this->cacheFile === null
+            || !self::safeCacheDirectory(dirname($this->cacheFile))) {
+            return;
+        }
+        try {
+            $tmp = dirname($this->cacheFile) . '/.app-shell-' . bin2hex(random_bytes(16)) . '.tmp';
+        } catch (\Throwable) {
+            return;
+        }
+        $handle = @fopen($tmp, 'x+b');
+        if ($handle === false) {
+            return;
+        }
+        @chmod($tmp, 0600);
+        $written = 0;
+        $length = strlen($payload);
+        while ($written < $length) {
+            $n = @fwrite($handle, substr($payload, $written));
+            if ($n === false || $n === 0) {
+                break;
+            }
+            $written += $n;
+        }
+        @fflush($handle);
+        @fclose($handle);
+        if ($written !== $length || !@rename($tmp, $this->cacheFile)) {
+            @unlink($tmp);
+            return;
+        }
+        @chmod($this->cacheFile, 0600);
     }
 
     /**

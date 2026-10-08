@@ -7,6 +7,7 @@ namespace BetterCal\Domain;
 use BetterCal\Dav\ChangeLog;
 use BetterCal\Http\HttpError;
 use BetterCal\Infra\Db;
+use BetterCal\Infra\FeedCredentials;
 use BetterCal\Infra\HttpClient;
 use BetterCal\Infra\JobQueue;
 use BetterCal\Support\Limits;
@@ -51,7 +52,11 @@ final class Feeds
                 $cfg = $this->cfg ?? config();
                 return (new GoogleSync($this->db, new GoogleAuth($this->db, $cfg), $this))->poll($calendar);
             }
-            $ics = $this->fetch((string) $calendar['source_url']);
+            $cfg = $this->cfg ?? config();
+            $ics = $this->fetch(FeedCredentials::openSourceUrl(
+                (string) $calendar['source_url'],
+                (string) ($cfg['session_secret'] ?? '')
+            ));
             // Bounded before parsing, like every other ICS door (F8): the
             // refusal is recorded as this calendar's poll error, so the owner
             // sees why it stopped updating.

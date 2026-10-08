@@ -6,6 +6,7 @@ namespace BetterCal\Domain;
 
 use BetterCal\Http\HttpError;
 use BetterCal\Infra\Db;
+use BetterCal\Infra\FeedCredentials;
 use BetterCal\Support\Time;
 
 final class Calendars
@@ -16,6 +17,7 @@ final class Calendars
         private readonly Db $db,
         private readonly Undo $undo,
         private readonly Labels $labels,
+        private readonly ?string $sessionSecret = null,
     ) {
     }
 
@@ -138,6 +140,9 @@ final class Calendars
         ?int $creatorTokenId = null,
     ): array
     {
+        if ($sourceUrl !== null && strlen($sourceUrl) > 8_192) {
+            throw HttpError::badRequest('Subscription URL must be at most 8192 bytes');
+        }
         $name = trim((string) ($in['name'] ?? ''));
         if ($name === '') {
             throw HttpError::badRequest('name is required');
@@ -155,7 +160,9 @@ final class Calendars
                 'name' => mb_substr($name, 0, 160),
                 'color' => $this->colorOrDefault($in['color'] ?? null),
                 'kind' => $kind,
-                'source_url' => $sourceUrl,
+                'source_url' => $sourceUrl === null
+                    ? null
+                    : FeedCredentials::sealSourceUrl($sourceUrl, $this->secret()),
                 'position' => $position,
                 // What the calendar is to the person (migration 026): things I
                 // do, things I could do, or information. Changeable later.
@@ -494,7 +501,7 @@ final class Calendars
             'pluginSettings' => self::pluginSettingsFor($c['settings_json'] !== null ? (string) $c['settings_json'] : null),
             'sourceUrl' => $c['source_url'] !== null
                 && ($viewerTokenId === null || (int) ($c['created_by_token_id'] ?? 0) === $viewerTokenId)
-                    ? (string) $c['source_url']
+                    ? FeedCredentials::openSourceUrl((string) $c['source_url'], $this->secret())
                     : null,
             // ics (an address we fetch) or google (a calendar read through the
             // user's connected account); local calendars carry ics by default
@@ -589,5 +596,14 @@ final class Calendars
     {
         $color = (string) ($color ?? '');
         return preg_match('/^#[0-9a-fA-F]{6}$/', $color) === 1 ? strtolower($color) : '#4a7dff';
+    }
+
+    private function secret(): string
+    {
+        $secret = $this->sessionSecret ?? (string) (config()['session_secret'] ?? '');
+        if ($secret === '') {
+            throw new \RuntimeException('BETTERCAL_SESSION_SECRET is required to store feed credentials');
+        }
+        return $secret;
     }
 }

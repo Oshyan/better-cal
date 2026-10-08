@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+PHP_BIN="$(command -v php)"
 source "${ROOT_DIR}/scripts/deploy-backup.sh"
 
 passed=0
@@ -109,7 +110,12 @@ fi
 deploy_source="$(cat "${ROOT_DIR}/scripts/deploy.sh")"
 dev_source="$(cat "${ROOT_DIR}/scripts/deploy-dev.sh")"
 helper_source="$(cat "${ROOT_DIR}/scripts/deploy-backup.sh")"
+deploy_lib_source="$(cat "${ROOT_DIR}/scripts/deploy-lib.sh")"
 migration_check_source="$(cat "${ROOT_DIR}/scripts/migration-applied.php")"
+seed_source="$(cat "${ROOT_DIR}/server/bin/seed.php")"
+plugin_cleanup_source="$(cat "${ROOT_DIR}/server/bin/disable-missing-plugins.php")"
+clone_sanitizer_source="$(cat "${ROOT_DIR}/scripts/sanitize-dev-clone.php")"
+db_boundary_source="$(cat "${ROOT_DIR}/scripts/check-db-boundary.php")"
 case "${deploy_source}" in
   *'chown "root:${APP_USER}" "${APP_DIR}/.env"'*|*'chmod 640 "${APP_DIR}/.env"'*)
     not_ok 'production deploy still mutates .env as root' ;;
@@ -135,7 +141,9 @@ case "${deploy_source}" in
 esac
 if [[ "${deploy_source}" == *'migration-applied.php'* \
   && "${deploy_source}" == *'042_google_move_integrity.php'* \
+  && "${deploy_source}" == *'045_feed_credentials.php'* \
   && "${deploy_source}" == *'MOVE_INTEGRITY_QUIESCED'* \
+  && "${deploy_source}" == *'FEED_CREDENTIALS_QUIESCED'* \
   && "${deploy_source}" == *'.deploy-move-integrity-paused'* \
   && "${deploy_source}" == *'systemctl stop'* \
   && "${deploy_source}" == *'systemctl start'* \
@@ -149,7 +157,7 @@ if [[ "${deploy_source}" == *'migration-applied.php'* \
   && "${deploy_source}" == *'pgrep -u'* ]]; then
   ok
 else
-  not_ok 'production deploy does not require a quiesced first rollout for migration 042'
+  not_ok 'production deploy does not require quiesced first rollouts for migrations 042 and 045'
 fi
 case "${migration_check_source}" in
   *'MIGRATION_FILE'*'schema_migrations'*) ok ;;
@@ -160,6 +168,108 @@ case "${helper_source}" in
   *'export MYSQL_PWD='*'mysqldump --no-defaults'*) ok ;;
   *) not_ok 'app-side MySQL reader does not export the password internally and disable option files' ;;
 esac
+if [[ "${dev_source}" == *'DEV_ISOLATION_MODE="${DEV_ISOLATION_MODE:-strict}"'* \
+  && "${dev_source}" == *'DEV_ISOLATION_MODE=shared explicitly permits'* \
+  && "${dev_source}" == *'DEV_APP_USER="${DEV_APP_USER:-${APP_USER}}"'* \
+  && "${dev_source}" == *'DEV_DB_USER="${DEV_DB_USER:-${DB_USER}}"'* \
+  && "${dev_source}" == *'DEV_PHP_FPM_SERVICE="${DEV_PHP_FPM_SERVICE:-${PHP_FPM_SERVICE}}"'* ]]; then
+  ok
+else
+  not_ok 'development deploy does not default to strict isolation with an explicit warned shared-identity mode'
+fi
+if [[ "${dev_source}" == *'systemctl show --property=Id'* \
+  && "${dev_source}" == *'if [ "${fpm_relation}" = distinct ]'*'systemctl stop ${dev_fpm_q}'* \
+  && "${dev_source}" == *'if [ "${fpm_relation}" = distinct ]'*'systemctl restart ${dev_fpm_q}'* \
+  && "${dev_source}" == *'deploy_failure_recovery'* \
+  && "${dev_source}" == *'DEV_FPM_PAUSED=1'* \
+  && "${deploy_lib_source}" == *'deploy_failure_recovery "${rc}"'* \
+  && "${db_boundary_source}" == *'REPORT_DB_PRINCIPAL'*'SELECT CURRENT_USER()'* \
+  && "${dev_source}" == *'prod_db_principal'*'dev_db_principal'*'db_identities_shared'* \
+  && "${dev_source}" == *'stage "verify pre-deploy database isolation"'* \
+  && "${dev_source}" != *'ALTER USER '* \
+  && "${dev_source}" != *'REVOKE ALL PRIVILEGES'* \
+  && "${dev_source}" != *'GRANT ALL PRIVILEGES'* ]]; then
+  ok
+else
+  not_ok 'development deploy can mutate a shared service/account or fails to verify effective database identities'
+fi
+if [[ "${dev_source}" == *'DEV_EXTERNAL_SERVICES="${DEV_EXTERNAL_SERVICES:-disabled}"'* \
+  && "${dev_source}" == *'DEV_EXTERNAL_SERVICES=enabled permits configured dev integrations'* \
+  && "${dev_source}" == *'while DEV_EXTERNAL_SERVICES=disabled'* ]]; then
+  ok
+else
+  not_ok 'development deploy does not provide a disabled-by-default warned external-service switch'
+fi
+if [[ "${dev_source}" == *'DEV_CLONE_SUBSCRIPTIONS="${DEV_CLONE_SUBSCRIPTIONS:-preserve}"'* \
+  && "${dev_source}" == *'DEV_CLONE_SUBSCRIPTIONS must be preserve or strip'* \
+  && "${dev_source}" == *'STRIP_DEV_SUBSCRIPTIONS'* \
+  && "${clone_sanitizer_source}" == *"kind = 'subscribed' AND COALESCE(provider, 'ics') = 'ics'"* \
+  && "${clone_sanitizer_source}" == *'bcDevCloneSealSource'*'bcDevCloneOpenSource'* ]]; then
+  ok
+else
+  not_ok 'development clone does not preserve/re-encrypt ICS subscriptions by default with explicit stripping'
+fi
+if [[ "${dev_source}" == *'bc_dev_stage_'* \
+  && "${dev_source}" == *'CREATE DATABASE \`${STAGING_DB}\`'*'BETTERCAL_VERIFY_DEV_CLONE_STAGE=1 php "${CLONE_HELPER}"'*'mysqldump -h 127.0.0.1 -u root --single-transaction "${PROD_DB}"'* \
+  && "${dev_source}" == *'mysqldump -h 127.0.0.1 -u root --single-transaction "${PROD_DB}" | mysql -h 127.0.0.1 -u root "${STAGING_DB}"'* \
+  && "${dev_source}" == *'BETTERCAL_RUN_DEV_CLONE_SANITIZER=1 php "${CLONE_HELPER}"'* \
+  && "${dev_source}" == *'mysqldump -h 127.0.0.1 -u root --single-transaction "${STAGING_DB}" | mysql -h 127.0.0.1 -u root "${DEV_DB}"'* \
+  && "${dev_source}" == *'^bc_dev_stage_[0-9a-f]{24}$'* \
+  && "${dev_source}" == *'DROP DATABASE IF EXISTS \`${STAGING_DB}\`'* \
+  && "${dev_source}" == *'automatic cleanup of the private clone staging resources failed'* \
+  && "${clone_sanitizer_source}" == *"['sessions', 'trusted_devices', 'push_subscriptions', 'out_feeds', 'google_accounts', 'api_tokens']"* \
+  && "${clone_sanitizer_source}" == *'UPDATE plugins SET enabled = 0'*'DELETE FROM plugin_kv'*'DELETE FROM http_cache'* \
+  && "${clone_sanitizer_source}" == *"WHERE status IN ('pending', 'running')"* \
+  && "${clone_sanitizer_source}" == *'UPDATE mutations SET before_json = NULL, after_json = NULL'* ]]; then
+  ok
+else
+  not_ok 'development clone can publish production credentials before staging sanitation succeeds'
+fi
+if [[ "${db_boundary_source}" == *'REQUIRE_DB_ISOLATION'* \
+  && "${db_boundary_source}" == *"if (\$requireIsolation === '0')"* \
+  && "${dev_source}" == *'stage "verify effective database boundary"'*'check-db-boundary.php'*'stage "rsync code"'* ]]; then
+  ok
+else
+  not_ok 'development deploy does not verify the intended database before branch code while supporting explicit shared DB authority'
+fi
+if [[ "${deploy_lib_source}" == *'history_ref'*'server/plugins/*/plugin.json'* \
+  && "${deploy_lib_source}" == *'/var/lib/better-cal-deploy'* \
+  && "${deploy_lib_source}" == *'__PRESENT__'* \
+  && "${deploy_lib_source}" == *'plugin-quarantine'* \
+  && "${deploy_lib_source}" == *'managed-plugins'* \
+  && "${deploy_lib_source}" == *'crontab -l'*'pgrep -u'* \
+  && "${deploy_source}${dev_source}" == *'disable_missing_plugins'* ]]; then
+  ok
+else
+  not_ok 'deploy does not reconcile removed Git-managed plugins without deleting operator drop-ins'
+fi
+if [[ "${deploy_lib_source}" == *'managed-plugins.pending'*'finalize_managed_plugin_manifest'* \
+  && "${deploy_lib_source}" == *'disable-missing-plugins.php'*'finalize_managed_plugin_manifest'* ]]; then
+  ok
+else
+  not_ok 'removed-plugin manifest can advance before durable database cleanup succeeds'
+fi
+case "${plugin_cleanup_source}" in
+  *"payload['plugin']"*"status = 'failed'"*"last_error"*) ok ;;
+  *) not_ok 'removed-plugin cleanup does not cancel the actual queued plugin payload shape' ;;
+esac
+if [[ "${seed_source}" != *"'password:'"* \
+  && "${seed_source}" == *"str_starts_with(\$arg, '--password=')"* \
+  && "${seed_source}" == *"'password-stdin'"* ]]; then
+  ok
+else
+  not_ok 'seed still accepts a password in process arguments or lacks the stdin replacement'
+fi
+set +e
+seed_probe="$("${PHP_BIN}" "${ROOT_DIR}/server/bin/seed.php" --email=alex@example.test --password 2>&1)"
+seed_status=$?
+set -e
+if [ "${seed_status}" -eq 2 ] && [[ "${seed_probe}" == *'--password is not supported'* ]] \
+  && [[ "${seed_probe}" != *'alex@example.test'* ]]; then
+  ok
+else
+  not_ok 'seed did not reject an argv password before database access without echoing it'
+fi
 case "${helper_source}" in
   *'flock -n 9'*) ok ;;
   *) not_ok 'backup publication is not serialized with an exclusive lock' ;;

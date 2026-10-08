@@ -43,6 +43,8 @@ final class HttpClient
 
     /** @var array<string,list<string>> */
     private array $resolvedHosts = [];
+    /** @var ?list<array{length:int,bytes:string}> */
+    private ?array $discoveredNat64Prefixes = null;
 
     /**
      * Limits are per-instance so core callers can adopt the SSRF policy without
@@ -515,9 +517,20 @@ final class HttpClient
         if (!is_array($ips) || $ips === []) {
             throw new \RuntimeException('DNS resolution failed for ' . $lookupHost);
         }
+        $hasIpv6 = false;
         foreach ($ips as $ip) {
             if (!is_string($ip) || self::isForbiddenIp($ip)) {
                 throw new \RuntimeException('Refused private/internal address for ' . $lookupHost . ' (' . (is_string($ip) ? $ip : 'invalid') . ')');
+            }
+            $hasIpv6 = $hasIpv6 || filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false;
+        }
+        if ($hasIpv6) {
+            $prefixes = $this->nat64Prefixes($deadline);
+            foreach ($ips as $ip) {
+                $translated = self::nat64EmbeddedIpv4($ip, $prefixes);
+                if ($translated !== null && self::isForbiddenIp($translated)) {
+                    throw new \RuntimeException('Refused private/internal address for ' . $lookupHost . ' (' . $ip . ' translates to ' . $translated . ')');
+                }
             }
         }
         $port = (int) ($parts['port'] ?? ($scheme === 'https' ? 443 : 80));
@@ -527,6 +540,127 @@ final class HttpClient
             $ips
         );
         return ['host' => $lookupHost, 'resolve' => $resolveHost . ':' . $port . ':' . implode(',', $pins)];
+    }
+
+    /**
+     * Discover an operator/network-specific RFC 6052 NAT64 prefix using the
+     * RFC 7050 ipv4only.arpa probe. A failed probe closes IPv6 requests: when
+     * the local translator cannot be identified, a private embedded target
+     * cannot be distinguished from ordinary global IPv6 safely.
+     *
+     * @return list<array{length:int,bytes:string}>
+     */
+    private function nat64Prefixes(float $deadline): array
+    {
+        if ($this->discoveredNat64Prefixes !== null) {
+            return $this->discoveredNat64Prefixes;
+        }
+        if (microtime(true) >= $deadline) {
+            throw new \RuntimeException('HTTP deadline exceeded before NAT64 discovery');
+        }
+        $remainingMs = max(1, (int) floor(($deadline - microtime(true)) * 1000));
+        $answers = $this->resolver !== null
+            ? ($this->resolver)('ipv4only.arpa', $remainingMs)
+            : self::resolveHost('ipv4only.arpa', $remainingMs);
+        if (!is_array($answers) || $answers === []) {
+            throw new \RuntimeException('NAT64 prefix discovery failed; IPv6 destination refused');
+        }
+
+        $directAnchors = [];
+        $candidates = [];
+        foreach (array_values(array_unique(array_filter($answers, 'is_string'))) as $answer) {
+            if ($answer === '192.0.0.170' || $answer === '192.0.0.171') {
+                $directAnchors[$answer] = true; // ordinary non-DNS64 network
+                continue;
+            }
+            $prefix = self::nat64PrefixFromDiscoveryAddress($answer);
+            if ($prefix !== null) {
+                $key = $prefix['length'] . ':' . bin2hex($prefix['bytes']);
+                $candidates[$key]['prefix'] = ['length' => $prefix['length'], 'bytes' => $prefix['bytes']];
+                $candidates[$key]['anchors'][$prefix['anchor']] = true;
+            }
+        }
+        $prefixes = [];
+        foreach ($candidates as $key => $candidate) {
+            if (isset($candidate['anchors']['192.0.0.170'], $candidate['anchors']['192.0.0.171'])) {
+                $prefixes[$key] = $candidate['prefix'];
+            }
+        }
+        $ordinary = isset($directAnchors['192.0.0.170'], $directAnchors['192.0.0.171']);
+        if (!$ordinary && $prefixes === []) {
+            throw new \RuntimeException('NAT64 prefix discovery returned no verifiable RFC 7050 address; IPv6 destination refused');
+        }
+        return $this->discoveredNat64Prefixes = array_values($prefixes);
+    }
+
+    /** @return ?array{length:int,bytes:string,anchor:string} */
+    private static function nat64PrefixFromDiscoveryAddress(string $ip): ?array
+    {
+        $bin = filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false ? inet_pton($ip) : false;
+        if ($bin === false) {
+            return null;
+        }
+        foreach ([96, 64, 56, 48, 40, 32] as $length) {
+            $v4 = self::extractRfc6052Ipv4($bin, $length);
+            if ($v4 !== "\xC0\x00\x00\xAA" && $v4 !== "\xC0\x00\x00\xAB") {
+                continue;
+            }
+            $prefixBytes = substr($bin, 0, intdiv($length, 8));
+            if (hash_equals($bin, self::embedRfc6052Ipv4($prefixBytes, $length, $v4))) {
+                $anchor = inet_ntop($v4);
+                return is_string($anchor) ? ['length' => $length, 'bytes' => $prefixBytes, 'anchor' => $anchor] : null;
+            }
+        }
+        return null;
+    }
+
+    /** @param list<array{length:int,bytes:string}> $prefixes */
+    private static function nat64EmbeddedIpv4(string $ip, array $prefixes): ?string
+    {
+        $bin = filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false ? inet_pton($ip) : false;
+        if ($bin === false) {
+            return null;
+        }
+        foreach ($prefixes as $prefix) {
+            $length = (int) ($prefix['length'] ?? 0);
+            $bytes = (string) ($prefix['bytes'] ?? '');
+            if (!in_array($length, [32, 40, 48, 56, 64, 96], true)
+                || strlen($bytes) !== intdiv($length, 8)
+                || !hash_equals($bytes, substr($bin, 0, strlen($bytes)))) {
+                continue;
+            }
+            $v4 = inet_ntop(self::extractRfc6052Ipv4($bin, $length));
+            return is_string($v4) ? $v4 : null;
+        }
+        return null;
+    }
+
+    private static function extractRfc6052Ipv4(string $bin, int $length): string
+    {
+        return match ($length) {
+            32 => substr($bin, 4, 4),
+            40 => substr($bin, 5, 3) . substr($bin, 9, 1),
+            48 => substr($bin, 6, 2) . substr($bin, 9, 2),
+            56 => substr($bin, 7, 1) . substr($bin, 9, 3),
+            64 => substr($bin, 9, 4),
+            96 => substr($bin, 12, 4),
+            default => '',
+        };
+    }
+
+    private static function embedRfc6052Ipv4(string $prefix, int $length, string $v4): string
+    {
+        $bin = str_repeat("\0", 16);
+        $bin = substr_replace($bin, $prefix, 0, strlen($prefix));
+        return match ($length) {
+            32 => substr_replace($bin, $v4, 4, 4),
+            40 => substr_replace(substr_replace($bin, substr($v4, 0, 3), 5, 3), substr($v4, 3, 1), 9, 1),
+            48 => substr_replace(substr_replace($bin, substr($v4, 0, 2), 6, 2), substr($v4, 2, 2), 9, 2),
+            56 => substr_replace(substr_replace($bin, substr($v4, 0, 1), 7, 1), substr($v4, 1, 3), 9, 3),
+            64 => substr_replace($bin, $v4, 9, 4),
+            96 => substr_replace($bin, $v4, 12, 4),
+            default => $bin,
+        };
     }
 
     private function protocolMask(): int

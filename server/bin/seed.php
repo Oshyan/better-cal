@@ -3,12 +3,12 @@
 declare(strict_types=1);
 
 // Creates or updates the single user:
-//   php bin/seed.php --email=... [--name=...] [--revoke-tokens]
+//   php bin/seed.php --email=... [--name=...] [--password-stdin] [--revoke-tokens]
 // The password is asked for with echo off, or read from the
 // BETTERCAL_SEED_PASSWORD environment variable when there is no terminal
-// (scripts). A command-line argument would sit in the process list and the
-// shell history (scan 2026-09-23, F20); --password=... still works, with a
-// warning, for setups that have no other way.
+// (scripts). --password-stdin is the stronger automation path. Passwords in
+// command-line arguments are rejected because they are visible in process
+// listings and shell history before this program can do anything about it.
 // Also creates a default "Personal" calendar when the user has none.
 //
 // Setting the password of an existing user signs every browser out: a reset is
@@ -23,12 +23,23 @@ use BetterCal\Domain\Auth;
 use BetterCal\Domain\GoogleAuth;
 use BetterCal\Infra\Db;
 
-$options = getopt('', ['email:', 'password:', 'name::', 'revoke-tokens']);
+foreach (array_slice($argv, 1) as $arg) {
+    if ($arg === '--password' || str_starts_with($arg, '--password=')) {
+        fwrite(STDERR, "--password is not supported because command arguments are public to process observers. Use the hidden prompt, --password-stdin, or BETTERCAL_SEED_PASSWORD.\n");
+        exit(2);
+    }
+}
+$options = getopt('', ['email:', 'password-stdin', 'name::', 'revoke-tokens']);
 $email = trim((string) ($options['email'] ?? ''));
 $password = '';
-if (isset($options['password'])) {
-    $password = (string) $options['password'];
-    fwrite(STDERR, "Warning: a password on the command line is visible to other users of this machine and stays in your shell history. Leave --password off to be asked for it.\n");
+if (isset($options['password-stdin'])) {
+    $line = fgets(STDIN, 1026);
+    $terminated = is_string($line) && (str_ends_with($line, "\n") || str_ends_with($line, "\r"));
+    if ($line === false || (!$terminated && !feof(STDIN))) {
+        fwrite(STDERR, "No bounded password was received on standard input.\n");
+        exit(1);
+    }
+    $password = rtrim($line, "\r\n");
 } elseif (($env = getenv('BETTERCAL_SEED_PASSWORD')) !== false && $env !== '') {
     $password = $env;
 } elseif (stream_isatty(STDIN)) {
@@ -55,7 +66,7 @@ $name = trim((string) ($options['name'] ?? ''));
 $revokeTokens = isset($options['revoke-tokens']);
 
 if ($email === '' || $password === '') {
-    fwrite(STDERR, "Usage: php bin/seed.php --email=you@example.com [--name=\"Display Name\"] [--revoke-tokens]\n(asks for the password; or set BETTERCAL_SEED_PASSWORD when running without a terminal)\n");
+    fwrite(STDERR, "Usage: php bin/seed.php --email=you@example.com [--name=\"Display Name\"] [--password-stdin] [--revoke-tokens]\n(asks for the password; automation may pipe one line with --password-stdin or set BETTERCAL_SEED_PASSWORD)\n");
     exit(1);
 }
 if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
@@ -64,6 +75,10 @@ if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
 }
 if (strlen($password) < 8) {
     fwrite(STDERR, "Password must be at least 8 characters.\n");
+    exit(1);
+}
+if (strlen($password) > 1024) {
+    fwrite(STDERR, "Password must be at most 1024 bytes.\n");
     exit(1);
 }
 

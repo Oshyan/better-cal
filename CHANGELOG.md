@@ -4,6 +4,13 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.36 (2026-10-07)
+
+- **Duplicate detection can no longer turn a dense imported or subscribed calendar into an all-pairs worker load.** Scans now use bounded, resumable slices; persistent linked groups and Review suggestions have separate storage and read ceilings; and a sustained backlog appears in System Health instead of monopolizing background work.
+- **Sparse duplicate groups still behave as one event when their connecting copy is outside the visible window.** Calendar rendering and reminder selection share a component identifier, while soft-deleted automatic matches stop consuming hidden capacity.
+
+Operators: no migration. Ordinary calendars keep the same matching behavior. Exceptionally dense clusters may finish over several worker runs, and reaching a persistent ceiling raises a System Health notice rather than hiding or deleting events.
+
 ## 0.9.35 (2026-10-07)
 
 - **Migration 042 no longer rebuilds the existing Google-move table to add its active-move uniqueness key.** MySQL 8.4 could reject that rebuild while re-creating valid historical foreign keys. A normal nullable key maintained by database insert/update triggers enforces the same one-active-move rule without rebuilding the table.

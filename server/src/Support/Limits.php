@@ -98,6 +98,20 @@ final class Limits
         'MODEL_FILTER_PER_CALENDAR_DAY' => 100,
         'MODEL_RESPONSE_BYTES' => 1048576, // authoritative streamed cap, all Gemini callers
         'MODEL_LOG_RETENTION_DAYS' => 90,
+        // Duplicate detection is periodic heuristic work over externally
+        // supplied events. Bound every slice before candidate generation can
+        // become an all-pairs operation; unfinished rows continue in a later
+        // worker job and pathological dense clusters are sampled, not fully
+        // materialised as an O(n squared) graph.
+        'DUPLICATE_SCAN_ROWS' => 500,
+        'DUPLICATE_CANDIDATES_PER_EVENT' => 100,
+        'DUPLICATE_LINKED_EDGES' => 5000,
+        'DUPLICATE_LINK_TRAVERSAL_QUERIES' => 32,
+        'DUPLICATE_OPEN_SUGGESTIONS' => 500,
+        'DUPLICATE_OPEN_SUGGESTIONS_PER_EVENT' => 3,
+        'DUPLICATE_COMPARISONS' => 20000,
+        'DUPLICATE_PAIRS' => 2000,
+        'DUPLICATE_SCAN_SECONDS' => 5,
         // Compact recurrence properties can hide thousands of comma-separated
         // values on one admitted line. Count them before parser/object work,
         // and keep one series from becoming a permanent expansion tax.
@@ -140,6 +154,15 @@ final class Limits
         'MODEL_FILTER_PER_CALENDAR_DAY' => 500,
         'MODEL_RESPONSE_BYTES' => 4194304,
         'MODEL_LOG_RETENTION_DAYS' => 365,
+        'DUPLICATE_SCAN_ROWS' => 2000,
+        'DUPLICATE_CANDIDATES_PER_EVENT' => 250,
+        'DUPLICATE_LINKED_EDGES' => 20000,
+        'DUPLICATE_LINK_TRAVERSAL_QUERIES' => 100,
+        'DUPLICATE_OPEN_SUGGESTIONS' => 2000,
+        'DUPLICATE_OPEN_SUGGESTIONS_PER_EVENT' => 10,
+        'DUPLICATE_COMPARISONS' => 100000,
+        'DUPLICATE_PAIRS' => 5000,
+        'DUPLICATE_SCAN_SECONDS' => 10,
         'EXDATE_VALUES_PER_EVENT' => 2048,
         'EXDATE_VALUES_PER_INPUT' => 8192,
     ];

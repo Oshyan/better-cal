@@ -1675,6 +1675,205 @@ check('rsvp reply keeps sequence', str_contains($reply, 'SEQUENCE:2'));
     $possibleId = (int) $ddb->scalar("SELECT id FROM event_duplicates WHERE status = 'possible'");
     $dups->decide(1, $possibleId, 'dismissed');
     checkEq('dup decide: dismissed by the owner', 'dismissed', $ddb->scalar('SELECT status FROM event_duplicates WHERE id = ?', [$possibleId]));
+    $hiddenHub = $dups->linkedFor([60, 61]);
+    check('dup linked: visible spokes share a component when their hub is outside the window',
+        isset($hiddenHub[60][0]['groupId'], $hiddenHub[61][0]['groupId'])
+        && $hiddenHub[60][0]['groupId'] === $hiddenHub[61][0]['groupId']);
+    $spokes = [];
+    foreach ($ddb->all('SELECT * FROM events WHERE id IN (60, 61)') as $r) {
+        $spokes[(int) $r['id']] = $r;
+    }
+    $spokeQuiet = $dups->silenced($spokes, static fn(array $_r): bool => true, $cals);
+    checkEq('dup reminders: one visible spoke stays quiet when the sparse hub is absent', 1, count($spokeQuiet));
+
+    // Phase 15 / F7: external calendars can put many distinct events at one
+    // timestamp. Every worker slice must remain bounded and resumable rather
+    // than retaining the quadratic pair graph.
+    Limits::configure([
+        'DUPLICATE_SCAN_ROWS' => PHP_INT_MAX,
+        'DUPLICATE_CANDIDATES_PER_EVENT' => PHP_INT_MAX,
+        'DUPLICATE_LINKED_EDGES' => PHP_INT_MAX,
+        'DUPLICATE_LINK_TRAVERSAL_QUERIES' => PHP_INT_MAX,
+        'DUPLICATE_OPEN_SUGGESTIONS' => PHP_INT_MAX,
+        'DUPLICATE_OPEN_SUGGESTIONS_PER_EVENT' => PHP_INT_MAX,
+        'DUPLICATE_COMPARISONS' => PHP_INT_MAX,
+        'DUPLICATE_PAIRS' => PHP_INT_MAX,
+        'DUPLICATE_SCAN_SECONDS' => PHP_INT_MAX,
+    ]);
+    checkEq('dup limits: operator overrides cannot remove the hard ceilings', [2000, 250, 20000, 100, 2000, 10, 100000, 5000, 10], [
+        Limits::get('DUPLICATE_SCAN_ROWS'),
+        Limits::get('DUPLICATE_CANDIDATES_PER_EVENT'),
+        Limits::get('DUPLICATE_LINKED_EDGES'),
+        Limits::get('DUPLICATE_LINK_TRAVERSAL_QUERIES'),
+        Limits::get('DUPLICATE_OPEN_SUGGESTIONS'),
+        Limits::get('DUPLICATE_OPEN_SUGGESTIONS_PER_EVENT'),
+        Limits::get('DUPLICATE_COMPARISONS'),
+        Limits::get('DUPLICATE_PAIRS'),
+        Limits::get('DUPLICATE_SCAN_SECONDS'),
+    ]);
+    Limits::configure([
+        'DUPLICATE_SCAN_ROWS' => 20,
+        'DUPLICATE_CANDIDATES_PER_EVENT' => 5,
+        'DUPLICATE_LINKED_EDGES' => 12,
+        'DUPLICATE_OPEN_SUGGESTIONS' => 12,
+        'DUPLICATE_OPEN_SUGGESTIONS_PER_EVENT' => 3,
+        'DUPLICATE_COMPARISONS' => 20,
+        'DUPLICATE_PAIRS' => 10,
+        'DUPLICATE_SCAN_SECONDS' => 5,
+    ]);
+    $budgetDb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $budgetDb->run('CREATE TABLE users (id INTEGER PRIMARY KEY)');
+    $budgetDb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, kind TEXT, role TEXT)');
+    $budgetDb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, start_utc TEXT, all_day INTEGER, tzid TEXT, rrule TEXT, recurrence_instance_utc TEXT, status TEXT, is_container INTEGER, deleted_at TEXT)');
+    $budgetDb->run('CREATE TABLE event_duplicates (id INTEGER PRIMARY KEY, user_id INTEGER, event_a INTEGER, event_b INTEGER, status TEXT, basis TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, decided_at TEXT, UNIQUE(event_a, event_b))');
+    $budgetDb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)');
+    $budgetDb->run('INSERT INTO users VALUES (1)');
+    $budgetDb->run("INSERT INTO calendars VALUES (1, 1, 'Example A', 'subscribed', 'mine'), (2, 1, 'Example B', 'subscribed', 'mine')");
+    $denseStart = Time::nowUtc()->add(new DateInterval('P5D'))->format('Y-m-d H:i:s');
+    for ($id = 1; $id <= 80; $id++) {
+        $budgetDb->run(
+            "INSERT INTO events VALUES (?, 1, ?, ?, 'Sample gathering', ?, 0, 'UTC', NULL, NULL, 'confirmed', 0, NULL)",
+            [$id, ($id % 2) + 1, 'sample-' . $id, $denseStart]
+        );
+    }
+    $bounded = new BetterCal\Domain\Duplicates($budgetDb);
+    $slice1 = $bounded->scanAllSlice(['userId' => 1, 'phase' => 'time', 'afterId' => 0]);
+    check('dup budget: dense first slice is explicitly throttled and continued', $slice1['throttled'] && $slice1['more']);
+    check('dup budget: row, comparison and pair work stay within hard slice values',
+        $slice1['rows'] <= 20 && $slice1['comparisons'] <= 20 && $slice1['linked'] + $slice1['possible'] <= 10);
+    $slice2 = $bounded->scanAllSlice($slice1['cursor']);
+    check('dup budget: continuation cursor makes progress instead of repeating one prefix',
+        (int) ($slice2['cursor']['afterId'] ?? 0) > (int) ($slice1['cursor']['afterId'] ?? 0));
+    check('dup budget: two slices cannot retain or write a quadratic result',
+        (int) $budgetDb->scalar('SELECT COUNT(*) FROM event_duplicates') <= 20);
+    Limits::configure(['DUPLICATE_CANDIDATES_PER_EVENT' => 100, 'DUPLICATE_COMPARISONS' => 1]);
+    $tinyComparisonSlice = $bounded->scanAllSlice(['userId' => 1, 'phase' => 'time', 'afterId' => 0]);
+    check('dup budget: a comparison limit below the candidate limit still advances its cursor',
+        $tinyComparisonSlice['comparisons'] === 1 && (int) ($tinyComparisonSlice['cursor']['afterId'] ?? 0) > 0);
+    Limits::configure(['DUPLICATE_CANDIDATES_PER_EVENT' => 5, 'DUPLICATE_COMPARISONS' => 20]);
+    $budgetDb->run('DELETE FROM event_duplicates');
+    $budgetDb->run('DELETE FROM mutations');
+    $denseCursor = ['userId' => 1, 'phase' => 'time', 'afterId' => 0];
+    $denseDone = false;
+    for ($sliceNo = 0; $sliceNo < 50; $sliceNo++) {
+        $denseSlice = $bounded->scanAllSlice($denseCursor);
+        if (!$denseSlice['more']) {
+            $denseDone = true;
+            break;
+        }
+        $denseCursor = $denseSlice['cursor'];
+    }
+    check('dup budget: a dense distinct-UID cluster completes through bounded continuations', $denseDone);
+    check('dup budget: exact-match cluster is stored as a sparse graph',
+        (int) $budgetDb->scalar("SELECT COUNT(*) FROM event_duplicates WHERE status = 'linked'") <= 80);
+    checkEq('dup budget: continuation slices coalesce Activity to one entry per user cycle', 1,
+        (int) $budgetDb->scalar("SELECT COUNT(*) FROM mutations WHERE source = 'dedup'"));
+    $budgetDb->run('DELETE FROM event_duplicates');
+    $budgetDb->run('DELETE FROM mutations');
+    $budgetDb->run('UPDATE events SET calendar_id = 1');
+    $possibleCursor = ['userId' => 1, 'phase' => 'time', 'afterId' => 0];
+    $possibleDone = false;
+    for ($sliceNo = 0; $sliceNo < 50; $sliceNo++) {
+        $possibleSlice = $bounded->scanAllSlice($possibleCursor);
+        if (!$possibleSlice['more']) {
+            $possibleDone = true;
+            break;
+        }
+        $possibleCursor = $possibleSlice['cursor'];
+    }
+    $possibleDegree = 0;
+    foreach ($budgetDb->all("SELECT event_a, event_b FROM event_duplicates WHERE status = 'possible'") as $pair) {
+        $possibleDegree = max(
+            $possibleDegree,
+            (int) $budgetDb->scalar("SELECT COUNT(*) FROM event_duplicates WHERE status = 'possible' AND (event_a = ? OR event_b = ?)", [$pair['event_a'], $pair['event_a']]),
+            (int) $budgetDb->scalar("SELECT COUNT(*) FROM event_duplicates WHERE status = 'possible' AND (event_a = ? OR event_b = ?)", [$pair['event_b'], $pair['event_b']]),
+        );
+    }
+    check('dup budget: dense same-calendar suggestions complete through continuations', $possibleDone);
+    $possibleTotal = (int) $budgetDb->scalar("SELECT COUNT(*) FROM event_duplicates WHERE status = 'possible'");
+    check('dup budget: open Review suggestions exist but have bounded total and per-event degree',
+        $possibleTotal > 0 && $possibleTotal <= 12 && $possibleDegree <= 3);
+    check('dup budget: the Review read is bounded by the same global suggestion limit',
+        count($bounded->possible(1)) <= 12);
+
+    // Soft-deleted events are absent from Review and cannot consume its live
+    // global or per-event suggestion capacity.
+    $budgetDb->run("UPDATE events SET deleted_at = '2026-01-01 00:00:00' WHERE id <= 80");
+    foreach ([81, 82] as $id) {
+        $budgetDb->run(
+            "INSERT INTO events VALUES (?, 1, 1, ?, 'Fresh example', ?, 0, 'UTC', NULL, NULL, 'confirmed', 0, NULL)",
+            [$id, 'fresh-' . $id, $denseStart]
+        );
+    }
+    $freshSlice = $bounded->scanAllSlice(['userId' => 1, 'phase' => 'time', 'afterId' => 80]);
+    check('dup budget: hidden stale suggestions do not block a fresh Review candidate',
+        $freshSlice['possible'] === 1 && count($bounded->possible(1)) === 1);
+    $bounded->scanAllSlice(['userId' => 1, 'phase' => 'uid', 'afterId' => 0]);
+    checkEq('dup budget: a new cycle prunes automatic edges hidden by soft deletion', 1,
+        (int) $budgetDb->scalar('SELECT COUNT(*) FROM event_duplicates'));
+
+    // Repeated remote changes may discover different exact links over time,
+    // but persistent linked storage and reads remain behind a hard ceiling.
+    Limits::configure(['DUPLICATE_LINKED_EDGES' => 3]);
+    $rotateDb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $rotateDb->run('CREATE TABLE users (id INTEGER PRIMARY KEY)');
+    $rotateDb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, role TEXT)');
+    $rotateDb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, start_utc TEXT, all_day INTEGER, tzid TEXT, rrule TEXT, recurrence_instance_utc TEXT, status TEXT, is_container INTEGER, deleted_at TEXT)');
+    $rotateDb->run('CREATE TABLE event_duplicates (id INTEGER PRIMARY KEY, user_id INTEGER, event_a INTEGER, event_b INTEGER, status TEXT, basis TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, decided_at TEXT, UNIQUE(event_a, event_b))');
+    $rotateDb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)');
+    $rotateDb->run('INSERT INTO users VALUES (1)');
+    $rotateDb->run("INSERT INTO calendars VALUES (1, 1, 'subscribed', 'mine'), (2, 1, 'subscribed', 'mine')");
+    foreach ([[1, 1, 'Alpha'], [2, 1, 'Beta'], [3, 2, 'Alpha'], [4, 2, 'Beta']] as [$id, $cal, $title]) {
+        $rotateDb->run("INSERT INTO events VALUES (?, 1, ?, ?, ?, ?, 0, 'UTC', NULL, NULL, 'confirmed', 0, NULL)", [$id, $cal, 'rotate-' . $id, $title, $denseStart]);
+    }
+    $rotating = new BetterCal\Domain\Duplicates($rotateDb);
+    $rotating->scan(1);
+    $rotateDb->run("UPDATE events SET title = CASE id WHEN 3 THEN 'Beta' WHEN 4 THEN 'Alpha' ELSE title END");
+    $rotated = $rotating->scanAllSlice(['userId' => 1, 'phase' => 'time', 'afterId' => 0]);
+    check('dup budget: rotating exact matches hit a visible hard linked-edge ceiling',
+        $rotated['throttled'] && (int) $rotateDb->scalar("SELECT COUNT(*) FROM event_duplicates WHERE status = 'linked'") === 3);
+    $rotateDb->run('DELETE FROM event_duplicates');
+    foreach ([[1, 2], [1, 3], [1, 4], [2, 3], [2, 4], [3, 4]] as [$a, $b]) {
+        $rotateDb->run("INSERT INTO event_duplicates (user_id, event_a, event_b, status, basis) VALUES (1, ?, ?, 'linked', 'title')", [$a, $b]);
+    }
+    $boundedLegacy = $rotating->linkedFor([1, 2, 3, 4]);
+    check('dup budget: a pre-existing dense graph has bounded read amplification',
+        array_sum(array_map('count', $boundedLegacy)) <= 6);
+
+    // A dense same-UID group is represented as a linear star. The title
+    // phase excludes it, so it cannot recreate the omitted clique edges.
+    Limits::configure(['DUPLICATE_LINKED_EDGES' => 100]);
+    $uidDb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $uidDb->run('CREATE TABLE users (id INTEGER PRIMARY KEY)');
+    $uidDb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, role TEXT)');
+    $uidDb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, start_utc TEXT, all_day INTEGER, tzid TEXT, rrule TEXT, recurrence_instance_utc TEXT, status TEXT, is_container INTEGER, deleted_at TEXT)');
+    $uidDb->run('CREATE TABLE event_duplicates (id INTEGER PRIMARY KEY, user_id INTEGER, event_a INTEGER, event_b INTEGER, status TEXT, basis TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, decided_at TEXT, UNIQUE(event_a, event_b))');
+    $uidDb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)');
+    $uidDb->run('INSERT INTO users VALUES (1)');
+    $uidDb->run("INSERT INTO calendars VALUES (1, 1, 'local', 'mine'), (2, 1, 'subscribed', 'mine')");
+    for ($id = 1; $id <= 40; $id++) {
+        $uidDb->run(
+            "INSERT INTO events VALUES (?, 1, ?, 'shared-example-uid', 'Sample series', ?, 0, 'UTC', NULL, NULL, 'confirmed', 0, NULL)",
+            [$id, ($id % 2) + 1, $denseStart]
+        );
+    }
+    $uidScanner = new BetterCal\Domain\Duplicates($uidDb);
+    $uidCursor = ['userId' => 1, 'phase' => 'uid', 'afterId' => 0];
+    for ($slices = 0; $slices < 10; $slices++) {
+        $uidSlice = $uidScanner->scanAllSlice($uidCursor);
+        check('dup UID budget: each slice writes no more than the configured pair limit',
+            $uidSlice['linked'] + $uidSlice['possible'] <= 10);
+        $uidCursor = $uidSlice['cursor'] ?? [];
+        if (($uidCursor['phase'] ?? '') === 'time') {
+            break;
+        }
+    }
+    checkEq('dup UID budget: forty same-UID copies need only a 39-edge spanning star', 39,
+        (int) $uidDb->scalar('SELECT COUNT(*) FROM event_duplicates'));
+    $uidTime = $uidScanner->scanAllSlice($uidCursor);
+    checkEq('dup UID budget: title phase does not rebuild the same-UID clique', [0, 0],
+        [$uidTime['linked'] + $uidTime['possible'], $uidTime['comparisons']]);
+    Limits::reset();
 }
 
 // ---------------------------------------------------------------------------

@@ -130,10 +130,40 @@ try {
                     echo bc_ts() . " google_move move=$moveId $result\n";
                     break;
                 case 'duplicate_scan':
-            $dup = (new BetterCal\Domain\Duplicates($db))->scanAll();
-            echo bc_ts() . " duplicate_scan linked={$dup['linked']} possible={$dup['possible']}\n";
-            break;
-        case 'rank_events':
+                    $cursor = isset($payload['cursor']) && is_array($payload['cursor']) ? $payload['cursor'] : [];
+                    $dup = (new BetterCal\Domain\Duplicates($db))->scanAllSlice($cursor);
+                    $cycleThrottled = !empty($payload['throttled']) || $dup['throttled'];
+                    if ($dup['more'] && is_array($dup['cursor'])) {
+                        // One slice per worker minute. This leaves room for
+                        // reminders, mail and feed jobs even when a calendar
+                        // needs many duplicate-detection pages.
+                        $queue->enqueue('duplicate_scan', [
+                            'cursor' => $dup['cursor'],
+                            'throttled' => $cycleThrottled,
+                        ], Time::nowUtc()->modify('+1 minute'));
+                    } elseif ($cycleThrottled) {
+                        $systemHealth->recordFailure(
+                            'job:duplicate_scan_budget',
+                            'job',
+                            null,
+                            'Duplicate detection backlog',
+                            'One scan cycle reached its safety budget; duplicate suggestions were bounded or deferred.'
+                        );
+                    } else {
+                        $systemHealth->recordOk(
+                            'job:duplicate_scan_budget',
+                            'job',
+                            null,
+                            'Duplicate detection backlog',
+                            false
+                        );
+                    }
+                    echo bc_ts() . " duplicate_scan linked={$dup['linked']} possible={$dup['possible']}"
+                        . " rows={$dup['rows']} comparisons={$dup['comparisons']}"
+                        . ($dup['more'] ? ' continued=1' : '')
+                        . ($cycleThrottled ? ' bounded=1' : '') . "\n";
+                    break;
+                case 'rank_events':
                     $scored = $ranking->run();
                     echo bc_ts() . " rank_events scored=$scored\n";
                     break;

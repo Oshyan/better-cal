@@ -1,5 +1,5 @@
 // The same event on several calendars (#9), shown once. The server links the
-// copies (occ.dupes: [{pairId, eventId, calendarId}]); among the occurrences
+// copies (occ.dupes: [{pairId, eventId, calendarId, groupId}]); among the occurrences
 // that are visible, each linked group draws one: the copy from the most live
 // source (Google, then your own calendars, then feeds, then a booking read
 // from mail), which carries `alsoOn` naming the others. Nothing is hidden
@@ -31,33 +31,22 @@ function better(a, b, calById) {
  */
 export function collapseDuplicates(occs, calById) {
   if (!occs.some((o) => o.dupes && o.dupes.length)) return occs;
-  const present = new Set(occs.map((o) => o.eventId));
-  const parent = new Map();
-  const find = (x) => {
-    let r = x;
-    while (parent.has(r) && parent.get(r) !== r) r = parent.get(r);
-    parent.set(x, r);
-    return r;
-  };
+  // The server's graph is intentionally sparse. groupId names the complete
+  // connected component, so two visible spokes still collapse when their
+  // shared hub is hidden or outside this window.
+  const groupOf = (o) => o.dupes && o.dupes.length
+    ? (o.dupes.find((d) => d.groupId != null)?.groupId ?? o.eventId)
+    : o.eventId;
   const size = new Map();
   for (const o of occs) {
-    if (!o.dupes) continue;
-    for (const d of o.dupes) {
-      if (!present.has(d.eventId)) continue;
-      const a = find(o.eventId);
-      const b = find(d.eventId);
-      if (a !== b) parent.set(a, b);
-    }
-  }
-  for (const o of occs) {
-    if (o.dupes && o.dupes.length) size.set(find(o.eventId), (size.get(find(o.eventId)) || 0) + 1);
+    if (o.dupes && o.dupes.length) size.set(groupOf(o), (size.get(groupOf(o)) || 0) + 1);
   }
   // A series' copies meet at each instant; single events meet once.
-  const keyOf = (o) => find(o.eventId) + '|' + (o.recurring ? startMs(o) : '');
+  const keyOf = (o) => groupOf(o) + '|' + (o.recurring ? startMs(o) : '');
   const best = new Map();
   const members = new Map();
   for (const o of occs) {
-    if (!o.dupes || !o.dupes.length || (size.get(find(o.eventId)) || 0) < 2) continue;
+    if (!o.dupes || !o.dupes.length || (size.get(groupOf(o)) || 0) < 2) continue;
     const k = keyOf(o);
     (members.get(k) || members.set(k, []).get(k)).push(o);
     const cur = best.get(k);

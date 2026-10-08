@@ -126,6 +126,19 @@ added step.
 | F36 | One active move, one leased executor and durable remote calendar/event recovery markers are enforced across browser/worker overlap and response loss | Passed | [ ] |
 | F36 rollout boundary | Active unmarked moves are forbidden by the database; ambiguous pre-upgrade work is stopped, and the first migration requires verified quiescence | Passed | [ ] |
 
+## Phase 15 — bounded duplicate detection
+
+This phase is included in release 0.9.36 and requires no database migration. Duplicate
+discovery now runs as bounded, resumable worker slices instead of materializing
+an attacker-controlled all-pairs graph. The focused live behavior checks remain
+open.
+
+| Scan finding | Remediation | Local automated verification | Live/deployed verification |
+|---|---|---:|---:|
+| F7 | Same-UID copies use a linear spanning graph; different-UID matching has hard row, candidate, comparison, pair and elapsed-time budgets; persistent linked storage, graph traversal and Review suggestions have separate hard ceilings; unfinished pages continue in later worker runs | Passed | [ ] |
+| F7 behavior | A shared component id preserves calendar collapse and one-reminder behavior when a sparse hub is outside the current window; soft-deleted automatic edges are pruned and cannot consume invisible Review capacity | Passed | [ ] |
+| F7 observability | A completed cycle that encountered a dense/pathological cluster records one bounded System-health failure; later clean cycles recover it through the existing Activity and alert path | Passed | [ ] |
+
 ## Completed local evidence
 
 This section is the technical record for reviewers; it is not a manual to-do list for the owner.
@@ -178,6 +191,10 @@ This section is the technical record for reviewers; it is not a manual to-do lis
 - [x] Phase 14 focused controls cover calendar/event/CalDAV/trip mutation exclusion, failed-move freeze and explicit stop, one leased executor, active-move database invariants, exact target reservation, calendar and per-event response-loss recovery, restart repair, stale provider-response rejection, binding-generation ABA protection, account disconnect, and Undo across every referenced calendar.
 - [x] Phase 14 local suites: server 2,164/0; frontend smoke 653/0; frontend static 353/0 across 103 modules; deploy-security 21/0. Touched PHP and shell files pass syntax checks, the working-tree diff passes whitespace validation and the repository privacy guard reports no findings.
 - [x] Phase 14 independent read-only post-patch review found F17 fixed and the application-level F36 controls complete. Its deployment follow-up now treats service, cron and process-inspection errors as failures rather than evidence of quiescence. Live MySQL concurrency and Google response-loss exercises remain deployment-layer checks.
+- [x] Phase 15 reproduced the original quadratic path with generic data: 500 same-time events retained 62,500 pairs and used about 63.5 MiB under a 128 MiB process limit. The bounded implementation retained 199 sparse candidates with about 4 MiB peak memory in the same probe, before persistence and independent review.
+- [x] Phase 15 focused controls cover hard operator ceilings, dense distinct-UID comparison/result bounds, durable cursor progress, independently tuned limit progress, sparse exact-match graphs, bounded open-suggestion count and degree, linked-edge storage and read bounds, rotating exact matches, pre-existing dense graphs, hidden sparse hubs, stale soft-deleted candidates, same-UID linear spanning edges, same-UID exclusion from the title phase, duplicate-free continuation storage, one Activity entry per user cycle, and ordinary duplicate matching semantics.
+- [x] Phase 15 local suites: server 2,190/0; frontend smoke 654/0 in `America/Los_Angeles`, `UTC`, `Europe/Berlin`, `Asia/Kolkata` and `Pacific/Auckland`; frontend static 353/0 across 103 modules; MCP 67/0; deploy-security 21/0; vendor manifest 10/10. Touched PHP files pass syntax checks, the working-tree diff passes whitespace validation and the repository privacy guard reports no findings.
+- [x] Phase 15 independent read-only post-patch review found and prompted fixes for cross-cycle linked-edge growth, bounded reads of pre-existing dense graphs, sparse groups whose hub is outside the visible window, and soft-deleted candidates consuming invisible Review capacity. No remaining single-slice all-pairs bypass was found.
 
 ## Remaining practical checks
 

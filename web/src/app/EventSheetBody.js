@@ -62,6 +62,17 @@ function AlsoOn({ occ }) {
   const [busy, setBusy] = useState(false);
   // The whole group, not only direct links: A and C may each be linked to B.
   const seen = new Map([[occ.eventId, null]]);
+  const groupId = occ.dupes.find((d) => d.groupId != null)?.groupId;
+  if (groupId != null) {
+    // Sparse groups share a stable component id even when their hub is not
+    // in the current window. Pull visible spokes into the detail list too.
+    for (const x of state.occ.values()) {
+      if (x.eventId === occ.eventId || !x.dupes?.some((d) => d.groupId === groupId)) continue;
+      const direct = occ.dupes.find((d) => d.eventId === x.eventId);
+      const unlink = direct || x.dupes.find((d) => d.groupId === groupId);
+      if (unlink) seen.set(x.eventId, { ...unlink, eventId: x.eventId, calendarId: x.calendarId });
+    }
+  }
   const queue = [...occ.dupes];
   while (queue.length) {
     const d = queue.shift();

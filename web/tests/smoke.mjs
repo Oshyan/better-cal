@@ -18,6 +18,7 @@ import {
 import { contrastText, withAlpha, parseHex, inkColor, luminance } from '../src/lib/color.js';
 import { mapMosaic, stadiaStyle, mapTilerStyle, isPendingLocation, gmapsUrl } from '../src/lib/maps.js';
 import { baseTitle, groupOccurrences, itemMatchesFilter, isGroupId } from '../src/ui/grouping.js';
+import { collapseDuplicates } from '../src/ui/duplicates.js';
 import { sortByMatch } from '../src/lib/rank.js';
 import { parseJumpText, jumpGranularity } from '../src/lib/jumpparse.js';
 import { parseClockText, resolveClock, minsToHHMM, hhmmToMins, parseDateText, durationLabel } from '../src/lib/whenparse.js';
@@ -485,6 +486,21 @@ const mkOcc = (calendarId, title, dayKey, opts = {}) => ({
   ...opts.extra,
 });
 const FLAGS = { 1: true, 2: true, 3: false };
+
+// The persisted duplicate graph is sparse. Two visible spokes still share
+// the server-provided group id when their hub is hidden/outside the window.
+const spokeA = mkOcc(1, 'Sample gathering', '2026-06-18', { extra: {
+  eventId: 101, dupes: [{ pairId: 1, eventId: 100, calendarId: 3, groupId: 100 }],
+} });
+const spokeB = mkOcc(2, 'Sample gathering', '2026-06-18', { extra: {
+  eventId: 102, dupes: [{ pairId: 2, eventId: 100, calendarId: 3, groupId: 100 }],
+} });
+const collapsedSpokes = collapseDuplicates([spokeA, spokeB], new Map([
+  [1, { kind: 'local', provider: 'ics' }],
+  [2, { kind: 'subscribed', provider: 'google' }],
+]));
+assert('duplicates: visible spokes collapse without their sparse hub',
+  collapsedSpokes.length === 1 && collapsedSpokes[0].eventId === 102);
 
 // baseTitle strips one trailing parenthetical, keeps everything else.
 eq('grouping: baseTitle strips parenthetical', baseTitle('Juneteenth (Alabama)'), 'Juneteenth');

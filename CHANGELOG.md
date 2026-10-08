@@ -4,6 +4,12 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.41 (2026-10-08)
+
+- **App-shell cache security coverage now uses the same private sibling-directory layout as production.** This corrects Linux CI validation without weakening the runtime cache ownership and permission checks or changing application behavior.
+
+Operators: no migration and no configuration change. This is a release-validation correction for 0.9.40.
+
 ## 0.9.40 (2026-10-08)
 
 - **Stored calendar capabilities are protected at rest.** Subscription source addresses and published-feed tokens are purpose-bound and encrypted; Undo history no longer retains usable copies. Existing feed addresses keep working through migration 045.

@@ -6918,7 +6918,10 @@ require __DIR__ . '/plugins.php';
     file_put_contents("$root/src/app/lazy.js", "export default 1;\n");
     file_put_contents("$root/tests/t.mjs", "// a test\n");
     $extra = ['/', '/assets/styles/app.css', '/assets/icons/missing.png'];
-    $cache = $root . '-cache.json';
+    $cacheDir = $root . '-cache';
+    mkdir($cacheDir, 0700);
+    chmod($cacheDir, 0700);
+    $cache = $cacheDir . '/app-shell.json';
     $savedLog = ini_get('error_log');
     ini_set('error_log', $root . '-errors.log'); // the missing-entry notice is expected here
 
@@ -6978,6 +6981,7 @@ require __DIR__ . '/plugins.php';
     foreach ([$cache, $root . '-errors.log', $sentinel] as $f) {
         @unlink($f);
     }
+    @rmdir($cacheDir);
     $rm = static function (string $dir) use (&$rm): void {
         foreach (array_diff((array) scandir($dir), ['.', '..']) as $n) {
             is_dir("$dir/$n") ? $rm("$dir/$n") : unlink("$dir/$n");

@@ -43,7 +43,7 @@ export async function currentPushEndpoint() {
   }
 }
 
-// What this device is, in words a person recognises (0.6.7): "Pixel 9 Pro ·
+// What this device is, in words a person recognises (0.6.7): "Android phone ·
 // Chrome app", "Mac · Chrome", "iPhone · Safari app". Chromium browsers say
 // it through userAgentData (the phone's model is one of its details); the
 // rest are read from the user-agent string. "app" when it runs installed.

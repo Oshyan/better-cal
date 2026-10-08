@@ -35,9 +35,9 @@ final class Geocode
 
     /**
      * Easier forms of a location to try when the full text finds nothing.
-     * Feeds decorate addresses: "111 Conselyea St, Brooklyn, NY 11211, USA
+     * Feeds decorate addresses: "450 Elm St, Portland, OR 97205, USA
      * (The Lounge)", "[Upstairs] 5 Main St", or a venue name ahead of the
-     * street: "The Lounge, 111 Conselyea St, Brooklyn". In order: without the
+     * street: "The Lounge, 450 Elm St, Portland". In order: without the
      * bracketed parts; then, if a later comma-separated part starts with a
      * street number, from that part on. Never the original, never empty.
      *
@@ -77,7 +77,7 @@ final class Geocode
     /**
      * Cache key: sha256 over the lowercased normalized query plus the coarse
      * bias cell. Bias participates because the same text resolves differently
-     * per region ("SFO" is an airport here, an after-school program in
+     * per region ("SFO" is an airport in one region, an after-school program in
      * Denmark); integer-degree cells (~100 km) keep travel from thrashing the
      * cache while still separating regions.
      */
@@ -86,7 +86,7 @@ final class Geocode
         return hash('sha256', mb_strtolower(self::normalize($q)) . '|' . self::biasCell($biasLat, $biasLng));
     }
 
-    /** "38,-123"-style integer-degree cell, or "none" without a bias. */
+    /** "51,0"-style integer-degree cell, or "none" without a bias. */
     public static function biasCell(?float $biasLat, ?float $biasLng): string
     {
         if ($biasLat === null || $biasLng === null) {
@@ -162,8 +162,8 @@ final class Geocode
      * Pick the best feature for a query.
      *
      * Significance ranking applies ONLY among candidates whose own name matches
-     * the whole query, which keeps it out of the way of addresses: "1658 Market
-     * St, San Francisco" has no candidate named exactly that, so the provider's
+     * the whole query, which keeps it out of the way of addresses: "100 Main
+     * St, Springfield" has no candidate named exactly that, so the provider's
      * own street match is left alone. When several places genuinely share a
      * name, the more significant one wins.
      *
@@ -227,7 +227,7 @@ final class Geocode
      * exonyms. It fires only when the primary settled on a SMALL SETTLEMENT:
      *
      *   - an address or a venue has osm_key `highway`/`amenity`/`building`, so
-     *     it never qualifies and "Zuni Cafe" is left alone;
+     *     it never qualifies and "Example Cafe" is left alone;
      *   - a state, region or country outranks the threshold, so "Hawaii" keeps
      *     the primary's correct answer and never sees the secondary's village
      *     of the same name in Guatemala;
@@ -376,8 +376,8 @@ final class Geocode
      * True only when all three hold: the query reads as a free-text
      * description rather than an address or a name (no comma, four or more
      * words), the answer is not itself a place-level feature, and it lies
-     * further than IMPLAUSIBLE_KM from the bias. Addresses ("15 Calton Hill,
-     * Edinburgh") and names ("Heathrow Terminal 5") pass untouched; a long
+     * further than IMPLAUSIBLE_KM from the bias. Addresses ("12 Rua Augusta,
+     * Lisbon") and names ("Central Bus Station") pass untouched; a long
      * comma-less description of somewhere genuinely distant is the known
      * false negative, and it surfaces as "couldn't place" rather than as a
      * silent wrong pin. Pure, unit-tested.
@@ -488,11 +488,12 @@ final class Geocode
                     'display' => (string) $top['display'],
                     'kind' => isset($top['kind']) ? (string) $top['kind'] : null,
                 ];
-                // A wrong pin is worse than no pin. "A Temple Mansion in
-                // Oakland's Ivy Hill" came back as Oakland County, Michigan,
-                // 3,300 km from home; treat that as unplaced (cached as a
-                // miss, so the sweep retries in a month) and let the event
-                // say so, rather than draw a confident map of the wrong state.
+                // A wrong pin is worse than no pin. A long free-text venue
+                // description came back as a same-named county in another
+                // state, thousands of km from the bias point; treat that as
+                // unplaced (cached as a miss, so the sweep retries in a month)
+                // and let the event say so, rather than draw a confident map
+                // of the wrong state.
                 if ($mapped !== null && self::implausible(
                     $normalized,
                     $mapped['kind'],

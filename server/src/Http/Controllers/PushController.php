@@ -123,7 +123,7 @@ final class PushController
             'url' => '/',
             // A reminder for an event with a place carries a Map button; the
             // test shows one so the button can be tried without waiting.
-            'map' => 'https://www.google.com/maps/search/?api=1&query=' . rawurlencode('Ferry Building, San Francisco'),
+            'map' => 'https://www.google.com/maps/search/?api=1&query=' . rawurlencode('Harbor Hall, 100 Main St'),
             'tag' => 'bettercal-test',
         ];
         $sent = 0;

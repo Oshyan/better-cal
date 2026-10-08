@@ -68,7 +68,7 @@ function FilterForm({ calendars, folders, initial, inline, busy, onSave, onCance
       ${!isPrompt && html`<label class="bc-field grow">
         <span>${type === 'regex' ? 'Pattern (case-insensitive regex)' : 'Keyword (case-insensitive)'}</span>
         <input
-          placeholder=${type === 'regex' ? 'e.g. karaoke|trivia' : 'e.g. webinar'}
+          placeholder=${type === 'regex' ? 'e.g. webinar|livestream' : 'e.g. webinar'}
           value=${pattern} onInput=${(e) => setPattern(e.target.value)} required
         />
       </label>`}
@@ -86,14 +86,14 @@ function FilterForm({ calendars, folders, initial, inline, busy, onSave, onCance
       <label class="bc-field grow">
         <span>Keep events that match</span>
         <textarea
-          placeholder="e.g. dance and live music events at small venues"
+          placeholder="e.g. outdoor events and family activities"
           value=${prompt} onInput=${(e) => setPrompt(e.target.value)} required rows="2"
         ></textarea>
       </label>
       <label class="bc-field grow">
         <span>Exclude (optional)</span>
         <textarea
-          placeholder="e.g. no DJ nights or cover bands"
+          placeholder="e.g. no online-only sessions"
           value=${negativePrompt} onInput=${(e) => setNegativePrompt(e.target.value)} rows="2"
         ></textarea>
       </label>

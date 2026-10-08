@@ -603,9 +603,9 @@ final class GoogleSync
 
     /**
      * EXDATE line values to UTC db strings. Forms seen from Google:
-     *   EXDATE;TZID=Europe/London:20260921T150000,20260928T150000
-     *   EXDATE;VALUE=DATE:20260921
-     *   EXDATE:20260921T140000Z
+     *   EXDATE;TZID=America/Chicago:20260310T090000,20260317T090000
+     *   EXDATE;VALUE=DATE:20260310
+     *   EXDATE:20260310T140000Z
      *
      * @return list<string>
      */

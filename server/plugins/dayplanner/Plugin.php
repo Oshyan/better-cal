@@ -60,8 +60,8 @@ return new class implements PluginInterface {
         // user's own zone, DST and all. A bare local time would leave the
         // host guessing a zone for an instant the user will read as "3 PM".
         // The USER's zone, not the server's. Building "9 AM Saturday" in the
-        // host machine's zone put the whole plan at midnight for a Pacific
-        // user running on a Berlin box.
+        // host machine's zone put the whole plan at midnight for a user
+        // whose zone differs from the server's.
         $zone = $host->timezone();
         $first = (new DateTimeImmutable('now', $zone))->setTime(0, 0)->modify('+1 day');
         $last = $first->modify('+' . ($horizon - 1) . ' days');
@@ -75,7 +75,7 @@ return new class implements PluginInterface {
                 $ignore[$cal['id']] = true;
                 continue;
             }
-            // Recurring all-day chores ("change sheets", "card payment due")
+            // Recurring all-day chores ("water plants", "bill due")
             // are not what "this day is taken" means, but they are all-day
             // events and there is no way to tell them apart from a trip. So
             // the user marks those calendars here; without an opt-out one
@@ -356,7 +356,7 @@ return new class implements PluginInterface {
         return $out;
     }
 
-    /** "Marcus is" / "Marcus and Lin are"; long lists get counted, not printed. */
+    /** "Alex is" / "Alex and Sam are"; long lists get counted, not printed. */
     private function phrase(array $names): string
     {
         $shown = array_slice($names, 0, 3);

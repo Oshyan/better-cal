@@ -199,7 +199,7 @@ const TOOLS = [
   },
   {
     name: 'quick_add',
-    description: 'Natural-language event creation ("Dinner with Sam next thursday 7pm at Zuni"). Returns a parsed draft; set commit=true to actually create the event.',
+    description: 'Natural-language event creation ("Dinner with Sam next thursday 7pm at Luna Trattoria"). Returns a parsed draft; set commit=true to actually create the event.',
     inputSchema: {
       type: 'object',
       properties: {

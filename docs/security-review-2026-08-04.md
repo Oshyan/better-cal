@@ -470,9 +470,9 @@ Refusals are recorded twice, for two different readers: `mail_ingest` keeps the 
 
 ### Residual risk: no inbound authentication verdict is available
 
-The review's fix note says to match "authenticated mail identity where available". On this deployment it is not available. The ingest mailbox is MXroute, and inspection of real delivered messages found **no `Authentication-Results` header** on any of them — only `X-Spam-Status`, plus an `ARC-Authentication-Results` that Google stamped before forwarding, reading `arc=none`. So there is no inbound verdict to consult and a check for one would be dead code here.
+The review's fix note says to match "authenticated mail identity where available". On the reference deployment it is not available. The ingest mailbox's provider adds no `Authentication-Results` header: inspection of real delivered messages found **none** on any of them, only a spam-score header and an upstream `ARC-Authentication-Results` reading `arc=none`. So there is no inbound verdict to consult and a check for one would be dead code there.
 
-That is deliberate on MXroute's part, not an oversight: they [do not act on ARC](https://blog.mxroute.com/arc-the-trust-me-bro-of-email-authentication), on the grounds that trust is not transitive and there is no universal trust network that would say which forwarders deserve to be believed. Their argument applies to us too. A stamped verdict is an intermediary's assertion, so consuming one would move the trust boundary rather than close it. Any real fix has to verify signatures against the message we actually hold.
+Some mail providers deliberately do not act on ARC, on the grounds that trust is not transitive and there is no universal trust network that would say which forwarders deserve to be believed. That argument applies to us too. A stamped verdict is an intermediary's assertion, so consuming one would move the trust boundary rather than close it. Any real fix has to verify signatures against the message we actually hold.
 
 What this means concretely: the bar rises from "know the UID" to "know the UID **and** know or spoof the organizer's address". Both the `From` header and the body `ORGANIZER` are attacker-controlled under plain SMTP, so a determined attacker who learns the organizer address can still pass the check. That is a real limit, not a solved problem.
 

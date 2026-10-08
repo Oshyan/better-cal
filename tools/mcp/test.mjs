@@ -173,7 +173,7 @@ async function main() {
       title: 'Test dinner',
       start: '2026-08-01T19:00:00-07:00',
       end: '2026-08-01T20:00:00-07:00',
-      location: 'Zuni',
+      location: 'Luna Trattoria',
     },
   });
   checkEq('create_event hit mock once', 1, received.length);
@@ -187,7 +187,7 @@ async function main() {
     title: 'Test dinner',
     start: '2026-08-01T19:00:00-07:00',
     end: '2026-08-01T20:00:00-07:00',
-    location: 'Zuni',
+    location: 'Luna Trattoria',
   }, reqSeen.body);
 
   // ---- create_event response mapping --------------------------------------

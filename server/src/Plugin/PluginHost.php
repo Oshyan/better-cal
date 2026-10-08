@@ -143,8 +143,8 @@ final class PluginHost
         // No stored setting (the client knows its zone from the browser and
         // never had to tell the server). The events themselves do know: take
         // the zone the user's own recent events are written in. Falling back
-        // to the server's zone instead would put a Bay Area user's "Saturday
-        // morning" in Berlin.
+        // to the server's zone instead would put a user's "Saturday morning"
+        // in whatever zone the server happens to run in.
         if ($tz === null) {
             // UTC is excluded from the vote: a Takeout import writes thousands
             // of rows as UTC, which means "unknown", not "this user lives in
@@ -613,8 +613,9 @@ final class PluginHost
      *
      * Pass biasLat/biasLng to disambiguate. Without a bias the provider ranks
      * globally, so a bare venue name lands wherever the best string match is —
-     * "Greens Restaurant Fort Mason" resolves to Toronto. Plugins that geocode
-     * user-typed place names should bias toward the region they mean.
+     * a restaurant named after its neighborhood can resolve to a same-named
+     * place on another continent. Plugins that geocode user-typed place names
+     * should bias toward the region they mean.
      */
     public function geocode(string $query, ?float $biasLat = null, ?float $biasLng = null): ?array
     {

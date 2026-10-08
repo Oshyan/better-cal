@@ -189,8 +189,8 @@ export function EditorDrawer() {
   const flashTimer = useRef(0);
 
   // A place the quick fill found opens the Location candidates (0.6.2):
-  // typed text alone lands wherever a later lookup guesses (The Pig's Ear in
-  // Dublin), so the choice is offered right away. Nothing is picked for you.
+  // typed text alone lands wherever a later lookup guesses (the Corner Bistro
+  // in another city), so the choice is offered right away. Nothing is picked for you.
   // While typing it only opens; on Enter or Fill the cursor moves there too.
   const [placeAsk, setPlaceAsk] = useState(null);
   const applyNlDraft = (d, fromEnter = false) => {
@@ -721,7 +721,7 @@ export function EditorDrawer() {
           <${Icon} name="quickadd" size=${15} />
           <input
             class="bc-nl-input"
-            placeholder=${phoneOpen ? 'Type it: Lunch with Ada Fri noon' : 'Type it naturally: Lunch with Ada Friday noon at Zuni'}
+            placeholder=${phoneOpen ? 'Type it: Lunch with Ada Fri noon' : 'Type it naturally: Lunch with Ada Friday noon at Luna Trattoria'}
             value=${nlText}
             onInput=${onNlInput}
             onKeyDown=${onNlKeyDown}

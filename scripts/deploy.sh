@@ -41,7 +41,9 @@ DEPLOY_COMMIT="$(git -C "${ROOT_DIR}" rev-parse HEAD)"
 DEPLOY_SNAPSHOT="$(mktemp -d /tmp/bc-deploy.XXXXXX)"
 git -C "${ROOT_DIR}" archive "${DEPLOY_COMMIT}" | tar -x -C "${DEPLOY_SNAPSHOT}"
 # Composer's libraries aren't in the commit; the sabre-backed tests need them.
-[ -d "${ROOT_DIR}/server/vendor" ] && ln -s "${ROOT_DIR}/server/vendor" "${DEPLOY_SNAPSHOT}/server/vendor"
+# Copied, not linked: Composer's autoloader maps the app's own classes relative
+# to the real vendor path, so a symlink would test the working tree's code.
+if [ -d "${ROOT_DIR}/server/vendor" ]; then cp -R "${ROOT_DIR}/server/vendor" "${DEPLOY_SNAPSHOT}/server/vendor"; fi
 echo "Deploying $(git -C "${ROOT_DIR}" log -1 --format='%h %s' "${DEPLOY_COMMIT}") (version $(cat "${DEPLOY_SNAPSHOT}/VERSION"))"
 UNCOMMITTED="$(git -C "${ROOT_DIR}" status --porcelain | wc -l | tr -d ' ')"
 if [ "${UNCOMMITTED}" != "0" ]; then

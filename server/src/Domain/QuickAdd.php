@@ -212,7 +212,7 @@ final class QuickAdd
      * - Past start with no explicit date in the text ("cocktails at 4pm"
      *   scheduled for two days ago): take the fallback's times, which always
      *   roll forward when no date was written.
-     * - Companion clause stripped from the title ("Cocktails with Virginia"
+     * - Companion clause stripped from the title ("Cocktails with Alex"
      *   -> "Cocktails"): the product rule is title = text minus
      *   date/time/location phrases only, so restore the fallback title.
      * - Location or people the fallback found but the LLM dropped: union
@@ -268,7 +268,7 @@ final class QuickAdd
             $merged['title'] = $fbTitle;
         } elseif (self::overStripped($llmTitle, $fbTitle)) {
             // The model cut words the text kept ("Lunch" from "Lunch at The
-            // Pig's Ear"): the deterministic title, which only drops dates
+            // Captain's Table"): the deterministic title, which only drops dates
             // and times, says what the event is called.
             $merged['title'] = $fbTitle;
         }

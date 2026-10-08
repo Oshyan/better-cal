@@ -78,7 +78,7 @@ return new class implements PluginInterface {
 - `calendarSettings(int $calendarId): array` — per-calendar values for your plugin.
 - `calendars(): array` — the user's calendars (`id`, `name`, `kind`, `visible`).
 - `http(): HttpClient` — `get($url)` / `getJson($url)`. Refuses private/loopback/link-local/metadata addresses (resolved before connect, pinned against DNS rebind), caps at 5 MB / 20 s / 3 redirects, and allows **60 requests per run** (each redirect hop spends one). Note that three requests at the permitted 20 s each already exceed the 60 s run budget, so the wall clock binds long before the request count does.
-- `geocode(string $query, ?float $biasLat = null, ?float $biasLng = null): ?array` — the host geocoder (cached). Returns `{lat, lng, display, kind}` — `kind` is the provider's own word for what it found (`city`, `town`, `state`, `country`, `restaurant`, …) or null if it did not say, and it is how you tell a region from a destination without geocoding again. Returns **null when the place is not found or the provider is unreachable** — the two are indistinguishable, so treat null as "no answer", not "no such place". Without a bias the provider ranks globally and a bare venue name lands wherever the best string match is: "Greens Restaurant Fort Mason" resolves to Toronto. A bias helps when the right place is *somewhere* in the provider's candidates, but it only reranks that list — it cannot conjure a venue the provider does not hold, and it will then pick the nearest wrong answer instead of the far one. Treat any geocode of a user-typed venue name as a guess: check the `display` string you get back before acting on the coordinates, and prefer a full street address as the query.
+- `geocode(string $query, ?float $biasLat = null, ?float $biasLng = null): ?array` — the host geocoder (cached). Returns `{lat, lng, display, kind}` — `kind` is the provider's own word for what it found (`city`, `town`, `state`, `country`, `restaurant`, …) or null if it did not say, and it is how you tell a region from a destination without geocoding again. Returns **null when the place is not found or the provider is unreachable** — the two are indistinguishable, so treat null as "no answer", not "no such place". Without a bias the provider ranks globally and a bare venue name lands wherever the best string match is: a restaurant named after a local landmark can resolve to a same-named place on another continent. A bias helps when the right place is *somewhere* in the provider's candidates, but it only reranks that list — it cannot conjure a venue the provider does not hold, and it will then pick the nearest wrong answer instead of the far one. Treat any geocode of a user-typed venue name as a guess: check the `display` string you get back before acting on the coordinates, and prefer a full street address as the query.
 
 **Do not build your own geocoder.** The host's already ranks same-named places by significance and consults a second provider when the first returns a small settlement, which is what stops "Lisbon" landing in Iowa; a plugin-local one starts from scratch and gives the user a second set of answers to reconcile. If it is getting something wrong, that is a host bug worth reporting rather than routing around.
 - `ensureCalendar(name, color): int` — find-or-create a calendar YOU own.
@@ -193,14 +193,14 @@ For anything that suggests a plan rather than performing it. Generating a propos
 ```php
 $host->propose([
     'sourceKey' => 'weekend-2026-09-05',   // stable: re-running REPLACES your own open proposal
-    'title' => 'A day in Point Reyes',
-    'summary' => 'Low tide at 1:40 PM, clear, Marcus is around.',
+    'title' => 'A day at the coast',
+    'summary' => 'Low tide at 1:40 PM, clear, Alex is around.',
     'rationaleHtml' => '<p>Why these times…</p>',   // sanitized by the host
     'plan' => [
-        'trip' => ['title' => 'Point Reyes day', 'start' => '2026-09-05', 'end' => '2026-09-06'],
+        'trip' => ['title' => 'Coast day', 'start' => '2026-09-05', 'end' => '2026-09-06'],
         'events' => [
             ['title' => 'Drive out', 'start' => '2026-09-05T09:00:00-07:00', 'end' => '2026-09-05T10:30:00-07:00'],
-            ['title' => 'Tidepools', 'start' => '2026-09-05T13:00:00-07:00', 'end' => '2026-09-05T15:00:00-07:00', 'location' => 'Point Reyes'],
+            ['title' => 'Tidepools', 'start' => '2026-09-05T13:00:00-07:00', 'end' => '2026-09-05T15:00:00-07:00', 'location' => 'Harbor Beach'],
         ],
     ],
 ]);

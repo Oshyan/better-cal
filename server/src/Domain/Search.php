@@ -25,7 +25,7 @@ final class Search
      * Tag and people names match too: events tagged with a name containing
      * the query, or linked to a person whose name contains it, are included.
      * A `#` prefix (e.g. "#work") searches tags only; an `@` prefix (e.g.
-     * "@virginia") searches people only. $excerpt trims descriptions for
+     * "@alex") searches people only. $excerpt trims descriptions for
      * list payloads; feed export passes false.
      *
      * $opts (0.7.3, #60): 'when' => 'all' | 'upcoming' | 'past', applied in

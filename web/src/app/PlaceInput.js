@@ -12,8 +12,8 @@
 // a dinner added during a trip searches near the trip); where this device is,
 // when the browser already knows (devicelocation.js, never prompting and
 // never waited for); the device's time zone
-// when it differs from the home zone (travelling: "The George" should find
-// the pub in London, not a bar in San Francisco); the home location setting;
+// when it differs from the home zone (travelling: "Corner Bistro" should find
+// the one in Lisbon, not one back home); the home location setting;
 // the given time zone. Zone centroids resolve server-side. Results beyond
 // 500 km of the bias are marked with their region so a match half a world
 // away is identifiable at a glance.

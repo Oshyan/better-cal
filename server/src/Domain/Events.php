@@ -1792,10 +1792,10 @@ final class Events
     }
 
     /**
-     * Measured cost of what this trims, one-month window, 725 occurrences,
-     * 793 bytes each before: `uid` 76 bytes/occurrence (9.6%); a null field
-     * costs its key plus `:null,` on every row it is absent from, and
-     * description alone is null on 98% of them.
+     * Measured cost of what this trims, one-month window of several hundred
+     * occurrences, roughly 800 bytes each before: `uid` was about a tenth of
+     * each occurrence; a null field costs its key plus `:null,` on every row
+     * it is absent from, and description alone is null on nearly all of them.
      *
      * @param array{tags:array<int,list<string>>,people:array<int,list<string>>,containers:array<int,list<array{eventId:int,title:string}>>} $links
      */

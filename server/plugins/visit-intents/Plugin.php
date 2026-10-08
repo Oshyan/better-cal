@@ -967,7 +967,7 @@ return new class implements PluginInterface {
             return '';
         }
         $last = end($parts);
-        // "San Francisco CA" / "Oakland, CA" → "San Francisco" / "Oakland"
+        // "Portland OR" / "Denver, CO" → "Portland" / "Denver"
         $last = trim(preg_replace('/\s+[A-Z]{2}$/', '', $last) ?? $last);
         if ($last === '' || preg_match('/^\d/', $last)) {
             return count($parts) > 1 ? trim($parts[count($parts) - 2]) : '';

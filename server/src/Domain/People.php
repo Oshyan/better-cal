@@ -317,7 +317,7 @@ final class People
      * Rename and/or set notes. Renaming onto an existing person's name merges
      * the two: links move to the survivor (duplicates collapse via the
      * composite primary key), the renamed row is deleted, and the survivor is
-     * returned — "Virginia" -> "Virginia Miller" should unify history, not
+     * returned — "Alex" -> "Alex Example" should unify history, not
      * error out.
      *
      * @param array{name?: mixed, notes?: mixed} $in

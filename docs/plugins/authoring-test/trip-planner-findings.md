@@ -1,6 +1,6 @@
 # Authoring friction log — `trip-planner` (agent B)
 
-Written as I go. Timestamps are local (US Pacific).
+Written as I go. Timestamps are local to the user's zone.
 
 ---
 
@@ -81,7 +81,7 @@ An author who trusts the field builds a URL with `latitude=991`. I now range-che
 **Fix:** Clamp/reject in the host, and until then say in the docs that `location` values are shape-checked but not range-checked.
 
 ### GOOD: `calendarSettings` enforcement and error messages
-**Reality:** `PATCH /plugins/:id/calendar-settings/11 {"travel":"Whatever"}` -> `400 {"travel":"must be one of Auto, Blocks travel, Soft conflict only, Ignore"}`, and an unknown calendar id -> `400 "Unknown calendar"`. Both exactly right. Also: `select` `options` are free-form strings, so human-readable option labels ("Soft conflict only") work as values - the docs' only example is `["F","C"]`, which made me unsure whether options had to be terse tokens.
+**Reality:** `PATCH /plugins/:id/calendar-settings/<calendarId> {"travel":"Whatever"}` -> `400 {"travel":"must be one of Auto, Blocks travel, Soft conflict only, Ignore"}`, and an unknown calendar id -> `400 "Unknown calendar"`. Both exactly right. Also: `select` `options` are free-form strings, so human-readable option labels ("Soft conflict only") work as values - the docs' only example is `["F","C"]`, which made me unsure whether options had to be terse tokens.
 
 ### `budgetRemaining()` unit and `logTail` length were both guesses
 **Needed:** To write a "stop when the budget runs low" loop, and to know how much I could log.
@@ -124,14 +124,14 @@ The `div`-yes/`h4`-no and `ol`-yes/`table`-no combination is not guessable. Neit
 
 ### GOOD: the timezone warning was worth its weight
 **Docs said:** "`timezone(): DateTimeZone` - **the user's** zone... `date_default_timezone_get()` is the server's zone and may be a continent away." And: all-day occurrences "come back as `YYYY-MM-DDT00:00:00+00:00`... Do **not** timezone-convert it; converting slides Saturday into Friday west of UTC."
-**Reality:** Both true and both load-bearing. My run logged `tz=America/Los_Angeles serverTz=Europe/Berlin`. And my band boundaries came out as `2026-11-02T08:00:00+00:00` for the window starting 2 Nov (PST, -08:00) while the previous band ended `2026-10-12T07:00:00+00:00` (PDT, -07:00) - correct across the DST change, first time, because I built every local midnight through `timezone()`. This is the single best part of the docs. Without those two paragraphs I would have shipped an off-by-one-day bug.
+**Reality:** Both true and both load-bearing. My run logged `tz=<user zone> serverTz=<server zone>`, two zones several hours apart. And my band boundaries came out at the user's local midnight on both sides of the autumn clock change, their UTC hour shifting by one - correct across the DST change, first time, because I built every local midnight through `timezone()`. This is the single best part of the docs. Without those two paragraphs I would have shipped an off-by-one-day bug.
 
 ## 2026-08-07T11:05-07:00 — contract probes
 
 ### SEVERE: a date-only `start` in a proposal's `plan.events` silently becomes a TIMED midnight-to-midnight event
 **Needed:** All-day travel-day markers in the proposed plan. I have no idea what time the flight is, so inventing "09:00-17:00" is a lie the user has to correct.
 **Docs said:** For `syncEvents`: "`start`/`end` are `YYYY-MM-DD` for all-day (end exclusive) or ISO instants." For proposals: "each needs a `title` and a `start`" and the example shows ISO instants. Nothing about whether the `syncEvents` date convention carries over.
-**Reality:** `propose()` **accepts** `{'title':..., 'start':'2027-02-23', 'end':'2027-02-24'}` without complaint. On Accept it materialises as: `10293 | 2027-02-23T00:00:00-08:00 -> 2027-02-24T00:00:00-08:00 | allDay false`
+**Reality:** `propose()` **accepts** `{'title':..., 'start':'2027-02-23', 'end':'2027-02-24'}` without complaint. On Accept it materialises as: `<id> | 2027-02-23T00:00:00-08:00 -> 2027-02-24T00:00:00-08:00 | allDay false`
 - a 24-hour *timed* event. The same string means "all-day" in `syncEvents` and "midnight to midnight, timed" in `plan.events`. There appears to be **no way to propose an all-day event** except via the single `trip` key.
 **Cost:** A deliberate probe deploy plus an accept/undo cycle. Without probing I would have shipped either wrong-looking 24h blocks or (as I did) invented clock times with a "these are placeholders" apology in the description.
 **Fix:** State it: "`plan.events` are always timed; a date-only `start` is interpreted as local midnight. Only `trip` is created all-day." And ideally add an `allDay` flag to plan events.
@@ -187,7 +187,7 @@ The one wrinkle: a bracketed IPv6 literal fails at DNS rather than at the addres
 ### Uninstall purges proposals (undocumented) but leaves `calendarSettings` behind (also undocumented)
 **Docs said:** "Uninstall always purges your ranges, warnings, runs, and KV."
 **Reality:** `POST /uninstall` -> `{"ok":true,"purged":{"events":0,"calendars":0,"ranges":2,"warnings":14,"kv":7}}`. Two things the list does not cover:
-- **Proposals are purged too** - `GET /proposals?status=all` went from 10 trip-planner rows to zero - but they are not in the `purged` breakdown, so the receipt under-reports what was destroyed.
+- **Proposals are purged too** - `GET /proposals?status=all` went from a handful of trip-planner rows to zero - but they are not in the `purged` breakdown, so the receipt under-reports what was destroyed.
 - **Per-calendar settings survive.** After uninstalling, `GET /calendars` still shows `"pluginSettings": {"trip-planner": {"travel": "Ignore"}}` on two calendars, while plugin-scope settings were reset to manifest defaults. So half my configuration is orphaned on the calendars forever.
 **Fix:** Add proposals to both the sentence and the `purged` breakdown, and say explicitly that `calendarSettings` are kept (or purge them).
 
@@ -217,7 +217,7 @@ The one wrinkle: a bracketed IPv6 literal fails at DNS rather than at the addres
 ### `calendars()` returns less than the calendar API does, and the missing field is the one I needed
 **Needed:** Sensible defaults for "does this calendar block travel?" - the whole point of the requested feature.
 **Docs said:** "`calendars(): array` - the user's calendars (`id`, `name`, `kind`, `visible`)."
-**Reality:** Accurate, and `kind` carries real signal (`local` / `subscribed` / `plugin`), which let me default plugin calendars to ignored and subscribed feeds to non-blocking. But the REST API's calendar objects also carry `folderIds`, `tagNames`, `sourceUrl` and `position` - and a plugin sees none of them. On this instance the user has a calendar of speculative trips and a task-app calendar with **2741 chore occurrences in 120 days**; both are `kind: local`, indistinguishable from their everyday personal calendar. I had to write an auto-quiet heuristic ("this calendar has something on 118 of 120 days, so it is not telling me anything") to stop the task calendar destroying every score.
+**Reality:** Accurate, and `kind` carries real signal (`local` / `subscribed` / `plugin`), which let me default plugin calendars to ignored and subscribed feeds to non-blocking. But the REST API's calendar objects also carry `folderIds`, `tagNames`, `sourceUrl` and `position` - and a plugin sees none of them. On this instance the user has a calendar of speculative trips and a task-app calendar with **thousands of chore occurrences over a few months**; both are `kind: local`, indistinguishable from their everyday personal calendar. I had to write an auto-quiet heuristic ("this calendar has something on nearly every day, so it is not telling me anything") to stop the task calendar destroying every score.
 **Cost:** Real design work, and a wrong first run. The docs *do* warn about this ("recurring all-day chores are all-day events too, and they are not what 'this day is taken' means") - that warning was accurate and valuable, it just does not come with the data you would need to act on it automatically.
 **Fix:** Either expose `tagNames`/`folderIds` on `calendars()`, or say plainly that `kind` is the only signal and every other distinction must come from `calendarSettings`.
 
@@ -237,7 +237,7 @@ The one wrinkle: a bracketed IPv6 literal fails at DNS rather than at the addres
 
 ### GOOD: the parts that were right, and that I leaned on
 - **The two timezone paragraphs.** Best-written thing in the doc. Both warnings were real and both would have cost me a day.
-- **"The window includes plugin-owned calendars."** Named the exact failure mode (Weather's one-all-day-event-per-day) *and* prescribed the fix (`kind === 'plugin'`, plus offer a toggle). I implemented it straight from that paragraph and it was correct on first run: Weather contributed 6 occurrences and Tides 57 to my window, both correctly ignored.
+- **"The window includes plugin-owned calendars."** Named the exact failure mode (Weather's one-all-day-event-per-day) *and* prescribed the fix (`kind === 'plugin'`, plus offer a toggle). I implemented it straight from that paragraph and it was correct on first run: Weather and Tides contributed a few dozen occurrences to my window, all correctly ignored.
 - **"Host coercions you will not be told about."** A table of silent clamps, in the docs, before I hit any of them. That is exactly the right instinct; the section just needs to be twice as long (the HTML allowlist and the plan-event date rule belong in it).
 - **The proposals model itself.** "Generating a proposal never touches the calendar - only the user pressing Accept does, and acceptance materializes the whole plan atomically under one run id." All true. Accept created a trip container plus two linked events; undo removed all five mutations in one call. This is the single best-designed capability in the platform and it is exactly what the brief's "nothing reaches my calendar without me saying yes" needs.
 - **`llmJson()` returning null indistinguishably**, stated up front. It meant I designed the deterministic fallback first rather than bolting it on - which turned out to matter, because the model is not configured on this instance and **every run of this plugin has been in fallback mode**. The plugin has never once needed the model to produce its output.
@@ -252,13 +252,13 @@ The one wrinkle: a bracketed IPv6 literal fails at DNS rather than at the addres
 **Fix:** Name the icon set, or the allowed strings, and reject unknown ones at manifest parse so `errors[]` catches them.
 
 ### AUTHOR TRAP: `date('Y')` inside a plugin is the SERVER's year
-**Reality:** My own bug, caught by an extreme-settings run. I formatted a date span as "Tue 27 Oct – Sun 24 Jan" with no year, because the check was `substr($start,0,4) !== date('Y')` - and `date('Y')` is Europe/Berlin's year, not the user's. Around New Year, west of UTC, those differ. The docs warn about this for `date_default_timezone_get()` but the warning is attached to *timezone objects*; the same trap is sitting in every bare `date()`/`mktime()`/`strtotime()` call an author writes.
+**Reality:** My own bug, caught by an extreme-settings run. I formatted a date span as "Tue 27 Oct – Sun 24 Jan" with no year, because the check was `substr($start,0,4) !== date('Y')` - and `date('Y')` is the server's year, not the user's. Around New Year, west of UTC, those differ. The docs warn about this for `date_default_timezone_get()` but the warning is attached to *timezone objects*; the same trap is sitting in every bare `date()`/`mktime()`/`strtotime()` call an author writes.
 **Fix:** Widen the existing warning: "`timezone()` is the user's zone. Every bare `date()`, `mktime()` and `strtotime()` in your plugin runs in the server's zone - derive dates from `timezone()` instead."
 
 ### Not verifiable headlessly (stated as a result, per HOWTO)
 Everything below is written and shipped, but I have no way to confirm how it looks:
 - whether `decoration.icon: "plane"` renders as anything
-- whether a **multi-day** overlay band draws sensibly - the only other range-emitting plugin (`tides`) makes 3-hour intraday bands, so mine at 21 days is an untested aspect ratio. My bands are correct as data: adjacent, non-overlapping, DST-correct (`…-10-12T00:00:00-07:00` and `…-11-02T00:00:00-08:00`).
+- whether a **multi-day** overlay band draws sensibly - the only other range-emitting plugin (`tides`) makes 3-hour intraday bands, so mine at 21 days is an untested aspect ratio. My bands are correct as data: adjacent, non-overlapping, DST-correct (local midnight on both sides of the clock change).
 - whether `warnings[].fix` is displayed at all, and where
 - whether the `select` calendar setting renders its four human-readable options legibly in the calendar gear panel
 - whether `notify()` reached anything - it returned without throwing, and the docs say it is "silent if no channel is configured", so success and no-op are indistinguishable to me. Same problem as `llmJson()`, but without the compensating log line.

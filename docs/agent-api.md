@@ -55,7 +55,7 @@ curl -s "$BC/events" -X POST -H "$AUTH" -H 'Content-Type: application/json' -d '
   "title": "Dinner with Sam",
   "start": "2026-08-06T19:00:00-07:00",
   "end": "2026-08-06T21:00:00-07:00",
-  "location": "Zuni"
+  "location": "Luna Trattoria"
 }'
 ```
 

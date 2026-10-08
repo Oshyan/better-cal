@@ -247,7 +247,7 @@ final class PlaceSearch
             $params['lat'] = $biasLat;
             $params['lon'] = $biasLng;
         }
-        // "Panda and Sons" is "Panda & Sons" in OpenStreetMap, and Photon
+        // "Smith and Sons" is "Smith & Sons" in OpenStreetMap, and Photon
         // matches neither spelling from the other. Both are asked at once;
         // the other spelling's matches go first, since they are the ones the
         // typed spelling missed, and duplicates fold in mapFeatures.

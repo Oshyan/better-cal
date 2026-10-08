@@ -279,7 +279,7 @@ const TOOLS = [
   },
   {
     name: 'list_review',
-    description: 'The Review queue: everything waiting on the owner\'s decision. Kinds include held invitation changes, unanswered invitations, plugin proposals, possible duplicates, and paused calendar subscriptions. Each item has a key and the actions available to this caller; subscription ownership decisions require a browser session.',
+    description: 'The Review queue: everything waiting on the owner\'s decision. Kinds include first-time emailed invitations not yet added, held invitation changes, unanswered invitations, plugin proposals, possible duplicates, and paused calendar subscriptions. Each item has a key and the actions available to this caller; subscription ownership decisions require a browser session.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -290,7 +290,7 @@ const TOOLS = [
   },
   {
     name: 'decide_review',
-    description: 'Act on one Review item: pass its key and one of ITS action names, both exactly as list_review returned them (e.g. accept / dismiss for invite_change and proposal; accepted / tentative / declined for rsvp). Accepting an invite_change applies the organizer\'s change to the calendar; dismissing keeps the calendar as it is. Decisions about the owner\'s calendar should reflect what the owner asked for.',
+    description: 'Act on one Review item: pass its key and one of ITS action names, both exactly as list_review returned them (e.g. accept / dismiss for invite_new, invite_change and proposal; accepted / tentative / declined for rsvp). Accepting invite_new adds it without replying; accepting invite_change applies the organizer\'s change. Dismissing leaves the calendar unchanged. Decisions about the owner\'s calendar should reflect what the owner asked for.',
     inputSchema: {
       type: 'object',
       properties: {

@@ -577,9 +577,11 @@ final class MailIngest
      * sending mail to the ingest address, and the owner would see no trace: a
      * cancelled meeting looks the same as one that was never accepted.
      *
-     * So the organizer recorded when the invitation was FIRST accepted becomes
-     * the trusted identity for that UID, and later REQUEST/CANCEL messages must
-     * match it. Two things are compared, and either satisfies the check, since
+     * So the organizer recorded after an explicit owner decision becomes the
+     * trusted identity for that UID, and later REQUEST/CANCEL messages must
+     * match it. Legacy mail invitations that predate that marker may reach
+     * Review, but can never mutate the event until the owner accepts. Two
+     * things are compared, and either satisfies the check, since
      * mailing lists and calendaring services legitimately send on an
      * organizer's behalf:
      *
@@ -591,12 +593,23 @@ final class MailIngest
      */
     public static function imipMayMutate(?array $stored, array $incoming, string $fromAddr, string $eventStatus = 'confirmed'): array
     {
+        if (is_array($stored) && ($stored['via'] ?? 'mail') === 'google') {
+            return [false, 'invitation is owned by Google'];
+        }
         $trusted = self::addrKey($stored['organizer']['email'] ?? null);
         // No organizer was ever recorded (an event created locally, or by an
         // older ingest). Nothing to authenticate against, so treat the UID as
         // unowned rather than inventing trust for it.
         if ($trusted === '') {
             return [false, 'no organizer bound to this event'];
+        }
+
+        // Before Phase 11, a first-arriving REQUEST created the event and chose
+        // this anchor without owner involvement. Do not preserve that vulnerable
+        // first-arrival trust decision. Such mail may only become a held Review
+        // candidate; acceptance below establishes the explicit owner marker.
+        if (!self::organizerTrustEstablished($stored)) {
+            return [true, ''];
         }
 
         $claimed = self::addrKey($incoming['organizer']['email'] ?? null);
@@ -627,6 +640,25 @@ final class MailIngest
         return [true, ''];
     }
 
+    /** Has the owner explicitly approved this mail invitation's organizer? */
+    public static function organizerTrustEstablished(?array $invite): bool
+    {
+        if (!is_array($invite)) {
+            return false;
+        }
+        // Google supplied this identity over its authenticated API. A later
+        // email with the same UID must not turn it into a legacy-unbound item.
+        if (($invite['via'] ?? 'mail') === 'google') {
+            return true;
+        }
+        if (($invite['organizerTrust'] ?? '') === 'owner') {
+            return true;
+        }
+        // An RSVP sent from Better-Cal is also an explicit owner decision and
+        // safely upgrades a pre-marker invitation without another prompt.
+        return in_array((string) ($invite['myPartstat'] ?? ''), ['ACCEPTED', 'TENTATIVE', 'DECLINED'], true);
+    }
+
     /** @return array{0:string,1:?int,2?:string}|null [outcome, eventId, reason] */
     private function applyImipEvent(int $userId, string $method, array $ev, string $tz, array $msg): ?array
     {
@@ -639,6 +671,7 @@ final class MailIngest
             'SELECT * FROM events WHERE user_id = ? AND uid = ? AND deleted_at IS NULL AND recurrence_parent_id IS NULL',
             [$userId, $uid]
         );
+        $storedInvite = null;
 
         // Anything that would MUTATE an event the owner already has must prove
         // it comes from that event's organizer. Creating a new event from an
@@ -693,7 +726,16 @@ final class MailIngest
             if ($existing === null) {
                 return ['skipped', null];
             }
-            $held = $this->review->holdInviteChange($userId, $existing, $uid, 'CANCEL', [], $ev['invite'] ?? null, $fromAddr);
+            $held = $this->review->holdInviteChange(
+                $userId,
+                $existing,
+                $uid,
+                'CANCEL',
+                [],
+                $ev['invite'] ?? null,
+                $fromAddr,
+                self::organizerTrustEstablished(is_array($storedInvite) ? $storedInvite : null),
+            );
             return [$held === null ? 'unchanged' : 'held', (int) $existing['id']];
         }
 
@@ -713,8 +755,35 @@ final class MailIngest
         ];
 
         if ($existing !== null) {
-            $held = $this->review->holdInviteChange($userId, $existing, $uid, 'REQUEST', $fields, $ev['invite'] ?? null, $fromAddr);
+            $held = $this->review->holdInviteChange(
+                $userId,
+                $existing,
+                $uid,
+                'REQUEST',
+                $fields,
+                $ev['invite'] ?? null,
+                $fromAddr,
+                self::organizerTrustEstablished(is_array($storedInvite) ? $storedInvite : null),
+            );
             return [$held === null ? 'unchanged' : 'held', (int) $existing['id']];
+        }
+
+        // A first-time iMIP REQUEST is an unauthenticated claim about both the
+        // meeting and its organizer. Reserve the ordinary mail-event admission,
+        // but create only a Review candidate. PUBLISH confirmations retain the
+        // existing direct-create booking behavior.
+        if ($method === 'REQUEST') {
+            $admitted = $this->admission->createInvitationCandidate(
+                $userId,
+                self::messageKey($msg),
+                $fromAddr,
+                fn(): int => $this->review->holdNewInvitation($userId, $uid, $fields, $ev['invite'] ?? null, $fromAddr)
+            );
+            if (!$admitted['allowed']) {
+                $limited = $this->limited($userId, $msg, 'imip', $admitted);
+                return [$limited['outcome'], null, $limited['error']];
+            }
+            return ['held', null];
         }
 
         $admitted = $this->admission->createEvent(
@@ -872,14 +941,20 @@ final class MailIngest
     /** Find-or-create the local "Invitations" calendar. */
     public function inviteCalendarId(int $userId): int
     {
-        $id = $this->db->scalar(
+        return self::ensureInviteCalendar($this->db, $userId);
+    }
+
+    /** Find-or-create the invitation calendar for owner-approved Review items. */
+    public static function ensureInviteCalendar(Db $db, int $userId): int
+    {
+        $id = $db->scalar(
             "SELECT id FROM calendars WHERE user_id = ? AND kind = 'local' AND name = ?",
             [$userId, self::INVITE_CALENDAR]
         );
         if ($id !== null) {
             return (int) $id;
         }
-        return $this->db->insert('calendars', [
+        return $db->insert('calendars', [
             'user_id' => $userId,
             'name' => self::INVITE_CALENDAR,
             'kind' => 'local',

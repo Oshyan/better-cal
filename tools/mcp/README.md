@@ -63,8 +63,8 @@ Every call's arguments are validated against the tool's schema before any reques
 | `delete_event` | `id`, `scope?`, `instanceStart?` | Delete an event / instance(s) |
 | `set_attendance` | `id`, `attendance` | none / interested / going / hidden |
 | `list_calendars` | — | Calendars, folders, tags |
-| `list_review` | `status?` | The Review queue: held invitation changes, unanswered invitations, plugin proposals, each with its actions |
-| `decide_review` | `key`, `action` | Run one of an item's own actions (accept / dismiss, or accepted / tentative / declined for an invitation) |
+| `list_review` | `status?` | The Review queue: first-time emailed invitations, held changes, unanswered invitations, plugin proposals, each with its actions |
+| `decide_review` | `key`, `action` | Run one of an item's own actions; adding a first-time invitation does not send an RSVP |
 | `undo` | — | Revert the latest mutation |
 
 Datetimes are ISO8601 with offset (`2026-08-01T19:00:00-07:00`). `id` is the numeric `eventId` from an occurrence; `instanceStart` is that occurrence's `start` value.

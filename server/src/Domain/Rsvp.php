@@ -231,6 +231,7 @@ final class Rsvp
                 : ['sent' => false, 'reason' => 'send_failed', 'message' => $error];
         }
         $invite['myPartstat'] = $partstat;
+        $invite['organizerTrust'] = 'owner';
         $invite['reply'] = ['partstat' => $partstat, 'sent' => $outcome['sent'], 'reason' => $outcome['reason'], 'message' => $outcome['message'], 'at' => Time::iso(Time::nowUtc())];
         $this->db->run('UPDATE events SET invite_json = ? WHERE id = ?', [json_encode($invite), (int) $row['id']]);
         return $outcome;

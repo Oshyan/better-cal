@@ -76,6 +76,17 @@ This phase was released and deployed in 0.9.29. It has no database migration. Th
 | F1 | One Google event poll, including a stale-token retry, shares cumulative event, memory, response-byte, page and elapsed-time bounds; a controlled refusal keeps the prior snapshot and sync token | Passed | [ ] |
 | F62 | Calendar-list pagination uses one HTTP client and one cumulative item, byte, page, time and token-progress budget | Passed | [ ] |
 
+## Phase 11 — emailed invitation trust and pending revision order
+
+This phase is implemented locally and awaiting release. It requires no database
+migration. First-time emailed invitations now require an owner decision before
+event creation; ordinary booking extraction remains automatic.
+
+| Scan finding | Remediation | Local automated verification | Live/deployed verification |
+|---|---|---:|---:|
+| F10 | An unknown-UID iMIP REQUEST becomes a Review candidate under rolling admission and a 100-open-decision hard cap; only **Add to calendar** creates the event and establishes the organizer anchor | Passed | [ ] |
+| F61 | Trusted existing-invitation revisions are ordered under an account lock; legacy-untrusted claims remain parallel until the owner chooses one; decision rechecks/mutation/closure are atomic | Passed | [ ] |
+
 ## Completed local evidence
 
 This section is the technical record for reviewers; it is not a manual to-do list for the owner.
@@ -116,6 +127,9 @@ This section is the technical record for reviewers; it is not a manual to-do lis
 - [x] Phase 10 local suites: server 2,051/0 under a 128 MiB memory limit; frontend smoke 653/0 in `America/Los_Angeles`, `UTC`, `Europe/Berlin`, `Asia/Kolkata` and `Pacific/Auckland`; frontend static 347/0; MCP 63/0; deploy-security 19/0; vendor manifest 10/10. All changed PHP files pass syntax checks and the working-tree diff passes whitespace validation.
 - [x] Phase 10 independent post-patch review found no concrete remaining F1 or F62 bypass after prompting fixes for cached large-description memory and the token-refresh deadline. The review itself made no live provider request.
 - [x] Phase 10 release `0.9.29` (`564699f`) was pushed, tagged, published and deployed. The bounded pre-deploy backup completed, Composer reported no known advisories, no migration was pending, production health and the server-side application smoke passed, and hashes for `VERSION`, the pagination budget and Google sync matched the committed release. GitHub CI completed successfully. The Google-specific practical exercise below remains intentionally unchecked.
+- [x] Phase 11 focused controls cover first-arrival hold-without-event, competing same-UID claims, owner-established organizer trust, no implicit RSVP, legacy-untrusted parallel candidates, exact replay coalescing, pending-sequence ordering after trust, stale displayed-diff refresh, double-decision refusal, Google ownership isolation, PUBLISH booking preservation, and a persistent 100-open-decision hard ceiling that does not block ordinary bookings.
+- [x] Phase 11 local suites: server 2,080/0 under a 128 MiB memory limit; frontend smoke 653/0 in `America/Los_Angeles`, `UTC`, `Europe/Berlin`, `Asia/Kolkata` and `Pacific/Auckland`; frontend static 349/0 across 103 modules; MCP 64/0. All changed PHP files pass syntax checks and the working-tree diff passes whitespace validation. No time-zone harness was required because this phase does not change repeat rules, time-zone handling, import or export.
+- [x] Phase 11 independent read-only post-patch review found no remaining source-backed F10/F61 bypass or adjacent regression after prompting fixes for legacy pending-sequence suppression, unbounded persistent invitation candidates, and acceptance of pre-patch Review rows without the new classification marker. A live MySQL concurrency exercise remains a deployment-layer check, not completed local evidence.
 
 ## Remaining practical checks
 
@@ -132,6 +146,10 @@ Use a disposable account or non-production installation for the checks that deli
 ### Google pagination and worker release (F1/F62)
 
 - [ ] After deployment, open Settings → Connections once and refresh one representative connected Google calendar. Confirm the complete calendar list appears and the calendar returns to a successful “last checked” state. There is no need to manufacture an oversized calendar or broken page-token cycle; those failure paths are covered by the automated controls above.
+
+### Emailed invitation review (F10/F61)
+
+- [ ] After deployment, use one disposable emailed `REQUEST`: confirm it appears in Review before any event exists, **Add to calendar** creates it without sending a reply, and the ordinary Accept / Maybe / Decline choice appears afterward. There is no need to manufacture forged UIDs, extreme sequences or acceptance races; those paths are covered by automated controls.
 
 ### Sign-out and API-key cleanup (M1/M5)
 

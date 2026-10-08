@@ -155,17 +155,23 @@ try {
                             $r = $ingest->ingestMessage($uid, $msg, $tz, $hereTz);
                             // A held change waits for a decision, and the
                             // owner is not looking at the queue: tell them. One
-                            // notification per meeting (tag), so an organizer
-                            // who edits three times does not buzz three times.
-                            if ($r['outcome'] === 'held' && $r['eventId'] !== null) {
+                            // notification tag per existing meeting; new
+                            // invitations share a queue tag so a burst replaces
+                            // the prior notice instead of buzzing repeatedly.
+                            if ($r['outcome'] === 'held') {
                                 try {
-                                    $heldTitle = (string) ($db->scalar('SELECT title FROM events WHERE id = ?', [(int) $r['eventId']]) ?? 'an invitation');
+                                    $isNewInvitation = $r['eventId'] === null;
+                                    $heldTitle = $isNewInvitation
+                                        ? 'an emailed invitation'
+                                        : (string) ($db->scalar('SELECT title FROM events WHERE id = ?', [(int) $r['eventId']]) ?? 'an invitation');
                                     (new \BetterCal\Infra\Notifier($db, $cfg))->send(
                                         $uid,
-                                        'An organizer changed "' . $heldTitle . '"',
-                                        'Nothing has changed on your calendar yet. Review it to accept or dismiss.',
+                                        $isNewInvitation ? 'New emailed invitation to review' : 'An organizer changed "' . $heldTitle . '"',
+                                        $isNewInvitation
+                                            ? 'It has not been added to your calendar. Review it to add or dismiss.'
+                                            : 'Nothing has changed on your calendar yet. Review it to accept or dismiss.',
                                         '/review',
-                                        'review-' . (int) $r['eventId']
+                                        $isNewInvitation ? 'review-new-invitation' : 'review-' . (int) $r['eventId']
                                     );
                                 } catch (\Throwable $e) {
                                     echo bc_ts() . ' mail_ingest notify failed: ' . $e->getMessage() . "\n";

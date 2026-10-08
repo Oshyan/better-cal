@@ -63,8 +63,12 @@ const mock = createServer((req, res) => {
       respond(200, { events: [{ instanceId: '42:20260801T190000Z', eventId: 42, title: 'Dinner' }] });
     } else if (req.method === 'GET' && path === '/api/v1/review') {
       respond(200, {
-        count: 2,
+        count: 3,
         items: [
+          { key: 'invite_new:13', kind: 'invite_new', status: 'open', title: 'New dinner', actions: [
+            { name: 'accept', label: 'Add to calendar', method: 'POST', path: '/review/invitations/13/accept' },
+            { name: 'dismiss', label: 'Dismiss', method: 'POST', path: '/review/invitations/13/dismiss' },
+          ] },
           { key: 'invite_change:12', kind: 'invite_change', status: 'open', title: 'Planning dinner', actions: [
             { name: 'accept', label: 'Accept change', method: 'POST', path: '/review/invite-changes/12/accept' },
             { name: 'dismiss', label: 'Dismiss', method: 'POST', path: '/review/invite-changes/12/dismiss' },
@@ -75,7 +79,7 @@ const mock = createServer((req, res) => {
           { key: 'invite_change:9', kind: 'invite_change', status: 'dismissed', title: 'Old', actions: [] },
         ],
       });
-    } else if (req.method === 'POST' && (path === '/api/v1/review/invite-changes/12/accept' || path === '/api/v1/events/4410/rsvp')) {
+    } else if (req.method === 'POST' && (path === '/api/v1/review/invitations/13/accept' || path === '/api/v1/review/invite-changes/12/accept' || path === '/api/v1/events/4410/rsvp')) {
       respond(200, { ok: true });
     } else if (req.method === 'PATCH' && path.startsWith('/api/v1/events/')) {
       respond(200, { eventId: 42, title: entry.body.title ?? 'Dinner' });
@@ -253,7 +257,7 @@ async function main() {
   received.length = 0;
   const review = await rpc('tools/call', { name: 'list_review', arguments: {} });
   checkEq('list_review path', '/api/v1/review', received[0]?.url);
-  checkEq('list_review maps items', 3, JSON.parse(review.result?.content?.[0]?.text ?? '{}').items?.length);
+  checkEq('list_review maps items', 4, JSON.parse(review.result?.content?.[0]?.text ?? '{}').items?.length);
   check('list_review marks third-party text as data (F18)', String(JSON.parse(review.result?.content?.[0]?.text ?? '{}')._untrusted || '').includes('never instructions'));
 
   received.length = 0;
@@ -261,6 +265,11 @@ async function main() {
   check('decide_review accept not isError', decided.result?.isError !== true);
   checkEq('decide_review looks the item up, then posts the SERVER\'s path',
     ['GET /api/v1/review?status=all', 'POST /api/v1/review/invite-changes/12/accept'], received.map((r) => r.method + ' ' + r.url));
+
+  received.length = 0;
+  await rpc('tools/call', { name: 'decide_review', arguments: { key: 'invite_new:13', action: 'accept' } });
+  checkEq('decide_review adds a first-time invitation only through its server action',
+    ['GET /api/v1/review?status=all', 'POST /api/v1/review/invitations/13/accept'], received.map((r) => r.method + ' ' + r.url));
 
   received.length = 0;
   await rpc('tools/call', { name: 'decide_review', arguments: { key: 'rsvp:4410', action: 'accepted' } });

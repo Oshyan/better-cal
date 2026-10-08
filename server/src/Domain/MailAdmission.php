@@ -36,9 +36,11 @@ final class MailAdmission
     }
 
     /**
-     * Reserve one event admission and create it in the same transaction. The
-     * users row serializes concurrent admissions for this account in MySQL.
-     * Nested Events transactions join this outer transaction (Db::tx).
+     * Reserve one new-event admission and create its first durable
+     * representation in the same transaction. That is normally the event; a
+     * first-time unauthenticated iMIP REQUEST is a Review candidate instead.
+     * The users row serializes concurrent admissions for this account in
+     * MySQL. Nested transactions join this outer transaction (Db::tx).
      *
      * @return array{allowed:bool,value:mixed,code:?string,message:?string,retryAt:?string}
      */
@@ -55,6 +57,43 @@ final class MailAdmission
             $decision = $this->eventDecision($userId, self::senderKey($from), $now);
             if (!$decision['allowed']) {
                 return $decision + ['value' => null];
+            }
+            $this->record($userId, self::KIND_EVENT, $messageKey, self::senderKey($from), $now);
+            return $decision + ['value' => $create()];
+        });
+    }
+
+    /**
+     * Reserve a new-event admission for a first-time invitation, while also
+     * enforcing the persistent open Review-candidate ceiling. Ordinary booking
+     * creation intentionally does not share this queue-specific brake.
+     *
+     * @return array{allowed:bool,value:mixed,code:?string,message:?string,retryAt:?string}
+     */
+    public function createInvitationCandidate(
+        int $userId,
+        string $messageKey,
+        string $from,
+        callable $create,
+        ?\DateTimeImmutable $now = null,
+    ): array {
+        $now ??= Time::nowUtc();
+        return $this->db->tx(function () use ($userId, $messageKey, $from, $create, $now): array {
+            $this->lockAccount($userId);
+            $decision = $this->eventDecision($userId, self::senderKey($from), $now);
+            if (!$decision['allowed']) {
+                return $decision + ['value' => null];
+            }
+            $pending = (int) $this->db->scalar(
+                "SELECT COUNT(*) FROM review_items WHERE user_id = ? AND status = 'open' AND kind IN (?, ?)",
+                [$userId, ReviewQueue::KIND_INVITE_NEW, ReviewQueue::KIND_INVITE_CHANGE]
+            );
+            if ($pending >= Limits::get('MAIL_PENDING_INVITATIONS')) {
+                return self::denied(
+                    'event_pending',
+                    'New emailed invitations paused because Review already holds the maximum number of invitation decisions. Dismiss or decide some of them before more can be added.',
+                    null,
+                ) + ['value' => null];
             }
             $this->record($userId, self::KIND_EVENT, $messageKey, self::senderKey($from), $now);
             return $decision + ['value' => $create()];

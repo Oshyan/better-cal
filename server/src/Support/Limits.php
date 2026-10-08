@@ -74,6 +74,10 @@ final class Limits
         'MAIL_EVENTS_PER_DAY' => 100,
         'MAIL_EVENTS_PER_SENDER_DAY' => 25,
         'MAIL_ACTIVE_EVENTS' => 500,
+        // Open first-invitation and legacy-untrusted change candidates. Kept
+        // below Review's 200-row read bound so public mail cannot bury every
+        // genuine candidate behind an indefinitely growing queue.
+        'MAIL_PENDING_INVITATIONS' => 100,
         'MAIL_LLM_PER_HOUR' => 20,
         'MAIL_LLM_PER_DAY' => 50,
         'MAIL_LLM_PER_SENDER_DAY' => 20,
@@ -118,6 +122,7 @@ final class Limits
         'MAIL_EVENTS_PER_DAY' => 500,
         'MAIL_EVENTS_PER_SENDER_DAY' => 100,
         'MAIL_ACTIVE_EVENTS' => 2000,
+        'MAIL_PENDING_INVITATIONS' => 100,
         'MAIL_LLM_PER_HOUR' => 100,
         'MAIL_LLM_PER_DAY' => 250,
         'MAIL_LLM_PER_SENDER_DAY' => 100,

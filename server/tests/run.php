@@ -909,7 +909,7 @@ check('isNew: unknown via is never new', !Events::isNewFor('mystery', $freshN, $
 // mail; the organizer bound when the invite was first accepted is what later
 // REQUEST/CANCEL messages must match, or anyone who learns a UID can cancel or
 // rewrite the owner's meeting.
-$bound = ['organizer' => ['email' => 'alice@example.com'], 'sequence' => 2];
+$bound = ['organizer' => ['email' => 'alice@example.com'], 'sequence' => 2, 'organizerTrust' => 'owner'];
 $may = static fn(?array $stored, array $in, string $from) => MailIngest::imipMayMutate($stored, $in, $from);
 
 check('imip same organizer may update', $may($bound, ['organizer' => ['email' => 'alice@example.com'], 'sequence' => 3], 'mailer@corp.example')[0]);
@@ -926,6 +926,18 @@ check('imip equal sequence allowed', $may($bound, ['organizer' => ['email' => 'a
 // rather than letting unauthenticated mail take ownership of it (BC-08).
 checkEq('imip unbound local uid refused', 'no organizer bound to this event', $may(null, ['organizer' => ['email' => 'alice@example.com'], 'sequence' => 1], 'alice@example.com')[1]);
 checkEq('imip empty stored organizer refused', 'no organizer bound to this event', $may(['organizer' => null, 'sequence' => 0], ['organizer' => ['email' => 'x@y.test']], 'x@y.test')[1]);
+
+// Events created before Phase 11 were bound by whichever email arrived first,
+// without an owner decision. That legacy anchor may propose a held Review item,
+// but does not get to suppress a genuine lower-sequence/different-organizer
+// candidate. An explicit old RSVP and Google API identity are already trusted.
+$legacy = ['organizer' => ['email' => 'first-arrival@example.test'], 'sequence' => 99, 'myPartstat' => 'NEEDS-ACTION'];
+check('imip legacy first-arrival organizer is not owner-trusted', !MailIngest::organizerTrustEstablished($legacy));
+check('imip legacy different organizer may reach Review', $may($legacy, ['organizer' => ['email' => 'real@example.test'], 'sequence' => 1], 'real@example.test')[0]);
+check('imip legacy explicit RSVP establishes trust', MailIngest::organizerTrustEstablished(['myPartstat' => 'ACCEPTED'] + $legacy));
+check('imip Google organizer is provider-trusted', MailIngest::organizerTrustEstablished(['via' => 'google', 'organizer' => ['email' => 'g@example.test']]));
+checkEq('imip mail cannot claim a same-UID Google invitation', 'invitation is owned by Google',
+    $may(['via' => 'google', 'organizer' => ['email' => 'g@example.test']], ['organizer' => ['email' => 'g@example.test'], 'sequence' => 1], 'g@example.test')[1]);
 
 // BC-09: a cancellation ends its sequence number. A REQUEST carrying the same
 // number was written before the cancel and must not rewrite the cancelled event;
@@ -980,6 +992,10 @@ check('imip live event: equal sequence still allowed', $mayWhen('confirmed', 2)[
     checkEq('review hold: a no-op message creates no item', null, $queue->holdInviteChange(1, $stored, 'uid-1', 'REQUEST', $same, $alice, 'alice@example.com'));
     $first = $queue->holdInviteChange(1, $stored, 'uid-1', 'REQUEST', ['location' => 'Nopa'] + $same, $alice, 'alice@example.com');
     check('review hold: a real change is held', is_int($first) && $first > 0);
+    $stalePending = $queue->holdInviteChange(1, $stored, 'uid-1', 'REQUEST', ['location' => 'Old place'] + $same, ['sequence' => 2] + $alice, 'alice@example.com');
+    checkEq('review hold: a lower pending sequence cannot replace the newer one', [null, [$first]], [$stalePending, array_column($queue->listFor(1), 'id')]);
+    $equalPending = $queue->holdInviteChange(1, $stored, 'uid-1', 'REQUEST', ['location' => 'Equal-sequence correction'] + $same, $alice, 'alice@example.com');
+    checkEq('review hold: a legitimate equal-sequence correction remains supported', [$equalPending], array_column($queue->listFor(1), 'id'));
     $second = $queue->holdInviteChange(1, $stored, 'uid-1', 'CANCEL', [], ['sequence' => 4] + $alice, 'alice@example.com');
     $open = $queue->listFor(1);
     checkEq('review hold: a newer change for the same meeting replaces the open one', [$second], array_column($open, 'id'));
@@ -1006,6 +1022,44 @@ check('imip live event: equal sequence still allowed', $mayWhen('confirmed', 2)[
         checkEq('review: another user\'s item is a 404, not a 403 (no existence leak)', 404, $e->status);
     }
     checkEq('review list all: superseded items stay out, decided ones show', ['open', 'dismissed'], array_column($queue->listFor(1, false), 'status'));
+
+    $legacyHigh = $queue->holdInviteChange(2, $stored, 'legacy-uid', 'REQUEST', ['location' => 'Forged place'] + $same,
+        ['organizer' => ['email' => 'mallory@example.test'], 'sequence' => 999], 'mallory@example.test', false);
+    $legacyReal = $queue->holdInviteChange(2, $stored, 'legacy-uid', 'REQUEST', ['location' => 'Genuine place'] + $same,
+        ['organizer' => ['email' => 'alice@example.com'], 'sequence' => 4], 'alice@example.com', false);
+    checkEq('review legacy hold: untrusted high sequence cannot hide a competing lower candidate', [$legacyReal, $legacyHigh],
+        array_column($queue->listFor(2), 'id'));
+    checkEq('review legacy hold: exact replay coalesces without growing the queue', $legacyReal,
+        $queue->holdInviteChange(2, $stored, 'legacy-uid', 'REQUEST', ['location' => 'Genuine place'] + $same,
+            ['organizer' => ['email' => 'alice@example.com'], 'sequence' => 4], 'alice@example.com', false));
+    Limits::configure(['MAIL_PENDING_INVITATIONS' => PHP_INT_MAX]);
+    checkEq('review invitation cap: operator cannot raise the hard ceiling', 100, Limits::get('MAIL_PENDING_INVITATIONS'));
+    Limits::configure(['MAIL_PENDING_INVITATIONS' => 2]);
+    $overPendingCap = $queue->holdInviteChange(2, $stored, 'legacy-uid', 'REQUEST', ['location' => 'Third claim'] + $same,
+        ['organizer' => ['email' => 'third@example.com'], 'sequence' => 1000], 'third@example.com', false);
+    checkEq('review invitation cap: a distinct legacy claim cannot grow a full decision queue', [null, 2, 1], [
+        $overPendingCap,
+        $queue->openCount(2, BetterCal\Domain\ReviewQueue::KIND_INVITE_CHANGE),
+        $queue->openCount(2, BetterCal\Domain\ReviewQueue::KIND_MAIL_LIMIT),
+    ]);
+    Limits::reset();
+
+    $newFields = [
+        'title' => 'Owner-approved invitation', 'start' => '2026-10-20T18:00:00-07:00',
+        'end' => '2026-10-20T19:00:00-07:00', 'allDay' => false,
+        'tzid' => 'America/Los_Angeles', 'location' => 'Cafe', 'description' => null, 'rrule' => null,
+    ];
+    $newOne = $queue->holdNewInvitation(1, 'new-uid', $newFields, $alice, 'alice@example.com');
+    checkEq('review new invite: exact replay coalesces', $newOne,
+        $queue->holdNewInvitation(1, 'new-uid', $newFields, $alice, 'alice@example.com'));
+    $competing = $queue->holdNewInvitation(1, 'new-uid', ['title' => 'Forged variant'] + $newFields,
+        ['organizer' => ['email' => 'mallory@example.test'], 'sequence' => 999], 'mallory@example.test');
+    $newOpen = array_values(array_filter($queue->listFor(1), static fn(array $i): bool => $i['kind'] === BetterCal\Domain\ReviewQueue::KIND_INVITE_NEW));
+    checkEq('review new invite: untrusted high sequence cannot hide a competing first candidate', [$competing, $newOne], array_column($newOpen, 'id'));
+    checkEq('review new invite: holding creates no event link', [null, null], array_column($newOpen, 'eventId'));
+    checkEq('review new invite: dismiss means nothing was added', 'dismissed', $queue->dismiss(1, $newOne)['status']);
+    checkEq('review new invite: dismiss is recorded as owner decision', 'Dismissed emailed invitation "Owner-approved invitation" without adding it',
+        $rdb->scalar('SELECT summary FROM mutations WHERE entity_id = 0 ORDER BY id DESC LIMIT 1'));
     $mailNotice = $queue->holdMailLimit(1, 'llm_account_day', 'Automated email reading paused.', '2026-10-08T12:00:00Z', 'Ticket', 'sender@example.com');
     checkEq('review mail limit: repeated mail updates one bounded notice', $mailNotice,
         $queue->holdMailLimit(1, 'llm_account_day', 'Automated email reading paused.', '2026-10-08T12:00:00Z', 'Another ticket', 'other@example.com'));
@@ -1021,6 +1075,173 @@ check('imip live event: equal sequence still allowed', $mayWhen('confirmed', 2)[
     checkEq('review model limit: aggregate keeps calendar and bounded latest batch context', [2, 9, 10],
         [$modelItem['detail']['count'], $modelItem['detail']['calendarId'], $modelItem['detail']['latestBatchSize']]);
     checkEq('review model limit: dismissing it never needs an event', 'dismissed', $queue->dismissModelLimit(1, $modelNotice)['status']);
+}
+
+// Phase 11 trigger-path reproduction: an unknown-UID METHOD:REQUEST reaches
+// the real MailIngest sink, consumes the ordinary mail admission, and writes
+// only a Review candidate. A hostile first arrival therefore cannot create the
+// event or establish the organizer anchor; a genuine competing candidate with
+// the same sender-controlled UID remains visible.
+{
+    $idb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $idb->run('CREATE TABLE users (id INTEGER PRIMARY KEY)');
+    $idb->run('INSERT INTO users (id) VALUES (1)');
+    $idb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, uid TEXT, deleted_at TEXT, recurrence_parent_id INTEGER, created_via TEXT, end_utc TEXT, rrule TEXT)');
+    $idb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, message_key TEXT, sender_key TEXT, admitted_at TEXT, UNIQUE(user_id, kind, message_key))');
+    $idb->run("CREATE TABLE review_items (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, event_id INTEGER, source_key TEXT, title TEXT, summary TEXT, payload_json TEXT, status TEXT DEFAULT 'open', created_at TEXT DEFAULT CURRENT_TIMESTAMP, decided_at TEXT)");
+    $emptyEvents = (new ReflectionClass(Events::class))->newInstanceWithoutConstructor();
+    $ingest = new MailIngest($idb, $emptyEvents, null, new BetterCal\Domain\MailAdmission($idb));
+    $apply = (new ReflectionClass(MailIngest::class))->getMethod('applyImipEvent');
+    $imip = [
+        'uid' => 'shared-uid', 'title' => 'Forged first arrival',
+        'start_utc' => '2026-11-02 18:00:00', 'end_utc' => '2026-11-02 19:00:00',
+        'all_day' => false, 'tzid' => 'UTC', 'location' => null, 'description' => null, 'rrule' => null,
+        'invite' => ['organizer' => ['email' => 'mallory@example.test'], 'attendees' => [], 'sequence' => 999, 'myPartstat' => 'NEEDS-ACTION'],
+    ];
+    $firstArrival = $apply->invoke($ingest, 1, 'REQUEST', $imip, 'UTC', [
+        'messageId' => 'forged@example.test', 'subject' => 'Invitation', 'from' => 'mallory@example.test',
+    ]);
+    checkEq('imip first arrival: request is held with no event creation', [['held', null], 0, 1], [
+        $firstArrival,
+        (int) $idb->scalar('SELECT COUNT(*) FROM events'),
+        (int) $idb->scalar("SELECT COUNT(*) FROM review_items WHERE kind = 'invite_new' AND status = 'open'"),
+    ]);
+    $genuine = ['title' => 'Genuine invitation', 'invite' => ['organizer' => ['email' => 'real@example.test'], 'attendees' => [], 'sequence' => 1, 'myPartstat' => 'NEEDS-ACTION']] + $imip;
+    $secondArrival = $apply->invoke($ingest, 1, 'REQUEST', $genuine, 'UTC', [
+        'messageId' => 'genuine@example.test', 'subject' => 'Invitation', 'from' => 'real@example.test',
+    ]);
+    checkEq('imip first arrival: genuine same-UID candidate remains available despite lower sequence', [['held', null], 0, 2], [
+        $secondArrival,
+        (int) $idb->scalar('SELECT COUNT(*) FROM events'),
+        (int) $idb->scalar("SELECT COUNT(*) FROM review_items WHERE kind = 'invite_new' AND status = 'open'"),
+    ]);
+    checkEq('imip unknown cancellation: still creates neither event nor decision', ['skipped', null],
+        $apply->invoke($ingest, 1, 'CANCEL', $genuine, 'UTC', ['messageId' => 'cancel@example.test', 'subject' => 'Cancelled', 'from' => 'real@example.test']));
+}
+
+// The positive owner path is exercised with the real Events domain. Acceptance
+// creates exactly one event and the organizer trust marker in the same
+// transaction, closes competing first-arrival candidates, and deliberately
+// leaves RSVP at NEEDS-ACTION.
+{
+    $adb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $adb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, settings_json TEXT)');
+    $adb->run("INSERT INTO users VALUES (1, '{\"tz\":\"UTC\"}')");
+    $adb->run("CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, color TEXT, kind TEXT DEFAULT 'local', provider TEXT DEFAULT 'ics', visible INTEGER DEFAULT 1, subscription_authority TEXT, settings_json TEXT, role TEXT DEFAULT 'mine', created_at TEXT DEFAULT CURRENT_TIMESTAMP, synctoken INTEGER DEFAULT 1)");
+    $adb->run("CREATE TABLE events (
+        id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, description TEXT, location TEXT,
+        location_lat REAL, location_lng REAL, geocoded_at TEXT, url TEXT, start_utc TEXT, end_utc TEXT, all_day INTEGER,
+        tzid TEXT, rrule TEXT, exdates_json TEXT, recurrence_parent_id INTEGER, recurrence_instance_utc TEXT,
+        status TEXT DEFAULT 'confirmed', source TEXT DEFAULT 'local', attendance TEXT DEFAULT 'none', score REAL,
+        style_json TEXT, dynamic_json TEXT, icon TEXT, is_container INTEGER DEFAULT 0, reminders_json TEXT,
+        invite_json TEXT, created_via TEXT, created_at TEXT, updated_at TEXT, deleted_at TEXT, google_event_id TEXT
+    )");
+    $adb->run('CREATE TABLE tags (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT)');
+    $adb->run('CREATE TABLE people (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT)');
+    $adb->run('CREATE TABLE event_tags (event_id INTEGER, tag_id INTEGER)');
+    $adb->run('CREATE TABLE event_people (event_id INTEGER, person_id INTEGER)');
+    $adb->run('CREATE TABLE event_links (id INTEGER PRIMARY KEY, container_id INTEGER, event_id INTEGER, position INTEGER)');
+    $adb->run('CREATE TABLE event_duplicates (id INTEGER PRIMARY KEY, event_a INTEGER, event_b INTEGER, status TEXT)');
+    $adb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, message_key TEXT, sender_key TEXT, admitted_at TEXT, UNIQUE(user_id, kind, message_key))');
+    $adb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT)');
+    $adb->run("CREATE TABLE review_items (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, event_id INTEGER, source_key TEXT, title TEXT, summary TEXT, payload_json TEXT, status TEXT DEFAULT 'open', created_at TEXT DEFAULT CURRENT_TIMESTAMP, decided_at TEXT)");
+    $undoA = new BetterCal\Domain\Undo($adb);
+    $labelsA = new BetterCal\Domain\Labels($adb);
+    $eventsA = new BetterCal\Domain\Events(
+        $adb,
+        new Recurrence(),
+        $undoA,
+        $labelsA,
+        new Filters($adb, $undoA, new BetterCal\Infra\JobQueue($adb)),
+        new BetterCal\Domain\Trips($adb, $undoA),
+    );
+    $queueA = new BetterCal\Domain\ReviewQueue($adb, $eventsA);
+    $fieldsA = [
+        'title' => 'Dinner invitation', 'start' => '2026-11-10T18:00:00+00:00', 'end' => '2026-11-10T19:00:00+00:00',
+        'allDay' => false, 'tzid' => 'UTC', 'location' => 'Cafe', 'description' => null, 'rrule' => null,
+    ];
+    $inviteA = ['method' => 'REQUEST', 'organizer' => ['email' => 'alice@example.test', 'name' => 'Alice'], 'attendees' => [], 'sequence' => 4, 'myPartstat' => 'NEEDS-ACTION'];
+    $chosen = $queueA->holdNewInvitation(1, 'accept-uid', $fieldsA, $inviteA, 'alice@example.test');
+    $queueA->holdNewInvitation(1, 'accept-uid', ['title' => 'Competing claim'] + $fieldsA,
+        ['method' => 'REQUEST', 'organizer' => ['email' => 'mallory@example.test'], 'attendees' => [], 'sequence' => 99, 'myPartstat' => 'NEEDS-ACTION'], 'mallory@example.test');
+    $accepted = $queueA->accept(1, $chosen);
+    $savedInvite = json_decode((string) $adb->scalar('SELECT invite_json FROM events WHERE id = ?', [$accepted['eventId']]), true);
+    checkEq('review new invite accept: creates one event and marks organizer owner-approved', [1, 'owner', 'NEEDS-ACTION', 'mail:imip:review'], [
+        (int) $adb->scalar('SELECT COUNT(*) FROM events'),
+        $savedInvite['organizerTrust'] ?? null,
+        $savedInvite['myPartstat'] ?? null,
+        $adb->scalar('SELECT created_via FROM events WHERE id = ?', [$accepted['eventId']]),
+    ]);
+    checkEq('review new invite accept: accepted candidate links to event and competing UID claim closes', [['accepted', $accepted['eventId']], ['superseded', null]],
+        array_map(static fn(array $r): array => [$r['status'], $r['event_id'] !== null ? (int) $r['event_id'] : null], $adb->all('SELECT status, event_id FROM review_items ORDER BY id')));
+    try {
+        $queueA->accept(1, $chosen);
+        check('review new invite accept: cannot decide twice', false);
+    } catch (HttpError $e) {
+        checkEq('review new invite accept: second decision is a conflict', [409, 'review_decided'], [$e->status, $e->errorCode]);
+    }
+    $eventA = $adb->one('SELECT * FROM events WHERE id = ?', [$accepted['eventId']]);
+    $changeFields = ['title' => 'Dinner invitation', 'start' => '2026-11-10T18:00:00+00:00', 'end' => '2026-11-10T19:00:00+00:00',
+        'allDay' => false, 'tzid' => 'UTC', 'location' => 'Bistro', 'description' => null, 'rrule' => null];
+    $changeId = $queueA->holdInviteChange(1, $eventA, 'accept-uid', 'REQUEST', $changeFields,
+        ['sequence' => 5] + $inviteA, 'alice@example.test');
+    $adb->run("UPDATE events SET title = 'Owner edit after arrival' WHERE id = ?", [$accepted['eventId']]);
+    try {
+        $queueA->accept(1, $changeId);
+        check('review change accept: owner edit requires refreshed review', false);
+    } catch (HttpError $e) {
+        checkEq('review change accept: owner edit returns refreshed-review conflict', [409, 'review_changed'], [$e->status, $e->errorCode]);
+    }
+    $refreshed = json_decode((string) $adb->scalar('SELECT payload_json FROM review_items WHERE id = ?', [$changeId]), true);
+    checkEq('review change accept: calendar untouched and current differences refreshed atomically', ['Cafe', 'open', ['title', 'location']], [
+        $adb->scalar('SELECT location FROM events WHERE id = ?', [$accepted['eventId']]),
+        $adb->scalar('SELECT status FROM review_items WHERE id = ?', [$changeId]),
+        array_column($refreshed['diff'] ?? [], 'field'),
+    ]);
+    $appliedChange = $queueA->accept(1, $changeId);
+    checkEq('review change accept: refreshed second decision applies and advances trust sequence', ['Dinner invitation', 'Bistro', 5, 'owner', 'accepted'], [
+        $adb->scalar('SELECT title FROM events WHERE id = ?', [$appliedChange['eventId']]),
+        $adb->scalar('SELECT location FROM events WHERE id = ?', [$appliedChange['eventId']]),
+        json_decode((string) $adb->scalar('SELECT invite_json FROM events WHERE id = ?', [$appliedChange['eventId']]), true)['sequence'] ?? null,
+        json_decode((string) $adb->scalar('SELECT invite_json FROM events WHERE id = ?', [$appliedChange['eventId']]), true)['organizerTrust'] ?? null,
+        $adb->scalar('SELECT status FROM review_items WHERE id = ?', [$changeId]),
+    ]);
+    $legacyInvite = json_decode((string) $adb->scalar('SELECT invite_json FROM events WHERE id = ?', [$appliedChange['eventId']]), true);
+    unset($legacyInvite['organizerTrust']);
+    $adb->run('UPDATE events SET invite_json = ? WHERE id = ?', [json_encode($legacyInvite), $appliedChange['eventId']]);
+    $legacyEvent = $adb->one('SELECT * FROM events WHERE id = ?', [$appliedChange['eventId']]);
+    $forgedLegacy = $queueA->holdInviteChange(1, $legacyEvent, 'accept-uid', 'REQUEST', ['location' => 'Forged venue'] + $changeFields,
+        ['organizer' => ['email' => 'mallory@example.test'], 'sequence' => 999] + $inviteA, 'mallory@example.test', false);
+    $genuineLegacy = $queueA->holdInviteChange(1, $legacyEvent, 'accept-uid', 'REQUEST', ['location' => 'Genuine venue'] + $changeFields,
+        ['organizer' => ['email' => 'alice@example.test'], 'sequence' => 6] + $inviteA, 'alice@example.test', false);
+    // Compatibility: a decision held by the pre-Phase-11 code has neither of
+    // the new payload markers. Acceptance must classify it from the locked
+    // legacy event and close post-upgrade competing claims just the same.
+    $oldPayload = json_decode((string) $adb->scalar('SELECT payload_json FROM review_items WHERE id = ?', [$genuineLegacy]), true);
+    unset($oldPayload['sequenceAuthoritative'], $oldPayload['candidateKey']);
+    $adb->run('UPDATE review_items SET payload_json = ? WHERE id = ?', [json_encode($oldPayload), $genuineLegacy]);
+    $queueA->accept(1, $genuineLegacy);
+    $acceptedLegacyInvite = json_decode((string) $adb->scalar('SELECT invite_json FROM events WHERE id = ?', [$appliedChange['eventId']]), true);
+    checkEq('review legacy accept: pre-patch row anchors organizer and closes competing same-UID claim',
+        ['Genuine venue', 'alice@example.test', 6, 'owner', 'superseded', 'accepted'], [
+            $adb->scalar('SELECT location FROM events WHERE id = ?', [$appliedChange['eventId']]),
+            $acceptedLegacyInvite['organizer']['email'] ?? null,
+            $acceptedLegacyInvite['sequence'] ?? null,
+            $acceptedLegacyInvite['organizerTrust'] ?? null,
+            $adb->scalar('SELECT status FROM review_items WHERE id = ?', [$forgedLegacy]),
+            $adb->scalar('SELECT status FROM review_items WHERE id = ?', [$genuineLegacy]),
+        ]);
+    $mailA = new MailIngest($adb, $eventsA, null, new BetterCal\Domain\MailAdmission($adb));
+    $applyA = (new ReflectionClass(MailIngest::class))->getMethod('applyImipEvent');
+    $publish = ['uid' => 'publish-uid', 'title' => 'Published booking', 'start_utc' => '2026-11-12 18:00:00', 'end_utc' => '2026-11-12 19:00:00',
+        'all_day' => false, 'tzid' => 'UTC', 'location' => null, 'description' => null, 'rrule' => null,
+        'invite' => ['method' => 'PUBLISH', 'organizer' => null, 'attendees' => [], 'sequence' => 0, 'myPartstat' => 'NEEDS-ACTION']];
+    $published = $applyA->invoke($mailA, 1, 'PUBLISH', $publish, 'UTC', [
+        'messageId' => 'publish@example.test', 'subject' => 'Booking', 'from' => 'venue@example.test',
+    ]);
+    checkEq('imip booking control: PUBLISH retains direct event creation', ['created', 2, 2], [
+        $published[0], $published[1], (int) $adb->scalar('SELECT COUNT(*) FROM events'),
+    ]);
 }
 
 $ldHtml = '<html><body><script type="application/ld+json">'
@@ -4510,6 +4731,7 @@ require __DIR__ . '/plugins.php';
     $qdb->run('CREATE TABLE users (id INTEGER PRIMARY KEY)');
     $qdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, message_key TEXT, sender_key TEXT, admitted_at TEXT, UNIQUE(user_id, kind, message_key))');
     $qdb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, created_via TEXT, deleted_at TEXT, recurrence_parent_id INTEGER, end_utc TEXT, rrule TEXT)');
+    $qdb->run("CREATE TABLE review_items (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, status TEXT DEFAULT 'open')");
     $qdb->run('INSERT INTO users (id) VALUES (1), (2)');
     $admission = new BetterCal\Domain\MailAdmission($qdb);
     $quotaNow = new DateTimeImmutable('2026-10-07T12:00:00Z');
@@ -4531,6 +4753,18 @@ require __DIR__ . '/plugins.php';
     }
     checkEq('mail event quota: a failed creation rolls back its reservation', 0,
         (int) $qdb->scalar('SELECT COUNT(*) FROM mail_admissions WHERE message_key = ?', [hash('sha256', 'rollback')]));
+    Limits::configure(['MAIL_EVENTS_PER_DAY' => 10, 'MAIL_EVENTS_PER_SENDER_DAY' => 10, 'MAIL_PENDING_INVITATIONS' => 2]);
+    $qdb->run("INSERT INTO review_items (user_id, kind) VALUES (2, 'invite_new'), (2, 'invite_change')");
+    $candidateCreates = 0;
+    $pendingBlocked = $admission->createInvitationCandidate(2, 'pending-cap', 'invite@example.test',
+        static function () use (&$candidateCreates): int { return ++$candidateCreates; }, $quotaNow);
+    checkEq('mail invitation quota: persistent open-decision cap refuses another candidate without reserving it', [false, 'event_pending', 0, 0], [
+        $pendingBlocked['allowed'], $pendingBlocked['code'], $candidateCreates,
+        (int) $qdb->scalar('SELECT COUNT(*) FROM mail_admissions WHERE message_key = ?', [hash('sha256', 'pending-cap')]),
+    ]);
+    $bookingAtPendingCap = $admission->createEvent(2, 'booking-at-pending-cap', 'venue@example.test', static fn(): int => 77, $quotaNow);
+    checkEq('mail invitation quota: ordinary booking creation remains available at the Review cap', [true, 77],
+        [$bookingAtPendingCap['allowed'], $bookingAtPendingCap['value']]);
     $l1 = $admission->reserveLlm(1, 'llm-1', 'a@example.test', $quotaNow);
     $l2 = $admission->reserveLlm(1, 'llm-2', 'b@example.test', $quotaNow);
     $l3 = $admission->reserveLlm(1, 'llm-3', 'rotated@example.test', $quotaNow);

@@ -1,5 +1,6 @@
 // Review: everything waiting on your decision, in one list.
 //
+//   invite_new     a first-time emailed invitation, held before event creation.
 //   invite_change  an organizer emailed a change (or a cancellation) to an
 //                  invitation already on your calendar. An emailed change is
 //                  an unauthenticated message, so it is HELD, shown here with
@@ -31,8 +32,8 @@ import { rsvpOutcome } from './actions.js';
 import { fmtSince } from '../lib/since.js';
 import { parseISO, dateOfDayKey, fmtRange, fmtDayMedium, fmtTime } from '../lib/dates.js';
 
-const KIND_LABEL = { invite_change: 'Invitation change', mail_limit: 'Email automation paused', model_limit: 'AI filter processing paused', rsvp: 'Invitation', proposal: 'Proposal', duplicate: 'Possible duplicate', subscription: 'Calendar updates paused' };
-const KIND_ICON = { invite_change: 'mail', mail_limit: 'warning', model_limit: 'warning', rsvp: 'mail', proposal: 'proposals', duplicate: 'stack', subscription: 'calendar' };
+const KIND_LABEL = { invite_new: 'New emailed invitation', invite_change: 'Invitation change', mail_limit: 'Email automation paused', model_limit: 'AI filter processing paused', rsvp: 'Invitation', proposal: 'Proposal', duplicate: 'Possible duplicate', subscription: 'Calendar updates paused' };
+const KIND_ICON = { invite_new: 'mail', invite_change: 'mail', mail_limit: 'warning', model_limit: 'warning', rsvp: 'mail', proposal: 'proposals', duplicate: 'stack', subscription: 'calendar' };
 
 // One side of a changed date. All-day values are bare dates; timed ones are
 // instants, shown on this device's clock like everything else on screen.
@@ -83,6 +84,8 @@ function ReviewCard({ item, onChanged }) {
         toast('Email automation notice dismissed');
       } else if (item.kind === 'model_limit') {
         toast('AI filter notice dismissed');
+      } else if (item.kind === 'invite_new') {
+        toast(accepted ? 'Invitation added. You have not replied.' : 'Dismissed. Nothing was added.');
       } else {
         toast(
           accepted ? (d.method === 'CANCEL' ? 'Cancellation accepted' : 'Change applied') : 'Dismissed. Your calendar is unchanged',
@@ -92,8 +95,8 @@ function ReviewCard({ item, onChanged }) {
       invalidateRecords();
       refreshWindow();
     } catch (e) {
-      // 409: the event is gone, or a newer version was already applied. The
-      // server closed the item; the message says which, and the list reloads.
+      // A 409 can close a gone/stale item, or refresh its differences after an
+      // owner edit. The server message says which and the list reloads either way.
       toast(e.message || 'Failed', { error: true });
     } finally {
       setBusy(false);
@@ -111,13 +114,13 @@ function ReviewCard({ item, onChanged }) {
       ${open
         ? html`<button type="button" class="bc-link-btn bc-review-title" title=${openOptions ? 'Open calendar options' : 'Open this event'} onClick=${open}>${item.title}</button>`
         : html`<span class="bc-review-title">${item.title}</span>`}
-      ${item.kind === 'rsvp' && html`<span class="bc-review-when">${whenLine(d)}${d.location ? ' · ' + d.location : ''}</span>`}
+      ${(item.kind === 'rsvp' || item.kind === 'invite_new') && html`<span class="bc-review-when">${whenLine(d)}${d.location ? ' · ' + d.location : ''}</span>`}
       ${item.kind === 'duplicate' && html`<span class="bc-review-when">${d.a.start === d.b.start ? fmtWhen(d.a.start) : fmtWhen(d.a.start) + ' and ' + fmtWhen(d.b.start)}</span>`}
       <span class="bc-review-age" title=${item.createdAt ? new Date(item.createdAt).toLocaleString() : ''}>${item.createdAt ? fmtSince(item.createdAt) : ''}</span>
       ${item.status !== 'open' && html`<span class="bc-badge">${item.status}</span>`}
     </div>
     <div class="bc-review-body">
-      <span class="bc-review-summary">${item.summary}${item.kind === 'invite_change' && d.from ? html` <span class="bc-review-sender" title="The address this email came from. Email senders are not verified.">Sent from ${d.from}</span>` : ''}</span>
+      <span class="bc-review-summary">${item.summary}${(item.kind === 'invite_change' || item.kind === 'invite_new') && d.from ? html` <span class="bc-review-sender" title="The address this email came from. Email senders are not verified.">Sent from ${d.from}</span>` : ''}${(item.kind === 'invite_change' || item.kind === 'invite_new') ? html` <span class="bc-review-sender" title="The invitation revision claimed by this email.">Sequence ${d.sequence || 0}</span>` : ''}</span>
       ${(item.actions.length > 0 || openOptions) && html`<span class="bc-review-actions">${item.actions.map((a, i) => html`<button
         key=${a.name} type="button" disabled=${busy}
         class=${'bc-btn' + (i === 0 ? ' bc-btn-primary' : '')}

@@ -3,17 +3,17 @@
   "files": {
     "preact.module.js": {
       "package": "preact",
-      "version": "10.29.7",
-      "path": "dist/preact.module.js",
+      "version": "11.0.1",
+      "path": "dist/preact.mjs",
       "transform": "strip-sourcemap",
-      "sha256": "40776cab8b504ffd5ba436d0ef4448427eb7ca23292d689acd6e6df1594609c0"
+      "sha256": "17598141bfddaf9bc74873b88e19e4cfee3605078752a3d693d15a57019865d4"
     },
     "hooks.module.js": {
       "package": "preact",
-      "version": "10.29.7",
-      "path": "hooks/dist/hooks.module.js",
+      "version": "11.0.1",
+      "path": "hooks/dist/hooks.mjs",
       "transform": "strip-sourcemap+preact-import",
-      "sha256": "9e7eff58e0ae604583461eba1344da69a6894eab575eb591c635cc0d3f9ec57d"
+      "sha256": "05c7f3fb9e18d49981672106420d5ca014a4023efee0439cabaebf0a6988e93b"
     },
     "htm.module.js": {
       "package": "htm",

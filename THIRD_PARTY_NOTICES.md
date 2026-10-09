@@ -8,7 +8,7 @@ These front-end libraries are copied into `web/vendor/`, pinned and checksummed 
 
 | Library | Version | License | Files |
 |---|---|---|---|
-| [Preact](https://github.com/preactjs/preact) | 10.29.7 | [MIT](https://github.com/preactjs/preact/blob/10.29.7/LICENSE) | `preact.module.js`, `hooks.module.js` |
+| [Preact](https://github.com/preactjs/preact) | 11.0.1 | [MIT](https://github.com/preactjs/preact/blob/11.0.1/LICENSE) | `preact.module.js`, `hooks.module.js` |
 | [htm](https://github.com/developit/htm) | 3.1.1 | [Apache-2.0](https://github.com/developit/htm/blob/3.1.1/LICENSE) | `htm.module.js` |
 | [Squire](https://github.com/fastmail/Squire) | 2.4.9 | [MIT](https://github.com/fastmail/Squire/blob/master/LICENSE) | `squire/squire-raw.js` |
 | [DOMPurify](https://github.com/cure53/DOMPurify) | 3.4.16 | [Apache-2.0 or MPL-2.0](https://github.com/cure53/DOMPurify/blob/3.4.16/LICENSE) (used under Apache-2.0) | `squire/purify.min.js` |

@@ -11,7 +11,7 @@ use BetterCal\Infra\Db;
  *
  * - events.location_source: 'picked' (a person chose it: a suggestion in the
  *   location box, or coordinates sent with the event), 'lookup' (Better-Cal's
- *   geocoder resolved the location text), or 'calendar' (the calendar data
+ *   geocoder resolved the location text), or 'supplied' (the event's own data
  *   carried it). NULL with coordinates present means unknown: everything
  *   placed before this migration.
  * - events.location_provider: the geocoder that answered ('photon',

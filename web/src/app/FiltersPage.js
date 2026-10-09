@@ -15,6 +15,13 @@ import { api, refreshWindow } from './api.js';
 import { PageShell, EmptyState, Skeleton } from './PageShell.js';
 import { PALETTE } from '../lib/color.js';
 import { fmtSince } from '../lib/since.js';
+import { Icon } from '../ui/icons.js';
+
+// An AI prompt filter on everything judges every event on every subscribed
+// calendar, including feeds added later, against one description. Fine when
+// meant; easy to miss when the prompt was written with one calendar in mind.
+const BROAD_PROMPT_NOTE = 'Judges every event on every subscribed calendar, including ones you add later.';
+const broadPrompt = (type, scope) => type === 'prompt' && scope === 'global';
 
 const FIELD_OPTIONS = ['title', 'description', 'location', 'tags'];
 // Default selection mirrors the server default: tags is opt-in.
@@ -108,6 +115,7 @@ function FilterForm({ calendars, folders, initial, inline, busy, onSave, onCance
           <option value="folder">One folder</option>
           <option value="calendar">One calendar</option>
         </select>
+        ${broadPrompt(type, scope) && html`<span class="bc-filter-broad"><${Icon} name="warning" size=${13} />${BROAD_PROMPT_NOTE}</span>`}
       </label>
       ${scope === 'folder' && html`<label class="bc-field">
         <span>Folder</span>
@@ -291,6 +299,7 @@ export function FiltersPage() {
             </div>
             <div class="bc-card-body">${f.type === 'prompt' ? f.config.prompt : f.config.pattern}</div>
             ${f.type === 'prompt' && f.config.negativePrompt && html`<div class="bc-card-sub">Excludes: ${f.config.negativePrompt}</div>`}
+            ${broadPrompt(f.type, f.scope) && html`<div class="bc-filter-broad"><${Icon} name="warning" size=${13} />${BROAD_PROMPT_NOTE}</div>`}
             ${f.type !== 'prompt' && html`<div class="bc-card-sub">Matches in ${(f.config.fields || DEFAULT_FIELDS).join(', ')}</div>`}
           </div>
           <label class="bc-switch">

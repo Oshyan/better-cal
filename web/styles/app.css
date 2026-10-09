@@ -1741,6 +1741,9 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-card-title { font-size: 14px; margin-right: 2px; }
 .bc-card-body { font-size: 14px; overflow-wrap: anywhere; }
 .bc-card-sub { color: var(--fg-muted); font-size: 12.5px; overflow-wrap: anywhere; }
+/* A broad AI prompt filter (FiltersPage.js): a quiet note, not an error. */
+.bc-filter-broad { display: flex; align-items: flex-start; gap: 5px; margin-top: 4px; color: var(--fg-muted); font-size: 12.5px; line-height: 1.35; }
+.bc-filter-broad svg { flex: none; margin-top: 1px; color: var(--warn); }
 .bc-card-actions { display: flex; gap: 6px; flex: none; }
 .bc-card.is-off .bc-card-main { opacity: 0.5; }
 /* Inline filter editing: the card being edited carries the app's accent cue

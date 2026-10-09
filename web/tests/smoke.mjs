@@ -20,6 +20,7 @@ import { mapMosaic, stadiaStyle, mapTilerStyle, isPendingLocation, gmapsUrl, val
 import { safeWebUrl, meetingLinkInText } from '../src/lib/urls.js';
 import { baseTitle, groupOccurrences, itemMatchesFilter, isGroupId } from '../src/ui/grouping.js';
 import { collapseDuplicates } from '../src/ui/duplicates.js';
+import { dayStepList } from '../src/ui/daysteps.js';
 import { sortByMatch } from '../src/lib/rank.js';
 import { parseJumpText, jumpGranularity } from '../src/lib/jumpparse.js';
 import { parseClockText, resolveClock, minsToHHMM, hhmmToMins, parseDateText, durationLabel } from '../src/lib/whenparse.js';
@@ -517,6 +518,39 @@ const collapsedSpokes = collapseDuplicates([spokeA, spokeB], new Map([
 ]));
 assert('duplicates: visible spokes collapse without their sparse hub',
   collapsedSpokes.length === 1 && collapsedSpokes[0].eventId === 102);
+
+// The day's step list (#27) matches what the views draw.
+{
+  const cals = [
+    { id: 1, visible: true, kind: 'local', provider: 'ics' },
+    { id: 2, visible: true, kind: 'subscribed', provider: 'google' },
+    { id: 3, visible: false, kind: 'local', provider: 'ics' },
+  ];
+  const timed = (id, cal, hh, extra = {}) => ({
+    instanceId: id, eventId: Number(id.replace(/\D/g, '')) || 1, calendarId: cal, title: id,
+    start: `2026-06-18T${hh}:00:00-07:00`, end: `2026-06-18T${hh}:30:00-07:00`, allDay: false, attendance: 'none', ...extra,
+  });
+  const a = timed('s1', 1, '09');
+  const hidden = timed('s2', 3, '10');
+  const twinLocal = timed('s3', 1, '12', { eventId: 3, dupes: [{ pairId: 9, eventId: 4, calendarId: 2, groupId: 3 }] });
+  const twinGoogle = timed('s4', 2, '12', { eventId: 4, dupes: [{ pairId: 9, eventId: 3, calendarId: 1, groupId: 3 }] });
+  const weather = timed('s5', 1, '13', { relationship: 'context' });
+  const maybe = timed('s6', 1, '14', { relationship: 'maybe' });
+  const span = { ...mkOcc(1, 'Trip', '2026-06-17', { days: 3 }), instanceId: 's7' };
+  const all = [a, hidden, twinLocal, twinGoogle, weather, maybe, span];
+  const ids = (l) => l.map((o) => o.instanceId).join(',');
+  const opts = (keep, showRel = {}) => ({ dayKey: '2026-06-18', calendars: cals, showRel, keep });
+  eq('steps: what the views show, a twin once (the one drawn), spans included',
+    ids(dayStepList(all, opts(['s1']))), 's7,s1,s4,s6');
+  eq('steps: an event opened on a hidden calendar stays, and stays after stepping off it',
+    ids(dayStepList(all, opts(['s1', 's2']))), 's7,s1,s2,s4,s6');
+  eq('steps: the twin you opened takes the drawn twin\'s place',
+    ids(dayStepList(all, opts(['s3']))), 's7,s1,s3,s6');
+  eq('steps: a kind the Show filter hides leaves the list, context never joins it',
+    ids(dayStepList(all, opts(['s1'], { maybe: false }))), 's7,s1,s4');
+  eq('steps: an opened context item is still steppable back to',
+    ids(dayStepList(all, opts(['s1', 's5']))), 's7,s1,s4,s5,s6');
+}
 
 // baseTitle strips one trailing parenthetical, keeps everything else.
 eq('grouping: baseTitle strips parenthetical', baseTitle('Juneteenth (Alabama)'), 'Juneteenth');

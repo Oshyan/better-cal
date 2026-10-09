@@ -7,9 +7,10 @@ import {
 import { api, refreshWindow, undo, loadCalendars, loadPeople, loadReviewCount } from './api.js';
 import { adoptSettings } from './settings.js';
 import { discardEditorWithUndo, clearQuickAddText } from './drafts.js';
-import { localTz, todayKey, addDaysKey, occDayKey, epochDayOfKey, startMs, pad, parseISO, toISOWithOffset, addDaysDate } from '../lib/dates.js';
-import { occurrenceDaySpan, shiftOccurrenceDays } from '../ui/monthmath.js';
+import { localTz, todayKey, addDaysKey, occDayKey, pad, parseISO, toISOWithOffset, addDaysDate } from '../lib/dates.js';
+import { shiftOccurrenceDays } from '../ui/monthmath.js';
 import { extendTripSpan } from '../ui/trips.js';
+import { dayStepList } from '../ui/daysteps.js';
 import { REL_KINDS, showRelFromConfig } from '../lib/relfilter.js';
 
 // Split sits last so the number keys of the older views stay where they were.
@@ -204,42 +205,18 @@ export function stepPopoverSameDay(dir) {
   return true;
 }
 
-// Chronological list of one day's visible occurrences (all-day first).
+// One day's occurrences to step through (ui/daysteps.js): what the views
+// show that day, plus the open event and the one the sheet was opened on.
 // `anchorDay` pins the day being browsed: without it, stepping onto a
 // multi-day event would re-derive the day from THAT event's start and walk
-// off to another day mid-navigation. Membership is span-based (an event
-// covering the day belongs to it), matching the day-expand list.
-//
-// Only what the views show (0.5.0): visible calendars, not hidden, not a
-// kind the Show filter has switched off, and not context (weather, sunset:
-// information in the day's header, not an event to step onto). The open
-// event always counts, so its place in the list is never lost.
-// `pin` (0.6.10): the event the sheet or panel was opened on stays in the
-// list while you step away from it, even when the views hide it (a search
-// result on a hidden calendar), so stepping back to it always works.
+// off to another day mid-navigation.
 export function sameDayList(occ, anchorDay, pin = null) {
-  const dayKey = anchorDay || occDayKey(occ);
-  const ed = epochDayOfKey(dayKey);
-  const visible = new Set(state.calendars.filter((c) => c.visible).map((c) => c.id));
-  const showRel = state.showRel || {};
-  const list = [];
-  for (const o of state.occ.values()) {
-    if (o.instanceId !== occ.instanceId && o.instanceId !== pin) {
-      if (!visible.has(o.calendarId)) continue;
-      if (o.attendance === 'hidden') continue;
-      if (o.relationship === 'context') continue;
-      if (o.relationship && showRel[o.relationship] === false) continue;
-    }
-    const span = occurrenceDaySpan(o);
-    if (epochDayOfKey(span.startKey) > ed || epochDayOfKey(span.endKey) < ed) continue;
-    list.push(o);
-  }
-  list.sort((a, b) => {
-    if (a.allDay !== b.allDay) return a.allDay ? -1 : 1;
-    if (startMs(a) !== startMs(b)) return startMs(a) - startMs(b);
-    return (a.title || '') < (b.title || '') ? -1 : (a.title || '') > (b.title || '') ? 1 : 0;
+  return dayStepList(state.occ.values(), {
+    dayKey: anchorDay || occDayKey(occ),
+    calendars: state.calendars,
+    showRel: state.showRel || {},
+    keep: [occ.instanceId, pin],
   });
-  return list;
 }
 
 

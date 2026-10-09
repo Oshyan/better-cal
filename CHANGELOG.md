@@ -4,6 +4,12 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.53 (2026-10-09)
+
+- **Preact 11.** The app's UI framework moves from Preact 10.29.7 to 11.0.1, before the final pre-1.0 security scan so the scan covers what 1.0 ships. Nothing should look or work differently; if something does, that's a bug worth reporting.
+
+Operators: no migration. The vendored `preact.module.js` and `hooks.module.js` now come from Preact's `.mjs` builds and keep their `.js` names, so no web server MIME change is needed.
+
 ## 0.9.52 (2026-10-09)
 
 - **Settings shows the place search services in use.** Since 0.9.46 the "Place search service" row under Location & maps never appeared, with its notes on Stadia's and MapTiler's terms and any problem with the setting: the app kept only the map key from the server's configuration. It now keeps the place search part too, and the outage notice from 0.9.51 knows which services you use.

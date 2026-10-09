@@ -40,6 +40,9 @@ final class Updates
      */
     public const MAX_REDIRECTS = 2;
     public const REQUEST_BUDGET = self::MAX_REDIRECTS + 1;
+    /** The worker job's health row (worker.php HEALTH_JOB_LABELS). */
+    public const HEALTH_SUBJECT = 'job:update_check';
+    public const HEALTH_LABEL = 'Application update checks';
 
     /** @param ?\Closure(string,array):array{status:int,body:string} $fetch */
     public function __construct(
@@ -121,12 +124,21 @@ final class Updates
             }
             $stored = $this->saveAcceptedState($state);
             if ($notify) $this->notifySecurityFloor($stored);
-            return $stored;
         } catch (\Throwable $e) {
             $message = mb_substr($e->getMessage(), 0, 1000);
             $this->saveError($message, $startingRevision);
             throw new \RuntimeException('Update check failed: ' . $message, 0, $e);
         }
+        // Any successful check ends a failing streak, not only the daily
+        // job's: otherwise a failure stayed on the System page for up to a
+        // day after the cause was fixed, while checks from Settings and the
+        // banner were succeeding. Only a failing row is written (create:
+        // false), and the health record never decides the check's result.
+        try {
+            (new SystemHealth($this->db))->recordOk(self::HEALTH_SUBJECT, 'job', null, self::HEALTH_LABEL, false);
+        } catch (\Throwable) {
+        }
+        return $stored;
     }
 
     public function status(int $userId): array

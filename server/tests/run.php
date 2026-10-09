@@ -8198,6 +8198,18 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
     $checked = $updates->check(false);
     checkEq('updates: extension and out-of-order older releases are ignored', '1.1.0', $checked['latest_version']);
 
+    // A failing streak from the daily job ends with the next successful check,
+    // whoever runs it (Settings, the banner), not a day later.
+    $udb->run('CREATE TABLE system_health (subject TEXT PRIMARY KEY, kind TEXT, user_id INTEGER, label TEXT, status TEXT DEFAULT "ok", first_failed_at TEXT, last_failed_at TEXT, last_ok_at TEXT, consecutive_failures INTEGER DEFAULT 0, last_error TEXT, alerted_at TEXT)');
+    $udb->run('CREATE TABLE IF NOT EXISTS mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT)');
+    (new BetterCal\Domain\SystemHealth($udb))->recordFailure(Updates::HEALTH_SUBJECT, 'job', null, Updates::HEALTH_LABEL, 'Update check failed: example');
+    $updates->check(false);
+    checkEq('updates: a successful check clears the job\'s failing streak', ['ok', 0],
+        [$udb->scalar('SELECT status FROM system_health WHERE subject = ?', [Updates::HEALTH_SUBJECT]), (int) $udb->scalar('SELECT consecutive_failures FROM system_health WHERE subject = ?', [Updates::HEALTH_SUBJECT])]);
+    $udb->run('DELETE FROM system_health');
+    $updates->check(false);
+    checkEq('updates: a successful check creates no health row of its own', 0, (int) $udb->scalar('SELECT COUNT(*) FROM system_health'));
+
     $pageCalls = 0;
     $crowdedFetch = static function (string $url) use ($manifest, &$pageCalls): array {
         if (str_contains($url, 'api.github.com')) {

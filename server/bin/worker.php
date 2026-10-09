@@ -72,7 +72,7 @@ const HEALTH_JOB_LABELS = [
     'geocode_sweep' => 'Geocoding',
     'system_alerts' => 'Alert emails',
     'duplicate_scan' => 'Duplicate detection',
-    'update_check' => 'Application update checks',
+    'update_check' => BetterCal\Domain\Updates::HEALTH_LABEL,
 ];
 
 $locked = $db->scalar('SELECT GET_LOCK(?, 0)', [WORKER_LOCK]);

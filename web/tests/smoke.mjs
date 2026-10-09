@@ -1547,7 +1547,10 @@ console.log('--- chronological ordering across timezone offsets ---');
   eq('tz label: UTC', tzOffsetLabel('UTC', summer), 'UTC');
   eq('tz city', tzCity('America/Argentina/Buenos_Aires'), 'Buenos Aires');
   assert('same clock: identical names', sameClock('America/Los_Angeles', 'America/Los_Angeles', summer));
-  assert('same clock: Vancouver keeps Los Angeles time all year (no notice)', sameClock('America/Los_Angeles', 'America/Vancouver', summer));
+  // Tijuana follows the US clock changes. (This used Vancouver until British
+  // Columbia moved to permanent UTC-7 from 2026-11-01 in tzdata 2026a; the
+  // answer then depended on the machine's time-zone data.)
+  assert('same clock: Tijuana keeps Los Angeles time all year (no notice)', sameClock('America/Los_Angeles', 'America/Tijuana', summer));
   assert('same clock: Lisbon is not Los Angeles', !sameClock('America/Los_Angeles', 'Europe/Lisbon', summer));
   // Phoenix matches Los Angeles in summer only; agreeing today is not enough.
   assert('same clock: Phoenix differs from LA once DST ends', !sameClock('America/Los_Angeles', 'America/Phoenix', summer));

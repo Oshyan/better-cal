@@ -409,7 +409,8 @@ export function zoneNote(occ) {
 }
 
 // Do two zones keep the same clock? Names alone over-report: a browser in
-// Vancouver or Tijuana says so, and is on Los Angeles time all year. Compared
+// Tijuana says so, and is on Los Angeles time all year. (Vancouver was too,
+// until British Columbia moved to permanent UTC-7 from November 2026.) Compared
 // now and half a year on, so zones that agree only until a DST change differ.
 export function sameClock(a, b, at = new Date()) {
   if (!a || !b || a === b) return true;

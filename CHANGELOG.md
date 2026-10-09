@@ -4,6 +4,13 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.51 (2026-10-09)
+
+- **Place search outages only interrupt when they matter.** With more than one place search service set up, one being down no longer earns an email or a notice at startup, since searches go to the next one; you hear about it only when all of them are down. When Photon is the only service and it's down, the notice, the email and Settings say so and point to free LocationIQ or MapTiler keys that keep place search working next time.
+- **Security record:** `SECURITY.md` and the README now include the 2026-10-06 scan (77 findings, fixed through 0.9.42), ahead of the final pre-1.0 scan.
+
+Operators: no migration. `GET /config`'s `placeSearch` adds `healthSubjects` and `downAdvice`. The PHP test suite no longer logs database errors, and fails if one is ever logged.
+
 ## 0.9.50 (2026-10-09)
 
 - **A bare house number finds the houses near you again.** In 0.9.49, with MapTiler in the list, typing just a number could show nothing: MapTiler reads a short number as the start of longer ones ("250" offered 2500 and 2507), those were rightly dropped, and the services after it were never asked. Now a service whose results would all be dropped counts as having found nothing, and the next one answers. So MapTiler finds bare numbers only when that exact number exists nearby; Photon covers the rest, as before.

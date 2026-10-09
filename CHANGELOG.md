@@ -4,6 +4,16 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.46 (2026-10-09)
+
+- **Place search can be much faster.** With a free LocationIQ key, the location dropdown answers in about a tenth of a second instead of one to two, and finds parks and venues by their full name, world cities and airports by name more reliably. Photon still answers what LocationIQ can't (a house number with only a few letters of the street) and whenever it is slow, busy or finds nothing, so nothing gets worse. Stadia Maps is supported too; it is the strongest on addresses, but keeping the places you pick needs one of its paid plans, and Settings says so. Photon remains the default and needs no key. [Geocoding and place search](docs/geocoding.md) compares the services and says what to set up.
+- **The dropdown credits whoever answered**, in one small line under the list, as each service's terms ask.
+- **Each event knows where its coordinates came from:** a place you picked, a lookup from its location text, or coordinates that came with the event itself, and which service answered. Events placed before this release say unknown rather than guess.
+- **The filter box no longer leaves gaps.** Hidden events kept their lane in month, 3-day and week's all-day row, so an empty row could sit above the matches (#126).
+- **The test email's button says Open Better-Cal**, since there is no event behind it.
+
+Operators: migration 048 adds `location_source`, `location_provider` and `location_placed_at` to events and `provider` to the geocode cache; existing rows stay null. New optional settings: `BETTERCAL_PLACE_SEARCH` (`photon`, `locationiq` or `stadia`), `BETTERCAL_LOCATIONIQ_KEY` and `BETTERCAL_STADIA_KEY` (see `.env.example`). LocationIQ is reached over IPv4 only, so a key restricted by address needs the server's IPv4 address. `GET /geocode/search` adds `credits`, `GET /config` adds `placeSearch`, and events carry `locationSource`, `locationProvider` and `locationPlacedAt` (detail only). `scripts/push-settings.sh` changes a server's `.env` from a local, gitignored `scripts/server.env`, backing it up first; deploys still never write `.env`. The dev deploy's shared database mode works again, and it refuses the new keys on dev like other service keys.
+
 ## 0.9.45 (2026-10-09)
 
 - **A filtered day shows its matches.** With text in the filter box, month and 3-day views gave grayed-out events their slots and counted them in "+N", so a busy day could show only grayed-out events with its matches behind the "+N". Matches now come first, grayed-out events fill only what's left, and "+N" counts matches that didn't fit. Events a dim filter grays out work the same way, as does the all-day row of week view.

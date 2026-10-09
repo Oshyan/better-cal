@@ -4,6 +4,12 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.48 (2026-10-09)
+
+- **A picked house address no longer repeats its street.** In 0.9.47, picking an address that Photon found filled the location as "250 Elm Street, 250 Elm Street, Sampleville". The street is now said once, and the list's second line no longer repeats it either.
+
+Operators: no migration.
+
 ## 0.9.47 (2026-10-09)
 
 - **A picked place keeps its address.** Picking a town used to save just its name ("Sampleville"), so the event looked as if nothing had been picked. Now it's the place and its address ("Sampleville, Example State", or a venue with its street and city), with the country added for places far away, and that's what the event panel, hover card, agenda and your other calendar apps show.

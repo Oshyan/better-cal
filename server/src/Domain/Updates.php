@@ -16,7 +16,18 @@ use BetterCal\Support\Time;
  */
 final class Updates
 {
-    public const RELEASES_URL = 'https://api.github.com/repos/Oshyan/better-cal/releases?per_page=100&page=1';
+    /**
+     * GitHub lists releases newest-created first, and a release is always
+     * created after the ones before it, so the newest app release sits near
+     * the top. Pages of 25 are read newest first and the scan stops at the
+     * first page holding an app release (the highest version on it wins); a
+     * run of extension releases only costs another page. It used to read the
+     * whole list, up to three pages of 100, and fail once the list outgrew
+     * them, so every check would have stopped after 300 releases.
+     */
+    public const RELEASE_PAGE_SIZE = 25;
+    public const MAX_RELEASE_PAGES = 4;
+    public const RELEASES_URL = 'https://api.github.com/repos/Oshyan/better-cal/releases?per_page=' . self::RELEASE_PAGE_SIZE . '&page=1';
     public const RELEASE_BASE = 'https://github.com/Oshyan/better-cal/releases/download/';
     public const MANIFEST_NAME = 'bettercal-release.json';
     public const MAX_MANIFEST_BYTES = 4096;
@@ -29,8 +40,6 @@ final class Updates
      */
     public const MAX_REDIRECTS = 2;
     public const REQUEST_BUDGET = self::MAX_REDIRECTS + 1;
-    private const RELEASE_PAGE_SIZE = 100;
-    private const MAX_RELEASE_PAGES = 3;
 
     /** @param ?\Closure(string,array):array{status:int,body:string} $fetch */
     public function __construct(
@@ -47,9 +56,8 @@ final class Updates
         $startingRevision = (int) ($startingState['revision'] ?? 0);
         try {
             $candidates = [];
-            $complete = false;
-            for ($page = 1; $page <= self::MAX_RELEASE_PAGES; $page++) {
-                $releaseResponse = $this->get($this->releasePageUrl($page), [
+            for ($page = 1; $page <= self::MAX_RELEASE_PAGES && $candidates === []; $page++) {
+                $releaseResponse = $this->get(self::releasePageUrl($page), [
                     'Accept: application/vnd.github+json',
                     'X-GitHub-Api-Version: 2026-03-10',
                 ]);
@@ -68,12 +76,12 @@ final class Updates
                     }
                 }
                 if (count($releases) < self::RELEASE_PAGE_SIZE) {
-                    $complete = true;
-                    break;
+                    break; // the end of the list
                 }
             }
-            if (!$complete) {
-                throw new \RuntimeException('The bounded release scan ended before the release list did');
+            if ($candidates === [] && $page > self::MAX_RELEASE_PAGES) {
+                throw new \RuntimeException('No published Better-Cal application release among the newest '
+                    . (self::RELEASE_PAGE_SIZE * self::MAX_RELEASE_PAGES) . ' releases');
             }
             if ($candidates === []) {
                 throw new \RuntimeException('No published Better-Cal application release was found');
@@ -244,11 +252,6 @@ final class Updates
         return $expected;
     }
 
-    private function releasePageUrl(int $page): string
-    {
-        return 'https://api.github.com/repos/Oshyan/better-cal/releases?per_page=' . self::RELEASE_PAGE_SIZE . '&page=' . $page;
-    }
-
     private function releasedAt(array $release): ?string
     {
         $raw = $release['published_at'] ?? null;
@@ -273,6 +276,11 @@ final class Updates
             maxTotalBytes: $manifestRequest ? self::MAX_MANIFEST_BYTES : 1024 * 1024,
         );
         return $http->get($url, $headers);
+    }
+
+    private static function releasePageUrl(int $page): string
+    {
+        return 'https://api.github.com/repos/Oshyan/better-cal/releases?per_page=' . self::RELEASE_PAGE_SIZE . '&page=' . $page;
     }
 
     private function currentVersion(): string

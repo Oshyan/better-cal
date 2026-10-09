@@ -8121,6 +8121,26 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
     checkEq('updates: bounded pagination finds an app release after a full extension page',
         ['1.1.0', 2], [$crowded['latest_version'], $pageCalls]);
 
+    // The usual case: the newest page holds an app release, so one request,
+    // however long the whole list has grown (it used to read all of it and
+    // fail past 300 releases).
+    $longCalls = 0;
+    $longFetch = static function (string $url) use ($manifest, &$longCalls): array {
+        if (!str_contains($url, 'api.github.com')) return ['status' => 200, 'body' => $manifest];
+        $longCalls++;
+        $page = [[
+            'tag_name' => 'v1.1.0', 'draft' => false, 'prerelease' => false, 'immutable' => true,
+            'html_url' => 'https://github.com/Oshyan/better-cal/releases/tag/v1.1.0', 'published_at' => '2026-10-08T12:00:00Z',
+            'assets' => [['name' => Updates::MANIFEST_NAME, 'browser_download_url' => Updates::RELEASE_BASE . 'v1.1.0/' . Updates::MANIFEST_NAME, 'digest' => 'sha256:' . hash('sha256', $manifest)]],
+        ]];
+        for ($i = 1; $i < Updates::RELEASE_PAGE_SIZE; $i++) {
+            $page[] = ['tag_name' => 'v1.0.' . (50 - $i), 'draft' => false, 'prerelease' => false, 'assets' => []];
+        }
+        return ['status' => 200, 'body' => json_encode($page)];
+    };
+    $long = (new Updates($udb, ['version' => '1.0.0'], $longFetch))->check(false);
+    checkEq('updates: the newest page with an app release is the only request, however long the list', ['1.1.0', 1], [$long['latest_version'], $longCalls]);
+
     $boundedCalls = 0;
     $truncatedFetch = static function (string $url) use (&$boundedCalls): array {
         $boundedCalls++;
@@ -8132,10 +8152,10 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
     };
     try {
         (new Updates($udb, ['version' => '1.0.0'], $truncatedFetch))->check(false);
-        check('updates: a full final bounded page cannot be reported as complete', false);
+        check('updates: no app release in the newest pages is a failure, not a quiet success', false);
     } catch (RuntimeException $e) {
-        check('updates: a full final bounded page cannot be reported as complete',
-            $boundedCalls === 3 && str_contains($e->getMessage(), 'ended before'));
+        check('updates: no app release in the newest pages is a failure, not a quiet success',
+            $boundedCalls === Updates::MAX_RELEASE_PAGES && str_contains($e->getMessage(), 'among the newest'));
     }
 
     $manifest12 = Updates::manifestJson('1.2.0', 'routine', '1.0.0');

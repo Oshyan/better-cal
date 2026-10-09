@@ -231,6 +231,24 @@ final class PlaceSearch
             preg_match($num, (string) ($c['name'] ?? '') . ' ' . (string) ($c['address'] ?? '')) === 1));
     }
 
+    /**
+     * Whether any candidate would survive search()'s rules for this query:
+     * the leading house number must match, and with a bias a bare number is
+     * never a far place. A provider whose answer would all be filtered out
+     * hasn't answered, so the next one is asked (FallbackPlaces): a service
+     * that reads "250" as a prefix and offers 2500 and 2507 leaves nothing. Pure.
+     *
+     * @param list<array<string,mixed>> $candidates
+     */
+    public static function usable(string $q, array $candidates, bool $biased): bool
+    {
+        $kept = self::matchingNumber($q, $candidates);
+        if ($biased && self::houseNumber($q) !== null && !self::hasWord($q)) {
+            $kept = array_filter($kept, static fn(array $c): bool => empty($c['far']));
+        }
+        return $kept !== [];
+    }
+
     /** A query word of three or more letters (not just numbers). Pure. */
     public static function hasWord(string $q): bool
     {

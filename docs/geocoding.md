@@ -32,7 +32,7 @@ Better-Cal is a personal calendar you host yourself, so the choices follow from 
 
 **Set your Home location** (Settings, Location & maps) whatever else you do. Every service ranks nearby places first, and without a Home location or a device location, Better-Cal can only guess your region from your time zone.
 
-**Recommended: free LocationIQ and MapTiler keys, LocationIQ first.** [LocationIQ](https://locationiq.com) answered in about 0.06 seconds (median) in testing, roughly twenty times faster than Photon, and was as good or better on places, venues, cities and landmarks. It can't find an address from a house number with only a few letters of the street (it once offered a different street outright), so it hands those on. [MapTiler](https://www.maptiler.com) is the one service besides Photon that finds addresses from a bare house number, and it does it in about a third of a second. Together, every kind of search in the tables below came out right, at a median of 0.1 seconds. To set it up:
+**Recommended: free LocationIQ and MapTiler keys, LocationIQ first.** [LocationIQ](https://locationiq.com) answered in about 0.06 seconds (median) in testing, roughly twenty times faster than Photon, and was as good or better on places, venues, cities and landmarks. It can't find an address from a house number with only a few letters of the street (it once offered a different street outright), so it hands those on. [MapTiler](https://www.maptiler.com) finds addresses from a house number and a letter or two of the street in about a third of a second, and from a bare number when that exact number exists nearby (it reads a short number as the start of longer ones, so "250" can bring 2500 and 2507, and then Photon answers). Together, with Photon behind them, every kind of search in the tables below came out right, at a median of 0.1 seconds. To set it up:
 
 1. Create a free account and an access token at locationiq.com, and a free account and an API key at maptiler.com. The MapTiler key must be one the server may use: a key locked to your site's address (as a map-tile key often is) is refused without a browser origin.
 2. In the server's `.env`, set `BETTERCAL_PLACE_SEARCH=locationiq,maptiler`, `BETTERCAL_LOCATIONIQ_KEY` and `BETTERCAL_MAPTILER_GEOCODING_KEY`.
@@ -54,7 +54,7 @@ These were tested in October 2026 from a small US-hosted server, with each servi
 |---|---|---|---|---|---|
 | **Photon** (komoot) | Free, no key; fair use | 1-2 s, up to 3 s | OpenStreetMap data, with credit | **Default**, and behind every other service | Works with no setup and handles bare house numbers; slow |
 | **LocationIQ** | 5,000 requests/day, 2 per second, 60 per minute | 0.06 s median | Allowed (credit link required on the free plan) | **Recommended**, first | Fastest by far; strong on places, cities and landmarks; weak on short partial addresses, which it hands on |
-| **MapTiler** | 100,000 requests/month, shared with its map tiles; personal and non-commercial on free | 0.3 s for addresses, up to 1.4 s when venues are included | Explicitly allowed, permanently | **Recommended**, second | Finds addresses from a bare house number or a letter or two of the street; good on venues and cities |
+| **MapTiler** | 100,000 requests/month, shared with its map tiles; personal and non-commercial on free | 0.3 s for addresses, up to 1.4 s when venues are included | Explicitly allowed, permanently | **Recommended**, second | Finds addresses from a number and a letter or two of the street, and some bare numbers; good on venues and cities |
 | **Stadia Maps** | 200,000 credits/month; autocomplete costs 20 a request, so about 10,000 | 0.15-0.2 s | Free plan is non-commercial; keeping results needs a paid plan that includes it | **Supported** | Best on addresses and venues (OpenAddresses house numbers); its terms are the catch |
 | **Geoapify** | 3,000 requests/day, 5 per second | 1.1 s median, spikes to 7 s | Allowed, with credit | Not supported | Very good on partial addresses once configured, but as slow as Photon and less predictable |
 | **CSV2GEO** | 3,000 requests/day, 300 per minute; place search 20/day | 0.2 s | Allowed for your own use | Not supported | Its autocomplete has no location bias at all: results come from anywhere in the country |
@@ -65,7 +65,7 @@ How each did, by kind of search (✓ right result first or near it, ~ plausible 
 
 | Kind of search | Photon (tuned) | LocationIQ | MapTiler | Stadia | Geoapify | CSV2GEO |
 |---|---|---|---|---|---|---|
-| A bare house number | ✓ | ✗ | ✓ | ✗ | ✗ | ✗ |
+| A bare house number | ✓ | ✗ | ~ | ✗ | ✗ | ✗ |
 | Number plus 1-3 letters of the street | ✓ (mostly) | ✗ | ✓ | ✓ | ✓ | ✗ |
 | Number plus most of the street | ✓ | ✓ | ✓ | ✓ | ✓ | ~ |
 | Part of a local venue's name | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ |
@@ -74,7 +74,7 @@ How each did, by kind of search (✓ right result first or near it, ~ plausible 
 | A famous landmark with replicas elsewhere | ✓ | ✓ | ✓ | ~ | ✓ | - |
 | A local airport by name | ✗ | ✓ | ✓ | ~ | ✓ | - |
 
-No single service won every row, which is why Better-Cal lets you list several, with Photon behind them, instead of picking one. LocationIQ then MapTiler covers every row.
+No single service won every row, which is why Better-Cal lets you list several, with Photon behind them, instead of picking one. LocationIQ then MapTiler, with Photon behind them, covers every row.
 
 **Also tested, not supported:**
 

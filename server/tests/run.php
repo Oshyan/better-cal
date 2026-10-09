@@ -2408,6 +2408,14 @@ $chain->candidates('elm', 45.52, -122.68, 6, null);
 checkEq('fallback: the primary answers what it takes', [0, 'Primary'], [$fallback->calls, $chain->credits()[0]['label']]);
 $chain->candidates('skip me', 45.52, -122.68, 6, null);
 checkEq('fallback: what the primary does not take goes to the fallback', [1, 'Fallback'], [$fallback->calls, $chain->credits()[0]['label']]);
+$primary->rows = [$row('2500 Elm Street', 45.53, -122.69), $row('2507 Oak Lane', 45.53, -122.69)];
+$before = $fallback->calls;
+$chain->candidates('250', 45.52, -122.68, 6, null);
+checkEq('fallback: an answer the number rule would empty (250 read as a prefix) hands over', 1, $fallback->calls - $before);
+$primary->rows = [$row('250 Elm Court', 43.6, -116.6)];
+$before = $fallback->calls;
+$chain->candidates('250', 45.52, -122.68, 6, null);
+checkEq('fallback: a bare number answered only far away hands over', 1, $fallback->calls - $before);
 foreach ([null, []] as $primaryRows) {
     $primary->rows = $primaryRows;
     $before = $fallback->calls;

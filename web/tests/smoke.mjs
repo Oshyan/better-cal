@@ -528,7 +528,9 @@ assert('duplicates: visible spokes collapse without their sparse hub',
   ];
   const timed = (id, cal, hh, extra = {}) => ({
     instanceId: id, eventId: Number(id.replace(/\D/g, '')) || 1, calendarId: cal, title: id,
-    start: `2026-06-18T${hh}:00:00-07:00`, end: `2026-06-18T${hh}:30:00-07:00`, allDay: false, attendance: 'none', ...extra,
+    // Local times, so the day holds in every zone the suite runs under.
+    start: new Date(2026, 5, 18, Number(hh)).toISOString(), end: new Date(2026, 5, 18, Number(hh), 30).toISOString(),
+    allDay: false, attendance: 'none', ...extra,
   });
   const a = timed('s1', 1, '09');
   const hidden = timed('s2', 3, '10');

@@ -13,17 +13,22 @@
 
 import { html, render } from '../../vendor/index.js';
 import { state } from '../app/store.js';
-import { parseISO, fmtRange, eventDuration } from '../lib/dates.js';
+import { parseISO, dateOfDayKey, fmtRange, eventDuration } from '../lib/dates.js';
 import { isPendingLocation } from '../lib/maps.js';
 import { formattingReasons } from '../lib/eventwhy.js';
 
 export const HOVER_DELAY_MS = 700;
 const TARGETS = '.bc-chip[data-instance], .bc-bar[data-instance], .bc-block[data-instance], [data-ctx-instance], [data-hovertext]';
 
-function Card({ occ, cal, at, nowMs }) {
-  const s = parseISO(occ.start);
-  const e = occ.end ? parseISO(occ.end) : s;
-  const reasons = formattingReasons(occ, nowMs);
+function Card({ occ, cal, at, nowMs, why = true }) {
+  // All-day dates are dates (stored at +00:00): read them as written, as the
+  // event panel does, or west of UTC a one-day event reads as the day before
+  // to that day.
+  const day = (iso) => dateOfDayKey(iso.slice(0, 10));
+  const s = occ.allDay ? day(occ.start) : parseISO(occ.start);
+  const e = occ.end ? (occ.allDay ? day(occ.end) : parseISO(occ.end)) : s;
+  // The reasons explain how an event chip is drawn; a context token isn't.
+  const reasons = why ? formattingReasons(occ, nowMs) : [];
   const place = occ.location && !isPendingLocation(occ.location) ? occ.location : null;
   const duration = eventDuration(occ); // multi-day: the exact total, as the old tooltip gave it
   return html`<div class="bc-hovercard" role="tooltip" style=${`left:${at.left}px;top:${at.top}px`}>
@@ -69,7 +74,7 @@ export function startHoverCards(doc = document) {
       return;
     }
     const cal = state.calendars.find((c) => c.id === occ.calendarId) || null;
-    render(html`<${Card} occ=${occ} cal=${cal} at=${{ left, top }} nowMs=${Date.now()} />`, host);
+    render(html`<${Card} occ=${occ} cal=${cal} at=${{ left, top }} nowMs=${Date.now()} why=${!el.dataset.ctxInstance} />`, host);
   };
 
   const onOver = (e) => {

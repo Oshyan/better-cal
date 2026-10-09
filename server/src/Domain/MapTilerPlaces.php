@@ -15,9 +15,9 @@ use BetterCal\Infra\KeyedGeocoderTransport;
  * - It finds addresses from a bare house number or a number with a letter or
  *   two of the street, near the bias, which only Photon otherwise did, and
  *   in about a third of a second; so it takes every query.
- * - Venues (its "poi" type) are left out unless asked for, and asking makes
- *   a search three or four times slower; a number-led query is an address,
- *   so venues are asked for only without a leading number.
+ * - Venues (its "poi" type) are left out unless asked for, and asking can
+ *   make a search slower, so they're skipped only while a query is a bare
+ *   house number or a number with a letter or two: an address being typed.
  * - Its proximity is a bias, and a far match it rates higher stays ahead of
  *   a local one, so distance reorders within PlaceSearch's cap; a city named
  *   exactly what was typed is pinned first (local streets named after it
@@ -64,7 +64,10 @@ final class MapTilerPlaces implements SelectivePlaceProvider
     public function candidates(string $q, ?float $biasLat, ?float $biasLng, int $limit, ?string $language): ?array
     {
         $biased = $biasLat !== null && $biasLng !== null;
-        $venues = PlaceSearch::houseNumber($q) === null;
+        // Venues too once there's a real word: plenty start with a number
+        // (a chain named "7-Something", a gym open "24 Hour"). A bare number
+        // or a number and a letter or two is someone typing an address.
+        $venues = PlaceSearch::houseNumber($q) === null || PlaceSearch::hasWord($q);
         $body = $this->transport->keyed('maptiler', [self::url($this->key, $q, $limit + 4, $language, $biased ? $biasLng . ',' . $biasLat : null, $venues)])[0] ?? null;
         if ($body === null) {
             return null;

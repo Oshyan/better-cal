@@ -2358,6 +2358,15 @@ checkEq('MapTiler: an address is named with its house number; a venue by its nam
     array_map(static fn(array $r): array => [$r['name'], $r['address'], $r['kind'], $r['fill']], $mtRows));
 parse_str((string) parse_url($MT::url('k', '250 elm', 6, 'en', '-122.68,45.52', false), PHP_URL_QUERY), $mtAddrQuery);
 parse_str((string) parse_url($MT::url('k', 'example the', 6, 'en', '-122.68,45.52', true), PHP_URL_QUERY), $mtVenueQuery);
+$mtAsked = [];
+foreach (['250', '250 e', '7 eleven', 'example cafe'] as $mtQ) {
+    $keyedTransport->bodies = [];
+    (new $MT($keyedTransport, 'k'))->candidates($mtQ, 45.52, -122.68, 6, null);
+    parse_str((string) parse_url($keyedTransport->urls[0], PHP_URL_QUERY), $mtQs);
+    $mtAsked[] = isset($mtQs['excludeTypes']);
+}
+checkEq('MapTiler: venues are skipped only for an address being typed (a bare number, or a letter or two); a number-led venue name gets them',
+    [false, false, true, true], $mtAsked);
 checkEq('MapTiler: venues are asked for only without a leading number (they slow it), proximity as lng,lat',
     [null, 'true', '-122.68,45.52', '/geocoding/250%20elm.json'],
     [$mtAddrQuery['excludeTypes'] ?? null, $mtVenueQuery['excludeTypes'] ?? null, $mtAddrQuery['proximity'] ?? null, parse_url($MT::url('k', '250 elm', 6, null, null, false), PHP_URL_PATH)]);

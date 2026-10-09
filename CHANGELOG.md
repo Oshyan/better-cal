@@ -4,6 +4,12 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.50 (2026-10-09)
+
+- **A bare house number finds the houses near you again.** In 0.9.49, with MapTiler in the list, typing just a number could show nothing: MapTiler reads a short number as the start of longer ones ("250" offered 2500 and 2507), those were rightly dropped, and the services after it were never asked. Now a service whose results would all be dropped counts as having found nothing, and the next one answers. So MapTiler finds bare numbers only when that exact number exists nearby; Photon covers the rest, as before.
+
+Operators: no migration.
+
 ## 0.9.49 (2026-10-09)
 
 - **Bare house numbers, fast, with MapTiler.** MapTiler's geocoding is now a place search option, and it's the one service besides Photon that finds addresses from a bare house number or a number with a letter or two of the street, in about a third of a second instead of one to three. Its terms allow keeping the places you pick.

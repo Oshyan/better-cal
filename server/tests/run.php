@@ -2282,6 +2282,19 @@ checkEq('a house named by its street line is not named twice, in Photon\'s addre
         'properties' => ['housenumber' => '250', 'street' => 'Elm Street', 'city' => 'Sampleville', 'state' => 'Example State', 'country' => 'Exampleland']]]], null, null)[0])['name'],
      $h['address'], $h['fill'],
      \BetterCal\Domain\PlaceSearch::row('250 Elm Street', '250 Elm Street, Sampleville, Exampleland', 45.5, -122.6, null, null, null, null, null, null, 'Exampleland')['fill']]);
+$townRow = static fn(string $name, string $kind, bool $far = false): array => ['name' => $name, 'kind' => $kind, 'far' => $far];
+$townRows = [$townRow('Sampleville Pond', 'pond'), $townRow('Sampleville Lakes', 'town'), $townRow('Sampleville Lakes Outfitters', 'shop')];
+checkEq('LocationIQ: a nearby town whose name starts with what was typed goes first, until the typing goes past it',
+    ['Sampleville Lakes', 'Sampleville Lakes', 'Sampleville Lakes', null, null, null, null],
+    array_map(static fn(?array $r) => $r['name'] ?? null, [
+        $LIQ::townStartingWith('sampleville lake', $townRows),
+        $LIQ::townStartingWith('Sampleville', $townRows),
+        $LIQ::townStartingWith('sam', $townRows),
+        $LIQ::townStartingWith('sa', $townRows),
+        $LIQ::townStartingWith('sampleville lakes out', $townRows),
+        $LIQ::townStartingWith('sampleville', [$townRow('Sampleville Lakes', 'town', true)]),
+        $LIQ::townStartingWith('sampleville', [$townRow('Sampleville Corner', 'hamlet')]),
+    ]));
 checkEq('LocationIQ: a house named by its number alone is named by its number and street', '250 Elm Street',
     $LIQ::mapResults([$liqResult('place', 'house', 45.52, -122.68, ['name' => '250', 'house_number' => '250', 'road' => 'Elm Street'], '250')], null, null)[0]['name'] ?? null);
 checkEq('LocationIQ: only whole typed words jump ahead ("grand la" is still being typed)', [['Grand Lake Park'], []],

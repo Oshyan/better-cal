@@ -86,8 +86,20 @@ final class LocationIqPlaces implements SelectivePlaceProvider
         $whole = self::withWholeWords($q, $near);
         $far = array_values(array_filter($searched, static fn(array $c): bool => $c['far']));
         $candidates = array_reduce([$typed, $near, $far], [PlaceSearch::class, 'mergeCandidates'], $whole);
+        $pins = [];
         $exact = PlaceSearch::exactPlace($q, $places, $candidates);
-        return $exact === null ? $candidates : PlaceSearch::mergeCandidates([$exact + ['pin' => true]], $candidates);
+        if ($exact !== null) {
+            $pins[] = $exact + ['pin' => true];
+        }
+        // A nearby town whose name starts with what was typed goes first:
+        // its own autocomplete ranks an exactly-named pond above the town
+        // for "mammoth lake" (Mammoth Lakes), and whole-word matching put a
+        // barbecue spot called "Mammoth" above it for "mammoth".
+        $town = self::townStartingWith($q, $candidates);
+        if ($town !== null) {
+            $pins[] = $town + ['pin' => true];
+        }
+        return $pins === [] ? $candidates : PlaceSearch::mergeCandidates($pins, $candidates);
     }
 
     // ---- Pure helpers (unit-tested, no network) ------------------------
@@ -130,6 +142,32 @@ final class LocationIqPlaces implements SelectivePlaceProvider
             }
             return true;
         }));
+    }
+
+    /**
+     * The first nearby city, town or village (or administrative area, as
+     * its search returns municipalities) whose name starts with everything
+     * typed, case, spacing and punctuation aside, or null. Three letters at
+     * least, and once the typing goes past the name ("mammoth lakes pack")
+     * it no longer applies. Hamlets and the like share names with too much.
+     * Pure.
+     *
+     * @param list<array<string,mixed>> $rows
+     */
+    public static function townStartingWith(string $q, array $rows): ?array
+    {
+        $norm = static fn(string $s): string => trim((string) preg_replace('/[^\p{L}\p{N}]+/u', ' ', mb_strtolower($s)));
+        $want = $norm($q);
+        if (mb_strlen(str_replace(' ', '', $want)) < 3) {
+            return null;
+        }
+        foreach ($rows as $r) {
+            if (empty($r['far']) && in_array($r['kind'] ?? null, ['city', 'town', 'village', 'administrative'], true)
+                && str_starts_with($norm((string) ($r['name'] ?? '')), $want)) {
+                return $r;
+            }
+        }
+        return null;
     }
 
     /**

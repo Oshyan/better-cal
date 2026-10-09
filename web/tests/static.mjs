@@ -15,6 +15,7 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
+import { spawnSync } from 'node:child_process';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', 'src');
 
@@ -185,6 +186,54 @@ for (const file of files) {
     '401 and explicit logout must clear saved resume context');
   check(resume.includes("['localStorage', 'sessionStorage']") && resume.includes('globalThis[name]'),
     'resume clearing must cover both installed-app and tab storage');
+}
+
+// --- 10a. the shell document's inline scripts parse --------------------------
+// They run before any module (theme, deep-link handoff, the start record and
+// its load-failure message); a syntax error there is silent and total.
+{
+  const doc = readFileSync(join(root, '..', 'index.html'), 'utf8');
+  for (const [i, m] of [...doc.matchAll(/<script>([\s\S]*?)<\/script>/g)].entries()) {
+    try { new Function(m[1]); passed++; } catch (e) { fail('index.html inline script ' + i + ': ' + e.message); }
+  }
+}
+
+// --- 10. the offline cache holds every module the app starts with ---------
+// The server lists the app's static import graph (server/src/Http/AppShell.php)
+// for the service worker to cache and the page to preload. A module it misses
+// is fetched from the network on every start, so a stalled download on a weak
+// connection hangs the app on a white screen. Its parser once missed imports
+// written across lines. Compare it with V8's own reading of the same files.
+{
+  const webRoot = join(root, '..');
+  const want = new Set();
+  const queue = ['src/app/main.js'];
+  while (queue.length) {
+    const rel = queue.shift();
+    if (want.has(rel)) continue;
+    want.add(rel);
+    const mod = new vm.SourceTextModule(readFileSync(join(webRoot, rel), 'utf8'), { identifier: rel });
+    for (const spec of mod.dependencySpecifiers) {
+      if (spec.startsWith('.')) queue.push(join(dirname(rel), spec).split('\\').join('/'));
+    }
+  }
+  const php = spawnSync('php', ['-r', 'require $argv[1]; echo json_encode((new BetterCal\\Http\\AppShell($argv[2]))->graph());',
+    join(webRoot, '..', 'server', 'src', 'bootstrap.php'), webRoot], { encoding: 'utf8' });
+  if (php.error && php.error.code === 'ENOENT') {
+    console.log('SKIP: php not found, so the offline-cache module list was not compared');
+  } else {
+    let have = null;
+    try { have = new Set(JSON.parse(php.stdout)); } catch { fail('AppShell graph did not return JSON: ' + (php.stderr || php.stdout).slice(0, 300)); }
+    if (have) {
+      const missing = [...want].filter((m) => !have.has(m));
+      const extra = [...have].filter((m) => !want.has(m));
+      if (missing.length || extra.length) {
+        fail('offline cache module list differs from the real import graph: missing ' + JSON.stringify(missing) + ', extra ' + JSON.stringify(extra));
+      } else {
+        passed++;
+      }
+    }
+  }
 }
 
 console.log('');

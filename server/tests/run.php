@@ -6933,6 +6933,47 @@ require __DIR__ . '/plugins.php';
         (int) $tdb->scalar('SELECT COUNT(*) FROM api_tokens'));
 }
 
+// --- A start that never finished: reported once, validated to a fixed shape ---
+{
+    $ceController = new BetterCal\Http\Controllers\SystemController(
+        new BetterCal\Domain\SystemHealth(new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null])),
+        new BetterCal\Domain\PushSubscriptions(new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null])),
+        new BetterCal\Infra\EmailSender([]),
+        [],
+    );
+    $ceReq = static function (array $body, string $auth = 'session'): BetterCal\Http\Request {
+        $r = new BetterCal\Http\Request('POST', '/api/v1/system/client-event', [], $body);
+        $r->user = ['id' => 1, 'email' => 'owner@example.test'];
+        $r->authMethod = $auth;
+        return $r;
+    };
+    $ceRecent = gmdate('Y-m-d\TH:i:s.000\Z', time() - 3600);
+    $ceLog = sys_get_temp_dir() . '/bc-client-event-' . bin2hex(random_bytes(4)) . '.log';
+    $ceSavedLog = ini_get('error_log');
+    ini_set('error_log', $ceLog);
+    checkEq('client event: a stalled start is accepted from a browser session', 200,
+        $ceController->clientEvent($ceReq(['kind' => 'boot-stalled', 'at' => $ceRecent, 'file' => '/assets/src/ui/agendarails.js']))->status);
+    $ceLine = (string) @file_get_contents($ceLog);
+    check('client event: one fixed-shape line names the file that failed', str_contains($ceLine, 'did not finish') && str_contains($ceLine, 'loading /assets/src/ui/agendarails.js failed'));
+    ini_set('error_log', $ceSavedLog === false ? '' : $ceSavedLog);
+    @unlink($ceLog);
+    foreach ([
+        'an API token' => [['kind' => 'boot-stalled', 'at' => $ceRecent], 'token', 403],
+        'another kind' => [['kind' => 'anything', 'at' => $ceRecent], 'session', 400],
+        'a time long ago' => [['kind' => 'boot-stalled', 'at' => '2020-01-01T00:00:00Z'], 'session', 400],
+        'free text as a time' => [['kind' => 'boot-stalled', 'at' => "now\nforged log line"], 'session', 400],
+        'a path outside the app' => [['kind' => 'boot-stalled', 'at' => $ceRecent, 'file' => "/etc/passwd"], 'session', 400],
+        'a path with a newline' => [['kind' => 'boot-stalled', 'at' => $ceRecent, 'file' => "/assets/x.js\nforged"], 'session', 400],
+    ] as $what => [$body, $auth, $status]) {
+        try {
+            $ceController->clientEvent($ceReq($body, $auth));
+            check("client event: $what is refused", false);
+        } catch (HttpError $e) {
+            checkEq("client event: $what is refused", $status, $e->status);
+        }
+    }
+}
+
 // --- App shell: preload block and service-worker version, filled in when served ---
 {
     $AS = BetterCal\Http\AppShell::class;
@@ -6957,6 +6998,13 @@ require __DIR__ . '/plugins.php';
     $savedLog = ini_get('error_log');
     ini_set('error_log', $root . '-errors.log'); // the missing-entry notice is expected here
 
+    // Imports written across lines, with double quotes, or minified once went
+    // unseen, so those modules were fetched from the network on every start.
+    checkEq('app shell: multi-line, double-quoted, minified and side-effect imports are all found; dynamic imports and comments are not',
+        ['./multi.js', '../lib/dq.js', './min.js', './re.js', './after-string.js', './side.js', './min-side.js'],
+        $AS::staticSpecifiers("import {\n  a,\n  b,\n} from './multi.js';\nimport x from \"../lib/dq.js\";\nimport{c}from\"./min.js\";export * from './re.js';\nimport './side.js';\n;import\"./min-side.js\";\nconst lazy = () => import('./lazy.js');\n// import y from './commented.js';\n * import z from './jsdoc.js'\nconst s = '/* not a comment */'; import w from './after-string.js';\n"));
+    check('app shell: an import after a string containing a comment marker is still found',
+        in_array('./after-string.js', $AS::staticSpecifiers("const s = '/* x */'; import w from './after-string.js';\n"), true));
     $shell = new BetterCal\Http\AppShell($root, $cache, $extra);
     checkEq('app shell: static imports breadth-first; dynamic and remote imports left out', ['src/app/main.js', 'src/app/a.js', 'src/lib/b.js', 'src/lib/side.js'], $shell->graph());
     $st = $shell->state();

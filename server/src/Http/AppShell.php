@@ -162,6 +162,36 @@ final class AppShell
      *
      * @return list<string>
      */
+    /**
+     * Module specifiers of a file's static imports and re-exports. Pure.
+     * A statement may span lines (`import {\n  a,\n  b,\n} from './x.js'`),
+     * use either quote, and be minified (`import{a}from"./x.js"`). Single-line
+     * matching once missed three modules, so a phone started them from the
+     * network instead of the cache and could hang on a white screen when a
+     * download stalled. A dynamic import() never matches: it has no `from`,
+     * and its parenthesis stops the bare form.
+     *
+     * @return list<string>
+     */
+    public static function staticSpecifiers(string $src): array
+    {
+        // Comment lines could hold import-like text; they are not code. Only
+        // whole comment lines go: stripping /* ... */ spans would also eat
+        // code after a string that happens to contain "/*".
+        $src = (string) preg_replace('~(?m)^[ \t]*(?://|/\*|\*).*$~', '', $src);
+        $specs = [];
+        // import ... from '…' / export ... from '…': the clause between the
+        // keyword and `from` holds no quotes, but may hold newlines.
+        if (preg_match_all('~(?:^|[\n;}])\s*(?:import|export)\b[^\'"`;]*?\bfrom\s*([\'"])([^\'"\n]+)\1~', $src, $m)) {
+            $specs = array_merge($specs, $m[2]);
+        }
+        // Side-effect imports: import '…';
+        if (preg_match_all('~(?:^|[\n;}])\s*import\s*([\'"])([^\'"\n]+)\1~', $src, $m)) {
+            $specs = array_merge($specs, $m[2]);
+        }
+        return array_values(array_unique($specs));
+    }
+
     public function graph(): array
     {
         $seen = [];
@@ -178,14 +208,7 @@ final class AppShell
             if ($src === false) {
                 continue;
             }
-            $specs = [];
-            if (preg_match_all('~(?:^|\n)\s*(?:import|export)[^\'"\n]*?from\s+\'([^\']+)\'~', $src, $m)) {
-                $specs = array_merge($specs, $m[1]);
-            }
-            if (preg_match_all('~(?:^|\n)\s*import\s+\'([^\']+)\'~', $src, $m)) {
-                $specs = array_merge($specs, $m[1]);
-            }
-            foreach ($specs as $spec) {
+            foreach (self::staticSpecifiers($src) as $spec) {
                 if (!str_starts_with($spec, '.')) {
                     continue;
                 }

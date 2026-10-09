@@ -8,6 +8,7 @@ import { loadSession, startSession } from './session.js';
 import { armQuietReload } from './drafts.js';
 import { restoreResume, recordStart } from './resume.js';
 import { takeHandoff, runHandoff } from './handoff.js';
+import { markBooted, reportStalledStart } from './bootlog.js';
 import './install.js'; // keeps the browser's one-time install prompt for the welcome
 import {
   BATTERY_TIP_BODY, shouldShowInstallTip, markInstallTipShown,
@@ -38,6 +39,8 @@ async function boot() {
   if (authed && !handoff) restoreResume();
   set({ booted: true, pendingHandoff: authed ? null : handoff });
   if (authed) startSession(handoff);
+  // A start that never finished (a white screen) goes to the server log once.
+  if (authed) reportStalledStart();
 }
 
 // Installed-PWA launches. The manifest asks for focus-existing: opening the
@@ -78,6 +81,8 @@ if ('launchQueue' in window) {
 }
 
 render(html`<${App} />`, document.getElementById('app'));
+// Every module loaded and the app is on screen: this start finished.
+markBooted();
 boot();
 
 // Android battery guidance, one time only: after installing the PWA (or on

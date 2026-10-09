@@ -15,6 +15,13 @@
        below is made, so no asset request or Referer ever carries them
        (src/app/handoff.js collects them at boot). -->
   <script>try{if(location.pathname!=='/'){sessionStorage.setItem('bc-handoff',JSON.stringify({path:location.pathname,search:location.search}));history.replaceState(null,'','/')}}catch(e){}</script>
+  <!-- Start record: this start is noted before any app code loads, and
+       main.js marks it finished once the app has rendered, so a start that
+       never got that far (a hung download: a white screen) is still on record
+       at the next start (src/app/bootlog.js). A start file that fails to load
+       outright gets a message with a reload button instead of a blank page. -->
+  <script>try{var bp=localStorage.getItem('bc-boot');if(bp){var bb=JSON.parse(bp);if(bb&&!bb.done)localStorage.setItem('bc-boot-stalled',bp)}localStorage.setItem('bc-boot',JSON.stringify({at:Date.now(),done:false}))}catch(e){}
+  addEventListener('error',function(e){var s=e.target;if(!s||s.tagName!=='SCRIPT'||!s.src||window.bcBooted)return;try{var b=JSON.parse(localStorage.getItem('bc-boot')||'{}');b.failed=String(s.src).replace(location.origin,'').split('?')[0];localStorage.setItem('bc-boot',JSON.stringify(b))}catch(x){}var a=document.getElementById('app');if(a&&!a.firstChild){a.innerHTML='<div style="font:16px system-ui,sans-serif;padding:24px;max-width:28em"><p>Better-Cal couldn’t finish loading. The connection may have dropped while it was starting.</p><button type="button" style="font:inherit;padding:8px 16px" onclick="location.reload()">Try again</button></div>'}},true)</script>
   <link rel="manifest" href="/assets/manifest.webmanifest">
   <link rel="icon" href="/assets/icons/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/assets/icons/icon-192.png">

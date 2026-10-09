@@ -272,6 +272,9 @@ function bc_handle_api(Request $request, array $cfg): void
         $router->add('DELETE', "$base/push/devices/:id", [$pushController, 'removeDevice']);
         // Is background work working: the Settings panel and boot notices.
         $router->add('GET', "$base/system/health", [$systemController, 'health']);
+        // A start of the app that never reached its first render (white screen),
+        // reported by the next start: one validated line in the error log.
+        $router->add('POST', "$base/system/client-event", [$systemController, 'clientEvent']);
         // Google Calendar connector (docs/google-calendar.md).
         $router->add('GET', "$base/google/status", [$googleController, 'status']);
         $router->add('GET', "$base/google/connect", [$googleController, 'connect']);

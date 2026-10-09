@@ -11,6 +11,7 @@ import { fmtSince } from '../lib/since.js';
 import { adoptSettings } from './settings.js';
 import { saveSetting } from './actions.js';
 import { recentStarts } from './resume.js';
+import { stalledStart } from './bootlog.js';
 import { UpdateSettings } from './updates.js';
 import { PageShell } from './PageShell.js';
 import { Icon } from '../ui/icons.js';
@@ -120,9 +121,11 @@ const START_WORDS = {
 };
 function StartsRow() {
   const starts = recentStarts().slice(0, 10);
-  if (starts.length === 0) return null;
-  return html`<${Row} label="Recent starts on this device" hint="Why the app last started here, most recent first. Kept on this device only.">
+  const stalled = stalledStart();
+  if (starts.length === 0 && !stalled) return null;
+  return html`<${Row} label="Recent starts on this device" hint="Why the app last started here, most recent first. Kept on this device only; a start that never finished is also noted in the server's log.">
     <ul class="bc-sys-starts">
+      ${stalled && html`<li class="is-stalled"><span class="bc-sys-starts-when">${fmtDayMedium(new Date(stalled.at))}, ${fmtTime(new Date(stalled.at))}</span> didn't finish starting (${stalled.failed ? 'couldn’t load ' + stalled.failed.split('/').pop() : 'a download probably hung'})</li>`}
       ${starts.map((st) => html`<li key=${st.at}><span class="bc-sys-starts-when">${fmtDayMedium(new Date(st.at))}, ${fmtTime(new Date(st.at))}</span> ${START_WORDS[st.reason] || st.reason}</li>`)}
     </ul>
   <//>`;

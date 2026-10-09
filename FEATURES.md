@@ -146,7 +146,7 @@ Multi-day events show their total duration beside the title on every visible seg
 ### Notifications and reminders
 
 - Per-event, per-calendar, and global default reminders with a clear precedence chain.
-- Subscribed and plugin calendars stay quiet unless you ask: a busy feed or sunsets don't all remind. Set reminders for one in its settings (Reminders, Set for this calendar), or on a single event.
+- Each calendar chooses its reminders: your defaults (they follow Settings), none, or its own. Until you choose, its role decides: your own calendars use your defaults, wherever they live (here, Google, a feed), and Opportunities and Context calendars stay quiet, so a busy feed or sunsets don't all remind.
 - Web Push to any installed PWA or browser, email delivery, or both, including a push-with-email-fallback mode for unreachable devices.
 - Timed and all-day reminder defaults are separately configurable (e.g. all-day events remind the evening before).
 - A Home time zone setting: all-day reminders fire on your home clock whatever zone an event was imported or created in, and the app tells you once when the device you are on keeps a different clock.

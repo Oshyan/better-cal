@@ -2711,11 +2711,11 @@ checkEq('all-day weekly in UTC unchanged', ['2026-08-31 00:00:00', '2026-09-02 0
 {
     $rmdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
     $rmdb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, settings_json TEXT)');
-    $rmdb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, provider TEXT, settings_json TEXT)');
+    $rmdb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, provider TEXT, settings_json TEXT, role TEXT)');
     $rmdb->run("CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, start_utc TEXT, end_utc TEXT, all_day INTEGER, tzid TEXT, rrule TEXT, exdates_json TEXT, recurrence_instance_utc TEXT, recurrence_parent_id INTEGER, status TEXT DEFAULT 'confirmed', source TEXT DEFAULT 'local', attendance TEXT DEFAULT 'none', deleted_at TEXT, reminders_json TEXT, location TEXT, location_lat REAL, location_lng REAL, url TEXT, description TEXT)");
     $rmdb->run('CREATE TABLE event_duplicates (id INTEGER PRIMARY KEY, event_a INTEGER, event_b INTEGER, status TEXT)');
     $rmdb->run('INSERT INTO users VALUES (1, ?, ?)', ['owner@example.com', json_encode(['tz' => 'America/Los_Angeles', 'reminderAllDay' => [['daysBefore' => 0, 'time' => '18:00']]])]);
-    $rmdb->run("INSERT INTO calendars VALUES (1, 1, 'local', 'ics', NULL)");
+    $rmdb->run("INSERT INTO calendars VALUES (1, 1, 'local', 'ics', NULL, 'mine')");
     $rmdb->run("INSERT INTO events (id, user_id, calendar_id, uid, title, start_utc, end_utc, all_day, tzid) VALUES (1, 1, 1, 'a', 'Imported day', '2026-10-10 00:00:00', '2026-10-11 00:00:00', 1, 'UTC')");
     $rmRc = new ReflectionClass(BetterCal\Domain\Reminders::class);
     $rm = $rmRc->newInstanceWithoutConstructor();
@@ -4322,14 +4322,30 @@ checkEq('rem effective global timed fallback', [$gTimed, 'default'],
     Reminders::effective(null, null, $gTimed, $gAllDay, false));
 checkEq('rem effective global allday fallback', [$gAllDay, 'default'],
     Reminders::effective(null, null, $gTimed, $gAllDay, true));
-checkEq('rem effective subscribed never inherits global', [[], 'default'],
-    Reminders::effective(null, null, $gTimed, $gAllDay, false, 'subscribed'));
-checkEq('rem effective plugin calendar never inherits global', [[], 'default'],
-    Reminders::effective(null, null, $gTimed, $gAllDay, false, 'plugin'));
-checkEq('rem effective plugin event reminder still applies', [[['minutes' => 10]], 'event'],
-    Reminders::effective([['minutes' => 10]], null, $gTimed, $gAllDay, false, 'plugin'));
-checkEq('rem effective subscribed calendar default applies', [[['minutes' => 30]], 'calendar'],
-    Reminders::effective(null, $calDef, $gTimed, $gAllDay, false, 'subscribed'));
+// A calendar that hasn't chosen follows its role: Mine uses the global
+// default wherever it comes from; Opportunities and Context stay quiet.
+checkEq('rem effective an unset Opportunities calendar stays quiet', [[], 'calendar'],
+    Reminders::effective(null, null, $gTimed, $gAllDay, false, 'opportunities'));
+checkEq('rem effective an unset Context calendar stays quiet', [[], 'calendar'],
+    Reminders::effective(null, null, $gTimed, $gAllDay, false, 'context'));
+checkEq('rem effective an event reminder on a quiet calendar still applies', [[['minutes' => 10]], 'event'],
+    Reminders::effective([['minutes' => 10]], null, $gTimed, $gAllDay, false, 'context'));
+checkEq('rem effective own lists apply on any role', [[['minutes' => 30]], 'calendar'],
+    Reminders::effective(null, $calDef, $gTimed, $gAllDay, false, 'opportunities'));
+checkEq('rem effective "defaults" makes a quiet role follow the global default', [$gTimed, 'default'],
+    Reminders::effective(null, 'defaults', $gTimed, $gAllDay, false, 'opportunities'));
+checkEq('rem effective "defaults" on Mine is the global default too', [$gAllDay, 'default'],
+    Reminders::effective(null, 'defaults', $gTimed, $gAllDay, true, 'mine'));
+checkEq('rem calendar defaults read from settings', [['timed' => [], 'allDay' => []], 'defaults', null, null],
+    [Reminders::calendarDefaults('{"reminderDefaults":{"timed":[],"allDay":[]}}'), Reminders::calendarDefaults(['reminderDefaults' => 'defaults']),
+     Reminders::calendarDefaults('{"reminderDefaults":"other"}'), Reminders::calendarDefaults(null)]);
+checkEq('rem defaults accepts "defaults"', 'defaults', Reminders::validateDefaults('defaults'));
+try {
+    Reminders::validateDefaults('always');
+    check('rem defaults rejects another string', false);
+} catch (HttpError $e) {
+    checkEq('rem defaults another string code', 'invalid_reminders', $e->errorCode);
+}
 
 // Fire-time math. Timed: minutes before the start instant.
 $startUtc = Time::fromDb('2026-08-07 19:00:00'); // noon LA

@@ -1,7 +1,8 @@
 // Reminder helpers: offset formatting, all-day default conversion, and a
 // client-side mirror of the server's effective-reminder resolution (event
-// override > calendar default > global default; subscribed and plugin calendars
-// never inherit the global default). Pure module, smoke-tested in node.
+// override > calendar's own > global default; a calendar that hasn't chosen
+// follows its role, Mine reminding and the others quiet). Pure module,
+// smoke-tested in node.
 
 // Offsets offered by the editor / settings selects (minutes before start;
 // for all-day events, before local midnight of the event date).
@@ -104,15 +105,19 @@ export function normalizeMinutesList(minutes) {
     .map((m) => ({ minutes: m }));
 }
 
+// A calendar's reminderDefaults that means "follow the global defaults".
+export const FOLLOW_DEFAULTS = 'defaults';
+
 // Mirror of the server's Reminders::effective (docs/api-contract.md).
-// Returns {reminders, source: 'event'|'calendar'|'default'}.
-export function effectiveReminders({ override, calendarDefaults, settings, allDay, calendarKind }) {
+// calendarDefaults: the calendar's own {timed, allDay}, 'defaults', or null
+// (unset: the role decides). Returns {reminders, source: 'event'|'calendar'|'default'}.
+export function effectiveReminders({ override, calendarDefaults, settings, allDay, calendarRole = 'mine' }) {
   if (override != null) return { reminders: override, source: 'event' };
-  if (calendarDefaults != null) {
+  if (calendarDefaults && typeof calendarDefaults === 'object') {
     const list = allDay ? (calendarDefaults.allDay || []) : (calendarDefaults.timed || []);
     return { reminders: list, source: 'calendar' };
   }
-  if (calendarKind === 'subscribed' || calendarKind === 'plugin') return { reminders: [], source: 'default' };
+  if (calendarDefaults !== FOLLOW_DEFAULTS && calendarRole !== 'mine') return { reminders: [], source: 'calendar' };
   const s = settings || {};
   return {
     reminders: (allDay ? s.reminderAllDay : s.reminderTimed) || [],

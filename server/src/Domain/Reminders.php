@@ -23,8 +23,11 @@ use BetterCal\Support\WorkBudgetExceeded;
  * - Event override (events.reminders_json): list of {"minutes": int} offsets
  *   before start (before local midnight for all-day events); [] means
  *   explicitly no reminders; NULL means inherit.
- * - Calendar default (calendars.settings_json.reminderDefaults) and global
- *   default (user settings reminderTimed/reminderAllDay):
+ * - Calendar default (calendars.settings_json.reminderDefaults): unset (the
+ *   role decides: a Mine calendar uses the global default, others none),
+ *   "defaults" (always the global default), or its own lists below.
+ * - Calendar own lists and the global default (user settings
+ *   reminderTimed/reminderAllDay):
  *   timed entries {"minutes": int}, all-day entries {"daysBefore": int,
  *   "time": "HH:MM"} (fire daysBefore days before the event date at that
  *   time in the owner's Home zone, settings.tz; the event's own zone only
@@ -37,6 +40,8 @@ final class Reminders
     private bool $h24 = false;
 
     public const MAX_ENTRIES = 5;
+    /** A calendar's reminderDefaults saying "follow the global defaults" whatever its role. */
+    public const FOLLOW_DEFAULTS = 'defaults';
     public const MAX_MINUTES = 40320; // 4 weeks
     public const MAX_DAYS_BEFORE = 28;
 
@@ -141,18 +146,19 @@ final class Reminders
     }
 
     /**
-     * Validate a calendar's reminderDefaults object. null clears the default
-     * (fall through to global). Missing keys are treated as [] (none).
+     * Validate a calendar's reminderDefaults: null clears it (the role
+     * decides), "defaults" follows the global defaults, an object holds the
+     * calendar's own lists (a missing key is [] = none).
      *
-     * @return array{timed:list<array{minutes:int}>,allDay:list<array{daysBefore:int,time:string}>}|null
+     * @return array{timed:list<array{minutes:int}>,allDay:list<array{daysBefore:int,time:string}>}|string|null
      */
-    public static function validateDefaults(mixed $value): ?array
+    public static function validateDefaults(mixed $value): array|string|null
     {
-        if ($value === null) {
-            return null;
+        if ($value === null || $value === self::FOLLOW_DEFAULTS) {
+            return $value;
         }
         if (!is_array($value)) {
-            throw HttpError::badRequest('reminderDefaults must be an object with timed/allDay lists or null', 'invalid_reminders');
+            throw HttpError::badRequest('reminderDefaults must be an object with timed/allDay lists, "defaults" or null', 'invalid_reminders');
         }
         foreach (array_keys($value) as $key) {
             if (!in_array($key, ['timed', 'allDay'], true)) {
@@ -165,41 +171,56 @@ final class Reminders
         ];
     }
 
+    /**
+     * A calendar's stored reminderDefaults from its decoded or raw
+     * settings_json: its own lists, "defaults", or null when unset. Pure.
+     *
+     * @return array|string|null
+     */
+    public static function calendarDefaults(mixed $settings): array|string|null
+    {
+        if (is_string($settings)) {
+            $settings = $settings === '' ? null : json_decode($settings, true);
+        }
+        $value = is_array($settings) ? ($settings['reminderDefaults'] ?? null) : null;
+        return is_array($value) || $value === self::FOLLOW_DEFAULTS ? $value : null;
+    }
+
     // ---- Pure: effective resolution -----------------------------------
 
     /**
      * Resolve the reminders that actually fire for an event: the event
-     * override when set (including [] = explicitly none), else the calendar
-     * default, else the global default. Subscribed (feed) calendars never
-     * inherit the global default — a feed reminds only when its calendar has
-     * explicit reminderDefaults (or the event an override), so subscribing to
-     * a busy feed does not turn every event into a notification.
+     * override when set (including [] = explicitly none), else the calendar's
+     * own lists, else the global default. A calendar that hasn't chosen
+     * follows its role: Mine (things I do) uses the global default wherever
+     * it comes from (a Google calendar, a feed of my own plans);
+     * Opportunities and Context stay quiet, so subscribing to a busy feed or
+     * turning on sunsets doesn't turn every event into a notification.
+     * "defaults" makes any calendar follow the global default.
      *
      * @param list<array>|null $eventReminders decoded reminders_json
-     * @param array|null $calendarDefaults decoded settings_json.reminderDefaults
+     * @param array|string|null $calendarDefaults calendarDefaults() of the calendar
      * @param list<array> $globalTimed validated reminderTimed setting
      * @param list<array> $globalAllDay validated reminderAllDay setting
      * @return array{0:list<array>,1:string} [entries, source: event|calendar|default]
      */
     public static function effective(
         ?array $eventReminders,
-        ?array $calendarDefaults,
+        array|string|null $calendarDefaults,
         array $globalTimed,
         array $globalAllDay,
         bool $allDay,
-        string $calendarKind = 'local',
+        string $calendarRole = 'mine',
     ): array {
         if ($eventReminders !== null) {
             return [$eventReminders, 'event'];
         }
-        if ($calendarDefaults !== null) {
+        if (is_array($calendarDefaults)) {
             $list = $allDay ? ($calendarDefaults['allDay'] ?? []) : ($calendarDefaults['timed'] ?? []);
             return [is_array($list) ? array_values($list) : [], 'calendar'];
         }
-        // Feeds and plugin calendars (sunsets, tides) don't inherit the global
-        // default; a reminder on one is set per event or per calendar.
-        if ($calendarKind === 'subscribed' || $calendarKind === 'plugin') {
-            return [[], 'default'];
+        if ($calendarDefaults !== self::FOLLOW_DEFAULTS && $calendarRole !== 'mine') {
+            return [[], 'calendar']; // the calendar's role keeps it quiet
         }
         return [$allDay ? $globalAllDay : $globalTimed, 'default'];
     }
@@ -466,12 +487,13 @@ final class Reminders
         $winEnd = $now->add(new \DateInterval(self::SCAN_LOOKAHEAD));
 
         $calendars = [];
-        foreach ($this->db->all('SELECT id, kind, provider, settings_json FROM calendars WHERE user_id = ?', [$userId]) as $cal) {
-            $settings = is_string($cal['settings_json'] ?? null) ? json_decode((string) $cal['settings_json'], true) : $cal['settings_json'];
-            $defaults = is_array($settings) && isset($settings['reminderDefaults']) && is_array($settings['reminderDefaults'])
-                ? $settings['reminderDefaults']
-                : null;
-            $calendars[(int) $cal['id']] = ['kind' => (string) $cal['kind'], 'provider' => (string) ($cal['provider'] ?? 'ics'), 'defaults' => $defaults];
+        foreach ($this->db->all('SELECT id, kind, provider, role, settings_json FROM calendars WHERE user_id = ?', [$userId]) as $cal) {
+            $calendars[(int) $cal['id']] = [
+                'kind' => (string) $cal['kind'],
+                'provider' => (string) ($cal['provider'] ?? 'ics'),
+                'role' => (string) ($cal['role'] ?? 'mine'),
+                'defaults' => self::calendarDefaults($cal['settings_json'] ?? null),
+            ];
         }
 
         $rawSettings = $this->db->scalar('SELECT settings_json FROM users WHERE id = ?', [$userId]);
@@ -564,8 +586,8 @@ final class Reminders
         $quiet = (new Duplicates($this->db))->silenced(
             $byId,
             function (array $row) use ($calendars, $globalTimed, $globalAllDay): bool {
-                $cal = $calendars[(int) $row['calendar_id']] ?? ['kind' => 'local', 'defaults' => null];
-                [$entries] = self::effective(self::decode($row['reminders_json'] ?? null), $cal['defaults'], $globalTimed, $globalAllDay, (int) $row['all_day'] === 1, $cal['kind']);
+                $cal = $calendars[(int) $row['calendar_id']] ?? ['kind' => 'local', 'role' => 'mine', 'defaults' => null];
+                [$entries] = self::effective(self::decode($row['reminders_json'] ?? null), $cal['defaults'], $globalTimed, $globalAllDay, (int) $row['all_day'] === 1, $cal['role']);
                 return $entries !== [];
             },
             $calendars
@@ -581,14 +603,14 @@ final class Reminders
             if (isset($quiet[(int) $master['id']])) {
                 continue;
             }
-            $masterCal = $calendars[(int) $master['calendar_id']] ?? ['kind' => 'local', 'defaults' => null];
+            $masterCal = $calendars[(int) $master['calendar_id']] ?? ['kind' => 'local', 'role' => 'mine', 'defaults' => null];
             [$masterEntries] = self::effective(
                 self::decode($master['reminders_json'] ?? null),
                 $masterCal['defaults'],
                 $globalTimed,
                 $globalAllDay,
                 (int) $master['all_day'] === 1,
-                $masterCal['kind'],
+                $masterCal['role'],
             );
             $mayRemind = $masterEntries !== [];
             if (!$mayRemind) {
@@ -600,7 +622,7 @@ final class Reminders
                         $globalTimed,
                         $globalAllDay,
                         (int) $override['all_day'] === 1,
-                        $overrideCal['kind'],
+                        $overrideCal['role'],
                     );
                     if ($overrideEntries !== []) {
                         $mayRemind = true;
@@ -660,7 +682,7 @@ final class Reminders
         ?string $homeTzid = null,
     ): void {
         $calendarId = (int) $row['calendar_id'];
-        $cal = $calendars[$calendarId] ?? ['kind' => 'local', 'defaults' => null];
+        $cal = $calendars[$calendarId] ?? ['kind' => 'local', 'role' => 'mine', 'defaults' => null];
         $allDay = (int) $row['all_day'] === 1;
         [$entries] = self::effective(
             self::decode($row['reminders_json'] ?? null),
@@ -668,7 +690,7 @@ final class Reminders
             $globalTimed,
             $globalAllDay,
             $allDay,
-            $cal['kind']
+            $cal['role']
         );
         foreach ($entries as $entry) {
             $fire = self::fireAt(is_array($entry) ? $entry : [], $startUtc, $allDay, (string) $row['tzid'], $homeTzid);

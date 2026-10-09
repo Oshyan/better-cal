@@ -14,7 +14,7 @@ import { SchemaForm } from './SchemaForm.js';
 import { Icon } from '../ui/icons.js';
 import { MoveToGoogle } from './MoveToGoogle.js';
 import { TimedDefault, AllDayDefault } from './ReminderDefaults.js';
-import { summarizeDefaults } from '../lib/reminders.js';
+import { summarizeDefaults, FOLLOW_DEFAULTS } from '../lib/reminders.js';
 
 // Preset grid: the app palette plus teal and slate to round out 12.
 const SWATCHES = [...PALETTE, '#3aa695', '#708090'];
@@ -45,36 +45,52 @@ function pollStatusLine(cal) {
   return line;
 }
 
-// The calendar's own default reminders, or what it gets without them: your
-// defaults from Settings, or none for subscribed and plugin calendars, which
-// never inherit them (a busy feed or sunsets shouldn't all remind).
+// Which reminders the calendar's events get: your defaults (linked, so they
+// follow Settings), none, or the calendar's own. Until one is chosen the role
+// decides: Mine uses your defaults, Opportunities and Context stay quiet (a
+// busy feed or sunsets shouldn't all remind). Any role can choose any of the
+// three.
+const ROLE_NAMES = { mine: 'Mine', opportunities: 'Opportunities', context: 'Context' };
+const FALLBACK_OWN = { timed: [{ minutes: 10 }], allDay: [{ daysBefore: 1, time: '18:00' }] };
+
 function ReminderField({ cal }) {
-  const own = cal.reminderDefaults != null;
-  const skipsGlobal = cal.kind === 'subscribed' || cal.kind === 'plugin';
+  const rd = cal.reminderDefaults;
+  const role = cal.role || 'mine';
   const s = state.settings || {};
+  const own = rd && typeof rd === 'object';
+  const ownEmpty = own && !(rd.timed || []).length && !(rd.allDay || []).length;
+  const mode = own ? (ownEmpty ? 'none' : 'own')
+    : rd === FOLLOW_DEFAULTS ? 'defaults'
+    : role === 'mine' ? 'defaults' : 'none';
   const save = (reminderDefaults) => updateCalendar(cal, { reminderDefaults });
   const onMode = (v) => {
-    if (v === 'inherit') save(null);
-    else save({ timed: s.reminderTimed || [], allDay: s.reminderAllDay || [] });
+    if (v === 'defaults') save(FOLLOW_DEFAULTS);
+    else if (v === 'none') save({ timed: [], allDay: [] });
+    else {
+      const timed = s.reminderTimed || [];
+      const allDay = s.reminderAllDay || [];
+      save(timed.length || allDay.length ? { timed, allDay } : FALLBACK_OWN);
+    }
   };
+  const summary = summarizeDefaults(s.reminderTimed, s.reminderAllDay);
   return html`<div class="bc-calset-field">
     <span class="bc-calset-label">Reminders</span>
-    <select aria-label="Reminders for this calendar" value=${own ? 'own' : 'inherit'} onChange=${(e) => onMode(e.target.value)}>
-      <option value="inherit">${skipsGlobal ? 'None' : 'My defaults'}</option>
+    <select aria-label="Reminders for this calendar" value=${mode} onChange=${(e) => onMode(e.target.value)}>
+      <option value="defaults">My defaults</option>
+      <option value="none">None</option>
       <option value="own">Set for this calendar</option>
     </select>
-    ${!own && html`<span class="bc-calset-status">${skipsGlobal
-      ? (cal.kind === 'plugin' ? 'Plugin' : 'Subscribed') + ' calendars don\'t use your default reminders, so nothing reminds unless you set it here or on an event.'
-      : 'From Settings, Notifications: ' + summarizeDefaults(s.reminderTimed, s.reminderAllDay) + '.'}</span>`}
-    ${own && html`<div class="bc-calset-rem">
+    ${mode === 'defaults' && html`<span class="bc-calset-status">From Settings, Notifications: ${summary}.</span>`}
+    ${mode === 'none' && rd == null && html`<span class="bc-calset-status">${ROLE_NAMES[role] || 'This'} calendars don't remind unless you choose, so a busy feed or sunsets don't all notify. An event's own reminders still apply.</span>`}
+    ${mode === 'own' && html`<div class="bc-calset-rem">
       <span class="bc-calset-sub">Timed events</span>
       <div class="bc-calset-remrow"><${TimedDefault} label="Reminder for timed events on this calendar"
-        value=${cal.reminderDefaults.timed}
-        onChange=${(list) => save({ ...cal.reminderDefaults, timed: list })} /></div>
+        value=${rd.timed}
+        onChange=${(list) => save({ ...rd, timed: list })} /></div>
       <span class="bc-calset-sub">All-day events</span>
       <div class="bc-calset-remrow"><${AllDayDefault} label="Reminder for all-day events on this calendar"
-        value=${cal.reminderDefaults.allDay}
-        onChange=${(list) => save({ ...cal.reminderDefaults, allDay: list })} /></div>
+        value=${rd.allDay}
+        onChange=${(list) => save({ ...rd, allDay: list })} /></div>
       <span class="bc-calset-status">An event's own reminders still win.</span>
     </div>`}
   </div>`;

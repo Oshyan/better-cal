@@ -104,7 +104,7 @@ final class Events
     ) {
     }
 
-    /** @var array<int, array{createdAt:\DateTimeImmutable,kind:string,reminderDefaults:?array}>|null calendar id => meta, lazy per request */
+    /** @var array<int, array{createdAt:\DateTimeImmutable,kind:string,role:string,reminderDefaults:array|string|null}>|null calendar id => meta, lazy per request */
     private ?array $calMeta = null;
     /** @var array<int, array{timed:list<array>,allDay:list<array>}> user id => global reminder defaults, lazy */
     private array $userReminderDefaults = [];
@@ -380,18 +380,13 @@ final class Events
         return $this->parentRrules[$parentId];
     }
 
-    /** @return array{createdAt:\DateTimeImmutable,kind:string,reminderDefaults:?array}|null */
+    /** @return array{createdAt:\DateTimeImmutable,kind:string,role:string,reminderDefaults:array|string|null}|null */
     private function calendarMeta(int $calendarId): ?array
     {
         if ($this->calMeta === null) {
             $this->calMeta = [];
             foreach ($this->db->all('SELECT id, created_at, kind, role, settings_json FROM calendars') as $c) {
-                $settings = is_string($c['settings_json'] ?? null)
-                    ? json_decode((string) $c['settings_json'], true)
-                    : $c['settings_json'];
-                $defaults = is_array($settings) && isset($settings['reminderDefaults']) && is_array($settings['reminderDefaults'])
-                    ? $settings['reminderDefaults']
-                    : null;
+                $defaults = Reminders::calendarDefaults($c['settings_json'] ?? null);
                 $this->calMeta[(int) $c['id']] = [
                     'createdAt' => Time::fromDb((string) $c['created_at']),
                     'kind' => (string) $c['kind'],
@@ -2100,7 +2095,7 @@ final class Events
             $globals['timed'],
             $globals['allDay'],
             (int) $row['all_day'] === 1,
-            $calMeta['kind'] ?? 'local'
+            $calMeta['role'] ?? 'mine'
         );
         $rrule = null;
         if ($full) {

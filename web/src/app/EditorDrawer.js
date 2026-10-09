@@ -689,7 +689,7 @@ export function EditorDrawer() {
         calendarDefaults: selectedCal ? selectedCal.reminderDefaults : null,
         settings: state.settings,
         allDay: form.allDay,
-        calendarKind: selectedCal ? selectedCal.kind : 'local',
+        calendarRole: selectedCal ? (selectedCal.role || 'mine') : 'mine',
       });
   const remSrcHint = remEff.source === 'calendar' ? 'from calendar default'
     : remEff.source === 'default' ? 'from your defaults' : 'custom for this event';

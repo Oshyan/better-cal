@@ -248,7 +248,7 @@ final class Calendars
             if (array_key_exists('reminderDefaults', $in)) {
                 $validated = Reminders::validateDefaults($in['reminderDefaults']);
                 if ($validated === null) {
-                    unset($settings['reminderDefaults']); // fall through to global defaults
+                    unset($settings['reminderDefaults']); // unset: the role decides
                 } else {
                     $settings['reminderDefaults'] = $validated;
                 }
@@ -553,13 +553,10 @@ final class Calendars
         return $kind === 'subscribed';
     }
 
-    /** Stored per-calendar reminder defaults, or null when unset (global defaults apply). */
-    public static function reminderDefaultsFor(?string $settingsJson): ?array
+    /** Stored per-calendar reminder defaults: own lists, "defaults", or null when unset (the role decides). */
+    public static function reminderDefaultsFor(?string $settingsJson): array|string|null
     {
-        $settings = $settingsJson !== null && $settingsJson !== '' ? json_decode($settingsJson, true) : null;
-        return is_array($settings) && isset($settings['reminderDefaults']) && is_array($settings['reminderDefaults'])
-            ? $settings['reminderDefaults']
-            : null;
+        return Reminders::calendarDefaults($settingsJson);
     }
 
     private function colorOrDefault(mixed $color): string

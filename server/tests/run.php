@@ -2382,6 +2382,32 @@ check('place search service: Stadia without its key says so and uses Photon',
     $staDesc['active'] === 'photon' && str_contains((string) $staDesc['problem'], 'BETTERCAL_STADIA_KEY'));
 check('place search service: choosing Stadia always shows the storage note', $staDesc['note'] === $PPV::STADIA_NOTE && $staDesc['termsUrl'] !== null);
 check('place search service: an unknown name is called out', str_contains((string) $PPV::describe(['provider' => 'bogus'])['problem'], 'photon, locationiq or stadia'));
+// The single-pin lookup: its own setting, defaulting to the dropdown's; a
+// keyed service's full-text search, ranked by distance with a bias.
+$lookupDesc = $PPV::describe(['provider' => 'locationiq', 'locationiq_key' => 'k']);
+checkEq('place lookup: empty follows the dropdown\'s service', ['locationiq', 'LocationIQ', null], [$lookupDesc['lookup']['active'], $lookupDesc['lookup']['name'], $lookupDesc['lookup']['problem']]);
+$lookupDesc = $PPV::describe(['provider' => 'locationiq', 'lookup' => 'photon', 'locationiq_key' => 'k']);
+checkEq('place lookup: can be set apart from the dropdown', ['locationiq', 'photon'], [$lookupDesc['active'], $lookupDesc['lookup']['active']]);
+$lookupDesc = $PPV::describe(['provider' => 'photon', 'lookup' => 'stadia']);
+check('place lookup: Stadia without its key says so, and choosing it for lookups shows the storage note',
+    $lookupDesc['lookup']['active'] === 'photon' && str_contains((string) $lookupDesc['lookup']['problem'], 'BETTERCAL_STADIA_KEY') && $lookupDesc['note'] === $PPV::STADIA_NOTE);
+check('place lookup: Photon alone means no keyed service; a key means one',
+    $PPV::pin(['provider' => 'photon'], $keyedTransport) === null && $PPV::pin(['lookup' => 'locationiq', 'locationiq_key' => 'k'], $keyedTransport) instanceof \BetterCal\Domain\KeyedPins);
+$keyedTransport->bodies = ['/v1/search' => [
+    $liqResult('amenity', 'cafe', 48.85, 2.35, ['name' => 'Example Cafe', 'city' => 'Far City']),
+    $liqResult('amenity', 'cafe', 45.53, -122.69, ['name' => 'Example Cafe', 'road' => 'Elm Street', 'house_number' => '12', 'city' => 'Sampleville']),
+]];
+$pinned = (new \BetterCal\Domain\KeyedPins($keyedTransport, 'locationiq', 'SAMPLEKEY'))->pin('Example Cafe, Elm Street', 45.52, -122.68);
+parse_str((string) parse_url($keyedTransport->urls[0], PHP_URL_QUERY), $pinQuery);
+checkEq('place lookup: LocationIQ full-text search, region preferred, the nearer of equal matches, named as its provider',
+    ['/v1/search', null, 'Example Cafe, 12 Elm Street, Sampleville', 'locationiq'],
+    [parse_url($keyedTransport->urls[0], PHP_URL_PATH), $pinQuery['bounded'] ?? null, $pinned['display'] ?? null, $pinned['provider'] ?? null]);
+$keyedTransport->bodies = ['/v1/search' => []];
+checkEq('place lookup: nothing found is null, so Photon gets its turn', null, (new \BetterCal\Domain\KeyedPins($keyedTransport, 'locationiq', 'k'))->pin('Nowhere Special', 45.52, -122.68));
+$failing = new class implements \BetterCal\Infra\KeyedGeocoderTransport {
+    public function keyed(string $provider, array $urls): array { return [null]; }
+};
+checkEq('place lookup: unreachable is false, so Photon gets its turn', false, (new \BetterCal\Domain\KeyedPins($failing, 'stadia', 'k'))->pin('Anywhere', null, null));
 check('place search service: LocationIQ with a key is LocationIQ in front of Photon, without one it is Photon',
     $PPV::build(['provider' => 'locationiq', 'locationiq_key' => 'k'], $gt) instanceof \BetterCal\Domain\FallbackPlaces
     && $PPV::build(['provider' => 'locationiq'], $gt) instanceof \BetterCal\Domain\PhotonPlaces);

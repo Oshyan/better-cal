@@ -42,7 +42,7 @@ Photon stays behind it automatically. LocationIQ can't find an address from a ho
 
 **Also supported: Stadia Maps.** [Stadia Maps](https://stadiamaps.com) had the best results of anything tested on addresses (it carries far more US house numbers than OpenStreetMap alone) and was fast. Set `BETTERCAL_PLACE_SEARCH=stadia` and `BETTERCAL_STADIA_KEY`. **But note:** Better-Cal saves the coordinates of places you pick. Stadia Maps' terms allow keeping them only on a paid plan that includes storing results, so check [Stadia's current plans](https://stadiamaps.com/pricing/). Making sure your plan fits is your responsibility; Better-Cal does not check. Settings says the same wherever Stadia is mentioned.
 
-Choosing a service changes the dropdown only. The single-pin lookup stays on Photon for now (see below).
+**The background lookup follows the same choice** unless you set `BETTERCAL_PLACE_LOOKUP` to something else. With LocationIQ, it uses LocationIQ's full-text search (built for complete text like "Venue, 12 Main Street, City") and falls back to Photon when that finds nothing or doesn't answer within 1.2 seconds. In testing that was five to fifteen times faster than Photon, and it fixed wrong pins Photon makes when the lookup leans toward your home area ("Munich" came back as a local Munich Street, "Lisbon" as a town in Iowa). Its 5,000 requests a day are shared with the dropdown; working through a large import can use a good share of them, and Photon answers whatever is left over.
 
 ## The services, compared
 

@@ -80,14 +80,19 @@ final class StadiaPlaces implements SelectivePlaceProvider
 
     // ---- Pure helpers (unit-tested, no network) ------------------------
 
-    /** @param array<string,mixed> $extra */
-    public static function url(string $key, string $q, int $size, ?string $language, array $extra = []): string
+    /**
+     * @param array<string,mixed> $extra
+     * @param 'autocomplete'|'search' $endpoint search is full text (the
+     *   single-pin lookup); autocomplete is for typing
+     */
+    public static function url(string $key, string $q, int $size, ?string $language, array $extra = [], string $endpoint = 'autocomplete'): string
     {
         $params = ['text' => $q, 'size' => max(1, min(20, $size))] + $extra;
         if ($language !== null) {
             $params['lang'] = $language;
         }
-        return self::AUTOCOMPLETE . '?' . http_build_query($params + ['api_key' => $key]);
+        $base = $endpoint === 'search' ? str_replace('/autocomplete', '/search', self::AUTOCOMPLETE) : self::AUTOCOMPLETE;
+        return $base . '?' . http_build_query($params + ['api_key' => $key]);
     }
 
     /**

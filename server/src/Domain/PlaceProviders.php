@@ -39,45 +39,84 @@ final class PlaceProviders
     }
 
     /**
-     * For Settings (GET /config): what was asked for, what is in use, and
-     * anything to say about it. Never the key itself.
+     * The keyed service asked first by the single-pin lookup (Geocode), or
+     * null for Photon alone. BETTERCAL_PLACE_LOOKUP chooses it; empty means
+     * whatever the dropdown uses.
      *
-     * @param array{provider?:string,locationiq_key?:string,stadia_key?:string} $places
-     * @return array{requested:string,active:string,name:string,fallback:?string,problem:?string,note:?string,termsUrl:?string}
+     * @param array{provider?:string,lookup?:string,locationiq_key?:string,stadia_key?:string} $places
+     */
+    public static function pin(array $places, KeyedGeocoderTransport $transport): ?PinProvider
+    {
+        $active = self::active($places, 'lookup');
+        return $active === 'photon' ? null : new KeyedPins($transport, $active, (string) $places[$active . '_key']);
+    }
+
+    /**
+     * For Settings (GET /config): what was asked for, what is in use, and
+     * anything to say about it, for the dropdown and, under `lookup`, for
+     * the single-pin lookup. Never a key.
+     *
+     * @param array{provider?:string,lookup?:string,locationiq_key?:string,stadia_key?:string} $places
+     * @return array{requested:string,active:string,name:string,fallback:?string,problem:?string,note:?string,termsUrl:?string,lookup:array{requested:string,active:string,name:string,problem:?string}}
      */
     public static function describe(array $places): array
     {
         $requested = self::requested($places);
         $active = self::active($places);
-        $problem = null;
-        if (!isset(self::NAMES[$requested])) {
-            $problem = 'BETTERCAL_PLACE_SEARCH is set to something Better-Cal does not know, so Photon is used. It can be photon, locationiq or stadia.';
-        } elseif ($requested !== $active) {
-            $problem = self::NAMES[$requested] . ' is chosen, but ' . self::KEYS[$requested] . ' is empty, so Photon is used.';
-        }
-        $stadia = $requested === 'stadia';
+        $lookupRequested = self::requested($places, 'lookup');
+        $lookupActive = self::active($places, 'lookup');
+        $stadia = $requested === 'stadia' || $lookupRequested === 'stadia';
         return [
             'requested' => $requested,
             'active' => $active,
             'name' => self::NAMES[$active],
             'fallback' => $active === 'photon' ? null : 'Photon',
-            'problem' => $problem,
+            'problem' => self::problem('BETTERCAL_PLACE_SEARCH', $requested, $active),
             'note' => $stadia ? self::STADIA_NOTE : null,
             'termsUrl' => $stadia ? self::STADIA_TERMS_URL : null,
+            'lookup' => [
+                'requested' => $lookupRequested,
+                'active' => $lookupActive,
+                'name' => self::NAMES[$lookupActive],
+                'problem' => self::problem('BETTERCAL_PLACE_LOOKUP', $lookupRequested, $lookupActive),
+            ],
         ];
     }
 
-    /** @param array<string,mixed> $places */
-    private static function requested(array $places): string
+    private static function problem(string $setting, string $requested, string $active): ?string
     {
-        $name = strtolower(trim((string) ($places['provider'] ?? '')));
+        if (!isset(self::NAMES[$requested])) {
+            return $setting . ' is set to something Better-Cal does not know, so Photon is used. It can be photon, locationiq or stadia.';
+        }
+        if ($requested !== $active) {
+            return self::NAMES[$requested] . ' is chosen, but ' . self::KEYS[$requested] . ' is empty, so Photon is used.';
+        }
+        return null;
+    }
+
+    /**
+     * What is asked for: BETTERCAL_PLACE_SEARCH for the dropdown; for the
+     * lookup BETTERCAL_PLACE_LOOKUP, else the dropdown's choice.
+     *
+     * @param array<string,mixed> $places
+     * @param 'provider'|'lookup' $job
+     */
+    private static function requested(array $places, string $job = 'provider'): string
+    {
+        $name = strtolower(trim((string) ($places[$job] ?? '')));
+        if ($name === '' && $job === 'lookup') {
+            return self::requested($places);
+        }
         return $name === '' ? 'photon' : $name;
     }
 
-    /** @param array<string,mixed> $places */
-    private static function active(array $places): string
+    /**
+     * @param array<string,mixed> $places
+     * @param 'provider'|'lookup' $job
+     */
+    private static function active(array $places, string $job = 'provider'): string
     {
-        $requested = self::requested($places);
+        $requested = self::requested($places, $job);
         return match ($requested) {
             'locationiq' => trim((string) ($places['locationiq_key'] ?? '')) !== '' ? 'locationiq' : 'photon',
             'stadia' => trim((string) ($places['stadia_key'] ?? '')) !== '' ? 'stadia' : 'photon',

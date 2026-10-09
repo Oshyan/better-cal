@@ -13,6 +13,10 @@ use BetterCal\Infra\GeocoderTransport;
  * permanent cache in geocode_cache. Negative provider answers ("no features")
  * are cached too, as NULL lat/lng rows; transport failures are returned as
  * not-found but never cached, so a flaky network cannot poison the cache.
+ *
+ * A keyed service (PinProvider, chosen by BETTERCAL_PLACE_LOOKUP) may be
+ * asked first; Photon and Open-Meteo answer whenever it finds nothing or
+ * can't be reached, so it can only add answers.
  */
 final class Geocode
 {
@@ -21,6 +25,7 @@ final class Geocode
     public function __construct(
         private readonly Db $db,
         private readonly GeocoderTransport $transport,
+        private readonly ?PinProvider $keyed = null,
     ) {
     }
 
@@ -491,8 +496,17 @@ final class Geocode
 
         $mapped = null;
         $airportHit = self::airport($normalized);
+        $keyed = $airportHit === null && $this->keyed !== null ? $this->keyed->pin($normalized, $biasLat, $biasLng) : null;
+        // The same guard as Photon's answers: a long description placed far
+        // away is a guess, so Photon gets its turn instead.
+        if (is_array($keyed) && $biasLat !== null && $biasLng !== null
+            && self::implausible($normalized, $keyed['kind'], PlaceSearch::distanceKm($biasLat, $biasLng, $keyed['lat'], $keyed['lng']))) {
+            $keyed = null;
+        }
         if ($airportHit !== null) {
             $mapped = ['lat' => $airportHit['lat'], 'lng' => $airportHit['lng'], 'display' => $airportHit['display'], 'provider' => 'ourairports'];
+        } elseif (is_array($keyed)) {
+            $mapped = $keyed;
         } else {
             // 20, not 5: photon buries a world capital under eight American
             // namesakes, so the right answer has to be in the candidate set

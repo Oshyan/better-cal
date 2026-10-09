@@ -52,7 +52,11 @@ $promptEval = new PromptEval(
 $pluginsDomain = new BetterCal\Domain\Plugins($db);
 $geocodeSweep = new BetterCal\Domain\GeocodeSweep(
     $db,
-    new BetterCal\Domain\Geocode($db, new BetterCal\Infra\PoliciedGeocoderTransport($db)),
+    new BetterCal\Domain\Geocode(
+        $db,
+        $workerGeocoderTransport = new BetterCal\Infra\PoliciedGeocoderTransport($db),
+        BetterCal\Domain\PlaceProviders::pin($cfg['places'], $workerGeocoderTransport),
+    ),
     new BetterCal\Domain\Settings($db)
 );
 $systemHealth = new BetterCal\Domain\SystemHealth($db);

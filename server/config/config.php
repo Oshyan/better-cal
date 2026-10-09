@@ -62,6 +62,9 @@ function config(): array
             // photon (default, no key), locationiq or stadia, each with
             // Photon behind it. Keys stay server-side.
             'provider' => $env('BETTERCAL_PLACE_SEARCH', 'photon'),
+            // The single-pin lookup (background sweep, event panel, plugins):
+            // the same choices, empty meaning the dropdown's.
+            'lookup' => $env('BETTERCAL_PLACE_LOOKUP'),
             'locationiq_key' => $env('BETTERCAL_LOCATIONIQ_KEY'),
             'stadia_key' => $env('BETTERCAL_STADIA_KEY'),
         ],

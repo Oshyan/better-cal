@@ -4,6 +4,16 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.44 (2026-10-09)
+
+- **Addresses find the one near you.** A bare house number now lists the nearest houses with that number, and a number with a half-typed street ("250 el") finds it nearby; both used to find nothing. Address results that contain every word you typed come first, nearest first, so an exact match a thousand miles away no longer beats the street down the road, and the world is searched only when nothing nearby fits.
+- **Famous places beat their replicas.** Place search now asks in your browser's language (English, German or French; other languages get each place's local name), so "Eiffel Tower" finds the one in Paris, and past 500 km results keep the search service's own order instead of the nearest replica winning.
+- **Each calendar chooses its reminders**, in its settings: your defaults (linked, so they follow Settings), none, or its own. Until you choose, its role decides: your own calendars use your defaults wherever they live, and Opportunities and Context calendars stay quiet. Connected Google calendars, including a calendar moved to Google, used to skip your defaults entirely, and a subscribed calendar couldn't follow them at all.
+- **Calendar tags are gone.** They were stored but nothing used them. Event tags are unchanged.
+- **Update check failures clear when checks work again.** Settings, System kept showing a failure for up to a day after the cause was fixed, until the daily check ran.
+
+Operators: migration 047 drops the unused `calendar_tags` table when it is empty (an install that set calendar tags through the API keeps its rows). The calendar API no longer accepts or returns `tagNames`, and a calendar's `reminderDefaults` also takes `"defaults"`. Place search now has a provider interface (`PlaceProvider`), with Photon as the only provider so far.
+
 ## 0.9.43 (2026-10-09)
 
 - **Update checks work.** Every check failed with "HTTP request budget exhausted" from the first release that carried a manifest: GitHub answers a release file download with a redirect, and the checker allowed only one request. It also read the whole release list and would have stopped working once the repository passed 300 releases; it now reads the newest releases, normally one small request.

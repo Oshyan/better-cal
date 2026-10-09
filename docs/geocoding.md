@@ -73,7 +73,14 @@ How each did, by kind of search (✓ right result first or near it, ~ plausible 
 
 No single service won every row, which is why Better-Cal pairs a fast keyed service with Photon instead of picking one.
 
-**Not tested yet:** Radar, Geocode Earth and the Open Places API (places only, no addresses) are on the list. The big platforms (Google, Mapbox, HERE, TomTom) generally limit how long you may keep their results or charge per request beyond a small allowance, which is a poor fit here, but their current terms haven't been checked in detail.
+**Also tested, not supported:**
+
+- **Open Places API** (Overture place data, free 10,000 a month, results may be kept). Its name search finds local venues by partial name in about 0.3 s, but it ranks by relevance before distance (a chain's locations 10 to 15 miles away came before one 1.5 miles away), has no address search, and says itself that it isn't meant for autocomplete. It could become a venue companion for businesses OpenStreetMap lacks, if we find enough of them that it has.
+- **Overture Maps API** (overturemapsapi.com) has no partial-text search at all: places match an exact full name, addresses only by distance from a point.
+
+A small restaurant that OpenStreetMap had under the wrong name was missing from Overture's data too; only Stadia (which also uses Foursquare's open place data) had it right.
+
+**Not tested yet:** Radar and Geocode Earth are on the list. The big platforms (Google, Mapbox, HERE, TomTom) generally limit how long you may keep their results or charge per request beyond a small allowance, which is a poor fit here, but their current terms haven't been checked in detail.
 
 ## Why the same map data gives different results
 

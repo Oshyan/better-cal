@@ -20,6 +20,10 @@ use BetterCal\Infra\GeocoderTransport;
  *   contain every typed word.
  * - "and" and "&" don't match each other, so both spellings are asked.
  * - Without a language it matches local names only.
+ * - With enough nearby matches the world isn't asked, so "munich" offered
+ *   only local Munich Streets, never the city. A small worldwide request
+ *   for places (cities, counties, states, countries) runs alongside, and one
+ *   named exactly what was typed is pinned first.
  */
 final class PhotonPlaces implements PlaceProvider
 {
@@ -29,6 +33,8 @@ final class PhotonPlaces implements PlaceProvider
     public const REGION_HALF_DEG = 2.7;
     /** How far the nearest-house lookup reaches, matching the region box. */
     public const NEAR_RADIUS_KM = 300;
+    /** The place-level layers asked worldwide alongside the regional search. */
+    public const PLACE_LAYERS = ['city', 'county', 'state', 'country'];
     /** The languages photon.komoot.io has names for, besides 'default'. */
     public const LANGS = ['en', 'de', 'fr'];
 
@@ -69,8 +75,16 @@ final class PhotonPlaces implements PlaceProvider
         // half-typed street name near home came back as a restaurant on
         // another continent).
         $candidates = null;
+        $places = [];
         if ($biased) {
             $sets = $batch($params + ['bbox' => self::regionBox($biasLat, $biasLng)]);
+            // Places worldwide, in the same parallel batch: a city's name
+            // typed in full should offer the city, however many local
+            // streets share it. Photon's soft bias still prefers the nearby
+            // one ("berkeley" here is the local Berkeley).
+            if ($address === null && PlaceSearch::hasWord($q)) {
+                $sets[] = ['q' => $q, 'limit' => 3, 'lang' => $lang, 'lat' => $biasLat, 'lon' => $biasLng, 'layer' => self::PLACE_LAYERS];
+            }
             // Photon's search can't find an address from a bare number, nor
             // from a number and a half-typed street ("250 el" found nothing
             // nearby, though "250 elm" did). Its reverse lookup can: the
@@ -87,7 +101,7 @@ final class PhotonPlaces implements PlaceProvider
                     'lang' => $lang,
                 ];
             }
-            $candidates = $this->fetch($sets, $q, $biasLat, $biasLng);
+            $candidates = $this->fetch($sets, $q, $biasLat, $biasLng, $places);
         }
         // Worldwide only when the region has too little AND there is a real
         // word to go on: a bare "250" worldwide is every place numbered 250.
@@ -107,7 +121,52 @@ final class PhotonPlaces implements PlaceProvider
             $world = $biased ? PlaceSearch::containingAllWords($q, $world ?? []) : ($world ?? []);
             $candidates = PlaceSearch::mergeCandidates($candidates ?? [], $world);
         }
+        $exact = self::exactPlace($q, $places, $candidates ?? []);
+        if ($exact !== null) {
+            $candidates = PlaceSearch::mergeCandidates([$exact + ['pin' => true]], $candidates);
+        }
         return $candidates;
+    }
+
+    /**
+     * The first place named exactly what was typed (case, spacing and
+     * punctuation aside), or null: "munich" is Munich, "muni" is nobody.
+     * None when a nearby result already has that exact name: San Francisco's
+     * Muni, not a village of that name abroad. Pure.
+     *
+     * @param list<array<string,mixed>> $places place-level rows (placeLevel())
+     * @param list<array<string,mixed>> $nearby the other candidates
+     */
+    public static function exactPlace(string $q, array $places, array $nearby = []): ?array
+    {
+        $norm = static fn(string $s): string => trim((string) preg_replace('/[^\p{L}\p{N}]+/u', ' ', mb_strtolower($s)));
+        $want = $norm($q);
+        if ($want === '') {
+            return null;
+        }
+        foreach ($nearby as $c) {
+            if (empty($c['far']) && $norm((string) ($c['name'] ?? '')) === $want) {
+                return null;
+            }
+        }
+        foreach ($places as $p) {
+            if ($norm((string) ($p['name'] ?? '')) === $want) {
+                return $p;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Places big enough to pin by name: a city or town, a county, state or
+     * country. Villages and hamlets share names with too much ("muni"
+     * matched a village abroad). Pure, on Photon features.
+     */
+    public static function placeLevel(array $feature): bool
+    {
+        $props = is_array($feature['properties'] ?? null) ? $feature['properties'] : [];
+        return in_array($props['type'] ?? null, ['county', 'state', 'country'], true)
+            || in_array($props['osm_value'] ?? null, ['city', 'town'], true);
     }
 
     // ---- Pure helpers (unit-tested, no network) ------------------------
@@ -266,27 +325,33 @@ final class PhotonPlaces implements PlaceProvider
     /**
      * One Photon batch in parallel, mapped and filtered: null when every
      * request failed (so a provider outage is told apart from "nothing
-     * matched").
+     * matched"). The place-level request's results (it carries a layer
+     * filter) come back separately in $places.
      *
      * @param list<array<string,mixed>> $paramSets
+     * @param list<array<string,mixed>> $places
      * @return ?list<array<string,mixed>>
      */
-    private function fetch(array $paramSets, string $q, ?float $biasLat, ?float $biasLng): ?array
+    private function fetch(array $paramSets, string $q, ?float $biasLat, ?float $biasLng, array &$places = []): ?array
     {
         $bodies = $this->transport->photon($paramSets);
         $features = [];
         $nearest = [];
+        $placeFeatures = [];
         $anyOk = false;
         foreach ($bodies as $i => $decoded) {
             if (is_array($decoded) && is_array($decoded['features'] ?? null)) {
                 $anyOk = true;
                 if (($paramSets[$i]['_endpoint'] ?? null) === 'reverse') {
                     array_push($nearest, ...$decoded['features']);
+                } elseif (isset($paramSets[$i]['layer'])) {
+                    array_push($placeFeatures, ...$decoded['features']);
                 } else {
                     array_push($features, ...$decoded['features']);
                 }
             }
         }
+        $places = self::mapFeatures(['features' => array_values(array_filter($placeFeatures, [self::class, 'placeLevel']))], $biasLat, $biasLng);
         if (!$anyOk) {
             return null;
         }

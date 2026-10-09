@@ -28,12 +28,21 @@ final class PoliciedGeocoderTransport implements GeocoderTransport
 
     public function photon(array $paramSets): array
     {
-        $urls = array_map(static function (array $params): string {
-            $endpoint = ($params['_endpoint'] ?? null) === 'reverse' ? self::PHOTON_REVERSE_ENDPOINT : self::PHOTON_ENDPOINT;
-            unset($params['_endpoint']);
-            return $endpoint . '?' . http_build_query($params);
-        }, $paramSets);
+        $urls = array_map([self::class, 'photonUrl'], $paramSets);
         return $this->jsonBatch('photon', 'Photon geocoding', $urls, 3);
+    }
+
+    /**
+     * The request URL for one Photon parameter set: /reverse when it says
+     * '_endpoint' => 'reverse', and a list value as repeated keys
+     * (layer=city&layer=state), since Photon refuses PHP's bracketed form
+     * (layer[0]=city). Pure.
+     */
+    public static function photonUrl(array $params): string
+    {
+        $endpoint = ($params['_endpoint'] ?? null) === 'reverse' ? self::PHOTON_REVERSE_ENDPOINT : self::PHOTON_ENDPOINT;
+        unset($params['_endpoint']);
+        return $endpoint . '?' . preg_replace('/%5B\d+%5D=/', '=', http_build_query($params));
     }
 
     public function openMeteo(array $params): ?array

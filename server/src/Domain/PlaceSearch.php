@@ -15,7 +15,8 @@ use BetterCal\Http\HttpError;
  * that apply whatever the provider: a leading house number must appear in a
  * result; an address goes nearest first; a bare number is never a far
  * place; results past 500 km are flagged far so the UI can call them out;
- * an airport code pins the airport.
+ * an airport code pins the airport. A provider may mark a row 'pin' (the
+ * place named exactly what was typed): it goes first, ahead of ranking.
  *
  * Location bias keeps "Main Street" from matching half a world away:
  * explicit lat/lng (the user's home location setting) wins, else a static
@@ -313,6 +314,8 @@ final class PlaceSearch
         $biased = $biasLat !== null && $biasLng !== null;
 
         $candidates = self::matchingNumber($q, $this->provider->candidates($q, $biasLat, $biasLng, $limit, $language) ?? []);
+        $pinned = array_values(array_filter($candidates, static fn(array $c): bool => !empty($c['pin'])));
+        $candidates = array_values(array_filter($candidates, static fn(array $c): bool => empty($c['pin'])));
         if ($biased) {
             if (self::houseNumber($q) !== null) {
                 // A bare number is a house nearby: worldwide it is every
@@ -332,6 +335,10 @@ final class PlaceSearch
                 }
             }
         }
+        $candidates = array_merge(
+            array_map(static function (array $c): array { unset($c['pin']); return $c; }, $pinned),
+            $candidates
+        );
         // Airport codes: pin the IATA-table airport above everything; bias
         // must not bury SFO under a same-named street nearby, and in Denmark
         // "SFO" is an after-school program, which is never the intent of an

@@ -2115,6 +2115,56 @@ $r = $aps->search('250', 45.52, -122.68, 6);
 checkEq('place search: a bare number finds the nearest houses with it, nearest first', ['250 Ash Lane', '250 Oak Avenue'], array_column($r, 'name'));
 $addrTransport->calls = [];
 $aps->search('250 elm', null, null, 6);
+checkEq('place search: list values go to Photon as repeated keys, reverse to its own endpoint',
+    ['https://photon.komoot.io/api?q=munich&layer=city&layer=state', 'https://photon.komoot.io/reverse?lat=1'],
+    [\BetterCal\Infra\PoliciedGeocoderTransport::photonUrl(['q' => 'munich', 'layer' => ['city', 'state']]),
+     \BetterCal\Infra\PoliciedGeocoderTransport::photonUrl(['_endpoint' => 'reverse', 'lat' => 1])]);
+// A city's name typed in full offers the city, however many local streets
+// share it; a nearby place of that exact name wins; villages don't pin.
+$PP = \BetterCal\Domain\PhotonPlaces::class;
+$placeRow = static fn(string $name, bool $far) => ['name' => $name, 'address' => 'Example', 'far' => $far];
+checkEq('place search: a place named exactly what was typed', 'Sampleburg',
+    ($PP::exactPlace('sampleburg', [$placeRow('Sampleburg', true)], [$placeRow('Sampleburg Street', false)]) ?? [])['name'] ?? null);
+checkEq('place search: case, spacing and punctuation aside', 'St. Example',
+    ($PP::exactPlace('st example', [$placeRow('St. Example', true)]) ?? [])['name'] ?? null);
+checkEq('place search: a half-typed name pins nothing', null, $PP::exactPlace('sampleb', [$placeRow('Sampleburg', true)]));
+checkEq('place search: a nearby result of that exact name wins over a far place', null,
+    $PP::exactPlace('sampleburg', [$placeRow('Sampleburg', true)], [$placeRow('Sampleburg', false)]));
+checkEq('place search: cities, towns, counties, states and countries can pin; villages and hamlets cannot', [true, true, true, true, false, false],
+    array_map(static fn(array $p): bool => $PP::placeLevel(['properties' => $p]), [
+        ['type' => 'city', 'osm_value' => 'city'], ['type' => 'city', 'osm_value' => 'town'],
+        ['type' => 'state', 'osm_value' => 'administrative'], ['type' => 'country', 'osm_value' => 'country'],
+        ['type' => 'city', 'osm_value' => 'village'], ['type' => 'city', 'osm_value' => 'hamlet'],
+    ]));
+$cityTransport = new class($regionFeature) implements \BetterCal\Infra\GeocoderTransport {
+    public array $calls = [];
+    public function __construct(private \Closure $f) {}
+    public function photon(array $paramSets): array
+    {
+        $this->calls[] = $paramSets;
+        $f = $this->f;
+        return array_map(static function (array $p) use ($f): array {
+            if (isset($p['layer'])) {
+                return ['features' => [[
+                    'geometry' => ['coordinates' => [11.57, 48.14]],
+                    'properties' => ['name' => 'Sampleburg', 'type' => 'city', 'osm_value' => 'city', 'country' => 'Exampleland'],
+                ]]];
+            }
+            return ['features' => [
+                ['geometry' => ['coordinates' => [-122.68, 45.52]], 'properties' => ['name' => 'Sampleburg Street', 'city' => 'Example']],
+                ['geometry' => ['coordinates' => [-122.67, 45.53]], 'properties' => ['name' => 'Sampleburg Place', 'city' => 'Example']],
+                ['geometry' => ['coordinates' => [-122.66, 45.51]], 'properties' => ['name' => 'Sampleburg Court', 'city' => 'Example']],
+            ]];
+        }, $paramSets);
+    }
+    public function openMeteo(array $params): ?array { return null; }
+};
+$cityResults = (new \BetterCal\Domain\PlaceSearch(new \BetterCal\Domain\PhotonPlaces($cityTransport)))->search('sampleburg', 45.52, -122.68, 6, 'en');
+checkEq('place search: the city is first, ahead of nearby streets, and ranking does not move it', ['Sampleburg', 'Sampleburg Street'],
+    array_slice(array_column($cityResults, 'name'), 0, 2));
+check('place search: the pin marker stays inside the server', !array_key_exists('pin', $cityResults[0]));
+checkEq('place search: the place request rides in the same batch, with its layers', [1, ['city', 'county', 'state', 'country']],
+    [count($cityTransport->calls), $cityTransport->calls[0][count($cityTransport->calls[0]) - 1]['layer'] ?? null]);
 check('place search: without a bias point there is no nearest lookup', !in_array('reverse', array_column($addrTransport->calls[0] ?? [], '_endpoint'), true));
 // Another provider gets the shared rules and none of Photon's: no region
 // pass, no reverse lookup, and its own order kept when it ranks by distance.

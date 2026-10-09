@@ -4,6 +4,15 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.47 (2026-10-09)
+
+- **A picked place keeps its address.** Picking a town used to save just its name ("Sampleville"), so the event looked as if nothing had been picked. Now it's the place and its address ("Sampleville, Example State", or a venue with its street and city), with the country added for places far away, and that's what the event panel, hover card, agenda and your other calendar apps show.
+- **The location box shows whether it's placed:** a solid pin once you've picked a suggestion, an outline while it's text you typed, and an x to clear it.
+- **Typing in the editor keeps the day you chose.** Dragging across four days and typing "stay at the lake" used to reset the event to today at 2 PM. The quick fill now changes the date only when the text names one, and a time on its own ("dinner at 7pm") lands on the day you picked. Dates you changed by hand, and people the event started with, stay too.
+- **Place search gives up sooner when Photon is slow.** A house number with a few letters of the street could wait six seconds for an empty answer; it's now three at most.
+
+Operators: no migration. `/geocode/search` rows add `fill`, and `/quickadd` drafts add `when: {date, time}`.
+
 ## 0.9.46 (2026-10-09)
 
 - **Place search can be much faster.** With a free LocationIQ key, the location dropdown answers in about a tenth of a second instead of one to two, and finds parks and venues by their full name, world cities and airports by name more reliably. Photon still answers what LocationIQ can't (a house number with only a few letters of the street) and whenever it is slow, busy or finds nothing, so nothing gets worse. Stadia Maps is supported too; it is the strongest on addresses, but keeping the places you pick needs one of its paid plans, and Settings says so. Photon remains the default and needs no key. [Geocoding and place search](docs/geocoding.md) compares the services and says what to set up.

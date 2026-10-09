@@ -27,7 +27,9 @@ final class EmailSender
     }
 
     /**
-     * Build the reminder email from a notification payload {title, body, url}.
+     * Build the reminder email from a notification payload {title, body, url},
+     * plus optional {action, note} for a message with no event behind it (the
+     * test email: its button opens the app, so it mustn't say "Open event").
      * Pure so tests can cover it without vendor/ or SMTP.
      *
      * @return array{subject:string, html:string, text:string}
@@ -36,6 +38,8 @@ final class EmailSender
     {
         $title = (string) ($payload['title'] ?? '') !== '' ? (string) $payload['title'] : '(untitled event)';
         $body = (string) ($payload['body'] ?? '');
+        $action = (string) ($payload['action'] ?? '') !== '' ? (string) $payload['action'] : 'Open event';
+        $note = (string) ($payload['note'] ?? '') !== '' ? (string) $payload['note'] : 'Sent by Better-Cal because this event has a reminder.';
         $link = rtrim($baseUrl, '/') . (string) ($payload['url'] ?? '/');
         $h = static fn(string $s): string => htmlspecialchars($s, ENT_QUOTES, 'UTF-8');
 
@@ -46,8 +50,8 @@ final class EmailSender
             . ($body !== '' ? '<p style="margin:0 0 20px;font-size:14px;color:#555b64">' . $h($body) . '</p>' : '')
             . '<p style="margin:0 0 24px"><a href="' . $h($link) . '" '
             . 'style="display:inline-block;background:#5b7fd4;color:#ffffff;text-decoration:none;'
-            . 'padding:10px 18px;border-radius:8px;font-size:14px">Open event</a></p>'
-            . '<p style="margin:0;font-size:12px;color:#8a8f98">Sent by Better-Cal because this event has a reminder.</p>'
+            . 'padding:10px 18px;border-radius:8px;font-size:14px">' . $h($action) . '</a></p>'
+            . '<p style="margin:0;font-size:12px;color:#8a8f98">' . $h($note) . '</p>'
             . '</div>';
 
         $text = $title . "\n" . ($body !== '' ? $body . "\n" : '') . "\n" . $link . "\n";

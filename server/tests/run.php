@@ -4538,6 +4538,9 @@ check('email html button link absolute', str_contains($msg['html'], 'href="' . h
 check('email text alt carries title and link', str_contains($msg['text'], 'Dinner') && str_contains($msg['text'], $absLink));
 check('email html escapes markup', !str_contains(EmailSender::buildMessage(['title' => '<b>x</b>', 'body' => '', 'url' => '/'], 'https://cal.example.com')['html'], '<b>x</b>'));
 checkEq('email untitled fallback', 'Reminder: (untitled event)', EmailSender::buildMessage(['body' => '', 'url' => '/'], 'https://x.example')['subject']);
+$testMsg = EmailSender::buildMessage(['title' => 'Test', 'body' => '', 'url' => '/', 'action' => 'Open Better-Cal', 'note' => 'A test.'], 'https://cal.example.com')['html'];
+check('email: a message with no event names its button and footer for what they are', str_contains($testMsg, '>Open Better-Cal</a>') && str_contains($testMsg, 'A test.') && !str_contains($testMsg, 'Open event'));
+check('email: a reminder keeps "Open event"', str_contains(EmailSender::buildMessage(['title' => 'x', 'body' => '', 'url' => '/'], 'https://x.example')['html'], '>Open event</a>'));
 check('email base url trailing slash collapsed', str_contains(EmailSender::buildMessage(['title' => 'T', 'body' => '', 'url' => '/'], 'https://x.example/')['text'], 'https://x.example/'));
 
 // VALARM trigger mapping, both directions.

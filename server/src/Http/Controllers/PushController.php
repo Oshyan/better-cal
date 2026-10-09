@@ -174,6 +174,8 @@ final class PushController
             'title' => 'Better-Cal test email',
             'body' => 'Email notifications are working.',
             'url' => '/',
+            'action' => 'Open Better-Cal',
+            'note' => 'Sent by Better-Cal because you asked for a test email in Settings.',
         ]);
         if (!$ok) {
             throw HttpError::badRequest('Sending failed; check the server SMTP settings and logs', 'email_send_failed');

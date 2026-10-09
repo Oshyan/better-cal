@@ -484,6 +484,7 @@ function LocationSection({ settings, config }) {
   };
 
   const hasHome = settings.homeLat != null && settings.homeLng != null;
+  const search = config && config.placeSearch;
 
   // What a place search is biased toward right now, and whether the device's
   // own position can be used (granted) or offered (prompt).
@@ -549,6 +550,12 @@ function LocationSection({ settings, config }) {
       ${perm !== 'granted' && perm !== 'denied' && html`<button type="button" class="bc-btn" disabled=${locBusy} onClick=${allowDevice}>Allow this device's location</button>`}
       ${perm === 'denied' && html`<span class="bc-set-value">Location is blocked for this site in the browser.</span>`}
     <//>
+    ${search && html`<${Row} label="Place search service" hint=${html`Set on the server: BETTERCAL_PLACE_SEARCH, and the service's key, in .env.${search.note
+      ? html` ${search.note} <a href=${search.termsUrl} target="_blank" rel="noopener noreferrer">Stadia's terms</a>`
+      : ''}`}>
+      <span class="bc-set-value">${search.name}${search.fallback ? ', with ' + search.fallback + ' when it can\'t answer' : ''}</span>
+      ${search.problem && html`<span class="bc-set-value">${search.problem}</span>`}
+    <//>`}
   </section>`;
 }
 

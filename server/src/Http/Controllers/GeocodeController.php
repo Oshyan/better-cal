@@ -53,7 +53,7 @@ final class GeocodeController
             $limit > 0 ? $limit : PlaceSearch::DEFAULT_LIMIT,
             PlaceSearch::preferredLanguage($req->header('Accept-Language'))
         );
-        return Response::json(['results' => $results]);
+        return Response::json(['results' => $results, 'credits' => $this->placeSearch->credits()]);
     }
 
     private static function floatParam(?string $value): ?float

@@ -10,7 +10,8 @@ use BetterCal\Http\HttpError;
  * Multi-candidate place autocomplete for the location dropdown. Results are
  * transient and never cached (Geocode is the single-pin lookup, cached).
  *
- * The provider (PlaceProvider; PhotonPlaces today) fetches candidates and
+ * The provider (PlaceProvider: PhotonPlaces by default, or LocationIQ or
+ * Stadia with Photon behind them, PlaceProviders) fetches candidates and
  * carries every workaround its service needs. This class holds the rules
  * that apply whatever the provider: a leading house number must appear in a
  * result; an address goes nearest first; a bare number is never a far
@@ -27,6 +28,8 @@ final class PlaceSearch
     public const DEFAULT_LIMIT = 6;
     public const MAX_LIMIT = 10;
     public const FAR_KM = 500.0;
+    /** Half a region box's height, in degrees of latitude (about 300 km). */
+    public const REGION_HALF_DEG = 2.7;
 
     public function __construct(private readonly PlaceProvider $provider)
     {
@@ -269,6 +272,55 @@ final class PlaceSearch
     }
 
     /**
+     * A box (minLon,minLat,maxLon,maxLat) about 300 km each way around a
+     * point: big enough for a metro area and its surroundings, small enough
+     * that the rest of the world can't crowd it out. Pure.
+     */
+    public static function regionBox(float $lat, float $lng): string
+    {
+        $dLat = self::REGION_HALF_DEG;
+        // Degrees of longitude shrink toward the poles; keep the box square-ish.
+        $dLng = min(30.0, $dLat / max(0.2, cos(deg2rad($lat))));
+        $f = static fn(float $v): string => rtrim(rtrim(sprintf('%.4F', $v), '0'), '.');
+        return implode(',', [
+            $f(max(-180.0, $lng - $dLng)), $f(max(-90.0, $lat - $dLat)),
+            $f(min(180.0, $lng + $dLng)), $f(min(90.0, $lat + $dLat)),
+        ]);
+    }
+
+    /**
+     * The first place named exactly what was typed (case, spacing and
+     * punctuation aside), or null: "munich" is Munich, "muni" is nobody.
+     * None when a nearby result already has that exact name: a local place
+     * of that name, not one abroad. A provider that finds cities and the like
+     * separately from its nearby results uses this to offer the city however
+     * many local streets share its name. Pure.
+     *
+     * @param list<array<string,mixed>> $places place-level rows (cities and
+     *   towns, counties, states, countries; never villages)
+     * @param list<array<string,mixed>> $nearby the other candidates
+     */
+    public static function exactPlace(string $q, array $places, array $nearby = []): ?array
+    {
+        $norm = static fn(string $s): string => trim((string) preg_replace('/[^\p{L}\p{N}]+/u', ' ', mb_strtolower($s)));
+        $want = $norm($q);
+        if ($want === '') {
+            return null;
+        }
+        foreach ($nearby as $c) {
+            if (empty($c['far']) && $norm((string) ($c['name'] ?? '')) === $want) {
+                return null;
+            }
+        }
+        foreach ($places as $p) {
+            if ($norm((string) ($p['name'] ?? '')) === $want) {
+                return $p;
+            }
+        }
+        return null;
+    }
+
+    /**
      * Nearest first; rows without a distance keep their order at the end.
      * Stable. Pure.
      *
@@ -301,6 +353,17 @@ final class PlaceSearch
     }
 
     // ---- Lookup --------------------------------------------------------
+
+    /**
+     * Who to credit for the last search's results (PlaceProvider::credits),
+     * for the dropdown's credit line.
+     *
+     * @return list<array{label:string,url:string}>
+     */
+    public function credits(): array
+    {
+        return $this->provider->credits();
+    }
 
     /**
      * @param ?string $language preferred language (preferredLanguage), or null

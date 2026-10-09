@@ -11,13 +11,22 @@ use BetterCal\Domain\SystemHealth;
  * explicit while HttpClient owns address classification, DNS pinning,
  * redirects, deadlines and response budgets.
  */
-final class PoliciedGeocoderTransport implements GeocoderTransport
+final class PoliciedGeocoderTransport implements GeocoderTransport, KeyedGeocoderTransport
 {
     private const PHOTON_ENDPOINT = 'https://photon.komoot.io/api';
     private const PHOTON_REVERSE_ENDPOINT = 'https://photon.komoot.io/reverse';
     private const OPEN_METEO_ENDPOINT = 'https://geocoding-api.open-meteo.com/v1/search';
     private const TIMEOUT_MS = 3_000;
     private const MAX_BYTES = 1024 * 1024;
+    /**
+     * The keyed place-search services: the one host each may be asked, the
+     * health label, and whether to connect over IPv4 only (LocationIQ can
+     * restrict a key to source addresses, and accepts only IPv4 ones there).
+     */
+    private const KEYED = [
+        'locationiq' => ['host' => 'api.locationiq.com', 'label' => 'LocationIQ place search', 'ipv4' => true],
+        'stadia' => ['host' => 'api.stadiamaps.com', 'label' => 'Stadia Maps place search', 'ipv4' => false],
+    ];
 
     public function __construct(
         private readonly Db $db,
@@ -45,6 +54,20 @@ final class PoliciedGeocoderTransport implements GeocoderTransport
         return $endpoint . '?' . preg_replace('/%5B\d+%5D=/', '=', http_build_query($params));
     }
 
+    public function keyed(string $provider, array $urls): array
+    {
+        $profile = self::KEYED[$provider] ?? null;
+        if ($profile === null) {
+            throw new \InvalidArgumentException('Unknown place search provider');
+        }
+        foreach ($urls as $url) {
+            if (parse_url($url, PHP_URL_SCHEME) !== 'https' || strtolower((string) parse_url($url, PHP_URL_HOST)) !== $profile['host']) {
+                throw new \InvalidArgumentException('Place search URL is not for ' . $provider);
+            }
+        }
+        return $this->jsonBatch($provider, $profile['label'], $urls, 0, $profile['ipv4']);
+    }
+
     public function openMeteo(array $params): ?array
     {
         $rows = $this->jsonBatch(
@@ -57,7 +80,7 @@ final class PoliciedGeocoderTransport implements GeocoderTransport
     }
 
     /** @param list<string> $urls @return list<?array> */
-    private function jsonBatch(string $provider, string $label, array $urls, int $maxRedirects): array
+    private function jsonBatch(string $provider, string $label, array $urls, int $maxRedirects, bool $ipv4Only = false): array
     {
         if ($urls === []) {
             return [];
@@ -72,12 +95,22 @@ final class PoliciedGeocoderTransport implements GeocoderTransport
             allowedSchemes: ['https'],
             maxTotalBytes: count($urls) * self::MAX_BYTES,
             resolver: $this->resolver,
+            ipv4Only: $ipv4Only,
         );
         $responses = $http->getMany($urls, ['Accept: application/json']);
         $decoded = [];
         $errors = [];
+        $limited = 0;
         foreach ($responses as $response) {
             $error = $response['error'];
+            // LocationIQ answers "nothing found" with a 404.
+            if ($error === null && $provider === 'locationiq' && $response['status'] === 404) {
+                $decoded[] = [];
+                continue;
+            }
+            if ($error === null && $response['status'] === 429) {
+                $limited++;
+            }
             if ($error === null && ($response['status'] < 200 || $response['status'] >= 300)) {
                 $error = 'HTTP ' . $response['status'];
             }
@@ -92,7 +125,7 @@ final class PoliciedGeocoderTransport implements GeocoderTransport
                     $error = 'provider returned invalid JSON';
                 }
             }
-            if ($error === null && $provider === 'photon' && !is_array($data['features'] ?? null)) {
+            if ($error === null && in_array($provider, ['photon', 'stadia'], true) && !is_array($data['features'] ?? null)) {
                 $error = 'provider response did not contain a feature list';
             }
             if ($error === null && $provider === 'open-meteo' && !empty($data['error'])) {
@@ -108,10 +141,13 @@ final class PoliciedGeocoderTransport implements GeocoderTransport
             }
         }
 
-        if (count($errors) === count($responses)) {
-            $this->recordFailure($provider, $label, implode('; ', array_values(array_unique($errors))));
-        } else {
+        // A free plan's rate limit is not an outage: the search falls back
+        // to Photon, and System health stays for real failures.
+        // Rate limited only is neither a failure nor a recovery.
+        if (count($errors) < count($responses)) {
             $this->recordOk($provider, $label);
+        } elseif ($limited < count($errors)) {
+            $this->recordFailure($provider, $label, implode('; ', array_values(array_unique($errors))));
         }
         return $decoded;
     }

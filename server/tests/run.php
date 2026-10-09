@@ -888,6 +888,27 @@ checkEq(
     'request refused by outbound policy',
     PoliciedGeocoderTransport::safeError('Refused private/internal address for attacker.example')
 );
+// Keyed place search: each service may only be asked at its own API host,
+// LocationIQ only over IPv4 (its key restriction accepts IPv4 alone), and the
+// key, which rides in the URL, never reaches a log.
+$threw = false;
+try { $gt->keyed('locationiq', ['https://attacker.example/v1/search?q=x&key=SAMPLEKEY']); } catch (\InvalidArgumentException) { $threw = true; }
+check('keyed place search refuses a URL for another host', $threw);
+$threw = false;
+try { $gt->keyed('nobody', ['https://api.locationiq.com/v1/search']); } catch (\InvalidArgumentException) { $threw = true; }
+check('keyed place search refuses an unknown provider', $threw);
+$gtLogs = [];
+$gt6 = new PoliciedGeocoderTransport(
+    $gtdb,
+    static function (string $line) use (&$gtLogs): void { $gtLogs[] = $line; },
+    static fn(string $host): array => ['2606:4700:4700::1111']
+);
+checkEq('LocationIQ is reached over IPv4 only: an IPv6-only answer is a failure', [null],
+    $gt6->keyed('locationiq', ['https://api.locationiq.com/v1/autocomplete?q=Private+Place&key=SAMPLEKEY']));
+check('keyed place search logs omit the key and the query', $gtLogs !== []
+    && !str_contains(implode("\n", $gtLogs), 'SAMPLEKEY') && !str_contains(implode("\n", $gtLogs), 'Private'));
+checkEq('keyed place search failures are owner-visible health', 'failing',
+    $gtdb->scalar('SELECT status FROM system_health WHERE subject = ?', ['geocoder:locationiq']));
 
 // Recovery is also a locked state transition: repeated healthy requests after
 // a proven streak create one Activity recovery, not one per request.
@@ -2027,7 +2048,7 @@ checkEq('place search keeps a successful result when its sibling fails', 'Smith 
 // Region first: Photon's lat/lon only nudges a worldwide ranking, so with a
 // bias the search is boxed to the region and goes worldwide only when the
 // region finds too little. A leading house number must appear in a result.
-checkEq('place search: the region box is about 300 km around the point', '-126.5335,42.82,-118.8265,48.22', \BetterCal\Domain\PhotonPlaces::regionBox(45.52, -122.68));
+checkEq('place search: the region box is about 300 km around the point', '-126.5335,42.82,-118.8265,48.22', \BetterCal\Domain\PlaceSearch::regionBox(45.52, -122.68));
 checkEq('place search: a leading house number must appear in the result',
     ['100 Main Street'],
     array_column(\BetterCal\Domain\PlaceSearch::matchingNumber('100 mai', [
@@ -2156,12 +2177,12 @@ checkEq('place search: list values go to Photon as repeated keys, reverse to its
 $PP = \BetterCal\Domain\PhotonPlaces::class;
 $placeRow = static fn(string $name, bool $far) => ['name' => $name, 'address' => 'Example', 'far' => $far];
 checkEq('place search: a place named exactly what was typed', 'Sampleburg',
-    ($PP::exactPlace('sampleburg', [$placeRow('Sampleburg', true)], [$placeRow('Sampleburg Street', false)]) ?? [])['name'] ?? null);
+    ($PS::exactPlace('sampleburg', [$placeRow('Sampleburg', true)], [$placeRow('Sampleburg Street', false)]) ?? [])['name'] ?? null);
 checkEq('place search: case, spacing and punctuation aside', 'St. Example',
-    ($PP::exactPlace('st example', [$placeRow('St. Example', true)]) ?? [])['name'] ?? null);
-checkEq('place search: a half-typed name pins nothing', null, $PP::exactPlace('sampleb', [$placeRow('Sampleburg', true)]));
+    ($PS::exactPlace('st example', [$placeRow('St. Example', true)]) ?? [])['name'] ?? null);
+checkEq('place search: a half-typed name pins nothing', null, $PS::exactPlace('sampleb', [$placeRow('Sampleburg', true)]));
 checkEq('place search: a nearby result of that exact name wins over a far place', null,
-    $PP::exactPlace('sampleburg', [$placeRow('Sampleburg', true)], [$placeRow('Sampleburg', false)]));
+    $PS::exactPlace('sampleburg', [$placeRow('Sampleburg', true)], [$placeRow('Sampleburg', false)]));
 checkEq('place search: cities, towns, counties, states and countries can pin; villages and hamlets cannot', [true, true, true, true, false, false],
     array_map(static fn(array $p): bool => $PP::placeLevel(['properties' => $p]), [
         ['type' => 'city', 'osm_value' => 'city'], ['type' => 'city', 'osm_value' => 'town'],
@@ -2204,6 +2225,7 @@ $otherProvider = new class implements \BetterCal\Domain\PlaceProvider {
     public array $rows = [];
     public function candidates(string $q, ?float $biasLat, ?float $biasLng, int $limit, ?string $language): ?array { return $this->rows; }
     public function distanceCap(): ?float { return null; }
+    public function credits(): array { return [['label' => 'Example', 'url' => 'https://example.test']]; }
 };
 $row = static fn(string $name, float $lat, float $lng): array => \BetterCal\Domain\PlaceSearch::row($name, 'Example', $lat, $lng, null, null, 45.52, -122.68);
 $ops = new \BetterCal\Domain\PlaceSearch($otherProvider);
@@ -2213,6 +2235,124 @@ $otherProvider->rows = [$row('250 Elm Court', 43.6, -116.6), $row('250 Elm Stree
 checkEq('place search: any provider: the number must match and an address goes nearest first', ['250 Elm Street', '250 Elm Court'], array_column($ops->search('250 elm', 45.52, -122.68, 6), 'name'));
 $otherProvider->rows = [$row('250 Elm Court', 43.6, -116.6), $row('250 Oak Lane', 45.53, -122.69)];
 checkEq('place search: any provider: a bare number is never a far place', ['250 Oak Lane'], array_column($ops->search('250', 45.52, -122.68, 6), 'name'));
+
+// Keyed providers, behind Photon. Bodies are canned per endpoint path.
+$keyedTransport = new class implements \BetterCal\Infra\KeyedGeocoderTransport {
+    public array $urls = [];
+    public array $bodies = [];
+    public function keyed(string $provider, array $urls): array
+    {
+        $this->urls = $urls;
+        return array_map(function (string $u) {
+            $path = (string) parse_url($u, PHP_URL_PATH);
+            $query = [];
+            parse_str((string) parse_url($u, PHP_URL_QUERY), $query);
+            $key = $path . (isset($query['layers']) ? '#' . $query['layers'] : '');
+            return array_key_exists($key, $this->bodies) ? $this->bodies[$key] : [];
+        }, $urls);
+    }
+};
+$LIQ = \BetterCal\Domain\LocationIqPlaces::class;
+$liqResult = static fn(string $class, string $type, float $lat, float $lng, array $address, string $place = ''): array =>
+    ['class' => $class, 'type' => $type, 'lat' => (string) $lat, 'lon' => (string) $lng, 'display_place' => $place, 'address' => $address];
+checkEq('LocationIQ takes places and addresses with four letters of the street; Photon the rest', [true, true, false, false],
+    array_map(static fn(string $q): bool => (new $LIQ($keyedTransport, 'k'))->accepts($q), ['grand la', '250 elmw', '250 elm', '250']));
+checkEq('LocationIQ: a house is named by its number and street, its address is the rest',
+    [['250 Elm Street', 'Example City, Example State, Exampleland', 'house'], ['Example Theatre', '12 Grand Avenue, Example City', 'cinema']],
+    array_map(static fn(array $r): array => [$r['name'], $r['address'], $r['kind']], $LIQ::mapResults([
+        $liqResult('place', 'house', 45.52, -122.68, ['name' => 'Elm Street', 'house_number' => '250', 'road' => 'Elm Street', 'city' => 'Example City', 'state' => 'Example State', 'country' => 'Exampleland'], 'Elm Street'),
+        $liqResult('amenity', 'cinema', 45.53, -122.67, ['name' => 'Example Theatre', 'house_number' => '12', 'road' => 'Grand Avenue', 'city' => 'Example City']),
+    ], 45.52, -122.68)));
+checkEq('LocationIQ: a house named by its number alone is named by its number and street', '250 Elm Street',
+    $LIQ::mapResults([$liqResult('place', 'house', 45.52, -122.68, ['name' => '250', 'house_number' => '250', 'road' => 'Elm Street'], '250')], null, null)[0]['name'] ?? null);
+checkEq('LocationIQ: only whole typed words jump ahead ("grand la" is still being typed)', [['Grand Lake Park'], []],
+    [array_column($LIQ::withWholeWords('grand lake', [['name' => 'Grand Lake Park', 'address' => ''], ['name' => 'Grand Lakeshore', 'address' => '']]), 'name'),
+     $LIQ::withWholeWords('grand la', [['name' => 'Grand Meadow Lane', 'address' => '']])]);
+$keyedTransport->bodies = [
+    '/v1/autocomplete' => [$liqResult('highway', 'residential', 45.53, -122.69, ['name' => 'Sampleburg Street', 'road' => 'Sampleburg Street', 'city' => 'Example City'], 'Sampleburg Street')],
+    '/v1/search' => [
+        ['display_name' => 'Sampleburg, Exampleland'] + $liqResult('boundary', 'administrative', 48.14, 11.57, ['city' => 'Sampleburg', 'country' => 'Exampleland']),
+        $liqResult('leisure', 'park', 45.55, -122.70, ['name' => 'Sampleburg Park', 'city' => 'Example City']),
+        $liqResult('amenity', 'cafe', 45.52, -122.68, ['name' => 'Unrelated Cafe', 'city' => 'Example City']),
+    ],
+];
+$liqSearch = new \BetterCal\Domain\PlaceSearch(new $LIQ($keyedTransport, 'SAMPLEKEY'));
+checkEq('LocationIQ: the city named exactly first, then full-word matches nearby, then the region\'s partial ones; loose matches dropped',
+    ['Sampleburg', 'Sampleburg Park', 'Sampleburg Street'], array_column($liqSearch->search('sampleburg', 45.52, -122.68, 6, 'en'), 'name'));
+parse_str((string) parse_url($keyedTransport->urls[0], PHP_URL_QUERY), $acQuery);
+parse_str((string) parse_url($keyedTransport->urls[1], PHP_URL_QUERY), $seQuery);
+checkEq('LocationIQ: autocomplete is boxed to the region, search only prefers it; both carry the language and the key',
+    ['1', null, \BetterCal\Domain\PlaceSearch::regionBox(45.52, -122.68), 'en', 'SAMPLEKEY', 'json'],
+    [$acQuery['bounded'] ?? null, $seQuery['bounded'] ?? null, $seQuery['viewbox'] ?? null, $acQuery['accept-language'] ?? null, $seQuery['key'] ?? null, $seQuery['format'] ?? null]);
+checkEq('LocationIQ credits itself as its free plan asks', 'Search by LocationIQ.com', $liqSearch->credits()[0]['label'] ?? null);
+
+$STA = \BetterCal\Domain\StadiaPlaces::class;
+$staFeature = static fn(string $name, string $label, string $layer, float $lat, float $lng): array =>
+    ['geometry' => ['coordinates' => [$lng, $lat]], 'properties' => ['name' => $name, 'label' => $label, 'layer' => $layer, 'locality' => 'Example City']];
+checkEq('Stadia takes anything but a bare number', [true, true, false],
+    array_map(static fn(string $q): bool => (new $STA($keyedTransport, 'k'))->accepts($q), ['grand la', '250 e', '250']));
+$keyedTransport->bodies = [
+    '/geocoding/v1/autocomplete' => ['features' => [$staFeature('Sampleburg Street', 'Sampleburg Street, Example City, EX', 'street', 45.53, -122.69)]],
+    '/geocoding/v1/autocomplete#coarse' => ['features' => [
+        $staFeature('Sampleburg', 'Sampleburg, Exampleland', 'locality', 48.14, 11.57),
+        $staFeature('Sampleburg', 'Sampleburg, Elsewhere', 'neighbourhood', 40.0, 3.0),
+    ]],
+];
+$staSearch = new \BetterCal\Domain\PlaceSearch(new $STA($keyedTransport, 'SAMPLEKEY'));
+$staRows = $staSearch->search('sampleburg', 45.52, -122.68, 6);
+checkEq('Stadia: the address line is the label after the name; a city named exactly is pinned first',
+    [['Sampleburg', 'Exampleland'], ['Sampleburg Street', 'Example City, EX']],
+    array_map(static fn(array $r): array => [$r['name'], $r['address']], $staRows));
+parse_str((string) parse_url($keyedTransport->urls[0], PHP_URL_QUERY), $staQuery);
+checkEq('Stadia: the bias is its focus point, and the places request is worldwide', [45.52, -122.68, false],
+    [(float) ($staQuery['focus_point_lat'] ?? 0), (float) ($staQuery['focus_point_lon'] ?? 0), str_contains($keyedTransport->urls[1] ?? '', 'focus.point')]);
+$staSearch->search('250 e', 45.52, -122.68, 6);
+checkEq('Stadia: an address asks no places request', 1, count($keyedTransport->urls));
+
+// FallbackPlaces: the primary answers what it takes; Photon the rest, and
+// whenever the primary fails or finds nothing. Credits follow who answered.
+$primary = new class implements \BetterCal\Domain\SelectivePlaceProvider {
+    public ?array $rows = [];
+    public function accepts(string $q): bool { return $q !== 'skip me'; }
+    public function candidates(string $q, ?float $biasLat, ?float $biasLng, int $limit, ?string $language): ?array { return $this->rows; }
+    public function distanceCap(): ?float { return 1.0; }
+    public function credits(): array { return [['label' => 'Primary', 'url' => 'https://primary.example']]; }
+};
+$fallback = new class implements \BetterCal\Domain\PlaceProvider {
+    public int $calls = 0;
+    public function candidates(string $q, ?float $biasLat, ?float $biasLng, int $limit, ?string $language): ?array { $this->calls++; return []; }
+    public function distanceCap(): ?float { return null; }
+    public function credits(): array { return [['label' => 'Fallback', 'url' => 'https://fallback.example']]; }
+};
+$chain = new \BetterCal\Domain\FallbackPlaces($primary, $fallback);
+$primary->rows = [$row('Elm Park', 45.53, -122.69)];
+$chain->candidates('elm', 45.52, -122.68, 6, null);
+checkEq('fallback: the primary answers what it takes', [0, 'Primary'], [$fallback->calls, $chain->credits()[0]['label']]);
+$chain->candidates('skip me', 45.52, -122.68, 6, null);
+checkEq('fallback: what the primary does not take goes to the fallback', [1, 'Fallback'], [$fallback->calls, $chain->credits()[0]['label']]);
+foreach ([null, []] as $primaryRows) {
+    $primary->rows = $primaryRows;
+    $before = $fallback->calls;
+    $chain->candidates('elm', 45.52, -122.68, 6, null);
+    checkEq('fallback: a primary that ' . ($primaryRows === null ? 'fails' : 'finds nothing') . ' hands over', 1, $fallback->calls - $before);
+}
+
+// Which service: Photon unless a known one is chosen with its key; Settings
+// is told what was asked, what is used and why, never the key.
+$PPV = \BetterCal\Domain\PlaceProviders::class;
+checkEq('place search service: Photon by default', ['photon', 'Photon', null, null], array_values(array_intersect_key($PPV::describe([]), array_flip(['active', 'name', 'fallback', 'problem']))));
+$liqDesc = $PPV::describe(['provider' => 'LocationIQ', 'locationiq_key' => 'SAMPLEKEY']);
+checkEq('place search service: LocationIQ with its key, Photon behind it, no Stadia note', ['locationiq', 'Photon', null],
+    [$liqDesc['active'], $liqDesc['fallback'], $liqDesc['note']]);
+check('place search service: the description never carries the key', !str_contains(json_encode($liqDesc), 'SAMPLEKEY'));
+$staDesc = $PPV::describe(['provider' => 'stadia', 'stadia_key' => '']);
+check('place search service: Stadia without its key says so and uses Photon',
+    $staDesc['active'] === 'photon' && str_contains((string) $staDesc['problem'], 'BETTERCAL_STADIA_KEY'));
+check('place search service: choosing Stadia always shows the storage note', $staDesc['note'] === $PPV::STADIA_NOTE && $staDesc['termsUrl'] !== null);
+check('place search service: an unknown name is called out', str_contains((string) $PPV::describe(['provider' => 'bogus'])['problem'], 'photon, locationiq or stadia'));
+check('place search service: LocationIQ with a key is LocationIQ in front of Photon, without one it is Photon',
+    $PPV::build(['provider' => 'locationiq', 'locationiq_key' => 'k'], $gt) instanceof \BetterCal\Domain\FallbackPlaces
+    && $PPV::build(['provider' => 'locationiq'], $gt) instanceof \BetterCal\Domain\PhotonPlaces);
 checkEq('push label: a device names itself', 'Android phone · Chrome app', \BetterCal\Domain\PushSubscriptions::label('Android phone · Chrome app'));
 checkEq('push label: control characters and runs of space go', 'Mac · Chrome', \BetterCal\Domain\PushSubscriptions::label("Mac\n\t·   Chrome"));
 checkEq('push label: capped at 80 characters', 80, mb_strlen(\BetterCal\Domain\PushSubscriptions::label(str_repeat('x', 200))));

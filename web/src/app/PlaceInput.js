@@ -88,6 +88,7 @@ export function PlaceInput({
   value, onText, onPick, tz, near, compact, placeholder, ariaLabel, inputClass, ask,
 }) {
   const [results, setResults] = useState(null); // null = closed, [] = no matches
+  const [credits, setCredits] = useState([]); // who answered, as their terms ask
   const [active, setActive] = useState(-1);
   const timerRef = useRef(0);
   const reqRef = useRef(0);
@@ -126,6 +127,7 @@ export function PlaceInput({
       const data = await api('/geocode/search?' + params.toString());
       if (id !== reqRef.current) return; // stale response
       const list = (data && data.results) || [];
+      setCredits((data && data.credits) || []);
       setResults(list.length ? list : null);
       setActive(list.length ? 0 : -1);
     } catch {
@@ -206,6 +208,9 @@ export function PlaceInput({
           ${r.address}
         </span>`}
       </li>`)}
+      ${credits.length > 0 && html`<li class="bc-place-credit" role="presentation" onPointerDown=${(e) => e.preventDefault()}>
+        ${credits.map((c, i) => html`${i > 0 ? ' · ' : ''}<a key=${c.url} href=${c.url} target="_blank" rel="noopener noreferrer">${c.label}</a>`)}
+      </li>`}
     </ul>`}
   </span>`;
 }

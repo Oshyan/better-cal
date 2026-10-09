@@ -62,6 +62,9 @@ final class HttpClient
         private readonly ?int $maxTotalBytes = null,
         private readonly ?\Closure $resolver = null,
         private readonly ?float $absoluteDeadline = null,
+        // Connect over IPv4 only: for services whose API keys can be
+        // restricted to IPv4 source addresses alone (LocationIQ).
+        private readonly bool $ipv4Only = false,
     ) {
     }
 
@@ -208,6 +211,7 @@ final class HttpClient
                     CURLOPT_ENCODING => '',
                     CURLOPT_PROTOCOLS => $this->protocolMask(),
                     CURLOPT_RESOLVE => [$destination['resolve']],
+                    CURLOPT_IPRESOLVE => $this->ipv4Only ? CURL_IPRESOLVE_V4 : CURL_IPRESOLVE_WHATEVER,
                     // Environment HTTP(S)_PROXY/ALL_PROXY settings would move
                     // DNS and the TCP connection outside this policy boundary.
                     CURLOPT_PROXY => '',
@@ -415,6 +419,7 @@ final class HttpClient
                 CURLOPT_ENCODING => '',
                 CURLOPT_PROTOCOLS => $this->protocolMask(),
                 CURLOPT_RESOLVE => [$destination['resolve']],
+                CURLOPT_IPRESOLVE => $this->ipv4Only ? CURL_IPRESOLVE_V4 : CURL_IPRESOLVE_WHATEVER,
                 CURLOPT_PROXY => '',
                 CURLOPT_WRITEFUNCTION => function ($c, string $chunk) use (&$response, &$overflow, &$totalOverflow, $batch): int {
                     $bytes = strlen($chunk);
@@ -516,6 +521,12 @@ final class HttpClient
         }
         if (!is_array($ips) || $ips === []) {
             throw new \RuntimeException('DNS resolution failed for ' . $lookupHost);
+        }
+        if ($this->ipv4Only) {
+            $ips = array_values(array_filter($ips, static fn($ip): bool => is_string($ip) && filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) !== false));
+            if ($ips === []) {
+                throw new \RuntimeException('DNS resolution found no IPv4 address for ' . $lookupHost);
+            }
         }
         $hasIpv6 = false;
         foreach ($ips as $ip) {

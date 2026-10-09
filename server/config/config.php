@@ -57,6 +57,14 @@ function config(): array
             'client_id' => $env('BETTERCAL_GOOGLE_CLIENT_ID'),
             'client_secret' => $env('BETTERCAL_GOOGLE_CLIENT_SECRET'),
         ],
+        'places' => [
+            // Place search for the location dropdown (Domain\PlaceProviders):
+            // photon (default, no key), locationiq or stadia, each with
+            // Photon behind it. Keys stay server-side.
+            'provider' => $env('BETTERCAL_PLACE_SEARCH', 'photon'),
+            'locationiq_key' => $env('BETTERCAL_LOCATIONIQ_KEY'),
+            'stadia_key' => $env('BETTERCAL_STADIA_KEY'),
+        ],
         'maptiler' => [
             // Optional MapTiler tile key; when empty the event detail
             // mini-map keeps plain OSM tiles.

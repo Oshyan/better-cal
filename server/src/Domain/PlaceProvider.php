@@ -30,4 +30,12 @@ interface PlaceProvider
      * a provider that already ranks by proximity needs no correction.
      */
     public function distanceCap(): ?float;
+
+    /**
+     * Who to credit for the results just given (the dropdown shows them):
+     * the service and its data, as its terms ask.
+     *
+     * @return list<array{label:string,url:string}>
+     */
+    public function credits(): array;
 }

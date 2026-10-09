@@ -29,8 +29,6 @@ final class PhotonPlaces implements PlaceProvider
 {
     /** Fewer regional matches than this, and the worldwide search runs too. */
     public const REGION_ENOUGH = 3;
-    /** Half the region box's height, in degrees of latitude (about 300 km). */
-    public const REGION_HALF_DEG = 2.7;
     /** How far the nearest-house lookup reaches, matching the region box. */
     public const NEAR_RADIUS_KM = 300;
     /** The place-level layers asked worldwide alongside the regional search. */
@@ -48,6 +46,14 @@ final class PhotonPlaces implements PlaceProvider
         // should decide (the Eiffel Tower in Paris, not a replica a few
         // thousand km closer).
         return PlaceSearch::FAR_KM / 250.0;
+    }
+
+    public function credits(): array
+    {
+        return [
+            ['label' => 'Photon', 'url' => 'https://photon.komoot.io'],
+            ['label' => '© OpenStreetMap', 'url' => 'https://www.openstreetmap.org/copyright'],
+        ];
     }
 
     public function candidates(string $q, ?float $biasLat, ?float $biasLng, int $limit, ?string $language): ?array
@@ -77,7 +83,7 @@ final class PhotonPlaces implements PlaceProvider
         $candidates = null;
         $places = [];
         if ($biased) {
-            $sets = $batch($params + ['bbox' => self::regionBox($biasLat, $biasLng)]);
+            $sets = $batch($params + ['bbox' => PlaceSearch::regionBox($biasLat, $biasLng)]);
             // Places worldwide, in the same parallel batch: a city's name
             // typed in full should offer the city, however many local
             // streets share it. Photon's soft bias still prefers the nearby
@@ -121,40 +127,11 @@ final class PhotonPlaces implements PlaceProvider
             $world = $biased ? PlaceSearch::containingAllWords($q, $world ?? []) : ($world ?? []);
             $candidates = PlaceSearch::mergeCandidates($candidates ?? [], $world);
         }
-        $exact = self::exactPlace($q, $places, $candidates ?? []);
+        $exact = PlaceSearch::exactPlace($q, $places, $candidates ?? []);
         if ($exact !== null) {
             $candidates = PlaceSearch::mergeCandidates([$exact + ['pin' => true]], $candidates);
         }
         return $candidates;
-    }
-
-    /**
-     * The first place named exactly what was typed (case, spacing and
-     * punctuation aside), or null: "munich" is Munich, "muni" is nobody.
-     * None when a nearby result already has that exact name: San Francisco's
-     * Muni, not a village of that name abroad. Pure.
-     *
-     * @param list<array<string,mixed>> $places place-level rows (placeLevel())
-     * @param list<array<string,mixed>> $nearby the other candidates
-     */
-    public static function exactPlace(string $q, array $places, array $nearby = []): ?array
-    {
-        $norm = static fn(string $s): string => trim((string) preg_replace('/[^\p{L}\p{N}]+/u', ' ', mb_strtolower($s)));
-        $want = $norm($q);
-        if ($want === '') {
-            return null;
-        }
-        foreach ($nearby as $c) {
-            if (empty($c['far']) && $norm((string) ($c['name'] ?? '')) === $want) {
-                return null;
-            }
-        }
-        foreach ($places as $p) {
-            if ($norm((string) ($p['name'] ?? '')) === $want) {
-                return $p;
-            }
-        }
-        return null;
     }
 
     /**
@@ -257,23 +234,6 @@ final class PhotonPlaces implements PlaceProvider
             $out[] = PlaceSearch::row($name, $address, $point[0], $point[1], $city !== '' ? $city : null, $kind, $biasLat, $biasLng, null, 'photon');
         }
         return $out;
-    }
-
-    /**
-     * Photon's bbox (minLon,minLat,maxLon,maxLat) around a point, about 300 km
-     * each way: big enough for a metro area and its surroundings, small enough
-     * that the rest of the world can't crowd it out. Pure.
-     */
-    public static function regionBox(float $lat, float $lng): string
-    {
-        $dLat = self::REGION_HALF_DEG;
-        // Degrees of longitude shrink toward the poles; keep the box square-ish.
-        $dLng = min(30.0, $dLat / max(0.2, cos(deg2rad($lat))));
-        $f = static fn(float $v): string => rtrim(rtrim(sprintf('%.4F', $v), '0'), '.');
-        return implode(',', [
-            $f(max(-180.0, $lng - $dLng)), $f(max(-90.0, $lat - $dLat)),
-            $f(min(180.0, $lng + $dLng)), $f(min(90.0, $lat + $dLat)),
-        ]);
     }
 
     /**

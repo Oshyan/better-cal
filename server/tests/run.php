@@ -5684,6 +5684,22 @@ checkEq(
     check('failure email: says it is one per streak', str_contains($mail['text'], 'one email per failing streak'));
     $two = SystemHealth::buildFailureEmail([$row(), $row(['subject' => 'feed:31', 'kind' => 'feed', 'label' => 'Feed: Events'])], $now, new DateTimeZone('UTC'), '');
     checkEq('failure email: several things, counted', 'Better-Cal: 2 things have been failing', $two['subject']);
+    // Place search: an outage alerts only when every configured service is
+    // down; with Photon alone, the email says how to add another.
+    $placeSubjects = ['geocoder:locationiq', 'geocoder:photon'];
+    checkEq('alert: a place search service is held while another one works, sent when all are down; others never held',
+        [true, false, true, false, false],
+        [SystemHealth::placeAlertHeld('geocoder:photon', ['geocoder:photon'], $placeSubjects),
+         SystemHealth::placeAlertHeld('geocoder:photon', ['geocoder:photon', 'geocoder:locationiq'], $placeSubjects),
+         SystemHealth::placeAlertHeld('geocoder:stadia', ['geocoder:stadia'], $placeSubjects),
+         SystemHealth::placeAlertHeld('job:filter_eval', ['job:filter_eval'], $placeSubjects),
+         SystemHealth::placeAlertHeld('geocoder:photon', ['geocoder:photon'], ['geocoder:photon'])]);
+    $photonMail = SystemHealth::buildFailureEmail([$row(['subject' => 'geocoder:photon', 'label' => 'Photon geocoding'])], $now, new DateTimeZone('UTC'), '', \BetterCal\Domain\PlaceProviders::PHOTON_DOWN_ADVICE);
+    check('failure email: Photon alone and down says how to keep place search working', str_contains($photonMail['text'], 'LocationIQ or MapTiler') && str_contains($photonMail['html'], 'LocationIQ or MapTiler'));
+    checkEq('place search health: Photon alone, or the listed services plus Photon', [['geocoder:photon'], ['geocoder:locationiq', 'geocoder:maptiler', 'geocoder:photon']],
+        [\BetterCal\Domain\PlaceProviders::healthSubjects([]), \BetterCal\Domain\PlaceProviders::healthSubjects(['provider' => 'locationiq,maptiler', 'locationiq_key' => 'k', 'maptiler_key' => 'm'])]);
+    checkEq('place search health: the advice is only for Photon alone', [true, false],
+        [\BetterCal\Domain\PlaceProviders::describe([])['downAdvice'] !== null, \BetterCal\Domain\PlaceProviders::describe(['provider' => 'locationiq', 'locationiq_key' => 'k'])['downAdvice'] !== null]);
     checkEq('device label: apple push', 'Reminders to Safari / Apple device (added 2026-09-01)', \BetterCal\Domain\PushSubscriptions::labelFor(['endpoint' => 'https://web.push.apple.com/QAbc', 'created_at' => '2026-09-01 10:00:00']));
     checkEq('device label: fcm', 'Reminders to Chrome / Android (added 2026-09-01)', \BetterCal\Domain\PushSubscriptions::labelFor(['endpoint' => 'https://fcm.googleapis.com/fcm/send/x', 'created_at' => '2026-09-01 10:00:00']));
 }

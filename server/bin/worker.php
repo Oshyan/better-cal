@@ -272,7 +272,7 @@ try {
                         . ($r['error'] !== null ? ' error=' . $r['error'] : '') . "\n";
                     break;
                 case 'system_alerts':
-                    $r = $systemHealth->sweepAlerts($emailSender, $cfg['alert_email'] ?? null);
+                    $r = $systemHealth->sweepAlerts($emailSender, $cfg['alert_email'] ?? null, BetterCal\Domain\PlaceProviders::healthSubjects($cfg['places']));
                     if ($r['failureEmails'] + $r['recoveryEmails'] > 0 || $r['skipped'] !== null) {
                         echo bc_ts() . " system_alerts failure_emails={$r['failureEmails']} recovery_emails={$r['recoveryEmails']}"
                             . ($r['skipped'] !== null ? " skipped={$r['skipped']}" : '') . "\n";

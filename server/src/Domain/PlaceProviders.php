@@ -74,6 +74,23 @@ final class PlaceProviders
     }
 
     /**
+     * The System health subjects of the place search services in use for
+     * either job, Photon always among them: an outage of one is worth an
+     * alert only when all of them are down (SystemHealth::sweepAlerts).
+     *
+     * @param array<string,mixed> $places
+     * @return list<string>
+     */
+    public static function healthSubjects(array $places): array
+    {
+        $services = array_unique(array_merge(self::chain($places, 'provider')['active'], self::chain($places, 'lookup')['active'], ['photon']));
+        return array_values(array_map(static fn(string $s): string => 'geocoder:' . $s, $services));
+    }
+
+    /** What to tell an owner whose only place search service, Photon, is down. */
+    public const PHOTON_DOWN_ADVICE = 'Photon, the free service Better-Cal searches places with, is down. Free keys from LocationIQ or MapTiler put another service in front of it, so place search keeps working when Photon doesn\'t; see docs/geocoding.md.';
+
+    /**
      * For Settings (GET /config): what was asked for, what is in use, and
      * anything to say about it, for the dropdown and, under `lookup`, for
      * the single-pin lookup. Never a key. `requested` and `active` are the
@@ -108,6 +125,10 @@ final class PlaceProviders
             'note' => $stadia ? self::STADIA_NOTE : null,
             'termsUrl' => $stadia ? self::STADIA_TERMS_URL : null,
             'notes' => $notes,
+            // Which System health rows are place search, and what to say
+            // when every one of them is down (only Photon in use: get a key).
+            'healthSubjects' => self::healthSubjects($places),
+            'downAdvice' => self::healthSubjects($places) === ['geocoder:photon'] ? self::PHOTON_DOWN_ADVICE : null,
             'lookup' => $summary($lookup),
         ];
     }

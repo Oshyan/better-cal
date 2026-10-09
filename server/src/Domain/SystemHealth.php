@@ -193,7 +193,7 @@ final class SystemHealth
      *
      * @return array{failureEmails:int,recoveryEmails:int,skipped:string|null}
      */
-    public function sweepAlerts(EmailSender $email, ?string $alertEmail): array
+    public function sweepAlerts(EmailSender $email, ?string $alertEmail, array $placeSubjects = []): array
     {
         $out = ['failureEmails' => 0, 'recoveryEmails' => 0, 'skipped' => null];
         if (!$email->isConfigured()) {
@@ -203,14 +203,17 @@ final class SystemHealth
         $now = Time::nowUtc();
         $nowDb = Time::toDb($now);
 
+        $rows = $this->db->all("SELECT * FROM system_health WHERE status = 'failing' OR alerted_at IS NOT NULL");
+        $failingSubjects = array_column(array_filter($rows, static fn(array $r): bool => $r['status'] === 'failing'), 'subject');
         $failing = [];   // recipient => list<row>
         $recovered = []; // recipient => list<row>
-        foreach ($this->db->all("SELECT * FROM system_health WHERE status = 'failing' OR alerted_at IS NOT NULL") as $row) {
+        foreach ($rows as $row) {
             $to = $this->recipientFor($row, $alertEmail);
             if ($to === null) {
                 continue;
             }
-            if ($row['status'] === 'failing' && self::shouldAlert($row, $now)) {
+            if ($row['status'] === 'failing' && self::shouldAlert($row, $now)
+                && !self::placeAlertHeld((string) $row['subject'], $failingSubjects, $placeSubjects)) {
                 $failing[$to][] = $row;
             } elseif ($row['status'] === 'ok' && !empty($row['alerted_at'])) {
                 $recovered[$to][] = $row;
@@ -219,7 +222,10 @@ final class SystemHealth
 
         foreach ($failing as $to => $rows) {
             $tz = $this->tzFor($rows[0]);
-            $msg = self::buildFailureEmail($rows, $now, $tz, $this->baseUrl());
+            // Photon alone, and down: say how to keep place search working.
+            $note = $placeSubjects === ['geocoder:photon'] && in_array('geocoder:photon', array_column($rows, 'subject'), true)
+                ? PlaceProviders::PHOTON_DOWN_ADVICE : null;
+            $msg = self::buildFailureEmail($rows, $now, $tz, $this->baseUrl(), $note);
             if ($email->sendPlain((string) $to, $msg['subject'], $msg['text'], $msg['html'])) {
                 foreach ($rows as $r) {
                     $this->db->run('UPDATE system_health SET alerted_at = ? WHERE subject = ?', [$nowDb, $r['subject']]);
@@ -241,10 +247,32 @@ final class SystemHealth
     }
 
     /**
-     * Pure message builder. Timestamps are ISO 8601 with the recipient's
-     * offset. @param list<array> $rows @return array{subject:string,text:string,html:string}
+     * Is a failing place search service's alert held back? Yes while another
+     * configured service ($placeSubjects, Photon among them) still works: the
+     * search falls through to it, so nothing waits on the outage. A service
+     * no longer configured isn't worth an alert either. Other subjects are
+     * never held. Pure.
+     *
+     * @param list<string> $failingSubjects every subject failing now
+     * @param list<string> $placeSubjects the configured services' subjects
      */
-    public static function buildFailureEmail(array $rows, \DateTimeImmutable $now, \DateTimeZone $tz, string $baseUrl): array
+    public static function placeAlertHeld(string $subject, array $failingSubjects, array $placeSubjects): bool
+    {
+        if ($placeSubjects === [] || !str_starts_with($subject, 'geocoder:') || $subject === 'geocoder:open-meteo') {
+            return false;
+        }
+        if (!in_array($subject, $placeSubjects, true)) {
+            return true;
+        }
+        return array_diff($placeSubjects, $failingSubjects) !== [];
+    }
+
+    /**
+     * Pure message builder. Timestamps are ISO 8601 with the recipient's
+     * offset; $note, when given, follows the list. @param list<array> $rows
+     * @return array{subject:string,text:string,html:string}
+     */
+    public static function buildFailureEmail(array $rows, \DateTimeImmutable $now, \DateTimeZone $tz, string $baseUrl, ?string $note = null): array
     {
         $n = count($rows);
         $subject = 'Better-Cal: ' . ($n === 1 ? (string) $rows[0]['label'] . ' has been failing' : "$n things have been failing");
@@ -256,6 +284,7 @@ final class SystemHealth
         }
         $link = rtrim($baseUrl, '/') . '/#settings';
         $text = "These have been failing long enough to be worth your attention:\n\n" . implode("\n", $lines)
+            . ($note !== null ? "\n\n" . $note : '')
             . "\n\nDetails and history: $link (Settings, System) and the Activity page.\n"
             . "You get one email per failing streak, and one when it recovers.\n";
         $h = static fn(string $s): string => htmlspecialchars($s, ENT_QUOTES, 'UTF-8');
@@ -268,7 +297,8 @@ final class SystemHealth
                 . ($r['last_error'] !== null && $r['last_error'] !== '' ? '<br><span style="color:#555b64;font-size:13px">last error: ' . $h(mb_substr((string) $r['last_error'], 0, 300)) . '</span>' : '')
                 . '</li>';
         }
-        $html .= '</ul><p style="margin:16px 0 0;font-size:13px;color:#555b64">Details and history: <a href="' . $h($link) . '">Settings, System</a> and the Activity page. You get one email per failing streak, and one when it recovers.</p></div>';
+        $html .= '</ul>' . ($note !== null ? '<p style="margin:12px 0 0;font-size:14px">' . $h($note) . '</p>' : '')
+            . '<p style="margin:16px 0 0;font-size:13px;color:#555b64">Details and history: <a href="' . $h($link) . '">Settings, System</a> and the Activity page. You get one email per failing streak, and one when it recovers.</p></div>';
         return ['subject' => $subject, 'text' => $text, 'html' => $html];
     }
 

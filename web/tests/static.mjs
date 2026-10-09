@@ -92,8 +92,8 @@ for (const file of files) {
   const web = join(root, '..');
   const system = readFileSync(join(root, 'app', 'system.js'), 'utf8');
   const check = (ok, msg) => { if (ok) passed++; else fail(msg); };
-  check(/subject\.startsWith\('geocoder:'\)[\s\S]*consecutiveFailures >= 3/.test(system),
-    'system health must announce geocoder failures only after a three-failure streak');
+  check(/services\.includes\(r\.subject\) && r\.consecutiveFailures >= 3[\s\S]*down\.length === services\.length/.test(system),
+    'system health must announce place search failures only after a three-failure streak, and only when every service in use is down');
   check(system.includes('See Settings, System.'),
     'geocoder failure notice must direct the owner to the health details');
 }

@@ -1828,6 +1828,7 @@ body.bc-dragging * { cursor: grabbing !important; }
    (a select plus a note plus a button) never drops below its own label. */
 .bc-set-control { display: flex; flex: 1 1 0; min-width: 0; align-items: center; gap: 10px; flex-wrap: wrap; }
 .bc-set-value { color: var(--fg); }
+.bc-set-value.bc-set-warn { color: var(--danger); }
 .bc-set-value code { font-family: var(--mono); background: var(--bg-inset); border-radius: 4px; padding: 0 4px; }
 .bc-set-away { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--fg-muted); }
 .bc-set-hint { flex-basis: 100%; margin-left: 182px; color: var(--fg-muted); font-size: 12px; }

@@ -485,6 +485,11 @@ function LocationSection({ settings, config }) {
 
   const hasHome = settings.homeLat != null && settings.homeLng != null;
   const search = config && config.placeSearch;
+  // Every place search service in use is failing right now (Settings says
+  // what to do about it; the boot toast says it once).
+  const health = useStore((s) => s.systemHealth);
+  const searchDown = !!search && (search.healthSubjects || []).length > 0 && (search.healthSubjects || []).every((subject) =>
+    ((health && health.rows) || []).some((r) => r.subject === subject && r.status === 'failing'));
 
   // What a place search is biased toward right now, and whether the device's
   // own position can be used (granted) or offered (prompt).
@@ -555,6 +560,7 @@ function LocationSection({ settings, config }) {
       <span class="bc-set-value">${search.name}${search.fallback ? ', then ' + search.fallback : ''}${search.lookup && search.lookup.active !== search.active
         ? '; placing events nobody picked a place for: ' + search.lookup.name + (search.lookup.active !== 'photon' ? ', then Photon' : '') : ''}</span>
       ${search.problem && html`<span class="bc-set-value">${search.problem}</span>`}
+      ${searchDown && html`<span class="bc-set-value bc-set-warn">${search.downAdvice || 'Every place search service in use is failing; see the System tab.'}</span>`}
       ${search.lookup && search.lookup.problem && search.lookup.problem !== search.problem && html`<span class="bc-set-value">${search.lookup.problem}</span>`}
     <//>`}
   </section>`;

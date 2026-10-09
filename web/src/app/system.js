@@ -28,12 +28,18 @@ export function announceSystemHealth() {
   if (filters) {
     toast('Prompt filters are not being evaluated (failing since ' + fmtSince(filters.firstFailedAt) + '). Events they would hide may be showing.', { error: true });
   }
-  const geocoders = rows.filter((r) => r.subject.startsWith('geocoder:') && r.consecutiveFailures >= 3);
-  if (geocoders.length === 1) {
-    toast(geocoders[0].label + ' has failed repeatedly since ' + fmtSince(geocoders[0].firstFailedAt)
-      + '. Some location lookups may fail. See Settings, System.', { error: true });
-  } else if (geocoders.length > 1) {
-    toast('Location lookup providers have failed repeatedly. Place suggestions and map pins may be unavailable. See Settings, System.', { error: true });
+  // Place search: worth interrupting for only when every service in use is
+  // down, since the search falls through to whichever still works. With
+  // Photon alone, say how to keep it working next time (a free key).
+  const search = state.config && state.config.placeSearch;
+  const services = (search && search.healthSubjects) || ['geocoder:photon'];
+  const down = rows.filter((r) => services.includes(r.subject) && r.consecutiveFailures >= 3);
+  if (down.length > 0 && down.length === services.length) {
+    const since = fmtSince(down.map((r) => r.firstFailedAt).sort()[0]);
+    toast(search && search.downAdvice
+      ? search.downAdvice.replace(' is down.', ' has been down since ' + since + '.')
+      : 'Every place search service has failed repeatedly since ' + since + '. Place suggestions and map pins are unavailable until one recovers. See Settings, System.',
+    { error: true });
   }
   const visibleIds = new Set(state.calendars.filter((c) => c.visible).map((c) => c.id));
   const feeds = rows.filter((r) => r.kind === 'feed' && r.consecutiveFailures >= 2

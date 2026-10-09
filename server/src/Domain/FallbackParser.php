@@ -26,7 +26,7 @@ final class FallbackParser
      * (date resolved AND (time resolved OR all-day)); it is stripped before the
      * draft reaches the API response.
      *
-     * @return array{title:string,start:string,end:string,allDay:bool,location:?string,personNames:list<string>,confidence:float,source:string,complete:bool,dateFound:bool}
+     * @return array{title:string,start:string,end:string,allDay:bool,location:?string,personNames:list<string>,confidence:float,source:string,complete:bool,dateFound:bool,timeFound:bool}
      */
     public static function parse(string $text, string $tzid, ?\DateTimeImmutable $now = null): array
     {
@@ -165,6 +165,9 @@ final class FallbackParser
             // Internal signal for QuickAdd's LLM merge-guard: an explicit date
             // in the text means a past start may be intentional.
             'dateFound' => $dateFound,
+            // Whether the text named a time ("all day" or a date range wins
+            // over a stray one); QuickAdd reports both as the draft's `when`.
+            'timeFound' => $timeFound,
         ];
     }
 

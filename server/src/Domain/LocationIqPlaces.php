@@ -195,7 +195,7 @@ final class LocationIqPlaces implements SelectivePlaceProvider
             }
             $city = $str('city');
             $kind = isset($r['type']) ? (string) $r['type'] : null;
-            $out[] = PlaceSearch::row($name, implode(', ', $parts), $point[0], $point[1], $city !== '' ? $city : null, $kind, $biasLat, $biasLng, null, 'locationiq');
+            $out[] = PlaceSearch::row($name, implode(', ', $parts), $point[0], $point[1], $city !== '' ? $city : null, $kind, $biasLat, $biasLng, null, 'locationiq', $str('country'));
         }
         return $out;
     }

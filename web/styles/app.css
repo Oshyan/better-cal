@@ -2326,6 +2326,26 @@ body.bc-rescheduling { user-select: none; }
   border: 1px solid var(--border-strong); border-radius: 10px;
   font-size: 10.5px; font-weight: 600; color: var(--fg-muted);
 }
+/* Placed or not: a pin inside the start of the box, solid once a suggestion
+   was picked; an x at the end empties it. Both sit over the input's padding. */
+.bc-place.has-pin input { padding-left: 26px; }
+.bc-place.has-clear input { padding-right: 26px; }
+.bc-place-pin, .bc-place-clear {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  display: flex; align-items: center; color: var(--fg-muted);
+}
+.bc-place-pin { left: 8px; pointer-events: none; }
+.bc-place-pin .bc-pin { margin: 0; vertical-align: 0; color: inherit; }
+.bc-place-pin.is-placed { color: var(--accent); }
+.bc-pin.is-filled path { fill: currentColor; }
+.bc-pin.is-filled circle { fill: var(--bg-raised); }
+.bc-place-clear {
+  right: 4px; padding: 3px; border: 0; border-radius: 4px; background: none; cursor: pointer;
+}
+.bc-place-clear:hover { color: var(--fg); background: var(--bg-inset); }
+.bc-place-compact.has-pin input { padding-left: 22px; }
+.bc-place-compact.has-clear input { padding-right: 22px; }
+.bc-place-compact .bc-place-pin { left: 6px; }
 /* Who answered, as each search service's terms ask: one quiet line. */
 .bc-place-credit {
   padding: 4px 9px 2px; border-top: 1px solid var(--border); margin-top: 2px;

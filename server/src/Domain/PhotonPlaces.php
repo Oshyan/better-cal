@@ -117,9 +117,13 @@ final class PhotonPlaces implements PlaceProvider
         // street on another continent with a different number). An address
         // found nearby is the one meant; the world is asked only when the
         // region has none.
+        // With a bias and no real word the world isn't asked even when the
+        // region failed: worldwide, a bare "250" or "250 e" is noise the far
+        // filters drop anyway, and with Photon slow the retry only doubled
+        // the wait before an empty answer.
         $found = $address !== null ? count(PlaceSearch::containingAllWords($q, $candidates ?? [])) : count($candidates ?? []);
         $enough = $address !== null ? 1 : self::REGION_ENOUGH;
-        if ($candidates === null || ($found < $enough && PlaceSearch::hasWord($q))) {
+        if (!$biased || (PlaceSearch::hasWord($q) && ($candidates === null || $found < $enough))) {
             $world = $this->fetch($batch($params), $q, $biasLat, $biasLng);
             if ($candidates === null && $world === null) {
                 return null;
@@ -231,7 +235,7 @@ final class PhotonPlaces implements PlaceProvider
             $kind = (isset($props['type']) && $props['type'] !== 'other')
                 ? (string) $props['type']
                 : (isset($props['osm_value']) ? (string) $props['osm_value'] : null);
-            $out[] = PlaceSearch::row($name, $address, $point[0], $point[1], $city !== '' ? $city : null, $kind, $biasLat, $biasLng, null, 'photon');
+            $out[] = PlaceSearch::row($name, $address, $point[0], $point[1], $city !== '' ? $city : null, $kind, $biasLat, $biasLng, null, 'photon', isset($props['country']) ? trim((string) $props['country']) : null);
         }
         return $out;
     }

@@ -180,7 +180,12 @@ final class QuickAdd
             }
         }
         $draft ??= $fallback;
-        unset($draft['complete'], $draft['dateFound']); // parser-internal, not part of the draft contract
+        // Whether the text itself named a date or a time, from the
+        // deterministic parser even when the LLM wrote the draft: the LLM
+        // fills in a start either way. An editor opened on a chosen day or
+        // range keeps it unless the text says otherwise.
+        $draft['when'] = ['date' => (bool) ($fallback['dateFound'] ?? false), 'time' => (bool) ($fallback['timeFound'] ?? false)];
+        unset($draft['complete'], $draft['dateFound'], $draft['timeFound']); // parser-internal, not part of the draft contract
         if ($modelLimit !== null) {
             $draft['modelLimit'] = $modelLimit;
         }

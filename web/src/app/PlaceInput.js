@@ -24,6 +24,7 @@ import { state } from './store.js';
 import { knownPosition, awayFromHome } from './devicelocation.js';
 import { localTz } from '../lib/dates.js';
 import { onOutsidePress, insideAny } from '../ui/outside.js';
+import { Icon, PinIcon } from '../ui/icons.js';
 
 const NEAR_MS = 36 * 3600 * 1000;
 
@@ -65,9 +66,15 @@ export function placeBias(tz, near = null) {
 const MIN_CHARS = 2;
 const DEBOUNCE_MS = 300;
 
-// "Name, City" fill text for a picked candidate.
+// What picking a candidate puts in the location, and so what the event shows
+// everywhere (panel, hover card, agenda, exports, Google, phone calendars):
+// the place and its address, "Example Theatre, 12 Grand Avenue, Example City,
+// Example State", so a picked town reads as more than its bare name. The
+// country only for a far place, where it's worth saying. Older servers send
+// no fill: "Name, City".
 export function pickFillText(candidate) {
   if (!candidate) return '';
+  if (candidate.fill) return candidate.far && candidate.display ? candidate.display : candidate.fill;
   const name = candidate.name || '';
   const city = candidate.city || '';
   return city && city !== name ? name + ', ' + city : name;
@@ -84,8 +91,13 @@ function farRegion(candidate) {
 // ask: {seq, focus} from the caller to search what the box holds now and
 // open the candidates (the editor's quick fill found a place). Nothing is
 // picked for you; with focus, the cursor moves here so arrows and Enter pick.
+//
+// placed (true/false; leave it out for no marker): a pin at the start of the
+// box, solid while the text is placed on the map (a suggestion was picked)
+// and an outline while it's free text, so a pick reads as a pick. clearable:
+// an x that empties the box, since a picked place fills it with an address.
 export function PlaceInput({
-  value, onText, onPick, tz, near, compact, placeholder, ariaLabel, inputClass, ask,
+  value, onText, onPick, tz, near, compact, placeholder, ariaLabel, inputClass, ask, placed, clearable,
 }) {
   const [results, setResults] = useState(null); // null = closed, [] = no matches
   const [credits, setCredits] = useState([]); // who answered, as their terms ask
@@ -177,7 +189,21 @@ export function PlaceInput({
   };
   const onFocus = () => clearTimeout(blurTimer.current);
 
-  return html`<span class=${'bc-place' + (compact ? ' bc-place-compact' : '')} ref=${wrapRef}>
+  const marked = placed != null;
+  const canClear = clearable && !!(value || '').trim();
+  const clear = () => {
+    clearTimeout(timerRef.current);
+    reqRef.current++;
+    close();
+    onText('');
+    if (inputRef.current) inputRef.current.focus();
+  };
+
+  return html`<span class=${'bc-place' + (compact ? ' bc-place-compact' : '') + (marked ? ' has-pin' : '') + (clearable ? ' has-clear' : '')} ref=${wrapRef}>
+    ${marked && html`<span class=${'bc-place-pin' + (placed ? ' is-placed' : '')}
+      title=${placed ? 'Placed on the map' : 'Not placed yet: pick a suggestion to place it'}><${PinIcon} size=${compact ? 12 : 14} filled=${!!placed} /></span>`}
+    ${canClear && html`<button type="button" class="bc-place-clear" aria-label="Clear location" title="Clear"
+      onPointerDown=${(e) => e.preventDefault()} onClick=${clear}><${Icon} name="close" size=${compact ? 12 : 14} /></button>`}
     <input
       class=${inputClass || ''}
       ref=${inputRef}

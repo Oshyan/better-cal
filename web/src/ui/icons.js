@@ -238,9 +238,10 @@ export function Icon({ name, size = 15 }) {
 // Map pin preceding location text (agenda rows, event popover, detail view):
 // teardrop outline with a punched circle, muted via the bc-pin class so the
 // address stays the focus. aria-hidden because the text carries the meaning.
-export function PinIcon({ size = 12 }) {
+// filled: the solid pin a location field shows once its text is placed on the map.
+export function PinIcon({ size = 12, filled = false }) {
   return html`<svg
-    class="bc-pin" viewBox="0 0 16 16" width=${size} height=${size} aria-hidden="true"
+    class=${'bc-pin' + (filled ? ' is-filled' : '')} viewBox="0 0 16 16" width=${size} height=${size} aria-hidden="true"
     fill="none" stroke="currentColor" stroke-width="1.4"
     stroke-linecap="round" stroke-linejoin="round"
   ><path d="M12.7 6.7c0 3.5-4.7 7.6-4.7 7.6S3.3 10.2 3.3 6.7a4.7 4.7 0 0 1 9.4 0z" />

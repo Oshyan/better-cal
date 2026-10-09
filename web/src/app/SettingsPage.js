@@ -519,6 +519,7 @@ function LocationSection({ settings, config }) {
         value=${homeText}
         ariaLabel="Home location"
         placeholder="Search for your city or address"
+        placed=${hasHome}
         tz=${localTz()}
         onText=${setHomeText}
         onPick=${(r) => {

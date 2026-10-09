@@ -193,28 +193,59 @@ export function EditorDrawer() {
   // in another city), so the choice is offered right away. Nothing is picked for you.
   // While typing it only opens; on Enter or Fill the cursor moves there too.
   const [placeAsk, setPlaceAsk] = useState(null);
+  // What the quick fill falls back to: the form as the editor opened it (a
+  // dragged range, a clicked day, a person or calendar it started from) plus
+  // anything changed by hand since. The quick fill sets a field only when the
+  // text says something about it, so "stay at the lake" typed over a
+  // four-day selection keeps the four days (it used to become today at 2 PM),
+  // and deleting a date from the text puts the editor's dates back.
+  const nlBase = useRef(null);
   const applyNlDraft = (d, fromEnter = false) => {
     if (!d) return;
     if (d.location) setPlaceAsk((p) => ({ seq: ((p && p.seq) || 0) + 1, focus: fromEnter }));
     const touched = [];
     setForm((f) => {
       if (!f) return f;
+      const base = nlBase.current || f;
       const nf = { ...f };
-      if (d.title) { nf.title = d.title; touched.push('title'); }
-      if (d.start) { nf.start = toInputValue(parseISO(d.start)); touched.push('start'); }
-      if (d.end) { nf.end = toInputValue(parseISO(d.end)); touched.push('end'); }
-      if (d.allDay != null) { nf.allDay = !!d.allDay; touched.push('allDay'); }
+      nf.title = d.title || base.title;
+      // A server without these flags: the parse decides, as before.
+      const when = d.when || { date: true, time: true };
+      if (d.start && d.end && when.date) {
+        nf.start = toInputValue(parseISO(d.start));
+        nf.end = toInputValue(parseISO(d.end));
+        nf.allDay = !!d.allDay;
+      } else if (d.start && d.end && when.time && !d.allDay) {
+        // A time and no date ("dinner at 7pm"): that time, on the day the
+        // editor opened with, for the parsed length.
+        const day = fromInputValue(base.start);
+        const ps = parseISO(d.start);
+        const s = new Date(day.getFullYear(), day.getMonth(), day.getDate(), ps.getHours(), ps.getMinutes());
+        nf.start = toInputValue(s);
+        nf.end = toInputValue(new Date(s.getTime() + (parseISO(d.end) - ps)));
+        nf.allDay = false;
+      } else {
+        nf.start = base.start;
+        nf.end = base.end;
+        nf.allDay = base.allDay;
+      }
       if (d.location) {
         nf.location = d.location;
         // Parsed free text: stale picked coordinates no longer apply.
         nf.locationLat = null;
         nf.locationLng = null;
-        touched.push('location');
+        nf.locationProvider = null;
+      } else {
+        nf.location = base.location;
+        nf.locationLat = base.locationLat;
+        nf.locationLng = base.locationLng;
+        nf.locationProvider = base.locationProvider;
       }
-      if (d.personNames && d.personNames.length) {
-        nf.people = toPeopleChips(d.personNames);
-        touched.push('people');
-      }
+      // People the editor started with stay; the text adds to them.
+      const named = toPeopleChips(d.personNames || []);
+      nf.people = [...base.people, ...named.filter((p) => !base.people.some((b) => b.name.toLowerCase() === p.name.toLowerCase()))];
+      for (const k of ['title', 'start', 'end', 'allDay', 'location']) if (nf[k] !== f[k]) touched.push(k);
+      if (JSON.stringify(nf.people) !== JSON.stringify(f.people)) touched.push('people');
       return nf;
     });
     if (touched.length) {
@@ -382,12 +413,14 @@ export function EditorDrawer() {
         : null,
     };
     setForm(initial);
+    nlBase.current = initial;
     initialSnapRef.current = JSON.stringify(initial);
     set({ editorDirty: false });
     // Putting a draft back (Undo after a close, or after a reload): the form
     // as it was, against the ORIGINAL baseline so it is still dirty.
     if (editor.restore && editor.restore.form) {
       setForm(editor.restore.form);
+      nlBase.current = editor.restore.form;
       if (editor.restore.initialSnap) initialSnapRef.current = editor.restore.initialSnap;
       set({ editorDirty: true });
     }
@@ -462,7 +495,17 @@ export function EditorDrawer() {
   if (!editor || !form) return null;
 
   const occ = editor.occ;
-  const upd = (patch) => setForm((f) => ({ ...f, ...patch }));
+  // A change by hand: applied, and kept as what the quick fill falls back to.
+  const byHand = (fn) => setForm((f) => {
+    const nf = fn(f);
+    if (nlBase.current && nf !== f) {
+      const changed = {};
+      for (const k of Object.keys(nf)) if (nf[k] !== f[k]) changed[k] = nf[k];
+      nlBase.current = { ...nlBase.current, ...changed };
+    }
+    return nf;
+  });
+  const upd = (patch) => byHand((f) => ({ ...f, ...patch }));
 
   // Picking a zone normally keeps the typed clock time ("3 PM", now in New
   // York). The exception is picking the zone this event is ALREADY stored in
@@ -470,7 +513,7 @@ export function EditorDrawer() {
   // it in its own zone", so the moment is kept and the fields switch to that
   // zone's reading. Otherwise reopening "6:44 PM New York" in London and
   // re-picking New York would turn 11:44 PM London into 11:44 PM New York.
-  const pickZone = (z) => setForm((f) => {
+  const pickZone = (z) => byHand((f) => {
     const own = occ && occ.tzid === z && !f.tzTouched && !f.allDay;
     if (!own) return { ...f, tz: z, tzTouched: true };
     const [s, en] = formInstants(f);
@@ -504,7 +547,7 @@ export function EditorDrawer() {
   // midnight, which as a timed event is a day long. Those become an hour,
   // at the next quarter hour today or 9 AM on another day. Times the owner
   // had set before ticking it (on and straight off again) are kept.
-  const onAllDayToggle = (checked) => setForm((f) => {
+  const onAllDayToggle = (checked) => byHand((f) => {
     if (checked) return { ...f, allDay: true };
     const s0 = fromInputValue(f.start);
     const e0 = fromInputValue(f.end);
@@ -520,7 +563,7 @@ export function EditorDrawer() {
   // locked, and otherwise only when the end would no longer be after the
   // start, to an hour later (Google Calendar's rule). An end before its start
   // is never made silently.
-  const setStart = (v) => setForm((f) => {
+  const setStart = (v) => byHand((f) => {
     const ns = fromInputValue(v);
     if (isNaN(ns)) return f;
     const oldS = fromInputValue(f.start);
@@ -804,6 +847,8 @@ export function EditorDrawer() {
             tz=${occ ? occ.tzid : localTz()}
             near=${() => calendarPlaceNear(formInstants(form)[0].getTime(), occ ? occ.eventId : null)}
             ask=${placeAsk}
+            placed=${form.locationLat != null}
+            clearable
             onText=${(v) => upd({ location: v, locationLat: null, locationLng: null, locationProvider: null })}
             onPick=${(r) => upd({ location: pickFillText(r), locationLat: r.lat, locationLng: r.lng, locationProvider: r.provider || null })}
           />

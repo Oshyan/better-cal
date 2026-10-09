@@ -453,6 +453,8 @@ export function QuickAdd() {
             placeholder="Optional"
             inputClass="bc-qa-loc"
             tz=${localTz()}
+            placed=${form.locationLat != null}
+            clearable
             onText=${(v) => {
               touchedRef.current.add('location');
               setForm((f) => {

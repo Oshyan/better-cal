@@ -137,7 +137,10 @@ final class StadiaPlaces implements SelectivePlaceProvider
             }
             $city = $str('locality');
             $kind = $str('layer');
-            $out[] = PlaceSearch::row($name, $address, $point[0], $point[1], $city !== '' ? $city : null, $kind !== '' ? $kind : null, $biasLat, $biasLng, null, 'stadia');
+            // Its labels end with the country's code for some ("CA, USA") and
+            // its name for others ("Bavaria, Germany").
+            $country = str_ends_with($address, $str('country_a')) && $str('country_a') !== '' ? $str('country_a') : $str('country');
+            $out[] = PlaceSearch::row($name, $address, $point[0], $point[1], $city !== '' ? $city : null, $kind !== '' ? $kind : null, $biasLat, $biasLng, null, 'stadia', $country);
         }
         return $out;
     }

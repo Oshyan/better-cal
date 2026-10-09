@@ -335,6 +335,10 @@ checkEq('fp tonight keeps title', 'Dinner', $d['title']);
 $d = $p('Night hike Friday');
 check('fp leading Night stays in title', str_contains($d['title'], 'Night hike'));
 check('fp leading Night stays all-day', $d['allDay']);
+checkEq('fp says whether the text named a date and a time',
+    [[false, false], [false, true], [true, false], [true, true]],
+    array_map(static fn(array $x): array => [$x['dateFound'], $x['timeFound']],
+        [$p('Stay at the lake'), $p('Dinner at 7pm'), $p('Lunch Friday'), $p('Lunch Friday at noon')]));
 $d = $p('Gym yesterday 6pm');
 checkEq('fp yesterday is explicit past date', true, $d['dateFound']);
 check('fp yesterday lands in the past', $d['start'] < \BetterCal\Support\Time::iso($now));
@@ -2092,6 +2096,9 @@ $regionTransport->regional = null; // the boxed request failed
 $r = $ps->search('100 main', 45.52, -122.68, 6);
 checkEq('place search: a failed regional request still gets worldwide results', '100 Main Road', $r[0]['name'] ?? ($r ? 'other' : 'none'));
 $regionTransport->calls = [];
+$ps->search('100 m', 45.52, -122.68, 6);
+checkEq('place search: a failed regional request without a real word is not retried worldwide', 1, count($regionTransport->calls));
+$regionTransport->calls = [];
 $regionTransport->regional = [];
 $regionTransport->world = [$regionFeature('250', 'Plaza Mayor', 40.41, -3.70)];
 checkEq('place search: a bare number never goes worldwide (every place numbered 250)', [[], 1], [$ps->search('250', 45.52, -122.68, 6), count($regionTransport->calls)]);
@@ -2263,6 +2270,12 @@ checkEq('LocationIQ: a house is named by its number and street, its address is t
         $liqResult('place', 'house', 45.52, -122.68, ['name' => 'Elm Street', 'house_number' => '250', 'road' => 'Elm Street', 'city' => 'Example City', 'state' => 'Example State', 'country' => 'Exampleland'], 'Elm Street'),
         $liqResult('amenity', 'cinema', 45.53, -122.67, ['name' => 'Example Theatre', 'house_number' => '12', 'road' => 'Grand Avenue', 'city' => 'Example City']),
     ], 45.52, -122.68)));
+checkEq('a pick fills the place and its address, without the country (the client adds it back for far places)',
+    ['Sampleville, Example State', 'Example Theatre, 12 Grand Avenue, Sampleville', 'Exampleland', 'Sampleville, Example State, Exampleland'],
+    [\BetterCal\Domain\PlaceSearch::row('Sampleville', 'Example State, Exampleland', 45.5, -122.6, 'Sampleville', 'town', null, null, null, 'photon', 'Exampleland')['fill'],
+     \BetterCal\Domain\PlaceSearch::row('Example Theatre', '12 Grand Avenue, Sampleville', 45.5, -122.6, null, null, null, null, null, 'photon', 'Exampleland')['fill'],
+     \BetterCal\Domain\PlaceSearch::row('Exampleland', 'Exampleland', 45.5, -122.6, null, 'country', null, null, null, 'photon', 'Exampleland')['fill'],
+     \BetterCal\Domain\PlaceSearch::row('Sampleville', 'Example State, Exampleland', 45.5, -122.6, null, null, null, null)['fill']]);
 checkEq('LocationIQ: a house named by its number alone is named by its number and street', '250 Elm Street',
     $LIQ::mapResults([$liqResult('place', 'house', 45.52, -122.68, ['name' => '250', 'house_number' => '250', 'road' => 'Elm Street'], '250')], null, null)[0]['name'] ?? null);
 checkEq('LocationIQ: only whole typed words jump ahead ("grand la" is still being typed)', [['Grand Lake Park'], []],
@@ -3766,6 +3779,10 @@ checkEq('pd fail -> highlight', 'highlight', Filters::promptDisposition($promptR
     $qadb->run("UPDATE users SET settings_json = '{\"nlParseMode\":\"never\"}' WHERE id = 1");
     $deterministic = $qa->run(1, 'Dinner tomorrow 7pm', 'UTC', false, null, 77);
     checkEq('quick add model budget: deterministic-only parse spends no capacity', [1, false], [$qaTransport->calls, isset($deterministic['draft']['modelLimit'])]);
+    checkEq('quick add: the draft says the text named a date and a time, and keeps the parser\'s flags to itself',
+        [['date' => true, 'time' => true], ['date' => false, 'time' => false], false],
+        [$deterministic['draft']['when'] ?? null, $qa->run(1, 'Stay at the lake', 'UTC', false, null, 77)['draft']['when'] ?? null,
+         isset($deterministic['draft']['dateFound']) || isset($deterministic['draft']['timeFound'])]);
     Limits::configure(['MODEL_QUICKADD_CHARS' => 5]);
     try {
         $qa->run(1, '123456', 'UTC', false, null, 77);

@@ -129,19 +129,33 @@ final class PlaceSearch
      * names the geocoder that found it, which an event keeps as the
      * provenance of a picked place.
      *
-     * @return array{name:string,address:string,lat:float,lng:float,display:string,city:?string,kind:?string,distanceKm:?float,far:bool,provider:?string}
+     * fill is what picking it puts in the location: the name and address
+     * without the country (the address line ends with it when $country is
+     * given); the client uses display instead for a far place, where the
+     * country is worth saying.
+     *
+     * @return array{name:string,address:string,lat:float,lng:float,display:string,fill:string,city:?string,kind:?string,distanceKm:?float,far:bool,provider:?string}
      */
-    public static function row(string $name, string $address, float $lat, float $lng, ?string $city, ?string $kind, ?float $biasLat, ?float $biasLng, ?string $display = null, ?string $provider = null): array
+    public static function row(string $name, string $address, float $lat, float $lng, ?string $city, ?string $kind, ?float $biasLat, ?float $biasLng, ?string $display = null, ?string $provider = null, ?string $country = null): array
     {
         $distance = $biasLat !== null && $biasLng !== null
             ? round(self::distanceKm($biasLat, $biasLng, $lat, $lng), 1)
             : null;
+        $local = $address;
+        if ($country !== null && $country !== '') {
+            if ($address === $country) {
+                $local = '';
+            } elseif (str_ends_with($address, ', ' . $country)) {
+                $local = substr($address, 0, -strlen(', ' . $country));
+            }
+        }
         return [
             'name' => $name,
             'address' => $address,
             'lat' => $lat,
             'lng' => $lng,
             'display' => $display ?? ($address === '' ? $name : $name . ', ' . $address),
+            'fill' => $local === '' ? $name : $name . ', ' . $local,
             'city' => $city,
             'kind' => $kind,
             'distanceKm' => $distance,
@@ -425,7 +439,8 @@ final class PlaceSearch
                 $biasLat,
                 $biasLng,
                 $airport['display'],
-                'ourairports'
+                'ourairports',
+                $airport['country']
             );
             $candidates = array_merge([$pinned], array_values(array_filter(
                 $candidates,

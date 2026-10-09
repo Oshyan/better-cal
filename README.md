@@ -54,8 +54,8 @@ It hasn't been tried on an iPhone yet, so if you have one, I'd especially like t
 
 For a one-person project, taking security seriously means doing the work in public rather than making promises:
 
-- **Three full scans** of the whole codebase so far (Codex Security in August and September 2026, Claude Security on 2026-09-23), with every finding independently verified.
-- **Every finding fixed**, deployed and checked on the reference install, and the fix commit names the finding it closes. The 2026-09-23 round found 29 issues (none High or Critical), all fixed the same day.
+- **Four full scans** of the whole codebase so far (Codex Security in August, September and October 2026, Claude Security on 2026-09-23), with every finding independently verified. One more, on the 1.0 release candidate, comes before 1.0.
+- **Every finding fixed**, deployed and checked on the reference install, and the fix commit names the finding it closes. The 2026-09-23 round found 29 issues (none High or Critical), all fixed the same day. The 2026-10-06 round found 77 (one High), fixed in phases through 0.9.42, except one set aside after testing showed it was already bounded and one Low accepted with the reason recorded.
 - **The fixes reviewed too.** Three more passes looked for incomplete fixes, ways around them and anything they broke, and those were fixed as well (0.1.6 to 0.1.8).
 - **Published advisories.** The 2026-09-23 findings were published as GitHub security advisories; [SECURITY.md](SECURITY.md#past-advisories) lists each with the affected and fixed versions.
 - **Tests** run on every change and before every deploy, including regression tests for each security fix.

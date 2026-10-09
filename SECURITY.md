@@ -19,13 +19,15 @@ Include what you found, how to reproduce it, and what you think it allows. You w
 
 - **2026-09-23**: a Claude Security scan of the whole repository at revision `14f98fe` (high effort, three-verifier panel on every candidate): 29 findings, 9 Medium and 20 Low, none High or Critical. All were fixed in releases 0.1.1 to 0.1.5, deployed and verified on the reference install the same day. Three adversarial reviews of those fixes followed; the gaps and regressions they found were fixed in 0.1.6 to 0.1.8. Each Medium finding was published as its own GitHub security advisory and the Low ones as one combined advisory; [Past advisories](#past-advisories) below lists them with the affected and patched versions. **0.2.0 is the first release with the whole pass in it.**
 
+- **2026-10-06**: a full Codex Security scan of the repository at revision `3cdca5a` (released in 0.9.13): 77 findings, 1 High, 46 Medium and 30 Low. They were fixed in phases through release 0.9.42, each fix with regression tests and an independent review of the patch. One Medium was set aside after testing showed the reported path was already bounded by the recurrence library's own limit, and one Low was accepted rather than fixed. The working record is `docs/security-remediation-checklist-2026-10-06.md`; the checks still to run against a deployed install are tracked in [issue #81](https://github.com/Oshyan/better-cal/issues/81). This was not the final pre-1.0 scan: that one runs on the 1.0 release candidate.
+
 Known residuals, accepted and documented rather than fixed:
 
 - The overall sign-in brake can still be triggered by an attacker controlling 10 or more addresses (cheap with IPv6). While it is on, password sign-ins are refused from addresses that have not signed in during the last 30 days, unless the browser has signed in here before (it carries a device cookie, since 0.2.3). CalDAV devices using API tokens are unaffected. A brand-new device has to wait for the attack to subside; a one-time code to let it in is planned in issue #59.
 - Prompt filters and ranking judge events in batches of 25, so one event's text can in principle sway the model's verdicts on the others in its batch. The text is sent as separate, marked data.
 - When the deploy script connects as root, it leaves `.env` root-owned, but the app user owns the directory it sits in, so this is not a hard boundary. Deploying as a non-root user with sudo skips that step.
 
-These scans cover the code as of release 0.1.5 (2026-09-23). Changes since then have had tests, including regression tests for every fixed finding, and review as they were made, but not yet a full scan. Anything you find is worth telling us about.
+The latest full scan covers the code as of release 0.9.13 (2026-10-06), and its fixes run through 0.9.42. Changes since then have had tests, including regression tests for every fixed finding, and review as they were made, but not yet a full scan; a final scan of the 1.0 release candidate is planned (issue #81). Anything you find is worth telling us about.
 
 ### Past advisories
 

@@ -4,6 +4,13 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.54 (2026-10-09)
+
+- **A phone turned sideways keeps the phone layout.** The layout was chosen by width alone, so a phone held sideways (wider than 640 points) got the desktop frame: the two-row toolbar, the sidebar, popovers and no bottom bar. A touch screen no taller than 500 points now counts as a phone too, and the turned shape gets its own touches: the bottom bar is slimmer with labels beside the icons, sheets open from the right at full height instead of covering most of the screen from below, the frame keeps clear of a side notch, the 3-day overview shows five days a row and three rows, and week view starts at five days across (a pinch still changes it, remembered separately from upright). ([#125](https://github.com/Oshyan/better-cal/issues/125))
+- **Context items show the hover card.** Hovering a context item (weather, air quality, sunrise and sunset, a holiday, a "+N") now shows the same card events do, after the same short pause. The browser's own tooltip, which these used, appeared for some items and not others.
+
+Operators: no migration.
+
 ## 0.9.53 (2026-10-09)
 
 - **Preact 11.** The app's UI framework moves from Preact 10.29.7 to 11.0.1, before the final pre-1.0 security scan so the scan covers what 1.0 ships. Nothing should look or work differently; if something does, that's a bug worth reporting.

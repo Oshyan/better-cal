@@ -4,6 +4,17 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.55 (2026-10-09)
+
+- **Stepping through a day skips duplicates.** An event linked across two visible calendars shows once in the views, but the event sheet and panel stepped onto both copies. Now it's one step, and the copy you opened keeps its place. ([#27](https://github.com/Oshyan/better-cal/issues/27))
+- **The hover card names the plain-language filter** that dimmed or highlighted an event, quoting its words, instead of "one of your plain-language filters".
+- **The Filters page notes a broad AI filter.** An AI prompt filter that applies to everything judges every event on every subscribed calendar, including ones added later; the form and the filter's card now say so.
+- **Hover card dates for all-day events.** West of UTC a one-day all-day event's card read as the day before to that day. It now shows the right single date.
+- **Context hover cards** leave off the reasons list, which explains how event chips are drawn and didn't apply to them.
+- **The overview says "5 day" on a turned phone,** where it shows five days a row (0.9.54).
+
+Operators: no migration.
+
 ## 0.9.54 (2026-10-09)
 
 - **A phone turned sideways keeps the phone layout.** The layout was chosen by width alone, so a phone held sideways (wider than 640 points) got the desktop frame: the two-row toolbar, the sidebar, popovers and no bottom bar. A touch screen no taller than 500 points now counts as a phone too, and the turned shape gets its own touches: the bottom bar is slimmer with labels beside the icons, sheets open from the right at full height instead of covering most of the screen from below, the frame keeps clear of a side notch, the 3-day overview shows five days a row and three rows, and week view starts at five days across (a pinch still changes it, remembered separately from upright). ([#125](https://github.com/Oshyan/better-cal/issues/125))

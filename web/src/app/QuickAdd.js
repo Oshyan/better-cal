@@ -300,6 +300,7 @@ export function QuickAdd() {
       location,
       locationLat: location && f.locationLat != null ? f.locationLat : null,
       locationLng: location && f.locationLng != null ? f.locationLng : null,
+      ...(location && f.locationLat != null && f.locationProvider ? { locationProvider: f.locationProvider } : {}),
       ...(parsed.length ? { personIds: parsed.map((n) => knownPerson(n).id) } : {}),
     });
     setBusy(false);
@@ -342,6 +343,7 @@ export function QuickAdd() {
           location: (form.location || '').trim() || (draft && draft.location),
           locationLat: (form.location || '').trim() ? form.locationLat : null,
           locationLng: (form.location || '').trim() ? form.locationLng : null,
+          locationProvider: (form.location || '').trim() ? (form.locationProvider || null) : null,
           calendarId: form.calendarId != null ? Number(form.calendarId) : undefined,
           // Carry the parsed people across; the editor resolves them to chips
           // and asks about any that aren't in the directory yet.
@@ -454,7 +456,7 @@ export function QuickAdd() {
             onText=${(v) => {
               touchedRef.current.add('location');
               setForm((f) => {
-                const nf = { ...f, location: v, locationLat: null, locationLng: null };
+                const nf = { ...f, location: v, locationLat: null, locationLng: null, locationProvider: null };
                 formRef.current = nf;
                 return nf;
               });
@@ -462,7 +464,7 @@ export function QuickAdd() {
             onPick=${(r) => {
               touchedRef.current.add('location');
               setForm((f) => {
-                const nf = { ...f, location: pickFillText(r), locationLat: r.lat, locationLng: r.lng };
+                const nf = { ...f, location: pickFillText(r), locationLat: r.lat, locationLng: r.lng, locationProvider: r.provider || null };
                 formRef.current = nf;
                 return nf;
               });

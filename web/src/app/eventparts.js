@@ -285,6 +285,9 @@ export function useEventGeo(occ, active) {
               body: {
                 locationLat: point.lat,
                 locationLng: point.lng,
+                // A lookup, not a choice: the server keeps that apart.
+                locationSource: 'lookup',
+                ...(res.provider ? { locationProvider: res.provider } : {}),
                 ...(occ.recurring ? { scope: 'all' } : {}),
               },
             }).catch(() => {});

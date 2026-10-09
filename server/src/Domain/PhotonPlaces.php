@@ -254,7 +254,7 @@ final class PhotonPlaces implements PlaceProvider
             $kind = (isset($props['type']) && $props['type'] !== 'other')
                 ? (string) $props['type']
                 : (isset($props['osm_value']) ? (string) $props['osm_value'] : null);
-            $out[] = PlaceSearch::row($name, $address, $point[0], $point[1], $city !== '' ? $city : null, $kind, $biasLat, $biasLng);
+            $out[] = PlaceSearch::row($name, $address, $point[0], $point[1], $city !== '' ? $city : null, $kind, $biasLat, $biasLng, null, 'photon');
         }
         return $out;
     }

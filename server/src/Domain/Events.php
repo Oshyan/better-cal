@@ -179,7 +179,7 @@ final class Events
         }
         $id = (int) $created['id'];
         $this->db->tx(function () use ($row, $id, $userId, $in): void {
-            [, $local] = self::splitGoogleFields(array_intersect_key($row, array_flip(['reminders_json', 'is_container', 'location_lat', 'location_lng'])));
+            [, $local] = self::splitGoogleFields(array_intersect_key($row, array_flip(['reminders_json', 'is_container', 'location_lat', 'location_lng', 'location_source', 'location_provider', 'location_placed_at'])));
             if ($local !== []) {
                 $this->db->update('events', $local, 'id = ?', [$id]);
             }
@@ -896,6 +896,11 @@ final class Events
             'location' => isset($in['location']) ? mb_substr((string) $in['location'], 0, 500) : null,
             'location_lat' => self::coordOrNull($in, 'locationLat'),
             'location_lng' => self::coordOrNull($in, 'locationLng'),
+            // Provenance only alongside coordinates: without them the columns
+            // keep their NULL default.
+            ...(self::coordOrNull($in, 'locationLat') !== null && self::coordOrNull($in, 'locationLng') !== null
+                ? self::locationProvenance($in, true)
+                : []),
             'url' => isset($in['url']) ? self::cleanUrl((string) $in['url']) : null,
             'start_utc' => $startUtc,
             'end_utc' => $endUtc,
@@ -981,6 +986,10 @@ final class Events
             'location' => $source['location'],
             'locationLat' => $source['location_lat'],
             'locationLng' => $source['location_lng'],
+            // A copy keeps where its coordinates came from (unknown stays
+            // unknown); the time becomes the copy's.
+            'locationSource' => $source['location_source'] ?? null,
+            'locationProvider' => $source['location_provider'] ?? null,
             'start' => Time::dbToIso((string) $source['start_utc'], $tzid),
             'end' => Time::dbToIso((string) $source['end_utc'], $tzid),
             'allDay' => (int) $source['all_day'] === 1,
@@ -2063,7 +2072,7 @@ final class Events
      * rrule 35, tzid 28, reminderSource 26, description 21 — a third of the
      * row, none of it read by anything that draws a grid.
      */
-    private const DETAIL_ONLY = ['uid', 'createdAt', 'updatedAt', 'reminders', 'reminderSource', 'rrule', 'description', 'tzid', 'geocodedAt'];
+    private const DETAIL_ONLY = ['uid', 'createdAt', 'updatedAt', 'reminders', 'reminderSource', 'rrule', 'description', 'tzid', 'geocodedAt', 'locationSource', 'locationProvider', 'locationPlacedAt'];
 
     /**
      * Beyond bytes, the list shape skips work: effective reminders need the
@@ -2120,6 +2129,11 @@ final class Events
             // coordinates means "tried and could not", which the detail view
             // says out loud instead of showing an address with no map.
             'geocodedAt' => !empty($row['geocoded_at']) ? Time::iso(Time::fromDb((string) $row['geocoded_at'])) : null,
+            // Where the coordinates came from (migration 048): picked, lookup
+            // or source, and the geocoder; null when unknown.
+            'locationSource' => isset($row['location_source']) ? (string) $row['location_source'] : null,
+            'locationProvider' => isset($row['location_provider']) ? (string) $row['location_provider'] : null,
+            'locationPlacedAt' => !empty($row['location_placed_at']) ? Time::iso(Time::fromDb((string) $row['location_placed_at'])) : null,
             'url' => $row['url'] !== null ? (string) $row['url'] : null,
             // All-day events are calendar dates, not instants: serialize the date
             // in the event's own zone at a fixed +00:00 midnight so clients can
@@ -2343,6 +2357,17 @@ final class Events
                 }
             }
         }
+        // Provenance changes only when the coordinates do: the editor sends an
+        // event's coordinates back with every save, and a title edit mustn't
+        // turn a looked-up place into a picked one or restamp its time.
+        if (array_key_exists('locationLat', $in) || array_key_exists('locationLng', $in)) {
+            $newLat = array_key_exists('location_lat', $fields) ? $fields['location_lat'] : ($current['location_lat'] ?? null);
+            $newLng = array_key_exists('location_lng', $fields) ? $fields['location_lng'] : ($current['location_lng'] ?? null);
+            $same = static fn($a, $b): bool => $a === null || $b === null ? $a === $b : abs((float) $a - (float) $b) < 1e-9;
+            if (!$same($newLat, $current['location_lat'] ?? null) || !$same($newLng, $current['location_lng'] ?? null)) {
+                $fields += self::locationProvenance($in, $newLat !== null && $newLng !== null);
+            }
+        }
         if (array_key_exists('status', $in) && $in['status'] !== null) {
             $fields['status'] = $this->statusOrDefault($in['status']);
         }
@@ -2360,6 +2385,32 @@ final class Events
             $fields['reminders_json'] = self::encodeReminders(Reminders::validateEventReminders($in['reminders']));
         }
         return $fields;
+    }
+
+    /** Where an event's coordinates came from (migration 048). */
+    public const LOCATION_SOURCES = ['picked', 'lookup', 'source'];
+
+    /**
+     * Provenance columns for coordinates being set or cleared. Without
+     * coordinates, all three clear. With them: locationSource from the input
+     * ('picked' when absent: coordinates sent with an event are a person's or
+     * client's choice; null when given as null, for a copy of coordinates of
+     * unknown origin), locationProvider when it's a plain provider name, and
+     * the time. Pure.
+     *
+     * @return array{location_source:?string,location_provider:?string,location_placed_at:?string}
+     */
+    public static function locationProvenance(array $in, bool $hasCoords): array
+    {
+        if (!$hasCoords) {
+            return ['location_source' => null, 'location_provider' => null, 'location_placed_at' => null];
+        }
+        $source = array_key_exists('locationSource', $in)
+            ? (in_array($in['locationSource'], self::LOCATION_SOURCES, true) ? $in['locationSource'] : ($in['locationSource'] === null ? null : 'picked'))
+            : 'picked';
+        $provider = $in['locationProvider'] ?? null;
+        $provider = is_string($provider) && preg_match('/^[a-z0-9][a-z0-9.-]{0,31}$/', $provider) === 1 ? $provider : null;
+        return ['location_source' => $source, 'location_provider' => $provider, 'location_placed_at' => Time::nowDb()];
     }
 
     /** Optional locationLat/locationLng on create: number or null. */

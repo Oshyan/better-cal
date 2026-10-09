@@ -461,8 +461,8 @@ final class Geocode
             }
             if ($alt['lat'] !== null) {
                 $this->db->run(
-                    'UPDATE geocode_cache SET lat = ?, lng = ?, display = ?, kind = ? WHERE query_hash = ?',
-                    [$alt['lat'], $alt['lng'], $alt['display'], $alt['kind'] ?? null, self::queryHash($normalized, $biasLat, $biasLng)]
+                    'UPDATE geocode_cache SET lat = ?, lng = ?, display = ?, kind = ?, provider = ? WHERE query_hash = ?',
+                    [$alt['lat'], $alt['lng'], $alt['display'], $alt['kind'] ?? null, $alt['provider'] ?? null, self::queryHash($normalized, $biasLat, $biasLng)]
                 );
                 return $alt;
             }
@@ -480,15 +480,19 @@ final class Geocode
     {
         $hash = self::queryHash($normalized, $biasLat, $biasLng);
 
-        $row = $this->db->one('SELECT lat, lng, display, kind FROM geocode_cache WHERE query_hash = ?', [$hash]);
+        $row = $this->db->one('SELECT * FROM geocode_cache WHERE query_hash = ?', [$hash]);
         if ($row !== null) {
-            return self::resultFromRow($row);
+            $cached = self::resultFromRow($row);
+            // Which geocoder answered (migration 048); null for answers
+            // cached before it was recorded.
+            $cached['provider'] = $cached['lat'] !== null && isset($row['provider']) ? (string) $row['provider'] : null;
+            return $cached;
         }
 
         $mapped = null;
         $airportHit = self::airport($normalized);
         if ($airportHit !== null) {
-            $mapped = ['lat' => $airportHit['lat'], 'lng' => $airportHit['lng'], 'display' => $airportHit['display']];
+            $mapped = ['lat' => $airportHit['lat'], 'lng' => $airportHit['lng'], 'display' => $airportHit['display'], 'provider' => 'airports'];
         } else {
             // 20, not 5: photon buries a world capital under eight American
             // namesakes, so the right answer has to be in the candidate set
@@ -511,6 +515,7 @@ final class Geocode
                     'lng' => (float) $top['lng'],
                     'display' => (string) $top['display'],
                     'kind' => isset($top['kind']) ? (string) $top['kind'] : null,
+                    'provider' => 'photon',
                 ];
                 // A wrong pin is worse than no pin. A long free-text venue
                 // description came back as a same-named county in another
@@ -527,6 +532,9 @@ final class Geocode
                 }
             } else {
                 $mapped = self::mapResponse($decoded, $normalized);
+                if ($mapped !== null) {
+                    $mapped['provider'] = 'photon';
+                }
                 // Photon indexes places under their local name, so an English
                 // exonym misses: "Lisbon" matches eight American towns and
                 // never Lisboa. When its answer is a small settlement, ask the
@@ -535,13 +543,13 @@ final class Geocode
                 if (self::shouldConsultSecondary(self::pickFeature($decoded, $normalized))) {
                     $alt = $this->fetchSecondary($normalized);
                     if ($alt !== null) {
-                        $mapped = $alt;
+                        $mapped = $alt + ['provider' => 'open-meteo'];
                     }
                 }
             }
         }
         $this->db->run(
-            'INSERT INTO geocode_cache (query_hash, query, lat, lng, display, kind) VALUES (?, ?, ?, ?, ?, ?)
+            'INSERT INTO geocode_cache (query_hash, query, lat, lng, display, kind, provider) VALUES (?, ?, ?, ?, ?, ?, ?)
              ON DUPLICATE KEY UPDATE query_hash = query_hash',
             [
                 $hash,
@@ -550,10 +558,11 @@ final class Geocode
                 $mapped['lng'] ?? null,
                 isset($mapped['display']) ? mb_substr($mapped['display'], 0, 500) : null,
                 isset($mapped['kind']) ? mb_substr((string) $mapped['kind'], 0, 32) : null,
+                $mapped['provider'] ?? null,
             ]
         );
 
-        return $mapped ?? ['lat' => null, 'lng' => null, 'display' => null, 'kind' => null];
+        return $mapped ?? ['lat' => null, 'lng' => null, 'display' => null, 'kind' => null, 'provider' => null];
     }
 
     /** Policied provider fetch; null on any transport-level failure. */

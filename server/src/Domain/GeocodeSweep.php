@@ -174,10 +174,12 @@ final class GeocodeSweep
 
             [$in, $params] = Db::in($g['ids']);
             if (isset($res['lat'], $res['lng'])) {
+                $now = Time::nowDb();
                 $this->db->run(
-                    "UPDATE events SET location_lat = ?, location_lng = ?, geocoded_at = ?
+                    "UPDATE events SET location_lat = ?, location_lng = ?, geocoded_at = ?,
+                        location_source = 'lookup', location_provider = ?, location_placed_at = ?
                      WHERE id IN $in AND location_lat IS NULL",
-                    [(float) $res['lat'], (float) $res['lng'], Time::nowDb(), ...$params]
+                    [(float) $res['lat'], (float) $res['lng'], $now, $res['provider'] ?? null, $now, ...$params]
                 );
                 $stats['resolved'] += count($g['ids']);
             } else {

@@ -122,11 +122,13 @@ final class PlaceSearch
 
     /**
      * One candidate row, the shape every provider returns and the API sends.
-     * With a bias point it carries distanceKm and far (> 500 km).
+     * With a bias point it carries distanceKm and far (> 500 km). provider
+     * names the geocoder that found it, which an event keeps as the
+     * provenance of a picked place.
      *
-     * @return array{name:string,address:string,lat:float,lng:float,display:string,city:?string,kind:?string,distanceKm:?float,far:bool}
+     * @return array{name:string,address:string,lat:float,lng:float,display:string,city:?string,kind:?string,distanceKm:?float,far:bool,provider:?string}
      */
-    public static function row(string $name, string $address, float $lat, float $lng, ?string $city, ?string $kind, ?float $biasLat, ?float $biasLng, ?string $display = null): array
+    public static function row(string $name, string $address, float $lat, float $lng, ?string $city, ?string $kind, ?float $biasLat, ?float $biasLng, ?string $display = null, ?string $provider = null): array
     {
         $distance = $biasLat !== null && $biasLng !== null
             ? round(self::distanceKm($biasLat, $biasLng, $lat, $lng), 1)
@@ -141,6 +143,7 @@ final class PlaceSearch
             'kind' => $kind,
             'distanceKm' => $distance,
             'far' => $distance !== null && $distance > self::FAR_KM,
+            'provider' => $provider,
         ];
     }
 
@@ -358,7 +361,8 @@ final class PlaceSearch
                 'aerodrome',
                 $biasLat,
                 $biasLng,
-                $airport['display']
+                $airport['display'],
+                'airports'
             );
             $candidates = array_merge([$pinned], array_values(array_filter(
                 $candidates,

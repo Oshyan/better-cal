@@ -334,6 +334,9 @@ final class Feeds
                         $changed['location_lat'] = null;
                         $changed['location_lng'] = null;
                         $changed['geocoded_at'] = null;
+                        $changed['location_source'] = null;
+                        $changed['location_provider'] = null;
+                        $changed['location_placed_at'] = null;
                     }
                     $changed['updated_at'] = Time::nowDb();
                     $this->db->update('events', $changed, 'id = ?', [(int) $current['id']]);

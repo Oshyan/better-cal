@@ -1210,11 +1210,16 @@ check('imip live event: equal sequence still allowed', $mayWhen('confirmed', 2)[
     $adb->run('CREATE TABLE event_tags (event_id INTEGER, tag_id INTEGER)');
     $adb->run('CREATE TABLE event_people (event_id INTEGER, person_id INTEGER)');
     $adb->run('CREATE TABLE event_links (id INTEGER PRIMARY KEY, container_id INTEGER, event_id INTEGER, position INTEGER)');
-    $adb->run('CREATE TABLE event_duplicates (id INTEGER PRIMARY KEY, event_a INTEGER, event_b INTEGER, status TEXT)');
+    $adb->run('CREATE TABLE event_duplicates (id INTEGER PRIMARY KEY, user_id INTEGER, event_a INTEGER, event_b INTEGER, status TEXT, basis TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, decided_at TEXT, UNIQUE(event_a, event_b))');
     $adb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, message_key TEXT, sender_key TEXT, admitted_at TEXT, UNIQUE(user_id, kind, message_key))');
     $adb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT, undone INTEGER DEFAULT 0, created_at TEXT DEFAULT CURRENT_TIMESTAMP)');
     $adb->run("CREATE TABLE review_items (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, event_id INTEGER, source_key TEXT, title TEXT, summary TEXT, payload_json TEXT, status TEXT DEFAULT 'open', created_at TEXT DEFAULT CURRENT_TIMESTAMP, decided_at TEXT)");
     $adb->run("CREATE TABLE plugin_proposals (id INTEGER PRIMARY KEY, plugin_id TEXT, user_id INTEGER, source_key TEXT, title TEXT, summary TEXT, rationale_html TEXT, plan_json TEXT, status TEXT DEFAULT 'open', created_at TEXT DEFAULT CURRENT_TIMESTAMP, decided_at TEXT, accepted_run_id TEXT, UNIQUE(plugin_id, source_key))");
+    // Location provenance columns (migration 048), applied the way a deploy does.
+    $m48 = require dirname(__DIR__) . '/migrations/048_location_provenance.php';
+    checkEq('migration 048: adds the provenance columns, skipping a table this database lacks',
+        'added events.location_source, events.location_provider, events.location_placed_at', $m48($adb));
+    checkEq('migration 048: runs again harmlessly', 'location provenance already present', $m48($adb));
     $undoA = new BetterCal\Domain\Undo($adb);
     $labelsA = new BetterCal\Domain\Labels($adb);
     $eventsA = new BetterCal\Domain\Events(
@@ -1320,6 +1325,33 @@ check('imip live event: equal sequence still allowed', $mayWhen('confirmed', 2)[
     $adb->run("INSERT INTO calendars (id, user_id, name, color, kind, position) VALUES (10, 1, 'Planning', '#4477aa', 'local', -10)");
     $adb->run("INSERT INTO calendars (id, user_id, name, color, kind, plugin_id, position) VALUES (11, 1, 'Generated', '#8855aa', 'plugin', 'sample-feed', 10)");
     $adb->run("INSERT INTO calendars (id, user_id, name, color, kind, provider, position) VALUES (12, 1, 'External', '#558855', 'subscribed', 'google', 20)");
+
+    // Where an event's coordinates came from (migration 048).
+    $prov = static fn(int $id): array => $adb->one('SELECT location_source AS s, location_provider AS p, location_placed_at IS NOT NULL AS t FROM events WHERE id = ?', [$id]);
+    $placeBase = ['calendarId' => 10, 'start' => '2026-12-08T18:00:00+00:00', 'end' => '2026-12-08T19:00:00+00:00', 'allDay' => false, 'tzid' => 'UTC'];
+    $picked = (int) $eventsA->create(1, $placeBase + ['title' => 'Picked place', 'location' => 'Sample Hall', 'locationLat' => 45.52, 'locationLng' => -122.68, 'locationProvider' => 'photon'])['eventId'];
+    checkEq('provenance: a place chosen from suggestions is picked, with its geocoder and a time', ['s' => 'picked', 'p' => 'photon', 't' => 1], $prov($picked));
+    $plain = (int) $eventsA->create(1, $placeBase + ['title' => 'No place', 'location' => 'Somewhere'])['eventId'];
+    checkEq('provenance: no coordinates, no provenance', ['s' => null, 'p' => null, 't' => 0], $prov($plain));
+    $odd = (int) $eventsA->create(1, $placeBase + ['title' => 'Odd provider', 'location' => 'Sample Hall', 'locationLat' => 45.5, 'locationLng' => -122.6, 'locationSource' => 'whatever', 'locationProvider' => 'Not A Name!'])['eventId'];
+    checkEq('provenance: an unknown source is picked, and a provider that isn\'t a plain name is dropped', ['s' => 'picked', 'p' => null, 't' => 1], $prov($odd));
+    $eventsA->patch(1, $plain, ['locationLat' => 45.53, 'locationLng' => -122.69, 'locationSource' => 'lookup', 'locationProvider' => 'open-meteo']);
+    checkEq('provenance: the event panel\'s lookup records itself as a lookup', ['s' => 'lookup', 'p' => 'open-meteo', 't' => 1], $prov($plain));
+    $adb->run('UPDATE events SET location_placed_at = ? WHERE id = ?', ['2026-01-01 00:00:00', $plain]);
+    $eventsA->patch(1, $plain, ['title' => 'Renamed', 'locationLat' => 45.53, 'locationLng' => -122.69]);
+    checkEq('provenance: saving the same coordinates back (a title edit) changes nothing',
+        ['s' => 'lookup', 'p' => 'open-meteo', 'at' => '2026-01-01 00:00:00'],
+        (function () use ($adb, $plain): array { $r = $adb->one('SELECT location_source AS s, location_provider AS p, location_placed_at AS at FROM events WHERE id = ?', [$plain]); return $r; })());
+    $eventsA->patch(1, $plain, ['location' => 'Typed text', 'locationLat' => null, 'locationLng' => null]);
+    checkEq('provenance: clearing the coordinates clears it', ['s' => null, 'p' => null, 't' => 0], $prov($plain));
+    $adb->run('UPDATE events SET location_source = NULL, location_provider = NULL WHERE id = ?', [$odd]);
+    $adb->run("INSERT INTO calendars (id, user_id, name, color, kind, position) VALUES (13, 1, 'Second', '#aa7744', 'local', 30)");
+    $copied = (int) $eventsA->copyTo(1, $odd, 13)['eventId'];
+    checkEq('provenance: a copy of coordinates of unknown origin stays unknown', ['s' => null, 'p' => null, 't' => 1], $prov($copied));
+    $copiedPick = (int) $eventsA->copyTo(1, $picked, 13)['eventId'];
+    checkEq('provenance: a copy keeps where its coordinates came from', ['s' => 'picked', 'p' => 'photon', 't' => 1], $prov($copiedPick));
+    $full = $eventsA->serializeSingle($eventsA->get(1, $picked));
+    checkEq('provenance: the single-event record says where its place came from', ['picked', 'photon'], [$full['locationSource'] ?? null, $full['locationProvider'] ?? null]);
     $adb->run("UPDATE users SET settings_json = '{\"tz\":\"UTC\",\"defaultCalendarId\":10}' WHERE id = 1");
     $tripsA = new BetterCal\Domain\Trips($adb, $undoA);
     $proposalsA = new BetterCal\Domain\Proposals($adb, $eventsA, $tripsA);

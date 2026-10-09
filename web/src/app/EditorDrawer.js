@@ -362,6 +362,9 @@ export function EditorDrawer() {
         : (draft.locationLat != null ? draft.locationLat : null),
       locationLng: occ ? (occ.locationLng != null ? occ.locationLng : null)
         : (draft.locationLng != null ? draft.locationLng : null),
+      // Only a place picked in this session (or carried from quick add) sends
+      // its provider; an existing event's coordinates go back unchanged.
+      locationProvider: occ ? null : (draft.locationProvider || null),
       url: occ ? (occ.url || '') : '',
       description: occ ? (occ.description || '') : (draft.description || ''),
       tags: occ && occ.tags ? occ.tags.join(', ') : '',
@@ -594,6 +597,9 @@ export function EditorDrawer() {
       // stale coordinates clear and the lazy geocode re-resolves later.
       locationLat: form.location ? form.locationLat : null,
       locationLng: form.location ? form.locationLng : null,
+      // Which geocoder found a picked place; the server records provenance
+      // only when the coordinates changed.
+      ...(form.locationProvider ? { locationProvider: form.locationProvider } : {}),
       url: form.url || null,
       description: isEmptyHtml(form.description) ? null : form.description,
       tagNames: form.tags.split(',').map((t) => t.trim()).filter(Boolean),
@@ -798,8 +804,8 @@ export function EditorDrawer() {
             tz=${occ ? occ.tzid : localTz()}
             near=${() => calendarPlaceNear(formInstants(form)[0].getTime(), occ ? occ.eventId : null)}
             ask=${placeAsk}
-            onText=${(v) => upd({ location: v, locationLat: null, locationLng: null })}
-            onPick=${(r) => upd({ location: pickFillText(r), locationLat: r.lat, locationLng: r.lng })}
+            onText=${(v) => upd({ location: v, locationLat: null, locationLng: null, locationProvider: null })}
+            onPick=${(r) => upd({ location: pickFillText(r), locationLat: r.lat, locationLng: r.lng, locationProvider: r.provider || null })}
           />
         </div>
         ${lab('Link')}

@@ -1971,10 +1971,10 @@ check('gcal detects with surrounding whitespace', GcalLink::isTemplateUrl('  ' .
 check('gcal rejects plain text', !GcalLink::isTemplateUrl('Lunch with Ada Friday noon'));
 check('gcal rejects other google urls', !GcalLink::isTemplateUrl('https://calendar.google.com/calendar/r?cid=abc'));
 
-checkEq('place search: "and" is also asked as "&"', 'Smith & Sons', \BetterCal\Domain\PlaceSearch::ampersandVariant('Smith and Sons'));
-checkEq('place search: "&" is also asked as "and"', 'Marks and Spencer', \BetterCal\Domain\PlaceSearch::ampersandVariant('Marks & Spencer'));
-checkEq('place search: no "and" means one query', null, \BetterCal\Domain\PlaceSearch::ampersandVariant('Example Cafe'));
-checkEq('place search: "and" inside a word is left alone', null, \BetterCal\Domain\PlaceSearch::ampersandVariant('Andalucia Bar'));
+checkEq('place search: "and" is also asked as "&"', 'Smith & Sons', \BetterCal\Domain\PhotonPlaces::ampersandVariant('Smith and Sons'));
+checkEq('place search: "&" is also asked as "and"', 'Marks and Spencer', \BetterCal\Domain\PhotonPlaces::ampersandVariant('Marks & Spencer'));
+checkEq('place search: no "and" means one query', null, \BetterCal\Domain\PhotonPlaces::ampersandVariant('Example Cafe'));
+checkEq('place search: "and" inside a word is left alone', null, \BetterCal\Domain\PhotonPlaces::ampersandVariant('Andalucia Bar'));
 $placeTransport = new class implements \BetterCal\Infra\GeocoderTransport {
     public array $seen = [];
     public function photon(array $paramSets): array
@@ -1987,7 +1987,7 @@ $placeTransport = new class implements \BetterCal\Infra\GeocoderTransport {
     }
     public function openMeteo(array $params): ?array { return null; }
 };
-$placeResults = (new \BetterCal\Domain\PlaceSearch($placeTransport))->search('Smith and Sons', null, null, 6);
+$placeResults = (new \BetterCal\Domain\PlaceSearch(new \BetterCal\Domain\PhotonPlaces($placeTransport)))->search('Smith and Sons', null, null, 6);
 checkEq('place search keeps alternate spelling first in the parallel batch', 'Smith & Sons', $placeTransport->seen[0]['q'] ?? null);
 checkEq('place search keeps the original spelling second in the parallel batch', 'Smith and Sons', $placeTransport->seen[1]['q'] ?? null);
 checkEq('place search keeps a successful result when its sibling fails', 'Smith and Sons', $placeResults[0]['name'] ?? null);
@@ -1995,7 +1995,7 @@ checkEq('place search keeps a successful result when its sibling fails', 'Smith 
 // Region first: Photon's lat/lon only nudges a worldwide ranking, so with a
 // bias the search is boxed to the region and goes worldwide only when the
 // region finds too little. A leading house number must appear in a result.
-checkEq('place search: the region box is about 300 km around the point', '-126.5335,42.82,-118.8265,48.22', \BetterCal\Domain\PlaceSearch::regionBox(45.52, -122.68));
+checkEq('place search: the region box is about 300 km around the point', '-126.5335,42.82,-118.8265,48.22', \BetterCal\Domain\PhotonPlaces::regionBox(45.52, -122.68));
 checkEq('place search: a leading house number must appear in the result',
     ['100 Main Street'],
     array_column(\BetterCal\Domain\PlaceSearch::matchingNumber('100 mai', [
@@ -2022,7 +2022,7 @@ $regionTransport = new class($regionFeature) implements \BetterCal\Infra\Geocode
     }
     public function openMeteo(array $params): ?array { return null; }
 };
-$ps = new \BetterCal\Domain\PlaceSearch($regionTransport);
+$ps = new \BetterCal\Domain\PlaceSearch(new \BetterCal\Domain\PhotonPlaces($regionTransport));
 $regionTransport->regional = [$regionFeature('100', 'Main Street', 45.52, -122.68), $regionFeature('100', 'Main Avenue', 45.50, -122.60), $regionFeature('100', 'Maine Road', 45.40, -122.70)];
 $regionTransport->world = [$regionFeature('100', 'Main Road', 48.85, 2.35)];
 $r = $ps->search('100 main', 45.52, -122.68, 6);
@@ -2031,9 +2031,9 @@ checkEq('place search: regional results come back', '100 Main Street', $r[0]['na
 $regionTransport->calls = [];
 $regionTransport->regional = [$regionFeature('100', 'Main Street', 45.52, -122.68), $regionFeature('8', 'Oak Lane', 45.51, -122.66)];
 $regionTransport->world = [$regionFeature('100', 'Main Road', 48.85, 2.35), $regionFeature('7', 'Main Square', 52.37, 4.89)];
-$r = $ps->search('100 main', 45.52, -122.68, 6);
+$r = $ps->search('main', 45.52, -122.68, 6);
 checkEq('place search: too few regional matches adds a worldwide request without the box', [2, false], [count($regionTransport->calls), isset($regionTransport->calls[1][0]['bbox'])]);
-checkEq('place search: regional first, worldwide after, and results without the house number dropped', ['100 Main Street', '100 Main Road'], array_column($r, 'name'));
+checkEq('place search: regional first, worldwide after, in Photon order past 500 km', ['100 Main Street', '8 Oak Lane', '100 Main Road', '7 Main Square'], array_column($r, 'name'));
 $regionTransport->calls = [];
 $regionTransport->regional = null; // the boxed request failed
 $r = $ps->search('100 main', 45.52, -122.68, 6);
@@ -2050,6 +2050,87 @@ checkEq('place search: a far result must contain every typed word, the last one 
         ['name' => 'Elm Diner', 'address' => 'Sample Town'],
     ]), 'name'));
 check('place search: a real word is three letters or more', \BetterCal\Domain\PlaceSearch::hasWord('250 elm') && !\BetterCal\Domain\PlaceSearch::hasWord('250 e'));
+
+// Addresses: Photon's search can't find "250" or "250 el" nearby, so a
+// number-led query also asks its reverse lookup for the nearest houses with
+// that number, and address results go nearest first.
+$PS = \BetterCal\Domain\PlaceSearch::class;
+checkEq('place search: an address filter is the number and the typed words, the last a prefix', 'housenumber:250 AND elm*', \BetterCal\Domain\PhotonPlaces::addressFilter('250 elm'));
+checkEq('place search: a bare number filters on the number alone', 'housenumber:250', \BetterCal\Domain\PhotonPlaces::addressFilter('250'));
+checkEq('place search: a prefix under three letters is left out (Photon fails on "e*")', 'housenumber:250 AND oak', \BetterCal\Domain\PhotonPlaces::addressFilter('250 oak e'));
+checkEq('place search: a letter suffix stays on the number', 'housenumber:12b AND elm*', \BetterCal\Domain\PhotonPlaces::addressFilter('12B Elm'));
+checkEq('place search: typed punctuation and operators are only words', 'housenumber:12 AND sample AND or AND example*', \BetterCal\Domain\PhotonPlaces::addressFilter('12 Sample OR (Example*"'));
+checkEq('place search: "and" is not a required word', 'housenumber:12 AND smith AND jones*', \BetterCal\Domain\PhotonPlaces::addressFilter('12 smith and jones'));
+checkEq('place search: no leading number is no address', [null, null], [\BetterCal\Domain\PhotonPlaces::addressFilter('main st'), \BetterCal\Domain\PhotonPlaces::addressFilter('1st street')]);
+checkEq('place search: the preferred language is the first one, as a primary subtag', ['en', 'fr', 'es', null, null],
+    [$PS::preferredLanguage('en-US,en;q=0.9'), $PS::preferredLanguage('fr-CA'), $PS::preferredLanguage('es-ES,en;q=0.8'), $PS::preferredLanguage(null), $PS::preferredLanguage('*')]);
+checkEq('place search: Photon gets the language when it has names in it, else local names', ['en', 'fr', 'default', 'default'],
+    [\BetterCal\Domain\PhotonPlaces::lang('en'), \BetterCal\Domain\PhotonPlaces::lang('fr'), \BetterCal\Domain\PhotonPlaces::lang('es'), \BetterCal\Domain\PhotonPlaces::lang(null)]);
+checkEq('place search: an address puts full matches first, each group nearest first',
+    ['250 Elm Court', '250 Elm Street', '250 Elk Road'],
+    array_column($PS::addressOrder('250 elm', [
+        ['name' => '250 Elk Road', 'address' => 'Example', 'distanceKm' => 1.0],
+        ['name' => '250 Elm Street', 'address' => 'Example', 'distanceKm' => 900.0],
+        ['name' => '250 Elm Court', 'address' => 'Example', 'distanceKm' => 20.0],
+    ]), 'name'));
+checkEq('place search: past the dropdown cap, far rows keep Photon order', ['Famous far', 'Replica nearer'],
+    array_column($PS::rank([['name' => 'Famous far', 'distanceKm' => 9000.0], ['name' => 'Replica nearer', 'distanceKm' => 1500.0]], 2.0), 'name'));
+$addrTransport = new class($regionFeature) implements \BetterCal\Infra\GeocoderTransport {
+    public array $calls = [];
+    public array $regional = [];
+    public array $nearest = [];
+    public array $world = [];
+    public function __construct(private \Closure $f) {}
+    public function photon(array $paramSets): array
+    {
+        $this->calls[] = $paramSets;
+        return array_map(fn(array $p) => ['features' => ($p['_endpoint'] ?? null) === 'reverse'
+            ? $this->nearest : (isset($p['bbox']) ? $this->regional : $this->world)], $paramSets);
+    }
+    public function openMeteo(array $params): ?array { return null; }
+};
+$aps = new \BetterCal\Domain\PlaceSearch(new \BetterCal\Domain\PhotonPlaces($addrTransport));
+$addrTransport->nearest = [
+    $regionFeature('250', 'Oak Avenue', 45.521, -122.681),
+    $regionFeature('250', 'Elmwood Drive', 45.53, -122.69),
+    $regionFeature('250', 'Pine Street', 45.54, -122.70), // matched "elm" in another field
+];
+$addrTransport->world = [$regionFeature('250', 'Elm Court', 43.6, -116.6)];
+$r = $aps->search('250 elm', 45.52, -122.68, 6, 'en');
+$reverse = $addrTransport->calls[0][1] ?? [];
+checkEq('place search: an address asks the reverse lookup in the same batch, around the bias point',
+    ['reverse', 'housenumber:250 AND elm*', 45.52, -122.68, 'en'],
+    [$reverse['_endpoint'] ?? null, $reverse['query_string_filter'] ?? null, $reverse['lat'] ?? null, $reverse['lon'] ?? null, $reverse['lang'] ?? null]);
+checkEq('place search: nearest houses must show every typed word', ['250 Elmwood Drive'], array_column($r, 'name'));
+checkEq('place search: an address found nearby needs no worldwide request', 1, count($addrTransport->calls));
+$addrTransport->calls = [];
+$addrTransport->nearest = [];
+$addrTransport->regional = [$regionFeature('250', 'Elk Road', 45.50, -122.66)]; // a loose, typo-tolerant match
+$r = $aps->search('250 elm', 45.52, -122.68, 6);
+checkEq('place search: a loose nearby match still asks the world, and the full far match goes first', [2, ['250 Elm Court', '250 Elk Road']], [count($addrTransport->calls), array_column($r, 'name')]);
+$addrTransport->calls = [];
+$addrTransport->regional = [];
+$addrTransport->nearest = [$regionFeature('250', 'Oak Avenue', 45.53, -122.69), $regionFeature('250', 'Ash Lane', 45.521, -122.681)];
+$r = $aps->search('250', 45.52, -122.68, 6);
+checkEq('place search: a bare number finds the nearest houses with it, nearest first', ['250 Ash Lane', '250 Oak Avenue'], array_column($r, 'name'));
+$addrTransport->calls = [];
+$aps->search('250 elm', null, null, 6);
+check('place search: without a bias point there is no nearest lookup', !in_array('reverse', array_column($addrTransport->calls[0] ?? [], '_endpoint'), true));
+// Another provider gets the shared rules and none of Photon's: no region
+// pass, no reverse lookup, and its own order kept when it ranks by distance.
+$otherProvider = new class implements \BetterCal\Domain\PlaceProvider {
+    public array $rows = [];
+    public function candidates(string $q, ?float $biasLat, ?float $biasLng, int $limit, ?string $language): ?array { return $this->rows; }
+    public function distanceCap(): ?float { return null; }
+};
+$row = static fn(string $name, float $lat, float $lng): array => \BetterCal\Domain\PlaceSearch::row($name, 'Example', $lat, $lng, null, null, 45.52, -122.68);
+$ops = new \BetterCal\Domain\PlaceSearch($otherProvider);
+$otherProvider->rows = [$row('Elm Cafe', 48.85, 2.35), $row('Elm Park', 45.53, -122.69)];
+checkEq('place search: a provider that ranks by itself keeps its order', ['Elm Cafe', 'Elm Park'], array_column($ops->search('elm', 45.52, -122.68, 6), 'name'));
+$otherProvider->rows = [$row('250 Elm Court', 43.6, -116.6), $row('250 Elm Street', 45.53, -122.69), $row('Elm Diner', 45.52, -122.68)];
+checkEq('place search: any provider: the number must match and an address goes nearest first', ['250 Elm Street', '250 Elm Court'], array_column($ops->search('250 elm', 45.52, -122.68, 6), 'name'));
+$otherProvider->rows = [$row('250 Elm Court', 43.6, -116.6), $row('250 Oak Lane', 45.53, -122.69)];
+checkEq('place search: any provider: a bare number is never a far place', ['250 Oak Lane'], array_column($ops->search('250', 45.52, -122.68, 6), 'name'));
 checkEq('push label: a device names itself', 'Android phone · Chrome app', \BetterCal\Domain\PushSubscriptions::label('Android phone · Chrome app'));
 checkEq('push label: control characters and runs of space go', 'Mac · Chrome', \BetterCal\Domain\PushSubscriptions::label("Mac\n\t·   Chrome"));
 checkEq('push label: capped at 80 characters', 80, mb_strlen(\BetterCal\Domain\PushSubscriptions::label(str_repeat('x', 200))));
@@ -4881,12 +4962,12 @@ check('ps centroid ids are real IANA zones with sane coords', $psValid);
 checkEq(
     'ps address full',
     '450 Elm Street, Portland, Oregon, United States',
-    PlaceSearch::composeAddress(['housenumber' => '450', 'street' => 'Elm Street', 'city' => 'Portland', 'state' => 'Oregon', 'country' => 'United States'])
+    \BetterCal\Domain\PhotonPlaces::composeAddress(['housenumber' => '450', 'street' => 'Elm Street', 'city' => 'Portland', 'state' => 'Oregon', 'country' => 'United States'])
 );
-checkEq('ps address street only', 'Elm Street, Portland', PlaceSearch::composeAddress(['street' => 'Elm Street', 'city' => 'Portland']));
-checkEq('ps address city dedupes name', 'Germany', PlaceSearch::composeAddress(['name' => 'Berlin', 'city' => 'Berlin', 'country' => 'Germany']));
-checkEq('ps address dedupes repeated parts', 'Singapore', PlaceSearch::composeAddress(['city' => 'Singapore', 'state' => 'Singapore', 'country' => 'Singapore', 'name' => 'Zoo']));
-checkEq('ps address empty props', '', PlaceSearch::composeAddress([]));
+checkEq('ps address street only', 'Elm Street, Portland', \BetterCal\Domain\PhotonPlaces::composeAddress(['street' => 'Elm Street', 'city' => 'Portland']));
+checkEq('ps address city dedupes name', 'Germany', \BetterCal\Domain\PhotonPlaces::composeAddress(['name' => 'Berlin', 'city' => 'Berlin', 'country' => 'Germany']));
+checkEq('ps address dedupes repeated parts', 'Singapore', \BetterCal\Domain\PhotonPlaces::composeAddress(['city' => 'Singapore', 'state' => 'Singapore', 'country' => 'Singapore', 'name' => 'Zoo']));
+checkEq('ps address empty props', '', \BetterCal\Domain\PhotonPlaces::composeAddress([]));
 
 // distanceKm: Portland -> Seattle is roughly 235 km; zero distance to self.
 $dPdxSea = PlaceSearch::distanceKm(45.52, -122.68, 47.61, -122.33);
@@ -4909,7 +4990,7 @@ $psPhoton = ['features' => [
     ],
     ['geometry' => ['coordinates' => ['x', 'y']], 'properties' => ['name' => 'Broken']],
 ]];
-$psMapped = PlaceSearch::mapFeatures($psPhoton, 45.52, -122.68);
+$psMapped = \BetterCal\Domain\PhotonPlaces::mapFeatures($psPhoton, 45.52, -122.68);
 checkEq('ps map count after dedupe + invalid drop', 2, count($psMapped));
 checkEq('ps map lat from GeoJSON', 45.5231, $psMapped[0]['lat']);
 checkEq('ps map lng from GeoJSON', -122.6765, $psMapped[0]['lng']);
@@ -4917,8 +4998,8 @@ checkEq('ps map display', 'Example Cafe, 450 Elm Street, Portland, Oregon, Unite
 checkEq('ps map city extracted', 'Portland', $psMapped[0]['city']);
 check('ps map near candidate not far', $psMapped[0]['far'] === false && $psMapped[0]['distanceKm'] < 5);
 check('ps map antipodal candidate flagged far', $psMapped[1]['far'] === true && $psMapped[1]['distanceKm'] > 10000);
-checkEq('ps map garbage -> empty', [], PlaceSearch::mapFeatures('garbage', null, null));
-checkEq('ps map no bias -> null distance', null, PlaceSearch::mapFeatures($psPhoton, null, null)[0]['distanceKm']);
+checkEq('ps map garbage -> empty', [], \BetterCal\Domain\PhotonPlaces::mapFeatures('garbage', null, null));
+checkEq('ps map no bias -> null distance', null, \BetterCal\Domain\PhotonPlaces::mapFeatures($psPhoton, null, null)[0]['distanceKm']);
 
 // rank: a near match overtakes a textually-first far match; near-order stable.
 $psRanked = PlaceSearch::rank([

@@ -14,6 +14,7 @@ use BetterCal\Domain\SystemHealth;
 final class PoliciedGeocoderTransport implements GeocoderTransport
 {
     private const PHOTON_ENDPOINT = 'https://photon.komoot.io/api';
+    private const PHOTON_REVERSE_ENDPOINT = 'https://photon.komoot.io/reverse';
     private const OPEN_METEO_ENDPOINT = 'https://geocoding-api.open-meteo.com/v1/search';
     private const TIMEOUT_MS = 3_000;
     private const MAX_BYTES = 1024 * 1024;
@@ -27,10 +28,11 @@ final class PoliciedGeocoderTransport implements GeocoderTransport
 
     public function photon(array $paramSets): array
     {
-        $urls = array_map(
-            static fn(array $params): string => self::PHOTON_ENDPOINT . '?' . http_build_query($params),
-            $paramSets
-        );
+        $urls = array_map(static function (array $params): string {
+            $endpoint = ($params['_endpoint'] ?? null) === 'reverse' ? self::PHOTON_REVERSE_ENDPOINT : self::PHOTON_ENDPOINT;
+            unset($params['_endpoint']);
+            return $endpoint . '?' . http_build_query($params);
+        }, $paramSets);
         return $this->jsonBatch('photon', 'Photon geocoding', $urls, 3);
     }
 

@@ -5,19 +5,21 @@ declare(strict_types=1);
 namespace BetterCal\Domain;
 
 use BetterCal\Http\HttpError;
-use BetterCal\Infra\GeocoderTransport;
 
 /**
- * Multi-candidate place autocomplete backed by photon.komoot.io (free, no
- * key). Complements Geocode (single best match, cached): this endpoint powers
- * the location picker dropdown, so results are transient and never cached.
+ * Multi-candidate place autocomplete for the location dropdown. Results are
+ * transient and never cached (Geocode is the single-pin lookup, cached).
+ *
+ * The provider (PlaceProvider; PhotonPlaces today) fetches candidates and
+ * carries every workaround its service needs. This class holds the rules
+ * that apply whatever the provider: a leading house number must appear in a
+ * result; an address goes nearest first; a bare number is never a far
+ * place; results past 500 km are flagged far so the UI can call them out;
+ * an airport code pins the airport.
  *
  * Location bias keeps "Main Street" from matching half a world away:
  * explicit lat/lng (the user's home location setting) wins, else a static
- * IANA-timezone centroid approximates the region, else no bias. When a bias
- * exists, candidates are re-ranked by blending Photon's own order with
- * distance, and far results (> 500 km) are flagged so the UI can call them
- * out.
+ * IANA-timezone centroid approximates the region, else no bias.
  */
 final class PlaceSearch
 {
@@ -25,7 +27,7 @@ final class PlaceSearch
     public const MAX_LIMIT = 10;
     public const FAR_KM = 500.0;
 
-    public function __construct(private readonly GeocoderTransport $transport)
+    public function __construct(private readonly PlaceProvider $provider)
     {
     }
 
@@ -107,28 +109,6 @@ final class PlaceSearch
         return self::TZ_CENTROIDS[$tzid] ?? null;
     }
 
-    /**
-     * Concise address line from Photon feature properties: street (with house
-     * number), city, state, country. The place name itself is excluded; parts
-     * repeating an earlier part are dropped.
-     */
-    public static function composeAddress(array $props): string
-    {
-        $parts = [];
-        $street = trim((string) ($props['street'] ?? ''));
-        $houseNumber = trim((string) ($props['housenumber'] ?? ''));
-        if ($street !== '') {
-            $parts[] = $houseNumber !== '' ? $houseNumber . ' ' . $street : $street;
-        }
-        foreach (['city', 'state', 'country'] as $key) {
-            $value = trim((string) ($props[$key] ?? ''));
-            if ($value !== '' && !in_array($value, $parts, true) && $value !== trim((string) ($props['name'] ?? ''))) {
-                $parts[] = $value;
-            }
-        }
-        return implode(', ', $parts);
-    }
-
     /** Great-circle distance in km (haversine). */
     public static function distanceKm(float $lat1, float $lng1, float $lat2, float $lng2): float
     {
@@ -140,87 +120,43 @@ final class PlaceSearch
     }
 
     /**
-     * Map a decoded Photon response into candidate rows. When a bias point is
-     * given, each candidate carries distanceKm and far (> 500 km).
+     * One candidate row, the shape every provider returns and the API sends.
+     * With a bias point it carries distanceKm and far (> 500 km).
      *
-     * @return list<array{name:string,address:string,lat:float,lng:float,display:string,city:?string,distanceKm:?float,far:bool}>
+     * @return array{name:string,address:string,lat:float,lng:float,display:string,city:?string,kind:?string,distanceKm:?float,far:bool}
      */
-    public static function mapFeatures(mixed $decoded, ?float $biasLat, ?float $biasLng): array
+    public static function row(string $name, string $address, float $lat, float $lng, ?string $city, ?string $kind, ?float $biasLat, ?float $biasLng, ?string $display = null): array
     {
-        if (!is_array($decoded) || !is_array($decoded['features'] ?? null)) {
-            return [];
-        }
-        $out = [];
-        $seen = [];
-        foreach ($decoded['features'] as $feature) {
-            if (!is_array($feature)) {
-                continue;
-            }
-            $coords = $feature['geometry']['coordinates'] ?? null;
-            if (!is_array($coords) || count($coords) < 2 || !is_numeric($coords[0]) || !is_numeric($coords[1])) {
-                continue;
-            }
-            try {
-                $point = Coordinates::pair($coords[1], $coords[0]);
-            } catch (\InvalidArgumentException) {
-                continue;
-            }
-            if ($point === null) {
-                continue;
-            }
-            $props = is_array($feature['properties'] ?? null) ? $feature['properties'] : [];
-            $name = trim((string) ($props['name'] ?? ''));
-            $address = self::composeAddress($props);
-            if ($name === '') {
-                $name = $address !== '' ? explode(', ', $address)[0] : '';
-            }
-            if ($name === '') {
-                continue;
-            }
-            [$lat, $lng] = $point;
-            // Photon repeats places across OSM layers; keep the first of each.
-            $dedupe = mb_strtolower($name . '|' . $address);
-            if (isset($seen[$dedupe])) {
-                continue;
-            }
-            $seen[$dedupe] = true;
-            $display = $address === '' ? $name : $name . ', ' . $address;
-            $distance = null;
-            if ($biasLat !== null && $biasLng !== null) {
-                $distance = round(self::distanceKm($biasLat, $biasLng, $lat, $lng), 1);
-            }
-            $city = trim((string) ($props['city'] ?? ''));
-            $out[] = [
-                'name' => $name,
-                'address' => $address,
-                'lat' => $lat,
-                'lng' => $lng,
-                'display' => $display,
-                'city' => $city !== '' ? $city : null,
-                // Photon's feature type ('city', 'street', 'house', ...; 'other'
-                // for most POIs, in which case the OSM value names it). The
-                // plausibility guard exempts place-level kinds from the
-                // distance check, so a bare "Tokyo" may be far away.
-                'kind' => (isset($props['type']) && $props['type'] !== 'other')
-                    ? (string) $props['type']
-                    : (isset($props['osm_value']) ? (string) $props['osm_value'] : null),
-                'distanceKm' => $distance,
-                'far' => $distance !== null && $distance > self::FAR_KM,
-            ];
-        }
-        return $out;
+        $distance = $biasLat !== null && $biasLng !== null
+            ? round(self::distanceKm($biasLat, $biasLng, $lat, $lng), 1)
+            : null;
+        return [
+            'name' => $name,
+            'address' => $address,
+            'lat' => $lat,
+            'lng' => $lng,
+            'display' => $display ?? ($address === '' ? $name : $name . ', ' . $address),
+            'city' => $city,
+            'kind' => $kind,
+            'distanceKm' => $distance,
+            'far' => $distance !== null && $distance > self::FAR_KM,
+        ];
     }
 
     /**
-     * Re-rank candidates when a bias exists: blend Photon's own order (index)
-     * with distance so nearby matches beat textually-equal matches half a
-     * world away, without letting distance completely override relevance.
-     * Score = index + distance penalty (capped); lower is better; stable.
+     * Re-rank candidates when a bias exists: blend the provider's own order
+     * (index) with distance so nearby matches beat textually-equal matches
+     * half a world away, without letting distance completely override
+     * relevance. Score = index + distance penalty (capped); lower is better;
+     * stable.
      *
-     * @param list<array<string,mixed>> $candidates rows from mapFeatures
+     * @param list<array<string,mixed>> $candidates
+     * @param float $maxPenalty the cap: 8 (the default) for one worldwide
+     *   list, where the right answer may sit mid-list (Geocode); for the
+     *   dropdown each provider sets its own (PlaceProvider::distanceCap)
      * @return list<array<string,mixed>>
      */
-    public static function rank(array $candidates): array
+    public static function rank(array $candidates, float $maxPenalty = 8.0): array
     {
         $scored = [];
         foreach ($candidates as $i => $c) {
@@ -228,117 +164,30 @@ final class PlaceSearch
             // 0 penalty at 0 km, 1 per 250 km, capped at 8 (anything beyond
             // 2000 km is equally "far"): a top far match still loses to a
             // mid-list near match, but never to page-bottom noise.
-            $penalty = $d === null ? 0.0 : min(8.0, (float) $d / 250.0);
+            $penalty = $d === null ? 0.0 : min($maxPenalty, (float) $d / 250.0);
             $scored[] = ['score' => $i + $penalty, 'index' => $i, 'row' => $c];
         }
         usort($scored, static fn(array $a, array $b): int => [$a['score'], $a['index']] <=> [$b['score'], $b['index']]);
         return array_map(static fn(array $s): array => $s['row'], $scored);
     }
 
-    // ---- Lookup --------------------------------------------------------
-
-    /**
-     * @return list<array<string,mixed>> ranked candidates (empty on provider
-     *   failure; transport errors never bubble to the client)
-     */
-    public function search(string $q, ?float $biasLat, ?float $biasLng, int $limit): array
+    /** The house number a query starts with ("250", "12b"), or null. Pure. */
+    public static function houseNumber(string $q): ?string
     {
-        $q = Geocode::normalize($q);
-        if ($q === '') {
-            throw HttpError::badRequest('q is required');
-        }
-        $limit = max(1, min(self::MAX_LIMIT, $limit));
-
-        $params = ['q' => $q, 'limit' => $limit + 4]; // headroom for dedupe + re-rank
-        $biased = $biasLat !== null && $biasLng !== null;
-        if ($biased) {
-            $params['lat'] = $biasLat;
-            $params['lon'] = $biasLng;
-        }
-        // "Smith and Sons" is "Smith & Sons" in OpenStreetMap, and Photon
-        // matches neither spelling from the other. Both are asked at once;
-        // the other spelling's matches go first, since they are the ones the
-        // typed spelling missed, and duplicates fold in mapFeatures.
-        $alt = self::ampersandVariant($q);
-        $batch = static fn(array $p): array => $alt === null ? [$p] : [['q' => $alt] + $p, $p];
-
-        // Photon's lat/lon is only a soft preference: it still ranks the whole
-        // world by text match and prominence, so for half-typed input nothing
-        // nearby made its top results (a half-typed street name near home came
-        // back as a restaurant on another continent). With a bias, search a box around it first (a hard
-        // filter), and only look worldwide when the region has too little.
-        $candidates = null;
-        if ($biased) {
-            $candidates = $this->candidates($batch($params + ['bbox' => self::regionBox($biasLat, $biasLng)]), $q, $biasLat, $biasLng);
-        }
-        // Worldwide only when the region has too little AND there is a real
-        // word to go on: a bare "250" worldwide is every place numbered 250.
-        // Far results must also contain every typed word (the last may be
-        // partial); nearby, Photon's typo tolerance helps, but from across
-        // the world it only adds noise (a half-typed street name matched a
-        // street on another continent with a different number).
-        if ($candidates === null || (count($candidates) < self::REGION_ENOUGH && self::hasWord($q))) {
-            $world = $this->candidates($batch($params), $q, $biasLat, $biasLng);
-            if ($candidates === null && $world === null) {
-                return [];
-            }
-            $world = $biased ? self::containingAllWords($q, $world ?? []) : ($world ?? []);
-            $candidates = self::mergeCandidates($candidates ?? [], $world);
-        }
-        if ($biased) {
-            $candidates = self::rank($candidates);
-        }
-        // Airport codes: pin the IATA-table airport above everything — bias
-        // must not bury SFO under a same-named street nearby, and in Denmark
-        // "SFO" is an after-school program, which is never the intent of an
-        // all-caps three-letter location.
-        $airport = Geocode::airport($q);
-        if ($airport !== null) {
-            $address = implode(', ', array_values(array_filter(
-                [$airport['city'], $airport['country']],
-                static fn(string $p): bool => $p !== ''
-            )));
-            $distance = $biasLat !== null && $biasLng !== null
-                ? round(self::distanceKm($biasLat, $biasLng, $airport['lat'], $airport['lng']), 1)
-                : null;
-            $pinned = [
-                'name' => $airport['name'],
-                'address' => $address,
-                'lat' => $airport['lat'],
-                'lng' => $airport['lng'],
-                'display' => $airport['display'],
-                'city' => $airport['city'] !== '' ? $airport['city'] : null,
-                'distanceKm' => $distance,
-                'far' => $distance !== null && $distance > self::FAR_KM,
-            ];
-            $candidates = array_merge([$pinned], array_values(array_filter(
-                $candidates,
-                static fn(array $c): bool => mb_strtolower($c['name']) !== mb_strtolower($airport['name'])
-            )));
-        }
-        return array_slice($candidates, 0, $limit);
+        return preg_match('/^\s*(\d+[a-z]?)\b/iu', $q, $m) === 1 ? $m[1] : null;
     }
 
-    /** Fewer regional matches than this, and the worldwide search runs too. */
-    public const REGION_ENOUGH = 3;
-    /** Half the region box's height, in degrees of latitude (about 300 km). */
-    public const REGION_HALF_DEG = 2.7;
-
     /**
-     * Photon's bbox (minLon,minLat,maxLon,maxLat) around a point, about 300 km
-     * each way: big enough for a metro area and its surroundings, small enough
-     * that the rest of the world can't crowd it out. Pure.
+     * The first language in an Accept-Language header as a primary subtag
+     * ('en' from "en-US,en;q=0.9"), or null. Only the first: someone who
+     * prefers Spanish is better served by local names than by English ones,
+     * so a provider without Spanish falls back to local names. Pure.
      */
-    public static function regionBox(float $lat, float $lng): string
+    public static function preferredLanguage(?string $acceptLanguage): ?string
     {
-        $dLat = self::REGION_HALF_DEG;
-        // Degrees of longitude shrink toward the poles; keep the box square-ish.
-        $dLng = min(30.0, $dLat / max(0.2, cos(deg2rad($lat))));
-        $f = static fn(float $v): string => rtrim(rtrim(sprintf('%.4F', $v), '0'), '.');
-        return implode(',', [
-            $f(max(-180.0, $lng - $dLng)), $f(max(-90.0, $lat - $dLat)),
-            $f(min(180.0, $lng + $dLng)), $f(min(90.0, $lat + $dLat)),
-        ]);
+        $first = strtolower(trim(explode(',', (string) $acceptLanguage)[0]));
+        $primary = explode('-', explode(';', $first)[0])[0];
+        return preg_match('/^[a-z]{2,3}$/', $primary) === 1 ? $primary : null;
     }
 
     /**
@@ -351,10 +200,11 @@ final class PlaceSearch
      */
     public static function matchingNumber(string $q, array $candidates): array
     {
-        if (preg_match('/^\s*(\d+[a-z]?)\b/iu', $q, $m) !== 1) {
+        $number = self::houseNumber($q);
+        if ($number === null) {
             return $candidates;
         }
-        $num = '/(?<![\p{L}\p{N}])' . preg_quote($m[1], '/') . '(?![\p{L}\p{N}])/iu';
+        $num = '/(?<![\p{L}\p{N}])' . preg_quote($number, '/') . '(?![\p{L}\p{N}])/iu';
         return array_values(array_filter($candidates, static fn(array $c): bool =>
             preg_match($num, (string) ($c['name'] ?? '') . ' ' . (string) ($c['address'] ?? '')) === 1));
     }
@@ -394,7 +244,7 @@ final class PlaceSearch
     }
 
     /**
-     * Regional candidates first, then worldwide ones not already listed. Pure.
+     * The first list's candidates, then the second's not already listed. Pure.
      *
      * @param list<array<string,mixed>> $first
      * @param list<array<string,mixed>> $then
@@ -415,48 +265,99 @@ final class PlaceSearch
     }
 
     /**
-     * One Photon batch, mapped and filtered: null when every request failed
-     * (so a provider outage is told apart from "nothing matched").
+     * Nearest first; rows without a distance keep their order at the end.
+     * Stable. Pure.
      *
-     * @param list<array<string,mixed>> $paramSets
-     * @return ?list<array<string,mixed>>
+     * @param list<array<string,mixed>> $candidates
+     * @return list<array<string,mixed>>
      */
-    private function candidates(array $paramSets, string $q, ?float $biasLat, ?float $biasLng): ?array
+    public static function byDistance(array $candidates): array
     {
-        $bodies = $this->fetchAll($paramSets);
-        $features = [];
-        $anyOk = false;
-        foreach ($bodies as $decoded) {
-            if (is_array($decoded) && is_array($decoded['features'] ?? null)) {
-                $anyOk = true;
-                array_push($features, ...$decoded['features']);
-            }
+        $keyed = [];
+        foreach ($candidates as $i => $c) {
+            $keyed[] = [$c['distanceKm'] ?? INF, $i, $c];
         }
-        if (!$anyOk) {
-            return null;
-        }
-        return self::matchingNumber($q, self::mapFeatures(['features' => $features], $biasLat, $biasLng));
-    }
-
-    /** The query with "and" and "&" swapped, or null when it has neither. */
-    public static function ampersandVariant(string $q): ?string
-    {
-        if (preg_match('/\s&\s/u', $q)) {
-            return preg_replace('/\s&\s/u', ' and ', $q);
-        }
-        if (preg_match('/\sand\s/iu', $q)) {
-            return preg_replace('/\sand\s/iu', ' & ', $q);
-        }
-        return null;
+        usort($keyed, static fn(array $a, array $b): int => [$a[0], $a[1]] <=> [$b[0], $b[1]]);
+        return array_column($keyed, 2);
     }
 
     /**
-     * Several provider fetches in parallel; each result null on failure.
-     * @param list<array<string,mixed>> $paramSets
-     * @return list<?array>
+     * Results for an address query: those showing every typed word first,
+     * then looser matches (a provider's typo tolerance), each group nearest
+     * first. Pure.
+     *
+     * @param list<array<string,mixed>> $candidates
+     * @return list<array<string,mixed>>
      */
-    private function fetchAll(array $paramSets): array
+    public static function addressOrder(string $q, array $candidates): array
     {
-        return $this->transport->photon($paramSets);
+        $full = self::containingAllWords($q, $candidates);
+        $loose = array_values(array_filter($candidates, static fn(array $c): bool => !in_array($c, $full, true)));
+        return [...self::byDistance($full), ...self::byDistance($loose)];
+    }
+
+    // ---- Lookup --------------------------------------------------------
+
+    /**
+     * @param ?string $language preferred language (preferredLanguage), or null
+     * @return list<array<string,mixed>> ranked candidates (empty on provider
+     *   failure; transport errors never bubble to the client)
+     */
+    public function search(string $q, ?float $biasLat, ?float $biasLng, int $limit, ?string $language = null): array
+    {
+        $q = Geocode::normalize($q);
+        if ($q === '') {
+            throw HttpError::badRequest('q is required');
+        }
+        $limit = max(1, min(self::MAX_LIMIT, $limit));
+        $biased = $biasLat !== null && $biasLng !== null;
+
+        $candidates = self::matchingNumber($q, $this->provider->candidates($q, $biasLat, $biasLng, $limit, $language) ?? []);
+        if ($biased) {
+            if (self::houseNumber($q) !== null) {
+                // A bare number is a house nearby: worldwide it is every
+                // place with that number.
+                if (!self::hasWord($q)) {
+                    $candidates = array_values(array_filter($candidates, static fn(array $c): bool => !$c['far']));
+                }
+                // An address is a place you mean to go: the nearest match is
+                // the one, however exact a far one looks ("250 elm" must offer
+                // the Elmwood Avenue nearby before an Elm Court a thousand
+                // miles off).
+                $candidates = self::addressOrder($q, $candidates);
+            } else {
+                $cap = $this->provider->distanceCap();
+                if ($cap !== null) {
+                    $candidates = self::rank($candidates, $cap);
+                }
+            }
+        }
+        // Airport codes: pin the IATA-table airport above everything; bias
+        // must not bury SFO under a same-named street nearby, and in Denmark
+        // "SFO" is an after-school program, which is never the intent of an
+        // all-caps three-letter location.
+        $airport = Geocode::airport($q);
+        if ($airport !== null) {
+            $address = implode(', ', array_values(array_filter(
+                [$airport['city'], $airport['country']],
+                static fn(string $p): bool => $p !== ''
+            )));
+            $pinned = self::row(
+                $airport['name'],
+                $address,
+                $airport['lat'],
+                $airport['lng'],
+                $airport['city'] !== '' ? $airport['city'] : null,
+                'aerodrome',
+                $biasLat,
+                $biasLng,
+                $airport['display']
+            );
+            $candidates = array_merge([$pinned], array_values(array_filter(
+                $candidates,
+                static fn(array $c): bool => mb_strtolower($c['name']) !== mb_strtolower($airport['name'])
+            )));
+        }
+        return array_slice($candidates, 0, $limit);
     }
 }

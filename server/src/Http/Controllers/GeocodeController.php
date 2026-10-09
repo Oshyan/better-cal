@@ -46,7 +46,13 @@ final class GeocodeController
             [$lat, $lng] = $centroid ?? [null, null];
         }
         $limit = (int) ($req->q('limit') ?? PlaceSearch::DEFAULT_LIMIT);
-        $results = $this->placeSearch->search((string) ($req->q('q') ?? ''), $lat, $lng, $limit > 0 ? $limit : PlaceSearch::DEFAULT_LIMIT);
+        $results = $this->placeSearch->search(
+            (string) ($req->q('q') ?? ''),
+            $lat,
+            $lng,
+            $limit > 0 ? $limit : PlaceSearch::DEFAULT_LIMIT,
+            PlaceSearch::preferredLanguage($req->header('Accept-Language'))
+        );
         return Response::json(['results' => $results]);
     }
 

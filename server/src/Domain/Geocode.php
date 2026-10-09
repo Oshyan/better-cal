@@ -504,7 +504,7 @@ final class Geocode
                 return ['lat' => null, 'lng' => null, 'display' => null, 'kind' => null, 'transport' => true];
             }
             if ($biasLat !== null && $biasLng !== null) {
-                $ranked = PlaceSearch::rank(PlaceSearch::mapFeatures($decoded, $biasLat, $biasLng));
+                $ranked = PlaceSearch::rank(PhotonPlaces::mapFeatures($decoded, $biasLat, $biasLng));
                 $top = $ranked[0] ?? null;
                 $mapped = $top === null ? null : [
                     'lat' => (float) $top['lat'],

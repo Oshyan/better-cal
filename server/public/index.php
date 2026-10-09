@@ -77,7 +77,7 @@ function bc_handle_api(Request $request, array $cfg): void
         $settings = new Domain\Settings($db);
         $geocoderTransport = new \BetterCal\Infra\PoliciedGeocoderTransport($db);
         $geocode = new Domain\Geocode($db, $geocoderTransport);
-        $placeSearch = new Domain\PlaceSearch($geocoderTransport);
+        $placeSearch = new Domain\PlaceSearch(new Domain\PhotonPlaces($geocoderTransport));
         $pushSubscriptions = new Domain\PushSubscriptions($db, $cfg['push']['extra_hosts']);
         $pushSender = new \BetterCal\Infra\PushSender($cfg);
         $emailSender = new \BetterCal\Infra\EmailSender($cfg);

@@ -4,6 +4,16 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.45 (2026-10-09)
+
+- **A filtered day shows its matches.** With text in the filter box, month and 3-day views gave grayed-out events their slots and counted them in "+N", so a busy day could show only grayed-out events with its matches behind the "+N". Matches now come first, grayed-out events fill only what's left, and "+N" counts matches that didn't fit. Events a dim filter grays out work the same way, as does the all-day row of week view.
+- **Typing a city's name offers the city.** "munich" used to list only nearby Munich Streets; now Munich comes first. A place named exactly what you typed goes to the top when it's a city, town, county, state or country and nothing nearby has that name.
+- **Reconnecting a Google account brings its calendars back.** After Disconnect, connecting the same account again shows Re-attach for each calendar it left behind, which reconnects it with its events and everything added to them, instead of making a duplicate.
+- **Reminder times follow your clock setting:** "Day before at 6:00 PM" on a 12-hour clock, in the event panel, the editor and calendar settings. A custom reminder amount in a calendar's settings now fits on one line.
+- **Dependencies:** PHPMailer 7 and web-push 11 for email and push notifications, with no change in how either behaves; web-push 11 is handed a client built with the same timeouts and redirects off as before.
+
+Operators: no migration. `composer install` brings in the new versions (Guzzle is now a direct requirement, and php-http/discovery's Composer plugin is disabled in `composer.json`). The Google account's calendar list gains `reattachId`, and subscribing to a calendar a disconnected account left re-attaches it (200, `reattached: true`).
+
 ## 0.9.44 (2026-10-09)
 
 - **Addresses find the one near you.** A bare house number now lists the nearest houses with that number, and a number with a half-typed street ("250 el") finds it nearby; both used to find nothing. Address results that contain every word you typed come first, nearest first, so an exact match a thousand miles away no longer beats the street down the road, and the world is searched only when nothing nearby fits.

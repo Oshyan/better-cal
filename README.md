@@ -82,6 +82,7 @@ MIT (see [LICENSE](LICENSE)). Use it, fork it, host it, sell it. If you build so
 - [Architecture](docs/architecture.md)
 - [API contract](docs/api-contract.md) and [agent API](docs/agent-api.md)
 - [Calendar roles and event relationships](docs/relationships.md): planned, maybe, available and context, i.e. what a calendar is to you and what that makes its events
+- [Geocoding and place search](docs/geocoding.md): which services find places, why those, and what to set up after installing for faster results
 - [CalDAV](docs/caldav.md)
 - [Email ingest](docs/email-ingest.md)
 - [Moving from Google Calendar](docs/migration.md): try it without changing anything at Google, run both for a while, switch fully, or go back

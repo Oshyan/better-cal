@@ -80,7 +80,12 @@ No single service won every row, which is why Better-Cal pairs a fast keyed serv
 
 A small restaurant that OpenStreetMap had under the wrong name was missing from Overture's data too; only Stadia (which also uses Foursquare's open place data) had it right.
 
-**Not tested yet:** Radar and Geocode Earth are on the list. The big platforms (Google, Mapbox, HERE, TomTom) generally limit how long you may keep their results or charge per request beyond a small allowance, which is a poor fit here, but their current terms haven't been checked in detail.
+**Ruled out without testing:**
+
+- **Radar** no longer has a free tier (plans are annual, by sales call), and its terms limit storing geocoding and search results to 30 days.
+- **Geocode Earth** (Pelias, like Stadia) starts at $100 a month, too much for a personal tool.
+
+**Not tested yet:** MapTiler's geocoding. Its terms explicitly allow keeping results permanently, on the free plan too, and its US addresses include OpenAddresses and county data, which makes it a promising choice for the background lookup. For the dropdown it's less clear: its terms ask that people's typing go to MapTiler directly rather than through a server, and on the free plan searches share one monthly allowance with map tiles, with maps suspended if it runs out. The big platforms (Google, Mapbox, HERE, TomTom) generally limit how long you may keep their results or charge per request beyond a small allowance, which is a poor fit here, but their current terms haven't been checked in detail.
 
 ## Why the same map data gives different results
 

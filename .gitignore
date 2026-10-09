@@ -12,4 +12,7 @@ workfolder/
 .ygrep/
 # Deploy target of this checkout (scripts/deploy.env.example is the template)
 scripts/deploy.env
+# Server settings pushed by scripts/push-settings.sh (secrets; never committed)
+scripts/server.env
+scripts/server-dev.env
 .deploy-move-integrity-paused

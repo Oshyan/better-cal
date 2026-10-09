@@ -610,6 +610,11 @@ final class Events
                 if ($disposition === 'hide' && !$includeHidden) {
                     continue;
                 }
+                if ($disposition === 'dim' || $disposition === 'highlight') {
+                    // Which filter, and where it matched: the app's hover
+                    // card says why an event is underlined or dimmed.
+                    $occ['filterReason'] = Filters::reasonFor($row, $activeFilters, $promptCtx['filters'], $promptCtx['failed'], $disposition);
+                }
                 if ($disposition === 'dim') {
                     $occ['dimmed'] = true;
                 } elseif ($disposition === 'highlight') {
@@ -643,6 +648,9 @@ final class Events
                 $serialized = $this->serialize($occ['row'], $occ['start'], $occ['end'], $links, full: false);
                 if (!empty($occ['dimmed'])) {
                     $serialized['dimmed'] = true;
+                }
+                if (!empty($occ['filterReason'])) {
+                    $serialized['filterReason'] = $occ['filterReason'];
                 }
                 if (!empty($occ['highlighted'])) {
                     $serialized['highlighted'] = true;

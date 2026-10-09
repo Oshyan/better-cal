@@ -25,6 +25,7 @@ import { parseJumpText, jumpGranularity } from '../src/lib/jumpparse.js';
 import { parseClockText, resolveClock, minsToHHMM, hhmmToMins, parseDateText, durationLabel } from '../src/lib/whenparse.js';
 import { monthWeeks, stepMonthOf } from '../src/lib/minimonth.js';
 import { state as storeState, missingRanges, pruneOccurrenceCache, invalidateRecords, mergeWindow } from '../src/app/store.js';
+import { formattingReasons } from '../src/lib/eventwhy.js';
 import {
   normalizeDayRange, dayRangeDraft, dayRangeLabel, timeRangeLabel, chipPosition,
   dragCreateMode, allDayRangeDraft,
@@ -2449,6 +2450,28 @@ eq('gmaps: text alone is a search', gmapsUrl('Example Cafe', null, null), 'https
   assert('records: editing one event still strips that event’s record', !r2.full && !('description' in r2));
   storeState.occ.clear();
   for (const [k, v] of saved) storeState.occ.set(k, v);
+}
+
+// Why an event looks the way it does (the hover card's italic lines).
+{
+  const later = Date.parse('2026-03-10T12:00:00Z');
+  const base = { title: 'Review', start: '2026-03-11T17:00:00Z', end: '2026-03-11T18:00:00Z', relationship: 'planned' };
+  eq('why: a plain planned future event needs no explanation', formattingReasons(base, later), []);
+  eq('why: a highlight names the filter and where it matched',
+    formattingReasons({ ...base, highlighted: true, filterReason: { type: 'keyword', pattern: 'dinner', field: 'description' } }, later),
+    ['Underlined: highlighted by your “dinner” filter (matched in the description)']);
+  eq('why: a dimmed event from a plain-language filter',
+    formattingReasons({ ...base, dimmed: true, filterReason: { type: 'prompt' } }, later),
+    ['Grayed out: dimmed by one of your plain-language filters']);
+  eq('why: a regex filter shows its pattern as one',
+    formattingReasons({ ...base, highlighted: true, filterReason: { type: 'regex', pattern: 'a|b', field: 'title' } }, later)[0],
+    'Underlined: highlighted by your /a|b/ filter (matched in the title)');
+  eq('why: a maybe that already ended',
+    formattingReasons({ ...base, relationship: 'maybe' }, Date.parse('2026-03-12T00:00:00Z')),
+    ['Dashed outline: a maybe', 'Faded: already ended']);
+  eq('why: happening now, new, cancelled',
+    formattingReasons({ ...base, isNew: true, status: 'cancelled' }, Date.parse('2026-03-11T17:30:00Z')),
+    ['Struck through: cancelled', 'New: arrived in the last day', 'Gold ring: happening now']);
 }
 
 console.log(passed + ' passed, ' + failed + ' failed');

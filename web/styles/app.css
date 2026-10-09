@@ -4201,3 +4201,17 @@ button.bc-es-alsoon-cal { cursor: pointer; text-decoration: underline; text-deco
 .bc-move-row select { flex: 1; min-width: 0; }
 .bc-move-actions { display: flex; gap: 8px; }
 .bc-move-error { color: var(--danger, #c34a4a); display: grid; gap: 6px; }
+
+/* Event hover card (ui/HoverCard.js): full title, when/calendar/where, then
+   why the event looks the way it does, small and italic. Mouse only; it
+   never takes the pointer, so it can't get in the way of the next hover. */
+.bc-hovercard {
+  position: fixed; z-index: 150; max-width: 320px; pointer-events: none;
+  background: var(--bg-raised); color: var(--fg); border: 1px solid var(--border-strong);
+  border-radius: var(--radius); box-shadow: var(--shadow); padding: 8px 10px; font-size: 13px; line-height: 1.35;
+}
+.bc-hovercard-title { font-weight: 600; overflow-wrap: anywhere; }
+.bc-hovercard-meta { color: var(--fg-muted); margin-top: 2px; }
+.bc-hovercard-cal { white-space: nowrap; }
+.bc-hovercard-cal i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; vertical-align: 0; }
+.bc-hovercard-why { margin: 6px 0 0; padding: 6px 0 0; list-style: none; border-top: 1px solid var(--border); color: var(--fg-muted); font-style: italic; font-size: 12px; display: grid; gap: 2px; }

@@ -3214,7 +3214,7 @@ try {
 } catch (HttpError $e) {
     checkEq('flt invalid regex error code', 'filter_invalid_regex', $e->errorCode);
 }
-checkEq('flt valid regex accepted', ['pattern' => 'a|b', 'fields' => ['title', 'description', 'location']], Filters::validateConfig('regex', ['pattern' => 'a|b']));
+checkEq('flt valid regex accepted', ['pattern' => 'a|b', 'fields' => ['title']], Filters::validateConfig('regex', ['pattern' => 'a|b']));
 checkEq('flt fields normalized to known order', ['title', 'location'], Filters::validateConfig('keyword', ['pattern' => 'x', 'fields' => ['location', 'title']])['fields']);
 try {
     Filters::validateConfig('keyword', ['pattern' => '   ']);
@@ -3233,9 +3233,24 @@ check('flt default fields exclude tags', !Filters::evaluate($occTagged, $kw('wor
 check('flt tags missing key never matches', !Filters::evaluate($occ, $kw('work', ['tags'])));
 check('flt tags plus title field still matches title', Filters::evaluate($occTagged, $kw('practice', ['title', 'tags'])));
 checkEq('flt tags accepted in config fields', ['tags'], Filters::validateConfig('keyword', ['pattern' => 'x', 'fields' => ['tags']])['fields']);
-checkEq('flt config default fields stay three', ['title', 'description', 'location'], Filters::validateConfig('keyword', ['pattern' => 'x'])['fields']);
+checkEq('flt a new filter matches titles unless told otherwise', ['title'], Filters::validateConfig('keyword', ['pattern' => 'x'])['fields']);
+checkEq('flt an edit without fields keeps the filter\'s own', ['title', 'description'], Filters::validateConfig('keyword', ['pattern' => 'y'], ['title', 'description'])['fields']);
+check('flt a saved filter without a field list still matches descriptions (legacy fallback)', Filters::evaluate(['title' => 'Lunch', 'description' => 'dinner after'], ['type' => 'keyword', 'config' => ['pattern' => 'dinner']]));
 check('flt anyUsesTags true', Filters::anyUsesTags([['config' => ['pattern' => 'x', 'fields' => ['title', 'tags']]]]));
 check('flt anyUsesTags false', !Filters::anyUsesTags([['config' => ['pattern' => 'x', 'fields' => ['title']]], ['config' => ['pattern' => 'y']]]));
+// Why an event is highlighted or dimmed: which filter, and where it matched
+// (a description match underlined a title that never mentions the word).
+$fltRow = ['id' => 7, 'calendar_id' => 2, 'title' => 'Visit Sam', 'description' => 'dinner after'];
+$fltFilters = [
+    ['type' => 'keyword', 'action' => 'dim', 'calendarIds' => null, 'config' => ['pattern' => 'visit', 'fields' => ['title']]],
+    ['type' => 'keyword', 'action' => 'highlight', 'calendarIds' => [9 => true], 'config' => ['pattern' => 'dinner', 'fields' => ['description']]],
+    ['type' => 'keyword', 'action' => 'highlight', 'calendarIds' => null, 'config' => ['pattern' => 'dinner', 'fields' => ['title', 'description']]],
+];
+checkEq('flt matchedField names the field that matched', 'description', Filters::matchedField($fltRow, $fltFilters[2]));
+checkEq('flt reason for a highlight: the in-scope filter, its pattern and the field', ['type' => 'keyword', 'pattern' => 'dinner', 'field' => 'description'], Filters::reasonFor($fltRow, $fltFilters, [], [], 'highlight'));
+checkEq('flt reason for a dim', ['type' => 'keyword', 'pattern' => 'visit', 'field' => 'title'], Filters::reasonFor($fltRow, $fltFilters, [], [], 'dim'));
+checkEq('flt reason from a plain-language filter', ['type' => 'prompt'], Filters::reasonFor($fltRow, [], [['id' => 4, 'action' => 'highlight', 'calendarIds' => null]], [4 => [7 => true]], 'highlight'));
+checkEq('flt no reason when nothing applies', null, Filters::reasonFor($fltRow, [], [], [], 'highlight'));
 
 // disposition: calendar scoping and hide > dim > highlight precedence.
 $hideAll = ['type' => 'keyword', 'config' => ['pattern' => 'yoga'], 'action' => 'hide', 'calendarIds' => null];

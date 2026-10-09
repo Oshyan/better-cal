@@ -41,7 +41,14 @@ final class Filters
         '#3d9dc9', '#c9569b', '#6b8e23', '#b0713a', '#5d6dc9',
     ];
     /** Default when config.fields is absent; tags is opt-in. */
+    /** Fields a saved filter without a field list matches (filters from before fields were stored). */
     public const DEFAULT_FIELDS = ['title', 'description', 'location'];
+    /**
+     * A new keyword or regex filter matches titles unless told otherwise:
+     * long imported descriptions matched words nobody expected, and a title
+     * is what people have in mind when they name a filter.
+     */
+    public const NEW_FILTER_FIELDS = ['title'];
     private const MAX_PATTERN_CHARS = 500;
     private const MAX_PROMPT_CHARS = 2000;
     /** Cap on event ids per on-read filter_eval enqueue. */
@@ -130,10 +137,12 @@ final class Filters
             $fields['type'] = $type;
         }
         if (array_key_exists('type', $in) || array_key_exists('config', $in)) {
-            $config = array_key_exists('config', $in) && is_array($in['config'])
-                ? $in['config']
-                : (json_decode((string) $before['config_json'], true) ?: []);
-            $fields['config_json'] = json_encode(self::validateConfig($type, $config));
+            $previous = json_decode((string) $before['config_json'], true) ?: [];
+            $config = array_key_exists('config', $in) && is_array($in['config']) ? $in['config'] : $previous;
+            // A config sent without fields keeps the filter's own, never the
+            // new-filter default: an edit must not quietly narrow it.
+            $keep = is_array($previous['fields'] ?? null) && $previous['fields'] !== [] ? $previous['fields'] : self::DEFAULT_FIELDS;
+            $fields['config_json'] = json_encode(self::validateConfig($type, $config, $keep));
         }
 
         if (array_key_exists('action', $in)) {
@@ -324,11 +333,21 @@ final class Filters
      */
     public static function evaluate(array $occ, array $filter): bool
     {
+        return self::matchedField($occ, $filter) !== null;
+    }
+
+    /**
+     * Which field a keyword or regex filter matched (title, description,
+     * location or tags), or null. Same matching as evaluate(); it also lets
+     * the app say why an event is highlighted or dimmed.
+     */
+    public static function matchedField(array $occ, array $filter): ?string
+    {
         $type = (string) ($filter['type'] ?? 'keyword');
         $config = is_array($filter['config'] ?? null) ? $filter['config'] : [];
         $pattern = (string) ($config['pattern'] ?? '');
         if ($pattern === '') {
-            return false;
+            return null;
         }
         $fields = self::DEFAULT_FIELDS;
         if (isset($config['fields']) && is_array($config['fields']) && $config['fields'] !== []) {
@@ -339,17 +358,55 @@ final class Filters
                 $tags = is_array($occ['tags'] ?? null) ? $occ['tags'] : [];
                 foreach ($tags as $tag) {
                     if (self::patternHits($type, $pattern, (string) $tag)) {
-                        return true;
+                        return 'tags';
                     }
                 }
                 continue;
             }
             $value = (string) ($occ[$field] ?? '');
             if ($value !== '' && self::patternHits($type, $pattern, $value)) {
-                return true;
+                return $field;
             }
         }
-        return false;
+        return null;
+    }
+
+    /**
+     * Why an event got a filter's action (highlight or dim), for the app to
+     * say so: the first keyword or regex filter with that action that matched,
+     * its pattern and the field it matched in; else a plain-language (prompt)
+     * filter. Null when none applies.
+     *
+     * @param list<array{id:int,action:string,calendarIds:?array<int,true>}> $promptFilters
+     * @param array<int,array<int,true>> $failed
+     * @return ?array{type:string,pattern?:string,field?:string}
+     */
+    public static function reasonFor(array $row, array $filters, array $promptFilters, array $failed, string $action): ?array
+    {
+        foreach ($filters as $filter) {
+            if (($filter['action'] ?? '') !== $action) {
+                continue;
+            }
+            if ($filter['calendarIds'] !== null && !isset($filter['calendarIds'][(int) ($row['calendar_id'] ?? 0)])) {
+                continue;
+            }
+            $field = self::matchedField($row, $filter);
+            if ($field !== null) {
+                return [
+                    'type' => (string) ($filter['type'] ?? 'keyword'),
+                    'pattern' => mb_substr((string) ($filter['config']['pattern'] ?? ''), 0, 80),
+                    'field' => $field,
+                ];
+            }
+        }
+        $eventId = (int) ($row['id'] ?? 0);
+        foreach ($promptFilters as $filter) {
+            if (($filter['action'] ?? '') === $action && isset($failed[$filter['id']][$eventId])
+                && ($filter['calendarIds'] === null || isset($filter['calendarIds'][(int) ($row['calendar_id'] ?? 0)]))) {
+                return ['type' => 'prompt'];
+            }
+        }
+        return null;
     }
 
     private static function patternHits(string $type, string $pattern, string $value): bool
@@ -555,7 +612,8 @@ final class Filters
     /**
      * Keyword/regex: {pattern, fields}. Prompt: {prompt, negativePrompt?, threshold?}.
      */
-    public static function validateConfig(string $type, array $config): array
+    /** @param ?list<string> $defaultFields fields kept when config has none: the filter's own on an update, title only for a new one */
+    public static function validateConfig(string $type, array $config, ?array $defaultFields = null): array
     {
         if ($type === 'prompt') {
             return self::validatePromptConfig($config);
@@ -567,7 +625,7 @@ final class Filters
         if (mb_strlen($pattern) > self::MAX_PATTERN_CHARS) {
             throw HttpError::badRequest('config.pattern is too long (max ' . self::MAX_PATTERN_CHARS . ' chars)');
         }
-        $fields = self::DEFAULT_FIELDS;
+        $fields = $defaultFields ?? self::NEW_FILTER_FIELDS;
         if (array_key_exists('fields', $config)) {
             if (!is_array($config['fields'])) {
                 throw HttpError::badRequest('config.fields must be an array');

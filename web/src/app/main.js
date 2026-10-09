@@ -9,6 +9,7 @@ import { armQuietReload } from './drafts.js';
 import { restoreResume, recordStart } from './resume.js';
 import { takeHandoff, runHandoff } from './handoff.js';
 import { markBooted, reportStalledStart } from './bootlog.js';
+import { startHoverCards } from '../ui/HoverCard.js';
 import './install.js'; // keeps the browser's one-time install prompt for the welcome
 import {
   BATTERY_TIP_BODY, shouldShowInstallTip, markInstallTipShown,
@@ -83,6 +84,8 @@ if ('launchQueue' in window) {
 render(html`<${App} />`, document.getElementById('app'));
 // Every module loaded and the app is on screen: this start finished.
 markBooted();
+// Full title, details and why an event looks the way it does, on hover.
+startHoverCards();
 boot();
 
 // Android battery guidance, one time only: after installing the PWA (or on

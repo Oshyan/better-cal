@@ -134,10 +134,11 @@ export function EventChip({ occ, cal, dimmed, nowMs, showTime = true, seg = null
   // GCal semantics: all-day (and group) chips are filled with the calendar
   // tint; timed events are quiet dot + time + title rows. The tint rides a
   // CSS variable so the mobile pill layout can re-fill dot chips.
-  const dotStyle = !occ.allDay && !occ.isGroup && !interested;
-  const style = interested
-    ? `border-color:${ink(color)};color:${ink(color)};background:transparent`
-    : `--tint:${withAlpha(color, 0.16)};color:var(--fg)`;
+  // A maybe looks like any other event plus a dashed outline in the
+  // calendar's colour: grey already means ended, available or context, and
+  // tinting the title in the calendar's colour read as a state of its own.
+  const dotStyle = !occ.allDay && !occ.isGroup;
+  const style = `--tint:${withAlpha(color, 0.16)};color:var(--fg)` + (interested ? `;border-color:${ink(color)}` : '');
   const timed = !occ.allDay && showTime && !occ.isGroup;
   const { onClick, onDblClick } = openHandlers(occ, onOpen);
   return html`<button
@@ -148,7 +149,6 @@ export function EventChip({ occ, cal, dimmed, nowMs, showTime = true, seg = null
     onPointerDown=${occ.isGroup ? undefined : onPointerDown}
     onClick=${onClick}
     onDblClick=${onDblClick}
-    title=${chipTitle(occ)}
   >
     ${occ.relationship === 'context'
       ? html`<span class="bc-ctx-glyph" style=${`border-color:${color}`}></span>`
@@ -174,9 +174,9 @@ export function EventBar({ occ, cal, seg, dimmed, nowMs, note = null, onOpen, on
   // and never draggable or resizable in v1.
   const style = trip
     ? `border:1.5px solid ${color};color:var(--fg);background:${withAlpha(color, 0.1)}`
-    : interested
-      ? `border:1px solid ${ink(color)};color:${ink(color)};background:transparent`
-      : `background:${color};color:${contrastText(color)}`;
+    // A maybe keeps its fill; the dashed outline is drawn in the text colour
+    // so it shows on any calendar colour.
+    : `background:${color};color:${contrastText(color)}` + (interested ? `;border:1.5px dashed ${contrastText(color)}` : '');
   const { onClick, onDblClick } = openHandlers(occ, onOpen);
   const edges = occ.isGroup || trip ? null : onEdgePointerDown;
   return html`<div
@@ -194,7 +194,6 @@ export function EventBar({ occ, cal, seg, dimmed, nowMs, note = null, onOpen, on
         onOpen(occ.instanceId, e.currentTarget.getBoundingClientRect(), trip ? { detail: true } : undefined);
       }
     }}
-    title=${chipTitle(occ)}
   >
     ${!seg.contLeft && edges && html`<span class="bc-bar-handle l" onPointerDown=${(e) => edges('start', e)}></span>`}
     ${!seg.contLeft && occ.isGroup && html`<${StackGlyph} />`}
@@ -217,12 +216,13 @@ export function EventBlock({ occ, cal, rect, dimmed, nowMs, titleOnly = false, o
   const trip = !!occ.isContainer;
   const bg = trip
     ? `border:1.5px solid ${color};color:var(--fg);background:${withAlpha(color, 0.1)}`
-    : interested
-      ? `border:1.5px solid ${ink(color)};color:${ink(color)};background:var(--bg-raised)`
-      // Opaque, not translucent: cascaded blocks overlap, and a see-through
-      // fill let the block underneath bleed through so neither title was
-      // readable. Hover raises one to the front when you need the other.
-      : `background:${color};color:${contrastText(color)};border-left:3px solid ${color}`;
+    // Opaque, not translucent: cascaded blocks overlap, and a see-through
+    // fill let the block underneath bleed through so neither title was
+    // readable. Hover raises one to the front when you need the other.
+    // A maybe keeps its fill and adds a dashed outline in the text colour.
+    : `background:${color};color:${contrastText(color)};` + (interested
+      ? `border:1.5px dashed ${contrastText(color)}`
+      : `border-left:3px solid ${color}`);
   const s = parseISO(occ.start);
   const e = parseISO(occ.end);
   const showMeta = !titleOnly && rect.height > 34 && !occ.isGroup;
@@ -232,7 +232,6 @@ export function EventBlock({ occ, cal, rect, dimmed, nowMs, titleOnly = false, o
   const edges = occ.isGroup || trip ? null : onEdgePointerDown;
   return html`<div
     class="bc-block${titleOnly ? ' is-title-only' : ''}${stateClasses(occ, dimmed, nowMs)}"
-    title=${chipTitle(occ)}
     style=${`top:${rect.top}px;height:${rect.height}px;left:${rect.leftPct}%;width:${rect.widthPct}%;${rect.z ? `z-index:${rect.z};` : ''}${bg}${hlVar(occ)}`}
     data-instance=${occ.instanceId}
     role="button"

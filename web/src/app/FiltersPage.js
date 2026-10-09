@@ -18,8 +18,10 @@ import { fmtSince } from '../lib/since.js';
 
 const FIELD_OPTIONS = ['title', 'description', 'location', 'tags'];
 // Default selection mirrors the server default: tags is opt-in.
+// Saved filters without a field list match these (legacy); a new filter
+// starts on the title alone (server: Filters::NEW_FILTER_FIELDS).
 const DEFAULT_FIELDS = ['title', 'description', 'location'];
-const ALL_FIELDS = { title: true, description: true, location: true, tags: false };
+const NEW_FILTER_FIELDS = ['title'];
 const TYPE_LABELS = { keyword: 'Keyword', regex: 'Regex', prompt: 'AI prompt' };
 const ACTION_LABELS = { hide: 'Hides', dim: 'Dims', highlight: 'Highlights' };
 
@@ -33,7 +35,7 @@ function FilterForm({ calendars, folders, initial, inline, busy, onSave, onCance
   const [pattern, setPattern] = useState(initial && initial.type !== 'prompt' ? (initial.config.pattern || '') : '');
   const [fields, setFields] = useState(() => (initial && initial.type !== 'prompt'
     ? Object.fromEntries(FIELD_OPTIONS.map((x) => [x, (initial.config.fields || DEFAULT_FIELDS).includes(x)]))
-    : { ...ALL_FIELDS }));
+    : Object.fromEntries(FIELD_OPTIONS.map((x) => [x, NEW_FILTER_FIELDS.includes(x)]))));
   const [prompt, setPrompt] = useState(initial && initial.type === 'prompt' ? (initial.config.prompt || '') : '');
   const [negativePrompt, setNegativePrompt] = useState(initial && initial.type === 'prompt' ? (initial.config.negativePrompt || '') : '');
   const [color, setColor] = useState((initial && initial.config && initial.config.color) || '');

@@ -9,7 +9,7 @@ This page explains both, what they look like, how to change them, and what leave
 | Relationship | Meaning | How it is drawn |
 |---|---|---|
 | **Planned** | I am doing this. | The normal look. No mark at all. |
-| **Maybe** | Tentative. I might do this. | Dashed outline. |
+| **Maybe** | Tentative. I might do this. | The normal look plus a dashed outline (in the calendar's color on a chip, in the text color on a filled bar or block). |
 | **Available** | An opportunity I have not picked up. | Quiet: muted title, normal size. |
 | **Context** | Information, not a plan. Sunset, tides, holidays, a friend's schedule. | Never a chip. Small tokens in the day's header (month cell, week column, day panel, agenda heading), italic with a hollow rounded square in the calendar's colour; a timed context event is a dashed hairline at its minute on the timeline. See "Where context is drawn". |
 | **Hidden** | I do not want to see this. | Not drawn. |
@@ -71,6 +71,27 @@ Context is consulted, not attended: the weather, the AQI, when the sun sets, whe
 - **Times keep their place**: a moment on a calendar in another zone (a Seattle sunset while you are in Lisbon) reads in its own zone with the zone named, "7:10p PDT". Its position on the timeline is still the true instant.
 - **Week and day**: all-day context as tokens in the column header; a timed context event is a dashed hairline at its minute with a small label, never a block. Sunset at 7:10 is a moment, not a forty-minute appointment.
 - **Agenda**: the day's tokens ride on the day heading.
+
+## Reading an event's look
+
+Besides its relationship, an event's look can carry a few other states, and several can combine (a maybe that already ended is outlined and faded).
+
+| Look | Means |
+|---|---|
+| Normal, no mark | Planned, upcoming. |
+| Dashed outline | A maybe. |
+| Muted title | Available: an opportunity you haven't picked. |
+| Faded italic | Context: information, not a plan. |
+| Faded | Already ended. It comes back to full strength under the pointer. |
+| Gold ring | Happening now. |
+| "New" pill | Arrived on its own (a feed, email, import, an agent or a plugin) in the last day. |
+| Struck through | Cancelled. |
+| Title underlined in a color | Highlighted by one of your filters, in the color the filter names (the accent color if it names none). |
+| Grayed out | Dimmed by one of your filters. |
+| Stack icon and a count | Several similar events shown as one (near-duplicate grouping, on calendars where it's on). |
+| Outlined, tinted band | A trip: it holds the events during it. |
+
+Hover over an event with a mouse or trackpad and a card shows its full title (a narrow month cell cuts long ones short), when it is, its calendar and its place, then a short italic line for each of these states that applies. For a highlighted or dimmed event, that line names the filter and where it matched: "Underlined: highlighted by your "dinner" filter (matched in the description)". A new keyword filter matches titles only unless you tick more fields, so words in a long imported description don't surprise you.
 
 ## Why it works this way
 

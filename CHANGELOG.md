@@ -4,6 +4,18 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.43 (2026-10-09)
+
+- **Update checks work.** Every check failed with "HTTP request budget exhausted" from the first release that carried a manifest: GitHub answers a release file download with a redirect, and the checker allowed only one request. It also read the whole release list and would have stopped working once the repository passed 300 releases; it now reads the newest releases, normally one small request.
+- **The app starts from its offline cache.** Three modules it starts with were left out of the cache (imports written across lines were missed), so every start downloaded them, and on a weak connection the first start after an update could hang on a white screen. A start that never finishes is now noted in Settings, System and reported once to the server log, and a start file that fails to load shows a Try again message instead of a blank page.
+- **An open event keeps its details.** Its description and own time zone disappeared whenever anything changed on any device, until the event was reopened.
+- **Place search looks near you first.** Partly typed addresses came back as places on other continents. Suggestions now come from the region around where your calendar puts you (about 300 km), go worldwide only when the region has little, must contain the house number you typed, and a far result must contain every word.
+- **Hover any event for a card** with its full title, when, calendar and place, and a short line for each reason it looks the way it does, including which filter highlighted or dimmed it and where it matched. It replaces the browser's tooltip, which showed unreliably.
+- **A maybe looks like any other event, with a dashed outline.** Its title no longer takes the calendar's color.
+- **A new keyword filter matches titles** unless you tick more fields. Existing filters keep theirs.
+
+Operators: no migration. New endpoint `POST /system/client-event` (browser sessions only). CI now fails a step whose test output is piped (it used to pass), and `scripts/deploy.sh` runs its pre-flight tests on the exact commit being shipped.
+
 ## 0.9.42 (2026-10-08)
 
 - **Private offline calendar data is now bounded and read-only.** Saved calendar responses expire within 24 hours, exclude credentials and private feed addresses, and are invalidated across logout, revocation and account changes. Reconnecting restores editing only after the live session and CSRF protection are confirmed.

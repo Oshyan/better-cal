@@ -1515,6 +1515,36 @@ console.log('--- chronological ordering across timezone offsets ---');
   eq('map style: maptiler default on light', mapTilerStyle(null, false), 'streets-v2');
 }
 
+// A day cell with the filter box in use (#126): matches first, grayed-out
+// events only in slots left over, and "+N" counting matches only.
+{
+  const { planCell } = await import('../src/ui/monthmath.js');
+  const { assignLanes } = await import('../src/ui/layout.js');
+  const ev = (id, q = false) => ({ instanceId: id, q });
+  const quiet = (o) => o.q;
+  const names = (plan) => plan.shown.map((o) => o.instanceId);
+  const day = [ev('a', true), ev('b', true), ev('c'), ev('d', true), ev('e')];
+  let plan = planCell(day, quiet, 3);
+  eq('+N: matches come first, grayed-out events fill what is left', names(plan), ['c', 'e', 'a']);
+  eq('+N: nothing hidden when the matches fit', plan.hidden, 0);
+  plan = planCell([ev('a', true), ev('b'), ev('c'), ev('d'), ev('e', true), ev('f')], quiet, 3);
+  eq('+N: too many matches show room - 1 of them and count the rest', [names(plan), plan.hidden], [['b', 'c'], 2]);
+  eq('+N: the phone dots are the hidden matches', plan.more.map((o) => o.instanceId), ['d', 'f']);
+  plan = planCell([ev('a'), ev('b', true)], quiet, 3, 2);
+  eq('+N: hidden matching bars count; a grayed-out event takes the slot left over', [names(plan), plan.hidden], [['a', 'b'], 2]);
+  plan = planCell([ev('a'), ev('b'), ev('c', true)], quiet, 3, 2);
+  eq('+N: matching bars that push matches over leave no slot for grayed-out ones', [names(plan), plan.hidden], [['a', 'b'], 2]);
+  plan = planCell([ev('a'), ev('b'), ev('c'), ev('d')], () => false, 3);
+  eq('+N: with nothing grayed out the layout is unchanged', [names(plan), plan.hidden], [['a', 'b'], 2]);
+  plan = planCell([ev('a', true), ev('b', true), ev('c', true), ev('d', true)], quiet, 3);
+  eq('+N: a day of only grayed-out events shows what fits, with no "+N"', [plan.shown.length, plan.hidden], [3, 0]);
+  const lanes = assignLanes([
+    { id: 'quiet', startCol: 0, endCol: 3, quiet: true },
+    { id: 'match', startCol: 1, endCol: 2 },
+  ], 1);
+  eq('+N: a grayed-out bar gives its lane to a matching one', [lanes.get('match'), lanes.get('quiet')], [0, 1]);
+}
+
 // --- Very long spans cost nothing until a row is drawn (BC-15) ------------------
 {
   const { rowSegmentAt, spanRowCount, clampDayRange, LONG_SPAN_ROWS } = await import('../src/ui/monthmath.js');

@@ -109,7 +109,7 @@ Multi-day events show their total duration beside the title on every visible seg
 - Instant search across events with click-through that jumps to and flashes the result. Upcoming (the default), All or Past, and a calendar, are chosen under the box and applied before the result limit; a repeating series shows its next date. Tag chips run a tag-only search.
 - Prompt filters: describe a rule in plain English ("hide corporate networking events"), an LLM evaluates it over events, results apply as filters.
 - Trainable ranking: thumbs up/down and attendance feed a ranker that orders busy feeds by predicted interest; agenda has a match-sort mode. Thumbs show which one you chose.
-- On-page quick filter dims non-matching events live.
+- On-page quick filter dims non-matching events live. In month and 3-day views (and the all-day row of week view) a day shows its matches first, and its "+N" counts only matches that didn't fit (events a dim filter grays out work the same way).
 - The Show filter switches Planned, Maybe, Available and Context events on and off (`p`, `m`, `a`, `x`); a mark on a day says when it's hiding some of that day's events.
 
 ### Activity log and undo

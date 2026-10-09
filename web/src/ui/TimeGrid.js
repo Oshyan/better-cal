@@ -437,6 +437,9 @@ export function TimeGrid({
     });
   }, [vstack, phone, days, occurrences]);
 
+  // Grayed out by the filter box or a dim filter: placed after the rest and
+  // not counted in "+N" (#126).
+  const isQuiet = (occ) => !!(occ.dimmed || (dimSet && dimSet.has(occ.instanceId)));
   // All-day lanes keep one top-to-bottom order while you scroll: lanes are
   // assigned over everything loaded by real dates (earlier start first, then
   // the longer, trips before other bars that start the same day), not over
@@ -450,15 +453,15 @@ export function TimeGrid({
       if (occ.attendance === 'hidden' || isContext(occ)) continue;
       const { startKey, endKey } = occurrenceDaySpan(occ);
       if (!occ.allDay && startKey === endKey) continue;
-      items.push({ id: occ.instanceId, startCol: epochDayOfKey(startKey), endCol: epochDayOfKey(endKey), trip: !!occ.isContainer });
+      items.push({ id: occ.instanceId, startCol: epochDayOfKey(startKey), endCol: epochDayOfKey(endKey), trip: !!occ.isContainer, quiet: isQuiet(occ) });
     }
     items.sort((a, b) => (b.trip - a.trip) || String(a.id).localeCompare(String(b.id)));
-    return assignLanes(items, ALLDAY_LANES_MAX); // stable sort inside: start, then longer, then this order
-  }, [infinite, occurrences]);
+    return assignLanes(items, ALLDAY_LANES_MAX); // stable sort inside: quiet last, start, then longer, then this order
+  }, [infinite, occurrences, dimSet]);
   const barLanes = useMemo(() => {
     if (!globalLanes) {
       return assignLanes(
-        allDayBars.map((b) => ({ id: b.occ.instanceId, startCol: b.seg.startCol, endCol: b.seg.endCol })),
+        allDayBars.map((b) => ({ id: b.occ.instanceId, startCol: b.seg.startCol, endCol: b.seg.endCol, quiet: isQuiet(b.occ) })),
         ALLDAY_LANES_MAX,
       );
     }
@@ -473,15 +476,16 @@ export function TimeGrid({
   for (const l of barLanes.values()) if (l < ALLDAY_LANES_MAX) barLaneCount = Math.max(barLaneCount, l + 1);
   const phoneWeek = infinite && phone;
   const visibleBarLanes = phoneWeek ? PHONE_BAR_LANES : ALLDAY_LANES_MAX;
-  // Bars past the last useful lane are counted per day for its "+N".
+  // Bars past the last useful lane are counted per day for its "+N",
+  // unless they're grayed out (#126): those yield lanes and aren't counted.
   const moreByCol = useMemo(() => {
     const m = new Map();
     for (const b of allDayBars) {
-      if (barLanes.get(b.occ.instanceId) < visibleBarLanes) continue;
+      if (barLanes.get(b.occ.instanceId) < visibleBarLanes || isQuiet(b.occ)) continue;
       for (let c = b.seg.startCol; c <= b.seg.endCol; c++) m.set(c, (m.get(c) || 0) + 1);
     }
     return m.size ? m : null;
-  }, [allDayBars, barLanes, visibleBarLanes]);
+  }, [allDayBars, barLanes, visibleBarLanes, dimSet]);
 
   // Overlap layout per day column (see layout.js for the algorithm).
   const layoutByDay = useMemo(() => timedByDay.map((list) => {

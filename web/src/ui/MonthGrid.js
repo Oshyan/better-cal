@@ -27,6 +27,7 @@ import {
   spanRowCount, rowSegmentAt, clampDayRange, LONG_SPAN_ROWS,
   rowIndexOfDayKey, firstEpochDayOfRow, dayKeysOfRow, isWeekendEpochDay,
   monthStartsInRange, dominantMonthOfRows,
+  planCell,
 } from './monthmath.js';
 import { assignLanes } from './layout.js';
 import { EventChip, EventBar, TripBand, HiddenMark } from './EventChip.js';
@@ -716,8 +717,11 @@ function WeekRow({
   // On a desktop they fit the cell's width (#108): a wide screen shows them
   // all, not two and "+N".
   const ctxMax = mobile ? (columns >= 7 ? 0 : 1) : Infinity;
+  // Quiet: grayed out by the filter box or a dim filter. They yield their
+  // slots to the rest and don't count toward "+N" (planCell, #126).
+  const isQuiet = (occ) => !!(occ.dimmed || (dimSet && dimSet.has(occ.instanceId)));
   const bandLanes = assignLanes(
-    bandList.map((b) => ({ id: b.occ.instanceId + ':' + b.seg.startCol, startCol: b.seg.startCol, endCol: b.seg.endCol })),
+    bandList.map((b) => ({ id: b.occ.instanceId + ':' + b.seg.startCol, startCol: b.seg.startCol, endCol: b.seg.endCol, quiet: isQuiet(b.occ) })),
     MAX_BAND_LANES,
   );
   let bandLaneCount = 0;
@@ -729,7 +733,7 @@ function WeekRow({
   for (const b of bandList) {
     const lane = bandLanes.get(b.occ.instanceId + ':' + b.seg.startCol);
     if (lane < MAX_BAND_LANES) visibleBands.push({ ...b, lane });
-    else for (let c = b.seg.startCol; c <= b.seg.endCol; c++) bandExtraByCol[c]++;
+    else if (!isQuiet(b.occ)) for (let c = b.seg.startCol; c <= b.seg.endCol; c++) bandExtraByCol[c]++;
   }
   // Lanes are reserved PER COLUMN, not per row: a band or bar on Wednesday
   // must not push Monday's chips down. Multi-day segments still align across
@@ -747,19 +751,20 @@ function WeekRow({
   const barList = bars || [];
   const maxBarLanes = Math.max(1, cap - 1);
   const lanes = assignLanes(
-    barList.map((b) => ({ id: b.occ.instanceId + ':' + b.seg.startCol, startCol: b.seg.startCol, endCol: b.seg.endCol })),
+    barList.map((b) => ({ id: b.occ.instanceId + ':' + b.seg.startCol, startCol: b.seg.startCol, endCol: b.seg.endCol, quiet: isQuiet(b.occ) })),
     maxBarLanes,
   );
   let barLaneCount = 0;
   for (const l of lanes.values()) if (l < maxBarLanes) barLaneCount = Math.max(barLaneCount, l + 1);
   const chipStartLane = barLaneCount;
-  // Hidden bar segments count toward each covered day's overflow.
+  // Hidden bar segments count toward each covered day's overflow, unless
+  // they're quiet.
   const extraByCol = new Array(columns).fill(0);
   const visibleBars = [];
   for (const b of barList) {
     const lane = lanes.get(b.occ.instanceId + ':' + b.seg.startCol);
     if (lane < maxBarLanes) visibleBars.push({ ...b, lane });
-    else for (let c = b.seg.startCol; c <= b.seg.endCol; c++) extraByCol[c]++;
+    else if (!isQuiet(b.occ)) for (let c = b.seg.startCol; c <= b.seg.endCol; c++) extraByCol[c]++;
   }
   const barLanesByCol = new Array(columns).fill(0);
   for (const b of visibleBars) {
@@ -779,10 +784,8 @@ function WeekRow({
       ? CELL_HEAD + bandOffset + barLanesByCol[col] * chipRow
       : CELL_HEAD + bandLanesByCol[col] * bandH;
     const room = Math.max(0, Math.min(capacity, Math.floor((rowH - chipTop - 4) / chipRow)));
-    const overflowFromBars = extraByCol[col] + bandExtraByCol[col];
-    const needsMore = singles.length + overflowFromBars > room;
-    const shown = needsMore ? Math.max(0, room - 1) : singles.length;
-    const hidden = singles.length - shown + overflowFromBars;
+    const plan = planCell(singles, isQuiet, room, extraByCol[col] + bandExtraByCol[col]);
+    const hidden = plan.hidden;
     // Ribbon rows have no weekday header, so each cell labels itself
     // ("Mon 3"; month name on month start: "Aug 1"). Weekends get a subtle
     // tint for orientation.
@@ -826,7 +829,7 @@ function WeekRow({
         onClick=${(e) => { e.stopPropagation(); if (quickCreateDay) quickCreateDay(k); }}
       ><${Icon} name="plus" size=${13} /></button>
       <div class="bc-cell-chips" style=${`top:${chipTop}px`}>
-        ${singles.slice(0, shown).map((occ) => html`<${EventChip}
+        ${plan.shown.map((occ) => html`<${EventChip}
           key=${occ.instanceId} occ=${occ} cal=${calendars[occ.calendarId]}
           dimmed=${dimSet && dimSet.has(occ.instanceId)} nowMs=${nowMs}
           onOpen=${onOpenEvent}
@@ -837,7 +840,7 @@ function WeekRow({
           onClick=${(e) => { e.stopPropagation(); if (onExpandDay) onExpandDay(k); }}
           onPointerDown=${(e) => e.stopPropagation()}
         >
-          ${mobile && singles.slice(shown, shown + 3).map((o) => html`<span
+          ${mobile && plan.more.slice(0, 3).map((o) => html`<span
             key=${o.instanceId} class="bc-more-dot"
             style=${`background:${(calendars[o.calendarId] && calendars[o.calendarId].color) || '#888'}`}
           ></span>`)}

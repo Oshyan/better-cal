@@ -7,6 +7,30 @@ import {
   pad, addDaysInZone, sameClock, localTz,
 } from '../lib/dates.js';
 
+// Which of a day's single events a month or 3-day cell shows, and what its
+// "+N" counts. Quiet events (dimmed by the filter box or a dim filter) come
+// after the others and only fill slots that are left; "+N" counts the others
+// that don't fit, plus hiddenBars (multi-day bars and trip bands of the same
+// kind that found no lane). So a filtered day never hides its matches behind
+// grayed-out events, and "+3" means three matches. With nothing quiet this
+// is the plain layout: as many as fit, the last slot given to "+N" when it's
+// needed. Returns {shown, hidden, more}: the events to draw in order, the
+// "+N" count, and the hidden events (for the phone's colour dots).
+export function planCell(singles, isQuiet, room, hiddenBars = 0) {
+  const loud = [];
+  const quiet = [];
+  for (const o of singles) (isQuiet(o) ? quiet : loud).push(o);
+  const needsMore = loud.length + hiddenBars > room;
+  const shownLoud = needsMore ? Math.max(0, room - 1) : loud.length;
+  const hidden = loud.length - shownLoud + hiddenBars;
+  const left = needsMore ? 0 : Math.max(0, room - shownLoud - (hidden > 0 ? 1 : 0));
+  return {
+    shown: [...loud.slice(0, shownLoud), ...quiet.slice(0, left)],
+    hidden,
+    more: loud.slice(shownLoud),
+  };
+}
+
 // Visible week window for a virtualized scroller.
 // scrollTop/viewportH in px, rowH px per week row, buffer rows on each side.
 // Weeks are addressed by absolute week index; the spacer covers

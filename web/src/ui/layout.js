@@ -57,7 +57,11 @@ export function layoutOverlaps(items, minSpan = 30, options = {}) {
 // Returns Map id -> lane, packing into the lowest free lane.
 export function assignLanes(bars, maxLanes = Infinity) {
   maxLanes = Math.max(1, maxLanes);
-  const sorted = [...bars].sort((a, b) => a.startCol - b.startCol || b.endCol - a.endCol);
+  // A bar marked quiet (dimmed by the filter box or a dim filter) is placed
+  // after every other bar, so when lanes run out it's the one left over.
+  // Placing out of start order only ever costs compactness, never overlap.
+  const sorted = [...bars].sort((a, b) => (a.quiet ? 1 : 0) - (b.quiet ? 1 : 0)
+    || a.startCol - b.startCol || b.endCol - a.endCol);
   const laneEnds = []; // last occupied endCol per lane
   const lanes = new Map();
   for (const b of sorted) {

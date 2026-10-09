@@ -492,7 +492,7 @@ final class Geocode
         $mapped = null;
         $airportHit = self::airport($normalized);
         if ($airportHit !== null) {
-            $mapped = ['lat' => $airportHit['lat'], 'lng' => $airportHit['lng'], 'display' => $airportHit['display'], 'provider' => 'airports'];
+            $mapped = ['lat' => $airportHit['lat'], 'lng' => $airportHit['lng'], 'display' => $airportHit['display'], 'provider' => 'ourairports'];
         } else {
             // 20, not 5: photon buries a world capital under eight American
             // namesakes, so the right answer has to be in the candidate set

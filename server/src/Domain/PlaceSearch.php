@@ -362,7 +362,7 @@ final class PlaceSearch
                 $biasLat,
                 $biasLng,
                 $airport['display'],
-                'airports'
+                'ourairports'
             );
             $candidates = array_merge([$pinned], array_values(array_filter(
                 $candidates,

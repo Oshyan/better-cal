@@ -2388,7 +2388,7 @@ final class Events
     }
 
     /** Where an event's coordinates came from (migration 048). */
-    public const LOCATION_SOURCES = ['picked', 'lookup', 'source'];
+    public const LOCATION_SOURCES = ['picked', 'lookup', 'calendar'];
 
     /**
      * Provenance columns for coordinates being set or cleared. Without

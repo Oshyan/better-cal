@@ -20,6 +20,15 @@ final class Updates
     public const RELEASE_BASE = 'https://github.com/Oshyan/better-cal/releases/download/';
     public const MANIFEST_NAME = 'bettercal-release.json';
     public const MAX_MANIFEST_BYTES = 4096;
+    /**
+     * A release asset's download URL on github.com always answers with a
+     * redirect to GitHub's asset storage, so fetching the manifest takes two
+     * requests. The client's budget counts every hop, so it must cover them:
+     * with a budget of 1 every check failed from the first release that had a
+     * manifest ("HTTP request budget exhausted (1)").
+     */
+    public const MAX_REDIRECTS = 2;
+    public const REQUEST_BUDGET = self::MAX_REDIRECTS + 1;
     private const RELEASE_PAGE_SIZE = 100;
     private const MAX_RELEASE_PAGES = 3;
 
@@ -254,10 +263,10 @@ final class Updates
         if ($this->fetch !== null) return ($this->fetch)($url, $headers);
         $manifestRequest = str_ends_with($url, '/' . self::MANIFEST_NAME);
         $http = new HttpClient(
-            requestBudget: 1,
+            requestBudget: self::REQUEST_BUDGET,
             userAgent: HttpClient::userAgentFor('release checks'),
             maxBytes: $manifestRequest ? self::MAX_MANIFEST_BYTES : 1024 * 1024,
-            maxRedirects: 2,
+            maxRedirects: self::MAX_REDIRECTS,
             connectTimeoutMs: 5000,
             totalTimeoutMs: 15000,
             allowedSchemes: ['https'],

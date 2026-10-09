@@ -8051,6 +8051,11 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
     $migration46 = require dirname(__DIR__) . '/migrations/046_update_awareness.php';
     $migration46($udb);
 
+    // GitHub always redirects a release asset download to its storage, and the
+    // client's budget counts every hop: a budget of 1 failed every real check
+    // from the first release with a manifest. The stubbed fetch below never
+    // redirects, so this guards the relation itself.
+    check('update check: the request budget covers the redirects it allows', Updates::REQUEST_BUDGET >= Updates::MAX_REDIRECTS + 1);
     $manifest = Updates::manifestJson('1.1.0', 'recommended', '1.0.0');
     $fetch = static function (string $url) use ($manifest): array {
         if ($url === Updates::RELEASES_URL) {

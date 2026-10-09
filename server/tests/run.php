@@ -2408,6 +2408,31 @@ $failing = new class implements \BetterCal\Infra\KeyedGeocoderTransport {
     public function keyed(string $provider, array $urls): array { return [null]; }
 };
 checkEq('place lookup: unreachable is false, so Photon gets its turn', false, (new \BetterCal\Domain\KeyedPins($failing, 'stadia', 'k'))->pin('Anywhere', null, null));
+// A list: services in order, Photon always last; a service without its key
+// or an unknown name is skipped and Settings says why.
+$listDesc = $PPV::describe(['provider' => 'photon, Stadia ,locationiq,bogus', 'stadia_key' => 's', 'locationiq_key' => 'k']);
+checkEq('place search list: in order, Photon last whatever its place in the list', ['stadia,locationiq', 'Stadia Maps, then LocationIQ', 'Photon'],
+    [$listDesc['active'], $listDesc['name'], $listDesc['fallback']]);
+check('place search list: an unknown name is called out', str_contains((string) $listDesc['problem'], '"bogus"'));
+$listDesc = $PPV::describe(['provider' => 'stadia,locationiq', 'locationiq_key' => 'k']);
+check('place search list: a service without its key is skipped, the rest kept',
+    $listDesc['active'] === 'locationiq' && str_contains((string) $listDesc['problem'], 'BETTERCAL_STADIA_KEY is empty, so it is skipped'));
+$listChain = $PPV::build(['provider' => 'stadia,locationiq', 'stadia_key' => 's', 'locationiq_key' => 'k'], $gt);
+check('place search list: each service in front of the rest', $listChain instanceof \BetterCal\Domain\FallbackPlaces);
+checkEq('place lookup list: follows the dropdown\'s list unless set', 'stadia,locationiq',
+    $PPV::describe(['provider' => 'stadia,locationiq', 'stadia_key' => 's', 'locationiq_key' => 'k'])['lookup']['active']);
+check('place lookup list: two keyed services are a chain', $PPV::pin(['lookup' => 'locationiq,stadia', 'stadia_key' => 's', 'locationiq_key' => 'k'], $keyedTransport) instanceof \BetterCal\Domain\PinChain);
+$pinStub = static fn(array|false|null $answer): \BetterCal\Domain\PinProvider => new class($answer) implements \BetterCal\Domain\PinProvider {
+    public int $asked = 0;
+    public function __construct(private array|false|null $answer) {}
+    public function pin(string $q, ?float $biasLat, ?float $biasLng): array|false|null { $this->asked++; return $this->answer; }
+};
+$hit = ['lat' => 1.0, 'lng' => 2.0, 'display' => 'Example', 'kind' => null, 'provider' => 'stadia'];
+$second = $pinStub($hit);
+checkEq('place lookup chain: the next service answers when the first finds nothing or fails', [$hit, $hit, 2],
+    [(new \BetterCal\Domain\PinChain([$pinStub(null), $second]))->pin('x', null, null), (new \BetterCal\Domain\PinChain([$pinStub(false), $second]))->pin('x', null, null), $second->asked]);
+checkEq('place lookup chain: nothing found is null, nothing reached is false (Photon answers either way)', [null, false],
+    [(new \BetterCal\Domain\PinChain([$pinStub(false), $pinStub(null)]))->pin('x', null, null), (new \BetterCal\Domain\PinChain([$pinStub(false), $pinStub(false)]))->pin('x', null, null)]);
 check('place search service: LocationIQ with a key is LocationIQ in front of Photon, without one it is Photon',
     $PPV::build(['provider' => 'locationiq', 'locationiq_key' => 'k'], $gt) instanceof \BetterCal\Domain\FallbackPlaces
     && $PPV::build(['provider' => 'locationiq'], $gt) instanceof \BetterCal\Domain\PhotonPlaces);

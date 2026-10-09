@@ -4,6 +4,8 @@
 // follows its role, Mine reminding and the others quiet). Pure module,
 // smoke-tested in node.
 
+import { fmtTime } from './dates.js';
+
 // Offsets offered by the editor / settings selects (minutes before start;
 // for all-day events, before local midnight of the event date).
 export const TIMED_CHOICES = [0, 5, 10, 15, 30, 60, 120, 1440, 10080];
@@ -60,6 +62,13 @@ export function fmtOffsetMinutes(minutes) {
   return m === 1 ? '1 minute before' : m + ' minutes before';
 }
 
+// "18:00" on the user's clock: "6:00 PM" with the 12-hour setting.
+function fmtClock(hhmm) {
+  const [h, m] = String(hhmm).split(':').map(Number);
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return String(hhmm);
+  return fmtTime(new Date(2000, 0, 1, h, m));
+}
+
 // Human text for one reminder entry of either shape.
 export function fmtReminder(entry) {
   if (!entry || typeof entry !== 'object') return '';
@@ -68,7 +77,7 @@ export function fmtReminder(entry) {
     const when = entry.daysBefore === 0 ? 'Same day'
       : entry.daysBefore === 1 ? 'Day before'
       : entry.daysBefore + ' days before';
-    return when + (entry.time ? ' at ' + entry.time : '');
+    return when + (entry.time ? ' at ' + fmtClock(entry.time) : '');
   }
   return '';
 }

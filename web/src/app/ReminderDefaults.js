@@ -39,7 +39,7 @@ export function TimedDefault({ value, onChange, label = 'Default reminder for ti
         onChange=${(e) => savePair({ ...pair, unit: e.target.value })}>
         ${REMINDER_UNITS.map((u) => html`<option key=${u} value=${u}>${u}</option>`)}
       </select>
-      <span class="bc-rem-after">before start</span>
+      <span class="bc-rem-after">before</span>
     </span>`}`;
 }
 

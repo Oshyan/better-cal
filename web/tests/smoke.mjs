@@ -880,9 +880,13 @@ eq('toMinutes/fromMinutes round trip', toMinutes(fromMinutes(4320).n, fromMinute
 assert('reminder units well-formed', REMINDER_UNITS.length === 4 && REMINDER_UNITS.includes('weeks'));
 assert('timed presets within server cap', TIMED_CHOICES.every((m) => m >= 0 && m <= MAX_REMINDER_MINUTES));
 assert('timed presets include week', TIMED_CHOICES.includes(10080));
+setTimeFormat('24');
 eq('reminder fmt entry minutes shape', fmtReminder({ minutes: 15 }), '15 minutes before');
 eq('reminder fmt entry allday shape', fmtReminder({ daysBefore: 1, time: '18:00' }), 'Day before at 18:00');
 eq('reminder fmt entry same day', fmtReminder({ daysBefore: 0, time: '09:00' }), 'Same day at 09:00');
+setTimeFormat('12');
+assert('reminder fmt all-day time follows the 12-hour setting', /^Day before at 6:00\s?PM$/i.test(fmtReminder({ daysBefore: 1, time: '18:00' })));
+setTimeFormat('24'); // the summaries below read in 24-hour
 
 // All-day default -> minutes before local midnight; same-day clamps to 0.
 eq('reminder allday to minutes day before 18:00', allDayEntryToMinutes({ daysBefore: 1, time: '18:00' }), 360);
@@ -901,6 +905,7 @@ const remCalDef = { timed: [{ minutes: 30 }], allDay: [] };
 eq('reminder defaults summary', summarizeDefaults(remSettings.reminderTimed, remSettings.reminderAllDay), '10 minutes before; all-day: Day before at 18:00');
 eq('reminder defaults summary, all-day only', summarizeDefaults([], [{ daysBefore: 0, time: '08:00' }]), 'none; all-day: Same day at 08:00');
 eq('reminder defaults summary, none', summarizeDefaults([], []), 'none');
+setTimeFormat('12'); // later tests expect the 12-hour clock
 eq('reminder effective event wins',
   effectiveReminders({ override: [{ minutes: 5 }], calendarDefaults: remCalDef, settings: remSettings, allDay: false }),
   { reminders: [{ minutes: 5 }], source: 'event' });

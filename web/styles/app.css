@@ -2239,8 +2239,8 @@ body.bc-rescheduling { user-select: none; }
 .bc-calset-rem { display: flex; flex-direction: column; gap: 3px; padding-left: 8px; border-left: 2px solid var(--border); }
 .bc-calset-sub { font-size: 11px; color: var(--fg-muted); }
 .bc-calset-remrow { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
-.bc-calset-remrow .bc-rem-custom { flex-wrap: wrap; }
-.bc-calset-remrow .bc-num { width: 56px; }
+.bc-calset-remrow .bc-rem-custom { flex-wrap: nowrap; gap: 4px; }
+.bc-calset-remrow .bc-num { width: 46px; }
 
 /* --- time-relative event styling (append-only section) ---------------------
    Past events dim on every view; currently running events carry a warm gold

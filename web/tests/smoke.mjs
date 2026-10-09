@@ -37,6 +37,7 @@ import {
   fmtOffsetMinutes, fmtReminder, allDayEntryToMinutes, entryToMinutes,
   normalizeMinutesList, effectiveReminders, toMinutes, fromMinutes,
   TIMED_CHOICES, MAX_REMINDER_MINUTES, REMINDER_UNITS,
+  summarizeDefaults,
 } from '../src/lib/reminders.js';
 import { deepLinkAnchorMs, deepLinkWindows } from '../src/lib/deeplink.js';
 import {
@@ -897,6 +898,9 @@ eq('reminder normalize', normalizeMinutesList([30, 5, 5, 0]),
 // subscribed calendars never inherit the global default.
 const remSettings = { reminderTimed: [{ minutes: 10 }], reminderAllDay: [{ daysBefore: 1, time: '18:00' }] };
 const remCalDef = { timed: [{ minutes: 30 }], allDay: [] };
+eq('reminder defaults summary', summarizeDefaults(remSettings.reminderTimed, remSettings.reminderAllDay), '10 minutes before; all-day: Day before at 18:00');
+eq('reminder defaults summary, all-day only', summarizeDefaults([], [{ daysBefore: 0, time: '08:00' }]), 'none; all-day: Same day at 08:00');
+eq('reminder defaults summary, none', summarizeDefaults([], []), 'none');
 eq('reminder effective event wins',
   effectiveReminders({ override: [{ minutes: 5 }], calendarDefaults: remCalDef, settings: remSettings, allDay: false }),
   { reminders: [{ minutes: 5 }], source: 'event' });

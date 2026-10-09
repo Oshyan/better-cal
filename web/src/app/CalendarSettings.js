@@ -1,7 +1,8 @@
 // Per-calendar settings panel, opened from the gear on a sidebar calendar
 // row. Name, color (preset swatches + free hex), folder membership; for
 // subscribed feeds also source URL, poll interval, stale threshold, similar-
-// event grouping, refresh-now and last-poll status. Delete confirms inline.
+// event grouping, refresh-now and last-poll status. Default reminders for the
+// calendar's events. Delete confirms inline.
 // All writes go through PATCH /calendars/:id (updateCalendar).
 
 import { html, useState } from '../../vendor/index.js';
@@ -12,6 +13,8 @@ import { parseHex, PALETTE } from '../lib/color.js';
 import { SchemaForm } from './SchemaForm.js';
 import { Icon } from '../ui/icons.js';
 import { MoveToGoogle } from './MoveToGoogle.js';
+import { TimedDefault, AllDayDefault } from './ReminderDefaults.js';
+import { summarizeDefaults } from '../lib/reminders.js';
 
 // Preset grid: the app palette plus teal and slate to round out 12.
 const SWATCHES = [...PALETTE, '#3aa695', '#708090'];
@@ -40,6 +43,41 @@ function pollStatusLine(cal) {
   else if (h.content === 'empty') line += ' (ok, no events yet)';
   else line += ' (ok' + (h.eventCount != null ? ', ' + h.eventCount + ' events' : '') + ')';
   return line;
+}
+
+// The calendar's own default reminders, or what it gets without them: your
+// defaults from Settings, or none for subscribed and plugin calendars, which
+// never inherit them (a busy feed or sunsets shouldn't all remind).
+function ReminderField({ cal }) {
+  const own = cal.reminderDefaults != null;
+  const skipsGlobal = cal.kind === 'subscribed' || cal.kind === 'plugin';
+  const s = state.settings || {};
+  const save = (reminderDefaults) => updateCalendar(cal, { reminderDefaults });
+  const onMode = (v) => {
+    if (v === 'inherit') save(null);
+    else save({ timed: s.reminderTimed || [], allDay: s.reminderAllDay || [] });
+  };
+  return html`<div class="bc-calset-field">
+    <span class="bc-calset-label">Reminders</span>
+    <select aria-label="Reminders for this calendar" value=${own ? 'own' : 'inherit'} onChange=${(e) => onMode(e.target.value)}>
+      <option value="inherit">${skipsGlobal ? 'None' : 'My defaults'}</option>
+      <option value="own">Set for this calendar</option>
+    </select>
+    ${!own && html`<span class="bc-calset-status">${skipsGlobal
+      ? (cal.kind === 'plugin' ? 'Plugin' : 'Subscribed') + ' calendars don\'t use your default reminders, so nothing reminds unless you set it here or on an event.'
+      : 'From Settings, Notifications: ' + summarizeDefaults(s.reminderTimed, s.reminderAllDay) + '.'}</span>`}
+    ${own && html`<div class="bc-calset-rem">
+      <span class="bc-calset-sub">Timed events</span>
+      <div class="bc-calset-remrow"><${TimedDefault} label="Reminder for timed events on this calendar"
+        value=${cal.reminderDefaults.timed}
+        onChange=${(list) => save({ ...cal.reminderDefaults, timed: list })} /></div>
+      <span class="bc-calset-sub">All-day events</span>
+      <div class="bc-calset-remrow"><${AllDayDefault} label="Reminder for all-day events on this calendar"
+        value=${cal.reminderDefaults.allDay}
+        onChange=${(list) => save({ ...cal.reminderDefaults, allDay: list })} /></div>
+      <span class="bc-calset-status">An event's own reminders still win.</span>
+    </div>`}
+  </div>`;
 }
 
 export function CalendarSettings({ cal, folders, onClose }) {
@@ -147,6 +185,7 @@ export function CalendarSettings({ cal, folders, onClose }) {
         <option value="context">Context: information (sunset, tides, someone's schedule)</option>
       </select>
     </div>
+    <${ReminderField} cal=${cal} />
     ${subscribed && html`<div class="bc-calset-field">
       <span class="bc-calset-label">Source</span>
       ${cal.provider === 'google'

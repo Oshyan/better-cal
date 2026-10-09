@@ -2233,6 +2233,14 @@ body.bc-rescheduling { user-select: none; }
    (editor drawer and settings defaults). */
 .bc-rem-custom { display: inline-flex; align-items: center; gap: 6px; }
 .bc-rem-custom .bc-num { width: 72px; }
+.bc-rem-after { color: var(--fg-muted); font-size: 12px; }
+/* A calendar's own reminders, in the narrow settings panel: each control
+   wraps onto as many lines as it needs. */
+.bc-calset-rem { display: flex; flex-direction: column; gap: 3px; padding-left: 8px; border-left: 2px solid var(--border); }
+.bc-calset-sub { font-size: 11px; color: var(--fg-muted); }
+.bc-calset-remrow { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+.bc-calset-remrow .bc-rem-custom { flex-wrap: wrap; }
+.bc-calset-remrow .bc-num { width: 56px; }
 
 /* --- time-relative event styling (append-only section) ---------------------
    Past events dim on every view; currently running events carry a warm gold

@@ -72,6 +72,15 @@ export function fmtReminder(entry) {
   return '';
 }
 
+// One line for a pair of default lists: "10 minutes before; all-day: Day
+// before at 18:00", or "none" when both are empty.
+export function summarizeDefaults(timed, allDay) {
+  const t = (timed || []).map(fmtReminder).filter(Boolean).join(', ');
+  const a = (allDay || []).map(fmtReminder).filter(Boolean).join(', ');
+  if (!t && !a) return 'none';
+  return (t || 'none') + '; all-day: ' + (a || 'none');
+}
+
 // {daysBefore, time} -> minutes before local midnight of the event date.
 // Day before at 18:00 = 360 minutes before midnight. Same-day times land
 // after midnight and clamp to 0 (event overrides only carry >= 0 offsets).

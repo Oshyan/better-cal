@@ -171,8 +171,9 @@ final class PhotonPlaces implements PlaceProvider
         $parts = [];
         $street = trim((string) ($props['street'] ?? ''));
         $houseNumber = trim((string) ($props['housenumber'] ?? ''));
-        if ($street !== '') {
-            $parts[] = $houseNumber !== '' ? $houseNumber . ' ' . $street : $street;
+        $line = $houseNumber !== '' ? $houseNumber . ' ' . $street : $street;
+        if ($street !== '' && $line !== trim((string) ($props['name'] ?? ''))) {
+            $parts[] = $line;
         }
         foreach (['city', 'state', 'country'] as $key) {
             $value = trim((string) ($props[$key] ?? ''));
@@ -216,7 +217,11 @@ final class PhotonPlaces implements PlaceProvider
             $name = trim((string) ($props['name'] ?? ''));
             $address = self::composeAddress($props);
             if ($name === '') {
-                $name = $address !== '' ? explode(', ', $address)[0] : '';
+                // A house has no name: it's named by its street line, which
+                // then leaves the address ("250 Elm Street", "Example City").
+                $lines = $address !== '' ? explode(', ', $address) : [''];
+                $name = array_shift($lines);
+                $address = implode(', ', $lines);
             }
             if ($name === '') {
                 continue;

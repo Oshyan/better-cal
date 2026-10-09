@@ -141,12 +141,13 @@ final class PlaceSearch
         $distance = $biasLat !== null && $biasLng !== null
             ? round(self::distanceKm($biasLat, $biasLng, $lat, $lng), 1)
             : null;
-        $local = $address;
+        // Never the name twice ("250 Elm Street, 250 Elm Street, ...").
+        $local = str_starts_with($address . ', ', $name . ', ') ? (string) substr($address, strlen($name) + 2) : $address;
         if ($country !== null && $country !== '') {
-            if ($address === $country) {
+            if ($local === $country) {
                 $local = '';
-            } elseif (str_ends_with($address, ', ' . $country)) {
-                $local = substr($address, 0, -strlen(', ' . $country));
+            } elseif (str_ends_with($local, ', ' . $country)) {
+                $local = substr($local, 0, -strlen(', ' . $country));
             }
         }
         return [

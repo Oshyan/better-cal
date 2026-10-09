@@ -2276,6 +2276,12 @@ checkEq('a pick fills the place and its address, without the country (the client
      \BetterCal\Domain\PlaceSearch::row('Example Theatre', '12 Grand Avenue, Sampleville', 45.5, -122.6, null, null, null, null, null, 'photon', 'Exampleland')['fill'],
      \BetterCal\Domain\PlaceSearch::row('Exampleland', 'Exampleland', 45.5, -122.6, null, 'country', null, null, null, 'photon', 'Exampleland')['fill'],
      \BetterCal\Domain\PlaceSearch::row('Sampleville', 'Example State, Exampleland', 45.5, -122.6, null, null, null, null)['fill']]);
+checkEq('a house named by its street line is not named twice, in Photon\'s address or the fill',
+    ['250 Elm Street', 'Sampleville, Example State, Exampleland', '250 Elm Street, Sampleville, Example State', '250 Elm Street, Sampleville'],
+    [($h = \BetterCal\Domain\PhotonPlaces::mapFeatures(['features' => [['geometry' => ['coordinates' => [-122.6, 45.5]],
+        'properties' => ['housenumber' => '250', 'street' => 'Elm Street', 'city' => 'Sampleville', 'state' => 'Example State', 'country' => 'Exampleland']]]], null, null)[0])['name'],
+     $h['address'], $h['fill'],
+     \BetterCal\Domain\PlaceSearch::row('250 Elm Street', '250 Elm Street, Sampleville, Exampleland', 45.5, -122.6, null, null, null, null, null, null, 'Exampleland')['fill']]);
 checkEq('LocationIQ: a house named by its number alone is named by its number and street', '250 Elm Street',
     $LIQ::mapResults([$liqResult('place', 'house', 45.52, -122.68, ['name' => '250', 'house_number' => '250', 'road' => 'Elm Street'], '250')], null, null)[0]['name'] ?? null);
 checkEq('LocationIQ: only whole typed words jump ahead ("grand la" is still being typed)', [['Grand Lake Park'], []],

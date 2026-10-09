@@ -4,6 +4,16 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.49 (2026-10-09)
+
+- **Bare house numbers, fast, with MapTiler.** MapTiler's geocoding is now a place search option, and it's the one service besides Photon that finds addresses from a bare house number or a number with a letter or two of the street, in about a third of a second instead of one to three. Its terms allow keeping the places you pick.
+- **More than one service, in order.** The place search setting takes a list, tried in turn, with Photon always last: `locationiq,maptiler` lets LocationIQ answer places, venues and cities and MapTiler the addresses LocationIQ can't. In testing that pair got every kind of search right at about a tenth of a second. [Geocoding and place search](docs/geocoding.md) has the comparison and the setup.
+- **Events you didn't place by hand land faster and in the right country.** Imported, feed and typed locations are now placed by the same services you chose for search, before Photon. That's five to fifteen times faster with LocationIQ, and it fixes places Photon put near home instead of abroad (a city's name matching a local street, or a small American town sharing a European capital's name).
+- **A town comes first when you're typing its name**, ahead of a pond or a street that happens to share it.
+- **Venues whose names start with a number** (a convenience chain, a 24-hour gym) are found by every service.
+
+Operators: no migration. `BETTERCAL_PLACE_SEARCH` now takes a comma list from `locationiq`, `maptiler` and `stadia` (Photon always last); new: `BETTERCAL_PLACE_LOOKUP` (the same kind of list for placing events, empty meaning the search list) and `BETTERCAL_MAPTILER_GEOCODING_KEY` (a key the server may use: one locked to the site's address is refused). `GET /config`'s `placeSearch` lists services as comma lists, adds `notes` and `lookup`.
+
 ## 0.9.48 (2026-10-09)
 
 - **A picked house address no longer repeats its street.** In 0.9.47, picking an address that Photon found filled the location as "250 Elm Street, 250 Elm Street, Sampleville". The street is now said once, and the list's second line no longer repeats it either.

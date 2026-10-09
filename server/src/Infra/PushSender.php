@@ -181,7 +181,12 @@ final class PushSender
         }
     }
 
-    private function webPush(): object
+    /**
+     * The library's sender, built on first use. Public so a test with the
+     * library installed can prove it still constructs: an error here is
+     * swallowed by send() as a plain failed push.
+     */
+    public function webPush(): object
     {
         if ($this->webPush !== null) {
             return $this->webPush;
@@ -197,20 +202,25 @@ final class PushSender
         if ($subject === '') {
             $subject = (string) ($this->cfg['base_url'] ?? 'mailto:admin@localhost');
         }
+        // web-push 11 takes a PSR-18 client instead of Guzzle options, so the
+        // client is built here, with the timeouts and redirects off.
         // Redirects off: a push service answers 201, never 3xx, and following
         // one would let an allowed host (or anything impersonating it) steer
         // the request to a destination endpointProblem() never saw, including
-        // a downgrade to plain http.
+        // a downgrade to plain http. (Guzzle's PSR-18 sendRequest() turns
+        // redirects off as well.)
+        $client = new \GuzzleHttp\Client([
+            'timeout' => self::TOTAL_TIMEOUT,
+            'connect_timeout' => self::CONNECT_TIMEOUT,
+            'allow_redirects' => false,
+        ]);
         $this->webPush = new \Minishlink\WebPush\WebPush([
             'VAPID' => [
                 'subject' => $subject,
                 'publicKey' => (string) $vapid['public'],
                 'privateKey' => (string) $vapid['private'],
             ],
-        ], [], self::TOTAL_TIMEOUT, [
-            'allow_redirects' => false,
-            'connect_timeout' => self::CONNECT_TIMEOUT,
-        ]);
+        ], [], $client);
         return $this->webPush;
     }
 }

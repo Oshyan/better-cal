@@ -4704,6 +4704,20 @@ checkEq('push defaults still allowed alongside extras', null, BetterCal\Infra\Pu
     // ERROR (without vendor/ the library path would also end in ERROR).
     $pushLog = (string) tempnam(sys_get_temp_dir(), 'bcpush');
     $prevLog = ini_set('error_log', $pushLog);
+    // With the library installed (CI's fresh-install job, a real server),
+    // the sender must still build: a constructor change in a web-push major
+    // failed every push quietly, since send() reports any error as a failed
+    // push (#123). Real keys, no network.
+    if (class_exists(\Minishlink\WebPush\WebPush::class) && class_exists(\GuzzleHttp\Client::class)) {
+        $testKeys = \Minishlink\WebPush\VAPID::createVapidKeys();
+        $built = (new BetterCal\Infra\PushSender([
+            'vapid' => ['public' => $testKeys['publicKey'], 'private' => $testKeys['privateKey'], 'subject' => 'mailto:owner@example.test'],
+            'push' => ['extra_hosts' => []],
+        ]))->webPush();
+        check('push: the web-push sender builds with the installed library', $built instanceof \Minishlink\WebPush\WebPush);
+    } else {
+        check('push: the web-push sender builds with the installed library', true, 'library not installed here; CI fresh-install covers it');
+    }
     $outcome = (new BetterCal\Infra\PushSender(['vapid' => ['public' => 'x', 'private' => 'y'], 'push' => ['extra_hosts' => []]]))
         ->send(['endpoint' => 'https://127.0.0.1/x', 'p256dh' => 'a', 'auth' => 'b'], ['title' => 't']);
     ini_set('error_log', $prevLog === false ? '' : $prevLog);

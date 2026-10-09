@@ -16,7 +16,6 @@ final class Calendars
     public function __construct(
         private readonly Db $db,
         private readonly Undo $undo,
-        private readonly Labels $labels,
         private readonly ?string $sessionSecret = null,
     ) {
     }
@@ -38,15 +37,11 @@ final class Calendars
 
         $calIds = array_map(static fn($c) => (int) $c['id'], $calendars);
         $folderIdsByCal = [];
-        $tagNamesByCal = [];
         $feedFactsByCal = [];
         if ($calIds !== []) {
             [$in, $params] = Db::in($calIds);
             foreach ($this->db->all("SELECT calendar_id, folder_id FROM calendar_folders WHERE calendar_id IN $in", $params) as $row) {
                 $folderIdsByCal[(int) $row['calendar_id']][] = (int) $row['folder_id'];
-            }
-            foreach ($this->db->all("SELECT ct.calendar_id, t.name FROM calendar_tags ct JOIN tags t ON t.id = ct.tag_id WHERE ct.calendar_id IN $in ORDER BY t.name", $params) as $row) {
-                $tagNamesByCal[(int) $row['calendar_id']][] = (string) $row['name'];
             }
             foreach ($this->db->all(self::feedFactsSql($in), $params) as $row) {
                 $feedFactsByCal[(int) $row['id']] = self::feedFacts($row);
@@ -58,7 +53,6 @@ final class Calendars
                 fn(array $c) => $this->serialize(
                     $c,
                     $folderIdsByCal[(int) $c['id']] ?? [],
-                    $tagNamesByCal[(int) $c['id']] ?? [],
                     $feedFactsByCal[(int) $c['id']] ?? self::NO_FEED_FACTS,
                     $viewerTokenId,
                 ),
@@ -184,16 +178,12 @@ final class Calendars
             if (!empty($in['folderIds']) && is_array($in['folderIds'])) {
                 $this->setFolders($userId, $id, $in['folderIds']);
             }
-            if (!empty($in['tagNames']) && is_array($in['tagNames'])) {
-                $this->setTags($userId, $id, $in['tagNames']);
-            }
             return $id;
         });
         $created = $this->get($userId, $id);
         $this->undo->record($userId, 'calendar', $id, 'create', null, [
             'calendars' => [$created],
             'calendar_folders' => $this->db->all('SELECT * FROM calendar_folders WHERE calendar_id = ?', [$id]),
-            'calendar_tags' => $this->db->all('SELECT * FROM calendar_tags WHERE calendar_id = ?', [$id]),
         ]);
         return $this->serializeById($userId, $id);
     }
@@ -218,7 +208,6 @@ final class Calendars
         $before = $this->get($userId, $id);
         $beforeLinks = [
             'calendar_folders' => $this->db->all('SELECT * FROM calendar_folders WHERE calendar_id = ?', [$id]),
-            'calendar_tags' => $this->db->all('SELECT * FROM calendar_tags WHERE calendar_id = ?', [$id]),
         ];
 
         $fields = [];
@@ -274,16 +263,12 @@ final class Calendars
             if (array_key_exists('folderIds', $in) && is_array($in['folderIds'])) {
                 $this->setFolders($userId, $id, $in['folderIds']);
             }
-            if (array_key_exists('tagNames', $in) && is_array($in['tagNames'])) {
-                $this->setTags($userId, $id, $in['tagNames']);
-            }
         });
 
         $after = $this->get($userId, $id);
         $this->undo->record($userId, 'calendar', $id, 'update', ['calendars' => [$before]] + $beforeLinks, [
             'calendars' => [$after],
             'calendar_folders' => $this->db->all('SELECT * FROM calendar_folders WHERE calendar_id = ?', [$id]),
-            'calendar_tags' => $this->db->all('SELECT * FROM calendar_tags WHERE calendar_id = ?', [$id]),
         ]);
         return $this->serializeById($userId, $id, $viewerTokenId);
     }
@@ -374,7 +359,6 @@ final class Calendars
             $before = [
                 'calendars' => [$calendar],
                 'calendar_folders' => $this->db->all('SELECT * FROM calendar_folders WHERE calendar_id = ?', [$id]),
-                'calendar_tags' => $this->db->all('SELECT * FROM calendar_tags WHERE calendar_id = ?', [$id]),
                 'events' => $events,
             ];
             $eventIds = array_map(static fn($e) => (int) $e['id'], $events);
@@ -396,16 +380,11 @@ final class Calendars
             static fn($r) => (int) $r['folder_id'],
             $this->db->all('SELECT folder_id FROM calendar_folders WHERE calendar_id = ?', [$id])
         );
-        $tagNames = array_map(
-            static fn($r) => (string) $r['name'],
-            $this->db->all('SELECT t.name FROM calendar_tags ct JOIN tags t ON t.id = ct.tag_id WHERE ct.calendar_id = ? ORDER BY t.name', [$id])
-        );
         [$in, $params] = Db::in([$id]);
         $factsRow = $this->db->one(self::feedFactsSql($in), $params);
         return $this->serialize(
             $row,
             $folderIds,
-            $tagNames,
             $factsRow !== null ? self::feedFacts($factsRow) : self::NO_FEED_FACTS,
             $viewerTokenId,
         );
@@ -486,7 +465,7 @@ final class Calendars
     }
 
     /** @param array{lastRaw:int,everRaw:int,hasUpcoming:bool} $feed */
-    private function serialize(array $c, array $folderIds, array $tagNames, array $feed, ?int $viewerTokenId = null): array
+    private function serialize(array $c, array $folderIds, array $feed, ?int $viewerTokenId = null): array
     {
         $subscribed = $c['kind'] === 'subscribed';
         $content = self::contentState($c, $feed['lastRaw'], $feed['everRaw'], $feed['hasUpcoming'], Time::nowUtc());
@@ -523,7 +502,6 @@ final class Calendars
             'pollIntervalMinutes' => (int) $c['poll_interval_minutes'],
             'staleAfterDays' => (int) $c['stale_after_days'],
             'folderIds' => $folderIds,
-            'tagNames' => $tagNames,
             'groupSimilar' => self::groupSimilarFor(
                 $c['settings_json'] !== null ? (string) $c['settings_json'] : null,
                 (string) $c['kind']
@@ -550,14 +528,6 @@ final class Calendars
             if ($owned !== null) {
                 $this->db->run('INSERT IGNORE INTO calendar_folders (calendar_id, folder_id) VALUES (?, ?)', [$calendarId, $folderId]);
             }
-        }
-    }
-
-    private function setTags(int $userId, int $calendarId, array $tagNames): void
-    {
-        $this->db->run('DELETE FROM calendar_tags WHERE calendar_id = ?', [$calendarId]);
-        foreach ($this->labels->tagIds($userId, $tagNames) as $tagId) {
-            $this->db->run('INSERT IGNORE INTO calendar_tags (calendar_id, tag_id) VALUES (?, ?)', [$calendarId, $tagId]);
         }
     }
 

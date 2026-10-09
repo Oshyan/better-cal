@@ -67,7 +67,7 @@ function bc_handle_api(Request $request, array $cfg): void
         $filters = new Domain\Filters($db, $undo, $jobQueue);
         $trips = new Domain\Trips($db, $undo);
         $events = new Domain\Events($db, $recurrence, $undo, $labels, $filters, $trips);
-        $calendars = new Domain\Calendars($db, $undo, $labels, (string) $cfg['session_secret']);
+        $calendars = new Domain\Calendars($db, $undo, (string) $cfg['session_secret']);
         $folders = new Domain\Folders($db, $undo);
         $feeds = new Domain\Feeds($db, $jobQueue, $cfg);
         $googleAuth = new Domain\GoogleAuth($db, $cfg);

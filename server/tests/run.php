@@ -6214,7 +6214,7 @@ require __DIR__ . '/plugins.php';
     }
     $deleteCode = null;
     try {
-        (new BetterCal\Domain\Calendars($mdb, new BetterCal\Domain\Undo($mdb), new BetterCal\Domain\Labels($mdb)))->delete(1, 1);
+        (new BetterCal\Domain\Calendars($mdb, new BetterCal\Domain\Undo($mdb)))->delete(1, 1);
     } catch (HttpError $e) {
         $deleteCode = $e->errorCode;
     }
@@ -6936,7 +6936,6 @@ require __DIR__ . '/plugins.php';
     $cdb->run('CREATE TABLE folders (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, position INTEGER)');
     $cdb->run('CREATE TABLE tags (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT)');
     $cdb->run('CREATE TABLE calendar_folders (calendar_id INTEGER, folder_id INTEGER)');
-    $cdb->run('CREATE TABLE calendar_tags (calendar_id INTEGER, tag_id INTEGER)');
     $cdb->run('CREATE TABLE feed_stats (calendar_id INTEGER, poll_date TEXT, raw_count INTEGER)');
     $cdb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, calendar_id INTEGER, end_utc TEXT, deleted_at TEXT, rrule TEXT)');
     $cdb->run('CREATE TABLE api_tokens (id INTEGER PRIMARY KEY, user_id INTEGER, expires_at TEXT)');
@@ -6957,7 +6956,6 @@ require __DIR__ . '/plugins.php';
     $calendarDomain = new BetterCal\Domain\Calendars(
         $cdb,
         new BetterCal\Domain\Undo($cdb),
-        new BetterCal\Domain\Labels($cdb),
         $feedStorageSecret,
     );
     $sessionCalendars = $calendarDomain->listAll(1)['calendars'];

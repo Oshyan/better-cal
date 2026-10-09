@@ -17,7 +17,7 @@ final class Undo
 {
     /** Restore order respects FK dependencies; deletions run in reverse. */
     private const TABLE_ORDER = [
-        'folders', 'tags', 'people', 'calendars', 'calendar_folders', 'calendar_tags',
+        'folders', 'tags', 'people', 'calendars', 'calendar_folders',
         'events', 'event_links', 'event_tags', 'event_people', 'out_feeds', 'filters', 'saved_views',
         'availability',
     ];
@@ -27,7 +27,6 @@ final class Undo
         'events' => ['id'], 'out_feeds' => ['id'], 'filters' => ['id'], 'saved_views' => ['id'],
         'event_links' => ['id'], 'availability' => ['id'],
         'calendar_folders' => ['calendar_id', 'folder_id'],
-        'calendar_tags' => ['calendar_id', 'tag_id'],
         'event_tags' => ['event_id', 'tag_id'],
         'event_people' => ['event_id', 'person_id'],
     ];

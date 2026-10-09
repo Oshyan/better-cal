@@ -44,7 +44,7 @@ try {
     $filters = new Domain\Filters($db, $undo, new JobQueue($db));
     $trips = new Domain\Trips($db, $undo);
     $events = new Domain\Events($db, new Domain\Recurrence(), $undo, $labels, $filters, $trips);
-    $calendars = new Domain\Calendars($db, $undo, $labels);
+    $calendars = new Domain\Calendars($db, $undo);
 } catch (\Throwable $e) {
     $fail('bootstrap', $e);
 }

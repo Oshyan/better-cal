@@ -43,7 +43,7 @@ if ((int) $db->scalar('SELECT COUNT(*) FROM events WHERE user_id = ?', [$userId]
 ActivityContext::set('demo-seed');
 $undo = new Undo($db);
 $labels = new Labels($db);
-$calendars = new Calendars($db, $undo, $labels);
+$calendars = new Calendars($db, $undo);
 $events = new Events($db, new Recurrence(), $undo, $labels, new Filters($db, $undo, new JobQueue($db)), new Trips($db, $undo));
 $people = new People($db);
 

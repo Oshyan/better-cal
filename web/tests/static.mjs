@@ -94,6 +94,11 @@ for (const file of files) {
   const check = (ok, msg) => { if (ok) passed++; else fail(msg); };
   check(/services\.includes\(r\.subject\) && r\.consecutiveFailures >= 3[\s\S]*down\.length === services\.length/.test(system),
     'system health must announce place search failures only after a three-failure streak, and only when every service in use is down');
+  // The client keeps what Settings and the boot notice read from /config:
+  // it once kept only the tile key, so the place search row never showed.
+  const api = readFileSync(join(root, 'app', 'api.js'), 'utf8');
+  check(/placeSearch:\s*\(data && data\.placeSearch\)/.test(api),
+    'loadConfig must keep placeSearch from /config (Settings and the place search outage notice read it)');
   check(system.includes('See Settings, System.'),
     'geocoder failure notice must direct the owner to the health details');
 }

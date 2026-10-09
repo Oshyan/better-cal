@@ -72,7 +72,7 @@ export const state = {
     panelTucksSidebar: true,
   },
   // Public-safe server config (GET /config), fetched once at boot.
-  config: { maptilerKey: null },
+  config: { maptilerKey: null, placeSearch: null },
   // Folder visibility modes: {folderId: {mode: 'all'|'none'|'custom', custom: [calId]}}.
   // Mirrored server-side in settings under the folderVisibility key.
   folderVisibility: {},

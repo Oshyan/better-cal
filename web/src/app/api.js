@@ -147,12 +147,17 @@ export async function logout(pushEndpointHash = null) {
 
 // --- server config ---------------------------------------------------------
 
-// Public-safe config (MapTiler tile key, map style), fetched once at boot.
-// Failure just means the mini-map keeps its OSM tiles.
+// Public-safe config, fetched once at boot: the MapTiler tile key and which
+// place search services are in use (Settings shows them; the boot notice
+// reads which ones must all be down before it speaks). Failure just means
+// the mini-map keeps its OSM tiles and Settings leaves the row out.
 export async function loadConfig() {
   try {
     const data = await api('/config');
-    set({ config: { maptilerKey: (data && data.maptilerKey) || null } });
+    set({ config: {
+      maptilerKey: (data && data.maptilerKey) || null,
+      placeSearch: (data && data.placeSearch) || null,
+    } });
   } catch (e) { /* non-critical */ }
 }
 

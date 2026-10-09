@@ -24,7 +24,7 @@ final class ChangeLog
     {
         try {
             $db->tx(function () use ($db, $calendarId, $uid, $op): void {
-                $token = $db->scalar('SELECT synctoken FROM calendars WHERE id = ? FOR UPDATE', [$calendarId]);
+                $token = $db->scalar('SELECT synctoken FROM calendars WHERE id = ?' . $db->forUpdate(), [$calendarId]);
                 if ($token === null) {
                     return; // calendar gone (cascade delete); nothing to journal
                 }

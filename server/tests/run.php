@@ -7,6 +7,14 @@ declare(strict_types=1);
 
 require dirname(__DIR__) . '/src/bootstrap.php';
 
+// The run's error log goes to a file, printed at the end, so a database
+// error logged anywhere fails the run (#119): code under test that catches
+// a PDOException and logs it would otherwise pass while a setup is missing a
+// table, and that path would go untested. Tests that break a table on
+// purpose capture their own log (captureLog).
+$GLOBALS['__runLog'] = (string) tempnam(sys_get_temp_dir(), 'bc-test-log');
+ini_set('error_log', $GLOBALS['__runLog']);
+
 // Credential-storage migrations need the same application secret as runtime.
 // CI intentionally has no .env, so provide an invented test-only value there.
 if (($testSessionSecret = getenv('BETTERCAL_SESSION_SECRET')) === false || $testSessionSecret === '') {
@@ -55,6 +63,43 @@ function check(string $name, bool $cond, string $detail = ''): void
     }
     $GLOBALS['__fail']++;
     echo "FAIL: $name" . ($detail !== '' ? " — $detail" : '') . "\n";
+}
+
+/**
+ * Run $fn with PHP's error log captured instead of printed; returns its
+ * result and what it logged. For tests that break a dependency on purpose
+ * (a missing table) and check the code fails safely: the log line is part
+ * of what they check, and the run's output stays free of database errors
+ * so a real one stands out (CI fails on any).
+ *
+ * @return array{0:mixed,1:string}
+ */
+function captureLog(callable $fn): array
+{
+    $file = tempnam(sys_get_temp_dir(), 'bc-log');
+    $previous = ini_set('error_log', $file);
+    try {
+        $result = $fn();
+    } finally {
+        ini_set('error_log', $previous === false ? '' : $previous);
+    }
+    $logged = (string) file_get_contents($file);
+    @unlink($file);
+    return [$result, $logged];
+}
+
+/**
+ * The CalDAV change journal for a test database that has calendars: every
+ * write to an event journals itself (Dav\ChangeLog), so a setup without it
+ * logs a database error per write and the journaling goes untested. Same
+ * shape as migration 003. (A setup whose calendars lack `synctoken` skips
+ * the journal quietly, so it isn't added here: several setups insert
+ * calendar rows by position.)
+ */
+function davJournal(\BetterCal\Infra\Db|\PDO $db): void
+{
+    $pdo = $db instanceof \PDO ? $db : $db->pdo();
+    $pdo->exec('CREATE TABLE IF NOT EXISTS dav_changes (id INTEGER PRIMARY KEY, calendar_id INTEGER NOT NULL, uri TEXT NOT NULL, operation INTEGER NOT NULL, synctoken INTEGER NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP)');
 }
 
 function checkEq(string $name, mixed $expected, mixed $actual): void
@@ -1222,6 +1267,7 @@ check('imip live event: equal sequence still allowed', $mayWhen('confirmed', 2)[
     $adb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, settings_json TEXT)');
     $adb->run("INSERT INTO users VALUES (1, '{\"tz\":\"UTC\"}')");
     $adb->run("CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, color TEXT, kind TEXT DEFAULT 'local', provider TEXT DEFAULT 'ics', plugin_id TEXT, visible INTEGER DEFAULT 1, position INTEGER DEFAULT 0, subscription_authority TEXT, settings_json TEXT, role TEXT DEFAULT 'mine', created_at TEXT DEFAULT CURRENT_TIMESTAMP, synctoken INTEGER DEFAULT 1)");
+    davJournal($adb);
     $adb->run("CREATE TABLE events (
         id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, description TEXT, location TEXT,
         location_lat REAL, location_lng REAL, geocoded_at TEXT, url TEXT, start_utc TEXT, end_utc TEXT, all_day INTEGER,
@@ -1757,6 +1803,7 @@ check('rsvp reply keeps sequence', str_contains($reply, 'SEQUENCE:2'));
     $ddb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
     $ddb->run("CREATE TABLE users (id INTEGER PRIMARY KEY)");
     $ddb->run("CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, kind TEXT, role TEXT, provider TEXT)");
+    davJournal($ddb);
     $ddb->run("CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, start_utc TEXT, end_utc TEXT, all_day INTEGER DEFAULT 0, tzid TEXT DEFAULT 'UTC', rrule TEXT, recurrence_instance_utc TEXT, recurrence_parent_id INTEGER, status TEXT DEFAULT 'confirmed', is_container INTEGER DEFAULT 0, deleted_at TEXT, invite_json TEXT, reminders_json TEXT, source TEXT DEFAULT 'local', created_via TEXT DEFAULT 'web')");
     $ddb->run("CREATE TABLE event_duplicates (id INTEGER PRIMARY KEY, user_id INTEGER, event_a INTEGER, event_b INTEGER, status TEXT, basis TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, decided_at TEXT)");
     $ddb->run("CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)");
@@ -1863,6 +1910,7 @@ check('rsvp reply keeps sequence', str_contains($reply, 'SEQUENCE:2'));
     $budgetDb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
     $budgetDb->run('CREATE TABLE users (id INTEGER PRIMARY KEY)');
     $budgetDb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, kind TEXT, role TEXT, provider TEXT)');
+    davJournal($budgetDb);
     $budgetDb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, start_utc TEXT, all_day INTEGER, tzid TEXT, rrule TEXT, recurrence_instance_utc TEXT, status TEXT, is_container INTEGER, deleted_at TEXT, source TEXT, created_via TEXT)');
     $budgetDb->run('CREATE TABLE event_duplicates (id INTEGER PRIMARY KEY, user_id INTEGER, event_a INTEGER, event_b INTEGER, status TEXT, basis TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, decided_at TEXT, UNIQUE(event_a, event_b))');
     $budgetDb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)');
@@ -1957,6 +2005,7 @@ check('rsvp reply keeps sequence', str_contains($reply, 'SEQUENCE:2'));
     $rotateDb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
     $rotateDb->run('CREATE TABLE users (id INTEGER PRIMARY KEY)');
     $rotateDb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, role TEXT, provider TEXT)');
+    davJournal($rotateDb);
     $rotateDb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, start_utc TEXT, all_day INTEGER, tzid TEXT, rrule TEXT, recurrence_instance_utc TEXT, status TEXT, is_container INTEGER, deleted_at TEXT, source TEXT, created_via TEXT)');
     $rotateDb->run('CREATE TABLE event_duplicates (id INTEGER PRIMARY KEY, user_id INTEGER, event_a INTEGER, event_b INTEGER, status TEXT, basis TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, decided_at TEXT, UNIQUE(event_a, event_b))');
     $rotateDb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)');
@@ -1985,6 +2034,7 @@ check('rsvp reply keeps sequence', str_contains($reply, 'SEQUENCE:2'));
     $uidDb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
     $uidDb->run('CREATE TABLE users (id INTEGER PRIMARY KEY)');
     $uidDb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, role TEXT, provider TEXT)');
+    davJournal($uidDb);
     $uidDb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, start_utc TEXT, all_day INTEGER, tzid TEXT, rrule TEXT, recurrence_instance_utc TEXT, status TEXT, is_container INTEGER, deleted_at TEXT, source TEXT, created_via TEXT)');
     $uidDb->run('CREATE TABLE event_duplicates (id INTEGER PRIMARY KEY, user_id INTEGER, event_a INTEGER, event_b INTEGER, status TEXT, basis TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, decided_at TEXT, UNIQUE(event_a, event_b))');
     $uidDb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)');
@@ -2721,6 +2771,8 @@ check('export: override of an all-day series keeps a date RECURRENCE-ID', str_co
 // Migration 043 removes unsafe legacy scalar fields without deleting events.
 {
     $m43db = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $m43db->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, synctoken INTEGER DEFAULT 1)'); // writes journal themselves (Dav\ChangeLog)
+    davJournal($m43db);
     $m43db->run('CREATE TABLE events (id INTEGER PRIMARY KEY, calendar_id INTEGER, uid TEXT, url TEXT, rrule TEXT, location_lat REAL, location_lng REAL, updated_at TEXT)');
     $m43db->run("INSERT INTO events VALUES (1, 1, 'unsafe', 'javascript:alert(1)', 'FREQ=DAILY;BROKEN', 91, 1.7e308, NULL)");
     $m43db->run("INSERT INTO events VALUES (2, 1, 'safe', 'https://example.test/e/2', 'FREQ=WEEKLY;BYDAY=MO', 45.5, -122.6, NULL)");
@@ -3071,6 +3123,7 @@ checkEq('all-day weekly in UTC unchanged', ['2026-08-31 00:00:00', '2026-09-02 0
     $rmdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
     $rmdb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, settings_json TEXT)');
     $rmdb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, provider TEXT, settings_json TEXT, role TEXT)');
+    davJournal($rmdb);
     $rmdb->run("CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, start_utc TEXT, end_utc TEXT, all_day INTEGER, tzid TEXT, rrule TEXT, exdates_json TEXT, recurrence_instance_utc TEXT, recurrence_parent_id INTEGER, status TEXT DEFAULT 'confirmed', source TEXT DEFAULT 'local', attendance TEXT DEFAULT 'none', deleted_at TEXT, reminders_json TEXT, location TEXT, location_lat REAL, location_lng REAL, url TEXT, description TEXT)");
     $rmdb->run('CREATE TABLE event_duplicates (id INTEGER PRIMARY KEY, event_a INTEGER, event_b INTEGER, status TEXT)');
     $rmdb->run('INSERT INTO users VALUES (1, ?, ?)', ['owner@example.com', json_encode(['tz' => 'America/Los_Angeles', 'reminderAllDay' => [['daysBefore' => 0, 'time' => '18:00']]])]);
@@ -3183,6 +3236,7 @@ checkEq('all-day weekly in UTC unchanged', ['2026-08-31 00:00:00', '2026-09-02 0
 
     $psdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
     $psdb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, plugin_id TEXT)');
+    davJournal($psdb);
     $psdb->run('CREATE TABLE events (
         id INTEGER PRIMARY KEY, calendar_id INTEGER, uid TEXT, title TEXT, start_utc TEXT, end_utc TEXT,
         all_day INTEGER, description TEXT, location TEXT, deleted_at TEXT
@@ -3208,6 +3262,8 @@ checkEq('all-day weekly in UTC unchanged', ['2026-08-31 00:00:00', '2026-09-02 0
 // Undo right after a creation undoes the creation, not the change before it.
 {
     $udb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $udb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, synctoken INTEGER DEFAULT 1)'); // writes journal themselves (Dav\ChangeLog)
+    davJournal($udb);
     $udb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT)');
     $udb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT, undone INTEGER DEFAULT 0)');
     $undo = new BetterCal\Domain\Undo($udb);
@@ -3408,6 +3464,8 @@ if (class_exists(\Sabre\VObject\Reader::class)) { // needs sabre/vobject (the in
 // dates, with their skipped and edited days; every occurrence keeps its date.
 if (class_exists(\Sabre\VObject\Reader::class)) { // needs sabre/vobject (the install job runs it)
     $mgdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $mgdb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, synctoken INTEGER DEFAULT 1)'); // writes journal themselves (Dav\ChangeLog)
+    davJournal($mgdb);
     $mgdb->run("CREATE TABLE events (id INTEGER PRIMARY KEY, calendar_id INTEGER, uid TEXT, title TEXT, start_utc TEXT, end_utc TEXT, all_day INTEGER, tzid TEXT, rrule TEXT, exdates_json TEXT, recurrence_parent_id INTEGER, recurrence_instance_utc TEXT, updated_at TEXT)");
     $mgdb->run("INSERT INTO events VALUES (1, 1, 's', 'Series', '2026-10-05 07:00:00', '2026-10-06 07:00:00', 1, 'America/Los_Angeles', 'FREQ=WEEKLY;UNTIL=20261124T075959Z', '[\"2026-10-12 07:00:00\"]', NULL, NULL, NULL)");
     $mgdb->run("INSERT INTO events VALUES (2, 1, 's', 'Moved', '2026-10-20 07:00:00', '2026-10-21 07:00:00', 1, 'America/Los_Angeles', NULL, NULL, 1, '2026-10-19 07:00:00', NULL)");
@@ -3871,6 +3929,7 @@ checkEq('pd fail -> highlight', 'highlight', Filters::promptDisposition($promptR
     $qadb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
     $qadb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, settings_json TEXT)');
     $qadb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, position INTEGER, name TEXT)');
+    davJournal($qadb);
     $qadb->run('CREATE TABLE model_admissions (id INTEGER PRIMARY KEY, user_id INTEGER, operation TEXT, principal_kind TEXT, principal_key TEXT, admitted_at TEXT, lease_until TEXT, finished_at TEXT)');
     $qadb->run("INSERT INTO users (id, settings_json) VALUES (1, '{\"nlParseMode\":\"always\"}')");
     $qadb->run("INSERT INTO calendars (id, user_id, kind, position, name) VALUES (10, 1, 'local', 0, 'Home')");
@@ -3923,6 +3982,7 @@ checkEq('pd fail -> highlight', 'highlight', Filters::promptDisposition($promptR
     $pedb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
     $pedb->run('CREATE TABLE users (id INTEGER PRIMARY KEY)');
     $pedb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT)');
+    davJournal($pedb);
     $pedb->run('CREATE TABLE filters (id INTEGER PRIMARY KEY, user_id INTEGER, enabled INTEGER, type TEXT, config_json TEXT, scope TEXT, scope_id INTEGER)');
     $pedb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, title TEXT, description TEXT, location TEXT, start_utc TEXT, end_utc TEXT, tzid TEXT, source TEXT, deleted_at TEXT, rrule TEXT, created_at TEXT)');
     $pedb->run('CREATE TABLE filter_evals (id INTEGER PRIMARY KEY, filter_id INTEGER, event_id INTEGER, verdict TEXT, score REAL, evaluated_at TEXT)');
@@ -4580,6 +4640,7 @@ if (class_exists(\Sabre\CalDAV\Backend\AbstractBackend::class)) {
     $moveDavDb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
     $moveDavDb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, settings_json TEXT)');
     $moveDavDb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, name TEXT, color TEXT)');
+    davJournal($moveDavDb);
     $moveDavDb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, calendar_id INTEGER, uid TEXT, deleted_at TEXT, recurrence_parent_id INTEGER, recurrence_instance_utc TEXT)');
     $moveDavDb->run('CREATE TABLE calendar_moves (id INTEGER PRIMARY KEY, calendar_id INTEGER, status TEXT, cancelled_at TEXT)');
     $moveDavDb->run("INSERT INTO users VALUES (1, '{}')");
@@ -5309,7 +5370,7 @@ check('migration 034 is a PHP migration the runner can call', is_callable($clean
 {
     $mdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
     $mdb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, synctoken INTEGER DEFAULT 1)');
-    $mdb->run('CREATE TABLE dav_changes (id INTEGER PRIMARY KEY, calendar_id INTEGER, uid TEXT, op INTEGER, synctoken INTEGER)');
+    davJournal($mdb);
     $mdb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, calendar_id INTEGER, uid TEXT, description TEXT, updated_at TEXT)');
     $mdb->run('INSERT INTO calendars (id) VALUES (1)');
     $mdb->run("INSERT INTO events VALUES (1, 1, 'a', '<p onclick=\"x()\">hi<script>y()</script></p>', '2026-01-01 00:00:00'), (2, 1, 'b', 'a < b plain', '2026-01-01 00:00:00'), (3, 1, 'c', '<p>already clean</p>', '2026-01-01 00:00:00')");
@@ -6372,11 +6433,13 @@ require __DIR__ . '/plugins.php';
     checkEq('throttle: other buckets are separate', 0, $throttle->count('c', 60, $at(30)));
     $throttle->clear('b');
     checkEq('throttle: clear', 0, $throttle->count('b', 60, $at(30)));
-    checkEq('throttle: a missing table never blocks anyone', [0, 0], (static function () {
+    [$brokenCounts, $brokenLog] = captureLog(static function () {
         $broken = new BetterCal\Infra\Throttle(new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]));
         $broken->hit('x');
         return [$broken->count('x', 60), $broken->retryAfter('x', 1, 60)];
-    })());
+    });
+    checkEq('throttle: a missing table never blocks anyone', [0, 0], $brokenCounts);
+    check('throttle: and the failure is logged', str_contains($brokenLog, 'throttle hit failed'));
 
     $guard = new BetterCal\Domain\LoginGuard($throttle, [], 3, $tdb);
     $bad = '203.0.113.7';
@@ -6493,6 +6556,7 @@ require __DIR__ . '/plugins.php';
 {
     $migdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
     $migdb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, kind TEXT, provider TEXT, source_url TEXT)');
+    davJournal($migdb);
     $migdb->run("INSERT INTO calendars (id, kind, provider, source_url) VALUES
         (1, 'subscribed', 'ics', 'https://example.com/feed.ics'),
         (2, 'subscribed', 'google', NULL),
@@ -6518,6 +6582,7 @@ require __DIR__ . '/plugins.php';
         id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, provider TEXT,
         google_account_id INTEGER, google_calendar_id TEXT
     )');
+    davJournal($mdb);
     $mdb->run('CREATE TABLE calendar_moves (
         id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, calendar_id INTEGER,
         google_account_id INTEGER, google_calendar_id TEXT, create_new INTEGER DEFAULT 1,
@@ -6778,6 +6843,7 @@ require __DIR__ . '/plugins.php';
 {
     $tdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
     $tdb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, provider TEXT, synctoken INTEGER DEFAULT 1)');
+    davJournal($tdb);
     $tdb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, is_container INTEGER, updated_at TEXT, deleted_at TEXT)');
     $tdb->run('CREATE TABLE event_links (id INTEGER PRIMARY KEY AUTOINCREMENT, container_id INTEGER, event_id INTEGER, position INTEGER)');
     $tdb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT, undone INTEGER DEFAULT 0)');
@@ -6805,6 +6871,7 @@ require __DIR__ . '/plugins.php';
     $sdb->run('CREATE TABLE users (id INTEGER PRIMARY KEY)');
     $sdb->run('CREATE TABLE api_tokens (id INTEGER PRIMARY KEY, user_id INTEGER, expires_at TEXT)');
     $sdb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, provider TEXT, source_url TEXT, subscription_authority TEXT, created_by_token_id INTEGER)');
+    davJournal($sdb);
     $sdb->run('INSERT INTO users (id) VALUES (1), (2)');
     $sdb->run("INSERT INTO api_tokens (id, user_id, expires_at) VALUES (1, 1, NULL), (2, 1, '2000-01-01 00:00:00'), (3, 2, NULL)");
     $sdb->run("INSERT INTO calendars VALUES
@@ -6865,6 +6932,7 @@ require __DIR__ . '/plugins.php';
     $pdb->run('CREATE TABLE out_feeds (id INTEGER PRIMARY KEY, user_id INTEGER, token TEXT, token_sealed TEXT, created_by_token_id INTEGER)');
     $pdb->run('CREATE TABLE google_accounts (id INTEGER PRIMARY KEY, user_id INTEGER, email TEXT, refresh_token_enc TEXT, scopes TEXT, status TEXT DEFAULT "ok", reauth_required_at TEXT, last_error TEXT)');
     $pdb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, provider TEXT, source_url TEXT, subscription_authority TEXT, created_by_token_id INTEGER, google_account_id INTEGER, google_access_role TEXT, last_poll_status TEXT, last_poll_error TEXT)');
+    davJournal($pdb);
     $pdb->run('CREATE TABLE calendar_moves (id INTEGER PRIMARY KEY, user_id INTEGER, status TEXT, cancelled_at TEXT, finished_at TEXT, error TEXT)');
     $pdb->run("INSERT INTO push_subscriptions (user_id, endpoint) VALUES (1, 'https://fcm.googleapis.com/a'), (1, 'https://attacker.example/b'), (2, 'https://fcm.googleapis.com/c')");
     $resetSecret = str_repeat('r', 32);
@@ -7052,7 +7120,9 @@ require __DIR__ . '/plugins.php';
     check('devices: the newest are the ones kept', $devices->find($newest, 'owner@example.com', $later('P1D')) !== null && $devices->find($tok2, 'owner@example.com', $later('P1D')) === null);
     $ddb->run('DELETE FROM trusted_devices');
     $broken = new BetterCal\Domain\TrustedDevices(new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]));
-    checkEq('devices: before the migration runs, nothing vouches and nothing breaks', [null, null, 0], [$broken->find(str_repeat('a', 43), 'owner@example.com'), $broken->remember(1), $broken->forgetAll(1)]);
+    [$brokenDevices, $brokenDevicesLog] = captureLog(static fn() => [$broken->find(str_repeat('a', 43), 'owner@example.com'), $broken->remember(1), $broken->forgetAll(1)]);
+    checkEq('devices: before the migration runs, nothing vouches and nothing breaks', [null, null, 0], $brokenDevices);
+    check('devices: and the failure is logged', str_contains($brokenDevicesLog, 'could not remember this browser'));
 
     // The whole sign-in path, with the overall brake held on by a crowd.
     $savedAddr = $_SERVER['REMOTE_ADDR'] ?? null;
@@ -7329,6 +7399,7 @@ require __DIR__ . '/plugins.php';
         stale_after_days INTEGER, last_polled_at TEXT, last_poll_status TEXT, last_poll_error TEXT,
         content_changed_at TEXT, created_at TEXT, subscription_authority TEXT, created_by_token_id INTEGER
     )');
+    davJournal($cdb);
     $cdb->run('CREATE TABLE folders (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, position INTEGER)');
     $cdb->run('CREATE TABLE tags (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT)');
     $cdb->run('CREATE TABLE calendar_folders (calendar_id INTEGER, folder_id INTEGER)');
@@ -7666,6 +7737,7 @@ use BetterCal\Infra\Secrets;
 
     $migrationDb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
     $migrationDb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, source_url TEXT)');
+    davJournal($migrationDb);
     $migrationDb->run('CREATE TABLE out_feeds (id INTEGER PRIMARY KEY, token TEXT)');
     $migrationDb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, before_json TEXT, after_json TEXT)');
     $legacySource = 'https://feeds.example.test/sample.ics?token=invented';
@@ -7719,6 +7791,7 @@ use BetterCal\Infra\Secrets;
             google_calendar_id TEXT, google_access_role TEXT,
             google_sync_token TEXT, google_account_id INTEGER, settings_json TEXT
         )');
+        davJournal($pdo);
         $pdo->exec('CREATE TABLE mutations (id INTEGER PRIMARY KEY, before_json TEXT, after_json TEXT)');
         $pdo->exec('CREATE TABLE plugins (
             id TEXT PRIMARY KEY, enabled INTEGER, settings_json TEXT,
@@ -7866,6 +7939,7 @@ use BetterCal\Infra\Secrets;
     $gdb->run('CREATE TABLE google_accounts (id INTEGER PRIMARY KEY, user_id INTEGER, email TEXT, refresh_token_enc TEXT, scopes TEXT, status TEXT, reauth_required_at TEXT, last_error TEXT, created_at TEXT)');
     $gdb->run('CREATE TABLE sessions (token_hash TEXT PRIMARY KEY, user_id INTEGER, expires_at TEXT, authenticated_at TEXT)');
     $gdb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, google_account_id INTEGER, last_polled_at TEXT, last_poll_status TEXT, last_poll_error TEXT)');
+    davJournal($gdb);
     $gdb->run('CREATE TABLE calendar_moves (id INTEGER PRIMARY KEY, status TEXT, cancelled_at TEXT)');
     $gdb->run("INSERT INTO users (id, email) VALUES (7, 'owner@example.com')");
     $gdb->run('INSERT INTO google_accounts (id, user_id, email, refresh_token_enc, scopes, status, reauth_required_at, created_at) VALUES (1, 7, ?, ?, ?, ?, ?, ?)', [
@@ -7933,6 +8007,7 @@ use BetterCal\Infra\Secrets;
     // was added here, instead of making a second copy.
     $radb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
     $radb->run("CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, kind TEXT, provider TEXT, google_account_id INTEGER, google_calendar_id TEXT, google_access_role TEXT, google_binding_version INTEGER DEFAULT 0, google_sync_token TEXT, last_poll_status TEXT, last_poll_error TEXT, settings_json TEXT)");
+    davJournal($radb);
     $radb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT)');
     $radb->run("INSERT INTO calendars (id, user_id, name, kind, provider, google_account_id, google_calendar_id, google_access_role, google_binding_version, google_sync_token, last_poll_status, last_poll_error, settings_json) VALUES
         (1, 1, 'Sample team', 'subscribed', 'google', NULL, 'team@example.test', 'reader', 3, 'sync-position', 'error', 'Google account disconnected', '{\"reminderDefaults\":\"defaults\"}'),
@@ -8290,6 +8365,7 @@ use BetterCal\Domain\GoogleWriter;
 {
     $pdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
     $pdb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, plugin_id TEXT)');
+    davJournal($pdb);
     $pdb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, description TEXT, location TEXT, start_utc TEXT, end_utc TEXT, all_day INTEGER, tzid TEXT, icon TEXT, source TEXT, created_via TEXT, deleted_at TEXT, updated_at TEXT)');
     $pdb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT, calendar_ids_json TEXT, undone INTEGER DEFAULT 0, created_at TEXT DEFAULT CURRENT_TIMESTAMP)');
     $pdb->run("INSERT INTO calendars VALUES (1, 1, 'plugin', 'sample')");
@@ -8430,10 +8506,12 @@ use BetterCal\Domain\GoogleWriter;
     $emailDenied = $emailAdmission->admitEmail(1, 'other@example.com', 'cycle-one', $at);
     checkEq('email admission: a scan cycle stops at its persistent cap', [false, 'cycle'], [$emailDenied['admitted'], $emailDenied['reason']]);
     $missingAdmission = new BetterCal\Domain\ExternalActionAdmission(new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]));
+    [$missingResult, $missingLog] = captureLog(static fn() => $missingAdmission->admitEmail(1, 'owner@example.com', 'cycle-two', $at));
     checkEq('email admission: unavailable accounting fails closed', [false, 'accounting_unavailable'], array_values(array_intersect_key(
-        $missingAdmission->admitEmail(1, 'owner@example.com', 'cycle-two', $at),
+        $missingResult,
         ['admitted' => true, 'reason' => true]
     )));
+    check('email admission: and the failure is logged', str_contains($missingLog, 'notification email admission unavailable'));
     Limits::configure(['NOTIFY_EMAILS_PER_ACCOUNT_HOUR' => 2]);
     $xadb->run('DELETE FROM external_action_admissions');
     $testEmailNow = BetterCal\Support\Time::nowUtc();
@@ -8458,6 +8536,7 @@ use BetterCal\Domain\GoogleWriter;
     $migDb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
     $migDb->run('CREATE TABLE users (id INTEGER PRIMARY KEY)');
     $migDb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, kind TEXT, provider TEXT)');
+    davJournal($migDb);
     $migDb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, calendar_id INTEGER, source TEXT, created_via TEXT)');
     $migDb->run('CREATE TABLE event_duplicates (id INTEGER PRIMARY KEY, event_a INTEGER, event_b INTEGER, status TEXT, basis TEXT)');
     // Simulate a prior interrupted DDL migration: the lock table exists but
@@ -8855,6 +8934,11 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
     }
 }
 
+$runLog = (string) @file_get_contents($GLOBALS['__runLog']);
+@unlink($GLOBALS['__runLog']);
+fwrite(STDERR, $runLog);
+$dbErrors = array_values(array_filter(explode("\n", $runLog), static fn(string $l): bool => str_contains($l, 'SQLSTATE')));
+check('no database errors were logged during the run', $dbErrors === [], implode("\n", array_slice($dbErrors, 0, 5)));
 $pass = $GLOBALS['__pass'];
 $fail = $GLOBALS['__fail'];
 echo "\n$pass passed, $fail failed\n";

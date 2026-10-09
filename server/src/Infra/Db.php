@@ -107,6 +107,16 @@ final class Db
         }
     }
 
+    /**
+     * " FOR UPDATE" on MySQL, where it locks the selected rows for the
+     * transaction; empty elsewhere (SQLite, in the tests, has no row locks:
+     * its transactions already hold the whole database).
+     */
+    public function forUpdate(): string
+    {
+        return $this->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
+    }
+
     /** Build an IN clause: returns [sqlFragment, params]. */
     public static function in(array $values): array
     {

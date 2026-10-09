@@ -249,6 +249,13 @@ if [[ "${deploy_lib_source}" == *'managed-plugins.pending'*'finalize_managed_plu
 else
   not_ok 'removed-plugin manifest can advance before durable database cleanup succeeds'
 fi
+if [[ "${deploy_source}" == *'stage "dependency audit"'*'audit_composer_snapshot "${DEPLOY_SNAPSHOT}"'*'stage "rsync code"'* \
+  && "${deploy_lib_source}" == *'audit_composer_snapshot()'*'composer audit --working-dir='* \
+  && "${deploy_lib_source}" == *'cleanup_composer_audit_dir'* ]]; then
+  ok
+else
+  not_ok 'production dependency audit does not gate the exact snapshot before live deployment mutations'
+fi
 case "${plugin_cleanup_source}" in
   *"payload['plugin']"*"status = 'failed'"*"last_error"*) ok ;;
   *) not_ok 'removed-plugin cleanup does not cancel the actual queued plugin payload shape' ;;

@@ -42,7 +42,7 @@ A few habits the codebase keeps:
 
 ## Versions
 
-Maintainers bump `VERSION` and add a `CHANGELOG.md` entry when cutting a release; pull requests do not need to.
+Maintainers bump `VERSION` and add a `CHANGELOG.md` entry when cutting a release; pull requests do not need to. Releases follow the draft-first process in [`docs/releasing.md`](docs/releasing.md): prepare the immutable assets, deploy and smoke-test the exact tagged commit, then publish the draft.
 
 ## Licence
 

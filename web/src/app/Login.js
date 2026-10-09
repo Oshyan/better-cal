@@ -8,10 +8,7 @@ import { loadSession, startSession } from './session.js';
 export function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  // Visible by default. Masking protects against someone reading over your
-  // shoulder, which is rare; it costs everyone typos they cannot see, every
-  // time. Hide is one click away for the shared-screen moment.
-  const [shown, setShown] = useState(true);
+  const [shown, setShown] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 

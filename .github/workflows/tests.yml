@@ -22,9 +22,9 @@ jobs:
   server:
     name: PHP suite
     runs-on: ubuntu-latest
-    container: php:8.4-cli
+    container: php:8.4-cli@sha256:1d2cf2b7d715b5b3aa959f0150ccbcc7b71e0181b637e443abf40a7fb56bf79a
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: PHP and extensions
         run: php -v && php -m | grep -Ei 'pdo_sqlite|sodium|mbstring|curl'
       - name: Server tests
@@ -40,9 +40,9 @@ jobs:
   install:
     name: Fresh install on PHP 8.4
     runs-on: ubuntu-latest
-    container: php:8.4-cli
+    container: php:8.4-cli@sha256:1d2cf2b7d715b5b3aa959f0150ccbcc7b71e0181b637e443abf40a7fb56bf79a
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: PHP is 8.4
         run: |
           php -v
@@ -53,6 +53,8 @@ jobs:
           apt-get install -y -qq --no-install-recommends libzip-dev unzip
           docker-php-ext-install zip pdo_mysql
           php -r 'copy("https://getcomposer.org/installer", "/tmp/composer-setup.php");'
+          php -r 'copy("https://composer.github.io/installer.sig", "/tmp/composer-setup.sig");'
+          php -r '$expected = trim(file_get_contents("/tmp/composer-setup.sig")); $actual = hash_file("sha384", "/tmp/composer-setup.php"); if (!hash_equals($expected, $actual)) { fwrite(STDERR, "Composer installer signature mismatch\n"); exit(1); }'
           php /tmp/composer-setup.php --quiet --install-dir=/usr/local/bin --filename=composer
       - name: Platform requirements of the lock file
         working-directory: server
@@ -62,6 +64,9 @@ jobs:
         env:
           COMPOSER_ALLOW_SUPERUSER: 1
         run: composer install --no-dev --no-interaction --prefer-dist
+      - name: Known dependency vulnerabilities
+        working-directory: server
+        run: composer audit --no-dev --locked
       - name: Server tests with the installed libraries
         run: php server/tests/run.php
 
@@ -69,8 +74,8 @@ jobs:
     name: Frontend suites
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
       - name: Smoke tests, three time zones
@@ -83,3 +88,9 @@ jobs:
         run: node --experimental-vm-modules web/tests/static.mjs | tail -1
       - name: MCP server
         run: node tools/mcp/test.mjs
+      - name: CI dependency pins
+        run: node scripts/check-ci-pins.mjs
+      - name: Dependency-watch reporting
+        run: node scripts/tests/dependency-watch.mjs
+      - name: Release manifest contract
+        run: node scripts/tests/release-manifest.mjs

@@ -50,6 +50,7 @@ import { batteryTipApplies, BATTERY_TIP_BODY, BATTERY_TIP_TITLE } from '../src/l
 import { fuzzyScore, rankByFuzzy } from '../src/lib/fuzzy.js';
 import { STATIC_COMMANDS, COMMAND_GROUPS, MANAGE_ITEMS, VIEW_LABELS, VIEW_ICONS } from '../src/app/commanddefs.js';
 import { normalizeShareParams } from '../src/app/handoff.js';
+import { api as requestApi, fetchMe as fetchApiMe, login as apiLogin, logout as apiLogout } from '../src/app/api.js';
 
 let passed = 0;
 let failed = 0;
@@ -1723,6 +1724,137 @@ console.log('--- chronological ordering across timezone offsets ---');
   globalThis.fetch = realFetch;
 }
 
+console.log('--- API offline session transitions ---');
+
+{
+  const originalFetch = globalThis.fetch;
+  const jsonResponse = (data, status = 200, headers = {}) => new Response(JSON.stringify(data), {
+    status,
+    headers: { 'Content-Type': 'application/json', ...headers },
+  });
+  try {
+    const calls = [];
+    storeState.offlineReadOnly = true;
+    storeState.authed = false;
+    storeState.csrf = null;
+    globalThis.fetch = async (url, options = {}) => {
+      calls.push([url, options.method || 'GET']);
+      return jsonResponse({ ok: true });
+    };
+    await requestApi('/auth/login', { method: 'POST', body: { email: 'owner@example.test', password: 'sample' } });
+    eq('api offline: credential recovery POST is not blocked', calls, [['/api/v1/auth/login', 'POST']]);
+
+    globalThis.fetch = async () => jsonResponse({ user: { email: 'owner@example.test' } }, 200, {
+      'X-BetterCal-Offline': '1',
+    });
+    await fetchApiMe();
+    eq('api offline: cached /me is authenticated but read-only and carries no CSRF',
+      [storeState.authed, storeState.offlineReadOnly, storeState.csrf], [true, true, null]);
+
+    globalThis.fetch = async () => jsonResponse({ config: {} });
+    await requestApi('/config');
+    eq('api offline: an unrelated live GET does not claim writable session recovery', storeState.offlineReadOnly, true);
+
+    const recoveryCalls = [];
+    globalThis.fetch = async (url, options = {}) => {
+      recoveryCalls.push([url, options.method || 'GET', options.headers?.['X-CSRF'] || null]);
+      if (url.endsWith('/me')) return jsonResponse({ user: { email: 'owner@example.test' }, csrf: 'LIVE-CSRF' });
+      return jsonResponse({ ok: true });
+    };
+    await requestApi('/events', { method: 'POST', body: { title: 'Sample event' } });
+    eq('api offline: a mutation restores live /me before sending its CSRF', recoveryCalls, [
+      ['/api/v1/me', 'GET', null],
+      ['/api/v1/events', 'POST', 'LIVE-CSRF'],
+    ]);
+    eq('api offline: live /me restores writable mode', [storeState.offlineReadOnly, storeState.csrf], [false, 'LIVE-CSRF']);
+
+    storeState.authed = true;
+    storeState.offlineReadOnly = true;
+    storeState.csrf = null;
+    globalThis.fetch = async () => jsonResponse({ error: { code: 'unauthorized' } }, 401);
+    try { await requestApi('/me'); } catch { /* expected */ }
+    eq('api offline: a live 401 resets local state so login can recover',
+      [storeState.authed, storeState.offlineReadOnly, storeState.csrf], [false, false, null]);
+
+    storeState.authed = true;
+    storeState.offlineReadOnly = true;
+    storeState.csrf = null;
+    let releaseMe;
+    let eventWrites = 0;
+    globalThis.fetch = async (url) => {
+      if (url.endsWith('/me')) {
+        return {
+          status: 200, ok: true, statusText: 'OK', headers: new Headers(),
+          json: () => new Promise((resolve) => { releaseMe = () => resolve({ user: { email: 'owner@example.test' }, csrf: 'STALE-CSRF' }); }),
+        };
+      }
+      if (url.endsWith('/events')) eventWrites++;
+      return jsonResponse({ ok: true });
+    };
+    const interruptedWrite = requestApi('/events', { method: 'POST', body: { title: 'Sample event' } });
+    while (!releaseMe) await new Promise((resolve) => setTimeout(resolve, 0));
+    // The logout itself is online here; the point under test is that it wins
+    // over the older /me body still being parsed by the interrupted write.
+    storeState.offlineReadOnly = false;
+    storeState.csrf = 'CURRENT-CSRF';
+    await apiLogout();
+    releaseMe();
+    try { await interruptedWrite; } catch { /* logout invalidates the pending recovery */ }
+    eq('api offline: logout cannot be undone by a pending live /me response',
+      [storeState.authed, storeState.offlineReadOnly, storeState.csrf, eventWrites], [false, false, null, 0]);
+
+    storeState.authed = true;
+    storeState.offlineReadOnly = true;
+    storeState.csrf = null;
+    const logoutCalls = [];
+    globalThis.fetch = async (url, options = {}) => {
+      logoutCalls.push([url, options.method || 'GET', options.headers?.['X-CSRF'] || null]);
+      if (url.endsWith('/me')) return jsonResponse({ user: { email: 'owner@example.test' }, csrf: 'LOGOUT-CSRF' });
+      return jsonResponse({ ok: true });
+    };
+    await apiLogout();
+    eq('api offline: logout recovers live CSRF before ending the server session', logoutCalls, [
+      ['/api/v1/me', 'GET', null],
+      ['/api/v1/auth/logout', 'POST', 'LOGOUT-CSRF'],
+    ]);
+
+    storeState.authed = true;
+    storeState.offlineReadOnly = false;
+    storeState.csrf = 'OLD-CSRF';
+    let releaseOld401;
+    globalThis.fetch = async (url) => {
+      if (url.endsWith('/events')) {
+        return new Promise((resolve) => { releaseOld401 = () => resolve(jsonResponse({ error: { code: 'unauthorized' } }, 401)); });
+      }
+      if (url.endsWith('/auth/login')) return jsonResponse({ ok: true });
+      if (url.endsWith('/me')) return jsonResponse({ user: { email: 'new@example.test' }, csrf: 'NEW-CSRF' });
+      return jsonResponse({ ok: true });
+    };
+    const stale401 = requestApi('/events');
+    while (!releaseOld401) await new Promise((resolve) => setTimeout(resolve, 0));
+    await apiLogin('new@example.test', 'sample');
+    releaseOld401();
+    let stale401Code = null;
+    try { await stale401; } catch (e) { stale401Code = e.code; }
+    eq('api session: a delayed 401 cannot sign out a newer login',
+      [stale401Code, storeState.authed, storeState.user?.email, storeState.csrf],
+      ['session_changed', true, 'new@example.test', 'NEW-CSRF']);
+
+    storeState.authed = true;
+    storeState.offlineReadOnly = true;
+    globalThis.fetch = async () => { throw new TypeError('offline'); };
+    try { await apiLogout(); } catch { /* server session may remain; local logout must still win */ }
+    eq('api offline: failed logout still leaves this device locally signed out',
+      [storeState.authed, storeState.offlineReadOnly, storeState.csrf], [false, false, null]);
+  } finally {
+    globalThis.fetch = originalFetch;
+    storeState.authed = false;
+    storeState.user = null;
+    storeState.csrf = null;
+    storeState.offlineReadOnly = false;
+  }
+}
+
 // --- Service worker: the API cache must not outlive the session (BC-04) -------
 // Runs the REAL web/sw.js in a sandbox with a fake CacheStorage and network.
 // Before the fix: sign out, go offline, and /api/v1/me still answered 200 from
@@ -1772,7 +1904,7 @@ console.log('--- chronological ordering across timezone offsets ---');
       location: { origin: 'https://cal.example.com' },
       fetch: async (req) => net.respond(keyOf(req)),
       // A worker resolves relative URLs against its origin; Node's Request does not.
-      Response, Request: class extends Request { constructor(u, o) { super(typeof u === 'string' && u.startsWith('/') ? 'https://cal.example.com' + u : u, o); } },
+      Response, Headers, Request: class extends Request { constructor(u, o) { super(typeof u === 'string' && u.startsWith('/') ? 'https://cal.example.com' + u : u, o); } },
       URL, URLSearchParams, TextDecoder, Uint8Array, Promise, JSON, setTimeout, clearTimeout,
       console: { warn: () => {}, log: () => {} },
     };
@@ -1813,7 +1945,14 @@ console.log('--- chronological ordering across timezone offsets ---');
     };
     return { stores, net, get, postShare, handoff, message, settle, takes, lifecycle };
   };
-  const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+  const json = (body, status = 200, { session = 'session-a', deadline = Math.floor(Date.now() / 1000) + 86400 } = {}) => new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      'Content-Type': 'application/json',
+      'X-BetterCal-Session': session,
+      'X-BetterCal-Offline-Until': String(deadline),
+    },
+  });
   const offline = () => { throw new TypeError('Failed to fetch'); };
   const apiCached = (w) => [...w.stores.entries()].filter(([k]) => k.endsWith('-api')).reduce((n, [, m]) => n + m.size, 0);
 
@@ -1869,6 +2008,8 @@ console.log('--- chronological ordering across timezone offsets ---');
     w.net.respond = offline;
     const res = await w.get('/api/v1/me');
     eq('sw: signed in and offline, the cache still answers (offline calendar kept)', res.status, 200);
+    eq('sw: offline response is explicitly read-only context', res.headers.get('X-BetterCal-Offline'), '1');
+    assert('sw: cached /me does not retain a CSRF credential', !(await res.text()).includes('SECRET-CSRF'));
   }
 
   // The finding itself.
@@ -1903,6 +2044,8 @@ console.log('--- chronological ordering across timezone offsets ---');
   // A 401 means the session is gone (expired, or revoked by a password reset).
   {
     const w = makeWorker();
+    w.net.respond = () => json({ user: { email: 'owner@example.com' }, csrf: 'SECRET-CSRF' });
+    await w.get('/api/v1/me');
     w.net.respond = () => json({ events: [{ title: 'Private dinner' }] });
     await w.get('/api/v1/events?start=a&end=b');
     await w.settle();
@@ -1910,6 +2053,70 @@ console.log('--- chronological ordering across timezone offsets ---');
     const res = await w.get('/api/v1/me');
     eq('sw: the 401 itself still reaches the page', res.status, 401);
     eq('sw: a 401 purges everything cached under the dead session', apiCached(w), 0);
+  }
+
+  // A delayed 401 from an earlier login must not erase the cache established
+  // by a newer login while that old network request was still in flight.
+  {
+    const w = makeWorker();
+    w.net.respond = () => json({ user: { email: 'old@example.test' }, csrf: 'OLD' });
+    await w.get('/api/v1/me');
+    await w.settle();
+    let releaseOld401;
+    w.net.respond = () => new Promise((resolve) => {
+      releaseOld401 = () => resolve(json({ error: { code: 'unauthorized' } }, 401));
+    });
+    const stale401 = w.get('/api/v1/me');
+    while (!releaseOld401) await new Promise((resolve) => setTimeout(resolve, 0));
+    await w.message({ type: 'purge-api' });
+    w.net.respond = () => json({ user: { email: 'new@example.test' }, csrf: 'NEW' }, 200, { session: 'session-b' });
+    await w.get('/api/v1/me');
+    await w.settle();
+    releaseOld401();
+    eq('sw: the stale 401 still reaches its original page request', (await stale401).status, 401);
+    await w.settle();
+    w.net.respond = offline;
+    const currentMe = await w.get('/api/v1/me');
+    eq('sw: a delayed old-session 401 cannot erase a newer login cache',
+      [currentMe.status, (await currentMe.json()).user.email], [200, 'new@example.test']);
+  }
+
+  // A cached body already being read when logout lands must not escape after
+  // the purge. The epoch protects delivery as well as later cache writes.
+  {
+    const w = makeWorker();
+    w.net.respond = () => json({ user: { email: 'old@example.test' }, csrf: 'OLD' });
+    await w.get('/api/v1/me');
+    await w.settle();
+    const apiStore = [...w.stores.entries()].find(([name]) => name.endsWith('-api'))[1];
+    const meUrl = 'https://cal.example.com/api/v1/me';
+    const body = new TextEncoder().encode(JSON.stringify({ user: { email: 'old@example.test' } }));
+    const headers = new Headers({
+      'Content-Type': 'application/json',
+      'X-BetterCal-Session': 'session-a',
+      'X-BetterCal-Offline-Until': String(Math.floor(Date.now() / 1000) + 86400),
+    });
+    let releaseRead;
+    let cloneCount = 0;
+    apiStore.set(meUrl, {
+      clone: () => {
+        const shouldPause = ++cloneCount === 1;
+        return {
+          status: 200, statusText: 'OK', headers,
+          arrayBuffer: () => shouldPause
+            ? new Promise((resolve) => { releaseRead = () => resolve(body.buffer); })
+            : Promise.resolve(body.buffer),
+        };
+      },
+    });
+    w.net.respond = offline;
+    const pending = w.get('/api/v1/me');
+    while (!releaseRead) await new Promise((resolve) => setTimeout(resolve, 0));
+    await w.message({ type: 'purge-api' });
+    releaseRead();
+    const result = await pending;
+    eq('sw: logout invalidates a cached body already being read', result.status, 503);
+    assert('sw: invalidated cached bytes are not returned', !(await result.text()).includes('old@example.test'));
   }
 
   // Filled in by the server: the app's files are precached and served from cache.
@@ -1935,6 +2142,9 @@ console.log('--- chronological ordering across timezone offsets ---');
   // The race a plain delete leaves open: a response in flight at sign-out.
   {
     const w = makeWorker();
+    w.net.respond = () => json({ user: { email: 'owner@example.com' }, csrf: 'SECRET-CSRF' });
+    await w.get('/api/v1/me');
+    await w.settle();
     let release;
     w.net.respond = () => new Promise((r) => { release = () => r(json({ events: [{ title: 'Private dinner' }] })); });
     const pending = w.get('/api/v1/events?start=a&end=b');
@@ -1943,10 +2153,106 @@ console.log('--- chronological ordering across timezone offsets ---');
     await pending;
     await w.settle();
     eq('sw: a response that was in flight at sign-out is not cached afterwards', apiCached(w), 0);
-    w.net.respond = () => json({ events: [] });
+    w.net.respond = (url) => url.endsWith('/me')
+      ? json({ user: { email: 'owner@example.com' }, csrf: 'NEW-CSRF' }, 200, { session: 'session-b' })
+      : json({ events: [] }, 200, { session: 'session-b' });
+    await w.get('/api/v1/me');
     await w.get('/api/v1/events?start=a&end=b');
     await w.settle();
-    eq('sw: caching resumes for the next session', apiCached(w), 1);
+    eq('sw: caching resumes for the next session', apiCached(w), 2);
+  }
+
+  // A stale response paused while its private JSON copy is being stripped
+  // must not adopt the epoch of a newer login and replace that account.
+  {
+    const w = makeWorker();
+    w.net.respond = () => json({ user: { email: 'old@example.test' }, csrf: 'OLD' });
+    await w.get('/api/v1/me');
+    await w.settle();
+    let releaseCopy;
+    const slowOldResponse = {
+      status: 200,
+      statusText: 'OK',
+      ok: true,
+      headers: json({}, 200, { session: 'session-a' }).headers,
+      clone: () => ({
+        json: () => new Promise((resolve) => { releaseCopy = () => resolve({ user: { email: 'old@example.test' }, csrf: 'OLD' }); }),
+      }),
+    };
+    w.net.respond = () => slowOldResponse;
+    const stale = w.get('/api/v1/me');
+    while (!releaseCopy) await new Promise((resolve) => setTimeout(resolve, 0));
+    await w.message({ type: 'purge-api' });
+    w.net.respond = () => json({ user: { email: 'new@example.test' }, csrf: 'NEW' }, 200, { session: 'session-b' });
+    await w.get('/api/v1/me');
+    await w.settle();
+    releaseCopy();
+    await stale;
+    await w.settle();
+    w.net.respond = offline;
+    const me = await (await w.get('/api/v1/me')).json();
+    eq('sw: a stale copied response cannot replace a newer login', me.user.email, 'new@example.test');
+  }
+
+  // A different login gets a different opaque cache identity. The worker
+  // drops the prior account before storing the new /me.
+  {
+    const w = makeWorker();
+    w.net.respond = () => json({ user: { email: 'first@example.test' }, csrf: 'FIRST' });
+    await w.get('/api/v1/me');
+    await w.settle();
+    w.net.respond = () => json({ user: { email: 'second@example.test' }, csrf: 'SECOND' }, 200, { session: 'session-b' });
+    await w.get('/api/v1/me');
+    await w.settle();
+    w.net.respond = offline;
+    const me = await w.get('/api/v1/me');
+    eq('sw: identity change leaves only the new login cache', (await me.json()).user.email, 'second@example.test');
+  }
+
+  // The absolute offline deadline wins even when the browser never observed
+  // the server-side revocation while online.
+  {
+    const w = makeWorker();
+    w.net.respond = () => json({ user: { email: 'owner@example.test' }, csrf: 'SECRET' }, 200, {
+      deadline: Math.floor(Date.now() / 1000) - 1,
+    });
+    await w.get('/api/v1/me');
+    await w.settle();
+    w.net.respond = offline;
+    eq('sw: expired private cache is refused and purged', (await w.get('/api/v1/me')).status, 503);
+    eq('sw: expiry clears all private entries', apiCached(w), 0);
+  }
+
+  // Capability-management and integration endpoints are never offline data.
+  {
+    const w = makeWorker();
+    w.net.respond = () => json({ user: { email: 'owner@example.test' }, csrf: 'SECRET' });
+    await w.get('/api/v1/me');
+    await w.get('/api/v1/outfeeds');
+    await w.get('/api/v1/google/status');
+    await w.settle();
+    eq('sw: sensitive integration endpoints are excluded from the private cache', apiCached(w), 1);
+    w.net.respond = offline;
+    eq('sw: an offline online-only endpoint fails without purging saved calendar data',
+      [(await w.get('/api/v1/plugins')).status, apiCached(w)], [503, 1]);
+    eq('sw: a normal offline cache miss also preserves the signed-in cache',
+      [(await w.get('/api/v1/events?start=uncached&end=range')).status, apiCached(w)], [503, 1]);
+    eq('sw: saved /me remains available after unrelated offline misses', (await w.get('/api/v1/me')).status, 200);
+  }
+
+  // The calendar list is needed to paint offline, but subscription addresses
+  // are bearer-like capabilities and are removed from its cached copy.
+  {
+    const w = makeWorker();
+    w.net.respond = (url) => url.endsWith('/me')
+      ? json({ user: { email: 'owner@example.test' }, csrf: 'SECRET' })
+      : json({ calendars: [{ id: 1, name: 'Sample feed', sourceUrl: 'https://feeds.example.test/private.ics?key=secret' }] });
+    await w.get('/api/v1/me');
+    await w.get('/api/v1/calendars');
+    await w.settle();
+    w.net.respond = offline;
+    const calendars = await (await w.get('/api/v1/calendars')).json();
+    eq('sw: cached calendar metadata removes subscription capabilities', calendars.calendars[0].sourceUrl, null);
   }
 
   // The shell is not private and must survive, or signing out breaks offline load.

@@ -122,6 +122,25 @@ function notify(method, params) {
 }
 
 async function main() {
+  const probe = (url) => new Promise((resolve) => {
+    const proc = spawn(process.execPath, [SERVER_PATH], {
+      env: { ...process.env, BETTERCAL_URL: url, BETTERCAL_TOKEN: FAKE_TOKEN },
+      stdio: ['pipe', 'ignore', 'pipe'],
+    });
+    let stderr = '';
+    proc.stderr.on('data', (chunk) => { stderr += chunk; });
+    proc.stdin.end();
+    proc.on('close', (code) => resolve({ code, stderr }));
+  });
+  for (const url of ['https://calendar.example.test', 'http://localhost:8080', 'http://127.1:8080', 'http://[::1]:8080']) {
+    const result = await probe(url);
+    checkEq(`base URL accepts ${url}`, 0, result.code);
+  }
+  for (const url of ['http://calendar.example.test', 'http://192.168.1.20', 'https://user:pass@example.test', 'https://example.test/?target=elsewhere', 'not a URL']) {
+    const result = await probe(url);
+    check(`base URL rejects ${url} before startup`, result.code !== 0 && result.stderr.includes('BETTERCAL_URL'));
+  }
+
   await new Promise((resolve) => mock.listen(0, '127.0.0.1', resolve));
   const port = mock.address().port;
 
@@ -156,6 +175,18 @@ async function main() {
   const byName = Object.fromEntries((list.result?.tools ?? []).map((t) => [t.name, t]));
   checkEq('annotations: delete_event is destructive', true, byName.delete_event?.annotations?.destructiveHint);
   checkEq('annotations: list_events is read-only', true, byName.list_events?.annotations?.readOnlyHint);
+  const expectedEffects = {
+    list_events: [true, false, false], search_events: [true, false, false],
+    create_event: [false, false, true], quick_add: [false, false, true],
+    update_event: [false, true, true], delete_event: [false, true, true],
+    set_attendance: [false, true, false], list_calendars: [true, false, false],
+    list_review: [true, false, false], undo: [false, true, false],
+  };
+  for (const [name, expected] of Object.entries(expectedEffects)) {
+    const a = byName[name]?.annotations || {};
+    checkEq(`annotations: ${name} complete effect metadata`, expected,
+      [a.readOnlyHint, a.destructiveHint, a.openWorldHint]);
+  }
   const names = (list.result?.tools ?? []).map((t) => t.name).sort();
   checkEq('tools/list names', [
     'create_event',

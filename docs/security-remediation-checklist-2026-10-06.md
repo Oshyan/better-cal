@@ -305,6 +305,20 @@ The automated suite covers oversized repeat-rule inputs; normal release smoke te
 - [ ] Exercise both documented dev policies once. In the recommended `strict` mode, verify the dev web worker has its own Unix/database/FPM identities and cannot read or query production. In explicitly warned `shared` mode, verify the deploy never stops a shared FPM service or locks/revokes a shared DB account. For either mode, a clone must accept only the dev login, retain and re-encrypt ordinary ICS subscriptions by default, strip production sessions/tokens/push/outbound feeds/Google connections, disable and clear copied plugin integrations/active jobs, and honor the optional subscription-strip and external-service switches. Reconnect or reconfigure an external integration explicitly when testing it in dev. Ordinary later dev deploys stay one command.
 - [ ] In a disposable deployment fixture, remove one Git-managed test plugin and retain one server-only custom plugin. Confirm only the removed release plugin is quarantined and disabled. No production plugin deletion exercise is required. App-cache poisoning, NAT64 classification and CLI argument refusal are covered by automated tests.
 
+### Phase 21A remaining focused findings (F49/F54/F59/F60/F63/F66/F74/F76)
+
+- [ ] Confirm the MCP bridge accepts HTTPS and loopback-only HTTP, refuses other plaintext or credential-bearing base URLs before sending a token, and advertises external side effects for tools that can reach configured services or writable remote calendars.
+- [ ] Confirm CI uses immutable action/container references, verifies Composer's installer, blocks known production dependency advisories, and the weekly dependency process reports security and non-security updates without auto-merging them.
+- [ ] In a disposable browser profile, load the calendar online, go offline within the 24-hour local window and confirm saved data is read-only. Then verify explicit logout, an observed 401, a different login and expiry each make the private cache and resume context unavailable. Confirm cached `/me` has no CSRF value and cached calendars have no subscription address.
+- [ ] Confirm the login password starts masked, Show/Hide preserves the entered value and password-manager autofill still works.
+- [ ] Confirm hostile feedback-example text is model data rather than ranking instructions, and a same-site sibling page cannot frame the app on either a fresh or 304 response.
+
+### Phase 21B application update awareness and immutable releases
+
+- [ ] Exercise All releases, Security only and Off in Settings, About. Routine and recommended notices are dismissible per version; a required security notice persists until update or explicit opt-out. Check now works in every mode, and no path downloads or installs application code.
+- [ ] With a disposable release fixture, reject a mutable release, extension tag, wrong repository URL, duplicate/missing asset, bad digest, malformed/noncanonical manifest, version mismatch, rollback and a decreased cumulative secure-version floor. Confirm notification delivery deduplicates by secure floor.
+- [ ] Cut the first update-aware release through `scripts/release.sh`: create the draft and final manifest first, deploy and smoke-test the exact tagged commit, publish only after verification, and confirm GitHub reports the release immutable.
+
 ## Deployment closeout
 
 - [x] Deploy the exact reviewed commit with migrations 036 and 037.

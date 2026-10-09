@@ -6,14 +6,20 @@ namespace BetterCal\Http;
 
 final class Response
 {
+    public readonly array $headers;
+
     /** @param array<string,string> $headers */
     private function __construct(
         public readonly int $status,
-        public readonly array $headers,
+        array $headers,
         public readonly string $body = '',
         public readonly ?string $filePath = null,
         public readonly array $cookies = [],
     ) {
+        $this->headers = $headers + [
+            'Content-Security-Policy' => "frame-ancestors 'none'",
+            'X-Frame-Options' => 'DENY',
+        ];
     }
 
     public static function json(mixed $data, int $status = 200, array $cookies = []): self

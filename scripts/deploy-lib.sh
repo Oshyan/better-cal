@@ -349,6 +349,74 @@ disable_missing_plugins() {
   finalize_managed_plugin_manifest
 }
 
+# Audit the exact release lock file with the target host's Composer before any
+# live application path, service, schedule or database is changed. Only the
+# two public Composer metadata files enter a short-lived app-user-owned /tmp
+# directory; failures leave the current deployment untouched.
+COMPOSER_AUDIT_DIR=''
+COMPOSER_AUDIT_USER=''
+
+cleanup_composer_audit_dir() {
+  [ -n "${COMPOSER_AUDIT_DIR:-}" ] || return 0
+  local suffix
+  case "${COMPOSER_AUDIT_DIR}" in
+    /tmp/bc-composer-audit.*)
+      suffix="${COMPOSER_AUDIT_DIR#/tmp/bc-composer-audit.}"
+      case "${suffix}" in ''|*[!A-Za-z0-9]*) echo 'Refusing to clean an unexpected Composer audit path.' >&2; return 1 ;; esac
+      ;;
+    *) echo 'Refusing to clean an unexpected Composer audit path.' >&2; return 1 ;;
+  esac
+  case "${COMPOSER_AUDIT_USER:-}" in
+    ''|[0-9]*|*[!A-Za-z0-9_-]*) echo 'Refusing to clean a Composer audit path for an invalid account.' >&2; return 1 ;;
+  esac
+  local dir_q user_q
+  printf -v dir_q '%q' "${COMPOSER_AUDIT_DIR}"
+  printf -v user_q '%q' "${COMPOSER_AUDIT_USER}"
+  rssh "sudo -n -u ${user_q} -- rm -rf -- ${dir_q}"
+  COMPOSER_AUDIT_DIR=''
+  COMPOSER_AUDIT_USER=''
+}
+
+audit_composer_snapshot() {
+  local snapshot="$1"
+  local run_user="${2:-${APP_USER}}"
+  case "${run_user}" in
+    ''|[0-9]*|*[!A-Za-z0-9_-]*)
+      echo 'Composer audit application user must be a plain Unix account name.' >&2
+      return 1
+      ;;
+  esac
+  [ -f "${snapshot}/server/composer.json" ] && [ -f "${snapshot}/server/composer.lock" ] || {
+    echo 'Release snapshot is missing Composer metadata.' >&2
+    return 1
+  }
+  local user_q dir_q suffix
+  printf -v user_q '%q' "${run_user}"
+  COMPOSER_AUDIT_DIR="$(rssh "sudo -n -u ${user_q} -- mktemp -d /tmp/bc-composer-audit.XXXXXX")"
+  COMPOSER_AUDIT_USER="${run_user}"
+  case "${COMPOSER_AUDIT_DIR}" in
+    /tmp/bc-composer-audit.*)
+      suffix="${COMPOSER_AUDIT_DIR#/tmp/bc-composer-audit.}"
+      case "${suffix}" in ''|*[!A-Za-z0-9]*) echo 'Target host returned an unsafe Composer audit path.' >&2; return 1 ;; esac
+      ;;
+    *) echo 'Target host returned an unsafe Composer audit path.' >&2; return 1 ;;
+  esac
+  printf -v dir_q '%q' "${COMPOSER_AUDIT_DIR}"
+  if ! rsync -az --no-owner --no-group \
+      --rsync-path="sudo -n -u ${run_user} rsync" \
+      -e "ssh ${SSH_OPTS[*]}" \
+      "${snapshot}/server/composer.json" "${snapshot}/server/composer.lock" \
+      "${REMOTE}:${COMPOSER_AUDIT_DIR}/"; then
+    cleanup_composer_audit_dir || true
+    return 1
+  fi
+  if ! rssh "sudo -n -u ${user_q} -- composer audit --working-dir=${dir_q} --no-dev --locked --no-interaction"; then
+    cleanup_composer_audit_dir || true
+    return 1
+  fi
+  cleanup_composer_audit_dir
+}
+
 deploy_on_exit() {
   local rc=$?
   # A caller may register narrowly scoped recovery that still needs the shared
@@ -357,6 +425,7 @@ deploy_on_exit() {
   if [ "${rc}" -ne 0 ] && declare -F deploy_failure_recovery >/dev/null 2>&1; then
     deploy_failure_recovery "${rc}" || true
   fi
+  cleanup_composer_audit_dir || true
   ssh -o "ControlPath=${SSH_CTL_DIR}/ctl" -O exit "${REMOTE}" >/dev/null 2>&1 || true
   rm -f "${SSH_CTL_DIR}/ctl"
   rmdir "${SSH_CTL_DIR}" 2>/dev/null || true

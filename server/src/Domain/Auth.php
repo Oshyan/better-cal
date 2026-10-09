@@ -378,14 +378,14 @@ final class Auth
         return $out;
     }
 
-    /** @return ?array{user:array,csrf:string,authenticatedAt:?string} */
+    /** @return ?array{user:array,csrf:string,authenticatedAt:?string,cacheId:string,offlineUntil:int} */
     public function resolve(?string $token): ?array
     {
         if ($token === null || $token === '') {
             return null;
         }
         $row = $this->db->one(
-            'SELECT s.csrf, s.last_seen_at, s.authenticated_at AS session_authenticated_at, s.token_hash, u.* FROM sessions s JOIN users u ON u.id = s.user_id
+            'SELECT s.csrf, s.last_seen_at, s.expires_at AS session_expires_at, s.authenticated_at AS session_authenticated_at, s.token_hash, u.* FROM sessions s JOIN users u ON u.id = s.user_id
              WHERE s.token_hash = ? AND s.expires_at > ?',
             [hash('sha256', $token), Time::nowDb()]
         );
@@ -395,14 +395,25 @@ final class Auth
         $csrf = (string) $row['csrf'];
         $tokenHash = (string) $row['token_hash'];
         $lastSeen = (string) $row['last_seen_at'];
+        $expiresAt = Time::fromDb((string) $row['session_expires_at']);
         $authenticatedAt = isset($row['session_authenticated_at']) && $row['session_authenticated_at'] !== null
             ? (string) $row['session_authenticated_at']
             : null;
-        unset($row['csrf'], $row['last_seen_at'], $row['session_authenticated_at'], $row['token_hash'], $row['password_hash']);
+        unset($row['csrf'], $row['last_seen_at'], $row['session_expires_at'], $row['session_authenticated_at'], $row['token_hash'], $row['password_hash']);
         if (Time::fromDb($lastSeen) < Time::nowUtc()->sub(new \DateInterval('PT1H'))) {
             $this->db->run('UPDATE sessions SET last_seen_at = ? WHERE token_hash = ?', [Time::nowDb(), $tokenHash]);
         }
-        return ['user' => $row, 'csrf' => $csrf, 'authenticatedAt' => $authenticatedAt];
+        return [
+            'user' => $row,
+            'csrf' => $csrf,
+            'authenticatedAt' => $authenticatedAt,
+            // Opaque, per-login cache scope. It changes whenever a new
+            // session is issued without exposing the bearer cookie itself.
+            'cacheId' => hash('sha256', 'better-cal/offline/v1|' . $tokenHash),
+            // Offline data is deliberately shorter-lived than the server
+            // session. The worker also refuses it after the real session end.
+            'offlineUntil' => min($expiresAt->getTimestamp(), time() + 86400),
+        ];
     }
 
     /** The device cookie (TrustedDevices): a year, sent only to the sign-in endpoints, never to scripts or other sites. */

@@ -72,11 +72,17 @@ if [ "${SKIP_TESTS:-0}" != "1" ]; then
   php "${DEPLOY_SNAPSHOT}/server/tests/run.php" | tail -1
   # Vendored frontend libraries must be exactly the pinned releases.
   node "${DEPLOY_SNAPSHOT}/scripts/vendor.mjs" --verify | tail -1
+  node "${DEPLOY_SNAPSHOT}/scripts/check-ci-pins.mjs"
+  node "${DEPLOY_SNAPSHOT}/scripts/tests/dependency-watch.mjs" | tail -1
+  node "${DEPLOY_SNAPSHOT}/scripts/tests/release-manifest.mjs" | tail -1
   bash "${DEPLOY_SNAPSHOT}/scripts/tests/deploy-security.sh" | tail -1
 fi
 
 stage "connect"
 ssh_open
+
+stage "dependency audit"
+audit_composer_snapshot "${DEPLOY_SNAPSHOT}" "${APP_USER}"
 
 # Migrations that change an old/new-code authority boundary need one quiesced
 # first rollout. 042 closes an in-flight Google-move ambiguity; 045 replaces
@@ -215,10 +221,6 @@ if sudo -n -u "${APP_USER}" -- test -L "${APP_DIR}/.env" \
   exit 1
 fi
 sudo -u "${APP_USER}" bash -c "cd ${APP_DIR}/server && composer install --no-dev --quiet --no-interaction"
-# Known advisories against the locked PHP dependencies: reported, not blocking.
-# A finding means "look at it", not "roll back the deploy in progress".
-echo "-- composer audit --"
-sudo -u "${APP_USER}" bash -c "cd ${APP_DIR}/server && composer audit --no-dev --locked --no-interaction 2>&1 | tail -20" || true
 sudo -u "${APP_USER}" php "${APP_DIR}/server/bin/migrate.php"
 # Docroot -> app/server/public. Its parent belongs to APP_USER, so every
 # pathname operation there runs as APP_USER rather than lending root to a

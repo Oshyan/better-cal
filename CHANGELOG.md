@@ -4,6 +4,15 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.42 (2026-10-08)
+
+- **Private offline calendar data is now bounded and read-only.** Saved calendar responses expire within 24 hours, exclude credentials and private feed addresses, and are invalidated across logout, revocation and account changes. Reconnecting restores editing only after the live session and CSRF protection are confirmed.
+- **The application can now report available releases without installing them.** Users may receive all update notices, security-only notices or none; Settings retains a manual check. Release metadata must come from an immutable application release with one canonical, digest-verified manifest, and rollback or security-floor regressions are refused.
+- **Dependency and release handling is reviewable by default.** CI inputs are immutable, weekly dependency checks open a review issue without auto-merging, deployment audits the exact Composer lock before changing production, and releases follow a draft-first verified workflow. Vendored DOMPurify is updated to 3.4.16 to close its published advisories, with Squire updated to 2.4.9.
+- **Browser, model and automation trust boundaries are narrower.** Remote MCP connections require HTTPS, tool effects are described accurately, mutable ranking data stays outside trusted model instructions, authenticated pages cannot be framed, logout clears resumable private context, and login passwords start masked with an explicit Show control.
+
+Operators: migration 046 adds instance update state and per-user notice state. No configuration is required. The worker performs a bounded daily GitHub release-metadata check; disabling update notifications suppresses proactive notices but leaves the manual Settings check available. Offline saved calendars remain viewable for up to 24 hours but cannot be edited until the server is reachable.
+
 ## 0.9.41 (2026-10-08)
 
 - **App-shell cache security coverage now uses the same private sibling-directory layout as production.** This corrects Linux CI validation without weakening the runtime cache ownership and permission checks or changing application behavior.

@@ -37,6 +37,10 @@ final class Settings
         // (push, with email only when no device looks reachable). Enforced
         // server-side by the reminder scan (Reminders::channelPlan).
         'notifyChannel' => 'push',
+        // App release notices: all releases, only releases required by the
+        // cumulative security floor, or no proactive notices. The instance
+        // still keeps passive status for About and manual checks.
+        'updateNotifications' => 'all',
         // Where reminder/test emails are sent; null = the account email
         // (which is also the SMTP sender mailbox and may not be read).
         'notifyEmail' => null,
@@ -211,6 +215,7 @@ final class Settings
                 'theme' => self::enum($key, $value, ['system', 'light', 'dark']),
                 'nlParseMode' => self::enum($key, $value, ['always', 'smart', 'never']),
                 'notifyChannel' => self::enum($key, $value, ['push', 'email', 'both', 'push-fallback']),
+                'updateNotifications' => self::enum($key, $value, ['all', 'security', 'off']),
                 'notifyEmail' => self::email($key, $value),
                 'overviewMode' => self::enum($key, $value, ['month', '3day']),
                 'defaultCalendarId' => self::calendarId($value),

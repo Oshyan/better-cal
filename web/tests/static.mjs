@@ -171,6 +171,22 @@ for (const file of files) {
     'event source navigation must revalidate legacy stored URLs at the click sink');
 }
 
+// --- 9. login and explicit sign-out local privacy --------------------------
+{
+  const login = readFileSync(join(root, 'app', 'Login.js'), 'utf8');
+  const api = readFileSync(join(root, 'app', 'api.js'), 'utf8');
+  const resume = readFileSync(join(root, 'app', 'resume-storage.js'), 'utf8');
+  const check = (ok, msg) => { if (ok) passed++; else fail(msg); };
+  check(login.includes('useState(false)') && login.includes("autocomplete=\"current-password\"")
+      && login.includes("shown ? 'text' : 'password'"),
+    'login password must start masked while retaining autofill and an explicit reveal');
+  check(api.includes("res.status === 401") && api.includes('clearResume()')
+      && /function logout[\s\S]*finally[\s\S]*clearResume\(\)/.test(api),
+    '401 and explicit logout must clear saved resume context');
+  check(resume.includes("['localStorage', 'sessionStorage']") && resume.includes('globalThis[name]'),
+    'resume clearing must cover both installed-app and tab storage');
+}
+
 console.log('');
 console.log(passed + ' checks passed, ' + failed + ' failed (' + files.length + ' modules)');
 if (failed > 0) process.exit(1);

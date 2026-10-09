@@ -31,6 +31,9 @@ const SERVED_RAW = VERSION === 'bc-unversioned';
 const SHELL_CACHE = VERSION + '-shell';
 const API_CACHE = VERSION + '-api';
 const API_TIMEOUT_MS = 5000;
+const SESSION_HEADER = 'X-BetterCal-Session';
+const OFFLINE_UNTIL_HEADER = 'X-BetterCal-Offline-Until';
+const OFFLINE_RESPONSE_HEADER = 'X-BetterCal-Offline';
 // Unversioned: a share stashed by one worker version must survive the next
 // one activating before the page has collected it.
 const HANDOFF_CACHE = 'bc-handoff';
@@ -100,6 +103,75 @@ async function purgeApiCache() {
   await Promise.all(keys.filter((k) => k.endsWith('-api')).map((k) => caches.delete(k)));
 }
 
+function cacheableApiPath(request) {
+  const path = new URL(request.url).pathname.replace(/^\/api\/v1/, '');
+  return path === '/me'
+    || path === '/config'
+    || path === '/calendars'
+    || path === '/events'
+    || path === '/search'
+    || path === '/people'
+    || path === '/views'
+    || path === '/review/count'
+    || path === '/system/health'
+    || path === '/updates';
+}
+
+async function privateCacheCopy(request, response) {
+  const url = new URL(request.url);
+  if (url.pathname !== '/api/v1/me' && url.pathname !== '/api/v1/calendars') return response.clone();
+  const data = await response.clone().json();
+  if (url.pathname === '/api/v1/me') delete data.csrf;
+  if (url.pathname === '/api/v1/calendars' && Array.isArray(data.calendars)) {
+    for (const calendar of data.calendars) if (calendar && typeof calendar === 'object') calendar.sourceUrl = null;
+  }
+  const headers = new Headers(response.headers);
+  // These describe the original body, not the capability-stripped JSON.
+  headers.delete('Content-Length');
+  headers.delete('Content-Encoding');
+  headers.delete('ETag');
+  return new Response(JSON.stringify(data), {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+async function validOfflineResponse(request, cacheName) {
+  // An endpoint deliberately outside the offline allowlist is an ordinary
+  // miss, not evidence that the signed-in cache is corrupt. Offline boot asks
+  // for some online-only resources (plugins, integration state); those must
+  // fail alone without erasing the saved calendar.
+  if (!cacheableApiPath(request)) return null;
+  const epoch = apiEpoch;
+  const cache = await caches.open(cacheName);
+  if (epoch !== apiEpoch) return null;
+  const cached = await cache.match(request);
+  if (epoch !== apiEpoch) return null;
+  if (!cached) return null;
+  const me = await cache.match(new URL('/api/v1/me', self.location.origin).href);
+  if (epoch !== apiEpoch) return null;
+  const session = cached?.headers.get(SESSION_HEADER);
+  const currentSession = me?.headers.get(SESSION_HEADER);
+  const deadline = Number(cached?.headers.get(OFFLINE_UNTIL_HEADER) || 0);
+  if (!session || !currentSession || session !== currentSession
+      || !Number.isSafeInteger(deadline) || deadline * 1000 < Date.now()) {
+    await purgeApiCache();
+    return null;
+  }
+  const headers = new Headers(cached.headers);
+  headers.set(OFFLINE_RESPONSE_HEADER, '1');
+  const body = await cached.arrayBuffer();
+  // A logout, 401 or login change that happened while Cache Storage read the
+  // body wins. Never deliver private bytes across that invalidation boundary.
+  if (epoch !== apiEpoch) return null;
+  return new Response(body, {
+    status: cached.status,
+    statusText: cached.statusText,
+    headers,
+  });
+}
+
 self.addEventListener('message', (event) => {
   if (event.data && event.data.type === 'purge-api') event.waitUntil(purgeApiCache());
 });
@@ -111,25 +183,49 @@ function networkFirstWithTimeout(request, cacheName, timeoutMs) {
     const timer = timeoutMs ? setTimeout(async () => {
       // Private responses may only come from the private API cache. Searching
       // every cache would let a poisoned/legacy shell cache survive logout.
-      const cached = await (await caches.open(cacheName)).match(request);
+      const cached = await validOfflineResponse(request, cacheName);
       if (cached && !settled) { settled = true; resolve(cached); }
     }, timeoutMs) : null;
     fetch(request).then(async (res) => {
       if (timer) clearTimeout(timer);
-      if (res.status === 401) {
+      if (res.status === 401 && epoch === apiEpoch) {
         await purgeApiCache();
-      } else if (res.ok && epoch === apiEpoch) {
-        const copy = res.clone();
+      } else if (res.ok && epoch === apiEpoch && cacheableApiPath(request)
+          && res.headers.get(SESSION_HEADER) && res.headers.get(OFFLINE_UNTIL_HEADER)) {
+        const copy = await privateCacheCopy(request, res);
+        // JSON capability stripping above is asynchronous. A logout, 401 or
+        // different login that landed while it ran permanently invalidates
+        // this response; it must not be allowed to reinterpret the new epoch
+        // as its own below.
+        if (epoch !== apiEpoch) {
+          if (!settled) { settled = true; resolve(res); }
+          return;
+        }
         caches.open(cacheName).then(async (cache) => {
+          if (epoch !== apiEpoch) return;
+          let cacheEpoch = epoch;
+          const current = await cache.match(new URL('/api/v1/me', self.location.origin).href);
+          if (epoch !== apiEpoch) return;
+          if (current && current.headers.get(SESSION_HEADER) !== res.headers.get(SESSION_HEADER)) {
+            const expectedTransitionEpoch = epoch + 1;
+            await purgeApiCache();
+            // A second purge means another logout/login transition raced this
+            // one. Neither response is allowed to win by adopting that epoch.
+            if (apiEpoch !== expectedTransitionEpoch) return;
+            cacheEpoch = apiEpoch;
+            cache = await caches.open(cacheName);
+            if (cacheEpoch !== apiEpoch) return;
+          }
+          if (cacheEpoch !== apiEpoch) return;
           await cache.put(request, copy);
           // A purge that landed while this was being written wins.
-          if (epoch !== apiEpoch) await purgeApiCache();
+          if (cacheEpoch !== apiEpoch) await purgeApiCache();
         }).catch(() => { /* quota or storage error: just not cached */ });
       }
       if (!settled) { settled = true; resolve(res); }
     }).catch(async () => {
       if (timer) clearTimeout(timer);
-      const cached = await (await caches.open(cacheName)).match(request);
+      const cached = await validOfflineResponse(request, cacheName);
       if (!settled) {
         settled = true;
         resolve(cached || new Response(JSON.stringify({ error: { code: 'offline', message: 'Offline and not cached' } }), {

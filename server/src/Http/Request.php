@@ -16,6 +16,9 @@ final class Request
     public ?string $authMethod = null;
     /** Last password verification for this browser session, as a UTC DB timestamp. */
     public ?string $authenticatedAt = null;
+    /** Opaque per-login identity and absolute local offline-cache deadline. */
+    public ?string $sessionCacheId = null;
+    public ?int $offlineUntil = null;
     /** The API token this request authenticated with (authMethod 'token'), for binding what it creates. */
     public ?int $tokenId = null;
 

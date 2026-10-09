@@ -6,7 +6,7 @@ A zero-dependency MCP server (stdio transport, newline-delimited JSON-RPC 2.0) t
 
 Two environment variables:
 
-- `BETTERCAL_URL`: base URL of your deployment, e.g. `https://cal.example.com` (no trailing slash needed).
+- `BETTERCAL_URL`: HTTPS base URL of your deployment, e.g. `https://cal.example.com` (no trailing slash needed). Plain HTTP is accepted only for loopback development addresses; credentials, query strings and fragments are refused so the account token cannot be sent to an unintended origin.
 - `BETTERCAL_TOKEN`: a personal access token (`bc_...`). Create one on the server with `php server/bin/token.php --create --name="Claude Code"`, or via `POST /api/v1/tokens` from a logged-in session. The token value is shown once.
 
 **The token is a long-lived credential for the whole account. It never belongs in a file that can be committed.** Keep it in your shell environment (or a secret manager that exports it) and let the MCP config refer to it by name:

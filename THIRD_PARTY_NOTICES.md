@@ -10,8 +10,8 @@ These front-end libraries are copied into `web/vendor/`, pinned and checksummed 
 |---|---|---|---|
 | [Preact](https://github.com/preactjs/preact) | 10.29.7 | [MIT](https://github.com/preactjs/preact/blob/10.29.7/LICENSE) | `preact.module.js`, `hooks.module.js` |
 | [htm](https://github.com/developit/htm) | 3.1.1 | [Apache-2.0](https://github.com/developit/htm/blob/3.1.1/LICENSE) | `htm.module.js` |
-| [Squire](https://github.com/fastmail/Squire) | 2.4.8 | [MIT](https://github.com/fastmail/Squire/blob/master/LICENSE) | `squire/squire-raw.js` |
-| [DOMPurify](https://github.com/cure53/DOMPurify) | 3.4.15 | [Apache-2.0 or MPL-2.0](https://github.com/cure53/DOMPurify/blob/3.4.15/LICENSE) (used under Apache-2.0) | `squire/purify.min.js` |
+| [Squire](https://github.com/fastmail/Squire) | 2.4.9 | [MIT](https://github.com/fastmail/Squire/blob/master/LICENSE) | `squire/squire-raw.js` |
+| [DOMPurify](https://github.com/cure53/DOMPurify) | 3.4.16 | [Apache-2.0 or MPL-2.0](https://github.com/cure53/DOMPurify/blob/3.4.16/LICENSE) (used under Apache-2.0) | `squire/purify.min.js` |
 | [Leaflet](https://github.com/Leaflet/Leaflet) | 1.9.4 | [BSD-2-Clause](https://github.com/Leaflet/Leaflet/blob/v1.9.4/LICENSE) | `leaflet/` |
 
 The Apache-2.0 licensed files (htm, DOMPurify) are redistributed unmodified; their license text is at the links above. Only Preact's two files are changed: the source-map comment is removed, and `hooks.module.js` imports Preact by its local path.

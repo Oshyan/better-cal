@@ -6,8 +6,12 @@ import { state, set, mergeWindow, pruneOccurrenceCache, missingRanges, patchOccu
 import { toISOWithOffset } from '../lib/dates.js';
 import { adoptSettings } from './settings.js';
 import { clearEditorDraft, clearQuickAddText } from './drafts.js';
+import { clearResume } from './resume-storage.js';
 
 const BASE = '/api/v1';
+// Monotonic local authentication generation. Logout, a live 401 and a new
+// login invalidate session responses already being parsed in another task.
+let authEpoch = 0;
 
 export class ApiError extends Error {
   constructor(code, message, status) {
@@ -18,6 +22,15 @@ export class ApiError extends Error {
 }
 
 export async function api(path, { method = 'GET', body, formData, signal } = {}) {
+  const requestEpoch = authEpoch;
+  if (method !== 'GET' && state.offlineReadOnly && path !== '/auth/login') {
+    // The cached /me deliberately contains no CSRF value. Re-establish the
+    // live session before a write; if the device is still offline, keep the
+    // calendar explicitly read-only instead of sending a doomed mutation.
+    await fetchMe();
+    if (state.offlineReadOnly) throw new ApiError('offline_read_only', 'Offline saved data is read-only', 0);
+  }
+  if (requestEpoch !== authEpoch) throw new ApiError('session_changed', 'Session changed while the request was in flight', 0);
   const headers = {};
   if (method !== 'GET' && state.csrf) headers['X-CSRF'] = state.csrf;
   if (body !== undefined) headers['Content-Type'] = 'application/json';
@@ -34,28 +47,44 @@ export async function api(path, { method = 'GET', body, formData, signal } = {})
     if (e && e.name === 'AbortError') throw new ApiError('aborted', 'Request superseded', 0);
     throw new ApiError('network', 'Network error', 0);
   }
+  // A response belongs only to the login generation that sent it. In
+  // particular, a delayed 401 from the prior session must not sign out a
+  // login that completed while that old request was in flight.
+  if (requestEpoch !== authEpoch) throw new ApiError('session_changed', 'Session changed while the request was in flight', 0);
   if (res.status === 401) {
     // The session is gone (expired, revoked by a password reset, or signed
     // out elsewhere), so this browser no longer has any claim to the data it
     // cached under it.
     purgePrivateCaches();
-    set({ authed: false, user: null });
+    clearResume();
+    authEpoch++;
+    set({ authed: false, user: null, csrf: null, offlineReadOnly: false });
     throw new ApiError('unauthorized', 'Signed out', 401);
   }
   let data = null;
   try { data = await res.json(); } catch { /* empty body */ }
+  // Parsing can yield to logout or login just like fetch(). Do not return an
+  // old session's body to a caller that may write it into current app state.
+  if (requestEpoch !== authEpoch) throw new ApiError('session_changed', 'Session changed while the request was in flight', 0);
   if (!res.ok) {
     const err = (data && data.error) || {};
     throw new ApiError(err.code || 'error', err.message || res.statusText, res.status);
   }
+  if (res.headers.get('X-BetterCal-Offline') === '1' && requestEpoch === authEpoch) set({ offlineReadOnly: true });
   return data;
 }
 
 // --- session ---------------------------------------------------------------
 
-export async function fetchMe() {
+export async function fetchMe(expectedEpoch = authEpoch) {
+  if (expectedEpoch !== authEpoch) throw new ApiError('session_changed', 'Session changed while the request was in flight', 0);
   const data = await api('/me');
-  set({ authed: true, user: data.user, csrf: data.csrf });
+  if (expectedEpoch !== authEpoch) throw new ApiError('session_changed', 'Session changed while the request was in flight', 0);
+  // Only a live /me can restore a writable session: the worker deliberately
+  // removes CSRF from its cached copy. A successful unrelated GET is not
+  // enough evidence to leave offline read-only mode.
+  const csrf = typeof data.csrf === 'string' && data.csrf !== '' ? data.csrf : null;
+  set({ authed: true, user: data.user, csrf, offlineReadOnly: csrf === null });
   // /me carries the merged settings object; apply them (view, week start,
   // time format, theme) before anything renders against defaults.
   adoptSettings(data.user && data.user.settings, { initial: true });
@@ -63,8 +92,9 @@ export async function fetchMe() {
 }
 
 export async function login(email, password) {
+  const loginEpoch = ++authEpoch;
   await api('/auth/login', { method: 'POST', body: { email, password } });
-  return fetchMe();
+  return fetchMe(loginEpoch);
 }
 
 // The service worker's cache of API responses is private to the signed-in
@@ -91,6 +121,9 @@ export async function purgePrivateCaches() {
 }
 
 export async function logout(pushEndpointHash = null) {
+  // Invalidate any /me already being fetched before making the network call;
+  // the CSRF value remains available long enough for this logout request.
+  authEpoch++;
   try {
     await api('/auth/logout', {
       method: 'POST',
@@ -100,13 +133,16 @@ export async function logout(pushEndpointHash = null) {
     // Even when the request fails (offline), clear what is stored locally:
     // that is the half of signing out this device can always do. The caller
     // still sees the error, because the server session is NOT ended.
+    // Mark the app signed out before awaiting storage cleanup so a pagehide in
+    // between cannot save fresh resume context.
+    set({ authed: false, user: null, csrf: null, offlineReadOnly: false });
     await purgePrivateCaches();
     // Unsaved drafts go too, but only here: a session that merely EXPIRED
     // mid-edit (the 401 path) must not cost the owner what they were typing.
     clearEditorDraft();
     clearQuickAddText();
+    clearResume();
   }
-  set({ authed: false, user: null, csrf: null });
 }
 
 // --- server config ---------------------------------------------------------
@@ -168,6 +204,35 @@ export async function loadSystemHealth() {
   } catch (e) {
     return null; // the panel says it could not load; nothing else depends on it
   }
+}
+
+// --- application updates --------------------------------------------------
+
+export async function loadUpdates() {
+  try {
+    const updates = await api('/updates');
+    set({ updates });
+    return updates;
+  } catch {
+    return null;
+  }
+}
+
+export async function checkUpdates() {
+  try {
+    const updates = await api('/updates/check', { method: 'POST', body: {} });
+    set({ updates });
+    return updates;
+  } catch (e) {
+    await loadUpdates();
+    throw e;
+  }
+}
+
+export async function dismissUpdate() {
+  const updates = await api('/updates/dismiss', { method: 'POST', body: {} });
+  set({ updates });
+  return updates;
 }
 
 // --- saved views -----------------------------------------------------------

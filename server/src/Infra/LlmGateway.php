@@ -242,15 +242,17 @@ final class LlmGateway
             return null;
         }
         $instructions = "You are ranking upcoming calendar events for a user based on their past feedback.\n"
-            . "Feedback examples (signal up = the user liked a similar event, down = disliked):\n"
-            . json_encode($examples, JSON_UNESCAPED_UNICODE) . "\n"
-            . "For each event below, output score between 0 and 1: how likely the user is to want "
+            . "For each candidate event, output a score between 0 and 1: how likely the user is to want "
             . "to attend it, judging by similarity to the liked and disliked examples.\n"
             . "Return one result per event, echoing its eventId.\n"
             . self::UNTRUSTED_NOTE;
+        $data = "UNTRUSTED FEEDBACK EXAMPLES (signal up means liked; down means disliked):\n"
+            . json_encode($examples, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . "\n"
+            . "UNTRUSTED CANDIDATE EVENTS:\n"
+            . json_encode($events, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 
         $parsed = $this->generate([
-            ...$this->instructionsAndData($instructions, self::dataBlock($events)),
+            ...$this->instructionsAndData($instructions, $data),
             'generationConfig' => [
                 'response_mime_type' => 'application/json',
                 'response_schema' => [

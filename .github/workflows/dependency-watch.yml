@@ -1,0 +1,47 @@
+name: dependency watch
+
+on:
+  schedule:
+    - cron: '17 16 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Verify Composer installer and inspect locked dependencies
+        run: |
+          php -r 'copy("https://getcomposer.org/installer", "/tmp/composer-setup.php");'
+          php -r 'copy("https://composer.github.io/installer.sig", "/tmp/composer-setup.sig");'
+          php -r '$expected = trim(file_get_contents("/tmp/composer-setup.sig")); $actual = hash_file("sha384", "/tmp/composer-setup.php"); if (!hash_equals($expected, $actual)) exit(1);'
+          php /tmp/composer-setup.php --quiet --install-dir=/tmp --filename=composer
+          audit_status=0
+          php /tmp/composer audit --working-dir=server --locked --no-dev --format=json > /tmp/composer-audit.json || audit_status=$?
+          if [ "$audit_status" -gt 3 ] || [ ! -s /tmp/composer-audit.json ]; then
+            echo "Composer audit did not produce a usable report (exit $audit_status)." >&2
+            exit 1
+          fi
+          php /tmp/composer outdated --working-dir=server --direct --locked --format=json > /tmp/composer-outdated.json
+      - name: Inspect vendored libraries and PHP image
+        run: node scripts/dependency-status.mjs --json > /tmp/repo-dependencies.json
+      - name: Open or refresh the review issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/dependency-watch-report.mjs /tmp/composer-audit.json /tmp/composer-outdated.json /tmp/repo-dependencies.json /tmp/dependency-report.md
+          title='Dependency review available'
+          issue=$(gh issue list --state open --search "$title in:title" --json number --jq '.[0].number // empty')
+          if [ -s /tmp/dependency-report.md ]; then
+            if [ -n "$issue" ]; then gh issue edit "$issue" --body-file /tmp/dependency-report.md; else gh issue create --title "$title" --body-file /tmp/dependency-report.md; fi
+          elif [ -n "$issue" ]; then
+            gh issue close "$issue" --comment 'The scheduled dependency review found no remaining updates or advisories.'
+          fi

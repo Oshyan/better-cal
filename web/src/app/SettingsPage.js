@@ -6,11 +6,12 @@
 import { PHONE_QUERY } from '../lib/breakpoints.js';
 import { html, useState, useEffect, useMemo } from '../../vendor/index.js';
 import { useStore, toast, shallowEq, set } from './store.js';
-import { api, logout, loadSystemHealth, loadCalendars, loadReviewCount } from './api.js';
+import { api, logout, loadSystemHealth, loadCalendars, loadReviewCount, loadUpdates } from './api.js';
 import { fmtSince } from '../lib/since.js';
 import { adoptSettings } from './settings.js';
 import { saveSetting } from './actions.js';
 import { recentStarts } from './resume.js';
+import { UpdateSettings } from './updates.js';
 import { PageShell } from './PageShell.js';
 import { Icon } from '../ui/icons.js';
 import { GoogleConnector } from './GoogleConnector.js';
@@ -666,8 +667,8 @@ function sectionSummary(id, settings, user, version) {
 }
 
 export function SettingsPage() {
-  const { settings, user, calendars, config, settingsTab } = useStore(
-    (s) => ({ settings: s.settings, user: s.user, calendars: s.calendars, config: s.config, settingsTab: s.settingsTab }),
+  const { settings, user, calendars, config, settingsTab, updates } = useStore(
+    (s) => ({ settings: s.settings, user: s.user, calendars: s.calendars, config: s.config, settingsTab: s.settingsTab, updates: s.updates }),
     shallowEq,
   );
   const [version, setVersion] = useState(null);
@@ -679,6 +680,7 @@ export function SettingsPage() {
       .then((data) => adoptSettings(data.settings))
       .catch(() => { /* boot values remain; per-control saves still work */ });
     api('/health').then((h) => setVersion(h && h.version)).catch(() => {});
+    loadUpdates();
   }, []);
 
   const save = (key) => (value) => saveSetting(key, value);
@@ -833,6 +835,18 @@ export function SettingsPage() {
       <h2 class="bc-set-h">About</h2>
       <${Row} label="Version">
         <span class="bc-set-value">${version || 'unknown'}</span>
+      <//>
+      <${Row} label="Update notices" hint="Checks GitHub Releases once a day. Better-Cal never installs an update automatically.">
+        <select value=${settings.updateNotifications || 'all'} aria-label="Update notices" onChange=${async (e) => {
+          if (await save('updateNotifications')(e.target.value)) await loadUpdates();
+        }}>
+          <option value="all">All releases</option>
+          <option value="security">Security updates only</option>
+          <option value="off">Off</option>
+        </select>
+      <//>
+      <${Row} label="Updates" hint="A manual check works even when automatic notices are off.">
+        <${UpdateSettings} update=${updates} />
       <//>
       <${Row} label="Source" hint="Self-hosted; the code, issues and docs live on GitHub.">
         <a class="bc-set-value" href="https://github.com/Oshyan/better-cal" target="_blank" rel="noopener">github.com/Oshyan/better-cal</a>

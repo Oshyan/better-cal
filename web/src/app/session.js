@@ -6,7 +6,7 @@
 
 import { state, toast } from './store.js';
 import { saveSetting } from './actions.js';
-import { loadCalendars, loadSavedViews, loadConfig, loadPeople, loadPlugins, loadReviewCount, loadSystemHealth } from './api.js';
+import { loadCalendars, loadSavedViews, loadConfig, loadPeople, loadPlugins, loadReviewCount, loadSystemHealth, loadUpdates } from './api.js';
 import { announceSystemHealth } from './system.js';
 import { installHoverPrefetch } from './prefetch.js';
 import { restoreDraftsAfterBoot, installActivityTracking } from './drafts.js';
@@ -31,6 +31,7 @@ export function loadSession() {
     loadSystemHealth(), // own catch inside; feeds the boot notices and the device banner
     loadPlugins(), // ops listing feeds the sidebar layer toggles; own catch inside
     loadReviewCount(),
+    loadUpdates(),
     // Tell the server our timezone once. The browser has always known it;
     // worker-side code (plugins building local times) had no way to.
     (state.settings.tz ? Promise.resolve() : saveSetting('tz', localTz()).catch(() => {})),

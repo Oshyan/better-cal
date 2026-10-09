@@ -57,6 +57,7 @@ $geocodeSweep = new BetterCal\Domain\GeocodeSweep(
 );
 $systemHealth = new BetterCal\Domain\SystemHealth($db);
 $emailSender = new EmailSender($cfg);
+$updates = new BetterCal\Domain\Updates($db, $cfg);
 
 // Job types reported to system_health at the job level, with the label a
 // person sees. feed_poll is reported per calendar by Feeds::poll and
@@ -71,6 +72,7 @@ const HEALTH_JOB_LABELS = [
     'geocode_sweep' => 'Geocoding',
     'system_alerts' => 'Alert emails',
     'duplicate_scan' => 'Duplicate detection',
+    'update_check' => 'Application update checks',
 ];
 
 $locked = $db->scalar('SELECT GET_LOCK(?, 0)', [WORKER_LOCK]);
@@ -287,6 +289,10 @@ try {
                         . ' deleted=' . $result['deleted'] . ' model_admissions=' . $modelAdmissions
                         . ' external_action_admissions=' . $externalAdmissions . "\n";
                     break;
+                case 'update_check':
+                    $result = $updates->check(true);
+                    echo bc_ts() . ' update_check latest=' . ($result['latest_version'] ?? 'none') . "\n";
+                    break;
                 default:
                     throw new \RuntimeException('Unknown job type: ' . $job['type']);
             }
@@ -376,6 +382,10 @@ function bc_enqueue_recurring(Db $db, JobQueue $queue): void
     // The same event arriving twice (#9). Feeds poll every few minutes at
     // most, so a duplicate shows as one within ten.
     bc_enqueue_if_stale($db, $queue, 'duplicate_scan', 'PT10M');
+    // Release metadata is small and changes infrequently. Once a day keeps
+    // self-hosted installs informed without turning ordinary use into GitHub
+    // traffic.
+    bc_enqueue_if_stale($db, $queue, 'update_check', 'P1D');
 
     // Plugin jobs: manifests declare intervals; staleness is judged from
     // plugin_runs (a failing job still respects its interval). Cap per tick.

@@ -24,8 +24,8 @@ import { splitDay } from '../lib/splitday.js';
 import { setResumeTime } from '../lib/resumetime.js';
 import { openOccurrence } from './push.js';
 import { searchSnapshot, reopenSearch, primeSearchBack } from './SearchOverlay.js';
+import { RESUME_KEY, clearResume } from './resume-storage.js';
 
-const KEY = 'bc-resume';
 const MAX_AGE_MS = 30 * 60000;
 
 const installed = () => { try { return matchMedia('(display-mode: standalone)').matches; } catch { return false; } };
@@ -85,7 +85,7 @@ export function saveResume() {
     searchBack: pop && pop.backTo && pop.backTo.search && search.last ? search.last : null,
   };
   const st = store();
-  try { if (st) st.setItem(KEY, JSON.stringify(snap)); } catch { /* not durable here */ }
+  try { if (st) st.setItem(RESUME_KEY, JSON.stringify(snap)); } catch { /* not durable here */ }
 }
 
 // --- why the app started (0.9.1) -------------------------------------------
@@ -124,9 +124,15 @@ export function recentStarts() {
 /** A fresh snapshot exists (the app is coming back, not starting cold). */
 export function hasFreshResume() {
   try {
-    const snap = JSON.parse((store() && store().getItem(KEY)) || 'null');
-    return !!(snap && snap.at && Date.now() - snap.at <= MAX_AGE_MS);
-  } catch { return false; }
+    const st = store();
+    const snap = JSON.parse((st && st.getItem(RESUME_KEY)) || 'null');
+    const fresh = !!(snap && snap.at && Date.now() - snap.at <= MAX_AGE_MS);
+    if (!fresh && st) st.removeItem(RESUME_KEY);
+    return fresh;
+  } catch {
+    clearResume();
+    return false;
+  }
 }
 
 export function installResumeSaving() {
@@ -142,9 +148,12 @@ export function restoreResume() {
   let snap = null;
   try {
     const st = store();
-    snap = JSON.parse((st && st.getItem(KEY)) || 'null');
-    if (st) st.removeItem(KEY);
-  } catch { return false; }
+    snap = JSON.parse((st && st.getItem(RESUME_KEY)) || 'null');
+    if (st) st.removeItem(RESUME_KEY);
+  } catch {
+    clearResume();
+    return false;
+  }
   if (!snap || !snap.at || Date.now() - snap.at > MAX_AGE_MS) return false;
   const saved = snap.activeViewId && state.savedViews.find((v) => v.id === snap.activeViewId);
   // A saved view brings its calendars and Show choices back with it; the

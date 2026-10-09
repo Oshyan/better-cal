@@ -26,6 +26,7 @@ export const state = {
   authed: false,
   user: null,
   csrf: null,
+  offlineReadOnly: false,
 
   calendars: [],
   folders: [],
@@ -51,6 +52,7 @@ export const state = {
   pluginSeq: 0,       // bump to force a plugin ranges/list refetch
   reviewCount: 0,     // everything awaiting a decision, including paused calendar updates (sidebar badge)
   systemHealth: null, // GET /system/health: {rows, emailAlerts}; Settings panel, boot notices, device banner
+  updates: null,      // checked release metadata and this user's banner decision
   availSeq: 0,        // visible people's availability spans refetch trigger        // bumped on span/visibility changes to refetch availSpans
 
   // User settings (contract defaults until /me or /settings answers).
@@ -59,6 +61,7 @@ export const state = {
   settings: {
     defaultView: 'month', weekStart: 'sun', timeFormat: '12',
     defaultCalendarId: null, theme: 'system', nlParseMode: 'smart',
+    updateNotifications: 'all',
     sidebarActiveOnly: false,
     pluginHidden: {},
     overviewMode: null,

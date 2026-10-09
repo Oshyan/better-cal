@@ -108,6 +108,7 @@ function bc_handle_api(Request $request, array $cfg): void
         $pushController = new Controllers\PushController($pushSubscriptions, $pushSender, $emailSender, $throttle, $db);
         $systemController = new Controllers\SystemController(new Domain\SystemHealth($db), $pushSubscriptions, $emailSender, $cfg);
         $healthController = new Controllers\HealthController($db, $cfg);
+        $updatesController = new Controllers\UpdatesController(new Domain\Updates($db, $cfg));
         $googleMove = new Domain\GoogleMove($db, $googleAuth, new Domain\GoogleWriter($db, $googleAuth, $feeds), $feeds, $undo, $jobQueue);
         $googleController = new Controllers\GoogleController($db, $googleAuth, $calendars, $feeds, $googleMove);
 
@@ -287,6 +288,9 @@ function bc_handle_api(Request $request, array $cfg): void
 
         $router->add('GET', "$base/settings", [$settingsController, 'index']);
         $router->add('PATCH', "$base/settings", [$settingsController, 'patch']);
+        $router->add('GET', "$base/updates", [$updatesController, 'status']);
+        $router->add('POST', "$base/updates/check", [$updatesController, 'check']);
+        $router->add('POST', "$base/updates/dismiss", [$updatesController, 'dismiss']);
 
         $router->add('GET', "$base/tokens", [$tokensController, 'index']);
         $router->add('POST', "$base/tokens", [$tokensController, 'create']);
@@ -323,6 +327,8 @@ function bc_handle_api(Request $request, array $cfg): void
                 $request->csrf = $session['csrf'];
                 $request->authMethod = 'session';
                 $request->authenticatedAt = $session['authenticatedAt'];
+                $request->sessionCacheId = $session['cacheId'];
+                $request->offlineUntil = $session['offlineUntil'];
 
                 if (!in_array($request->method, ['GET', 'HEAD', 'OPTIONS'], true)
                     && !hash_equals($session['csrf'], (string) ($request->header('X-CSRF') ?? ''))
@@ -342,6 +348,11 @@ function bc_handle_api(Request $request, array $cfg): void
             } catch (\PDOException) {
                 // Before migration 039: the other cursor parts still move.
             }
+        }
+        if ($request->authMethod === 'session' && $request->sessionCacheId !== null && $request->offlineUntil !== null) {
+            $response = $response
+                ->withHeader('X-BetterCal-Session', $request->sessionCacheId)
+                ->withHeader('X-BetterCal-Offline-Until', (string) $request->offlineUntil);
         }
         $response->send();
     } catch (HttpError $e) {

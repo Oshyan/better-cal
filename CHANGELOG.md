@@ -4,6 +4,12 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.52 (2026-10-09)
+
+- **Settings shows the place search services in use.** Since 0.9.46 the "Place search service" row under Location & maps never appeared, with its notes on Stadia's and MapTiler's terms and any problem with the setting: the app kept only the map key from the server's configuration. It now keeps the place search part too, and the outage notice from 0.9.51 knows which services you use.
+
+Operators: no migration.
+
 ## 0.9.51 (2026-10-09)
 
 - **Place search outages only interrupt when they matter.** With more than one place search service set up, one being down no longer earns an email or a notice at startup, since searches go to the next one; you hear about it only when all of them are down. When Photon is the only service and it's down, the notice, the email and Settings say so and point to free LocationIQ or MapTiler keys that keep place search working next time.

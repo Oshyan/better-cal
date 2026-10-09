@@ -20,12 +20,15 @@ final class PoliciedGeocoderTransport implements GeocoderTransport, KeyedGeocode
     private const MAX_BYTES = 1024 * 1024;
     /**
      * The keyed place-search services: the one host each may be asked, the
-     * health label, and whether to connect over IPv4 only (LocationIQ can
-     * restrict a key to source addresses, and accepts only IPv4 ones there).
+     * health label, whether to connect over IPv4 only (LocationIQ can
+     * restrict a key to source addresses, and accepts only IPv4 ones there),
+     * and how long to wait. LocationIQ answers in well under a second (0.06 s
+     * median, 0.9 s the slowest normal answer in testing); past 1.2 s it is
+     * stuck, and Photon behind it answers sooner than waiting would.
      */
     private const KEYED = [
-        'locationiq' => ['host' => 'api.locationiq.com', 'label' => 'LocationIQ place search', 'ipv4' => true],
-        'stadia' => ['host' => 'api.stadiamaps.com', 'label' => 'Stadia Maps place search', 'ipv4' => false],
+        'locationiq' => ['host' => 'api.locationiq.com', 'label' => 'LocationIQ place search', 'ipv4' => true, 'timeoutMs' => 1_200],
+        'stadia' => ['host' => 'api.stadiamaps.com', 'label' => 'Stadia Maps place search', 'ipv4' => false, 'timeoutMs' => self::TIMEOUT_MS],
     ];
 
     public function __construct(
@@ -65,7 +68,7 @@ final class PoliciedGeocoderTransport implements GeocoderTransport, KeyedGeocode
                 throw new \InvalidArgumentException('Place search URL is not for ' . $provider);
             }
         }
-        return $this->jsonBatch($provider, $profile['label'], $urls, 0, $profile['ipv4']);
+        return $this->jsonBatch($provider, $profile['label'], $urls, 0, $profile['ipv4'], $profile['timeoutMs']);
     }
 
     public function openMeteo(array $params): ?array
@@ -80,7 +83,7 @@ final class PoliciedGeocoderTransport implements GeocoderTransport, KeyedGeocode
     }
 
     /** @param list<string> $urls @return list<?array> */
-    private function jsonBatch(string $provider, string $label, array $urls, int $maxRedirects, bool $ipv4Only = false): array
+    private function jsonBatch(string $provider, string $label, array $urls, int $maxRedirects, bool $ipv4Only = false, int $timeoutMs = self::TIMEOUT_MS): array
     {
         if ($urls === []) {
             return [];
@@ -90,8 +93,8 @@ final class PoliciedGeocoderTransport implements GeocoderTransport, KeyedGeocode
             userAgent: HttpClient::userAgentFor('geocoding'),
             maxBytes: self::MAX_BYTES,
             maxRedirects: $maxRedirects,
-            connectTimeoutMs: self::TIMEOUT_MS,
-            totalTimeoutMs: self::TIMEOUT_MS,
+            connectTimeoutMs: $timeoutMs,
+            totalTimeoutMs: $timeoutMs,
             allowedSchemes: ['https'],
             maxTotalBytes: count($urls) * self::MAX_BYTES,
             resolver: $this->resolver,

@@ -86,7 +86,7 @@ deploy_rsync() {
       git -C "${ROOT_DIR}" ls-files --cached --others --exclude-standard -z
     fi
   } | \
-  rsync -azr --no-owner --no-group "${extra[@]}" \
+  rsync -azr --no-owner --no-group ${extra[@]+"${extra[@]}"} \
     --from0 --files-from=- \
     --exclude '.git' \
     --exclude '.credentials' \
@@ -96,6 +96,8 @@ deploy_rsync() {
     --exclude '.env.*' \
     --exclude '.mcp.json' \
     --exclude 'scripts/deploy.env' \
+    --exclude 'scripts/server.env' \
+    --exclude 'scripts/server-dev.env' \
     --exclude 'workfolder' \
     --exclude 'workfolder/***' \
     --exclude '.ygrep' \

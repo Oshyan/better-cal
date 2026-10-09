@@ -232,6 +232,15 @@ if [[ "${db_boundary_source}" == *'REQUIRE_DB_ISOLATION'* \
 else
   not_ok 'development deploy does not verify the intended database before branch code while supporting explicit shared DB authority'
 fi
+# `getenv(...) ?: default` reads the string "0" as empty: the explicit
+# REQUIRE_DB_ISOLATION=0 of shared mode became "1" and could never pass.
+if [[ "${db_boundary_source}" != *"getenv('REQUIRE_DB_ISOLATION') ?:"* \
+  && "${db_boundary_source}" != *"getenv('REPORT_DB_PRINCIPAL') ?:"* \
+  && "${db_boundary_source}" == *"=== false || \$v === '') ? \$default"* ]]; then
+  ok
+else
+  not_ok 'the database boundary check reads an explicit "0" setting as unset'
+fi
 if [[ "${deploy_lib_source}" == *'history_ref'*'server/plugins/*/plugin.json'* \
   && "${deploy_lib_source}" == *'/var/lib/better-cal-deploy'* \
   && "${deploy_lib_source}" == *'__PRESENT__'* \

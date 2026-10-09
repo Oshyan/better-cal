@@ -10,8 +10,12 @@ declare(strict_types=1);
 $appRoot = (string) getenv('APP_ROOT');
 $expected = (string) getenv('EXPECTED_DB');
 $forbidden = (string) getenv('FORBIDDEN_DB');
-$requireIsolation = (string) (getenv('REQUIRE_DB_ISOLATION') ?: '1');
-$reportPrincipal = (string) (getenv('REPORT_DB_PRINCIPAL') ?: '0');
+// Not `?:`: it treats the string "0" as empty, so an explicit
+// REQUIRE_DB_ISOLATION=0 (shared mode) silently became "1" and shared mode
+// could never pass. Only unset or empty takes the default.
+$envOr = static fn(string $name, string $default): string => (($v = getenv($name)) === false || $v === '') ? $default : (string) $v;
+$requireIsolation = $envOr('REQUIRE_DB_ISOLATION', '1');
+$reportPrincipal = $envOr('REPORT_DB_PRINCIPAL', '0');
 $expectedUser = (string) getenv('EXPECTED_DB_USER');
 if ($appRoot === '' || $appRoot[0] !== '/' || !is_file($appRoot . '/server/src/bootstrap.php')) {
     fwrite(STDERR, "Invalid application root for database boundary check.\n");

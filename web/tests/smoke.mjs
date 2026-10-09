@@ -24,7 +24,7 @@ import { sortByMatch } from '../src/lib/rank.js';
 import { parseJumpText, jumpGranularity } from '../src/lib/jumpparse.js';
 import { parseClockText, resolveClock, minsToHHMM, hhmmToMins, parseDateText, durationLabel } from '../src/lib/whenparse.js';
 import { monthWeeks, stepMonthOf } from '../src/lib/minimonth.js';
-import { state as storeState, missingRanges, pruneOccurrenceCache } from '../src/app/store.js';
+import { state as storeState, missingRanges, pruneOccurrenceCache, invalidateRecords, mergeWindow } from '../src/app/store.js';
 import {
   normalizeDayRange, dayRangeDraft, dayRangeLabel, timeRangeLabel, chipPosition,
   dragCreateMode, allDayRangeDraft,
@@ -2425,5 +2425,31 @@ eq('gmaps: a slash in the name stays inside the query', gmapsUrl('Bar 1/2', 1, 2
 eq('gmaps: pending text falls back to the coordinates', gmapsUrl("Location available once RSVP'd", 45.5, -122.6), 'https://www.google.com/maps/search/?api=1&query=45.5,-122.6');
 eq('gmaps: coordinate text uses the coordinates', gmapsUrl('45.5, -122.6', 45.5, -122.6), 'https://www.google.com/maps/search/?api=1&query=45.5,-122.6');
 eq('gmaps: text alone is a search', gmapsUrl('Example Cafe', null, null), 'https://www.google.com/maps/search/?api=1&query=Example%20Cafe');
+
+// A change anywhere (the change cursor moving) used to strip every fetched
+// record, so an open event view lost its description and own time zone until
+// something refetched them. Now they stay, marked stale; an edit to one event
+// still strips that event's record.
+{
+  const saved = new Map(storeState.occ);
+  storeState.occ.clear();
+  const base = { instanceId: 'r1', eventId: 1, start: '2026-03-10T17:00:00Z', end: '2026-03-10T18:00:00Z', title: 'Review' };
+  storeState.occ.set('r1', { ...base, full: true, description: 'Agenda here', tzid: 'Europe/Lisbon' });
+  storeState.occ.set('r2', { ...base, instanceId: 'r2', eventId: 2, full: true, description: 'Other notes' });
+  invalidateRecords();
+  const r1 = storeState.occ.get('r1');
+  eq('records: a change anywhere keeps the fetched details on screen', [r1.description, r1.tzid], ['Agenda here', 'Europe/Lisbon']);
+  assert('records: ... and marks them stale for a refetch', r1.stale === true && r1.full === true);
+  mergeWindow('2026-03-10T00:00:00Z', '2026-03-11T00:00:00Z', [{ ...base }]);
+  const merged = storeState.occ.get('r1');
+  assert('records: a window refresh carries the details and the stale mark', merged.description === 'Agenda here' && merged.stale === true);
+  storeState.occ.set('r2', { ...base, instanceId: 'r2', eventId: 2, full: true, description: 'Other notes' });
+  invalidateRecords(2);
+  const r2 = storeState.occ.get('r2');
+  assert('records: editing one event still strips that event’s record', !r2.full && !('description' in r2));
+  storeState.occ.clear();
+  for (const [k, v] of saved) storeState.occ.set(k, v);
+}
+
 console.log(passed + ' passed, ' + failed + ' failed');
 if (failed > 0) process.exit(1);

@@ -231,9 +231,21 @@ const RECORD_FIELDS = ['description', 'rrule', 'reminders', 'reminderSource', 'c
 // of them (undo, or the change cursor moved: something changed and it could
 // be any of them). The next open refetches; until then the list shape is
 // shown, which is exactly what a first open shows.
+//
+// For all of them, the fields stay and are only marked stale: the next
+// ensureFullOccurrence refetches and replaces them, and an open event view
+// refetches at once (EventPopover). Stripping them meant a description or the
+// event's own time zone vanished from an open view whenever anything changed
+// on any device, until something happened to refetch it.
 export function invalidateRecords(eventId = null) {
+  if (eventId === null) {
+    for (const [id, occ] of state.occ) {
+      if (occ.full && !occ.stale) state.occ.set(id, { ...occ, stale: true });
+    }
+    return;
+  }
   for (const [id, occ] of state.occ) {
-    if (occ.full && (eventId === null || occ.eventId === eventId)) {
+    if (occ.full && occ.eventId === eventId) {
       const next = { ...occ };
       delete next.full;
       for (const k of RECORD_FIELDS) if (k in next && !(k in LIST_KEEP)) delete next[k];
@@ -264,6 +276,7 @@ export function mergeWindow(startISO, endISO, events) {
     const p = prior.get(ev.instanceId);
     if (p) {
       const merged = { ...ev, full: true };
+      if (p.stale) merged.stale = true; // carried fields still need their refetch
       for (const k of RECORD_FIELDS) if (k in p && !(k in ev)) merged[k] = p[k];
       state.occ.set(ev.instanceId, merged);
     } else {

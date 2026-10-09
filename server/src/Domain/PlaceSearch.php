@@ -250,7 +250,8 @@ final class PlaceSearch
         $limit = max(1, min(self::MAX_LIMIT, $limit));
 
         $params = ['q' => $q, 'limit' => $limit + 4]; // headroom for dedupe + re-rank
-        if ($biasLat !== null && $biasLng !== null) {
+        $biased = $biasLat !== null && $biasLng !== null;
+        if ($biased) {
             $params['lat'] = $biasLat;
             $params['lon'] = $biasLng;
         }
@@ -259,18 +260,32 @@ final class PlaceSearch
         // the other spelling's matches go first, since they are the ones the
         // typed spelling missed, and duplicates fold in mapFeatures.
         $alt = self::ampersandVariant($q);
-        $bodies = $this->fetchAll($alt === null ? [$params] : [['q' => $alt] + $params, $params]);
-        $features = [];
-        foreach ($bodies as $decoded) {
-            if (is_array($decoded) && is_array($decoded['features'] ?? null)) {
-                array_push($features, ...$decoded['features']);
+        $batch = static fn(array $p): array => $alt === null ? [$p] : [['q' => $alt] + $p, $p];
+
+        // Photon's lat/lon is only a soft preference: it still ranks the whole
+        // world by text match and prominence, so for half-typed input nothing
+        // nearby made its top results (a half-typed street name near home came
+        // back as a restaurant on another continent). With a bias, search a box around it first (a hard
+        // filter), and only look worldwide when the region has too little.
+        $candidates = null;
+        if ($biased) {
+            $candidates = $this->candidates($batch($params + ['bbox' => self::regionBox($biasLat, $biasLng)]), $q, $biasLat, $biasLng);
+        }
+        // Worldwide only when the region has too little AND there is a real
+        // word to go on: a bare "250" worldwide is every place numbered 250.
+        // Far results must also contain every typed word (the last may be
+        // partial); nearby, Photon's typo tolerance helps, but from across
+        // the world it only adds noise (a half-typed street name matched a
+        // street on another continent with a different number).
+        if ($candidates === null || (count($candidates) < self::REGION_ENOUGH && self::hasWord($q))) {
+            $world = $this->candidates($batch($params), $q, $biasLat, $biasLng);
+            if ($candidates === null && $world === null) {
+                return [];
             }
+            $world = $biased ? self::containingAllWords($q, $world ?? []) : ($world ?? []);
+            $candidates = self::mergeCandidates($candidates ?? [], $world);
         }
-        if ($features === [] && !in_array(true, array_map(static fn($b) => $b !== null, $bodies), true)) {
-            return [];
-        }
-        $candidates = self::mapFeatures(['features' => $features], $biasLat, $biasLng);
-        if ($biasLat !== null && $biasLng !== null) {
+        if ($biased) {
             $candidates = self::rank($candidates);
         }
         // Airport codes: pin the IATA-table airport above everything — bias
@@ -302,6 +317,125 @@ final class PlaceSearch
             )));
         }
         return array_slice($candidates, 0, $limit);
+    }
+
+    /** Fewer regional matches than this, and the worldwide search runs too. */
+    public const REGION_ENOUGH = 3;
+    /** Half the region box's height, in degrees of latitude (about 300 km). */
+    public const REGION_HALF_DEG = 2.7;
+
+    /**
+     * Photon's bbox (minLon,minLat,maxLon,maxLat) around a point, about 300 km
+     * each way: big enough for a metro area and its surroundings, small enough
+     * that the rest of the world can't crowd it out. Pure.
+     */
+    public static function regionBox(float $lat, float $lng): string
+    {
+        $dLat = self::REGION_HALF_DEG;
+        // Degrees of longitude shrink toward the poles; keep the box square-ish.
+        $dLng = min(30.0, $dLat / max(0.2, cos(deg2rad($lat))));
+        $f = static fn(float $v): string => rtrim(rtrim(sprintf('%.4F', $v), '0'), '.');
+        return implode(',', [
+            $f(max(-180.0, $lng - $dLng)), $f(max(-90.0, $lat - $dLat)),
+            $f(min(180.0, $lng + $dLng)), $f(min(90.0, $lat + $dLat)),
+        ]);
+    }
+
+    /**
+     * Keep only candidates that contain the house number the query starts
+     * with ("250 elm" must not offer "Elm Diner" or "258 Oak Road").
+     * A query without a leading number keeps everything. Pure.
+     *
+     * @param list<array<string,mixed>> $candidates
+     * @return list<array<string,mixed>>
+     */
+    public static function matchingNumber(string $q, array $candidates): array
+    {
+        if (preg_match('/^\s*(\d+[a-z]?)\b/iu', $q, $m) !== 1) {
+            return $candidates;
+        }
+        $num = '/(?<![\p{L}\p{N}])' . preg_quote($m[1], '/') . '(?![\p{L}\p{N}])/iu';
+        return array_values(array_filter($candidates, static fn(array $c): bool =>
+            preg_match($num, (string) ($c['name'] ?? '') . ' ' . (string) ($c['address'] ?? '')) === 1));
+    }
+
+    /** A query word of three or more letters (not just numbers). Pure. */
+    public static function hasWord(string $q): bool
+    {
+        return preg_match('/\p{L}{3,}/u', $q) === 1;
+    }
+
+    /**
+     * Keep candidates whose name and address contain every query word: each
+     * word as the start of a word in the candidate, numbers whole. The last
+     * word may be partial (it is still being typed). Pure.
+     *
+     * @param list<array<string,mixed>> $candidates
+     * @return list<array<string,mixed>>
+     */
+    public static function containingAllWords(string $q, array $candidates): array
+    {
+        $words = preg_split('/[^\p{L}\p{N}]+/u', mb_strtolower($q), -1, PREG_SPLIT_NO_EMPTY) ?: [];
+        if ($words === []) {
+            return $candidates;
+        }
+        return array_values(array_filter($candidates, static function (array $c) use ($words): bool {
+            $text = mb_strtolower((string) ($c['name'] ?? '') . ' ' . (string) ($c['address'] ?? ''));
+            foreach ($words as $w) {
+                $pattern = ctype_digit($w)
+                    ? '/(?<![\p{L}\p{N}])' . preg_quote($w, '/') . '(?![\p{L}\p{N}])/u'
+                    : '/(?<![\p{L}\p{N}])' . preg_quote($w, '/') . '/u';
+                if (preg_match($pattern, $text) !== 1) {
+                    return false;
+                }
+            }
+            return true;
+        }));
+    }
+
+    /**
+     * Regional candidates first, then worldwide ones not already listed. Pure.
+     *
+     * @param list<array<string,mixed>> $first
+     * @param list<array<string,mixed>> $then
+     * @return list<array<string,mixed>>
+     */
+    public static function mergeCandidates(array $first, array $then): array
+    {
+        $key = static fn(array $c): string => mb_strtolower((string) $c['name']) . '|' . round((float) $c['lat'], 4) . '|' . round((float) $c['lng'], 4);
+        $seen = [];
+        $out = [];
+        foreach ([...$first, ...$then] as $c) {
+            if (!isset($seen[$key($c)])) {
+                $seen[$key($c)] = true;
+                $out[] = $c;
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * One Photon batch, mapped and filtered: null when every request failed
+     * (so a provider outage is told apart from "nothing matched").
+     *
+     * @param list<array<string,mixed>> $paramSets
+     * @return ?list<array<string,mixed>>
+     */
+    private function candidates(array $paramSets, string $q, ?float $biasLat, ?float $biasLng): ?array
+    {
+        $bodies = $this->fetchAll($paramSets);
+        $features = [];
+        $anyOk = false;
+        foreach ($bodies as $decoded) {
+            if (is_array($decoded) && is_array($decoded['features'] ?? null)) {
+                $anyOk = true;
+                array_push($features, ...$decoded['features']);
+            }
+        }
+        if (!$anyOk) {
+            return null;
+        }
+        return self::matchingNumber($q, self::mapFeatures(['features' => $features], $biasLat, $biasLng));
     }
 
     /** The query with "and" and "&" swapped, or null when it has neither. */

@@ -1991,6 +1991,65 @@ $placeResults = (new \BetterCal\Domain\PlaceSearch($placeTransport))->search('Sm
 checkEq('place search keeps alternate spelling first in the parallel batch', 'Smith & Sons', $placeTransport->seen[0]['q'] ?? null);
 checkEq('place search keeps the original spelling second in the parallel batch', 'Smith and Sons', $placeTransport->seen[1]['q'] ?? null);
 checkEq('place search keeps a successful result when its sibling fails', 'Smith and Sons', $placeResults[0]['name'] ?? null);
+
+// Region first: Photon's lat/lon only nudges a worldwide ranking, so with a
+// bias the search is boxed to the region and goes worldwide only when the
+// region finds too little. A leading house number must appear in a result.
+checkEq('place search: the region box is about 300 km around the point', '-126.5335,42.82,-118.8265,48.22', \BetterCal\Domain\PlaceSearch::regionBox(45.52, -122.68));
+checkEq('place search: a leading house number must appear in the result',
+    ['100 Main Street'],
+    array_column(\BetterCal\Domain\PlaceSearch::matchingNumber('100 mai', [
+        ['name' => '100 Main Street', 'address' => 'Portland'],
+        ['name' => 'Main Street Diner', 'address' => 'Portland'],
+        ['name' => '1000 Mainsail Way', 'address' => 'Seattle'],
+    ]), 'name'));
+checkEq('place search: no leading number keeps every candidate', 2, count(\BetterCal\Domain\PlaceSearch::matchingNumber('main st', [['name' => 'A', 'address' => ''], ['name' => 'B', 'address' => '']])));
+$regionFeature = static fn(string $num, string $street, float $lat, float $lng): array => [
+    'geometry' => ['coordinates' => [$lng, $lat]],
+    'properties' => ['housenumber' => $num, 'street' => $street, 'name' => $num . ' ' . $street, 'city' => 'Example'],
+];
+$regionTransport = new class($regionFeature) implements \BetterCal\Infra\GeocoderTransport {
+    public array $calls = [];
+    public ?array $regional = null;
+    public ?array $world = null;
+    public function __construct(private \Closure $f) {}
+    public function photon(array $paramSets): array
+    {
+        $this->calls[] = $paramSets;
+        $boxed = isset($paramSets[0]['bbox']);
+        $features = $boxed ? $this->regional : $this->world;
+        return array_map(static fn() => $features === null ? null : ['features' => $features], $paramSets);
+    }
+    public function openMeteo(array $params): ?array { return null; }
+};
+$ps = new \BetterCal\Domain\PlaceSearch($regionTransport);
+$regionTransport->regional = [$regionFeature('100', 'Main Street', 45.52, -122.68), $regionFeature('100', 'Main Avenue', 45.50, -122.60), $regionFeature('100', 'Maine Road', 45.40, -122.70)];
+$regionTransport->world = [$regionFeature('100', 'Main Road', 48.85, 2.35)];
+$r = $ps->search('100 main', 45.52, -122.68, 6);
+checkEq('place search: enough regional matches means one boxed request and no worldwide one', [1, true], [count($regionTransport->calls), isset($regionTransport->calls[0][0]['bbox'])]);
+checkEq('place search: regional results come back', '100 Main Street', $r[0]['name'] ?? null);
+$regionTransport->calls = [];
+$regionTransport->regional = [$regionFeature('100', 'Main Street', 45.52, -122.68), $regionFeature('8', 'Oak Lane', 45.51, -122.66)];
+$regionTransport->world = [$regionFeature('100', 'Main Road', 48.85, 2.35), $regionFeature('7', 'Main Square', 52.37, 4.89)];
+$r = $ps->search('100 main', 45.52, -122.68, 6);
+checkEq('place search: too few regional matches adds a worldwide request without the box', [2, false], [count($regionTransport->calls), isset($regionTransport->calls[1][0]['bbox'])]);
+checkEq('place search: regional first, worldwide after, and results without the house number dropped', ['100 Main Street', '100 Main Road'], array_column($r, 'name'));
+$regionTransport->calls = [];
+$regionTransport->regional = null; // the boxed request failed
+$r = $ps->search('100 main', 45.52, -122.68, 6);
+checkEq('place search: a failed regional request still gets worldwide results', '100 Main Road', $r[0]['name'] ?? ($r ? 'other' : 'none'));
+$regionTransport->calls = [];
+$regionTransport->regional = [];
+$regionTransport->world = [$regionFeature('250', 'Plaza Mayor', 40.41, -3.70)];
+checkEq('place search: a bare number never goes worldwide (every place numbered 250)', [[], 1], [$ps->search('250', 45.52, -122.68, 6), count($regionTransport->calls)]);
+checkEq('place search: a far result must contain every typed word, the last one partial',
+    ['250 Elmwood Avenue'],
+    array_column(\BetterCal\Domain\PlaceSearch::containingAllWords('250 elm', [
+        ['name' => '250 Elmwood Avenue', 'address' => 'Example'],
+        ['name' => '250 Calle 258', 'address' => 'Sample City'],
+        ['name' => 'Elm Diner', 'address' => 'Sample Town'],
+    ]), 'name'));
+check('place search: a real word is three letters or more', \BetterCal\Domain\PlaceSearch::hasWord('250 elm') && !\BetterCal\Domain\PlaceSearch::hasWord('250 e'));
 checkEq('push label: a device names itself', 'Android phone · Chrome app', \BetterCal\Domain\PushSubscriptions::label('Android phone · Chrome app'));
 checkEq('push label: control characters and runs of space go', 'Mac · Chrome', \BetterCal\Domain\PushSubscriptions::label("Mac\n\t·   Chrome"));
 checkEq('push label: capped at 80 characters', 80, mb_strlen(\BetterCal\Domain\PushSubscriptions::label(str_repeat('x', 200))));

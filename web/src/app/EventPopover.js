@@ -321,6 +321,14 @@ export function EventPopover() {
     prefetchMap(state.occ.get(popover.instanceId)); // the detail view's map, warmed now
   }, [popover && popover.instanceId]); // eslint-disable-line
 
+  // Something changed somewhere (the change cursor moved): the open event's
+  // details were kept on screen but marked stale; fetch them again now rather
+  // than at the next open.
+  const openStale = !!(occ && occ.stale);
+  useEffect(() => {
+    if (popover && openStale) ensureFullOccurrence(popover.instanceId);
+  }, [openStale, popover && popover.instanceId]); // eslint-disable-line
+
   useEffect(() => {
     setEditingTime(false);
   }, [popover && popover.instanceId]);

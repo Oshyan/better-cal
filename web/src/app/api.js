@@ -473,12 +473,12 @@ const detailInFlight = new Map(); // instanceId -> Promise, so a popover then ed
 export function ensureFullOccurrence(instanceId) {
   const occ = state.occ.get(instanceId);
   if (!occ) return Promise.resolve(null);
-  if (occ.full) return Promise.resolve(occ);
+  if (occ.full && !occ.stale) return Promise.resolve(occ);
   if (detailInFlight.has(instanceId)) return detailInFlight.get(instanceId);
   const p = api('/events/' + occ.eventId + '/occurrence')
     .then((d) => {
       const rec = (d && d.occurrence) || {};
-      const patch = { full: true };
+      const patch = { full: true, stale: false };
       for (const k of DETAIL_FIELDS) if (k in rec) patch[k] = rec[k];
       patchOccurrence(instanceId, patch);
       return state.occ.get(instanceId);

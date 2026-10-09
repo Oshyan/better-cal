@@ -437,9 +437,11 @@ export function TimeGrid({
     });
   }, [vstack, phone, days, occurrences]);
 
-  // Grayed out by the filter box or a dim filter: placed after the rest and
-  // not counted in "+N" (#126).
-  const isQuiet = (occ) => !!(occ.dimmed || (dimSet && dimSet.has(occ.instanceId)));
+  // Grayed out by a dim filter (still drawn, faded): placed after the rest
+  // and not counted in "+N" (#126). Events the filter box hides (dimSet,
+  // display:none) take no lane at all.
+  const isQuiet = (occ) => !!occ.dimmed;
+  const filteredOut = (occ) => !!(dimSet && dimSet.has(occ.instanceId));
   // All-day lanes keep one top-to-bottom order while you scroll: lanes are
   // assigned over everything loaded by real dates (earlier start first, then
   // the longer, trips before other bars that start the same day), not over
@@ -450,7 +452,7 @@ export function TimeGrid({
     if (!infinite) return null;
     const items = [];
     for (const occ of occurrences) {
-      if (occ.attendance === 'hidden' || isContext(occ)) continue;
+      if (occ.attendance === 'hidden' || isContext(occ) || filteredOut(occ)) continue;
       const { startKey, endKey } = occurrenceDaySpan(occ);
       if (!occ.allDay && startKey === endKey) continue;
       items.push({ id: occ.instanceId, startCol: epochDayOfKey(startKey), endCol: epochDayOfKey(endKey), trip: !!occ.isContainer, quiet: isQuiet(occ) });
@@ -460,10 +462,12 @@ export function TimeGrid({
   }, [infinite, occurrences, dimSet]);
   const barLanes = useMemo(() => {
     if (!globalLanes) {
-      return assignLanes(
-        allDayBars.map((b) => ({ id: b.occ.instanceId, startCol: b.seg.startCol, endCol: b.seg.endCol, quiet: isQuiet(b.occ) })),
+      const lanes = assignLanes(
+        allDayBars.filter((b) => !filteredOut(b.occ)).map((b) => ({ id: b.occ.instanceId, startCol: b.seg.startCol, endCol: b.seg.endCol, quiet: isQuiet(b.occ) })),
         ALLDAY_LANES_MAX,
       );
+      for (const b of allDayBars) if (filteredOut(b.occ)) lanes.set(b.occ.instanceId, ALLDAY_LANES_MAX); // not drawn
+      return lanes;
     }
     const used = [...new Set(allDayBars.map((b) => globalLanes.get(b.occ.instanceId)).filter((l) => l < ALLDAY_LANES_MAX))].sort((a, b) => a - b);
     const compact = new Map(used.map((l, i) => [l, i]));
@@ -471,7 +475,7 @@ export function TimeGrid({
       const lane = globalLanes.get(b.occ.instanceId);
       return [b.occ.instanceId, lane < ALLDAY_LANES_MAX ? compact.get(lane) : ALLDAY_LANES_MAX];
     }));
-  }, [globalLanes, allDayBars]);
+  }, [globalLanes, allDayBars, dimSet]);
   let barLaneCount = 0;
   for (const l of barLanes.values()) if (l < ALLDAY_LANES_MAX) barLaneCount = Math.max(barLaneCount, l + 1);
   const phoneWeek = infinite && phone;
@@ -481,7 +485,7 @@ export function TimeGrid({
   const moreByCol = useMemo(() => {
     const m = new Map();
     for (const b of allDayBars) {
-      if (barLanes.get(b.occ.instanceId) < visibleBarLanes || isQuiet(b.occ)) continue;
+      if (barLanes.get(b.occ.instanceId) < visibleBarLanes || isQuiet(b.occ) || filteredOut(b.occ)) continue;
       for (let c = b.seg.startCol; c <= b.seg.endCol; c++) m.set(c, (m.get(c) || 0) + 1);
     }
     return m.size ? m : null;

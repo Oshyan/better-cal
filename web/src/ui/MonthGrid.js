@@ -708,7 +708,11 @@ function WeekRow({
   // Trip backdrop bands: stacked under the day-number strip, capped at
   // MAX_BAND_LANES (extras overflow into the day expand via the +N counter).
   // Bars and chips shift down by the band block so bands never eat lanes.
-  const bandList = bands || [];
+  // The filter box hides events that don't match (dimSet, drawn with
+  // display:none), so they take no lane and no slot: an invisible bar used
+  // to keep its lane and leave an empty row above the matches.
+  const shownByFilter = (o) => !(dimSet && dimSet.has(o.occ ? o.occ.instanceId : o.instanceId));
+  const bandList = (bands || []).filter(shownByFilter);
   const bandH = mobile ? BAND_H_MOBILE : BAND_H;
   // Context tokens (weather, sun, tides) beside the day number. On a phone
   // the full month's cells have no room for them: none there, and one in the
@@ -717,9 +721,9 @@ function WeekRow({
   // On a desktop they fit the cell's width (#108): a wide screen shows them
   // all, not two and "+N".
   const ctxMax = mobile ? (columns >= 7 ? 0 : 1) : Infinity;
-  // Quiet: grayed out by the filter box or a dim filter. They yield their
+  // Quiet: grayed out by a dim filter (still drawn, faded). They yield their
   // slots to the rest and don't count toward "+N" (planCell, #126).
-  const isQuiet = (occ) => !!(occ.dimmed || (dimSet && dimSet.has(occ.instanceId)));
+  const isQuiet = (occ) => !!occ.dimmed;
   const bandLanes = assignLanes(
     bandList.map((b) => ({ id: b.occ.instanceId + ':' + b.seg.startCol, startCol: b.seg.startCol, endCol: b.seg.endCol, quiet: isQuiet(b.occ) })),
     MAX_BAND_LANES,
@@ -748,7 +752,7 @@ function WeekRow({
   // remaining height (never below one lane).
   const cap = Math.min(capacity, Math.max(1, Math.floor((rowH - CELL_HEAD - bandOffset - 4) / chipRow)));
 
-  const barList = bars || [];
+  const barList = (bars || []).filter(shownByFilter);
   const maxBarLanes = Math.max(1, cap - 1);
   const lanes = assignLanes(
     barList.map((b) => ({ id: b.occ.instanceId + ':' + b.seg.startCol, startCol: b.seg.startCol, endCol: b.seg.endCol, quiet: isQuiet(b.occ) })),
@@ -775,7 +779,7 @@ function WeekRow({
 
   const cells = keys.map((k, col) => {
     const [y, m, d] = k.split('-').map(Number);
-    const singles = byDay.get(k) || [];
+    const singles = (byDay.get(k) || []).filter(shownByFilter);
     // Chips begin below whatever actually covers THIS day. Bars share one
     // row-wide top (they span columns), so a day carrying a bar clears the
     // band block too; a day with only bands clears just its own bands; a day

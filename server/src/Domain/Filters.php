@@ -244,6 +244,7 @@ final class Filters
                 'id' => (int) $row['id'],
                 'action' => (string) $row['action'],
                 'color' => (json_decode((string) $row['config_json'], true)['color'] ?? null),
+                'prompt' => (string) (json_decode((string) $row['config_json'], true)['prompt'] ?? ''),
                 'calendarIds' => $this->scopeCalendarIds($row),
             ];
         }
@@ -375,7 +376,7 @@ final class Filters
      * Why an event got a filter's action (highlight or dim), for the app to
      * say so: the first keyword or regex filter with that action that matched,
      * its pattern and the field it matched in; else a plain-language (prompt)
-     * filter. Null when none applies.
+     * filter, with its prompt when it has one. Null when none applies.
      *
      * @param list<array{id:int,action:string,calendarIds:?array<int,true>}> $promptFilters
      * @param array<int,array<int,true>> $failed
@@ -403,7 +404,13 @@ final class Filters
         foreach ($promptFilters as $filter) {
             if (($filter['action'] ?? '') === $action && isset($failed[$filter['id']][$eventId])
                 && ($filter['calendarIds'] === null || isset($filter['calendarIds'][(int) ($row['calendar_id'] ?? 0)]))) {
-                return ['type' => 'prompt'];
+                // Its words, so the app can say which one: "one of your
+                // plain-language filters" left people hunting.
+                $prompt = trim((string) ($filter['prompt'] ?? ''));
+                if ($prompt === '') {
+                    return ['type' => 'prompt'];
+                }
+                return ['type' => 'prompt', 'pattern' => mb_strlen($prompt) > 80 ? rtrim(mb_substr($prompt, 0, 79)) . '…' : $prompt];
             }
         }
         return null;

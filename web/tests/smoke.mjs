@@ -2505,6 +2505,9 @@ eq('gmaps: text alone is a search', gmapsUrl('Example Cafe', null, null), 'https
   eq('why: a dimmed event from a plain-language filter',
     formattingReasons({ ...base, dimmed: true, filterReason: { type: 'prompt' } }, later),
     ['Grayed out: dimmed by one of your plain-language filters']);
+  eq('why: a plain-language filter is named by its words',
+    formattingReasons({ ...base, dimmed: true, filterReason: { type: 'prompt', pattern: 'Only the big public holidays' } }, later),
+    ['Grayed out: dimmed by your plain-language filter “Only the big public holidays”']);
   eq('why: a regex filter shows its pattern as one',
     formattingReasons({ ...base, highlighted: true, filterReason: { type: 'regex', pattern: 'a|b', field: 'title' } }, later)[0],
     'Underlined: highlighted by your /a|b/ filter (matched in the title)');

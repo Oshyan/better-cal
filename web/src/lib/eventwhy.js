@@ -10,7 +10,9 @@ const FIELD_WORDS = { title: 'title', description: 'description', location: 'loc
 
 function filterWords(reason, verb) {
   if (!reason) return `${verb} by one of your filters`;
-  if (reason.type === 'prompt') return `${verb} by one of your plain-language filters`;
+  if (reason.type === 'prompt') {
+    return reason.pattern ? `${verb} by your plain-language filter “${reason.pattern}”` : `${verb} by one of your plain-language filters`;
+  }
   const pattern = reason.type === 'regex' ? `/${reason.pattern}/` : `“${reason.pattern}”`;
   const where = FIELD_WORDS[reason.field] ? ` (matched in the ${FIELD_WORDS[reason.field]})` : '';
   return `${verb} by your ${pattern} filter${where}`;

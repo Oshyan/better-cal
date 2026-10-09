@@ -3748,6 +3748,8 @@ checkEq('flt matchedField names the field that matched', 'description', Filters:
 checkEq('flt reason for a highlight: the in-scope filter, its pattern and the field', ['type' => 'keyword', 'pattern' => 'dinner', 'field' => 'description'], Filters::reasonFor($fltRow, $fltFilters, [], [], 'highlight'));
 checkEq('flt reason for a dim', ['type' => 'keyword', 'pattern' => 'visit', 'field' => 'title'], Filters::reasonFor($fltRow, $fltFilters, [], [], 'dim'));
 checkEq('flt reason from a plain-language filter', ['type' => 'prompt'], Filters::reasonFor($fltRow, [], [['id' => 4, 'action' => 'highlight', 'calendarIds' => null]], [4 => [7 => true]], 'highlight'));
+checkEq('flt reason from a plain-language filter carries its prompt', ['type' => 'prompt', 'pattern' => 'Only the big public holidays'], Filters::reasonFor($fltRow, [], [['id' => 4, 'action' => 'dim', 'calendarIds' => null, 'prompt' => ' Only the big public holidays ']], [4 => [7 => true]], 'dim'));
+checkEq('flt a long prompt is cut short', 80, mb_strlen(Filters::reasonFor($fltRow, [], [['id' => 4, 'action' => 'dim', 'calendarIds' => null, 'prompt' => str_repeat('word ', 40)]], [4 => [7 => true]], 'dim')['pattern']));
 checkEq('flt no reason when nothing applies', null, Filters::reasonFor($fltRow, [], [], [], 'highlight'));
 
 // disposition: calendar scoping and hide > dim > highlight precedence.

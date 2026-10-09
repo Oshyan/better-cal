@@ -7547,6 +7547,30 @@ use BetterCal\Infra\Secrets;
     checkEq('google kind: someone else primary is shared', 'shared', GoogleAuth::calendarKind('friend@gmail.com', 'reader', false));
     checkEq('google kind: ICS import is a feed', 'feed', GoogleAuth::calendarKind('xyz@import.calendar.google.com', 'reader', false));
     checkEq('google kind: holidays are google', 'google', GoogleAuth::calendarKind('en.usa#holiday@group.v.calendar.google.com', 'reader', false));
+
+    // Disconnect, then connect the same account again (#114): Add finds the
+    // calendar the disconnect left behind and re-attaches it, keeping what
+    // was added here, instead of making a second copy.
+    $radb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $radb->run("CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, kind TEXT, provider TEXT, google_account_id INTEGER, google_calendar_id TEXT, google_access_role TEXT, google_binding_version INTEGER DEFAULT 0, google_sync_token TEXT, last_poll_status TEXT, last_poll_error TEXT, settings_json TEXT)");
+    $radb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT)');
+    $radb->run("INSERT INTO calendars (id, user_id, name, kind, provider, google_account_id, google_calendar_id, google_access_role, google_binding_version, google_sync_token, last_poll_status, last_poll_error, settings_json) VALUES
+        (1, 1, 'Sample team', 'subscribed', 'google', NULL, 'team@example.test', 'reader', 3, 'sync-position', 'error', 'Google account disconnected', '{\"reminderDefaults\":\"defaults\"}'),
+        (2, 1, 'Adopted copy', 'subscribed', 'ics', NULL, NULL, NULL, 0, NULL, 'ok', NULL, NULL),
+        (3, 1, 'Still connected', 'subscribed', 'google', 7, 'other@example.test', 'owner', 0, NULL, 'ok', NULL, NULL),
+        (4, 2, 'Someone else', 'subscribed', 'google', NULL, 'team@example.test', 'reader', 0, NULL, 'ok', NULL, NULL)");
+    $raCalendars = new BetterCal\Domain\Calendars($radb, new BetterCal\Domain\Undo($radb));
+    checkEq('google re-attach: finds the calendar a disconnect left, only for its owner', [1, null, null],
+        [$raCalendars->orphanedGoogleCalendar(1, 'team@example.test'), $raCalendars->orphanedGoogleCalendar(1, 'other@example.test'), $raCalendars->orphanedGoogleCalendar(3, 'team@example.test')]);
+    $raCalendars->reattachGoogle(1, 1, 9, 'writer', 'owner@example.test');
+    $ra = $radb->one('SELECT * FROM calendars WHERE id = 1');
+    checkEq('google re-attach: new account and access, a new binding, the sync position and settings kept',
+        [9, 'writer', 4, 'sync-position', 'ok', null, '{"reminderDefaults":"defaults"}'],
+        [(int) $ra['google_account_id'], $ra['google_access_role'], (int) $ra['google_binding_version'], $ra['google_sync_token'], $ra['last_poll_status'], $ra['last_poll_error'], $ra['settings_json']]);
+    checkEq('google re-attach: no longer an orphan', null, $raCalendars->orphanedGoogleCalendar(1, 'team@example.test'));
+    check('google re-attach: recorded in Activity with Undo', str_contains((string) $radb->scalar('SELECT summary FROM mutations WHERE entity_id = 1'), 'Re-attached'));
+    check('google re-attach: a binding from before the re-attach no longer matches',
+        !BetterCal\Domain\GoogleSync::sameBinding(['google_account_id' => null, 'google_calendar_id' => 'team@example.test', 'google_binding_version' => 3], $ra));
     checkEq('google role: your own calendars start as Mine, Google\'s as Context, shared and feed copies as Opportunities',
         ['mine', 'context', 'opportunities', 'opportunities'],
         array_map([GoogleAuth::class, 'defaultRole'], ['yours', 'google', 'shared', 'feed']));

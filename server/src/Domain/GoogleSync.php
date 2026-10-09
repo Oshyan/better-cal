@@ -48,11 +48,11 @@ final class GoogleSync
             );
         }
         if ($calendar['google_account_id'] === null) {
-            throw new \RuntimeException('Google account disconnected; delete this calendar or adopt it as local, then add it again from Settings, Connections');
+            throw new \RuntimeException('Google account disconnected; connect it again in Settings, Connections and add this calendar there to re-attach it, or adopt it as local');
         }
         $account = $this->db->one('SELECT * FROM google_accounts WHERE id = ?', [(int) $calendar['google_account_id']]);
         if ($account === null) {
-            throw new \RuntimeException('Google account disconnected; delete this calendar or adopt it as local, then add it again from Settings, Connections');
+            throw new \RuntimeException('Google account disconnected; connect it again in Settings, Connections and add this calendar there to re-attach it, or adopt it as local');
         }
         // Check the actual stored payload before any remote request. A count
         // alone is not enough: individually valid 64 KiB descriptions can

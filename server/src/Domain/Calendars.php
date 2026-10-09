@@ -115,6 +115,52 @@ final class Calendars
         return $out;
     }
 
+    /**
+     * The calendar here that followed this Google calendar until its account
+     * was disconnected (google_account_id went NULL with the account row),
+     * or null. Adopted calendars have no Google id, so they never match.
+     * Oldest first when a disconnect and a fresh Add left two.
+     */
+    public function orphanedGoogleCalendar(int $userId, string $googleCalendarId, bool $lock = false): ?int
+    {
+        $forUpdate = $lock && $this->db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
+        $id = $this->db->scalar(
+            "SELECT id FROM calendars
+             WHERE user_id = ? AND kind = 'subscribed' AND provider = 'google'
+               AND google_account_id IS NULL AND google_calendar_id = ?
+             ORDER BY id LIMIT 1" . $forUpdate,
+            [$userId, $googleCalendarId]
+        );
+        return $id === null ? null : (int) $id;
+    }
+
+    /**
+     * Connect an orphaned Google calendar to a (re)connected account instead
+     * of adding a second copy: everything added here (tags, people,
+     * reminders, Planned/Maybe, trips) stays. The binding version moves, so
+     * a response fetched under the old connection can't land; the sync
+     * position stays, so the next poll brings only what changed at Google
+     * meanwhile (or a full resync when Google says the position is stale).
+     * Call inside the caller's transaction.
+     */
+    public function reattachGoogle(int $userId, int $id, int $accountId, string $accessRole, string $accountEmail): void
+    {
+        $before = $this->get($userId, $id);
+        $this->db->run(
+            "UPDATE calendars SET google_account_id = ?, google_access_role = ?,
+                google_binding_version = google_binding_version + 1,
+                last_poll_status = 'ok', last_poll_error = NULL
+             WHERE id = ? AND user_id = ? AND google_account_id IS NULL",
+            [$accountId, $accessRole, $id, $userId]
+        );
+        $after = $this->get($userId, $id);
+        $this->undo->record(
+            $userId, 'calendar', $id, 'update',
+            ['calendars' => [$before]], ['calendars' => [$after]],
+            "Re-attached '" . $before['name'] . "' to Google account " . $accountEmail
+        );
+    }
+
     public function get(int $userId, int $id): array
     {
         $row = $this->db->one('SELECT * FROM calendars WHERE id = ? AND user_id = ?', [$id, $userId]);

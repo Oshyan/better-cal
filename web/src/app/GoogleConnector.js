@@ -67,7 +67,7 @@ export function GoogleConnector() {
     setBusy('disconnect:' + a.id);
     try {
       await api('/google/accounts/' + a.id + '/disconnect', { method: 'POST' });
-      toast('Disconnected ' + a.email + '. Its calendars stay until you delete them.');
+      toast('Disconnected ' + a.email + '. Its calendars stay; connect it again and Re-attach them to resume syncing.');
       setConfirmDisconnect(null);
       await load();
     } catch (e) {
@@ -85,7 +85,9 @@ export function GoogleConnector() {
       if (!cal) return;
       await loadCalendars();
       const n = cal.health && cal.health.eventCount;
-      toast('Added "' + cal.name + '"' + (n != null ? ' (' + n + ' events)' : '') + '. It checks Google every ' + cal.pollIntervalMinutes + ' minutes.');
+      toast(cal.reattached
+        ? 'Re-attached "' + cal.name + '": its events and everything you added here stay, and it follows Google again.'
+        : 'Added "' + cal.name + '"' + (n != null ? ' (' + n + ' events)' : '') + '. It checks Google every ' + cal.pollIntervalMinutes + ' minutes.');
       await loadList(a.id);
     } catch (e) {
       toast('Could not add: ' + e.message, { error: true });
@@ -145,6 +147,8 @@ export function GoogleConnector() {
               <td>${roleLabel(c.accessRole)}</td>
               <td>${c.calendarId
                 ? html`<span class="bc-set-value" title=${'Here as "' + (localName(c.calendarId) || c.name) + '"'}>Added</span>`
+                : c.reattachId
+                ? html`<button type="button" class="bc-link-btn" disabled=${busy === c.id} title=${'"' + (localName(c.reattachId) || c.name) + '" is still here from when this account was disconnected. Re-attach keeps its events and everything added to them.'} onClick=${() => add(a, c)}>${busy === c.id ? 'Re-attaching…' : 'Re-attach'}</button>`
                 : html`<button type="button" class="bc-link-btn" disabled=${busy === c.id} onClick=${() => add(a, c)}>${busy === c.id ? 'Adding…' : 'Add'}</button>`}</td>
             </tr>`)}</tbody>
           </table>`}

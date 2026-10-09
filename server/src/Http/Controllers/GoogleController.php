@@ -144,14 +144,30 @@ final class GoogleController
         foreach ($this->db->all('SELECT id, google_calendar_id FROM calendars WHERE user_id = ? AND google_account_id = ?', [$userId, (int) $account['id']]) as $row) {
             $subscribed[(string) $row['google_calendar_id']] = (int) $row['id'];
         }
+        // A calendar left here by a disconnected account: Add re-attaches it.
+        $orphaned = [];
+        foreach ($this->db->all(
+            "SELECT id, google_calendar_id FROM calendars
+             WHERE user_id = ? AND kind = 'subscribed' AND provider = 'google' AND google_account_id IS NULL
+             ORDER BY id DESC",
+            [$userId]
+        ) as $row) {
+            $orphaned[(string) $row['google_calendar_id']] = (int) $row['id'];
+        }
         foreach ($list as &$c) {
             $c['calendarId'] = $subscribed[$c['id']] ?? null;
+            $c['reattachId'] = $c['calendarId'] === null ? ($orphaned[$c['id']] ?? null) : null;
         }
         unset($c);
         return Response::json(['calendars' => $list]);
     }
 
-    /** Subscribe to one of the account's calendars; first sync happens now. */
+    /**
+     * Subscribe to one of the account's calendars; first sync happens now.
+     * When a calendar here followed this Google calendar until its account
+     * was disconnected, that one is re-attached instead of adding a copy
+     * (200 with reattached: true, rather than 201).
+     */
     public function subscribe(Request $req, array $params): Response
     {
         $req->requireRecentAuthentication('Adding a Google calendar');
@@ -189,6 +205,11 @@ final class GoogleController
             if ($moving !== null) {
                 throw HttpError::conflict('google_calendar_in_use', 'That Google calendar is reserved by an unfinished move');
             }
+            $orphan = $this->calendars->orphanedGoogleCalendar($userId, $googleCalendarId, true);
+            if ($orphan !== null) {
+                $this->calendars->reattachGoogle($userId, $orphan, (int) $account['id'], $role, (string) $account['email']);
+                return ['id' => $orphan, 'reattached' => true];
+            }
             return $this->calendars->create(
                 $userId,
                 [
@@ -208,6 +229,10 @@ final class GoogleController
         } catch (\Throwable $e) {
             error_log('initial google sync failed for calendar ' . $calendar['id'] . ': ' . $e->getMessage());
         }
-        return Response::json($this->calendars->serializeById($userId, (int) $calendar['id']), 201);
+        $reattached = !empty($calendar['reattached']);
+        return Response::json(
+            $this->calendars->serializeById($userId, (int) $calendar['id']) + ['reattached' => $reattached],
+            $reattached ? 200 : 201
+        );
     }
 }

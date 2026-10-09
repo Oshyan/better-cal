@@ -5,7 +5,7 @@
 
 import { html, useState, useLayoutEffect, useRef } from '../../vendor/index.js';
 import { Icon } from './icons.js';
-import { contextToken, contextTitle, HOST_ICON, dayLabelText } from '../lib/context.js';
+import { contextToken, contextTitle, HOST_ICON, dayLabelText, dayLabelLines } from '../lib/context.js';
 
 const CONTEXT_RENDER_MAX = 100;
 const CONTEXT_OVERFLOW_TITLE_MAX = 20;
@@ -27,12 +27,15 @@ export function TokenIcon({ token, cal, size = 10 }) {
 }
 
 // Tokens are spans with the button role: a header is often itself a button
-// (week column, day panel), and buttons cannot nest.
+// (week column, day panel), and buttons cannot nest. They name their event
+// for the hover card (ui/HoverCard.js) rather than carry a title: the
+// browser's own tooltip showed for some tokens and not others.
 function Token({ occ, cal, onOpen, zone = true, overflow = false }) {
   const tk = contextToken(occ, cal);
   return html`<span
     role="button" tabindex=${overflow ? -1 : 0} aria-hidden=${overflow ? 'true' : undefined}
-    class=${'bc-ctx-token' + (overflow ? ' is-overflow' : '')} title=${contextTitle(occ)}
+    class=${'bc-ctx-token' + (overflow ? ' is-overflow' : '')}
+    data-ctx-instance=${overflow ? undefined : occ.instanceId} aria-label=${contextTitle(occ)}
     onPointerDown=${(e) => e.stopPropagation()}
     onClick=${(e) => open(onOpen, occ, e)}
     onKeyDown=${(e) => keyOpen(onOpen, occ, e)}
@@ -93,7 +96,7 @@ export function ContextStrip({ occs, calendars, max = Infinity, fit = null, more
     ${rendered.map((occ, i) => (fit !== null || i < limit) && html`<${Token} key=${occ.instanceId} occ=${occ} cal=${calendars && calendars[occ.calendarId]} onOpen=${onOpen} zone=${zone} overflow=${i >= limit} />`)}
     ${more && rest > 0 && html`<span
       role="button" tabindex="0" class="bc-ctx-more"
-      title=${overflowTitles.join('\n')}
+      data-hovertext=${overflowTitles.join('\n')} aria-label=${overflowTitles.join(', ')}
       onPointerDown=${(e) => e.stopPropagation()}
       onClick=${(e) => { e.stopPropagation(); if (onMore) onMore(); }}
       onKeyDown=${(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); if (onMore) onMore(); } }}
@@ -110,7 +113,8 @@ export function ContextMark({ occ, cal, top, onOpen }) {
   return html`<div class="bc-ctx-mark" style=${`top:${top}px`}>
     <span class="bc-ctx-mark-line" style=${`border-color:${color}`}></span>
     <span
-      role="button" tabindex="0" class="bc-ctx-mark-label" title=${contextTitle(occ)}
+      role="button" tabindex="0" class="bc-ctx-mark-label"
+      data-ctx-instance=${occ.instanceId} aria-label=${contextTitle(occ)}
       onPointerDown=${(e) => e.stopPropagation()}
       onClick=${(e) => open(onOpen, occ, e)}
       onKeyDown=${(e) => keyOpen(onOpen, occ, e)}
@@ -131,16 +135,17 @@ export function ContextMark({ occ, cal, top, onOpen }) {
 export function DayLabel({ occs, onOpen, sep = false, flag = false }) {
   if (!occs || occs.length === 0) return null;
   const text = dayLabelText(occs);
+  const lines = dayLabelLines(occs).join('\n');
   if (flag) {
     return html`<span
-      role="button" tabindex="0" class="bc-daylabel is-flag" title=${text} aria-label=${text}
+      role="button" tabindex="0" class="bc-daylabel is-flag" data-hovertext=${lines} aria-label=${text}
       onPointerDown=${(e) => e.stopPropagation()}
       onClick=${(e) => open(onOpen, occs[0], e)}
       onKeyDown=${(e) => keyOpen(onOpen, occs[0], e)}
     ><${Icon} name="flag" size=${11} /></span>`;
   }
   return html`<span
-    role="button" tabindex="0" class=${'bc-daylabel' + (sep ? ' is-sep' : '')} title=${text}
+    role="button" tabindex="0" class=${'bc-daylabel' + (sep ? ' is-sep' : '')} data-hovertext=${lines}
     onPointerDown=${(e) => e.stopPropagation()}
     onClick=${(e) => open(onOpen, occs[0], e)}
     onKeyDown=${(e) => keyOpen(onOpen, occs[0], e)}

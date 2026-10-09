@@ -193,6 +193,24 @@ for (const file of files) {
     'resume clearing must cover both installed-app and tab storage');
 }
 
+// --- 9b. context items use the hover card, not the browser's tooltip -------
+// The native title tooltip showed for some context tokens and not others.
+// Tokens, timeline marks, day-list rows, "+N" and holiday labels name what
+// the hover card shows; a title alongside would show a second tooltip.
+{
+  const strip = readFileSync(join(root, 'ui', 'ContextStrip.js'), 'utf8');
+  const expand = readFileSync(join(root, 'ui', 'DayExpand.js'), 'utf8');
+  const card = readFileSync(join(root, 'ui', 'HoverCard.js'), 'utf8');
+  const check = (ok, msg) => { if (ok) passed++; else fail(msg); };
+  check(!/\btitle=\$\{(contextTitle|text|overflowTitles)/.test(strip) && !/ctxrow"\s*title=/.test(expand),
+    'context items must not carry a native title tooltip');
+  check((strip.match(/data-ctx-instance=/g) || []).length >= 2 && (strip.match(/data-hovertext=/g) || []).length >= 3
+      && expand.includes('data-ctx-instance='),
+    'context tokens, marks, "+N", day labels and day-list rows must feed the hover card');
+  check(card.includes('[data-ctx-instance]') && card.includes('[data-hovertext]'),
+    'the hover card must pick up context items');
+}
+
 // --- 10a. the shell document's inline scripts parse --------------------------
 // They run before any module (theme, deep-link handoff, the start record and
 // its load-failure message); a syntax error there is silent and total.

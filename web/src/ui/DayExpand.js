@@ -103,7 +103,8 @@ export function DayExpand({ dayKey, anchorRect, occurrences, calendars, dimSet, 
             const cal = calendars[occ.calendarId];
             const tk = contextToken(occ, cal, 60);
             return html`<button
-              key=${occ.instanceId} type="button" role="listitem" class="bc-dayexpand-ctxrow" title=${contextTitle(occ)}
+              key=${occ.instanceId} type="button" role="listitem" class="bc-dayexpand-ctxrow"
+              data-ctx-instance=${occ.instanceId} aria-label=${contextTitle(occ)}
               onClick=${(e) => onOpenEvent && onOpenEvent(occ.instanceId, e.currentTarget.getBoundingClientRect(), { dayKey })}
             >
               <${TokenIcon} token=${tk} cal=${cal} size=${12} />

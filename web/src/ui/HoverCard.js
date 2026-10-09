@@ -6,6 +6,10 @@
 // One card for the whole app, driven by delegated pointer events on any
 // element carrying data-instance: mouse and trackpad only (a touch has no
 // hover), shown after a short rest, gone on leave, press, scroll or keypress.
+// Context items get it too: a token or timeline mark names its event with
+// data-ctx-instance (not data-instance, which would make it draggable), and a
+// "+N" or holiday label that stands for several gives its lines in
+// data-hovertext, one per line.
 
 import { html, render } from '../../vendor/index.js';
 import { state } from '../app/store.js';
@@ -14,7 +18,7 @@ import { isPendingLocation } from '../lib/maps.js';
 import { formattingReasons } from '../lib/eventwhy.js';
 
 export const HOVER_DELAY_MS = 700;
-const TARGETS = '.bc-chip[data-instance], .bc-bar[data-instance], .bc-block[data-instance]';
+const TARGETS = '.bc-chip[data-instance], .bc-bar[data-instance], .bc-block[data-instance], [data-ctx-instance], [data-hovertext]';
 
 function Card({ occ, cal, at, nowMs }) {
   const s = parseISO(occ.start);
@@ -27,6 +31,12 @@ function Card({ occ, cal, at, nowMs }) {
     <div class="bc-hovercard-meta">${fmtRange(s, e, occ.allDay)}${duration ? ` (${duration.exact} total)` : ''}${cal && html` · <span class="bc-hovercard-cal"><i style=${`background:${cal.color}`}></i>${cal.name}</span>`}</div>
     ${place && html`<div class="bc-hovercard-meta">${place}</div>`}
     ${reasons.length > 0 && html`<ul class="bc-hovercard-why">${reasons.map((r) => html`<li key=${r}>${r}</li>`)}</ul>`}
+  </div>`;
+}
+
+function TextCard({ lines, at }) {
+  return html`<div class="bc-hovercard" role="tooltip" style=${`left:${at.left}px;top:${at.top}px`}>
+    ${lines.map((l, i) => html`<div key=${i} class=${i === 0 ? 'bc-hovercard-line' : 'bc-hovercard-line is-next'}>${l}</div>`)}
   </div>`;
 }
 
@@ -43,9 +53,10 @@ export function startHoverCards(doc = document) {
     if (current) { current = null; render(null, host); }
   };
   const show = (el) => {
-    const occ = state.occ.get(el.dataset.instance);
-    if (!occ || !el.isConnected) return;
-    const cal = state.calendars.find((c) => c.id === occ.calendarId) || null;
+    if (!el.isConnected) return;
+    const text = el.dataset.hovertext;
+    const occ = text ? null : state.occ.get(el.dataset.instance || el.dataset.ctxInstance);
+    if (!text && !occ) return;
     const r = el.getBoundingClientRect();
     const view = doc.defaultView;
     // Below the event, or above it near the bottom edge; kept on screen.
@@ -53,6 +64,11 @@ export function startHoverCards(doc = document) {
     const below = r.bottom + 6;
     const top = below + 120 > view.innerHeight ? Math.max(8, r.top - 6 - 120) : below;
     current = el;
+    if (text) {
+      render(html`<${TextCard} lines=${text.split('\n')} at=${{ left, top }} />`, host);
+      return;
+    }
+    const cal = state.calendars.find((c) => c.id === occ.calendarId) || null;
     render(html`<${Card} occ=${occ} cal=${cal} at=${{ left, top }} nowMs=${Date.now()} />`, host);
   };
 

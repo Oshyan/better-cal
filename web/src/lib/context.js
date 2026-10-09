@@ -157,11 +157,16 @@ export function dayLabelsByDay(occurrences, calendars) {
   return out;
 }
 
-/** The label's words: the titles, source prefix dropped, joined. */
-export function dayLabelText(occs) {
+/** The label's words, one entry per holiday: titles with the source prefix dropped. */
+export function dayLabelLines(occs) {
   const shown = occs.slice(0, 20).map((o) => contextText(o) || '(untitled)');
   if (occs.length > shown.length) shown.push(`+${occs.length - shown.length} more`);
-  return shown.join(' · ');
+  return shown;
+}
+
+/** The label's words, joined. */
+export function dayLabelText(occs) {
+  return dayLabelLines(occs).join(' · ');
 }
 
 export function contextByDay(occurrences, calendars) {

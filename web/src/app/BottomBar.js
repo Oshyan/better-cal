@@ -36,6 +36,10 @@ const PHONE_VIEWS = [
 ];
 const HOLD_MS = 450;
 
+// The overview ribbon shows five days a row on a phone turned sideways
+// (App.js), so its name says so there.
+const viewLabel = ([k, l], wide) => (k === 'month:3day' && wide ? '5 day' : l);
+
 function phoneViewKey(view) {
   return view === 'month' ? 'month:' + effectiveOverviewMode() : view;
 }
@@ -123,7 +127,7 @@ function Row({ icon, label, checked, role, onClick, dot, disabled }) {
 }
 
 function ViewSheet({ onClose }) {
-  const s = useStore((st) => ({ view: st.view, overviewMode: st.settings.overviewMode, agendaSort: st.agendaSort }), shallowEq);
+  const s = useStore((st) => ({ view: st.view, overviewMode: st.settings.overviewMode, agendaSort: st.agendaSort, phoneWide: st.phoneWide }), shallowEq);
   const picker = useSavedViewPicker(onClose);
   const current = phoneViewKey(s.view);
   const pick = (k) => {
@@ -135,7 +139,7 @@ function ViewSheet({ onClose }) {
   return html`<${Sheet} label="View" onClose=${onClose}>
     <div class="bc-bsheet-h">View</div>
     <div role="menu" aria-label="Calendar view">
-      ${PHONE_VIEWS.map(([k, l, icon]) => html`<${Row} key=${k} icon=${icon} label=${l} role="menuitemradio" checked=${k === current} onClick=${() => pick(k)} />`)}
+      ${PHONE_VIEWS.map((v) => html`<${Row} key=${v[0]} icon=${v[2]} label=${viewLabel(v, s.phoneWide)} role="menuitemradio" checked=${v[0] === current} onClick=${() => pick(v[0])} />`)}
     </div>
     ${s.view === 'agenda' && html`<div class="bc-bsheet-inline">
       <span>Agenda order</span>
@@ -212,7 +216,7 @@ function NewSheet({ onClose }) {
 export function BottomBar() {
   const s = useStore((st) => ({
     view: st.view, overviewMode: st.settings.overviewMode, sheet: st.phoneSheet,
-    filterOn: filterActive(st), route: st.route, reviewCount: st.reviewCount,
+    filterOn: filterActive(st), route: st.route, reviewCount: st.reviewCount, phoneWide: st.phoneWide,
   }), shallowEq);
   // Every action but Review belongs to the calendar, so each brings it back
   // from the Review page.
@@ -223,7 +227,7 @@ export function BottomBar() {
   const newPress = useHold(() => set({ quickAddOpen: true, phoneSheet: null, route: 'calendar' }), () => set({ phoneSheet: 'new' }));
   return html`<nav class="bc-bottombar" aria-label="Calendar actions">
       <button type="button" class=${'bc-bb-btn' + (s.sheet === 'view' ? ' is-open' : '')} aria-haspopup="dialog" aria-expanded=${s.sheet === 'view'} onClick=${() => toggle('view')}>
-        <${Icon} name=${cur[2]} size=${22} /><span>${cur[1]}</span>
+        <${Icon} name=${cur[2]} size=${22} /><span>${viewLabel(cur, s.phoneWide)}</span>
       </button>
       <button type="button" class="bc-bb-btn" onClick=${() => set({ phoneSheet: null, searchOpen: true, route: 'calendar' })}>
         <${Icon} name="search" size=${22} /><span>Search</span>

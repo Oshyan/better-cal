@@ -329,7 +329,7 @@ button:focus-visible, [tabindex]:focus-visible {
 .bc-jump-foot { display: flex; align-items: center; justify-content: space-between; }
 .bc-jump-closefoot { display: none; }
 
-@media (max-width: 640px) {
+@media (max-width: 640px), (pointer: coarse) and (max-height: 500px) and (max-width: 1000px) {
   .bc-jump-pop { position: fixed; left: 8px; right: 8px; top: 54px; width: auto; }
   .bc-jump-closefoot { display: block; }
 }
@@ -355,7 +355,7 @@ button:focus-visible, [tabindex]:focus-visible {
 }
 /* Desktop collapse: the toolbar hamburger hides the sidebar entirely
    (mobile ignores this class; the drawer has its own open state). */
-@media (min-width: 801px) {
+@media (min-width: 801px) and (pointer: fine), (min-width: 801px) and (min-height: 501px), (min-width: 1001px) {
   .bc-sidebar.is-collapsed { display: none; }
 }
 
@@ -1192,7 +1192,7 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-dayexpand-title { font-weight: 700; }
 .bc-dayexpand-title { flex: 1; min-width: 0; }
 .bc-dayexpand-new { display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 10px; margin-right: 6px; font-size: 13px; }
-@media (max-width: 640px) { .bc-dayexpand-new { height: 36px; padding: 0 14px; font-size: 15px; } }
+@media (max-width: 640px), (pointer: coarse) and (max-height: 500px) and (max-width: 1000px) { .bc-dayexpand-new { height: 36px; padding: 0 14px; font-size: 15px; } }
 .bc-dayexpand-list { overflow-y: auto; overscroll-behavior: contain; padding: 6px 10px 10px; }
 .bc-dayexpand-row { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
 .bc-dayexpand-time { width: 64px; flex: none; font-size: 11.5px; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
@@ -1483,7 +1483,7 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-quickadd-actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
 .bc-quickadd-expand { font-size: 12.5px; }
 .bc-quickadd-hint { color: var(--fg-muted); font-size: 11.5px; margin-left: auto; }
-@media (max-width: 640px) { .bc-quickadd-hint { display: none; } }
+@media (max-width: 640px), (pointer: coarse) and (max-height: 500px) and (max-width: 1000px) { .bc-quickadd-hint { display: none; } }
 
 /* --- editor drawer --------------------------------------------------------------- */
 
@@ -1656,7 +1656,7 @@ body.bc-dragging * { cursor: grabbing !important; }
   border-bottom-width: 2px; border-radius: 4px; padding: 0 5px;
 }
 .bc-sc-label { font-size: 12.5px; min-width: 0; }
-@media (max-width: 640px) { .bc-shortcuts-grid { grid-template-columns: 1fr; } }
+@media (max-width: 640px), (pointer: coarse) and (max-height: 500px) and (max-width: 1000px) { .bc-shortcuts-grid { grid-template-columns: 1fr; } }
 
 /* --- toasts ------------------------------------------------------------------------- */
 
@@ -1833,7 +1833,7 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-set-away { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--fg-muted); }
 .bc-set-hint { flex-basis: 100%; margin-left: 182px; color: var(--fg-muted); font-size: 12px; }
 
-@media (max-width: 640px) {
+@media (max-width: 640px), (pointer: coarse) and (max-height: 500px) and (max-width: 1000px) {
   /* On a phone the label sits above what it names, so it has to read as the
      heading of that block, a step above the content (device names, values),
      which is already as small as it should go (0.6.8). */
@@ -1989,7 +1989,7 @@ body.bc-rescheduling { user-select: none; }
 .bc-strip-grid { display: flex; flex-direction: column; gap: 3px; }
 .bc-strip-wk { height: 2px; border-radius: 1px; background: var(--border-strong); }
 
-@media (max-width: 800px) {
+@media (max-width: 800px), (pointer: coarse) and (max-height: 500px) and (max-width: 1000px) {
   .bc-strip { width: 72px; }
   .bc-resched-hint { display: none; }
   /* Narrow screens: the label truncates before the escape hatch does, and
@@ -2002,7 +2002,7 @@ body.bc-rescheduling { user-select: none; }
 
 /* --- responsive -------------------------------------------------------------------------- */
 
-@media (max-width: 800px) {
+@media (max-width: 800px), (pointer: coarse) and (max-height: 500px) and (max-width: 1000px) {
   .bc-brand-name { display: none; }
   .bc-sidebar {
     position: fixed; left: 0; top: 0; bottom: 0; z-index: 50;
@@ -2015,7 +2015,7 @@ body.bc-rescheduling { user-select: none; }
   .bc-toolbar-month { min-width: 0; font-size: 14px; }
 }
 
-@media (max-width: 640px) {
+@media (max-width: 640px), (pointer: coarse) and (max-height: 500px) and (max-width: 1000px) {
   /* Unified mobile month rendering: timed chips and all-day bars alike
      become compact single-line text pills (10px, ellipsized) in up to 3
      lanes; overflow renders as dots + "+N" (no more dots-vs-text split). */
@@ -2048,7 +2048,7 @@ body.bc-rescheduling { user-select: none; }
 .bc-sidebar-mobilehead { display: none; }
 .bc-folder-delete:hover { color: var(--danger); }
 
-@media (max-width: 800px) {
+@media (max-width: 800px), (pointer: coarse) and (max-height: 500px) and (max-width: 1000px) {
   .bc-sidebar-scrim {
     display: block; position: fixed; inset: 0; z-index: 49;
     background: var(--scrim);
@@ -2155,7 +2155,7 @@ body.bc-rescheduling { user-select: none; }
 /* Ribbon cells are wider than the 7-column mobile month's: restore the dot it
    hides. Not the time: at about 100 points a day, "1:30 AM" took half of
    every pill and left a word of the title (0.4.0). */
-@media (max-width: 640px) {
+@media (max-width: 640px), (pointer: coarse) and (max-height: 500px) and (max-width: 1000px) {
   .bc-month.is-ribbon .bc-cell .bc-chip .bc-chip-dot { display: inline-block; }
   .bc-month.is-ribbon .bc-cell .bc-chip .bc-chip-title { font-size: 11px; }
 }
@@ -2820,7 +2820,7 @@ body.bc-rescheduling { user-select: none; }
 .bc-activity-actions .bc-btn { padding: 1px 9px; font-size: 12px; }
 .bc-activity-more { margin-top: 12px; }
 
-@media (max-width: 640px) {
+@media (max-width: 640px), (pointer: coarse) and (max-height: 500px) and (max-width: 1000px) {
   .bc-activity-row { flex-wrap: wrap; row-gap: 2px; }
   .bc-activity-when { width: auto; }
   .bc-activity-summary { flex-basis: 100%; order: 3; }
@@ -3077,7 +3077,7 @@ button.bc-review-title { color: var(--fg); padding: 0; }
 
 /* The loading skeleton takes the phone's shape: no sidebar column squeezing
    the grid into a sliver before the app snaps to its real layout. */
-@media (max-width: 640px) {
+@media (max-width: 640px), (pointer: coarse) and (max-height: 500px) and (max-width: 1000px) {
   .bc-boot-body { grid-template-columns: 1fr; }
   .bc-boot-side { display: none; }
 }
@@ -3085,7 +3085,7 @@ button.bc-review-title { color: var(--fg); padding: 0; }
 /* Toasts on a narrow screen: the message keeps a readable width and the
    choices wrap beneath it, instead of the message being crushed into a
    one-word column beside buttons that refuse to wrap. */
-@media (max-width: 640px) {
+@media (max-width: 640px), (pointer: coarse) and (max-height: 500px) and (max-width: 1000px) {
   .bc-toasts { left: 12px; right: 12px; transform: none; bottom: calc(12px + env(safe-area-inset-bottom, 0px)); }
   .bc-toast { max-width: 100%; }
 }
@@ -3095,7 +3095,7 @@ button.bc-review-title { color: var(--fg); padding: 0; }
    triage on a swipe (.bc-agenda-acts) instead of buttons. The heights here
    match the ones AgendaList gives its layout math (rows 30, headings 32,
    month bands 26), so the rails and tints stay on their rows. */
-@media (max-width: 640px) {
+@media (max-width: 640px), (pointer: coarse) and (max-height: 500px) and (max-width: 1000px) {
   .bc-agenda { padding: 0 10px 0 26px; }
   .bc-agenda-group { left: -26px; right: -10px; padding: 0 10px 0 26px; }
   .bc-agenda-monthsep { height: 26px; margin: 0 -10px 0 -26px; padding: 0 10px 2px 26px; }
@@ -3161,7 +3161,7 @@ button.bc-review-title { color: var(--fg); padding: 0; }
   .bc-agenda-act.is-down { --hue: #6b7280; }
   .bc-agenda-act.is-on { box-shadow: inset 0 -3px 0 color-mix(in srgb, var(--hue) 80%, var(--fg)); }
 }
-@media (max-width: 640px) and (prefers-reduced-motion: reduce) {
+@media (max-width: 640px) and (prefers-reduced-motion: reduce), (pointer: coarse) and (max-height: 500px) and (max-width: 1000px) and (prefers-reduced-motion: reduce) {
   .bc-agenda-rowin, .bc-agenda-acts { transition: none; }
 }
 
@@ -3206,11 +3206,12 @@ button.bc-review-title { color: var(--fg); padding: 0; }
    shown only while something does, and a bottom bar of five actions
    (BottomBar.js).
    Everything else the desktop toolbar holds lives in the bottom bar's sheets.
-   640px is the phone breakpoint (lib/breakpoints.js). */
+   640px is the phone breakpoint, joined by a phone turned sideways
+   (lib/breakpoints.js TURNED_QUERY; the turned-only changes are at the end). */
 .bc-bottombar, .bc-fchips, .bc-tb-todaybadge { display: none; }
 /* Keyboard shortcuts mean nothing without a keyboard. */
 @media (pointer: coarse) { .bc-kbd-btn, .bc-ov-key { display: none; } }
-@media (max-width: 640px) {
+@media (max-width: 640px), (pointer: coarse) and (max-height: 500px) and (max-width: 1000px) {
   .bc-toolbar { flex-wrap: nowrap; min-height: 44px; padding: 0 8px 0 2px; gap: 2px; }
   .bc-toolbar > .bc-brand,
   .bc-toolbar > .bc-tb-today,
@@ -3469,7 +3470,7 @@ button.bc-review-title { color: var(--fg); padding: 0; }
 /* The drop chip (repeating event scope, trip move) fits a phone: it wraps,
    the question on its own line, and is kept on screen by its measured size. */
 .bc-dropchoice { max-width: calc(100vw - 16px); flex-wrap: wrap; }
-@media (max-width: 640px) {
+@media (max-width: 640px), (pointer: coarse) and (max-height: 500px) and (max-width: 1000px) {
   .bc-dropchoice { right: 8px; }
   .bc-dropchoice-title { flex-basis: 100%; max-width: none; }
 }
@@ -3496,7 +3497,7 @@ button.bc-review-title { color: var(--fg); padding: 0; }
 .bc-toolbar-jump { display: inline-flex; flex: none; color: var(--fg-muted); margin-left: 2px; }
 .bc-toolbar-titlewrap { display: inline-flex; align-items: center; min-width: 0; }
 .bc-toolbar-ctx { display: none; }
-@media (max-width: 640px) {
+@media (max-width: 640px), (pointer: coarse) and (max-height: 500px) and (max-width: 1000px) {
   /* Day view: the day's weather and such to the right of the date, on the
      title's line (the date shortens to make room). */
   .bc-toolbar-titlewrap { flex: 1 1 auto; overflow: hidden; gap: 4px; }
@@ -3535,7 +3536,7 @@ button.bc-review-title { color: var(--fg); padding: 0; }
 .bc-toolbar-daylabel .bc-daylabel { font-size: 12.5px; }
 /* Phones: no room after the date and weather in the top bar; the day view
    gives the holiday its own line at the top of the day's sticky header. */
-@media (max-width: 640px) { .bc-toolbar-daylabel { display: none; } }
+@media (max-width: 640px), (pointer: coarse) and (max-height: 500px) and (max-width: 1000px) { .bc-toolbar-daylabel { display: none; } }
 .bc-tg-vday-labelrow { flex-basis: 100%; display: flex; min-width: 0; padding: 0 2px; }
 .bc-tg-vday-labelrow .bc-daylabel { font-size: 12.5px; }
 /* Phone full month: the holiday is a small flag after the day number; a tap
@@ -3546,11 +3547,11 @@ button.bc-review-title { color: var(--fg); padding: 0; }
 }
 /* A month's first day says "Nov 1": with a flag beside it the pair must
    still fit a 52-point cell, so the number's padding tightens. */
-@media (max-width: 640px) {
+@media (max-width: 640px), (pointer: coarse) and (max-height: 500px) and (max-width: 1000px) {
   .bc-cell-head:has(.bc-daylabel.is-flag) .bc-daynum { padding-left: 3px; padding-right: 2px; }
   .bc-cell-head .bc-daylabel.is-flag { padding: 0; }
 }
-@media (max-width: 640px) {
+@media (max-width: 640px), (pointer: coarse) and (max-height: 500px) and (max-width: 1000px) {
   .bc-cell-head:has(.bc-daylabel.is-flag) { gap: 0; padding-right: 0; }
   .bc-cell-head:has(.bc-daylabel.is-flag) .bc-daynum { padding-right: 1px; }
 }
@@ -3913,7 +3914,7 @@ button.bc-es-alsoon-cal { cursor: pointer; text-decoration: underline; text-deco
    sidebar slides out to the left rather than vanishing. The sidebar keeps its width
    while it moves (a negative margin, not a shrinking box), so its contents never
    reflow mid-slide, and it becomes hidden to focus once it is out of view. */
-@media (min-width: 801px) and (prefers-reduced-motion: no-preference) {
+@media (min-width: 801px) and (pointer: fine) and (prefers-reduced-motion: no-preference), (min-width: 801px) and (min-height: 501px) and (prefers-reduced-motion: no-preference), (min-width: 1001px) and (prefers-reduced-motion: no-preference) {
   .bc-main { transition: padding-right 0.3s cubic-bezier(0.2, 0, 0, 1); }
   .bc-evpanel { animation: bc-evpanel-in 0.3s cubic-bezier(0.2, 0, 0, 1); }
   .bc-sidebar {
@@ -3937,7 +3938,7 @@ button.bc-es-alsoon-cal { cursor: pointer; text-decoration: underline; text-deco
 .bc-editor .bc-ed-x { order: 2; }
 .bc-when-type { position: sticky; top: -4px; z-index: 1; margin-top: -4px; padding-top: 12px; color: var(--accent); background: var(--bg-raised); border-bottom: 1px solid var(--border); }
 .bc-when-type span { display: inline-flex; align-items: center; gap: 8px; }
-@media (max-width: 640px) {
+@media (max-width: 640px), (pointer: coarse) and (max-height: 500px) and (max-width: 1000px) {
   .bc-editor {
     width: 100%; max-width: 100%; border-left: none; box-shadow: none;
     padding: 0 16px; gap: 14px;
@@ -3998,7 +3999,7 @@ button.bc-es-alsoon-cal { cursor: pointer; text-decoration: underline; text-deco
   position: fixed; left: 8px; right: 8px; top: auto; bottom: calc(8px + env(safe-area-inset-bottom, 0px));
   width: auto; transform: none; z-index: 95; animation: bc-sheet-up 0.16s ease-out;
 }
-@media (max-width: 640px) {
+@media (max-width: 640px), (pointer: coarse) and (max-height: 500px) and (max-width: 1000px) {
   .bc-es-invite .bc-es-seg { height: 32px; }
   .bc-es-invite .bc-es-segbtn { font-size: 13.5px; }
   .bc-evsheet .bc-es-rowbtn { height: 32px; padding: 0 10px; font-size: 13px; }
@@ -4018,7 +4019,7 @@ button.bc-es-alsoon-cal { cursor: pointer; text-decoration: underline; text-deco
 }
 @keyframes bc-toast-life { from { transform: scaleX(1); } to { transform: scaleX(0); } }
 .bc-toast:hover .bc-toast-life { animation-play-state: paused; }
-@media (max-width: 640px) {
+@media (max-width: 640px), (pointer: coarse) and (max-height: 500px) and (max-width: 1000px) {
   .bc-toast { min-height: 56px; padding: 6px 6px 8px 16px; border-radius: 14px; font-size: 15px; column-gap: 4px; }
   .bc-toast > span:first-child { flex: initial; }
   .bc-toast-undo {
@@ -4033,7 +4034,7 @@ button.bc-es-alsoon-cal { cursor: pointer; text-decoration: underline; text-deco
    A full screen, not a floating card: more results above the keyboard. Each result is two
    lines, the title first (up to two lines of it, never cut to a word) and when and where
    under it, so nothing important is truncated to make room for the rest. */
-@media (max-width: 640px) {
+@media (max-width: 640px), (pointer: coarse) and (max-height: 500px) and (max-width: 1000px) {
   .bc-search-overlay { padding: 0; align-items: stretch; }
   .bc-search {
     width: 100%; max-width: 100%; max-height: none; height: 100%;
@@ -4070,14 +4071,14 @@ button.bc-es-alsoon-cal { cursor: pointer; text-decoration: underline; text-deco
 /* --- the sidebar drawer on a phone (0.6.9) ----------------------------------------------
    Wide enough that a calendar's name fits beside Only and its gear, with the calendar
    still visible at the right edge to tap back to. */
-@media (max-width: 640px) {
+@media (max-width: 640px), (pointer: coarse) and (max-height: 500px) and (max-width: 1000px) {
   .bc-sidebar { width: min(86vw, 360px); }
 }
 
 /* --- Settings on a phone (0.6.9) ----------------------------------------------------------
    Every tab in view (they wrap to a second row instead of scrolling off the edge with
    nothing to say there are more), and controls a thumb can hit. */
-@media (max-width: 640px) {
+@media (max-width: 640px), (pointer: coarse) and (max-height: 500px) and (max-width: 1000px) {
 /* 0.8.0: the tabs gave way to a list of sections, each a page of its own (SettingsPage.js). */
 .bc-setlist { display: grid; margin-top: 12px; border-top: 1px solid var(--border); }
 .bc-setlist-row {
@@ -4094,7 +4095,7 @@ button.bc-es-alsoon-cal { cursor: pointer; text-decoration: underline; text-deco
 .bc-setpage:not([data-tab="connections"]) > .bc-set-section:first-child > .bc-set-h:first-child { display: none; }
 .bc-setpage { margin-top: 8px; }
 }
-@media (max-width: 640px) and (pointer: coarse) {
+@media (max-width: 640px) and (pointer: coarse), (pointer: coarse) and (max-height: 500px) and (max-width: 1000px) {
   .bc-set-section select,
   .bc-set-section input:not([type="checkbox"]):not([type="radio"]),
   .bc-set-section .bc-btn { min-height: 44px; font-size: 16px; }
@@ -4150,7 +4151,7 @@ button.bc-es-alsoon-cal { cursor: pointer; text-decoration: underline; text-deco
   padding: 4px 8px; border: none; background: none; color: var(--accent); font-size: 13.5px; font-weight: 600; border-radius: 6px; cursor: pointer;
 }
 .bc-es-backto:hover { background: var(--bg-inset); }
-@media (max-width: 640px) {
+@media (max-width: 640px), (pointer: coarse) and (max-height: 500px) and (max-width: 1000px) {
   .bc-tr-main { grid-template-columns: 6.6em minmax(0, 1fr); padding: 10px 2px; }
   .bc-tr-when { font-size: 13.5px; }
   .bc-tr-title { font-size: 16px; }
@@ -4215,7 +4216,7 @@ button.bc-es-alsoon-cal { cursor: pointer; text-decoration: underline; text-deco
 .bc-welcome-text small { color: var(--fg-muted); font-size: 12.5px; line-height: 1.35; }
 .bc-welcome-item .bc-btn { flex: none; }
 .bc-welcome-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-top: 4px; }
-@media (max-width: 640px) {
+@media (max-width: 640px), (pointer: coarse) and (max-height: 500px) and (max-width: 1000px) {
   .bc-welcome-wrap { align-items: flex-end; padding: 0; }
   .bc-welcome { width: 100%; max-height: 92vh; border-radius: 18px 18px 0 0; padding: 18px 16px calc(16px + env(safe-area-inset-bottom, 0px)); }
   .bc-welcome-row > span:first-child { width: 100%; }
@@ -4252,3 +4253,31 @@ button.bc-es-alsoon-cal { cursor: pointer; text-decoration: underline; text-deco
 .bc-hovercard-cal { white-space: nowrap; }
 .bc-hovercard-cal i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; vertical-align: 0; }
 .bc-hovercard-why { margin: 6px 0 0; padding: 6px 0 0; list-style: none; border-top: 1px solid var(--border); color: var(--fg-muted); font-style: italic; font-size: 12px; display: grid; gap: 2px; }
+
+/* --- A phone turned sideways (#125) -------------------------------------------
+   It keeps the phone frame (every phone media block above includes it); what
+   changes is the shape, about 900 wide by 400 tall. Height is what's scarce:
+   the bottom bar puts each label beside its icon and New stops rising out of
+   it, and sheets come in from the right at full height instead of covering
+   most of the screen from below. In landscape the notch is at a side, so the
+   frame keeps clear of it there. Same query as lib/breakpoints.js PHONE_WIDE. */
+@media (pointer: coarse) and (max-height: 500px) and (max-width: 1000px) and (min-width: 641px) {
+  .bc-app { padding-left: env(safe-area-inset-left, 0px); padding-right: env(safe-area-inset-right, 0px); }
+  .bc-bb-btn { min-height: 44px; padding: 0 4px; display: flex; align-items: center; justify-content: center; gap: 7px; font-size: 13px; }
+  .bc-bottombar { align-items: center; }
+  .bc-bb-newico { width: 36px; height: 36px; margin-top: 0; border-radius: 11px; box-shadow: 0 0 0 3px var(--bg-raised), 0 0 0 4px var(--bb-edge); }
+  .bc-bb-newico svg { width: 20px; height: 20px; }
+  .bc-bb-btn.is-on::before { top: 6px; left: 22px; }
+  .bc-bb-count { top: 2px; left: 26px; }
+  .bc-toasts { bottom: calc(56px + env(safe-area-inset-bottom, 0px)); }
+  .bc-sheet, .bc-bsheet {
+    left: auto !important; right: 0 !important; top: 0 !important; bottom: 0 !important;
+    width: min(440px, 55vw) !important; height: auto; max-height: none;
+    border-radius: 14px 0 0 14px; animation: bc-sheet-in-right 0.18s ease;
+    padding-right: env(safe-area-inset-right, 0px);
+  }
+  .bc-evsheet, .bc-evsheet.is-full { height: auto; border-top: none; border-left: 4px solid var(--cal, var(--border-strong)); }
+  /* Already full height: nothing to pull up or down. */
+  .bc-evsheet-grab, .bc-bsheet-grip { display: none; }
+}
+@keyframes bc-sheet-in-right { from { transform: translateX(30%); opacity: 0.6; } }

@@ -1,6 +1,6 @@
 // App root: routes between views, wires bettercal-ui to the store and API.
 
-import { COMPACT_QUERY, COARSE_QUERY } from '../lib/breakpoints.js';
+import { COMPACT_QUERY, COARSE_QUERY, PHONE_WIDE_QUERY } from '../lib/breakpoints.js';
 import { html, useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback } from '../../vendor/index.js';
 import { useStore, set, state, calendarMeta, shallowEq, invalidateRecords } from './store.js';
 import { PHONE_QUERY } from '../lib/breakpoints.js';
@@ -130,6 +130,7 @@ export function App() {
       overviewMode: st.settings.overviewMode,
       nowMinute: st.nowMinute,
       viewportNarrow: st.viewportNarrow,
+      phoneWide: st.phoneWide,
       viewAreaNarrow: st.viewAreaNarrow,
       coarsePointer: st.coarsePointer,
     }),
@@ -250,13 +251,12 @@ export function App() {
   useEffect(() => {
     const mqNarrow = window.matchMedia(COMPACT_QUERY);
     const mqCoarse = window.matchMedia(COARSE_QUERY);
-    const sync = () => set({ viewportNarrow: mqNarrow.matches, coarsePointer: mqCoarse.matches });
-    mqNarrow.addEventListener('change', sync);
-    mqCoarse.addEventListener('change', sync);
+    const mqWide = window.matchMedia(PHONE_WIDE_QUERY);
+    const sync = () => set({ viewportNarrow: mqNarrow.matches, coarsePointer: mqCoarse.matches, phoneWide: mqWide.matches });
+    for (const mq of [mqNarrow, mqCoarse, mqWide]) mq.addEventListener('change', sync);
     sync();
     return () => {
-      mqNarrow.removeEventListener('change', sync);
-      mqCoarse.removeEventListener('change', sync);
+      for (const mq of [mqNarrow, mqCoarse, mqWide]) mq.removeEventListener('change', sync);
     };
   }, []);
 
@@ -717,16 +717,20 @@ export function App() {
     // The month slot: full month (7 columns) or the 3-day ribbon. Desktop is
     // always the full month unless the view area is too narrow (responsive
     // fallback); narrow viewports follow the mobile overviewMode setting.
+    // A phone turned sideways (#125) has the width for five days a row and
+    // the height for three rows, so the ribbon reshapes rather than leaving
+    // three very wide days in rows too short to read.
     const ribbon = s.view === 'month' && effectiveOverviewMode() === '3day';
-    const columns = ribbon ? 3 : 7;
+    const columns = ribbon ? (s.phoneWide ? 5 : 3) : 7;
+    const ribbonRows = s.phoneWide ? 3 : 5;
     view = html`<${MonthGrid}
       key=${'grid' + columns}
       occurrences=${occurrencesWithAvail}
       hiddenDays=${hiddenDays} onShowHidden=${showAllRel}
       calendars=${calMeta}
       columns=${columns}
-      visibleRows=${ribbon ? 5 : MONTH_ROWS[s.view]}
-      minRows=${ribbon ? 5 : MONTH_MIN_ROWS[s.view] || MONTH_ROWS[s.view]}
+      visibleRows=${ribbon ? ribbonRows : MONTH_ROWS[s.view]}
+      minRows=${ribbon ? ribbonRows : MONTH_MIN_ROWS[s.view] || MONTH_ROWS[s.view]}
       scrollKey=${s.anchor}
       scrollSeq=${s.scrollSeq}
       glide=${s.glideSeq === s.scrollSeq}
@@ -992,7 +996,7 @@ function DropChoiceChip({ choice }) {
   }, []);
   // Clamped so a drop near the viewport edge keeps the chip fully on-screen.
   // Phones: edge to edge with a margin (CSS), at the drop's height.
-  const x = window.innerWidth <= 640 ? 8 : Math.max(8, Math.min(choice.x, window.innerWidth - 300));
+  const x = window.matchMedia(PHONE_QUERY).matches ? 8 : Math.max(8, Math.min(choice.x, window.innerWidth - 300));
   const y = Math.max(8, Math.min(choice.y, window.innerHeight - 56));
   return html`<div class="bc-dropchoice" ref=${rootRef} style=${'left:' + x + 'px;top:' + y + 'px'} role="dialog" aria-label=${choice.title}>
     <span class="bc-dropchoice-title">${choice.title}</span>

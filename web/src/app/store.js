@@ -2,7 +2,7 @@
 // Components use useStore(selector, equals) to re-render only when their
 // selected slice changes.
 
-import { COMPACT_QUERY, COARSE_QUERY } from '../lib/breakpoints.js';
+import { COMPACT_QUERY, COARSE_QUERY, PHONE_WIDE_QUERY } from '../lib/breakpoints.js';
 import { useState, useEffect, useRef } from '../../vendor/index.js';
 import { todayKey } from '../lib/dates.js';
 
@@ -95,6 +95,9 @@ export const state = {
     ? window.matchMedia(COMPACT_QUERY).matches : false,
   coarsePointer: typeof window !== 'undefined' && window.matchMedia
     ? window.matchMedia(COARSE_QUERY).matches : false,
+  // A phone turned sideways (lib/breakpoints.js PHONE_WIDE_QUERY).
+  phoneWide: typeof window !== 'undefined' && window.matchMedia
+    ? window.matchMedia(PHONE_WIDE_QUERY).matches : false,
   // What is actually showing, light or dark: the theme setting when pinned,
   // else the OS. settings.js keeps it current; the parts that pick colours
   // outside CSS (map tiles, calendar colour used as ink) read it.

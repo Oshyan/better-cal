@@ -27,7 +27,7 @@ import { EventBlock, EventBar, HiddenMark } from './EventChip.js';
 import { ContextStrip, ContextMark, DayLabel } from './ContextStrip.js';
 import { contextByDay, dayLabelsByDay, isContext } from '../lib/context.js';
 import { Icon } from './icons.js';
-import { COMPACT_QUERY, PHONE_QUERY } from '../lib/breakpoints.js';
+import { COMPACT_QUERY, PHONE_QUERY, PHONE_WIDE_QUERY } from '../lib/breakpoints.js';
 import { startPointerDrag, cloneAsGhost, externalDropTarget, setDropRowHighlight } from './DragController.js';
 import { swallowClickOfThisPress } from './outside.js';
 import { takeResumeTime } from '../lib/resumetime.js';
@@ -57,16 +57,20 @@ const V_ALLDAY_MAX = 3;
 const V_ALLDAY_MAX_PHONE = 4;
 
 // Narrow week: how many days fit across. This is the starting value; a
-// sideways pinch changes it and the device remembers what you chose.
+// sideways pinch changes it and the device remembers what you chose. A phone
+// turned sideways (#125) is more than twice as wide, so it starts at five and
+// keeps its own choice: turning back finds the upright count unchanged.
 const DAYS_ACROSS = 2.3;
+const DAYS_ACROSS_WIDE = 5;
 const DAYS_ACROSS_MIN = 1.2;
 const DAYS_ACROSS_MAX = 7;
-const DAYS_ACROSS_KEY = 'bc-week-days-across';
-function readDaysAcross() {
+const daysAcrossKey = (wide) => (wide ? 'bc-week-days-across-wide' : 'bc-week-days-across');
+function readDaysAcross(wide) {
+  const start = wide ? DAYS_ACROSS_WIDE : DAYS_ACROSS;
   try {
-    const v = parseFloat(localStorage.getItem(DAYS_ACROSS_KEY));
-    return v >= DAYS_ACROSS_MIN && v <= DAYS_ACROSS_MAX ? v : DAYS_ACROSS;
-  } catch { return DAYS_ACROSS; }
+    const v = parseFloat(localStorage.getItem(daysAcrossKey(wide)));
+    return v >= DAYS_ACROSS_MIN && v <= DAYS_ACROSS_MAX ? v : start;
+  } catch { return start; }
 }
 // Below this column width the weekday shows as its first letter.
 const TIGHT_COL_W = 64;
@@ -162,7 +166,16 @@ export function TimeGrid({
     mq.addEventListener('change', onChange);
     return () => mq.removeEventListener('change', onChange);
   }, []);
-  const [daysAcross, setDaysAcross] = useState(readDaysAcross);
+  const [wide, setWide] = useState(() => window.matchMedia(PHONE_WIDE_QUERY).matches);
+  const wideRef = useRef(wide);
+  wideRef.current = wide;
+  const [daysAcross, setDaysAcross] = useState(() => readDaysAcross(wide));
+  useEffect(() => {
+    const mq = window.matchMedia(PHONE_WIDE_QUERY);
+    const onChange = () => { setWide(mq.matches); setDaysAcross(readDaysAcross(mq.matches)); };
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
   const daysAcrossRef = useRef(daysAcross);
   daysAcrossRef.current = daysAcross;
   const [narrow, setNarrow] = useState(() => window.matchMedia(NARROW_QUERY).matches);
@@ -174,7 +187,7 @@ export function TimeGrid({
   }, []);
 
   // Fixed column width: narrow viewports show `daysAcross` columns (2.3 to
-  // start, then whatever a pinch set); desktop divides the track into 7 with
+  // start, 5 turned sideways, then whatever a pinch set); desktop divides the track into 7 with
   // a 110px floor.
   const colW = useMemo(() => {
     if (!infinite) return 0;
@@ -318,7 +331,7 @@ export function TimeGrid({
     const onEnd = (e) => {
       if (!pinch || e.touches.length >= 2) return;
       pinch = null;
-      try { localStorage.setItem(DAYS_ACROSS_KEY, String(Math.round(daysAcrossRef.current * 100) / 100)); } catch { /* per-device only */ }
+      try { localStorage.setItem(daysAcrossKey(wideRef.current), String(Math.round(daysAcrossRef.current * 100) / 100)); } catch { /* per-device only */ }
     };
     el.addEventListener('touchstart', onStart, { passive: true });
     el.addEventListener('touchmove', onMove, { passive: false });

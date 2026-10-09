@@ -15,9 +15,9 @@ use BetterCal\Infra\KeyedGeocoderTransport;
  *   bias is passed as the focus and its order is kept.
  * - A bare number finds postcodes abroad, so that goes to the fallback; a
  *   number with even one letter of the street it handles well.
- * - With a focus, a city's full name offers local streets named after it
- *   ("munich"), so a worldwide request for places (layers=coarse) runs
- *   alongside and one named exactly what was typed is pinned first.
+ * - With a focus, a city's full name offers local streets named after it,
+ *   so a worldwide request for places (layers=coarse) runs alongside and
+ *   one named exactly what was typed is pinned first.
  *
  * Its v1 autocomplete costs 20 credits a request on Stadia's plans; the
  * places request makes that 40 for a query without a house number.

@@ -339,9 +339,9 @@ final class PlaceSearch
      * The first nearby town whose name starts with everything typed, case,
      * spacing and punctuation aside, or null; each provider says which of its
      * kinds count as a town. Three letters at least, and once the typing goes
-     * past the name ("sampleville lakes pack") it no longer applies. A provider
-     * pins it first: autocomplete tends to rank an exactly-named pond above
-     * the town of nearly the same name ("sampleville lake", Sampleville Lakes).
+     * past the name it no longer applies. A provider pins it first:
+     * autocomplete tends to rank an exactly-named small feature above the
+     * town of nearly the same name.
      * Hamlets and the like share names with too much to count. Pure.
      *
      * @param list<array<string,mixed>> $rows

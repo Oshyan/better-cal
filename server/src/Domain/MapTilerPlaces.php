@@ -19,10 +19,9 @@ use BetterCal\Infra\KeyedGeocoderTransport;
  *   a search three or four times slower; a number-led query is an address,
  *   so venues are asked for only without a leading number.
  * - Its proximity is a bias, and a far match it rates higher stays ahead of
- *   a local one ("example film" offered a film company on another continent second), so
- *   distance reorders within PlaceSearch's cap, and a city named exactly
- *   what was typed is pinned first (a local Munich Street came before
- *   Munich), as is a nearby town whose name starts with it.
+ *   a local one, so distance reorders within PlaceSearch's cap; a city named
+ *   exactly what was typed is pinned first (local streets named after it
+ *   otherwise lead), as is a nearby town whose name starts with it.
  *
  * Its terms allow keeping results permanently; on its free plan, searches
  * share one monthly allowance with its map tiles (PlaceProviders::MAPTILER_NOTE).
@@ -115,7 +114,7 @@ final class MapTilerPlaces implements SelectivePlaceProvider
     /**
      * Map a decoded response into candidate rows. The name is its own
      * (`text`), but for an address the first part of its full name, which
-     * carries the house number its `text` leaves off ("250 Elm Street").
+     * carries the house number its `text` leaves off.
      * The address line is the rest of the full name. Features under
      * $minRelevance (its own 0-1 score; under 0.5 is a fallback such as a
      * city for an unmatched street) are dropped. Pure.

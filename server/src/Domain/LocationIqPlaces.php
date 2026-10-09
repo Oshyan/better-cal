@@ -16,14 +16,15 @@ use BetterCal\Infra\KeyedGeocoderTransport;
  * - Its search (/v1/search) gets complete words right where autocomplete
  *   doesn't: a park by its full name, a city or landmark worldwide. It runs
  *   alongside, with the region preferred but not required. It also matches
- *   loosely ("sample la" found anything called Sample), so its results must
- *   contain every typed word, the last as a prefix, and only those with
- *   every word whole go ahead of autocomplete's.
+ *   loosely, on any one typed word, so its results must contain every typed
+ *   word, the last as a prefix, and only those with every word whole go
+ *   ahead of autocomplete's.
  * - Neither finds an address from a bare number or a number and under four
- *   letters of the street ("250 el" offered a different street outright),
- *   so those queries go to the fallback (accepts()).
- * - "Munich" offers local Munich Streets nearby; a city named exactly what
- *   was typed is pinned first (PlaceSearch::exactPlace), as with Photon.
+ *   letters of the street (it can offer a different street outright), so
+ *   those queries go to the fallback (accepts()).
+ * - A city's full name can bring local streets named after it first; a
+ *   city named exactly what was typed is pinned first
+ *   (PlaceSearch::exactPlace), as with Photon.
  * - It answers "nothing found" with HTTP 404 (the transport maps that to an
  *   empty list) and its free plan allows two requests a second: past that it
  *   answers 429, and the fallback answers instead.
@@ -78,10 +79,9 @@ final class LocationIqPlaces implements SelectivePlaceProvider
         if (!$biased) {
             return PlaceSearch::mergeCandidates($searched, $typed);
         }
-        // Nearby matches of every typed word, whole, first (the park by its
-        // full name); then the region's partial matches, then other nearby
-        // search results ("sample la" must offer Sample Lake before a Sample
-        // Meadow Lane), then the world's.
+        // Nearby matches of every typed word, whole, first; then the region's
+        // partial matches, then other nearby search results (which may match
+        // only some of what's being typed), then the world's.
         $near = array_values(array_filter($searched, static fn(array $c): bool => !$c['far']));
         $whole = self::withWholeWords($q, $near);
         $far = array_values(array_filter($searched, static fn(array $c): bool => $c['far']));
@@ -91,10 +91,8 @@ final class LocationIqPlaces implements SelectivePlaceProvider
         if ($exact !== null) {
             $pins[] = $exact + ['pin' => true];
         }
-        // A nearby town whose name starts with what was typed goes first:
-        // its own autocomplete ranks an exactly-named pond above the town
-        // for "sampleville lake" (Sampleville Lakes), and whole-word matching put
-        // a barbecue grill called "Sampleville" above it for "sampleville".
+        // A nearby town whose name starts with what was typed goes first: an
+        // exactly-named small feature otherwise ranks above it.
         $town = self::townStartingWith($q, $candidates);
         if ($town !== null) {
             $pins[] = $town + ['pin' => true];
@@ -120,9 +118,8 @@ final class LocationIqPlaces implements SelectivePlaceProvider
     }
 
     /**
-     * Rows whose name and address contain every typed word as a whole word
-     * ("example park" in "Example Regional Park"; "sample la" in nothing yet,
-     * since "la" is still being typed). Pure.
+     * Rows whose name and address contain every typed word as a whole word;
+     * a last word still being typed matches nothing yet. Pure.
      *
      * @param list<array<string,mixed>> $rows
      * @return list<array<string,mixed>>

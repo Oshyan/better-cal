@@ -43,7 +43,7 @@ final class KeyedPins implements PinProvider
             'stadia' => StadiaPlaces::url($this->key, $q, self::CANDIDATES, null, $biased ? ['focus.point.lat' => $biasLat, 'focus.point.lon' => $biasLng] : [], 'search'),
             // Complete text, so no guessing at completions; venues included.
             // English names, as the other services give with no language
-            // asked (without one it answered "München, Bayern, Deutschland").
+            // asked; without one it answers in local names.
             'maptiler' => MapTilerPlaces::url($this->key, $q, self::CANDIDATES, 'en', $biased ? $biasLng . ',' . $biasLat : null, true, ['autocomplete' => 'false']),
             default => LocationIqPlaces::url('search', $this->key, $q, self::CANDIDATES, null, ['format' => 'json', 'addressdetails' => 1, 'normalizeaddress' => 1]
                 + ($biased ? ['viewbox' => PlaceSearch::regionBox($biasLat, $biasLng)] : [])),
@@ -54,9 +54,8 @@ final class KeyedPins implements PinProvider
         }
         $rows = match ($this->service) {
             'stadia' => StadiaPlaces::mapFeatures($body, $biasLat, $biasLng),
-            // Under 0.5 is its own fallback, such as the city for a venue it
-            // didn't find ("Example Theatre, 12 Grand Ave" came back as a
-            // county); the next service does better than that.
+            // Under 0.5 is its own fallback, such as the city or county for a
+            // venue it didn't find; the next service does better than that.
             'maptiler' => MapTilerPlaces::mapFeatures($body, $biasLat, $biasLng, self::MAPTILER_MIN_RELEVANCE),
             default => LocationIqPlaces::mapResults($body, $biasLat, $biasLng),
         };

@@ -16,11 +16,11 @@ use BetterCal\Infra\KeyedGeocoderTransport;
  * - Its search (/v1/search) gets complete words right where autocomplete
  *   doesn't: a park by its full name, a city or landmark worldwide. It runs
  *   alongside, with the region preferred but not required. It also matches
- *   loosely ("grand la" found anything called Grand), so its results must
+ *   loosely ("sample la" found anything called Sample), so its results must
  *   contain every typed word, the last as a prefix, and only those with
  *   every word whole go ahead of autocomplete's.
  * - Neither finds an address from a bare number or a number and under four
- *   letters of the street ("811 ada" offered a different street outright),
+ *   letters of the street ("250 el" offered a different street outright),
  *   so those queries go to the fallback (accepts()).
  * - "Munich" offers local Munich Streets nearby; a city named exactly what
  *   was typed is pinned first (PlaceSearch::exactPlace), as with Photon.
@@ -80,7 +80,7 @@ final class LocationIqPlaces implements SelectivePlaceProvider
         }
         // Nearby matches of every typed word, whole, first (the park by its
         // full name); then the region's partial matches, then other nearby
-        // search results ("grand la" must offer Grand Lake before a Grand
+        // search results ("sample la" must offer Sample Lake before a Sample
         // Meadow Lane), then the world's.
         $near = array_values(array_filter($searched, static fn(array $c): bool => !$c['far']));
         $whole = self::withWholeWords($q, $near);
@@ -93,8 +93,8 @@ final class LocationIqPlaces implements SelectivePlaceProvider
         }
         // A nearby town whose name starts with what was typed goes first:
         // its own autocomplete ranks an exactly-named pond above the town
-        // for "mammoth lake" (Mammoth Lakes), and whole-word matching put a
-        // barbecue spot called "Mammoth" above it for "mammoth".
+        // for "sampleville lake" (Sampleville Lakes), and whole-word matching put
+        // a barbecue grill called "Sampleville" above it for "sampleville".
         $town = self::townStartingWith($q, $candidates);
         if ($town !== null) {
             $pins[] = $town + ['pin' => true];
@@ -121,7 +121,7 @@ final class LocationIqPlaces implements SelectivePlaceProvider
 
     /**
      * Rows whose name and address contain every typed word as a whole word
-     * ("tilden park" in "Tilden Regional Park"; "grand la" in nothing yet,
+     * ("example park" in "Example Regional Park"; "sample la" in nothing yet,
      * since "la" is still being typed). Pure.
      *
      * @param list<array<string,mixed>> $rows
@@ -145,29 +145,15 @@ final class LocationIqPlaces implements SelectivePlaceProvider
     }
 
     /**
-     * The first nearby city, town or village (or administrative area, as
-     * its search returns municipalities) whose name starts with everything
-     * typed, case, spacing and punctuation aside, or null. Three letters at
-     * least, and once the typing goes past the name ("mammoth lakes pack")
-     * it no longer applies. Hamlets and the like share names with too much.
-     * Pure.
+     * PlaceSearch::townStartingWith with LocationIQ's kinds of town: city,
+     * town, village, or an administrative area (its search returns
+     * municipalities that way). Pure.
      *
      * @param list<array<string,mixed>> $rows
      */
     public static function townStartingWith(string $q, array $rows): ?array
     {
-        $norm = static fn(string $s): string => trim((string) preg_replace('/[^\p{L}\p{N}]+/u', ' ', mb_strtolower($s)));
-        $want = $norm($q);
-        if (mb_strlen(str_replace(' ', '', $want)) < 3) {
-            return null;
-        }
-        foreach ($rows as $r) {
-            if (empty($r['far']) && in_array($r['kind'] ?? null, ['city', 'town', 'village', 'administrative'], true)
-                && str_starts_with($norm((string) ($r['name'] ?? '')), $want)) {
-                return $r;
-            }
-        }
-        return null;
+        return PlaceSearch::townStartingWith($q, $rows, ['city', 'town', 'village', 'administrative']);
     }
 
     /**
@@ -188,7 +174,7 @@ final class LocationIqPlaces implements SelectivePlaceProvider
 
     /**
      * Map decoded autocomplete or search results into candidate rows. The
-     * name is the place's own ("Grand Lake Theatre"); for an address it is
+     * name is the place's own ("Example Theatre"); for an address it is
      * the house number and street, since LocationIQ names a house after its
      * street. The address line is street, city, state, country, without
      * repeats of the name. Pure.

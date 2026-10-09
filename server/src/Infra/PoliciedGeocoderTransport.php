@@ -32,6 +32,7 @@ final class PoliciedGeocoderTransport implements GeocoderTransport, KeyedGeocode
     private const KEYED = [
         'locationiq' => ['host' => 'api.locationiq.com', 'label' => 'LocationIQ place search', 'ipv4' => true, 'timeoutMs' => 1_200],
         'stadia' => ['host' => 'api.stadiamaps.com', 'label' => 'Stadia Maps place search', 'ipv4' => false, 'timeoutMs' => self::KEYED_MAX_MS],
+        'maptiler' => ['host' => 'api.maptiler.com', 'label' => 'MapTiler place search', 'ipv4' => false, 'timeoutMs' => self::KEYED_MAX_MS],
     ];
 
     public function __construct(
@@ -131,7 +132,7 @@ final class PoliciedGeocoderTransport implements GeocoderTransport, KeyedGeocode
                     $error = 'provider returned invalid JSON';
                 }
             }
-            if ($error === null && in_array($provider, ['photon', 'stadia'], true) && !is_array($data['features'] ?? null)) {
+            if ($error === null && in_array($provider, ['photon', 'stadia', 'maptiler'], true) && !is_array($data['features'] ?? null)) {
                 $error = 'provider response did not contain a feature list';
             }
             if ($error === null && $provider === 'open-meteo' && !empty($data['error'])) {

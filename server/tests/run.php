@@ -2263,7 +2263,7 @@ $LIQ = \BetterCal\Domain\LocationIqPlaces::class;
 $liqResult = static fn(string $class, string $type, float $lat, float $lng, array $address, string $place = ''): array =>
     ['class' => $class, 'type' => $type, 'lat' => (string) $lat, 'lon' => (string) $lng, 'display_place' => $place, 'address' => $address];
 checkEq('LocationIQ takes places and addresses with four letters of the street; Photon the rest', [true, true, false, false],
-    array_map(static fn(string $q): bool => (new $LIQ($keyedTransport, 'k'))->accepts($q), ['grand la', '250 elmw', '250 elm', '250']));
+    array_map(static fn(string $q): bool => (new $LIQ($keyedTransport, 'k'))->accepts($q), ['sample la', '250 elmw', '250 elm', '250']));
 checkEq('LocationIQ: a house is named by its number and street, its address is the rest',
     [['250 Elm Street', 'Example City, Example State, Exampleland', 'house'], ['Example Theatre', '12 Grand Avenue, Example City', 'cinema']],
     array_map(static fn(array $r): array => [$r['name'], $r['address'], $r['kind']], $LIQ::mapResults([
@@ -2297,9 +2297,9 @@ checkEq('LocationIQ: a nearby town whose name starts with what was typed goes fi
     ]));
 checkEq('LocationIQ: a house named by its number alone is named by its number and street', '250 Elm Street',
     $LIQ::mapResults([$liqResult('place', 'house', 45.52, -122.68, ['name' => '250', 'house_number' => '250', 'road' => 'Elm Street'], '250')], null, null)[0]['name'] ?? null);
-checkEq('LocationIQ: only whole typed words jump ahead ("grand la" is still being typed)', [['Grand Lake Park'], []],
-    [array_column($LIQ::withWholeWords('grand lake', [['name' => 'Grand Lake Park', 'address' => ''], ['name' => 'Grand Lakeshore', 'address' => '']]), 'name'),
-     $LIQ::withWholeWords('grand la', [['name' => 'Grand Meadow Lane', 'address' => '']])]);
+checkEq('LocationIQ: only whole typed words jump ahead ("sample la" is still being typed)', [['Sample Lake Park'], []],
+    [array_column($LIQ::withWholeWords('sample lake', [['name' => 'Sample Lake Park', 'address' => ''], ['name' => 'Sample Lakeshore', 'address' => '']]), 'name'),
+     $LIQ::withWholeWords('sample la', [['name' => 'Sample Meadow Lane', 'address' => '']])]);
 $keyedTransport->bodies = [
     '/v1/autocomplete' => [$liqResult('highway', 'residential', 45.53, -122.69, ['name' => 'Sampleburg Street', 'road' => 'Sampleburg Street', 'city' => 'Example City'], 'Sampleburg Street')],
     '/v1/search' => [
@@ -2322,7 +2322,7 @@ $STA = \BetterCal\Domain\StadiaPlaces::class;
 $staFeature = static fn(string $name, string $label, string $layer, float $lat, float $lng): array =>
     ['geometry' => ['coordinates' => [$lng, $lat]], 'properties' => ['name' => $name, 'label' => $label, 'layer' => $layer, 'locality' => 'Example City']];
 checkEq('Stadia takes anything but a bare number', [true, true, false],
-    array_map(static fn(string $q): bool => (new $STA($keyedTransport, 'k'))->accepts($q), ['grand la', '250 e', '250']));
+    array_map(static fn(string $q): bool => (new $STA($keyedTransport, 'k'))->accepts($q), ['sample la', '250 e', '250']));
 $keyedTransport->bodies = [
     '/geocoding/v1/autocomplete' => ['features' => [$staFeature('Sampleburg Street', 'Sampleburg Street, Example City, EX', 'street', 45.53, -122.69)]],
     '/geocoding/v1/autocomplete#coarse' => ['features' => [
@@ -2340,6 +2340,43 @@ checkEq('Stadia: the bias is its focus point, and the places request is worldwid
     [(float) ($staQuery['focus_point_lat'] ?? 0), (float) ($staQuery['focus_point_lon'] ?? 0), str_contains($keyedTransport->urls[1] ?? '', 'focus.point')]);
 $staSearch->search('250 e', 45.52, -122.68, 6);
 checkEq('Stadia: an address asks no places request', 1, count($keyedTransport->urls));
+
+// MapTiler: addresses named with their house number, venues by category,
+// the country trimmed from the fill, its own fallbacks droppable.
+$MT = \BetterCal\Domain\MapTilerPlaces::class;
+$mtFeature = static fn(string $type, string $text, string $placeName, float $lat, float $lng, float $relevance = 1.0, array $props = []): array => [
+    'place_type' => [$type], 'text' => $text, 'place_name' => $placeName, 'center' => [$lng, $lat], 'relevance' => $relevance, 'properties' => $props,
+    'context' => [['id' => 'municipality.1', 'text' => 'Sampleville'], ['id' => 'country.1', 'text' => 'Exampleland']],
+];
+$mtRows = $MT::mapFeatures(['features' => [
+    $mtFeature('address', 'Elm Street', '250 Elm Street, Sampleville, Example State 12345, Exampleland', 45.52, -122.68),
+    $mtFeature('poi', 'Example Theatre', 'Example Theatre, 12 Grand Avenue, Sampleville, Exampleland', 45.53, -122.67, 1.0, ['categories' => ['cinema']]),
+    $mtFeature('county', 'Example County', 'Example County, Example State, Exampleland', 45.0, -122.0, 0.4),
+]], 45.52, -122.68, 0.5);
+checkEq('MapTiler: an address is named with its house number; a venue by its name, its kind its category; its fallbacks dropped',
+    [['250 Elm Street', 'Sampleville, Example State 12345, Exampleland', 'address', '250 Elm Street, Sampleville, Example State 12345'], ['Example Theatre', '12 Grand Avenue, Sampleville, Exampleland', 'cinema', 'Example Theatre, 12 Grand Avenue, Sampleville']],
+    array_map(static fn(array $r): array => [$r['name'], $r['address'], $r['kind'], $r['fill']], $mtRows));
+parse_str((string) parse_url($MT::url('k', '250 elm', 6, 'en', '-122.68,45.52', false), PHP_URL_QUERY), $mtAddrQuery);
+parse_str((string) parse_url($MT::url('k', 'example the', 6, 'en', '-122.68,45.52', true), PHP_URL_QUERY), $mtVenueQuery);
+checkEq('MapTiler: venues are asked for only without a leading number (they slow it), proximity as lng,lat',
+    [null, 'true', '-122.68,45.52', '/geocoding/250%20elm.json'],
+    [$mtAddrQuery['excludeTypes'] ?? null, $mtVenueQuery['excludeTypes'] ?? null, $mtAddrQuery['proximity'] ?? null, parse_url($MT::url('k', '250 elm', 6, null, null, false), PHP_URL_PATH)]);
+$keyedTransport->bodies = ['/geocoding/sampleville.json' => ['features' => [
+    $mtFeature('poi', 'Sampleville Street Cafe', 'Sampleville Street Cafe, Example City, Exampleland', 45.53, -122.69),
+    $mtFeature('county', 'Sampleville', 'Sampleville, Far State, Elsewhere', 48.14, 11.57),
+]]];
+checkEq('MapTiler: a city named exactly what was typed goes first',
+    'Sampleville', (new \BetterCal\Domain\PlaceSearch(new $MT($keyedTransport, 'k')))->search('sampleville', 45.52, -122.68, 6)[0]['name'] ?? null);
+$keyedTransport->bodies = ['/geocoding/Example%20Theatre%2C%2012%20Grand%20Ave.json' => ['features' => [
+    $mtFeature('county', 'Grand County', 'Grand County, Example State, Exampleland', 45.0, -122.0, 0.47),
+]]];
+checkEq('place lookup: MapTiler\'s own fallback (relevance under 0.5) is nothing found, so the next service answers', null,
+    (new \BetterCal\Domain\KeyedPins($keyedTransport, 'maptiler', 'k'))->pin('Example Theatre, 12 Grand Ave', 45.52, -122.68));
+parse_str((string) parse_url($keyedTransport->urls[0], PHP_URL_QUERY), $mtPinQuery);
+checkEq('place lookup: MapTiler asked for complete text, venues included', ['false', 'true'], [$mtPinQuery['autocomplete'] ?? null, $mtPinQuery['excludeTypes'] ?? null]);
+check('place search list: MapTiler is a known service with its own key and the allowance note',
+    ($d = \BetterCal\Domain\PlaceProviders::describe(['provider' => 'locationiq,maptiler', 'locationiq_key' => 'k', 'maptiler_key' => 'm']))['active'] === 'locationiq,maptiler'
+    && in_array(\BetterCal\Domain\PlaceProviders::MAPTILER_NOTE, array_column($d['notes'], 'text'), true));
 
 // FallbackPlaces: the primary answers what it takes; Photon the rest, and
 // whenever the primary fails or finds nothing. Credits follow who answered.
@@ -2381,7 +2418,7 @@ $staDesc = $PPV::describe(['provider' => 'stadia', 'stadia_key' => '']);
 check('place search service: Stadia without its key says so and uses Photon',
     $staDesc['active'] === 'photon' && str_contains((string) $staDesc['problem'], 'BETTERCAL_STADIA_KEY'));
 check('place search service: choosing Stadia always shows the storage note', $staDesc['note'] === $PPV::STADIA_NOTE && $staDesc['termsUrl'] !== null);
-check('place search service: an unknown name is called out', str_contains((string) $PPV::describe(['provider' => 'bogus'])['problem'], 'photon, locationiq or stadia'));
+check('place search service: an unknown name is called out', str_contains((string) $PPV::describe(['provider' => 'bogus'])['problem'], 'photon, locationiq, stadia or maptiler'));
 // The single-pin lookup: its own setting, defaulting to the dropdown's; a
 // keyed service's full-text search, ranked by distance with a bias.
 $lookupDesc = $PPV::describe(['provider' => 'locationiq', 'locationiq_key' => 'k']);

@@ -67,6 +67,9 @@ function config(): array
             'lookup' => $env('BETTERCAL_PLACE_LOOKUP'),
             'locationiq_key' => $env('BETTERCAL_LOCATIONIQ_KEY'),
             'stadia_key' => $env('BETTERCAL_STADIA_KEY'),
+            // A key the server may use: one locked to the site's address
+            // (as a tile key often is) is refused without a browser origin.
+            'maptiler_key' => $env('BETTERCAL_MAPTILER_GEOCODING_KEY'),
         ],
         'maptiler' => [
             // Optional MapTiler tile key; when empty the event detail

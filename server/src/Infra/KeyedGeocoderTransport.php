@@ -15,7 +15,7 @@ interface KeyedGeocoderTransport
      * Requests in parallel, one result per URL: the decoded JSON, [] when the
      * service answered "nothing found", or null on failure.
      *
-     * @param 'locationiq'|'stadia' $provider
+     * @param 'locationiq'|'stadia'|'maptiler' $provider
      * @param list<string> $urls
      * @return list<?array>
      */

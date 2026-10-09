@@ -551,9 +551,7 @@ function LocationSection({ settings, config }) {
       ${perm !== 'granted' && perm !== 'denied' && html`<button type="button" class="bc-btn" disabled=${locBusy} onClick=${allowDevice}>Allow this device's location</button>`}
       ${perm === 'denied' && html`<span class="bc-set-value">Location is blocked for this site in the browser.</span>`}
     <//>
-    ${search && html`<${Row} label="Place search service" hint=${html`Set on the server, in .env: BETTERCAL_PLACE_SEARCH for suggestions as you type and BETTERCAL_PLACE_LOOKUP for placing events nobody picked a place for (imports, feeds, typed text), each a list of services tried in order (photon, locationiq, stadia), with Photon always last; and each service's key.${search.note
-      ? html` ${search.note} <a href=${search.termsUrl} target="_blank" rel="noopener noreferrer">Stadia's terms</a>`
-      : ''}`}>
+    ${search && html`<${Row} label="Place search service" hint=${html`Set on the server, in .env: BETTERCAL_PLACE_SEARCH for suggestions as you type and BETTERCAL_PLACE_LOOKUP for placing events nobody picked a place for (imports, feeds, typed text), each a list of services tried in order (photon, locationiq, stadia, maptiler), with Photon always last; and each service's key.${(search.notes || []).map((n) => html` ${n.text} <a href=${n.url} target="_blank" rel="noopener noreferrer">${n.link}</a>`)}`}>
       <span class="bc-set-value">${search.name}${search.fallback ? ', then ' + search.fallback : ''}${search.lookup && search.lookup.active !== search.active
         ? '; placing events nobody picked a place for: ' + search.lookup.name + (search.lookup.active !== 'photon' ? ', then Photon' : '') : ''}</span>
       ${search.problem && html`<span class="bc-set-value">${search.problem}</span>`}

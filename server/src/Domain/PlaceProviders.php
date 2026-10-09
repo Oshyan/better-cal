@@ -19,8 +19,12 @@ use BetterCal\Infra\KeyedGeocoderTransport;
  */
 final class PlaceProviders
 {
-    public const NAMES = ['photon' => 'Photon', 'locationiq' => 'LocationIQ', 'stadia' => 'Stadia Maps'];
-    private const KEYS = ['locationiq' => 'BETTERCAL_LOCATIONIQ_KEY', 'stadia' => 'BETTERCAL_STADIA_KEY'];
+    public const NAMES = ['photon' => 'Photon', 'locationiq' => 'LocationIQ', 'stadia' => 'Stadia Maps', 'maptiler' => 'MapTiler'];
+    private const KEYS = ['locationiq' => 'BETTERCAL_LOCATIONIQ_KEY', 'stadia' => 'BETTERCAL_STADIA_KEY', 'maptiler' => 'BETTERCAL_MAPTILER_GEOCODING_KEY'];
+
+    /** Shown wherever Better-Cal mentions MapTiler's geocoding. */
+    public const MAPTILER_NOTE = 'On MapTiler\'s free plan, place searches share one monthly allowance with its map tiles, and maps are suspended for the rest of the month if it runs out.';
+    public const MAPTILER_PRICING_URL = 'https://www.maptiler.com/cloud/pricing/';
 
     /**
      * Shown wherever Better-Cal mentions Stadia (Settings, .env.example, the
@@ -41,7 +45,11 @@ final class PlaceProviders
         $chain = new PhotonPlaces($transport);
         foreach (array_reverse(self::chain($places, 'provider')['active']) as $service) {
             $key = (string) $places[$service . '_key'];
-            $chain = new FallbackPlaces($service === 'stadia' ? new StadiaPlaces($transport, $key) : new LocationIqPlaces($transport, $key), $chain);
+            $chain = new FallbackPlaces(match ($service) {
+                'stadia' => new StadiaPlaces($transport, $key),
+                'maptiler' => new MapTilerPlaces($transport, $key),
+                default => new LocationIqPlaces($transport, $key),
+            }, $chain);
         }
         return $chain;
     }
@@ -79,7 +87,15 @@ final class PlaceProviders
     {
         $search = self::chain($places, 'provider');
         $lookup = self::chain($places, 'lookup');
-        $stadia = in_array('stadia', $search['requested'], true) || in_array('stadia', $lookup['requested'], true);
+        $named = array_merge($search['requested'], $lookup['requested']);
+        $stadia = in_array('stadia', $named, true);
+        $notes = [];
+        if ($stadia) {
+            $notes[] = ['text' => self::STADIA_NOTE, 'url' => self::STADIA_TERMS_URL, 'link' => 'Stadia\'s terms'];
+        }
+        if (in_array('maptiler', $named, true)) {
+            $notes[] = ['text' => self::MAPTILER_NOTE, 'url' => self::MAPTILER_PRICING_URL, 'link' => 'MapTiler\'s plans'];
+        }
         $summary = static fn(array $c): array => [
             'requested' => $c['requested'] === [] ? 'photon' : implode(',', $c['requested']),
             'active' => $c['active'] === [] ? 'photon' : implode(',', $c['active']),
@@ -91,6 +107,7 @@ final class PlaceProviders
             'fallback' => $search['active'] === [] ? null : 'Photon',
             'note' => $stadia ? self::STADIA_NOTE : null,
             'termsUrl' => $stadia ? self::STADIA_TERMS_URL : null,
+            'notes' => $notes,
             'lookup' => $summary($lookup),
         ];
     }
@@ -121,7 +138,7 @@ final class PlaceProviders
                 continue; // always last, whether listed or not
             }
             if (!isset(self::NAMES[$service])) {
-                $problems[] = $setting . ' names "' . $service . '", which Better-Cal does not know, so it is skipped. Services can be photon, locationiq or stadia.';
+                $problems[] = $setting . ' names "' . $service . '", which Better-Cal does not know, so it is skipped. Services can be photon, locationiq, stadia or maptiler.';
             } elseif (trim((string) ($places[$service . '_key'] ?? '')) === '') {
                 $problems[] = self::NAMES[$service] . ' is chosen, but ' . self::KEYS[$service] . ' is empty, so it is skipped.';
             } else {

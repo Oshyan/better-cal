@@ -336,6 +336,34 @@ final class PlaceSearch
     }
 
     /**
+     * The first nearby town whose name starts with everything typed, case,
+     * spacing and punctuation aside, or null; each provider says which of its
+     * kinds count as a town. Three letters at least, and once the typing goes
+     * past the name ("sampleville lakes pack") it no longer applies. A provider
+     * pins it first: autocomplete tends to rank an exactly-named pond above
+     * the town of nearly the same name ("sampleville lake", Sampleville Lakes).
+     * Hamlets and the like share names with too much to count. Pure.
+     *
+     * @param list<array<string,mixed>> $rows
+     * @param list<string> $townKinds
+     */
+    public static function townStartingWith(string $q, array $rows, array $townKinds): ?array
+    {
+        $norm = static fn(string $s): string => trim((string) preg_replace('/[^\p{L}\p{N}]+/u', ' ', mb_strtolower($s)));
+        $want = $norm($q);
+        if (mb_strlen(str_replace(' ', '', $want)) < 3) {
+            return null;
+        }
+        foreach ($rows as $r) {
+            if (empty($r['far']) && in_array($r['kind'] ?? null, $townKinds, true)
+                && str_starts_with($norm((string) ($r['name'] ?? '')), $want)) {
+                return $r;
+            }
+        }
+        return null;
+    }
+
+    /**
      * Nearest first; rows without a distance keep their order at the end.
      * Stable. Pure.
      *

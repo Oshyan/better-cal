@@ -22,13 +22,16 @@ final class PoliciedGeocoderTransport implements GeocoderTransport, KeyedGeocode
      * The keyed place-search services: the one host each may be asked, the
      * health label, whether to connect over IPv4 only (LocationIQ can
      * restrict a key to source addresses, and accepts only IPv4 ones there),
-     * and how long to wait. LocationIQ answers in well under a second (0.06 s
-     * median, 0.9 s the slowest normal answer in testing); past 1.2 s it is
-     * stuck, and Photon behind it answers sooner than waiting would.
+     * and how long to wait. Photon stands behind each of these, so none gets
+     * more than KEYED_MAX_MS: past that, waiting is slower than asking Photon,
+     * which keeps the longer TIMEOUT_MS since nothing stands behind it.
+     * LocationIQ answers in well under a second (0.06 s median, 0.9 s the
+     * slowest normal answer in testing), so past 1.2 s it is stuck.
      */
+    private const KEYED_MAX_MS = 2_000;
     private const KEYED = [
         'locationiq' => ['host' => 'api.locationiq.com', 'label' => 'LocationIQ place search', 'ipv4' => true, 'timeoutMs' => 1_200],
-        'stadia' => ['host' => 'api.stadiamaps.com', 'label' => 'Stadia Maps place search', 'ipv4' => false, 'timeoutMs' => self::TIMEOUT_MS],
+        'stadia' => ['host' => 'api.stadiamaps.com', 'label' => 'Stadia Maps place search', 'ipv4' => false, 'timeoutMs' => self::KEYED_MAX_MS],
     ];
 
     public function __construct(

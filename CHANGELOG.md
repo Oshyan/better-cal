@@ -4,6 +4,13 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.57 (2026-10-10)
+
+- **The day arrows on a phone's event sheet behave.** The arrow you last tapped kept a grey box through later swipes (a touch screen holds "hover" on the last thing tapped); icon buttons now show it only while pressed. A sideways swipe through the day now flashes the arrow it stands for, as a tap would.
+- **Guzzle 8.2** (from 7.15), the HTTP client push notifications go out through, with its psr7 3 and promises 3. No change in behaviour. sabre/vobject 5 waits for a sabre/dav release that allows it ([#128](https://github.com/Oshyan/better-cal/issues/128)).
+
+Operators: no migration. `composer install` brings the new Guzzle in, as deploys already do.
+
 ## 0.9.56 (2026-10-09)
 
 - **Back on a phone closes what's open instead of leaving the app.** The View, Filter and New sheets, quick add, jump to date and the day list ignored the phone's Back, so it closed the app. They now close on Back (a first Back with the keyboard up still just hides the keyboard).

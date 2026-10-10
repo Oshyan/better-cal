@@ -211,7 +211,7 @@ Use a disposable account or non-production installation for the checks that deli
 ### Google account recovery (H1)
 
 - [ ] After the ten-minute confirmation window expires, verify that changing a Google connection or starting/retrying a calendar move asks for the Better-Cal password. Ordinary calendar use and background updates should not ask.
-- [ ] Start a Google connection in one signed-in browser and verify a second browser cannot finish that first browser's connection.
+- [x] Start a Google connection in one signed-in browser and verify a second browser cannot finish that first browser's connection. Verified 2026-10-10 on the live install: completing Google's consent in a second signed-in browser was refused with the state message, and the existing Google connection was unchanged (no new account, no replaced token).
 - [ ] With a disposable Google account, begin a test move, use the documented compromise-reset command, and verify the connection pauses, unfinished work stops, and already-cached events remain visible. Reconnecting the same Google account should restore the existing calendar rather than create a duplicate. Check the disposable Google calendar for events uploaded before the reset and note any cleanup they still need; a reset cannot pull back completed uploads.
 
 ### Google pagination and worker release (F1/F62)

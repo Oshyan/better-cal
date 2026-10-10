@@ -1,8 +1,26 @@
 #!/usr/bin/env node
 
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const [, , auditPath, outdatedPath, repoPath, outputPath] = process.argv;
+const [, , auditPath, outdatedPath, repoPath, outputPath, holdsArg] = process.argv;
+// Updates deliberately on hold (dependency-watch-holds.json): a package and
+// the major version that cannot or should not be taken yet, with why and
+// what releases it. Held updates stay out of the review issue, so a week
+// with nothing else to do opens none. Advisories are never held.
+const holdsPath = holdsArg || join(dirname(fileURLToPath(import.meta.url)), 'dependency-watch-holds.json');
+let holds = {};
+if (existsSync(holdsPath)) {
+  try { holds = JSON.parse(readFileSync(holdsPath, 'utf8')); }
+  catch (error) { throw new Error(`Dependency holds file is invalid JSON: ${error.message}`); }
+  if (!holds || typeof holds !== 'object' || Array.isArray(holds)) throw new Error('Dependency holds file is not a JSON object');
+}
+const majorOf = (version) => Number(String(version || '').replace(/^v/, '').split('.')[0]);
+const heldBy = (item) => {
+  const hold = holds[item.name];
+  return hold && Number.isFinite(hold.major) && majorOf(item.latest) === hold.major ? hold : null;
+};
 const parseObject = (path, label) => {
   let value;
   try { value = JSON.parse(readFileSync(path, 'utf8')); }
@@ -29,7 +47,8 @@ const advisories = Object.entries(audit.advisories || {}).flatMap(([packageName,
   (Array.isArray(items) ? items : [items]).filter(Boolean).map((item) => ({ ...item, packageName }))
 );
 const abandoned = audit.abandoned ? Object.entries(audit.abandoned) : [];
-const composer = outdatedList;
+const composer = outdatedList.filter((item) => !heldBy(item));
+const held = outdatedList.filter((item) => heldBy(item));
 const extra = repo.updates;
 const issueCount = advisories.length + abandoned.length + composer.length + extra.length;
 if (issueCount === 0) {
@@ -53,6 +72,14 @@ if (abandoned.length) {
 if (composer.length) {
   lines.push('## Composer updates', '');
   for (const item of composer) lines.push(`- ${item.name}: ${item.version} → ${item.latest}`);
+  lines.push('');
+}
+if (held.length) {
+  lines.push('## On hold (not counted)', '');
+  for (const item of held) {
+    const hold = heldBy(item);
+    lines.push(`- ${item.name}: ${item.version} → ${item.latest}. ${hold.reason || ''} Waiting for ${hold.until || 'a later review'}.`);
+  }
   lines.push('');
 }
 if (extra.length) {

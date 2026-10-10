@@ -1,0 +1,8 @@
+{
+  "sabre/vobject": {
+    "major": 5,
+    "reason": "sabre/dav 4.x, which runs the CalDAV server, requires sabre/vobject 4 and sabre/xml 2; vobject 5 needs sabre/xml 3 or 4, so Composer cannot install it.",
+    "until": "a sabre/dav release that allows sabre/vobject 5 (sabre-io/dav#1415); the weekly check flags new sabre/dav majors as usual",
+    "issue": 128
+  }
+}

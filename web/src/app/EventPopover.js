@@ -234,7 +234,13 @@ export function EventPopover() {
     if (!el) return;
     const sc = scrollParent(el);
     if (!sc) return;
-    const sheetTop = sheet ? window.innerHeight - panel.offsetHeight : window.innerHeight; // not its rect: it may be mid-animation
+    // A phone turned sideways docks the sheet at the side (#125), where it
+    // covers no rows: the calendar narrows beside it and only the bottom bar
+    // is below. Upright, the sheet's top is the floor.
+    const bar = state.phoneWide ? document.querySelector('.bc-bottombar') : null;
+    const sheetTop = sheet && !state.phoneWide
+      ? window.innerHeight - panel.offsetHeight // not its rect: it may be mid-animation
+      : (bar ? bar.getBoundingClientRect().top : window.innerHeight);
     const top = Math.max(0, sc.getBoundingClientRect().top) + 8;
     const r = el.getBoundingClientRect();
     let delta = 0;

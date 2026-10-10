@@ -4262,7 +4262,9 @@ button.bc-es-alsoon-cal { cursor: pointer; text-decoration: underline; text-deco
    changes is the shape, about 900 wide by 400 tall. Height is what's scarce:
    the bottom bar puts each label beside its icon and New stops rising out of
    it, and sheets come in from the right at full height instead of covering
-   most of the screen from below. In landscape the notch is at a side, so the
+   most of the screen from below. The event sheet docks beside the calendar,
+   which narrows to keep every day (and the event shown) in view, with the
+   bottom bar still under it. In landscape the notch is at a side, so the
    frame keeps clear of it there. Same query as lib/breakpoints.js PHONE_WIDE. */
 @media (pointer: coarse) and (max-height: 500px) and (max-width: 1000px) and (min-width: 641px) {
   .bc-app { padding-left: env(safe-area-inset-left, 0px); padding-right: env(safe-area-inset-right, 0px); }
@@ -4275,11 +4277,13 @@ button.bc-es-alsoon-cal { cursor: pointer; text-decoration: underline; text-deco
   .bc-toasts { bottom: calc(56px + env(safe-area-inset-bottom, 0px)); }
   .bc-sheet, .bc-bsheet {
     left: auto !important; right: 0 !important; top: 0 !important; bottom: 0 !important;
-    width: min(440px, 55vw) !important; height: auto; max-height: none;
+    width: min(440px, 50vw) !important; height: auto; max-height: none;
     border-radius: 14px 0 0 14px; animation: bc-sheet-in-right 0.18s ease;
     padding-right: env(safe-area-inset-right, 0px);
   }
   .bc-evsheet, .bc-evsheet.is-full { height: auto; border-top: none; border-left: 4px solid var(--cal, var(--border-strong)); }
+  .bc-sheet-open .bc-app { padding-right: min(440px, 50vw); }
+  .bc-sheet-open .bc-bottombar { transform: none; opacity: 1; pointer-events: auto; }
   /* Already full height: nothing to pull up or down. */
   .bc-evsheet-grab, .bc-bsheet-grip { display: none; }
 }

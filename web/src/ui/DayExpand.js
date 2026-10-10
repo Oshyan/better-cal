@@ -4,6 +4,7 @@
 
 import { PHONE_QUERY } from '../lib/breakpoints.js';
 import { html, useRef, useState, useMemo, useEffect } from '../../vendor/index.js';
+import { useBackClose } from '../app/backclose.js';
 import { dateOfDayKey, fmtDayLong, parseISO, fmtTime, epochDayOfKey, byStart } from '../lib/dates.js';
 import { EventChip } from './EventChip.js';
 import { occurrenceDaySpan } from './monthmath.js';
@@ -30,6 +31,7 @@ export function anchorPanel(anchorRect, panelW, panelH, margin = 8) {
 
 export function DayExpand({ dayKey, anchorRect, occurrences, calendars, dimSet, nowMs, onOpenEvent, onOpenDetail, onNew, onClose }) {
   const panelRef = useRef(null);
+  useBackClose(isMobile(), onClose);
   const [eventPage, setEventPage] = useState(0);
   const [contextPage, setContextPage] = useState(0);
 

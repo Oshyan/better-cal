@@ -59,8 +59,6 @@ export function Welcome() {
 
   const firstCal = (s.calendars || []).find((c) => c.kind === 'local' && c.editable) || null;
   const [step, setStep] = useState(1);
-  const stepRef = useRef(1);
-  stepRef.current = step;
   const [form, setForm] = useState(null);
   const [google, setGoogle] = useState(null); // {configured, connected}
   const [pushOn, setPushOn] = useState(false); // this device already gets reminders
@@ -93,21 +91,41 @@ export function Welcome() {
   // Phone: Back steps from 2 to 1, and from 1 puts the welcome aside until
   // the next launch (not done: it comes back), like every other phone surface.
   const phone = (() => { try { return matchMedia(PHONE_QUERY).matches; } catch { return false; } })();
+  // Step 2 gets its own entry when you go to it, never during Back: Chrome
+  // on Android skips an entry the page added without a tap, so one pushed
+  // from inside a Back sent the next Back out of the app.
+  const step2Ref = useRef(false);
+  const ignorePopRef = useRef(0);
   useEffect(() => {
     if (!show || !phone) return undefined;
     if (!(history.state && history.state.bcWelcome)) history.pushState({ bcWelcome: 1 }, '');
     let popped = false;
     const onPop = () => {
-      if (stepRef.current === 2) { setStep(1); history.pushState({ bcWelcome: 1 }, ''); return; }
+      if (ignorePopRef.current > 0) { ignorePopRef.current -= 1; return; }
+      if (step2Ref.current) { step2Ref.current = false; setStep(1); return; }
       popped = true;
       set({ welcomeOpen: false, welcomeLater: true });
     };
     window.addEventListener('popstate', onPop);
     return () => {
       window.removeEventListener('popstate', onPop);
-      if (!popped && history.state && history.state.bcWelcome) history.back();
+      if (!popped && history.state && history.state.bcWelcome) history.go(-(1 + (step2Ref.current ? 1 : 0)));
+      step2Ref.current = false;
+      ignorePopRef.current = 0;
     };
   }, [show, phone]); // eslint-disable-line
+  useEffect(() => {
+    if (!show || !phone) return;
+    if (step === 2 && !step2Ref.current) {
+      step2Ref.current = true;
+      history.pushState({ bcWelcome: 1, bcWelcomeStep: 2 }, '');
+    } else if (step === 1 && step2Ref.current) {
+      // Back to step 1 by its own button rather than the phone's Back.
+      step2Ref.current = false;
+      ignorePopRef.current += 1;
+      history.back();
+    }
+  }, [show, phone, step]); // eslint-disable-line
 
   if (!show || !form) return null;
 

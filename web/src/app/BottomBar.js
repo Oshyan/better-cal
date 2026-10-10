@@ -18,6 +18,7 @@
 
 import { html, useRef, useEffect } from '../../vendor/index.js';
 import { useStore, set, shallowEq } from './store.js';
+import { useBackClose } from './backclose.js';
 import { setView, setOverviewMode, effectiveOverviewMode, toggleRel, showOnlyRel, showAllRel } from './actions.js';
 import { REL_LABEL, REL_ORDER } from './Relationship.js';
 import { useSavedViewPicker } from './ViewSwitcher.js';
@@ -79,6 +80,7 @@ function useHold(onTap, onHold) {
 function Sheet({ label, onClose, children }) {
   const ref = useRef(null);
   const drag = useRef(null);
+  useBackClose(true, onClose);
   useEffect(() => {
     const onKey = (e) => {
       if (e.key === 'Escape') { e.stopPropagation(); onClose(); }

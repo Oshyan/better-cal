@@ -6,6 +6,7 @@
 
 import { html, useState, useRef, useEffect } from '../../vendor/index.js';
 import { useStore, set, state } from './store.js';
+import { useBackClose } from './backclose.js';
 import { jumpToDate, jumpAnchorFor } from './actions.js';
 import { trapFocus } from '../ui/DayExpand.js';
 import { parseJumpText, jumpGranularity } from '../lib/jumpparse.js';
@@ -19,6 +20,7 @@ import {
 
 export function JumpPopover() {
   const open = useStore((s) => s.jumpOpen);
+  useBackClose(open, () => set({ jumpOpen: false }));
   const [text, setText] = useState('');
   const [disp, setDisp] = useState(null);     // {year, month} shown in the grid
   const [yearMode, setYearMode] = useState(false);

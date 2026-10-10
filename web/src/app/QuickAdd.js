@@ -14,6 +14,7 @@
 
 import { html, useState, useRef, useEffect } from '../../vendor/index.js';
 import { useStore, set, state, toast } from './store.js';
+import { useBackClose } from './backclose.js';
 import { quickAddParse, quickAddCreate, defaultTargetCalendarId } from './actions.js';
 import { api, loadPeople } from './api.js';
 import { saveQuickAddText, clearQuickAddText } from './drafts.js';
@@ -119,6 +120,8 @@ function fmtAvailRange(d) {
 
 export function QuickAdd() {
   const open = useStore((s) => s.quickAddOpen);
+  // Back closes it; the typed text stays, as it does across a reload.
+  useBackClose(open, () => set({ quickAddOpen: false }));
   const [text, setText] = useState('');
   // Typed text is durable across a reload (drafts.js); cleared on create,
   // cancel, or hand-off to the editor.

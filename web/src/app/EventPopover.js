@@ -150,8 +150,14 @@ export function EventPopover() {
   const bodyRef = useRef(null);
   const navRef = useRef(null); // {go(i), index, count} of the day being stepped
   const poppedRef = useRef(false);
+  // History entries above the sheet's own: one while it is full, one while
+  // it shows an event opened from its trip. Each is added when you act, so
+  // Back only ever takes entries away (see the back-gesture effect).
+  const stepsRef = useRef(0);
+  const ignorePopRef = useRef(0);
   const open = !!popover;
   const sheet = open && isMobile();
+  const steps = sheet ? (full ? 1 : 0) + (popover && popover.backTo && !popover.backTo.search ? 1 : 0) : 0;
 
   useEffect(() => { if (!open) setFull(false); }, [open]);
   // One bar at the bottom at a time: while the sheet is open its actions
@@ -164,8 +170,12 @@ export function EventPopover() {
   }, [sheet]);
 
   // The phone's back gesture steps the sheet down: full to quick, quick to
-  // closed. One history entry stands for the open sheet; closing it any
-  // other way takes that entry back off.
+  // closed. One history entry stands for the open sheet, and one more for
+  // each step above it (full; an event opened from its trip). Steps get
+  // their entry when you take them, never during Back: Chrome on Android
+  // skips an entry the page added without a tap or swipe, so an entry
+  // pushed from inside a Back sent the next Back out of the app (#125's
+  // phone check). Closing any other way takes the entries back off.
   useEffect(() => {
     if (!sheet) return undefined;
     // Opened from search, the sheet takes over search's entry (and the one
@@ -174,13 +184,19 @@ export function EventPopover() {
     if (history.state && (history.state.bcSearch || history.state.bcSheet || history.state.bcEditor)) history.replaceState({ bcSheet: 1 }, '');
     else history.pushState({ bcSheet: 1 }, '');
     const onPop = () => {
+      if (ignorePopRef.current > 0) { ignorePopRef.current -= 1; return; }
       // An event opened from its trip: Back returns to the trip (0.7.0).
       // Opened from search: Back returns to the results (0.7.3), which
       // push their own entry.
       const back = state.popover && state.popover.backTo;
-      if (back && back.search) { poppedRef.current = true; goBackTo(back); return; }
-      if (back) { goBackTo(back); history.pushState({ bcSheet: 1 }, ''); return; }
-      if (fullRef.current) { setFull(false); history.pushState({ bcSheet: 1 }, ''); return; }
+      if (back && back.search) { poppedRef.current = true; stepsRef.current = 0; goBackTo(back); return; }
+      if (stepsRef.current > 0) {
+        // The entry for the top step is already gone; undo that step.
+        stepsRef.current -= 1;
+        if (back) goBackTo(back);
+        else setFull(false);
+        return;
+      }
       poppedRef.current = true;
       set({ popover: null });
     };
@@ -191,11 +207,29 @@ export function EventPopover() {
       // stacking another; "‹ Search" hands it back to search (0.7.3).
       if (!poppedRef.current && history.state && history.state.bcSheet && !state.editor) {
         if (state.searchOpen) history.replaceState({ bcSearch: 1 }, '');
-        else history.back();
+        else history.go(-(1 + stepsRef.current));
       }
       poppedRef.current = false;
+      stepsRef.current = 0;
+      ignorePopRef.current = 0;
     };
   }, [sheet]);
+
+  // After the sheet's own entry (the effect above, which runs first).
+  useEffect(() => {
+    if (!sheet) return;
+    while (stepsRef.current < steps) {
+      stepsRef.current += 1;
+      history.pushState({ bcSheet: 1, bcSheetStep: stepsRef.current }, '');
+    }
+    if (stepsRef.current > steps) {
+      // Stepped down by a gesture or a tap rather than Back.
+      const n = stepsRef.current - steps;
+      stepsRef.current = steps;
+      ignorePopRef.current += 1;
+      history.go(-n);
+    }
+  }, [sheet, steps]);
 
   // Outline the event where the day being browsed shows it, and keep that
   // outline as the views behind re-render (virtualized rows come and go).

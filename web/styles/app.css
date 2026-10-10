@@ -199,7 +199,15 @@ button:focus-visible, [tabindex]:focus-visible {
      paddings do not leave the mark sitting off-axis. */
   display: inline-flex; align-items: center; justify-content: center;
 }
-.bc-icon-btn:hover { background: var(--bg-inset); color: var(--fg); }
+/* Hover only where there is a pointer to hover with: a touch screen keeps
+   "hover" on the last button tapped, which left a grey box on it. A touch
+   gets the same look only while pressed. */
+@media (hover: hover) { .bc-icon-btn:hover { background: var(--bg-inset); color: var(--fg); } }
+.bc-icon-btn:active:not(:disabled) { background: var(--bg-inset); color: var(--fg); }
+/* A swipe through the day flashes the arrow it stands for (EventPopover). */
+.bc-sheet-chev.is-flash { animation: bc-press-flash 0.28s ease-out; }
+@keyframes bc-press-flash { from { background: var(--bg-inset); color: var(--fg); } to { background: transparent; } }
+@media (prefers-reduced-motion: reduce) { .bc-sheet-chev.is-flash { animation-duration: 0.01s; } }
 /* Quick add is the one toolbar action with colour: it is the fastest way in
    and worth spotting without hunting. Amber, with a soft glow on hover. */
 .bc-qa-btn { color: var(--warn); }

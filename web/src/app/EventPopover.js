@@ -335,7 +335,19 @@ export function EventPopover() {
         if (dy < -SNAP) setFull(true);
         else if (dy > SNAP) { if (fullRef.current) setFull(false); else set({ popover: null }); }
       } else if (Math.abs(dx) > SWIPE && navRef.current) {
-        navRef.current.go(navRef.current.index + (dx < 0 ? 1 : -1));
+        const dir = dx < 0 ? 1 : -1;
+        const to = navRef.current.index + dir;
+        if (to >= 0 && to < navRef.current.count) {
+          // The arrow the swipe stands for shows the press a tap on it would.
+          const arrow = panel.querySelectorAll('.bc-sheet-chev')[dir > 0 ? 1 : 0];
+          if (arrow) {
+            arrow.classList.remove('is-flash');
+            void arrow.offsetWidth; // restart the animation on a quick second swipe
+            arrow.classList.add('is-flash');
+            arrow.addEventListener('animationend', () => arrow.classList.remove('is-flash'), { once: true });
+          }
+        }
+        navRef.current.go(to);
       }
       g = null;
     };

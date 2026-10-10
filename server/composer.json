@@ -9,7 +9,7 @@
         "ext-curl": "*",
         "ext-json": "*",
         "ext-openssl": "*",
-        "guzzlehttp/guzzle": "^7.9",
+        "guzzlehttp/guzzle": "^8.2",
         "minishlink/web-push": "^11.0",
         "phpmailer/phpmailer": "^7.1",
         "sabre/dav": "^4.7",

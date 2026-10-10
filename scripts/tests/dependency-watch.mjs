@@ -42,6 +42,13 @@ try {
     JSON.stringify({ installed: [{ name: 'sample/library', version: '1.0.0', latest: '1.1.0' }] }),
     JSON.stringify({ updates: [{ kind: 'CI image', name: 'sample:latest', current: 'sha256:old', latest: 'sha256:new' }] }),
   );
+  const locked = run(
+    JSON.stringify({ advisories: {}, abandoned: [] }),
+    JSON.stringify({ locked: [{ name: 'sample/library', version: '1.0.0', latest: '2.0.0' }] }),
+    JSON.stringify({ updates: [] }),
+  );
+  check('a --locked report (packages under "locked") is read too', locked.status === 0
+    && locked.output.includes('sample/library: 1.0.0 → 2.0.0'));
   check('valid updates create a human review report', update.status === 0
     && update.output.includes('sample/library: 1.0.0 → 1.1.0')
     && update.output.includes('does not authorize automatic merging'));

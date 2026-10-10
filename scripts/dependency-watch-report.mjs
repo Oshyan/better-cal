@@ -20,13 +20,16 @@ if (!Object.hasOwn(audit, 'advisories') || !audit.advisories || typeof audit.adv
 if (audit.abandoned !== undefined && (!audit.abandoned || typeof audit.abandoned !== 'object')) {
   throw new Error('Composer audit abandoned packages are malformed');
 }
-if (!Array.isArray(outdated.installed)) throw new Error('Composer outdated report has no installed-package list');
+// `composer outdated --locked` lists packages under `locked`, a plain run
+// under `installed`; the workflow uses --locked.
+const outdatedList = Array.isArray(outdated.locked) ? outdated.locked : outdated.installed;
+if (!Array.isArray(outdatedList)) throw new Error('Composer outdated report has no package list');
 if (!Array.isArray(repo.updates)) throw new Error('Repository dependency report has no update list');
 const advisories = Object.entries(audit.advisories || {}).flatMap(([packageName, items]) =>
   (Array.isArray(items) ? items : [items]).filter(Boolean).map((item) => ({ ...item, packageName }))
 );
 const abandoned = audit.abandoned ? Object.entries(audit.abandoned) : [];
-const composer = outdated.installed;
+const composer = outdatedList;
 const extra = repo.updates;
 const issueCount = advisories.length + abandoned.length + composer.length + extra.length;
 if (issueCount === 0) {

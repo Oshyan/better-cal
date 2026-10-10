@@ -4,6 +4,15 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.56 (2026-10-09)
+
+- **Back on a phone closes what's open instead of leaving the app.** The View, Filter and New sheets, quick add, jump to date and the day list ignored the phone's Back, so it closed the app. They now close on Back (a first Back with the keyboard up still just hides the keyboard).
+- **Back steps the event sheet down reliably.** From a full sheet, Back went to the short sheet as it should, but the next Back left the app instead of closing the sheet. The same happened going back from an event to its trip, and from the welcome's second step. Found by testing on a real Android phone.
+- **A turned phone keeps the event in view.** Held sideways, the event sheet now sits beside a narrowed calendar (as the desktop panel does), with the bottom bar still under it, so the event you opened is never hidden behind the sheet. ([#125](https://github.com/Oshyan/better-cal/issues/125))
+- **The weekly dependency check works.** It never had: it read Composer's report under the wrong name and failed every run.
+
+Operators: no migration.
+
 ## 0.9.55 (2026-10-09)
 
 - **Stepping through a day skips duplicates.** An event linked across two visible calendars shows once in the views, but the event sheet and panel stepped onto both copies. Now it's one step, and the copy you opened keeps its place. ([#27](https://github.com/Oshyan/better-cal/issues/27))

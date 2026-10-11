@@ -137,6 +137,7 @@ final class SystemHealth
      */
     public function snapshot(int $userId): array
     {
+        $this->pruneGone();
         $rows = $this->db->all(
             "SELECT * FROM system_health WHERE user_id = ? OR user_id IS NULL
              ORDER BY (status = 'failing') DESC, kind, label",
@@ -196,6 +197,7 @@ final class SystemHealth
     public function sweepAlerts(EmailSender $email, ?string $alertEmail, array $placeSubjects = []): array
     {
         $out = ['failureEmails' => 0, 'recoveryEmails' => 0, 'skipped' => null];
+        $this->pruneGone();
         if (!$email->isConfigured()) {
             $out['skipped'] = 'smtp not configured';
             return $out;
@@ -336,6 +338,40 @@ final class SystemHealth
     }
 
     // ---- Internals ----------------------------------------------------
+
+    /**
+     * Drop the rows of feeds and push devices that no longer exist. Nothing
+     * deletes a subject's row when its calendar or device goes (the table
+     * has no foreign keys), so Settings, System kept listing them, and a
+     * failing one could keep an alert open. Best effort: reading health must
+     * work even where a table is missing.
+     */
+    private function pruneGone(): void
+    {
+        try {
+            $bySubject = ['feed' => [], 'push' => []];
+            foreach ($this->db->all("SELECT subject FROM system_health WHERE subject LIKE 'feed:%' OR subject LIKE 'push:%'") as $row) {
+                [$kind, $id] = explode(':', (string) $row['subject'], 2) + [1 => ''];
+                if (isset($bySubject[$kind]) && ctype_digit($id)) {
+                    $bySubject[$kind][(int) $id] = (string) $row['subject'];
+                }
+            }
+            foreach (['feed' => 'calendars', 'push' => 'push_subscriptions'] as $kind => $table) {
+                if ($bySubject[$kind] === []) {
+                    continue;
+                }
+                [$in, $params] = Db::in(array_keys($bySubject[$kind]));
+                $alive = array_flip(array_map('intval', array_column($this->db->all("SELECT id FROM $table WHERE id IN $in", $params), 'id')));
+                $gone = array_values(array_diff_key($bySubject[$kind], $alive));
+                if ($gone !== []) {
+                    [$in, $params] = Db::in($gone);
+                    $this->db->run("DELETE FROM system_health WHERE subject IN $in", $params);
+                }
+            }
+        } catch (\Throwable) {
+            // A missing table or a locked row: leave the rows for next time.
+        }
+    }
 
     private function ensureRow(string $subject, string $kind, ?int $userId, string $label): void
     {

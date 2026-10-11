@@ -894,6 +894,25 @@ if (is_resource($proxyServer)) {
     check('http pinning disables environment proxy bypass', true, 'loopback listener unavailable; source path covered');
 }
 
+// Health rows of feeds and push devices that were deleted drop out.
+$hpdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+$hpdb->run('CREATE TABLE system_health (subject TEXT PRIMARY KEY, kind TEXT, user_id INTEGER, label TEXT, status TEXT DEFAULT "ok", first_failed_at TEXT, last_failed_at TEXT, last_ok_at TEXT, consecutive_failures INTEGER DEFAULT 0, last_error TEXT, alerted_at TEXT)');
+$hpdb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY)');
+$hpdb->run('CREATE TABLE push_subscriptions (id INTEGER PRIMARY KEY)');
+$hpdb->run('INSERT INTO calendars (id) VALUES (1)');
+$hpdb->run('INSERT INTO push_subscriptions (id) VALUES (7)');
+foreach ([['feed:1', 'feed'], ['feed:2', 'feed'], ['push:7', 'push'], ['push:9', 'push'], ['geocoder:photon', 'geocoder']] as [$s, $k]) {
+    $hpdb->run("INSERT INTO system_health (subject, kind, user_id, label, status) VALUES (?, ?, 1, 'Sample', 'failing')", [$s, $k]);
+}
+$hpSubjects = array_column((new SystemHealth($hpdb))->snapshot(1), 'subject');
+sort($hpSubjects);
+checkEq('health: rows of deleted feeds and push devices drop out, others stay', ['feed:1', 'geocoder:photon', 'push:7'], $hpSubjects);
+checkEq('health: the dropped rows are deleted, not just hidden', 3, (int) $hpdb->scalar('SELECT COUNT(*) FROM system_health'));
+$hpbare = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+$hpbare->run('CREATE TABLE system_health (subject TEXT PRIMARY KEY, kind TEXT, user_id INTEGER, label TEXT, status TEXT DEFAULT "ok", first_failed_at TEXT, last_failed_at TEXT, last_ok_at TEXT, consecutive_failures INTEGER DEFAULT 0, last_error TEXT, alerted_at TEXT)');
+$hpbare->run("INSERT INTO system_health (subject, kind, user_id, label) VALUES ('feed:3', 'feed', 1, 'Sample')");
+checkEq('health: reading still works where the calendars table is missing', 1, count((new SystemHealth($hpbare))->snapshot(1)));
+
 // The production geocoder transport uses the same batch boundary and records
 // an owner-visible health failure without putting the location query in logs.
 $gtdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);

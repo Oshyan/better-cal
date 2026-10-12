@@ -212,6 +212,21 @@ final class Feeds
     }
 
     /**
+     * Whether a sync's changes carry a new answer to a Google-synced
+     * invitation that should clear a Planned/Maybe chosen by hand, so the
+     * answer decides again (Events::relationship). Pure; unit-tested.
+     *
+     * @param array<string,mixed> $current the stored row
+     * @param array<string,mixed> $changed the columns this sync changes
+     */
+    public static function answerResetsChoice(array $current, array $changed): bool
+    {
+        return array_key_exists('invite_json', $changed)
+            && in_array((string) ($current['attendance'] ?? 'none'), ['going', 'interested'], true)
+            && Events::googleAnswer(['invite_json' => $current['invite_json'] ?? null]) !== Events::googleAnswer(['invite_json' => $changed['invite_json']]);
+    }
+
+    /**
      * Sync parsed VEVENTs into the calendar: update changed, insert new,
      * delete events whose uid disappeared from the feed.
      *
@@ -329,9 +344,7 @@ final class Feeds
                 }
                 // An answer changed in Google Calendar decides Planned or
                 // Maybe again, as one given here does (Rsvp::answerAtGoogle).
-                if (array_key_exists('invite_json', $changed)
-                    && in_array((string) ($current['attendance'] ?? 'none'), ['going', 'interested'], true)
-                    && Events::googleAnswer(['invite_json' => $current['invite_json']]) !== Events::googleAnswer(['invite_json' => $changed['invite_json']])) {
+                if (self::answerResetsChoice($current, $changed)) {
                     $changed['attendance'] = 'none';
                 }
                 if ($changed !== []) {

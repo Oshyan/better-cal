@@ -8631,6 +8631,16 @@ use BetterCal\Domain\GoogleWriter;
     checkEq('google answer: unanswered reads as NEEDS-ACTION', 'NEEDS-ACTION', $gi(['via' => 'google', 'method' => 'REQUEST']));
     checkEq('google answer: an emailed invitation keeps using the status', null, $gi(['method' => 'REQUEST', 'myPartstat' => 'DECLINED']));
     checkEq('google answer: none without an invitation', null, BetterCal\Domain\Events::googleAnswer(['invite_json' => null]));
+    $inv = static fn(string $p): string => json_encode(['via' => 'google', 'method' => 'REQUEST', 'myPartstat' => $p]);
+    $reset = [BetterCal\Domain\Feeds::class, 'answerResetsChoice'];
+    check('sync: an answer changed in Google Calendar clears a choice made by hand',
+        $reset(['attendance' => 'going', 'invite_json' => $inv('ACCEPTED')], ['invite_json' => $inv('DECLINED')]));
+    check('sync: an invitation update that keeps the answer leaves the choice alone',
+        !$reset(['attendance' => 'going', 'invite_json' => $inv('ACCEPTED')], ['invite_json' => json_encode(['via' => 'google', 'method' => 'REQUEST', 'myPartstat' => 'ACCEPTED', 'attendees' => []])]));
+    check('sync: Hidden is never cleared by an answer',
+        !$reset(['attendance' => 'hidden', 'invite_json' => $inv('ACCEPTED')], ['invite_json' => $inv('DECLINED')]));
+    check('sync: no invitation change, nothing to clear',
+        !$reset(['attendance' => 'going', 'invite_json' => $inv('ACCEPTED')], ['title' => 'Renamed']));
 }
 
 // --- /events refuses a window longer than the cap instead of cutting it short ---

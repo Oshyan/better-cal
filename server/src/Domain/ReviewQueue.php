@@ -642,7 +642,7 @@ final class ReviewQueue
                 $this->close((int) $row['id'], 'superseded');
                 return self::decisionError('review_stale', 'Your calendar already matches this invitation change. The item has been closed.');
             }
-            if ($currentDiff !== (array) ($payload['diff'] ?? [])) {
+            if (!self::sameDiff($currentDiff, (array) ($payload['diff'] ?? []))) {
                 // The owner edited the event after this card was prepared. Do
                 // not apply a full emailed snapshot against a different state
                 // than the differences they reviewed. Refresh the card under
@@ -691,6 +691,26 @@ final class ReviewQueue
         }
         $row = $this->db->one('SELECT * FROM review_items WHERE id = ?', [$id]);
         return ['item' => self::serialize($row ?? []), 'eventId' => (int) $result['eventId']];
+    }
+
+    /**
+     * Whether two invitation diffs say the same thing. A stored one comes back
+     * from MySQL's JSON column with its keys reordered (to, from, field,
+     * label), so comparing the arrays strictly always differed and every
+     * Accept refreshed the card and refused again. Pure; unit-tested.
+     *
+     * @param list<array<string,mixed>> $a
+     * @param list<array<string,mixed>> $b
+     */
+    public static function sameDiff(array $a, array $b): bool
+    {
+        $canon = static fn(array $rows): array => array_map(
+            static fn($r): array => is_array($r)
+                ? [(string) ($r['field'] ?? ''), (string) ($r['label'] ?? ''), $r['from'] ?? null, $r['to'] ?? null]
+                : [],
+            array_values($rows)
+        );
+        return $canon($a) === $canon($b);
     }
 
     /** Close open items whose event is gone, so the queue never offers a decision about nothing. */

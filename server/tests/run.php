@@ -1365,6 +1365,15 @@ check('imip live event: equal sequence still allowed', $mayWhen('confirmed', 2)[
         $adb->scalar('SELECT status FROM review_items WHERE id = ?', [$changeId]),
         array_column($refreshed['diff'] ?? [], 'field'),
     ]);
+    // MySQL's JSON column hands the stored diff back with its keys reordered
+    // (to, from, field, label); that alone must not read as another change.
+    $reordered = $refreshed;
+    $reordered['diff'] = array_map(static fn(array $r): array => ['to' => $r['to'], 'from' => $r['from'], 'field' => $r['field'], 'label' => $r['label']], $refreshed['diff']);
+    $adb->run('UPDATE review_items SET payload_json = ? WHERE id = ?', [json_encode($reordered), $changeId]);
+    check('review diff: the same differences in another key order are the same', BetterCal\Domain\ReviewQueue::sameDiff($refreshed['diff'], $reordered['diff']));
+    check('review diff: a different value is a difference', !BetterCal\Domain\ReviewQueue::sameDiff(
+        [['field' => 'status', 'label' => 'Status', 'from' => 'confirmed', 'to' => 'cancelled']],
+        [['to' => 'cancelled', 'from' => 'tentative', 'field' => 'status', 'label' => 'Status']]));
     $appliedChange = $queueA->accept(1, $changeId);
     checkEq('review change accept: refreshed second decision applies and advances trust sequence', ['Dinner invitation', 'Bistro', 5, 'owner', 'accepted'], [
         $adb->scalar('SELECT title FROM events WHERE id = ?', [$appliedChange['eventId']]),

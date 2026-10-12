@@ -22,7 +22,7 @@ const isPhone = () => { try { return matchMedia(PHONE_QUERY).matches; } catch { 
 /** Something that keeps its own history entry is open now (it can take ours). */
 function handedOver() {
   return !!(state.editor || state.popover || state.searchOpen || state.quickAddOpen
-    || state.phoneSheet || state.jumpOpen || state.expandedDay);
+    || state.phoneSheet || state.jumpOpen || state.expandedDay || state.moveDialog);
 }
 
 /**

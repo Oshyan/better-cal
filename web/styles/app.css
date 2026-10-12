@@ -192,6 +192,11 @@ button:focus-visible, [tabindex]:focus-visible {
 .bc-btn-primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
 .bc-btn-primary:hover { background: var(--accent); filter: brightness(1.08); }
 .bc-btn-danger { color: var(--danger); border-color: var(--danger); }
+/* A disabled button looks it everywhere: a full-colour primary that does
+   nothing read as ready to press. */
+.bc-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.bc-btn:disabled:hover { background: var(--bg-raised); }
+.bc-btn-primary:disabled:hover { background: var(--accent); filter: none; }
 .bc-icon-btn {
   background: none; border: none; border-radius: 6px;
   padding: 4px 7px; color: var(--fg-muted); line-height: 1;
@@ -4085,6 +4090,10 @@ button.bc-es-alsoon-cal { cursor: pointer; text-decoration: underline; text-deco
 @media (max-width: 640px), (pointer: coarse) and (max-height: 500px) and (max-width: 1000px) {
   .bc-sidebar { width: min(86vw, 360px); }
 }
+@media (max-width: 640px) {
+  .bc-move-overlay { padding: 0; align-items: stretch; }
+  .bc-move-dialog { width: 100%; max-height: none; border-radius: 0; padding: calc(12px + env(safe-area-inset-top, 0px)) 16px calc(16px + env(safe-area-inset-bottom, 0px)); align-content: start; }
+}
 
 /* --- Settings on a phone (0.6.9) ----------------------------------------------------------
    Every tab in view (they wrap to a second row instead of scrolling off the edge with
@@ -4240,14 +4249,32 @@ button.bc-es-alsoon-cal { cursor: pointer; text-decoration: underline; text-deco
 /* Move to Google, in a local calendar's settings (0.9.4, #55). */
 .bc-calset-value { font-size: 12.5px; color: var(--fg-muted); line-height: 1.4; }
 .bc-move .bc-btn { align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; }
-.bc-move-panel { display: grid; gap: 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-raised); }
-.bc-move-note { margin: 0; font-size: 12.5px; color: var(--fg-muted); line-height: 1.45; }
-.bc-move-note .bc-btn { margin-top: 6px; }
-.bc-move-row { display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
-.bc-move-row > span { flex: none; width: 4.5em; color: var(--fg-muted); }
-.bc-move-row select { flex: 1; min-width: 0; }
-.bc-move-actions { display: flex; gap: 8px; }
 .bc-move-error { color: var(--danger, #c34a4a); display: grid; gap: 6px; }
+/* The Move to Google dialog (MoveToGoogle.js): a centred window on a wide
+   screen, a full-height sheet on a phone. Room for the choice, the one
+   permission step, and the progress, which the sidebar panel never had. */
+.bc-move-overlay { display: flex; align-items: center; justify-content: center; z-index: 84; padding: 24px 16px; }
+.bc-move-dialog {
+  width: 520px; max-width: 100%; max-height: min(86vh, 640px); overflow-y: auto; overscroll-behavior: contain;
+  display: grid; gap: 12px; padding: 14px 18px 16px; outline: none;
+  background: var(--bg-raised); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow);
+}
+.bc-move-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.bc-move-head h2 { margin: 0; font-size: 16px; display: inline-flex; align-items: center; gap: 8px; }
+.bc-move-form, .bc-move-progress { display: grid; gap: 10px; }
+.bc-move-progress p { margin: 0; }
+.bc-move-note { margin: 0; font-size: 13px; color: var(--fg-muted); line-height: 1.45; }
+.bc-move-warn { color: var(--fg); }
+.bc-move-field { display: grid; gap: 4px; font-size: 13px; }
+.bc-move-field > span { color: var(--fg-muted); font-size: 12px; font-weight: 600; }
+.bc-move-field select { width: 100%; min-width: 0; }
+.bc-move-step { display: grid; gap: 8px; justify-items: start; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-inset); }
+.bc-move-step p { margin: 0; font-size: 13px; line-height: 1.45; }
+.bc-move-bar { height: 8px; border-radius: 4px; background: var(--bg-inset); overflow: hidden; }
+.bc-move-bar i { display: block; height: 100%; background: var(--accent); transition: width 0.4s ease; }
+.bc-move-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.bc-move-foot { justify-content: flex-end; }
+.bc-move-error p { margin: 0; }
 
 /* Event hover card (ui/HoverCard.js): full title, when/calendar/where, then
    why the event looks the way it does, small and italic. Mouse only; it

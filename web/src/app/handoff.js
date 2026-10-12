@@ -21,6 +21,9 @@ import { api } from './api.js';
 import { set, toast } from './store.js';
 import { localTz } from '../lib/dates.js';
 
+/** Set before leaving for Google's consent screen, read when Google sends you back here. */
+export const GOOGLE_RETURN_KEY = 'bc-google-return';
+
 const SESSION_KEY = 'bc-handoff';
 const CACHE_NAME = 'bc-handoff';
 const CACHE_KEY = '/__handoff';
@@ -136,7 +139,20 @@ export async function runHandoff(handoff) {
     const tab = path.split('/')[2];
     set(tab ? { route: 'settings', settingsTab: tab } : { route: 'settings' });
   } else if (path === '/google') {
-    // Back from Google's consent screen (GoogleController::callback).
+    // Back from Google's consent screen (GoogleController::callback). A
+    // permission asked for from the Move to Google dialog goes back to that
+    // dialog; anything else to Settings, Connections, to pick calendars.
+    let back = null;
+    try {
+      back = JSON.parse(sessionStorage.getItem(GOOGLE_RETURN_KEY) || 'null');
+      sessionStorage.removeItem(GOOGLE_RETURN_KEY);
+    } catch { /* storage unavailable: Connections */ }
+    if (back && back.kind === 'move' && Number.isInteger(back.calendarId)) {
+      set({ route: 'calendar', moveDialog: { calendarId: back.calendarId } });
+      if (params.get('connected')) toast('Google permission granted. You can move the calendar now.');
+      else if (params.get('error')) toast('Google didn\'t grant the permission, so the calendar wasn\'t moved. Try again from here.', { error: true });
+      return;
+    }
     set({ route: 'settings', settingsTab: 'connections' });
     // Fixed words for fixed codes: nothing from the URL reaches the screen (F16).
     const GOOGLE_ERRORS = {

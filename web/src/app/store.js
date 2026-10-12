@@ -147,6 +147,7 @@ export const state = {
   welcomeLater: false, // put aside with Back on a phone until the next launch // reopen search with the results an event was opened from (0.7.3)
   jumpOpen: false,   // jump-to-date popover (toolbar date label / g)
   shortcutsOpen: false, // keyboard shortcuts cheat sheet (?)
+  moveDialog: null, // {calendarId}: the Move to Google dialog (MoveToGoogle.js)
   popover: null,     // {instanceId, anchorRect}
   // Which relationships the views show (Relationship.js): a quick filter that
   // applies to every view, remembered per browser. Off = that kind is hidden.

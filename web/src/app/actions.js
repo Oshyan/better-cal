@@ -140,7 +140,7 @@ export function jumpToDate(dayKey, flashId) {
 export function closeOverlays() {
   if (state.popover || state.groupPopover || state.editor || state.expandedDay ||
       state.searchOpen || state.quickAddOpen || state.jumpOpen || state.shortcutsOpen ||
-      state.createDrawer) {
+      state.createDrawer || state.moveDialog) {
     // An editor with entered data closes like anything else; the draft is
     // durable and the toast's Undo puts it back. No dialog to read.
     if (state.editor && state.editorDirty) {
@@ -152,7 +152,7 @@ export function closeOverlays() {
     set({
       popover: null, groupPopover: null, editor: null, expandedDay: null, deletePrompt: null, attendPrompt: null,
       searchOpen: false, quickAddOpen: false, jumpOpen: false, shortcutsOpen: false,
-      editorDirty: false, createDrawer: null,
+      editorDirty: false, createDrawer: null, moveDialog: null,
     });
     return true;
   }

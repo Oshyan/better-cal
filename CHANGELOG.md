@@ -4,6 +4,15 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.58 (2026-10-12)
+
+- **Moving a calendar to Google has its own dialog.** It used to sit inside the sidebar's calendar settings, which were too narrow for it (parts ran off the edge). Now "Move to Google…" opens a dialog with room for the choice, the progress and the outcome; on a phone it's a full-screen sheet. Settings keep a line about any move in progress.
+- **Granting Google's create-calendars permission comes back to the move.** An account connected before moves existed has to allow one more permission. That step is now worded as what it is ("Allow on Google", adding a permission to your existing connection, not a second one), and Google sends you back to the move dialog instead of to Settings, Connections with a prompt to pick calendars. An account that already has the permission never sees the step.
+- **Disabled buttons look disabled everywhere.** A disabled main button kept its full colour outside the editor, so it looked ready to press.
+- **Settings, System forgets deleted feeds and push devices.** Their health rows stayed behind after the calendar or device was gone.
+
+Operators: no migration.
+
 ## 0.9.57 (2026-10-10)
 
 - **The day arrows on a phone's event sheet behave.** The arrow you last tapped kept a grey box through later swipes (a touch screen holds "hover" on the last thing tapped); icon buttons now show it only while pressed. A sideways swipe through the day now flashes the arrow it stands for, as a tap would.

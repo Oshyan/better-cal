@@ -72,7 +72,10 @@ function ReviewCard({ item, onChanged }) {
     try {
       const res = await api(action.path, { method: action.method || 'POST', body: action.body || {} });
       const accepted = action.name !== 'dismiss';
-      if (item.kind === 'rsvp') {
+      if (item.kind === 'rsvp' && action.name === 'dismiss') {
+        toast('Dismissed without answering. You can still answer from the event.');
+        loadReviewCount();
+      } else if (item.kind === 'rsvp') {
         const out = rsvpOutcome(res || {}, d.via);
         toast(out.text, { error: !!out.error });
       } else if (item.kind === 'duplicate') {
@@ -131,7 +134,7 @@ function ReviewCard({ item, onChanged }) {
       <span class="bc-review-summary">${item.summary}${(item.kind === 'invite_change' || item.kind === 'invite_new') && d.from ? html` <span class="bc-review-sender" title="The address this email came from. Email senders are not verified.">Sent from ${d.from}</span>` : ''}${item.kind === 'invite_change' ? html` <span class="bc-review-sender" title="The organizer's calendar numbers each version of an invitation, raising it when the time, place or details change. A version older than the one on your calendar is not applied.">${d.method === 'CANCEL' ? 'Cancellation' : 'Updated invitation'} (v${(d.sequence || 0) + 1})</span>` : ''}</span>
       ${(item.actions.length > 0 || openOptions) && html`<span class="bc-review-actions">${item.actions.map((a, i) => html`<button
         key=${a.name} type="button" disabled=${busy}
-        class=${'bc-btn' + (i === 0 ? ' bc-btn-primary' : '')}
+        class=${a.quiet ? 'bc-link-btn bc-review-quiet' : 'bc-btn' + (i === 0 ? ' bc-btn-primary' : '')}
         onClick=${() => run(a)}
       >${a.label}</button>`)}${openOptions && html`<button type="button" class="bc-btn" disabled=${busy} onClick=${openOptions}>Calendar options</button>`}</span>`}
     </div>

@@ -291,9 +291,12 @@ final class Rsvp
         $invite['organizerTrust'] = 'owner';
         $invite['reply'] = ['partstat' => $partstat, 'sent' => $outcome['sent'], 'reason' => $outcome['reason'], 'message' => $outcome['message'], 'at' => Time::iso(Time::nowUtc())];
         $this->db->run('UPDATE events SET invite_json = ? WHERE id = ?', [json_encode($invite), (int) $row['id']]);
-        // Accepted is Planned and Maybe is a Maybe, on the event's own status
-        // (Events::relationship). Decline leaves the event as it was.
-        $status = ['ACCEPTED' => 'confirmed', 'TENTATIVE' => 'tentative'][$partstat] ?? null;
+        // An answer sets Planned or Maybe on the event's own status
+        // (Events::relationship): Accept is Planned, Maybe and Decline are a
+        // Maybe, the nearest to "no" that keeps it on the calendar. Planned
+        // and Maybe stay the owner's to change afterwards; doing so sends
+        // nothing.
+        $status = ['ACCEPTED' => 'confirmed', 'TENTATIVE' => 'tentative', 'DECLINED' => 'tentative'][$partstat] ?? null;
         if ($status !== null) {
             $this->db->run("UPDATE events SET status = ? WHERE id = ? AND status <> 'cancelled'", [$status, (int) $row['id']]);
         }

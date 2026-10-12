@@ -223,6 +223,7 @@ function bc_handle_api(Request $request, array $cfg): void
         $router->add('GET', "$base/review/count", [$reviewController, 'count']);
         $router->add('POST', "$base/review/invitations/:id/accept", [$reviewController, 'acceptInvitation']);
         $router->add('POST', "$base/review/invitations/:id/dismiss", [$reviewController, 'dismissInvitation']);
+        $router->add('POST', "$base/review/replies/:id/dismiss", [$reviewController, 'dismissReply']);
         $router->add('POST', "$base/review/invite-changes/:id/accept", [$reviewController, 'acceptInviteChange']);
         $router->add('POST', "$base/review/invite-changes/:id/dismiss", [$reviewController, 'dismissInviteChange']);
         $router->add('POST', "$base/review/mail-limits/:id/dismiss", [$reviewController, 'dismissMailLimit']);

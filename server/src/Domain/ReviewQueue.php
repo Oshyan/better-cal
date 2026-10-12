@@ -451,6 +451,11 @@ final class ReviewQueue
             if (!is_array($invite) || ($invite['method'] ?? '') !== 'REQUEST' || ($invite['myPartstat'] ?? 'NEEDS-ACTION') !== 'NEEDS-ACTION') {
                 continue;
             }
+            // Dismissed from Review without answering. An updated invitation
+            // stores a fresh invite block and asks again.
+            if (!empty($invite['reviewDismissedAt'])) {
+                continue;
+            }
             // Only what can actually be answered from here (#70); the event
             // itself says why one can't.
             if (Rsvp::kind($invite) !== 'invitation' || Rsvp::blocker($invite, config()) !== null) {
@@ -711,6 +716,32 @@ final class ReviewQueue
             array_values($rows)
         );
         return $canon($a) === $canon($b);
+    }
+
+    /**
+     * Take an unanswered invitation out of Review without answering it: no
+     * reply goes to the organizer, and the event keeps its Accept / Maybe /
+     * Decline. Recorded in Activity.
+     *
+     * @return array{eventId:int}
+     */
+    public function dismissReply(int $userId, int $eventId): array
+    {
+        return ActivityContext::with('review', fn(): array => $this->db->tx(function () use ($userId, $eventId): array {
+            $row = $this->db->one(
+                'SELECT id, title, invite_json FROM events WHERE id = ? AND user_id = ? AND deleted_at IS NULL' . $this->forUpdate(),
+                [$eventId, $userId]
+            );
+            $invite = $row !== null ? (is_array($row['invite_json']) ? $row['invite_json'] : json_decode((string) $row['invite_json'], true)) : null;
+            if (!is_array($invite) || ($invite['myPartstat'] ?? 'NEEDS-ACTION') !== 'NEEDS-ACTION') {
+                throw HttpError::notFound('No unanswered invitation on this event');
+            }
+            $invite['reviewDismissedAt'] = Time::iso(Time::nowUtc());
+            $this->db->run('UPDATE events SET invite_json = ? WHERE id = ?', [json_encode($invite), $eventId]);
+            (new Undo($this->db))->record($userId, 'event', $eventId, 'refuse', null, null,
+                'Dismissed the reply reminder for "' . (string) $row['title'] . '" without answering');
+            return ['eventId' => $eventId];
+        }));
     }
 
     /** Close open items whose event is gone, so the queue never offers a decision about nothing. */

@@ -1333,6 +1333,18 @@ check('imip live event: equal sequence still allowed', $mayWhen('confirmed', 2)[
     $savedInvite = json_decode((string) $adb->scalar('SELECT invite_json FROM events WHERE id = ?', [$accepted['eventId']]), true);
     checkEq('review new invite accept: added without an answer it is a Maybe', 'tentative',
         $adb->scalar('SELECT status FROM events WHERE id = ?', [$accepted['eventId']]));
+    $queueA->dismissReply(1, $accepted['eventId']);
+    $dismissedInvite = json_decode((string) $adb->scalar('SELECT invite_json FROM events WHERE id = ?', [$accepted['eventId']]), true);
+    checkEq('review reply dismiss: leaves Review unanswered, nothing sent, recorded in Activity', ['NEEDS-ACTION', true, 'Dismissed the reply reminder for "Dinner invitation" without answering'], [
+        $dismissedInvite['myPartstat'] ?? null,
+        !empty($dismissedInvite['reviewDismissedAt']),
+        $adb->scalar("SELECT summary FROM mutations WHERE entity_id = ? AND op = 'refuse' ORDER BY id DESC LIMIT 1", [$accepted['eventId']]),
+    ]);
+    check('review reply dismiss: no longer listed as awaiting a reply',
+        !in_array($accepted['eventId'], array_column($queueA->invitationsAwaitingReply(1, new DateTimeImmutable('2026-11-01T00:00:00Z')), 'eventId'), true));
+    // The rest of this block expects the stored invite as it was.
+    unset($dismissedInvite['reviewDismissedAt']);
+    $adb->run('UPDATE events SET invite_json = ? WHERE id = ?', [json_encode($dismissedInvite), $accepted['eventId']]);
     checkEq('review new invite accept: creates one event and marks organizer owner-approved', [1, 'owner', 'NEEDS-ACTION', 'mail:imip:review'], [
         (int) $adb->scalar('SELECT COUNT(*) FROM events'),
         $savedInvite['organizerTrust'] ?? null,

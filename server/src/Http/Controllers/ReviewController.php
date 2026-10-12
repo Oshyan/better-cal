@@ -142,6 +142,8 @@ final class ReviewController
                     self::action('accepted', 'Accept', "/events/{$inv['eventId']}/rsvp", ['answer' => 'accepted']),
                     self::action('tentative', 'Maybe', "/events/{$inv['eventId']}/rsvp", ['answer' => 'tentative']),
                     self::action('declined', 'Decline', "/events/{$inv['eventId']}/rsvp", ['answer' => 'declined']),
+                    // Out of the queue without answering; shown quietly.
+                    self::action('dismiss', 'Dismiss', "/review/replies/{$inv['eventId']}/dismiss") + ['quiet' => true],
                 ] : [],
             ];
         }
@@ -286,6 +288,12 @@ final class ReviewController
             $result['reply'] = $this->rsvp->answer($userId, (int) $result['eventId'], 'accepted');
         }
         return Response::json($result);
+    }
+
+    public function dismissReply(Request $req, array $params): Response
+    {
+        $req->requireSession('Review decisions');
+        return Response::json($this->queue->dismissReply((int) $req->user['id'], (int) $params['id']));
     }
 
     public function dismissInvitation(Request $req, array $params): Response

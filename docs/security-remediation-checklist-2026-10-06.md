@@ -210,13 +210,13 @@ Use a disposable account or non-production installation for the checks that deli
 
 ### Google account recovery (H1)
 
-- [ ] After the ten-minute confirmation window expires, verify that changing a Google connection or starting/retrying a calendar move asks for the Better-Cal password. Ordinary calendar use and background updates should not ask.
+- [x] After the ten-minute confirmation window expires, verify that changing a Google connection or starting/retrying a calendar move asks for the Better-Cal password. Ordinary calendar use and background updates should not ask. Verified 2026-10-12 on the live install: connecting a Google account and starting a calendar move each asked for the password after the window had expired; ordinary viewing and editing did not.
 - [x] Start a Google connection in one signed-in browser and verify a second browser cannot finish that first browser's connection. Verified 2026-10-10 on the live install: completing Google's consent in a second signed-in browser was refused with the state message, and the existing Google connection was unchanged (no new account, no replaced token).
 - [ ] With a disposable Google account, begin a test move, use the documented compromise-reset command, and verify the connection pauses, unfinished work stops, and already-cached events remain visible. Reconnecting the same Google account should restore the existing calendar rather than create a duplicate. Check the disposable Google calendar for events uploaded before the reset and note any cleanup they still need; a reset cannot pull back completed uploads.
 
 ### Google pagination and worker release (F1/F62)
 
-- [ ] After deployment, open Settings → Connections once and refresh one representative connected Google calendar. Confirm the complete calendar list appears and the calendar returns to a successful “last checked” state. There is no need to manufacture an oversized calendar or broken page-token cycle; those failure paths are covered by the automated controls above.
+- [x] After deployment, open Settings → Connections once and refresh one representative connected Google calendar. Confirm the complete calendar list appears and the calendar returns to a successful “last checked” state. There is no need to manufacture an oversized calendar or broken page-token cycle; those failure paths are covered by the automated controls above. Verified 2026-10-12 on the live install: the full calendar list appeared for the connected account (its count of added calendars matched), and both Google-backed calendars returned to an OK last-checked state on the current release.
 
 ### Google calendar move integrity (F17/F36)
 
@@ -238,7 +238,7 @@ Use a disposable account or non-production installation for the checks that deli
 
 ### API-key creation (F31 residual)
 
-- [ ] After the ten-minute confirmation window expires, create one disposable API key and confirm the password prompt retries in place and shows the new key once. Revoke it afterward. The Google, source-URL and outbound-feed authorization matrices are covered by automated tests and do not need separate manual exercises.
+- [x] After the ten-minute confirmation window expires, create one disposable API key and confirm the password prompt retries in place and shows the new key once. Revoke it afterward. The Google, source-URL and outbound-feed authorization matrices are covered by automated tests and do not need separate manual exercises. Verified on the live install as part of the owner's check (#81, item 3): creating a key after the window asked for the password, showed the key once, and it was revoked.
 
 ### Sign-out and API-key cleanup (M1/M5)
 

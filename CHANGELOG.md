@@ -4,6 +4,13 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.67 (2026-10-12)
+
+- **Declining an invitation makes it a Maybe** instead of leaving it Planned, the nearest to "no" that keeps it on your calendar. Accept still makes it Planned. Whatever an answer sets, you can still change Planned or Maybe by hand afterwards; that sends nothing to the organizer.
+- **An unanswered invitation can be dismissed from Review** with a quiet Dismiss next to Accept / Maybe / Decline. Nothing is sent, the event keeps its answer buttons, and an updated invitation asks again.
+
+Operators: no migration.
+
 ## 0.9.66 (2026-10-12)
 
 - **An open app keeps up with what happens in the background**, without reloading or taking anything out of your hands. Each kind of change reloads only its own part, merged into what's on screen, and nothing changes under a drag; the change waits until you let go.

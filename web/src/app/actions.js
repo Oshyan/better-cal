@@ -1118,6 +1118,7 @@ export function setFolderVisibilityMode(folderId, mode) {
 // What happened to an answer, in words: where it went, or why it didn't.
 export function rsvpOutcome(result, via) {
   const verb = { ACCEPTED: 'Accepted', TENTATIVE: 'Maybe', DECLINED: 'Declined' }[result.myPartstat] || 'Answered';
+  if (result.unchanged) return { text: verb + ' already; nothing new was sent.' };
   if (result.sent) {
     return { text: via === 'google' ? verb + '. Google passes your answer to the organizer.' : verb + '. The reply went to the organizer.' };
   }

@@ -235,7 +235,15 @@ final class Rsvp
         if (self::kind($invite) !== 'invitation') {
             throw HttpError::badRequest('This is a booking, not an invitation; there is nobody to answer');
         }
-        $outcome = ($invite['via'] ?? 'mail') === 'google'
+        // The answer already given (and, by mail, already sent) is not sent
+        // again: pressing Accept twice mailed the organizer twice. A reply
+        // that failed can still be retried.
+        $via = ($invite['via'] ?? 'mail') === 'google' ? 'google' : 'mail';
+        if (($invite['myPartstat'] ?? null) === $partstat
+            && ($via === 'google' || (($invite['reply']['partstat'] ?? null) === $partstat && !empty($invite['reply']['sent'])))) {
+            return ['myPartstat' => $partstat, 'sent' => true, 'reason' => null, 'message' => null, 'unchanged' => true];
+        }
+        $outcome = $via === 'google'
             ? $this->answerAtGoogle($row, $invite, $partstat)
             : $this->answerByMail($row, $invite, $partstat);
 
@@ -270,7 +278,8 @@ final class Rsvp
                 $partstat,
                 (int) ($invite['sequence'] ?? 0),
                 (string) $row['title'],
-                Time::nowUtc()
+                Time::nowUtc(),
+                ['start' => Time::fromDb((string) $row['start_utc']), 'end' => Time::fromDb((string) $row['end_utc']), 'allDay' => (int) $row['all_day'] === 1]
             );
             $verb = ['ACCEPTED' => 'Accepted', 'DECLINED' => 'Declined', 'TENTATIVE' => 'Tentative'][$partstat];
             $error = $this->mailer->sendImipReply($organizer, $verb . ': ' . (string) $row['title'], $ics, $verb . ': ' . (string) $row['title'], (string) $route['profile']);

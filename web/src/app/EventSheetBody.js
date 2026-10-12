@@ -165,7 +165,8 @@ function InviteBlock({ occ }) {
     ${inv.canReply && (!failed || changing) && html`<span class="bc-es-seg" role="group" aria-label="Reply to the invitation">
       ${ANSWERS.map(([a, ps, label]) => html`<button
         key=${a} type="button" class=${'bc-es-segbtn' + (inv.myPartstat === ps ? ' is-on' : '')} disabled=${busy}
-        aria-pressed=${inv.myPartstat === ps} onClick=${() => answer(a)}
+        aria-pressed=${inv.myPartstat === ps} title=${inv.myPartstat === ps && !failed ? 'Your answer; choose another to change it' : undefined}
+        onClick=${() => { if (inv.myPartstat !== ps || failed) answer(a); }}
       >${label}</button>`)}
     </span>`}
   </div>`;

@@ -1743,6 +1743,25 @@ check('rsvp reply has METHOD', str_contains($reply, 'METHOD:REPLY'));
 check('rsvp reply has partstat attendee', str_contains($reply, 'ATTENDEE;PARTSTAT=ACCEPTED:mailto:owner@example.com'));
 check('rsvp reply has organizer', str_contains($reply, 'ORGANIZER:mailto:alice@example.com'));
 check('rsvp reply keeps sequence', str_contains($reply, 'SEQUENCE:2'));
+check('rsvp reply without times has none', !str_contains($reply, 'DTSTART'));
+$timedReply = MailIngest::buildReplyIcs('abc-123@example.com', 'alice@example.com', 'owner@example.com', 'ACCEPTED', 0, 'Team sync', new DateTimeImmutable('2026-08-03T12:00:00Z'),
+    ['start' => new DateTimeImmutable('2026-08-10T17:00:00-07:00'), 'end' => new DateTimeImmutable('2026-08-10T18:00:00-07:00'), 'allDay' => false]);
+check('rsvp reply carries the event times in UTC', str_contains($timedReply, "DTSTART:20260811T000000Z\r\nDTEND:20260811T010000Z"));
+$dayReply = MailIngest::buildReplyIcs('abc-123@example.com', 'alice@example.com', 'owner@example.com', 'ACCEPTED', 0, 'Offsite', new DateTimeImmutable('2026-08-03T12:00:00Z'),
+    ['start' => new DateTimeImmutable('2026-08-10T00:00:00Z'), 'end' => new DateTimeImmutable('2026-08-11T00:00:00Z'), 'allDay' => true]);
+check('rsvp reply carries an all-day event as dates', str_contains($dayReply, "DTSTART;VALUE=DATE:20260810\r\nDTEND;VALUE=DATE:20260811"));
+if (class_exists(\PHPMailer\PHPMailer\PHPMailer::class)) {
+    $replyMail = new \PHPMailer\PHPMailer\PHPMailer(true);
+    $replyMail->CharSet = \PHPMailer\PHPMailer\PHPMailer::CHARSET_UTF8;
+    $replyMail->setFrom('owner@example.com');
+    $replyMail->addAddress('alice@example.com');
+    $replyMail->Subject = 'Accepted: Team sync';
+    BetterCal\Infra\EmailSender::imipReplyBody($replyMail, $timedReply, 'Accepted: Team sync');
+    $replyMail->preSend();
+    $replyMime = $replyMail->getSentMIMEMessage();
+    check('rsvp mail: the reply is an inline text/calendar method=REPLY part, as Google sends', str_contains($replyMime, 'Content-Type: text/calendar; method=REPLY; charset=utf-8'));
+    check('rsvp mail: and an invite.ics attachment', str_contains($replyMime, 'application/ics; name=invite.ics') && str_contains($replyMime, 'multipart/alternative'));
+}
 
 // Answering invitations (#70): invitation or booking, and whether a reply can go.
 {

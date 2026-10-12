@@ -186,14 +186,27 @@ final class EmailSender
             $mail->setFrom($from);
             $mail->addAddress($toEmail);
             $mail->Subject = $subject;
-            $mail->Body = $bodyText;
-            $mail->ContentType = 'text/plain';
-            $mail->addStringAttachment($ics, 'invite.ics', 'base64', 'text/calendar; method=REPLY');
+            self::imipReplyBody($mail, $ics, $bodyText);
             $mail->send();
             return null;
         } catch (\Throwable $e) {
             error_log('rsvp send error: ' . $e->getMessage());
             return mb_substr($e->getMessage(), 0, 300);
         }
+    }
+
+    /**
+     * The reply laid out as Google's own replies are: text and HTML, the
+     * reply itself as an inline text/calendar; method=REPLY part, and the
+     * same as an invite.ics attachment. Sent as an attachment alone, Gmail
+     * showed "Unable to load event" and the guest's answer didn't change.
+     */
+    public static function imipReplyBody(\PHPMailer\PHPMailer\PHPMailer $mail, string $ics, string $bodyText): void
+    {
+        $mail->isHTML(true);
+        $mail->Body = '<p>' . htmlspecialchars($bodyText, ENT_QUOTES | ENT_HTML5, 'UTF-8') . '</p>';
+        $mail->AltBody = $bodyText;
+        $mail->Ical = $ics;
+        $mail->addStringAttachment($ics, 'invite.ics', 'base64', 'application/ics');
     }
 }

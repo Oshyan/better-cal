@@ -966,7 +966,14 @@ final class MailIngest
 
     // ---- RSVP ----------------------------------------------------------
 
-    /** Pure iMIP REPLY builder (docs/email-ingest.md). */
+    /**
+     * Pure iMIP REPLY builder (docs/email-ingest.md). $when (start, end,
+     * allDay) puts the event's own times in the reply, as Google's replies
+     * carry them; a reply without them showed in Gmail as "Unable to load
+     * event" and didn't change the guest's answer.
+     *
+     * @param array{start:\DateTimeImmutable,end:\DateTimeImmutable,allDay:bool}|null $when
+     */
     public static function buildReplyIcs(
         string $uid,
         string $organizerEmail,
@@ -974,8 +981,15 @@ final class MailIngest
         string $partstat,
         int $sequence,
         string $summary,
-        \DateTimeImmutable $now
+        \DateTimeImmutable $now,
+        ?array $when = null
     ): string {
+        $times = [];
+        if ($when !== null) {
+            $times = $when['allDay']
+                ? ['DTSTART;VALUE=DATE:' . $when['start']->setTimezone(Time::utc())->format('Ymd'), 'DTEND;VALUE=DATE:' . $when['end']->setTimezone(Time::utc())->format('Ymd')]
+                : ['DTSTART:' . $when['start']->setTimezone(Time::utc())->format('Ymd\THis\Z'), 'DTEND:' . $when['end']->setTimezone(Time::utc())->format('Ymd\THis\Z')];
+        }
         $lines = [
             'BEGIN:VCALENDAR',
             'VERSION:2.0',
@@ -984,6 +998,7 @@ final class MailIngest
             'BEGIN:VEVENT',
             'UID:' . $uid,
             'DTSTAMP:' . $now->setTimezone(Time::utc())->format('Ymd\THis\Z'),
+            ...$times,
             'ORGANIZER:mailto:' . $organizerEmail,
             'ATTENDEE;PARTSTAT=' . strtoupper($partstat) . ':mailto:' . $attendeeEmail,
             'SEQUENCE:' . $sequence,

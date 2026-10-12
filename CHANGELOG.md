@@ -4,6 +4,12 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.61 (2026-10-12)
+
+- **A calendar's Source reads as one sentence.** In 0.9.60 it broke after "Google Calendar" and ran two sentences together.
+
+Operators: no migration.
+
 ## 0.9.60 (2026-10-12)
 
 - **You can tell at a glance which calendars come from somewhere else.** In the sidebar, a Google calendar has Google's mark after its name and a calendar subscribed by web address has a link mark; hovering says where it comes from and whether you can edit it. A calendar's settings now say plainly where it comes from (for Google, which account), instead of a cut-off line.

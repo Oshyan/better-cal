@@ -41,8 +41,13 @@ final class Events
      *   planned   marked going, or on one of my calendars and not tentative
      *   maybe     marked interested, or on one of my calendars and tentative
      *   available on an opportunities calendar and not picked
+     *
+     * $answer is my answer to a Google-synced invitation (its status is the
+     * organizer's, not mine): accepted is planned, anything else maybe, as
+     * an answer by mail sets the status. A Planned/Maybe chosen by hand is
+     * kept as attendance and wins until the next answer.
      */
-    public static function relationship(string $attendance, string $status, string $role): string
+    public static function relationship(string $attendance, string $status, string $role, ?string $answer = null): string
     {
         if ($role === 'context') {
             return 'context';
@@ -57,6 +62,9 @@ final class Events
             return 'maybe';
         }
         if ($role === 'mine') {
+            if ($answer !== null) {
+                return $answer === 'ACCEPTED' ? 'planned' : 'maybe';
+            }
             return $status === 'tentative' ? 'maybe' : 'planned';
         }
         return 'available';
@@ -79,6 +87,12 @@ final class Events
         if ($role === 'mine') {
             if (!in_array($relationship, ['planned', 'maybe'], true)) {
                 throw HttpError::badRequest('On your own calendar an event is planned or maybe');
+            }
+            // A Google-synced invitation's status is the organizer's; my own
+            // choice is kept here, as attendance, and the next answer resets it.
+            if (self::googleAnswer($event) !== null) {
+                $this->setAttendance($userId, $id, self::ATTENDANCE_ALIASES[$relationship], $scope, $instanceStart);
+                return;
             }
             $in = ['status' => $relationship === 'maybe' ? 'tentative' : 'confirmed'];
             if (!empty($event['rrule']) && empty($event['recurrence_parent_id'])) {
@@ -2151,7 +2165,7 @@ final class Events
             'source' => (string) $row['source'],
             'attendance' => (string) $row['attendance'],
             'status' => (string) $row['status'],
-            'relationship' => self::relationship((string) $row['attendance'], (string) $row['status'], (string) ($calMeta['role'] ?? 'mine')),
+            'relationship' => self::relationship((string) $row['attendance'], (string) $row['status'], (string) ($calMeta['role'] ?? 'mine'), self::googleAnswer($row)),
             'icon' => isset($row['icon']) && $row['icon'] !== '' ? (string) $row['icon'] : null,
             'score' => isset($row['score']) && $row['score'] !== null ? (float) $row['score'] : null,
             // Thumbs (feed events): 'up' or 'down' once given, so the buttons show it (#107).
@@ -2180,6 +2194,19 @@ final class Events
             'updatedAt' => Time::iso(Time::fromDb((string) $row['updated_at'])),
             'isNew' => $this->isNew($row, $createdAt),
         ];
+    }
+
+    /** My answer to a Google-synced invitation on this row, or null for anything else. */
+    public static function googleAnswer(array $row): ?string
+    {
+        if (!isset($row['invite_json']) || $row['invite_json'] === null) {
+            return null;
+        }
+        $invite = is_array($row['invite_json']) ? $row['invite_json'] : json_decode((string) $row['invite_json'], true);
+        if (!is_array($invite) || ($invite['via'] ?? 'mail') !== 'google' || strtoupper((string) ($invite['method'] ?? '')) !== 'REQUEST') {
+            return null;
+        }
+        return strtoupper((string) ($invite['myPartstat'] ?? 'NEEDS-ACTION'));
     }
 
     private static function invite(array $row): ?array

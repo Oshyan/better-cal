@@ -332,6 +332,9 @@ final class Rsvp
         // answer to the organizer by itself; nobody else gets mail.
         $resp = $this->google->patch($calendar, $googleId, ['attendees' => array_values($attendees)]);
         $this->google->apply($calendar, [$resp]);
+        // The answer decides Planned or Maybe again (Events::relationship),
+        // over any choice made by hand since the last answer.
+        $this->db->run("UPDATE events SET attendance = 'none' WHERE id = ? AND attendance IN ('going', 'interested')", [(int) $row['id']]);
         return ['sent' => true, 'reason' => null, 'message' => null];
     }
 }

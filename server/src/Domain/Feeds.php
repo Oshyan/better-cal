@@ -327,6 +327,13 @@ final class Feeds
                 if ($current['deleted_at'] !== null) {
                     $changed['deleted_at'] = null;
                 }
+                // An answer changed in Google Calendar decides Planned or
+                // Maybe again, as one given here does (Rsvp::answerAtGoogle).
+                if (array_key_exists('invite_json', $changed)
+                    && in_array((string) ($current['attendance'] ?? 'none'), ['going', 'interested'], true)
+                    && Events::googleAnswer(['invite_json' => $current['invite_json']]) !== Events::googleAnswer(['invite_json' => $changed['invite_json']])) {
+                    $changed['attendance'] = 'none';
+                }
                 if ($changed !== []) {
                     // A new address means the old coordinates are wrong;
                     // the geocode sweep re-resolves within the minute.

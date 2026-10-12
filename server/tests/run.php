@@ -8621,6 +8621,16 @@ use BetterCal\Domain\GoogleWriter;
     checkEq('rel: hidden wins over tentative', 'hidden', $rel('hidden', 'tentative', 'mine'));
     checkEq('rel: context is context whatever the marks', 'context', $rel('going', 'tentative', 'context'));
     checkEq('rel: a going mark on my calendar is planned', 'planned', $rel('going', 'tentative', 'mine'));
+    // A Google-synced invitation: my answer decides, its status is the organizer's.
+    checkEq('rel: a Google invitation I accepted is planned', 'planned', $rel('none', 'confirmed', 'mine', 'ACCEPTED'));
+    checkEq('rel: a Google invitation I declined is maybe, though confirmed', 'maybe', $rel('none', 'confirmed', 'mine', 'DECLINED'));
+    checkEq('rel: an unanswered Google invitation is maybe', 'maybe', $rel('none', 'confirmed', 'mine', 'NEEDS-ACTION'));
+    checkEq('rel: a Planned chosen by hand wins over a decline until the next answer', 'planned', $rel('going', 'confirmed', 'mine', 'DECLINED'));
+    $gi = static fn(array $invite): ?string => BetterCal\Domain\Events::googleAnswer(['invite_json' => json_encode($invite)]);
+    checkEq('google answer: read from a Google invitation', 'DECLINED', $gi(['via' => 'google', 'method' => 'REQUEST', 'myPartstat' => 'DECLINED']));
+    checkEq('google answer: unanswered reads as NEEDS-ACTION', 'NEEDS-ACTION', $gi(['via' => 'google', 'method' => 'REQUEST']));
+    checkEq('google answer: an emailed invitation keeps using the status', null, $gi(['method' => 'REQUEST', 'myPartstat' => 'DECLINED']));
+    checkEq('google answer: none without an invitation', null, BetterCal\Domain\Events::googleAnswer(['invite_json' => null]));
 }
 
 // --- /events refuses a window longer than the cap instead of cutting it short ---

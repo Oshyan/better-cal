@@ -4,6 +4,14 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.60 (2026-10-12)
+
+- **You can tell at a glance which calendars come from somewhere else.** In the sidebar, a Google calendar has Google's mark after its name and a calendar subscribed by web address has a link mark; hovering says where it comes from and whether you can edit it. A calendar's settings now say plainly where it comes from (for Google, which account), instead of a cut-off line.
+- **Settings, Connections is clearer about what you're looking at.** Each Google account's list is titled "Calendars in you@...", even with one account, says it's every calendar that account can see, and counts how many are in your calendars here. The last column reads "In Better-Cal": Added, or Add. The introduction is shorter and plainer.
+- **The finished Move to Google message says where the calendar now lives** (your Google account, by name), that it stays on your calendar here with edits going both ways, and how to share it from Google Calendar.
+
+Operators: no migration. Calendars in the API carry `googleAccountEmail`.
+
 ## 0.9.59 (2026-10-12)
 
 - **An edit to a Google calendar no longer flips back for a few minutes.** If you changed an event while Better-Cal was in the middle of syncing that calendar from Google, the sync could put the old version back until the next one (up to about 5 minutes later; Google always had your edit). A sync that overlaps an edit now discards what it fetched and leaves it to the next one.

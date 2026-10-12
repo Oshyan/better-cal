@@ -37,7 +37,8 @@ function useMoveStatus(calendarId, active) {
     const t = setInterval(async () => {
       try {
         const d = await api('/calendars/' + calendarId + '/move-to-google');
-        setMove(d.move);
+        // Just started: until the new move is on record, keep showing it starting.
+        setMove((cur) => (cur && cur.starting && !d.move ? cur : d.move));
         if (d.move && d.move.status === 'done') {
           toast(MOVED_TOAST);
           loadCalendars();
@@ -153,10 +154,17 @@ function MoveDialogBody({ calendarId, cal, close }) {
     try {
       const selectedAccountId = failed ? move.googleAccountId : accountId;
       const selectedTarget = failed ? (move.createdNew ? null : move.googleCalendarId) : (target === 'new' ? null : target);
-      const d = await stepUp.run('move this calendar to Google', () => api('/calendars/' + calendarId + '/move-to-google', {
-        method: 'POST', body: { accountId: selectedAccountId, googleCalendarId: selectedTarget },
-      }));
-      if (!d) return;
+      const before = move;
+      const d = await stepUp.run('move this calendar to Google', () => {
+        // Starting uploads for up to 12 seconds before it answers (a small
+        // calendar finishes in that one request), so show the move at once
+        // and follow its real progress while the request is still running.
+        setMove({ status: 'queued', done: 0, total: 0, starting: true });
+        return api('/calendars/' + calendarId + '/move-to-google', {
+          method: 'POST', body: { accountId: selectedAccountId, googleCalendarId: selectedTarget },
+        }).catch((e) => { setMove(before); throw e; });
+      });
+      if (!d) { setMove(before); return; }
       setMove(d);
       if (d.status === 'done') {
         toast(MOVED_TOAST);
@@ -191,7 +199,7 @@ function MoveDialogBody({ calendarId, cal, close }) {
   } else if (running) {
     const pct = move.total ? Math.round((move.done / move.total) * 100) : 0;
     body = html`<div class="bc-move-progress">
-      <p>Uploading ${move.done} of ${move.total} event${move.total === 1 ? '' : 's'}…</p>
+      <p>${move.total ? `Uploading ${move.done} of ${move.total} event${move.total === 1 ? '' : 's'}…` : 'Starting the move…'}</p>
       <div class="bc-move-bar" role="progressbar" aria-valuemin="0" aria-valuemax=${move.total} aria-valuenow=${move.done}><i style=${`width:${pct}%`}></i></div>
       <p class="bc-move-note">"${name}" takes no edits until this finishes, so a half-uploaded calendar can't change underneath it. You can close this; the move carries on.</p>
     </div>`;

@@ -207,7 +207,9 @@ export function CalendarSettings({ cal, folders, onClose }) {
       ${cal.provider === 'google'
         ? html`<span class="bc-calset-source"><${GoogleG} size=${13} /><span>
             <strong>Google Calendar</strong>${(cal.googleAccountEmail ? `, in ${cal.googleAccountEmail}` : '') + '. '
-              + (cal.editable ? 'Edits here go to Google, and changes made there come in at each check below.' : 'View only: it can\'t be changed here. Changes made there come in at each check below.')}
+              + (!cal.googleAccountEmail
+                ? 'Its Google account was disconnected, so it no longer updates and can\'t be edited here. Connect the account again in Settings, Connections, and choose Re-attach to pick up where it left off.'
+                : cal.editable ? 'Edits here go to Google, and changes made there come in at each check below.' : 'View only: it can\'t be changed here. Changes made there come in at each check below.')}
           </span></span>`
         : html`<span class="bc-calset-source"><${Icon} name="link" size=${13} /><span>
             <strong>Subscribed from a web address</strong>${', view only. It refreshes at each check below.'}

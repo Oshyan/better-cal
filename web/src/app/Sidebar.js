@@ -90,7 +90,9 @@ function calSourceMark(cal) {
   if (cal.kind !== 'subscribed' || cal.pluginId) return null;
   const google = cal.provider === 'google';
   const label = google
-    ? `From Google Calendar${cal.googleAccountEmail ? ' (' + cal.googleAccountEmail + ')' : ''}${cal.editable ? '; edits here go to Google' : '; view only'}`
+    ? (cal.googleAccountEmail
+      ? `From Google Calendar (${cal.googleAccountEmail})${cal.editable ? '; edits here go to Google' : '; view only'}`
+      : 'From Google Calendar; its account was disconnected, so it no longer updates')
     : 'Subscribed from a web address; view only';
   return html`<span class=${'bc-cal-src' + (google ? ' is-google' : '')} role="img" aria-label=${label} title=${label}>${google
     ? html`<${GoogleG} size=${11} />`

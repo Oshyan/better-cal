@@ -11,7 +11,7 @@ import { api, loadCalendars, loadReviewCount } from './api.js';
 import { state, toast } from './store.js';
 import { parseHex, PALETTE } from '../lib/color.js';
 import { SchemaForm } from './SchemaForm.js';
-import { Icon } from '../ui/icons.js';
+import { Icon, GoogleG } from '../ui/icons.js';
 import { MoveToGoogle } from './MoveToGoogle.js';
 import { TimedDefault, AllDayDefault } from './ReminderDefaults.js';
 import { summarizeDefaults, FOLLOW_DEFAULTS } from '../lib/reminders.js';
@@ -205,7 +205,7 @@ export function CalendarSettings({ cal, folders, onClose }) {
     ${subscribed && html`<div class="bc-calset-field">
       <span class="bc-calset-label">Source</span>
       ${cal.provider === 'google'
-        ? html`<span class="bc-calset-source"><${Icon} name="google" size=${13} /><span>
+        ? html`<span class="bc-calset-source"><${GoogleG} size=${13} /><span>
             <strong>Google Calendar</strong>${(cal.googleAccountEmail ? `, in ${cal.googleAccountEmail}` : '') + '. '
               + (cal.editable ? 'Edits here go to Google, and changes made there come in at each check below.' : 'View only: it can\'t be changed here. Changes made there come in at each check below.')}
           </span></span>`

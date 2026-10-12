@@ -100,10 +100,12 @@ export function GoogleConnector() {
   // Google states a role, not a kind; the server derives the kind from the
   // calendar id (GoogleAuth::calendarKind) and sorts by it.
   const KIND = {
-    yours: ['Yours', 'A calendar you own'],
-    shared: ['Shared with you', 'Someone else owns it and shared it with you; the one shape no iCal address can reach'],
-    feed: ['Feed copy', "Google's own copy of an ICS subscription; subscribing to the ICS address here is fresher"],
-    google: ['Google', 'Provided by Google (holidays, birthdays)'],
+    // Labels relative to the account the list belongs to ("Calendars in ..."),
+    // not to the person reading.
+    yours: ['Owned', 'This Google account owns it'],
+    shared: ['Shared', "Someone else owns it and shared it with this account; a web address can't reach these"],
+    feed: ['Feed copy', "Google's own copy of a calendar subscribed by web address; subscribing to that address here is fresher"],
+    google: ['From Google', 'Provided by Google (holidays, birthdays)'],
   };
   const localName = (id) => { const c = calendars.find((x) => x.id === id); return c ? c.name : null; };
 

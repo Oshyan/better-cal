@@ -25,7 +25,7 @@ import { CalendarSettings } from './CalendarSettings.js';
 import { MiniMonth } from './MiniMonth.js';
 import { PALETTE } from '../lib/color.js';
 import { MANAGE_ITEMS } from './commanddefs.js';
-import { Icon, CalDot } from '../ui/icons.js';
+import { Icon, CalDot, GoogleG } from '../ui/icons.js';
 import { attachScrollRail } from '../ui/scrollrail.js';
 import { COARSE_QUERY, PHONE_QUERY } from '../lib/breakpoints.js';
 import { onOutsidePress, insideAny } from '../ui/outside.js';
@@ -92,7 +92,9 @@ function calSourceMark(cal) {
   const label = google
     ? `From Google Calendar${cal.googleAccountEmail ? ' (' + cal.googleAccountEmail + ')' : ''}${cal.editable ? '; edits here go to Google' : '; view only'}`
     : 'Subscribed from a web address; view only';
-  return html`<span class="bc-cal-src" role="img" aria-label=${label} title=${label}><${Icon} name=${google ? 'google' : 'link'} size=${12} /></span>`;
+  return html`<span class=${'bc-cal-src' + (google ? ' is-google' : '')} role="img" aria-label=${label} title=${label}>${google
+    ? html`<${GoogleG} size=${11} />`
+    : html`<${Icon} name="link" size=${12} />`}</span>`;
 }
 
 function pluginDecoFor(cal) {

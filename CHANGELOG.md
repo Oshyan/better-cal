@@ -4,6 +4,13 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.62 (2026-10-12)
+
+- **Google calendars carry Google's own G, in color.** The small grey mark in the sidebar was hard to make out; the real G reads at a glance (and fades with the row when a calendar is hidden). A calendar's settings use the same G for its Source.
+- **Connections names each calendar's type from the account's side**: Owned, Shared, Feed copy or From Google, with a hover note on each. "Yours" was ambiguous once more than one account was connected.
+
+Operators: no migration.
+
 ## 0.9.61 (2026-10-12)
 
 - **A calendar's Source reads as one sentence.** In 0.9.60 it broke after "Google Calendar" and ran two sentences together.

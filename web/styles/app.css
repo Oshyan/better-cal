@@ -484,6 +484,8 @@ button:focus-visible, [tabindex]:focus-visible {
 .bc-cal-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* A calendar from somewhere else (Sidebar.js calSourceMark): Google's mark or a link. */
 .bc-cal-src { flex: none; display: inline-flex; color: var(--fg-muted); margin-left: 2px; }
+/* Google's G keeps its colours, and fades with a hidden calendar's row. */
+.bc-cal-row.is-off .bc-cal-src.is-google { filter: grayscale(1); opacity: 0.45; }
 .bc-health {
   color: var(--warn); cursor: pointer; display: inline-flex; align-items: center;
   border: none; border-radius: 4px; background: none; padding: 3px;

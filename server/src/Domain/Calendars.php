@@ -511,6 +511,25 @@ final class Calendars
     }
 
     /** @param array{lastRaw:int,everRaw:int,hasUpcoming:bool} $feed */
+    /** @var array<int,?string> account id => email, per request */
+    private array $googleEmails = [];
+
+    private function googleAccountEmail(?int $accountId): ?string
+    {
+        if ($accountId === null || $accountId < 1) {
+            return null;
+        }
+        if (!array_key_exists($accountId, $this->googleEmails)) {
+            try {
+                $email = $this->db->scalar('SELECT email FROM google_accounts WHERE id = ?', [$accountId]);
+            } catch (\PDOException) {
+                $email = null; // no google_accounts table (narrow test schemas)
+            }
+            $this->googleEmails[$accountId] = $email !== null ? (string) $email : null;
+        }
+        return $this->googleEmails[$accountId];
+    }
+
     private function serialize(array $c, array $folderIds, array $feed, ?int $viewerTokenId = null): array
     {
         $subscribed = $c['kind'] === 'subscribed';
@@ -537,6 +556,8 @@ final class Calendars
             'role' => (string) ($c['role'] ?? 'mine'),
             'googleCalendarId' => isset($c['google_calendar_id']) && $c['google_calendar_id'] !== null ? (string) $c['google_calendar_id'] : null,
             'googleAccessRole' => isset($c['google_access_role']) && $c['google_access_role'] !== null ? (string) $c['google_access_role'] : null,
+            // Which connected account it comes through, so the app can say so.
+            'googleAccountEmail' => $this->googleAccountEmail(isset($c['google_account_id']) ? (int) $c['google_account_id'] : null),
             // Whether events on it can be created, edited and deleted here:
             // local calendars, and Google calendars the connected account may
             // write to (write-through, GoogleWriter). Feeds and plugin

@@ -31,7 +31,7 @@ export function CalDot({ cal, color, deco }) {
     </span>`;
   }
   return feed
-    ? html`<span class="bc-cal-dot is-feed" title="Subscribed feed" style=${`border-color:${c}`}></span>`
+    ? html`<span class="bc-cal-dot is-feed" title=${cal.provider === 'google' ? 'Google calendar' : 'Subscribed calendar'} style=${`border-color:${c}`}></span>`
     : html`<span class="bc-cal-dot" style=${`background:${c}`}></span>`;
 }
 

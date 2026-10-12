@@ -9,6 +9,7 @@ import { html, useState, useEffect } from '../../vendor/index.js';
 import { useStore, toast } from './store.js';
 import { api, loadCalendars } from './api.js';
 import { usePasswordStepUp } from './PasswordStepUp.js';
+import { Icon } from '../ui/icons.js';
 
 function Row({ label, hint, children }) {
   return html`<div class="bc-set-row">
@@ -108,7 +109,7 @@ export function GoogleConnector() {
 
   return html`<section class="bc-set-section">
     <h2 class="bc-set-h">Google Calendar</h2>
-    <p class="bc-set-lead">Calendars through a Google account: yours, ones you subscribe to, and ones shared with you, including shared-but-not-public calendars no iCal address can reach. Where the account can edit, so can you here: a change goes to Google first and lands back within a second. Edits made in Google arrive within the check interval.</p>
+    <p class="bc-set-lead">Connect a Google account, then choose which of its calendars to add here. Added calendars show alongside your own and stay in sync with Google. If the account can edit a calendar, you can edit it here too, and changes go straight to Google. This also reaches calendars people have shared with you privately, which a web address can't.</p>
     ${status === null && html`<${Row} label="Account"><span class="bc-set-value">Loading…</span><//>`}
     ${status && !status.configured && html`<${Row} label="Account" hint="Reading calendars through a Google account needs an OAuth client of this server's own, from a free Google Cloud project: about ten minutes, once, by whoever runs the server. The two values go in .env as BETTERCAL_GOOGLE_CLIENT_ID and BETTERCAL_GOOGLE_CLIENT_SECRET.">
       <span class="bc-set-value">Not set up on this server. <a href=${GOOGLE_SETUP_URL} target="_blank" rel="noopener">How to set it up</a></span>
@@ -133,20 +134,22 @@ export function GoogleConnector() {
       <//>
       ${status.accounts.map((a) => {
         const list = lists[a.id];
+        const addedCount = Array.isArray(list) ? list.filter((c) => c.calendarId).length : 0;
         return html`<div class="bc-google-block" key=${a.id}>
-          <h3 class="bc-google-h">${status.accounts.length > 1 ? a.email : 'Calendars'}</h3>
+          <h3 class="bc-google-h">Calendars in ${a.email}</h3>
+          ${Array.isArray(list) && list.length > 0 && html`<p class="bc-google-sub">Every calendar this Google account can see. The last column shows which are in your calendars here (${addedCount} of ${list.length}); add any of the others.</p>`}
           ${a.reauthRequired && html`<span class="bc-set-value">Cached calendars stay visible, but Google syncing and editing are paused until this account is reconnected.</span>`}
           ${!a.reauthRequired && (list === undefined || list === 'loading') && html`<span class="bc-set-value">Asking Google…</span>`}
           ${typeof list === 'string' && list.startsWith('error:') && html`<span class="bc-set-value bc-google-err">${list.slice(6)} <button type="button" class="bc-link-btn" onClick=${() => loadList(a.id)}>Retry</button></span>`}
           ${Array.isArray(list) && list.length === 0 && html`<span class="bc-set-value">Google lists no calendars for this account.</span>`}
           ${Array.isArray(list) && list.length > 0 && html`<table class="bc-sys-table bc-google-list">
-            <thead><tr><th>Calendar</th><th>Kind</th><th>Access</th><th></th></tr></thead>
+            <thead><tr><th>Calendar</th><th>Type</th><th>Your access</th><th>In Better-Cal</th></tr></thead>
             <tbody>${list.map((c) => html`<tr key=${c.id}>
               <td><span class="bc-cal-dot" style=${c.color ? 'background:' + c.color : ''}></span> ${c.name}${c.primary ? html` <span class="bc-google-tag">primary</span>` : ''}</td>
               <td title=${(KIND[c.kind] || ['', ''])[1]}>${(KIND[c.kind] || [c.kind])[0]}</td>
               <td>${roleLabel(c.accessRole)}</td>
               <td>${c.calendarId
-                ? html`<span class="bc-set-value" title=${'Here as "' + (localName(c.calendarId) || c.name) + '"'}>Added</span>`
+                ? html`<span class="bc-google-in"><${Icon} name="check" size=${12} /> ${localName(c.calendarId) && localName(c.calendarId) !== c.name ? `Added, as "${localName(c.calendarId)}"` : 'Added'}</span>`
                 : c.reattachId
                 ? html`<button type="button" class="bc-link-btn" disabled=${busy === c.id} title=${'"' + (localName(c.reattachId) || c.name) + '" is still here from when this account was disconnected. Re-attach keeps its events and everything added to them.'} onClick=${() => add(a, c)}>${busy === c.id ? 'Re-attaching…' : 'Re-attach'}</button>`
                 : html`<button type="button" class="bc-link-btn" disabled=${busy === c.id} onClick=${() => add(a, c)}>${busy === c.id ? 'Adding…' : 'Add'}</button>`}</td>

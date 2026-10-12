@@ -205,8 +205,14 @@ export function CalendarSettings({ cal, folders, onClose }) {
     ${subscribed && html`<div class="bc-calset-field">
       <span class="bc-calset-label">Source</span>
       ${cal.provider === 'google'
-        ? html`<span class="bc-calset-url" title=${cal.googleCalendarId || ''}>Google Calendar, through your connected account (Settings, Connections)${cal.editable ? '; edits here go to Google' : '; view only at Google'}</span>`
-        : html`<span class="bc-calset-url" title=${cal.sourceUrl}>${cal.sourceUrl}</span>`}
+        ? html`<span class="bc-calset-source"><${Icon} name="google" size=${13} /><span>
+            <strong>Google Calendar</strong>${cal.googleAccountEmail ? `, in ${cal.googleAccountEmail}` : ''}.
+            ${cal.editable ? 'Edits here go to Google, and changes made there come in at each check below.' : 'View only: it can\'t be changed here. Changes made there come in at each check below.'}
+          </span></span>`
+        : html`<span class="bc-calset-source"><${Icon} name="link" size=${13} /><span>
+            <strong>Subscribed from a web address</strong>, view only. It refreshes at each check below.
+            ${cal.sourceUrl && html`<span class="bc-calset-url" title=${cal.sourceUrl}>${cal.sourceUrl}</span>`}
+          </span></span>`}
     </div>
     ${subscriptionPaused && html`<div class="bc-calset-auth" role="alert">
       <span>${subscriptionAuth.reason}</span>

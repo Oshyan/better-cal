@@ -19,7 +19,7 @@ import { usePasswordStepUp } from './PasswordStepUp.js';
 import { useBackClose } from './backclose.js';
 import { GOOGLE_RETURN_KEY } from './handoff.js';
 
-const MOVED_TOAST = 'Moved to Google. Share it from Google Calendar: its settings, Share with specific people.';
+const MOVED_TOAST = 'Moved to Google. It stays on your calendar here; edits now go to Google.';
 
 function useMoveStatus(calendarId, active) {
   const [move, setMove] = useState(undefined); // undefined: not loaded yet
@@ -204,7 +204,12 @@ function MoveDialogBody({ calendarId, cal, close }) {
       <p class="bc-move-note">"${name}" takes no edits until this finishes, so a half-uploaded calendar can't change underneath it. You can close this; the move carries on.</p>
     </div>`;
   } else if (move && move.status === 'done') {
-    body = html`<p class="bc-move-note">"${name}" is now a Google calendar. Share it from Google Calendar: its settings, Share with specific people.</p>`;
+    const movedTo = (accounts.find((a) => a.id === move.googleAccountId) || {}).email;
+    body = html`<div class="bc-move-done">
+      <p><strong>Done.</strong> "${name}" now lives in your Google account${movedTo ? ` (${movedTo})` : ''}, and it's still on your calendar here.</p>
+      <p class="bc-move-note">It works like your other Google calendars: changes you make here go to Google, and changes made in Google Calendar show up here.</p>
+      <p class="bc-move-note">To let other people see it or add to it, share it from Google Calendar: open the calendar's settings there and choose "Share with specific people".</p>
+    </div>`;
   } else if (failed) {
     body = html`<div class="bc-move-error">
       <p>The move stopped: ${move.error || 'unknown error'}. ${move.done} of ${move.total} uploaded so far.</p>

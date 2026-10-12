@@ -80,6 +80,21 @@ function healthBadge(cal, onOpen) {
 // A plugin-owned calendar wears its plugin's declared decoration. Read from the
 // loaded plugin list rather than the calendar payload, so it tracks the
 // manifest without a schema field to keep in sync.
+/**
+ * Where a calendar comes from, after its name: Google's mark for a Google
+ * calendar, a link for one subscribed by web address. Calendars that live
+ * here (and plugin calendars, which show their own icon) get none, so the
+ * marks single out what someone else's system holds.
+ */
+function calSourceMark(cal) {
+  if (cal.kind !== 'subscribed' || cal.pluginId) return null;
+  const google = cal.provider === 'google';
+  const label = google
+    ? `From Google Calendar${cal.googleAccountEmail ? ' (' + cal.googleAccountEmail + ')' : ''}${cal.editable ? '; edits here go to Google' : '; view only'}`
+    : 'Subscribed from a web address; view only';
+  return html`<span class="bc-cal-src" role="img" aria-label=${label} title=${label}><${Icon} name=${google ? 'google' : 'link'} size=${12} /></span>`;
+}
+
 function pluginDecoFor(cal) {
   if (!cal || !cal.pluginId) return null;
   const pl = (state.plugins || []).find((p) => p.id === cal.pluginId);
@@ -143,6 +158,7 @@ function CalendarRow({ cal, folders, open, onGear, soloed, onSolo, filedIn, phon
         />
         <${CalDot} cal=${cal} deco=${pluginDecoFor(cal)} />
         <span class="bc-cal-name">${cal.name}</span>
+        ${calSourceMark(cal)}
         ${filedIn && filedIn.length > 0 && html`<span
           class="bc-cal-filed" role="img"
           aria-label=${'Also in ' + filedIn.join(', ')}

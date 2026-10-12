@@ -4,6 +4,19 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.66 (2026-10-12)
+
+- **An open app keeps up with what happens in the background**, without reloading or taking anything out of your hands. Each kind of change reloads only its own part, merged into what's on screen, and nothing changes under a drag; the change waits until you let go.
+  - **Plugin calendars** (weather, sunrise and the like) now record their changes, so open tabs show them, and so do phones and desktop apps syncing over CalDAV, which until now missed them until something else on that calendar changed.
+  - **AI filter verdicts** show as they arrive: newly added feed events get hidden, dimmed or highlighted a minute later instead of staying unfiltered until something else changed.
+  - **Warnings and notices**: a feed starting or stopping failing, reminders no longer reaching this device, a Google account needing reconnecting, a plugin failing, and a new release (including a security one) now appear in an open tab.
+  - **Duplicates** that get linked show as one event, and plugin range bands and layers update.
+  - **Changes from another device**: saved views and settings follow (except while this tab is on the Settings page), and the Review badge reflects decisions made elsewhere.
+  - **An open Activity page** adds new entries at the top.
+- Ranking order isn't reapplied live, so a list you're reading doesn't reshuffle; new scores show the next time the view opens.
+
+Operators: no migration. `GET /changes/cursor` also returns `status`.
+
 ## 0.9.65 (2026-10-12)
 
 - **Accepting an emailed change or cancellation works again.** Every Accept said the event had changed since the email arrived, refreshed the card and refused again, so only Dismiss worked. The stored differences come back from MySQL with their fields in another order, and that alone counted as a change; they are now compared field by field.

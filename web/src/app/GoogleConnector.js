@@ -102,7 +102,7 @@ export function GoogleConnector() {
   const KIND = {
     // Labels relative to the account the list belongs to ("Calendars in ..."),
     // not to the person reading.
-    yours: ['Owned', 'This Google account owns it'],
+    yours: ['Account', 'Made in this Google account'],
     shared: ['Shared', "Someone else owns it and shared it with this account; a web address can't reach these"],
     feed: ['Feed copy', "Google's own copy of a calendar subscribed by web address; subscribing to that address here is fresher"],
     google: ['From Google', 'Provided by Google (holidays, birthdays)'],

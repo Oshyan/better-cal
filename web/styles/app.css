@@ -4090,10 +4090,6 @@ button.bc-es-alsoon-cal { cursor: pointer; text-decoration: underline; text-deco
 @media (max-width: 640px), (pointer: coarse) and (max-height: 500px) and (max-width: 1000px) {
   .bc-sidebar { width: min(86vw, 360px); }
 }
-@media (max-width: 640px) {
-  .bc-move-overlay { padding: 0; align-items: stretch; }
-  .bc-move-dialog { width: 100%; max-height: none; border-radius: 0; padding: calc(12px + env(safe-area-inset-top, 0px)) 16px calc(16px + env(safe-area-inset-bottom, 0px)); align-content: start; }
-}
 
 /* --- Settings on a phone (0.6.9) ----------------------------------------------------------
    Every tab in view (they wrap to a second row instead of scrolling off the edge with
@@ -4275,6 +4271,11 @@ button.bc-es-alsoon-cal { cursor: pointer; text-decoration: underline; text-deco
 .bc-move-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .bc-move-foot { justify-content: flex-end; }
 .bc-move-error p { margin: 0; }
+/* Phone: a full-height sheet. After the rules above, so it wins. */
+@media (max-width: 640px) {
+  .bc-move-overlay { padding: 0; align-items: stretch; }
+  .bc-move-dialog { width: 100%; max-height: none; border-radius: 0; padding: calc(12px + env(safe-area-inset-top, 0px)) 16px calc(16px + env(safe-area-inset-bottom, 0px)); align-content: start; }
+}
 
 /* Event hover card (ui/HoverCard.js): full title, when/calendar/where, then
    why the event looks the way it does, small and italic. Mouse only; it

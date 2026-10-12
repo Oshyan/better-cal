@@ -4,6 +4,14 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.68 (2026-10-12)
+
+- **A Google-synced invitation shows as Planned or Maybe by your answer**, as an emailed one has since 0.9.67: Accept is Planned, and Maybe, Decline or no answer yet is a Maybe. It used to show as Planned whatever you'd answered, because such an event's status belongs to the organizer. Planned or Maybe chosen by hand still wins, until your next answer, whether you give it here or in Google Calendar.
+- **A Google calendar whose account was disconnected says so** in its settings and the sidebar, instead of claiming that changes still come in at each check.
+- **The password prompt reads properly:** "Confirm your Better-Cal password before adding a Google calendar", not "to adding".
+
+Operators: no migration.
+
 ## 0.9.67 (2026-10-12)
 
 - **Declining an invitation makes it a Maybe** instead of leaving it Planned, the nearest to "no" that keeps it on your calendar. Accept still makes it Planned. Whatever an answer sets, you can still change Planned or Maybe by hand afterwards; that sends nothing to the organizer.

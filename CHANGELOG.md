@@ -4,6 +4,12 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.65 (2026-10-12)
+
+- **Accepting an emailed change or cancellation works again.** Every Accept said the event had changed since the email arrived, refreshed the card and refused again, so only Dismiss worked. The stored differences come back from MySQL with their fields in another order, and that alone counted as a change; they are now compared field by field.
+
+Operators: no migration.
+
 ## 0.9.64 (2026-10-12)
 
 - **Invitation replies are laid out the way Google's own are.** A reply now carries the event's times and goes as a calendar part inside the message as well as an `invite.ics` attachment. Sent as an attachment alone, Gmail showed the organizer "Unable to load event" and the guest's answer didn't change.

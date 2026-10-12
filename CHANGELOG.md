@@ -4,6 +4,18 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.63 (2026-10-12)
+
+- **Accepting an invitation now reaches the organizer when you invited yourself.** A reply went out from the address set up for replies even when that address was the organizer, so it told the organizer's calendar that the organizer was coming and the invited guest stayed "awaiting". Replies now go from whichever of the server's sending addresses was actually invited, never the organizer's, through that address's own mail account. An invitation sent from one of the server's addresses, with none of the others invited, offers no reply.
+- **Add and accept.** A new emailed invitation in Review can be added and accepted in one step, so no second "not replied" item follows. **Add** on its own still adds it without replying.
+- **An invitation you haven't answered is a Maybe.** It used to come in as Planned. Accept makes it Planned and Maybe keeps it a Maybe; Decline is unchanged.
+- **The Review badge keeps up while the app is open.** New invitations, held changes, proposals and possible duplicates arrive without changing an event, so the badge only refreshed when you did something; it now updates within 30 seconds, and only while the tab is visible.
+- **Invitation changes say which version they are** ("Updated invitation (v2)") instead of "Sequence 1", and a new invitation no longer shows a number at all.
+- **A reminder whose time passed before the event was added now fires, late.** Add an invitation at 1:30 for 2:00 with a two-hour reminder and you get the reminder right away, as Google Calendar does, instead of never. It only applies while the event is still ahead, up to six days late, and not to a calendar added after the reminder's time, so subscribing to or importing a calendar doesn't set off a burst.
+- **Connections calls a calendar made in the account "Account"** in its Type column, instead of "Owned"; the access column already says owner.
+
+Operators: no migration. `GET /changes/cursor` also returns `review`.
+
 ## 0.9.62 (2026-10-12)
 
 - **Google calendars carry Google's own G, in color.** The small grey mark in the sidebar was hard to make out; the real G reads at a glance (and fades with the row when a calendar is hidden). A calendar's settings use the same G for its Source.

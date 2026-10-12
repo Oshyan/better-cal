@@ -141,6 +141,13 @@ final class GoogleSync
             if (!self::sameBinding($calendar, $current)) {
                 throw HttpError::conflict('subscription_authorization_revoked', 'This calendar no longer uses that Google source; the fetched response was discarded.');
             }
+            // An edit landed while Google's list was being fetched: what was
+            // fetched predates it and would put the old version back until
+            // the next poll. Drop this result and keep the sync position, so
+            // the next poll fetches from before the edit and sees it.
+            if (self::editedDuringFetch($calendar, $current)) {
+                return 0;
+            }
             // The last HTTP request may have been in flight when reset landed.
             // The calendar comes first, matching compromise reset and event
             // writers; then the account lock makes reset/finalization atomic.
@@ -160,6 +167,19 @@ final class GoogleSync
             $this->feeds->pollSucceeded($current, count($snapshot), $count);
             return $count;
         });
+    }
+
+    /**
+     * Did an event on this calendar change after the poll began? Every event
+     * write (here, or materialised from Google's answer to one) records a
+     * change and bumps the calendar's synctoken; the poll compares the value
+     * it started with to the one under the calendar lock.
+     */
+    public static function editedDuringFetch(array $atStart, ?array $current): bool
+    {
+        return $current !== null
+            && isset($atStart['synctoken'], $current['synctoken'])
+            && (int) $current['synctoken'] !== (int) $atStart['synctoken'];
     }
 
     /** Does a fetched response still belong to the exact subscribed Google source? */

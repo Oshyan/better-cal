@@ -6838,6 +6838,12 @@ require __DIR__ . '/plugins.php';
         !BetterCal\Domain\GoogleSync::sameBinding($expectedBinding, array_replace($expectedBinding, ['kind' => 'local']))
         && !BetterCal\Domain\GoogleSync::sameBinding($expectedBinding, array_replace($expectedBinding, ['google_calendar_id' => 'different-source']))
         && !BetterCal\Domain\GoogleSync::sameBinding($expectedBinding, array_replace($expectedBinding, ['google_binding_version' => 4])));
+checkEq('google sync: a poll that raced an edit drops its result', true,
+    BetterCal\Domain\GoogleSync::editedDuringFetch(['synctoken' => 7], ['synctoken' => 8]));
+checkEq('google sync: an untouched calendar applies the poll', false,
+    BetterCal\Domain\GoogleSync::editedDuringFetch(['synctoken' => 7], ['synctoken' => 7]));
+checkEq('google sync: without a synctoken the poll applies as before', false,
+    BetterCal\Domain\GoogleSync::editedDuringFetch(['id' => 1], ['id' => 1, 'synctoken' => 9]));
 
     $mdb->run("INSERT INTO events VALUES (20, 1, 2, NULL, 0, NULL, NULL, NULL)");
     $third = $claim->invoke($mover, $moveId);

@@ -20,6 +20,22 @@ final class ChangeLog
     public const OP_MODIFY = 2;
     public const OP_DELETE = 3;
 
+    /**
+     * Move the account's change marker (users.change_seq, part of
+     * /changes/cursor) for background work that changes what the app shows
+     * without changing an event's calendar data: filter verdicts, duplicate
+     * links. Open tabs then refetch the visible window, merged in place. Only
+     * call it when something visible actually changed.
+     */
+    public static function touchAccount(Db $db, int $userId): void
+    {
+        try {
+            $db->run('UPDATE users SET change_seq = change_seq + 1 WHERE id = ?', [$userId]);
+        } catch (\PDOException $e) {
+            error_log('change marker failed for user ' . $userId . ': ' . $e->getMessage());
+        }
+    }
+
     public static function record(Db $db, int $calendarId, string $uid, int $op): void
     {
         try {

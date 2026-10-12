@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace BetterCal\Plugin;
 
+use BetterCal\Dav\ChangeLog;
 use BetterCal\Domain\ActivityContext;
 use BetterCal\Domain\Events;
 use BetterCal\Domain\Filters;
@@ -730,6 +731,7 @@ final class PluginHost
             $added = 0;
             $updated = 0;
             $seen = [];
+            $journal = []; // uid => ChangeLog op, recorded with the rows below
             foreach ($events as $ev) {
                 if ($this->budgetRemaining() <= 2.0) {
                     throw new \RuntimeException('syncEvents: plugin run reached its time budget; all event changes were rolled back');
@@ -760,6 +762,7 @@ final class PluginHost
                         'source' => 'local',
                         'created_via' => 'plugin:' . $this->pluginId,
                     ]);
+                    $journal[$key] = ChangeLog::OP_ADD;
                     $added++;
                 } else {
                     $changed = [];
@@ -771,6 +774,7 @@ final class PluginHost
                     if ($changed !== []) {
                         $changed['updated_at'] = Time::nowDb();
                         $this->db->update('events', $changed, 'id = ?', [(int) $cur['id']]);
+                        $journal[$key] = ChangeLog::OP_MODIFY;
                         $updated++;
                     }
                 }
@@ -782,11 +786,18 @@ final class PluginHost
                         throw new \RuntimeException('syncEvents: plugin run reached its time budget; all event changes were rolled back');
                     }
                     $this->db->run('DELETE FROM events WHERE id = ?', [(int) $r['id']]);
+                    $journal[(string) $uid] = ChangeLog::OP_DELETE;
                     $removed++;
                 }
             }
             if ($this->budgetRemaining() <= 2.0) {
                 throw new \RuntimeException('syncEvents: plugin run reached its time budget; all event changes were rolled back');
+            }
+            // Journal each changed event, as a feed poll does, so CalDAV
+            // clients syncing this calendar and open app tabs see the
+            // change. Inside the transaction: a rollback takes it back too.
+            foreach ($journal as $uid => $op) {
+                ChangeLog::record($this->db, $calendarId, (string) $uid, $op);
             }
             if ($added + $updated + $removed > 0) {
                 ActivityContext::with('plugin:' . $this->pluginId, function () use ($calendarId, $added, $updated, $removed): void {

@@ -182,39 +182,11 @@ function bc_handle_api(Request $request, array $cfg): void
 
         $router->add('GET', "$base/search", [$searchController, 'search']);
 
-        // Change cursor: an opaque string that changes whenever the user's
-        // events (via calendar synctokens — bumped by API, CalDAV, feed
-        // polls, and mail ingest), availability spans, or people change,
-        // and after any successful write through the API (change_seq).
-        // Clients poll it cheaply and refetch only when it moves.
+        // Change cursor (Domain\ChangeCursor): three opaque parts an open
+        // tab polls every 30 seconds while visible, refetching only what the
+        // part that moved covers: events, Review, and background status.
         $router->add('GET', "$base/changes/cursor", function (Request $req) use ($db): Response {
-            $userId = (int) $req->user['id'];
-            $cal = $db->one('SELECT COALESCE(SUM(synctoken), 0) AS s, COUNT(*) AS c FROM calendars WHERE user_id = ?', [$userId]);
-            $av = $db->one('SELECT COUNT(*) AS c, COALESCE(MAX(a.id), 0) AS m FROM availability a JOIN people p ON p.id = a.person_id WHERE p.user_id = ?', [$userId]);
-            $people = $db->scalar('SELECT COUNT(*) FROM people WHERE user_id = ?', [$userId]);
-            try {
-                $seq = (string) $db->scalar('SELECT change_seq FROM users WHERE id = ?', [$userId]);
-            } catch (\PDOException) {
-                $seq = '0'; // before migration 039
-            }
-            // What waits in Review, apart from events: mail held for a
-            // decision and the limit notices, plugin proposals, possible
-            // duplicates. Background work adds these without touching an
-            // event, so they get their own part; the client reloads the
-            // badge when either part moves.
-            $review = [];
-            foreach ([
-                "SELECT COUNT(CASE WHEN status = 'open' THEN 1 END) AS c, COALESCE(MAX(id), 0) AS m FROM review_items WHERE user_id = ?",
-                "SELECT COUNT(CASE WHEN status = 'open' THEN 1 END) AS c, COALESCE(MAX(id), 0) AS m FROM plugin_proposals WHERE user_id = ?",
-                "SELECT COUNT(CASE WHEN status = 'possible' THEN 1 END) AS c, COALESCE(MAX(id), 0) AS m FROM event_duplicates WHERE user_id = ?",
-            ] as $sql) {
-                $r = $db->one($sql, [$userId]);
-                $review[] = $r['c'] . '.' . $r['m'];
-            }
-            return Response::json([
-                'cursor' => $cal['s'] . ':' . $cal['c'] . ':' . $av['c'] . ':' . $av['m'] . ':' . $people . ':' . $seq,
-                'review' => implode(':', $review),
-            ]);
+            return Response::json((new Domain\ChangeCursor($db))->all((int) $req->user['id']));
         });
 
         $router->add('GET', "$base/people", [$peopleController, 'index']);
@@ -364,11 +336,7 @@ function bc_handle_api(Request $request, array $cfg): void
         // device refreshes, whatever the write touched (#16). Reads don't.
         if ($request->user !== null && $response->status < 400
             && !in_array($request->method, ['GET', 'HEAD', 'OPTIONS'], true)) {
-            try {
-                $db->run('UPDATE users SET change_seq = change_seq + 1 WHERE id = ?', [(int) $request->user['id']]);
-            } catch (\PDOException) {
-                // Before migration 039: the other cursor parts still move.
-            }
+            \BetterCal\Dav\ChangeLog::touchAccount($db, (int) $request->user['id']);
         }
         if ($request->authMethod === 'session' && $request->sessionCacheId !== null && $request->offlineUntil !== null) {
             $response = $response

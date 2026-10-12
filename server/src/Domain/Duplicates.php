@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace BetterCal\Domain;
 
+use BetterCal\Dav\ChangeLog;
 use BetterCal\Http\HttpError;
 use BetterCal\Infra\Db;
 use BetterCal\Support\Limits;
@@ -255,6 +256,9 @@ final class Duplicates
         $slice = $this->discoverUserSlice($userId, $cursor, $now);
         $activityRecorded = !empty($cursor['activityRecorded']);
         $counts = $this->storePairs($userId, $slice['pairs'], !$activityRecorded);
+        if ($counts['linked'] > 0) {
+            ChangeLog::touchAccount($this->db, $userId); // linked copies now show as one
+        }
         if ($counts['linked'] + $counts['possible'] > 0) {
             $activityRecorded = true;
         }

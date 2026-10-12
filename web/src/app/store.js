@@ -50,6 +50,7 @@ export const state = {
   plugins: [],        // ops listing from GET /plugins
   pluginRanges: {},   // plugin id -> {truncated, ranges: [...]} for the loaded window
   pluginSeq: 0,       // bump to force a plugin ranges/list refetch
+  activitySeq: 0,     // bumped by the change poll; an open Activity page adds new entries
   reviewCount: 0,     // everything awaiting a decision, including paused calendar updates (sidebar badge)
   systemHealth: null, // GET /system/health: {rows, emailAlerts}; Settings panel, boot notices, device banner
   updates: null,      // checked release metadata and this user's banner decision

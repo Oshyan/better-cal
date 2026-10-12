@@ -4,7 +4,8 @@ import { COMPACT_QUERY, COARSE_QUERY, PHONE_WIDE_QUERY } from '../lib/breakpoint
 import { html, useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback } from '../../vendor/index.js';
 import { useStore, set, state, calendarMeta, shallowEq, invalidateRecords } from './store.js';
 import { PHONE_QUERY } from '../lib/breakpoints.js';
-import { loadWindow, api, refreshWindow, loadPeople, loadCalendars, retryWindowsNow, loadReviewCount } from './api.js';
+import { adoptSettings } from './settings.js';
+import { loadWindow, api, refreshWindow, loadPeople, loadCalendars, retryWindowsNow, loadReviewCount, loadSystemHealth, loadPlugins, loadUpdates, loadSavedViews } from './api.js';
 import { hiddenDayCounts } from '../lib/relfilter.js';
 import {
   moveEvent, resizeEvent, sendFeedback, exitReschedule, googleBacked, setRelationship, showAllRel,
@@ -213,28 +214,55 @@ export function App() {
   useEffect(() => {
     let cursor = null;
     let review = null;
+    let status = null;
     let stopped = false;
     let inFlight = false;
     const check = async () => {
       if (stopped || inFlight || document.visibilityState !== 'visible') return;
+      // Nothing changes under a drag: the next check, after the drop, picks
+      // up whatever moved meanwhile.
+      if (document.body.classList.contains('bc-dragging')) return;
       inFlight = true;
       try {
         const d = await api('/changes/cursor');
         if (!stopped && d && d.cursor) {
+          // Each part reloads only what it covers, merged into what's on
+          // screen: no reload, no lost place, nothing taken out of your hands.
           const moved = cursor !== null && d.cursor !== cursor;
+          const reviewMoved = review !== null && d.review !== review;
+          const statusMoved = status !== null && d.status !== status;
           if (moved) {
             invalidateRecords(); // something changed somewhere; fetched records may be stale
             refreshWindow();
-            loadCalendars().catch(() => {});
             loadPeople().catch(() => {});
+            loadSavedViews().catch(() => {});
             set({ availSeq: state.availSeq + 1 });
+            // Settings changed on another device, unless this tab is
+            // editing them right now.
+            if (state.route !== 'settings') {
+              api('/settings').then((r) => {
+                const next = r && r.settings;
+                // Most moves aren't settings; adopting identical ones would
+                // only redraw everything that reads them.
+                if (next && Object.keys(next).some((k) => JSON.stringify(next[k]) !== JSON.stringify(state.settings[k]))) adoptSettings(next);
+              }).catch(() => {});
+            }
           }
+          if (moved || statusMoved) loadCalendars().catch(() => {});
           // The Review badge: held mail, proposals and possible duplicates
           // arrive without an event (their own part), and unanswered
           // invitations or decisions made elsewhere ride on the events part.
-          if (moved || (review !== null && d.review !== review)) loadReviewCount();
+          if (moved || reviewMoved) loadReviewCount();
+          if (statusMoved) {
+            loadSystemHealth();
+            loadPlugins();
+            loadUpdates();
+            set({ pluginSeq: state.pluginSeq + 1 });
+          }
+          if (moved || reviewMoved || statusMoved) set({ activitySeq: state.activitySeq + 1 });
           cursor = d.cursor;
           review = d.review ?? null;
+          status = d.status ?? null;
         }
       } catch { /* transient network problems just delay freshness */ }
       inFlight = false;

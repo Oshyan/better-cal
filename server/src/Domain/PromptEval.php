@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace BetterCal\Domain;
 
+use BetterCal\Dav\ChangeLog;
 use BetterCal\Infra\Db;
 use BetterCal\Infra\JobQueue;
 use BetterCal\Infra\LlmGateway;
@@ -144,6 +145,11 @@ final class PromptEval
                         'evaluated_at' => Time::nowDb(),
                     ]);
                     $evaluated++;
+                }
+                if ($results !== []) {
+                    // Verdicts decide what's hidden, dimmed or highlighted;
+                    // open tabs refetch the window to show them.
+                    ChangeLog::touchAccount($this->db, (int) $task['userId']);
                 }
             }
             $remaining = $index < count($tasks) - 1;

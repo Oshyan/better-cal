@@ -1860,7 +1860,7 @@ if (class_exists(\PHPMailer\PHPMailer\PHPMailer::class)) {
     ]);
 
     $ddb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
-    $ddb->run("CREATE TABLE users (id INTEGER PRIMARY KEY)");
+    $ddb->run("CREATE TABLE users (id INTEGER PRIMARY KEY, change_seq INTEGER NOT NULL DEFAULT 0)");
     $ddb->run("CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, kind TEXT, role TEXT, provider TEXT)");
     davJournal($ddb);
     $ddb->run("CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, start_utc TEXT, end_utc TEXT, all_day INTEGER DEFAULT 0, tzid TEXT DEFAULT 'UTC', rrule TEXT, recurrence_instance_utc TEXT, recurrence_parent_id INTEGER, status TEXT DEFAULT 'confirmed', is_container INTEGER DEFAULT 0, deleted_at TEXT, invite_json TEXT, reminders_json TEXT, source TEXT DEFAULT 'local', created_via TEXT DEFAULT 'web')");
@@ -1967,13 +1967,13 @@ if (class_exists(\PHPMailer\PHPMailer\PHPMailer::class)) {
         'DUPLICATE_SCAN_SECONDS' => 5,
     ]);
     $budgetDb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
-    $budgetDb->run('CREATE TABLE users (id INTEGER PRIMARY KEY)');
+    $budgetDb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, change_seq INTEGER NOT NULL DEFAULT 0)');
     $budgetDb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, kind TEXT, role TEXT, provider TEXT)');
     davJournal($budgetDb);
     $budgetDb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, start_utc TEXT, all_day INTEGER, tzid TEXT, rrule TEXT, recurrence_instance_utc TEXT, status TEXT, is_container INTEGER, deleted_at TEXT, source TEXT, created_via TEXT)');
     $budgetDb->run('CREATE TABLE event_duplicates (id INTEGER PRIMARY KEY, user_id INTEGER, event_a INTEGER, event_b INTEGER, status TEXT, basis TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, decided_at TEXT, UNIQUE(event_a, event_b))');
     $budgetDb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)');
-    $budgetDb->run('INSERT INTO users VALUES (1)');
+    $budgetDb->run('INSERT INTO users (id) VALUES (1)');
     $budgetDb->run("INSERT INTO calendars VALUES (1, 1, 'Example A', 'subscribed', 'mine', 'ics'), (2, 1, 'Example B', 'subscribed', 'mine', 'ics')");
     $denseStart = Time::nowUtc()->add(new DateInterval('P5D'))->format('Y-m-d H:i:s');
     for ($id = 1; $id <= 80; $id++) {
@@ -2062,13 +2062,13 @@ if (class_exists(\PHPMailer\PHPMailer\PHPMailer::class)) {
     // but persistent linked storage and reads remain behind a hard ceiling.
     Limits::configure(['DUPLICATE_LINKED_EDGES' => 3]);
     $rotateDb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
-    $rotateDb->run('CREATE TABLE users (id INTEGER PRIMARY KEY)');
+    $rotateDb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, change_seq INTEGER NOT NULL DEFAULT 0)');
     $rotateDb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, role TEXT, provider TEXT)');
     davJournal($rotateDb);
     $rotateDb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, start_utc TEXT, all_day INTEGER, tzid TEXT, rrule TEXT, recurrence_instance_utc TEXT, status TEXT, is_container INTEGER, deleted_at TEXT, source TEXT, created_via TEXT)');
     $rotateDb->run('CREATE TABLE event_duplicates (id INTEGER PRIMARY KEY, user_id INTEGER, event_a INTEGER, event_b INTEGER, status TEXT, basis TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, decided_at TEXT, UNIQUE(event_a, event_b))');
     $rotateDb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)');
-    $rotateDb->run('INSERT INTO users VALUES (1)');
+    $rotateDb->run('INSERT INTO users (id) VALUES (1)');
     $rotateDb->run("INSERT INTO calendars VALUES (1, 1, 'local', 'mine', 'ics'), (2, 1, 'local', 'mine', 'ics')");
     foreach ([[1, 1, 'Alpha'], [2, 1, 'Beta'], [3, 2, 'Alpha'], [4, 2, 'Beta']] as [$id, $cal, $title]) {
         $rotateDb->run("INSERT INTO events VALUES (?, 1, ?, ?, ?, ?, 0, 'UTC', NULL, NULL, 'confirmed', 0, NULL, 'local', 'web')", [$id, $cal, 'rotate-' . $id, $title, $denseStart]);
@@ -2091,13 +2091,13 @@ if (class_exists(\PHPMailer\PHPMailer\PHPMailer::class)) {
     // phase excludes it, so it cannot recreate the omitted clique edges.
     Limits::configure(['DUPLICATE_LINKED_EDGES' => 100]);
     $uidDb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
-    $uidDb->run('CREATE TABLE users (id INTEGER PRIMARY KEY)');
+    $uidDb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, change_seq INTEGER NOT NULL DEFAULT 0)');
     $uidDb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, role TEXT, provider TEXT)');
     davJournal($uidDb);
     $uidDb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, start_utc TEXT, all_day INTEGER, tzid TEXT, rrule TEXT, recurrence_instance_utc TEXT, status TEXT, is_container INTEGER, deleted_at TEXT, source TEXT, created_via TEXT)');
     $uidDb->run('CREATE TABLE event_duplicates (id INTEGER PRIMARY KEY, user_id INTEGER, event_a INTEGER, event_b INTEGER, status TEXT, basis TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, decided_at TEXT, UNIQUE(event_a, event_b))');
     $uidDb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)');
-    $uidDb->run('INSERT INTO users VALUES (1)');
+    $uidDb->run('INSERT INTO users (id) VALUES (1)');
     $uidDb->run("INSERT INTO calendars VALUES (1, 1, 'local', 'mine', 'ics'), (2, 1, 'subscribed', 'mine', 'ics')");
     for ($id = 1; $id <= 40; $id++) {
         $uidDb->run(
@@ -3227,6 +3227,56 @@ checkEq('all-day weekly in UTC unchanged', ['2026-08-31 00:00:00', '2026-09-02 0
     check('reminders late: an unknown calendar age never fires late', !BetterCal\Domain\Reminders::stillUsefulLate($utc('2026-11-01 00:00:00'), $utc('2026-11-20 00:00:00'), $utc('2026-11-02 00:00:00'), null));
 }
 
+// The change cursor's parts (0.9.66): each moves on a real change in what it
+// covers and stays put otherwise, so an idle tab refetches nothing.
+{
+    $ccdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    foreach ([
+        'CREATE TABLE users (id INTEGER PRIMARY KEY, change_seq INTEGER NOT NULL DEFAULT 0)',
+        "CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, synctoken INTEGER NOT NULL DEFAULT 0, last_poll_status TEXT NOT NULL DEFAULT 'never', last_poll_error TEXT)",
+        'CREATE TABLE people (id INTEGER PRIMARY KEY, user_id INTEGER)',
+        'CREATE TABLE availability (id INTEGER PRIMARY KEY, person_id INTEGER)',
+        "CREATE TABLE review_items (id INTEGER PRIMARY KEY, user_id INTEGER, status TEXT NOT NULL DEFAULT 'open')",
+        "CREATE TABLE plugin_proposals (id INTEGER PRIMARY KEY, user_id INTEGER, status TEXT NOT NULL DEFAULT 'open')",
+        'CREATE TABLE event_duplicates (id INTEGER PRIMARY KEY, user_id INTEGER, status TEXT)',
+        "CREATE TABLE system_health (subject TEXT PRIMARY KEY, user_id INTEGER, status TEXT NOT NULL DEFAULT 'ok', first_failed_at TEXT, last_ok_at TEXT)",
+        "CREATE TABLE google_accounts (id INTEGER PRIMARY KEY, user_id INTEGER, status TEXT NOT NULL DEFAULT 'ok', reauth_required_at TEXT)",
+        'CREATE TABLE plugins (id TEXT PRIMARY KEY, enabled INTEGER NOT NULL DEFAULT 0, consecutive_failures INTEGER NOT NULL DEFAULT 0)',
+        'CREATE TABLE plugin_ranges (id INTEGER PRIMARY KEY, plugin_id TEXT)',
+        'CREATE TABLE plugin_warnings (id INTEGER PRIMARY KEY, plugin_id TEXT)',
+        'CREATE TABLE app_update_state (id INTEGER PRIMARY KEY, latest_version TEXT, minimum_secure_version TEXT)',
+        'CREATE TABLE user_update_notices (user_id INTEGER PRIMARY KEY, dismissed_version TEXT)',
+    ] as $sql) {
+        $ccdb->run($sql);
+    }
+    $ccdb->run('INSERT INTO users (id) VALUES (1)');
+    $ccdb->run("INSERT INTO calendars (id, user_id, last_poll_status) VALUES (1, 1, 'ok')");
+    $ccdb->run("INSERT INTO system_health (subject, user_id) VALUES ('job:reminder_scan', NULL)");
+    $ccdb->run("INSERT INTO plugins (id, enabled) VALUES ('sample', 1)");
+    $ccdb->run("INSERT INTO app_update_state (id, latest_version) VALUES (1, '1.0.0')");
+    $cc = new BetterCal\Domain\ChangeCursor($ccdb);
+    $first = $cc->all(1);
+    $ccdb->run("UPDATE system_health SET last_ok_at = '2026-11-01 00:00:00'");
+    checkEq('change cursor: a check that stays ok moves nothing', $first, $cc->all(1));
+    $statusMoves = static function (string $sql) use ($ccdb, $cc): bool {
+        $before = $cc->status(1);
+        $ccdb->run($sql);
+        return $cc->status(1) !== $before;
+    };
+    check('change cursor status: a feed starting to fail', $statusMoves("UPDATE calendars SET last_poll_status = 'error', last_poll_error = 'HTTP 500'"));
+    check('change cursor status: a job starting to fail', $statusMoves("UPDATE system_health SET status = 'failing', first_failed_at = '2026-11-01 00:01:00'"));
+    check('change cursor status: a Google account needing reconnecting', $statusMoves("INSERT INTO google_accounts (id, user_id, reauth_required_at) VALUES (1, 1, '2026-11-01 00:00:00')"));
+    check('change cursor status: a plugin failing', $statusMoves("UPDATE plugins SET consecutive_failures = 1"));
+    check('change cursor status: new plugin ranges', $statusMoves("INSERT INTO plugin_ranges (plugin_id) VALUES ('sample')"));
+    check('change cursor status: a newer release found', $statusMoves("UPDATE app_update_state SET latest_version = '1.0.1'"));
+    $review = $cc->review(1);
+    $ccdb->run("INSERT INTO review_items (user_id) VALUES (1)");
+    check('change cursor review: a held invitation moves only the review part', $cc->review(1) !== $review && $cc->events(1) === $first['cursor']);
+    $events = $cc->events(1);
+    BetterCal\Dav\ChangeLog::touchAccount($ccdb, 1);
+    check('change cursor: background work that changes what shows moves the events part', $cc->events(1) !== $events);
+}
+
 // An outbound feed over its cap keeps the events nearest today: the oldest
 // past ones are left off, never the upcoming ones (#110).
 {
@@ -3310,13 +3360,13 @@ checkEq('all-day weekly in UTC unchanged', ['2026-08-31 00:00:00', '2026-09-02 0
     check('plugin sync deadline: later plugin work remains a timeout', !$host->committedSyncWithinBudget());
 
     $psdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
-    $psdb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, plugin_id TEXT)');
+    $psdb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, plugin_id TEXT, synctoken INTEGER NOT NULL DEFAULT 0)');
     davJournal($psdb);
     $psdb->run('CREATE TABLE events (
         id INTEGER PRIMARY KEY, calendar_id INTEGER, uid TEXT, title TEXT, start_utc TEXT, end_utc TEXT,
         all_day INTEGER, description TEXT, location TEXT, deleted_at TEXT
     )');
-    $psdb->run("INSERT INTO calendars VALUES (1, 1, 'plugin', 'sample')");
+    $psdb->run("INSERT INTO calendars (id, user_id, kind, plugin_id) VALUES (1, 1, 'plugin', 'sample')");
     $psdb->run("INSERT INTO events VALUES (1, 1, 'plg-sample-one', 'Sample event',
         '2026-10-08 10:00:00', '2026-10-08 11:00:00', 0, NULL, NULL, NULL)");
     $atomicHost = $hostRc->newInstanceWithoutConstructor();
@@ -4057,7 +4107,7 @@ checkEq('pd fail -> highlight', 'highlight', Filters::promptDisposition($promptR
 // a delayed successful continuation plus one bounded Review notice.
 {
     $pedb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
-    $pedb->run('CREATE TABLE users (id INTEGER PRIMARY KEY)');
+    $pedb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, change_seq INTEGER NOT NULL DEFAULT 0)');
     $pedb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT)');
     davJournal($pedb);
     $pedb->run('CREATE TABLE filters (id INTEGER PRIMARY KEY, user_id INTEGER, enabled INTEGER, type TEXT, config_json TEXT, scope TEXT, scope_id INTEGER)');
@@ -8463,11 +8513,11 @@ use BetterCal\Domain\GoogleWriter;
 // calendar that the next snapshot could then delete from.
 {
     $pdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
-    $pdb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, plugin_id TEXT)');
+    $pdb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, plugin_id TEXT, synctoken INTEGER NOT NULL DEFAULT 0)');
     davJournal($pdb);
     $pdb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, description TEXT, location TEXT, start_utc TEXT, end_utc TEXT, all_day INTEGER, tzid TEXT, icon TEXT, source TEXT, created_via TEXT, deleted_at TEXT, updated_at TEXT)');
     $pdb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT, calendar_ids_json TEXT, undone INTEGER DEFAULT 0, created_at TEXT DEFAULT CURRENT_TIMESTAMP)');
-    $pdb->run("INSERT INTO calendars VALUES (1, 1, 'plugin', 'sample')");
+    $pdb->run("INSERT INTO calendars (id, user_id, kind, plugin_id) VALUES (1, 1, 'plugin', 'sample')");
     $pdb->run("INSERT INTO events (id, user_id, calendar_id, uid, title, start_utc, end_utc, all_day, tzid, source, created_via) VALUES (1, 1, 1, 'plg-sample-first', 'Original', '2026-10-01 00:00:00', '2026-10-02 00:00:00', 1, 'UTC', 'local', 'plugin:sample')");
     $host = new BetterCal\Plugin\PluginHost($pdb, 'sample', 1, new BetterCal\Infra\HttpClient(), [], []);
     try {
@@ -8502,6 +8552,10 @@ use BetterCal\Domain\GoogleWriter;
         ['sourceKey' => 'b', 'title' => 'B', 'start' => '2026-10-02', 'allDay' => true],
     ]));
     checkEq('plugin sync: exact-limit snapshot is complete', ['A', 'B'], array_column($pdb->all('SELECT title FROM events ORDER BY title'), 'title'));
+    checkEq('plugin sync: each change is journaled like a feed poll (two added, one removed), and refused snapshots journal nothing',
+        [['plg-sample-a.ics', 1], ['plg-sample-b.ics', 1], ['plg-sample-first.ics', 3]],
+        array_map(static fn(array $r): array => [$r['uri'], (int) $r['operation']], $pdb->all('SELECT uri, operation FROM dav_changes ORDER BY uri')));
+    checkEq('plugin sync: the calendar sync token moved once per change', 3, (int) $pdb->scalar('SELECT synctoken FROM calendars WHERE id = 1'));
 
     Limits::configure(['PLUGIN_SYNC_BYTES' => 512]);
     try {

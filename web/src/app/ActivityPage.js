@@ -3,7 +3,7 @@
 // undo inside the 7-day snapshot window (docs/api-contract.md#activity).
 
 import { html, useState, useEffect, useRef } from '../../vendor/index.js';
-import { state, set, toast, insertOccurrence } from './store.js';
+import { state, set, toast, insertOccurrence, useStore } from './store.js';
 import { api, refreshWindow } from './api.js';
 import { jumpToDate, openDetail } from './actions.js';
 import { occDayKey } from '../lib/dates.js';
@@ -67,6 +67,26 @@ export function ActivityPage() {
       setNextBefore(d.nextBefore);
     }).catch((e) => { if (my === seq.current) toast('Load failed: ' + e.message, { error: true }); });
   };
+
+  // Something changed in the background (the app's change poll): add the
+  // new entries at the top, keeping everything already loaded where it is.
+  const activitySeq = useStore((s) => s.activitySeq);
+  useEffect(() => {
+    if (!activitySeq || !entries) return;
+    const my = seq.current;
+    const params = new URLSearchParams();
+    if (sel) params.set('sources', [...sel].join(','));
+    if (q.trim()) params.set('q', q.trim());
+    api('/activity?' + params.toString()).then((d) => {
+      if (my !== seq.current) return; // a filter change is loading its own list
+      setEntries((prev) => {
+        if (!prev) return prev;
+        const have = new Set(prev.map((en) => en.id));
+        const fresh = (d.entries || []).filter((en) => !have.has(en.id));
+        return fresh.length ? fresh.concat(prev) : prev;
+      });
+    }).catch(() => { /* the next change tries again */ });
+  }, [activitySeq]);
 
   // Reload on filter change; quick filter debounced so typing stays live.
   useEffect(() => {

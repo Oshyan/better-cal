@@ -515,8 +515,8 @@ button:focus-visible, [tabindex]:focus-visible {
 /* Where a subscribed calendar comes from: wrapped, readable, not a cut-off line. */
 .bc-calset-source { display: flex; align-items: flex-start; gap: 7px; font-size: 12.5px; line-height: 1.45; color: var(--fg); }
 .bc-calset-source > svg { flex: none; margin-top: 2px; color: var(--fg-muted); }
-.bc-calset-source > span { min-width: 0; display: grid; gap: 2px; }
-.bc-calset-source .bc-calset-url { display: block; }
+.bc-calset-source > span { min-width: 0; }
+.bc-calset-source .bc-calset-url { display: block; margin-top: 2px; }
 .bc-calset-folders { display: flex; flex-direction: column; gap: 2px; }
 .bc-calset-status { color: var(--fg-muted); font-size: 11px; }
 .bc-calset-auth {

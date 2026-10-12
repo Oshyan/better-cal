@@ -206,11 +206,11 @@ export function CalendarSettings({ cal, folders, onClose }) {
       <span class="bc-calset-label">Source</span>
       ${cal.provider === 'google'
         ? html`<span class="bc-calset-source"><${Icon} name="google" size=${13} /><span>
-            <strong>Google Calendar</strong>${cal.googleAccountEmail ? `, in ${cal.googleAccountEmail}` : ''}.
-            ${cal.editable ? 'Edits here go to Google, and changes made there come in at each check below.' : 'View only: it can\'t be changed here. Changes made there come in at each check below.'}
+            <strong>Google Calendar</strong>${(cal.googleAccountEmail ? `, in ${cal.googleAccountEmail}` : '') + '. '
+              + (cal.editable ? 'Edits here go to Google, and changes made there come in at each check below.' : 'View only: it can\'t be changed here. Changes made there come in at each check below.')}
           </span></span>`
         : html`<span class="bc-calset-source"><${Icon} name="link" size=${13} /><span>
-            <strong>Subscribed from a web address</strong>, view only. It refreshes at each check below.
+            <strong>Subscribed from a web address</strong>${', view only. It refreshes at each check below.'}
             ${cal.sourceUrl && html`<span class="bc-calset-url" title=${cal.sourceUrl}>${cal.sourceUrl}</span>`}
           </span></span>`}
     </div>

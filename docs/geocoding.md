@@ -79,7 +79,7 @@ No single service won every row, which is why Better-Cal lets you list several, 
 **Also tested, not supported:**
 
 - **Open Places API** (Overture place data, free 10,000 a month, results may be kept). Its name search finds local venues by partial name in about 0.3 s, but it ranks by relevance before distance (a chain's locations 10 to 15 miles away came before one 1.5 miles away), has no address search, and says itself that it isn't meant for autocomplete. It could become a venue companion for businesses OpenStreetMap lacks, if we find enough of them that it has.
-- **Overture Maps API** (overturemapsapi.com) has no partial-text search at all: places match an exact full name, addresses only by distance from a point.
+- **Overture Maps API** (overturemapsapi.com) has no partial-text search at all: places match an exact full name, addresses only by distance from a point. In October 2026 its docs added a `name_prefix` filter on `/places` for type-ahead, nearest first. Tested on 2026-10-12, the live API ignored it: every prefix (including nonsense) returned the same unfiltered places in the radius, with a total count of every place there, and uncached responses took 1.5–3.3 s. Worth a retest if it starts working, as a possible venue companion rather than a replacement, since its data lacks much of Foursquare's coverage and its free tier is non-commercial.
 
 A small restaurant that OpenStreetMap had under the wrong name was missing from Overture's data too; only Stadia (which also uses Foursquare's open place data) had it right.
 

@@ -4,6 +4,14 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.59 (2026-10-12)
+
+- **An edit to a Google calendar no longer flips back for a few minutes.** If you changed an event while Better-Cal was in the middle of syncing that calendar from Google, the sync could put the old version back until the next one (up to about 5 minutes later; Google always had your edit). A sync that overlaps an edit now discards what it fetched and leaves it to the next one.
+- **The move dialog shows the move right away.** Starting a move used to leave a greyed-out button for several seconds before any progress appeared; it now shows "Starting the move…" as soon as you've confirmed, then the upload's progress.
+- **On a phone the move dialog fills the screen,** as intended in 0.9.58 (it showed as a floating card).
+
+Operators: no migration.
+
 ## 0.9.58 (2026-10-12)
 
 - **Moving a calendar to Google has its own dialog.** It used to sit inside the sidebar's calendar settings, which were too narrow for it (parts ran off the edge). Now "Move to Google…" opens a dialog with room for the choice, the progress and the outcome; on a phone it's a full-screen sheet. Settings keep a line about any move in progress.

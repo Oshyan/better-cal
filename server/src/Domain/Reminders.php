@@ -47,8 +47,14 @@ final class Reminders
 
     /** Occurrence-start lookahead for the scan; covers the max lead time (4 weeks + margin). */
     private const SCAN_LOOKAHEAD = 'P35D';
-    /** A due reminder older than this is skipped (worker downtime cutoff). */
+    /** A due reminder older than this is skipped (worker downtime cutoff), unless it is still useful late. */
     private const FIRE_GRACE = 'PT1H';
+    /**
+     * How late a missed reminder may still fire, for an event not yet begun.
+     * Inside NOTIFIED_RETENTION with a day to spare, so a reminder already
+     * sent is always still on record and never repeats.
+     */
+    private const LATE_LIMIT = 'P6D';
     private const NOTIFIED_RETENTION = 'P7D';
     private const FAILING_SUBSCRIPTION_TTL = 'P3D';
     private const MASTER_SLICE = 250;
@@ -487,8 +493,9 @@ final class Reminders
         $winEnd = $now->add(new \DateInterval(self::SCAN_LOOKAHEAD));
 
         $calendars = [];
-        foreach ($this->db->all('SELECT id, kind, provider, role, settings_json FROM calendars WHERE user_id = ?', [$userId]) as $cal) {
+        foreach ($this->db->all('SELECT id, kind, provider, role, settings_json, created_at FROM calendars WHERE user_id = ?', [$userId]) as $cal) {
             $calendars[(int) $cal['id']] = [
+                'createdAt' => !empty($cal['created_at']) ? Time::fromDb((string) $cal['created_at']) : null,
                 'kind' => (string) $cal['kind'],
                 'provider' => (string) ($cal['provider'] ?? 'ics'),
                 'role' => (string) ($cal['role'] ?? 'mine'),
@@ -694,7 +701,10 @@ final class Reminders
         );
         foreach ($entries as $entry) {
             $fire = self::fireAt(is_array($entry) ? $entry : [], $startUtc, $allDay, (string) $row['tzid'], $homeTzid);
-            if ($fire === null || $fire > $now || $fire <= $grace) {
+            if ($fire === null || $fire > $now) {
+                continue;
+            }
+            if ($fire <= $grace && !self::stillUsefulLate($fire, self::begins($startUtc, $allDay, $homeTzid), $now, $cal['createdAt'] ?? null)) {
                 continue;
             }
             $offset = (int) round(($startUtc->getTimestamp() - $fire->getTimestamp()) / 60);
@@ -703,6 +713,30 @@ final class Reminders
                 'payload' => self::payload($row, $startUtc, $allDay, $this->viewTz, $this->h24),
             ];
         }
+    }
+
+    /**
+     * A reminder whose time passed more than the grace ago still fires once,
+     * late, while the event is ahead: an invitation added at 1:30 for 2:00
+     * with a two-hour reminder, or an event typed in for later today. Not
+     * more than LATE_LIMIT late, and not for a calendar that didn't exist yet
+     * at the reminder's time, so subscribing to a calendar or importing one
+     * doesn't set off a burst for everything coming up. Pure; unit-tested.
+     */
+    public static function stillUsefulLate(\DateTimeImmutable $fire, \DateTimeImmutable $begins, \DateTimeImmutable $now, ?\DateTimeImmutable $calendarCreated): bool
+    {
+        return $begins > $now
+            && $fire > $now->sub(new \DateInterval(self::LATE_LIMIT))
+            && $calendarCreated !== null && $calendarCreated < $fire;
+    }
+
+    /** When an occurrence begins: an all-day one at midnight on the Home clock, like its reminders. */
+    private static function begins(\DateTimeImmutable $startUtc, bool $allDay, ?string $homeTzid): \DateTimeImmutable
+    {
+        if (!$allDay) {
+            return $startUtc;
+        }
+        return (new \DateTimeImmutable($startUtc->setTimezone(Time::utc())->format('Y-m-d') . ' 00:00:00', Time::zone($homeTzid ?? 'UTC')))->setTimezone(Time::utc());
     }
 
     /**

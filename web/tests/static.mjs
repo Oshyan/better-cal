@@ -118,7 +118,7 @@ for (const file of files) {
     'calendar health warning must not trigger the phone row long-press menu');
   check(review.includes("item.kind === 'subscription'") && review.includes("manageCal: d.calendarId") && review.includes('Calendar options'),
     'paused subscriptions in Review must open their calendar options');
-  check(review.includes("invite_new: 'New emailed invitation'") && review.includes('Invitation added. You have not replied.'),
+  check(review.includes("invite_new: 'New emailed invitation'") && review.includes('Added as a Maybe. You have not replied.'),
     'first-time emailed invitations must be visibly distinct and must not imply that adding one sent an RSVP');
   check(review.includes("item.kind === 'invite_new'") && review.includes("'Dismissed. Nothing was added.'"),
     'dismissing a first-time emailed invitation must say that no event was added');

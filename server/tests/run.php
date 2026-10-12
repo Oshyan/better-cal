@@ -1218,7 +1218,7 @@ check('imip live event: equal sequence still allowed', $mayWhen('confirmed', 2)[
     checkEq('review new invite: dismiss means nothing was added', 'dismissed', $queue->dismiss(1, $newOne)['status']);
     checkEq('review new invite: dismiss is recorded as owner decision', 'Dismissed emailed invitation "Owner-approved invitation" without adding it',
         $rdb->scalar('SELECT summary FROM mutations WHERE entity_id = 0 ORDER BY id DESC LIMIT 1'));
-    $mailNotice = $queue->holdMailLimit(1, 'llm_account_day', 'Automated email reading paused.', '2026-10-08T12:00:00Z', 'Ticket', 'sender@example.com');
+    $mailNotice =$queue->holdMailLimit(1, 'llm_account_day', 'Automated email reading paused.', '2026-10-08T12:00:00Z', 'Ticket', 'sender@example.com');
     checkEq('review mail limit: repeated mail updates one bounded notice', $mailNotice,
         $queue->holdMailLimit(1, 'llm_account_day', 'Automated email reading paused.', '2026-10-08T12:00:00Z', 'Another ticket', 'other@example.com'));
     $notice = array_values(array_filter($queue->listFor(1), static fn(array $i): bool => $i['kind'] === 'mail_limit'))[0];
@@ -1331,6 +1331,8 @@ check('imip live event: equal sequence still allowed', $mayWhen('confirmed', 2)[
         ['method' => 'REQUEST', 'organizer' => ['email' => 'mallory@example.test'], 'attendees' => [], 'sequence' => 99, 'myPartstat' => 'NEEDS-ACTION'], 'mallory@example.test');
     $accepted = $queueA->accept(1, $chosen);
     $savedInvite = json_decode((string) $adb->scalar('SELECT invite_json FROM events WHERE id = ?', [$accepted['eventId']]), true);
+    checkEq('review new invite accept: added without an answer it is a Maybe', 'tentative',
+        $adb->scalar('SELECT status FROM events WHERE id = ?', [$accepted['eventId']]));
     checkEq('review new invite accept: creates one event and marks organizer owner-approved', [1, 'owner', 'NEEDS-ACTION', 'mail:imip:review'], [
         (int) $adb->scalar('SELECT COUNT(*) FROM events'),
         $savedInvite['organizerTrust'] ?? null,
@@ -1760,6 +1762,16 @@ check('rsvp reply keeps sequence', str_contains($reply, 'SEQUENCE:2'));
     checkEq('rsvp: a cancelled meeting has nothing to answer', 'cancelled', BetterCal\Domain\Rsvp::blocker(['method' => 'CANCEL'] + $request, $rsvpCfg)['code']);
     checkEq('rsvp: replies from an address that was not invited would be ignored', 'address_mismatch', BetterCal\Domain\Rsvp::blocker(['attendees' => [['email' => 'someone@else.com']]] + $request, $rsvpCfg)['code']);
     check('rsvp: a Google invitation is always worth trying', BetterCal\Domain\Rsvp::blocker(['via' => 'google'] + $request, $noMail) === null);
+    checkEq('rsvp route: the invited RSVP address answers through the RSVP account', ['address' => 'owner@example.com', 'profile' => 'rsvp'], BetterCal\Domain\Rsvp::replyRoute($request, $rsvpCfg));
+    // The owner invites the Better-Cal mailbox from the address replies go
+    // out from: that address is the organizer, so the mailbox answers.
+    $selfInvite = ['organizer' => ['email' => 'Owner@example.com'], 'attendees' => [['email' => 'calendar@example.com'], ['email' => 'owner@example.com', 'partstat' => 'ACCEPTED']]] + $request;
+    checkEq('rsvp route: never as the organizer; the invited mailbox answers through the main account', ['address' => 'calendar@example.com', 'profile' => 'smtp'], BetterCal\Domain\Rsvp::replyRoute($selfInvite, $rsvpCfg));
+    check('rsvp: a self-sent invitation to the mailbox can be answered', BetterCal\Domain\Rsvp::blocker($selfInvite, $rsvpCfg) === null);
+    $ownOnly = ['organizer' => ['email' => 'owner@example.com'], 'attendees' => [['email' => 'owner@example.com'], ['email' => 'bob@example.net']]] + $request;
+    checkEq('rsvp: an invitation sent from one of our addresses, with none of the others invited, has nobody to answer', 'own_invitation', BetterCal\Domain\Rsvp::blocker($ownOnly, $rsvpCfg)['code']);
+    checkEq('rsvp route: with no guest list, the first account that is not the organizer', 'rsvp', BetterCal\Domain\Rsvp::replyRoute(['attendees' => []] + $request, $rsvpCfg)['profile']);
+    checkEq('rsvp route: with no guest list and the RSVP address organizing, the main account', 'smtp', BetterCal\Domain\Rsvp::replyRoute(['attendees' => [], 'organizer' => ['email' => 'owner@example.com']] + $request, $rsvpCfg)['profile']);
     $booking = BetterCal\Domain\Rsvp::describe(['method' => 'llm', 'organizer' => ['email' => 'me@fwd.example'], 'myPartstat' => 'NEEDS-ACTION'], $rsvpCfg);
     check('rsvp describe: a booking offers no reply and gives no reason', $booking['kind'] === 'booking' && $booking['canReply'] === false && $booking['why'] === null);
     $blocked = BetterCal\Domain\Rsvp::describe($request, $noMail);
@@ -3141,12 +3153,12 @@ checkEq('all-day weekly in UTC unchanged', ['2026-08-31 00:00:00', '2026-09-02 0
 {
     $rmdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
     $rmdb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, settings_json TEXT)');
-    $rmdb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, provider TEXT, settings_json TEXT, role TEXT)');
+    $rmdb->run("CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, provider TEXT, settings_json TEXT, role TEXT, created_at TEXT DEFAULT '2026-01-01 00:00:00')");
     davJournal($rmdb);
     $rmdb->run("CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, start_utc TEXT, end_utc TEXT, all_day INTEGER, tzid TEXT, rrule TEXT, exdates_json TEXT, recurrence_instance_utc TEXT, recurrence_parent_id INTEGER, status TEXT DEFAULT 'confirmed', source TEXT DEFAULT 'local', attendance TEXT DEFAULT 'none', deleted_at TEXT, reminders_json TEXT, location TEXT, location_lat REAL, location_lng REAL, url TEXT, description TEXT)");
     $rmdb->run('CREATE TABLE event_duplicates (id INTEGER PRIMARY KEY, event_a INTEGER, event_b INTEGER, status TEXT)');
     $rmdb->run('INSERT INTO users VALUES (1, ?, ?)', ['owner@example.com', json_encode(['tz' => 'America/Los_Angeles', 'reminderAllDay' => [['daysBefore' => 0, 'time' => '18:00']]])]);
-    $rmdb->run("INSERT INTO calendars VALUES (1, 1, 'local', 'ics', NULL, 'mine')");
+    $rmdb->run("INSERT INTO calendars (id, user_id, kind, provider, settings_json, role) VALUES (1, 1, 'local', 'ics', NULL, 'mine')");
     $rmdb->run("INSERT INTO events (id, user_id, calendar_id, uid, title, start_utc, end_utc, all_day, tzid) VALUES (1, 1, 1, 'a', 'Imported day', '2026-10-10 00:00:00', '2026-10-11 00:00:00', 1, 'UTC')");
     $rmRc = new ReflectionClass(BetterCal\Domain\Reminders::class);
     $rm = $rmRc->newInstanceWithoutConstructor();
@@ -3169,6 +3181,22 @@ checkEq('all-day weekly in UTC unchanged', ['2026-08-31 00:00:00', '2026-09-02 0
             [$firstSlice['more'], $firstSlice['phase'], $firstSlice['afterId'], count($firstSlice['due'])],
             [$secondSlice['more'], $secondSlice['phase'], $secondSlice['afterId'], count($secondSlice['due'])],
         ]);
+
+    // Missed reminders fire late while the event is still ahead.
+    $rmdb->run("INSERT INTO calendars (id, user_id, kind, provider, settings_json, role, created_at) VALUES (2, 1, 'local', 'ics', ?, 'mine', '2026-01-01 00:00:00')", [json_encode(['reminderDefaults' => ['timed' => [['minutes' => 120]]]])]);
+    $rmdb->run("INSERT INTO calendars (id, user_id, kind, provider, settings_json, role, created_at) VALUES (3, 1, 'ics', 'ics', ?, 'mine', '2026-11-02 20:00:00')", [json_encode(['reminderDefaults' => ['timed' => [['minutes' => 120]]]])]);
+    $rmdb->run("INSERT INTO events (id, user_id, calendar_id, uid, title, start_utc, end_utc, all_day, tzid) VALUES
+        (900, 1, 2, 'late-a', 'Added late', '2026-11-02 22:00:00', '2026-11-02 23:00:00', 0, 'UTC'),
+        (901, 1, 2, 'late-b', 'Already started', '2026-11-02 21:00:00', '2026-11-02 22:00:00', 0, 'UTC'),
+        (902, 1, 3, 'late-c', 'Just subscribed', '2026-11-02 22:00:00', '2026-11-02 23:00:00', 0, 'UTC')");
+    $lateKeys = array_map(static fn($d) => $d['key'], $rmRc->getMethod('dueForUser')->invoke($rm, 1, Time::fromDb('2026-11-02 21:30:00')));
+    check('reminders: a reminder missed by 90 minutes fires late while the event is ahead', in_array('900:20261102T220000Z:120', $lateKeys, true));
+    check('reminders: no late reminder once the event has begun', !in_array('901:20261102T210000Z:120', $lateKeys, true));
+    check('reminders: no late burst from a calendar added after the reminder time', !in_array('902:20261102T220000Z:120', $lateKeys, true));
+    $utc = static fn(string $s): DateTimeImmutable => Time::fromDb($s);
+    check('reminders late: within six days', BetterCal\Domain\Reminders::stillUsefulLate($utc('2026-11-01 00:00:00'), $utc('2026-11-20 00:00:00'), $utc('2026-11-06 00:00:00'), $utc('2026-01-01 00:00:00')));
+    check('reminders late: not seven days late, since sent reminders are kept for seven', !BetterCal\Domain\Reminders::stillUsefulLate($utc('2026-11-01 00:00:00'), $utc('2026-11-20 00:00:00'), $utc('2026-11-08 00:00:00'), $utc('2026-01-01 00:00:00')));
+    check('reminders late: an unknown calendar age never fires late', !BetterCal\Domain\Reminders::stillUsefulLate($utc('2026-11-01 00:00:00'), $utc('2026-11-20 00:00:00'), $utc('2026-11-02 00:00:00'), null));
 }
 
 // An outbound feed over its cap keeps the events nearest today: the oldest

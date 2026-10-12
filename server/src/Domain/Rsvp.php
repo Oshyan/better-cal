@@ -88,16 +88,63 @@ final class Rsvp
         if ($organizer === '') {
             return ['code' => 'no_organizer', 'text' => 'The invitation names no organizer to reply to.'];
         }
-        $me = self::senderAddress($cfg);
-        if ($me === null) {
+        $profiles = self::profiles($cfg);
+        if ($profiles === []) {
             return ['code' => 'not_configured', 'text' => 'Replies need an email account to send from, and none is set up on this server (see docs/email-ingest.md, RSVP).'];
         }
+        if (self::replyRoute($invite, $cfg) !== null) {
+            return null;
+        }
+        $mine = array_values(array_unique(array_values($profiles)));
+        if (in_array(strtolower($organizer), $mine, true)) {
+            return ['code' => 'own_invitation', 'text' => 'This invitation was sent from ' . strtolower($organizer) . ', one of this server\'s own addresses, so there is nobody to answer.'];
+        }
+        return ['code' => 'address_mismatch', 'text' => 'Replies would come from ' . implode(' or ', $mine) . ', which isn\'t one of the invited addresses, so the organizer\'s calendar would ignore them.'];
+    }
+
+    /**
+     * The sending accounts replies can use, as profile => address: the RSVP
+     * one first when set, then the main one.
+     *
+     * @return array<string,string>
+     */
+    private static function profiles(array $cfg): array
+    {
+        $out = [];
+        foreach (['rsvp' => $cfg['rsvp_smtp'] ?? [], 'smtp' => $cfg['smtp'] ?? []] as $name => $smtp) {
+            if (($smtp['host'] ?? '') === '') {
+                continue;
+            }
+            $from = strtolower(trim((string) (($smtp['from'] ?? '') !== '' ? $smtp['from'] : ($smtp['user'] ?? ''))));
+            if ($from !== '') {
+                $out[$name] = $from;
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * Which account answers an invitation: the one whose address was
+     * invited, never the organizer's own. The organizer is on its own guest
+     * list, so a reply from that address would only say the organizer is
+     * coming, and the invited guest would stay "awaiting" (seen when the
+     * owner invited the Better-Cal mailbox from the address replies go out
+     * from). Without a guest list, the first account that isn't the
+     * organizer stands in.
+     *
+     * @return array{address:string,profile:string}|null
+     */
+    public static function replyRoute(array $invite, array $cfg): ?array
+    {
+        $organizer = strtolower(trim((string) ($invite['organizer']['email'] ?? '')));
         $invited = array_values(array_filter(array_map(
-            static fn($a): string => strtolower((string) ($a['email'] ?? '')),
+            static fn($a): string => strtolower(trim((string) ($a['email'] ?? ''))),
             (array) ($invite['attendees'] ?? [])
         )));
-        if ($invited !== [] && !in_array($me, $invited, true)) {
-            return ['code' => 'address_mismatch', 'text' => 'Replies would come from ' . $me . ', which isn\'t one of the invited addresses, so the organizer\'s calendar would ignore them.'];
+        foreach (self::profiles($cfg) as $profile => $address) {
+            if ($address !== $organizer && ($invited === [] || in_array($address, $invited, true))) {
+                return ['address' => $address, 'profile' => $profile];
+            }
         }
         return null;
     }
@@ -214,7 +261,8 @@ final class Rsvp
         $outcome = ['sent' => false, 'reason' => $block['code'] ?? null, 'message' => $block['text'] ?? null];
         if ($block === null) {
             $organizer = (string) $invite['organizer']['email'];
-            $me = (string) self::senderAddress($this->cfg);
+            $route = (array) self::replyRoute($invite, $this->cfg);
+            $me = (string) $route['address'];
             $ics = MailIngest::buildReplyIcs(
                 (string) $row['uid'],
                 $organizer,
@@ -225,7 +273,7 @@ final class Rsvp
                 Time::nowUtc()
             );
             $verb = ['ACCEPTED' => 'Accepted', 'DECLINED' => 'Declined', 'TENTATIVE' => 'Tentative'][$partstat];
-            $error = $this->mailer->sendImipReply($organizer, $verb . ': ' . (string) $row['title'], $ics, $verb . ': ' . (string) $row['title']);
+            $error = $this->mailer->sendImipReply($organizer, $verb . ': ' . (string) $row['title'], $ics, $verb . ': ' . (string) $row['title'], (string) $route['profile']);
             $outcome = $error === null
                 ? ['sent' => true, 'reason' => null, 'message' => null]
                 : ['sent' => false, 'reason' => 'send_failed', 'message' => $error];
@@ -234,6 +282,12 @@ final class Rsvp
         $invite['organizerTrust'] = 'owner';
         $invite['reply'] = ['partstat' => $partstat, 'sent' => $outcome['sent'], 'reason' => $outcome['reason'], 'message' => $outcome['message'], 'at' => Time::iso(Time::nowUtc())];
         $this->db->run('UPDATE events SET invite_json = ? WHERE id = ?', [json_encode($invite), (int) $row['id']]);
+        // Accepted is Planned and Maybe is a Maybe, on the event's own status
+        // (Events::relationship). Decline leaves the event as it was.
+        $status = ['ACCEPTED' => 'confirmed', 'TENTATIVE' => 'tentative'][$partstat] ?? null;
+        if ($status !== null) {
+            $this->db->run("UPDATE events SET status = ? WHERE id = ? AND status <> 'cancelled'", [$status, (int) $row['id']]);
+        }
         return $outcome;
     }
 

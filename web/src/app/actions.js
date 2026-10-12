@@ -1134,6 +1134,7 @@ export async function rsvpEvent(occ, answer) {
       : { partstat: result.myPartstat, sent: result.sent, reason: result.reason, message: result.message };
     patchOccurrence(occ.instanceId, { invite: { ...occ.invite, myPartstat: result.myPartstat, reply } });
     invalidateRecords(occ.eventId);
+    if (via !== 'google') refreshWindow(); // Accept makes it Planned, Maybe a Maybe
     loadReviewCount(); // an answered invitation leaves the Review queue
     const out = rsvpOutcome(result, via);
     toast(out.text, { error: !!out.error });

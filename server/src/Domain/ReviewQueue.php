@@ -595,9 +595,10 @@ final class ReviewQueue
                     return self::decisionError('review_stale', 'That invitation is already on your calendar. The duplicate item has been closed.');
                 }
                 $calendarId = MailIngest::ensureInviteCalendar($this->db, $userId);
+                // Not answered yet, so a Maybe until the owner accepts.
                 $occurrence = ActivityContext::with('mail:imip:review', fn(): array => $this->events->create(
                     $userId,
-                    $fields + ['calendarId' => $calendarId, 'uid' => $uid]
+                    ['status' => 'tentative'] + $fields + ['calendarId' => $calendarId, 'uid' => $uid]
                 ));
                 $eventId = (int) $occurrence['eventId'];
                 MailIngest::storeInvite($this->db, $eventId, $incoming, false);

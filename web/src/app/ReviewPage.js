@@ -85,7 +85,15 @@ function ReviewCard({ item, onChanged }) {
       } else if (item.kind === 'model_limit') {
         toast('AI filter notice dismissed');
       } else if (item.kind === 'invite_new') {
-        toast(accepted ? 'Invitation added. You have not replied.' : 'Dismissed. Nothing was added.');
+        if (!accepted) {
+          toast('Dismissed. Nothing was added.');
+        } else if (res && res.reply) {
+          const out = rsvpOutcome(res.reply, 'mail');
+          toast('Added. ' + out.text, { error: !!out.error });
+          loadReviewCount();
+        } else {
+          toast('Added as a Maybe. You have not replied.');
+        }
       } else {
         toast(
           accepted ? (d.method === 'CANCEL' ? 'Cancellation accepted' : 'Change applied') : 'Dismissed. Your calendar is unchanged',
@@ -120,7 +128,7 @@ function ReviewCard({ item, onChanged }) {
       ${item.status !== 'open' && html`<span class="bc-badge">${item.status}</span>`}
     </div>
     <div class="bc-review-body">
-      <span class="bc-review-summary">${item.summary}${(item.kind === 'invite_change' || item.kind === 'invite_new') && d.from ? html` <span class="bc-review-sender" title="The address this email came from. Email senders are not verified.">Sent from ${d.from}</span>` : ''}${(item.kind === 'invite_change' || item.kind === 'invite_new') ? html` <span class="bc-review-sender" title="The invitation revision claimed by this email.">Sequence ${d.sequence || 0}</span>` : ''}</span>
+      <span class="bc-review-summary">${item.summary}${(item.kind === 'invite_change' || item.kind === 'invite_new') && d.from ? html` <span class="bc-review-sender" title="The address this email came from. Email senders are not verified.">Sent from ${d.from}</span>` : ''}${item.kind === 'invite_change' ? html` <span class="bc-review-sender" title="The organizer's calendar numbers each version of an invitation, raising it when the time, place or details change. A version older than the one on your calendar is not applied.">${d.method === 'CANCEL' ? 'Cancellation' : 'Updated invitation'} (v${(d.sequence || 0) + 1})</span>` : ''}</span>
       ${(item.actions.length > 0 || openOptions) && html`<span class="bc-review-actions">${item.actions.map((a, i) => html`<button
         key=${a.name} type="button" disabled=${busy}
         class=${'bc-btn' + (i === 0 ? ' bc-btn-primary' : '')}

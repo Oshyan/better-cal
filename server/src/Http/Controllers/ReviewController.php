@@ -7,6 +7,7 @@ namespace BetterCal\Http\Controllers;
 use BetterCal\Domain\Calendars;
 use BetterCal\Domain\Duplicates;
 use BetterCal\Domain\Proposals;
+use BetterCal\Domain\Rsvp;
 use BetterCal\Domain\ReviewQueue;
 use BetterCal\Http\Request;
 use BetterCal\Http\Response;
@@ -40,6 +41,7 @@ final class ReviewController
         private readonly Proposals $proposals,
         private readonly Calendars $calendars,
         private readonly ?Duplicates $duplicates = null,
+        private readonly ?Rsvp $rsvp = null,
     )
     {
     }
@@ -76,6 +78,8 @@ final class ReviewController
             }
             $isNew = $c['kind'] === ReviewQueue::KIND_INVITE_NEW;
             $fields = is_array($c['detail']['fields'] ?? null) ? $c['detail']['fields'] : [];
+            $heldInvite = is_array($c['detail']['invite'] ?? null) ? $c['detail']['invite'] : [];
+            $replyable = $isNew && Rsvp::kind($heldInvite) === 'invitation' && Rsvp::blocker($heldInvite, config()) === null;
             $items[] = [
                 'key' => $c['kind'] . ':' . $c['id'],
                 'kind' => $c['kind'],
@@ -98,7 +102,13 @@ final class ReviewController
                     'decidedAt' => $c['decidedAt'],
                 ],
                 'actions' => $open && $canDecide ? [
-                    self::action('accept', $isNew ? 'Add to calendar' : ($c['method'] === 'CANCEL' ? 'Accept cancellation' : 'Accept change'), $isNew
+                    // A new invitation that can be answered from here offers
+                    // adding and accepting in one decision, so no second
+                    // "not replied" item follows.
+                    ...($isNew && $this->rsvp !== null && $replyable
+                        ? [self::action('accept_reply', 'Add and accept', "/review/invitations/{$c['id']}/accept", ['answer' => 'accepted'])]
+                        : []),
+                    self::action('accept', $isNew ? ($replyable ? 'Add' : 'Add to calendar') : ($c['method'] === 'CANCEL' ? 'Accept cancellation' : 'Accept change'), $isNew
                         ? "/review/invitations/{$c['id']}/accept"
                         : "/review/invite-changes/{$c['id']}/accept"),
                     self::action('dismiss', 'Dismiss', $isNew
@@ -267,7 +277,15 @@ final class ReviewController
     public function acceptInvitation(Request $req, array $params): Response
     {
         $req->requireSession('Review decisions');
-        return Response::json($this->queue->accept((int) $req->user['id'], (int) $params['id']));
+        $userId = (int) $req->user['id'];
+        $result = $this->queue->accept($userId, (int) $params['id']);
+        // "Add and accept": the event exists now, so answer it the way the
+        // event's own Accept would. A reply that can't go still leaves the
+        // invitation added; the outcome says why.
+        if ($req->str('answer') === 'accepted' && $this->rsvp !== null) {
+            $result['reply'] = $this->rsvp->answer($userId, (int) $result['eventId'], 'accepted');
+        }
+        return Response::json($result);
     }
 
     public function dismissInvitation(Request $req, array $params): Response

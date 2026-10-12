@@ -156,10 +156,11 @@ final class EmailSender
      *
      * @return string|null why it didn't go, or null when it went
      */
-    public function sendImipReply(string $toEmail, string $subject, string $ics, string $bodyText): ?string
+    /** $profile: 'rsvp' (the RSVP account, else the main one) or 'smtp' (the main one), as Rsvp::replyRoute picks. */
+    public function sendImipReply(string $toEmail, string $subject, string $ics, string $bodyText, string $profile = 'rsvp'): ?string
     {
         $rsvp = $this->cfg['rsvp_smtp'] ?? [];
-        $smtp = ($rsvp['host'] ?? '') !== '' ? $rsvp : ($this->cfg['smtp'] ?? []);
+        $smtp = $profile !== 'smtp' && ($rsvp['host'] ?? '') !== '' ? $rsvp : ($this->cfg['smtp'] ?? []);
         if (($smtp['host'] ?? '') === '' || (($smtp['from'] ?? '') === '' && ($smtp['user'] ?? '') === '')) {
             return 'no email account is set up to send from';
         }

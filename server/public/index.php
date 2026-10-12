@@ -89,7 +89,8 @@ function bc_handle_api(Request $request, array $cfg): void
         $authController = new Controllers\AuthController($auth, $loginGuard, new Domain\TrustedDevices($db));
         $calendarsController = new Controllers\CalendarsController($db, $calendars, $feeds);
         $foldersController = new Controllers\FoldersController($folders);
-        $eventsController = new Controllers\EventsController($events, $trips, new Domain\Rsvp($db, $emailSender, $cfg, new Domain\GoogleWriter($db, $googleAuth, $feeds)));
+        $rsvp = new Domain\Rsvp($db, $emailSender, $cfg, new Domain\GoogleWriter($db, $googleAuth, $feeds));
+        $eventsController = new Controllers\EventsController($events, $trips, $rsvp);
         $quickAddController = new Controllers\QuickAddController($quickAdd);
         $searchController = new Controllers\SearchController($search, $events, $filters, $labels);
         $outFeedsController = new Controllers\OutFeedsController($outFeeds);
@@ -103,7 +104,7 @@ function bc_handle_api(Request $request, array $cfg): void
         $proposalsDomain = new Domain\Proposals($db, $events, $trips);
         $pluginsController = new Controllers\PluginsController($pluginsDomain, $jobQueue, $proposalsDomain, $undo, $db);
         $proposalsController = new Controllers\ProposalsController($proposalsDomain);
-        $reviewController = new Controllers\ReviewController(new Domain\ReviewQueue($db, $events), $proposalsDomain, $calendars, new Domain\Duplicates($db));
+        $reviewController = new Controllers\ReviewController(new Domain\ReviewQueue($db, $events), $proposalsDomain, $calendars, new Domain\Duplicates($db), $rsvp);
         $configController = new Controllers\ConfigController($settings, $cfg);
         $pushController = new Controllers\PushController($pushSubscriptions, $pushSender, $emailSender, $throttle, $db);
         $systemController = new Controllers\SystemController(new Domain\SystemHealth($db), $pushSubscriptions, $emailSender, $cfg);
@@ -196,7 +197,24 @@ function bc_handle_api(Request $request, array $cfg): void
             } catch (\PDOException) {
                 $seq = '0'; // before migration 039
             }
-            return Response::json(['cursor' => $cal['s'] . ':' . $cal['c'] . ':' . $av['c'] . ':' . $av['m'] . ':' . $people . ':' . $seq]);
+            // What waits in Review, apart from events: mail held for a
+            // decision and the limit notices, plugin proposals, possible
+            // duplicates. Background work adds these without touching an
+            // event, so they get their own part; the client reloads the
+            // badge when either part moves.
+            $review = [];
+            foreach ([
+                "SELECT COUNT(CASE WHEN status = 'open' THEN 1 END) AS c, COALESCE(MAX(id), 0) AS m FROM review_items WHERE user_id = ?",
+                "SELECT COUNT(CASE WHEN status = 'open' THEN 1 END) AS c, COALESCE(MAX(id), 0) AS m FROM plugin_proposals WHERE user_id = ?",
+                "SELECT COUNT(CASE WHEN status = 'possible' THEN 1 END) AS c, COALESCE(MAX(id), 0) AS m FROM event_duplicates WHERE user_id = ?",
+            ] as $sql) {
+                $r = $db->one($sql, [$userId]);
+                $review[] = $r['c'] . '.' . $r['m'];
+            }
+            return Response::json([
+                'cursor' => $cal['s'] . ':' . $cal['c'] . ':' . $av['c'] . ':' . $av['m'] . ':' . $people . ':' . $seq,
+                'review' => implode(':', $review),
+            ]);
         });
 
         $router->add('GET', "$base/people", [$peopleController, 'index']);

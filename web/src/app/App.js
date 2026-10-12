@@ -4,7 +4,7 @@ import { COMPACT_QUERY, COARSE_QUERY, PHONE_WIDE_QUERY } from '../lib/breakpoint
 import { html, useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback } from '../../vendor/index.js';
 import { useStore, set, state, calendarMeta, shallowEq, invalidateRecords } from './store.js';
 import { PHONE_QUERY } from '../lib/breakpoints.js';
-import { loadWindow, api, refreshWindow, loadPeople, loadCalendars, retryWindowsNow } from './api.js';
+import { loadWindow, api, refreshWindow, loadPeople, loadCalendars, retryWindowsNow, loadReviewCount } from './api.js';
 import { hiddenDayCounts } from '../lib/relfilter.js';
 import {
   moveEvent, resizeEvent, sendFeedback, exitReschedule, googleBacked, setRelationship, showAllRel,
@@ -212,6 +212,7 @@ export function App() {
   // refresh merges harmlessly.
   useEffect(() => {
     let cursor = null;
+    let review = null;
     let stopped = false;
     let inFlight = false;
     const check = async () => {
@@ -220,14 +221,20 @@ export function App() {
       try {
         const d = await api('/changes/cursor');
         if (!stopped && d && d.cursor) {
-          if (cursor !== null && d.cursor !== cursor) {
+          const moved = cursor !== null && d.cursor !== cursor;
+          if (moved) {
             invalidateRecords(); // something changed somewhere; fetched records may be stale
             refreshWindow();
             loadCalendars().catch(() => {});
             loadPeople().catch(() => {});
             set({ availSeq: state.availSeq + 1 });
           }
+          // The Review badge: held mail, proposals and possible duplicates
+          // arrive without an event (their own part), and unanswered
+          // invitations or decisions made elsewhere ride on the events part.
+          if (moved || (review !== null && d.review !== review)) loadReviewCount();
           cursor = d.cursor;
+          review = d.review ?? null;
         }
       } catch { /* transient network problems just delay freshness */ }
       inFlight = false;

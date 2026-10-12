@@ -4,6 +4,13 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.64 (2026-10-12)
+
+- **Invitation replies are laid out the way Google's own are.** A reply now carries the event's times and goes as a calendar part inside the message as well as an `invite.ics` attachment. Sent as an attachment alone, Gmail showed the organizer "Unable to load event" and the guest's answer didn't change.
+- **The answer you've already given can't be sent twice.** Pressing Accept again on an accepted invitation mailed the organizer again; now it does nothing, and choosing a different answer still sends. A reply that failed can still be retried.
+
+Operators: no migration.
+
 ## 0.9.63 (2026-10-12)
 
 - **Accepting an invitation now reaches the organizer when you invited yourself.** A reply went out from the address set up for replies even when that address was the organizer, so it told the organizer's calendar that the organizer was coming and the invited guest stayed "awaiting". Replies now go from whichever of the server's sending addresses was actually invited, never the organizer's, through that address's own mail account. An invitation sent from one of the server's addresses, with none of the others invited, offers no reply.

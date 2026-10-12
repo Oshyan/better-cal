@@ -51,7 +51,7 @@ final class Request
     {
         $this->requireSession($what);
         if ($this->authenticatedAt === null) {
-            throw HttpError::forbidden('step_up_required', 'Confirm your Better-Cal password to ' . lcfirst($what) . '.');
+            throw HttpError::forbidden('step_up_required', 'Confirm your Better-Cal password before ' . lcfirst($what) . '.');
         }
         try {
             $fresh = Time::fromDb($this->authenticatedAt) >= Time::nowUtc()->sub(new \DateInterval('PT' . Auth::STEP_UP_SECONDS . 'S'));
@@ -59,7 +59,7 @@ final class Request
             $fresh = false;
         }
         if (!$fresh) {
-            throw HttpError::forbidden('step_up_required', 'Confirm your Better-Cal password to ' . lcfirst($what) . '.');
+            throw HttpError::forbidden('step_up_required', 'Confirm your Better-Cal password before ' . lcfirst($what) . '.');
         }
     }
 

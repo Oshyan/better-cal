@@ -4,6 +4,15 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.69 (2026-10-12)
+
+- **Duplicate an event.** In an event's More menu, Duplicate makes a copy on the same calendar and opens it in the editor with the date selected, so you type the new day and save. A repeating event's occurrence is copied as a single event.
+- **Hold Option (Mac) or Alt while dragging an event to copy it** instead of moving it. It works in the week, day and month views; the original stays put, the cursor and a + on the dragged event say it's a copy, and you can press or release the key mid-drag. Dropping onto a calendar in the sidebar with Option/Alt held copies it there. Listed in the keyboard shortcuts.
+- **Optionally remove an event when you accept its cancellation.** Settings, General, Invitations: with "Remove the event when you accept its cancellation" on, accepting an emailed cancellation in Review deletes the event right away, with Undo, instead of keeping it struck through.
+- **DOMPurify 3.4.17**, which cleans up event descriptions before they're shown: hardening and fixes.
+
+Operators: no migration. `POST /events/:id/copy` takes `duplicate`, `start` and `end`; settings gain `removeAcceptedCancellations`.
+
 ## 0.9.68 (2026-10-12)
 
 - **A Google-synced invitation shows as Planned or Maybe by your answer**, as an emailed one has since 0.9.67: Accept is Planned, and Maybe, Decline or no answer yet is a Maybe. It used to show as Planned whatever you'd answered, because such an event's status belongs to the organizer. Planned or Maybe chosen by hand still wins, until your next answer, whether you give it here or in Google Calendar.

@@ -12,7 +12,7 @@ Published releases are immutable: their tag and assets cannot be replaced. Title
    ```
 
    The second argument is `routine`, `recommended`, or `security`. The last argument is the cumulative minimum secure version. A security fix normally sets that floor to the new version; later routine releases retain the same floor until another security release raises it.
-3. The helper creates and pushes the annotated version tag at the exact green commit, generates and verifies `bettercal-release.json`, and creates a draft GitHub release with that final asset.
+3. The helper creates and pushes the annotated version tag at the exact green commit, generates and verifies `bettercal-release.json`, and creates a draft GitHub release with that final asset. The release notes are the version's `CHANGELOG.md` section, with repository links made absolute, then a pointer to the update steps in `docs/install.md` and the commit comparison with the previous tag (`scripts/release-notes.mjs`). The app's update notice links to this page, so the changelog section's Operators line is what someone updating reads first.
 4. Deploy that exact commit and complete the production smoke checks while the release is still a draft.
 5. Publish only after those checks succeed:
 

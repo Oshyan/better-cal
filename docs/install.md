@@ -25,7 +25,7 @@ If your host differs and something needs changing, please report it.
 
 ## Steps
 
-1. Put the repository somewhere outside the web root, for example `/srv/better-cal`.
+1. Put the repository somewhere outside the web root, for example `/srv/better-cal`. A git clone makes updating one command: `git clone https://github.com/Oshyan/better-cal.git /srv/better-cal`, then `git checkout` the newest release tag from the [releases page](https://github.com/Oshyan/better-cal/releases) (for example `git checkout v0.9.73`). The source code zip on each release page works too; see [Updating](#updating) for what changes.
 2. `cd server && composer install --no-dev`
 3. Copy `.env.example` to `.env` in the repository root and fill in the database, `BETTERCAL_BASE_URL` and `BETTERCAL_SESSION_SECRET`. Everything else in that file is optional and documented there.
 4. `php server/bin/migrate.php` creates the schema. Run it again after every update; it only applies what is new.
@@ -35,7 +35,40 @@ If your host differs and something needs changing, please report it.
 8. Optional: `php server/bin/vapid.php --generate` and put the keys in `.env` to enable push reminders.
 9. Optional: the Google Calendar connector needs an OAuth client of your own, from a free Google Cloud project: about ten minutes, with direct links to each console page, in [google-calendar.md](google-calendar.md#one-time-setup-the-operator).
 
-Updating is: pull, `composer install --no-dev`, `php server/bin/migrate.php`. `scripts/deploy.sh` does this over rsync and ssh. It ships the last commit, not the working tree, so commit first: uncommitted edits are left out. It runs the server, smoke and static suites, deploy-security checks, dependency-pin checks and the vendor check on exactly those files first and refuses to ship a red tree. It then backs up the app directory and MySQL/MariaDB database before changing anything, into the configured root-owned backup directory, and finishes with the health check and `smoke.php`. The application account reads the backup sources but cannot write the private destination. To use it, copy `scripts/deploy.env.example` to `scripts/deploy.env`, fill in the host and paths, and run it. It assumes a Debian-style host with sudo, composer, mysqldump, `flock` and cron; `scripts/deploy-dev.sh` ships any branch to a second, isolated install on the same host. SQLite remains useful for tests, but this production deploy helper deliberately refuses an SQLite DSN; use SQLite's own online-backup mechanism separately.
+## Updating
+
+Settings, About shows the running version, and the app tells you when a release is out (it checks GitHub once a day; Settings, About can limit that to security releases or turn it off). It never downloads or installs anything itself.
+
+Each [release page](https://github.com/Oshyan/better-cal/releases) lists what changed and ends with an **Operators** line: what the update needs from you, such as "no migration", a new setting, or a newer PHP. Read it first. Skipping versions is fine, since the migration applies everything in between, but read the Operators lines of the ones you skip as well.
+
+Run these as the user that owns the files, in the app directory (`/srv/better-cal` here). It takes a minute or two.
+
+1. **Back up the database**, and keep a copy of `.env`:
+
+   ```sh
+   mysqldump --single-transaction -u DB_USER -p DB_NAME > ~/bettercal-before-update.sql
+   cp .env ~/bettercal-env-backup
+   ```
+
+   Your host's own database backup works too, as long as you can restore it.
+2. **Get the new code.**
+   - From a git clone: `git fetch --tags` and then `git checkout v0.9.74`, with the version you're updating to. Releases are tags; `main` can be ahead of the newest release.
+   - From a release zip: unpack the new one into a fresh directory beside the current one (say `/srv/better-cal-new`), copy `.env` into it along with any plugins you added under `server/plugins/` and your worker log if you keep one there, then swap the two: `mv /srv/better-cal /srv/better-cal-old && mv /srv/better-cal-new /srv/better-cal`. Your web server and cron entry keep pointing at the same path.
+3. **Update the PHP libraries:** `cd server && composer install --no-dev && cd ..`
+4. **Apply database changes:** `php server/bin/migrate.php`. It lists each change it applies, or none.
+5. **Check it:** `https://your-host/api/v1/health` should say `{"ok":true,"db":true,...}`, and Settings, About should show the new version. Open browsers and the installed app pick up the new version on their next load.
+
+For the few seconds between steps 2 and 4, the new code runs against the old database. To avoid even that, comment out the worker's cron line before step 2 and put it back after step 4.
+
+### If something goes wrong
+
+- **The migration stopped with an error:** don't keep using the app. Restore the backup (`mysql -u DB_USER -p DB_NAME < ~/bettercal-before-update.sql`), go back to the previous code (`git checkout` the old tag, or swap `/srv/better-cal-old` back), run `cd server && composer install --no-dev`, and please [report the error](https://github.com/Oshyan/better-cal/issues) with its message.
+- **The app misbehaves after a clean update:** going back to the previous code alone isn't enough when the update changed the database, so restore the backup as well. Do it soon: anything entered since the backup is lost when you restore it.
+- **The health check fails:** the PHP error log usually says why. Most often it's a missing PHP extension or version a release's Operators line asked for; `composer check-platform-reqs --lock --no-dev`, run in `server/`, lists what's missing.
+
+### The deploy script (optional)
+
+`scripts/deploy.sh` is the maintainer's deploy tool, not something you need: it runs the update steps above from a separate machine over rsync and ssh, with the test suites and a backup first. It ships the last commit, not the working tree, so commit first: uncommitted edits are left out. It runs the server, smoke and static suites, deploy-security checks, dependency-pin checks and the vendor check on exactly those files first and refuses to ship a red tree. It then backs up the app directory and MySQL/MariaDB database before changing anything, into the configured root-owned backup directory, and finishes with the health check and `smoke.php`. The application account reads the backup sources but cannot write the private destination. To use it, copy `scripts/deploy.env.example` to `scripts/deploy.env`, fill in the host and paths, and run it. It assumes a Debian-style host with sudo, composer, mysqldump, `flock` and cron; `scripts/deploy-dev.sh` ships any branch to a second, isolated install on the same host. SQLite remains useful for tests, but this production deploy helper deliberately refuses an SQLite DSN; use SQLite's own online-backup mechanism separately.
 
 ### Development deployments
 

@@ -44,6 +44,10 @@ case "${1:-}" in
     trap 'rm -rf "$manifest_dir"' EXIT
     node scripts/release-manifest.mjs --write "$manifest_dir/$ASSET" --version "$version" --priority "$priority" --minimum-secure-version "$floor"
     node scripts/release-manifest.mjs --verify "$manifest_dir/$ASSET" --version "$version"
+    # The release page is this version's changelog entry plus how to update
+    # (scripts/release-notes.mjs); the app's update notice links to it.
+    previous=$(git describe --tags --abbrev=0 --match 'v[0-9]*' HEAD^ 2>/dev/null || true)
+    node scripts/release-notes.mjs --version "$version" ${previous:+--previous "$previous"} --write "$manifest_dir/notes.md"
     if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
       [[ $(git rev-list -n 1 "$tag") == $(git rev-parse HEAD) ]] || die "existing local $tag points somewhere else"
     else
@@ -58,8 +62,9 @@ case "${1:-}" in
     if gh release view "$tag" --repo "$REPO" >/dev/null 2>&1; then
       [[ $(gh release view "$tag" --repo "$REPO" --json isDraft --jq .isDraft) == true ]] || die "existing $tag release is already published"
       gh release upload "$tag" --repo "$REPO" --clobber "$manifest_dir/$ASSET#$ASSET"
+      gh release edit "$tag" --repo "$REPO" --notes-file "$manifest_dir/notes.md"
     else
-      gh release create "$tag" --repo "$REPO" --draft --verify-tag --title "Better-Cal $tag" --generate-notes "$manifest_dir/$ASSET#$ASSET"
+      gh release create "$tag" --repo "$REPO" --draft --verify-tag --title "Better-Cal $tag" --notes-file "$manifest_dir/notes.md" "$manifest_dir/$ASSET#$ASSET"
     fi
     echo "Draft $tag is ready. Deploy this exact commit and complete smoke checks before publishing."
     ;;

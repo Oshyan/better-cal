@@ -65,7 +65,7 @@ For a one-person project, taking security seriously means doing the work in publ
 
 ## Versions
 
-Releases are tagged (`v0.1.1`) and listed on GitHub, `CHANGELOG.md` says what changed and why, and Settings shows the version you're running. Until 1.0, minor versions bring features and behavior changes, and patch versions bring fixes.
+Releases are tagged (`v0.1.1`) and listed on GitHub, `CHANGELOG.md` says what changed and why, and Settings shows the version you're running and tells you when there's a new one. Each release page says what the update needs; [Updating](docs/install.md#updating) has the steps. Until 1.0, minor versions bring features and behavior changes, and patch versions bring fixes.
 
 ## License
 

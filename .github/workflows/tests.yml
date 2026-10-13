@@ -102,3 +102,5 @@ jobs:
         run: node scripts/tests/dependency-watch.mjs
       - name: Release manifest contract
         run: node scripts/tests/release-manifest.mjs
+      - name: Release notes
+        run: node scripts/tests/release-notes.mjs

@@ -4,7 +4,15 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.70 (2026-10-12)
+
+- **Option/Alt-drag copying works**, and so does **dropping an event onto a calendar or person in the sidebar**. The week, day and month grids were told every event was read-only (their calendar list left out whether a calendar can be edited), so both were quietly refused. The sidebar drops had been broken since Google write-through arrived.
+
+Operators: no migration. 0.9.69 was prepared but never published: checking it live found the copy drag not working. Everything listed under it ships here.
+
 ## 0.9.69 (2026-10-12)
+
+*Not published; shipped in 0.9.70.*
 
 - **Duplicate an event.** In an event's More menu, Duplicate makes a copy on the same calendar and opens it in the editor with the date selected, so you type the new day and save. A repeating event's occurrence is copied as a single event.
 - **Hold Option (Mac) or Alt while dragging an event to copy it** instead of moving it. It works in the week, day and month views; the original stays put, the cursor and a + on the dragged event say it's a copy, and you can press or release the key mid-drag. Dropping onto a calendar in the sidebar with Option/Alt held copies it there. Listed in the keyboard shortcuts.

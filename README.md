@@ -79,7 +79,7 @@ MIT (see [LICENSE](LICENSE)). Use it, fork it, host it, sell it. If you build so
 
 ## Docs
 
-- [Installing](docs/install.md): requirements, steps, and web server setup for Nginx and Apache (both tested), on MySQL or MariaDB. Shared hosting should work (the `.htaccess` routing is tested on Apache), but it hasn't been tried on a real shared host yet.
+- [Installing](docs/install.md): what you need, nine steps with the exact commands, updating (with a backup first and a way back), and web server setup for Nginx and Apache (both tested), on MySQL or MariaDB. Shared hosting should work (the `.htaccess` routing is tested on Apache), but it hasn't been tried on a real shared host yet.
 - [Architecture](docs/architecture.md)
 - [API contract](docs/api-contract.md) and [agent API](docs/agent-api.md)
 - [Calendar roles and event relationships](docs/relationships.md): planned, maybe, available and context, i.e. what a calendar is to you and what that makes its events

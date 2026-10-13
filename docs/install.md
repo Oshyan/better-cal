@@ -1,39 +1,111 @@
 # Installing Better-Cal
 
-Better-Cal is plain PHP and MySQL with a no-build frontend. It runs on any host that gives you PHP 8.4+, MySQL 8 or MariaDB 10.6+, a cron job and a web server you can point at one directory.
+Better-Cal is plain PHP and MySQL with a no-build frontend. It runs on any host that gives you PHP 8.4+, MySQL 8 or MariaDB 10.6+, a cron job and a web server you can point at one directory. Installing takes about half an hour if those are already in place, and needs a command line on the server (SSH).
 
-What has been run, and how:
+## What you need
 
-- **Production:** Nginx with PHP-FPM 8.4 and Percona Server 8.4 (MySQL), on Debian.
-- **Clean-install test (2026-10-03):** Ubuntu 24.04 with Apache 2.4 and mod_php 8.3 (the minimum then; it is 8.4 since 0.9.0, and the GitHub check installs on 8.4 on every push), MariaDB 10.11 (and MariaDB 10.6 for the migrations, the smoke test and the worker), following this page from an empty machine. Everything below was checked there: install, migrations, sign-in, events and undo, search, repeating events, CalDAV and API tokens through Apache, a subscribed feed, a plugin, the worker under cron.
-- **Repeated on 2026-10-05** with PHP 8.4 from the Ubuntu PPA described below (mod_php, only the listed extensions) and MariaDB 10.11: install, migrations, the worker under cron, and the first sign-in to a new account with its welcome.
+- **A server or hosting account with SSH**, and a domain or subdomain for Better-Cal (say `cal.example.com`) with HTTPS. Sessions, the installable app and push reminders all require HTTPS.
+- **PHP 8.4 or newer** with the extensions listed under [Requirements in detail](#requirements-in-detail). Most hosts let you pick the version in their control panel.
+- **MySQL 8.4 or MariaDB 10.6 or newer.**
+- **Composer**, PHP's package installer ([getcomposer.org](https://getcomposer.org/download/)).
+- **Cron**, or any scheduler that can run a command every minute.
 
-If your host differs and something needs changing, please report it.
+## Install
 
-## Requirements
+Run these as the account that will own Better-Cal's files. PHP must be able to read them, and the worker's cron entry goes in this account's crontab. On shared hosting that's simply your own login. The examples install into `/srv/better-cal`; use any directory outside the web root.
+
+1. **Get the code.** Find the newest version on the [releases page](https://github.com/Oshyan/better-cal/releases), then:
+
+   ```sh
+   git clone https://github.com/Oshyan/better-cal.git /srv/better-cal
+   cd /srv/better-cal
+   git checkout v0.9.73
+   ```
+
+   Use the newest version in place of `v0.9.73`. Without git, download the release's source code zip and unpack it into `/srv/better-cal` instead; git makes [updating](#updating) a little simpler.
+
+2. **Install the PHP libraries:**
+
+   ```sh
+   cd server && composer install --no-dev && cd ..
+   ```
+
+   If Composer reports a missing PHP extension or the wrong PHP version, fix that first; `composer check-platform-reqs --lock --no-dev`, run in `server/`, lists everything missing.
+
+3. **Create a database and a user for it.** On shared hosting, use the control panel's database page and note the database name, user and password. On your own server:
+
+   ```sh
+   sudo mysql
+   ```
+   ```sql
+   CREATE DATABASE bettercal CHARACTER SET utf8mb4;
+   CREATE USER 'bettercal'@'localhost' IDENTIFIED BY 'choose-a-password';
+   GRANT ALL PRIVILEGES ON bettercal.* TO 'bettercal'@'localhost';
+   ```
+
+4. **Write the settings file.** Copy the example and keep it private:
+
+   ```sh
+   cp .env.example .env
+   chmod 600 .env
+   openssl rand -hex 32
+   ```
+
+   Open `.env` and fill in four things: `BETTERCAL_BASE_URL` (your address, like `https://cal.example.com`, no trailing slash), the database name in `BETTERCAL_DB_DSN`, `BETTERCAL_DB_USER` and `BETTERCAL_DB_PASS`, and `BETTERCAL_SESSION_SECRET` (paste the random string `openssl` just printed). Everything else in the file is optional and explained where it appears.
+
+5. **Create the tables:**
+
+   ```sh
+   php server/bin/migrate.php
+   ```
+
+   It lists each change as it applies it. Run it again after every update; it only applies what's new.
+
+6. **Create your account:**
+
+   ```sh
+   php server/bin/seed.php --email=you@example.com
+   ```
+
+   It asks for a password without showing it. (From a script, set `BETTERCAL_SEED_PASSWORD` instead; never put a password on the command line, where other users and the shell history can see it.)
+
+7. **Point the web server at `server/public`.** Every request goes to `server/public/index.php`, except `/dav`, which goes to `dav.php`. Copy the [Nginx](#nginx-tested) or [Apache](#apache-24-tested-with-mod_php) example below; on shared hosting, set the domain's web directory to `/srv/better-cal/server/public` in the control panel. No certificate yet? Let's Encrypt's `certbot` sets one up for Nginx or Apache in a couple of minutes.
+
+8. **Start the worker.** It polls subscribed calendars, reads forwarded mail, sends reminders and tidies up. Run `crontab -e` and add this line:
+
+   ```
+   * * * * * php /srv/better-cal/server/bin/worker.php >> /srv/better-cal/worker.log 2>&1
+   ```
+
+9. **Check it.** `https://cal.example.com/api/v1/health` should show `{"ok":true,"db":true,...}`. Then open `https://cal.example.com`, sign in, and the welcome walks you through the first settings. A couple of minutes later, Settings, System should show the worker's jobs as healthy.
+
+That's a working install. The rest is optional:
+
+- **Push reminders** on phones and desktops: `php server/bin/vapid.php --generate`, and put the two keys it prints into `.env`.
+- **Google Calendar**: needs an OAuth client of your own, from a free Google Cloud project. It takes about ten minutes; [google-calendar.md](google-calendar.md#one-time-setup-the-operator) has direct links to each console page.
+- **Email** for reminders by mail and invitation replies: the SMTP settings in `.env`.
+- More under [After installing](#after-installing): sample data to look around with, phone and desktop calendar apps (CalDAV), place search.
+
+If something here didn't work as written on your host, please [report it](https://github.com/Oshyan/better-cal/issues).
+
+## Requirements in detail
 
 - PHP 8.4 or newer (8.4.1 or later) with these extensions: `pdo_mysql`, `curl`, `mbstring`, `xml` (dom, simplexml, xmlreader, xmlwriter: CalDAV needs them), `zip`, plus `json`, `openssl`, `sodium`, `ctype`, `iconv` and `fileinfo`, which nearly every PHP build already has. `composer check-platform-reqs --lock --no-dev`, run in `server/`, lists anything missing.
-  - Best with `proc_open` allowed and the PHP command-line binary installed in PHP's own bin directory (`php8.4-cli` below does this on Debian and Ubuntu). Every outbound request (feeds, Google, place search, plugins) then looks up its address in a short-lived child process with a time limit, so a slow DNS server cannot stall it. Where either is missing (some shared hosts disable `proc_open`), the lookup runs in-process instead and the PHP error log says so once: everything still works and private addresses are still refused, but a stuck DNS server can hold a request until the system resolver gives up. Some shared hosts disable `proc_open`. Outbound requests connect directly: proxy variables such as `HTTPS_PROXY` are ignored.
+  - Best with `proc_open` allowed and the PHP command-line binary installed in PHP's own bin directory (`php8.4-cli` below does this on Debian and Ubuntu). Every outbound request (feeds, Google, place search, plugins) then looks up its address in a short-lived child process with a time limit, so a slow DNS server cannot stall it. Where either is missing (some shared hosts disable `proc_open`), the lookup runs in-process instead and the PHP error log says so once: everything still works and private addresses are still refused, but a stuck DNS server can hold a request until the system resolver gives up. Outbound requests connect directly: proxy variables such as `HTTPS_PROXY` are ignored.
   - Shared hosting: pick PHP 8.4 or 8.5 in the host's panel (DreamHost offers both as of October 2026; elsewhere, check the host's PHP version picker).
   - Debian 13 and Ubuntu 26.04 ship PHP 8.4 and 8.5 respectively: `apt install php8.4-cli php8.4-mysql php8.4-curl php8.4-mbstring php8.4-xml php8.4-zip` (use `8.5` on Ubuntu 26.04), plus `libapache2-mod-php8.4` or `php8.4-fpm` for the web server.
   - Ubuntu 24.04 and Debian 12 ship older PHP. Add the widely used packages by Ondřej Surý first: `sudo add-apt-repository ppa:ondrej/php` on Ubuntu (Debian: https://packages.sury.org/php/), then the `php8.4-*` packages above.
 - Composer, to install the PHP dependencies.
 - MySQL 8.4 or MariaDB 10.6 or newer, with one empty database and a user with full rights on it. Tested on MySQL 8.4 (Percona Server) and MariaDB 10.6 and 10.11. MySQL 8.0 should work, since nothing here needs newer SQL, but it is past end of life and untested.
 - A cron entry (or any scheduler) that can run a PHP script every minute.
-- HTTPS. Sessions, the service worker and Web Push all require it.
+- HTTPS.
 - Node 20+ only if you want to run the frontend tests, `scripts/deploy.sh` (which runs them) or the MCP server. The app itself needs no build step.
 
-## Steps
+### Where it has been tested
 
-1. Put the repository somewhere outside the web root, for example `/srv/better-cal`. A git clone makes updating one command: `git clone https://github.com/Oshyan/better-cal.git /srv/better-cal`, then `git checkout` the newest release tag from the [releases page](https://github.com/Oshyan/better-cal/releases) (for example `git checkout v0.9.73`). The source code zip on each release page works too; see [Updating](#updating) for what changes.
-2. `cd server && composer install --no-dev`
-3. Copy `.env.example` to `.env` in the repository root and fill in the database, `BETTERCAL_BASE_URL` and `BETTERCAL_SESSION_SECRET`. Everything else in that file is optional and documented there.
-4. `php server/bin/migrate.php` creates the schema. Run it again after every update; it only applies what is new.
-5. `php server/bin/seed.php --email=you@example.com` creates your account; it asks for the password with echo off. From a script, set `BETTERCAL_SEED_PASSWORD` instead; a password on the command line is visible to other users and stays in shell history.
-6. Point the web server at `server/public` (next section).
-7. Add the worker to cron, as the user that owns the files: `* * * * * php /srv/better-cal/server/bin/worker.php >> /srv/better-cal/worker.log 2>&1`. It polls feeds, ingests mail, sends reminders and prunes old data. Settings, System shows whether each job is healthy.
-8. Optional: `php server/bin/vapid.php --generate` and put the keys in `.env` to enable push reminders.
-9. Optional: the Google Calendar connector needs an OAuth client of your own, from a free Google Cloud project: about ten minutes, with direct links to each console page, in [google-calendar.md](google-calendar.md#one-time-setup-the-operator).
+- **Production:** Nginx with PHP-FPM 8.4 and Percona Server 8.4 (MySQL), on Debian.
+- **Clean-install test (2026-10-03):** Ubuntu 24.04 with Apache 2.4 and mod_php 8.3 (the minimum then; it is 8.4 since 0.9.0, and the GitHub check installs on 8.4 on every push), MariaDB 10.11 (and MariaDB 10.6 for the migrations, the smoke test and the worker), following this page from an empty machine. Everything below was checked there: install, migrations, sign-in, events and undo, search, repeating events, CalDAV and API tokens through Apache, a subscribed feed, a plugin, the worker under cron.
+- **Repeated on 2026-10-05** with PHP 8.4 from the Ubuntu PPA described above (mod_php, only the listed extensions) and MariaDB 10.11: install, migrations, the worker under cron, and the first sign-in to a new account with its welcome.
 
 ## Updating
 
@@ -209,7 +281,6 @@ Production backups use a separate privilege boundary. `BACKUP_DIR` must be one d
 
 ## After installing
 
-- `https://your-host/api/v1/health` should return `{"ok":true,"db":true,...}`.
 - `php server/bin/smoke.php` checks that the events window, a single event and the calendar list serialize against your real data.
 - To look around before moving anything in, `php server/bin/demo-seed.php` fills an empty account with invented sample calendars, events and people, dated around today. It refuses to run once the account has events of its own.
 - CalDAV clients connect to `https://your-host/dav/` with your email and either your password or an API token (`php server/bin/token.php --create --name="My phone"`). See [caldav.md](caldav.md).

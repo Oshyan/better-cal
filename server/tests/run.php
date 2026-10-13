@@ -1495,17 +1495,20 @@ check('imip live event: equal sequence still allowed', $mayWhen('confirmed', 2)[
     try { $eventsA->copyTo(1, $picked, 0, 'all', null, '2026-12-10T09:00:00+00:00', null, true); } catch (HttpError $e) { $half = $e->status; }
     checkEq('drag copy: a start without an end is refused', 400, $half);
     // A "this and following" change reports the event that now holds the
-    // occurrence, so the app can keep it open (it used to go blank).
-    $seriesId = (int) $eventsA->create(1, $placeBase + ['title' => 'Daily sample', 'rrule' => 'FREQ=DAILY;COUNT=5'])['eventId'];
-    $splitter = $eventsA;
-    (new ReflectionProperty($splitter, 'splitEventId'))->setValue($splitter, null);
-    $splitter->setRelationship(1, $seriesId, 'maybe', 'all');
-    checkEq('split: a whole-series change creates nothing new', null, $splitter->splitEventId());
-    $splitter->setRelationship(1, $seriesId, 'planned', 'following', '2026-12-10T18:00:00+00:00');
-    $newSeries = $splitter->splitEventId();
-    check('split: "this and following" reports the new series that holds the occurrence',
-        $newSeries !== null && $newSeries !== $seriesId
-        && $adb->scalar('SELECT start_utc FROM events WHERE id = ?', [$newSeries]) === '2026-12-10 18:00:00');
+    // occurrence, so the app can keep it open (it used to go blank). Needs
+    // sabre/vobject to prove the occurrence (the install job runs it).
+    if (class_exists(\Sabre\VObject\Reader::class)) {
+        $seriesId = (int) $eventsA->create(1, $placeBase + ['title' => 'Daily sample', 'rrule' => 'FREQ=DAILY;COUNT=5'])['eventId'];
+        $splitter = $eventsA;
+        (new ReflectionProperty($splitter, 'splitEventId'))->setValue($splitter, null);
+        $splitter->setRelationship(1, $seriesId, 'maybe', 'all');
+        checkEq('split: a whole-series change creates nothing new', null, $splitter->splitEventId());
+        $splitter->setRelationship(1, $seriesId, 'planned', 'following', '2026-12-10T18:00:00+00:00');
+        $newSeries = $splitter->splitEventId();
+        check('split: "this and following" reports the new series that holds the occurrence',
+            $newSeries !== null && $newSeries !== $seriesId
+            && $adb->scalar('SELECT start_utc FROM events WHERE id = ?', [$newSeries]) === '2026-12-10 18:00:00');
+    }
     $full = $eventsA->serializeSingle($eventsA->get(1, $picked));
     checkEq('provenance: the single-event record says where its place came from', ['picked', 'photon'], [$full['locationSource'] ?? null, $full['locationProvider'] ?? null]);
     $adb->run("UPDATE users SET settings_json = '{\"tz\":\"UTC\",\"defaultCalendarId\":10}' WHERE id = 1");

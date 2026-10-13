@@ -31,6 +31,8 @@ jobs:
             exit 1
           fi
           php /tmp/composer outdated --working-dir=server --direct --locked --format=json > /tmp/composer-outdated.json
+      - name: Vendored libraries are the published releases
+        run: node scripts/vendor.mjs --check-upstream
       - name: Inspect vendored libraries and PHP image
         run: node scripts/dependency-status.mjs --json > /tmp/repo-dependencies.json
       - name: Open or refresh the review issue

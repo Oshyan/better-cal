@@ -4,63 +4,83 @@
     "preact.module.js": {
       "package": "preact",
       "version": "11.0.1",
+      "license": "MIT",
       "path": "dist/preact.mjs",
       "transform": "strip-sourcemap",
+      "upstreamSha256": "3a3201e9ccef7d30ef1273427f1b17ef8323e464b2c8d73b4fd5636af730433e",
       "sha256": "17598141bfddaf9bc74873b88e19e4cfee3605078752a3d693d15a57019865d4"
     },
     "hooks.module.js": {
       "package": "preact",
       "version": "11.0.1",
+      "license": "MIT",
       "path": "hooks/dist/hooks.mjs",
       "transform": "strip-sourcemap+preact-import",
+      "upstreamSha256": "6cb79fe9959ad185b8b86134aff47c12fd20216b24837597b19be59a133d9947",
       "sha256": "05c7f3fb9e18d49981672106420d5ca014a4023efee0439cabaebf0a6988e93b"
     },
     "htm.module.js": {
       "package": "htm",
       "version": "3.1.1",
+      "license": "Apache-2.0",
       "path": "dist/htm.module.js",
+      "upstreamSha256": "ab33dd3f38059b9be4d5f5350128eefb2356639c4e0bbe9d9e8b3ba75847e9e4",
       "sha256": "ab33dd3f38059b9be4d5f5350128eefb2356639c4e0bbe9d9e8b3ba75847e9e4"
     },
     "squire/squire-raw.js": {
       "package": "squire-rte",
       "version": "2.4.9",
+      "license": "MIT",
       "path": "dist/squire-raw.js",
+      "upstreamSha256": "e20befa153892153e92307989c4d09d18d6b35b3b61af52e991b246ed8abbab2",
       "sha256": "e20befa153892153e92307989c4d09d18d6b35b3b61af52e991b246ed8abbab2"
     },
     "squire/purify.min.js": {
       "package": "dompurify",
       "version": "3.4.17",
+      "license": "(MPL-2.0 OR Apache-2.0)",
       "path": "dist/purify.min.js",
+      "upstreamSha256": "cd37898f9782adf54820c413191b5691803f0f137c799d6edcfd38523b4c2c31",
       "sha256": "cd37898f9782adf54820c413191b5691803f0f137c799d6edcfd38523b4c2c31"
     },
     "leaflet/leaflet.js": {
       "package": "leaflet",
       "version": "1.9.4",
+      "license": "BSD-2-Clause",
       "path": "dist/leaflet.js",
+      "upstreamSha256": "db49d009c841f5ca34a888c96511ae936fd9f5533e90d8b2c4d57596f4e5641a",
       "sha256": "db49d009c841f5ca34a888c96511ae936fd9f5533e90d8b2c4d57596f4e5641a"
     },
     "leaflet/leaflet.css": {
       "package": "leaflet",
       "version": "1.9.4",
+      "license": "BSD-2-Clause",
       "path": "dist/leaflet.css",
+      "upstreamSha256": "a7837102824184820dfa198d1ebcd109ff6d0ff9a2672a074b9a1b4d147d04c6",
       "sha256": "a7837102824184820dfa198d1ebcd109ff6d0ff9a2672a074b9a1b4d147d04c6"
     },
     "leaflet/images/marker-icon.png": {
       "package": "leaflet",
       "version": "1.9.4",
+      "license": "BSD-2-Clause",
       "path": "dist/images/marker-icon.png",
+      "upstreamSha256": "574c3a5cca85f4114085b6841596d62f00d7c892c7b03f28cbfa301deb1dc437",
       "sha256": "574c3a5cca85f4114085b6841596d62f00d7c892c7b03f28cbfa301deb1dc437"
     },
     "leaflet/images/marker-icon-2x.png": {
       "package": "leaflet",
       "version": "1.9.4",
+      "license": "BSD-2-Clause",
       "path": "dist/images/marker-icon-2x.png",
+      "upstreamSha256": "00179c4c1ee830d3a108412ae0d294f55776cfeb085c60129a39aa6fc4ae2528",
       "sha256": "00179c4c1ee830d3a108412ae0d294f55776cfeb085c60129a39aa6fc4ae2528"
     },
     "leaflet/images/marker-shadow.png": {
       "package": "leaflet",
       "version": "1.9.4",
+      "license": "BSD-2-Clause",
       "path": "dist/images/marker-shadow.png",
+      "upstreamSha256": "264f5c640339f042dd729062cfc04c17f8ea0f29882b538e3848ed8f10edb4da",
       "sha256": "264f5c640339f042dd729062cfc04c17f8ea0f29882b538e3848ed8f10edb4da"
     }
   }

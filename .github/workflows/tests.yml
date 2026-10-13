@@ -96,6 +96,8 @@ jobs:
         run: node tools/mcp/test.mjs
       - name: CI dependency pins
         run: node scripts/check-ci-pins.mjs
+      - name: Vendored libraries match their pins and list
+        run: node scripts/vendor.mjs --verify
       - name: Dependency-watch reporting
         run: node scripts/tests/dependency-watch.mjs
       - name: Release manifest contract

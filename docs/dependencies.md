@@ -22,4 +22,4 @@ Non-security updates are still reviewed each week:
 
 Every accepted update keeps its lock, digest or committed-file hash in the same change and runs the complete automated suite. Dependency pull requests are not auto-merged, and a green advisory scan does not substitute for ordinary compatibility review.
 
-For committed browser libraries, change the version in `web/vendor/manifest.json`, run `node scripts/vendor.mjs --fetch <file>`, review the transformed file and hash, then run `node scripts/vendor.mjs --verify` and the frontend suites.
+For committed browser libraries, change the version in `web/vendor/manifest.json`, run `node scripts/vendor.mjs --fetch <file>`, review the transformed file and hashes, then run `node scripts/vendor.mjs --verify` and the frontend suites. `--fetch` records both the published file's fingerprint (`upstreamSha256`) and the committed one's (`sha256`), with the package's license, and rewrites `web/vendor/README.md`, the reviewer-facing list; `--verify` fails if that list is stale. `node scripts/vendor.mjs --check-upstream` re-downloads every pinned file and confirms the committed copy is that release with only its documented change.

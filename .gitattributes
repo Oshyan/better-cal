@@ -1,0 +1,4 @@
+# Published third-party releases (see web/vendor/README.md): GitHub marks them
+# vendored and leaves them out of the language stats.
+web/vendor/** linguist-vendored
+web/vendor/index.js -linguist-vendored

@@ -59,6 +59,7 @@ For a one-person project, taking security seriously means doing the work in publ
 - **The fixes reviewed too.** Three more passes looked for incomplete fixes, ways around them and anything they broke, and those were fixed as well (0.1.6 to 0.1.8).
 - **Published advisories.** The 2026-09-23 findings were published as GitHub security advisories; [SECURITY.md](SECURITY.md#past-advisories) lists each with the affected and fixed versions.
 - **Tests** run on every change and before every deploy, including regression tests for each security fix.
+- **Third-party code you can check.** The browser libraries are committed as their published releases, pinned by fingerprint; `node scripts/vendor.mjs --check-upstream` confirms every one against npm ([web/vendor/README.md](web/vendor/README.md)).
 
 [SECURITY.md](SECURITY.md) has the details: the risks I accepted rather than fixed, the trade-offs made on purpose (staying signed in on your own devices, for example, and what to do if one is lost), and how to report a problem privately.
 
@@ -73,7 +74,7 @@ MIT (see [LICENSE](LICENSE)). Use it, fork it, host it, sell it. If you build so
 ## Stack
 
 - **Server:** PHP 8.4+, MySQL 8 or MariaDB 10.6+, no framework. CalDAV via sabre/dav. A cron worker polls feeds, reads mail, sends reminders, ranks events and prunes old data.
-- **Web:** Preact and HTM served as-is (no build step), installable as an app.
+- **Web:** Preact and HTM served as-is (no build step), installable as an app. The libraries it uses are committed as published (some minified); [web/vendor/README.md](web/vendor/README.md) lists each with its version, license, upstream link and fingerprint, and one command re-checks them all against npm.
 - **Optional:** an LLM provider key for plain-language help, prompt filters and ranking; a MapTiler key for map tiles; SMTP for reminder email and RSVP replies.
 
 ## Docs

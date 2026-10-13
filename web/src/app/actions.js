@@ -451,6 +451,45 @@ export async function copyEventTo(occ, calendarId, scope) {
   }
 }
 
+// Duplicate (#96): a copy on the same calendar, opened in the editor with
+// its date ready to change. One occurrence of a series becomes a plain event.
+export async function duplicateEvent(occ) {
+  const cal = state.calendars.find((c) => c.id === occ.calendarId);
+  if (!cal || !cal.editable) { toast("This calendar can't take new events. Use Copy to another calendar instead.", { error: true }); return null; }
+  try {
+    const body = { duplicate: true, scope: occ.recurring ? 'this' : 'all' };
+    if (occ.recurring) body.instanceStart = occ.start;
+    const created = await api('/events/' + occ.eventId + '/copy', { method: 'POST', body });
+    refreshWindow();
+    set({ popover: null, editor: { mode: 'edit', occ: created, focus: 'date' } });
+    toast('Duplicated "' + (created.title || occ.title) + '". Set its new date.', { duration: 4000, undoable: cal.provider !== 'google', note: NO_UNDO });
+    return created;
+  } catch (e) {
+    toast('Duplicate failed: ' + e.message, { error: true });
+    return null;
+  }
+}
+
+// Option- or Alt-drag: a copy where the event was dropped; the original
+// stays. One occurrence of a series is copied as a plain event.
+export async function copyEventAt({ instanceId, newStart, newEnd }) {
+  const occ = state.occ.get(instanceId);
+  if (!occ) return false;
+  const cal = state.calendars.find((c) => c.id === occ.calendarId);
+  if (!cal || !cal.editable) { toast("This calendar can't take new events, so the copy wasn't made.", { error: true }); return false; }
+  try {
+    const body = { duplicate: true, scope: occ.recurring ? 'this' : 'all', start: newStart, end: newEnd };
+    if (occ.recurring) body.instanceStart = occ.start;
+    const created = await api('/events/' + occ.eventId + '/copy', { method: 'POST', body });
+    toast('Copied "' + (created.title || occ.title) + '"' + (cal.provider === 'google' ? ' (and at Google)' : ''), { undoable: cal.provider !== 'google', note: NO_UNDO });
+    refreshWindow();
+    return true;
+  } catch (e) {
+    toast('Copy failed: ' + e.message, { error: true });
+    return false;
+  }
+}
+
 const ATTENDANCE_CYCLE = ['none', 'interested', 'going', 'hidden'];
 const ATTENDANCE_TOASTS = {
   none: 'Attendance cleared',

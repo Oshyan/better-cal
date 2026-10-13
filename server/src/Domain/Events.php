@@ -965,14 +965,31 @@ final class Events
      * also how something crosses the Google boundary: copy, then delete the
      * original if a move was meant.
      */
-    public function copyTo(int $userId, int $id, int $targetCalendarId, string $scope = 'all', ?string $instanceStart = null): array
-    {
+    public function copyTo(
+        int $userId,
+        int $id,
+        int $targetCalendarId,
+        string $scope = 'all',
+        ?string $instanceStart = null,
+        ?string $start = null,
+        ?string $end = null,
+        bool $duplicate = false,
+    ): array {
         $event = $this->get($userId, $id);
-        if ($targetCalendarId === (int) $event['calendar_id']) {
+        if ($targetCalendarId <= 0 && $duplicate) {
+            $targetCalendarId = (int) $event['calendar_id'];
+        }
+        if ($targetCalendarId === (int) $event['calendar_id'] && !$duplicate) {
             throw HttpError::badRequest('That is the calendar it is already on');
+        }
+        if (($start === null) !== ($end === null)) {
+            throw HttpError::badRequest('start and end go together');
         }
         $source = $event;
         $series = !empty($event['rrule']) && empty($event['recurrence_parent_id']);
+        if ($series && $start !== null && $scope !== 'this') {
+            throw HttpError::badRequest('A copy at another time is one occurrence: send scope "this" with instanceStart');
+        }
         if ($series && $scope === 'this') {
             // One occurrence becomes a plain event: the override for that day
             // if there is one, else the master's content at the instance time.
@@ -1022,6 +1039,10 @@ final class Events
         }
         if ($event['source'] === 'local' && !empty($source['url'])) {
             $in['url'] = (string) $source['url'];
+        }
+        if ($start !== null) {
+            $in['start'] = $start;
+            $in['end'] = $end;
         }
         $copy = $this->create($userId, $in);
         // A copy made on purpose is not a duplicate of its source (#9).

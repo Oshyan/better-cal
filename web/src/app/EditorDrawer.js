@@ -479,7 +479,12 @@ export function EditorDrawer() {
   useEffect(() => {
     if (!editor || !form || focusedFor.current === editor) return;
     focusedFor.current = editor;
-    if (phoneOpen && editor.occ) return;
+    if (phoneOpen && editor.occ && editor.focus !== 'date') return;
+    // A duplicate opens on its date, selected, so typing replaces it.
+    if (editor.focus === 'date') {
+      const d = panelRef.current && panelRef.current.querySelector('.bc-when-date input');
+      if (d) { d.focus({ preventScroll: true }); try { d.select(); } catch { /* not a text box */ } return; }
+    }
     const el = panelRef.current && panelRef.current.querySelector(!editor.occ && !editor.restore ? '.bc-nl-input' : '.bc-ed-title');
     if (!el) return;
     el.focus({ preventScroll: true });

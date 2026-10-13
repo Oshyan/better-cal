@@ -99,7 +99,7 @@ function ReviewCard({ item, onChanged }) {
         }
       } else {
         toast(
-          accepted ? (d.method === 'CANCEL' ? 'Cancellation accepted' : 'Change applied') : 'Dismissed. Your calendar is unchanged',
+          accepted ? (d.method === 'CANCEL' ? (res && res.removed ? 'Cancellation accepted; the event was removed' : 'Cancellation accepted') : 'Change applied') : 'Dismissed. Your calendar is unchanged',
           { undoable: accepted && item.kind === 'invite_change' },
         );
       }

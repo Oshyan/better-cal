@@ -13,7 +13,7 @@ import { DeleteScope, ScopeChoice } from './DeleteScope.js';
 import { relationshipOptions, REL_LABEL } from './Relationship.js';
 import {
   deleteEvent, updateEvent, setRelationship, sendFeedback, enterReschedule, openDetail, openTripByEventId,
-  googleBacked, GOOGLE_NO_UNDO, toggleCalendarVisible, rsvpEvent, goBackTo, editFromView,
+  googleBacked, GOOGLE_NO_UNDO, toggleCalendarVisible, rsvpEvent, goBackTo, editFromView, duplicateEvent,
 } from './actions.js';
 import { describeRrule, MiniMap, useEventGeo, linkify } from './eventparts.js';
 import { EventPluginData } from './EventPluginData.js';
@@ -221,6 +221,7 @@ function sourceHost(url) {
 // (named, with its colour), and the site it came from (named by its address,
 // so nobody mistakes it for a page of this app). Delete last.
 function MoreMenu({ occ, cal, isFeed, onClose, onDelete, onCopy, phone = false, onMove = null }) {
+  const canDuplicate = !isFeed && cal && cal.editable;
   const ref = useRef(null);
   useEffect(() => onOutsidePress(insideAny(ref), onClose), []); // eslint-disable-line
   const item = (icon, label, fn, cls = '', note = null, chosen = false) => html`<button type="button" role=${chosen ? 'menuitemradio' : 'menuitem'} aria-checked=${chosen ? 'true' : undefined} disabled=${chosen} class=${'bc-es-mi ' + cls + (chosen ? ' is-on' : '')} onClick=${() => { onClose(); fn(); }}>
@@ -235,6 +236,7 @@ function MoreMenu({ occ, cal, isFeed, onClose, onDelete, onCopy, phone = false, 
     ${phone && !isFeed && onMove && item('reschedule', 'Move to another time', onMove)}
     ${phone && isFeed && !context && item(html`<${ThumbIcon} dir="up" size=${18} />`, 'More like this', () => sendFeedback(occ, 'up'), '', occ.feedback === 'up' ? 'Chosen' : null, occ.feedback === 'up')}
     ${phone && isFeed && !context && item(html`<${ThumbIcon} dir="down" size=${18} />`, 'Less like this', () => sendFeedback(occ, 'down'), '', occ.feedback === 'down' ? 'Chosen' : null, occ.feedback === 'down')}
+    ${canDuplicate && item('plus', 'Duplicate', () => duplicateEvent(occ), '', 'then set its date')}
     ${item('copy', 'Copy to another calendar…', onCopy)}
     ${cal && html`<hr />
       ${head(html`<i style=${'background:' + (cal.color || 'var(--border-strong)')}></i>Calendar: ${calName}`)}

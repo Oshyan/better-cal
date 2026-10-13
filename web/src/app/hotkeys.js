@@ -36,6 +36,9 @@ export const HOTKEYS = [
   { id: 'deleteEvent', keys: ['Delete', 'Backspace'], display: ['Del'], label: 'Delete event (popover or detail open)', group: 'Events' },
   { id: 'detailPrev', keys: ['['], label: 'Previous event that day (event open)', group: 'Events' },
   { id: 'detailNext', keys: [']'], label: 'Next event that day (event open)', group: 'Events' },
+  // Shown in the sheet only: a modifier held during a drag, read by DragController;
+  // keyboard.js ignores any key pressed with Alt, so this binds nothing.
+  { id: 'dragCopy', keys: ['Alt'], display: ['Option / Alt', 'drag'], label: 'Copy an event instead of moving it (hold while dragging)', group: 'Events' },
 
   // Overlays
   { id: 'palette', keys: ['k'], mod: true, display: ['⌘/Ctrl', 'K'], label: 'Command palette', group: 'Overlays' },

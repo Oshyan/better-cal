@@ -11,7 +11,7 @@ import {
   moveEvent, resizeEvent, sendFeedback, exitReschedule, googleBacked, setRelationship, showAllRel,
   jumpToDate, openDetail, effectiveOverviewMode,
   moveAvailabilitySpan, moveTrip, moveEventToCalendar, linkPersonToEvent, attachToTrip,
-  resizeAvailabilitySpanDays,
+  resizeAvailabilitySpanDays, copyEventAt, copyEventTo,
 } from './actions.js';
 import { groupOccurrences, itemMatchesFilter } from '../ui/grouping.js';
 import { collapseDuplicates } from '../ui/duplicates.js';
@@ -549,6 +549,8 @@ export function App() {
   }, []);
 
   const onDropToCalendar = useCallback((occ, calendarId, at) => {
+    // Option/Alt: copy onto that calendar instead of moving there.
+    if (at && at.copy) { copyEventTo(occ, calendarId, occ.recurring ? 'this' : 'all'); return; }
     if (occ.recurring && at) { promptScopeAt(at, (scope) => moveEventToCalendar(occ, calendarId, scope)); return; }
     moveEventToCalendar(occ, calendarId);
   }, [promptScopeAt]);
@@ -559,6 +561,8 @@ export function App() {
   }, [promptScopeAt]);
 
   const onMoveEventW = useCallback((p) => {
+    // Option/Alt held at the drop: a copy there, the original stays.
+    if (p.at && p.at.copy) { copyEventAt(p); return; }
     const occ = state.occ.get(p.instanceId);
     if (occ && occ.recurring && p.at) { promptScopeAt(p.at, (scope) => moveEvent({ ...p, scope }), occ); return; }
     moveEvent(p);

@@ -56,6 +56,9 @@ final class Settings
         // Sidebar list density: hide unchecked calendars/people from the list
         // itself. Purely a display preference; it never changes visibility.
         'sidebarActiveOnly' => false,
+        // Accepting an emailed cancellation deletes the event (with Undo)
+        // instead of keeping it struck through (#132).
+        'removeAcceptedCancellations' => false,
         'pluginHidden' => [],
         'tz' => null,
         // Where the owner's device last was (its IANA zone), reported by the
@@ -222,6 +225,7 @@ final class Settings
                 'defaultViewId' => self::positiveIntOrNull($key, $value),
                 'folderVisibility' => self::folderVisibility($value),
                 'sidebarActiveOnly' => self::bool($key, $value),
+                'removeAcceptedCancellations' => self::bool($key, $value),
                 'pluginHidden' => self::pluginHidden($value),
                 'tz' => self::tzid($value),
                 'hereTz' => self::tzid($value),

@@ -728,6 +728,14 @@ export function SettingsPage() {
       <//>
     </section>
     <section class="bc-set-section">
+      <h2 class="bc-set-h">Invitations</h2>
+      <${Row} label="Cancelled invitations" hint="When an organizer cancels, the cancellation waits in Review. Accepting it normally keeps the event, struck through, as a record. With this on, accepting removes it instead; Undo brings it back.">
+        <label class="bc-set-check"><input
+          type="checkbox" checked=${settings.removeAcceptedCancellations === true}
+          onChange=${(e) => save('removeAcceptedCancellations')(e.target.checked)}
+        /> Remove the event when you accept its cancellation</label>
+      <//>
+
       <h2 class="bc-set-h">Quick add</h2>
       <${Row} label="Natural language parsing" hint=${NL_HINTS[settings.nlParseMode] || ''}>
         <${Seg} label="Natural language parsing" value=${settings.nlParseMode}

@@ -35,6 +35,8 @@ window.addEventListener('click', (e) => {
 //   ghostOffset: {x, y}           ghost offset from pointer (default 8,8)
 //   scrollEl: Element | null      auto-scrolled near its top/bottom edges
 //   hScrollEl: Element | null     auto-scrolled near its left/right edges
+//   copyable: bool              Option/Alt held at the drop makes it a copy:
+//                                 onDrop gets pt.copy = true
 //   onLift(pt), onMove(pt), onDrop(pt), onCancel(), onTap?()
 //   pt = {x, y} in client coordinates
 // }
@@ -51,6 +53,12 @@ export function startPointerDrag(e, opts) {
 
   const gOff = opts.ghostOffset || { x: 8, y: 8 };
 
+  // Option (Mac) or Alt held during a drag makes the drop a copy. It is read
+  // live, so pressing or releasing it mid-drag changes the outcome, and the
+  // page shows which (body.bc-drag-copy).
+  let copyKey = !!e.altKey;
+  const showCopy = () => document.body.classList.toggle('bc-drag-copy', lifted && copyKey && !!opts.copyable);
+
   function lift() {
     if (lifted || done) return;
     lifted = true;
@@ -64,6 +72,7 @@ export function startPointerDrag(e, opts) {
     }
     document.body.classList.add('bc-dragging');
     if (isTouch && navigator.vibrate) { try { navigator.vibrate(10); } catch { /* not allowed */ } }
+    showCopy();
     if (opts.onLift) opts.onLift(lastPt);
     loop();
   }
@@ -94,6 +103,7 @@ export function startPointerDrag(e, opts) {
 
   function onMove(ev) {
     lastPt = { x: ev.clientX, y: ev.clientY };
+    if (ev.altKey !== copyKey) { copyKey = ev.altKey; showCopy(); }
     if (!lifted) {
       const dist = Math.hypot(ev.clientX - startX, ev.clientY - startY);
       if (isTouch) {
@@ -109,14 +119,15 @@ export function startPointerDrag(e, opts) {
     if (opts.onMove) opts.onMove(lastPt);
   }
 
-  function onUp() {
+  function onUp(ev) {
     if (done) return;
     const wasLifted = lifted;
+    if (ev && typeof ev.altKey === 'boolean') copyKey = ev.altKey;
     cleanup();
     if (wasLifted) {
       suppressClick = true;
       setTimeout(() => { suppressClick = false; }, 350);
-      if (opts.onDrop) opts.onDrop(lastPt);
+      if (opts.onDrop) opts.onDrop(copyKey && opts.copyable ? { ...lastPt, copy: true } : lastPt);
     } else if (opts.onTap) opts.onTap();
     else if (opts.onCancel) opts.onCancel();
   }
@@ -134,6 +145,7 @@ export function startPointerDrag(e, opts) {
 
   function onKey(ev) {
     if (ev.key === 'Escape') cancel();
+    else if (ev.key === 'Alt') { copyKey = ev.type === 'keydown'; showCopy(); if (lifted) ev.preventDefault(); }
   }
 
   function cancel() {
@@ -153,6 +165,8 @@ export function startPointerDrag(e, opts) {
     cancelAnimationFrame(raf);
     if (ghost) ghost.remove();
     document.body.classList.remove('bc-dragging');
+    document.body.classList.remove('bc-drag-copy');
+    window.removeEventListener('keyup', onKey, true);
     window.removeEventListener('pointermove', onMove);
     window.removeEventListener('pointerup', onUp);
     window.removeEventListener('pointercancel', cancel);
@@ -166,6 +180,7 @@ export function startPointerDrag(e, opts) {
   window.addEventListener('pointerup', onUp);
   window.addEventListener('pointercancel', cancel);
   window.addEventListener('keydown', onKey, true);
+  window.addEventListener('keyup', onKey, true);
   if (isTouch) {
     window.addEventListener('contextmenu', onContextMenu, true);
     window.addEventListener('touchmove', onTouchMove, { passive: false });

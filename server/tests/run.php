@@ -1439,6 +1439,21 @@ check('imip live event: equal sequence still allowed', $mayWhen('confirmed', 2)[
     $adb->run("INSERT INTO calendars (id, user_id, name, color, kind, plugin_id, position) VALUES (11, 1, 'Generated', '#8855aa', 'plugin', 'sample-feed', 10)");
     $adb->run("INSERT INTO calendars (id, user_id, name, color, kind, provider, position) VALUES (12, 1, 'External', '#558855', 'subscribed', 'google', 20)");
 
+    // #132: with the setting on, accepting an emailed cancellation removes the event, with Undo.
+    $cancelInvite = ['method' => 'REQUEST', 'organizer' => ['email' => 'alice@example.test', 'name' => 'Alice'], 'attendees' => [], 'sequence' => 1, 'myPartstat' => 'NEEDS-ACTION'];
+    $cancelNew = $queueA->holdNewInvitation(1, 'cancel-uid', ['title' => 'Called-off dinner'] + $fieldsA, $cancelInvite, 'alice@example.test');
+    $cancelEventId = (int) $queueA->accept(1, $cancelNew)['eventId'];
+    $cancelRow = $adb->one('SELECT * FROM events WHERE id = ?', [$cancelEventId]);
+    $cancelChange = $queueA->holdInviteChange(1, $cancelRow, 'cancel-uid', 'CANCEL', [], ['method' => 'CANCEL', 'sequence' => 2] + $cancelInvite, 'alice@example.test');
+    $priorSettings = $adb->scalar('SELECT settings_json FROM users WHERE id = 1');
+    $adb->run("UPDATE users SET settings_json = '{\"removeAcceptedCancellations\":true}' WHERE id = 1");
+    $cancelResult = $queueA->accept(1, $cancelChange);
+    checkEq('cancellation: with the setting on, accepting it removes the event and says so', [true, true],
+        [!empty($cancelResult['removed']), $adb->scalar('SELECT deleted_at FROM events WHERE id = ?', [$cancelEventId]) !== null]);
+    check('cancellation: the removal is an ordinary delete in Activity, with a snapshot to undo',
+        $adb->scalar("SELECT before_json FROM mutations WHERE entity_id = ? AND op = 'delete' ORDER BY id DESC LIMIT 1", [$cancelEventId]) !== null);
+    $adb->run('UPDATE users SET settings_json = ? WHERE id = 1', [$priorSettings]);
+
     // Where an event's coordinates came from (migration 048).
     $prov = static fn(int $id): array => $adb->one('SELECT location_source AS s, location_provider AS p, location_placed_at IS NOT NULL AS t FROM events WHERE id = ?', [$id]);
     $placeBase = ['calendarId' => 10, 'start' => '2026-12-08T18:00:00+00:00', 'end' => '2026-12-08T19:00:00+00:00', 'allDay' => false, 'tzid' => 'UTC'];
@@ -1463,6 +1478,22 @@ check('imip live event: equal sequence still allowed', $mayWhen('confirmed', 2)[
     checkEq('provenance: a copy of coordinates of unknown origin stays unknown', ['s' => null, 'p' => null, 't' => 1], $prov($copied));
     $copiedPick = (int) $eventsA->copyTo(1, $picked, 13)['eventId'];
     checkEq('provenance: a copy keeps where its coordinates came from', ['s' => 'picked', 'p' => 'photon', 't' => 1], $prov($copiedPick));
+    // Duplicate (#96) and Option-drag: a copy on the same calendar, optionally at another time.
+    $refused = null;
+    try { $eventsA->copyTo(1, $picked, 10); } catch (HttpError $e) { $refused = $e->status; }
+    checkEq('copy: onto its own calendar is refused unless asked as a duplicate', 400, $refused);
+    $dup = (int) $eventsA->copyTo(1, $picked, 0, 'all', null, null, null, true)['eventId'];
+    checkEq('duplicate: same calendar, same content and time, a new event', [10, 'Picked place', '2026-12-08 18:00:00', true],
+        [(int) $adb->scalar('SELECT calendar_id FROM events WHERE id = ?', [$dup]), $adb->scalar('SELECT title FROM events WHERE id = ?', [$dup]),
+         $adb->scalar('SELECT start_utc FROM events WHERE id = ?', [$dup]), $dup !== $picked]);
+    $dropped = (int) $eventsA->copyTo(1, $picked, 0, 'all', null, '2026-12-10T09:00:00+00:00', '2026-12-10T10:00:00+00:00', true)['eventId'];
+    checkEq('drag copy: the copy lands at the dropped time; the original stays',
+        ['2026-12-10 09:00:00', '2026-12-10 10:00:00', '2026-12-08 18:00:00'],
+        [$adb->scalar('SELECT start_utc FROM events WHERE id = ?', [$dropped]), $adb->scalar('SELECT end_utc FROM events WHERE id = ?', [$dropped]),
+         $adb->scalar('SELECT start_utc FROM events WHERE id = ?', [$picked])]);
+    $half = null;
+    try { $eventsA->copyTo(1, $picked, 0, 'all', null, '2026-12-10T09:00:00+00:00', null, true); } catch (HttpError $e) { $half = $e->status; }
+    checkEq('drag copy: a start without an end is refused', 400, $half);
     $full = $eventsA->serializeSingle($eventsA->get(1, $picked));
     checkEq('provenance: the single-event record says where its place came from', ['picked', 'photon'], [$full['locationSource'] ?? null, $full['locationProvider'] ?? null]);
     $adb->run("UPDATE users SET settings_json = '{\"tz\":\"UTC\",\"defaultCalendarId\":10}' WHERE id = 1");

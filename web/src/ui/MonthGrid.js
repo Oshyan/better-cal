@@ -461,6 +461,9 @@ export function MonthGrid({
     startPointerDrag(ev, {
       makeGhost: () => cloneAsGhost(src),
       scrollEl: scrollRef.current,
+      // Option/Alt copies an ordinary event (not a trip, a person's away
+      // time or a plugin band) on a calendar that takes new events.
+      copyable: !isFeed && !occ.isContainer && !/^(avail|plg):/.test(String(occ.instanceId)),
       onMove: (pt) => {
         if (extKinds) {
           const ext = externalDropTarget(pt, extKinds);

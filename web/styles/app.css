@@ -942,6 +942,14 @@ button.bc-hidden-mark { cursor: pointer; }
   pointer-events: none; opacity: 0.85; box-shadow: var(--shadow);
   will-change: transform;
 }
+/* Option/Alt-drag copies (DragController): the original stays as it is,
+   the cursor says copy, and the ghost carries a +. */
+body.bc-drag-copy, body.bc-drag-copy * { cursor: copy !important; }
+body.bc-drag-copy .is-drag-source { opacity: 1; }
+body.bc-drag-copy .bc-drag-ghost::after {
+  content: '+'; position: absolute; top: 2px; right: 2px; width: 16px; height: 16px; border-radius: 50%;
+  background: var(--accent); color: #fff; font: 700 13px/16px system-ui, sans-serif; text-align: center;
+}
 /* Ghost for dragging a person out of the sidebar: a floating name pill. */
 .bc-drag-personpill {
   background: var(--bg-raised); border: 1px solid var(--border-strong);

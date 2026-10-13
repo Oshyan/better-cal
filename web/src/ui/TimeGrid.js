@@ -815,6 +815,7 @@ export function TimeGrid({
       ghostOffset: { x: 10, y: -8 },
       scrollEl: scrollRef.current,
       hScrollEl: infinite ? hscrollRef.current : null,
+      copyable: !isFeed && !occ.isContainer,
       onLift: () => src.classList.add('is-drag-source'),
       onMove: (pt) => {
         if (extKinds) {

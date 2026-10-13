@@ -681,6 +681,14 @@ final class ReviewQueue
             $this->events->patch($userId, $eventId, $patch);
             MailIngest::storeInvite($this->db, $eventId, $incoming === [] ? null : $incoming, true);
             $this->close((int) $row['id'], 'accepted');
+            // The owner's choice (#132): an accepted cancellation removes the
+            // event right away, as an ordinary delete with Undo, instead of
+            // leaving it struck through.
+            $removed = false;
+            if ($method === 'CANCEL' && (new Settings($this->db))->forUser($userId)['removeAcceptedCancellations'] === true) {
+                $this->events->deleteEvent($userId, $eventId, null, null);
+                $removed = true;
+            }
             if ($wasParallelLegacyCandidate) {
                 // This explicit owner choice establishes the organizer anchor.
                 // Every competing pre-anchor claim for the UID is now stale.
@@ -689,13 +697,13 @@ final class ReviewQueue
                     [Time::nowDb(), $userId, self::KIND_INVITE_CHANGE, (string) $row['source_key']]
                 );
             }
-            return ['eventId' => $eventId];
+            return ['eventId' => $eventId, 'removed' => $removed];
         }));
         if (isset($result['error'])) {
             throw HttpError::conflict((string) $result['error'], (string) $result['message']);
         }
         $row = $this->db->one('SELECT * FROM review_items WHERE id = ?', [$id]);
-        return ['item' => self::serialize($row ?? []), 'eventId' => (int) $result['eventId']];
+        return ['item' => self::serialize($row ?? []), 'eventId' => (int) $result['eventId']] + (!empty($result['removed']) ? ['removed' => true] : []);
     }
 
     /**

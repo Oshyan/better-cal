@@ -71,8 +71,12 @@ final class EventsController
     /** POST /events/:id/copy {calendarId, scope?: this|all, instanceStart?} -> the new event's occurrence */
     public function copy(Request $req, array $params): Response
     {
+        // duplicate: a copy on the same calendar (Duplicate, Option-drag);
+        // calendarId may then be left out. start/end place the copy at
+        // another time (where it was dropped).
+        $duplicate = ($req->body['duplicate'] ?? false) === true;
         $calendarId = (int) ($req->body['calendarId'] ?? 0);
-        if ($calendarId <= 0) {
+        if ($calendarId <= 0 && !$duplicate) {
             throw HttpError::badRequest('calendarId is required');
         }
         $scope = (string) ($req->str('scope') ?? 'all');
@@ -80,7 +84,8 @@ final class EventsController
             throw HttpError::badRequest('scope must be this|all');
         }
         try {
-            $occurrence = $this->events->copyTo((int) $req->user['id'], (int) $params['id'], $calendarId, $scope, $req->str('instanceStart'));
+            $occurrence = $this->events->copyTo((int) $req->user['id'], (int) $params['id'], $calendarId, $scope, $req->str('instanceStart'),
+                $req->str('start'), $req->str('end'), $duplicate);
         } catch (\InvalidArgumentException $e) {
             throw HttpError::badRequest($e->getMessage());
         }

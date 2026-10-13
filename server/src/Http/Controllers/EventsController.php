@@ -99,7 +99,7 @@ final class EventsController
         } catch (\InvalidArgumentException $e) {
             throw HttpError::badRequest($e->getMessage());
         }
-        return Response::json(['ok' => true]);
+        return Response::json(['ok' => true] + self::split($this->events));
     }
 
     public function delete(Request $req, array $params): Response
@@ -140,7 +140,7 @@ final class EventsController
             $scope,
             $req->str('instanceStart')
         );
-        return Response::json(['ok' => true]);
+        return Response::json(['ok' => true] + self::split($this->events));
     }
 
     public function attendance(Request $req, array $params): Response
@@ -156,7 +156,7 @@ final class EventsController
             $scope,
             $req->str('instanceStart')
         );
-        return Response::json(['ok' => true]);
+        return Response::json(['ok' => true] + self::split($this->events));
     }
 
     // ---- Trip links ---------------------------------------------------
@@ -194,5 +194,18 @@ final class EventsController
             (string) ($req->str('signal') ?? '')
         );
         return Response::json(['ok' => true, 'feedback' => $feedback]);
+    }
+
+    /**
+     * After a 'following' split, the event that now holds the occurrence the
+     * owner acted on: {splitEventId}. Its instanceId is that id plus the
+     * occurrence's start, so a client can keep it open.
+     *
+     * @return array{splitEventId?:int}
+     */
+    private static function split(?Events $events): array
+    {
+        $id = $events?->splitEventId();
+        return $id !== null ? ['splitEventId' => $id] : [];
     }
 }

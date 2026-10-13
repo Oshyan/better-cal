@@ -21,6 +21,18 @@ final class Events
     // a week.
     private const NEW_WINDOW_HOURS = 24;
     private const SCOPES = ['this', 'following', 'all'];
+
+    /**
+     * The event a 'following' split created in this request: the occurrence
+     * the owner had open now belongs to it, under a new id. Endpoints return
+     * it so a client can keep that occurrence open instead of a gone one.
+     */
+    private ?int $splitEventId = null;
+
+    public function splitEventId(): ?int
+    {
+        return $this->splitEventId;
+    }
     private const ATTENDANCE = ['none', 'interested', 'going', 'hidden'];
     private const WINDOW_SIZE_SQL = "LENGTH(COALESCE(uid, '')) + LENGTH(COALESCE(title, ''))
         + LENGTH(COALESCE(description, '')) + LENGTH(COALESCE(location, '')) + LENGTH(COALESCE(url, ''))
@@ -319,6 +331,7 @@ final class Events
         $row = $this->google()->rowByGoogleId((int) $calendar['id'], (string) ($created['id'] ?? ''));
         if ($row !== null) {
             $rowId = (int) $row['id'];
+            $this->splitEventId = $rowId;
             $this->db->tx(function () use ($rowId, $userId, $localFields, $in): void {
                 if ($localFields !== []) {
                     $this->db->update('events', $localFields + ['updated_at' => Time::nowDb()], 'id = ?', [$rowId]);
@@ -1755,6 +1768,7 @@ final class Events
         );
         ChangeLog::record($this->db, (int) $master['calendar_id'], (string) $master['uid'], ChangeLog::OP_MODIFY);
         ChangeLog::record($this->db, (int) $created['calendar_id'], (string) $created['uid'], ChangeLog::OP_ADD);
+        $this->splitEventId = (int) $newId;
         return $newId;
     }
 

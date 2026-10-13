@@ -387,6 +387,26 @@ export async function createEvent(fields) {
   }
 }
 
+// A "this and following" change splits the series: the occurrence that was
+// open now belongs to the new event (splitEventId), under a new instanceId.
+// Once the window has refreshed, point the open panel (and the event the
+// editor returns to) at it, so it stays open and shows the change instead of
+// going blank. Call after refreshWindow() has settled.
+function followSplit(occ, res) {
+  if (!res || !res.splitEventId) return;
+  const atOld = (p) => p && p.instanceId === occ.instanceId;
+  if (!atOld(state.popover) && !(state.editor && atOld(state.editor.returnTo))) return;
+  const t = new Date(occ.start).getTime();
+  const mine = [...state.occ.values()].filter((o) => o.eventId === res.splitEventId)
+    .sort((a, b) => new Date(a.start) - new Date(b.start));
+  const next = mine.find((o) => new Date(o.start).getTime() === t) || mine[0];
+  if (!next) return;
+  const patch = {};
+  if (atOld(state.popover)) patch.popover = { ...state.popover, instanceId: next.instanceId };
+  if (state.editor && atOld(state.editor.returnTo)) patch.editor = { ...state.editor, returnTo: { ...state.editor.returnTo, instanceId: next.instanceId } };
+  set(patch);
+}
+
 export async function updateEvent(occ, fields, scope) {
   const body = { ...fields };
   if (occ.recurring) {
@@ -394,12 +414,13 @@ export async function updateEvent(occ, fields, scope) {
     body.instanceStart = occ.start;
   }
   try {
-    await api('/events/' + occ.eventId, { method: 'PATCH', body });
+    const res = await api('/events/' + occ.eventId, { method: 'PATCH', body });
     // Tags, people, reminders and attendance are local even on a Google event; only content edits go to Google.
     const wentToGoogle = googleBacked(occ) && Object.keys(fields).some((k) => !['tagNames', 'personIds', 'personNames', 'reminders'].includes(k));
     toast(wentToGoogle ? 'Event updated at Google' : 'Event updated', { undoable: !wentToGoogle, note: NO_UNDO });
     invalidateRecords(occ.eventId); // its description/reminders/rule may be what changed
     await refreshWindow();
+    followSplit(occ, res);
     return true;
   } catch (e) {
     // Clearing the trip flag while events are still attached: the server
@@ -515,11 +536,12 @@ export async function setRelationship(occ, relationship, scope) {
   try {
     const body = { relationship };
     if (occ.recurring) { body.scope = scope || (mine ? 'all' : 'all'); body.instanceStart = occ.start; }
-    await api('/events/' + occ.eventId + '/relationship', { method: 'POST', body });
+    const res = await api('/events/' + occ.eventId + '/relationship', { method: 'POST', body });
     const label = { planned: 'Planned', maybe: 'Maybe', available: 'Available', hidden: 'Hidden' }[relationship] || relationship;
     const google = mine && googleBacked(occ);
     toast(relationship === 'hidden' ? 'Hidden' : label + (google ? ' (at Google)' : ''), { undoable: !google, note: NO_UNDO });
-    if (relationship === 'hidden' || occ.recurring || mine) refreshWindow();
+    if (res && res.splitEventId) refreshWindow().then(() => followSplit(occ, res));
+    else if (relationship === 'hidden' || occ.recurring || mine) refreshWindow();
     return relationship;
   } catch (e) {
     restoreOccurrence(occ.instanceId, before);
@@ -552,12 +574,13 @@ export async function setAttendance(occ, attendance, scope) {
   try {
     const body = { attendance };
     if (occ.recurring) { body.scope = scope || 'all'; body.instanceStart = occ.start; }
-    await api('/events/' + occ.eventId + '/attendance', { method: 'POST', body });
+    const res = await api('/events/' + occ.eventId + '/attendance', { method: 'POST', body });
     toast(ATTENDANCE_TOASTS[attendance] || 'Attendance updated', { undoable: true });
     // Hidden events leave the window payload on the next fetch, and a series
     // answer changes more than this one occurrence; refresh so the cache
     // agrees with the server (undo refreshes again to restore).
-    if (attendance === 'hidden' || occ.recurring) refreshWindow();
+    if (res && res.splitEventId) refreshWindow().then(() => followSplit(occ, res));
+    else if (attendance === 'hidden' || occ.recurring) refreshWindow();
     return attendance;
   } catch (e) {
     restoreOccurrence(occ.instanceId, before);

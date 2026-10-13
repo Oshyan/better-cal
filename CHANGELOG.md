@@ -4,6 +4,12 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.71 (2026-10-13)
+
+- **An open repeating event stays open after a "this and following" change.** Setting Planned or Maybe (or editing) with "This and following" splits the series, and the occurrence you had open moved to the new part under a new id, so the side panel went blank and stayed open. It now follows the occurrence to its new series and shows it with the change.
+
+Operators: no migration. Event PATCH, relationship and attendance responses carry `splitEventId` after a "following" split.
+
 ## 0.9.70 (2026-10-12)
 
 - **Option/Alt-drag copying works**, and so does **dropping an event onto a calendar or person in the sidebar**. The week, day and month grids were told every event was read-only (their calendar list left out whether a calendar can be edited), so both were quietly refused. The sidebar drops had been broken since Google write-through arrived.

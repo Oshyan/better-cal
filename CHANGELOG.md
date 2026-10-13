@@ -4,6 +4,12 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.73 (2026-10-13)
+
+- **The event panel's header names the year too** when the day isn't in this one (it said "Sat, Oct 8" above a 2011 event), and the highlighted year in the date line sits closer to its comma.
+
+Operators: no migration.
+
 ## 0.9.72 (2026-10-13)
 
 - **Past events aren't looked up for the map any more.** Connecting or importing a calendar sent every address in its history, back a decade or more, to the place lookup service, and filled Activity with addresses it couldn't place. Only upcoming events (and repeating ones still going) are placed in the background now; a past event you open is still placed then. Settings, Location & maps, "Look up addresses for past events too" brings back the old behavior.

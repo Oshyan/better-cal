@@ -28,7 +28,7 @@ import { isMobile, trapFocus, MOBILE_QUERY } from '../ui/DayExpand.js';
 import { ThumbIcon, PinIcon, LinkIcon, Icon } from '../ui/icons.js';
 import { DurationSuffix } from '../ui/EventChip.js';
 import {
-  parseISO, dateOfDayKey, fmtRange, eventDuration, toInputValue, fromInputValue, toISOWithOffset, occDayKey,
+  parseISO, dateOfDayKey, todayKey, fmtRange, eventDuration, toInputValue, fromInputValue, toISOWithOffset, occDayKey,
   allDayFields, allDayInputs,
 } from '../lib/dates.js';
 import { fmtReminder } from '../lib/reminders.js';
@@ -488,7 +488,7 @@ export function EventPopover() {
           disabled=${nav.index <= 0} onClick=${() => goSheet(nav.index - 1)}
         ><${Icon} name="chevronLeft" size=${20} /></button>
         <span class="bc-sheet-where">
-          <span class="bc-sheet-day">${dateOfDayKey(navDay).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}${nav.list.length > 1 ? ' \u00b7 ' + (nav.index + 1) + ' of ' + nav.list.length : ''}</span>
+          <span class="bc-sheet-day">${dateOfDayKey(navDay).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', ...(navDay.slice(0, 4) !== todayKey().slice(0, 4) ? { year: 'numeric' } : {}) })}${nav.list.length > 1 ? ' \u00b7 ' + (nav.index + 1) + ' of ' + nav.list.length : ''}</span>
           ${nav.list.length > 1 && nav.list.length <= 12 && html`<span class="bc-sheet-dots" aria-hidden="true">${nav.list.map((o, i) => html`<i key=${o.instanceId} class=${i === nav.index ? 'is-on' : ''}></i>`)}</span>`}
         </span>
         <button

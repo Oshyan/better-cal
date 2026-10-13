@@ -25,6 +25,12 @@ use BetterCal\Support\Time;
  * cost nothing and are not throttled. A transport failure stops the run
  * rather than stamping a month of "could not place" onto rows that were
  * never actually tried.
+ *
+ * Past events are skipped unless the owner turns placePastEvents on.
+ * Connecting or importing a calendar brings years of history, and every
+ * address in it cost a lookup for a map nobody opens. Opening a past event
+ * still places it on the spot (GET /geocode), and a series that is still
+ * running counts as upcoming however long ago it began.
  */
 final class GeocodeSweep
 {
@@ -84,17 +90,54 @@ final class GeocodeSweep
     /** Cheap gate so the worker can skip enqueueing when there is nothing to do. */
     public function hasCandidates(): bool
     {
+        [$when, $whenParams] = $this->whenSql();
         return $this->db->scalar(
             "SELECT 1 FROM events WHERE deleted_at IS NULL AND location_lat IS NULL
                AND location IS NOT NULL AND location <> ''
-               AND (geocoded_at IS NULL OR geocoded_at < ?) LIMIT 1",
-            [$this->retryCutoff()]
+               AND (geocoded_at IS NULL OR geocoded_at < ?) AND $when LIMIT 1",
+            [$this->retryCutoff(), ...$whenParams]
         ) !== null;
     }
 
     /**
-     * One run. Upcoming events first (soonest first), then the past (most
-     * recent first), so the map is ready for anything you are about to open.
+     * Which rows are worth a lookup by date: upcoming ones (not yet ended, or
+     * a series whose UNTIL has not passed; a COUNT-bounded series counts as
+     * running) for everyone, and past ones too for owners who asked for them.
+     *
+     * @return array{0:string,1:list<mixed>}
+     */
+    private function whenSql(): array
+    {
+        $now = Time::nowUtc();
+        $sql = "(end_utc >= ? OR (rrule IS NOT NULL AND rrule <> ''
+                   AND (rrule NOT LIKE '%UNTIL=%'
+                        OR SUBSTRING_INDEX(SUBSTRING_INDEX(rrule, 'UNTIL=', -1), ';', 1) >= ?)))";
+        $params = [$now->format('Y-m-d H:i:s'), $now->format('Ymd')];
+        $past = $this->pastUsers();
+        if ($past !== []) {
+            [$in, $inParams] = Db::in($past);
+            $sql = "($sql OR user_id IN $in)";
+            $params = [...$params, ...$inParams];
+        }
+        return [$sql, $params];
+    }
+
+    /** Owners who turned placePastEvents on. @return list<int> */
+    private function pastUsers(): array
+    {
+        $out = [];
+        foreach ($this->db->all('SELECT id FROM users') as $u) {
+            if (($this->settings->forUser((int) $u['id'])['placePastEvents'] ?? false) === true) {
+                $out[] = (int) $u['id'];
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * One run. Upcoming events first (soonest first), then running series
+     * and, for owners who asked, the past (most recent first), so the map is
+     * ready for anything you are about to open.
      *
      * @return array{groups:int,lookups:int,resolved:int,unplaced:int,transient:bool,seconds:float}
      */
@@ -103,16 +146,17 @@ final class GeocodeSweep
         $t0 = microtime(true);
         $stats = ['groups' => 0, 'lookups' => 0, 'resolved' => 0, 'unplaced' => 0, 'transient' => false, 'seconds' => 0.0];
 
+        [$when, $whenParams] = $this->whenSql();
         $rows = $this->db->all(
             "SELECT id, user_id, location, tzid FROM events
              WHERE deleted_at IS NULL AND location_lat IS NULL
                AND location IS NOT NULL AND location <> ''
-               AND (geocoded_at IS NULL OR geocoded_at < ?)
+               AND (geocoded_at IS NULL OR geocoded_at < ?) AND $when
              ORDER BY (start_utc >= UTC_TIMESTAMP()) DESC,
                       CASE WHEN start_utc >= UTC_TIMESTAMP() THEN start_utc END ASC,
                       start_utc DESC
              LIMIT " . self::SCAN_LIMIT,
-            [$this->retryCutoff()]
+            [$this->retryCutoff(), ...$whenParams]
         );
 
         // Group by user + address, preserving the priority order of first

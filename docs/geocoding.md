@@ -9,6 +9,7 @@ Better-Cal turns locations into coordinates for two different jobs, and they hav
 **Single-pin lookup (behind the scenes).** Plenty of events arrive with a location as text and no coordinates: feeds, Google calendars, imports, email, plugins, or a location you typed without picking from the list. For those, Better-Cal resolves the text to one best point (`GET /geocode`):
 
 - A background sweep runs every minute and places any event that has a location but no coordinates, upcoming events first, one network lookup per second.
+- Past events are skipped unless Settings, Location & maps, "Look up addresses for past events too" is on (`placePastEvents`). Connecting or importing a calendar brings years of history, and placing all of it costs a lookup per address for maps nobody opens. A repeating event whose rule hasn't ended counts as upcoming however long ago it began, and a past event you open is still placed then.
 - The event panel looks it up on open if the sweep hasn't reached it yet.
 - Plugins can ask for it.
 

@@ -19,7 +19,7 @@ import { describeRrule, MiniMap, useEventGeo, linkify } from './eventparts.js';
 import { EventPluginData } from './EventPluginData.js';
 import { Icon, ThumbIcon, PinIcon } from '../ui/icons.js';
 import { DurationSuffix } from '../ui/EventChip.js';
-import { fmtRange, zoneNote, fmtDateFull, fmtTime, parseISO, startMs } from '../lib/dates.js';
+import { fmtRangeParts, zoneNote, fmtDateFull, fmtTime, parseISO, startMs } from '../lib/dates.js';
 import { fmtReminder } from '../lib/reminders.js';
 import { stripToText, hasHtml, sanitizeHtml } from '../lib/richtext.js';
 import { gmapsUrl, isPendingLocation } from '../lib/maps.js';
@@ -361,7 +361,7 @@ export function EventSheetBody({ occ, cal, isFeed, full, panel = false, onFull, 
       <div class="bc-es-row">
         <${Icon} name="clock" size=${20} />
         <div class="bc-es-rt">
-          <span class="bc-date-duration">${fmtRange(s, e, occ.allDay)} <${DurationSuffix} occ=${occ} expanded /></span>
+          <span class="bc-date-duration">${fmtRangeParts(s, e, occ.allDay).map((p) => p.year ? html`<strong class="bc-es-year">${p.text}</strong>` : p.text)} <${DurationSuffix} occ=${occ} expanded /></span>
           ${(occ.recurring || zoneNote(occ)) && html`<small>${[occ.recurring ? describeRrule(occ.rrule) : null, zoneNote(occ)].filter(Boolean).join(' · ')}</small>`}
         </div>
       </div>

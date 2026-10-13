@@ -129,7 +129,7 @@ Server config: VAPID keys in `.env` (`BETTERCAL_VAPID_PUBLIC`, `BETTERCAL_VAPID_
 
 ## Settings
 User preferences stored in `users.settings_json`. The server stores and validates; enforcement is client-side except where the table's notes say the server uses a key (`nlParseMode` in `/quickadd`, the reminder keys in the reminder scan, `tz` and `hereTz`). Reads always return stored values merged over defaults; keys never set come back as their defaults. Settings changes are not undoable via `POST /undo`.
-- `GET /settings` → `{settings:{defaultView, defaultViewId, weekStart, timeFormat, defaultCalendarId, theme, nlParseMode, notifyChannel, notifyEmail, notifyEmailToken, overviewMode, folderVisibility, sidebarActiveOnly, removeAcceptedCancellations, pluginHidden, tz, hereTz, reminderTimed, reminderAllDay, homeLat, homeLng, homeLabel, mapStyle, welcomeDone, welcomeSteps}}`.
+- `GET /settings` → `{settings:{defaultView, defaultViewId, weekStart, timeFormat, defaultCalendarId, theme, nlParseMode, notifyChannel, notifyEmail, notifyEmailToken, overviewMode, folderVisibility, sidebarActiveOnly, removeAcceptedCancellations, pluginHidden, tz, hereTz, reminderTimed, reminderAllDay, homeLat, homeLng, homeLabel, mapStyle, placePastEvents, welcomeDone, welcomeSteps}}`.
 - `PATCH /settings` (any subset of the keys below) → `{settings:{...}}` (the full merged object). Unknown keys → 400 `unknown_setting`; invalid values → 400.
 
 | Key | Values | Default | Notes |
@@ -159,6 +159,7 @@ User preferences stored in `users.settings_json`. The server stores and validate
 | `homeLng` | number -180..180 or `null` | `null` | home location longitude |
 | `homeLabel` | string (≤200) or `null` | `null` | display name for the home location (Settings page only) |
 | `mapStyle` | `streets-v2`\|`dataviz`\|`outdoor-v2`\|`bright-v2` | `streets-v2` | MapTiler raster style for the event detail mini-map; only used when the server has `BETTERCAL_MAPTILER_KEY` configured (see `GET /config`) |
+| `placePastEvents` | boolean | `false` | the background geocoder also looks up addresses of events that have already ended (a running series counts as upcoming either way) |
 
 ## Saved views
 Named snapshots of client view state; `config` is client-defined: `{viewType, visibleCalendarIds, folderCollapse, filterText, hideRel, anchor:"today"|dayKey}`. `hideRel` lists the relationships the Show filter switches off (`planned|maybe|available|context`); absent or empty means show all.

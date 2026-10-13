@@ -77,6 +77,9 @@ final class Settings
         // MapTiler raster style for the event detail mini-map (used only when
         // BETTERCAL_MAPTILER_KEY is configured; OSM tiles otherwise).
         'mapStyle' => 'streets-v2',
+        // Background address lookups for events that have already ended
+        // (GeocodeSweep). Off: imported history is not worth a lookup each.
+        'placePastEvents' => false,
         // First-run welcome (0.9.2, #79). Done unless an account starts
         // without it: seed.php creates new accounts with false, so existing
         // accounts never see it. welcomeSteps: the "where to start" items
@@ -235,6 +238,7 @@ final class Settings
                 'homeLng' => self::coordinate($key, $value, 180.0),
                 'homeLabel' => self::label($key, $value),
                 'mapStyle' => self::enum($key, $value, self::MAP_STYLES),
+                'placePastEvents' => self::bool($key, $value),
                 'welcomeDone' => self::bool($key, $value),
                 'welcomeSteps' => self::welcomeSteps($value),
                 default => throw HttpError::badRequest("Unknown setting '$key'", 'unknown_setting'),

@@ -269,9 +269,15 @@ export function mergeWindow(startISO, endISO, events) {
   // Drop cached occurrences whose start falls in the window, then reinsert,
   // carrying fetched record fields over from the previous copy (invalidate
   // first when the refresh follows an edit of that event, see actions.js).
+  // An event opened from outside the window (Activity, a notification, a
+  // trip) can be on a hidden calendar, which the window never returns:
+  // dropping it here left its open panel blank. It stays while it is open.
+  const open = state.popover && state.popover.instanceId;
+  const kept = open && state.occ.get(open)?._held && !events.some((ev) => ev.instanceId === open) ? open : null;
   const prior = new Map();
   for (const [id, occ] of state.occ) {
     const t = new Date(occ.start).getTime();
+    if (id === kept) continue;
     if (t >= s && t < e && !occ._optimistic) {
       if (occ.full) prior.set(id, occ);
       state.occ.delete(id);
@@ -387,8 +393,9 @@ function mergeRanges(ranges) {
 // deep links). Deliberately does NOT register a loaded range: the occurrence
 // may come from an includeHidden fetch, and views must still do a full load
 // for that range later.
+// An occurrence fetched on its own, to open (see mergeWindow).
 export function insertOccurrence(occ) {
-  state.occ.set(occ.instanceId, occ);
+  state.occ.set(occ.instanceId, { ...occ, _held: true });
   set({ occVersion: state.occVersion + 1 });
 }
 

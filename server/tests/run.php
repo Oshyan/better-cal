@@ -5919,6 +5919,26 @@ checkEq(
     check('sweep: a plain address is an address', !GeocodeSweep::isUrlLocation('12 Rua Augusta, Lisbon'));
 }
 
+// Past events wait for their owner to ask (placePastEvents): an imported
+// calendar's years of history each cost a lookup for a map nobody opens.
+{
+    check('settings: past events are not looked up by default', \BetterCal\Domain\Settings::withDefaults([])['placePastEvents'] === false);
+    check('settings: past lookups can be turned on', \BetterCal\Domain\Settings::validate(['placePastEvents' => true])['placePastEvents'] === true);
+}
+
+// The duplicates Activity line counts copies, not events: "Found the same
+// event twice: 8 shown as one" read as eight events made into one.
+{
+    checkEq('dedup line: one copy', 'Hid 1 duplicate copy, so the event shows once: Team standup',
+        \BetterCal\Domain\Duplicates::foundSummary(1, 0, ['Team standup']));
+    checkEq('dedup line: copies of one series', 'Hid 8 duplicate copies, so each event shows once: Team standup',
+        \BetterCal\Domain\Duplicates::foundSummary(8, 0, ['Team standup']));
+    checkEq('dedup line: copies and close matches, names capped', 'Hid 2 duplicate copies, so each event shows once; 1 possible duplicate to check in Review: A; B; C; and 1 more',
+        \BetterCal\Domain\Duplicates::foundSummary(2, 1, ['A', 'B', 'C', 'D']));
+    checkEq('dedup line: close matches alone', 'Found 3 possible duplicates to check in Review',
+        \BetterCal\Domain\Duplicates::foundSummary(0, 3, []));
+}
+
 // ---------------------------------------------------------------------------
 // Feed content state. Three independent answers, not one boolean: a feed that
 // is empty and always was is fine; one that WENT empty is how expired tokens

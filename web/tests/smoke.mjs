@@ -6,6 +6,7 @@ import {
   keyOfEpochDay, addDaysKey, diffDaysKey, weekIndexOfKey, firstEpochDayOfWeek,
   dayKeysOfWeek, startOfWeekKey, setWeekStart, getWeekStart, setTimeFormat, fmtTime,
   fmtMonthShort, timeState, startMs, byStart, eventDuration, allDayFields, allDayInputs, untilDayKey,
+  fmtRange, fmtRangeParts, otherYear,
 } from '../src/lib/dates.js';
 import { layoutOverlaps, assignLanes, rangesOverlap } from '../src/ui/layout.js';
 import {
@@ -25,7 +26,7 @@ import { sortByMatch } from '../src/lib/rank.js';
 import { parseJumpText, jumpGranularity } from '../src/lib/jumpparse.js';
 import { parseClockText, resolveClock, minsToHHMM, hhmmToMins, parseDateText, durationLabel } from '../src/lib/whenparse.js';
 import { monthWeeks, stepMonthOf } from '../src/lib/minimonth.js';
-import { state as storeState, missingRanges, pruneOccurrenceCache, invalidateRecords, mergeWindow } from '../src/app/store.js';
+import { state as storeState, missingRanges, pruneOccurrenceCache, invalidateRecords, mergeWindow, insertOccurrence } from '../src/app/store.js';
 import { formattingReasons } from '../src/lib/eventwhy.js';
 import {
   normalizeDayRange, dayRangeDraft, dayRangeLabel, timeRangeLabel, chipPosition,
@@ -2526,6 +2527,41 @@ eq('gmaps: text alone is a search', gmapsUrl('Example Cafe', null, null), 'https
   invalidateRecords(2);
   const r2 = storeState.occ.get('r2');
   assert('records: editing one event still strips that event’s record', !r2.full && !('description' in r2));
+  storeState.occ.clear();
+  for (const [k, v] of saved) storeState.occ.set(k, v);
+}
+
+// An event in another year says which: a 2011 event read as this October's.
+{
+  const now = new Date(2026, 9, 13, 12);
+  const at = (y, m, d, h = 0) => new Date(y, m - 1, d, h);
+  assert('year: this year needs none', !fmtRange(at(2026, 10, 8, 10), at(2026, 10, 8, 16), false, now).includes('2026'));
+  assert('year: an old event names its year', fmtRange(at(2011, 10, 8, 10), at(2011, 10, 8, 16), false, now).includes('2011'));
+  assert('year: next year too', fmtRange(at(2027, 3, 1), at(2027, 3, 4), true, now).includes('2027'));
+  eq('year: the year is its own piece, to stand out', fmtRangeParts(at(2011, 10, 8, 10), at(2011, 10, 8, 16), false, now).filter((p) => p.year).map((p) => p.text), ['2011']);
+  assert('year: across New Year both dates say theirs', otherYear(at(2026, 12, 31, 22), at(2027, 1, 1, 2), false, now));
+  assert('year: an all-day event ending at midnight Jan 1 is still this year', !otherYear(at(2026, 12, 31), at(2027, 1, 1), true, now));
+}
+
+// An event opened from Activity can sit on a hidden calendar, which the
+// window never returns; the refresh that followed the jump dropped it and
+// left the open panel blank. It stays while it is open, and only then.
+{
+  const saved = new Map(storeState.occ);
+  const savedPop = storeState.popover;
+  storeState.occ.clear();
+  const held = { instanceId: 'h1', eventId: 7, calendarId: 9, start: '2026-03-10T17:00:00Z', end: '2026-03-10T18:00:00Z', title: 'Example meeting' };
+  insertOccurrence(held);
+  storeState.popover = { instanceId: 'h1', anchorRect: null };
+  mergeWindow('2026-03-10T00:00:00Z', '2026-03-11T00:00:00Z', []);
+  assert('held: the open event survives a window that lacks it', storeState.occ.has('h1'));
+  mergeWindow('2026-03-10T00:00:00Z', '2026-03-11T00:00:00Z', [{ ...held, title: 'Example meeting, moved' }]);
+  eq('held: a window that has it replaces it as usual', storeState.occ.get('h1').title, 'Example meeting, moved');
+  insertOccurrence(held);
+  storeState.popover = null;
+  mergeWindow('2026-03-10T00:00:00Z', '2026-03-11T00:00:00Z', []);
+  assert('held: once closed, a window that lacks it drops it', !storeState.occ.has('h1'));
+  storeState.popover = savedPop;
   storeState.occ.clear();
   for (const [k, v] of saved) storeState.occ.set(k, v);
 }

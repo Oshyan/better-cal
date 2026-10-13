@@ -551,6 +551,12 @@ function LocationSection({ settings, config }) {
         ${MAP_STYLES.map(([v, l]) => html`<option key=${v} value=${v}>${l}</option>`)}
       </select>
     <//>
+    <${Row} label="Past events" hint="Addresses nobody picked a place for (imports, feeds, typed text) are looked up in the background so maps are ready. Events that have already ended are skipped unless this is on; a past event you open is still placed then, and a repeating event that is still going counts as upcoming.">
+      <label class="bc-set-check"><input
+        type="checkbox" checked=${settings.placePastEvents === true}
+        onChange=${(e) => saveSetting('placePastEvents', e.target.checked)}
+      /> Look up addresses for past events too</label>
+    <//>
     <${Row} label="Place search near" hint="Searches for a place start near where you are: this device's location when the browser allows it, else the region its time zone puts it in when that differs from home, else your home location.">
       <span class="bc-set-value">${biasText}</span>
       ${perm !== 'granted' && perm !== 'denied' && html`<button type="button" class="bc-btn" disabled=${locBusy} onClick=${allowDevice}>Allow this device's location</button>`}

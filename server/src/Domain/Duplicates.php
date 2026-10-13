@@ -659,13 +659,7 @@ final class Duplicates
         if ($stored === [] || !$recordActivity) {
             return $counts;
         }
-        $parts = [];
-        if ($counts['linked'] > 0) {
-            $parts[] = $counts['linked'] . ' shown as one';
-        }
-        if ($counts['possible'] > 0) {
-            $parts[] = $counts['possible'] . ' to check in Review';
-        }
+        $titles = array_values(array_unique(array_column($stored, 'title')));
         ActivityContext::with('dedup', fn() => (new Undo($this->db))->record(
             $userId,
             'event',
@@ -673,10 +667,36 @@ final class Duplicates
             'update',
             null,
             null,
-            'Found the same event twice: ' . implode(', ', $parts),
-            ['titles' => array_slice(array_values(array_unique(array_column($stored, 'title'))), 0, 20)]
+            self::foundSummary($counts['linked'], $counts['possible'], $titles),
+            ['titles' => array_slice($titles, 0, 20)]
         ));
         return $counts;
+    }
+
+    /**
+     * The Activity line for one run's new pairs. Each pair is one extra copy
+     * of an event, so the count is of copies: "Found the same event twice: 8
+     * shown as one" read as eight events collapsed into a single one. Names
+     * the events, like the geocoder's line names the addresses. Pure.
+     *
+     * @param list<string> $titles
+     */
+    public static function foundSummary(int $linked, int $possible, array $titles): string
+    {
+        $parts = [];
+        if ($linked > 0) {
+            $parts[] = $linked === 1
+                ? 'Hid 1 duplicate copy, so the event shows once'
+                : "Hid $linked duplicate copies, so each event shows once";
+        }
+        if ($possible > 0) {
+            $parts[] = ($linked > 0 ? '' : 'Found ') . $possible . ' possible duplicate' . ($possible === 1 ? '' : 's') . ' to check in Review';
+        }
+        $titles = array_values(array_filter($titles, static fn($t) => trim((string) $t) !== ''));
+        $shown = array_map(static fn(string $t): string => mb_substr($t, 0, 60), array_slice($titles, 0, 3));
+        $more = count($titles) - count($shown);
+        return implode('; ', $parts)
+            . ($shown !== [] ? ': ' . implode('; ', $shown) . ($more > 0 ? "; and $more more" : '') : '');
     }
 
     private function nowSeconds(): float

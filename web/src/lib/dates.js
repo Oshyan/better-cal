@@ -255,6 +255,8 @@ const dayLongFmt = new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 
 const dayMedFmt = new Intl.DateTimeFormat(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
 const dateShortFmt = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
 const dateFullFmt = new Intl.DateTimeFormat(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+const dayMedYearFmt = new Intl.DateTimeFormat(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+const dateShortYearFmt = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 
 export function fmtTime(d) { return timeFmt.format(d).replace(/\s/g, ' '); }
 /** The clock time in a given zone (the user's time format), or the local time when the zone is unknown. */
@@ -422,16 +424,49 @@ export function sameClock(a, b, at = new Date()) {
 }
 
 // Range like "7:00 - 8:30 PM" or "Jul 3 - Jul 5" for the popover.
-export function fmtRange(start, end, allDay) {
+export function fmtRange(start, end, allDay, now = new Date()) {
+  return fmtRangeParts(start, end, allDay, now).map((p) => p.text).join('');
+}
+
+// An event in another year than this one says which, in every date it shows:
+// a 2011 event read as this October's (one imported from an old calendar,
+// opened from Activity, said "Sat, Oct 8" and nothing else).
+export function otherYear(start, end, allDay, now = new Date()) {
+  const last = allDay ? new Date(end.getTime() - 1) : end;
+  const y = now.getFullYear();
+  return start.getFullYear() !== y || last.getFullYear() !== y;
+}
+
+// fmtRange as pieces, the year marked, so a view can make it stand out.
+// [{text, year?: true}]
+export function fmtRangeParts(start, end, allDay, now = new Date()) {
+  const withYear = otherYear(start, end, allDay, now);
+  const out = [];
+  const put = (fmt, d) => {
+    for (const p of fmt.formatToParts(d)) {
+      const last = out[out.length - 1];
+      if (p.type === 'year') out.push({ text: p.value, year: true });
+      else if (last && !last.year) last.text += p.value;
+      else out.push({ text: p.value });
+    }
+  };
+  const text = (t) => {
+    const last = out[out.length - 1];
+    if (last && !last.year) last.text += t; else out.push({ text: t });
+  };
+  const day = withYear ? dayMedYearFmt : dayMedFmt;
+  const short = withYear ? dateShortYearFmt : dateShortFmt;
   const sk = dayKeyOf(start);
   const ek = dayKeyOf(end);
   if (allDay) {
     const lastKey = dayKeyOf(new Date(end.getTime() - 1));
-    if (sk === lastKey) return fmtDateFull(start);
-    return fmtDateShort(start) + ' to ' + fmtDateShort(dateOfDayKey(lastKey));
+    if (sk === lastKey) { put(dateFullFmt, start); return out; }
+    put(short, start); text(' to '); put(short, dateOfDayKey(lastKey));
+    return out;
   }
-  if (sk === ek) return fmtDayMedium(start) + ', ' + fmtTime(start) + ' to ' + fmtTime(end);
-  return fmtDayMedium(start) + ' ' + fmtTime(start) + ' to ' + fmtDayMedium(end) + ' ' + fmtTime(end);
+  if (sk === ek) { put(day, start); text(', ' + fmtTime(start) + ' to ' + fmtTime(end)); return out; }
+  put(day, start); text(' ' + fmtTime(start) + ' to '); put(day, end); text(' ' + fmtTime(end));
+  return out;
 }
 
 // datetime-local input value (no offset), local time.

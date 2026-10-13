@@ -4,6 +4,15 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.72 (2026-10-13)
+
+- **Past events aren't looked up for the map any more.** Connecting or importing a calendar sent every address in its history, back a decade or more, to the place lookup service, and filled Activity with addresses it couldn't place. Only upcoming events (and repeating ones still going) are placed in the background now; a past event you open is still placed then. Settings, Location & maps, "Look up addresses for past events too" brings back the old behavior.
+- **An event from another year says so.** The event panel, hover card and Review show the year whenever it isn't this one, and the panel highlights it, so an old imported event no longer reads as this year's.
+- **The duplicates line in Activity counts copies and names the events**: "Hid 8 duplicate copies, so each event shows once: (titles)" instead of "Found the same event twice: 8 shown as one".
+- **Opening an event from Activity no longer leaves a blank side panel** when the event is on a hidden calendar. The calendar's refresh dropped it right after it opened.
+
+Operators: no migration. Settings gain `placePastEvents` (default off).
+
 ## 0.9.71 (2026-10-13)
 
 - **An open repeating event stays open after a "this and following" change.** Setting Planned or Maybe (or editing) with "This and following" splits the series, and the occurrence you had open moved to the new part under a new id, so the side panel went blank and stayed open. It now follows the occurrence to its new series and shows it with the change.

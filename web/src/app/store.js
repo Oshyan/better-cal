@@ -454,6 +454,10 @@ export function dismissToast(id) {
 // CalendarMeta map for bettercal-ui: {id: {color, name, visible}}.
 export function calendarMeta() {
   const meta = {};
-  for (const c of state.calendars) meta[c.id] = { color: c.color, name: c.name, visible: c.visible };
+  // editable and provider are what the grids' drags check: whether an event
+  // can be copied with Option/Alt or dropped onto a sidebar calendar or
+  // person. Without them every event read as a feed's and those drops did
+  // nothing (broken when Google write-through arrived).
+  for (const c of state.calendars) meta[c.id] = { color: c.color, name: c.name, visible: c.visible, editable: !!c.editable, provider: c.provider || null };
   return meta;
 }

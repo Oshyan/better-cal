@@ -29,9 +29,9 @@
     },
     "squire/purify.min.js": {
       "package": "dompurify",
-      "version": "3.4.16",
+      "version": "3.4.17",
       "path": "dist/purify.min.js",
-      "sha256": "2c90a9b46d6463f26038a29b686e82bc91de01fdac9d5229e7cfe3b360134ea2"
+      "sha256": "cd37898f9782adf54820c413191b5691803f0f137c799d6edcfd38523b4c2c31"
     },
     "leaflet/leaflet.js": {
       "package": "leaflet",

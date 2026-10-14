@@ -9397,6 +9397,9 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
     $CI = BetterCal\Domain\CalendarImport::class;
     checkEq('zip import: Google export file names give the calendar name', 'Book club', $CI::calendarName('Book club_abc123@group.calendar.google.com.ics'));
     checkEq('zip import: an encoded @ in the file name is read the same', 'Work', $CI::calendarName('Work_sam.sample%40example.com.ics'));
+    checkEq('zip import: a newer c_ calendar id is not part of the name', 'Book club', $CI::calendarName('Book club_c_8f2e1a@group.calendar.google.com.ics'));
+    checkEq('zip import: a name with underscores of its own keeps them', 'my_side_project', $CI::calendarName('my_side_project_c_77aa@group.calendar.google.com.ics'));
+    checkEq('zip import: holiday calendar ids', 'Holidays in Sampleland', $CI::calendarName('Holidays in Sampleland_en.sample#holiday@group.v.calendar.google.com.ics'));
     checkEq('zip import: Takeout\'s bare address yields to the calendar\'s own name', 'Sam Sample',
         $CI::calendarName('sam.sample@example.com.ics', "BEGIN:VCALENDAR\r\nX-WR-CALNAME:Sam Sample\r\nEND:VCALENDAR\r\n"));
     checkEq('zip import: escaped commas in X-WR-CALNAME read naturally', 'Trips, family',

@@ -233,7 +233,11 @@ final class CalendarImport
         $name = pathinfo($file, PATHINFO_FILENAME);
         $name = str_replace('%40', '@', $name);
         $name = (string) preg_replace('/\.ical$/', '', $name);
-        if (preg_match('/^(.+)_[^_]*@[^_]*$/', $name, $parts) === 1 && trim($parts[1]) !== '') {
+        // The id after the last name part may itself start "c_" (newer
+        // calendars: c_<hash>@group.calendar.google.com), so the shortest
+        // name that leaves a well-formed id wins; a name with underscores of
+        // its own still keeps them.
+        if (preg_match('/^(.+?)_((?:c_)?[^_@]+@[^_]+)$/', $name, $parts) === 1 && trim($parts[1]) !== '') {
             return mb_substr(trim($parts[1]), 0, 160);
         }
         if ($ics !== '' && preg_match('/^X-WR-CALNAME:(.+)$/mi', $ics, $m) === 1) {

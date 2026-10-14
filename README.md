@@ -86,7 +86,7 @@ MIT (see [LICENSE](LICENSE)). Use it, fork it, host it, sell it. If you build so
 - [Geocoding and place search](docs/geocoding.md): which services find places, why those, and what to set up after installing for faster results
 - [CalDAV](docs/caldav.md)
 - [Email ingest](docs/email-ingest.md)
-- [Moving from Google Calendar](docs/migration.md): three ways to start, by how much you want to commit (subscribe to try it, import to switch, connect to live in both), then running both, switching fully, or going back
+- [Moving from Google Calendar](docs/migration.md): ways to start, by how much you want to commit (subscribe to try it, feeds both ways, import to switch, connect to live in both), mixed per calendar; other calendar services; keeping your current calendar app through CalDAV; then running both, switching fully, or going back
 - [Scale and limits](docs/limits.md): who it's sized for, and the limits you might run into
 - Roadmap: the [GitHub issues](https://github.com/Oshyan/better-cal/issues). There's no separate roadmap document.
 

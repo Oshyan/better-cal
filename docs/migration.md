@@ -2,18 +2,18 @@
 
 Nothing here is a cliff. You can try Better-Cal without changing anything at Google, run both for as long as you like, switch fully when you're sure, and go back at any point by simply stopping.
 
-## Three ways to start
+## Ways to start
 
-Pick by how much you want to commit today. You can start with one and move to another later: if you connect Google after subscribing or importing, events you now have twice show once (see "The same event twice" below), and you can remove the subscriptions or imported copies whenever you like.
+Pick by how much you want to commit today. It isn't one choice for your whole account: mix them per calendar, say connecting Google for the calendar your family shares, importing your old personal one, and subscribing to holidays. You can also start one way and move to another later: if you connect Google after subscribing or importing, events you now have twice show once (see "The same event twice" below), and you can remove the subscriptions or imported copies whenever you like.
 
-| | Subscribe to Google's feed | Import a copy | Connect Google |
-|---|---|---|---|
-| **Good for** | Just trying it out | Leaving Google, all at once | Living in both, for as long as you like |
-| **Setup** | Two minutes: copy one address per calendar | A few minutes: export from Google, upload here | Ten minutes, once per server, for a free Google Cloud project; then one click |
-| **Your Google events here** | Yes, read-only, refreshed every few minutes | Yes, as a snapshot from the moment you exported | Yes, live |
-| **Changes you make here reach Google** | No: new things go in a Better-Cal calendar, so you juggle two apps | No: from then on, Better-Cal is where your calendar lives | Yes, both ways, within a few minutes |
-| **Answer Google invitations here** | Only emailed ones, with [mail forwarding](email-ingest.md) | Only emailed ones, with [mail forwarding](email-ingest.md) | Yes |
-| **To stop** | Remove the subscriptions | Delete the imported calendars; Google still has everything | Disconnect; nothing at Google has changed |
+| | Subscribe to Google's feed | Feeds both ways | Import a copy | Connect Google |
+|---|---|---|---|---|
+| **Good for** | Just trying it out | Seeing everything in either app, without connecting Google | Leaving Google, all at once | Living in both, for as long as you like |
+| **Setup** | Two minutes: copy one address per calendar | A few more minutes: also publish a feed here and add it to Google | A few minutes: export from Google, upload here | Ten minutes, once per server, for a free Google Cloud project; then one click |
+| **Your Google events here** | Yes, read-only, refreshed hourly (as often as every 5 minutes if you set it) | The same | Yes, as a snapshot from the moment you exported | Yes, live |
+| **Changes you make here reach Google** | No: new things go in a Better-Cal calendar, so you juggle two apps | They show there read-only, when Google next refreshes the feed (often once a day) | No: from then on, Better-Cal is where your calendar lives | Yes, both ways, within a few minutes |
+| **Answer Google invitations here** | Only emailed ones, with [mail forwarding](email-ingest.md) | Only emailed ones, with mail forwarding | Only emailed ones, with [mail forwarding](email-ingest.md) | Yes |
+| **To stop** | Remove the subscriptions | Remove the subscriptions here and the feed's calendar at Google | Delete the imported calendars; Google still has everything | Disconnect; nothing at Google has changed |
 
 ### Just trying it: subscribe to Google's feed
 
@@ -24,6 +24,15 @@ Google gives every calendar a private address that calendar apps can read.
 3. Put anything new in a Better-Cal calendar (**+ New calendar**, in the same place).
 
 You see everything in one place, but you're running two apps: what you add here stays here, and changes you make at Google show up after the next refresh. Google's feed can also lag behind Google Calendar itself. Treat the secret address like a password: anyone who has it can read that calendar, and Google's settings page can reset it.
+
+### Seeing both everywhere: feeds both ways
+
+Subscribe to Google's calendars here as above, then send Better-Cal's back the same way, so each app shows everything:
+
+1. In Better-Cal, **Settings, Connections**, under **Outbound feeds**, create a feed that includes **One calendar** (one of your Better-Cal calendars), and **Copy URL**. Make one per calendar you want at Google. Don't use **All events**: it would include the Google calendars you subscribed to, and Google would show those twice.
+2. In Google Calendar, next to **Other calendars**, choose **+**, then **From URL**, and paste it.
+
+Nothing needs a Google Cloud project, and neither side can change the other's events: each app edits its own and shows the other's read-only. The catch is Google's side: it refreshes subscribed calendars on its own schedule, often only once a day, so something you add here can take that long to show at Google. Fine for seeing, not for coordinating at short notice. The feed address works like a password; deleting the feed here cuts it off.
 
 ### All in: import a copy
 
@@ -37,6 +46,18 @@ With command-line access to the server, `php server/bin/import-takeout.php /path
 The Google connector shows every calendar your Google account can see and keeps them in step both ways: create, edit or move something here and it's at Google within moments; change it at Google and it shows here within five minutes. It's the most setup, because whoever runs the server first creates a free Google Cloud project (about ten minutes, with links to each page, in [google-calendar.md](google-calendar.md#one-time-setup-the-operator)). After that, connecting is a click in **Settings, Connections**.
 
 It's also the path with no hard decisions: you can use Better-Cal daily while Google stays the source of truth, and later move calendars over one at a time, or never. The rest of this page is that route, step by step.
+
+### Not on Google?
+
+Only the live connection is Google-specific (there's no connector for iCloud or Microsoft yet). Subscribing, feeds both ways and importing work with any calendar service that can share a calendar address or export a file:
+
+- **iCloud:** share a calendar as a public calendar (in the Calendar app, its share settings) and subscribe to that address here, or export it from Calendar on a Mac (**File, Export**) and import the file.
+- **Outlook and Microsoft 365:** publish a calendar (Outlook on the web, **Settings, Calendar, Shared calendars, Publish a calendar**) and subscribe to its ICS link, or export it as an `.ics` file.
+- **Fastmail, Proton, Nextcloud and other CalDAV services:** each can give a calendar's ICS address to subscribe to, or export a file. Better-Cal is a CalDAV server, not a client, so it can't sign in to another CalDAV account directly.
+
+### Keep the app you already use
+
+Better-Cal is also a CalDAV server, so the calendar app you open every day can add it as one more account next to Google or iCloud: Apple Calendar on a Mac, iPhone or iPad, Thunderbird, or DAVx5 on Android, which puts it in the phone's own calendar app. Your Better-Cal calendars appear alongside the rest, editable, without changing how you work. [caldav.md](caldav.md) has the steps for each.
 
 ## The pieces
 

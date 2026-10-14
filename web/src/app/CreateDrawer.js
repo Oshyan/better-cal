@@ -17,7 +17,7 @@ import { Icon } from '../ui/icons.js';
 const TITLES = {
   calendar: 'New calendar',
   subscribe: 'Subscribe to calendar feed',
-  import: 'Import ICS file',
+  import: 'Import calendars',
   folder: 'New folder',
   person: 'New person',
 };
@@ -77,7 +77,19 @@ export function CreateDrawer() {
         fd.append('ics', file);
         if (name.trim()) fd.append('name', name.trim());
         const res = await api('/calendars/import', { method: 'POST', formData: fd });
-        toast('Imported ' + ((res && res.imported) || 0) + ' events');
+        // A zip (Google Calendar's export, Takeout) comes back as one calendar
+        // per file, with any it skipped and why (#136).
+        if (res && Array.isArray(res.calendars)) {
+          const n = res.calendars.length;
+          const skipped = (res.skipped || []).length;
+          toast(n === 0
+            ? 'Nothing imported: ' + (res.skipped || []).map((s) => s.file + ' (' + s.reason + ')').join('; ')
+            : 'Imported ' + (res.imported || 0) + ' events into ' + n + ' calendar' + (n === 1 ? '' : 's')
+              + (skipped ? '; skipped ' + (res.skipped || []).map((s) => s.file + ' (' + s.reason + ')').join('; ') : ''),
+          { error: n === 0, duration: skipped ? 15000 : undefined });
+        } else {
+          toast('Imported ' + ((res && res.imported) || 0) + ' events');
+        }
         await loadCalendars();
       } else if (kind === 'folder') {
         await createFolder(name.trim() || 'New folder');
@@ -113,7 +125,7 @@ export function CreateDrawer() {
       </div>
 
       <label class="bc-field">
-        <span>Name${kind === 'subscribe' || kind === 'import' ? ' (optional)' : ''}</span>
+        <span>Name${kind === 'subscribe' || kind === 'import' ? ' (optional)' : ''}${kind === 'import' ? ', for a single file' : ''}</span>
         <input
           value=${name} autofocus required=${kind === 'person' || kind === 'folder'}
           placeholder=${kind === 'person' ? "Person's name" : ''}
@@ -127,10 +139,10 @@ export function CreateDrawer() {
       </label>`}
 
       ${kind === 'import' && html`<label class="bc-field">
-        <span>ICS file</span>
+        <span>Calendar file (.ics), or a zip of them</span>
         ${state.pendingImportFile
           ? html`<span class="bc-badge" title="Opened from your device">${state.pendingImportFile.name}</span>`
-          : html`<input type="file" accept=".ics,text/calendar" ref=${fileRef} required />`}
+          : html`<input type="file" accept=".ics,.zip,text/calendar,application/zip" ref=${fileRef} required />`}
       </label>`}
 
       ${kind === 'calendar' && html`<div class="bc-field">

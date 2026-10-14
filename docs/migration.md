@@ -36,10 +36,10 @@ Nothing needs a Google Cloud project, and neither side can change the other's ev
 
 ### All in: import a copy
 
-1. In Google Calendar, open **Settings** (the gear), then **Import & export**, and click **Export**. A zip downloads with one `.ics` file per calendar; unzip it. ([Google Takeout](https://takeout.google.com) with only Calendar selected gives you the same files, but takes longer.)
-2. In Better-Cal's sidebar, choose **+ Import ICS** and pick one `.ics` file. Each becomes a calendar here, repeating events included. Repeat for the others. (Importing the whole zip in one step is coming: [#136](https://github.com/Oshyan/better-cal/issues/136).)
+1. In Google Calendar, open **Settings** (the gear), then **Import & export**, and click **Export**. A zip downloads with one `.ics` file per calendar. ([Google Takeout](https://takeout.google.com) with only Calendar selected gives you the same, but takes longer.)
+2. In Better-Cal's sidebar, choose **+ Import calendars** and pick the zip as it downloaded. Each calendar in it becomes one here, named as it was at Google, repeating events included. A single `.ics` file works too.
 
-With command-line access to the server, `php server/bin/import-takeout.php /path/to/unzipped-folder` imports every file in the folder in one go (see [Step 3](#step-3-the-full-switch)). The copy doesn't change when Google does, so this suits a clean break. For calendars other people share with you, connecting or subscribing works better.
+Importing the same export again adds nothing: a calendar whose name already exists is skipped, and anything else skipped is listed with why. For an export too large to upload, `php server/bin/import-takeout.php /path/to/export.zip` on the server does the same (see [Step 3](#step-3-the-full-switch)). The copy doesn't change when Google does, so this suits a clean break. For calendars other people share with you, connecting or subscribing works better.
 
 ### Living in both: connect Google
 
@@ -65,7 +65,7 @@ Better-Cal is also a CalDAV server, so the calendar app you open every day can a
 - **Google connector** (Settings → Connections). Connect a Google account and every calendar it can see appears here. Calendars you own or can write to are editable: what you create or change in Better-Cal goes to Google, and what changes at Google shows up here within five minutes ("Check now" on the calendar for sooner). See `docs/google-calendar.md`.
 - **Browser extension** (Settings → Connections has the link and your address to paste in). Every "Add to Google Calendar" link on the web opens in Better-Cal instead. Toggle it off and the links go to Google again. Works in Chrome, Edge, Brave and Vivaldi. On a phone, share the link to the installed app or paste it into quick add.
 - **Subscriptions**: any calendar you follow by URL (holidays, a venue, a friend's public calendar) can be followed here directly.
-- **Import** (the sidebar's **+ Import ICS**, or `server/bin/import-takeout.php` for a whole folder): turns Google Calendar's export, or a Takeout export, into local calendars, recurrence and all.
+- **Import** (the sidebar's **+ Import calendars**, or `server/bin/import-takeout.php` on the server): turns Google Calendar's export, or a Takeout export, as the zip it comes in, into local calendars, recurrence and all.
 - **Adopt as local** (a calendar's settings): makes a synced calendar yours here, keeping every event, and stops the sync.
 - **Email ingest** (`docs/email-ingest.md`): invitations that arrive by email become events, with real RSVP replies.
 - **CalDAV** (`docs/caldav.md`): Apple Calendar, DAVx5 and Thunderbird sync natively.
@@ -120,13 +120,13 @@ Do this per calendar, when you are sure, not all at once.
 
 **Calendars other people use.** If someone else writes to it or depends on seeing it live, keep it at Google and keep using it through the connector, or move it there if it started here (**Move to Google…**). That is not a compromise: Google is where the people sharing it already are, and Better-Cal edits it in place.
 
-**Export, for a clean cut.** In Google Calendar, **Settings**, **Import & export**, **Export**, and unzip what downloads. Import each `.ics` from the sidebar (**+ Import ICS**), or put the folder on the server and run:
+**Export, for a clean cut.** In Google Calendar, **Settings**, **Import & export**, **Export**, then import the zip that downloads from the sidebar (**+ Import calendars**). Or put it on the server and run:
 
 ```bash
-php server/bin/import-takeout.php /path/to/unzipped-folder
+php server/bin/import-takeout.php /path/to/export.zip
 ```
 
-One local calendar per file, recurrence intact; the command is safe to re-run. Use this instead of adopting if you want to cut over everything at once without having connected Google.
+(An unzipped folder of `.ics` files works too.) One local calendar per file, recurrence intact; importing again skips calendars already there. Use this instead of adopting if you want to cut over everything at once without having connected Google.
 
 **Afterwards**
 

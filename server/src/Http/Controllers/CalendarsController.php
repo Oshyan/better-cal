@@ -109,7 +109,11 @@ final class CalendarsController
         return Response::json($this->calendars->claimSubscription((int) $req->user['id'], (int) $params['id']));
     }
 
-    /** Multipart ICS file import into a new local calendar. */
+    /**
+     * Multipart import: an .ics file into a new local calendar, or a zip of
+     * them (Google Calendar's export, Takeout) into one calendar per file
+     * (Domain\CalendarImport, #136).
+     */
     public function import(Request $req): Response
     {
         $userId = $this->userId($req);
@@ -118,91 +122,33 @@ final class CalendarsController
             throw HttpError::badRequest('Multipart file field "ics" is required');
         }
         // Size first, from the upload metadata, so an oversized file is never
-        // even read into memory; then the event count, on the raw text, before
-        // the parser turns each one into objects and the loop below into rows
-        // inside one transaction (BC-12).
+        // even read into memory (BC-12).
         $maxBytes = Limits::get('IMPORT_BYTES');
         if ((int) ($file['size'] ?? 0) > $maxBytes) {
             throw new HttpError('import_too_large', 'That file is over the ' . round($maxBytes / 1048576) . ' MiB import limit. Split it, or raise BETTERCAL_LIMIT_IMPORT_BYTES on the server.', 413);
         }
-        $ics = file_get_contents((string) $file['tmp_name']);
-        if ($ics === false || !str_contains($ics, 'BEGIN:VCALENDAR')) {
+        $importer = new \BetterCal\Domain\CalendarImport($this->db, $this->calendars);
+        $tmp = (string) $file['tmp_name'];
+        $head = (string) @file_get_contents($tmp, false, null, 0, 4);
+        if ($head === "PK\x03\x04" || str_ends_with(strtolower((string) ($file['name'] ?? '')), '.zip')) {
+            $result = $importer->importZip($userId, $tmp);
+            return Response::json([
+                'calendars' => array_map(fn(array $c): array => $this->calendars->serializeById($userId, $c['calendarId']) + ['imported' => $c['imported']], $result['calendars']),
+                'skipped' => $result['skipped'],
+                'imported' => array_sum(array_column($result['calendars'], 'imported')),
+            ], $result['calendars'] === [] ? 200 : 201);
+        }
+        $ics = file_get_contents($tmp);
+        if ($ics === false) {
             throw HttpError::badRequest('File is not an ICS calendar', 'invalid_ics');
         }
-        // The configured cap, or fewer when this PHP process could not hold
-        // that many parsed events: a clear refusal beats an out-of-memory crash.
-        $maxEvents = Limits::importEventBudget();
-        $problem = Ics::budgetProblem($ics, $maxBytes, $maxEvents);
-        if ($problem !== null) {
-            if (str_contains($problem, 'skipped occurrences')) {
-                $how = 'Split unusually exception-heavy repeating series into smaller parts, or adjust BETTERCAL_LIMIT_EXDATE_VALUES_PER_EVENT and BETTERCAL_LIMIT_EXDATE_VALUES_PER_INPUT within their hard ceilings.';
-            } else {
-                $how = $maxEvents < Limits::get('IMPORT_EVENTS')
-                    ? 'This server has memory for about ' . number_format($maxEvents) . ' events at once: split the file, or raise PHP memory_limit.'
-                    : 'Split the file, or raise BETTERCAL_LIMIT_IMPORT_EVENTS on the server.';
-            }
-            throw new HttpError('import_too_large', $problem . '. ' . $how, 413);
-        }
-        try {
-            $parsed = Ics::parse($ics, \BetterCal\Domain\Settings::homeTzid($this->db, (int) $req->user['id']));
-        } catch (\Throwable $e) {
-            throw HttpError::badRequest('Could not parse ICS: ' . $e->getMessage(), 'invalid_ics');
-        }
-
         $name = trim((string) ($req->str('name') ?? ''));
         if ($name === '') {
             $name = pathinfo((string) ($file['name'] ?? 'Imported'), PATHINFO_FILENAME) ?: 'Imported';
         }
-        usort($parsed, static fn(array $a, array $b): int => ($a['recurrence_instance_utc'] === null ? 0 : 1) <=> ($b['recurrence_instance_utc'] === null ? 0 : 1));
-        [$calendarId, $imported] = $this->db->tx(function () use ($parsed, $userId, $name): array {
-            // The new calendar and every imported row become visible in one
-            // commit. A concurrent move cannot discover/count a half-imported
-            // calendar between two transactions.
-            $calendar = $this->calendars->create($userId, ['name' => $name]);
-            $calendarId = (int) $calendar['id'];
-            $imported = 0;
-            $masterIdByUid = [];
-            $seen = [];
-            foreach ($parsed as $ev) {
-                $key = $ev['uid'] . '|' . ($ev['recurrence_instance_utc'] ?? '');
-                if (isset($seen[$key])) {
-                    continue;
-                }
-                $seen[$key] = true;
-                $id = $this->db->insert('events', [
-                    'user_id' => $userId,
-                    'calendar_id' => $calendarId,
-                    'created_via' => 'import',
-                    'uid' => $ev['uid'],
-                    'title' => $ev['title'],
-                    'description' => \BetterCal\Domain\Sanitize::description($ev['description']),
-                    'location' => $ev['location'],
-                    'url' => $ev['url'],
-                    'start_utc' => $ev['start_utc'],
-                    'end_utc' => $ev['end_utc'],
-                    'all_day' => $ev['all_day'],
-                    'tzid' => $ev['tzid'],
-                    'rrule' => $ev['rrule'],
-                    'exdates_json' => $ev['exdates'] === [] ? null : json_encode($ev['exdates']),
-                    // VALARM reminders become explicit overrides; none = inherit defaults.
-                    'reminders_json' => ($ev['reminders'] ?? []) === [] ? null : json_encode($ev['reminders']),
-                    'status' => $ev['status'],
-                    'recurrence_instance_utc' => $ev['recurrence_instance_utc'],
-                    'recurrence_parent_id' => $ev['recurrence_instance_utc'] !== null
-                        ? ($masterIdByUid[(string) $ev['uid']] ?? null)
-                        : null,
-                    'source' => 'local',
-                ]);
-                if ($ev['recurrence_instance_utc'] === null) {
-                    $masterIdByUid[(string) $ev['uid']] = $id;
-                }
-                $imported++;
-            }
-            return [$calendarId, $imported];
-        });
-
-        $out = $this->calendars->serializeById($userId, $calendarId);
-        $out['imported'] = $imported;
+        $done = $importer->importIcs($userId, $ics, $name);
+        $out = $this->calendars->serializeById($userId, $done['calendarId']);
+        $out['imported'] = $done['imported'];
         return Response::json($out, 201);
     }
 

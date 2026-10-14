@@ -793,8 +793,14 @@ assert('hotkeys: every entry has keys + label + group + id', HOTKEYS.every((h) =
   typeof h.id === 'string' && h.id.length > 0 &&
   HOTKEY_GROUPS.includes(h.group)));
 eq('hotkeys: ids are unique', new Set(HOTKEYS.map((h) => h.id)).size, HOTKEYS.length);
-const allKeys = HOTKEYS.flatMap((h) => h.keys);
-eq('hotkeys: no key bound twice', new Set(allKeys).size, allKeys.length);
+// Bare keys and Cmd/Ctrl keys dispatch separately (keyboard.js), so k for
+// "back one week" and Cmd/Ctrl+K for the palette don't collide.
+const plainKeys = HOTKEYS.filter((h) => !h.mod).flatMap((h) => h.keys);
+const modKeys = HOTKEYS.filter((h) => h.mod).flatMap((h) => h.keys);
+eq('hotkeys: no bare key bound twice', new Set(plainKeys).size, plainKeys.length);
+eq('hotkeys: no Cmd/Ctrl key bound twice', new Set(modKeys).size, modKeys.length);
+eq('hotkeys: vi keys move like the arrows', ['h', 'l', 'k', 'j'].map((k) => HOTKEYS.find((h) => !h.mod && h.keys.includes(k))?.id),
+  ['prevDay', 'nextDay', 'prevWeek', 'nextWeek']);
 assert('hotkeys: every group is used', HOTKEY_GROUPS.every((g) => HOTKEYS.some((h) => h.group === g)));
 assert('hotkeys: cheat sheet binding exists', HOTKEYS.some((h) => h.keys.includes('?')));
 assert('hotkeys: display overrides are string arrays', HOTKEYS.every((h) =>

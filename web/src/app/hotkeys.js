@@ -14,10 +14,11 @@ export const HOTKEYS = [
   // Navigation
   { id: 'today', keys: ['t'], label: 'Go to today', group: 'Navigation' },
   { id: 'jump', keys: ['g'], label: 'Jump to date', group: 'Navigation' },
-  { id: 'prevDay', keys: ['ArrowLeft'], display: ['←'], label: 'Back one day', group: 'Navigation' },
-  { id: 'nextDay', keys: ['ArrowRight'], display: ['→'], label: 'Forward one day', group: 'Navigation' },
-  { id: 'prevWeek', keys: ['ArrowUp'], display: ['↑'], label: 'Back one week', group: 'Navigation' },
-  { id: 'nextWeek', keys: ['ArrowDown'], display: ['↓'], label: 'Forward one week', group: 'Navigation' },
+  // h j k l move like the arrows, for vi users (#141): j is down, so forward.
+  { id: 'prevDay', keys: ['ArrowLeft', 'h'], display: ['←', 'h'], label: 'Back one day', group: 'Navigation' },
+  { id: 'nextDay', keys: ['ArrowRight', 'l'], display: ['→', 'l'], label: 'Forward one day', group: 'Navigation' },
+  { id: 'prevWeek', keys: ['ArrowUp', 'k'], display: ['↑', 'k'], label: 'Back one week', group: 'Navigation' },
+  { id: 'nextWeek', keys: ['ArrowDown', 'j'], display: ['↓', 'j'], label: 'Forward one week', group: 'Navigation' },
 
   // Views
   { id: 'cycleView', keys: ['v'], label: 'Cycle through views', group: 'Views' },

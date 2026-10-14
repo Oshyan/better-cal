@@ -173,7 +173,7 @@ export function Welcome() {
     },
     {
       id: 'import', icon: 'calendar', title: 'Import a file',
-      sub: 'An .ics file, such as one calendar from Google Calendar\u2019s export (Settings, Import & export).',
+      sub: 'An .ics file, or the whole zip from Google Calendar\u2019s export (Settings, Import & export).',
       act: 'Import', run: () => { mark('import'); set({ createDrawer: { kind: 'import' } }); },
     },
     {

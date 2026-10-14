@@ -9390,6 +9390,48 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
     rmdir($deny);
 }
 
+// ---------------------------------------------------------------------------
+// Importing a calendar export zip in one step (#136): naming, which entries
+// count, and the limits, checked before anything is read.
+{
+    $CI = BetterCal\Domain\CalendarImport::class;
+    checkEq('zip import: Google export file names give the calendar name', 'Book club', $CI::calendarName('Book club_abc123@group.calendar.google.com.ics'));
+    checkEq('zip import: an encoded @ in the file name is read the same', 'Work', $CI::calendarName('Work_sam.sample%40example.com.ics'));
+    checkEq('zip import: Takeout\'s bare address yields to the calendar\'s own name', 'Sam Sample',
+        $CI::calendarName('sam.sample@example.com.ics', "BEGIN:VCALENDAR\r\nX-WR-CALNAME:Sam Sample\r\nEND:VCALENDAR\r\n"));
+    checkEq('zip import: escaped commas in X-WR-CALNAME read naturally', 'Trips, family',
+        $CI::calendarName('x.ics', "BEGIN:VCALENDAR\nX-WR-CALNAME:Trips\\, family\nEND:VCALENDAR\n"));
+    checkEq('zip import: otherwise the file name', 'Holidays', $CI::calendarName('Holidays.ics', "BEGIN:VCALENDAR\nEND:VCALENDAR\n"));
+
+    if (class_exists(ZipArchive::class)) {
+        $zpath = sys_get_temp_dir() . '/bc-zipimport-' . bin2hex(random_bytes(3)) . '.zip';
+        $z = new ZipArchive();
+        $z->open($zpath, ZipArchive::CREATE | ZipArchive::OVERWRITE);
+        $z->addFromString('Calendar/Book club_abc@group.calendar.google.com.ics', "BEGIN:VCALENDAR\nEND:VCALENDAR\n");
+        $z->addFromString('Calendar/Holidays.ics', "BEGIN:VCALENDAR\nEND:VCALENDAR\n");
+        $z->addFromString('archive_browser.html', '<html></html>');
+        $z->addFromString('__MACOSX/Calendar/._Holidays.ics', 'junk');
+        $z->addFromString('Calendar/big.ics', str_repeat('x', 5000));
+        $z->close();
+        $z->open($zpath, ZipArchive::RDONLY);
+        checkEq('zip import: only the .ics files count, sorted, junk and indexes ignored',
+            ['Book club_abc@group.calendar.google.com.ics', 'Holidays.ics', 'big.ics'], array_column($CI::icsEntries($z), 'file'));
+        $big = array_values(array_filter($CI::icsEntries($z), static fn($e) => $e['file'] === 'big.ics'))[0]['index'];
+        checkEq('zip import: an entry over the size limit is not read', null, $CI::readEntry($z, $big, 1000));
+        check('zip import: an entry within it is', $CI::readEntry($z, $big, 10000) === str_repeat('x', 5000));
+        $z->close();
+        $keepFiles = BetterCal\Support\Limits::get('TAKEOUT_FILES');
+        BetterCal\Support\Limits::configure(['TAKEOUT_FILES' => 2]);
+        $z->open($zpath, ZipArchive::RDONLY);
+        $threw = false;
+        try { $CI::icsEntries($z); } catch (BetterCal\Http\HttpError $e) { $threw = $e->status === 413; }
+        check('zip import: a zip with more calendars than allowed is refused whole', $threw);
+        $z->close();
+        BetterCal\Support\Limits::configure(['TAKEOUT_FILES' => $keepFiles]);
+        unlink($zpath);
+    }
+}
+
 $runLog = (string) @file_get_contents($GLOBALS['__runLog']);
 @unlink($GLOBALS['__runLog']);
 fwrite(STDERR, $runLog);

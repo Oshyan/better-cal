@@ -395,7 +395,7 @@ function AddMenu() {
   return html`<div class="bc-add-menu">
     <button type="button" class="bc-link-btn" onClick=${() => set({ createDrawer: { kind: 'calendar' } })}>+ New calendar</button>
     <button type="button" class="bc-link-btn" onClick=${() => set({ createDrawer: { kind: 'subscribe' } })}>+ Subscribe URL</button>
-    <button type="button" class="bc-link-btn" onClick=${() => set({ createDrawer: { kind: 'import' } })}>+ Import ICS</button>
+    <button type="button" class="bc-link-btn" onClick=${() => set({ createDrawer: { kind: 'import' } })}>+ Import calendars</button>
     <button type="button" class="bc-link-btn" onClick=${() => set({ createDrawer: { kind: 'folder' } })}>+ New folder</button>
   </div>`;
 }

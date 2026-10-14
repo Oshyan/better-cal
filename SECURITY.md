@@ -21,10 +21,6 @@ Include what you found, how to reproduce it, and what you think it allows. You w
 
 - **2026-10-06**: a full Codex Security scan of the repository at revision `3cdca5a` (released in 0.9.13): 77 findings, 1 High, 46 Medium and 30 Low. They were fixed in phases through release 0.9.42, each fix with regression tests and an independent review of the patch. One Medium was set aside after testing showed the reported path was already bounded by the recurrence library's own limit, and one Low was accepted rather than fixed. The working record is `docs/security-remediation-checklist-2026-10-06.md`; the checks still to run against a deployed install are tracked in [issue #81](https://github.com/Oshyan/better-cal/issues/81). This was not the final pre-1.0 scan: that one runs on the 1.0 release candidate.
 
-Releases are signed: `server/bin/update.php` installs only a release whose signature, over its version, commit, zip and manifest, verifies against a key in `server/config/release-keys.php`. The signing keys (a key file and a hardware security key, either one enough) never touch GitHub, so a compromised GitHub account alone cannot push code to installs. [docs/releasing.md](docs/releasing.md#signing) has the details.
-
-Third-party browser code: the libraries under `web/vendor/` (Preact, htm, Squire, DOMPurify, Leaflet) are the published npm releases, some minified, changed only where [web/vendor/README.md](web/vendor/README.md) says (two one-line edits to Preact's files). Each is pinned by SHA-256 in `web/vendor/manifest.json`, every deploy checks the tree against those pins, and `node scripts/vendor.mjs --check-upstream` re-downloads each release and confirms the committed file matches it.
-
 Known residuals, accepted and documented rather than fixed:
 
 - The overall sign-in brake can still be triggered by an attacker controlling 10 or more addresses (cheap with IPv6). While it is on, password sign-ins are refused from addresses that have not signed in during the last 30 days, unless the browser has signed in here before (it carries a device cookie, since 0.2.3). CalDAV devices using API tokens are unaffected. A brand-new device has to wait for the attack to subside; a one-time code to let it in is planned in issue #59.
@@ -50,6 +46,35 @@ Published on 2026-09-23 as GitHub security advisories. They belonged to the repo
 | Medium | Subscribed ICS feeds were parsed without a limit on events or bytes | 0.1.7 and earlier | 0.1.8 |
 | Low | The 20 Low findings of the 2026-09-23 scan, combined (timing, throttle races, prompt-injection surfaces, ReDoS, an SSRF deny-list gap and others) | 0.1.7 and earlier | 0.1.8 |
 
+## Releases and updates
+
+How code reaches an install, and what has to be true before it does.
+
+**What the app does on its own:** once a day it checks GitHub for a newer release and tells you, with a link to its notes. It never downloads or installs code.
+
+**What `server/bin/update.php` checks before installing anything** (it runs only when you run it):
+
+1. The release is a published, non-prerelease, **immutable** GitHub release of this repository, so its tag and files can't be swapped after publishing.
+2. Its manifest matches GitHub's SHA-256 digest and the rules the update notice applies (version, priority, a secure-version floor that never moves backwards).
+3. **Its signature verifies.** Each release carries `bettercal-release.sig`, a statement of its version, commit and the SHA-256 of its zip and manifest, signed by a key in `server/config/release-keys.php`. The signed hashes must match the files being installed, and in a git checkout the tag must point at the signed commit.
+4. The downloaded zip matches GitHub's SHA-256 digest, and it unpacks only into its own folder: no paths that climb out, no symbolic links, bounded in size.
+
+**The signing keys never touch GitHub.** There are two, and either one can sign: a key file on the maintainer's machine (with a copy in a password manager) and a FIDO2 hardware security key that needs its PIN and a touch. Releases are signed on the maintainer's machine after GitHub builds the zip. So taking over the GitHub account, or the build, isn't enough to put code on an install: it also takes one of those keys. Keys can be added or dropped in a release signed by a key already trusted, which is how a lost or exposed key is replaced ([docs/releasing.md](docs/releasing.md#signing)).
+
+**During an update:** the site shows "updating" and the worker pauses (it waits for a running job to finish first); the database is backed up first, by PHP itself; the previous version stays whole beside the new one; and `update.php --rollback` puts both the code and the database back. Backups go in a folder beside the app, readable by its account only, with names that can't be guessed. That folder and the previous version's get a deny-all `.htaccess` in case the app sits inside a web root, and the updater warns when it seems to.
+
+**First install:** `server/bin/install.php` writes `.env` readable by its owner only, with a freshly generated session secret, and never replaces an existing one.
+
+**Third-party browser code:** the libraries under `web/vendor/` (Preact, htm, Squire, DOMPurify, Leaflet) are the published npm releases, some minified, changed only where [web/vendor/README.md](web/vendor/README.md) says (two one-line edits to Preact's files). Each is pinned by SHA-256 in `web/vendor/manifest.json`, every deploy checks the tree against those pins, and `node scripts/vendor.mjs --check-upstream` re-downloads each release and confirms the committed file matches it. The PHP libraries are pinned in `server/composer.lock` and checked against the Packagist advisory database on every push and deploy.
+
+**Limits, stated plainly:**
+
+- The update notice in the app is not signature-checked, only verified against GitHub. Someone controlling the GitHub account could make installs *announce* a release (even a "security" one) that doesn't exist or isn't signed; `update.php` would still refuse to install it.
+- Updating from 0.9.74 to 0.9.75 used the 0.9.74 updater, which predates signatures. From 0.9.75 on, every update is checked.
+- Updating by hand (downloading the zip yourself, or `git checkout`) skips these checks unless you verify the signature yourself; [docs/releasing.md](docs/releasing.md#signing) shows the command.
+- On shared hosting, PHP can usually write to the app's own files, so anyone who can run PHP as that account can change the code. That's inherent in this kind of hosting, and why an update needs nothing more than that account.
+- The deny-all `.htaccess` files protect backups only under Apache. With Nginx, keep the app outside the web root, as the install guide says.
+
 ## Design trade-offs
 
 These are deliberate choices, not oversights. Each makes daily use easier and costs something if a device you use is lost or stolen.
@@ -70,3 +95,4 @@ These are deliberate choices, not oversights. Each makes daily use easier and co
 - Better-Cal is single-user. There is one login; other people reach it through CalDAV, shared feeds and invitations. Problems that require being that one logged-in user are still worth reporting if they cross a boundary the app is supposed to keep (a feed reaching an internal address, a plugin escaping its calendar, an emailed invitation changing something without a decision).
 - Outbound fetches (feeds, geocoding, Google, plugins) go through one HTTP client that refuses private, loopback, link-local and cloud-metadata addresses, checks and pins the address again after every redirect, and ignores proxy settings. Web push is sent separately, only to known browser push services (an operator can add more with `BETTERCAL_PUSH_EXTRA_HOSTS`), over https on port 443 with redirects off. A way around either is a finding.
 - Secrets live in `.env` and in the database sealed with libsodium; nothing in this repository should ever hold one. If you see one, that is a finding too.
+- `server/bin/update.php` must never install a release that isn't signed by a trusted key, or write outside the app's own folders. A way to make it do either is a finding.

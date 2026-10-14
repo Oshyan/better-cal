@@ -59,6 +59,7 @@ For a one-person project, taking security seriously means doing the work in publ
 - **The fixes reviewed too.** Three more passes looked for incomplete fixes, ways around them and anything they broke, and those were fixed as well (0.1.6 to 0.1.8).
 - **Published advisories.** The 2026-09-23 findings were published as GitHub security advisories; [SECURITY.md](SECURITY.md#past-advisories) lists each with the affected and fixed versions.
 - **Tests** run on every change and before every deploy, including regression tests for each security fix.
+- **Signed releases.** Every release is signed with keys that never touch GitHub, and the updater refuses any it can't verify, so a hijacked GitHub account alone can't push code to your install.
 - **Third-party code you can check.** The browser libraries are committed as their published releases, pinned by fingerprint; `node scripts/vendor.mjs --check-upstream` confirms every one against npm ([web/vendor/README.md](web/vendor/README.md)).
 
 [SECURITY.md](SECURITY.md) has the details: the risks I accepted rather than fixed, the trade-offs made on purpose (staying signed in on your own devices, for example, and what to do if one is lost), and how to report a problem privately.

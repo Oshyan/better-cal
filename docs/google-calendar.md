@@ -8,7 +8,7 @@ Where the connected account may edit the calendar (Google's access role `writer`
 
 Google requires each installation to have its own OAuth client, so whoever runs a Better-Cal install sets one up once, in their own Google Cloud project. About ten minutes.
 
-- **Only needed for the Google connector.** Everything else works without it, including following a Google calendar by its secret iCal address (Subscribe) and bringing calendars over from a Google Takeout export (Import).
+- **Only needed for the Google connector.** Everything else works without it, including following a Google calendar by its secret iCal address (Subscribe) and bringing calendars over from Google Calendar's own export or a Takeout export (Import).
 - **No cost and no billing account.** A Google Cloud project is free to create with any Google account, and the Calendar API has no charge at this scale.
 - **The app stays "unverified"**, which is fine for your own install. Verification is for apps offered to the public; an unverified app shows a one-time warning when an account connects.
 

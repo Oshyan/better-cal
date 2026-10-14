@@ -86,6 +86,7 @@ MIT (see [LICENSE](LICENSE)). Use it, fork it, host it, sell it. If you build so
 - [Geocoding and place search](docs/geocoding.md): which services find places, why those, and what to set up after installing for faster results
 - [CalDAV](docs/caldav.md)
 - [Email ingest](docs/email-ingest.md)
+- [The app and reminders](docs/app-and-reminders.md): why and how to install it on a phone or computer, turning on reminders (and the browser's question that follows), and changing notification settings in Better-Cal and on the device
 - [Moving from Google Calendar](docs/migration.md): ways to start, by how much you want to commit (subscribe to try it, feeds both ways, import to switch, connect to live in both), mixed per calendar; other calendar services; keeping your current calendar app through CalDAV; then running both, switching fully, or going back
 - [Scale and limits](docs/limits.md): who it's sized for, and the limits you might run into
 - Roadmap: the [GitHub issues](https://github.com/Oshyan/better-cal/issues). There's no separate roadmap document.

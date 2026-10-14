@@ -81,7 +81,7 @@ Run these as the account that will own Better-Cal's files. PHP must be able to r
 
 That's a working install. The rest is optional:
 
-- **Push reminders** on phones and desktops: `php server/bin/vapid.php --generate`, and put the two keys it prints into `.env`.
+- **Push reminders** on phones and desktops: `php server/bin/vapid.php --generate`, and put the two keys it prints into `.env`. Then each person turns them on per device; [the app and reminders](app-and-reminders.md) walks through it.
 - **Google Calendar**: needs an OAuth client of your own, from a free Google Cloud project. It takes about ten minutes; [google-calendar.md](google-calendar.md#one-time-setup-the-operator) has direct links to each console page.
 - **Email** for reminders by mail and invitation replies: the SMTP settings in `.env`.
 - More under [After installing](#after-installing): sample data to look around with, phone and desktop calendar apps (CalDAV), place search.

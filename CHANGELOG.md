@@ -4,6 +4,14 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.76 (2026-10-14)
+
+- **Import your whole Google Calendar export in one step.** Google Calendar's own export (Settings, Import & export, Export) and Takeout both give you a zip with one file per calendar. **+ Import calendars** in the sidebar now takes that zip as it downloaded: each calendar comes in as its own, named as it was at Google, repeating events and their exceptions intact. Importing the same export again adds nothing, and anything skipped is listed with why. `server/bin/import-takeout.php` takes the zip too, for exports too large to upload.
+- **Vi-style navigation:** h and l move back and forward a day, k and j a week, like the arrow keys. Listed in the keyboard shortcuts (`?`).
+- Importing from Google no longer names a calendar "Book club_c" when its Google id starts with `c_`, as newer calendars' ids do.
+
+Operators: no migration. Update with `php server/bin/update.php`.
+
 ## 0.9.75 (2026-10-14)
 
 - **Releases are signed, and the updater checks.** Each release now carries a signature over its version, commit, zip and manifest, and `php server/bin/update.php` installs nothing unless it verifies against the signing keys Better-Cal ships with. The keys never touch GitHub, so someone who took over the GitHub account couldn't push code to installs with it. There are two keys, either one enough: a key file, and a hardware security key as its backup. Nothing changes for anyone installing or updating. [Releasing](docs/releasing.md#signing) explains it.

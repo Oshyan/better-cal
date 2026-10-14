@@ -8506,8 +8506,15 @@ use BetterCal\Domain\GoogleWriter;
     $real = password_hash('correct horse', PASSWORD_BCRYPT, ['cost' => 11]);
     $bdb->run("INSERT INTO users (id, email, password_hash) VALUES (1, 'owner@example.com', ?)", [$real]);
     $time = static function (callable $f): float { $t = hrtime(true); $f(); return (hrtime(true) - $t) / 1e6; };
-    $known = $time(static fn() => password_verify('wrong', $real));
-    $unknown = $time(static fn() => BetterCal\Domain\Auth::burnTime($bdb, 'wrong'));
+    // One wall-clock sample per side flaked on a shared CI runner (a stall
+    // landed on one side only). Interleave several rounds and compare the
+    // fastest of each: noise only ever adds time, so the minimum is the cost
+    // of the work itself, while a cheaper hash in burnTime still shows.
+    $known = $unknown = INF;
+    for ($i = 0; $i < 5; $i++) {
+        $known = min($known, $time(static fn() => password_verify('wrong', $real)));
+        $unknown = min($unknown, $time(static fn() => BetterCal\Domain\Auth::burnTime($bdb, 'wrong')));
+    }
     check('burnTime: an unknown email takes as long as a real check (within 40%)', abs($unknown - $known) / max($known, 0.001) < 0.4, sprintf('known %.1fms, unknown %.1fms', $known, $unknown));
 }
 

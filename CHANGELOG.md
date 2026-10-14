@@ -4,6 +4,15 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.74 (2026-10-14)
+
+- **Installing and updating take one command each.** Each release now has a zip with the PHP libraries included, so a new install needs no Composer: unpack it, create a database, and run `php server/bin/install.php`. It checks PHP, asks for your address, database and account, writes `.env` with a generated secret and push keys, creates the tables and your account, and prints the web root and cron line to set up. `php server/bin/update.php` updates to the newest release: it backs up the database, shows "updating" while it works, installs the new version (from the zip, checked against GitHub's SHA-256, keeping the previous version beside it; or by checking out the tag in a git install), and migrates. `--rollback` puts the previous version and the database back. [Installing](docs/install.md#install) and [Updating](docs/install.md#updating) lead with these now; the by-hand steps are still there.
+- **Maintenance mode.** An empty `.maintenance` file in the app directory makes the site answer "updating" and the worker pause. The updater uses it; you can too, when updating by hand.
+- **The vendored browser libraries are documented for review.** `web/vendor/README.md` lists each with its version, license, upstream link and fingerprints, and `node scripts/vendor.mjs --check-upstream` confirms every file against its published release.
+- The welcome's Import row points at Google Calendar's own export (Settings, Import & export) rather than Takeout.
+
+Operators: no migration. Nothing changes for a running install; from this release on, `php server/bin/update.php` is the easy way to update (it needs to create folders beside the app directory, or a git checkout with Composer).
+
 ## 0.9.73 (2026-10-13)
 
 - **The event panel's header names the year too** when the day isn't in this one (it said "Sat, Oct 8" above a 2011 event), and the highlighted year in the date line sits closer to its comma.

@@ -115,23 +115,12 @@ if ($existing !== null) {
         }
     }
 } else {
-    $userId = $db->insert('users', [
-        'email' => $email,
-        'password_hash' => password_hash($password, PASSWORD_DEFAULT),
-        'display_name' => $name !== '' ? $name : explode('@', $email)[0],
-        // A new account opens on the first-run welcome (#79).
-        'settings_json' => json_encode(['welcomeDone' => false]),
-    ]);
-    echo "Created user $email (id $userId).\n";
+    // A new account opens on the first-run welcome (#79).
+    $userId = BetterCal\Infra\Setup::createOwner($db, $email, $password, $name);
+    echo "Created user $email (id $userId), with a \"Personal\" calendar.\n";
 }
 
-$hasCalendar = $db->scalar('SELECT id FROM calendars WHERE user_id = ? LIMIT 1', [$userId]);
-if ($hasCalendar === null) {
-    $calId = $db->insert('calendars', [
-        'user_id' => $userId,
-        'name' => 'Personal',
-        'color' => '#4a7dff',
-        'kind' => 'local',
-    ]);
+$calId = BetterCal\Infra\Setup::ensureCalendar($db, $userId);
+if ($calId !== null) {
     echo "Created default calendar \"Personal\" (id $calId).\n";
 }

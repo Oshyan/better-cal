@@ -18,6 +18,11 @@ require dirname(__DIR__) . '/src/bootstrap.php';
 
 $cfg = config();
 
+// bin/update.php is swapping the code or migrating: answer "updating".
+if (BetterCal\Support\Maintenance::active($cfg['app_root'])) {
+    BetterCal\Support\Maintenance::respond((string) parse_url((string) ($_SERVER['REQUEST_URI'] ?? '/'), PHP_URL_PATH));
+}
+
 try {
     $request = Request::fromGlobals();
 } catch (HttpError $e) {

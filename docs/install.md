@@ -1,38 +1,29 @@
 # Installing Better-Cal
 
-Better-Cal is plain PHP and MySQL with a no-build frontend. It runs on any host that gives you PHP 8.4+, MySQL 8 or MariaDB 10.6+, a cron job and a web server you can point at one directory. Installing takes about half an hour if those are already in place, and needs a command line on the server (SSH).
+Better-Cal is plain PHP and MySQL with a no-build frontend. It runs on any host that gives you PHP 8.4+, MySQL 8 or MariaDB 10.6+, a cron job and a web server you can point at one directory, which includes ordinary shared hosting. Installing takes about fifteen minutes if those are in place, and needs a command line on the server (SSH). A setup page in the browser, for hosts without one, is planned ([#138](https://github.com/Oshyan/better-cal/issues/138)).
 
 ## What you need
 
 - **A server or hosting account with SSH**, and a domain or subdomain for Better-Cal (say `cal.example.com`) with HTTPS. Sessions, the installable app and push reminders all require HTTPS.
-- **PHP 8.4 or newer** with the extensions listed under [Requirements in detail](#requirements-in-detail). Most hosts let you pick the version in their control panel.
-- **MySQL 8.4 or MariaDB 10.6 or newer.**
-- **Composer**, PHP's package installer ([getcomposer.org](https://getcomposer.org/download/)).
+- **PHP 8.4 or newer** with the extensions listed under [Requirements in detail](#requirements-in-detail). Most hosts let you pick the version in their control panel. The installer checks all of it and says what's missing.
+- **MySQL 8.4 or MariaDB 10.6 or newer:** one empty database and a user for it.
 - **Cron**, or any scheduler that can run a command every minute.
 
 ## Install
 
 Run these as the account that will own Better-Cal's files. PHP must be able to read them, and the worker's cron entry goes in this account's crontab. On shared hosting that's simply your own login. The examples install into `/srv/better-cal`; use any directory outside the web root.
 
-1. **Get the code.** Find the newest version on the [releases page](https://github.com/Oshyan/better-cal/releases), then:
+1. **Get the release zip.** On the [releases page](https://github.com/Oshyan/better-cal/releases), the newest release has `better-cal-X.Y.Z.zip`: the app with its PHP libraries included, so there's nothing else to install. Unpack it where it will live:
 
    ```sh
-   git clone https://github.com/Oshyan/better-cal.git /srv/better-cal
-   cd /srv/better-cal
-   git checkout v0.9.73
+   cd /srv
+   curl -LO https://github.com/Oshyan/better-cal/releases/download/v0.9.74/better-cal-0.9.74.zip
+   unzip better-cal-0.9.74.zip
    ```
 
-   Use the newest version in place of `v0.9.73`. Without git, download the release's source code zip and unpack it into `/srv/better-cal` instead; git makes [updating](#updating) a little simpler.
+   Use the newest version in place of `0.9.74`. That makes `/srv/better-cal`. (Uploading the zip through your host's file manager and unzipping it there works too.)
 
-2. **Install the PHP libraries:**
-
-   ```sh
-   cd server && composer install --no-dev && cd ..
-   ```
-
-   If Composer reports a missing PHP extension or the wrong PHP version, fix that first; `composer check-platform-reqs --lock --no-dev`, run in `server/`, lists everything missing.
-
-3. **Create a database and a user for it.** On shared hosting, use the control panel's database page and note the database name, user and password. On your own server:
+2. **Create a database and a user for it.** On shared hosting, use the control panel's database page and note the host, database name, user and password. On your own server:
 
    ```sh
    sudo mysql
@@ -43,50 +34,47 @@ Run these as the account that will own Better-Cal's files. PHP must be able to r
    GRANT ALL PRIVILEGES ON bettercal.* TO 'bettercal'@'localhost';
    ```
 
-4. **Write the settings file.** Copy the example and keep it private:
+3. **Run the installer:**
 
    ```sh
-   cp .env.example .env
-   chmod 600 .env
-   openssl rand -hex 32
+   php /srv/better-cal/server/bin/install.php
    ```
 
-   Open `.env` and fill in four things: `BETTERCAL_BASE_URL` (your address, like `https://cal.example.com`, no trailing slash), the database name in `BETTERCAL_DB_DSN`, `BETTERCAL_DB_USER` and `BETTERCAL_DB_PASS`, and `BETTERCAL_SESSION_SECRET` (paste the random string `openssl` just printed). Everything else in the file is optional and explained where it appears.
+   It checks PHP and its extensions, then asks for the address people will open Better-Cal at, the database details (and tries them before going on), and your email and a password. It writes `.env`, readable only by your account, with a generated session secret and push keys; creates the tables; and creates your account with a first calendar. It's safe to run again: with a `.env` in place it uses that one.
 
-5. **Create the tables:**
+4. **Point the web server at `/srv/better-cal/server/public`.** Every request goes to `server/public/index.php`, except `/dav`, which goes to `dav.php`. Copy the [Nginx](#nginx-tested) or [Apache](#apache-24-tested-with-mod_php) example below; on shared hosting, set the domain's web directory in the control panel. No certificate yet? Let's Encrypt's `certbot` sets one up for Nginx or Apache in a couple of minutes.
 
-   ```sh
-   php server/bin/migrate.php
-   ```
-
-   It lists each change as it applies it. Run it again after every update; it only applies what's new.
-
-6. **Create your account:**
-
-   ```sh
-   php server/bin/seed.php --email=you@example.com
-   ```
-
-   It asks for a password without showing it. (From a script, set `BETTERCAL_SEED_PASSWORD` instead; never put a password on the command line, where other users and the shell history can see it.)
-
-7. **Point the web server at `server/public`.** Every request goes to `server/public/index.php`, except `/dav`, which goes to `dav.php`. Copy the [Nginx](#nginx-tested) or [Apache](#apache-24-tested-with-mod_php) example below; on shared hosting, set the domain's web directory to `/srv/better-cal/server/public` in the control panel. No certificate yet? Let's Encrypt's `certbot` sets one up for Nginx or Apache in a couple of minutes.
-
-8. **Start the worker.** It polls subscribed calendars, reads forwarded mail, sends reminders and tidies up. Run `crontab -e` and add this line:
+5. **Start the worker.** It polls subscribed calendars, reads forwarded mail, sends reminders and tidies up. The installer prints the exact line, with your PHP's path; run `crontab -e` and add it. It looks like:
 
    ```
-   * * * * * php /srv/better-cal/server/bin/worker.php >> /srv/better-cal/worker.log 2>&1
+   * * * * * /usr/bin/php /srv/better-cal/server/bin/worker.php >> /srv/better-cal/worker.log 2>&1
    ```
 
-9. **Check it.** `https://cal.example.com/api/v1/health` should show `{"ok":true,"db":true,...}`. Then open `https://cal.example.com`, sign in, and the welcome walks you through the first settings. A couple of minutes later, Settings, System should show the worker's jobs as healthy.
+   On shared hosting, the control panel usually has a "cron jobs" page for this.
+
+6. **Check it.** `https://cal.example.com/api/v1/health` should show `{"ok":true,"db":true,...}`. Then open `https://cal.example.com`, sign in, and the welcome walks you through the first settings. A couple of minutes later, Settings, System should show the worker's jobs as healthy.
 
 That's a working install. The rest is optional:
 
-- **Push reminders** on phones and desktops: `php server/bin/vapid.php --generate`, and put the two keys it prints into `.env`. Then each person turns them on per device; [the app and reminders](app-and-reminders.md) walks through it.
+- **Push reminders** are set up by the installer; each person turns them on per device ([the app and reminders](app-and-reminders.md)).
 - **Google Calendar**: needs an OAuth client of your own, from a free Google Cloud project. It takes about ten minutes; [google-calendar.md](google-calendar.md#one-time-setup-the-operator) has direct links to each console page.
 - **Email** for reminders by mail and invitation replies: the SMTP settings in `.env`.
 - More under [After installing](#after-installing): sample data to look around with, phone and desktop calendar apps (CalDAV), place search.
 
 If something here didn't work as written on your host, please [report it](https://github.com/Oshyan/better-cal/issues).
+
+### From git instead of the zip
+
+For following development or making changes: `git clone https://github.com/Oshyan/better-cal.git /srv/better-cal`, `git checkout` the newest release tag, then install the PHP libraries with [Composer](https://getcomposer.org/download/) (`cd server && composer install --no-dev`) before running the installer. Updating works from a checkout too.
+
+### By hand, without the installer
+
+What `install.php` does, step by step, if you'd rather:
+
+1. `cp .env.example .env && chmod 600 .env`, then fill in `BETTERCAL_BASE_URL`, the database in `BETTERCAL_DB_DSN`, `BETTERCAL_DB_USER`, `BETTERCAL_DB_PASS`, and `BETTERCAL_SESSION_SECRET` (`openssl rand -hex 32` makes one). Everything else in the file is optional and explained where it appears.
+2. `php server/bin/migrate.php` creates the tables.
+3. `php server/bin/seed.php --email=you@example.com` creates your account; it asks for the password without showing it. From a script, set `BETTERCAL_SEED_PASSWORD` instead; never put a password on the command line, where other users and the shell history can see it.
+4. Optional: `php server/bin/vapid.php --generate`, and put the keys it prints into `.env`, for push reminders.
 
 ## Requirements in detail
 
@@ -95,7 +83,7 @@ If something here didn't work as written on your host, please [report it](https:
   - Shared hosting: pick PHP 8.4 or 8.5 in the host's panel (DreamHost offers both as of October 2026; elsewhere, check the host's PHP version picker).
   - Debian 13 and Ubuntu 26.04 ship PHP 8.4 and 8.5 respectively: `apt install php8.4-cli php8.4-mysql php8.4-curl php8.4-mbstring php8.4-xml php8.4-zip` (use `8.5` on Ubuntu 26.04), plus `libapache2-mod-php8.4` or `php8.4-fpm` for the web server.
   - Ubuntu 24.04 and Debian 12 ship older PHP. Add the widely used packages by Ondřej Surý first: `sudo add-apt-repository ppa:ondrej/php` on Ubuntu (Debian: https://packages.sury.org/php/), then the `php8.4-*` packages above.
-- Composer, to install the PHP dependencies.
+- Composer, only to install from git rather than the release zip.
 - MySQL 8.4 or MariaDB 10.6 or newer, with one empty database and a user with full rights on it. Tested on MySQL 8.4 (Percona Server) and MariaDB 10.6 and 10.11. MySQL 8.0 should work, since nothing here needs newer SQL, but it is past end of life and untested.
 - A cron entry (or any scheduler) that can run a PHP script every minute.
 - HTTPS.
@@ -109,11 +97,40 @@ If something here didn't work as written on your host, please [report it](https:
 
 ## Updating
 
-Settings, About shows the running version, and the app tells you when a release is out (it checks GitHub once a day; Settings, About can limit that to security releases or turn it off). It never downloads or installs anything itself.
+Settings, About shows the running version, and the app tells you when a release is out (it checks GitHub once a day; Settings, About can limit that to security releases or turn it off). The app itself never downloads or installs anything; updating is one command, run by you. Updating from the app is planned ([#139](https://github.com/Oshyan/better-cal/issues/139)).
 
-Each [release page](https://github.com/Oshyan/better-cal/releases) lists what changed and ends with an **Operators** line: what the update needs from you, such as "no migration", a new setting, or a newer PHP. Read it first. Skipping versions is fine, since the migration applies everything in between, but read the Operators lines of the ones you skip as well.
+Each [release page](https://github.com/Oshyan/better-cal/releases) lists what changed and ends with an **Operators** line: what the update needs from you, such as "no migration", a new setting, or a newer PHP. Skipping versions is fine, since the migration applies everything in between, but read the Operators lines of the ones you skip as well.
 
-Run these as the user that owns the files, in the app directory (`/srv/better-cal` here). It takes a minute or two.
+### With the updater
+
+As the account that owns the files:
+
+```sh
+php /srv/better-cal/server/bin/update.php
+```
+
+It finds the newest release, checks it the way the app's update notice does (a published, unchangeable GitHub release with a valid manifest), and shows its Operators line. If you say yes, it:
+
+1. **backs up the database** into `/srv/better-cal-backups/`, written by PHP itself, so it works without `mysqldump`;
+2. **puts the site in maintenance mode**, so it shows "updating" for a minute and the worker pauses;
+3. **installs the new version.** From a release zip, it downloads the new zip, checks its SHA-256 against GitHub's, and unpacks it beside the current copy. It carries over `.env`, plugins you added and per-host files like `.user.ini`, then swaps the two folders, so the previous version stays whole in `/srv/better-cal-<old version>`. From a git checkout, it checks out the release tag and runs Composer;
+4. **runs the new version's database changes**, then brings the site back.
+
+`--check` only says whether there's a release; `--yes` skips the question. It needs to be able to create folders beside the app directory (in `/srv` here), which on shared hosting your home directory allows. Open browsers and the installed app pick up the new version on their next load.
+
+**If something goes wrong,** the updater stops and says so. Before anything has changed, it leaves the current version running. Once the new code is in place, it leaves the site in maintenance mode, and
+
+```sh
+php /srv/better-cal/server/bin/update.php --rollback
+```
+
+puts the previous version and the database back as they were before the update. That also works after an update that finished but misbehaves; do it soon, since anything entered since the backup is lost. Please [report what happened](https://github.com/Oshyan/better-cal/issues).
+
+The backups and the previous version stay until you remove them. Delete old ones from `/srv/better-cal-backups/` and the `better-cal-<version>` folders whenever you're happy with an update.
+
+### By hand
+
+The same steps yourself, as the user that owns the files, in the app directory (`/srv/better-cal` here):
 
 1. **Back up the database**, and keep a copy of `.env`:
 
@@ -124,23 +141,18 @@ Run these as the user that owns the files, in the app directory (`/srv/better-ca
 
    Your host's own database backup works too, as long as you can restore it.
 2. **Get the new code.**
-   - From a git clone: `git fetch --tags` and then `git checkout v0.9.74`, with the version you're updating to. Releases are tags; `main` can be ahead of the newest release.
-   - From a release zip: unpack the new one into a fresh directory beside the current one (say `/srv/better-cal-new`), copy `.env` into it along with any plugins you added under `server/plugins/` and your worker log if you keep one there, then swap the two: `mv /srv/better-cal /srv/better-cal-old && mv /srv/better-cal-new /srv/better-cal`. Your web server and cron entry keep pointing at the same path.
-3. **Update the PHP libraries:** `cd server && composer install --no-dev && cd ..`
-4. **Apply database changes:** `php server/bin/migrate.php`. It lists each change it applies, or none.
-5. **Check it:** `https://your-host/api/v1/health` should say `{"ok":true,"db":true,...}`, and Settings, About should show the new version. Open browsers and the installed app pick up the new version on their next load.
+   - From a git clone: `git fetch --tags` and then `git checkout v0.9.74`, with the version you're updating to, then `cd server && composer install --no-dev && cd ..`. Releases are tags; `main` can be ahead of the newest release.
+   - From a release zip: unpack the new one into a fresh directory beside the current one (say `/srv/better-cal-new`), copy `.env` into it along with any plugins you added under `server/plugins/`, then swap the two: `mv /srv/better-cal /srv/better-cal-old && mv /srv/better-cal-new /srv/better-cal`. Your web server and cron entry keep pointing at the same path.
+3. **Apply database changes:** `php server/bin/migrate.php`. It lists each change it applies, or none.
+4. **Check it:** `https://your-host/api/v1/health` should say `{"ok":true,"db":true,...}`, and Settings, About should show the new version.
 
-For the few seconds between steps 2 and 4, the new code runs against the old database. To avoid even that, comment out the worker's cron line before step 2 and put it back after step 4.
+For the few seconds between steps 2 and 3, the new code runs against the old database. To avoid even that, create an empty file named `.maintenance` in the app directory before step 2 (the site shows "updating" and the worker pauses) and delete it after step 3.
 
-### If something goes wrong
-
-- **The migration stopped with an error:** don't keep using the app. Restore the backup (`mysql -u DB_USER -p DB_NAME < ~/bettercal-before-update.sql`), go back to the previous code (`git checkout` the old tag, or swap `/srv/better-cal-old` back), run `cd server && composer install --no-dev`, and please [report the error](https://github.com/Oshyan/better-cal/issues) with its message.
-- **The app misbehaves after a clean update:** going back to the previous code alone isn't enough when the update changed the database, so restore the backup as well. Do it soon: anything entered since the backup is lost when you restore it.
-- **The health check fails:** the PHP error log usually says why. Most often it's a missing PHP extension or version a release's Operators line asked for; `composer check-platform-reqs --lock --no-dev`, run in `server/`, lists what's missing.
+If the migration stops with an error, don't keep using the app: restore the backup (`mysql -u DB_USER -p DB_NAME < ~/bettercal-before-update.sql`), go back to the previous code (`git checkout` the old tag and run Composer, or swap `/srv/better-cal-old` back), and please [report the error](https://github.com/Oshyan/better-cal/issues). If the health check fails, the PHP error log usually says why; most often it's a missing PHP extension or version a release's Operators line asked for.
 
 ### The deploy script (optional)
 
-`scripts/deploy.sh` is the maintainer's deploy tool, not something you need: it runs the update steps above from a separate machine over rsync and ssh, with the test suites and a backup first. It ships the last commit, not the working tree, so commit first: uncommitted edits are left out. It runs the server, smoke and static suites, deploy-security checks, dependency-pin checks and the vendor check on exactly those files first and refuses to ship a red tree. It then backs up the app directory and MySQL/MariaDB database before changing anything, into the configured root-owned backup directory, and finishes with the health check and `smoke.php`. The application account reads the backup sources but cannot write the private destination. To use it, copy `scripts/deploy.env.example` to `scripts/deploy.env`, fill in the host and paths, and run it. It assumes a Debian-style host with sudo, composer, mysqldump, `flock` and cron; `scripts/deploy-dev.sh` ships any branch to a second, isolated install on the same host. SQLite remains useful for tests, but this production deploy helper deliberately refuses an SQLite DSN; use SQLite's own online-backup mechanism separately.
+`scripts/deploy.sh` is the maintainer's deploy tool, not something you need: it updates from a separate machine over rsync and ssh, with the test suites and a backup first. It ships the last commit, not the working tree, so commit first: uncommitted edits are left out. It runs the server, smoke and static suites, deploy-security checks, dependency-pin checks and the vendor check on exactly those files first and refuses to ship a red tree. It then backs up the app directory and MySQL/MariaDB database before changing anything, into the configured root-owned backup directory, and finishes with the health check and `smoke.php`. The application account reads the backup sources but cannot write the private destination. To use it, copy `scripts/deploy.env.example` to `scripts/deploy.env`, fill in the host and paths, and run it. It assumes a Debian-style host with sudo, composer, mysqldump, `flock` and cron; `scripts/deploy-dev.sh` ships any branch to a second, isolated install on the same host. SQLite remains useful for tests, but this production deploy helper deliberately refuses an SQLite DSN; use SQLite's own online-backup mechanism separately.
 
 ### Development deployments
 
@@ -158,7 +170,7 @@ Every `CLONE_DB=1` operation first imports production into a private, randomly n
 
 PHP dependencies are Composer's and pinned in `server/composer.lock`; `composer audit --no-dev --locked` checks them against the Packagist advisory database and is a CI/deployment gate. The frontend has no package manager: its libraries (Preact, htm, Squire, DOMPurify, Leaflet) are committed under `web/vendor/` and pinned in `web/vendor/manifest.json` with their npm package, version and the sha256 of the shipped file. `node scripts/vendor.mjs --verify` confirms the tree matches the manifest, and `--check-upstream` confirms each file against the published release; [web/vendor/README.md](../web/vendor/README.md) lists them. Dependabot and the weekly dependency-watch workflow notify maintainers of Composer, GitHub Actions, PHP-image and vendored-browser-library updates; updates remain reviewed rather than automatic. See [`dependencies.md`](dependencies.md) for the decision policy.
 
-The worker checks the project's GitHub releases once a day. Update notices are enabled by default and can be set to **All releases**, **Security updates only**, or **Off** in Settings, About; **Check now** always remains available. Better-Cal only reports a release and links to its notes—it never downloads or installs application code. A release's cumulative secure-version floor keeps an older vulnerable installation warned even if a later release is otherwise routine.
+The worker checks the project's GitHub releases once a day. Update notices are enabled by default and can be set to **All releases**, **Security updates only**, or **Off** in Settings, About; **Check now** always remains available. The app only reports a release and links to its notes; it never downloads or installs application code. `server/bin/update.php`, which you run, does: only a published, immutable release whose manifest and zip match GitHub's SHA-256 digests. A release's cumulative secure-version floor keeps an older vulnerable installation warned even if a later release is otherwise routine.
 
 ## How requests are routed
 

@@ -1,0 +1,105 @@
+# The release zip: the tagged source with its PHP libraries already
+# installed, so installing or updating needs no Composer (docs/install.md).
+# scripts/release.sh prepare starts this once the draft release exists and
+# waits for it; the zip is attached to the draft before it is published, so
+# the published (immutable) release always carries it, with GitHub's SHA-256
+# digest. The libraries are installed in the same pinned PHP 8.4 image the
+# tests use, from the lock file, exactly as a manual install would.
+name: release zip
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag (vX.Y.Z) whose draft release gets the zip
+        required: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  libraries:
+    name: PHP libraries on PHP 8.4
+    runs-on: ubuntu-latest
+    container: php:8.4-cli@sha256:1d2cf2b7d715b5b3aa959f0150ccbcc7b71e0181b637e443abf40a7fb56bf79a
+    steps:
+      - name: The tag is a release version
+        env:
+          TAG: ${{ inputs.tag }}
+        run: '[[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]'
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag }}
+      - name: Composer
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends libzip-dev unzip
+          docker-php-ext-install zip pdo_mysql
+          php -r 'copy("https://getcomposer.org/installer", "/tmp/composer-setup.php");'
+          php -r 'copy("https://composer.github.io/installer.sig", "/tmp/composer-setup.sig");'
+          php -r '$expected = trim(file_get_contents("/tmp/composer-setup.sig")); $actual = hash_file("sha384", "/tmp/composer-setup.php"); if (!hash_equals($expected, $actual)) { fwrite(STDERR, "Composer installer signature mismatch\n"); exit(1); }'
+          php /tmp/composer-setup.php --quiet --install-dir=/usr/local/bin --filename=composer
+      - name: Install from the lock file
+        working-directory: server
+        env:
+          COMPOSER_ALLOW_SUPERUSER: 1
+        run: |
+          composer check-platform-reqs --lock --no-dev
+          composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader
+          composer audit --no-dev --locked
+      - name: Pack the libraries
+        run: tar -czf /tmp/vendor.tar.gz -C server vendor
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: vendor
+          path: /tmp/vendor.tar.gz
+          retention-days: 1
+
+  zip:
+    name: Build and attach the zip
+    needs: libraries
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: vendor
+          path: /tmp/vendor
+      - name: Assemble
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          version="${TAG#v}"
+          [[ "$(tr -d '[:space:]' < VERSION)" == "$version" ]] || { echo "VERSION does not match $TAG" >&2; exit 1; }
+          out="$RUNNER_TEMP/out"
+          mkdir -p "$out"
+          # Everything but CI and the test suites, which aren't for running
+          # Better-Cal. (Excluded here rather than marked export-ignore, since
+          # the deploy script runs the suites from its own git archive.)
+          git archive --format=tar --prefix=better-cal/ "$TAG" -- . \
+            ':(exclude).github' ':(exclude)server/tests' ':(exclude)web/tests' \
+            ':(exclude)scripts/tests' ':(exclude)tools/tz-harness' | tar -x -C "$out"
+          # The files this release ships, so bin/update.php can tell the
+          # ones someone added from ones a later release simply dropped.
+          (cd "$out/better-cal" && find . -type f | sed 's|^\./||' | sort > .release-files)
+          tar -xzf /tmp/vendor/vendor.tar.gz -C "$out/better-cal/server"
+          [[ -f "$out/better-cal/server/vendor/autoload.php" ]]
+          (cd "$out" && zip -q -r -X "better-cal-$version.zip" better-cal)
+          sha256sum "$out/better-cal-$version.zip"
+          echo "ZIP=$out/better-cal-$version.zip" >> "$GITHUB_ENV"
+      - name: Attach to the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          [[ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" == true ]] || { echo "$TAG is not a draft release" >&2; exit 1; }
+          gh release upload "$TAG" --clobber "$ZIP"

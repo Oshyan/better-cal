@@ -11,8 +11,10 @@ use BetterCal\Infra\Notifier;
 use BetterCal\Support\Time;
 
 /**
- * Read-only release awareness. This class can fetch release metadata and
- * notify; it never downloads application code or invokes an installer.
+ * Release awareness. The app itself only fetches release metadata and
+ * notifies; it never downloads application code. bin/update.php, run by the
+ * operator, uses newestRelease() and downloadZip() to fetch the release zip
+ * it then installs, verified the same way as the update check.
  */
 final class Updates
 {
@@ -40,6 +42,8 @@ final class Updates
      */
     public const MAX_REDIRECTS = 2;
     public const REQUEST_BUDGET = self::MAX_REDIRECTS + 1;
+    /** The release zip (library files included): better-cal-X.Y.Z.zip, built by .github/workflows/release-zip.yml. */
+    public const MAX_ZIP_BYTES = 100 * 1024 * 1024;
     /** The worker job's health row (worker.php HEALTH_JOB_LABELS). */
     public const HEALTH_SUBJECT = 'job:update_check';
     public const HEALTH_LABEL = 'Application update checks';
@@ -58,42 +62,7 @@ final class Updates
         $startingState = $this->row();
         $startingRevision = (int) ($startingState['revision'] ?? 0);
         try {
-            $candidates = [];
-            for ($page = 1; $page <= self::MAX_RELEASE_PAGES && $candidates === []; $page++) {
-                $releaseResponse = $this->get(self::releasePageUrl($page), [
-                    'Accept: application/vnd.github+json',
-                    'X-GitHub-Api-Version: 2026-03-10',
-                ]);
-                if ($releaseResponse['status'] !== 200) {
-                    throw new \RuntimeException('GitHub Releases returned HTTP ' . $releaseResponse['status']);
-                }
-                $releases = json_decode($releaseResponse['body'], true, 32, JSON_THROW_ON_ERROR);
-                if (!is_array($releases) || !array_is_list($releases)) {
-                    throw new \RuntimeException('GitHub Releases response was not a list');
-                }
-                foreach ($releases as $candidate) {
-                    $tag = is_array($candidate) ? (string) ($candidate['tag_name'] ?? '') : '';
-                    if (preg_match('/^v(\d+\.\d+\.\d+)$/D', $tag) === 1
-                        && empty($candidate['draft']) && empty($candidate['prerelease'])) {
-                        $candidates[] = $candidate;
-                    }
-                }
-                if (count($releases) < self::RELEASE_PAGE_SIZE) {
-                    break; // the end of the list
-                }
-            }
-            if ($candidates === [] && $page > self::MAX_RELEASE_PAGES) {
-                throw new \RuntimeException('No published Better-Cal application release among the newest '
-                    . (self::RELEASE_PAGE_SIZE * self::MAX_RELEASE_PAGES) . ' releases');
-            }
-            if ($candidates === []) {
-                throw new \RuntimeException('No published Better-Cal application release was found');
-            }
-            usort($candidates, static fn(array $a, array $b): int => version_compare(
-                substr((string) $b['tag_name'], 1),
-                substr((string) $a['tag_name'], 1)
-            ));
-            $release = $candidates[0];
+            $release = $this->newestCandidate();
 
             $version = substr((string) $release['tag_name'], 1);
             $current = $this->currentVersion();
@@ -182,6 +151,123 @@ final class Updates
         }
         if (!is_string($status['latestVersion']) || !$status['available']) return;
         $this->saveNotice($userId, ['dismissed_version' => $status['latestVersion']]);
+    }
+
+    /** The newest published vX.Y.Z release in GitHub's list, unverified. */
+    private function newestCandidate(): array
+    {
+        $candidates = [];
+        for ($page = 1; $page <= self::MAX_RELEASE_PAGES && $candidates === []; $page++) {
+            $releaseResponse = $this->get(self::releasePageUrl($page), [
+                'Accept: application/vnd.github+json',
+                'X-GitHub-Api-Version: 2026-03-10',
+            ]);
+            if ($releaseResponse['status'] !== 200) {
+                throw new \RuntimeException('GitHub Releases returned HTTP ' . $releaseResponse['status']);
+            }
+            $releases = json_decode($releaseResponse['body'], true, 32, JSON_THROW_ON_ERROR);
+            if (!is_array($releases) || !array_is_list($releases)) {
+                throw new \RuntimeException('GitHub Releases response was not a list');
+            }
+            foreach ($releases as $candidate) {
+                $tag = is_array($candidate) ? (string) ($candidate['tag_name'] ?? '') : '';
+                if (preg_match('/^v(\d+\.\d+\.\d+)$/D', $tag) === 1
+                    && empty($candidate['draft']) && empty($candidate['prerelease'])) {
+                    $candidates[] = $candidate;
+                }
+            }
+            if (count($releases) < self::RELEASE_PAGE_SIZE) {
+                break; // the end of the list
+            }
+        }
+        if ($candidates === [] && $page > self::MAX_RELEASE_PAGES) {
+            throw new \RuntimeException('No published Better-Cal application release among the newest '
+                . (self::RELEASE_PAGE_SIZE * self::MAX_RELEASE_PAGES) . ' releases');
+        }
+        if ($candidates === []) {
+            throw new \RuntimeException('No published Better-Cal application release was found');
+        }
+        usort($candidates, static fn(array $a, array $b): int => version_compare(
+            substr((string) $b['tag_name'], 1),
+            substr((string) $a['tag_name'], 1)
+        ));
+        return $candidates[0];
+    }
+
+    /**
+     * For bin/update.php: the newest published app release, verified as the
+     * update check verifies it (immutable, canonical manifest and its GitHub
+     * digest), with its release zip when it has one. Nothing is stored.
+     *
+     * @return array{version:string,priority:string,minimumSecureVersion:?string,releaseUrl:string,notes:string,zip:?array{url:string,sha256:string,size:int}}
+     */
+    public function newestRelease(): array
+    {
+        $release = $this->newestCandidate();
+        $version = substr((string) $release['tag_name'], 1);
+        $state = $this->verifiedManifestState($release, $version, $this->row());
+        $name = 'better-cal-' . $version . '.zip';
+        $zips = array_values(array_filter(is_array($release['assets'] ?? null) ? $release['assets'] : [],
+            static fn($asset): bool => is_array($asset) && ($asset['name'] ?? null) === $name));
+        $zip = null;
+        if (count($zips) === 1) {
+            $url = self::RELEASE_BASE . rawurlencode('v' . $version) . '/' . $name;
+            if (($zips[0]['browser_download_url'] ?? null) !== $url) {
+                throw new \RuntimeException('The release zip download URL is not canonical');
+            }
+            if (preg_match('/^sha256:([0-9a-f]{64})$/D', (string) ($zips[0]['digest'] ?? ''), $m) !== 1) {
+                throw new \RuntimeException('The release zip has no valid GitHub SHA-256 digest');
+            }
+            $size = (int) ($zips[0]['size'] ?? 0);
+            if ($size <= 0 || $size > self::MAX_ZIP_BYTES) {
+                throw new \RuntimeException('The release zip size is out of range');
+            }
+            $zip = ['url' => $url, 'sha256' => $m[1], 'size' => $size];
+        } elseif (count($zips) > 1) {
+            throw new \RuntimeException('The release has more than one ' . $name);
+        }
+        return [
+            'version' => $version,
+            'priority' => (string) $state['priority'],
+            'minimumSecureVersion' => $state['minimum_secure_version'],
+            'releaseUrl' => (string) $state['release_url'],
+            'notes' => is_string($release['body'] ?? null) ? $release['body'] : '',
+            'zip' => $zip,
+        ];
+    }
+
+    /**
+     * Download a release zip found by newestRelease() to $path, refusing it
+     * unless its SHA-256 matches GitHub's digest.
+     *
+     * @param array{url:string,sha256:string,size:int} $zip
+     */
+    public function downloadZip(array $zip, string $path): void
+    {
+        if ($this->fetch !== null) {
+            $response = ($this->fetch)($zip['url'], ['Accept: application/octet-stream']);
+        } else {
+            $http = new HttpClient(
+                requestBudget: self::REQUEST_BUDGET,
+                userAgent: HttpClient::userAgentFor('release downloads'),
+                maxBytes: self::MAX_ZIP_BYTES,
+                maxRedirects: self::MAX_REDIRECTS,
+                connectTimeoutMs: 10000,
+                totalTimeoutMs: 300000,
+                allowedSchemes: ['https'],
+                maxTotalBytes: self::MAX_ZIP_BYTES,
+            );
+            $response = $http->get($zip['url'], ['Accept: application/octet-stream']);
+        }
+        if ($response['status'] !== 200) {
+            throw new \RuntimeException('The release zip returned HTTP ' . $response['status']);
+        }
+        if (strlen($response['body']) !== $zip['size'] || !hash_equals($zip['sha256'], hash('sha256', $response['body']))) {
+            throw new \RuntimeException("The downloaded zip doesn't match GitHub's SHA-256 digest; nothing was changed");
+        }
+        if (file_put_contents($path, $response['body']) !== $zip['size']) {
+            throw new \RuntimeException("Could not save the zip to $path");
+        }
     }
 
     private function verifiedManifestState(array $release, string $version, array $previous): array

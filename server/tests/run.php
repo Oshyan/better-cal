@@ -9185,6 +9185,150 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Install and update tooling (bin/install.php, bin/update.php): the pure and
+// file-system parts. The database backup is MySQL-only and checked on a real
+// server.
+{
+    $tmp = sys_get_temp_dir() . '/bc-setup-' . bin2hex(random_bytes(4));
+    mkdir($tmp);
+
+    checkEq('migrator: statements split on semicolons outside quotes and comments',
+        ["CREATE TABLE a (x TEXT DEFAULT 'a;b')", 'INSERT INTO a VALUES (1)'],
+        BetterCal\Infra\Migrator::splitStatements("-- note; here\nCREATE TABLE a (x TEXT DEFAULT 'a;b');\n# another;\nINSERT INTO a VALUES (1);\n"));
+
+    checkEq('setup: the database address', 'mysql:host=db.example.com;port=3307;dbname=cal_one;charset=utf8mb4',
+        BetterCal\Infra\Setup::dsn('db.example.com', 3307, 'cal_one'));
+    $threw = false;
+    try { BetterCal\Infra\Setup::dsn('localhost', 3306, 'bad;name=x'); } catch (InvalidArgumentException) { $threw = true; }
+    check('setup: a database name that would change the address is refused', $threw);
+
+    $example = "# Required\nBETTERCAL_BASE_URL=https://cal.example.com\n# BETTERCAL_DB_PASS=commented\nBETTERCAL_DB_PASS=\nBETTERCAL_SESSION_SECRET=\n";
+    $env = BetterCal\Infra\Setup::envText($example, [
+        'BETTERCAL_BASE_URL' => 'https://cal.example.org',
+        'BETTERCAL_DB_PASS' => 'pa ss#"word',
+        'BETTERCAL_SESSION_SECRET' => 'abc123',
+        'BETTERCAL_VAPID_PUBLIC' => 'key-1',
+    ]);
+    check('setup: values replace the example\'s lines in place, comments kept', str_contains($env, "# Required\nBETTERCAL_BASE_URL=https://cal.example.org\n# BETTERCAL_DB_PASS=commented\n"));
+    check('setup: a password with spaces, # and quotes is quoted whole', str_contains($env, "BETTERCAL_DB_PASS=\"pa ss#\"word\"\n"));
+    check('setup: a key the example lacks is added at the end', str_ends_with($env, "BETTERCAL_VAPID_PUBLIC=key-1\n"));
+    file_put_contents("$tmp/probe.env", $env);
+    $parsed = [];
+    foreach (file("$tmp/probe.env", FILE_IGNORE_NEW_LINES) as $line) {
+        if ($line !== '' && $line[0] !== '#' && str_contains($line, '=')) {
+            [$k, $v] = explode('=', $line, 2);
+            if ($v !== '' && ($v[0] === '"' || $v[0] === "'") && str_ends_with($v, $v[0])) { $v = substr($v, 1, -1); }
+            $parsed[$k] = $v;
+        }
+    }
+    checkEq('setup: config.php reads the quoted password back exactly', 'pa ss#"word', $parsed['BETTERCAL_DB_PASS'] ?? null);
+    $threw = false;
+    try { BetterCal\Infra\Setup::envText('', ['BETTERCAL_DB_PASS' => "a\nB=1"]); } catch (InvalidArgumentException) { $threw = true; }
+    check('setup: a line break that would add a setting is refused', $threw);
+
+    BetterCal\Infra\Setup::writeEnv("$tmp/.env", "A=1\n");
+    checkEq('setup: .env is readable by its owner alone', '600', substr(sprintf('%o', fileperms("$tmp/.env")), -3));
+    $threw = false;
+    try { BetterCal\Infra\Setup::writeEnv("$tmp/.env", "A=2\n"); } catch (RuntimeException) { $threw = true; }
+    check('setup: an existing .env is never replaced', $threw && file_get_contents("$tmp/.env") === "A=1\n");
+    check('setup: push keys are a P-256 pair', strlen(BetterCal\Infra\Setup::vapidKeys()['public']) === 87);
+
+    checkEq('update: the Operators line is found in release notes', 'Operators: no migration.',
+        BetterCal\Infra\Updater::operatorsLine("- A fix.\n\nOperators: no migration.\n\n---\n"));
+    checkEq('update: a release\'s PHP floor from composer.json', '8.4.1', BetterCal\Infra\Updater::phpRequirement('{"require":{"php":">=8.4.1"}}'));
+
+    BetterCal\Support\Maintenance::on($tmp, 'test');
+    check('maintenance: on', BetterCal\Support\Maintenance::active($tmp));
+    BetterCal\Support\Maintenance::off($tmp);
+    check('maintenance: off', !BetterCal\Support\Maintenance::active($tmp));
+
+    if (class_exists(ZipArchive::class)) {
+        $mkzip = static function (string $path, array $files, array $links = []): ZipArchive {
+            $z = new ZipArchive();
+            $z->open($path, ZipArchive::CREATE | ZipArchive::OVERWRITE);
+            foreach ($files as $name => $body) { $z->addFromString($name, $body); }
+            foreach ($links as $name => $target) {
+                $z->addFromString($name, $target);
+                $z->setExternalAttributesName($name, ZipArchive::OPSYS_UNIX, (0120777 << 16));
+            }
+            $z->close();
+            $z->open($path, ZipArchive::RDONLY);
+            return $z;
+        };
+        $good = ['better-cal/VERSION' => "1.2.3\n", 'better-cal/server/vendor/autoload.php' => '<?php'];
+        $refused = static function (ZipArchive $z): bool {
+            try { BetterCal\Infra\Updater::checkZip($z); return false; } catch (RuntimeException) { return true; } finally { $z->close(); }
+        };
+        check('update zip: a release with its libraries passes', !$refused($mkzip("$tmp/a.zip", $good)));
+        check('update zip: a path that climbs out is refused', $refused($mkzip("$tmp/b.zip", $good + ['better-cal/../../evil.php' => 'x'])));
+        check('update zip: a file outside better-cal/ is refused', $refused($mkzip("$tmp/c.zip", $good + ['elsewhere.php' => 'x'])));
+        check('update zip: a symbolic link is refused', $refused($mkzip("$tmp/d.zip", $good, ['better-cal/link' => '/etc/passwd'])));
+        check('update zip: one without its libraries is refused', $refused($mkzip("$tmp/e.zip", ['better-cal/VERSION' => "1.2.3\n"])));
+
+        // Unpack beside the app and carry your own files across.
+        $root = "$tmp/apps/better-cal";
+        mkdir("$root/server/plugins/sun", 0777, true);
+        mkdir("$root/server/plugins/mine", 0777, true);
+        file_put_contents("$root/.env", "A=1\n");
+        file_put_contents("$root/server/plugins/mine/plugin.json", '{}');
+        file_put_contents("$root/server/plugins/sun/plugin.json", '{}');
+        file_put_contents("$root/old-shipped.txt", 'x');
+        file_put_contents("$root/my-notes.txt", 'x');
+        file_put_contents("$root/" . BetterCal\Infra\Updater::RELEASE_FILES, "old-shipped.txt\nserver/plugins/sun/plugin.json\n");
+        $mkzip("$tmp/rel.zip", ['better-cal/VERSION' => "1.2.3\n", 'better-cal/server/vendor/autoload.php' => '<?php',
+            'better-cal/server/plugins/sun/plugin.json' => '{}'])->close();
+        $u = new BetterCal\Infra\Updater($root);
+        $tree = $u->unpack("$tmp/rel.zip", '1.2.3');
+        check('update: the new version unpacks beside the app', is_file("$tree/VERSION") && dirname($tree, 2) === "$tmp/apps");
+        $kept = $u->carryOver($tree);
+        check('update: .env and a plugin you added are carried over', is_file("$tree/.env") && is_file("$tree/server/plugins/mine/plugin.json")
+            && in_array('.env', $kept['carried'], true) && in_array('server/plugins/mine', $kept['carried'], true));
+        checkEq('update: only files you added are reported as left behind', ['my-notes.txt'], $kept['leftBehind']);
+        checkEq('update: backups go beside the app', "$tmp/apps/better-cal-backups", $u->backupDir());
+    }
+
+    // The release and its zip, verified as the update check verifies them.
+    $rdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    (require dirname(__DIR__) . '/migrations/046_update_awareness.php')($rdb);
+    $relManifest = Updates::manifestJson('2.0.0', 'routine', '1.0.0');
+    $zipBody = 'zip-bytes';
+    $zipAsset = static fn(string $url, string $digest) => ['name' => 'better-cal-2.0.0.zip', 'browser_download_url' => $url, 'digest' => $digest, 'size' => strlen($zipBody)];
+    $relFetch = static function (array $zipEntry) use ($relManifest, $zipBody): Closure {
+        return static function (string $url) use ($relManifest, $zipBody, $zipEntry): array {
+            if (str_contains($url, 'api.github.com')) {
+                return ['status' => 200, 'body' => json_encode([[
+                    'tag_name' => 'v2.0.0', 'draft' => false, 'prerelease' => false, 'immutable' => true,
+                    'html_url' => 'https://github.com/Oshyan/better-cal/releases/tag/v2.0.0', 'published_at' => '2026-10-08T12:00:00Z',
+                    'body' => "- Things.\n\nOperators: run the migration.\n",
+                    'assets' => [
+                        ['name' => Updates::MANIFEST_NAME, 'browser_download_url' => Updates::RELEASE_BASE . 'v2.0.0/' . Updates::MANIFEST_NAME, 'digest' => 'sha256:' . hash('sha256', $relManifest)],
+                        $zipEntry,
+                    ],
+                ]])];
+            }
+            return ['status' => 200, 'body' => str_ends_with($url, '.zip') ? $zipBody : $relManifest];
+        };
+    };
+    $canonical = Updates::RELEASE_BASE . 'v2.0.0/better-cal-2.0.0.zip';
+    $found = (new Updates($rdb, ['version' => '1.0.0'], $relFetch($zipAsset($canonical, 'sha256:' . hash('sha256', $zipBody)))))->newestRelease();
+    check('update: the newest release comes with its zip and notes', $found['version'] === '2.0.0' && $found['zip']['url'] === $canonical
+        && BetterCal\Infra\Updater::operatorsLine($found['notes']) === 'Operators: run the migration.');
+    $threw = false;
+    try { (new Updates($rdb, ['version' => '1.0.0'], $relFetch($zipAsset('https://example.com/better-cal-2.0.0.zip', 'sha256:' . hash('sha256', $zipBody)))))->newestRelease(); }
+    catch (RuntimeException) { $threw = true; }
+    check('update: a zip from anywhere but the release is refused', $threw);
+    $ok = new Updates($rdb, ['version' => '1.0.0'], $relFetch($zipAsset($canonical, 'sha256:' . hash('sha256', $zipBody))));
+    $ok->downloadZip(['url' => $canonical, 'sha256' => hash('sha256', $zipBody), 'size' => strlen($zipBody)], "$tmp/dl.zip");
+    check('update: a download matching GitHub\'s digest is saved', file_get_contents("$tmp/dl.zip") === $zipBody);
+    $threw = false;
+    try { $ok->downloadZip(['url' => $canonical, 'sha256' => str_repeat('0', 64), 'size' => strlen($zipBody)], "$tmp/dl2.zip"); }
+    catch (RuntimeException) { $threw = true; }
+    check('update: a download that doesn\'t match is refused and not saved', $threw && !file_exists("$tmp/dl2.zip"));
+
+    exec('rm -r ' . escapeshellarg($tmp));
+}
+
 $runLog = (string) @file_get_contents($GLOBALS['__runLog']);
 @unlink($GLOBALS['__runLog']);
 fwrite(STDERR, $runLog);

@@ -25,6 +25,10 @@ use BetterCal\Support\Time;
 const MAX_RUNTIME_SECONDS = 50;
 
 $cfg = config();
+// An update is in progress (bin/update.php): skip this minute's run.
+if (BetterCal\Support\Maintenance::active($cfg['app_root'])) {
+    exit(0);
+}
 $db = new Db($cfg['db']);
 // GET_LOCK is server-global in MySQL, not per-database: namespace the lock by
 // the database name so the dev instance's worker and production's can never

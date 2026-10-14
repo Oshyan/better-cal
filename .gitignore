@@ -16,3 +16,8 @@ scripts/deploy.env
 scripts/server.env
 scripts/server-dev.env
 .deploy-move-integrity-paused
+# Runtime state of an install (bin/update.php)
+.maintenance
+.backups/
+.release-files
+.runtime-cache/

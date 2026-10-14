@@ -6,6 +6,8 @@ cd "$ROOT"
 
 REPO="Oshyan/better-cal"
 ASSET="bettercal-release.json"
+# The release zip (source plus PHP libraries), built by .github/workflows/release-zip.yml.
+zip_name() { echo "better-cal-$1.zip"; }
 
 die() { echo "release: $*" >&2; exit 1; }
 remote_tag_commit() {
@@ -66,7 +68,23 @@ case "${1:-}" in
     else
       gh release create "$tag" --repo "$REPO" --draft --verify-tag --title "Better-Cal $tag" --notes-file "$manifest_dir/notes.md" "$manifest_dir/$ASSET#$ASSET"
     fi
-    echo "Draft $tag is ready. Deploy this exact commit and complete smoke checks before publishing."
+    # The release zip is built on GitHub from the tag, in the same PHP image
+    # the tests use, and attached to this draft before it is published.
+    echo "Building $(zip_name "$version") on GitHub..."
+    started=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    gh workflow run release-zip.yml --repo "$REPO" --ref main -f tag="$tag"
+    run_id=""
+    for _ in $(seq 1 30); do
+      run_id=$(gh run list --repo "$REPO" --workflow release-zip.yml --event workflow_dispatch --limit 5 --json databaseId,createdAt \
+        --jq "[.[] | select(.createdAt >= \"$started\")][0].databaseId // empty")
+      [ -n "$run_id" ] && break
+      sleep 2
+    done
+    [ -n "$run_id" ] || die "the release zip build did not start"
+    gh run watch "$run_id" --repo "$REPO" --exit-status >/dev/null || die "the release zip build failed: gh run view $run_id --repo $REPO --log-failed"
+    [[ $(gh release view "$tag" --repo "$REPO" --json assets --jq '[.assets[] | select(.name == "'"$(zip_name "$version")"'")] | length') == 1 ]] \
+      || die "the draft has no $(zip_name "$version")"
+    echo "Draft $tag is ready, with $(zip_name "$version"). Deploy this exact commit and complete smoke checks before publishing."
     ;;
   publish)
     [[ "${2:-}" == --deployment-verified ]] || die "publish requires --deployment-verified after deploying and smoke-testing this exact commit"
@@ -79,6 +97,7 @@ case "${1:-}" in
     trap 'rm -rf "$manifest_dir"' EXIT
     gh release download "$tag" --repo "$REPO" --pattern "$ASSET" --dir "$manifest_dir"
     [[ $(gh release view "$tag" --repo "$REPO" --json assets --jq '[.assets[] | select(.name == "'"$ASSET"'")] | length') == 1 ]] || die "draft must contain exactly one $ASSET"
+    [[ $(gh release view "$tag" --repo "$REPO" --json assets --jq '[.assets[] | select(.name == "'"$(zip_name "$version")"'")] | length') == 1 ]] || die "draft must contain exactly one $(zip_name "$version"); run prepare again"
     node scripts/release-manifest.mjs --verify "$manifest_dir/$ASSET" --version "$version"
     immutable_enabled=$(gh api -H 'X-GitHub-Api-Version: 2026-03-10' "repos/$REPO/immutable-releases" --jq '.enabled // false')
     [[ "$immutable_enabled" == true ]] || die "enable immutable releases for $REPO before publishing"

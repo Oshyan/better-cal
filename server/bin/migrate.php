@@ -3,129 +3,22 @@
 declare(strict_types=1);
 
 // Applies server/migrations/*.sql and *.php in filename order, tracked in
-// schema_migrations. Idempotent: already-applied files are skipped. A .php
-// migration returns a function taking the Db, for changes SQL can't make
-// (data that needs the application's own code, like the HTML sanitizer).
+// schema_migrations. Idempotent: already-applied files are skipped. The work
+// is in BetterCal\Infra\Migrator, which install.php and update.php share.
 
 require dirname(__DIR__) . '/src/bootstrap.php';
 
 use BetterCal\Infra\Db;
+use BetterCal\Infra\Migrator;
 
 $cfg = config();
-$db = new Db($cfg['db']);
-$pdo = $db->pdo();
-
-$pdo->exec(
-    'CREATE TABLE IF NOT EXISTS schema_migrations (
-        filename VARCHAR(255) PRIMARY KEY,
-        applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
-);
-
-$dir = dirname(__DIR__) . '/migrations';
-$files = array_merge(glob($dir . '/*.sql') ?: [], glob($dir . '/*.php') ?: []);
-sort($files, SORT_STRING);
-
-$applied = array_column($db->all('SELECT filename FROM schema_migrations'), 'filename');
-$appliedSet = array_fill_keys($applied, true);
-
-$ran = 0;
-foreach ($files as $file) {
-    $name = basename($file);
-    if (isset($appliedSet[$name])) {
-        continue;
-    }
-    echo "Applying $name ... ";
-    if (str_ends_with($name, '.php')) {
-        try {
-            $fn = require $file;
-            $note = $fn($db);
-            $db->run('INSERT INTO schema_migrations (filename) VALUES (?)', [$name]);
-            echo 'ok' . (is_string($note) && $note !== '' ? " ($note)" : '') . "\n";
-            $ran++;
-        } catch (\Throwable $e) {
-            echo "FAILED\n";
-            fwrite(STDERR, $e->getMessage() . "\n");
-            exit(1);
-        }
-        continue;
-    }
-    $sql = file_get_contents($file);
-    if ($sql === false) {
-        fwrite(STDERR, "cannot read $file\n");
-        exit(1);
-    }
-    try {
-        foreach (bc_split_statements($sql) as $statement) {
-            $pdo->exec($statement);
-        }
-        $db->run('INSERT INTO schema_migrations (filename) VALUES (?)', [$name]);
-        echo "ok\n";
-        $ran++;
-    } catch (\Throwable $e) {
-        echo "FAILED\n";
-        fwrite(STDERR, $e->getMessage() . "\n");
-        exit(1);
-    }
+$migrator = new Migrator(new Db($cfg['db']), dirname(__DIR__) . '/migrations');
+try {
+    $ran = $migrator->run(static function (string $line): void {
+        echo $line, "\n";
+    });
+} catch (\Throwable $e) {
+    fwrite(STDERR, $e->getMessage() . "\n");
+    exit(1);
 }
-
 echo $ran === 0 ? "Nothing to migrate.\n" : "Applied $ran migration(s).\n";
-
-/**
- * Split an SQL file into statements on semicolons, respecting quotes and
- * line comments. Sufficient for DDL migration files.
- *
- * @return list<string>
- */
-function bc_split_statements(string $sql): array
-{
-    $statements = [];
-    $current = '';
-    $len = strlen($sql);
-    $inString = null;
-    for ($i = 0; $i < $len; $i++) {
-        $ch = $sql[$i];
-        if ($inString !== null) {
-            $current .= $ch;
-            if ($ch === '\\' && $i + 1 < $len) {
-                $current .= $sql[++$i];
-            } elseif ($ch === $inString) {
-                $inString = null;
-            }
-            continue;
-        }
-        if ($ch === "'" || $ch === '"' || $ch === '`') {
-            $inString = $ch;
-            $current .= $ch;
-            continue;
-        }
-        if ($ch === '-' && ($sql[$i + 1] ?? '') === '-') {
-            while ($i < $len && $sql[$i] !== "\n") {
-                $i++;
-            }
-            $current .= "\n";
-            continue;
-        }
-        if ($ch === '#') {
-            while ($i < $len && $sql[$i] !== "\n") {
-                $i++;
-            }
-            $current .= "\n";
-            continue;
-        }
-        if ($ch === ';') {
-            $trimmed = trim($current);
-            if ($trimmed !== '') {
-                $statements[] = $trimmed;
-            }
-            $current = '';
-            continue;
-        }
-        $current .= $ch;
-    }
-    $trimmed = trim($current);
-    if ($trimmed !== '') {
-        $statements[] = $trimmed;
-    }
-    return $statements;
-}

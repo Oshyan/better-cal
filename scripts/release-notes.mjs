@@ -42,7 +42,9 @@ export function releaseNotes(changelog, version, previousTag = null) {
     '',
     '---',
     '',
-    `**Updating:** back up your database first, then follow [Updating Better-Cal](${UPDATING_URL}). Skipping versions is fine: the migration applies everything in between. If you skip some, read their "Operators" lines too.`,
+    `**Updating:** run \`php server/bin/update.php\` (it backs up first, and \`--rollback\` undoes it), or see [Updating Better-Cal](${UPDATING_URL}) to do it by hand. Skipping versions is fine: the migration applies everything in between. If you skip some, read their "Operators" lines too.`,
+    '',
+    `**New install:** \`better-cal-${version}.zip\` below is the app with its PHP libraries included; [Installing](${REPO_URL}/blob/main/docs/install.md#install) takes it from there.`,
     ...(previousTag ? ['', `**Commits:** ${REPO_URL}/compare/${previousTag}...${tag}`] : []),
     '',
   ].join('\n');

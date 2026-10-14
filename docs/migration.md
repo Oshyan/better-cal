@@ -1,8 +1,45 @@
 # Moving from Google Calendar
 
-Nothing here is a cliff. You can test Better-Cal without changing anything at Google, run both for as long as you like, switch fully when you are sure, and go back at any point by simply stopping. This page is the order to do it in.
+Nothing here is a cliff. You can try Better-Cal without changing anything at Google, run both for as long as you like, switch fully when you're sure, and go back at any point by simply stopping.
+
+## Three ways to start
+
+Pick by how much you want to commit today. You can start with one and move to another later: if you connect Google after subscribing or importing, events you now have twice show once (see "The same event twice" below), and you can remove the subscriptions or imported copies whenever you like.
+
+| | Subscribe to Google's feed | Import a copy | Connect Google |
+|---|---|---|---|
+| **Good for** | Just trying it out | Leaving Google, all at once | Living in both, for as long as you like |
+| **Setup** | Two minutes: copy one address per calendar | Ten minutes: export from Google, upload here | Ten minutes, once per server, for a free Google Cloud project; then one click |
+| **Your Google events here** | Yes, read-only, refreshed every few minutes | Yes, as a snapshot from the moment you exported | Yes, live |
+| **Changes you make here reach Google** | No: new things go in a Better-Cal calendar, so you juggle two apps | No: from then on, Better-Cal is where your calendar lives | Yes, both ways, within a few minutes |
+| **Answer Google invitations here** | Only emailed ones, with [mail forwarding](email-ingest.md) | Only emailed ones, with [mail forwarding](email-ingest.md) | Yes |
+| **To stop** | Remove the subscriptions | Delete the imported calendars; Google still has everything | Disconnect; nothing at Google has changed |
+
+### Just trying it: subscribe to Google's feed
+
+Google gives every calendar a private address that calendar apps can read.
+
+1. In Google Calendar, open the calendar's settings (the three dots next to it, then **Settings and sharing**) and copy **Secret address in iCal format**.
+2. In Better-Cal's sidebar, below the calendar list, choose **+ Subscribe URL** and paste it. Repeat for each calendar you want to see.
+3. Put anything new in a Better-Cal calendar (**+ New calendar**, in the same place).
+
+You see everything in one place, but you're running two apps: what you add here stays here, and changes you make at Google show up after the next refresh. Google's feed can also lag behind Google Calendar itself. Treat the secret address like a password: anyone who has it can read that calendar, and Google's settings page can reset it.
+
+### All in: import a copy
+
+1. At [takeout.google.com](https://takeout.google.com), deselect all, select **Calendar**, and export. You get a zip with one `.ics` file per calendar.
+2. In Better-Cal's sidebar, choose **+ Import ICS** and pick one `.ics` file. Each becomes a calendar here, repeating events included. Repeat for the others.
+
+With command-line access to the server, `php server/bin/import-takeout.php /path/to/Takeout/Calendar` imports the whole folder in one go (see [Step 3](#step-3-the-full-switch)). The copy doesn't change when Google does, so this suits a clean break. For calendars other people share with you, connecting or subscribing works better.
+
+### Living in both: connect Google
+
+The Google connector shows every calendar your Google account can see and keeps them in step both ways: create, edit or move something here and it's at Google within moments; change it at Google and it shows here within five minutes. It's the most setup, because whoever runs the server first creates a free Google Cloud project (about ten minutes, with links to each page, in [google-calendar.md](google-calendar.md#one-time-setup-the-operator)). After that, connecting is a click in **Settings, Connections**.
+
+It's also the path with no hard decisions: you can use Better-Cal daily while Google stays the source of truth, and later move calendars over one at a time, or never. The rest of this page is that route, step by step.
 
 ## The pieces
+
 
 - **Google connector** (Settings → Connections). Connect a Google account and every calendar it can see appears here. Calendars you own or can write to are editable: what you create or change in Better-Cal goes to Google, and what changes at Google shows up here within five minutes ("Check now" on the calendar for sooner). See `docs/google-calendar.md`.
 - **Browser extension** (Settings → Connections has the link and your address to paste in). Every "Add to Google Calendar" link on the web opens in Better-Cal instead. Toggle it off and the links go to Google again. Works in Chrome, Edge, Brave and Vivaldi. On a phone, share the link to the installed app or paste it into quick add.

@@ -49,7 +49,7 @@ It's also the path with no hard decisions: you can use Better-Cal daily while Go
 
 ### Not on Google?
 
-Only the live connection is Google-specific (there's no connector for iCloud or Microsoft yet). Subscribing, feeds both ways and importing work with any calendar service that can share a calendar address or export a file:
+Only the live connection is Google-specific (connecting to iCloud and other CalDAV services, then Microsoft, is planned: [#137](https://github.com/Oshyan/better-cal/issues/137); Proton has no way for other apps to connect). Subscribing, feeds both ways and importing work with any calendar service that can share a calendar address or export a file:
 
 - **iCloud:** share a calendar as a public calendar (in the Calendar app, its share settings) and subscribe to that address here, or export it from Calendar on a Mac (**File, Export**) and import the file.
 - **Outlook and Microsoft 365:** publish a calendar (Outlook on the web, **Settings, Calendar, Shared calendars, Publish a calendar**) and subscribe to its ICS link, or export it as an `.ics` file.

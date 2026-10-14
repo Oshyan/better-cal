@@ -21,6 +21,8 @@ Include what you found, how to reproduce it, and what you think it allows. You w
 
 - **2026-10-06**: a full Codex Security scan of the repository at revision `3cdca5a` (released in 0.9.13): 77 findings, 1 High, 46 Medium and 30 Low. They were fixed in phases through release 0.9.42, each fix with regression tests and an independent review of the patch. One Medium was set aside after testing showed the reported path was already bounded by the recurrence library's own limit, and one Low was accepted rather than fixed. The working record is `docs/security-remediation-checklist-2026-10-06.md`; the checks still to run against a deployed install are tracked in [issue #81](https://github.com/Oshyan/better-cal/issues/81). This was not the final pre-1.0 scan: that one runs on the 1.0 release candidate.
 
+Releases are signed: `server/bin/update.php` installs only a release whose signature, over its version, commit, zip and manifest, verifies against a key in `server/config/release-keys.php`. The signing keys (a key file and a hardware security key, either one enough) never touch GitHub, so a compromised GitHub account alone cannot push code to installs. [docs/releasing.md](docs/releasing.md#signing) has the details.
+
 Third-party browser code: the libraries under `web/vendor/` (Preact, htm, Squire, DOMPurify, Leaflet) are the published npm releases, some minified, changed only where [web/vendor/README.md](web/vendor/README.md) says (two one-line edits to Preact's files). Each is pinned by SHA-256 in `web/vendor/manifest.json`, every deploy checks the tree against those pins, and `node scripts/vendor.mjs --check-upstream` re-downloads each release and confirms the committed file matches it.
 
 Known residuals, accepted and documented rather than fixed:

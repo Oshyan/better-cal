@@ -32,9 +32,9 @@ if (BetterCal\Support\Maintenance::active($cfg['app_root'])) {
 $db = new Db($cfg['db']);
 // GET_LOCK is server-global in MySQL, not per-database: namespace the lock by
 // the database name so the dev instance's worker and production's can never
-// block each other while sharing one MySQL server.
-preg_match('/dbname=([^;]+)/', (string) $cfg['db']['dsn'], $lockM);
-define('WORKER_LOCK', 'bettercal_worker:' . ($lockM[1] ?? 'default'));
+// block each other while sharing one MySQL server. bin/update.php takes the
+// same lock to wait out a running job before it backs up.
+define('WORKER_LOCK', BetterCal\Infra\Updater::workerLockName((string) $cfg['db']['dsn']));
 $queue = new JobQueue($db);
 $feeds = new Feeds($db, $queue, $cfg);
 $llm = new LlmGateway($cfg);

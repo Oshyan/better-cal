@@ -8,6 +8,31 @@ REPO="Oshyan/better-cal"
 ASSET="bettercal-release.json"
 # The release zip (source plus PHP libraries), built by .github/workflows/release-zip.yml.
 zip_name() { echo "better-cal-$1.zip"; }
+SIG="bettercal-release.sig"
+
+# Check (and with "sign", first make) the release signature for $tag: the
+# statement names the version, the tag's commit and the SHA-256 of the zip and
+# manifest as attached to the release, signed with the maintainer's key file
+# (scripts/release-sign.php, docs/releasing.md). The private key never leaves
+# this machine; installs verify with server/config/release-keys.php.
+release_signature() {
+  local mode=$1 dir commit
+  dir=$(mktemp -d)
+  gh release download "$tag" --repo "$REPO" --pattern "$(zip_name "$version")" --pattern "$ASSET" --dir "$dir"
+  commit=$(git rev-parse "$tag^{commit}")
+  if [[ "$mode" == sign ]]; then
+    php scripts/release-sign.php --statement --version="$version" --commit="$commit" \
+      --zip="$dir/$(zip_name "$version")" --manifest="$dir/$ASSET" --out="$dir/statement.txt"
+    php scripts/release-sign.php --sign --statement-file="$dir/statement.txt" --out="$dir/$SIG"
+  else
+    gh release download "$tag" --repo "$REPO" --pattern "$SIG" --dir "$dir"
+  fi
+  php scripts/release-sign.php --verify="$dir/$SIG" --version="$version" --commit="$commit" \
+    --zip="$dir/$(zip_name "$version")" --manifest="$dir/$ASSET" || die "the release signature does not verify"
+  if [[ "$mode" == sign ]]; then
+    gh release upload "$tag" --repo "$REPO" --clobber "$dir/$SIG"
+  fi
+}
 
 die() { echo "release: $*" >&2; exit 1; }
 remote_tag_commit() {
@@ -84,7 +109,8 @@ case "${1:-}" in
     gh run watch "$run_id" --repo "$REPO" --exit-status >/dev/null || die "the release zip build failed: gh run view $run_id --repo $REPO --log-failed"
     [[ $(gh release view "$tag" --repo "$REPO" --json assets --jq '[.assets[] | select(.name == "'"$(zip_name "$version")"'")] | length') == 1 ]] \
       || die "the draft has no $(zip_name "$version")"
-    echo "Draft $tag is ready, with $(zip_name "$version"). Deploy this exact commit and complete smoke checks before publishing."
+    release_signature sign
+    echo "Draft $tag is ready, with $(zip_name "$version") and its signature. Deploy this exact commit and complete smoke checks before publishing."
     ;;
   publish)
     [[ "${2:-}" == --deployment-verified ]] || die "publish requires --deployment-verified after deploying and smoke-testing this exact commit"
@@ -99,6 +125,7 @@ case "${1:-}" in
     [[ $(gh release view "$tag" --repo "$REPO" --json assets --jq '[.assets[] | select(.name == "'"$ASSET"'")] | length') == 1 ]] || die "draft must contain exactly one $ASSET"
     [[ $(gh release view "$tag" --repo "$REPO" --json assets --jq '[.assets[] | select(.name == "'"$(zip_name "$version")"'")] | length') == 1 ]] || die "draft must contain exactly one $(zip_name "$version"); run prepare again"
     node scripts/release-manifest.mjs --verify "$manifest_dir/$ASSET" --version "$version"
+    release_signature check
     immutable_enabled=$(gh api -H 'X-GitHub-Api-Version: 2026-03-10' "repos/$REPO/immutable-releases" --jq '.enabled // false')
     [[ "$immutable_enabled" == true ]] || die "enable immutable releases for $REPO before publishing"
     gh release edit "$tag" --repo "$REPO" --draft=false --latest

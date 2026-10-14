@@ -109,7 +109,7 @@ As the account that owns the files:
 php /srv/better-cal/server/bin/update.php
 ```
 
-It finds the newest release, checks it the way the app's update notice does (a published, unchangeable GitHub release with a valid manifest), and shows its Operators line. If you say yes, it:
+It finds the newest release, checks it the way the app's update notice does (a published, unchangeable GitHub release with a valid manifest), checks the release's signature against the signing keys this copy of Better-Cal ships with ([releasing.md](releasing.md#signing)), and shows its Operators line. If you say yes, it:
 
 1. **backs up the database** into `/srv/better-cal-backups/`, written by PHP itself, so it works without `mysqldump`;
 2. **puts the site in maintenance mode**, so it shows "updating" for a minute and the worker pauses;
@@ -170,7 +170,7 @@ Every `CLONE_DB=1` operation first imports production into a private, randomly n
 
 PHP dependencies are Composer's and pinned in `server/composer.lock`; `composer audit --no-dev --locked` checks them against the Packagist advisory database and is a CI/deployment gate. The frontend has no package manager: its libraries (Preact, htm, Squire, DOMPurify, Leaflet) are committed under `web/vendor/` and pinned in `web/vendor/manifest.json` with their npm package, version and the sha256 of the shipped file. `node scripts/vendor.mjs --verify` confirms the tree matches the manifest, and `--check-upstream` confirms each file against the published release; [web/vendor/README.md](../web/vendor/README.md) lists them. Dependabot and the weekly dependency-watch workflow notify maintainers of Composer, GitHub Actions, PHP-image and vendored-browser-library updates; updates remain reviewed rather than automatic. See [`dependencies.md`](dependencies.md) for the decision policy.
 
-The worker checks the project's GitHub releases once a day. Update notices are enabled by default and can be set to **All releases**, **Security updates only**, or **Off** in Settings, About; **Check now** always remains available. The app only reports a release and links to its notes; it never downloads or installs application code. `server/bin/update.php`, which you run, does: only a published, immutable release whose manifest and zip match GitHub's SHA-256 digests. A release's cumulative secure-version floor keeps an older vulnerable installation warned even if a later release is otherwise routine.
+The worker checks the project's GitHub releases once a day. Update notices are enabled by default and can be set to **All releases**, **Security updates only**, or **Off** in Settings, About; **Check now** always remains available. The app only reports a release and links to its notes; it never downloads or installs application code. `server/bin/update.php`, which you run, does: only a published, immutable release whose manifest and zip match GitHub's SHA-256 digests and whose signature verifies against the keys in `server/config/release-keys.php`. A release's cumulative secure-version floor keeps an older vulnerable installation warned even if a later release is otherwise routine.
 
 ## How requests are routed
 

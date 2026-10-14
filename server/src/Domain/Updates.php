@@ -199,7 +199,7 @@ final class Updates
      * update check verifies it (immutable, canonical manifest and its GitHub
      * digest), with its release zip when it has one. Nothing is stored.
      *
-     * @return array{version:string,priority:string,minimumSecureVersion:?string,releaseUrl:string,notes:string,zip:?array{url:string,sha256:string,size:int}}
+     * @return array{version:string,priority:string,minimumSecureVersion:?string,releaseUrl:string,notes:string,zip:?array{url:string,sha256:string,size:int},signature:?array{url:string,sha256:string,size:int},manifestSha256:string}
      */
     public function newestRelease(): array
     {
@@ -226,6 +226,17 @@ final class Updates
         } elseif (count($zips) > 1) {
             throw new \RuntimeException('The release has more than one ' . $name);
         }
+        $signature = null;
+        $sigs = array_values(array_filter(is_array($release['assets'] ?? null) ? $release['assets'] : [],
+            static fn($asset): bool => is_array($asset) && ($asset['name'] ?? null) === \BetterCal\Support\ReleaseSignature::ASSET));
+        if (count($sigs) === 1) {
+            $url = self::RELEASE_BASE . rawurlencode('v' . $version) . '/' . \BetterCal\Support\ReleaseSignature::ASSET;
+            if (($sigs[0]['browser_download_url'] ?? null) !== $url
+                || preg_match('/^sha256:([0-9a-f]{64})$/D', (string) ($sigs[0]['digest'] ?? ''), $sm) !== 1) {
+                throw new \RuntimeException('The release signature asset is not canonical');
+            }
+            $signature = ['url' => $url, 'sha256' => $sm[1], 'size' => (int) ($sigs[0]['size'] ?? 0)];
+        }
         return [
             'version' => $version,
             'priority' => (string) $state['priority'],
@@ -233,7 +244,27 @@ final class Updates
             'releaseUrl' => (string) $state['release_url'],
             'notes' => is_string($release['body'] ?? null) ? $release['body'] : '',
             'zip' => $zip,
+            'signature' => $signature,
+            'manifestSha256' => (string) $state['manifest_digest'],
         ];
+    }
+
+    /**
+     * The release's signature file (Support\ReleaseSignature), checked
+     * against GitHub's digest. Whether it verifies is the caller's check.
+     *
+     * @param array{url:string,sha256:string,size:int} $signature
+     */
+    public function fetchSignature(array $signature): string
+    {
+        $response = $this->fetch !== null
+            ? ($this->fetch)($signature['url'], ['Accept: application/octet-stream'])
+            : $this->get($signature['url'], ['Accept: application/octet-stream']);
+        if ($response['status'] !== 200 || strlen($response['body']) > \BetterCal\Support\ReleaseSignature::MAX_BYTES
+            || !hash_equals($signature['sha256'], hash('sha256', $response['body']))) {
+            throw new \RuntimeException("The release signature doesn't match GitHub's digest");
+        }
+        return $response['body'];
     }
 
     /**

@@ -4,6 +4,14 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.75 (2026-10-14)
+
+- **Releases are signed, and the updater checks.** Each release now carries a signature over its version, commit, zip and manifest, and `php server/bin/update.php` installs nothing unless it verifies against the signing keys Better-Cal ships with. The keys never touch GitHub, so someone who took over the GitHub account couldn't push code to installs with it. There are two keys, either one enough: a key file, and a hardware security key as its backup. Nothing changes for anyone installing or updating. [Releasing](docs/releasing.md#signing) explains it.
+- **The updater waits for a running worker job** (it takes the worker's own lock) before backing up, so a job can't be cut off halfway when the code swaps.
+- **Backups and the previous version are kept out of the web's reach.** Their folders get a deny-all `.htaccess` (for Apache, which most shared hosts run), backup names can't be guessed, and the updater warns when the app looks like it sits inside a web root, where the docs say it shouldn't.
+
+Operators: no migration. Update with `php server/bin/update.php`; from this release on, it checks each release's signature.
+
 ## 0.9.74 (2026-10-14)
 
 - **Installing and updating take one command each.** Each release now has a zip with the PHP libraries included, so a new install needs no Composer: unpack it, create a database, and run `php server/bin/install.php`. It checks PHP, asks for your address, database and account, writes `.env` with a generated secret and push keys, creates the tables and your account, and prints the web root and cron line to set up. `php server/bin/update.php` updates to the newest release: it backs up the database, shows "updating" while it works, installs the new version (from the zip, checked against GitHub's SHA-256, keeping the previous version beside it; or by checking out the tag in a git install), and migrates. `--rollback` puts the previous version and the database back. [Installing](docs/install.md#install) and [Updating](docs/install.md#updating) lead with these now; the by-hand steps are still there.

@@ -33,6 +33,7 @@ use BetterCal\Infra\Setup;
 use BetterCal\Infra\Updater;
 use BetterCal\Support\Cli;
 use BetterCal\Support\Maintenance;
+use BetterCal\Support\ReleaseSignature;
 
 $opt = getopt('', ['check', 'yes', 'finish', 'rollback', 'help']);
 if (isset($opt['help'])) {
@@ -46,7 +47,7 @@ $updater = new Updater($appRoot);
 // Everything used after the code is swapped must already be loaded: the
 // autoloader looks for classes under the old path, which by then holds the
 // new version.
-foreach ([DbBackup::class, Migrator::class, Maintenance::class, Setup::class] as $class) {
+foreach ([DbBackup::class, Migrator::class, Maintenance::class, Setup::class, ReleaseSignature::class] as $class) {
     class_exists($class);
 }
 
@@ -99,8 +100,33 @@ function update(array $cfg, Updater $updater, bool $checkOnly, bool $yes): int
         Cli::say('  If this skips versions, that is fine; read the Operators lines of the ones in between too:');
         Cli::say('  https://github.com/Oshyan/better-cal/releases');
     }
+
+    // The release must be signed by a key this copy trusts (config/release-keys.php):
+    // GitHub's checks alone would let anyone who took over the GitHub account
+    // publish code every install accepts.
+    $signed = null;
+    $keys = ReleaseSignature::trustedKeys();
+    if ($keys !== []) {
+        if ($release['signature'] === null) {
+            Cli::say("  Not signed: $to has no " . ReleaseSignature::ASSET . '. Not installing it; please report this.');
+            return 1;
+        }
+        $signed = ReleaseSignature::verify((new Updates($db, $cfg))->fetchSignature($release['signature']), $keys);
+        if ($signed['version'] !== $to || $signed['manifest'] !== $release['manifestSha256']
+            || ($release['zip'] !== null && $signed['zip'] !== $release['zip']['sha256'])) {
+            Cli::say("  The signature is for a different release than $to. Not installing it; please report this.");
+            return 1;
+        }
+        Cli::say("  Signed by {$signed['key']}.");
+    }
     if ($checkOnly) {
         return 0;
+    }
+    if ($updater->looksServed()) {
+        Cli::say();
+        Cli::say("Note: $appRoot looks like it may be inside a web root. Backups and the previous version go beside it,");
+        Cli::say('and Better-Cal adds .htaccess files to keep Apache from serving them, but the app belongs outside the');
+        Cli::say('web root, with only server/public served (docs/install.md).');
     }
 
     // Before anything changes: can this install be updated this way?
@@ -151,11 +177,23 @@ function update(array $cfg, Updater $updater, bool $checkOnly, bool $yes): int
         }
     }
 
-    // 1. Back up the database.
+    // 1. Maintenance mode, then wait out a running worker job (its own lock),
+    // then back up the database.
+    Maintenance::on($appRoot, "updating $current to $to");
+    if ((int) $db->scalar('SELECT GET_LOCK(?, 90)', [Updater::workerLockName((string) $cfg['db']['dsn'])]) !== 1) {
+        Maintenance::off($appRoot);
+        Cli::say('The worker has been busy for 90 seconds. Nothing changed; try again in a few minutes.');
+        return 1;
+    }
     $stamp = gmdate('Ymd-His');
-    $backup = $updater->backupDir() . "/db-$current-$stamp.sql.gz";
+    $backup = $updater->backupDir() . "/db-$current-$stamp-" . bin2hex(random_bytes(4)) . '.sql.gz';
     Cli::say('Backing up the database...');
-    $dump = (new DbBackup($db))->dump($backup, "before updating $current to $to");
+    try {
+        $dump = (new DbBackup($db))->dump($backup, "before updating $current to $to");
+    } catch (\Throwable $e) {
+        Maintenance::off($appRoot);
+        throw new \RuntimeException('The backup failed: ' . $e->getMessage() . '. Nothing changed: still ' . $current . '.', 0, $e);
+    }
     @chmod($backup, 0600);
     Cli::say("  $backup (" . $dump['tables'] . ' tables, ' . number_format($dump['rows']) . ' rows, ' . round($dump['bytes'] / 1024) . ' KB)');
 
@@ -165,13 +203,16 @@ function update(array $cfg, Updater $updater, bool $checkOnly, bool $yes): int
     ];
     $updater->writeState($state);
 
-    // 2. Maintenance mode, then the new code.
-    Maintenance::on($appRoot, "updating $current to $to");
+    // 2. The new code.
     try {
         if ($git) {
             Cli::say("Checking out v$to...");
             if (Updater::run(['git', 'fetch', '--tags', '--quiet'], $appRoot) !== 0) {
                 throw new \RuntimeException('git fetch failed');
+            }
+            [, $commit] = Updater::capture(['git', 'rev-parse', "v$to^{commit}"], $appRoot);
+            if ($signed !== null && trim($commit) !== $signed['commit']) {
+                throw new \RuntimeException("The tag v$to points at a different commit than the signed release");
             }
             [, $json] = Updater::capture(['git', 'show', "v$to:server/composer.json"], $appRoot);
             requirePhp(Updater::phpRequirement($json), $to);
@@ -207,6 +248,7 @@ function update(array $cfg, Updater $updater, bool $checkOnly, bool $yes): int
                 throw new \RuntimeException('Could not move the new version into place; the current one was put back');
             }
             @rmdir(dirname($tree));
+            Updater::denyWeb($previous);
             $state['stage'] = 'swapped';
             $updater->writeState($state);
             Cli::say("  The previous version is in $previous.");

@@ -86,6 +86,44 @@ final class Updater
             throw new \RuntimeException("Could not create $dir");
         }
         @chmod($dir, 0700);
+        self::denyWeb($dir);
+    }
+
+    /**
+     * Keep a folder of backups or an old copy (with its .env) from being
+     * served, should it sit inside a web root after all: a deny-all
+     * .htaccess for Apache, which most shared hosts run, and an empty index.
+     * Nginx ignores both; there, the app belongs outside the web root.
+     */
+    public static function denyWeb(string $dir): void
+    {
+        if (!is_file("$dir/.htaccess")) {
+            @file_put_contents("$dir/.htaccess", "# Written by bin/update.php: never serve this folder.\nRequire all denied\n<IfModule !mod_authz_core.c>\n    Deny from all\n</IfModule>\n");
+        }
+        if (!file_exists("$dir/index.html")) {
+            @file_put_contents("$dir/index.html", '');
+        }
+    }
+
+    /**
+     * Whether the app directory looks like it sits inside a web root, where
+     * its backups and previous copies could be downloadable.
+     */
+    public function looksServed(): bool
+    {
+        foreach (explode('/', $this->appRoot) as $segment) {
+            if (in_array(strtolower($segment), ['public_html', 'htdocs', 'httpdocs', 'www', 'wwwroot', 'html', 'web'], true)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** The worker's MySQL lock (bin/worker.php), so an update can wait for a running job. */
+    public static function workerLockName(string $dsn): string
+    {
+        preg_match('/dbname=([^;]+)/', $dsn, $m);
+        return 'bettercal_worker:' . ($m[1] ?? 'default');
     }
 
     /** A path that doesn't exist yet: $base, or $base-2, $base-3 … */

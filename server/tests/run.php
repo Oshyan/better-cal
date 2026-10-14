@@ -9329,6 +9329,60 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
     exec('rm -r ' . escapeshellarg($tmp));
 }
 
+// ---------------------------------------------------------------------------
+// Release signatures (Support\ReleaseSignature): a key file's Ed25519, and a
+// security key's FIDO2 assertion (its authenticator data then SHA-256 of the
+// statement, signed with Ed25519), either one enough.
+{
+    $RS = BetterCal\Support\ReleaseSignature::class;
+    $statement = $RS::statement('1.2.3', str_repeat('a', 40), str_repeat('b', 64), str_repeat('c', 64));
+    $filePair = sodium_crypto_sign_keypair();
+    $hwPair = sodium_crypto_sign_keypair();
+    $rpId = 'release-signing.better-cal';
+    $keys = [
+        ['id' => 'file-1', 'type' => 'ed25519', 'publicKey' => base64_encode(sodium_crypto_sign_publickey($filePair))],
+        ['id' => 'hw-1', 'type' => 'fido2-ed25519', 'rpId' => $rpId, 'publicKey' => base64_encode(sodium_crypto_sign_publickey($hwPair))],
+    ];
+    $fileSig = ['key' => 'file-1', 'type' => 'ed25519', 'sig' => base64_encode(sodium_crypto_sign_detached($statement, sodium_crypto_sign_secretkey($filePair)))];
+    $fido = static function (int $flags, string $signed) use ($rpId, $hwPair): array {
+        $auth = hash('sha256', $rpId, true) . chr($flags) . pack('N', 7);
+        return ['key' => 'hw-1', 'type' => 'fido2', 'authData' => base64_encode($auth),
+            'sig' => base64_encode(sodium_crypto_sign_detached($auth . hash('sha256', $signed, true), sodium_crypto_sign_secretkey($hwPair)))];
+    };
+    $file = static fn(array $sigs, ?string $st = null) => json_encode(['statement' => $st ?? $statement, 'signatures' => $sigs]);
+    $verifies = static function (string $f) use ($RS, $keys): ?string {
+        try { return $RS::verify($f, $keys)['key']; } catch (RuntimeException) { return null; }
+    };
+
+    checkEq('release signature: the key file verifies', 'file-1', $verifies($file([$fileSig])));
+    checkEq('release signature: the security key, touched and with its PIN, verifies', 'hw-1', $verifies($file([$fido(0x05, $statement)])));
+    checkEq('release signature: either one is enough', 'hw-1', $verifies($file([['key' => 'file-1', 'type' => 'ed25519', 'sig' => base64_encode(str_repeat("\0", 64))], $fido(0x05, $statement)])));
+    checkEq('release signature: a security key not touched is refused', null, $verifies($file([$fido(0x04, $statement)])));
+    checkEq('release signature: a security key without its PIN is refused', null, $verifies($file([$fido(0x01, $statement)])));
+    checkEq('release signature: a signature over another statement is refused', null,
+        $verifies($file([$fileSig], $RS::statement('1.2.4', str_repeat('a', 40), str_repeat('b', 64), str_repeat('c', 64)))));
+    $stranger = sodium_crypto_sign_keypair();
+    checkEq('release signature: a key this copy does not trust is refused', null,
+        $verifies($file([['key' => 'file-1', 'type' => 'ed25519', 'sig' => base64_encode(sodium_crypto_sign_detached($statement, sodium_crypto_sign_secretkey($stranger)))]])));
+    $threw = false;
+    try { $RS::verify($file([$fileSig]), []); } catch (RuntimeException) { $threw = true; }
+    check('release signature: no trusted keys means nothing verifies', $threw);
+    checkEq('release signature: the statement names what was signed', ['version' => '1.2.3', 'commit' => str_repeat('a', 40), 'zip' => str_repeat('b', 64), 'manifest' => str_repeat('c', 64)],
+        $RS::parseStatement($statement));
+    check('release signature: this copy ships at least one trusted key', count($RS::trustedKeys()) >= 1);
+
+    checkEq('update: the worker lock is named per database', 'bettercal_worker:cal_one', BetterCal\Infra\Updater::workerLockName('mysql:host=x;dbname=cal_one;charset=utf8mb4'));
+    check('update: an app under public_html is noticed', (new BetterCal\Infra\Updater('/home/someone/public_html/better-cal'))->looksServed());
+    check('update: an app outside a web root is not', !(new BetterCal\Infra\Updater('/srv/better-cal'))->looksServed());
+    $deny = sys_get_temp_dir() . '/bc-deny-' . bin2hex(random_bytes(3));
+    mkdir($deny);
+    BetterCal\Infra\Updater::denyWeb($deny);
+    check('update: backup folders deny the web', str_contains((string) @file_get_contents("$deny/.htaccess"), 'Require all denied') && is_file("$deny/index.html"));
+    unlink("$deny/.htaccess");
+    unlink("$deny/index.html");
+    rmdir($deny);
+}
+
 $runLog = (string) @file_get_contents($GLOBALS['__runLog']);
 @unlink($GLOBALS['__runLog']);
 fwrite(STDERR, $runLog);

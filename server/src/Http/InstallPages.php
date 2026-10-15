@@ -132,6 +132,13 @@ final class InstallPages
         $values = ['BETTERCAL_BASE_URL' => $url, 'BETTERCAL_DB_DSN' => $dsn, 'BETTERCAL_DB_USER' => $dbUser,
             'BETTERCAL_DB_PASS' => $dbPass, 'BETTERCAL_SESSION_SECRET' => Setup::secret()]
             + ($push !== null ? ['BETTERCAL_VAPID_PUBLIC' => $push['public'], 'BETTERCAL_VAPID_PRIVATE' => $push['private'], 'BETTERCAL_VAPID_SUBJECT' => 'mailto:' . $email] : []);
+        // Some migrations read the settings (045 seals feed credentials with
+        // the session secret), and .env doesn't exist yet: put the new values
+        // in this request's environment, where config() looks first.
+        foreach ($values as $k => $val) {
+            putenv("$k=$val");
+            $_ENV[$k] = $val;
+        }
         $db = new Db(['dsn' => $dsn, 'user' => $dbUser, 'pass' => $dbPass]);
         $envPath = $appRoot . '/.env';
         $wroteEnv = false;

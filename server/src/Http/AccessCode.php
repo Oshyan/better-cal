@@ -13,7 +13,7 @@ namespace BetterCal\Http;
  * (outside the web root, so it can't be fetched); the page asks for it. Anyone
  * who can read that file could already change the app, so a stranger who
  * finds the page first gets nowhere. The code is 60 bits, expires after an
- * hour, and is replaced after 10 wrong tries. Entering it starts a session
+ * hour, and is replaced after 5 wrong tries. Entering it starts a session
  * held in an HttpOnly, SameSite=Strict cookie; forms also carry a token
  * derived from it. Used once, the files are removed.
  */
@@ -22,7 +22,7 @@ final class AccessCode
     public const FILE = 'better-cal-code.txt';
     public const COOKIE = 'bc_access';
     private const TTL = 3600;
-    private const MAX_TRIES = 10;
+    private const MAX_TRIES = 5;
     private const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
     public function __construct(private readonly string $appRoot, private readonly string $purpose)

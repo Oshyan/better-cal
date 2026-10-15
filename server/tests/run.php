@@ -9451,7 +9451,7 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
     $ac->ensure();
     check('access code: stays the same while it is valid', str_contains((string) file_get_contents($ac->codePath()), $typed));
     checkEq('access code: a wrong code is refused', null, $ac->verify('AAAA-BBBB-CCCC'));
-    checkEq('access code: and counts as a try', 9, $ac->triesLeft());
+    checkEq('access code: and counts as a try', 4, $ac->triesLeft());
     check('access code: no session without the code', !$ac->hasSession('anything'));
     check('access code: the other purpose cannot use it', (new BetterCal\Http\AccessCode($root, 'update'))->verify($typed) === null);
     $session = $ac->verify(strtolower(str_replace('-', ' ', $typed)));
@@ -9463,8 +9463,8 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
     $ac2 = new BetterCal\Http\AccessCode($root, 'update');
     $ac2->ensure();
     preg_match('/code: ([A-Z0-9-]+)/', (string) file_get_contents($ac2->codePath()), $m2);
-    for ($i = 0; $i < 10; $i++) { $ac2->verify('WRONG-WRONG-' . $i); }
-    check('access code: ten wrong tries use the code up', $ac2->verify($m2[1]) === null);
+    for ($i = 0; $i < 5; $i++) { $ac2->verify('WRONG-WRONG-' . $i); }
+    check('access code: five wrong tries use the code up', $ac2->verify($m2[1]) === null);
     $ac2->ensure();
     preg_match('/code: ([A-Z0-9-]+)/', (string) file_get_contents($ac2->codePath()), $m3);
     check('access code: and a new one replaces it', ($m3[1] ?? '') !== ($m2[1] ?? '') && is_string($ac2->verify($m3[1])));

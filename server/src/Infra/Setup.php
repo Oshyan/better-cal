@@ -31,12 +31,16 @@ final class Setup
             'required' => true,
             'fix' => "Pick PHP 8.4 or newer in your host's control panel, or install php8.4-cli (docs/install.md).",
         ]];
+        // What an extension is for, where that isn't obvious from its name.
+        $why = [
+            'sodium' => ' Better-Cal uses it to encrypt your backups and the passwords and tokens it keeps for Google and subscribed calendars, and to check that updates are genuine.',
+        ];
         foreach (self::EXTENSIONS as $ext) {
             $rows[] = [
                 'name' => "PHP extension $ext",
                 'ok' => extension_loaded($ext),
                 'required' => true,
-                'fix' => "Enable $ext in your host's PHP settings, or install it (on Debian and Ubuntu, the php8.4 package that provides it).",
+                'fix' => "Enable $ext in your host's PHP settings (often a list of PHP extensions with checkboxes), or install it (on Debian and Ubuntu, the php8.4 package that provides it)." . ($why[$ext] ?? ''),
             ];
         }
         $rows[] = [
@@ -240,7 +244,18 @@ final class Setup
      */
     public static function cronLine(string $appRoot, ?string $php = null): string
     {
+        return '* * * * * ' . self::cronCommand($appRoot, $php);
+    }
+
+    /**
+     * The worker's command alone, for control panels that take the schedule
+     * from their own minute/hour/day/month/weekday fields. It names this
+     * PHP's own binary, so the worker runs on the same PHP version as the
+     * site, whatever the panel's default "php" is.
+     */
+    public static function cronCommand(string $appRoot, ?string $php = null): string
+    {
         $php ??= PHP_BINARY !== '' ? PHP_BINARY : 'php';
-        return '* * * * * ' . $php . ' ' . $appRoot . '/server/bin/worker.php >/dev/null 2>&1';
+        return $php . ' ' . $appRoot . '/server/bin/worker.php >/dev/null 2>&1';
     }
 }

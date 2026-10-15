@@ -84,6 +84,33 @@ function urlBase64ToUint8Array(base64String) {
   return out;
 }
 
+// The service worker registration once its worker is active, which a push
+// subscription needs. On a first visit (the welcome offers notifications
+// straight away) it may not be registered yet, or still installing: register
+// it (the same URL as main.js, so this returns the one registration) and
+// wait for its worker to finish activating. Not .ready, which never settles
+// when installing fails; here a failed install ends the wait with an error.
+async function activeRegistration() {
+  const reg = (await navigator.serviceWorker.getRegistration()) || await navigator.serviceWorker.register('/sw.js');
+  if (reg.active) return reg;
+  const worker = reg.installing || reg.waiting;
+  if (!worker) throw new Error("The app's background worker isn't running; reload and try again");
+  await new Promise((resolve, reject) => {
+    const check = () => {
+      if (worker.state === 'activated') {
+        worker.removeEventListener('statechange', check);
+        resolve();
+      } else if (worker.state === 'redundant') {
+        worker.removeEventListener('statechange', check);
+        reject(new Error("The app's background worker couldn't start; reload and try again"));
+      }
+    };
+    worker.addEventListener('statechange', check);
+    check();
+  });
+  return reg;
+}
+
 // Request permission (user gesture), subscribe the service worker, register
 // the subscription with the server. Throws with a human message on failure.
 export async function enablePush() {
@@ -92,10 +119,7 @@ export async function enablePush() {
   if (perm !== 'granted') throw new Error('Notification permission was not granted');
   const { key } = await api('/push/key');
   if (!key) throw new Error('Server VAPID keys are not configured');
-  // getRegistration instead of .ready: ready never settles when registration
-  // failed, which would leave the Enable button hanging forever.
-  const reg = await navigator.serviceWorker.getRegistration();
-  if (!reg) throw new Error('Service worker is not registered yet; reload and try again');
+  const reg = await activeRegistration();
   const sub = await reg.pushManager.subscribe({
     userVisibleOnly: true,
     applicationServerKey: urlBase64ToUint8Array(key),

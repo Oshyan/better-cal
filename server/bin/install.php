@@ -225,6 +225,8 @@ Cli::say('   (on shared hosting, the web directory setting for your domain; Ngin
 Cli::say();
 Cli::say('2. Run the worker every minute: crontab -e, and add this line');
 Cli::say('     ' . Setup::cronLine($appRoot));
+Cli::say('   (In a control panel with separate schedule fields: every minute, all five set to *, running');
+Cli::say('     ' . Setup::cronCommand($appRoot) . ' )');
 Cli::say();
 Cli::say('Then ' . $base . '/api/v1/health should show {"ok":true,...}, and signing in starts the welcome.');
 Cli::say('Updates: php server/bin/update.php (docs/install.md, Updating).');

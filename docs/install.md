@@ -88,7 +88,7 @@ For hosting where you have a control panel and a file manager (or FTP) but no SS
 3. **Point a subdomain of its own at `better-cal/server/public`** (say `cal.example.com`; [why a subdomain](#choosing-where-to-put-it)) in the control panel's domain settings, and turn on HTTPS for it (most panels have a Let's Encrypt switch).
 4. **Open the address in your browser.** You'll see Better-Cal's setup page. To show it's your server, it asks for a code it has just written into the file `better-cal-code.php` in the `better-cal` folder: open that file in the file manager and type the code in. (Anyone who reaches the page before you can't get further without that file.)
 5. **Fill in the form:** the address, the database details (checked before anything is saved) and your account. Setup creates the tables, saves the settings in `.env.php` (readable only by your account) and makes your account. From then on the setup page is gone for good. If its check of your main domain finds a problem, the last page says so.
-6. **Add the cron job** it shows you, in the control panel's cron or scheduled-tasks page, running every minute. Then sign in.
+6. **Add the cron job** it shows you, in the control panel's cron or scheduled-tasks page. Most panels take the schedule in separate minute, hour, day, month and weekday fields: set them all to every (`*`), or pick "once per minute", and paste the command it shows. If the panel has a "PHP" job type that fills in the start of the path, choose its "custom" type instead and paste the whole command, since that names the PHP version your site runs on. Then sign in.
 
 It needs PHP to be able to write to the `better-cal` folder, which on shared hosting it normally can. If it can't, the page says so.
 

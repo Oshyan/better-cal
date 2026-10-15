@@ -164,11 +164,13 @@ final class InstallPages
         $code->finish();
         self::clearCookie();
         $php = is_executable(PHP_BINDIR . '/php') ? PHP_BINDIR . '/php' : 'php';
-        $cron = Setup::cronLine($appRoot, $php);
+        $command = Setup::cronCommand($appRoot, $php);
         self::page('Better-Cal is set up', self::privateFilesNotice(['app_root' => $appRoot, 'base_url' => $url])
             . '<p>Your settings are saved, the tables are made, and your account is ready.</p>'
-            . '<h2>One thing left: the worker</h2><p>It sends reminders, refreshes subscribed calendars and tidies up, once a minute. In your host\'s control panel, add a cron job (often under "Cron jobs" or "Scheduled tasks") that runs every minute:</p>'
-            . '<pre>' . self::e($cron) . '</pre><p class="hint">If your host names its PHP command differently, use theirs for PHP 8.4 or newer; their cron page usually says.</p>'
+            . '<h2>One thing left: the worker</h2><p>It sends reminders, refreshes subscribed calendars and tidies up, once a minute. In your host\'s control panel, add a cron job (often under "Cron jobs" or "Scheduled tasks"):</p>'
+            . '<ul><li><strong>When:</strong> every minute. Where the panel has separate fields, set minute, hour, day, month and weekday all to <code>*</code> (often called "every" or "once per minute").</li>'
+            . '<li><strong>Command:</strong></li></ul><pre>' . self::e($command) . '</pre>'
+            . '<p class="hint">If the panel offers a "PHP" type that fills in the start of the path for you, choose its "custom" or "command" type instead and paste the whole command: it names the PHP version this site runs on, which the panel\'s default may not be. With a terminal, the crontab line is <code>' . self::e(Setup::cronLine($appRoot, $php)) . '</code></p>'
             . '<p><a class="btn" href="/">Open Better-Cal and sign in</a></p>');
     }
 

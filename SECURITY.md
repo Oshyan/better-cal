@@ -32,7 +32,7 @@ The latest full scan covers the code as of release 0.9.13 (2026-10-06), and its 
 
 ### Past advisories
 
-Published on 2026-09-23 as GitHub security advisories. They belonged to the repository's earlier history, which was rewritten on 2026-10-05, so they are kept here as the record.
+The 2026-09-23 advisories belonged to the repository's earlier history, which was rewritten on 2026-10-05, so they are kept here as the record; later ones link to their GitHub advisory.
 
 | Severity | Advisory | Affected | Fixed in |
 |---|---|---|---|
@@ -45,6 +45,7 @@ Published on 2026-09-23 as GitHub security advisories. They belonged to the repo
 | Medium | A quadratic regular expression over mail HTML from outside stalled the mail worker | 0.1.6 and earlier | 0.1.7 |
 | Medium | Subscribed ICS feeds were parsed without a limit on events or bytes | 0.1.7 and earlier | 0.1.8 |
 | Low | The 20 Low findings of the 2026-09-23 scan, combined (timing, throttle races, prompt-injection surfaces, ReDoS, an SSRF deny-list gap and others) | 0.1.7 and earlier | 0.1.8 |
+| High | [Command-line scripts could be run from the web where the app folder is web-reachable](https://github.com/Oshyan/better-cal/security/advisories/GHSA-m2mq-39mq-vqf6) (published 2026-10-15) | 0.9.81 and earlier | 0.9.82 |
 
 ## Releases and updates
 

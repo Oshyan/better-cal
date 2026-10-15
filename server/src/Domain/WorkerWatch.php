@@ -79,12 +79,20 @@ final class WorkerWatch
         if ($row !== null && $row['status'] === 'failing') {
             return false;
         }
-        // Never ran: count from when the install was set up (its first account).
-        $last = $row['last_ok_at'] ?? $db->scalar('SELECT MIN(created_at) FROM users');
+        // No run reported yet. An install that ran before this report existed
+        // (an update to 0.9.83) has its jobs' successes to count from; only a
+        // new install counts from when it was set up (its first account).
+        $last = $row['last_ok_at'] ?? null;
+        $everRan = $last !== null;
+        if ($last === null) {
+            $last = $db->scalar("SELECT MAX(last_ok_at) FROM system_health WHERE subject LIKE 'job:%'");
+            $everRan = $last !== null;
+            $last ??= $db->scalar('SELECT MIN(created_at) FROM users');
+        }
         if ($last === null || Time::fromDb((string) $last)->getTimestamp() > $now->getTimestamp() - self::STALE_AFTER) {
             return false;
         }
-        $error = $row === null || $row['last_ok_at'] === null
+        $error = !$everRan
             ? "It hasn't run since Better-Cal was set up, so reminders, subscribed calendars and email import aren't working. Add the cron job: Settings, System shows the command."
             : "It hasn't run since then, so reminders, subscribed calendars and email import have stopped. Most often the cron job was removed or paused, or the PHP it names was removed in a PHP upgrade. Settings, System shows the command to use now.";
         $health = new SystemHealth($db);

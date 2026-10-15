@@ -9788,6 +9788,9 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
     $wdb->run("INSERT INTO users (id, email, created_at) VALUES (1, 'sam.sample@example.test', '2026-10-15 10:00:00')");
 
     check('worker watch: a new install gets its first 15 minutes', !$WW::check($wdb, $wcfg, $noMail, $t('2026-10-15 10:10:00')));
+    $wdb->run("INSERT INTO system_health (subject, kind, label, status, last_ok_at) VALUES ('job:reminder_scan', 'job', 'Reminder scan', 'ok', '2026-10-15 10:19:00')");
+    check('worker watch: an install updated from before the report counts from its jobs, not from setup', !$WW::check($wdb, $wcfg, $noMail, $t('2026-10-15 10:20:00')));
+    $wdb->run("DELETE FROM system_health WHERE subject = 'job:reminder_scan'");
     check('worker watch: after that, a worker that never ran is reported', $WW::check($wdb, $wcfg, $noMail, $t('2026-10-15 10:20:00')));
     $row = $wdb->one("SELECT * FROM system_health WHERE subject = 'worker'");
     check('worker watch: as failing since setup, saying to add the cron job', $row['status'] === 'failing' && $row['first_failed_at'] === '2026-10-15 10:00:00'

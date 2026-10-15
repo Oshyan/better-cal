@@ -9478,6 +9478,22 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
     @rmdir($root);
 }
 
+// ---------------------------------------------------------------------------
+// Only at its own address (Http\HostCheck): reached as a folder of another
+// site, Better-Cal would share that site's origin.
+{
+    $HC = BetterCal\Http\HostCheck::class;
+    check('host check: its own host', $HC::allowed('https://cal.example.com', 'cal.example.com'));
+    check('host check: case and the default port don\'t matter', $HC::allowed('https://cal.example.com', 'CAL.example.com:443'));
+    check('host check: a non-default port must match', $HC::allowed('https://cal.example.com:9443', 'cal.example.com:9443') && !$HC::allowed('https://cal.example.com:9443', 'cal.example.com'));
+    check('host check: the main site is refused', !$HC::allowed('https://cal.example.com', 'example.com'));
+    check('host check: an IP address is refused', !$HC::allowed('https://cal.example.com', '203.0.113.7'));
+    check('host check: an empty Host is refused', !$HC::allowed('https://cal.example.com', ''));
+    check('host check: an extra allowed host', $HC::allowed('https://cal.example.com', 'calendar.example.net', ['calendar.example.net']));
+    check('host check: nothing configured, nothing checked', $HC::allowed('http://localhost', 'anything.example'));
+    check('host check: a configured localhost is still checked', !$HC::allowed('http://localhost:8080', 'example.com'));
+}
+
 $runLog = (string) @file_get_contents($GLOBALS['__runLog']);
 @unlink($GLOBALS['__runLog']);
 fwrite(STDERR, $runLog);

@@ -20,6 +20,9 @@ if (BetterCal\Http\InstallPages::needsSetup(dirname(__DIR__, 2))) {
     echo "Better-Cal is not set up yet.\n";
     exit;
 }
+if (!BetterCal\Http\HostCheck::allowed(config()['base_url'], (string) ($_SERVER['HTTP_HOST'] ?? ''), config()['allowed_hosts'])) {
+    BetterCal\Http\HostCheck::respond(config()['base_url'], (string) ($_SERVER['REQUEST_METHOD'] ?? 'GET'), (string) ($_SERVER['REQUEST_URI'] ?? '/'));
+}
 if (BetterCal\Support\Maintenance::active(config()['app_root'])) {
     BetterCal\Support\Maintenance::respond('/dav');
 }

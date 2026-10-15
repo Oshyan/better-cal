@@ -110,6 +110,7 @@ final class InstallPages
         self::page('Set up Better-Cal', $err . '<form method="post" autocomplete="off">'
             . '<input type="hidden" name="step" value="install"><input type="hidden" name="form" value="' . self::e(AccessCode::formToken($token)) . '">'
             . '<h2>Address</h2><label>The address people will open Better-Cal at<input name="url" value="' . $f('url') . '" required></label>'
+            . '<p class="hint">A domain or subdomain of its own, like https://cal.example.com, not a folder of another site (<a href="https://github.com/Oshyan/better-cal/blob/main/docs/install.md#choosing-where-to-put-it">why</a>).</p>'
             . '<h2>Database</h2><p class="hint">An empty MySQL or MariaDB database and a user for it, from your host\'s control panel.</p>'
             . '<div class="row"><label>Host<input name="db_host" value="' . $f('db_host') . '" required></label><label class="narrow">Port<input name="db_port" value="' . $f('db_port') . '" inputmode="numeric" required></label></div>'
             . '<label>Database name<input name="db_name" value="' . $f('db_name') . '" required></label>'

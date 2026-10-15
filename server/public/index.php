@@ -24,6 +24,12 @@ if (BetterCal\Http\InstallPages::needsSetup(dirname(__DIR__, 2))) {
 $cfg = config();
 $requestPath = (string) parse_url((string) ($_SERVER['REQUEST_URI'] ?? '/'), PHP_URL_PATH);
 
+// Only at its own address: the same files reachable as a folder of another
+// site (example.com/cal/) would sit on that site's origin.
+if (!BetterCal\Http\HostCheck::allowed($cfg['base_url'], (string) ($_SERVER['HTTP_HOST'] ?? ''), $cfg['allowed_hosts'])) {
+    BetterCal\Http\HostCheck::respond($cfg['base_url'], (string) ($_SERVER['REQUEST_METHOD'] ?? 'GET'), (string) ($_SERVER['REQUEST_URI'] ?? '/'));
+}
+
 // bin/update.php is swapping the code or migrating: answer "updating".
 if (BetterCal\Support\Maintenance::active($cfg['app_root'])) {
     BetterCal\Support\Maintenance::respond($requestPath);

@@ -45,6 +45,9 @@ function config(): array
             'pass' => $env('BETTERCAL_DB_PASS'),
         ],
         'base_url' => rtrim($env('BETTERCAL_BASE_URL', 'http://localhost'), '/'),
+        // Other host names Better-Cal may be reached by (Http\HostCheck);
+        // every other one is redirected to base_url or refused.
+        'allowed_hosts' => array_values(array_filter(array_map('trim', explode(',', $env('BETTERCAL_ALLOWED_HOSTS'))), static fn(string $h): bool => $h !== '')),
         'gemini' => [
             'key' => $env('BETTERCAL_GEMINI_API_KEY'),
             'model' => $env('BETTERCAL_GEMINI_MODEL', 'gemini-3.6-flash'),

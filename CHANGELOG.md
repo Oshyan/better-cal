@@ -4,6 +4,14 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.79 (2026-10-15)
+
+- **Better-Cal answers only at its own address.** Many hosts store a subdomain as a folder inside the main site, so the same files could also be reached at `example.com/cal/`, on the main site's origin, where its scripts count as the same site. Requests for any host but the one in `BETTERCAL_BASE_URL` are now redirected there, or refused. `BETTERCAL_ALLOWED_HOSTS` lists extra names for the rare setup that needs them.
+- **The install guide says where to put it, and why:** a domain or subdomain of its own (not a folder of another site), pointed at `server/public`, outside the main web root where the host allows, and with its own hosting user if the account runs other sites. [Choosing where to put it](docs/install.md#choosing-where-to-put-it).
+- The setup and database update code is replaced after 5 wrong tries, not 10.
+
+Operators: no migration. If a proxy in front of Better-Cal rewrites the `Host` header, or you reach one install by two names, add the others to `BETTERCAL_ALLOWED_HOSTS` before updating, or those requests will be redirected to `BETTERCAL_BASE_URL`.
+
 ## 0.9.78 (2026-10-15)
 
 - **The "Database update needed" and "Updating" screens actually show in the app.** In 0.9.77 the app knew the server had said so but didn't redraw, so an installed app would have shown an empty calendar instead.

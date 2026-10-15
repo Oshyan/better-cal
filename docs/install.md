@@ -4,10 +4,20 @@ Better-Cal is plain PHP and MySQL with a no-build frontend. It runs on any host 
 
 ## What you need
 
-- **A server or hosting account**, and a domain or subdomain for Better-Cal (say `cal.example.com`) with HTTPS. SSH helps but isn't required. Sessions, the installable app and push reminders all require HTTPS.
+- **A server or hosting account**, and a domain or subdomain of Better-Cal's own (say `cal.example.com`, not `example.com/cal/`; [why](#choosing-where-to-put-it)) with HTTPS. SSH helps but isn't required. Sessions, the installable app and push reminders all require HTTPS.
 - **PHP 8.4 or newer** with the extensions listed under [Requirements in detail](#requirements-in-detail). Most hosts let you pick the version in their control panel. The installer checks all of it and says what's missing.
 - **MySQL 8.4 or MariaDB 10.6 or newer:** one empty database and a user for it.
 - **Cron**, or any scheduler that can run a command every minute.
+
+## Choosing where to put it
+
+**Give Better-Cal a domain or subdomain of its own,** like `cal.example.com`. A folder of another site, like `example.com/cal/`, isn't supported, and that's on purpose.
+
+Browsers keep sites apart by their address: everything on `example.com` counts as one site, whatever folder it's in. If Better-Cal lived at `example.com/cal/`, the rest of `example.com` (a WordPress install, its plugins, anything else there) could act as you inside Better-Cal: read your calendar, change it, use your session. A flaw in any of that would be a flaw in Better-Cal. A subdomain is a separate site to the browser, so that can't happen.
+
+**Point the subdomain at `server/public`,** and, if your host allows, keep the `better-cal` folder outside the main site's web root (beside `public_html`, not inside it). Many hosts store a subdomain as a folder inside the main site's web root, which is fine for the browser (it goes by the address, not the folder), but it means the same files can also be reached at `example.com/cal/`. Better-Cal answers only at the address in `BETTERCAL_BASE_URL` and sends any other to it, so that second address leads nowhere; keeping the folder outside `public_html` simply means it isn't there to find.
+
+**If the hosting account also runs other sites, give Better-Cal its own hosting user** where the host allows (DreamHost and many others do, per domain). The subdomain protects you in the browser; on the server, every site under one user runs as the same account, so if one of them were compromised it could read Better-Cal's `.env` and database. A separate user keeps them apart.
 
 ## Install
 
@@ -69,7 +79,7 @@ For hosting where you have a control panel and a file manager (or FTP) but no SS
 
 1. **Upload the release zip** (`better-cal-X.Y.Z.zip` from the [releases page](https://github.com/Oshyan/better-cal/releases)) with your host's file manager and unzip it there. It makes a `better-cal` folder. Put it outside your web root if the host allows (beside `public_html` rather than in it).
 2. **Create a database and a user** on the control panel's database page. Note the host, database name, user and password.
-3. **Point your domain at `better-cal/server/public`** in the control panel's domain settings, and turn on HTTPS for it (most panels have a Let's Encrypt switch).
+3. **Point a subdomain of its own at `better-cal/server/public`** (say `cal.example.com`; [why a subdomain](#choosing-where-to-put-it)) in the control panel's domain settings, and turn on HTTPS for it (most panels have a Let's Encrypt switch).
 4. **Open the address in your browser.** You'll see Better-Cal's setup page. To show it's your server, it asks for a code it has just written into the file `better-cal-code.txt` in the `better-cal` folder: open that file in the file manager and type the code in. (Anyone who reaches the page before you can't get further without that file.)
 5. **Fill in the form:** the address, the database details (checked before anything is saved) and your account. Setup creates the tables, saves the settings in `.env` (readable only by your account) and makes your account. From then on the setup page is gone for good.
 6. **Add the cron job** it shows you, in the control panel's cron or scheduled-tasks page, running every minute. Then sign in.
@@ -302,6 +312,8 @@ Signs that the `Authorization` header is being dropped: signing in through the b
 ## Behind a proxy or CDN
 
 Sign-in attempts are rate limited per network address. If something on another address sits in front of the web server (Cloudflare, a load balancer, a separate reverse-proxy host, a container ingress), PHP sees that proxy's address for every visitor, so they would all share one limit. Set `BETTERCAL_TRUSTED_PROXIES` in `.env` to the proxy's IPs or CIDR ranges and the real address is read from `X-Forwarded-For`, from the right-hand end, which is the part a client cannot forge. Leave it empty otherwise: by default the header is ignored. Nginx or Apache on the same machine handing requests to PHP-FPM is not a proxy in this sense and needs nothing.
+
+Better-Cal answers only at the host in `BETTERCAL_BASE_URL` ([why](#choosing-where-to-put-it)): a request for any other host is redirected there, or refused with 421. If a proxy in front rewrites the `Host` header to an internal name, or the same install is deliberately reached by a second name, list those in `BETTERCAL_ALLOWED_HOSTS`, comma separated.
 
 **Check that your web server is not already believing visitors about their address.** The app can only be as right as the address the web server hands it. Nginx's `real_ip` module (`set_real_ip_from`, `real_ip_header`) rewrites the client address from a header, and it should only do so for peers you control. CloudPanel's `/etc/nginx/nginx.conf` (seen in CloudPanel 2.5) includes `set_real_ip_from 0.0.0.0/0;` and leaves the header at nginx's default, `X-Real-IP`, which trusts that header from everyone: any visitor can then send `X-Real-IP: 1.2.3.4` and be counted as that address, which lets them dodge the per-address limit and aim a block at someone else's address. Keep the loopback and private ranges (CloudPanel's inner server on port 8080 needs `127.0.0.1`) and remove the `0.0.0.0/0` line, or replace it with your CDN's published ranges if you use one. To test: send one wrong password with a made-up `X-Real-IP` header and see which address the block in Activity names after ten of them, or look at `rate_events`.
 

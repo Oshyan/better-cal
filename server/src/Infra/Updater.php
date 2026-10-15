@@ -246,8 +246,22 @@ final class Updater
     }
 
     /**
+     * The folder a release zip keeps its files under: "better-cal/" for
+     * releases up to 0.9.83, "" for later ones, whose files sit at the top
+     * so a hosting file manager can unpack them straight into the folder
+     * you choose. Null when it's neither.
+     */
+    public static function zipRoot(\ZipArchive $zip): ?string
+    {
+        if ($zip->locateName(self::ZIP_ROOT . 'VERSION') !== false) {
+            return self::ZIP_ROOT;
+        }
+        return $zip->locateName('VERSION') !== false ? '' : null;
+    }
+
+    /**
      * Refuse a zip that could write anywhere but its own folder: every entry
-     * under better-cal/, no "..", no absolute paths or backslashes, no
+     * under its root (zipRoot), no "..", no absolute paths or backslashes, no
      * symbolic links, and bounded in count and unpacked size (declared sizes
      * here; extraction is from a file whose digest was already checked).
      */
@@ -256,12 +270,13 @@ final class Updater
         if ($zip->numFiles < 1 || $zip->numFiles > self::MAX_ENTRIES) {
             throw new \RuntimeException('The zip has an unexpected number of files');
         }
+        $root = self::zipRoot($zip) ?? self::ZIP_ROOT;
         $total = 0;
         for ($i = 0; $i < $zip->numFiles; $i++) {
             $stat = $zip->statIndex($i);
             $name = is_array($stat) ? (string) $stat['name'] : '';
-            if (!str_starts_with($name, self::ZIP_ROOT) || str_contains($name, '\\') || str_contains($name, "\0")
-                || in_array('..', explode('/', $name), true)) {
+            if ($name === '' || !str_starts_with($name, $root) || str_starts_with($name, '/') || str_contains($name, '\\') || str_contains($name, "\0")
+                || preg_match('~^[A-Za-z]:~', $name) === 1 || in_array('..', explode('/', $name), true)) {
                 throw new \RuntimeException("The zip holds an unexpected path: $name");
             }
             if ($zip->getExternalAttributesIndex($i, $opsys, $attr) && $opsys === \ZipArchive::OPSYS_UNIX
@@ -273,7 +288,7 @@ final class Updater
                 throw new \RuntimeException('The zip unpacks to more than expected');
             }
         }
-        if ($zip->locateName(self::ZIP_ROOT . 'VERSION') === false || $zip->locateName(self::ZIP_ROOT . 'server/vendor/autoload.php') === false) {
+        if ($zip->locateName($root . 'VERSION') === false || $zip->locateName($root . 'server/vendor/autoload.php') === false) {
             throw new \RuntimeException("The zip isn't a Better-Cal release with its libraries");
         }
     }
@@ -287,11 +302,14 @@ final class Updater
         }
         try {
             self::checkZip($zip);
+            $root = (string) self::zipRoot($zip);
             $staging = self::freePath($this->parent() . '/.' . $this->name() . '-' . $version . '-unpacking');
             if (!@mkdir($staging, 0755)) {
                 throw new \RuntimeException("Could not create $staging (is " . $this->parent() . ' writable?)');
             }
-            if (!$zip->extractTo($staging)) {
+            // Either layout ends up as <staging>/better-cal.
+            $into = $root === '' ? $staging . '/' . rtrim(self::ZIP_ROOT, '/') : $staging;
+            if (($root === '' && !@mkdir($into, 0755)) || !$zip->extractTo($into)) {
                 throw new \RuntimeException('Unpacking the zip failed (is the disk full?)');
             }
         } finally {

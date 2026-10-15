@@ -9272,6 +9272,12 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
         check('update zip: a file outside better-cal/ is refused', $refused($mkzip("$tmp/c.zip", $good + ['elsewhere.php' => 'x'])));
         check('update zip: a symbolic link is refused', $refused($mkzip("$tmp/d.zip", $good, ['better-cal/link' => '/etc/passwd'])));
         check('update zip: one without its libraries is refused', $refused($mkzip("$tmp/e.zip", ['better-cal/VERSION' => "1.2.3\n"])));
+        $flat = ['VERSION' => "1.2.3\n", 'server/vendor/autoload.php' => '<?php'];
+        check('update zip: a release with its files at the top (0.9.84 on) passes', !$refused($mkzip("$tmp/f.zip", $flat)));
+        check('update zip: a flat one that climbs out is refused', $refused($mkzip("$tmp/g.zip", $flat + ['server/../../evil.php' => 'x'])));
+        check('update zip: a flat one with an absolute path is refused', $refused($mkzip("$tmp/h.zip", $flat + ['/etc/evil.php' => 'x'])));
+        check('update zip: a flat one with a symbolic link is refused', $refused($mkzip("$tmp/i.zip", $flat, ['link' => '/etc/passwd'])));
+        check('update zip: a flat one without its libraries is refused', $refused($mkzip("$tmp/j.zip", ['VERSION' => "1.2.3\n"])));
 
         // Unpack beside the app and carry your own files across.
         $root = "$tmp/apps/better-cal";
@@ -9293,6 +9299,9 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
             && in_array('.env', $kept['carried'], true) && in_array('server/plugins/mine', $kept['carried'], true));
         checkEq('update: only files you added are reported as left behind', ['my-notes.txt'], $kept['leftBehind']);
         checkEq('update: backups go beside the app', "$tmp/apps/better-cal-backups", $u->backupDir());
+        $mkzip("$tmp/flat.zip", ['VERSION' => "1.2.4\n", 'server/vendor/autoload.php' => '<?php'])->close();
+        $flatTree = $u->unpack("$tmp/flat.zip", '1.2.4');
+        check('update: a flat release unpacks the same way', basename($flatTree) === 'better-cal' && is_file("$flatTree/VERSION") && is_file("$flatTree/server/vendor/autoload.php"));
     }
 
     // The release and its zip, verified as the update check verifies them.

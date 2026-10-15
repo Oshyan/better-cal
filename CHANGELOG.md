@@ -15,6 +15,7 @@ Your private files now stay private on any host, not only where the server reads
 - **The worker's cron line no longer writes a log into the app folder:** it's now `... worker.php >/dev/null 2>&1`. Failing jobs still show in Settings, System, and PHP errors go to the private log. If your cron line still writes `worker.log` into the folder, the Private files row says how to change it.
 - **Rolling back to a version before 0.9.83** writes `.env` back for it, since it can't read `.env.php`. Copies you made by hand beside the app (`better-cal-old`) are never touched.
 - **The database update page can restore the database** from the backup it just made, if the update fails.
+- **`update.php` also reads release zips with their files at the top** (no `better-cal` folder inside). Releases from 0.9.84 on use that layout, which hosting file managers unpack straight into the folder you choose; this version is the bridge that can install them.
 
 Operators: no migration. Update with `php server/bin/update.php`; it converts the settings and backups it owns. Where `.env` belongs to another account (root, as the deploy script sets it up), run `sudo php server/bin/settings.php --convert` once; the deploy scripts read `.env.php` and refuse to run with both files present. Change the worker's cron line to end in `>/dev/null 2>&1` if it writes `worker.log` inside the app folder.
 

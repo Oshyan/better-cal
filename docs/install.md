@@ -15,7 +15,13 @@ Better-Cal is plain PHP and MySQL with a no-build frontend. It runs on any host 
 
 Browsers keep sites apart by their address: everything on `example.com` counts as one site, whatever folder it's in. If Better-Cal lived at `example.com/cal/`, the rest of `example.com` (a WordPress install, its plugins, anything else there) could act as you inside Better-Cal: read your calendar, change it, use your session. A flaw in any of that would be a flaw in Better-Cal. A subdomain is a separate site to the browser, so that can't happen.
 
-**Point the subdomain at `server/public`,** and, if your host allows, keep the `better-cal` folder outside the main site's web root (beside `public_html`, not inside it). Many hosts store a subdomain as a folder inside the main site's web root, which is fine for the browser (it goes by the address, not the folder), but it means the same files can also be reached at `example.com/cal/`. Better-Cal answers only at the address in `BETTERCAL_BASE_URL` and sends any other to it, so that second address leads nowhere; keeping the folder outside `public_html` simply means it isn't there to find.
+**Point the subdomain at `server/public`,** and, if your host allows, keep the `better-cal` folder outside the main site's web root (beside `public_html`, not inside it).
+
+Some hosts (Hostinger, for one) only let a subdomain point at a folder inside `public_html`. That's fine for the browser, which goes by the address, not the folder, but it puts the whole `better-cal` folder where the main site serves files: without protection, `example.com/better-cal/.env` would hand out your database password. So:
+
+- **Unzip it inside `public_html`** and point the subdomain at `public_html/better-cal/server/public` (on Hostinger: tick "Custom folder for subdomain" and enter `better-cal/server/public`).
+- **The release protects itself there.** A `.htaccess` at the top of the `better-cal` folder refuses every request for anything in it, and only `server/public` serves the app; backup folders the updater makes get the same. Better-Cal also answers only at the address in `BETTERCAL_BASE_URL`, so the copy reachable through the main domain redirects to the subdomain.
+- **Check it after installing:** open `https://example.com/better-cal/VERSION` (your main domain). It should say Forbidden. If it shows a version number, your host isn't honouring `.htaccess` (most likely an Nginx-only host), and you should move the folder out of the web root or ask the host how.
 
 **If the hosting account also runs other sites, give Better-Cal its own hosting user** where the host allows (DreamHost and many others do, per domain). The subdomain protects you in the browser; on the server, every site under one user runs as the same account, so if one of them were compromised it could read Better-Cal's `.env` and database. A separate user keeps them apart.
 
@@ -77,7 +83,7 @@ If something here didn't work as written on your host, please [report it](https:
 
 For hosting where you have a control panel and a file manager (or FTP) but no SSH. Everything the installer does, a setup page in the browser does instead.
 
-1. **Upload the release zip** (`better-cal-X.Y.Z.zip` from the [releases page](https://github.com/Oshyan/better-cal/releases)) with your host's file manager and unzip it there. It makes a `better-cal` folder. Put it outside your web root if the host allows (beside `public_html` rather than in it).
+1. **Upload the release zip** (`better-cal-X.Y.Z.zip` from the [releases page](https://github.com/Oshyan/better-cal/releases)) with your host's file manager and unzip it there. It makes a `better-cal` folder. Put it outside your web root if the host allows (beside `public_html` rather than in it); if subdomains must point inside `public_html`, unzip it there instead, and do the check in [Choosing where to put it](#choosing-where-to-put-it) once you're set up.
 2. **Create a database and a user** on the control panel's database page. Note the host, database name, user and password.
 3. **Point a subdomain of its own at `better-cal/server/public`** (say `cal.example.com`; [why a subdomain](#choosing-where-to-put-it)) in the control panel's domain settings, and turn on HTTPS for it (most panels have a Let's Encrypt switch).
 4. **Open the address in your browser.** You'll see Better-Cal's setup page. To show it's your server, it asks for a code it has just written into the file `better-cal-code.txt` in the `better-cal` folder: open that file in the file manager and type the code in. (Anyone who reaches the page before you can't get further without that file.)

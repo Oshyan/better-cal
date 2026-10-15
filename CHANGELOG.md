@@ -4,6 +4,12 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.81 (2026-10-15)
+
+- **The app folder refuses to be served, except for `server/public`.** Some hosts (Hostinger, for one) only let a subdomain point inside `public_html`, which puts the whole `better-cal` folder inside the main site's web root, where `.env`, the setup code and backups would otherwise be downloadable through the main domain. A `.htaccess` at the top of the folder now refuses every request for anything in it, while `server/public` keeps serving the app. [Choosing where to put it](docs/install.md#choosing-where-to-put-it) covers this layout, and how to check it after installing.
+
+Operators: no migration. Apache and LiteSpeed read the new `.htaccess`; Nginx ignores it, so with Nginx keep the folder out of any web root, as before.
+
 ## 0.9.80 (2026-10-15)
 
 - **The address check compares host names only, not ports.** In 0.9.79 it also compared the port, and some web servers (nginx handing PHP its `$host`) leave the port out, so an install on a non-standard port was redirected to itself. A trailing dot (`cal.example.com.`) also counts as the same name now.

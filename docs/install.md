@@ -19,7 +19,7 @@ Browsers keep sites apart by their address: everything on `example.com` counts a
 
 Some hosts (Hostinger, for one) only let a subdomain point at a folder inside `public_html`. That's fine for the browser, which goes by the address, not the folder, but it puts the whole `better-cal` folder where the main site serves files: without protection, `example.com/better-cal/` would hand out your settings, database password included. So:
 
-- **Unzip it inside `public_html`** and point the subdomain at `public_html/better-cal/server/public` (on Hostinger: tick "Custom folder for subdomain" and enter `better-cal/server/public`).
+- **Put it in a `better-cal` folder inside `public_html`** and point the subdomain at `public_html/better-cal/server/public`. On Hostinger: tick "Custom folder for subdomain" and enter `better-cal/server/public`; the panel makes that folder, and you extract the zip into `public_html/better-cal` with "Overwrite existing files" on.
 - **The release protects itself there.** The settings file, `.env.php`, starts with a line that makes a web server show it as a blank page; backups are encrypted; and a `.htaccess` at the top of the folder refuses every request for anything in it on servers that read one (Apache, LiteSpeed). Only `server/public` serves the app. Better-Cal also answers only at the address in `BETTERCAL_BASE_URL`, so the copy reachable through the main domain redirects to the subdomain. [Keeping private files private](#keeping-private-files-private) has the details.
 - **It checks itself.** At the end of setup and after each update, Better-Cal asks your main domain for a test file in its folder and tells you in plain words whether your settings could be downloaded. Settings, System shows the latest result under **Private files**, with a **Check now** button. If it ever says "Fix this now", do what it says: move the folder out of `public_html`, or ask your host to run PHP for it.
 
@@ -33,11 +33,11 @@ Run these as the account that will own Better-Cal's files. PHP must be able to r
 
    ```sh
    cd /srv
-   curl -LO https://github.com/Oshyan/better-cal/releases/download/v0.9.74/better-cal-0.9.74.zip
-   unzip better-cal-0.9.74.zip
+   curl -LO https://github.com/Oshyan/better-cal/releases/download/v0.9.84/better-cal-0.9.84.zip
+   unzip better-cal-0.9.84.zip -d better-cal
    ```
 
-   Use the newest version in place of `0.9.74`. That makes `/srv/better-cal`. (Uploading the zip through your host's file manager and unzipping it there works too.)
+   Use the newest version in place of `0.9.84`. That makes `/srv/better-cal`. The zip's files sit at its top level, so `-d better-cal` names the folder; without it they'd land in `/srv` itself. (Releases before 0.9.84 had a `better-cal` folder inside, and plain `unzip` made it.) Uploading the zip through your host's file manager and extracting it into a `better-cal` folder works too.
 
 2. **Create a database and a user for it.** On shared hosting, use the control panel's database page and note the host, database name, user and password. On your own server:
 
@@ -85,7 +85,7 @@ If something here didn't work as written on your host, please [report it](https:
 
 For hosting where you have a control panel and a file manager (or FTP) but no SSH. Everything the installer does, a setup page in the browser does instead.
 
-1. **Upload the release zip** (`better-cal-X.Y.Z.zip` from the [releases page](https://github.com/Oshyan/better-cal/releases)) with your host's file manager and unzip it there. It makes a `better-cal` folder. Put it outside your web root if the host allows (beside `public_html` rather than in it); if subdomains must point inside `public_html`, unzip it there instead, and do the check in [Choosing where to put it](#choosing-where-to-put-it) once you're set up.
+1. **Upload the release zip** (`better-cal-X.Y.Z.zip` from the [releases page](https://github.com/Oshyan/better-cal/releases)) with your host's file manager and extract it into a folder named `better-cal`. Most file managers ask where to extract, or for a folder name to extract into; the zip's files go straight into that folder. Put it outside your web root if the host allows (beside `public_html` rather than in it); if subdomains must point inside `public_html`, make it `public_html/better-cal`. If the panel already made that folder when you set up the subdomain, extract into it with overwrite on.
 2. **Create a database and a user** on the control panel's database page. Note the host, database name, user and password.
 3. **Point a subdomain of its own at `better-cal/server/public`** (say `cal.example.com`; [why a subdomain](#choosing-where-to-put-it)) in the control panel's domain settings, and turn on HTTPS for it (most panels have a Let's Encrypt switch).
 4. **Open the address in your browser.** You'll see Better-Cal's setup page. To show it's your server, it asks for a code it has just written into the file `better-cal-code.php` in the `better-cal` folder: open that file in the file manager and type the code in. (Anyone who reaches the page before you can't get further without that file.)
@@ -161,7 +161,7 @@ The backups and the previous version stay until you remove them. Delete old ones
 
 ### Without a command line
 
-1. **Download the new release zip** and upload it with your host's file manager, next to the current `better-cal` folder (not into it), and unzip it under another name, say `better-cal-new`.
+1. **Download the new release zip** and upload it with your host's file manager, next to the current `better-cal` folder (not into it), and extract it into a new folder named `better-cal-new`. (A zip from before 0.9.84 has its own `better-cal` folder inside; move that up a level.)
 2. **Copy your own files across** from `better-cal` into `better-cal-new`: `.env.php` (or `.env`, on a version before 0.9.83), and any plugins you added under `server/plugins/`. Names starting with a dot are hidden in some file managers; look for a "show hidden files" setting.
 3. **Swap the folders by renaming them:** `better-cal` to `better-cal-old`, then `better-cal-new` to `better-cal`. Your domain and cron job keep pointing at the same place.
 4. **Open Better-Cal.** If the new version has database changes, you'll see "Database update needed" instead of your calendar (an installed app shows the same, with a button to the update page). Enter the code it writes into `better-cal-code.php`, as at setup, and press **Back up and update the database**: it backs up first, beside the `better-cal` folder (or inside it, if the folder above isn't writable), then applies the changes. If there are no changes, Better-Cal simply opens on the new version.
@@ -182,7 +182,7 @@ The updater's steps yourself, as the user that owns the files, in the app direct
    Your host's own database backup works too, as long as you can restore it.
 2. **Get the new code.**
    - From a git clone: `git fetch --tags` and then `git checkout v0.9.74`, with the version you're updating to, then `cd server && composer install --no-dev && cd ..`. Releases are tags; `main` can be ahead of the newest release.
-   - From a release zip: unpack the new one into a fresh directory beside the current one (say `/srv/better-cal-new`), copy `.env.php` into it along with any plugins you added under `server/plugins/`, then swap the two: `mv /srv/better-cal /srv/better-cal-old && mv /srv/better-cal-new /srv/better-cal`. Your web server and cron entry keep pointing at the same path.
+   - From a release zip: unpack the new one into a fresh directory beside the current one (`unzip better-cal-X.Y.Z.zip -d /srv/better-cal-new`), copy `.env.php` into it along with any plugins you added under `server/plugins/`, then swap the two: `mv /srv/better-cal /srv/better-cal-old && mv /srv/better-cal-new /srv/better-cal`. Your web server and cron entry keep pointing at the same path.
 3. **Apply database changes:** `php server/bin/migrate.php`. It lists each change it applies, or none.
 4. **Check it:** `https://your-host/api/v1/health` should say `{"ok":true,"db":true,...}`, and Settings, About should show the new version.
 

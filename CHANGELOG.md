@@ -4,6 +4,15 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.84 (2026-10-15)
+
+- **The release zip has its files at the top**, with no `better-cal` folder inside. Hosting file managers extract into a folder you pick or name, often one the panel already made when you set up a subdomain, so now you extract straight into your `better-cal` folder. On the command line, `unzip better-cal-0.9.84.zip -d better-cal` names the folder. [Installing](docs/install.md#install) has the steps.
+- **Time zones are searchable.** Every time zone choice (Settings, the welcome, the event editor) lets you type a city, a country, a region like "Pacific", or an offset like "UTC-7", and narrows the long list as you type. Arrow keys and Enter pick.
+- The welcome comes back on the step you left (after browsing plugins, say) instead of starting over, and its link to the Google setup guide looks like the buttons beside it.
+- Plugins no longer flashes a loading placeholder above a list that's already there.
+
+Operators: no migration. `php server/bin/update.php` from 0.9.83 handles the new zip layout. From 0.9.82 or older, it stops before changing anything ("unexpected path"); update by hand once ([Updating](docs/install.md#updating)), or to 0.9.83 first if it's still offered.
+
 ## 0.9.83 (2026-10-15)
 
 Your private files now stay private on any host, not only where the server reads `.htaccess` ([#142](https://github.com/Oshyan/better-cal/issues/142)). Recommended for every install, and especially where the `better-cal` folder sits inside a web root, as some hosts require for subdomains.

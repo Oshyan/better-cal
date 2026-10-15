@@ -102,9 +102,37 @@ function SystemSection() {
         Your feeds and devices: ${alerts.accountTo}${alerts.systemTo !== alerts.accountTo ? html`<br />System-wide: ${alerts.systemTo}` : html`<br />System-wide: same address (set BETTERCAL_ALERT_EMAIL to change)`}
       </span>`}
     <//>
+    <${CronRow} cron=${health && health.cron} worker=${rows.find((r) => r.subject === 'worker')} />
     <${PrivateFilesRow} />
     <${StartsRow} />
   </section>`;
+}
+
+// The worker's cron job as this server needs it now (Infra\Setup::workerPhp):
+// the schedule and the command apart, as control panels ask for them, and
+// the crontab line. Shown always, since after a PHP upgrade it's where the
+// new command is; the worker's own row above says whether it runs.
+function CronRow({ cron, worker }) {
+  const [copied, setCopied] = useState(false);
+  if (!cron) return null;
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(cron.command);
+      setCopied(true);
+    } catch {
+      toast('Copy failed; select the command and copy it instead');
+    }
+  };
+  const status = !worker ? "The worker hasn't reported yet."
+    : worker.status === 'failing' ? 'The worker has stopped: no run since ' + fmtSince(worker.firstFailedAt) + '.'
+      : 'The worker last ran ' + fmtSince(worker.lastOkAt) + '.';
+  const php = cron.followsServerPhp
+    ? "It runs the server's own PHP, so it keeps working through PHP upgrades."
+    : "It names this site's PHP version directly (the server's plain php is older or couldn't be checked); after a PHP upgrade, use the command shown here then.";
+  return html`<${Row} label="Cron job" hint=${status + ' ' + php + ' Crontab line: ' + cron.line}>
+    <span class="bc-set-value bc-cron">Every minute (all five schedule fields <code>*</code>), running <code>${cron.command}</code></span>
+    <button type="button" class="bc-btn" onClick=${copy}>${copied ? 'Copied' : 'Copy command'}</button>
+  <//>`;
 }
 
 // Can the settings file and backups be downloaded (#142, Infra\PrivateFilesCheck).

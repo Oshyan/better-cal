@@ -249,13 +249,91 @@ final class Setup
 
     /**
      * The worker's command alone, for control panels that take the schedule
-     * from their own minute/hour/day/month/weekday fields. It names this
-     * PHP's own binary, so the worker runs on the same PHP version as the
-     * site, whatever the panel's default "php" is.
+     * from their own minute/hour/day/month/weekday fields. The PHP it names
+     * comes from workerPhp().
      */
     public static function cronCommand(string $appRoot, ?string $php = null): string
     {
-        $php ??= PHP_BINARY !== '' ? PHP_BINARY : 'php';
+        $php ??= self::workerPhp($appRoot)['php'];
         return $php . ' ' . $appRoot . '/server/bin/worker.php >/dev/null 2>&1';
+    }
+
+    /** Where the server's plain "php" usually is, in the order cron's PATH finds it. */
+    private const GENERIC_PHP = ['/usr/bin/php', '/usr/local/bin/php'];
+
+    /**
+     * Which PHP the cron job should run. The server's plain `php` when it is
+     * new enough and has the extensions, since it follows the server's PHP
+     * upgrades (on hosts with a PHP selector, the version chosen for the
+     * account). Otherwise this PHP's own binary, which is right today but
+     * stops working once that version is removed; Settings, System then
+     * shows the new command, and a stopped worker is reported there.
+     * Checked by running it, at most once an hour (cached in .runtime-cache).
+     *
+     * @return array{php:string,follows:bool}
+     */
+    public static function workerPhp(string $appRoot): array
+    {
+        $current = is_executable(PHP_BINDIR . '/php') ? PHP_BINDIR . '/php'
+            : ((PHP_SAPI === 'cli' && PHP_BINARY !== '') ? PHP_BINARY : 'php');
+        $cache = $appRoot . '/.runtime-cache/worker-php.php';
+        $raw = @file_get_contents($cache);
+        $nl = $raw === false ? false : strpos($raw, "\n");
+        $hit = $nl === false ? null : json_decode(substr((string) $raw, $nl + 1), true);
+        if (is_array($hit) && ($hit['current'] ?? null) === $current && (int) ($hit['at'] ?? 0) > time() - 3600) {
+            return ['php' => (string) $hit['php'], 'follows' => (bool) $hit['follows']];
+        }
+        $choice = ['php' => $current, 'follows' => false];
+        if (Updater::canRun()) {
+            foreach (self::GENERIC_PHP as $generic) {
+                if (is_executable($generic) && self::phpIsEnough($generic)) {
+                    $choice = ['php' => $generic, 'follows' => true];
+                    break;
+                }
+            }
+        }
+        if (is_dir(dirname($cache)) || @mkdir(dirname($cache), 0700, true)) {
+            \BetterCal\Support\SettingsFile::writeAtomic($cache, \BetterCal\Support\SettingsFile::GUARD_PREFIX . "\n"
+                . json_encode($choice + ['current' => $current, 'at' => time()], JSON_UNESCAPED_SLASHES), 0600);
+        }
+        return $choice;
+    }
+
+    /** Whether a PHP binary is MIN_PHP or newer with every extension, run with a 5-second limit. */
+    public static function phpIsEnough(string $php): bool
+    {
+        $code = 'echo PHP_VERSION, "|", implode(",", array_filter(' . var_export(self::EXTENSIONS, true) . ', fn($e) => !extension_loaded($e)));';
+        $proc = @proc_open([$php, '-d', 'display_errors=0', '-r', $code], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+        if (!is_resource($proc)) {
+            return false;
+        }
+        stream_set_blocking($pipes[1], false);
+        $out = '';
+        $deadline = microtime(true) + 5;
+        while (microtime(true) < $deadline) {
+            $read = [$pipes[1]];
+            $w = $e = null;
+            if (@stream_select($read, $w, $e, 0, 200000) > 0) {
+                $chunk = fread($pipes[1], 8192);
+                if ($chunk === '' || $chunk === false) {
+                    if (feof($pipes[1])) {
+                        break;
+                    }
+                } else {
+                    $out .= $chunk;
+                }
+            }
+            if (!proc_get_status($proc)['running'] && feof($pipes[1])) {
+                break;
+            }
+        }
+        if (proc_get_status($proc)['running']) {
+            proc_terminate($proc);
+        }
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+        proc_close($proc);
+        [$version, $missing] = explode('|', trim($out), 2) + ['', 'x'];
+        return preg_match('/^\d+\.\d+\.\d+/', $version) === 1 && version_compare($version, self::MIN_PHP, '>=') && $missing === '';
     }
 }

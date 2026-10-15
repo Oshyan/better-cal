@@ -4,6 +4,8 @@
 // changes what the user is looking at or relying on right now. Everything
 // else is a line on the Settings page and an entry in Activity.
 //
+//   - the worker stopped running (cron)        -> banner until it runs again
+//                                                (reminders and feeds have stopped)
 //   - reminders undeliverable to THIS device  -> banner until fixed
 //   - prompt filters not being evaluated      -> one toast at boot (the grid
 //                                                is showing things it shouldn't)
@@ -51,10 +53,31 @@ export function announceSystemHealth() {
   }
 }
 
-// Persistent banner: reminders cannot reach this device. Nothing else earns
-// one. Re-enabling re-subscribes, which clears the failing subscription on
-// the server; dismiss hides it for this session only.
+// Persistent banners: the worker stopped (nothing in the background is
+// happening), and reminders cannot reach this device. Nothing else earns one.
 export function SystemBanner() {
+  return html`<${WorkerBanner} /><${PushBanner} />`;
+}
+
+// The cron job stopped running the worker (Domain\WorkerWatch). The fix is
+// on the server, so the button opens the page with the command to use.
+// Dismiss hides it for this session only.
+function WorkerBanner() {
+  const health = useStore((s) => s.systemHealth);
+  const [dismissed, setDismissed] = useState(false);
+  const row = failingRows(health).find((r) => r.subject === 'worker');
+  if (!row || dismissed) return null;
+  return html`<div class="bc-sysbanner" role="alert">
+    <span>Background work stopped (no run since ${fmtSince(row.firstFailedAt)}): reminders and calendar refreshes aren't happening. This is usually the cron job.</span>
+    <button type="button" class="bc-btn" onClick=${() => set({ route: 'settings', settingsTab: 'system' })}>What to do</button>
+    <button type="button" class="bc-icon-btn" aria-label="Dismiss for now" title="Dismiss for now" onClick=${() => setDismissed(true)}>×</button>
+  </div>`;
+}
+
+// Reminders cannot reach this device. Re-enabling re-subscribes, which
+// clears the failing subscription on the server; dismiss hides it for this
+// session only.
+function PushBanner() {
   const health = useStore((s) => s.systemHealth);
   const [endpointHash, setEndpointHash] = useState(null);
   const [dismissed, setDismissed] = useState(false);

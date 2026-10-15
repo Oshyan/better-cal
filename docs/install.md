@@ -66,7 +66,9 @@ Run these as the account that will own Better-Cal's files. PHP must be able to r
    * * * * * /usr/bin/php /srv/better-cal/server/bin/worker.php >/dev/null 2>&1
    ```
 
-   On shared hosting, the control panel usually has a "cron jobs" page for this. The output is thrown away on purpose: a log file in the app folder could be downloadable on some hosts. Failing jobs show in Settings, System, and PHP errors go to a private log, `.runtime-cache/php-errors.php`.
+   On shared hosting, the control panel usually has a "cron jobs" page for this, with the schedule in separate fields: set them all to every (`*`) and paste the command part. The output is thrown away on purpose: a log file in the app folder could be downloadable on some hosts. Failing jobs show in Settings, System, and PHP errors go to a private log, `.runtime-cache/php-errors.php`.
+
+   The PHP in the command is the server's plain `php` when that's new enough (it then follows the server's PHP upgrades), and otherwise this site's PHP named directly. Settings, System always shows the command as the server needs it now. If the worker stops running for 15 minutes (a PHP version removed, the cron job paused or deleted), the app shows a banner and, where email is set up, sends one email.
 
 6. **Check it.** `https://cal.example.com/api/v1/health` should show `{"ok":true,"db":true,...}`. Then open `https://cal.example.com`, sign in, and the welcome walks you through the first settings. A couple of minutes later, Settings, System should show the worker's jobs as healthy.
 

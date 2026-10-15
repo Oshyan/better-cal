@@ -9771,6 +9771,52 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
     $rm($tmp);
 }
 
+// ---------------------------------------------------------------------------
+// Noticing a worker that stopped (Domain\WorkerWatch): its cron job can stop
+// without a word, and then reminders and feeds stop too.
+{
+    $wdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $wdb->run('CREATE TABLE system_health (subject TEXT PRIMARY KEY, kind TEXT, user_id INTEGER, label TEXT, status TEXT DEFAULT "ok", first_failed_at TEXT, last_failed_at TEXT, last_ok_at TEXT, consecutive_failures INTEGER DEFAULT 0, last_error TEXT, alerted_at TEXT)');
+    $wdb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT)');
+    $wdb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, created_at TEXT)');
+    $wroot = sys_get_temp_dir() . '/bc-worker-watch-' . bin2hex(random_bytes(3));
+    mkdir($wroot);
+    $wcfg = ['app_root' => $wroot, 'db' => [], 'alert_email' => ''];
+    $noMail = new BetterCal\Infra\EmailSender([]);
+    $WW = BetterCal\Domain\WorkerWatch::class;
+    $t = static fn(string $iso): DateTimeImmutable => new DateTimeImmutable($iso, new DateTimeZone('UTC'));
+    $wdb->run("INSERT INTO users (id, email, created_at) VALUES (1, 'sam.sample@example.test', '2026-10-15 10:00:00')");
+
+    check('worker watch: a new install gets its first 15 minutes', !$WW::check($wdb, $wcfg, $noMail, $t('2026-10-15 10:10:00')));
+    check('worker watch: after that, a worker that never ran is reported', $WW::check($wdb, $wcfg, $noMail, $t('2026-10-15 10:20:00')));
+    $row = $wdb->one("SELECT * FROM system_health WHERE subject = 'worker'");
+    check('worker watch: as failing since setup, saying to add the cron job', $row['status'] === 'failing' && $row['first_failed_at'] === '2026-10-15 10:00:00'
+        && str_contains((string) $row['last_error'], 'Add the cron job'));
+    check('worker watch: once, not on every check', !$WW::check($wdb, $wcfg, $noMail, $t('2026-10-15 10:30:00')));
+
+    $health = new SystemHealth($wdb);
+    $WW::ran($health);
+    checkEq('worker watch: the next run marks it working again', 'ok', $wdb->scalar("SELECT status FROM system_health WHERE subject = 'worker'"));
+    $wdb->run("UPDATE system_health SET last_ok_at = '2026-10-15 11:00:00' WHERE subject = 'worker'");
+    check('worker watch: a worker that ran 10 minutes ago is fine', !$WW::check($wdb, $wcfg, $noMail, $t('2026-10-15 11:10:00')));
+    check('worker watch: one that stopped 20 minutes ago is reported', $WW::check($wdb, $wcfg, $noMail, $t('2026-10-15 11:20:00')));
+    $row = $wdb->one("SELECT * FROM system_health WHERE subject = 'worker'");
+    check('worker watch: failing since its last run, naming the likely causes', $row['first_failed_at'] === '2026-10-15 11:00:00'
+        && str_contains((string) $row['last_error'], 'PHP it names was removed'));
+    check('worker watch: written to Activity', in_array(true, array_map(static fn($s) => str_contains((string) $s, 'stopped'), array_column($wdb->all('SELECT summary FROM mutations'), 'summary')), true));
+    $WW::ran($health);
+    touch("$wroot/.maintenance");
+    $wdb->run("UPDATE system_health SET last_ok_at = '2026-10-15 12:00:00' WHERE subject = 'worker'");
+    check('worker watch: an update pausing the worker is not a stop', !$WW::check($wdb, $wcfg, $noMail, $t('2026-10-15 13:00:00')));
+    unlink("$wroot/.maintenance");
+    @rmdir("$wroot/.runtime-cache");
+    @rmdir($wroot);
+
+    check('cron: the command names a PHP and the worker, output discarded', preg_match('~^\S+ /srv/x/server/bin/worker\.php >/dev/null 2>&1$~', BetterCal\Infra\Setup::cronCommand('/srv/x', '/usr/bin/php')) === 1);
+    check('cron: this PHP is new enough, with the extensions', BetterCal\Infra\Setup::phpIsEnough(PHP_BINARY));
+    check('cron: something that is not PHP is not', !BetterCal\Infra\Setup::phpIsEnough('/bin/echo'));
+}
+
 $runLog = (string) @file_get_contents($GLOBALS['__runLog']);
 @unlink($GLOBALS['__runLog']);
 fwrite(STDERR, $runLog);

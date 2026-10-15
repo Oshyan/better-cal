@@ -10,6 +10,7 @@ use BetterCal\Http\HttpError;
 use BetterCal\Http\Request;
 use BetterCal\Http\Response;
 use BetterCal\Infra\EmailSender;
+use BetterCal\Infra\Setup;
 use BetterCal\Infra\PrivateFilesCheck;
 
 /**
@@ -113,8 +114,16 @@ final class SystemController
         }
         unset($r);
         $alertTo = (string) ($this->cfg['alert_email'] ?? '');
+        $root = (string) $this->cfg['app_root'];
+        $php = Setup::workerPhp($root);
         return Response::json([
             'rows' => $rows,
+            // The worker's cron job as this server needs it now (Setup::workerPhp).
+            'cron' => [
+                'command' => Setup::cronCommand($root, $php['php']),
+                'line' => Setup::cronLine($root, $php['php']),
+                'followsServerPhp' => $php['follows'],
+            ],
             'emailAlerts' => [
                 'configured' => $this->email->isConfigured(),
                 // Per-user subjects always go to the account email; this is

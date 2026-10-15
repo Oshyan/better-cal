@@ -42,6 +42,10 @@ if (BetterCal\Http\InstallPages::needsDatabaseUpdate($cfg)) {
     BetterCal\Http\InstallPages::databaseUpdate($cfg, $requestPath);
 }
 
+// Is the worker still running? Checked after the response, every few
+// minutes at most, since a stopped cron job says nothing (Domain\WorkerWatch).
+BetterCal\Domain\WorkerWatch::afterResponse($cfg);
+
 try {
     $request = Request::fromGlobals();
 } catch (HttpError $e) {

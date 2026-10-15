@@ -30,6 +30,8 @@ if (BetterCal\Support\Maintenance::active(config()['app_root'])) {
 if (BetterCal\Http\InstallPages::needsDatabaseUpdate(config())) {
     BetterCal\Http\InstallPages::databaseUpdate(config(), '/dav');
 }
+// Phones syncing are often what reaches the server: they notice a stopped worker too.
+BetterCal\Domain\WorkerWatch::afterResponse(config());
 
 BetterCal\Domain\ActivityContext::set('caldav');
 

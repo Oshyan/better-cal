@@ -82,6 +82,8 @@ $geocodeSweep = new BetterCal\Domain\GeocodeSweep(
     new BetterCal\Domain\Settings($db)
 );
 $systemHealth = new BetterCal\Domain\SystemHealth($db);
+// It ran: what the app checks to notice a cron job that stopped (Domain\WorkerWatch).
+BetterCal\Domain\WorkerWatch::ran($systemHealth);
 $emailSender = new EmailSender($cfg);
 $updates = new BetterCal\Domain\Updates($db, $cfg);
 

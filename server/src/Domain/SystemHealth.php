@@ -127,6 +127,61 @@ final class SystemHealth
         });
     }
 
+    /**
+     * Mark a subject failing because something stopped happening, rather
+     * than because an attempt failed: the worker not running (WorkerWatch).
+     * The streak starts at $sinceDb, the last time it did happen, and counts
+     * as proven at once (journaled, and alertable now). Returns whether this
+     * was the transition; a subject already failing is left as it is.
+     */
+    public function markStalled(string $subject, string $label, string $sinceDb, string $error): bool
+    {
+        $now = Time::nowDb();
+        $label = mb_substr($label, 0, 160);
+        return $this->db->tx(function () use ($subject, $label, $sinceDb, $error, $now): bool {
+            $this->ensureRow($subject, 'job', null, $label);
+            $row = $this->lockedRow($subject);
+            if ($row === null || $row['status'] === 'failing') {
+                return false;
+            }
+            $this->db->update('system_health', [
+                'label' => $label,
+                'status' => 'failing',
+                'first_failed_at' => $sinceDb,
+                'last_failed_at' => $now,
+                'consecutive_failures' => self::JOB_MIN_FAILURES,
+                'last_error' => mb_substr($error, 0, 2000),
+                'alerted_at' => null,
+            ], 'subject = ?', [$subject]);
+            $this->journal(null, "$label stopped: $error");
+            return true;
+        });
+    }
+
+    /**
+     * Send the failure email for one system-wide subject now, rather than at
+     * the worker's next sweep (there is none when the worker is what
+     * stopped). The recovery email follows from the worker's sweep once it
+     * runs again. Returns whether it was sent.
+     */
+    public function alertNow(string $subject, EmailSender $email, ?string $alertEmail): bool
+    {
+        if (!$email->isConfigured()) {
+            return false;
+        }
+        $row = $this->db->one('SELECT * FROM system_health WHERE subject = ?', [$subject]);
+        $to = $row === null ? null : $this->recipientFor($row, $alertEmail);
+        if ($row === null || $to === null || $row['status'] !== 'failing' || !empty($row['alerted_at'])) {
+            return false;
+        }
+        $msg = self::buildFailureEmail([$row], Time::nowUtc(), $this->tzFor($row), $this->baseUrl());
+        if (!$email->sendPlain($to, $msg['subject'], $msg['text'], $msg['html'])) {
+            return false;
+        }
+        $this->db->run('UPDATE system_health SET alerted_at = ? WHERE subject = ?', [Time::nowDb(), $subject]);
+        return true;
+    }
+
     // ---- Reading ------------------------------------------------------
 
     /**

@@ -4238,6 +4238,7 @@ button.bc-es-alsoon-cal { cursor: pointer; text-decoration: underline; text-deco
 /* Settings, System: can the private files be downloaded (#142). The verdict wraps
    beside its Check now button; notes are a short list under it. */
 .bc-pf { flex: 1 1 18em; min-width: 0; }
+.bc-cron { flex: 1 1 18em; min-width: 0; overflow-wrap: anywhere; }
 .bc-pf-notes { margin: 6px 0 0; padding-left: 1.2em; display: grid; gap: 4px; font-size: 13.5px; color: var(--fg-muted); }
 
 /* --- first-run welcome (0.9.2, #79) ----------------------------------------------------

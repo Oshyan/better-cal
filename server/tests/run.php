@@ -9813,7 +9813,9 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
     @rmdir($wroot);
 
     check('cron: the command names a PHP and the worker, output discarded', preg_match('~^\S+ /srv/x/server/bin/worker\.php >/dev/null 2>&1$~', BetterCal\Infra\Setup::cronCommand('/srv/x', '/usr/bin/php')) === 1);
-    check('cron: this PHP is new enough, with the extensions', BetterCal\Infra\Setup::phpIsEnough(PHP_BINARY));
+    $hasAll = version_compare(PHP_VERSION, BetterCal\Infra\Setup::MIN_PHP, '>=')
+        && array_filter(BetterCal\Infra\Setup::EXTENSIONS, static fn($e) => !extension_loaded($e)) === [];
+    checkEq('cron: running PHP tells whether it is new enough, with the extensions', $hasAll, BetterCal\Infra\Setup::phpIsEnough(PHP_BINARY));
     check('cron: something that is not PHP is not', !BetterCal\Infra\Setup::phpIsEnough('/bin/echo'));
 }
 

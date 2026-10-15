@@ -709,6 +709,7 @@ export function App() {
     };
   }, [route]);
 
+  if (s.serverState) return html`<${ServerNotice} kind=${s.serverState} />`;
   if (!s.booted) {
     // The frame the app will have, painted before /me answers, so the first
     // second reads as loading into place rather than a word on a blank page.
@@ -1096,4 +1097,28 @@ function PluginRangeCard({ card }) {
     </div>
     ${occ.detailHtml && html`<div class="bc-plugincard-body bc-rich" dangerouslySetInnerHTML=${{ __html: sanitizeHtml(occ.detailHtml) }}></div>`}
   </div>`;
+}
+
+// The server answered 503 for an update: "updating" while bin/update.php (or
+// the database update page) works, which clears on its own; or database
+// changes waiting after new files were uploaded by hand, which the owner
+// applies on /update-database (the service worker lets that page through).
+function ServerNotice({ kind }) {
+  useEffect(() => {
+    if (kind !== 'maintenance') return undefined;
+    const t = setInterval(async () => {
+      try {
+        const res = await fetch('/api/v1/health', { cache: 'no-store' });
+        if (res.ok) location.reload();
+      } catch { /* still updating, or offline */ }
+    }, 15000);
+    return () => clearInterval(t);
+  }, [kind]);
+  return html`<div class="bc-login-wrap"><div class="bc-login bc-server-notice" role="status">
+    <h1 class="bc-login-brand">${kind === 'maintenance' ? 'Updating' : 'Database update needed'}</h1>
+    ${kind === 'maintenance'
+      ? html`<p>Better-Cal is being updated. It will be back in a minute; this page reloads on its own.</p>`
+      : html`<p>Better-Cal\u2019s files were updated, and its database needs a matching update before it can open.</p>
+        <a class="bc-btn bc-btn-primary" href="/update-database">Update the database</a>`}
+  </div></div>`;
 }

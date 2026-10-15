@@ -1732,6 +1732,8 @@ body.bc-dragging * { cursor: grabbing !important; }
   padding: 22px; display: flex; flex-direction: column; gap: 12px;
 }
 .bc-login-brand { margin: 0 0 4px; font-size: 20px; text-align: center; }
+.bc-server-notice { text-align: center; }
+.bc-server-notice p { margin: 8px 0 16px; color: var(--fg-muted); }
 .bc-login-error { color: var(--danger); font-size: 13px; }
 
 /* Management pages share a scroll surface with a centered content column. */

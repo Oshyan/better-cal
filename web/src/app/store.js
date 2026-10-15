@@ -22,6 +22,7 @@ const collapse0 = savedCollapse();
 
 export const state = {
   booted: false,
+  serverState: null, // 'database_update' | 'maintenance': the server said so (503), see ServerNotice
   pendingHandoff: null, // a deep link or share that arrived signed out; run after sign-in
   authed: false,
   user: null,

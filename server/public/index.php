@@ -16,11 +16,23 @@ use BetterCal\Infra\LlmGateway;
 
 require dirname(__DIR__) . '/src/bootstrap.php';
 
+// Not set up yet (no .env): the setup page, for every path, until it is.
+if (BetterCal\Http\InstallPages::needsSetup(dirname(__DIR__, 2))) {
+    BetterCal\Http\InstallPages::setup(dirname(__DIR__, 2));
+}
+
 $cfg = config();
+$requestPath = (string) parse_url((string) ($_SERVER['REQUEST_URI'] ?? '/'), PHP_URL_PATH);
 
 // bin/update.php is swapping the code or migrating: answer "updating".
 if (BetterCal\Support\Maintenance::active($cfg['app_root'])) {
-    BetterCal\Support\Maintenance::respond((string) parse_url((string) ($_SERVER['REQUEST_URI'] ?? '/'), PHP_URL_PATH));
+    BetterCal\Support\Maintenance::respond($requestPath);
+}
+
+// New files with database changes still to apply (an update uploaded by
+// hand): the update page, and a 503 the app recognises from the API.
+if (BetterCal\Http\InstallPages::needsDatabaseUpdate($cfg)) {
+    BetterCal\Http\InstallPages::databaseUpdate($cfg, $requestPath);
 }
 
 try {

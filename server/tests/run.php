@@ -9435,6 +9435,49 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// The access code for setup in the browser and the database update page:
+// only someone who can read the app folder gets past the first screen.
+{
+    $root = sys_get_temp_dir() . '/bc-access-' . bin2hex(random_bytes(3));
+    mkdir($root);
+    $ac = new BetterCal\Http\AccessCode($root, 'setup');
+    check('access code: the app folder is writable here', $ac->writable());
+    $ac->ensure();
+    $file = (string) file_get_contents($ac->codePath());
+    preg_match('/code: ([A-Z0-9-]+)/', $file, $m);
+    $typed = $m[1] ?? '';
+    check('access code: written to the app folder, owner-only', strlen($typed) === 14 && substr(sprintf('%o', fileperms($ac->codePath())), -3) === '600');
+    $ac->ensure();
+    check('access code: stays the same while it is valid', str_contains((string) file_get_contents($ac->codePath()), $typed));
+    checkEq('access code: a wrong code is refused', null, $ac->verify('AAAA-BBBB-CCCC'));
+    checkEq('access code: and counts as a try', 9, $ac->triesLeft());
+    check('access code: no session without the code', !$ac->hasSession('anything'));
+    check('access code: the other purpose cannot use it', (new BetterCal\Http\AccessCode($root, 'update'))->verify($typed) === null);
+    $session = $ac->verify(strtolower(str_replace('-', ' ', $typed)));
+    check('access code: the right one, typed loosely, starts a session', is_string($session) && $ac->hasSession($session));
+    check('access code: the form token is bound to the session', BetterCal\Http\AccessCode::formToken($session) !== BetterCal\Http\AccessCode::formToken('other'));
+    $ac->finish();
+    check('access code: once used, the file and the session are gone', !is_file($ac->codePath()) && !$ac->hasSession($session));
+
+    $ac2 = new BetterCal\Http\AccessCode($root, 'update');
+    $ac2->ensure();
+    preg_match('/code: ([A-Z0-9-]+)/', (string) file_get_contents($ac2->codePath()), $m2);
+    for ($i = 0; $i < 10; $i++) { $ac2->verify('WRONG-WRONG-' . $i); }
+    check('access code: ten wrong tries use the code up', $ac2->verify($m2[1]) === null);
+    $ac2->ensure();
+    preg_match('/code: ([A-Z0-9-]+)/', (string) file_get_contents($ac2->codePath()), $m3);
+    check('access code: and a new one replaces it', ($m3[1] ?? '') !== ($m2[1] ?? '') && is_string($ac2->verify($m3[1])));
+    $ac2->finish();
+
+    check('setup: needed without .env', BetterCal\Http\InstallPages::needsSetup($root));
+    file_put_contents("$root/.env", "A=1\n");
+    check('setup: gone for good once .env exists', !BetterCal\Http\InstallPages::needsSetup($root));
+    unlink("$root/.env");
+    @rmdir("$root/.runtime-cache");
+    @rmdir($root);
+}
+
 $runLog = (string) @file_get_contents($GLOBALS['__runLog']);
 @unlink($GLOBALS['__runLog']);
 fwrite(STDERR, $runLog);

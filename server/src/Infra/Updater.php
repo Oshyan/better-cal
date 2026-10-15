@@ -47,11 +47,15 @@ final class Updater
         return basename($this->appRoot);
     }
 
-    /** Backups and the update record: beside the app, or inside it (git, read-only parent). */
+    /**
+     * Backups and the update record: beside the app, or inside it when the
+     * folder above isn't writable (a git checkout, or a host that only lets
+     * PHP write the app's own folder). Either way outside the web root.
+     */
     public function backupDir(): string
     {
         $beside = $this->parent() . '/' . $this->name() . '-backups';
-        if (is_dir($beside) || is_writable($this->parent()) || !$this->isGit()) {
+        if (is_dir($beside) || is_writable($this->parent())) {
             return $beside;
         }
         return $this->appRoot . '/.backups';

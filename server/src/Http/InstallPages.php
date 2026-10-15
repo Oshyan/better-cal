@@ -1,0 +1,340 @@
+<?php
+
+declare(strict_types=1);
+
+namespace BetterCal\Http;
+
+use BetterCal\Infra\Db;
+use BetterCal\Infra\DbBackup;
+use BetterCal\Infra\Migrator;
+use BetterCal\Infra\Setup;
+use BetterCal\Infra\Updater;
+use BetterCal\Support\Maintenance;
+
+/**
+ * The two pages that run before the app can: setup in the browser, for hosts
+ * without a command line (#138), and the database update after new files
+ * were uploaded by hand. Both are plain server-rendered forms with no app
+ * code behind them, and both first ask for the code AccessCode writes into
+ * the app folder, so only someone who controls the files gets past the first
+ * screen.
+ *
+ * Setup exists only while there is no .env (and no BETTERCAL_DB_DSN in the
+ * environment). Once .env is written it is gone for good: index.php never
+ * reaches it again, whatever happens to the database. It refuses a database
+ * that already holds a Better-Cal account, since that means a lost .env
+ * (restore it) rather than a new install.
+ */
+final class InstallPages
+{
+    // ---- Setup -------------------------------------------------------------
+
+    public static function needsSetup(string $appRoot): bool
+    {
+        $dsn = getenv('BETTERCAL_DB_DSN');
+        return !is_file($appRoot . '/.env') && ($dsn === false || $dsn === '');
+    }
+
+    public static function setup(string $appRoot): never
+    {
+        $code = new AccessCode($appRoot, 'setup');
+        if (!$code->writable()) {
+            self::page('Set up Better-Cal', '<p>PHP can\'t write to the Better-Cal folder, so setup has nowhere to save its settings.</p>'
+                . '<p>Make the folder writable by the account PHP runs as (on most shared hosting it already is), or install from a command line instead: <code>php server/bin/install.php</code>. <a href="https://github.com/Oshyan/better-cal/blob/main/docs/install.md">The install guide</a> covers both.</p>', 503);
+        }
+        $token = self::gate($code, 'Set up Better-Cal', 'To show this is your server, open <strong>' . AccessCode::FILE
+            . '</strong> in the Better-Cal folder you uploaded (with your host\'s file manager or FTP) and enter the code in it.');
+
+        $missing = array_values(array_filter(Setup::requirements($appRoot), static fn(array $r): bool => !$r['ok'] && $r['required']));
+        if ($missing !== []) {
+            $items = implode('', array_map(static fn(array $r): string => '<li><strong>' . self::e($r['name']) . '</strong><br>' . self::e($r['fix']) . '</li>', $missing));
+            self::page('Set up Better-Cal', "<p>This server is missing something Better-Cal needs:</p><ul>$items</ul><p>Fix it (usually in your host's PHP settings), then reload this page.</p>");
+        }
+
+        $errors = [];
+        $v = [
+            'url' => self::requestBaseUrl(), 'db_host' => 'localhost', 'db_port' => '3306', 'db_name' => '', 'db_user' => '', 'email' => '',
+        ];
+        if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && ($_POST['step'] ?? '') === 'install') {
+            self::checkForm($token);
+            foreach ($v as $k => $_) {
+                $v[$k] = trim((string) ($_POST[$k] ?? ''));
+            }
+            $dbPass = (string) ($_POST['db_pass'] ?? '');
+            $pass = (string) ($_POST['password'] ?? '');
+            $url = rtrim($v['url'], '/');
+            $parts = parse_url($url);
+            $local = is_array($parts) && ($parts['scheme'] ?? '') === 'http' && in_array($parts['host'] ?? '', ['localhost', '127.0.0.1'], true);
+            if (!is_array($parts) || (($parts['scheme'] ?? '') !== 'https' && !$local) || empty($parts['host']) || !empty($parts['path']) || !empty($parts['query'])) {
+                $errors[] = 'The address needs to be https://your.domain, with nothing after the domain.';
+            }
+            if (!filter_var($v['email'], FILTER_VALIDATE_EMAIL)) {
+                $errors[] = 'That email address is not valid.';
+            }
+            if (strlen($pass) < 8) {
+                $errors[] = 'Choose a password of 8 characters or more.';
+            } elseif ($pass !== (string) ($_POST['password2'] ?? '')) {
+                $errors[] = 'The two passwords differ.';
+            }
+            $dsn = null;
+            try {
+                $dsn = Setup::dsn($v['db_host'], (int) $v['db_port'], $v['db_name']);
+            } catch (\InvalidArgumentException $e) {
+                $errors[] = $e->getMessage();
+            }
+            if ($errors === [] && $dsn !== null) {
+                $problem = Setup::checkDatabase($dsn, $v['db_user'], $dbPass);
+                if ($problem !== null) {
+                    $errors[] = 'The database: ' . $problem;
+                }
+            }
+            if ($errors === [] && $dsn !== null) {
+                $db = new Db(['dsn' => $dsn, 'user' => $v['db_user'], 'pass' => $dbPass]);
+                $hasUsers = false;
+                try {
+                    $hasUsers = (int) $db->scalar('SELECT COUNT(*) FROM users') > 0;
+                } catch (\Throwable) {
+                    // No users table yet: an empty database, as it should be.
+                }
+                if ($hasUsers) {
+                    $errors[] = 'That database already holds a Better-Cal account. If this install lost its .env, restore it from a backup rather than setting up again (a new one could not read what the old one saved).';
+                }
+            }
+            if ($errors === [] && $dsn !== null) {
+                self::install($appRoot, $code, $url, $dsn, $v['db_user'], $dbPass, $v['email'], $pass);
+            }
+        }
+
+        $err = $errors === [] ? '' : '<div class="err">' . implode('<br>', array_map([self::class, 'e'], $errors)) . '</div>';
+        $f = static fn(string $k): string => self::e($v[$k]);
+        self::page('Set up Better-Cal', $err . '<form method="post" autocomplete="off">'
+            . '<input type="hidden" name="step" value="install"><input type="hidden" name="form" value="' . self::e(AccessCode::formToken($token)) . '">'
+            . '<h2>Address</h2><label>The address people will open Better-Cal at<input name="url" value="' . $f('url') . '" required></label>'
+            . '<h2>Database</h2><p class="hint">An empty MySQL or MariaDB database and a user for it, from your host\'s control panel.</p>'
+            . '<div class="row"><label>Host<input name="db_host" value="' . $f('db_host') . '" required></label><label class="narrow">Port<input name="db_port" value="' . $f('db_port') . '" inputmode="numeric" required></label></div>'
+            . '<label>Database name<input name="db_name" value="' . $f('db_name') . '" required></label>'
+            . '<label>User<input name="db_user" value="' . $f('db_user') . '" required></label>'
+            . '<label>Password<input name="db_pass" type="password"></label>'
+            . '<h2>Your account</h2><label>Email (you sign in with it)<input name="email" type="email" value="' . $f('email') . '" required></label>'
+            . '<label>Password (8 characters or more)<input name="password" type="password" minlength="8" required></label>'
+            . '<label>The same password again<input name="password2" type="password" minlength="8" required></label>'
+            . '<button type="submit">Set up Better-Cal</button></form>');
+    }
+
+    private static function install(string $appRoot, AccessCode $code, string $url, string $dsn, string $dbUser, string $dbPass, string $email, string $pass): never
+    {
+        @set_time_limit(300);
+        try {
+            $push = Setup::vapidKeys();
+        } catch (\Throwable) {
+            $push = null;
+        }
+        $values = ['BETTERCAL_BASE_URL' => $url, 'BETTERCAL_DB_DSN' => $dsn, 'BETTERCAL_DB_USER' => $dbUser,
+            'BETTERCAL_DB_PASS' => $dbPass, 'BETTERCAL_SESSION_SECRET' => Setup::secret()]
+            + ($push !== null ? ['BETTERCAL_VAPID_PUBLIC' => $push['public'], 'BETTERCAL_VAPID_PRIVATE' => $push['private'], 'BETTERCAL_VAPID_SUBJECT' => 'mailto:' . $email] : []);
+        $db = new Db(['dsn' => $dsn, 'user' => $dbUser, 'pass' => $dbPass]);
+        $envPath = $appRoot . '/.env';
+        $wroteEnv = false;
+        try {
+            // Tables, then .env, then the account. Until .env exists this page
+            // is the way in, and the account is what marks a database as
+            // installed, so a failure at any step can simply be retried: a
+            // .env written here is taken back if the account then fails.
+            (new Migrator($db, $appRoot . '/server/migrations'))->run(static function (string $line): void {});
+            $example = @file_get_contents($appRoot . '/.env.example');
+            Setup::writeEnv($envPath, Setup::envText($example === false ? '' : $example, $values));
+            $wroteEnv = true;
+            Setup::createOwner($db, $email, $pass);
+        } catch (\Throwable $e) {
+            if ($wroteEnv) {
+                @unlink($envPath);
+            }
+            self::page('Set up Better-Cal', '<div class="err">Setup stopped: ' . self::e($e->getMessage()) . '</div><p>Nothing that would get in the way of trying again was saved. <a href="">Back to setup</a></p>', 500);
+        }
+        $code->finish();
+        self::clearCookie();
+        $php = is_executable(PHP_BINDIR . '/php') ? PHP_BINDIR . '/php' : 'php';
+        $cron = '* * * * * ' . $php . ' ' . $appRoot . '/server/bin/worker.php >> ' . $appRoot . '/worker.log 2>&1';
+        self::page('Better-Cal is set up', '<p>Your settings are saved, the tables are made, and your account is ready.</p>'
+            . '<h2>One thing left: the worker</h2><p>It sends reminders, refreshes subscribed calendars and tidies up, once a minute. In your host\'s control panel, add a cron job (often under "Cron jobs" or "Scheduled tasks") that runs every minute:</p>'
+            . '<pre>' . self::e($cron) . '</pre><p class="hint">If your host names its PHP command differently, use theirs for PHP 8.4 or newer; their cron page usually says.</p>'
+            . '<p><a class="btn" href="/">Open Better-Cal and sign in</a></p>');
+    }
+
+    // ---- Database update -------------------------------------------------
+
+    /**
+     * Whether new files have database changes waiting. Cheap on every request:
+     * the list of migration files is compared with the last list known to be
+     * applied, and the database is only asked when they differ.
+     */
+    public static function needsDatabaseUpdate(array $cfg): bool
+    {
+        $dir = $cfg['app_root'] . '/server/migrations';
+        $files = array_map('basename', array_merge(glob($dir . '/*.sql') ?: [], glob($dir . '/*.php') ?: []));
+        sort($files, SORT_STRING);
+        $sig = hash('sha256', implode("\n", $files));
+        $marker = $cfg['app_root'] . '/.runtime-cache/schema-current';
+        if (@file_get_contents($marker) === $sig) {
+            return false;
+        }
+        try {
+            $pending = (new Migrator(new Db($cfg['db']), $dir))->pending();
+        } catch (\Throwable) {
+            return false; // the database is unreachable: the app reports that itself
+        }
+        if ($pending === []) {
+            if (is_dir(dirname($marker)) || @mkdir(dirname($marker), 0700)) {
+                @file_put_contents($marker, $sig);
+            }
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * While changes wait: the API and CalDAV answer 503 with a code the app
+     * recognises, and pages show the update screen. Static files are left to
+     * the normal routes. Returns only for those.
+     */
+    public static function databaseUpdate(array $cfg, string $path): void
+    {
+        if (str_starts_with($path, '/api/') || str_starts_with($path, '/dav')) {
+            http_response_code(503);
+            header('Content-Type: application/json; charset=utf-8');
+            header('Cache-Control: no-store');
+            echo json_encode(['error' => ['code' => 'database_update_required', 'message' => 'Better-Cal was updated and its database needs updating: open /update-database.']]), "\n";
+            exit;
+        }
+        if (str_starts_with($path, '/assets/') || $path === '/sw.js' || str_starts_with($path, '/feed/')) {
+            return;
+        }
+        $appRoot = $cfg['app_root'];
+        $code = new AccessCode($appRoot, 'update');
+        if (!$code->writable()) {
+            self::page('Database update needed', '<p>Better-Cal\'s files were updated and its database needs updating too, but PHP can\'t write to the Better-Cal folder to do it from here.</p><p>From a command line: <code>php server/bin/migrate.php</code>.</p>', 503);
+        }
+        $token = self::gate($code, 'Database update needed', 'Better-Cal\'s files were updated, and its database needs a matching update before it can open. To show this is your server, open <strong>'
+            . AccessCode::FILE . '</strong> in the Better-Cal folder (with your host\'s file manager or FTP) and enter the code in it.');
+        $db = new Db($cfg['db']);
+        $migrator = new Migrator($db, $appRoot . '/server/migrations');
+        $pending = $migrator->pending();
+        if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && ($_POST['step'] ?? '') === 'update') {
+            self::checkForm($token);
+            @set_time_limit(300);
+            $updater = new Updater($appRoot);
+            try {
+                $updater->ensureBackupDir();
+                $backup = $updater->backupDir() . '/db-before-' . $cfg['version'] . '-' . gmdate('Ymd-His') . '-' . bin2hex(random_bytes(4)) . '.sql.gz';
+                (new DbBackup($db))->dump($backup, 'before the database update for ' . $cfg['version']);
+                @chmod($backup, 0600);
+            } catch (\Throwable $e) {
+                self::page('Database update needed', '<div class="err">The backup failed, so nothing was changed: ' . self::e($e->getMessage()) . '</div><p><a href="/update-database">Try again</a></p>', 500);
+            }
+            Maintenance::on($appRoot, 'database update');
+            try {
+                $ran = $migrator->run(static function (string $line): void {});
+            } catch (\Throwable $e) {
+                Maintenance::off($appRoot);
+                self::page('Database update needed', '<div class="err">The update stopped: ' . self::e($e->getMessage()) . '</div>'
+                    . '<p>A backup from just before is in <code>' . self::e($backup) . '</code>. To go back, put the previous version\'s files back and restore that backup (<a href="https://github.com/Oshyan/better-cal/blob/main/docs/install.md#updating">Updating</a> shows how), and please <a href="https://github.com/Oshyan/better-cal/issues">report the error</a>.</p>', 500);
+            }
+            Maintenance::off($appRoot);
+            $code->finish();
+            self::clearCookie();
+            self::needsDatabaseUpdate($cfg);
+            self::page('Database updated', '<p>Better-Cal ' . self::e((string) $cfg['version']) . ' is ready: ' . $ran . ' database change' . ($ran === 1 ? '' : 's') . ' applied.</p>'
+                . '<p class="hint">A backup from just before is in <code>' . self::e($backup) . '</code>; delete it once you\'re happy.</p>'
+                . '<p><a class="btn" href="/">Open Better-Cal</a></p>');
+        }
+        $n = count($pending);
+        self::page('Database update needed', '<p>Better-Cal ' . self::e((string) $cfg['version']) . ' has ' . $n . ' database change' . ($n === 1 ? '' : 's') . ' to apply.</p>'
+            . '<p>This backs up the database first (beside the Better-Cal folder), shows "updating" to anyone else for the few seconds it takes, then applies them.</p>'
+            . '<form method="post"><input type="hidden" name="step" value="update"><input type="hidden" name="form" value="' . self::e(AccessCode::formToken($token)) . '">'
+            . '<button type="submit">Back up and update the database</button></form>', 503);
+    }
+
+    // ---- Shared ------------------------------------------------------------
+
+    /**
+     * The code screen. Returns the session token once a correct code has
+     * been entered (now or earlier); otherwise renders the form and exits.
+     */
+    private static function gate(AccessCode $code, string $title, string $intro): string
+    {
+        $cookie = $_COOKIE[AccessCode::COOKIE] ?? null;
+        if (is_string($cookie) && $code->hasSession($cookie)) {
+            return $cookie;
+        }
+        $msg = '';
+        if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && ($_POST['step'] ?? '') === 'code') {
+            $token = $code->verify((string) ($_POST['code'] ?? ''));
+            if ($token !== null) {
+                setcookie(AccessCode::COOKIE, $token, ['expires' => time() + 3600, 'path' => '/', 'secure' => self::https(), 'httponly' => true, 'samesite' => 'Strict']);
+                header('Location: ' . (string) parse_url((string) ($_SERVER['REQUEST_URI'] ?? '/'), PHP_URL_PATH), true, 303);
+                exit;
+            }
+            $left = $code->triesLeft();
+            $msg = '<div class="err">That code didn\'t match.' . ($left > 0 ? " $left tries left." : ' A new code has been written to the file; enter that one.') . '</div>';
+        }
+        $code->ensure();
+        self::page($title, "<p>$intro</p>$msg<form method=\"post\" autocomplete=\"off\"><input type=\"hidden\" name=\"step\" value=\"code\">"
+            . '<label>Code<input name="code" placeholder="XXXX-XXXX-XXXX" autocapitalize="characters" spellcheck="false" required></label>'
+            . '<button type="submit">Continue</button></form>', 403);
+    }
+
+    private static function checkForm(string $token): void
+    {
+        if (!hash_equals(AccessCode::formToken($token), (string) ($_POST['form'] ?? ''))) {
+            self::page('Something went wrong', '<p>That form had expired. <a href="">Reload the page</a> and try again.</p>', 403);
+        }
+    }
+
+    private static function clearCookie(): void
+    {
+        setcookie(AccessCode::COOKIE, '', ['expires' => time() - 3600, 'path' => '/', 'secure' => self::https(), 'httponly' => true, 'samesite' => 'Strict']);
+    }
+
+    private static function https(): bool
+    {
+        return (($_SERVER['HTTPS'] ?? '') !== '' && ($_SERVER['HTTPS'] ?? '') !== 'off') || (int) ($_SERVER['SERVER_PORT'] ?? 0) === 443;
+    }
+
+    private static function requestBaseUrl(): string
+    {
+        $host = (string) ($_SERVER['HTTP_HOST'] ?? '');
+        if ($host === '' || preg_match('/^[A-Za-z0-9.\-:\[\]]+$/', $host) !== 1) {
+            return 'https://';
+        }
+        return (self::https() ? 'https' : (in_array(explode(':', $host)[0], ['localhost', '127.0.0.1'], true) ? 'http' : 'https')) . '://' . $host;
+    }
+
+    public static function e(string $s): string
+    {
+        return htmlspecialchars($s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+    }
+
+    private static function page(string $title, string $body, int $status = 200): never
+    {
+        http_response_code($status);
+        header('Content-Type: text/html; charset=utf-8');
+        header('Cache-Control: no-store');
+        header('X-Frame-Options: DENY');
+        header("Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'");
+        header('Referrer-Policy: no-referrer');
+        echo '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
+            . '<meta name="robots" content="noindex"><title>' . self::e($title) . '</title><style>'
+            . ':root{color-scheme:light dark;--fg:#1d2330;--muted:#5d6577;--bg:#f6f7f9;--card:#fff;--line:#d9dde5;--accent:#5b7fd4;--err:#b3362f}'
+            . '@media (prefers-color-scheme:dark){:root{--fg:#e6e8ee;--muted:#9aa2b2;--bg:#16181d;--card:#1f2229;--line:#343844;--accent:#7593dd;--err:#e0766f}}'
+            . 'body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;padding:24px 16px}'
+            . 'main{max-width:34em;margin:0 auto;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:20px 24px}'
+            . 'h1{font-size:1.35em;margin:0 0 12px}h2{font-size:1.05em;margin:20px 0 6px}label{display:block;margin:10px 0;font-weight:500}'
+            . 'input{display:block;width:100%;box-sizing:border-box;margin-top:4px;padding:8px 10px;font:inherit;color:inherit;background:var(--bg);border:1px solid var(--line);border-radius:6px}'
+            . '.row{display:flex;gap:12px}.row label{flex:1}.row .narrow{flex:0 0 7em}'
+            . 'button,.btn{display:inline-block;margin-top:16px;padding:9px 18px;font:inherit;font-weight:600;color:#fff;background:var(--accent);border:0;border-radius:6px;text-decoration:none;cursor:pointer}'
+            . '.err{color:var(--err);border:1px solid var(--err);border-radius:6px;padding:8px 12px;margin:10px 0}.hint{color:var(--muted);font-size:.92em}'
+            . 'pre,code{font:13px ui-monospace,Menlo,monospace}pre{white-space:pre-wrap;word-break:break-all;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:10px}'
+            . 'ul{padding-left:1.2em}a{color:var(--accent)}</style></head><body><main><h1>' . self::e($title) . '</h1>' . $body . '</main></body></html>';
+        exit;
+    }
+}

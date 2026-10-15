@@ -14,8 +14,17 @@ use BetterCal\Infra\Db;
 
 require dirname(__DIR__) . '/src/bootstrap.php';
 
+if (BetterCal\Http\InstallPages::needsSetup(dirname(__DIR__, 2))) {
+    http_response_code(503);
+    header('Content-Type: text/plain; charset=utf-8');
+    echo "Better-Cal is not set up yet.\n";
+    exit;
+}
 if (BetterCal\Support\Maintenance::active(config()['app_root'])) {
     BetterCal\Support\Maintenance::respond('/dav');
+}
+if (BetterCal\Http\InstallPages::needsDatabaseUpdate(config())) {
+    BetterCal\Http\InstallPages::databaseUpdate(config(), '/dav');
 }
 
 BetterCal\Domain\ActivityContext::set('caldav');

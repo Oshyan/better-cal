@@ -429,6 +429,9 @@ self.addEventListener('fetch', (event) => {
   // address by the shell's head script before anything else loads.
   if (SERVED_RAW) return; // the network serves the document and every app file
 
+  // The database update page is the server's own, never the cached app.
+  if (url.pathname === '/update-database') return;
+
   if (event.request.mode === 'navigate') {
     event.respondWith(cacheFirst(new Request('/')).catch(() => fetch(event.request)));
     return;

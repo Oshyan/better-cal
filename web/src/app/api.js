@@ -68,8 +68,13 @@ export async function api(path, { method = 'GET', body, formData, signal } = {})
   if (requestEpoch !== authEpoch) throw new ApiError('session_changed', 'Session changed while the request was in flight', 0);
   if (!res.ok) {
     const err = (data && data.error) || {};
+    // The server is mid-update, or has database changes waiting after new
+    // files were uploaded: the app shows that instead of failing piecemeal.
+    if (err.code === 'database_update_required') set({ serverState: 'database_update' });
+    else if (err.code === 'maintenance') set({ serverState: 'maintenance' });
     throw new ApiError(err.code || 'error', err.message || res.statusText, res.status);
   }
+  if (state.serverState) set({ serverState: null });
   if (res.headers.get('X-BetterCal-Offline') === '1' && requestEpoch === authEpoch) set({ offlineReadOnly: true });
   return data;
 }

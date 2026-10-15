@@ -24,9 +24,13 @@ use BetterCal\Support\Time;
 
 const MAX_RUNTIME_SECONDS = 50;
 
+// Not set up yet, an update in progress, or database changes waiting to be
+// applied: skip this minute's run rather than fail at it.
+if (BetterCal\Http\InstallPages::needsSetup(dirname(__DIR__, 2))) {
+    exit(0);
+}
 $cfg = config();
-// An update is in progress (bin/update.php): skip this minute's run.
-if (BetterCal\Support\Maintenance::active($cfg['app_root'])) {
+if (BetterCal\Support\Maintenance::active($cfg['app_root']) || BetterCal\Http\InstallPages::needsDatabaseUpdate($cfg)) {
     exit(0);
 }
 $db = new Db($cfg['db']);

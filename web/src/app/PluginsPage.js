@@ -150,7 +150,7 @@ export function PluginsPage() {
     title="Plugins"
     note="Plugins run in the background worker and contribute events, calendar bands, and warnings. Drop a plugin folder into server/plugins/ and it appears here."
   >
-    ${!loaded && html`<${Skeleton} rows=${5} />`}
+    ${!loaded && plugins.length === 0 && html`<${Skeleton} rows=${5} />`}
     ${loaded && plugins.length === 0 && html`<${EmptyState} text="No plugins found in server/plugins/." />`}
     ${plugins.map((p) => html`<${PluginRow} key=${p.id} p=${p} />`)}
   </${PageShell}>`;

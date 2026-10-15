@@ -189,6 +189,8 @@ button:focus-visible, [tabindex]:focus-visible {
   line-height: 1.5;
 }
 .bc-btn:hover { background: var(--bg-inset); }
+/* A link that looks and sits like a button (the welcome's setup guide). */
+a.bc-btn { color: var(--fg); text-decoration: none; display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
 .bc-btn-primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
 .bc-btn-primary:hover { background: var(--accent); filter: brightness(1.08); }
 .bc-btn-danger { color: var(--danger); border-color: var(--danger); }
@@ -4239,6 +4241,16 @@ button.bc-es-alsoon-cal { cursor: pointer; text-decoration: underline; text-deco
    beside its Check now button; notes are a short list under it. */
 .bc-pf { flex: 1 1 18em; min-width: 0; }
 .bc-cron { flex: 1 1 18em; min-width: 0; overflow-wrap: anywhere; }
+
+/* Time zone picker (ZonePicker.js): the place field's list, a row per zone with
+   its offset, country and region beside it (wrapping, never cut off). */
+.bc-zone-picker { flex: 1 1 16em; max-width: 26em; }
+.bc-zone-list { max-width: min(420px, 92vw); }
+.bc-zone-row { flex-direction: row; align-items: baseline; gap: 8px; }
+.bc-zone-row .bc-place-name { flex: none; white-space: nowrap; }
+.bc-zone-row .bc-place-addr { min-width: 0; }
+.bc-zone-row.is-current .bc-place-name::after { content: ' ✓'; color: var(--accent); }
+.bc-zone-none { padding: 7px 9px; color: var(--fg-muted); font-size: 12.5px; }
 .bc-pf-notes { margin: 6px 0 0; padding-left: 1.2em; display: grid; gap: 4px; font-size: 13.5px; color: var(--fg-muted); }
 
 /* --- first-run welcome (0.9.2, #79) ----------------------------------------------------
@@ -4258,6 +4270,7 @@ button.bc-es-alsoon-cal { cursor: pointer; text-decoration: underline; text-deco
 .bc-welcome-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .bc-welcome-row > span:first-child { width: 150px; flex: none; font-weight: 600; font-size: 14px; }
 .bc-welcome-row select, .bc-welcome-row input { flex: 1; min-width: 0; }
+.bc-welcome-row .bc-zone-picker { flex: 1; max-width: none; }
 .bc-welcome-list { display: grid; border-top: 1px solid var(--border); }
 .bc-welcome-item { display: flex; align-items: center; gap: 12px; padding: 10px 2px; border-bottom: 1px solid var(--border); }
 .bc-welcome-ico { flex: none; width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; background: var(--bg-inset); color: var(--fg-muted); }

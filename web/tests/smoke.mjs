@@ -23,6 +23,7 @@ import { baseTitle, groupOccurrences, itemMatchesFilter, isGroupId } from '../sr
 import { collapseDuplicates } from '../src/ui/duplicates.js';
 import { dayStepList } from '../src/ui/daysteps.js';
 import { sortByMatch } from '../src/lib/rank.js';
+import { zoneIndex, filterZones, parseOffset } from '../src/lib/zonesearch.js';
 import { parseJumpText, jumpGranularity } from '../src/lib/jumpparse.js';
 import { parseClockText, resolveClock, minsToHHMM, hhmmToMins, parseDateText, durationLabel } from '../src/lib/whenparse.js';
 import { monthWeeks, stepMonthOf } from '../src/lib/minimonth.js';
@@ -2595,6 +2596,27 @@ eq('gmaps: text alone is a search', gmapsUrl('Example Cafe', null, null), 'https
   eq('why: happening now, new, cancelled',
     formattingReasons({ ...base, isNew: true, status: 'cancelled' }, Date.parse('2026-03-11T17:30:00Z')),
     ['Struck through: cancelled', 'New: arrived in the last day', 'Gold ring: happening now']);
+}
+
+// --- time zone search (ZonePicker) -----------------------------------------------
+{
+  const zones = zoneIndex([]);
+  const first = (q) => (filterZones(zones, q)[0] || {}).z;
+  const finds = (q, z) => filterZones(zones, q).some((e) => e.z === z);
+  eq('zones: a city, typed loosely', first('los ang'), 'America/Los_Angeles');
+  assert('zones: a city with accents or none', finds('sao paulo', 'America/Sao_Paulo'));
+  assert('zones: a country by name', finds('portugal', 'Europe/Lisbon'));
+  assert('zones: a country by code', finds('nz', 'Pacific/Auckland'));
+  assert('zones: a region note from the tz database', finds('mountain', 'America/Denver'));
+  eq('zones: an offset, written as people write it', parseOffset('UTC -7'), -420);
+  eq('zones: with minutes', parseOffset('+5:30'), 330);
+  eq('zones: GMT works too', parseOffset('gmt+1'), 60);
+  eq('zones: not an offset', parseOffset('utc'), null);
+  assert('zones: an offset finds the zones on it now', filterZones(zones, 'UTC+5:30').some((e) => e.z === 'Asia/Kolkata' || e.z === 'Asia/Calcutta'));
+  assert('zones: an offset finds only those', filterZones(zones, '+5:30').every((e) => e.off === 330));
+  assert('zones: a city by its current name, whatever the browser calls the zone', filterZones(zones, 'kolkata').length > 0);
+  assert('zones: cities that start with it come first', filterZones(zones, 'lond')[0].city === 'London');
+  eq('zones: nothing for nonsense', filterZones(zones, 'qqzzx').length, 0);
 }
 
 console.log(passed + ' passed, ' + failed + ' failed');

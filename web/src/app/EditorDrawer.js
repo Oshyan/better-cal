@@ -14,12 +14,13 @@ import { TripRow } from './Trips.js';
 import { trapFocus } from '../ui/DayExpand.js';
 import { PlaceInput, pickFillText, calendarPlaceNear } from './PlaceInput.js';
 import { PeopleInput } from './PeopleInput.js';
+import { ZonePicker } from './ZonePicker.js';
 import { RichText } from './RichText.js';
 import { Icon } from '../ui/icons.js';
 import { isEmptyHtml } from '../lib/richtext.js';
 import {
   parseISO, toInputValue, fromInputValue, toISOWithOffset, addDaysDate, pad, localTz,
-  dateOfDayKey, eventDuration, instantFromWallTime, wallTimeInZone, sameClock, tzCity, tzOffsetLabel, zoneOptions, fmtRange,
+  dateOfDayKey, eventDuration, instantFromWallTime, wallTimeInZone, sameClock, tzCity, tzOffsetLabel, fmtRange,
   allDayFields, allDayInputs, addDaysKey, diffDaysKey, fmtTime, fmtWeekdayShort, todayKey, untilDayKey,
 } from '../lib/dates.js';
 import {
@@ -120,7 +121,6 @@ function ZoneControl({ form, occ, onPick }) {
   const [open, setOpen] = useState(false);
   const device = localTz();
   const tz = form.tz || device;
-  const zones = useMemo(() => (open ? zoneOptions([tz, device, occ && occ.tzid]) : []), [open, tz, device, occ]);
   const elsewhere = form.tzTouched && !sameClock(tz, device);
   let here = '';
   if (elsewhere) {
@@ -136,9 +136,7 @@ function ZoneControl({ form, occ, onPick }) {
     : 'Pick a zone to enter the time as it reads there, for example a flight or a call in another city.';
   return html`<span class="bc-zone">
     ${open
-      ? html`<select class="bc-zone-select" aria-label="Time zone" value=${tz} onChange=${(e) => onPick(e.target.value)}>
-          ${zones.map(([z, label]) => html`<option key=${z} value=${z}>${label}</option>`)}
-        </select>`
+      ? html`<${ZonePicker} className="bc-zone-select" ariaLabel="Time zone" value=${tz} extra=${[device, occ && occ.tzid].filter(Boolean)} autoFocus=${true} onChange=${onPick} />`
       : html`<button type="button" class="bc-ed-chip bc-zone-btn" title=${title} aria-label=${'Time zone: ' + tzCity(tz) + '. Change'} onClick=${() => setOpen(true)}><${Icon} name="globe" size=${12} />${tzCity(tz)} time<${Icon} name="chevronDown" size=${10} /></button>
           ${stored && html`<button
             type="button" class="bc-link-btn bc-zone-btn"

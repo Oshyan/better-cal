@@ -13,7 +13,8 @@ import { useStore, set, state, toast, shallowEq } from './store.js';
 import { api } from './api.js';
 import { adoptSettings } from './settings.js';
 import { Icon } from '../ui/icons.js';
-import { localTz, zoneOptions } from '../lib/dates.js';
+import { localTz } from '../lib/dates.js';
+import { ZonePicker } from './ZonePicker.js';
 import { pushSupported, permissionState, enablePush, currentPushEndpoint } from './push.js';
 import { isInstalled, canPromptInstall, promptInstall, onInstallChange, installHint } from './install.js';
 import { PHONE_QUERY } from '../lib/breakpoints.js';
@@ -47,6 +48,8 @@ function Seg({ label, value, options, onChange }) {
   </span>`;
 }
 
+let lastStep = 1;
+
 export function Welcome() {
   const s = useStore((st) => ({
     settings: st.settings, calendars: st.calendars, route: st.route, open: st.welcomeOpen, plugins: st.plugins,
@@ -58,7 +61,11 @@ export function Welcome() {
   const show = ((pending && !s.later && s.route === 'calendar') || s.open) && !s.busy;
 
   const firstCal = (s.calendars || []).find((c) => c.kind === 'local' && c.editable) || null;
-  const [step, setStep] = useState(1);
+  // Kept outside the component: an action on step 2 (Browse plugins, Connect
+  // Google) leaves the calendar, which unmounts this, and coming back should
+  // land on the list you left, not on step 1.
+  const [step, setStepState] = useState(() => lastStep);
+  const setStep = (n) => { lastStep = n; setStepState(n); };
   const [form, setForm] = useState(null);
   const [google, setGoogle] = useState(null); // {configured, connected}
   const [pushOn, setPushOn] = useState(false); // this device already gets reminders
@@ -213,8 +220,6 @@ export function Welcome() {
     },
   ];
 
-  const zones = zoneOptions([form.tz]);
-
   return html`<div class="bc-welcome-wrap">
     <div class="bc-welcome" role="dialog" aria-modal="true" aria-labelledby="bc-welcome-h">
       ${step === 1 && html`
@@ -226,11 +231,9 @@ export function Welcome() {
           ? "These come from this device. Change anything that's wrong; all of it is in Settings later."
           : 'Your current settings. Change anything here, or later in Settings.'}</p>
         <div class="bc-welcome-form">
-          <label class="bc-welcome-row"><span>Home time zone</span>
-            <select value=${form.tz} onChange=${(e) => upd({ tz: e.target.value })} aria-label="Home time zone">
-              ${zones.map(([z, l]) => html`<option key=${z} value=${z}>${l}</option>`)}
-            </select>
-          </label>
+          <div class="bc-welcome-row"><span>Home time zone</span>
+            <${ZonePicker} value=${form.tz} ariaLabel="Home time zone" onChange=${(z) => upd({ tz: z })} />
+          </div>
           <div class="bc-welcome-row"><span>Week starts on</span>
             <${Seg} label="Week starts on" value=${form.weekStart} options=${[['sun', 'Sunday'], ['mon', 'Monday']]} onChange=${(v) => upd({ weekStart: v })} />
           </div>
@@ -261,7 +264,7 @@ export function Welcome() {
               <span class="bc-welcome-ico"><${Icon} name=${isDone ? 'check' : r.icon} size=${17} /></span>
               <span class="bc-welcome-text"><b>${r.title}</b><small>${r.sub}</small></span>
               ${r.act && !(isDone && (r.id === 'reminders' || r.id === 'install')) && html`<button type="button" class="bc-btn" onClick=${r.run}>${r.act}</button>`}
-              ${!r.act && r.href && html`<a class="bc-btn" href=${r.href} target="_blank" rel="noopener">${r.hrefLabel}</a>`}
+              ${!r.act && r.href && html`<a class="bc-btn bc-btn-link" href=${r.href} target="_blank" rel="noopener">${r.hrefLabel}<${Icon} name="arrowUpRight" size=${12} /></a>`}
             </div>`;
           })}
         </div>

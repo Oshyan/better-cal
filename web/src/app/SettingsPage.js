@@ -20,7 +20,8 @@ import { usePasswordStepUp } from './PasswordStepUp.js';
 import { OutfeedsSection } from './OutfeedsPage.js';
 import { PlaceInput, pickFillText, placeBias } from './PlaceInput.js';
 import { allowDeviceLocation, deviceLocationPermission } from './devicelocation.js';
-import { localTz, sameClock, tzOffsetLabel, tzCity, zoneOptions, fmtDayMedium, fmtTime } from '../lib/dates.js';
+import { localTz, sameClock, tzOffsetLabel, tzCity, fmtDayMedium, fmtTime } from '../lib/dates.js';
+import { ZonePicker } from './ZonePicker.js';
 import {
   permissionState, pushSupported, fetchPushStatus, enablePush, disablePush, fetchPushDevices, removePushDevice, currentEndpointHash, currentPushEndpoint,
   sendTestNotification, sendTestEmail,
@@ -353,12 +354,9 @@ function Row({ label, hint, children }) {
 const TZ_HINT = 'The clock for all-day reminders, and the zone of events created for you by email, plugins and the API. What you see on screen always follows the device you are using.';
 function HomeTimezoneRow({ tz, onChange }) {
   const device = localTz();
-  const zones = useMemo(() => zoneOptions([tz, device]), [tz, device]);
   const away = !sameClock(tz, device);
   return html`<${Row} label="Home time zone" hint=${TZ_HINT}>
-    <select value=${tz || device} aria-label="Home time zone" onChange=${(e) => onChange(e.target.value)}>
-      ${zones.map(([z, label]) => html`<option key=${z} value=${z}>${label}</option>`)}
-    </select>
+    <${ZonePicker} value=${tz || device} extra=${[device]} ariaLabel="Home time zone" className="bc-set-zone" onChange=${onChange} />
     ${away && html`<span class="bc-set-away">
       This device is on ${tzCity(device)} time (${tzOffsetLabel(device)})
       <button type="button" class="bc-btn" onClick=${() => onChange(device)}>Make ${tzCity(device)} Home</button>

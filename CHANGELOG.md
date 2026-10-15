@@ -4,6 +4,12 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.78 (2026-10-15)
+
+- **The "Database update needed" and "Updating" screens actually show in the app.** In 0.9.77 the app knew the server had said so but didn't redraw, so an installed app would have shown an empty calendar instead.
+
+Operators: no migration.
+
 ## 0.9.77 (2026-10-15)
 
 - **Set up Better-Cal in the browser, no command line needed.** Upload the release zip with your host's file manager, point your domain at it, and open the address: a setup page asks for the database details and your account, checks the database before saving anything, creates the tables, writes the settings and makes your account, then shows the cron line to add in your control panel. To keep anyone who finds a new install first from setting it up, it starts by asking for a code it writes into `better-cal-code.txt` in the Better-Cal folder, which only someone with access to your files can read. Once set up, the page is gone for good. [Install without a command line](docs/install.md#install-without-a-command-line).

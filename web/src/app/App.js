@@ -120,7 +120,7 @@ function pressedDay(occ) {
 export function App() {
   const s = useStore(
     (st) => ({
-      booted: st.booted, authed: st.authed, route: st.route, view: st.view,
+      booted: st.booted, serverState: st.serverState, authed: st.authed, route: st.route, view: st.view,
       anchor: st.anchor, scrollSeq: st.scrollSeq, glideSeq: st.glideSeq, occVersion: st.occVersion,
       calendars: st.calendars, filterText: st.filterText,
       expandedDay: st.expandedDay, agendaShowPast: st.agendaShowPast,

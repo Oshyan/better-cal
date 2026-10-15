@@ -28,10 +28,35 @@ export function ZonePicker({ value, onChange, extra = [], ariaLabel = 'Time zone
     const i = query ? 0 : shown.findIndex((e) => e.z === value);
     setActive(Math.max(0, i));
   }, [open, query]); // eslint-disable-line
+  // Scroll the list itself to the active row. Not scrollIntoView, which also
+  // scrolls every container around it: in the event editor it slid the
+  // whole panel sideways.
   useLayoutEffect(() => {
-    const row = open && listRef.current && listRef.current.children[active];
-    if (row) row.scrollIntoView({ block: 'nearest' });
+    const list = listRef.current;
+    const row = open && list && list.children[active];
+    if (!row) return;
+    if (row.offsetTop < list.scrollTop) list.scrollTop = row.offsetTop;
+    else if (row.offsetTop + row.offsetHeight > list.scrollTop + list.clientHeight) list.scrollTop = row.offsetTop + row.offsetHeight - list.clientHeight;
   }, [open, active, shown]);
+  // Keep the list inside whatever clips it (the editor panel, a dialog):
+  // narrower than that, and shifted left where it would run past its edge.
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    if (!open || !list) return;
+    list.style.left = '';
+    list.style.maxWidth = '';
+    let clip = list.parentElement;
+    while (clip && clip !== document.body && getComputedStyle(clip).overflowX === 'visible' && getComputedStyle(clip).overflowY === 'visible') clip = clip.parentElement;
+    // Its inside edges, without border or scroll bar.
+    const rect = clip && clip !== document.body ? clip.getBoundingClientRect() : null;
+    const bounds = rect
+      ? { left: rect.left + clip.clientLeft, right: rect.left + clip.clientLeft + clip.clientWidth }
+      : { left: 0, right: document.documentElement.clientWidth };
+    const room = bounds.right - bounds.left - 16;
+    if (list.offsetWidth > room) list.style.maxWidth = room + 'px';
+    const over = list.getBoundingClientRect().right - (bounds.right - 8);
+    if (over > 0) list.style.left = -over + 'px';
+  }, [open, shown]);
   useEffect(() => { if (autoFocus && inputRef.current) inputRef.current.focus(); }, []); // eslint-disable-line
 
   const close = () => { setOpen(false); setQuery(''); };

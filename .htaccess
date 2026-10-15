@@ -1,0 +1,20 @@
+# Better-Cal: nothing in this folder is meant to be served except
+# server/public, which has its own .htaccess and is where your domain or
+# subdomain should point (docs/install.md, Choosing where to put it).
+#
+# Some hosts only let a subdomain point inside public_html, so this whole
+# folder can end up inside the main site's web root, where example.com/
+# better-cal/.env or the setup code would otherwise be downloadable. This
+# refuses every request for anything here; server/public's own rules replace
+# these for the app itself. Apache and LiteSpeed read it; Nginx ignores it,
+# so with Nginx point the site at server/public and keep this folder out of
+# any web root.
+#
+# A rewrite rule rather than "Require all denied", which needs AuthConfig
+# overrides that some shared hosts don't allow (an error on every request).
+# The app needs mod_rewrite anyway.
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteRule ^ - [F]
+</IfModule>

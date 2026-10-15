@@ -28,7 +28,7 @@ server/
                      #   web/src/lib/patterns.js, the text patterns both sides share)
   bin/               # worker.php (cron), migrate.php, seed.php, demo-seed.php, smoke.php, token.php, vapid.php,
                      #   import-takeout.php, profile-*.php
-  config/            # config.php reads env / .env file; every key is read in exactly one place
+  config/            # config.php reads env / the settings file; every key is read in exactly one place
   data/              # generated static tables (IATA airports)
   plugins/           # bundled plugins, one folder each (plugin.json + Plugin.php): weather, sun, tides, ...
   migrations/        # NNN_name.sql (or .php returning fn(Db), for data changes that need app code), applied in order by migrate.php, tracked in schema_migrations
@@ -66,6 +66,6 @@ docs/                # this file, install, api-contract, agent-api, caldav, emai
 - Place search: the location dropdown asks a `PlaceProvider` chosen by `BETTERCAL_PLACE_SEARCH` (`PlaceProviders`): Photon by default, free and keyless; LocationIQ, MapTiler or Stadia Maps with their key, in the order listed, each in front of Photon (`FallbackPlaces`), which answers what the keyed service can't and whenever it fails. Each provider keeps its own workarounds; `PlaceSearch` holds the rules for all of them. The single-pin lookup (`Geocode`) asks the service `BETTERCAL_PLACE_LOOKUP` chooses (default: the dropdown's) first, through its full-text search (`KeyedPins`), then Photon and Open-Meteo.
 - LLM: `LlmGateway` fronts one provider (Gemini; the model is `BETTERCAL_GEMINI_MODEL`) for quick-add parsing, email extraction, prompt filters, ranking and plugin completions. A deterministic parser handles the common absolute and relative dates; an LLM failure never blocks creating an event.
 - Plugins run server-side under `PluginHost` with declared permissions, their own calendars, a request budget and the SSRF-safe client; `docs/plugins/authoring.md`.
-- Configuration is environment only, read once in `server/config/config.php` from real variables or the `.env` file at the app root. `.env.example` lists every key with what it is for and is the source of truth; only the database, base URL and session secret are required.
+- Configuration is environment only, read once in `server/config/config.php` from real variables or the settings file at the app root (`.env.php`, behind a guard line that makes a web server show it as a blank page; `.env` until it's converted). `.env.example` lists every key with what it is for and is the source of truth; only the database, base URL and session secret are required.
 - Secrets at rest (Google refresh tokens) are sealed with libsodium under a key derived from the session secret (`Infra\Secrets`); nothing in the repository holds a credential.
 - Tests: `php server/tests/run.php`, `node web/tests/smoke.mjs` (run under several time zones on deploy), `node --experimental-vm-modules web/tests/static.mjs`, `node tools/mcp/test.mjs`. CI runs all four on every push and pull request; the deploy script runs the first three, plus a check of the vendored files against their pins, before shipping.

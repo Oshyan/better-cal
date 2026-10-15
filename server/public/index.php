@@ -290,6 +290,9 @@ function bc_handle_api(Request $request, array $cfg): void
         // A start of the app that never reached its first render (white screen),
         // reported by the next start: one validated line in the error log.
         $router->add('POST', "$base/system/client-event", [$systemController, 'clientEvent']);
+        // Can the private files be downloaded (#142): Settings, System.
+        $router->add('GET', "$base/system/private-files", [$systemController, 'privateFiles']);
+        $router->add('POST', "$base/system/private-files/check", [$systemController, 'checkPrivateFiles']);
         // Google Calendar connector (docs/google-calendar.md).
         $router->add('GET', "$base/google/status", [$googleController, 'status']);
         $router->add('GET', "$base/google/connect", [$googleController, 'connect']);

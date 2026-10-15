@@ -17,13 +17,13 @@ Browsers keep sites apart by their address: everything on `example.com` counts a
 
 **Point the subdomain at `server/public`,** and, if your host allows, keep the `better-cal` folder outside the main site's web root (beside `public_html`, not inside it).
 
-Some hosts (Hostinger, for one) only let a subdomain point at a folder inside `public_html`. That's fine for the browser, which goes by the address, not the folder, but it puts the whole `better-cal` folder where the main site serves files: without protection, `example.com/better-cal/.env` would hand out your database password. So:
+Some hosts (Hostinger, for one) only let a subdomain point at a folder inside `public_html`. That's fine for the browser, which goes by the address, not the folder, but it puts the whole `better-cal` folder where the main site serves files: without protection, `example.com/better-cal/` would hand out your settings, database password included. So:
 
 - **Unzip it inside `public_html`** and point the subdomain at `public_html/better-cal/server/public` (on Hostinger: tick "Custom folder for subdomain" and enter `better-cal/server/public`).
-- **The release protects itself there.** A `.htaccess` at the top of the `better-cal` folder refuses every request for anything in it, and only `server/public` serves the app; backup folders the updater makes get the same. Better-Cal also answers only at the address in `BETTERCAL_BASE_URL`, so the copy reachable through the main domain redirects to the subdomain.
-- **Check it after installing:** open `https://example.com/better-cal/VERSION` (your main domain). It should say Forbidden. If it shows a version number, your host isn't honouring `.htaccess` (most likely an Nginx-only host), and you should move the folder out of the web root or ask the host how.
+- **The release protects itself there.** The settings file, `.env.php`, starts with a line that makes a web server show it as a blank page; backups are encrypted; and a `.htaccess` at the top of the folder refuses every request for anything in it on servers that read one (Apache, LiteSpeed). Only `server/public` serves the app. Better-Cal also answers only at the address in `BETTERCAL_BASE_URL`, so the copy reachable through the main domain redirects to the subdomain. [Keeping private files private](#keeping-private-files-private) has the details.
+- **It checks itself.** At the end of setup and after each update, Better-Cal asks your main domain for a test file in its folder and tells you in plain words whether your settings could be downloaded. Settings, System shows the latest result under **Private files**, with a **Check now** button. If it ever says "Fix this now", do what it says: move the folder out of `public_html`, or ask your host to run PHP for it.
 
-**If the hosting account also runs other sites, give Better-Cal its own hosting user** where the host allows (DreamHost and many others do, per domain). The subdomain protects you in the browser; on the server, every site under one user runs as the same account, so if one of them were compromised it could read Better-Cal's `.env` and database. A separate user keeps them apart.
+**If the hosting account also runs other sites, give Better-Cal its own hosting user** where the host allows (DreamHost and many others do, per domain). The subdomain protects you in the browser; on the server, every site under one user runs as the same account, so if one of them were compromised it could read Better-Cal's settings and database. A separate user keeps them apart.
 
 ## Install
 
@@ -56,17 +56,17 @@ Run these as the account that will own Better-Cal's files. PHP must be able to r
    php /srv/better-cal/server/bin/install.php
    ```
 
-   It checks PHP and its extensions, then asks for the address people will open Better-Cal at, the database details (and tries them before going on), and your email and a password. It writes `.env`, readable only by your account, with a generated session secret and push keys; creates the tables; and creates your account with a first calendar. It's safe to run again: with a `.env` in place it uses that one.
+   It checks PHP and its extensions, then asks for the address people will open Better-Cal at, the database details (and tries them before going on), and your email and a password. It writes the settings file, `.env.php`, readable only by your account, with a generated session secret and push keys; creates the tables; and creates your account with a first calendar. It's safe to run again: with settings in place it uses them.
 
 4. **Point the web server at `/srv/better-cal/server/public`.** Every request goes to `server/public/index.php`, except `/dav`, which goes to `dav.php`. Copy the [Nginx](#nginx-tested) or [Apache](#apache-24-tested-with-mod_php) example below; on shared hosting, set the domain's web directory in the control panel. No certificate yet? Let's Encrypt's `certbot` sets one up for Nginx or Apache in a couple of minutes.
 
 5. **Start the worker.** It polls subscribed calendars, reads forwarded mail, sends reminders and tidies up. The installer prints the exact line, with your PHP's path; run `crontab -e` and add it. It looks like:
 
    ```
-   * * * * * /usr/bin/php /srv/better-cal/server/bin/worker.php >> /srv/better-cal/worker.log 2>&1
+   * * * * * /usr/bin/php /srv/better-cal/server/bin/worker.php >/dev/null 2>&1
    ```
 
-   On shared hosting, the control panel usually has a "cron jobs" page for this.
+   On shared hosting, the control panel usually has a "cron jobs" page for this. The output is thrown away on purpose: a log file in the app folder could be downloadable on some hosts. Failing jobs show in Settings, System, and PHP errors go to a private log, `.runtime-cache/php-errors.php`.
 
 6. **Check it.** `https://cal.example.com/api/v1/health` should show `{"ok":true,"db":true,...}`. Then open `https://cal.example.com`, sign in, and the welcome walks you through the first settings. A couple of minutes later, Settings, System should show the worker's jobs as healthy.
 
@@ -74,7 +74,7 @@ That's a working install. The rest is optional:
 
 - **Push reminders** are set up by the installer; each person turns them on per device ([the app and reminders](app-and-reminders.md)).
 - **Google Calendar**: needs an OAuth client of your own, from a free Google Cloud project. It takes about ten minutes; [google-calendar.md](google-calendar.md#one-time-setup-the-operator) has direct links to each console page.
-- **Email** for reminders by mail and invitation replies: the SMTP settings in `.env`.
+- **Email** for reminders by mail and invitation replies: the SMTP settings in `.env.php`.
 - More under [After installing](#after-installing): sample data to look around with, phone and desktop calendar apps (CalDAV), place search.
 
 If something here didn't work as written on your host, please [report it](https://github.com/Oshyan/better-cal/issues).
@@ -86,8 +86,8 @@ For hosting where you have a control panel and a file manager (or FTP) but no SS
 1. **Upload the release zip** (`better-cal-X.Y.Z.zip` from the [releases page](https://github.com/Oshyan/better-cal/releases)) with your host's file manager and unzip it there. It makes a `better-cal` folder. Put it outside your web root if the host allows (beside `public_html` rather than in it); if subdomains must point inside `public_html`, unzip it there instead, and do the check in [Choosing where to put it](#choosing-where-to-put-it) once you're set up.
 2. **Create a database and a user** on the control panel's database page. Note the host, database name, user and password.
 3. **Point a subdomain of its own at `better-cal/server/public`** (say `cal.example.com`; [why a subdomain](#choosing-where-to-put-it)) in the control panel's domain settings, and turn on HTTPS for it (most panels have a Let's Encrypt switch).
-4. **Open the address in your browser.** You'll see Better-Cal's setup page. To show it's your server, it asks for a code it has just written into the file `better-cal-code.txt` in the `better-cal` folder: open that file in the file manager and type the code in. (Anyone who reaches the page before you can't get further without that file.)
-5. **Fill in the form:** the address, the database details (checked before anything is saved) and your account. Setup creates the tables, saves the settings in `.env` (readable only by your account) and makes your account. From then on the setup page is gone for good.
+4. **Open the address in your browser.** You'll see Better-Cal's setup page. To show it's your server, it asks for a code it has just written into the file `better-cal-code.php` in the `better-cal` folder: open that file in the file manager and type the code in. (Anyone who reaches the page before you can't get further without that file.)
+5. **Fill in the form:** the address, the database details (checked before anything is saved) and your account. Setup creates the tables, saves the settings in `.env.php` (readable only by your account) and makes your account. From then on the setup page is gone for good. If its check of your main domain finds a problem, the last page says so.
 6. **Add the cron job** it shows you, in the control panel's cron or scheduled-tasks page, running every minute. Then sign in.
 
 It needs PHP to be able to write to the `better-cal` folder, which on shared hosting it normally can. If it can't, the page says so.
@@ -100,10 +100,10 @@ For following development or making changes: `git clone https://github.com/Oshya
 
 What `install.php` does, step by step, if you'd rather:
 
-1. `cp .env.example .env && chmod 600 .env`, then fill in `BETTERCAL_BASE_URL`, the database in `BETTERCAL_DB_DSN`, `BETTERCAL_DB_USER`, `BETTERCAL_DB_PASS`, and `BETTERCAL_SESSION_SECRET` (`openssl rand -hex 32` makes one). Everything else in the file is optional and explained where it appears.
+1. `cp .env.example .env.php && chmod 600 .env.php` (keep its first line, which makes a web server show the file as a blank page), then fill in `BETTERCAL_BASE_URL`, the database in `BETTERCAL_DB_DSN`, `BETTERCAL_DB_USER`, `BETTERCAL_DB_PASS`, and `BETTERCAL_SESSION_SECRET` (`openssl rand -hex 32` makes one). Everything else in the file is optional and explained where it appears.
 2. `php server/bin/migrate.php` creates the tables.
 3. `php server/bin/seed.php --email=you@example.com` creates your account; it asks for the password without showing it. From a script, set `BETTERCAL_SEED_PASSWORD` instead; never put a password on the command line, where other users and the shell history can see it.
-4. Optional: `php server/bin/vapid.php --generate`, and put the keys it prints into `.env`, for push reminders.
+4. Optional: `php server/bin/vapid.php --generate`, and put the keys it prints into `.env.php`, for push reminders.
 
 ## Requirements in detail
 
@@ -140,10 +140,10 @@ php /srv/better-cal/server/bin/update.php
 
 It finds the newest release, checks it the way the app's update notice does (a published, unchangeable GitHub release with a valid manifest), checks the release's signature against the signing keys this copy of Better-Cal ships with ([releasing.md](releasing.md#signing)), and shows its Operators line. If you say yes, it:
 
-1. **backs up the database** into `/srv/better-cal-backups/`, written by PHP itself, so it works without `mysqldump`;
+1. **backs up the database** into `/srv/better-cal-backups/`, written by PHP itself, so it works without `mysqldump`, and encrypted;
 2. **puts the site in maintenance mode**, so it shows "updating" for a minute and the worker pauses;
-3. **installs the new version.** From a release zip, it downloads the new zip, checks its SHA-256 against GitHub's, and unpacks it beside the current copy. It carries over `.env`, plugins you added and per-host files like `.user.ini`, then swaps the two folders, so the previous version stays whole in `/srv/better-cal-<old version>`. From a git checkout, it checks out the release tag and runs Composer;
-4. **runs the new version's database changes**, then brings the site back.
+3. **installs the new version.** From a release zip, it downloads the new zip, checks its SHA-256 against GitHub's, and unpacks it beside the current copy. It carries over your settings, plugins you added and per-host files like `.user.ini`, then swaps the two folders, so the previous version stays whole in `/srv/better-cal-<old version>`. From a git checkout, it checks out the release tag and runs Composer;
+4. **runs the new version's database changes**, brings your private files up to date (settings still in `.env` move to `.env.php`, older backups get encrypted), and brings the site back.
 
 `--check` only says whether there's a release; `--yes` skips the question. It needs to be able to create folders beside the app directory (in `/srv` here), which on shared hosting your home directory allows. Open browsers and the installed app pick up the new version on their next load.
 
@@ -153,34 +153,34 @@ It finds the newest release, checks it the way the app's update notice does (a p
 php /srv/better-cal/server/bin/update.php --rollback
 ```
 
-puts the previous version and the database back as they were before the update. That also works after an update that finished but misbehaves; do it soon, since anything entered since the backup is lost. Please [report what happened](https://github.com/Oshyan/better-cal/issues).
+puts the previous version and the database back as they were before the update. That also works after an update that finished but misbehaves; do it soon, since anything entered since the backup is lost. Going back to a version before 0.9.83, which only reads `.env`, writes `.env` from `.env.php` for it and says so. Please [report what happened](https://github.com/Oshyan/better-cal/issues).
 
-The backups and the previous version stay until you remove them. Delete old ones from `/srv/better-cal-backups/` and the `better-cal-<version>` folders whenever you're happy with an update.
+The backups and the previous version stay until you remove them. Delete old ones from `/srv/better-cal-backups/` and the `better-cal-<version>` folders whenever you're happy with an update; Settings, System lists older copies under Private files. Backups are encrypted with a key made from your session secret, so keep a copy of `.env.php` with any backup you copy elsewhere. `php server/bin/backup.php --decrypt FILE OUT.sql.gz` turns one into a plain `.sql.gz` for phpMyAdmin or the `mysql` client.
 
 ### Without a command line
 
 1. **Download the new release zip** and upload it with your host's file manager, next to the current `better-cal` folder (not into it), and unzip it under another name, say `better-cal-new`.
-2. **Copy your own files across** from `better-cal` into `better-cal-new`: `.env`, and any plugins you added under `server/plugins/`.
+2. **Copy your own files across** from `better-cal` into `better-cal-new`: `.env.php` (or `.env`, on a version before 0.9.83), and any plugins you added under `server/plugins/`. Names starting with a dot are hidden in some file managers; look for a "show hidden files" setting.
 3. **Swap the folders by renaming them:** `better-cal` to `better-cal-old`, then `better-cal-new` to `better-cal`. Your domain and cron job keep pointing at the same place.
-4. **Open Better-Cal.** If the new version has database changes, you'll see "Database update needed" instead of your calendar (an installed app shows the same, with a button to the update page). Enter the code it writes into `better-cal-code.txt`, as at setup, and press **Back up and update the database**: it backs up first, beside the `better-cal` folder (or inside it, if the folder above isn't writable), then applies the changes. If there are no changes, Better-Cal simply opens on the new version.
+4. **Open Better-Cal.** If the new version has database changes, you'll see "Database update needed" instead of your calendar (an installed app shows the same, with a button to the update page). Enter the code it writes into `better-cal-code.php`, as at setup, and press **Back up and update the database**: it backs up first, beside the `better-cal` folder (or inside it, if the folder above isn't writable), then applies the changes. If there are no changes, Better-Cal simply opens on the new version.
 
-To go back: rename the folders back, and if the database was updated, restore the backup through your host's database tool (phpMyAdmin's Import takes the `.sql.gz` file). Keep `better-cal-old` until you're happy with the new version. Unlike the updater, this route doesn't check the release's signature for you, so download only from the [releases page](https://github.com/Oshyan/better-cal/releases).
+If the database update itself fails, the page offers **Restore the database as it was**; then rename the folders back. To go back after an update that worked, rename the folders back and restore the database from your host's own backups (most shared hosts keep daily ones). The backup Better-Cal made is encrypted, and turning it into a file phpMyAdmin can import takes a command line: `php server/bin/backup.php --decrypt`. Keep `better-cal-old` until you're happy with the new version. Unlike the updater, this route doesn't check the release's signature for you, so download only from the [releases page](https://github.com/Oshyan/better-cal/releases).
 
 ### By hand, with SSH
 
 The updater's steps yourself, as the user that owns the files, in the app directory (`/srv/better-cal` here):
 
-1. **Back up the database**, and keep a copy of `.env`:
+1. **Back up the database**, and keep a copy of your settings:
 
    ```sh
    mysqldump --single-transaction -u DB_USER -p DB_NAME > ~/bettercal-before-update.sql
-   cp .env ~/bettercal-env-backup
+   cp .env.php ~/bettercal-settings-backup.php
    ```
 
    Your host's own database backup works too, as long as you can restore it.
 2. **Get the new code.**
    - From a git clone: `git fetch --tags` and then `git checkout v0.9.74`, with the version you're updating to, then `cd server && composer install --no-dev && cd ..`. Releases are tags; `main` can be ahead of the newest release.
-   - From a release zip: unpack the new one into a fresh directory beside the current one (say `/srv/better-cal-new`), copy `.env` into it along with any plugins you added under `server/plugins/`, then swap the two: `mv /srv/better-cal /srv/better-cal-old && mv /srv/better-cal-new /srv/better-cal`. Your web server and cron entry keep pointing at the same path.
+   - From a release zip: unpack the new one into a fresh directory beside the current one (say `/srv/better-cal-new`), copy `.env.php` into it along with any plugins you added under `server/plugins/`, then swap the two: `mv /srv/better-cal /srv/better-cal-old && mv /srv/better-cal-new /srv/better-cal`. Your web server and cron entry keep pointing at the same path.
 3. **Apply database changes:** `php server/bin/migrate.php`. It lists each change it applies, or none.
 4. **Check it:** `https://your-host/api/v1/health` should say `{"ok":true,"db":true,...}`, and Settings, About should show the new version.
 
@@ -194,12 +194,12 @@ If the migration stops with an error, don't keep using the app: restore the back
 
 ### Development deployments
 
-`scripts/deploy-dev.sh` deploys the working tree to a separately configured dev directory and database. Provision `DEV_DIR`, `DEV_DB`, the dev `.env` and its distinct `BETTERCAL_SESSION_SECRET` before using it. Database accounts and grants are operator-owned configuration: the deploy verifies them but never creates, locks, unlocks or rewrites them.
+`scripts/deploy-dev.sh` deploys the working tree to a separately configured dev directory and database. Provision `DEV_DIR`, `DEV_DB`, the dev settings file and its distinct `BETTERCAL_SESSION_SECRET` before using it. Database accounts and grants are operator-owned configuration: the deploy verifies them but never creates, locks, unlocks or rewrites them.
 
 Three flags in the ignored `scripts/deploy.env` control the security/usability tradeoffs; `scripts/deploy.env.example` contains the complete configuration:
 
-- `DEV_ISOLATION_MODE=strict|shared` defaults to `strict`. Strict mode requires separate Unix, database and PHP-FPM identities and verifies that the two application identities cannot read one another's database or `.env`. Explicit `shared` mode permits those identities and credentials to be reused and prints a warning on every deploy. The application directories, database names and session secrets must still differ. A shared PHP-FPM service is never stopped or restarted; if opcode timestamp checks are disabled, changed dev code may remain stale until an operator-chosen reload.
-- `DEV_EXTERNAL_SERVICES=disabled|enabled` defaults to `disabled`. Enabling it permits integrations deliberately configured in the dev `.env` and warns that mail, push, AI, maps and connected calendars can have real side effects or cost. A clone never copies production Google connections or active plugin settings: reconnect or reconfigure those in dev. Receive-only ICS subscriptions are separate from this switch.
+- `DEV_ISOLATION_MODE=strict|shared` defaults to `strict`. Strict mode requires separate Unix, database and PHP-FPM identities and verifies that the two application identities cannot read one another's database or settings. Explicit `shared` mode permits those identities and credentials to be reused and prints a warning on every deploy. The application directories, database names and session secrets must still differ. A shared PHP-FPM service is never stopped or restarted; if opcode timestamp checks are disabled, changed dev code may remain stale until an operator-chosen reload.
+- `DEV_EXTERNAL_SERVICES=disabled|enabled` defaults to `disabled`. Enabling it permits integrations deliberately configured in the dev settings and warns that mail, push, AI, maps and connected calendars can have real side effects or cost. A clone never copies production Google connections or active plugin settings: reconnect or reconfigure those in dev. Receive-only ICS subscriptions are separate from this switch.
 - `DEV_CLONE_SUBSCRIPTIONS=preserve|strip` defaults to `preserve`. A `CLONE_DB=1` clone re-encrypts ordinary ICS source addresses with the dev session secret so they keep synchronizing. `strip` removes the synchronization addresses and leaves their imported events as local snapshots.
 
 Every `CLONE_DB=1` operation first imports production into a private, randomly named staging schema, proves neither application identity can access it, sanitizes and verifies it there, and only then replaces the dev database. Copied sessions, trusted devices, API tokens, push subscriptions, outbound feeds, Google connections, active jobs and plugin integration configuration are removed. Plugins and Google-backed calendars remain as inert data snapshots; enable and configure them again in dev when that is the behavior being tested. All copied account passwords are replaced with `DEV_LOGIN_PASSWORD`, which belongs only in the ignored deployment configuration.
@@ -317,17 +317,34 @@ Signs that the `Authorization` header is being dropped: signing in through the b
 
 ## Behind a proxy or CDN
 
-Sign-in attempts are rate limited per network address. If something on another address sits in front of the web server (Cloudflare, a load balancer, a separate reverse-proxy host, a container ingress), PHP sees that proxy's address for every visitor, so they would all share one limit. Set `BETTERCAL_TRUSTED_PROXIES` in `.env` to the proxy's IPs or CIDR ranges and the real address is read from `X-Forwarded-For`, from the right-hand end, which is the part a client cannot forge. Leave it empty otherwise: by default the header is ignored. Nginx or Apache on the same machine handing requests to PHP-FPM is not a proxy in this sense and needs nothing.
+Sign-in attempts are rate limited per network address. If something on another address sits in front of the web server (Cloudflare, a load balancer, a separate reverse-proxy host, a container ingress), PHP sees that proxy's address for every visitor, so they would all share one limit. Set `BETTERCAL_TRUSTED_PROXIES` in `.env.php` to the proxy's IPs or CIDR ranges and the real address is read from `X-Forwarded-For`, from the right-hand end, which is the part a client cannot forge. Leave it empty otherwise: by default the header is ignored. Nginx or Apache on the same machine handing requests to PHP-FPM is not a proxy in this sense and needs nothing.
 
 Better-Cal answers only at the host in `BETTERCAL_BASE_URL` ([why](#choosing-where-to-put-it)): a request for any other host is redirected there, or refused with 421. If a proxy in front rewrites the `Host` header to an internal name, or the same install is deliberately reached by a second name, list those in `BETTERCAL_ALLOWED_HOSTS`, comma separated.
 
 **Check that your web server is not already believing visitors about their address.** The app can only be as right as the address the web server hands it. Nginx's `real_ip` module (`set_real_ip_from`, `real_ip_header`) rewrites the client address from a header, and it should only do so for peers you control. CloudPanel's `/etc/nginx/nginx.conf` (seen in CloudPanel 2.5) includes `set_real_ip_from 0.0.0.0/0;` and leaves the header at nginx's default, `X-Real-IP`, which trusts that header from everyone: any visitor can then send `X-Real-IP: 1.2.3.4` and be counted as that address, which lets them dodge the per-address limit and aim a block at someone else's address. Keep the loopback and private ranges (CloudPanel's inner server on port 8080 needs `127.0.0.1`) and remove the `0.0.0.0/0` line, or replace it with your CDN's published ranges if you use one. To test: send one wrong password with a made-up `X-Real-IP` header and see which address the block in Activity names after ten of them, or look at `rate_events`.
 
-## Protecting `.env`
+## Keeping private files private
 
-`.env` holds the database password and the session secret. Keep it readable by the PHP user and by nobody else: on shared hosting (Dreamhost, Bluehost and the like) that is `chmod 600 .env`, owned by your own account, which is also the user PHP runs as. For the root-backed deploy script, provision it once as `root:APP_USER` mode `0640` (for example, `chown root:bettercal .env && chmod 640 .env`). The deploy validates that it is a readable regular file and refuses a symlink, but deliberately does not change its ownership or mode through the app-owned directory. Normal code deployments leave it untouched; repeat those two provisioning commands only after deliberately replacing `.env`.
+A few of Better-Cal's files must never be downloadable: the settings file (database password, session secret, keys), database backups, the one-time setup code and PHP's error log. They're protected wherever the folder sits:
 
-To change settings later without editing the file on the server, put them in `scripts/server.env` on your own machine (gitignored, `KEY=VALUE` lines) and run `scripts/push-settings.sh` (or `scripts/push-settings.sh dev` with `scripts/server-dev.env` for the dev install). It adds or replaces only those keys in the server's `.env`, keeps every other line, saves a copy to `/root/bettercal-env-backups` first, refuses a symlinked `.env`, keeps the file's owner and mode, and never prints a value. It is separate from deploying on purpose: a deploy still never writes `.env`. Settings apply on the next request; nothing needs restarting.
+- **The settings file starts with a guard line.** `.env.php` begins with `<?php __halt_compiler();`: asked for over the web, the server runs it as PHP, which stops at once, so it shows a blank page. Better-Cal reads it as text, never runs it. Keep that first line when you edit the file. If it's deleted, Better-Cal puts it back; if something else ends up in front of it, Better-Cal refuses to start and says what to fix.
+- **`.env` from before 0.9.83 still works** until it's converted. The updater, the database update page and the worker convert it on their own when it belongs to the account they run as; `php server/bin/settings.php --convert` does it by hand, run as the account that owns `.env` (root, on a server set up by the deploy script).
+- **Backups are encrypted** (libsodium's XChaCha20-Poly1305) with a key made from `BETTERCAL_SESSION_SECRET`, and end in `.bcbackup`. Restoring needs the settings they were made with, so keep a copy of `.env.php` with any backup you store elsewhere. `php server/bin/backup.php --decrypt FILE OUT.sql.gz` writes a plain copy for other tools; delete it when you're done.
+- **The setup code, the update record and PHP's error log are guarded the same way.** Where a host sets PHP to write errors to a file beside the script (a bare `error_log`, common on shared hosting), that file would sit in a served folder, so Better-Cal sends errors to `.runtime-cache/php-errors.php` instead.
+- **A `.htaccess`** at the top of the folder refuses every request on servers that read one.
+
+**Settings, System, Private files** says whether this holds on your host. Better-Cal writes a test file into its folder and asks your main domain for it (`example.com` and `www.example.com` for `cal.example.com`), at the place that domain would serve the folder if it sits in its web space:
+
+- **Safe** comes in three forms: the folder is outside any public web folder; it's inside one but the server refuses every request for it; or the main domain reaches it, but the settings file shows as a blank page there and the backups are encrypted.
+- **Probably safe** means no address it tried serves the folder. It can't rule out a domain it doesn't know about, so it says how to check that one yourself.
+- **Fix this now** means the server hands out PHP files as text in that folder, so the settings file can be read. Move the folder out of the web root, or ask your host to run PHP there, then change the database password, since it may already have been copied.
+- **Not checked** means your host doesn't let a site fetch pages from its own websites, which is common. The message says how to check by hand.
+
+It runs at the end of setup and of each update, and when you press **Check now** (at most once a minute). It's not on a timer. Notes under the result point out leftovers worth deleting, like an old `worker.log` in the folder.
+
+**File permissions.** Keep `.env.php` readable by the PHP user and nobody else: on shared hosting that is `chmod 600 .env.php`, owned by your own account, which is also the user PHP runs as. For the root-backed deploy script, provision it once as `root:APP_USER` mode `0640` (for example, `chown root:bettercal .env.php && chmod 640 .env.php`). The deploy validates that it is a readable regular file and refuses a symlink, or both `.env` and `.env.php` at once, but deliberately does not change ownership or mode through the app-owned directory. Converting a root-owned `.env` keeps its owner, group and mode: `sudo php server/bin/settings.php --convert`.
+
+To change settings later without editing the file on the server, put them in `scripts/server.env` on your own machine (gitignored, `KEY=VALUE` lines) and run `scripts/push-settings.sh` (or `scripts/push-settings.sh dev` with `scripts/server-dev.env` for the dev install). It adds or replaces only those keys in the server's settings file, keeps every other line (the guard line included), saves a copy to `/root/bettercal-env-backups` first, refuses a symlink, keeps the file's owner and mode, and never prints a value. It is separate from deploying on purpose: a deploy never writes the settings. They apply on the next request; nothing needs restarting.
 
 Production backups use a separate privilege boundary. `BACKUP_DIR` must be one direct child of `/home` or `/var/backups`; the deploy creates it as `root:root` mode `0700`, creates each archive as mode `0600`, and keeps the newest five app and database copies. The app user supplies the readable source stream but cannot create, replace or remove backup files. Installations that used an older deploy script may still have a legacy `backups` directory beside the app. After confirming a new backup exists under `BACKUP_DIR`, archive or remove that legacy directory as a separate, deliberate maintenance step.
 
@@ -336,5 +353,5 @@ Production backups use a separate privilege boundary. `BACKUP_DIR` must be one d
 - `php server/bin/smoke.php` checks that the events window, a single event and the calendar list serialize against your real data.
 - To look around before moving anything in, `php server/bin/demo-seed.php` fills an empty account with invented sample calendars, events and people, dated around today. It refuses to run once the account has events of its own.
 - CalDAV clients connect to `https://your-host/dav/` with your email and either your password or an API token (`php server/bin/token.php --create --name="My phone"`). See [caldav.md](caldav.md).
-- Place search works out of the box on Photon (photon.komoot.io, free, no key). For faster or better results you can use LocationIQ or Stadia Maps with your own key: set `BETTERCAL_PLACE_SEARCH` and the key in `.env` (see `.env.example`), and Settings, Location & maps shows which service is in use, with Photon still answering whatever the chosen service can't. [Geocoding and place search](geocoding.md) compares the services and explains the choice. If you restrict a LocationIQ key to source addresses, use the server's IPv4 address; Better-Cal reaches LocationIQ over IPv4. **Stadia Maps:** Better-Cal saves the coordinates of places you pick, and Stadia Maps' terms allow keeping them only on a paid plan that includes storing results, so check [Stadia's current plans](https://stadiamaps.com/pricing/). Making sure your plan fits is your responsibility; Better-Cal does not check.
+- Place search works out of the box on Photon (photon.komoot.io, free, no key). For faster or better results you can use LocationIQ or Stadia Maps with your own key: set `BETTERCAL_PLACE_SEARCH` and the key in `.env.php` (see `.env.example`), and Settings, Location & maps shows which service is in use, with Photon still answering whatever the chosen service can't. [Geocoding and place search](geocoding.md) compares the services and explains the choice. If you restrict a LocationIQ key to source addresses, use the server's IPv4 address; Better-Cal reaches LocationIQ over IPv4. **Stadia Maps:** Better-Cal saves the coordinates of places you pick, and Stadia Maps' terms allow keeping them only on a paid plan that includes storing results, so check [Stadia's current plans](https://stadiamaps.com/pricing/). Making sure your plan fits is your responsibility; Better-Cal does not check.
 - Set your Home time zone under Settings, General. The screen always follows the device you are using; Home is the clock all-day reminders fire on and the zone of events created for you by email, plugins and the API.

@@ -2,24 +2,31 @@
 
 declare(strict_types=1);
 
-/** Load KEY=VALUE lines from a .env file into the environment (existing env wins). */
-function bc_load_env(string $path): void
+/**
+ * Load the settings (.env.php, or .env until it's converted) into the
+ * environment; real environment variables win. A settings file that can't be
+ * trusted stops everything: a plain message on the command line, and on the
+ * web a bare 503 for whoever asked (the details go to the error log, never
+ * to a stranger).
+ */
+function bc_load_settings(string $appRoot): void
 {
-    if (!is_file($path) || !is_readable($path)) {
-        return;
+    try {
+        $values = \BetterCal\Support\SettingsFile::load($appRoot);
+    } catch (\BetterCal\Support\SettingsFileError $e) {
+        if (PHP_SAPI === 'cli' || PHP_SAPI === 'phpdbg') {
+            fwrite(STDERR, 'Better-Cal can\'t start: ' . $e->getMessage() . "\n");
+            exit(1);
+        }
+        error_log('Better-Cal can\'t start: ' . $e->getMessage());
+        http_response_code(503);
+        header('Content-Type: text/plain; charset=utf-8');
+        header('Cache-Control: no-store');
+        echo "Better-Cal can't start because of a problem with its settings file. The server's error log says what to fix.\n";
+        exit;
     }
-    foreach (file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $line) {
-        $line = trim($line);
-        if ($line === '' || str_starts_with($line, '#') || !str_contains($line, '=')) {
-            continue;
-        }
-        [$key, $value] = explode('=', $line, 2);
-        $key = trim($key);
-        $value = trim($value);
-        if ($value !== '' && ($value[0] === '"' || $value[0] === "'") && str_ends_with($value, $value[0])) {
-            $value = substr($value, 1, -1);
-        }
-        if ($key !== '' && getenv($key) === false) {
+    foreach ($values as $key => $value) {
+        if (getenv($key) === false) {
             putenv($key . '=' . $value);
             $_ENV[$key] = $value;
         }
@@ -34,7 +41,7 @@ function config(): array
         return $cfg;
     }
     $appRoot = dirname(__DIR__, 2);
-    bc_load_env($appRoot . '/.env');
+    bc_load_settings($appRoot);
 
     $env = static fn(string $key, string $default = ''): string => (($v = getenv($key)) === false || $v === '') ? $default : $v;
 

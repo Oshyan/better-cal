@@ -27,13 +27,17 @@ require dirname(__DIR__) . '/src/bootstrap.php';
 
 use BetterCal\Domain\Updates;
 use BetterCal\Infra\Db;
+use BetterCal\Infra\BackupCipher;
 use BetterCal\Infra\DbBackup;
 use BetterCal\Infra\Migrator;
+use BetterCal\Infra\PrivateFiles;
+use BetterCal\Infra\PrivateFilesCheck;
 use BetterCal\Infra\Setup;
 use BetterCal\Infra\Updater;
 use BetterCal\Support\Cli;
 use BetterCal\Support\Maintenance;
 use BetterCal\Support\ReleaseSignature;
+use BetterCal\Support\SettingsFile;
 
 $opt = getopt('', ['check', 'yes', 'finish', 'rollback', 'help']);
 if (isset($opt['help'])) {
@@ -47,7 +51,7 @@ $updater = new Updater($appRoot);
 // Everything used after the code is swapped must already be loaded: the
 // autoloader looks for classes under the old path, which by then holds the
 // new version.
-foreach ([DbBackup::class, Migrator::class, Maintenance::class, Setup::class, ReleaseSignature::class] as $class) {
+foreach ([DbBackup::class, BackupCipher::class, Migrator::class, Maintenance::class, Setup::class, ReleaseSignature::class, SettingsFile::class, PrivateFiles::class] as $class) {
     class_exists($class);
 }
 
@@ -186,10 +190,11 @@ function update(array $cfg, Updater $updater, bool $checkOnly, bool $yes): int
         return 1;
     }
     $stamp = gmdate('Ymd-His');
-    $backup = $updater->backupDir() . "/db-$current-$stamp-" . bin2hex(random_bytes(4)) . '.sql.gz';
+    $dumper = DbBackup::forConfig($db, $cfg);
+    $backup = $updater->backupDir() . "/db-$current-$stamp-" . bin2hex(random_bytes(16)) . $dumper->extension();
     Cli::say('Backing up the database...');
     try {
-        $dump = (new DbBackup($db))->dump($backup, "before updating $current to $to");
+        $dump = $dumper->dump($backup, "before updating $current to $to");
     } catch (\Throwable $e) {
         Maintenance::off($appRoot);
         throw new \RuntimeException('The backup failed: ' . $e->getMessage() . '. Nothing changed: still ' . $current . '.', 0, $e);
@@ -312,6 +317,16 @@ function finish(array $cfg, Updater $updater): int
         return 1;
     }
     Cli::say($ran === 0 ? '  No database changes in this release.' : "  Applied $ran database change(s).");
+    // Private files in the current layout (#142): settings in .env.php, here
+    // and in the previous copy, backups encrypted.
+    foreach (PrivateFiles::secure($cfg) as $line) {
+        Cli::say('  ' . $line);
+    }
+    $state = $updater->readState() ?? $state;
+    if (is_file(SettingsFile::plain($appRoot))) {
+        Cli::say('  Your settings are still in .env, which this account can\'t convert. Run as its owner:');
+        Cli::say('    php ' . $appRoot . '/server/bin/settings.php --convert');
+    }
     Maintenance::off($appRoot);
     $state['stage'] = 'done';
     $state['finishedAt'] = gmdate('c');
@@ -322,6 +337,18 @@ function finish(array $cfg, Updater $updater): int
     Cli::say('Kept, until you remove them: the database backup, ' . $state['backup']
         . ($state['previous'] ? ', and the previous version, ' . $state['previous'] : '') . '.');
     Cli::say('If something is wrong, php server/bin/update.php --rollback puts both back.');
+    try {
+        $r = PrivateFilesCheck::run($cfg);
+        if ($r['status'] !== 'safe') {
+            Cli::say();
+            Cli::say($r['title'] . ' ' . $r['message']);
+            foreach ($r['notes'] as $note) {
+                Cli::say('  - ' . $note);
+            }
+        }
+    } catch (\Throwable) {
+        // The check is advice; the update is done either way.
+    }
     return 0;
 }
 
@@ -352,15 +379,17 @@ function rollback(array $cfg, Updater $updater, bool $yes): int
     }
     Maintenance::on($appRoot, "rolling back $to to $from");
     Cli::say('Restoring the database...');
-    $restored = (new DbBackup(new Db($cfg['db'])))->restore((string) $state['backup']);
+    $restored = DbBackup::forConfig(new Db($cfg['db']), $cfg)->restore((string) $state['backup']);
     Cli::say('  ' . $restored['tables'] . ' tables restored' . ($restored['dropped'] > 0 ? ', ' . $restored['dropped'] . ' added by the update removed' : '') . '.');
     if ($state['mode'] === 'git') {
         if (Updater::run(['git', '-c', 'advice.detachedHead=false', 'checkout', '--quiet', "v$from"], $appRoot) !== 0
             || Updater::run(['composer', 'install', '--no-dev', '--no-interaction', '--quiet'], $appRoot . '/server') !== 0) {
             throw new \RuntimeException("Going back to v$from with git failed; check out v$from and run composer install by hand");
         }
+        plainSettingsFor($appRoot, $from);
         Maintenance::off($appRoot);
     } else {
+        plainSettingsFor((string) $state['previous'], $from);
         $failed = Updater::freePath($updater->parent() . '/' . $updater->name() . '-' . $to . '-rolled-back');
         if (!@rename($appRoot, $failed) || !@rename((string) $state['previous'], $appRoot)) {
             throw new \RuntimeException("Swapping the folders back failed; move {$state['previous']} to $appRoot by hand");
@@ -373,6 +402,36 @@ function rollback(array $cfg, Updater $updater, bool $yes): int
     $updater->writeState($state);
     Cli::say("Back on Better-Cal $from.");
     return 0;
+}
+
+/**
+ * Versions before 0.9.83 read only .env. Going back to one, write .env from
+ * .env.php so it starts, and say what that means: its settings file is no
+ * longer guarded (#142).
+ */
+function plainSettingsFor(string $root, string $version): void
+{
+    $config = (string) @file_get_contents($root . '/server/config/config.php');
+    $guarded = SettingsFile::guarded($root);
+    if (str_contains($config, '.env.php') || is_file(SettingsFile::plain($root)) || !is_file($guarded)) {
+        return;
+    }
+    $body = SettingsFile::checkGuard($guarded, (string) file_get_contents($guarded));
+    $mode = fileperms($guarded) & 0777;
+    $old = umask(0077);
+    try {
+        if (@file_put_contents(SettingsFile::plain($root), $body) === false) {
+            throw new \RuntimeException("Better-Cal $version reads its settings from .env, and writing $root/.env failed");
+        }
+    } finally {
+        umask($old);
+    }
+    @chmod(SettingsFile::plain($root), $mode);
+    // That version never reads .env.php; left behind, it would win over a
+    // .env edited meanwhile once a later version is installed again.
+    @unlink($guarded);
+    Cli::say("  Better-Cal $version reads its settings from .env, so .env was written from .env.php. That version");
+    Cli::say('  doesn\'t protect its settings file the way 0.9.83 and later do; update again when you can.');
 }
 
 function requirePhp(?string $min, string $to): void

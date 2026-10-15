@@ -94,7 +94,7 @@ MIT (see [LICENSE](LICENSE)). Use it, fork it, host it, sell it. If you build so
 
 ## Configuration
 
-Copy [`.env.example`](.env.example) to `.env` in the app root and fill it in. It lists every setting the server reads and what each is for; only the database, base URL and session secret are required. Create your account with `php server/bin/seed.php --email=...`, which asks for the password (or reads `BETTERCAL_SEED_PASSWORD` when run from a script). Running it again for an existing account resets the password and signs out every browser. After a suspected compromise, add `--revoke-tokens` to revoke all API tokens as well.
+Copy [`.env.example`](.env.example) to `.env.php` in the app root and fill it in, keeping its first line. It lists every setting the server reads and what each is for; only the database, base URL and session secret are required. Create your account with `php server/bin/seed.php --email=...`, which asks for the password (or reads `BETTERCAL_SEED_PASSWORD` when run from a script). Running it again for an existing account resets the password and signs out every browser. After a suspected compromise, add `--revoke-tokens` to revoke all API tokens as well.
 
 ## Development
 

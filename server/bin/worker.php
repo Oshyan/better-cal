@@ -30,8 +30,22 @@ if (BetterCal\Http\InstallPages::needsSetup(dirname(__DIR__, 2))) {
     exit(0);
 }
 $cfg = config();
+// Its cron line discards output (Infra\Setup::cronLine), so PHP's errors go
+// to the private log rather than nowhere, or a file in the app folder.
+ini_set('display_errors', '0');
+BetterCal\Support\ErrorLog::route($cfg['app_root'], true);
 if (BetterCal\Support\Maintenance::active($cfg['app_root']) || BetterCal\Http\InstallPages::needsDatabaseUpdate($cfg)) {
     exit(0);
+}
+// Settings still in .env, or backups from before they were encrypted
+// (#142): convert them, when they belong to the account this runs as.
+if (BetterCal\Infra\PrivateFiles::pending($cfg)) {
+    foreach (BetterCal\Infra\PrivateFiles::secure($cfg) as $line) {
+        echo bc_ts() . " private_files $line\n";
+        if (str_starts_with($line, "Couldn't")) {
+            error_log('Better-Cal worker: ' . $line);
+        }
+    }
 }
 $db = new Db($cfg['db']);
 // GET_LOCK is server-global in MySQL, not per-database: namespace the lock by
@@ -327,6 +341,7 @@ try {
                     $systemHealth->recordFailure('job:' . $job['type'], 'job', null, HEALTH_JOB_LABELS[(string) $job['type']], $e->getMessage());
                 }
                 fwrite(STDERR, bc_ts() . ' job ' . $job['id'] . ' (' . $job['type'] . ') failed: ' . $e->getMessage() . "\n");
+                error_log('Better-Cal worker: job ' . $job['id'] . ' (' . $job['type'] . ') failed: ' . $e->getMessage());
             }
         }
     }

@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace BetterCal\Infra;
 
+use BetterCal\Support\SettingsFile;
+
 /**
  * The file work of bin/update.php: where backups and the previous version
  * go, checking and unpacking a release zip, carrying your own files into
@@ -24,9 +26,10 @@ final class Updater
     private const MAX_ENTRIES = 20000;
     private const MAX_UNPACKED_BYTES = 400 * 1024 * 1024;
     /** Never carried into the new copy, never reported as left behind. */
-    private const NOT_CARRIED = ['server/vendor', '.runtime-cache', '.maintenance', '.git', 'worker.log', '.backups', '.release-files'];
+    private const NOT_CARRIED = ['server/vendor', '.runtime-cache', '.maintenance', '.git', 'worker.log', '.backups', '.release-files',
+        'better-cal-code.php', 'better-cal-code.txt'];
     /** Carried across when present: settings and per-host PHP or web-server files. */
-    private const CARRIED = ['.env', '.user.ini', 'server/public/.user.ini', 'server/public/.well-known'];
+    private const CARRIED = ['.env.php', '.env', '.user.ini', 'server/public/.user.ini', 'server/public/.well-known'];
 
     public function __construct(public readonly string $appRoot)
     {
@@ -61,15 +64,42 @@ final class Updater
         return $this->appRoot . '/.backups';
     }
 
+    /**
+     * The update record: JSON behind the settings file's guard line, so it
+     * shows as a blank page if the folder is ever served. Versions before
+     * 0.9.83 wrote update-state.json, which is still read (an update from one
+     * of them is finished by this code) and removed on the next write.
+     */
     public function statePath(): string
+    {
+        return $this->backupDir() . '/update-state.php';
+    }
+
+    private function oldStatePath(): string
     {
         return $this->backupDir() . '/update-state.json';
     }
 
-    /** @return ?array<string,mixed> */
+    /**
+     * When both exist, the newer one: after a rollback to a version before
+     * 0.9.83, that version's updater writes update-state.json beside the
+     * update-state.php this one left, and the new code finishing its update
+     * must read the json.
+     *
+     * @return ?array<string,mixed>
+     */
     public function readState(): ?array
     {
-        $raw = @file_get_contents($this->statePath());
+        clearstatcache();
+        $new = @filemtime($this->statePath());
+        $old = @filemtime($this->oldStatePath());
+        if ($new !== false && ($old === false || $new >= $old)) {
+            $raw = @file_get_contents($this->statePath());
+            $nl = $raw === false ? false : strpos($raw, "\n");
+            $raw = $nl === false ? false : substr((string) $raw, $nl + 1);
+        } else {
+            $raw = @file_get_contents($this->oldStatePath());
+        }
         $state = $raw === false ? null : json_decode($raw, true);
         return is_array($state) ? $state : null;
     }
@@ -78,9 +108,59 @@ final class Updater
     public function writeState(array $state): void
     {
         $this->ensureBackupDir();
-        if (file_put_contents($this->statePath(), json_encode($state, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n") === false) {
+        $text = SettingsFile::GUARD_PREFIX . " // Better-Cal update record\n" . json_encode($state, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n";
+        if (!SettingsFile::writeAtomic($this->statePath(), $text, 0600)) {
             throw new \RuntimeException('Could not write ' . $this->statePath());
         }
+        if (function_exists('posix_geteuid') && posix_geteuid() === 0) {
+            @chown($this->statePath(), (int) fileowner($this->backupDir()));
+            @chgrp($this->statePath(), (int) filegroup($this->backupDir()));
+        }
+        @unlink($this->oldStatePath());
+    }
+
+    /**
+     * Other Better-Cal copies beside this one: previous versions kept by an
+     * update (<name>-<version>), set aside by a rollback, or left by hand.
+     * Anything beside the app with a VERSION file and the app's name in front.
+     *
+     * @return list<string>
+     */
+    public function siblingCopies(): array
+    {
+        $out = [];
+        foreach (glob($this->parent() . '/' . $this->name() . '-*/VERSION') ?: [] as $version) {
+            $dir = dirname($version);
+            if ($dir !== $this->appRoot && is_dir($dir . '/server') && !is_link($dir)) {
+                $out[] = $dir;
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * The copies whose settings may be converted: ones this updater made
+     * (<name>-<version>, or set aside by a rollback), when their code reads
+     * .env.php or they are the update's previous version, which a rollback
+     * gives its .env back. A copy someone made by hand (better-cal-old, a
+     * staging copy) runs as it is and is never touched.
+     *
+     * @return list<string>
+     */
+    public function convertibleCopies(): array
+    {
+        $pattern = '/^' . preg_quote($this->name(), '/') . '-\d+\.\d+\.\d+(-rolled-back)?(-\d+)?$/';
+        $previous = $this->readState()['previous'] ?? null;
+        $out = [];
+        foreach ($this->siblingCopies() as $dir) {
+            if (preg_match($pattern, basename($dir)) !== 1) {
+                continue;
+            }
+            if ($dir === $previous || str_contains((string) @file_get_contents($dir . '/server/config/config.php'), '.env.php')) {
+                $out[] = $dir;
+            }
+        }
+        return $out;
     }
 
     public function ensureBackupDir(): void
@@ -268,8 +348,10 @@ final class Updater
             }
             return true;
         });
-        if (is_file($newRoot . '/.env')) {
-            @chmod($newRoot . '/.env', 0600);
+        foreach (['.env.php', '.env'] as $settings) {
+            if (is_file($newRoot . '/' . $settings)) {
+                @chmod($newRoot . '/' . $settings, 0600);
+            }
         }
         return ['carried' => $carried, 'leftBehind' => $leftBehind];
     }

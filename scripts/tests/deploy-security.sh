@@ -106,6 +106,10 @@ if backup_db_kind >/dev/null 2>&1; then
 else
   ok
 fi
+# The guarded settings file (.env.php) is read the same way, guard line first.
+printf '%s\nBETTERCAL_DB_DSN=mysql:host=127.0.0.1;dbname=sample\n' '<?php __halt_compiler(); // Better-Cal settings. Keep this first line: it stops this file being shown on the web.' > "${APP_DIR}/.env.php"
+if [ "$(backup_db_kind 2>/dev/null)" = 'mysql' ]; then ok; else not_ok 'backup did not read the database from .env.php'; fi
+rm -f "${APP_DIR}/.env.php"
 
 deploy_source="$(cat "${ROOT_DIR}/scripts/deploy.sh")"
 dev_source="$(cat "${ROOT_DIR}/scripts/deploy-dev.sh")"

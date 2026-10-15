@@ -12,7 +12,7 @@ Safety, since the .env sits in a directory the app user owns:
   inode, owner and mode stay as provisioned.
 - A copy goes first to a root-only backup directory, created exclusively.
 
-Usage: python3 merge-env.py <path to .env> <label for the backup name>
+Usage: python3 merge-env.py <app folder, or path to .env / .env.php> <label for the backup name>
 Environment: BC_ENV_BACKUP_DIR overrides the backup directory (tests).
 """
 
@@ -23,6 +23,8 @@ import sys
 import time
 
 KEY = re.compile(r'^[A-Z][A-Z0-9_]*$')
+# The first line of .env.php (server/src/Support/SettingsFile.php).
+GUARD_PREFIX = b'<?php __halt_compiler();'
 
 
 def main() -> int:
@@ -30,6 +32,14 @@ def main() -> int:
         print('usage: merge-env.py <.env path> <label>', file=sys.stderr)
         return 2
     path, label = sys.argv[1], sys.argv[2]
+    # A folder: its settings file, .env.php, or .env until it's converted.
+    # Both at once is ambiguous; .env.php must keep its guard line first.
+    if os.path.isdir(path):
+        guarded, plain = os.path.join(path, '.env.php'), os.path.join(path, '.env')
+        if os.path.lexists(guarded) and os.path.lexists(plain):
+            print(f'{path} has both .env.php and .env; keep one before pushing settings', file=sys.stderr)
+            return 1
+        path = guarded if os.path.lexists(guarded) else plain
     if not re.fullmatch(r'[a-z0-9-]{1,32}', label):
         print('label must be lowercase letters, digits or dashes', file=sys.stderr)
         return 2
@@ -75,6 +85,9 @@ def main() -> int:
         finally:
             os.close(bfd)
 
+        if path.endswith('.php') and not old.lstrip(b'\xef\xbb\xbf\r\n').startswith(GUARD_PREFIX):
+            print(f'{path} has lost its first line; put it back before pushing settings', file=sys.stderr)
+            return 1
         lines = old.decode('utf-8').split('\n')
         trailing = lines and lines[-1] == ''
         if trailing:

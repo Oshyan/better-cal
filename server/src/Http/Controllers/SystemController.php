@@ -10,8 +10,13 @@ use BetterCal\Http\HttpError;
 use BetterCal\Http\Request;
 use BetterCal\Http\Response;
 use BetterCal\Infra\EmailSender;
+use BetterCal\Infra\PrivateFilesCheck;
 
-/** GET /system/health — is background work working, for the Settings panel and boot notices; POST /system/client-event — a start that never finished. */
+/**
+ * GET /system/health — is background work working, for the Settings panel and boot notices;
+ * POST /system/client-event — a start that never finished;
+ * GET /system/private-files and POST /system/private-files/check — can the private files be downloaded (#142).
+ */
 final class SystemController
 {
     public function __construct(
@@ -66,6 +71,28 @@ final class SystemController
         }
         $now = time();
         return $t->getTimestamp() <= $now + 86400 && $t->getTimestamp() >= $now - 30 * 86400 ? $t : null;
+    }
+
+    /** The last private-files check (null when it has never run), and the seconds until "Check now" may run. */
+    public function privateFiles(Request $req): Response
+    {
+        $req->requireSession('Reading the private-files check');
+        $root = (string) $this->cfg['app_root'];
+        return Response::json(['result' => PrivateFilesCheck::last($root), 'wait' => PrivateFilesCheck::wait($root)]);
+    }
+
+    /** Run the check now: at most once a minute, since it asks other servers. */
+    public function checkPrivateFiles(Request $req): Response
+    {
+        $req->requireSession('Checking the private files');
+        $root = (string) $this->cfg['app_root'];
+        $wait = PrivateFilesCheck::wait($root);
+        if ($wait > 0) {
+            throw new HttpError('too_soon', "It was checked moments ago; try again in $wait seconds.", 429);
+        }
+        @set_time_limit(60);
+        $result = PrivateFilesCheck::run($this->cfg);
+        return Response::json(['result' => $result, 'wait' => PrivateFilesCheck::COOLDOWN_SECONDS]);
     }
 
     public function health(Request $req): Response

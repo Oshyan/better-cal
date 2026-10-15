@@ -7,12 +7,12 @@ declare(strict_types=1);
 //   php server/bin/install.php
 //
 // Checks this PHP, asks for the site's address, the database and your
-// account, writes .env (with a generated session secret and push keys),
+// account, writes .env.php (with a generated session secret and push keys),
 // creates the tables and your account, and prints the two things left to do
 // by hand: pointing the web server at server/public, and the worker's cron
 // line. Run it as the account that owns the files.
 //
-// Safe to run again: with a .env already in place it uses that one, applies
+// Safe to run again: with settings already in place it uses them, applies
 // any pending migrations, and only creates an account if none exists.
 //
 // For scripts, answers can come from options instead of questions:
@@ -24,11 +24,13 @@ require dirname(__DIR__) . '/src/bootstrap.php';
 
 use BetterCal\Infra\Db;
 use BetterCal\Infra\Migrator;
+use BetterCal\Infra\PrivateFiles;
+use BetterCal\Infra\PrivateFilesCheck;
 use BetterCal\Infra\Setup;
 use BetterCal\Support\Cli;
 
 $appRoot = dirname(__DIR__, 2);
-$envPath = $appRoot . '/.env';
+$envPath = BetterCal\Support\SettingsFile::guarded($appRoot);
 $opt = getopt('', ['url:', 'db-host:', 'db-port:', 'db-name:', 'db-user:', 'email:', 'name:', 'help']);
 if (isset($opt['help'])) {
     Cli::say('Usage: php server/bin/install.php [--url=…] [--db-host=…] [--db-port=…] [--db-name=…] [--db-user=…] [--email=…]');
@@ -88,7 +90,7 @@ if ($missing) {
 Cli::say('PHP and its extensions: ok.');
 
 // 2. Settings: an existing .env, or a new one.
-if (is_file($envPath)) {
+if (BetterCal\Support\SettingsFile::path($appRoot) !== null) {
     Cli::say('Using the existing .env.');
     $cfg = config();
     $problem = Setup::checkDatabase($cfg['db']['dsn'], $cfg['db']['user'], $cfg['db']['pass']);
@@ -169,7 +171,7 @@ if (is_file($envPath)) {
         Cli::say($e->getMessage());
         exit(1);
     }
-    Cli::say('Wrote .env (readable by this account only), with a new session secret' . ($push !== null ? ' and push keys.' : '.'));
+    Cli::say('Wrote .env.php (readable by this account only), with a new session secret' . ($push !== null ? ' and push keys.' : '.'));
     $cfg = config();
 }
 
@@ -183,6 +185,9 @@ try {
     exit(1);
 }
 Cli::say($ran === 0 ? 'Tables: already up to date.' : "Tables: created ($ran steps).");
+foreach (PrivateFiles::secure($cfg) as $line) {
+    Cli::say($line);
+}
 
 // 4. Your account: Better-Cal has one.
 $existing = (int) $db->scalar('SELECT COUNT(*) FROM users');
@@ -223,3 +228,22 @@ Cli::say('     ' . Setup::cronLine($appRoot));
 Cli::say();
 Cli::say('Then ' . $base . '/api/v1/health should show {"ok":true,...}, and signing in starts the welcome.');
 Cli::say('Updates: php server/bin/update.php (docs/install.md, Updating).');
+privateFilesSay($cfg);
+
+/** The private-files check, said only when it isn't plainly Safe (Settings, System shows Safe). */
+function privateFilesSay(array $cfg): void
+{
+    try {
+        $r = PrivateFilesCheck::run($cfg);
+    } catch (\Throwable) {
+        return;
+    }
+    if ($r['status'] === 'safe') {
+        return;
+    }
+    Cli::say();
+    Cli::say($r['title'] . ' ' . $r['message']);
+    foreach ($r['notes'] as $note) {
+        Cli::say('  - ' . $note);
+    }
+}

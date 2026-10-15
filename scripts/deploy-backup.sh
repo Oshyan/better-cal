@@ -103,8 +103,19 @@ backup_cleanup_temporaries() {
   [ -z "${BACKUP_DB_TEMP}" ] || rm -f -- "${BACKUP_DB_TEMP}"
 }
 
+# The settings file: .env.php, or .env until it's converted (#142). The
+# lines after .env.php's first line are the same KEY=VALUE lines, and that
+# first line holds no '=', so both read alike below. Looked at as APP_USER.
+backup_settings() {
+  if sudo -n -u "${APP_USER}" -- test -e "${APP_DIR}/.env.php" || sudo -n -u "${APP_USER}" -- test -L "${APP_DIR}/.env.php"; then
+    printf '%s/.env.php' "${APP_DIR}"
+  else
+    printf '%s/.env' "${APP_DIR}"
+  fi
+}
+
 backup_db_kind() {
-  sudo -n -u "${APP_USER}" -- bash -s -- "${APP_DIR}/.env" <<'APP_DB_KIND'
+  sudo -n -u "${APP_USER}" -- bash -s -- "$(backup_settings)" <<'APP_DB_KIND'
 set -euo pipefail
 env_file="$1"
 dsn="$(awk -F= '$1 == "BETTERCAL_DB_DSN" { value=substr($0, index($0,"=")+1); if (length(value)>=2 && ((substr(value,1,1)=="\"" || substr(value,1,1)=="\047") && substr(value,length(value),1)==substr(value,1,1))) value=substr(value,2,length(value)-2); print value; exit }' "${env_file}")"
@@ -117,7 +128,7 @@ APP_DB_KIND
 }
 
 backup_write_mysql() {
-  sudo -n -u "${APP_USER}" -- bash -s -- "${APP_DIR}/.env" <<'APP_MYSQL'
+  sudo -n -u "${APP_USER}" -- bash -s -- "$(backup_settings)" <<'APP_MYSQL'
 set -euo pipefail
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
@@ -235,19 +246,25 @@ backup_main() {
     return 1
   fi
 
-  # A symlinked .env is never needed by the reference deploy. These checks are
-  # intentionally made as APP_USER; even a rename race can therefore grant no
-  # authority beyond what the application already has.
-  if sudo -n -u "${APP_USER}" -- test -L "${APP_DIR}/.env"; then
-    backup_fail "${APP_DIR}/.env must be a regular file, not a symbolic link"
+  # A symlinked settings file is never needed by the reference deploy. These
+  # checks are intentionally made as APP_USER; even a rename race can therefore
+  # grant no authority beyond what the application already has.
+  local BACKUP_SETTINGS
+  BACKUP_SETTINGS="$(backup_settings)"
+  if [ "${BACKUP_SETTINGS}" = "${APP_DIR}/.env.php" ] && sudo -n -u "${APP_USER}" -- test -e "${APP_DIR}/.env"; then
+    backup_fail "${APP_DIR} has both .env.php and .env; keep one"
     return 1
   fi
-  if ! sudo -n -u "${APP_USER}" -- test -f "${APP_DIR}/.env"; then
-    backup_fail "${APP_DIR}/.env must be a regular file"
+  if sudo -n -u "${APP_USER}" -- test -L "${BACKUP_SETTINGS}"; then
+    backup_fail "${BACKUP_SETTINGS} must be a regular file, not a symbolic link"
     return 1
   fi
-  if ! sudo -n -u "${APP_USER}" -- test -r "${APP_DIR}/.env"; then
-    backup_fail "${APP_DIR}/.env must be readable by ${APP_USER}"
+  if ! sudo -n -u "${APP_USER}" -- test -f "${BACKUP_SETTINGS}"; then
+    backup_fail "${BACKUP_SETTINGS} must be a regular file"
+    return 1
+  fi
+  if ! sudo -n -u "${APP_USER}" -- test -r "${BACKUP_SETTINGS}"; then
+    backup_fail "${BACKUP_SETTINGS} must be readable by ${APP_USER}"
     return 1
   fi
 

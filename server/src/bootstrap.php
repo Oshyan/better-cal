@@ -30,3 +30,10 @@ spl_autoload_register(static function (string $class): void {
 });
 
 require_once dirname(__DIR__) . '/config/config.php';
+
+// A host's PHP error log pointing into the app folder (a bare "error_log",
+// as many shared hosts set it) would be downloadable; send it somewhere
+// private instead (Support\ErrorLog).
+if (PHP_SAPI !== 'cli' && PHP_SAPI !== 'phpdbg') {
+    BetterCal\Support\ErrorLog::route(dirname(__DIR__, 2));
+}

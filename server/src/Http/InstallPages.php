@@ -7,6 +7,8 @@ namespace BetterCal\Http;
 use BetterCal\Infra\Db;
 use BetterCal\Infra\DbBackup;
 use BetterCal\Infra\Migrator;
+use BetterCal\Infra\PrivateFiles;
+use BetterCal\Infra\PrivateFilesCheck;
 use BetterCal\Infra\Setup;
 use BetterCal\Infra\Updater;
 use BetterCal\Support\Maintenance;
@@ -32,7 +34,7 @@ final class InstallPages
     public static function needsSetup(string $appRoot): bool
     {
         $dsn = getenv('BETTERCAL_DB_DSN');
-        return !is_file($appRoot . '/.env') && ($dsn === false || $dsn === '');
+        return \BetterCal\Support\SettingsFile::path($appRoot) === null && ($dsn === false || $dsn === '');
     }
 
     public static function setup(string $appRoot): never
@@ -141,7 +143,7 @@ final class InstallPages
             $_ENV[$k] = $val;
         }
         $db = new Db(['dsn' => $dsn, 'user' => $dbUser, 'pass' => $dbPass]);
-        $envPath = $appRoot . '/.env';
+        $envPath = \BetterCal\Support\SettingsFile::guarded($appRoot);
         $wroteEnv = false;
         try {
             // Tables, then .env, then the account. Until .env exists this page
@@ -162,8 +164,9 @@ final class InstallPages
         $code->finish();
         self::clearCookie();
         $php = is_executable(PHP_BINDIR . '/php') ? PHP_BINDIR . '/php' : 'php';
-        $cron = '* * * * * ' . $php . ' ' . $appRoot . '/server/bin/worker.php >> ' . $appRoot . '/worker.log 2>&1';
-        self::page('Better-Cal is set up', '<p>Your settings are saved, the tables are made, and your account is ready.</p>'
+        $cron = Setup::cronLine($appRoot, $php);
+        self::page('Better-Cal is set up', self::privateFilesNotice(['app_root' => $appRoot, 'base_url' => $url])
+            . '<p>Your settings are saved, the tables are made, and your account is ready.</p>'
             . '<h2>One thing left: the worker</h2><p>It sends reminders, refreshes subscribed calendars and tidies up, once a minute. In your host\'s control panel, add a cron job (often under "Cron jobs" or "Scheduled tasks") that runs every minute:</p>'
             . '<pre>' . self::e($cron) . '</pre><p class="hint">If your host names its PHP command differently, use theirs for PHP 8.4 or newer; their cron page usually says.</p>'
             . '<p><a class="btn" href="/">Open Better-Cal and sign in</a></p>');
@@ -227,14 +230,19 @@ final class InstallPages
         $db = new Db($cfg['db']);
         $migrator = new Migrator($db, $appRoot . '/server/migrations');
         $pending = $migrator->pending();
+        $updater = new Updater($appRoot);
+        if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && ($_POST['step'] ?? '') === 'restore') {
+            self::checkForm($token);
+            self::restoreBackup($cfg, $db, $updater, (string) ($_POST['backup'] ?? ''));
+        }
         if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && ($_POST['step'] ?? '') === 'update') {
             self::checkForm($token);
             @set_time_limit(300);
-            $updater = new Updater($appRoot);
             try {
                 $updater->ensureBackupDir();
-                $backup = $updater->backupDir() . '/db-before-' . $cfg['version'] . '-' . gmdate('Ymd-His') . '-' . bin2hex(random_bytes(4)) . '.sql.gz';
-                (new DbBackup($db))->dump($backup, 'before the database update for ' . $cfg['version']);
+                $dumper = DbBackup::forConfig($db, $cfg);
+                $backup = $updater->backupDir() . '/db-before-' . $cfg['version'] . '-' . gmdate('Ymd-His') . '-' . bin2hex(random_bytes(16)) . $dumper->extension();
+                $dumper->dump($backup, 'before the database update for ' . $cfg['version']);
                 @chmod($backup, 0600);
             } catch (\Throwable $e) {
                 self::page('Database update needed', '<div class="err">The backup failed, so nothing was changed: ' . self::e($e->getMessage()) . '</div><p><a href="/update-database">Try again</a></p>', 500);
@@ -245,13 +253,24 @@ final class InstallPages
             } catch (\Throwable $e) {
                 Maintenance::off($appRoot);
                 self::page('Database update needed', '<div class="err">The update stopped: ' . self::e($e->getMessage()) . '</div>'
-                    . '<p>A backup from just before is in <code>' . self::e($backup) . '</code>. To go back, put the previous version\'s files back and restore that backup (<a href="https://github.com/Oshyan/better-cal/blob/main/docs/install.md#updating">Updating</a> shows how), and please <a href="https://github.com/Oshyan/better-cal/issues">report the error</a>.</p>', 500);
+                    . '<p>A backup from just before is in <code>' . self::e($backup) . '</code>. To go back: restore it here, then put the previous version\'s files back (<a href="https://github.com/Oshyan/better-cal/blob/main/docs/install.md#updating">Updating</a> shows how). Please also <a href="https://github.com/Oshyan/better-cal/issues">report the error</a>.</p>'
+                    . '<form method="post"><input type="hidden" name="step" value="restore"><input type="hidden" name="backup" value="' . self::e(basename($backup)) . '"><input type="hidden" name="form" value="' . self::e(AccessCode::formToken($token)) . '">'
+                    . '<button type="submit">Restore the database as it was</button></form>', 500);
             }
             Maintenance::off($appRoot);
+            // Settings still in .env, or older plain backups: the current,
+            // private layout (#142). After the site is back: encrypting a pile
+            // of old backups can take a while, and the worker finishes it if
+            // this request is cut short.
+            try {
+                PrivateFiles::secure($cfg);
+            } catch (\Throwable $e) {
+                error_log('Better-Cal: converting private files after the database update: ' . $e->getMessage());
+            }
             $code->finish();
             self::clearCookie();
             self::needsDatabaseUpdate($cfg);
-            self::page('Database updated', '<p>Better-Cal ' . self::e((string) $cfg['version']) . ' is ready: ' . $ran . ' database change' . ($ran === 1 ? '' : 's') . ' applied.</p>'
+            self::page('Database updated', self::privateFilesNotice($cfg) . '<p>Better-Cal ' . self::e((string) $cfg['version']) . ' is ready: ' . $ran . ' database change' . ($ran === 1 ? '' : 's') . ' applied.</p>'
                 . '<p class="hint">A backup from just before is in <code>' . self::e($backup) . '</code>; delete it once you\'re happy.</p>'
                 . '<p><a class="btn" href="/">Open Better-Cal</a></p>');
         }
@@ -262,7 +281,50 @@ final class InstallPages
             . '<button type="submit">Back up and update the database</button></form>', 503);
     }
 
+    /**
+     * Put back the backup this page made before a database update that
+     * failed. Only a backup of that kind, by its file name in the backup
+     * folder; restore() checks the whole file before it changes anything.
+     */
+    private static function restoreBackup(array $cfg, Db $db, Updater $updater, string $name): never
+    {
+        $path = $updater->backupDir() . '/' . $name;
+        if (preg_match('/^db-before-[0-9][0-9A-Za-z.\-]*\.(bcbackup|sql\.gz)$/D', $name) !== 1 || !is_file($path)) {
+            self::page('Database update needed', '<div class="err">That backup isn\'t there any more.</div><p><a href="/update-database">Back</a></p>', 404);
+        }
+        @set_time_limit(300);
+        Maintenance::on($cfg['app_root'], 'restoring the database');
+        try {
+            $r = DbBackup::forConfig($db, $cfg)->restore($path);
+        } catch (\Throwable $e) {
+            Maintenance::off($cfg['app_root']);
+            self::page('Database update needed', '<div class="err">Restoring stopped: ' . self::e($e->getMessage()) . '</div><p>Please <a href="https://github.com/Oshyan/better-cal/issues">report the error</a>.</p>', 500);
+        }
+        Maintenance::off($cfg['app_root']);
+        self::page('Database restored', '<p>The database is back as it was before the update (' . $r['tables'] . ' tables). Now put the previous version\'s files back, as <a href="https://github.com/Oshyan/better-cal/blob/main/docs/install.md#updating">Updating</a> shows; until then this page keeps asking to update the database.</p>');
+    }
+
     // ---- Shared ------------------------------------------------------------
+
+    /**
+     * The private-files check, shown only when it isn't plainly Safe (Safe
+     * stays on Settings, System). Never stops the page: a check that fails
+     * says nothing here.
+     */
+    private static function privateFilesNotice(array $cfg): string
+    {
+        try {
+            $r = PrivateFilesCheck::run($cfg);
+        } catch (\Throwable) {
+            return '';
+        }
+        if ($r['status'] === 'safe') {
+            return '';
+        }
+        $notes = $r['notes'] === [] ? '' : '<ul>' . implode('', array_map(static fn(string $n): string => '<li>' . self::e($n) . '</li>', $r['notes'])) . '</ul>';
+        $body = '<strong>' . self::e($r['title']) . '</strong> ' . self::e($r['message']) . $notes;
+        return $r['status'] === 'exposed' ? '<div class="err">' . $body . '</div>' : '<div class="note">' . $body . '</div>';
+    }
 
     /**
      * The code screen. Returns the session token once a correct code has
@@ -340,7 +402,7 @@ final class InstallPages
             . 'input{display:block;width:100%;box-sizing:border-box;margin-top:4px;padding:8px 10px;font:inherit;color:inherit;background:var(--bg);border:1px solid var(--line);border-radius:6px}'
             . '.row{display:flex;gap:12px}.row label{flex:1}.row .narrow{flex:0 0 7em}'
             . 'button,.btn{display:inline-block;margin-top:16px;padding:9px 18px;font:inherit;font-weight:600;color:#fff;background:var(--accent);border:0;border-radius:6px;text-decoration:none;cursor:pointer}'
-            . '.err{color:var(--err);border:1px solid var(--err);border-radius:6px;padding:8px 12px;margin:10px 0}.hint{color:var(--muted);font-size:.92em}'
+            . '.err{color:var(--err);border:1px solid var(--err);border-radius:6px;padding:8px 12px;margin:10px 0}.note{border:1px solid var(--line);border-radius:6px;padding:8px 12px;margin:10px 0}.hint{color:var(--muted);font-size:.92em}'
             . 'pre,code{font:13px ui-monospace,Menlo,monospace}pre{white-space:pre-wrap;word-break:break-all;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:10px}'
             . 'ul{padding-left:1.2em}a{color:var(--accent)}</style></head><body><main><h1>' . self::e($title) . '</h1>' . $body . '</main></body></html>';
         exit;

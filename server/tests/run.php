@@ -9515,6 +9515,247 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Private files on any host (#142): the guarded settings file, encrypted
+// backups, the update record, the error log, and the private-files check.
+{
+    $SF = BetterCal\Support\SettingsFile::class;
+    $tmp = sys_get_temp_dir() . '/bc-private-' . bin2hex(random_bytes(3));
+    mkdir($tmp);
+    $rm = static function (string $dir) use (&$rm): void {
+        foreach (scandir($dir) ?: [] as $e) {
+            if ($e === '.' || $e === '..') continue;
+            is_dir("$dir/$e") && !is_link("$dir/$e") ? $rm("$dir/$e") : @unlink("$dir/$e");
+        }
+        @rmdir($dir);
+    };
+
+    // The guarded reader.
+    $root = "$tmp/app";
+    mkdir($root);
+    file_put_contents("$root/.env.php", $SF::GUARD . "A=1\nB=\"two words\"\n# note\nC=<?php echo 1; ?>\n");
+    checkEq('settings: read after the guard line', ['A' => '1', 'B' => 'two words', 'C' => '<?php echo 1; ?>'], $SF::load($root));
+    file_put_contents("$root/.env.php", "\xEF\xBB\xBF" . str_replace("\n", "\r\n", $SF::GUARD . "A=1\n"));
+    checkEq('settings: a byte-order mark and CRLF are fine', ['A' => '1'], $SF::load($root));
+    file_put_contents("$root/.env.php", "A=1\nB=2\n");
+    checkEq('settings: a deleted guard line is put back', ['A' => '1', 'B' => '2'], $SF::load($root));
+    check('settings: and the file starts with it again', str_starts_with((string) file_get_contents("$root/.env.php"), $SF::GUARD_PREFIX));
+    file_put_contents("$root/.env.php", "");
+    $threw = false;
+    try { $SF::load($root); } catch (BetterCal\Support\SettingsFileError) { $threw = true; }
+    check('settings: an empty file (a save in progress) is refused, never "repaired"', $threw && (string) file_get_contents("$root/.env.php") === '');
+    file_put_contents("$root/.env.php", "# only a comment\n");
+    $threw = false;
+    try { $SF::load($root); } catch (BetterCal\Support\SettingsFileError) { $threw = true; }
+    check('settings: nor is one with no settings in it', $threw);
+    file_put_contents("$root/.env.php", "hello <?php phpinfo();\nA=1\n");
+    $threw = false;
+    try { $SF::load($root); } catch (BetterCal\Support\SettingsFileError) { $threw = true; }
+    check('settings: something else in front of the settings is refused', $threw);
+    file_put_contents("$root/.env.php", mb_convert_encoding($SF::GUARD . "A=1\n", 'UTF-16LE', 'UTF-8'));
+    $threw = false;
+    try { $SF::load($root); } catch (BetterCal\Support\SettingsFileError) { $threw = true; }
+    check('settings: a UTF-16 file is refused', $threw);
+    unlink("$root/.env.php");
+    file_put_contents("$root/.env", "A=1\n");
+    checkEq('settings: .env still works until it is converted', ['A' => '1'], $SF::load($root));
+    file_put_contents("$root/.env.php", $SF::GUARD . "A=2\n");
+    checkEq('settings: .env.php wins when both exist', ['A' => '2'], $SF::load($root));
+    unlink("$root/.env.php");
+
+    // Converting .env.
+    chmod("$root/.env", 0640);
+    $what = $SF::convert($root);
+    check('settings: convert moves .env to .env.php', is_string($what) && !is_file("$root/.env") && is_file("$root/.env.php"));
+    checkEq('settings: the converted file reads the same', ['A' => '1'], $SF::load($root));
+    checkEq('settings: and keeps its mode', '640', substr(sprintf('%o', fileperms("$root/.env.php")), -3));
+    checkEq('settings: nothing more to convert', null, $SF::convert($root));
+    file_put_contents("$root/.env", "A=1\n");
+    $SF::convert($root);
+    check('settings: an old .env with the same values is removed', !is_file("$root/.env"));
+    file_put_contents("$root/.env", "A=9\n");
+    $SF::convert($root);
+    check('settings: one with different values is left for the person to merge', is_file("$root/.env") && $SF::load($root) === ['A' => '1']);
+    file_put_contents("$root/.env", "A=1e0\n");
+    $SF::convert($root);
+    check('settings: values are compared as written ("1e0" is not "1")', is_file("$root/.env"));
+    unlink("$root/.env");
+    file_put_contents("$tmp/elsewhere.env", "A=1\n");
+    symlink("$tmp/elsewhere.env", "$root/.env");
+    checkEq('settings: a .env that is a symbolic link is left alone', null, $SF::convert($root));
+    unlink("$root/.env");
+    $leftovers = array_filter(scandir($root) ?: [], static fn(string $f): bool => str_contains($f, '.tmp-'));
+    check('settings: no temporary files are left behind', $leftovers === []);
+
+    // Writers.
+    $text = BetterCal\Infra\Setup::envText($SF::GUARD . "# Example\nBETTERCAL_BASE_URL=\n", ['BETTERCAL_BASE_URL' => 'https://cal.example.com']);
+    check('settings: a new settings file starts with exactly one guard line', str_starts_with($text, $SF::GUARD) && substr_count($text, $SF::GUARD_PREFIX) === 1);
+    $threw = false;
+    try { BetterCal\Infra\Setup::writeEnv("$root/.env.php", $text); } catch (RuntimeException) { $threw = true; }
+    check('settings: setup never replaces existing settings', $threw);
+    check('setup: not needed once .env.php exists', !BetterCal\Http\InstallPages::needsSetup($root));
+    check('setup: the worker\'s cron line discards output', str_ends_with(BetterCal\Infra\Setup::cronLine('/srv/x', 'php'), 'worker.php >/dev/null 2>&1'));
+
+    $ac = new BetterCal\Http\AccessCode($root, 'setup');
+    $ac->ensure();
+    check('access code: its file is guarded, and named .php', str_ends_with($ac->codePath(), '.php') && str_starts_with((string) file_get_contents($ac->codePath()), $SF::GUARD_PREFIX));
+    check('access code: so is its state', str_starts_with((string) @file_get_contents("$root/.runtime-cache/access-code.php"), $SF::GUARD_PREFIX));
+    $ac->finish();
+
+    // Encrypted backups.
+    $BC = BetterCal\Infra\BackupCipher::class;
+    $key = $BC::keyFrom('a session secret for tests');
+    $plain = random_bytes(70000) . str_repeat('calendar ', 20000);
+    $enc = "$tmp/b.bcbackup";
+    $w = new $BC($enc, $key);
+    $w->write(substr($plain, 0, 100));
+    $w->write(substr($plain, 100));
+    $w->close();
+    $back = '';
+    $BC::decrypt($enc, $key, static function (string $c) use (&$back): void { $back .= $c; });
+    check('backup: encrypts and decrypts across chunks', $back === $plain && $BC::isEncrypted($enc) && !str_contains((string) file_get_contents($enc), 'calendar calendar'));
+    $err = static function (string $path, string $k) use ($BC): string {
+        try { $BC::decrypt($path, $k, static function (string $c): void {}); return ''; } catch (RuntimeException $e) { return $e->getMessage(); }
+    };
+    check('backup: other settings say so plainly', str_contains($err($enc, $BC::keyFrom('another secret')), 'different settings'));
+    $bytes = (string) file_get_contents($enc);
+    file_put_contents("$tmp/cut.bcbackup", substr($bytes, 0, -40));
+    check('backup: a cut-off file is refused', $err("$tmp/cut.bcbackup", $key) !== '');
+    $flip = $bytes;
+    $flip[200] = chr(ord($flip[200]) ^ 1);
+    file_put_contents("$tmp/flip.bcbackup", $flip);
+    check('backup: a changed byte is refused', $err("$tmp/flip.bcbackup", $key) !== '');
+    file_put_contents("$tmp/tail.bcbackup", $bytes . 'x');
+    check('backup: data after the end is refused', $err("$tmp/tail.bcbackup", $key) !== '');
+
+    $sql = "-- Better-Cal database backup, test\n-- tables: a\nCREATE TABLE a (x int);\nINSERT INTO a VALUES (1);\n-- end\n";
+    file_put_contents("$tmp/db-old.sql.gz", gzencode($sql));
+    file_put_contents("$tmp/db-old.bcbackup", 'a cut-short copy');
+    $converted = BetterCal\Infra\DbBackup::encryptFile("$tmp/db-old.sql.gz", $key);
+    check('backup: an older plain backup is encrypted in place, past a cut-short attempt', str_ends_with($converted, '.bcbackup') && !is_file("$tmp/db-old.sql.gz") && $BC::isEncrypted($converted));
+    $lines = [];
+    $each = new ReflectionMethod(BetterCal\Infra\DbBackup::class, 'eachLine');
+    $dbb = new BetterCal\Infra\DbBackup(new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]), $key);
+    $each->invoke($dbb, $converted, static function (string $l) use (&$lines): void { $lines[] = $l; });
+    checkEq('backup: restore reads an encrypted backup line by line', explode("\n", rtrim($sql, "\n")), $lines);
+    BetterCal\Infra\DbBackup::decryptFile($converted, $key, "$tmp/out.sql.gz");
+    checkEq('backup: --decrypt gives back a plain .sql.gz', $sql, gzdecode((string) file_get_contents("$tmp/out.sql.gz")));
+    file_put_contents("$tmp/db-plain.sql.gz", gzencode($sql));
+    $lines = [];
+    $each->invoke($dbb, "$tmp/db-plain.sql.gz", static function (string $l) use (&$lines): void { $lines[] = $l; });
+    checkEq('backup: and still reads a plain one', 5, count($lines));
+
+    // The update record, the copies beside the app, and converting all of it.
+    $parent = "$tmp/sites";
+    mkdir($parent);
+    $app = "$parent/better-cal";
+    foreach ([$app, "$parent/better-cal-0.9.80", "$parent/better-cal-0.9.81", "$parent/better-cal-0.9.84-rolled-back", "$parent/better-cal-old"] as $d) {
+        mkdir("$d/server/config", 0755, true);
+        file_put_contents("$d/VERSION", "0.9.0\n");
+    }
+    file_put_contents("$parent/better-cal-0.9.84-rolled-back/server/config/config.php", "<?php // reads .env.php\n");
+    foreach (["$parent/better-cal-0.9.80", "$parent/better-cal-old"] as $d) {
+        file_put_contents("$d/.env", "A=1\n");
+    }
+    $u = new BetterCal\Infra\Updater($app);
+    $u->ensureBackupDir();
+    file_put_contents($u->backupDir() . '/update-state.json', json_encode(['from' => '0.9.81', 'to' => '0.9.83', 'stage' => 'swapped', 'backup' => $u->backupDir() . '/db-0.9.81.sql.gz', 'previous' => "$parent/better-cal-0.9.81"]));
+    checkEq('update record: one an older version wrote is read', '0.9.81', $u->readState()['from'] ?? null);
+    file_put_contents($u->backupDir() . '/db-0.9.81.sql.gz', gzencode($sql));
+    file_put_contents("$app/.env", "BETTERCAL_SESSION_SECRET=a session secret for tests\nA=1\n");
+    file_put_contents("$parent/better-cal-0.9.81/.env", "BETTERCAL_SESSION_SECRET=a session secret for tests\nA=1\n");
+    $pcfg = ['app_root' => $app, 'session_secret' => 'a session secret for tests'];
+    check('private files: there is something to convert', BetterCal\Infra\PrivateFiles::pending($pcfg));
+    $conv = array_map('basename', $u->convertibleCopies());
+    sort($conv);
+    checkEq('private files: only copies the updater made, whose code reads .env.php or that a rollback returns to', ['better-cal-0.9.81', 'better-cal-0.9.84-rolled-back'], $conv);
+    $done = BetterCal\Infra\PrivateFiles::secure(['app_root' => $app, 'session_secret' => 'a session secret for tests']);
+    check('private files: settings converted here and in the previous copy', is_file("$app/.env.php") && !is_file("$app/.env")
+        && is_file("$parent/better-cal-0.9.81/.env.php") && !is_file("$parent/better-cal-0.9.81/.env"));
+    $state = $u->readState();
+    check('private files: the backup is encrypted, and the update record follows it', str_ends_with((string) ($state['backup'] ?? ''), '.bcbackup') && is_file((string) $state['backup']));
+    check('update record: now guarded, and the old one gone', str_starts_with((string) file_get_contents($u->statePath()), $SF::GUARD_PREFIX)
+        && str_ends_with($u->statePath(), '.php') && !is_file($u->backupDir() . '/update-state.json'));
+    check('private files: nothing left to do', !BetterCal\Infra\PrivateFiles::pending($pcfg) && count($done) === 3);
+    check('private files: a copy made by hand, or an older one, keeps its .env', is_file("$parent/better-cal-old/.env") && is_file("$parent/better-cal-0.9.80/.env"));
+    file_put_contents($u->backupDir() . '/update-state.json', json_encode(['from' => '0.9.82', 'to' => '0.9.84', 'stage' => 'swapped']));
+    touch($u->backupDir() . '/update-state.json', time() + 5);
+    checkEq('update record: after a rollback, an older updater\'s newer record wins', '0.9.84', $u->readState()['to'] ?? null);
+    $u->writeState($u->readState());
+    check('update record: and is moved into the guarded one', !is_file($u->backupDir() . '/update-state.json') && ($u->readState()['to'] ?? null) === '0.9.84');
+
+    // PHP's error log.
+    $EL = BetterCal\Support\ErrorLog::class;
+    check('error log: a bare file name lands in the app folder', $EL::insideApp('error_log', $app));
+    check('error log: so does a path inside it', $EL::insideApp("$app/server/public/error_log", $app));
+    check('error log: a host log elsewhere is left alone', !$EL::insideApp('/var/log/php/error.log', $app) && !$EL::insideApp('syslog', $app));
+
+    // The private-files check.
+    $PC = BetterCal\Infra\PrivateFilesCheck::class;
+    checkEq('check: the main domain of a subdomain', 'example.com', $PC::mainDomain('cal.example.com'));
+    checkEq('check: under a two-level suffix', 'example.co.uk', $PC::mainDomain('cal.example.co.uk'));
+    checkEq('check: no main domain for a bare suffix or an address', [null, null, null], [$PC::mainDomain('co.uk'), $PC::mainDomain('203.0.113.7'), $PC::mainDomain('localhost')]);
+    checkEq('check: nor under a name shared with strangers (dynamic DNS, tunnels)', [null, null, null], [$PC::mainDomain('cal.tail1234.ts.net'), $PC::mainDomain('mycal.duckdns.org'), $PC::mainDomain('someone.github.io')]);
+    checkEq('check: hosts are the main domain and its www form', ['example.com', 'www.example.com'], $PC::candidateHosts('cal.example.com', null));
+    checkEq('check: an install at the main domain has nothing else to ask', [], $PC::candidateHosts('example.com', null));
+    checkEq('check: a domain the folder path is named for is asked too', ['example.com', 'www.example.com', 'example.net'], $PC::candidateHosts('cal.example.com', 'example.net'));
+    checkEq('check: the path after public_html', '/better-cal/', $PC::candidatePath('/home/u1/domains/example.com/public_html/better-cal')['path'] ?? null);
+    checkEq('check: the path after a folder named for a domain', '/apps/better-cal/', $PC::candidatePath('/home/someone/example.com/apps/better-cal')['path'] ?? null);
+    checkEq('check: no web folder in the path', null, $PC::candidatePath('/srv/better-cal'));
+    $tok = 'tok123';
+    checkEq('check: the settings file coming back as text means exposed', 'exposed', $PC::classify(['status' => 200, 'body' => "<?php ...\n$tok"], ['status' => 404, 'body' => ''], ['status' => 200, 'body' => "<?php __halt_compiler(); //\nBETTERCAL_DB_PASS=x"], $tok));
+    checkEq('check: PHP off but the settings file refused is a warning, not exposed', 'php-off', $PC::classify(['status' => 200, 'body' => "<?php ...\n$tok"], ['status' => 404, 'body' => ''], ['status' => 403, 'body' => 'Forbidden'], $tok));
+    checkEq('check: an empty page means guarded', 'guarded', $PC::classify(['status' => 200, 'body' => ''], ['status' => 404, 'body' => 'nope'], ['status' => 200, 'body' => ''], $tok));
+    checkEq('check: not when every address is an empty page', 'missing', $PC::classify(['status' => 200, 'body' => ''], ['status' => 200, 'body' => ''], null, $tok));
+    checkEq('check: 403 beside a real 404 means refused', 'refused', $PC::classify(['status' => 403, 'body' => 'x'], ['status' => 404, 'body' => ''], null, $tok));
+    checkEq('check: not when the domain refuses everything', 'missing', $PC::classify(['status' => 403, 'body' => 'x'], ['status' => 403, 'body' => ''], null, $tok));
+    checkEq('check: a readable .env', 'exposed-plain', $PC::classify(['status' => 200, 'body' => ''], ['status' => 404, 'body' => ''], ['status' => 200, 'body' => "BETTERCAL_DB_PASS=x"], $tok));
+
+    $site = "$tmp/home/domains/example.com/public_html/better-cal";
+    mkdir($site, 0755, true);
+    file_put_contents("$site/.env.php", $SF::GUARD . "BETTERCAL_DB_PASS=x\n");
+    $cfg = ['app_root' => $site, 'base_url' => 'https://cal.example.com'];
+    // A pretend web server for example.com: $mode says what it does with the folder.
+    $server = static function (string $mode) use ($site): callable {
+        return static function (array $urls) use ($mode, $site): array {
+            return array_map(static function (string $url) use ($mode, $site): array {
+                $path = (string) parse_url($url, PHP_URL_PATH);
+                $file = str_starts_with($path, '/better-cal/') ? $site . substr($path, strlen('/better-cal')) : null;
+                return match (true) {
+                    $mode === 'down' => ['status' => 0, 'body' => '', 'location' => null],
+                    $file === null || !is_file($file) || $mode === 'unmapped' => ['status' => 404, 'body' => 'Not Found', 'location' => null],
+                    $mode === 'raw' => ['status' => 200, 'body' => (string) file_get_contents($file), 'location' => null],
+                    $mode === 'php' => ['status' => 200, 'body' => str_ends_with($file, '.php') ? '' : (string) file_get_contents($file), 'location' => null],
+                    $mode === 'refuse' => ['status' => 403, 'body' => 'Forbidden', 'location' => null],
+                };
+            }, $urls);
+        };
+    };
+    $r = $PC::evaluate($cfg, $server('raw'));
+    check('check: PHP served as text is reported as exposed, naming the address', $r['status'] === 'exposed' && str_contains($r['message'], 'example.com/better-cal/.env.php'));
+    check('check: and the probe file is gone afterwards', glob("$site/bc-probe-*") === []);
+    checkEq('check: PHP running there is safe, guarded', ['safe', 'guarded'], [($r = $PC::evaluate($cfg, $server('php')))['status'], $r['kind']]);
+    checkEq('check: a refused folder is safe', ['safe', 'refused'], [($r = $PC::evaluate($cfg, $server('refuse')))['status'], $r['kind']]);
+    checkEq('check: a folder no address serves is probably safe', 'probably', $PC::evaluate($cfg, $server('unmapped'))['status']);
+    checkEq('check: no answers at all is not checked', 'unchecked', $PC::evaluate($cfg, $server('down'))['status']);
+    checkEq('check: an app outside any web folder is safe without asking', ['safe', 'outside'], [($r = $PC::evaluate(['app_root' => $app, 'base_url' => 'https://cal.example.com'], $server('raw')))['status'], $r['kind']]);
+    rename("$site/.env.php", "$site/.env");
+    file_put_contents("$site/.env", "BETTERCAL_DB_PASS=x\n");
+    $r = $PC::evaluate($cfg, $server('php'));
+    check('check: a plain .env the server hands out is exposed', $r['status'] === 'exposed' && str_contains($r['message'], '.env shows'));
+    file_put_contents("$site/worker.log", "x\n");
+    $r = $PC::evaluate($cfg, $server('unmapped'));
+    check('check: notes the old worker.log and the unconverted .env', count(array_filter($r['notes'], static fn(string $n): bool => str_contains($n, 'worker.log') || str_contains($n, 'still in .env'))) === 2);
+    $redirect = static function (array $urls) use ($server): array {
+        return array_map(static fn(string $u): array => str_starts_with($u, 'https://example.com/')
+            ? ['status' => 301, 'body' => '', 'location' => 'https://www.example.com' . parse_url($u, PHP_URL_PATH)]
+            : $server('refuse')([$u])[0], $urls);
+    };
+    checkEq('check: a redirect that keeps the path is followed', 'refused', $PC::evaluate($cfg, $redirect)['kind']);
+
+    $rm($tmp);
+}
+
 $runLog = (string) @file_get_contents($GLOBALS['__runLog']);
 @unlink($GLOBALS['__runLog']);
 fwrite(STDERR, $runLog);

@@ -223,6 +223,12 @@ function bcSanitizeDevClone(
     return ['subscriptions' => count($retained), 'stripped' => $stripSubscriptions];
 }
 
+/** The settings file: .env.php, or .env until it's converted. Its first line holds no '=', so both read alike. */
+function bcDevCloneSettings(string $root): string
+{
+    return file_exists($root . '/.env.php') || is_link($root . '/.env.php') ? $root . '/.env.php' : $root . '/.env';
+}
+
 function bcDevCloneEnvValue(string $path, string $key): string
 {
     if (is_link($path) || !is_file($path) || !is_readable($path)) {
@@ -281,7 +287,7 @@ function bcVerifyDevCloneStagePrivacy(): void
         [$developmentRoot, $developmentDatabase],
     ];
     foreach ($configs as [$root, $expectedDatabase]) {
-        $env = $root . '/.env';
+        $env = bcDevCloneSettings($root);
         $dsn = bcDevCloneEnvValue($env, 'BETTERCAL_DB_DSN');
         $user = bcDevCloneEnvValue($env, 'BETTERCAL_DB_USER');
         $password = bcDevCloneEnvValue($env, 'BETTERCAL_DB_PASS');
@@ -329,8 +335,8 @@ function bcRunDevCloneSanitizer(): void
         throw new RuntimeException('Clone sanitizer configuration is invalid');
     }
 
-    $productionSecret = bcDevCloneEnvValue($productionRoot . '/.env', 'BETTERCAL_SESSION_SECRET');
-    $developmentSecret = bcDevCloneEnvValue($developmentRoot . '/.env', 'BETTERCAL_SESSION_SECRET');
+    $productionSecret = bcDevCloneEnvValue(bcDevCloneSettings($productionRoot), 'BETTERCAL_SESSION_SECRET');
+    $developmentSecret = bcDevCloneEnvValue(bcDevCloneSettings($developmentRoot), 'BETTERCAL_SESSION_SECRET');
     $loginPassword = (string) getenv('DEV_LOGIN_PASSWORD');
     $rootPassword = (string) getenv('MYSQL_ROOT_PASSWORD');
     $pdo = new PDO(

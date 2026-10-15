@@ -206,14 +206,16 @@ if ! sudo -n -u "${DEV_APP_USER}" -- test -d "${DEV_DIR}" \
   exit 1
 fi
 if [ "${same_uid}" = 0 ]; then
-  if sudo -n -u "${DEV_APP_USER}" -- test -r "${APP_DIR}/.env"; then
-    echo 'The dev application user can read the production environment file.' >&2
-    exit 1
-  fi
-  if sudo -n -u "${APP_USER}" -- test -r "${DEV_DIR}/.env"; then
-    echo 'The production application user can read the dev environment file.' >&2
-    exit 1
-  fi
+  for name in .env .env.php; do
+    if sudo -n -u "${DEV_APP_USER}" -- test -r "${APP_DIR}/${name}"; then
+      echo 'The dev application user can read the production settings file.' >&2
+      exit 1
+    fi
+    if sudo -n -u "${APP_USER}" -- test -r "${DEV_DIR}/${name}"; then
+      echo 'The production application user can read the dev settings file.' >&2
+      exit 1
+    fi
+  done
   if [ -e "${BACKUP_DIR}" ] && sudo -n -u "${DEV_APP_USER}" -- test -r "${BACKUP_DIR}"; then
     echo 'The dev application user can read the production backup directory.' >&2
     exit 1
@@ -251,31 +253,46 @@ env_value() {
   value="${value#\'}"; value="${value%\'}"
   printf '%s' "${value}"
 }
-for file in "${APP_DIR}/.env" "${DEV_DIR}/.env"; do
+# The settings file: .env.php, or .env until it's converted (#142). Its first
+# line holds no '=', so env_value reads both alike. Both at once is ambiguous.
+settings_of() {
+  if [ -e "$1/.env.php" ] || [ -L "$1/.env.php" ]; then
+    if [ -e "$1/.env" ]; then
+      echo "$1 has both .env.php and .env; keep one." >&2
+      return 1
+    fi
+    printf '%s/.env.php' "$1"
+  else
+    printf '%s/.env' "$1"
+  fi
+}
+prod_env="$(settings_of "${APP_DIR}")"
+dev_env="$(settings_of "${DEV_DIR}")"
+for file in "${prod_env}" "${dev_env}"; do
   if [ -L "${file}" ] || [ ! -f "${file}" ] || [ ! -r "${file}" ]; then
-    echo 'Each environment must have a readable regular .env file, not a symlink.' >&2
+    echo 'Each environment must have a readable regular settings file, not a symlink.' >&2
     exit 1
   fi
 done
-prod_user="$(env_value "${APP_DIR}/.env" BETTERCAL_DB_USER)"
-dev_user="$(env_value "${DEV_DIR}/.env" BETTERCAL_DB_USER)"
-prod_dsn="$(env_value "${APP_DIR}/.env" BETTERCAL_DB_DSN)"
-dev_dsn="$(env_value "${DEV_DIR}/.env" BETTERCAL_DB_DSN)"
-prod_pass="$(env_value "${APP_DIR}/.env" BETTERCAL_DB_PASS)"
-dev_pass="$(env_value "${DEV_DIR}/.env" BETTERCAL_DB_PASS)"
-prod_secret="$(env_value "${APP_DIR}/.env" BETTERCAL_SESSION_SECRET)"
-dev_secret="$(env_value "${DEV_DIR}/.env" BETTERCAL_SESSION_SECRET)"
+prod_user="$(env_value "${prod_env}" BETTERCAL_DB_USER)"
+dev_user="$(env_value "${dev_env}" BETTERCAL_DB_USER)"
+prod_dsn="$(env_value "${prod_env}" BETTERCAL_DB_DSN)"
+dev_dsn="$(env_value "${dev_env}" BETTERCAL_DB_DSN)"
+prod_pass="$(env_value "${prod_env}" BETTERCAL_DB_PASS)"
+dev_pass="$(env_value "${dev_env}" BETTERCAL_DB_PASS)"
+prod_secret="$(env_value "${prod_env}" BETTERCAL_SESSION_SECRET)"
+dev_secret="$(env_value "${dev_env}" BETTERCAL_SESSION_SECRET)"
 if [ "${prod_user}" != "${DB_USER}" ] || [ "${dev_user}" != "${DEV_DB_USER}" ] \
   || [ -z "${prod_user}" ] || [ -z "${dev_user}" ]; then
-  echo 'The two .env files do not select their configured database users.' >&2
+  echo 'The two settings files do not select their configured database users.' >&2
   exit 1
 fi
 if [ "${DEV_ISOLATION_MODE}" = strict ] && [ "${prod_user}" = "${dev_user}" ]; then
   echo 'Strict development isolation requires distinct database users.' >&2
   exit 1
 fi
-case "${prod_dsn}" in *"dbname=${PROD_DB}"*) ;; *) echo 'Production .env does not select PROD_DB.' >&2; exit 1 ;; esac
-case "${dev_dsn}" in *"dbname=${DEV_DB}"*) ;; *) echo 'Dev .env does not select DEV_DB.' >&2; exit 1 ;; esac
+case "${prod_dsn}" in *"dbname=${PROD_DB}"*) ;; *) echo 'The production settings do not select PROD_DB.' >&2; exit 1 ;; esac
+case "${dev_dsn}" in *"dbname=${DEV_DB}"*) ;; *) echo 'The dev settings do not select DEV_DB.' >&2; exit 1 ;; esac
 if [ -z "${prod_pass}" ] || [ -z "${dev_pass}" ]; then
   echo 'Development and production database passwords must be non-empty.' >&2
   exit 1
@@ -292,8 +309,8 @@ if [ "${DEV_EXTERNAL_SERVICES}" = disabled ]; then
   # Refuse values that can activate a transport. Harmless companion defaults
   # such as ports, model names or a VAPID subject do not force the opt-in.
   for key in BETTERCAL_GEMINI_API_KEY BETTERCAL_GOOGLE_CLIENT_ID BETTERCAL_GOOGLE_CLIENT_SECRET BETTERCAL_MAPTILER_KEY BETTERCAL_LOCATIONIQ_KEY BETTERCAL_STADIA_KEY BETTERCAL_MAPTILER_GEOCODING_KEY BETTERCAL_SMTP_HOST BETTERCAL_RSVP_SMTP_HOST BETTERCAL_IMAP_HOST BETTERCAL_VAPID_PUBLIC BETTERCAL_VAPID_PRIVATE; do
-    if [ -n "$(env_value "${DEV_DIR}/.env" "${key}")" ]; then
-      echo "Dev .env configures an external service while DEV_EXTERNAL_SERVICES=disabled (${key})." >&2
+    if [ -n "$(env_value "${dev_env}" "${key}")" ]; then
+      echo "The dev settings configure an external service while DEV_EXTERNAL_SERVICES=disabled (${key})." >&2
       exit 1
     fi
   done
@@ -480,10 +497,14 @@ reconcile_release_plugins "${DEV_DIR}" '' "${DEV_APP_USER}"
 stage "composer + migrate (dev)"
 rssh "DEV_DIR='${DEV_DIR}' DEV_APP_USER='${DEV_APP_USER}' bash -s" <<'EOF'
 set -euo pipefail
-if sudo -n -u "${DEV_APP_USER}" -- test -L "${DEV_DIR}/.env" \
-  || ! sudo -n -u "${DEV_APP_USER}" -- test -f "${DEV_DIR}/.env" \
-  || ! sudo -n -u "${DEV_APP_USER}" -- test -r "${DEV_DIR}/.env"; then
-  echo "${DEV_DIR}/.env must be a readable regular file, not a symlink; provision it before deploying." >&2
+settings="${DEV_DIR}/.env"
+if sudo -n -u "${DEV_APP_USER}" -- test -e "${DEV_DIR}/.env.php" || sudo -n -u "${DEV_APP_USER}" -- test -L "${DEV_DIR}/.env.php"; then
+  settings="${DEV_DIR}/.env.php"
+fi
+if sudo -n -u "${DEV_APP_USER}" -- test -L "${settings}" \
+  || ! sudo -n -u "${DEV_APP_USER}" -- test -f "${settings}" \
+  || ! sudo -n -u "${DEV_APP_USER}" -- test -r "${settings}"; then
+  echo "${settings} must be a readable regular file, not a symlink; provision it before deploying." >&2
   exit 1
 fi
 sudo -u "${DEV_APP_USER}" bash -c "cd ${DEV_DIR}/server && composer install --no-dev --quiet --no-interaction"

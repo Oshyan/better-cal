@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
-# Push settings from a local, gitignored file into the server's .env.
+# Push settings from a local, gitignored file into the server's settings file
+# (.env.php, or .env until it's converted).
 #
-#   scripts/push-settings.sh          scripts/server.env      -> APP_DIR/.env
-#   scripts/push-settings.sh dev      scripts/server-dev.env  -> DEV_DIR/.env
+#   scripts/push-settings.sh          scripts/server.env      -> APP_DIR
+#   scripts/push-settings.sh dev      scripts/server-dev.env  -> DEV_DIR
 #
 # Only the keys in the local file are added or replaced; every other line of
-# the server's .env stays as it is. A copy of the .env goes to a root-only
-# backup directory first. Values travel over SSH stdin and are never printed.
+# the server's file stays as it is, the guard line of .env.php included. A
+# copy goes to a root-only backup directory first. Values travel over SSH
+# stdin and are never printed.
 #
-# Deliberately separate from deploy.sh: a deploy never writes .env (see its
-# "composer + migrate + link" stage), so settings change only when this is
-# run. The write is done by scripts/merge-env.py, which refuses a symlinked
-# .env and keeps the file's owner and mode. PHP reads .env on each request
+# Deliberately separate from deploy.sh: a deploy never writes the settings
+# (see its "composer + migrate + link" stage), so they change only when this
+# is run. The write is done by scripts/merge-env.py, which refuses a symlinked
+# file and keeps its owner and mode. PHP reads the settings on each request
 # and the worker on each run, so nothing needs restarting.
 #
 # Target host and paths come from scripts/deploy.env, as for deploy.sh.
@@ -63,9 +65,10 @@ if [ -n "${dupes}" ]; then
   exit 1
 fi
 
-echo "== pushing $(printf '%s\n' "${payload}" | wc -l | tr -d ' ') setting(s) to ${target} (${dir}/.env) =="
+echo "== pushing $(printf '%s\n' "${payload}" | wc -l | tr -d ' ') setting(s) to ${target} (${dir}) =="
 merge_b64="$(base64 < "${ROOT_DIR}/scripts/merge-env.py" | tr -d '\n')"
-printf -v env_q '%q' "${dir}/.env"
+# The folder: merge-env.py picks .env.php, or .env until it's converted.
+printf -v env_q '%q' "${dir}"
 printf -v label_q '%q' "${label}"
 printf '%s\n' "${payload}" | ssh "${REMOTE}" \
   "python3 -c \"\$(printf '%s' '${merge_b64}' | base64 -d)\" ${env_q} ${label_q}"

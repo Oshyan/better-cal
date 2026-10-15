@@ -4,6 +4,20 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.83 (2026-10-15)
+
+Your private files now stay private on any host, not only where the server reads `.htaccess` ([#142](https://github.com/Oshyan/better-cal/issues/142)). Recommended for every install, and especially where the `better-cal` folder sits inside a web root, as some hosts require for subdomains.
+
+- **The settings file is now `.env.php`.** Same `KEY=VALUE` lines, behind a first line that makes a web server show the file as a blank page. Better-Cal reads it as text and converts `.env` on its own after this update (when the file belongs to the account it runs as); `php server/bin/settings.php --convert` does it by hand. `.env` keeps working until then. Keep the first line when you edit the file: Better-Cal puts it back if it's deleted, and refuses to start, saying why, if something else ends up in front of it.
+- **Backups are encrypted,** with a key made from your session secret, so a downloaded backup is useless. Older backups beside the app are encrypted during the update. `php server/bin/backup.php --decrypt FILE OUT.sql.gz` gives a plain copy for phpMyAdmin or `mysql`. Keep a copy of `.env.php` with any backup you store elsewhere.
+- **The setup code, the update record and PHP's error log are guarded the same way.** The code file is now `better-cal-code.php`. Where a host has PHP write errors into the app folder (a bare `error_log`, common on shared hosting), they go to `.runtime-cache/php-errors.php` instead.
+- **Settings, System has a Private files row** that says in plain words whether your settings could be downloaded: Better-Cal asks your main domain for a test file in its folder. It also runs at the end of setup and after each update, which show it only when something needs doing. "Check now" runs it again.
+- **The worker's cron line no longer writes a log into the app folder:** it's now `... worker.php >/dev/null 2>&1`. Failing jobs still show in Settings, System, and PHP errors go to the private log. If your cron line still writes `worker.log` into the folder, the Private files row says how to change it.
+- **Rolling back to a version before 0.9.83** writes `.env` back for it, since it can't read `.env.php`. Copies you made by hand beside the app (`better-cal-old`) are never touched.
+- **The database update page can restore the database** from the backup it just made, if the update fails.
+
+Operators: no migration. Update with `php server/bin/update.php`; it converts the settings and backups it owns. Where `.env` belongs to another account (root, as the deploy script sets it up), run `sudo php server/bin/settings.php --convert` once; the deploy scripts read `.env.php` and refuse to run with both files present. Change the worker's cron line to end in `>/dev/null 2>&1` if it writes `worker.log` inside the app folder.
+
 ## 0.9.82 (2026-10-15)
 
 Security fix. Updating is recommended for every install whose `better-cal` folder sits inside a web root (for example under `public_html`, as some hosts require for subdomains).

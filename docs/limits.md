@@ -22,7 +22,7 @@ For a sense of what "one person" means here: a normal multi-month view may conta
 
 ## Limits you can change
 
-Imports, subscribed feeds, CalDAV objects, incoming email, skipped occurrences, description length and filter work all have caps that protect the server from oversized or hostile input. Each has a sensible default for one person and can be raised in `.env`; [`.env.example`](../.env.example) lists them (the `BETTERCAL_LIMIT_*` settings) with their defaults. The main ones:
+Imports, subscribed feeds, CalDAV objects, incoming email, skipped occurrences, description length and filter work all have caps that protect the server from oversized or hostile input. Each has a sensible default for one person and can be raised in `.env.php`; [`.env.example`](../.env.example) lists them (the `BETTERCAL_LIMIT_*` settings) with their defaults. The main ones:
 
 - An uploaded `.ics` file: 25 MiB and 20,000 events.
 - One command-line Takeout migration: 1,000 new `.ics` files and 1 GiB in aggregate by default, with the normal per-file import limits still applied. Each calendar commits separately, so a failed file can be corrected and the command safely resumed without redoing completed calendars.

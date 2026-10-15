@@ -22,3 +22,5 @@ scripts/server-dev.env
 .release-files
 .runtime-cache/
 better-cal-code.txt
+better-cal-code.php
+bc-probe-*

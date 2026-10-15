@@ -1,123 +1,123 @@
 # Design: Private Files That Stay Private on Any Host
 
-Status: proposed for 1.0, 2026-10-15; reviewed before implementation. Tracked in [#142](https://github.com/Oshyan/better-cal/issues/142).
+Status: built in 0.9.83, 2026-10-15, after a review of the first draft. Tracked in [#142](https://github.com/Oshyan/better-cal/issues/142).
 
 ## The problem
 
-Better-Cal keeps a few files that must never be downloadable: the settings file (database password, session secret, push and mail keys, the Google client secret), database backups, the one-time code that unlocks the setup and database update pages, and the worker's log. Today they live in or beside the `better-cal` folder, and the docs ask people to keep that folder out of the web root, serving only `server/public`.
+Better-Cal keeps a few files that must never be downloadable: the settings file (database password, session secret, push and mail keys, the Google client secret), database backups, the one-time code that unlocks the setup and database update pages, and logs. They live in or beside the `better-cal` folder, and the docs ask people to keep that folder out of the web root, serving only `server/public`.
 
-That isn't always possible. Some hosts (Hostinger, and any cPanel server with its default "restrict document roots to public_html" setting) only let a subdomain point inside the main site's `public_html`. The whole `better-cal` folder then sits where the main domain serves files, and `example.com/better-cal/.env` would hand out the database password. Bots scan for exactly this: CISA advisory AA24-016A and Palo Alto Networks' Unit 42 describe mass scanning for `/.env`, one campaign harvesting such files from 110,000 domains.
+That isn't always possible. Some hosts (Hostinger, and any cPanel server with its default "restrict document roots to public_html" setting) only let a subdomain point inside the main site's `public_html`. The whole folder then sits where the main domain serves files, and `example.com/better-cal/.env` would hand out the database password. Bots scan for exactly this: CISA advisory AA24-016A and Palo Alto Networks' Unit 42 describe mass scanning for `/.env`, one campaign harvesting such files from 110,000 domains.
 
-0.9.81 added a `.htaccess` at the top of the folder that refuses every request (`RewriteRule ^ - [F]`). It works on Apache and LiteSpeed, but it is not enough on its own:
-
-- Nginx ignores `.htaccess`. That includes Nginx-only hosts, Hostinger's Agency plans (an Nginx-based server with `.htaccess` off by default), and Plesk's opt-in "serve static files directly by nginx", whose default list has included `txt` and `gz`: the setup code and backups.
-- OpenLiteSpeed reads only the rewrite rules, and only after a restart.
-- A host can switch `.htaccess` overrides off.
+0.9.81 added a `.htaccess` at the top of the folder that refuses every request. It works on Apache and LiteSpeed, but Nginx ignores it (Nginx-only hosts, Hostinger's Agency plans, Plesk's "serve static files directly by nginx"), OpenLiteSpeed reads only its rewrite rules, and a host can switch overrides off. 0.9.82 made every PHP file but the two front controllers refuse to run from the web.
 
 ## Goals
 
 - Secrets can't be downloaded whatever the web server does with `.htaccess`, as long as it runs PHP files as PHP, which any host running Better-Cal must.
 - Backups are useless to whoever downloads them, on any server.
-- A non-technical person learns, in plain words, whether their install is safe, without being shown worrying messages when it is.
-- Existing installs keep working through the update, and nothing a person has to do by hand is easy to get wrong.
+- A non-technical person learns, in plain words, whether their install is safe, without worrying messages when it is.
+- Existing installs keep working through the update, convert without anyone doing anything by hand, and can still roll back.
 
 ## Not goals (1.x)
 
-- Moving the private part of the app above the web root automatically, leaving only `server/public` inside it. It is the structural fix, but it reorganises how `server/public` finds the rest of the app. With this design it stops being urgent.
-- Restoring an encrypted backup from the browser. In 1.0, restoring is `update.php --rollback` or a command-line decrypt.
+- Moving the private part of the app above the web root automatically. It is the structural fix, but it reorganises how `server/public` finds the rest of the app; with this design it stops being urgent.
+- Restoring an encrypted backup from the browser, except right after a failed database update on that page. Otherwise restoring is `update.php --rollback` or `backup.php --decrypt`.
 
 ## Design
 
-### 1. The settings file becomes `.env.php`
+### 1. The settings file is `.env.php`
 
 The same `KEY=VALUE` lines, after a guard line:
 
 ```
-<?php /* Better-Cal settings. Keep this first line: it stops this file being shown on the web. */ __halt_compiler();
+<?php __halt_compiler(); // Better-Cal settings. Keep this first line: it stops this file being shown on the web.
 BETTERCAL_BASE_URL=https://cal.example.com
-...
 ```
 
-- Requested over the web, the server runs it as PHP: `__halt_compiler()` stops PHP at that point, so the response is empty. This was chosen over `<?php exit; ?>`, which the research found unsafe: a value containing `<?` (a password can) makes PHP fail to parse the file, and with errors displayed the error message prints part of the secret and the server path. Nothing after `__halt_compiler()` is ever parsed.
-- Better-Cal reads it as text, never with `include`. The reader strips a UTF-8 byte-order mark, accepts CRLF, and parses the lines after the guard exactly as `.env` lines are parsed today.
-- **The guard is checked on every read.** If the file doesn't start with the guard (deleted line, a typo, UTF-16, something in front of it), Better-Cal refuses to start and says so in plain words: "The settings file .env.php has lost its first line, which keeps it from being shown on the web. Better-Cal won't start until it's back: copy the first line from .env.example.php." The CLI scripts print the same.
-- **Dotted name.** `.env.php` keeps the leading dot: many Nginx configurations refuse dotfiles, an extra layer. Some file managers hide dotfiles; the no-SSH docs say how to show them, as they already must for `.htaccess`.
-- **Compatibility.** If `.env.php` exists it is used; otherwise `.env`, as today. Real environment variables still win over both.
-- **Converting an existing `.env`.** `php server/bin/settings.php --convert` writes `.env.php` (owner and mode kept, atomically, through a temporary file that itself ends in `.php`), checks it reads back to the same values, then deletes `.env`. `update.php --finish` and the database update page run the same conversion after an update, so ordinary installs convert on their next update. On the reference server, where `.env` is root-owned by design, the conversion is a deliberate operator step, like provisioning `.env` is today.
-- **Writers.** `install.php`, the setup page, `Setup::writeEnv`, `scripts/push-settings.sh` and `merge-env.py`, and `deploy-backup.sh`'s credential read all handle `.env.php`, with the guard. `.env.example` becomes `.env.example.php` (the guard line plus the documented keys). `deploy-lib.sh` already excludes `.env.*` from deploys, so a deploy never touches `.env.php`.
+- Requested over the web, the server runs it: `__halt_compiler()` stops PHP at once and the response is empty. Nothing after it is ever parsed, so a value containing `<?` can't break it (the reason `<?php exit; ?>` was rejected).
+- `Support\SettingsFile` reads it as text, never with `include`. A byte-order mark, CRLF and blank lines before the guard are fine; UTF-16 or anything else in front is refused with a plain message (CLI) or a bare 503 with the details in the error log (web). A guard line that was simply deleted is put back when the rest is plainly settings: refusing to start doesn't make an already exposed file safer.
+- `.env.php` wins over `.env`; real environment variables win over both.
+- **Conversion** (`SettingsFile::convert`): writes `.env.php` through a temporary file that also ends in `.php`, keeps the mode (and owner and group, when run as root), checks it reads back to the same values, then deletes `.env`. Both present with equal values: `.env` is deleted. Both present and different: nothing changes, and the self-check says so. It only touches files owned by the account running it.
+- **Who converts:** `update.php --finish`, the database update page, `install.php` when run again, and the worker each minute when there's anything to do (`Infra\PrivateFiles`), each for files its account owns. `php server/bin/settings.php --convert` does it by hand, which is how a root-owned `.env` (the reference deploy) converts.
+- **Writers:** `install.php`, the setup page and `Setup::writeEnv` write `.env.php` and refuse to write beside an existing `.env`. `.env.example` starts with the guard line. The deploy scripts (`deploy.sh`, `deploy-backup.sh`, `deploy-dev.sh`, `push-settings.sh` with `merge-env.py`, `sanitize-dev-clone.php`) read `.env.php` when present and refuse both at once; the guard line holds no `=`, so their line parsers read both files alike.
 
-### 2. Every secret-bearing file Better-Cal writes ends in `.php`
+### 2. Every other secret-bearing file is guarded too
 
-- The access code becomes `better-cal-code.php`: the guard line, then the same human-readable text. It reads normally in a file manager; over the web it is an empty page.
-- Temporary files for atomic writes of guarded files are named `*.tmp-<random>.php`, then renamed into place.
-- The access code's state (`.runtime-cache/access-code.json`) holds only a hash and a session hash, never the code. It moves to `.runtime-cache/access-code.php`, guarded, so nothing under `.runtime-cache` is a readable data file.
-- No `.bak` or `~` copies of guarded files are ever made. The research's main finding about WordPress is that configuration leaks come from such copies (`wp-config.php.bak`, editor leftovers), not from the live file.
+- The access code is `better-cal-code.php` (guard line, then the human-readable code); its state is `.runtime-cache/access-code.php`. The old `.txt` and `.json` names are removed.
+- The update record is `update-state.php` (guard, then JSON); `update-state.json`, written by older updaters, is still read, so an update from 0.9.82 is finished by the new code, and removed on the next write.
+- The self-check's result is `.runtime-cache/private-files.php`.
+- **PHP's error log** (`Support\ErrorLog`): where the host's `error_log` setting is a bare name or points inside the app folder (shared hosts often write `error_log` beside the running script, which for Better-Cal is `server/public`), errors go to `.runtime-cache/php-errors.php`, guarded, trimmed past 2 MB. A log the host keeps elsewhere is left alone.
+- No `.bak` or `~` copies of guarded files are ever made.
 
 ### 3. Backups are encrypted
 
-- Database backups (`DbBackup`) are written as gzip, then encrypted with libsodium's secretstream (XChaCha20-Poly1305), streamed, under a `BCBK1` header. The key, `BETTERCAL_BACKUP_KEY` (32 random bytes, base64), lives in `.env.php`. The installers generate it; conversion adds it to existing installs.
-- Restore (`update.php --rollback`, `DbBackup::restore`) decrypts transparently, and still reads older unencrypted backups. `php server/bin/backup.php --decrypt FILE OUT` gives a plain `.sql.gz` for restoring with phpMyAdmin or another tool.
-- Names carry 128 bits of randomness (32 hex characters) instead of 32, as a second barrier.
-- **The key is the one new way to lose something:** without it, the backups can't be read. It lives in the same `.env.php` that the updater carries into each new version and keeps in the previous version's folder. The docs say plainly: keep a copy of `.env.php` with any backup you keep elsewhere.
-- The previous version's folder kept by `update.php` holds only the guarded `.env.php`. A leftover plain `.env` is deleted there too, when converting.
+- `DbBackup` streams gzip into `Infra\BackupCipher`: libsodium's secretstream (XChaCha20-Poly1305) in 64 KB chunks, under a `BCBK1` preface with an 8-byte key id, authenticated with every chunk; the last chunk is tagged final and nothing may follow it. Files end in `.bcbackup` and carry 128 random bits in their names.
+- **The key is derived from `BETTERCAL_SESSION_SECRET`** (libsodium KDF, context `bcbackup`). A restore needs the session secret anyway (feed credentials and Google tokens are sealed with it), so there's no new key to keep or lose. A restore with other settings says so plainly.
+- `restore()` reads the whole file, authenticating it, before it changes anything, and still reads older plain `.sql.gz` backups.
+- Older plain backups beside the app are encrypted in place by the conversion above; the update record follows the new name.
+- `php server/bin/backup.php --decrypt FILE OUT` writes a plain `.sql.gz` for phpMyAdmin or `mysql`.
+- After a failed database update, the database update page offers "Restore the database as it was" from the backup it just made.
 
-### 4. The worker keeps its own log, privately
+### 4. Copies beside the app
 
-- `worker.php` writes its run summary and PHP errors to `.runtime-cache/worker-log.php` (guarded, trimmed to the last 1,000 lines). It no longer relies on cron output.
-- The documented cron line discards output: `* * * * * php /path/better-cal/server/bin/worker.php >/dev/null 2>&1`. `install.php` and the setup page print that form.
-- An existing `worker.log` in the app folder is reported by the self-check (below) with how to change the cron line, and deleted once the new log is in use.
+- Settings in copies `update.php` made (`<name>-<version>`, `<name>-<version>-rolled-back`) are converted when their code reads `.env.php`, or when the copy is the update's previous version, which a rollback gives its `.env` back. A copy someone made by hand (`better-cal-old`, a staging copy) runs as it is and is never touched; the self-check notes it when it still keeps `.env`.
+- Nothing is deleted automatically: an earlier draft removed older copies after each update, but they can hold files the updater listed as only in the previous version, or settings edited after a rollback. The self-check lists older copies instead.
+- **Rollback to a version before 0.9.83**, which reads only `.env`: `update.php --rollback` writes `.env` from `.env.php` into that version's folder (and removes the `.env.php` it can't read), and says that version doesn't guard its settings.
 
-### 5. The `.htaccess` stays
+### 5. The worker's output
 
-It protects in the one case the guard doesn't: a server whose PHP handling breaks (PHP files downloaded as text, as happens after a removed PHP version leaves a stale handler on cPanel) while still honouring `.htaccess`. The two layers fail together only on an Nginx-family server whose PHP handling is also broken, which is rare and conspicuous: the main site breaks too.
+The documented cron line discards output: `* * * * * php /path/better-cal/server/bin/worker.php >/dev/null 2>&1`. The worker turns `display_errors` off and sends PHP errors and job failures to the private error log; failing jobs show in Settings, System as before. An install whose cron line still writes `worker.log` into the folder gets a note in the self-check with the new line.
 
-### 6. A self-check that says plainly whether the install is safe
+### 6. The `.htaccess` stays
 
-**What it checks.** Whether the main domain can reach the `better-cal` folder, and if so, whether it hands anything out.
+It protects in the one case the guard doesn't: a server whose PHP handling breaks (PHP files downloaded as text) while still honouring `.htaccess`.
 
-1. Hosts: the parent domain of the install's own host and its `www.` form (`cal.example.com` checks `example.com` and `www.example.com`). An install at an apex domain has no parent to check and is reported safe on that basis.
-2. Paths: for the app folder's absolute path, each tail of up to four segments (`/better-cal/`, `/public_html/better-cal/`, and so on), the ways a main domain could map onto it.
-3. Two probe files, written into the app folder under random names and deleted afterwards: `bc-probe-<random>.php`, which prints a random token when run, and `bc-probe-<random>.txt`, holding another token.
-4. For each host and path, Better-Cal fetches the PHP probe (through the app's own HTTP client, its usual limits and timeouts, no redirects followed).
-   - It returns the token: the main domain serves the folder and runs PHP there. The `.txt` probe at the same place then decides between "refused" (403/404) and "served" (its token comes back).
-   - It returns the PHP source (the body contains `bc-probe` source text): PHP isn't running there, and anything guarded would be readable. Exposed.
-   - 403 at every candidate: the folder is in the web space, refused by `.htaccess`.
-   - 404 everywhere: the main domain doesn't map onto the folder at any of the places it could.
-5. If no request completes (outgoing requests blocked, DNS failing), the result is "Not checked".
+### 7. A self-check that says plainly whether the install is safe
 
-**When it runs.** At the end of setup and of `install.php`, after `update.php` and the database update page, and on demand from Settings, System ("Check now"). Not on a timer.
+`Infra\PrivateFilesCheck`.
 
-**What people see.** One line in Settings, System, labelled **Private files**. Setup and the installers show only the red result, or the note; a plain "Safe" stays on the System page. Exact wording:
+**Where it looks.** The part of the app folder's path after the last folder hosts use as a web root (`public_html`, `htdocs`, `httpdocs`, `www`, `html`, `web`, `public`, or a folder named for a domain, as DreamHost does). No such folder: the install is reported safe, outside any public web folder, without asking anything. The hosts: the main domain of `BETTERCAL_BASE_URL`'s host and its `www.` form (with a short list of two-level suffixes such as `co.uk`), plus a domain the path is named for. Never the install's own address, an IP, a bare suffix, or a name shared with strangers (dynamic DNS, tunnels, hosting platforms such as `ts.net`, `duckdns.org`, `github.io`), where the "main domain" belongs to someone else.
 
-- Not in the main site's public web space:
-  > **Safe.** Your settings and backups are stored outside example.com's public web space, so no one can download them.
-- In it, and refused:
-  > **Safe.** Your Better-Cal folder sits inside example.com's public web space, but the server refuses every request for it, so no one can download your settings or backups.
-- In it, the extra protection ignored, the secrets still guarded:
-  > **Safe.** Your settings and backups are protected and can't be read, but this server lets anyone download Better-Cal's other files from example.com/better-cal/. Those are only the program itself, which is public anyway. To keep the folder tidy, move it out of public_html ([how](docs/install.md#choosing-where-to-put-it)).
-- PHP not running there (the guard can't work):
-  > **Exposed: fix this now.** Anyone can read your settings file at example.com/better-cal/.env.php, including your database password. This server isn't running PHP files for that folder. Move the better-cal folder out of public_html, or ask your host why PHP files there are downloadable instead of run ([details](docs/install.md#choosing-where-to-put-it)).
-- The check couldn't run:
-  > **Not checked.** Your host doesn't let Better-Cal fetch pages from your own website, so it couldn't test this. That doesn't mean anything is wrong. To check yourself, open example.com/better-cal/VERSION: "Forbidden" or "Not Found" is good; a version number means the folder is publicly visible.
+**How.** It writes `bc-probe-<random>.php` into the app folder (the guard line, then a random token), and for each host fetches it, a made-up `bc-missing-<random>.php` at the root as a control, and the settings file itself (`.env.php`, and `.env` while it exists). Over https, then http for hosts that don't answer; one redirect is followed when it keeps the path and stays on the same main domain. 3-second connect and 6-second total timeouts, 64 KB of each body. The probe is deleted afterwards, and leftovers older than two minutes before each run. These requests go to the install's own main domain only, so they don't use the outbound client's private-address rule (a home server's main domain may resolve to a private address).
 
-An old `worker.log` adds: "Your cron job still writes its output into the Better-Cal folder, where it can be downloaded. Change it to: `<the new line>`."
+**What it concludes,** per host, the worst across hosts winning:
 
-**Honest limits.** It checks the main domain, the one address that realistically shares the folder, at the paths it could plausibly map to. An unrelated domain on the same account pointing at the folder isn't covered.
+- The settings file comes back with `BETTERCAL_` in it: exposed.
+- The probe's token comes back but the settings file doesn't (a server that refuses dotfiles, or can't read owner-only files): PHP files are served as text there, but the settings are out of reach. "Probably safe, but fix this."
+- An empty 200, unless the control is an empty 200 too: reachable but guarded. Safe.
+- A 403 while the control is a 404: refused. Safe.
+- No answer from any host: not checked.
+- Otherwise: probably safe.
+
+**When.** At the end of setup and of `install.php`, after `update.php` and the database update page, and from "Check now" (at most once a minute). Not on a timer.
+
+**What people see.** One row in Settings, System, **Private files**, with the result, notes and "Check now". Setup, the installers and the updaters show the result only when it isn't plainly Safe.
+
+- "**Safe.** Your settings and backups are outside any public web folder."
+- "**Safe.** Your Better-Cal folder sits inside example.com's public web space, but the server refuses every request for it, so no one can download your settings or backups."
+- "**Safe.** example.com can reach the Better-Cal folder, but your settings file shows as a blank page there and your backups are encrypted."
+- "**Probably safe.** Your settings file can't be shown on the web and your backups are encrypted. Better-Cal couldn't find which address, if any, serves its folder. If your hosting account's main domain isn't example.com, open that domain/better-cal/.env.php: a blank page, Forbidden or Not Found is good."
+- "**Fix this now: your settings can be downloaded.** example.com/better-cal/.env.php shows your database password to anyone, because this server isn't running PHP for that folder. Move the better-cal folder out of public_html, or ask your host to turn PHP on for it. Once it's fixed, change your database password, since it may already have been copied."
+- "**Not checked.** Your host doesn't let Better-Cal fetch pages from its own websites, which is common and not a problem in itself. To check yourself, open example.com/better-cal/.env.php: a blank page, Forbidden or Not Found means your settings are safe; if you see lines starting with BETTERCAL_, see (the install guide)."
+
+Notes, where the folder isn't out of reach: an old `worker.log`, `error_log` files PHP wrote into the folder (`server/public/error_log` always, since the app's own address serves it), settings still in `.env` or two differing settings files, older copies beside the app, and backups not yet encrypted.
+
+**Honest limits.** It checks the main domain at the place it would serve the folder. An unrelated domain on the same account pointing at the folder isn't covered.
 
 ## Edge cases
 
-- **open_basedir.** Nothing in this design writes above the app folder that doesn't already: backups go beside it when that's writable, else inside it (encrypted either way); the probes go inside it.
-- **File managers and editors.** Editing `.env.php` by hand keeps working as long as the first line stays; if it doesn't, Better-Cal refuses to start with the message above rather than run exposed.
-- **Copying settings during a manual update.** The no-SSH steps copy `.env.php` instead of `.env`.
-- **CDNs in front** (Hostinger's, Cloudflare): the probes fetch through the same front door a visitor uses, so they test what a visitor would get. A cached old response could mislead; probe names are random and new each time.
-- **A host serving PHP as another user** (old shared mod_php setups) needs `.env.php` world-readable, exposing it to other accounts on the server. Naming doesn't change that; it is unchanged from today and documented.
+- **open_basedir.** Nothing writes above the app folder that didn't already: backups go beside it when that's writable, else inside it; the probe goes inside it.
+- **File managers** hide dotfiles; the no-SSH update steps say to show hidden files to copy `.env.php`.
+- **CDNs in front** (Hostinger's, Cloudflare): the probe goes through the same front door a visitor uses. Probe names are random each time, so a cached answer can't mislead.
+- **Malware scanners** on shared hosts (Imunify360, Monarx) may flag files containing `__halt_compiler`. To be checked on Hostinger before 1.0.
+- **A host serving PHP as another user** (old shared mod_php setups) needs the settings world-readable, exposing them to other accounts on the server. Unchanged by this design, and documented.
 
 ## Testing
 
-- Unit tests: the guarded reader (guard present, missing, mangled, BOM, CRLF, UTF-16, a value containing `<?php`), conversion round trips, backup encryption round trips (and old plain backups still restoring), probe classification.
-- Docker, the app inside a `public_html` under four servers: Apache honouring `.htaccess` (expect the second "Safe"); Apache with `AllowOverride None` (the third); Nginx serving the folder's static files with PHP for `.php` (the third, `.env.php` returning nothing); Nginx serving everything raw, PHP off for that path (Exposed). Plus the update path from 0.9.81 with a plain `.env`, converting on the way.
-- A real shared host (Hostinger Premium, LiteSpeed) before 1.0.
+- Unit tests (`server/tests/run.php`): the guarded reader (guard present, deleted, mangled, BOM, CRLF, UTF-16, a value containing `<?php`), conversion (mode, equal and differing pairs, no leftovers), writers, the access code's files, backup encryption (chunks, other settings, cut-off, a changed byte, data after the end), encrypting older backups and reading both kinds, the update record, sibling conversion and pruning, the error-log rule, and the self-check (hosts, paths, classification, and whole runs against a pretend server that serves raw files, runs PHP, refuses, isn't mapped, doesn't answer, or redirects).
+- Docker, the app inside a `public_html`: Apache honouring `.htaccess`, Apache with `AllowOverride None`, Nginx running PHP for the folder, Nginx serving it raw (expect Exposed); the update from 0.9.82 with a plain `.env`, converting on the way, and a rollback to 0.9.82.
+- The reference install (Nginx, app outside the web root, root-owned settings converted by its operator), with a backup taken first.
+- A real shared host (Hostinger Premium, LiteSpeed), including whether its scanner objects to the guarded files.
 
 ## Sources
 
-The research behind this design, with its evidence and links, is summarised in the tracking issue; the key sources: CISA AA24-016A (https://www.cisa.gov/news-events/cybersecurity-advisories/aa24-016a), Unit 42 on `.env` extortion (https://unit42.paloaltonetworks.com/large-scale-cloud-extortion-operation/), WPScan on configuration backups (https://wpscan.com/blog/wordpress-configuration-file-backups/), Matomo's guarded `config.ini.php` and its private-directories check (https://github.com/matomo-org/matomo/issues/17559), Plesk's Apache and nginx settings (https://docs.plesk.com/en-US/obsidian/customer-guide/websites-and-domains/hosting-settings/web-server-settings/apache-and-nginx-settings.72320/), Hostinger Agency's `.htaccess` (https://www.hostinger.com/support/how-to-enable-htaccess-on-agency-plans/), cPanel's document-root restriction (https://support.cpanel.net/hc/en-us/articles/360050710393), OpenLiteSpeed access control (https://docs.openlitespeed.org/security/access/), PHP's `__halt_compiler` (https://www.php.net/manual/en/function.halt-compiler.php).
+CISA AA24-016A (https://www.cisa.gov/news-events/cybersecurity-advisories/aa24-016a), Unit 42 on `.env` extortion (https://unit42.paloaltonetworks.com/large-scale-cloud-extortion-operation/), WPScan on configuration backups (https://wpscan.com/blog/wordpress-configuration-file-backups/), Matomo's guarded `config.ini.php` and its private-directories check (https://github.com/matomo-org/matomo/issues/17559), Plesk's Apache and nginx settings (https://docs.plesk.com/en-US/obsidian/customer-guide/websites-and-domains/hosting-settings/web-server-settings/apache-and-nginx-settings.72320/), Hostinger Agency's `.htaccess` (https://www.hostinger.com/support/how-to-enable-htaccess-on-agency-plans/), cPanel's document-root restriction (https://support.cpanel.net/hc/en-us/articles/360050710393), OpenLiteSpeed access control (https://docs.openlitespeed.org/security/access/), PHP's `__halt_compiler` (https://www.php.net/manual/en/function.halt-compiler.php).

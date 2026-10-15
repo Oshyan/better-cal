@@ -9,8 +9,10 @@ namespace BetterCal\Http;
  * two pages that run before anyone can sign in: setup in the browser (no
  * .env yet, #138) and the database update after new files were uploaded.
  *
- * The first visit writes a code to better-cal-code.txt in the app folder
- * (outside the web root, so it can't be fetched); the page asks for it. Anyone
+ * The first visit writes a code to better-cal-code.php in the app folder;
+ * the page asks for it. Like the settings file it starts with a guard line
+ * (Support\SettingsFile), so a web server shows it as a blank page even where
+ * the app folder sits inside a web root; a file manager shows the code. Anyone
  * who can read that file could already change the app, so a stranger who
  * finds the page first gets nowhere. The code is 60 bits, expires after an
  * hour, and is replaced after 5 wrong tries. Entering it starts a session
@@ -19,7 +21,9 @@ namespace BetterCal\Http;
  */
 final class AccessCode
 {
-    public const FILE = 'better-cal-code.txt';
+    public const FILE = 'better-cal-code.php';
+    /** The old name, removed wherever it's found. */
+    private const OLD_FILE = 'better-cal-code.txt';
     public const COOKIE = 'bc_access';
     private const TTL = 3600;
     private const MAX_TRIES = 5;
@@ -31,7 +35,7 @@ final class AccessCode
 
     private function statePath(): string
     {
-        return $this->appRoot . '/.runtime-cache/access-code.json';
+        return $this->appRoot . '/.runtime-cache/access-code.php';
     }
 
     public function codePath(): string
@@ -66,12 +70,11 @@ final class AccessCode
         $display = implode('-', str_split($code, 4));
         $this->save(['purpose' => $this->purpose, 'hash' => hash('sha256', $code), 'expires' => time() + self::TTL, 'tries' => 0, 'session' => null]);
         $what = $this->purpose === 'setup' ? 'setup' : 'database update';
-        $old = umask(0077);
-        file_put_contents($this->codePath(), "Better-Cal $what code: $display\n\n"
+        @unlink($this->appRoot . '/' . self::OLD_FILE);
+        \BetterCal\Support\SettingsFile::writeAtomic($this->codePath(), \BetterCal\Support\SettingsFile::GUARD_PREFIX . " // Better-Cal code file: the line below is the code.\n"
+            . "Better-Cal $what code: $display\n\n"
             . "Enter it on the page that asked for it. It works for an hour and only once;\n"
-            . "the page writes a new one when needed. This file is safe to delete.\n");
-        umask($old);
-        @chmod($this->codePath(), 0600);
+            . "the page writes a new one when needed. This file is safe to delete.\n", 0600);
     }
 
     /** Check a typed code. On success, returns the session token to set as a cookie. */
@@ -118,14 +121,17 @@ final class AccessCode
     public function finish(): void
     {
         @unlink($this->codePath());
+        @unlink($this->appRoot . '/' . self::OLD_FILE);
         @unlink($this->statePath());
+        @unlink(dirname($this->statePath()) . '/access-code.json');
     }
 
     /** @return ?array{purpose:string,hash:string,expires:int,tries:int,session:?string} */
     private function state(): ?array
     {
         $raw = @file_get_contents($this->statePath());
-        $s = $raw === false ? null : json_decode($raw, true);
+        $nl = $raw === false ? false : strpos($raw, "\n");
+        $s = $raw === false || $nl === false ? null : json_decode(substr($raw, $nl + 1), true);
         return is_array($s) && isset($s['purpose'], $s['hash'], $s['expires']) ? $s + ['tries' => 0, 'session' => null] : null;
     }
 
@@ -135,12 +141,8 @@ final class AccessCode
         if (!is_dir($dir)) {
             @mkdir($dir, 0700);
         }
-        $tmp = $this->statePath() . '.' . bin2hex(random_bytes(4));
-        $old = umask(0077);
-        $ok = file_put_contents($tmp, json_encode($s)) !== false && rename($tmp, $this->statePath());
-        umask($old);
+        $ok = \BetterCal\Support\SettingsFile::writeAtomic($this->statePath(), \BetterCal\Support\SettingsFile::GUARD_PREFIX . "\n" . json_encode($s), 0600);
         if (!$ok) {
-            @unlink($tmp);
             throw new \RuntimeException('Could not save the access code state in ' . $dir);
         }
     }

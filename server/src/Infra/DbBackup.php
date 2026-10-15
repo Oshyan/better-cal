@@ -17,14 +17,33 @@ namespace BetterCal\Infra;
  * It's read in one consistent snapshot, rows streamed (not held in memory),
  * and values that aren't valid UTF-8 are written as hex so nothing is
  * mangled on the way back.
+ *
+ * Given a key (BackupCipher::keyFrom, from the session secret), the gzip
+ * stream is encrypted as it's written (a .bcbackup file, #142): a backup
+ * that ends up downloadable is useless to whoever downloads it. restore()
+ * reads both kinds; `php server/bin/backup.php --decrypt` turns an encrypted
+ * one back into a plain .sql.gz for other tools.
  */
 final class DbBackup
 {
     private const ROWS_PER_INSERT = 200;
     private const BYTES_PER_INSERT = 1_000_000;
 
-    public function __construct(private readonly Db $db)
+    public function __construct(private readonly Db $db, private readonly ?string $key = null)
     {
+    }
+
+    /** With the backup key these settings give (null without a session secret). */
+    public static function forConfig(Db $db, array $cfg): self
+    {
+        $secret = (string) ($cfg['session_secret'] ?? '');
+        return new self($db, $secret !== '' ? BackupCipher::keyFrom($secret) : null);
+    }
+
+    /** The file name ending a new backup gets: encrypted when there's a key. */
+    public function extension(): string
+    {
+        return $this->key !== null ? BackupCipher::EXTENSION : '.sql.gz';
     }
 
     /** @return array{tables:int,rows:int,bytes:int} */
@@ -35,16 +54,35 @@ final class DbBackup
         foreach ($pdo->query("SHOW FULL TABLES WHERE Table_type = 'BASE TABLE'")->fetchAll(\PDO::FETCH_NUM) as $row) {
             $tables[] = (string) $row[0];
         }
-        $gz = gzopen($path, 'wb6');
-        if ($gz === false) {
-            throw new \RuntimeException("Could not write the backup to $path");
-        }
-        $rows = 0;
-        try {
-            $write = static function (string $line) use ($gz): void {
-                if (gzwrite($gz, $line . "\n") === false) {
+        if ($this->key !== null) {
+            $cipher = new BackupCipher($path, $this->key);
+            $deflate = deflate_init(ZLIB_ENCODING_GZIP, ['level' => 6]);
+            $sink = static function (string $line) use ($cipher, $deflate): void {
+                $cipher->write((string) deflate_add($deflate, $line, ZLIB_NO_FLUSH));
+            };
+            $finish = static function () use ($cipher, $deflate): void {
+                $cipher->write((string) deflate_add($deflate, '', ZLIB_FINISH));
+                $cipher->close();
+            };
+        } else {
+            $gz = gzopen($path, 'wb6');
+            if ($gz === false) {
+                throw new \RuntimeException("Could not write the backup to $path");
+            }
+            $sink = static function (string $line) use ($gz): void {
+                if (gzwrite($gz, $line) === false) {
                     throw new \RuntimeException('Writing the backup failed (is the disk full?)');
                 }
+            };
+            $finish = static function () use ($gz): void {
+                gzclose($gz);
+            };
+        }
+        $rows = 0;
+        $done = false;
+        try {
+            $write = static function (string $line) use ($sink): void {
+                $sink($line . "\n");
             };
             $write('-- Better-Cal database backup' . ($note !== '' ? ", $note" : '') . ', ' . gmdate('Y-m-d\TH:i:s\Z'));
             $write('-- tables: ' . implode(',', $tables));
@@ -87,8 +125,16 @@ final class DbBackup
             $pdo->exec('COMMIT');
             $write('SET FOREIGN_KEY_CHECKS=1;');
             $write('-- end');
+            $finish();
+            $done = true;
         } finally {
-            gzclose($gz);
+            if (!$done) {
+                try {
+                    $finish();
+                } catch (\Throwable) {
+                }
+                @unlink($path); // a half-written backup is worse than none
+            }
         }
         return ['tables' => count($tables), 'rows' => $rows, 'bytes' => (int) filesize($path)];
     }
@@ -138,29 +184,135 @@ final class DbBackup
     /** @param callable(string):void $fn */
     private function eachLine(string $path, callable $fn): void
     {
-        $gz = gzopen($path, 'rb');
-        if ($gz === false) {
-            throw new \RuntimeException("Could not read $path");
+        $partial = '';
+        $emit = static function (string $bytes) use (&$partial, $fn): void {
+            $partial .= $bytes;
+            while (($nl = strpos($partial, "\n")) !== false) {
+                $fn(substr($partial, 0, $nl));
+                $partial = substr($partial, $nl + 1);
+            }
+        };
+        if (BackupCipher::isEncrypted($path)) {
+            if ($this->key === null) {
+                throw new \RuntimeException(basename($path) . ' is encrypted, and these settings have no BETTERCAL_SESSION_SECRET to open it.');
+            }
+            $inflate = inflate_init(ZLIB_ENCODING_GZIP);
+            BackupCipher::decrypt($path, $this->key, static function (string $chunk) use ($inflate, $emit): void {
+                $out = inflate_add($inflate, $chunk, ZLIB_SYNC_FLUSH);
+                if ($out === false) {
+                    throw new \RuntimeException('The backup is damaged (it doesn\'t unpack).');
+                }
+                $emit($out);
+            });
+        } else {
+            $gz = gzopen($path, 'rb');
+            if ($gz === false) {
+                throw new \RuntimeException("Could not read $path");
+            }
+            try {
+                while (!gzeof($gz)) {
+                    $chunk = gzread($gz, 1 << 20);
+                    if ($chunk === false) {
+                        break;
+                    }
+                    $emit($chunk);
+                }
+            } finally {
+                gzclose($gz);
+            }
+        }
+        if ($partial !== '') {
+            $fn($partial);
+        }
+    }
+
+    /**
+     * A plain .sql.gz copy of an encrypted backup, for phpMyAdmin or the
+     * mysql client (`php server/bin/backup.php --decrypt`). Checks the whole
+     * file first, so a damaged one never yields a partial copy.
+     */
+    public static function decryptFile(string $path, string $key, string $out): void
+    {
+        if (!BackupCipher::isEncrypted($path)) {
+            throw new \RuntimeException(basename($path) . " isn't an encrypted Better-Cal backup.");
+        }
+        BackupCipher::decrypt($path, $key, static function (string $chunk): void {});
+        $old = umask(0077);
+        $fh = @fopen($out, 'xb');
+        umask($old);
+        if ($fh === false) {
+            throw new \RuntimeException("Could not create $out (does it already exist?)");
         }
         try {
-            $partial = '';
-            while (!gzeof($gz)) {
-                $chunk = gzgets($gz, 1 << 20);
-                if ($chunk === false) {
-                    break;
+            BackupCipher::decrypt($path, $key, static function (string $chunk) use ($fh): void {
+                if (fwrite($fh, $chunk) !== strlen($chunk)) {
+                    throw new \RuntimeException('Writing the plain copy failed (is the disk full?)');
                 }
-                $partial .= $chunk;
-                if (str_ends_with($partial, "\n")) {
-                    $fn(rtrim($partial, "\n"));
-                    $partial = '';
-                }
+            });
+            if (!fclose($fh)) {
+                throw new \RuntimeException('Writing the plain copy failed (is the disk full?)');
             }
-            if ($partial !== '') {
-                $fn($partial);
-            }
-        } finally {
-            gzclose($gz);
+        } catch (\Throwable $e) {
+            @fclose($fh);
+            @unlink($out);
+            throw $e;
         }
+    }
+
+    /**
+     * Encrypt a plain backup in place (a .sql.gz from before backups were
+     * encrypted): writes the .bcbackup beside it, checks it reads back, then
+     * removes the plain one. The gzip bytes are encrypted as they are.
+     * Returns the new path.
+     */
+    public static function encryptFile(string $plainPath, string $key): string
+    {
+        $out = (string) preg_replace('/\.sql\.gz$/', '', $plainPath) . BackupCipher::EXTENSION;
+        if (is_file($out)) {
+            // Left by a run that was cut short: the plain backup is still
+            // here, so that copy was never checked. Start again.
+            @unlink($out);
+        }
+        $cipher = new BackupCipher($out, $key);
+        $in = @fopen($plainPath, 'rb');
+        try {
+            if ($in === false) {
+                throw new \RuntimeException('Could not read ' . basename($plainPath));
+            }
+            while (!feof($in)) {
+                $cipher->write((string) fread($in, 1 << 16));
+            }
+            $cipher->close();
+        } catch (\Throwable $e) {
+            try {
+                $cipher->close();
+            } catch (\Throwable) {
+            }
+            @unlink($out);
+            throw $e;
+        } finally {
+            if (is_resource($in)) {
+                fclose($in);
+            }
+        }
+        $hashIn = hash_file('sha256', $plainPath);
+        $ctx = hash_init('sha256');
+        BackupCipher::decrypt($out, $key, static function (string $chunk) use ($ctx): void {
+            hash_update($ctx, $chunk);
+        });
+        if (!hash_equals($hashIn, hash_final($ctx))) {
+            @unlink($out);
+            throw new \RuntimeException('Encrypting ' . basename($plainPath) . ' did not read back the same; it was left as it is.');
+        }
+        @chmod($out, 0600);
+        if (function_exists('posix_geteuid') && posix_geteuid() === 0) {
+            // Run as root for a root-owned install's conversion: the copy
+            // belongs to whoever owned the original, so a rollback can read it.
+            @chown($out, (int) fileowner($plainPath));
+            @chgrp($out, (int) filegroup($plainPath));
+        }
+        @unlink($plainPath);
+        return $out;
     }
 
     private function literal(mixed $v): string

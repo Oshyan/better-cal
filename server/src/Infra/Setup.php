@@ -124,7 +124,8 @@ final class Setup
     }
 
     /**
-     * .env text from the example file with these values filled in: each
+     * Settings text (.env.php) from the example file with these values filled
+     * in, behind the guard line (Support\SettingsFile). Each
      * KEY= line that isn't commented out is replaced in place, so the
      * explanations stay next to it; a key the example lacks is added at the
      * end. Values are written double-quoted, which config.php strips, so a
@@ -142,6 +143,11 @@ final class Setup
                 throw new \InvalidArgumentException("$key can't contain a line break.");
             }
         }
+        $example = ltrim(str_starts_with($example, "\xEF\xBB\xBF") ? substr($example, 3) : $example, "\r\n");
+        if (str_starts_with($example, \BetterCal\Support\SettingsFile::GUARD_PREFIX)) {
+            $nl = strpos($example, "\n");
+            $example = $nl === false ? '' : substr($example, $nl + 1);
+        }
         $lines = explode("\n", $example);
         $done = [];
         foreach ($lines as $i => $line) {
@@ -150,7 +156,7 @@ final class Setup
                 $done[$m[1]] = true;
             }
         }
-        $text = rtrim(implode("\n", $lines), "\n") . "\n";
+        $text = \BetterCal\Support\SettingsFile::GUARD . rtrim(implode("\n", $lines), "\n") . "\n";
         $missing = array_diff_key($values, $done);
         if ($missing !== []) {
             $text .= "\n# Added by bin/install.php\n";
@@ -168,14 +174,18 @@ final class Setup
     }
 
     /**
-     * Write .env readable by its owner alone. Refuses to replace one: a
-     * second install must never silently swap the session secret or the
-     * database out from under a working one.
+     * Write the settings file readable by its owner alone. Refuses to replace
+     * one, or to write .env.php beside an existing .env: a second install must
+     * never silently swap the session secret or the database out from under a
+     * working one.
      */
     public static function writeEnv(string $path, string $text): void
     {
-        if (file_exists($path) || is_link($path)) {
-            throw new \RuntimeException("$path already exists; not replacing it.");
+        $siblings = [$path, dirname($path) . '/.env', dirname($path) . '/.env.php'];
+        foreach ($siblings as $p) {
+            if (file_exists($p) || is_link($p)) {
+                throw new \RuntimeException("$p already exists; not replacing it.");
+            }
         }
         $old = umask(0077);
         try {
@@ -222,10 +232,15 @@ final class Setup
         return $db->insert('calendars', ['user_id' => $userId, 'name' => 'Personal', 'color' => '#4a7dff', 'kind' => 'local']);
     }
 
-    /** The crontab line for the worker, with this PHP's own path. */
-    public static function cronLine(string $appRoot): string
+    /**
+     * The crontab line for the worker, with this PHP's own path. Output is
+     * discarded: a log file in the app folder could be downloaded where the
+     * folder sits in a web root, and the worker's errors go to its private
+     * log (Support\ErrorLog) and Settings, System.
+     */
+    public static function cronLine(string $appRoot, ?string $php = null): string
     {
-        $php = PHP_BINARY !== '' ? PHP_BINARY : 'php';
-        return '* * * * * ' . $php . ' ' . $appRoot . '/server/bin/worker.php >> ' . $appRoot . '/worker.log 2>&1';
+        $php ??= PHP_BINARY !== '' ? PHP_BINARY : 'php';
+        return '* * * * * ' . $php . ' ' . $appRoot . '/server/bin/worker.php >/dev/null 2>&1';
     }
 }

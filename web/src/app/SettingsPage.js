@@ -102,8 +102,38 @@ function SystemSection() {
         Your feeds and devices: ${alerts.accountTo}${alerts.systemTo !== alerts.accountTo ? html`<br />System-wide: ${alerts.systemTo}` : html`<br />System-wide: same address (set BETTERCAL_ALERT_EMAIL to change)`}
       </span>`}
     <//>
+    <${PrivateFilesRow} />
     <${StartsRow} />
   </section>`;
+}
+
+// Can the settings file and backups be downloaded (#142, Infra\PrivateFilesCheck).
+// The server keeps the last result; "Check now" asks the main domain again,
+// at most once a minute.
+function PrivateFilesRow() {
+  const [state, setState] = useState(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { api('/system/private-files').then(setState).catch(() => setState({ result: null, wait: 0 })); }, []);
+  const check = async () => {
+    setBusy(true);
+    try {
+      setState(await api('/system/private-files/check', { method: 'POST' }));
+    } catch (e) {
+      toast(e.message || 'The check failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+  const r = state && state.result;
+  const hint = busy ? 'Checking… this asks your main domain for a test file and takes a few seconds.'
+    : (r ? 'Checked ' + fmtSince(r.checkedAt) + '.' : (state ? 'Not checked yet.' : 'Loading…'));
+  return html`<${Row} label="Private files" hint=${hint}>
+    <span class="bc-set-value bc-pf${r && r.status === 'exposed' ? ' bc-set-warn' : ''}">
+      ${r && html`<strong>${r.title}</strong> ${r.message}`}
+      ${r && r.notes && r.notes.length > 0 && html`<ul class="bc-pf-notes">${r.notes.map((n) => html`<li key=${n}>${n}</li>`)}</ul>`}
+    </span>
+    <button type="button" class="bc-btn" disabled=${busy || !state} onClick=${check}>Check now</button>
+  <//>`;
 }
 
 // Why this device's app started, most recent first (0.9.1, resume.js): to

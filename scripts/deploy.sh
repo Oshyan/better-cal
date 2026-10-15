@@ -212,12 +212,22 @@ reconcile_release_plugins "${APP_DIR}" "${DEPLOY_SNAPSHOT}" "${APP_USER}"
 stage "composer + migrate + link"
 rssh "APP_DIR='${APP_DIR}' DOCROOT='${DOCROOT}' APP_USER='${APP_USER}' bash -s" <<'EOF'
 set -euo pipefail
-# .env is provisioned once, outside deployment. Never repair it through this
-# APP_USER-owned directory: a substituted symlink must not become a root path.
-if sudo -n -u "${APP_USER}" -- test -L "${APP_DIR}/.env" \
-  || ! sudo -n -u "${APP_USER}" -- test -f "${APP_DIR}/.env" \
-  || ! sudo -n -u "${APP_USER}" -- test -r "${APP_DIR}/.env"; then
-  echo "${APP_DIR}/.env must be a readable regular file, not a symlink; provision it before deploying." >&2
+# The settings file (.env.php, or .env until it's converted) is provisioned
+# once, outside deployment. Never repair it through this APP_USER-owned
+# directory: a substituted symlink must not become a root path. Both at once
+# is ambiguous, so it stops here.
+settings="${APP_DIR}/.env"
+if sudo -n -u "${APP_USER}" -- test -e "${APP_DIR}/.env.php" || sudo -n -u "${APP_USER}" -- test -L "${APP_DIR}/.env.php"; then
+  settings="${APP_DIR}/.env.php"
+  if sudo -n -u "${APP_USER}" -- test -e "${APP_DIR}/.env"; then
+    echo "${APP_DIR} has both .env.php and .env; merge anything still needed into .env.php and remove .env before deploying." >&2
+    exit 1
+  fi
+fi
+if sudo -n -u "${APP_USER}" -- test -L "${settings}" \
+  || ! sudo -n -u "${APP_USER}" -- test -f "${settings}" \
+  || ! sudo -n -u "${APP_USER}" -- test -r "${settings}"; then
+  echo "${settings} must be a readable regular file, not a symlink; provision it before deploying." >&2
   exit 1
 fi
 sudo -u "${APP_USER}" bash -c "cd ${APP_DIR}/server && composer install --no-dev --quiet --no-interaction"

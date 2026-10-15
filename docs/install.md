@@ -335,8 +335,8 @@ A few of Better-Cal's files must never be downloadable: the settings file (datab
 
 **Settings, System, Private files** says whether this holds on your host. Better-Cal writes a test file into its folder and asks your main domain for it (`example.com` and `www.example.com` for `cal.example.com`), at the place that domain would serve the folder if it sits in its web space:
 
-- **Safe** comes in three forms: the folder is outside any public web folder; it's inside one but the server refuses every request for it; or the main domain reaches it, but the settings file shows as a blank page there and the backups are encrypted.
-- **Probably safe** means no address it tried serves the folder. It can't rule out a domain it doesn't know about, so it says how to check that one yourself.
+- **Safe** comes in two forms: the folder is in the main domain's web space but the server refuses every request for it; or the main domain reaches it, but the settings file shows as a blank page there and the backups are encrypted.
+- **Probably safe** means no address it tried serves the folder. That's also the most it says for a folder outside `public_html` and the like, since a web root can be named anything. It can't rule out an address it doesn't know about, so it says how to check that one yourself.
 - **Fix this now** means the server hands out PHP files as text in that folder, so the settings file can be read. Move the folder out of the web root, or ask your host to run PHP there, then change the database password, since it may already have been copied.
 - **Not checked** means your host doesn't let a site fetch pages from its own websites, which is common. The message says how to check by hand.
 

@@ -23,7 +23,9 @@ use BetterCal\Support\SettingsFile;
  * - 403, while a made-up address on the same domain gives 404: the folder is
  *   in the web space and refused (the .htaccess). Safe.
  * - 404 everywhere: the domain doesn't serve the folder at the place it
- *   would. Probably safe; it can't prove no other address does.
+ *   would. Probably safe; it can't prove no other address does. That's
+ *   also the best it can say for a folder outside the usual web folders
+ *   (public_html and the like): a web root can be named anything.
  * - Nothing answers: outgoing requests are blocked. Not checked.
  *
  * Not on a timer: at the end of setup and of each updater, and from "Check
@@ -111,14 +113,18 @@ final class PrivateFilesCheck
         $place = self::candidatePath($appRoot);
         $plainSettings = is_file(SettingsFile::plain($appRoot));
 
-        if ($place === null) {
-            return self::finish('safe', 'Safe.', 'Your settings and backups are outside any public web folder.', $cfg, 'outside');
-        }
+        // No folder in the path that hosts usually serve (public_html and
+        // the like). A web root can be named anything, so that isn't proof:
+        // ask the main domain for the folder at its top level anyway, and
+        // never call the result more than "Probably safe".
+        $guessed = $place === null;
+        $place ??= ['path' => '/' . $folder . '/', 'docroot' => null, 'domain' => null];
+        $notFound = $guessed ? 'unlikely' : 'probably';
         $settingsFiles = array_values(array_filter(['.env', '.env.php'], static fn(string $f): bool => is_file($appRoot . '/' . $f))) ?: ['.env.php'];
         $hosts = self::candidateHosts($baseHost, $place['domain']);
         $shown = ($hosts[0] ?? $baseHost) . $place['path'];
         if ($hosts === []) {
-            return self::finish('probably', 'Probably safe.', self::probablyText($shown, $plainSettings, $andBackups), $cfg, 'probably');
+            return self::finish('probably', 'Probably safe.', self::probablyText($shown, $plainSettings, $andBackups), $cfg, $notFound);
         }
 
         // The probe: the guard line, then a token only a server that hands
@@ -153,7 +159,7 @@ final class PrivateFilesCheck
             }
             return null;
         };
-        $docroot = $place['docroot'];
+        $docroot = $place['docroot'] ?? 'the web folder it sits in';
         if (($host = $first('exposed')) !== null) {
             return self::finish('exposed', 'Fix this now: your settings can be downloaded.',
                 "$host{$place['path']}.env.php shows your database password to anyone, because this server isn't running PHP for that folder. "
@@ -178,7 +184,7 @@ final class PrivateFilesCheck
         if (count(array_filter($findings, static fn(string $f): bool => $f === 'failed')) === count($findings)) {
             return self::finish('unchecked', 'Not checked.', "Your host doesn't let Better-Cal fetch pages from its own websites, which is common and not a problem in itself. " . self::checkYourself($shown), $cfg, 'unchecked');
         }
-        return self::finish('probably', 'Probably safe.', self::probablyText($shown, $plainSettings, $andBackups), $cfg, 'probably');
+        return self::finish('probably', 'Probably safe.', self::probablyText($shown, $plainSettings, $andBackups), $cfg, $notFound);
     }
 
     /**
@@ -394,7 +400,8 @@ final class PrivateFilesCheck
     private static function finish(string $status, string $title, string $message, array $cfg, string $kind): array
     {
         $appRoot = rtrim($cfg['app_root'], '/');
-        $reachable = !in_array($kind, ['outside', 'refused'], true);
+        // Files in the folder are worth a note only where it may be served.
+        $reachable = !in_array($kind, ['unlikely', 'refused'], true);
         $notes = [];
         $plain = SettingsFile::plain($appRoot);
         $guarded = SettingsFile::guarded($appRoot);

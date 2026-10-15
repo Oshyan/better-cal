@@ -9738,7 +9738,13 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
     checkEq('check: a refused folder is safe', ['safe', 'refused'], [($r = $PC::evaluate($cfg, $server('refuse')))['status'], $r['kind']]);
     checkEq('check: a folder no address serves is probably safe', 'probably', $PC::evaluate($cfg, $server('unmapped'))['status']);
     checkEq('check: no answers at all is not checked', 'unchecked', $PC::evaluate($cfg, $server('down'))['status']);
-    checkEq('check: an app outside any web folder is safe without asking', ['safe', 'outside'], [($r = $PC::evaluate(['app_root' => $app, 'base_url' => 'https://cal.example.com'], $server('raw')))['status'], $r['kind']]);
+    checkEq('check: an app outside the usual web folders is still only probably safe', ['probably', 'unlikely'], [($r = $PC::evaluate(['app_root' => $app, 'base_url' => 'https://cal.example.com'], $server('unmapped')))['status'], $r['kind']]);
+    $asked = [];
+    $PC::evaluate(['app_root' => $app, 'base_url' => 'https://cal.example.com'], static function (array $urls) use (&$asked): array {
+        $asked = array_merge($asked, $urls);
+        return array_fill(0, count($urls), ['status' => 404, 'body' => '', 'location' => null]);
+    });
+    check('check: and its folder is still asked for, at the top of the main domain', in_array('https://example.com/better-cal/.env.php', $asked, true));
     rename("$site/.env.php", "$site/.env");
     file_put_contents("$site/.env", "BETTERCAL_DB_PASS=x\n");
     $r = $PC::evaluate($cfg, $server('php'));

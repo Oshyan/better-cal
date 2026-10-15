@@ -4,6 +4,14 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.77 (2026-10-15)
+
+- **Set up Better-Cal in the browser, no command line needed.** Upload the release zip with your host's file manager, point your domain at it, and open the address: a setup page asks for the database details and your account, checks the database before saving anything, creates the tables, writes the settings and makes your account, then shows the cron line to add in your control panel. To keep anyone who finds a new install first from setting it up, it starts by asking for a code it writes into `better-cal-code.txt` in the Better-Cal folder, which only someone with access to your files can read. Once set up, the page is gone for good. [Install without a command line](docs/install.md#install-without-a-command-line).
+- **Update without a command line.** Upload and unzip the new release beside the old one, copy `.env` across, and swap the folder names. If the new version has database changes, Better-Cal shows "Database update needed" (the installed app too) and the update page applies them after the same kind of code: it backs up first and shows "updating" to everyone else while it works. [Updating without a command line](docs/install.md#without-a-command-line).
+- While database changes are waiting, the app shows that instead of failing piecemeal, the API and CalDAV refuse rather than touch a half-updated database, and the worker pauses.
+
+Operators: no migration. Nothing changes for an install with a command line; `php server/bin/update.php` still updates in one step.
+
 ## 0.9.76 (2026-10-14)
 
 - **Import your whole Google Calendar export in one step.** Google Calendar's own export (Settings, Import & export, Export) and Takeout both give you a zip with one file per calendar. **+ Import calendars** in the sidebar now takes that zip as it downloaded: each calendar comes in as its own, named as it was at Google, repeating events and their exceptions intact. Importing the same export again adds nothing, and anything skipped is listed with why. `server/bin/import-takeout.php` takes the zip too, for exports too large to upload.

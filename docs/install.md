@@ -1,10 +1,10 @@
 # Installing Better-Cal
 
-Better-Cal is plain PHP and MySQL with a no-build frontend. It runs on any host that gives you PHP 8.4+, MySQL 8 or MariaDB 10.6+, a cron job and a web server you can point at one directory, which includes ordinary shared hosting. Installing takes about fifteen minutes if those are in place, and needs a command line on the server (SSH). A setup page in the browser, for hosts without one, is planned ([#138](https://github.com/Oshyan/better-cal/issues/138)).
+Better-Cal is plain PHP and MySQL with a no-build frontend. It runs on any host that gives you PHP 8.4+, MySQL 8 or MariaDB 10.6+, a cron job and a web server you can point at one directory, which includes ordinary shared hosting. Installing takes about fifteen minutes if those are in place. With a command line on the server (SSH), follow [Install](#install); without one, [Install without a command line](#install-without-a-command-line) does it all from your host's control panel and the browser.
 
 ## What you need
 
-- **A server or hosting account with SSH**, and a domain or subdomain for Better-Cal (say `cal.example.com`) with HTTPS. Sessions, the installable app and push reminders all require HTTPS.
+- **A server or hosting account**, and a domain or subdomain for Better-Cal (say `cal.example.com`) with HTTPS. SSH helps but isn't required. Sessions, the installable app and push reminders all require HTTPS.
 - **PHP 8.4 or newer** with the extensions listed under [Requirements in detail](#requirements-in-detail). Most hosts let you pick the version in their control panel. The installer checks all of it and says what's missing.
 - **MySQL 8.4 or MariaDB 10.6 or newer:** one empty database and a user for it.
 - **Cron**, or any scheduler that can run a command every minute.
@@ -63,6 +63,19 @@ That's a working install. The rest is optional:
 
 If something here didn't work as written on your host, please [report it](https://github.com/Oshyan/better-cal/issues).
 
+### Install without a command line
+
+For hosting where you have a control panel and a file manager (or FTP) but no SSH. Everything the installer does, a setup page in the browser does instead.
+
+1. **Upload the release zip** (`better-cal-X.Y.Z.zip` from the [releases page](https://github.com/Oshyan/better-cal/releases)) with your host's file manager and unzip it there. It makes a `better-cal` folder. Put it outside your web root if the host allows (beside `public_html` rather than in it).
+2. **Create a database and a user** on the control panel's database page. Note the host, database name, user and password.
+3. **Point your domain at `better-cal/server/public`** in the control panel's domain settings, and turn on HTTPS for it (most panels have a Let's Encrypt switch).
+4. **Open the address in your browser.** You'll see Better-Cal's setup page. To show it's your server, it asks for a code it has just written into the file `better-cal-code.txt` in the `better-cal` folder: open that file in the file manager and type the code in. (Anyone who reaches the page before you can't get further without that file.)
+5. **Fill in the form:** the address, the database details (checked before anything is saved) and your account. Setup creates the tables, saves the settings in `.env` (readable only by your account) and makes your account. From then on the setup page is gone for good.
+6. **Add the cron job** it shows you, in the control panel's cron or scheduled-tasks page, running every minute. Then sign in.
+
+It needs PHP to be able to write to the `better-cal` folder, which on shared hosting it normally can. If it can't, the page says so.
+
 ### From git instead of the zip
 
 For following development or making changes: `git clone https://github.com/Oshyan/better-cal.git /srv/better-cal`, `git checkout` the newest release tag, then install the PHP libraries with [Composer](https://getcomposer.org/download/) (`cd server && composer install --no-dev`) before running the installer. Updating works from a checkout too.
@@ -97,7 +110,7 @@ What `install.php` does, step by step, if you'd rather:
 
 ## Updating
 
-Settings, About shows the running version, and the app tells you when a release is out (it checks GitHub once a day; Settings, About can limit that to security releases or turn it off). The app itself never downloads or installs anything; updating is one command, run by you. Updating from the app is planned ([#139](https://github.com/Oshyan/better-cal/issues/139)).
+Settings, About shows the running version, and the app tells you when a release is out (it checks GitHub once a day; Settings, About can limit that to security releases or turn it off). The app itself never downloads or installs anything. With SSH, updating is one command; without it, a few steps in your host's file manager and one button. A one-click update from the app is planned ([#139](https://github.com/Oshyan/better-cal/issues/139)).
 
 Each [release page](https://github.com/Oshyan/better-cal/releases) lists what changed and ends with an **Operators** line: what the update needs from you, such as "no migration", a new setting, or a newer PHP. Skipping versions is fine, since the migration applies everything in between, but read the Operators lines of the ones you skip as well.
 
@@ -128,9 +141,18 @@ puts the previous version and the database back as they were before the update. 
 
 The backups and the previous version stay until you remove them. Delete old ones from `/srv/better-cal-backups/` and the `better-cal-<version>` folders whenever you're happy with an update.
 
-### By hand
+### Without a command line
 
-The same steps yourself, as the user that owns the files, in the app directory (`/srv/better-cal` here):
+1. **Download the new release zip** and upload it with your host's file manager, next to the current `better-cal` folder (not into it), and unzip it under another name, say `better-cal-new`.
+2. **Copy your own files across** from `better-cal` into `better-cal-new`: `.env`, and any plugins you added under `server/plugins/`.
+3. **Swap the folders by renaming them:** `better-cal` to `better-cal-old`, then `better-cal-new` to `better-cal`. Your domain and cron job keep pointing at the same place.
+4. **Open Better-Cal.** If the new version has database changes, you'll see "Database update needed" instead of your calendar (an installed app shows the same, with a button to the update page). Enter the code it writes into `better-cal-code.txt`, as at setup, and press **Back up and update the database**: it backs up first, beside the `better-cal` folder (or inside it, if the folder above isn't writable), then applies the changes. If there are no changes, Better-Cal simply opens on the new version.
+
+To go back: rename the folders back, and if the database was updated, restore the backup through your host's database tool (phpMyAdmin's Import takes the `.sql.gz` file). Keep `better-cal-old` until you're happy with the new version. Unlike the updater, this route doesn't check the release's signature for you, so download only from the [releases page](https://github.com/Oshyan/better-cal/releases).
+
+### By hand, with SSH
+
+The updater's steps yourself, as the user that owns the files, in the app directory (`/srv/better-cal` here):
 
 1. **Back up the database**, and keep a copy of `.env`:
 

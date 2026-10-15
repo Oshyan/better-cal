@@ -9485,7 +9485,9 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
     $HC = BetterCal\Http\HostCheck::class;
     check('host check: its own host', $HC::allowed('https://cal.example.com', 'cal.example.com'));
     check('host check: case and the default port don\'t matter', $HC::allowed('https://cal.example.com', 'CAL.example.com:443'));
-    check('host check: a non-default port must match', $HC::allowed('https://cal.example.com:9443', 'cal.example.com:9443') && !$HC::allowed('https://cal.example.com:9443', 'cal.example.com'));
+    check('host check: a non-default port, passed on or not, is the same host', $HC::allowed('https://cal.example.com:9443', 'cal.example.com:9443') && $HC::allowed('https://cal.example.com:9443', 'cal.example.com'));
+    check('host check: a trailing dot is the same host', $HC::allowed('https://cal.example.com', 'cal.example.com.'));
+    check('host check: another name on the same port is still refused', !$HC::allowed('https://cal.example.com:9443', 'other.example:9443'));
     check('host check: the main site is refused', !$HC::allowed('https://cal.example.com', 'example.com'));
     check('host check: an IP address is refused', !$HC::allowed('https://cal.example.com', '203.0.113.7'));
     check('host check: an empty Host is refused', !$HC::allowed('https://cal.example.com', ''));

@@ -4,7 +4,15 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.80 (2026-10-15)
+
+- **The address check compares host names only, not ports.** In 0.9.79 it also compared the port, and some web servers (nginx handing PHP its `$host`) leave the port out, so an install on a non-standard port was redirected to itself. A trailing dot (`cal.example.com.`) also counts as the same name now.
+
+Operators: no migration. Everything listed under 0.9.79 ships here.
+
 ## 0.9.79 (2026-10-15)
+
+*Not published; shipped in 0.9.80.*
 
 - **Better-Cal answers only at its own address.** Many hosts store a subdomain as a folder inside the main site, so the same files could also be reached at `example.com/cal/`, on the main site's origin, where its scripts count as the same site. Requests for any host but the one in `BETTERCAL_BASE_URL` are now redirected there, or refused. `BETTERCAL_ALLOWED_HOSTS` lists extra names for the rare setup that needs them.
 - **The install guide says where to put it, and why:** a domain or subdomain of its own (not a folder of another site), pointed at `server/public`, outside the main web root where the host allows, and with its own hosting user if the account runs other sites. [Choosing where to put it](docs/install.md#choosing-where-to-put-it).

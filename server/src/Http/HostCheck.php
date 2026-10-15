@@ -20,12 +20,21 @@ namespace BetterCal\Http;
  */
 final class HostCheck
 {
-    /** host[:port] lowercased, the port dropped when it's the scheme's default. */
+    /**
+     * The host name alone, lowercased, without a port or a trailing dot. Ports
+     * aren't compared: what this guards against is another name reaching the
+     * files, and web servers differ in whether they pass the port on (nginx
+     * often hands PHP $host, without it), so comparing ports would lock out
+     * an install on a non-standard port.
+     */
     public static function normalize(string $host, string $scheme = 'https'): string
     {
         $host = strtolower(trim($host));
-        $default = $scheme === 'http' ? ':80' : ':443';
-        return str_ends_with($host, $default) ? substr($host, 0, -strlen($default)) : $host;
+        if (str_starts_with($host, '[')) {
+            $end = strpos($host, ']');
+            return $end === false ? $host : substr($host, 0, $end + 1);
+        }
+        return rtrim((string) preg_replace('/:\d+$/', '', $host), '.');
     }
 
     /** @param list<string> $extra */

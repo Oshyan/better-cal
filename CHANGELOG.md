@@ -4,6 +4,17 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.82 (2026-10-15)
+
+Security fix. Updating is recommended for every install whose `better-cal` folder sits inside a web root (for example under `public_html`, as some hosts require for subdomains).
+
+- **Only Better-Cal's two front doors run from the web.** Its command-line scripts (`server/bin/*.php`: the installer, updater, worker, migration, token and account tools) didn't check how they were started. Where the whole folder is reachable from the web and the server ignores the folder's `.htaccess` (Nginx-family servers, or Apache with overrides off), they could be run from a browser: the worker and migrations with no arguments, and on PHP configurations that read arguments from the address, the token tool could create an API token. Every version before 0.9.81 was also exposed on Apache and LiteSpeed in that layout. Now every PHP file except `server/public/index.php` and `dav.php` answers 404 and does nothing when requested over the web, whatever the server's settings.
+- The release zip no longer includes the PHP libraries' own command-line tools, examples, tests and docs, which Better-Cal never uses.
+
+Found in a review of the design for keeping private files private on any host ([#142](https://github.com/Oshyan/better-cal/issues/142)); checked on Apache with `.htaccess` switched off, where every such script now answers 404.
+
+Operators: no migration. Update with `php server/bin/update.php`. Installs whose `better-cal` folder is outside any web root, as the install guide recommends, were not exposed.
+
 ## 0.9.81 (2026-10-15)
 
 - **The app folder refuses to be served, except for `server/public`.** Some hosts (Hostinger, for one) only let a subdomain point inside `public_html`, which puts the whole `better-cal` folder inside the main site's web root, where `.env`, the setup code and backups would otherwise be downloadable through the main domain. A `.htaccess` at the top of the folder now refuses every request for anything in it, while `server/public` keeps serving the app. [Choosing where to put it](docs/install.md#choosing-where-to-put-it) covers this layout, and how to check it after installing.

@@ -14,6 +14,7 @@ use BetterCal\Infra\Db;
 use BetterCal\Infra\JobQueue;
 use BetterCal\Infra\LlmGateway;
 
+define('BETTERCAL_WEB_ENTRY', true);
 require dirname(__DIR__) . '/src/bootstrap.php';
 
 // Not set up yet (no .env): the setup page, for every path, until it is.

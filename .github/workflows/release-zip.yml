@@ -93,6 +93,15 @@ jobs:
           (cd "$out/better-cal" && find . -type f | sed 's|^\./||' | sort > .release-files)
           tar -xzf /tmp/vendor/vendor.tar.gz -C "$out/better-cal/server"
           [[ -f "$out/better-cal/server/vendor/autoload.php" ]]
+          # The libraries' own command-line tools, examples, tests and docs:
+          # Better-Cal never runs them, and on a host that serves the app
+          # folder as a web root, a PHP script among them would run outside
+          # Better-Cal's checks. Only the libraries' code goes in the zip.
+          rm -rf "$out/better-cal/server/vendor/bin"
+          find "$out/better-cal/server/vendor" -mindepth 3 -maxdepth 3 -type d \
+            \( -name bin -o -name examples -o -name example -o -name tests -o -name test -o -name Tests -o -name docs \) \
+            -prune -exec rm -rf {} +
+          [[ -f "$out/better-cal/server/vendor/autoload.php" ]]
           (cd "$out" && zip -q -r -X "better-cal-$version.zip" better-cal)
           sha256sum "$out/better-cal-$version.zip"
           echo "ZIP=$out/better-cal-$version.zip" >> "$GITHUB_ENV"

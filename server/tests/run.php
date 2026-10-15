@@ -9496,6 +9496,25 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
     check('host check: a configured localhost is still checked', !$HC::allowed('http://localhost:8080', 'example.com'));
 }
 
+// ---------------------------------------------------------------------------
+// Only the two front controllers run from the web (0.9.82): bootstrap.php
+// refuses any non-CLI run that didn't declare itself, before anything else.
+{
+    $boot = (string) file_get_contents(dirname(__DIR__) . '/src/bootstrap.php');
+    $guardAt = strpos($boot, "!defined('BETTERCAL_WEB_ENTRY')");
+    check('web entry: bootstrap refuses undeclared web runs, first thing', $guardAt !== false && $guardAt < (int) strpos($boot, 'vendor/autoload.php'));
+    foreach (['index.php', 'dav.php'] as $front) {
+        $src = (string) file_get_contents(dirname(__DIR__) . '/public/' . $front);
+        $def = strpos($src, "define('BETTERCAL_WEB_ENTRY', true);");
+        check("web entry: $front declares itself before loading the bootstrap", $def !== false && $def < (int) strpos($src, "/src/bootstrap.php'"));
+    }
+    foreach (glob(dirname(__DIR__) . '/bin/*.php') ?: [] as $script) {
+        if (str_contains((string) file_get_contents($script), 'BETTERCAL_WEB_ENTRY')) {
+            check('web entry: ' . basename($script) . ' never declares itself a web entry', false);
+        }
+    }
+}
+
 $runLog = (string) @file_get_contents($GLOBALS['__runLog']);
 @unlink($GLOBALS['__runLog']);
 fwrite(STDERR, $runLog);

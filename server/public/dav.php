@@ -12,6 +12,7 @@ use BetterCal\Dav\PrincipalBackend;
 use BetterCal\Domain\Undo;
 use BetterCal\Infra\Db;
 
+define('BETTERCAL_WEB_ENTRY', true);
 require dirname(__DIR__) . '/src/bootstrap.php';
 
 if (BetterCal\Http\InstallPages::needsSetup(dirname(__DIR__, 2))) {

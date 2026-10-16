@@ -125,6 +125,7 @@ What `install.php` does, step by step, if you'd rather:
 - **Production:** Nginx with PHP-FPM 8.4 and Percona Server 8.4 (MySQL), on Debian.
 - **Clean-install test (2026-10-03):** Ubuntu 24.04 with Apache 2.4 and mod_php 8.3 (the minimum then; it is 8.4 since 0.9.0, and the GitHub check installs on 8.4 on every push), MariaDB 10.11 (and MariaDB 10.6 for the migrations, the smoke test and the worker), following this page from an empty machine. Everything below was checked there: install, migrations, sign-in, events and undo, search, repeating events, CalDAV and API tokens through Apache, a subscribed feed, a plugin, the worker under cron.
 - **Repeated on 2026-10-05** with PHP 8.4 from the Ubuntu PPA described above (mod_php, only the listed extensions) and MariaDB 10.11: install, migrations, the worker under cron, and the first sign-in to a new account with its welcome.
+- **Shared hosting (2026-10-15):** LiteSpeed with PHP chosen in the control panel and the app folder inside `public_html` (Hostinger), installed from the release zip with the setup page and a control-panel cron job, then updated by extracting a newer zip over it. And DreamHost shared hosting, installed by someone other than the maintainer following this page.
 
 ## Updating
 
@@ -357,3 +358,14 @@ Production backups use a separate privilege boundary. `BACKUP_DIR` must be one d
 - CalDAV clients connect to `https://your-host/dav/` with your email and either your password or an API token (`php server/bin/token.php --create --name="My phone"`). See [caldav.md](caldav.md).
 - Place search works out of the box on Photon (photon.komoot.io, free, no key). For faster or better results you can use LocationIQ or Stadia Maps with your own key: set `BETTERCAL_PLACE_SEARCH` and the key in `.env.php` (see `.env.example`), and Settings, Location & maps shows which service is in use, with Photon still answering whatever the chosen service can't. [Geocoding and place search](geocoding.md) compares the services and explains the choice. If you restrict a LocationIQ key to source addresses, use the server's IPv4 address; Better-Cal reaches LocationIQ over IPv4. **Stadia Maps:** Better-Cal saves the coordinates of places you pick, and Stadia Maps' terms allow keeping them only on a paid plan that includes storing results, so check [Stadia's current plans](https://stadiamaps.com/pricing/). Making sure your plan fits is your responsibility; Better-Cal does not check.
 - Set your Home time zone under Settings, General. The screen always follows the device you are using; Home is the clock all-day reminders fire on and the zone of events created for you by email, plugins and the API.
+
+## Removing Better-Cal
+
+To take an install down completely. If you might want your calendar again, keep a copy first: a database backup together with `.env.php` (a backup needs it to be read), or your calendars as `.ics` files, downloaded from an outbound feed's address (Outbound feeds) or saved from a CalDAV app.
+
+1. **The cron job.** Delete it first (control panel, or `crontab -e`), so nothing runs while the rest goes.
+2. **The address.** Remove the subdomain or domain you pointed at `server/public`, or its web server configuration (the Nginx or Apache site), and its HTTPS certificate if it has one of its own.
+3. **The files.** Delete the `better-cal` folder. Its settings, setup code and logs are inside it. Also delete anything beside it that Better-Cal made: `better-cal-backups` (database backups) and any `better-cal-<version>` folders kept by updates.
+4. **The database.** Delete the database and its database user (control panel, or `DROP DATABASE` and `DROP USER` in MySQL).
+5. **Your devices.** Remove the home-screen app where you installed it, and clear the site's data in each browser you used it in (its offline copy and notification sign-up). Calendar apps connected over CalDAV need their account removed too.
+6. **Google, if you connected it.** Remove Better-Cal's access in your Google Account (Security, Third-party apps and services). The OAuth client in your Google Cloud project, if you made one only for this, can go as well.

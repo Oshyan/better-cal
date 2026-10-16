@@ -1415,13 +1415,25 @@ body.bc-dragging * { cursor: grabbing !important; }
   color: var(--fg);
 }
 .bc-sysbanner > span { flex: 1; min-width: 200px; }
+/* The stopped-worker banner sits at the top, under the toolbar: at the bottom
+   of a tall window it went unseen. */
+.bc-sysbanner-top { font-size: 13.5px; font-weight: 500; }
+
+/* A red dot: something needs the owner (system.js needsAttention). On Settings
+   in the sidebar and on the System tab; it stays when the banner is dismissed. */
+.bc-attn-dot {
+  display: inline-block; flex: none; width: 8px; height: 8px; margin-left: 6px;
+  border-radius: 50%; background: var(--danger); vertical-align: 1px;
+}
 /* In-page warning (Filters page while prompt evaluation is failing). */
 .bc-syswarn {
   padding: 8px 12px; margin: 0 0 12px; font-size: 13px; border-radius: 6px;
   background: color-mix(in srgb, var(--danger) 10%, var(--bg));
   border: 1px solid color-mix(in srgb, var(--danger) 35%, var(--border));
 }
-.bc-sys-table { border-collapse: collapse; font-size: 12.5px; width: 100%; max-width: 720px; }
+.bc-sys-wrap { overflow-x: auto; }
+.bc-sys-table { border-collapse: collapse; font-size: 12.5px; width: 100%; }
+.bc-sys-table .bc-sys-status, .bc-sys-table .bc-sys-when { white-space: nowrap; }
 .bc-sys-table th { text-align: left; font-weight: 600; color: var(--fg-muted); padding: 2px 10px 4px 0; }
 .bc-sys-table td { padding: 3px 10px 3px 0; border-top: 1px solid var(--border); vertical-align: top; }
 .bc-sys-table tr.is-failing td { background: color-mix(in srgb, var(--danger) 6%, transparent); }
@@ -1448,7 +1460,24 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-tokens-value { font-family: var(--mono); font-size: 12.5px; background: var(--bg-inset); border-radius: 4px; padding: 2px 6px; user-select: all; word-break: break-all; }
 .bc-sys-ok { color: var(--fg-muted); }
 .bc-sys-bad { color: var(--danger); font-weight: 600; }
-.bc-sys-err { color: var(--fg-muted); max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bc-sys-err { color: var(--fg-muted); overflow-wrap: anywhere; }
+
+/* Settings, System: blocks with their title above (SettingsPage.js Block). */
+.bc-set-block { padding: 10px 0 12px; }
+.bc-set-block + .bc-set-block { border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent); }
+.bc-set-block-h { display: flex; align-items: baseline; gap: 8px; margin: 0 0 6px; font-size: 14px; font-weight: 700; }
+.bc-set-block-aside { font-size: 12.5px; font-weight: 500; color: var(--fg-muted); }
+.bc-set-block-aside.is-bad { color: var(--danger); font-weight: 600; }
+.bc-set-block-text { margin: 0 0 6px; }
+.bc-set-block-note { margin: 6px 0 0; color: var(--fg-muted); font-size: 12px; }
+.bc-set-block code, .bc-cron-fix code { font-family: var(--mono); background: var(--bg-inset); border-radius: 4px; padding: 0 4px; }
+.bc-cron-fix { padding: 8px 12px; margin: 0 0 8px; border-radius: 6px; color: var(--fg);
+  background: color-mix(in srgb, var(--danger) 8%, var(--bg)); border: 1px solid color-mix(in srgb, var(--danger) 35%, var(--border)); }
+.bc-cron-fix p { margin: 0; }
+.bc-cron-fix p + p { margin-top: 6px; }
+.bc-cron-fix strong { color: var(--danger); }
+.bc-cron-run { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.bc-cron-line { overflow-wrap: anywhere; }
 .bc-map-wrap { position: relative; margin-top: 6px; isolation: isolate; } /* Leaflet layers (z 400+) stay inside the map, under menus (0.6.10) */
 /* Leaflet ships a white attribution strip and light-grey tile gaps; both
    follow the theme here (the tiles themselves switch style, lib/maps.js). */
@@ -4240,7 +4269,6 @@ button.bc-es-alsoon-cal { cursor: pointer; text-decoration: underline; text-deco
 /* Settings, System: can the private files be downloaded (#142). The verdict wraps
    beside its Check now button; notes are a short list under it. */
 .bc-pf { flex: 1 1 18em; min-width: 0; }
-.bc-cron { flex: 1 1 18em; min-width: 0; overflow-wrap: anywhere; }
 
 /* Time zone picker (ZonePicker.js): the place field's list, a row per zone with
    its offset, country and region beside it (wrapping, never cut off). */

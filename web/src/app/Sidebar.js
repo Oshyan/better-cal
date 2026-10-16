@@ -22,6 +22,7 @@ import {
 } from './actions.js';
 import { startPointerDrag, externalDropTarget, setDropRowHighlight } from '../ui/DragController.js';
 import { CalendarSettings } from './CalendarSettings.js';
+import { needsAttention } from './system.js';
 import { MiniMonth } from './MiniMonth.js';
 import { PALETTE } from '../lib/color.js';
 import { MANAGE_ITEMS } from './commanddefs.js';
@@ -428,7 +429,7 @@ export function Sidebar({ open, collapsed, onClose }) {
     setManageCollapsed(next);
     try { localStorage.setItem('bc-manage-collapsed', next ? '1' : '0'); } catch { /* private mode */ }
   };
-  const { calendars, folders, collapsedFolders, route, people, collapsedAllCals, collapsedPeople, peopleSolo, activeOnly, plugins, pluginHidden, reviewCount } = useStore(
+  const { calendars, folders, collapsedFolders, route, people, collapsedAllCals, collapsedPeople, peopleSolo, activeOnly, plugins, pluginHidden, reviewCount, attention } = useStore(
     (s) => ({
       calendars: s.calendars, folders: s.folders,
       collapsedFolders: s.collapsedFolders, route: s.route,
@@ -436,6 +437,7 @@ export function Sidebar({ open, collapsed, onClose }) {
       people: s.people, collapsedAllCals: s.collapsedAllCals,
       plugins: s.plugins, pluginHidden: s.settings.pluginHidden || {},
       reviewCount: s.reviewCount,
+      attention: needsAttention(s.systemHealth),
       collapsedPeople: s.collapsedPeople, peopleSolo: s.peopleSolo,
       activeOnly: !!s.settings.sidebarActiveOnly,
     }),
@@ -614,7 +616,7 @@ export function Sidebar({ open, collapsed, onClose }) {
       aria-current=${route === r ? 'page' : 'false'}
       onClick=${() => set({ route: r })}
     ><${Icon} name=${r} size=${17} /><span>${label}</span>${r === 'review' && reviewCount > 0
-      && html`<span class="bc-manage-badge" aria-label=${reviewCount + ' awaiting a decision'}>${reviewCount}</span>`}</button>`)}
+      && html`<span class="bc-manage-badge" aria-label=${reviewCount + ' awaiting a decision'}>${reviewCount}</span>`}${r === 'settings' && attention && html`<span class="bc-attn-dot" role="img" aria-label="Needs attention" title="Something needs your attention: Settings, System"></span>`}</button>`)}
   </nav>`;
 
   return html`<aside class="bc-sidebar${open ? ' is-open' : ''}${collapsed ? ' is-collapsed' : ''}">
@@ -720,14 +722,15 @@ export function Sidebar({ open, collapsed, onClose }) {
         aria-expanded=${!manageCollapsed}
         onClick=${toggleManage}
       ><span class="bc-folder-caret bc-caret-vertical"><${Icon} name=${manageCollapsed ? 'chevronUp' : 'chevronDown'} size=${13} /></span>Manage${manageCollapsed && reviewCount > 0
-        && html`<span class="bc-manage-badge" aria-label=${reviewCount + ' waiting on a decision'}>${reviewCount}</span>`}</button>
+        && html`<span class="bc-manage-badge" aria-label=${reviewCount + ' waiting on a decision'}>${reviewCount}</span>`}${manageCollapsed && attention
+        && html`<span class="bc-attn-dot" role="img" aria-label="Needs attention" title="Something needs your attention: Settings, System"></span>`}</button>
       ${!manageCollapsed && MANAGE_ITEMS.map(([r, label]) => html`<button
         key=${r} type="button"
         class="bc-manage-item${route === r ? ' is-active' : ''}"
         aria-current=${route === r ? 'page' : 'false'}
         onClick=${() => set({ route: r })}
       ><${Icon} name=${r} /><span>${label}</span>${r === 'review' && reviewCount > 0
-        && html`<span class="bc-manage-badge" aria-label=${reviewCount + ' awaiting a decision'}>${reviewCount}</span>`}</button>`)}
+        && html`<span class="bc-manage-badge" aria-label=${reviewCount + ' awaiting a decision'}>${reviewCount}</span>`}${r === 'settings' && attention && html`<span class="bc-attn-dot" role="img" aria-label="Needs attention" title="Something needs your attention: Settings, System"></span>`}</button>`)}
     </footer>`}
   </aside>`;
 }

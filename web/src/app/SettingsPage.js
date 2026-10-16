@@ -11,6 +11,7 @@ import { fmtSince } from '../lib/since.js';
 import { adoptSettings } from './settings.js';
 import { saveSetting } from './actions.js';
 import { recentStarts } from './resume.js';
+import { needsAttention } from './system.js';
 import { stalledStart } from './bootlog.js';
 import { UpdateSettings } from './updates.js';
 import { PageShell } from './PageShell.js';
@@ -68,52 +69,75 @@ function Seg({ value, options, onChange, label }) {
   </span>`;
 }
 
-// Is background work working. One row per subject: the worker's job types
-// (system-wide), each subscribed feed, each device reminders go to. Failing
-// rows first. Transitions are also in Activity under "System", and a streak
-// that lasts earns one email; this is the "right now" view.
+// Settings, System: what the server is doing in the background, and whether
+// anything needs its owner. Each part is a block with its title above it
+// (tables and commands need the width more than a label column does), and a
+// title says the state at a glance ("1 failing") before the detail below.
+function Block({ id, title, aside, children }) {
+  return html`<div class="bc-set-block" id=${id}>
+    <h3 class="bc-set-block-h">${title}${aside}</h3>
+    ${children}
+  </div>`;
+}
+
+// Is background work working. One row per subject: the worker itself and its
+// job types (system-wide), each subscribed feed, each device reminders go to.
+// Failing rows first. Transitions are also in Activity under "System", and a
+// streak that lasts earns one email; this is the "right now" view.
 function SystemSection() {
   const health = useStore((s) => s.systemHealth);
+  const focus = useStore((s) => s.settingsFocus);
   const [loaded, setLoaded] = useState(false);
   useEffect(() => { loadSystemHealth().finally(() => setLoaded(true)); }, []);
   const rows = (health && health.rows) || [];
   const failing = rows.filter((r) => r.status === 'failing');
   const alerts = health && health.emailAlerts;
   const when = (iso) => (iso ? new Date(iso).toLocaleString() : '');
+  // Arriving from the stopped-worker banner: show the cron job, once it's there.
+  useEffect(() => {
+    if (focus !== 'cron' || !(health && health.cron)) return;
+    const el = document.getElementById('bc-set-cron');
+    if (el) el.scrollIntoView({ block: 'start' });
+    set({ settingsFocus: null });
+  }, [focus, health]);
   return html`<section class="bc-set-section">
     <h2 class="bc-set-h">System</h2>
-    <${Row} label="Background work" hint=${!loaded ? 'Checking…' : (rows.length === 0 ? 'Nothing has reported yet; the worker fills this in as jobs run.'
-      : (failing.length === 0 ? 'Everything that has reported is working.' : failing.length + ' failing'))}>
-      ${rows.length > 0 && html`<table class="bc-sys-table">
+    <${Block} title="Background work" aside=${!loaded ? html`<span class="bc-set-block-aside">checking…</span>`
+      : rows.length === 0 ? html`<span class="bc-set-block-aside">nothing has reported yet</span>`
+        : failing.length > 0 ? html`<span class="bc-set-block-aside is-bad">${failing.length} failing</span>`
+          : html`<span class="bc-set-block-aside">all working</span>`}>
+      ${rows.length === 0 && loaded && html`<p class="bc-set-block-note">The worker fills this in as jobs run.</p>`}
+      ${rows.length > 0 && html`<div class="bc-sys-wrap"><table class="bc-sys-table">
         <thead><tr><th>What</th><th>Status</th><th>Last OK</th><th>Detail</th></tr></thead>
         <tbody>${rows.map((r) => html`<tr key=${r.subject} class=${r.status === 'failing' ? 'is-failing' : ''}>
           <td>${r.label}</td>
-          <td>${r.status === 'failing'
+          <td class="bc-sys-status">${r.status === 'failing'
             ? html`<span class="bc-sys-bad">failing since ${fmtSince(r.firstFailedAt)} (${r.consecutiveFailures}×)</span>`
             : html`<span class="bc-sys-ok">ok</span>`}</td>
-          <td title=${when(r.lastOkAt)}>${r.lastOkAt ? fmtSince(r.lastOkAt) : 'never'}</td>
-          <td class="bc-sys-err" title=${r.lastError || ''}>${r.status === 'failing' && r.lastError ? r.lastError : ''}${r.alertedAt ? html` <span class="bc-badge">emailed ${fmtSince(r.alertedAt)}</span>` : ''}</td>
+          <td class="bc-sys-when" title=${when(r.lastOkAt)}>${r.lastOkAt ? fmtSince(r.lastOkAt) : 'never'}</td>
+          <td class="bc-sys-err">${r.status === 'failing' && r.lastError ? r.lastError : ''}${r.alertedAt ? html` <span class="bc-badge">emailed ${fmtSince(r.alertedAt)}</span>` : ''}</td>
         </tr>`)}</tbody>
-      </table>`}
+      </table></div>`}
     <//>
-    <${Row} label="Failure emails" hint=${alerts && alerts.configured
-      ? 'One email when something has been failing long enough to be real (jobs: 1 hour and 3 failures; feeds: a day; a device: 6 hours), one when it recovers, never one per failure.'
-      : 'Off: email is not configured on this server (BETTERCAL_SMTP_HOST and BETTERCAL_SMTP_FROM). Failures still show here and in Activity.'}>
-      ${alerts && alerts.configured && html`<span class="bc-set-value">
+    <${Block} title="Failure emails" aside=${alerts && !alerts.configured ? html`<span class="bc-set-block-aside">off</span>` : null}>
+      ${alerts && alerts.configured && html`<p class="bc-set-block-text">
         Your feeds and devices: ${alerts.accountTo}${alerts.systemTo !== alerts.accountTo ? html`<br />System-wide: ${alerts.systemTo}` : html`<br />System-wide: same address (set BETTERCAL_ALERT_EMAIL to change)`}
-      </span>`}
+      </p>`}
+      <p class="bc-set-block-note">${alerts && alerts.configured
+        ? 'One email when something has been failing long enough to be real (jobs: 1 hour and 3 failures; feeds: a day; a device: 6 hours), one when it recovers, never one per failure.'
+        : 'Email is not configured on this server (BETTERCAL_SMTP_HOST and BETTERCAL_SMTP_FROM). Failures still show here and in Activity.'}</p>
     <//>
-    <${CronRow} cron=${health && health.cron} worker=${rows.find((r) => r.subject === 'worker')} />
+    <${CronBlock} cron=${health && health.cron} worker=${rows.find((r) => r.subject === 'worker')} />
     <${PrivateFilesRow} />
     <${StartsRow} />
   </section>`;
 }
 
-// The worker's cron job as this server needs it now (Infra\Setup::workerPhp):
-// the schedule and the command apart, as control panels ask for them, and
-// the crontab line. Shown always, since after a PHP upgrade it's where the
-// new command is; the worker's own row above says whether it runs.
-function CronRow({ cron, worker }) {
+// The worker's cron job (Infra\Setup::workerPhp): first whether it runs,
+// and when it doesn't, what to do about it; then the schedule and a button
+// for the command, as control panels ask for them; then the note on which PHP
+// it uses, with the full crontab line for people with a terminal.
+function CronBlock({ cron, worker }) {
   const [copied, setCopied] = useState(false);
   if (!cron) return null;
   const copy = async () => {
@@ -121,24 +145,32 @@ function CronRow({ cron, worker }) {
       await navigator.clipboard.writeText(cron.command);
       setCopied(true);
     } catch {
-      toast('Copy failed; select the command and copy it instead');
+      toast('Copy failed; select the command in the crontab line below and copy it instead');
     }
   };
-  const status = !worker ? "The worker hasn't reported yet."
-    : worker.status === 'failing' ? 'The worker has stopped: no run since ' + fmtSince(worker.firstFailedAt) + '.'
-      : 'The worker last ran ' + fmtSince(worker.lastOkAt) + '.';
+  const stopped = worker && worker.status === 'failing';
   const php = cron.followsServerPhp
     ? "It runs the server's own PHP, so it keeps working through PHP upgrades."
-    : "It names this site's PHP version directly (the server's plain php is older or couldn't be checked); after a PHP upgrade, use the command shown here then.";
-  return html`<${Row} label="Cron job" hint=${status + ' ' + php + ' Crontab line: ' + cron.line}>
-    <span class="bc-set-value bc-cron">Every minute (all five schedule fields <code>*</code>), running <code>${cron.command}</code></span>
-    <button type="button" class="bc-btn" onClick=${copy}>${copied ? 'Copied' : 'Copy command'}</button>
+    : "It names this site's PHP version directly, because the server's plain php is older or couldn't be checked; after a PHP upgrade, use the command shown here then.";
+  return html`<${Block} id="bc-set-cron" title="Cron job" aside=${stopped ? html`<span class="bc-set-block-aside is-bad">stopped</span>` : null}>
+    ${stopped
+      ? html`<div class="bc-cron-fix">
+          <p><strong>The worker has stopped: no run since ${fmtSince(worker.firstFailedAt)}.</strong> Reminders, subscribed calendars and email import are paused until it runs again.</p>
+          <p>Open the cron jobs page in your host's control panel (or <code>crontab -e</code> on a server). If Better-Cal's job is missing or paused, add it again: every minute, with the command below. If it's there, the PHP it names may have been removed in an upgrade: replace its command with this one. This page notices within a few minutes once it runs.</p>
+        </div>`
+      : html`<p class="bc-set-block-text">${worker ? 'The worker last ran ' + fmtSince(worker.lastOkAt) + '.' : "The worker hasn't reported yet; it does on its first run."}</p>`}
+    <div class="bc-cron-run">
+      <span>Every minute (all five schedule fields <code>*</code>), running this command:</span>
+      <button type="button" class="bc-btn" onClick=${copy}>${copied ? 'Copied' : 'Copy command'}</button>
+    </div>
+    <p class="bc-set-block-note">${php} Crontab line: <code class="bc-cron-line">${cron.line}</code></p>
   <//>`;
 }
 
 // Can the settings file and backups be downloaded (#142, Infra\PrivateFilesCheck).
 // The server keeps the last result; "Check now" asks the main domain again,
 // at most once a minute.
+const PF_WORD = { safe: 'safe', probably: 'probably safe', exposed: 'fix this now', unchecked: 'not checked' };
 function PrivateFilesRow() {
   const [state, setState] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -156,12 +188,15 @@ function PrivateFilesRow() {
   const r = state && state.result;
   const hint = busy ? 'Checking… this asks your main domain for a test file and takes a few seconds.'
     : (r ? 'Checked ' + fmtSince(r.checkedAt) + '.' : (state ? 'Not checked yet.' : 'Loading…'));
-  return html`<${Row} label="Private files" hint=${hint}>
-    <span class="bc-set-value bc-pf${r && r.status === 'exposed' ? ' bc-set-warn' : ''}">
-      ${r && html`<strong>${r.title}</strong> ${r.message}`}
-      ${r && r.notes && r.notes.length > 0 && html`<ul class="bc-pf-notes">${r.notes.map((n) => html`<li key=${n}>${n}</li>`)}</ul>`}
-    </span>
-    <button type="button" class="bc-btn" disabled=${busy || !state} onClick=${check}>Check now</button>
+  return html`<${Block} title="Private files" aside=${r ? html`<span class=${'bc-set-block-aside' + (r.status === 'exposed' ? ' is-bad' : '')}>${PF_WORD[r.status] || ''}</span>` : null}>
+    <div class="bc-cron-run">
+      <span class=${'bc-pf' + (r && r.status === 'exposed' ? ' bc-set-warn' : '')}>
+        ${r ? html`<strong>${r.title}</strong> ${r.message}` : (state ? 'Not checked yet.' : 'Loading…')}
+      </span>
+      <button type="button" class="bc-btn" disabled=${busy || !state} onClick=${check}>Check now</button>
+    </div>
+    ${r && r.notes && r.notes.length > 0 && html`<ul class="bc-pf-notes">${r.notes.map((n) => html`<li key=${n}>${n}</li>`)}</ul>`}
+    <p class="bc-set-block-note">${hint}</p>
   <//>`;
 }
 
@@ -179,11 +214,12 @@ function StartsRow() {
   const starts = recentStarts().slice(0, 10);
   const stalled = stalledStart();
   if (starts.length === 0 && !stalled) return null;
-  return html`<${Row} label="Recent starts on this device" hint="Why the app last started here, most recent first. Kept on this device only; a start that never finished is also noted in the server's log.">
+  return html`<${Block} title="Recent starts on this device">
     <ul class="bc-sys-starts">
       ${stalled && html`<li class="is-stalled"><span class="bc-sys-starts-when">${fmtDayMedium(new Date(stalled.at))}, ${fmtTime(new Date(stalled.at))}</span> didn't finish starting (${stalled.failed ? 'couldn’t load ' + stalled.failed.split('/').pop() : 'a download probably hung'})</li>`}
       ${starts.map((st) => html`<li key=${st.at}><span class="bc-sys-starts-when">${fmtDayMedium(new Date(st.at))}, ${fmtTime(new Date(st.at))}</span> ${START_WORDS[st.reason] || st.reason}</li>`)}
     </ul>
+  <p class="bc-set-block-note">Why the app last started here, most recent first. Kept on this device only; a start that never finished is also noted in the server's log.</p>
   <//>`;
 }
 
@@ -695,6 +731,9 @@ export function SettingsPage() {
   // A phone (0.8.0) opens on a list of the sections, each a page of its own
   // with Back to the list; the tab strip ran to two crowded rows there.
   const phone = window.matchMedia(PHONE_QUERY).matches;
+  const attention = useStore((s) => needsAttention(s.systemHealth));
+  // The attention dot on the System tab needs health even on other tabs.
+  useEffect(() => { loadSystemHealth().catch(() => {}); }, []);
   const chosen = SETTINGS_TABS.some(([id]) => id === settingsTab) ? settingsTab : null;
   const tab = chosen || 'general';
   const pick = (id) => set({ settingsTab: id });
@@ -726,7 +765,7 @@ export function SettingsPage() {
     return html`<${PageShell} title="Settings" note="Changes are saved as you make them.">
       <nav class="bc-setlist" aria-label="Settings sections">
         ${SETTINGS_TABS.map(([id, label]) => html`<button key=${id} type="button" class="bc-setlist-row" onClick=${() => pick(id)}>
-          <span class="bc-setlist-text"><span class="bc-setlist-name">${label}</span><span class="bc-setlist-sum">${sectionSummary(id, settings, user, version)}</span></span>
+          <span class="bc-setlist-text"><span class="bc-setlist-name">${label}${id === 'system' && attention && html`<span class="bc-attn-dot" role="img" aria-label="Needs attention"></span>`}</span><span class="bc-setlist-sum">${sectionSummary(id, settings, user, version)}</span></span>
           <${Icon} name="chevronRight" size=${16} />
         </button>`)}
       </nav>
@@ -745,7 +784,7 @@ export function SettingsPage() {
         class="bc-tab${tab === id ? ' is-active' : ''}"
         aria-selected=${tab === id ? 'true' : 'false'}
         onClick=${() => pick(id)}
-      >${label}</button>`)}
+      >${label}${id === 'system' && attention && html`<span class="bc-attn-dot" role="img" aria-label="Needs attention" title="Something here needs your attention"></span>`}</button>`)}
     </div>`}
     <div role=${phone ? undefined : 'tabpanel'} aria-labelledby=${phone ? undefined : 'bc-settab-' + tab} class=${phone ? 'bc-setpage' : undefined} data-tab=${tab}>
     ${tab === 'general' && html`

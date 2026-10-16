@@ -138,6 +138,7 @@ export const state = {
   // sent you to a particular tab (a boot notice, the OAuth callback, a
   // /settings/<tab> link, handoff.js), and the page resets it on leaving.
   settingsTab: null, // Settings section; null = General on a desktop, the section list on a phone (0.8.0)
+  settingsFocus: null, // a part of the section to scroll to on arrival ('cron', from the stopped-worker banner)
 
   quickAddOpen: false,
   paletteOpen: false, // command palette (Cmd/Ctrl-K)

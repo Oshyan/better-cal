@@ -118,6 +118,8 @@ final class SystemController
         $php = Setup::workerPhp($root);
         return Response::json([
             'rows' => $rows,
+            // The last private-files verdict, for the attention dot (null before the first check).
+            'privateFiles' => PrivateFilesCheck::last($root)['status'] ?? null,
             // The worker's cron job as this server needs it now (Setup::workerPhp).
             'cron' => [
                 'command' => Setup::cronCommand($root, $php['php']),

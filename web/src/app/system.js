@@ -22,6 +22,16 @@ function failingRows(health) {
   return ((health && health.rows) || []).filter((r) => r.status === 'failing');
 }
 
+// Something on this server needs its owner, now: the worker stopped (nothing
+// in the background is happening) or the settings file can be downloaded.
+// A red dot on Settings in the sidebar and on its System tab, which stays
+// when the banner is dismissed. Failing feeds or a slow geocoder don't count:
+// they have their own notices, and a dot that never clears means nothing.
+export function needsAttention(health) {
+  if (!health) return false;
+  return failingRows(health).some((r) => r.subject === 'worker') || health.privateFiles === 'exposed';
+}
+
 // Called once after boot, after loadSystemHealth has had its chance.
 export function announceSystemHealth() {
   const rows = failingRows(state.systemHealth);
@@ -53,24 +63,28 @@ export function announceSystemHealth() {
   }
 }
 
-// Persistent banners: the worker stopped (nothing in the background is
-// happening), and reminders cannot reach this device. Nothing else earns one.
+// Persistent banners: the worker stopped (WorkerBanner, at the top of every
+// page, where it can't be missed below a tall calendar), and reminders cannot
+// reach this device (here). Nothing else earns one.
 export function SystemBanner() {
-  return html`<${WorkerBanner} /><${PushBanner} />`;
+  return html`<${PushBanner} />`;
 }
 
 // The cron job stopped running the worker (Domain\WorkerWatch). The fix is
-// on the server, so the button opens the page with the command to use.
-// Dismiss hides it for this session only.
-function WorkerBanner() {
+// on the server, so the button opens Settings, System at the cron job, which
+// says what to do. Dismiss hides it for this session only; the red dot on
+// Settings stays until it runs again.
+let workerBannerDismissed = false;
+export function WorkerBanner() {
   const health = useStore((s) => s.systemHealth);
-  const [dismissed, setDismissed] = useState(false);
+  const [dismissed, setDismissed] = useState(workerBannerDismissed);
   const row = failingRows(health).find((r) => r.subject === 'worker');
   if (!row || dismissed) return null;
-  return html`<div class="bc-sysbanner" role="alert">
+  const dismiss = () => { workerBannerDismissed = true; setDismissed(true); };
+  return html`<div class="bc-sysbanner bc-sysbanner-top" role="alert">
     <span>Background work stopped (no run since ${fmtSince(row.firstFailedAt)}): reminders and calendar refreshes aren't happening. This is usually the cron job.</span>
-    <button type="button" class="bc-btn" onClick=${() => set({ route: 'settings', settingsTab: 'system' })}>What to do</button>
-    <button type="button" class="bc-icon-btn" aria-label="Dismiss for now" title="Dismiss for now" onClick=${() => setDismissed(true)}>×</button>
+    <button type="button" class="bc-btn" onClick=${() => set({ route: 'settings', settingsTab: 'system', settingsFocus: 'cron' })}>What to do</button>
+    <button type="button" class="bc-icon-btn" aria-label="Dismiss for now" title="Dismiss for now" onClick=${dismiss}>×</button>
   </div>`;
 }
 

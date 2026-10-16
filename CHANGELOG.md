@@ -4,6 +4,15 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.85 (2026-10-16)
+
+- **A stopped worker is hard to miss.** Its banner now sits at the top of the page, under the toolbar, instead of along the bottom where a tall window hid it. A red dot on Settings in the sidebar, and on the System tab, stays until the worker runs again, even after the banner is dismissed. The dot also shows when the private-files check finds your settings file readable from the web.
+- **"What to do" says what to do.** It opens Settings, System at the cron job, which, while the worker is stopped, says so in red and explains how to fix it: check the cron job in your host's control panel, add it again if it's missing, or replace its command if its PHP was removed. The schedule and a Copy command button follow, and the full crontab line appears once, below.
+- **Settings, System has room to read.** Each part's title sits above it rather than beside it, so the background work table uses the full width, its error details wrap instead of being cut off, and the title says "1 failing" (or "all working") before the list.
+- [Installing](docs/install.md#removing-better-cal) has a new section on removing Better-Cal completely, and lists the shared hosts it has been installed on.
+
+Operators: no migration.
+
 ## 0.9.84 (2026-10-15)
 
 - **The release zip has its files at the top**, with no `better-cal` folder inside. Hosting file managers extract into a folder you pick or name, often one the panel already made when you set up a subdomain, so now you extract straight into your `better-cal` folder. On the command line, `unzip better-cal-0.9.84.zip -d better-cal` names the folder. [Installing](docs/install.md#install) has the steps.

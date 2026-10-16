@@ -111,10 +111,10 @@ function SystemSection() {
         <thead><tr><th>What</th><th>Status</th><th>Last OK</th><th>Detail</th></tr></thead>
         <tbody>${rows.map((r) => html`<tr key=${r.subject} class=${r.status === 'failing' ? 'is-failing' : ''}>
           <td>${r.label}</td>
-          <td class="bc-sys-status">${r.status === 'failing'
-            ? html`<span class="bc-sys-bad">failing since ${fmtSince(r.firstFailedAt)} (${r.consecutiveFailures}×)</span>`
-            : html`<span class="bc-sys-ok">ok</span>`}</td>
-          <td class="bc-sys-when" title=${when(r.lastOkAt)}>${r.lastOkAt ? fmtSince(r.lastOkAt) : 'never'}</td>
+          <td class="bc-sys-status" title=${r.status === 'failing' ? 'Failing since ' + when(r.firstFailedAt) : ''}>${r.status === 'failing'
+            ? html`<span class="bc-sys-bad">failing (${r.consecutiveFailures}×)</span>`
+            : html`<span class="bc-sys-ok">${r.off || 'ok'}</span>`}</td>
+          <td class=${'bc-sys-when' + (r.status === 'failing' ? ' bc-sys-bad' : '')} title=${when(r.lastOkAt)}>${r.off ? '' : (r.lastOkAt ? fmtSince(r.lastOkAt) : 'never')}</td>
           <td class="bc-sys-err">${r.status === 'failing' && r.lastError ? r.lastError : ''}${r.alertedAt ? html` <span class="bc-badge">emailed ${fmtSince(r.alertedAt)}</span>` : ''}</td>
         </tr>`)}</tbody>
       </table></div>`}

@@ -120,7 +120,20 @@ final class SystemController
         $places = \BetterCal\Domain\PlaceProviders::healthSubjects($this->cfg['places'] ?? []);
         $rows = array_values(array_filter($rows, static fn(array $r): bool => !str_starts_with((string) $r['subject'], 'geocoder:')
             || $r['subject'] === 'geocoder:open-meteo' || in_array($r['subject'], $places, true)));
+        // Work that isn't happening by design reads as such, not as "ok":
+        // turned off by the owner, or a service this server never set up.
+        $worker = \BetterCal\Domain\WorkerWatch::state($this->health->db());
+        $notSetUp = 'not set up';
+        $off = [
+            'worker' => $worker['state'] === 'off' ? 'off' : null,
+            'job:geocode_sweep' => \BetterCal\Domain\PlaceProviders::isOff($this->cfg['places'] ?? [], 'lookup') ? 'off' : null,
+            'job:mail_ingest' => (new \BetterCal\Infra\MailFetcher($this->cfg))->isConfigured() ? null : $notSetUp,
+            'job:filter_eval' => (new \BetterCal\Infra\LlmGateway($this->cfg))->isConfigured() ? null : $notSetUp,
+            'job:rank_events' => (new \BetterCal\Infra\LlmGateway($this->cfg))->isConfigured() ? null : $notSetUp,
+            'job:system_alerts' => $this->email->isConfigured() ? null : $notSetUp,
+        ];
         foreach ($rows as &$r) {
+            $r['off'] = $r['status'] === 'failing' ? null : ($off[$r['subject']] ?? null);
             if ($r['kind'] === 'push') {
                 $r['endpointHash'] = $endpointHashes[$r['subject']] ?? null;
             }
@@ -132,7 +145,7 @@ final class SystemController
         return Response::json([
             'rows' => $rows,
             // running, never, off or stopped (Domain\WorkerWatch::state).
-            'worker' => \BetterCal\Domain\WorkerWatch::state($this->health->db()),
+            'worker' => $worker,
             // The last private-files verdict, for the attention dot (null before the first check).
             'privateFiles' => PrivateFilesCheck::last($root)['status'] ?? null,
             // The worker's cron job as this server needs it now (Setup::workerPhp).

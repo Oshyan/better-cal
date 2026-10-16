@@ -12,6 +12,8 @@ Security fixes are tracked privately as GitHub security advisories until they sh
 - **The worker is optional for plain calendar use, and says so.** One that never ran isn't an error any more: Settings, System says what needs it and how to set it up, and reminders, subscribing to a calendar and connecting Google each say so where you turn them on. Removed it on purpose? "I turned it off on purpose" stops the warnings until it runs again.
 - **Place search can be turned off:** `BETTERCAL_PLACE_SEARCH=off` in the settings file. Places are typed as plain text, no service is ever asked, and nothing shows as failing.
 - **Export everything:** Settings, Account downloads a zip with one `.ics` file per calendar, every event whatever its date, the same shape as Google Calendar's export. Better-Cal imports the zip in one step; Google, Apple, Outlook, Fastmail, Proton and Thunderbird import the files a calendar at a time. Each calendar's settings also have **Download .ics**.
+- **Import into a calendar you already have**, not only a new one: Import's new "Into" choice takes any of your own calendars, and events it already has (from an earlier import of the same file) are left as they are.
+- **Settings, System says what's off.** Background work shows "off" for what you turned off (the worker, place lookups) and "not set up" for services this server has no settings for (mail import, prompt filters and ranking without an AI key, alert emails without SMTP), instead of "ok". A failing row reads "failing (41×)", with its last good time in red beside it.
 - [Installing](docs/install.md#removing-better-cal) has a new section on removing Better-Cal completely, and lists the shared hosts it has been installed on.
 
 Operators: no migration.

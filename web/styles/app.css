@@ -1591,6 +1591,7 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-field { display: flex; flex-direction: column; gap: 3px; }
 .bc-field > span { font-size: 11.5px; font-weight: 600; color: var(--fg-muted); }
 .bc-field.grow { flex: 1; min-width: 140px; }
+.bc-field > .bc-field-hint { font-weight: 400; font-size: 12px; }
 .bc-check { display: inline-flex; align-items: center; gap: 5px; }
 .bc-num { width: 58px; }
 .bc-byday { display: flex; gap: 4px; flex-wrap: wrap; }

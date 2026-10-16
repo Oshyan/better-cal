@@ -9846,10 +9846,12 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
 // calendar, that Better-Cal's own import reads back.
 {
     $xdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
-    $xdb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, position INTEGER DEFAULT 0)');
+    $xdb->run("CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, position INTEGER DEFAULT 0, kind TEXT DEFAULT 'local')");
+    $xdb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, settings_json TEXT)');
+    $xdb->run('INSERT INTO users (id) VALUES (1), (2)');
     $xdb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, description TEXT, location TEXT, url TEXT,
         start_utc TEXT, end_utc TEXT, all_day INTEGER DEFAULT 0, tzid TEXT, rrule TEXT, exdates_json TEXT, reminders_json TEXT, status TEXT,
-        recurrence_instance_utc TEXT, deleted_at TEXT, is_container INTEGER DEFAULT 0)');
+        recurrence_instance_utc TEXT, deleted_at TEXT, is_container INTEGER DEFAULT 0, created_via TEXT, source TEXT, recurrence_parent_id INTEGER)');
     $xdb->run('CREATE TABLE event_links (id INTEGER PRIMARY KEY, container_id INTEGER, event_id INTEGER, position INTEGER DEFAULT 0)');
     $xdb->run("INSERT INTO calendars (id, user_id, name, position) VALUES (1, 1, 'Work', 0), (2, 1, 'Work', 1), (3, 1, 'Trips: \"far\" / near', 2), (4, 2, 'Someone else', 0)");
     $xdb->run("INSERT INTO events (id, user_id, calendar_id, uid, title, start_utc, end_utc, tzid, rrule) VALUES
@@ -9879,6 +9881,20 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
         check('export: old events are included, deleted ones are not', str_contains($work2, 'Old one') && !str_contains($work2, 'Deleted'));
         checkEq('export: Better-Cal\'s import reads the calendar names back', 'Work', BetterCal\Domain\CalendarImport::calendarName('Work (2).ics', $work2));
         check('export: nothing from another account', !str_contains(implode('', array_map(static fn($n) => (string) $z->getFromName($n), $names)), 'Not yours'));
+        // Back in: into a calendar that already has them adds nothing; into
+        // another of your calendars, they come in.
+        $importer = new BetterCal\Domain\CalendarImport($xdb, new BetterCal\Domain\Calendars($xdb, new BetterCal\Domain\Undo($xdb)));
+        $again = $importer->importIcs(1, $work, 'ignored', null, 1);
+        checkEq('import: into a calendar that has them already, nothing is added', ['imported' => 0, 'alreadyThere' => 1], ['imported' => $again['imported'], 'alreadyThere' => $again['alreadyThere']]);
+        $into = $importer->importIcs(1, $work, 'ignored', null, 2);
+        checkEq('import: into another of your calendars, they come in', [2, 1, 0], [$into['calendarId'], $into['imported'], $into['alreadyThere']]);
+        $xdb->run("UPDATE calendars SET kind = 'subscribed' WHERE id = 3");
+        $threw = null;
+        try { $importer->importIcs(1, $work, 'ignored', null, 3); } catch (BetterCal\Http\HttpError $e) { $threw = $e->errorCode; }
+        checkEq('import: a subscribed or Google calendar is not a target', 'import_target', $threw);
+        $threw = null;
+        try { $importer->importIcs(1, $work, 'ignored', null, 4); } catch (BetterCal\Http\HttpError $e) { $threw = $e->status; }
+        checkEq('import: nor is another account\'s calendar', 404, $threw);
         $z->close();
         unlink($zpath);
     }

@@ -32,11 +32,14 @@ export function CreateDrawer() {
   const [notes, setNotes] = useState('');
   const [color, setColor] = useState(null);
   const [folderId, setFolderId] = useState('');
+  // Import: '' for a new calendar, or one of your own calendars' ids.
+  const [into, setInto] = useState('');
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     if (!req) return;
     setName('');
+    setInto('');
     setUrl(req.url || '');
     setNotes('');
     setColor(PALETTE[state.calendars.length % PALETTE.length]);
@@ -76,7 +79,8 @@ export function CreateDrawer() {
         if (!file) { setBusy(false); return; }
         const fd = new FormData();
         fd.append('ics', file);
-        if (name.trim()) fd.append('name', name.trim());
+        if (into) fd.append('calendarId', into);
+        else if (name.trim()) fd.append('name', name.trim());
         const res = await api('/calendars/import', { method: 'POST', formData: fd });
         // A zip (Google Calendar's export, Takeout) comes back as one calendar
         // per file, with any it skipped and why (#136).
@@ -89,7 +93,9 @@ export function CreateDrawer() {
               + (skipped ? '; skipped ' + (res.skipped || []).map((s) => s.file + ' (' + s.reason + ')').join('; ') : ''),
           { error: n === 0, duration: skipped ? 15000 : undefined });
         } else {
-          toast('Imported ' + ((res && res.imported) || 0) + ' events');
+          const again = (res && res.alreadyThere) || 0;
+          toast('Imported ' + ((res && res.imported) || 0) + ' events' + (into && res ? ' into ' + res.name : '')
+            + (again ? '; ' + again + ' already there' : ''));
         }
         await loadCalendars();
       } else if (kind === 'folder') {
@@ -125,14 +131,23 @@ export function CreateDrawer() {
         <button type="button" class="bc-icon-btn" aria-label="Close" onClick=${close}><${Icon} name="close" size=${15} /></button>
       </div>
 
-      <label class="bc-field">
+      ${kind === 'import' && html`<label class="bc-field">
+        <span>Into</span>
+        <select value=${into} onChange=${(e) => setInto(e.target.value)} aria-label="Import into">
+          <option value="">A new calendar</option>
+          ${state.calendars.filter((c) => c.kind === 'local').map((c) => html`<option key=${c.id} value=${String(c.id)}>${c.name}</option>`)}
+        </select>
+        ${into && html`<span class="bc-field-hint">Events the calendar already has (the same event, from an earlier import) are left as they are. A zip always makes a new calendar per file.</span>`}
+      </label>`}
+
+      ${!(kind === 'import' && into) && html`<label class="bc-field">
         <span>Name${kind === 'subscribe' || kind === 'import' ? ' (optional)' : ''}${kind === 'import' ? ', for a single file' : ''}</span>
         <input
           value=${name} autofocus required=${kind === 'person' || kind === 'folder'}
           placeholder=${kind === 'person' ? "Person's name" : ''}
           onInput=${(e) => setName(e.target.value)}
         />
-      </label>
+      </label>`}
 
       ${kind === 'subscribe' && html`<label class="bc-field">
         <span>ICS URL</span>

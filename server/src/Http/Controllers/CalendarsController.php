@@ -146,10 +146,13 @@ final class CalendarsController
         if ($name === '') {
             $name = pathinfo((string) ($file['name'] ?? 'Imported'), PATHINFO_FILENAME) ?: 'Imported';
         }
-        $done = $importer->importIcs($userId, $ics, $name);
+        // Into one of your calendars (calendarId), or a new one.
+        $into = $req->str('calendarId');
+        $done = $importer->importIcs($userId, $ics, $name, null, $into !== null && $into !== '' ? (int) $into : null);
         $out = $this->calendars->serializeById($userId, $done['calendarId']);
         $out['imported'] = $done['imported'];
-        return Response::json($out, 201);
+        $out['alreadyThere'] = $done['alreadyThere'];
+        return Response::json($out, $into !== null && $into !== '' ? 200 : 201);
     }
 
     private function userId(Request $req): int

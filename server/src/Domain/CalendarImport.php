@@ -32,12 +32,26 @@ final class CalendarImport
     }
 
     /**
-     * One calendar file into a new local calendar.
+     * One calendar file into a new local calendar, or into one of the user's
+     * local calendars ($intoCalendarId). Into an existing one, an event it
+     * already has (the same UID and occurrence) is left as it is and counted
+     * as already there, so importing a file twice adds nothing. Google
+     * calendars and subscriptions aren't targets: rows written here wouldn't
+     * reach Google, and a feed's next poll would replace them.
      *
-     * @return array{calendarId:int,imported:int}
+     * @return array{calendarId:int,imported:int,alreadyThere:int}
      */
-    public function importIcs(int $userId, string $ics, string $name, ?string $color = null): array
+    public function importIcs(int $userId, string $ics, string $name, ?string $color = null, ?int $intoCalendarId = null): array
     {
+        if ($intoCalendarId !== null) {
+            $kind = $this->db->scalar('SELECT kind FROM calendars WHERE id = ? AND user_id = ?', [$intoCalendarId, $userId]);
+            if ($kind === null) {
+                throw HttpError::notFound('No such calendar');
+            }
+            if ($kind !== 'local') {
+                throw HttpError::badRequest('Import into one of your own calendars; a subscribed or Google calendar can\'t take imported events.', 'import_target');
+            }
+        }
         $maxBytes = Limits::get('IMPORT_BYTES');
         if (!str_contains($ics, 'BEGIN:VCALENDAR')) {
             throw HttpError::badRequest('File is not an ICS calendar', 'invalid_ics');
@@ -63,13 +77,14 @@ final class CalendarImport
         }
         // Masters before their edited occurrences, so each override finds its parent.
         usort($parsed, static fn(array $a, array $b): int => ($a['recurrence_instance_utc'] === null ? 0 : 1) <=> ($b['recurrence_instance_utc'] === null ? 0 : 1));
-        return $this->db->tx(function () use ($parsed, $userId, $name, $color): array {
+        return $this->db->tx(function () use ($parsed, $userId, $name, $color, $intoCalendarId): array {
             // The new calendar and every imported row become visible in one
             // commit. A concurrent move cannot discover/count a half-imported
             // calendar between two transactions.
-            $calendar = $this->calendars->create($userId, ['name' => $name] + ($color !== null ? ['color' => $color] : []));
-            $calendarId = (int) $calendar['id'];
+            $calendarId = $intoCalendarId
+                ?? (int) $this->calendars->create($userId, ['name' => $name] + ($color !== null ? ['color' => $color] : []))['id'];
             $imported = 0;
+            $alreadyThere = 0;
             $masterIdByUid = [];
             $seen = [];
             foreach ($parsed as $ev) {
@@ -78,6 +93,18 @@ final class CalendarImport
                     continue;
                 }
                 $seen[$key] = true;
+                if ($intoCalendarId !== null) {
+                    $existing = $ev['recurrence_instance_utc'] === null
+                        ? $this->db->scalar('SELECT id FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_instance_utc IS NULL', [$calendarId, $ev['uid']])
+                        : $this->db->scalar('SELECT id FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_instance_utc = ?', [$calendarId, $ev['uid'], $ev['recurrence_instance_utc']]);
+                    if ($existing !== null) {
+                        if ($ev['recurrence_instance_utc'] === null) {
+                            $masterIdByUid[(string) $ev['uid']] = (int) $existing;
+                        }
+                        $alreadyThere++;
+                        continue;
+                    }
+                }
                 $id = $this->db->insert('events', [
                     'user_id' => $userId,
                     'calendar_id' => $calendarId,
@@ -107,7 +134,7 @@ final class CalendarImport
                 }
                 $imported++;
             }
-            return ['calendarId' => $calendarId, 'imported' => $imported];
+            return ['calendarId' => $calendarId, 'imported' => $imported, 'alreadyThere' => $alreadyThere];
         });
     }
 

@@ -9862,24 +9862,26 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
     checkEq('export: file names are safe and unique', ['Work.ics', 'work (2).ics', 'Trips far near.ics', 'Calendar.ics'],
         [BetterCal\Domain\Export::fileName('Work', $used), BetterCal\Domain\Export::fileName('work', $used),
          BetterCal\Domain\Export::fileName('Trips: "far" / near', $used), BetterCal\Domain\Export::fileName('  ', $used)]);
-    $zpath = sys_get_temp_dir() . '/bc-export-test-' . bin2hex(random_bytes(4)) . '.zip';
-    $sum = (new BetterCal\Domain\Export($xdb))->zip(1, $zpath);
-    checkEq('export: every calendar of the user, every live event whatever its date', ['calendars' => 3, 'events' => 2], $sum);
-    $z = new ZipArchive();
-    $z->open($zpath);
-    $names = [];
-    for ($i = 0; $i < $z->numFiles; $i++) {
-        $names[] = $z->getNameIndex($i);
+    if (class_exists(ZipArchive::class)) {
+        $zpath = sys_get_temp_dir() . '/bc-export-test-' . bin2hex(random_bytes(4)) . '.zip';
+        $sum = (new BetterCal\Domain\Export($xdb))->zip(1, $zpath);
+        checkEq('export: every calendar of the user, every live event whatever its date', ['calendars' => 3, 'events' => 2], $sum);
+        $z = new ZipArchive();
+        $z->open($zpath);
+        $names = [];
+        for ($i = 0; $i < $z->numFiles; $i++) {
+            $names[] = $z->getNameIndex($i);
+        }
+        check('export: a file per calendar, same-named ones kept apart', in_array('Work.ics', $names, true) && in_array('Work (2).ics', $names, true) && count($names) === 3);
+        $work = (string) $z->getFromName('Work.ics');
+        check('export: repeating events keep their rule and zone', str_contains($work, 'RRULE:FREQ=WEEKLY;BYDAY=MO') && str_contains($work, 'TZID=America/Los_Angeles'));
+        $work2 = (string) $z->getFromName('Work (2).ics');
+        check('export: old events are included, deleted ones are not', str_contains($work2, 'Old one') && !str_contains($work2, 'Deleted'));
+        checkEq('export: Better-Cal\'s import reads the calendar names back', 'Work', BetterCal\Domain\CalendarImport::calendarName('Work (2).ics', $work2));
+        check('export: nothing from another account', !str_contains(implode('', array_map(static fn($n) => (string) $z->getFromName($n), $names)), 'Not yours'));
+        $z->close();
+        unlink($zpath);
     }
-    check('export: a file per calendar, same-named ones kept apart', in_array('Work.ics', $names, true) && in_array('Work (2).ics', $names, true) && count($names) === 3);
-    $work = (string) $z->getFromName('Work.ics');
-    check('export: repeating events keep their rule and zone', str_contains($work, 'RRULE:FREQ=WEEKLY;BYDAY=MO') && str_contains($work, 'TZID=America/Los_Angeles'));
-    $work2 = (string) $z->getFromName('Work (2).ics');
-    check('export: old events are included, deleted ones are not', str_contains($work2, 'Old one') && !str_contains($work2, 'Deleted'));
-    checkEq('export: Better-Cal\'s import reads the calendar names back', 'Work', BetterCal\Domain\CalendarImport::calendarName('Work (2).ics', $work2));
-    check('export: nothing from another account', !str_contains(implode('', array_map(static fn($n) => (string) $z->getFromName($n), $names)), 'Not yours'));
-    $z->close();
-    unlink($zpath);
     $threw = false;
     try { (new BetterCal\Domain\Export($xdb))->calendar(1, 4); } catch (BetterCal\Http\HttpError $e) { $threw = $e->status === 404; }
     check('export: another account\'s calendar is not found', $threw);

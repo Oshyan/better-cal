@@ -126,6 +126,8 @@ export function PlaceInput({
   }, [ask && ask.seq]); // eslint-disable-line
 
   const runSearch = async (q) => {
+    // Turned off on this server (BETTERCAL_PLACE_SEARCH=off): a plain text field.
+    if (state.config && state.config.placeSearch && state.config.placeSearch.off) return;
     const id = ++reqRef.current;
     const params = new URLSearchParams({ q, limit: '6' });
     const bias = placeBias(tz, typeof near === 'function' ? near() : near);

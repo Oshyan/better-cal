@@ -54,7 +54,9 @@ export function Welcome() {
   const s = useStore((st) => ({
     settings: st.settings, calendars: st.calendars, route: st.route, open: st.welcomeOpen, plugins: st.plugins,
     busy: !!(st.createDrawer || st.editor || st.searchOpen || st.quickAddOpen), later: st.welcomeLater,
+    workerState: st.systemHealth && st.systemHealth.worker ? st.systemHealth.worker.state : null,
   }), shallowEq);
+  const workerState = s.workerState;
   const pending = s.settings && s.settings.welcomeDone === false;
   // welcomeLater: put aside with Back on a phone; it comes back next launch.
   // Reopened from Settings it opens right there; on its own, on the calendar.
@@ -205,7 +207,8 @@ export function Welcome() {
       id: 'reminders', icon: 'bell', title: 'Reminders on this device',
       sub: pushState === 'unsupported' ? 'This browser has no push notifications; reminders can come by email instead (Settings, Notifications).'
         : pushState === 'denied' ? 'Notifications are blocked for this site in the browser.'
-          : 'Notifications for your events, even with the app closed.',
+          : workerState && workerState !== 'running' ? "Notifications for your events, even with the app closed. They need the background worker (a cron job), which isn't running on this server yet: Settings, System shows how."
+            : 'Notifications for your events, even with the app closed.',
       act: !pushOn && (pushState === 'default' || pushState === 'granted') ? 'Turn on' : null,
       isDone: pushOn,
       run: async () => {

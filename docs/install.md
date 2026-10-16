@@ -70,6 +70,8 @@ Run these as the account that will own Better-Cal's files. PHP must be able to r
 
    The PHP in the command is the server's plain `php` when that's new enough (it then follows the server's PHP upgrades), and otherwise this site's PHP named directly. Settings, System always shows the command as the server needs it now. If the worker stops running for 15 minutes (a PHP version removed, the cron job paused or deleted), the app shows a banner and, where email is set up, sends one email.
 
+   The worker is optional for plain calendar use: the app and phones over CalDAV work without it. Reminders, subscribed calendars and Google refreshing, email import, prompt filters, place pins and plugins need it, and say so where you turn them on while it isn't running. A worker that never ran isn't treated as a problem; one you remove on purpose, Settings, System lets you mark as turned off.
+
 6. **Check it.** `https://cal.example.com/api/v1/health` should show `{"ok":true,"db":true,...}`. Then open `https://cal.example.com`, sign in, and the welcome walks you through the first settings. A couple of minutes later, Settings, System should show the worker's jobs as healthy.
 
 That's a working install. The rest is optional:
@@ -122,7 +124,7 @@ What `install.php` does, step by step, if you'd rather:
 
 ### Where it has been tested
 
-- **Production:** Nginx with PHP-FPM 8.4 and Percona Server 8.4 (MySQL), on Debian.
+- **Production:** Nginx with PHP-FPM 8.4 and MySQL 8.4, on Linux.
 - **Clean-install test (2026-10-03):** Ubuntu 24.04 with Apache 2.4 and mod_php 8.3 (the minimum then; it is 8.4 since 0.9.0, and the GitHub check installs on 8.4 on every push), MariaDB 10.11 (and MariaDB 10.6 for the migrations, the smoke test and the worker), following this page from an empty machine. Everything below was checked there: install, migrations, sign-in, events and undo, search, repeating events, CalDAV and API tokens through Apache, a subscribed feed, a plugin, the worker under cron.
 - **Repeated on 2026-10-05** with PHP 8.4 from the Ubuntu PPA described above (mod_php, only the listed extensions) and MariaDB 10.11: install, migrations, the worker under cron, and the first sign-in to a new account with its welcome.
 - **Shared hosting (2026-10-15):** LiteSpeed with PHP chosen in the control panel and the app folder inside `public_html` (Hostinger), installed from the release zip with the setup page and a control-panel cron job, then updated by extracting a newer zip over it. And DreamHost shared hosting, installed by someone other than the maintainer following this page.
@@ -361,7 +363,7 @@ Production backups use a separate privilege boundary. `BACKUP_DIR` must be one d
 
 ## Removing Better-Cal
 
-To take an install down completely. If you might want your calendar again, keep a copy first: a database backup together with `.env.php` (a backup needs it to be read), or your calendars as `.ics` files, downloaded from an outbound feed's address (Outbound feeds) or saved from a CalDAV app.
+To take an install down completely. If you might want your calendars again, keep a copy first: **Settings, Account, Export everything** downloads a zip with one `.ics` file per calendar, which Better-Cal imports in one step and other calendar apps import a file at a time. A database backup together with `.env.php` (a backup needs it to be read) keeps everything else too: people, labels, filters and settings.
 
 1. **The cron job.** Delete it first (control panel, or `crontab -e`), so nothing runs while the rest goes.
 2. **The address.** Remove the subdomain or domain you pointed at `server/public`, or its web server configuration (the Nginx or Apache site), and its HTTPS certificate if it has one of its own.

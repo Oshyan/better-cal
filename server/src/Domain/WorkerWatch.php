@@ -22,6 +22,11 @@ use BetterCal\Support\Time;
  * (Settings, System, a banner in the app, Activity) and one email goes out
  * when email is set up. The worker's next run marks it working again, and
  * its alert sweep sends the recovery email.
+ *
+ * Plain calendar use (the app, phones over CalDAV) works without the worker,
+ * so only a worker that ran and then stopped is an error. One that never ran
+ * isn't set up yet, and one its owner turned off on purpose (state()) is off;
+ * neither warns. Features that need it say so where they're turned on.
  */
 final class WorkerWatch
 {
@@ -29,6 +34,43 @@ final class WorkerWatch
     public const LABEL = 'Background worker (the cron job)';
     public const STALE_AFTER = 900;
     public const CHECK_EVERY = 120;
+
+    /**
+     * running, never (no run recorded, nor any job's), off (turned off on
+     * purpose, and no run since), or stopped (failing).
+     *
+     * @return array{state:string,lastRunAt:?string,offAt:?string}
+     */
+    public static function state(Db $db): array
+    {
+        $row = $db->one('SELECT status, last_ok_at FROM system_health WHERE subject = ?', [self::SUBJECT]);
+        $last = $row['last_ok_at'] ?? $db->scalar("SELECT MAX(last_ok_at) FROM system_health WHERE subject LIKE 'job:%'");
+        try {
+            $owner = $db->scalar('SELECT id FROM users ORDER BY id LIMIT 1');
+            $offAt = $owner === null ? null : ((new Settings($db))->forUser((int) $owner)['workerOffAt'] ?? null);
+        } catch (\Throwable) {
+            $offAt = null; // reading health must work even where a table is missing
+        }
+        $iso = static fn(?string $t): ?string => $t === null ? null : Time::dbToIso($t);
+        if ($offAt !== null && ($last === null || (string) $last < (string) $offAt)) {
+            return ['state' => 'off', 'lastRunAt' => $iso($last), 'offAt' => $iso($offAt)];
+        }
+        if ($row !== null && $row['status'] === 'failing') {
+            return ['state' => 'stopped', 'lastRunAt' => $iso($last), 'offAt' => null];
+        }
+        return ['state' => $last === null ? 'never' : 'running', 'lastRunAt' => $iso($last), 'offAt' => null];
+    }
+
+    /** The owner turned the worker off on purpose: no warnings until it runs again. */
+    public static function turnOff(Db $db): void
+    {
+        $owner = $db->scalar('SELECT id FROM users ORDER BY id LIMIT 1');
+        if ($owner === null) {
+            return;
+        }
+        (new Settings($db))->patch((int) $owner, ['workerOffAt' => Time::nowDb()]);
+        (new SystemHealth($db))->markOff(self::SUBJECT, self::LABEL, 'turned off on purpose; it is back on when the cron job runs it again.');
+    }
 
     /** For the worker: it ran. */
     public static function ran(SystemHealth $health): void
@@ -75,26 +117,18 @@ final class WorkerWatch
             return false; // an update pauses the worker on purpose
         }
         $now ??= Time::nowUtc();
+        $state = self::state($db);
+        if ($state['state'] !== 'running') {
+            return false; // already stopped, off on purpose, or never set up: none of them news
+        }
         $row = $db->one('SELECT status, last_ok_at FROM system_health WHERE subject = ?', [self::SUBJECT]);
-        if ($row !== null && $row['status'] === 'failing') {
-            return false;
-        }
-        // No run reported yet. An install that ran before this report existed
-        // (an update to 0.9.83) has its jobs' successes to count from; only a
-        // new install counts from when it was set up (its first account).
-        $last = $row['last_ok_at'] ?? null;
-        $everRan = $last !== null;
-        if ($last === null) {
-            $last = $db->scalar("SELECT MAX(last_ok_at) FROM system_health WHERE subject LIKE 'job:%'");
-            $everRan = $last !== null;
-            $last ??= $db->scalar('SELECT MIN(created_at) FROM users');
-        }
+        // An install that ran before this report existed (an update to
+        // 0.9.83) counts from its jobs' last success.
+        $last = $row['last_ok_at'] ?? $db->scalar("SELECT MAX(last_ok_at) FROM system_health WHERE subject LIKE 'job:%'");
         if ($last === null || Time::fromDb((string) $last)->getTimestamp() > $now->getTimestamp() - self::STALE_AFTER) {
             return false;
         }
-        $error = !$everRan
-            ? "It hasn't run since Better-Cal was set up, so reminders, subscribed calendars and email import aren't working. Add the cron job: Settings, System shows the command."
-            : "It hasn't run since then, so reminders, subscribed calendars and email import have stopped. Most often the cron job was removed or paused, or the PHP it names was removed in a PHP upgrade. Settings, System shows the command to use now.";
+        $error = "It hasn't run since then, so reminders, subscribed calendars and email import have stopped. Most often the cron job was removed or paused, or the PHP it names was removed in a PHP upgrade. Settings, System shows the command to use now.";
         $health = new SystemHealth($db);
         if (!$health->markStalled(self::SUBJECT, self::LABEL, (string) $last, $error)) {
             return false;

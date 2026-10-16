@@ -74,6 +74,14 @@ final class SystemController
         return $t->getTimestamp() <= $now + 86400 && $t->getTimestamp() >= $now - 30 * 86400 ? $t : null;
     }
 
+    /** POST /system/worker-off: the owner turned the worker off on purpose; no warnings until it runs again. */
+    public function workerOff(Request $req): Response
+    {
+        $req->requireSession('Turning the background worker off');
+        \BetterCal\Domain\WorkerWatch::turnOff($this->health->db());
+        return Response::json(['worker' => \BetterCal\Domain\WorkerWatch::state($this->health->db())]);
+    }
+
     /** The last private-files check (null when it has never run), and the seconds until "Check now" may run. */
     public function privateFiles(Request $req): Response
     {
@@ -107,6 +115,11 @@ final class SystemController
         foreach ($this->subscriptions->forUser($userId) as $sub) {
             $endpointHashes['push:' . $sub['id']] = (string) $sub['endpoint_hash'];
         }
+        // A place search service not in use (turned off, or replaced) is no
+        // longer news, whatever its last state; the weather service isn't one.
+        $places = \BetterCal\Domain\PlaceProviders::healthSubjects($this->cfg['places'] ?? []);
+        $rows = array_values(array_filter($rows, static fn(array $r): bool => !str_starts_with((string) $r['subject'], 'geocoder:')
+            || $r['subject'] === 'geocoder:open-meteo' || in_array($r['subject'], $places, true)));
         foreach ($rows as &$r) {
             if ($r['kind'] === 'push') {
                 $r['endpointHash'] = $endpointHashes[$r['subject']] ?? null;
@@ -118,6 +131,8 @@ final class SystemController
         $php = Setup::workerPhp($root);
         return Response::json([
             'rows' => $rows,
+            // running, never, off or stopped (Domain\WorkerWatch::state).
+            'worker' => \BetterCal\Domain\WorkerWatch::state($this->health->db()),
             // The last private-files verdict, for the attention dot (null before the first check).
             'privateFiles' => PrivateFilesCheck::last($root)['status'] ?? null,
             // The worker's cron job as this server needs it now (Setup::workerPhp).

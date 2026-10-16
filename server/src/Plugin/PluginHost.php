@@ -641,7 +641,8 @@ final class PluginHost
             // and signals "not found" by nulling the fields rather than by
             // returning empty. Indexing it like a list yields null every time.
             $transport = new PoliciedGeocoderTransport($this->db);
-            $hit = (new Geocode($this->db, $transport, \BetterCal\Domain\PlaceProviders::pin($this->cfg['places'] ?? [], $transport)))
+            $hit = (new Geocode($this->db, $transport, \BetterCal\Domain\PlaceProviders::pin($this->cfg['places'] ?? [], $transport),
+                \BetterCal\Domain\PlaceProviders::isOff($this->cfg['places'] ?? [], 'lookup')))
                 ->lookup($query, $biasLat, $biasLng);
             return isset($hit['lat'], $hit['lng']) ? $hit : null;
         } catch (\Throwable $e) {

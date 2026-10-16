@@ -48,6 +48,11 @@ final class SystemHealth
     {
     }
 
+    public function db(): Db
+    {
+        return $this->db;
+    }
+
     // ---- Reporting ----------------------------------------------------
 
     /** @return bool true when this was the first failure after success (a transition) */
@@ -155,6 +160,26 @@ final class SystemHealth
             ], 'subject = ?', [$subject]);
             $this->journal(null, "$label stopped: $error");
             return true;
+        });
+    }
+
+    /**
+     * A subject that stopped on purpose (the worker, turned off by its
+     * owner): no longer failing, with no recovery email owed. Its last good
+     * time stays as it was. Journaled once.
+     */
+    public function markOff(string $subject, string $label, string $note): void
+    {
+        $this->db->tx(function () use ($subject, $label, $note): void {
+            $this->ensureRow($subject, 'job', null, mb_substr($label, 0, 160));
+            $this->lockedRow($subject);
+            $this->db->update('system_health', [
+                'status' => 'ok',
+                'consecutive_failures' => 0,
+                'last_error' => null,
+                'alerted_at' => null,
+            ], 'subject = ?', [$subject]);
+            $this->journal(null, mb_substr($label . ' ' . $note, 0, 300));
         });
     }
 

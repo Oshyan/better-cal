@@ -295,6 +295,12 @@ export function CalendarSettings({ cal, folders, onClose }) {
 
     ${cal.kind === 'local' && cal.editable && html`<${MoveToGoogle} cal=${cal} />`}
 
+    <div class="bc-calset-field">
+      <span class="bc-calset-label">Export</span>
+      <a class="bc-btn" href=${'/api/v1/calendars/' + cal.id + '/export'} download>Download .ics</a>
+      <span class="bc-calset-status">Every event in this calendar as a calendar file, for any calendar app that imports .ics files.</span>
+    </div>
+
     <div class="bc-calset-danger">
       ${confirmDelete
         ? html`<span class="bc-calset-confirm">Delete "${cal.name}" and all of its events?</span>

@@ -120,3 +120,15 @@ function PushBanner() {
     <button type="button" class="bc-icon-btn" aria-label="Dismiss for now" title="Dismiss for now" onClick=${() => setDismissed(true)}>×</button>
   </div>`;
 }
+
+// Where a feature needs the worker and it isn't running (not set up yet,
+// turned off on purpose, or stopped): one line saying so, where the feature
+// is turned on, instead of a warning everywhere for people who never use it.
+export function WorkerNote({ what }) {
+  const health = useStore((s) => s.systemHealth);
+  const st = health && health.worker && health.worker.state;
+  if (!st || st === 'running') return null;
+  const why = st === 'never' ? "isn't set up on this server yet" : st === 'off' ? 'is turned off on this server' : 'has stopped running on this server';
+  return html`<p class="bc-worker-note">${what} need the background worker (a cron job), which ${why}.
+    <button type="button" class="bc-link-btn" onClick=${() => set({ route: 'settings', settingsTab: 'system', settingsFocus: 'cron' })}>How to set it up</button></p>`;
+}

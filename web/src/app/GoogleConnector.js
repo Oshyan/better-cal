@@ -8,6 +8,7 @@
 import { html, useState, useEffect } from '../../vendor/index.js';
 import { useStore, toast } from './store.js';
 import { api, loadCalendars } from './api.js';
+import { WorkerNote } from './system.js';
 import { usePasswordStepUp } from './PasswordStepUp.js';
 import { Icon } from '../ui/icons.js';
 
@@ -111,9 +112,10 @@ export function GoogleConnector() {
 
   return html`<section class="bc-set-section">
     <h2 class="bc-set-h">Google Calendar</h2>
+    <${WorkerNote} what="Google calendars, to stay in sync," />
     <p class="bc-set-lead">Connect a Google account, then choose which of its calendars to add here. Added calendars show alongside your own and stay in sync with Google. If the account can edit a calendar, you can edit it here too, and changes go straight to Google. This also reaches calendars people have shared with you privately, which a web address can't.</p>
     ${status === null && html`<${Row} label="Account"><span class="bc-set-value">Loading…</span><//>`}
-    ${status && !status.configured && html`<${Row} label="Account" hint="Reading calendars through a Google account needs an OAuth client of this server's own, from a free Google Cloud project: about ten minutes, once, by whoever runs the server. The two values go in .env as BETTERCAL_GOOGLE_CLIENT_ID and BETTERCAL_GOOGLE_CLIENT_SECRET.">
+    ${status && !status.configured && html`<${Row} label="Account" hint="Reading calendars through a Google account needs an OAuth client of this server's own, from a free Google Cloud project: about ten minutes, once, by whoever runs the server. The two values go in the settings file, .env.php, as BETTERCAL_GOOGLE_CLIENT_ID and BETTERCAL_GOOGLE_CLIENT_SECRET.">
       <span class="bc-set-value">Not set up on this server. <a href=${GOOGLE_SETUP_URL} target="_blank" rel="noopener">How to set it up</a></span>
     <//>`}
     ${status && status.configured && html`

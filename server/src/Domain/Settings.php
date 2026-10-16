@@ -86,6 +86,10 @@ final class Settings
         // taken so far.
         'welcomeDone' => true,
         'welcomeSteps' => [],
+        // The worker turned off on purpose (Settings, System), as a database
+        // time; null when it never was. It counts until the worker runs
+        // again after it (Domain\WorkerWatch::state).
+        'workerOffAt' => null,
     ];
     public const WELCOME_STEPS = ['subscribe', 'import', 'google', 'install', 'reminders', 'plugins'];
     // Every view the app has (web/src/app/actions.js VIEWS). It listed a
@@ -241,6 +245,8 @@ final class Settings
                 'placePastEvents' => self::bool($key, $value),
                 'welcomeDone' => self::bool($key, $value),
                 'welcomeSteps' => self::welcomeSteps($value),
+                'workerOffAt' => $value === null || (is_string($value) && preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $value) === 1)
+                    ? $value : throw HttpError::badRequest('workerOffAt must be null or a database time'),
                 default => throw HttpError::badRequest("Unknown setting '$key'", 'unknown_setting'),
             };
         }

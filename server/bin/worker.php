@@ -78,6 +78,7 @@ $geocodeSweep = new BetterCal\Domain\GeocodeSweep(
         $db,
         $workerGeocoderTransport = new BetterCal\Infra\PoliciedGeocoderTransport($db),
         BetterCal\Domain\PlaceProviders::pin($cfg['places'], $workerGeocoderTransport),
+        BetterCal\Domain\PlaceProviders::isOff($cfg['places'], 'lookup'),
     ),
     new BetterCal\Domain\Settings($db)
 );
@@ -403,7 +404,10 @@ function bc_enqueue_recurring(Db $db, JobQueue $queue): void
     bc_enqueue_if_stale($db, $queue, 'activity_prune', 'P1D');
     // Coordinates for anything with an address and none yet, upcoming first.
     // Every tick; the job itself is a no-op when there is nothing to place.
-    bc_enqueue_if_stale($db, $queue, 'geocode_sweep', 'PT50S');
+    // Not at all when looking places up is turned off (BETTERCAL_PLACE_SEARCH=off).
+    if (!BetterCal\Domain\PlaceProviders::isOff(config()['places'], 'lookup')) {
+        bc_enqueue_if_stale($db, $queue, 'geocode_sweep', 'PT50S');
+    }
     // Alert emails: ten minutes, so a broken SMTP is one failed attempt per
     // ten minutes rather than per minute. The decision of WHAT to email is
     // SystemHealth::shouldAlert; this is only how often it is asked.

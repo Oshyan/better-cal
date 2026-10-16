@@ -256,7 +256,8 @@ final class OutFeeds
         });
     }
 
-    private const SOURCE_PROJECTION = 'id, uid, title, description, location, url, start_utc, end_utc,
+    /** The columns Ics::buildCalendar reads (also Export). */
+    public const SOURCE_PROJECTION = 'id, uid, title, description, location, url, start_utc, end_utc,
         all_day, tzid, rrule, exdates_json, reminders_json, status, recurrence_instance_utc';
     private const SEARCH_PROJECTION = [
         'id', 'uid', 'start_utc', 'end_utc', 'all_day', 'tzid', 'rrule', 'exdates_json',

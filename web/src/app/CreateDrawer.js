@@ -13,6 +13,7 @@ import { createFolder } from './actions.js';
 import { trapFocus } from '../ui/DayExpand.js';
 import { PALETTE } from '../lib/color.js';
 import { Icon } from '../ui/icons.js';
+import { WorkerNote } from './system.js';
 
 const TITLES = {
   calendar: 'New calendar',
@@ -137,6 +138,7 @@ export function CreateDrawer() {
         <span>ICS URL</span>
         <input type="url" required placeholder="https://example.com/calendar.ics" value=${url} onInput=${(e) => setUrl(e.target.value)} />
       </label>`}
+      ${kind === 'subscribe' && html`<${WorkerNote} what="Subscribed calendars, to stay up to date," />`}
 
       ${kind === 'import' && html`<label class="bc-field">
         <span>Calendar file (.ics), or a zip of them</span>

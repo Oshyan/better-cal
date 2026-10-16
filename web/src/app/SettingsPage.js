@@ -11,7 +11,7 @@ import { fmtSince } from '../lib/since.js';
 import { adoptSettings } from './settings.js';
 import { saveSetting } from './actions.js';
 import { recentStarts } from './resume.js';
-import { needsAttention } from './system.js';
+import { needsAttention, WorkerNote } from './system.js';
 import { stalledStart } from './bootlog.js';
 import { UpdateSettings } from './updates.js';
 import { PageShell } from './PageShell.js';
@@ -127,18 +127,21 @@ function SystemSection() {
         ? 'One email when something has been failing long enough to be real (jobs: 1 hour and 3 failures; feeds: a day; a device: 6 hours), one when it recovers, never one per failure.'
         : 'Email is not configured on this server (BETTERCAL_SMTP_HOST and BETTERCAL_SMTP_FROM). Failures still show here and in Activity.'}</p>
     <//>
-    <${CronBlock} cron=${health && health.cron} worker=${rows.find((r) => r.subject === 'worker')} />
+    <${CronBlock} cron=${health && health.cron} worker=${health && health.worker} />
     <${PrivateFilesRow} />
     <${StartsRow} />
   </section>`;
 }
 
-// The worker's cron job (Infra\Setup::workerPhp): first whether it runs,
-// and when it doesn't, what to do about it; then the schedule and a button
-// for the command, as control panels ask for them; then the note on which PHP
-// it uses, with the full crontab line for people with a terminal.
+// The worker's cron job (Infra\Setup::workerPhp, Domain\WorkerWatch): first
+// its state, which only reads as an error when it ran and then stopped (plain
+// calendar use works without it), and what to do; then the schedule and a
+// button for the command, as control panels ask for them; then the note on
+// which PHP it uses, with the full crontab line for people with a terminal.
+const NEEDS_WORKER = 'Reminders, subscribed calendars and Google refreshing, email import, prompt filters, place pins and plugins';
 function CronBlock({ cron, worker }) {
   const [copied, setCopied] = useState(false);
+  const [busy, setBusy] = useState(false);
   if (!cron) return null;
   const copy = async () => {
     try {
@@ -148,17 +151,31 @@ function CronBlock({ cron, worker }) {
       toast('Copy failed; select the command in the crontab line below and copy it instead');
     }
   };
-  const stopped = worker && worker.status === 'failing';
+  const turnOff = async () => {
+    setBusy(true);
+    try {
+      await api('/system/worker-off', { method: 'POST' });
+      await loadSystemHealth();
+    } catch (e) {
+      toast(e.message || 'Could not turn it off', { error: true });
+    } finally {
+      setBusy(false);
+    }
+  };
+  const st = (worker && worker.state) || 'never';
   const php = cron.followsServerPhp
     ? "It runs the server's own PHP, so it keeps working through PHP upgrades."
     : "It names this site's PHP version directly, because the server's plain php is older or couldn't be checked; after a PHP upgrade, use the command shown here then.";
-  return html`<${Block} id="bc-set-cron" title="Cron job" aside=${stopped ? html`<span class="bc-set-block-aside is-bad">stopped</span>` : null}>
-    ${stopped
-      ? html`<div class="bc-cron-fix">
-          <p><strong>The worker has stopped: no run since ${fmtSince(worker.firstFailedAt)}.</strong> Reminders, subscribed calendars and email import are paused until it runs again.</p>
-          <p>Open the cron jobs page in your host's control panel (or <code>crontab -e</code> on a server). If Better-Cal's job is missing or paused, add it again: every minute, with the command below. If it's there, the PHP it names may have been removed in an upgrade: replace its command with this one. This page notices within a few minutes once it runs.</p>
-        </div>`
-      : html`<p class="bc-set-block-text">${worker ? 'The worker last ran ' + fmtSince(worker.lastOkAt) + '.' : "The worker hasn't reported yet; it does on its first run."}</p>`}
+  const aside = { stopped: html`<span class="bc-set-block-aside is-bad">stopped</span>`, off: html`<span class="bc-set-block-aside">off</span>`, never: html`<span class="bc-set-block-aside">not set up</span>` }[st] || null;
+  return html`<${Block} id="bc-set-cron" title="Cron job" aside=${aside}>
+    ${st === 'stopped' && html`<div class="bc-cron-fix">
+      <p><strong>The worker has stopped: no run since ${fmtSince(worker.lastRunAt)}.</strong> Reminders, subscribed calendars and email import are paused until it runs again.</p>
+      <p>Open the cron jobs page in your host's control panel (or <code>crontab -e</code> on a server). If Better-Cal's job is missing or paused, add it again: every minute, with the command below. If it's there, the PHP it names may have been removed in an upgrade: replace its command with this one. This page notices within a few minutes once it runs.</p>
+      <p>Removed it on purpose? <button type="button" class="bc-btn" disabled=${busy} onClick=${turnOff}>I turned it off on purpose</button> stops these warnings until it runs again.</p>
+    </div>`}
+    ${st === 'running' && html`<p class="bc-set-block-text">The worker last ran ${fmtSince(worker.lastRunAt)}.</p>`}
+    ${st === 'never' && html`<p class="bc-set-block-text">The worker hasn't run yet: no cron job has started it. Plain calendar use works without it, in the app and on phones. ${NEEDS_WORKER} need it; to have them, add the cron job:</p>`}
+    ${st === 'off' && html`<p class="bc-set-block-text">Off: you turned the worker off ${fmtSince(worker.offAt)}. ${NEEDS_WORKER} don't run without it. To turn it back on, add the cron job again; this page notices once it runs.</p>`}
     <div class="bc-cron-run">
       <span>Every minute (all five schedule fields <code>*</code>), running this command:</span>
       <button type="button" class="bc-btn" onClick=${copy}>${copied ? 'Copied' : 'Copy command'}</button>
@@ -167,9 +184,6 @@ function CronBlock({ cron, worker }) {
   <//>`;
 }
 
-// Can the settings file and backups be downloaded (#142, Infra\PrivateFilesCheck).
-// The server keeps the last result; "Check now" asks the main domain again,
-// at most once a minute.
 const PF_WORD = { safe: 'safe', probably: 'probably safe', exposed: 'fix this now', unchecked: 'not checked' };
 function PrivateFilesRow() {
   const [state, setState] = useState(null);
@@ -478,6 +492,7 @@ function NotificationsSection({ settings, user }) {
     <h2 class="bc-set-h">Notifications</h2>
     <${Row} label="Reminders on this device" hint="Reminders arrive as push notifications even when the app is closed.">
       <span class="bc-set-value">${statusText}</span>
+      <${WorkerNote} what="Reminders" />
       ${!enabled && html`<button type="button" class="bc-btn" disabled=${busy || !canEnable}
         onClick=${run(enablePush, 'Notifications enabled')}>Enable</button>`}
       ${enabled && html`<button type="button" class="bc-btn" disabled=${busy}
@@ -654,9 +669,10 @@ function LocationSection({ settings, config }) {
       ${perm !== 'granted' && perm !== 'denied' && html`<button type="button" class="bc-btn" disabled=${locBusy} onClick=${allowDevice}>Allow this device's location</button>`}
       ${perm === 'denied' && html`<span class="bc-set-value">Location is blocked for this site in the browser.</span>`}
     <//>
-    ${search && html`<${Row} label="Place search service" hint=${html`Set on the server, in .env: BETTERCAL_PLACE_SEARCH for suggestions as you type and BETTERCAL_PLACE_LOOKUP for placing events nobody picked a place for (imports, feeds, typed text), each a list of services tried in order (photon, locationiq, stadia, maptiler), with Photon always last; and each service's key.${(search.notes || []).map((n) => html` ${n.text} <a href=${n.url} target="_blank" rel="noopener noreferrer">${n.link}</a>`)}`}>
-      <span class="bc-set-value">${search.name}${search.fallback ? ', then ' + search.fallback : ''}${search.lookup && search.lookup.active !== search.active
-        ? '; placing events nobody picked a place for: ' + search.lookup.name + (search.lookup.active !== 'photon' ? ', then Photon' : '') : ''}</span>
+    ${search && html`<${Row} label="Place search service" hint=${html`Set on the server, in the settings file (.env.php): BETTERCAL_PLACE_SEARCH for suggestions as you type and BETTERCAL_PLACE_LOOKUP for placing events nobody picked a place for (imports, feeds, typed text), each a list of services tried in order (photon, locationiq, stadia, maptiler), with Photon always last, or off; and each service's key.${(search.notes || []).map((n) => html` ${n.text} <a href=${n.url} target="_blank" rel="noopener noreferrer">${n.link}</a>`)}`}>
+      ${search.off && html`<span class="bc-set-value">Off on this server: places are typed as text, with no suggestions${search.lookup && search.lookup.off ? ' and no map pins for events nobody picked a place for' : ''}.</span>`}
+      ${!search.off && html`<span class="bc-set-value">${search.name}${search.fallback ? ', then ' + search.fallback : ''}${search.lookup && search.lookup.active !== search.active
+        ? '; placing events nobody picked a place for: ' + search.lookup.name + (search.lookup.active !== 'photon' && !search.lookup.off ? ', then Photon' : '') : ''}</span>`}
       ${search.problem && html`<span class="bc-set-value">${search.problem}</span>`}
       ${searchDown && html`<span class="bc-set-value bc-set-warn">${search.downAdvice || 'Every place search service in use is failing; see the System tab.'}</span>`}
       ${search.lookup && search.lookup.problem && search.lookup.problem !== search.problem && html`<span class="bc-set-value">${search.lookup.problem}</span>`}
@@ -688,7 +704,7 @@ function sectionSummary(id, settings, user, version) {
     case 'notifications': return 'Reminders on this device, devices, delivery, default reminders';
     case 'location': return 'Home location, map style, place search';
     case 'connections': return 'Google, outgoing feeds, CalDAV, browser extension';
-    case 'account': return [(user && user.email) || 'Signed in', 'other browsers', 'API keys'].join(' · ');
+    case 'account': return [(user && user.email) || 'Signed in', 'other browsers', 'export', 'API keys'].join(' · ');
     case 'about': return (version ? 'Version ' + version : 'Version') + ' · source';
     case 'system': return 'Background work, failure emails';
     default: return '';
@@ -867,6 +883,9 @@ export function SettingsPage() {
         <button type="button" class="bc-btn" disabled=${busy} onClick=${signOut}>Sign out</button>
       <//>
       <${OtherBrowsersRow} />
+      <${Row} label="Export everything" hint="A zip with one .ics file per calendar, every event in it whatever its date, the same shape as Google Calendar's export. Better-Cal imports the whole zip in one step; Google, Apple, Outlook, Fastmail, Proton and Thunderbird import the files one calendar at a time. People, labels, filters and settings aren't calendar data and aren't included; a database backup keeps those.">
+        <a class="bc-btn" href="/api/v1/export" download>Download all calendars (.zip)</a>
+      <//>
     </section>
     <${TokensSection} />`}
 

@@ -9778,7 +9778,7 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
     $wdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
     $wdb->run('CREATE TABLE system_health (subject TEXT PRIMARY KEY, kind TEXT, user_id INTEGER, label TEXT, status TEXT DEFAULT "ok", first_failed_at TEXT, last_failed_at TEXT, last_ok_at TEXT, consecutive_failures INTEGER DEFAULT 0, last_error TEXT, alerted_at TEXT)');
     $wdb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT)');
-    $wdb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, created_at TEXT)');
+    $wdb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, created_at TEXT, settings_json TEXT)');
     $wroot = sys_get_temp_dir() . '/bc-worker-watch-' . bin2hex(random_bytes(3));
     mkdir($wroot);
     $wcfg = ['app_root' => $wroot, 'db' => [], 'alert_email' => ''];
@@ -9787,18 +9787,25 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
     $t = static fn(string $iso): DateTimeImmutable => new DateTimeImmutable($iso, new DateTimeZone('UTC'));
     $wdb->run("INSERT INTO users (id, email, created_at) VALUES (1, 'sam.sample@example.test', '2026-10-15 10:00:00')");
 
-    check('worker watch: a new install gets its first 15 minutes', !$WW::check($wdb, $wcfg, $noMail, $t('2026-10-15 10:10:00')));
+    checkEq('worker watch: a worker that never ran is "never", not an error', 'never', $WW::state($wdb)['state']);
+    check('worker watch: and is never reported, however long ago setup was', !$WW::check($wdb, $wcfg, $noMail, $t('2026-11-15 10:00:00')));
     $wdb->run("INSERT INTO system_health (subject, kind, label, status, last_ok_at) VALUES ('job:reminder_scan', 'job', 'Reminder scan', 'ok', '2026-10-15 10:19:00')");
-    check('worker watch: an install updated from before the report counts from its jobs, not from setup', !$WW::check($wdb, $wcfg, $noMail, $t('2026-10-15 10:20:00')));
+    checkEq('worker watch: an install updated from before the report counts as running from its jobs', 'running', $WW::state($wdb)['state']);
+    check('worker watch: so it is fine within 15 minutes of its jobs', !$WW::check($wdb, $wcfg, $noMail, $t('2026-10-15 10:30:00')));
+    check('worker watch: and reported after that', $WW::check($wdb, $wcfg, $noMail, $t('2026-10-15 10:40:00')));
+    checkEq('worker watch: stopped', 'stopped', $WW::state($wdb)['state']);
+    check('worker watch: once, not on every check', !$WW::check($wdb, $wcfg, $noMail, $t('2026-10-15 10:50:00')));
+    $WW::turnOff($wdb);
+    checkEq('worker watch: turned off on purpose, it is off', 'off', $WW::state($wdb)['state']);
+    checkEq('worker watch: no longer failing', 'ok', $wdb->scalar("SELECT status FROM system_health WHERE subject = 'worker'"));
+    check('worker watch: and never reported while off', !$WW::check($wdb, $wcfg, $noMail, $t('2026-12-01 10:00:00')));
     $wdb->run("DELETE FROM system_health WHERE subject = 'job:reminder_scan'");
-    check('worker watch: after that, a worker that never ran is reported', $WW::check($wdb, $wcfg, $noMail, $t('2026-10-15 10:20:00')));
-    $row = $wdb->one("SELECT * FROM system_health WHERE subject = 'worker'");
-    check('worker watch: as failing since setup, saying to add the cron job', $row['status'] === 'failing' && $row['first_failed_at'] === '2026-10-15 10:00:00'
-        && str_contains((string) $row['last_error'], 'Add the cron job'));
-    check('worker watch: once, not on every check', !$WW::check($wdb, $wcfg, $noMail, $t('2026-10-15 10:30:00')));
 
+    $wdb->run("UPDATE users SET settings_json = '{\"workerOffAt\":\"2026-10-15 10:55:00\"}'");
     $health = new SystemHealth($wdb);
     $WW::ran($health);
+    checkEq('worker watch: a run after being turned off makes it running again', 'running', $WW::state($wdb)['state']);
+    $wdb->run('UPDATE users SET settings_json = NULL');
     checkEq('worker watch: the next run marks it working again', 'ok', $wdb->scalar("SELECT status FROM system_health WHERE subject = 'worker'"));
     $wdb->run("UPDATE system_health SET last_ok_at = '2026-10-15 11:00:00' WHERE subject = 'worker'");
     check('worker watch: a worker that ran 10 minutes ago is fine', !$WW::check($wdb, $wcfg, $noMail, $t('2026-10-15 11:10:00')));
@@ -9815,11 +9822,69 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
     @rmdir("$wroot/.runtime-cache");
     @rmdir($wroot);
 
+    $PP = BetterCal\Domain\PlaceProviders::class;
+    check('place search: off turns both jobs off', $PP::isOff(['provider' => 'off'], 'provider') && $PP::isOff(['provider' => 'off'], 'lookup'));
+    check('place search: lookup can stay on', !$PP::isOff(['provider' => 'off', 'lookup' => 'photon'], 'lookup'));
+    checkEq('place search: off has no services to watch', [], $PP::healthSubjects(['provider' => 'off']));
+    checkEq('place search: off is not an unknown service', [null, true, 'Off'], [($d = $PP::describe(['provider' => 'off']))['problem'], $d['off'], $d['name']]);
+    $geoOff = new BetterCal\Domain\Geocode($wdb, new class implements BetterCal\Infra\GeocoderTransport {
+        public function photon(array $paramSets): array { throw new RuntimeException('asked a service while off'); }
+        public function openMeteo(array $params): ?array { throw new RuntimeException('asked a service while off'); }
+    }, null, true);
+    checkEq('place search: lookups while off find nothing and ask nobody', null, $geoOff->lookup('Lisbon')['lat']);
+    checkEq('place search: nothing suggested while off', [], (new BetterCal\Domain\PlaceSearch(new BetterCal\Domain\NoPlaces()))->search('Lisbon', null, null, 5));
+
     check('cron: the command names a PHP and the worker, output discarded', preg_match('~^\S+ /srv/x/server/bin/worker\.php >/dev/null 2>&1$~', BetterCal\Infra\Setup::cronCommand('/srv/x', '/usr/bin/php')) === 1);
     $hasAll = version_compare(PHP_VERSION, BetterCal\Infra\Setup::MIN_PHP, '>=')
         && array_filter(BetterCal\Infra\Setup::EXTENSIONS, static fn($e) => !extension_loaded($e)) === [];
     checkEq('cron: running PHP tells whether it is new enough, with the extensions', $hasAll, BetterCal\Infra\Setup::phpIsEnough(PHP_BINARY));
     check('cron: something that is not PHP is not', !BetterCal\Infra\Setup::phpIsEnough('/bin/echo'));
+}
+
+// ---------------------------------------------------------------------------
+// Taking your calendars out (Domain\Export): a zip of .ics files, one per
+// calendar, that Better-Cal's own import reads back.
+{
+    $xdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $xdb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, position INTEGER DEFAULT 0)');
+    $xdb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, description TEXT, location TEXT, url TEXT,
+        start_utc TEXT, end_utc TEXT, all_day INTEGER DEFAULT 0, tzid TEXT, rrule TEXT, exdates_json TEXT, reminders_json TEXT, status TEXT,
+        recurrence_instance_utc TEXT, deleted_at TEXT, is_container INTEGER DEFAULT 0)');
+    $xdb->run('CREATE TABLE event_links (id INTEGER PRIMARY KEY, container_id INTEGER, event_id INTEGER, position INTEGER DEFAULT 0)');
+    $xdb->run("INSERT INTO calendars (id, user_id, name, position) VALUES (1, 1, 'Work', 0), (2, 1, 'Work', 1), (3, 1, 'Trips: \"far\" / near', 2), (4, 2, 'Someone else', 0)");
+    $xdb->run("INSERT INTO events (id, user_id, calendar_id, uid, title, start_utc, end_utc, tzid, rrule) VALUES
+        (1, 1, 1, 'a@example.test', 'Weekly sync', '2026-10-05 16:00:00', '2026-10-05 16:30:00', 'America/Los_Angeles', 'FREQ=WEEKLY;BYDAY=MO'),
+        (2, 1, 2, 'b@example.test', 'Old one', '2019-01-02 10:00:00', '2019-01-02 11:00:00', 'UTC', NULL),
+        (3, 1, 2, 'c@example.test', 'Deleted', '2026-10-06 10:00:00', '2026-10-06 11:00:00', 'UTC', NULL),
+        (4, 2, 4, 'd@example.test', 'Not yours', '2026-10-06 10:00:00', '2026-10-06 11:00:00', 'UTC', NULL)");
+    $xdb->run("UPDATE events SET deleted_at = '2026-10-07 00:00:00' WHERE id = 3");
+    $used = [];
+    checkEq('export: file names are safe and unique', ['Work.ics', 'work (2).ics', 'Trips far near.ics', 'Calendar.ics'],
+        [BetterCal\Domain\Export::fileName('Work', $used), BetterCal\Domain\Export::fileName('work', $used),
+         BetterCal\Domain\Export::fileName('Trips: "far" / near', $used), BetterCal\Domain\Export::fileName('  ', $used)]);
+    $zpath = sys_get_temp_dir() . '/bc-export-test-' . bin2hex(random_bytes(4)) . '.zip';
+    $sum = (new BetterCal\Domain\Export($xdb))->zip(1, $zpath);
+    checkEq('export: every calendar of the user, every live event whatever its date', ['calendars' => 3, 'events' => 2], $sum);
+    $z = new ZipArchive();
+    $z->open($zpath);
+    $names = [];
+    for ($i = 0; $i < $z->numFiles; $i++) {
+        $names[] = $z->getNameIndex($i);
+    }
+    check('export: a file per calendar, same-named ones kept apart', in_array('Work.ics', $names, true) && in_array('Work (2).ics', $names, true) && count($names) === 3);
+    $work = (string) $z->getFromName('Work.ics');
+    check('export: repeating events keep their rule and zone', str_contains($work, 'RRULE:FREQ=WEEKLY;BYDAY=MO') && str_contains($work, 'TZID=America/Los_Angeles'));
+    $work2 = (string) $z->getFromName('Work (2).ics');
+    check('export: old events are included, deleted ones are not', str_contains($work2, 'Old one') && !str_contains($work2, 'Deleted'));
+    checkEq('export: Better-Cal\'s import reads the calendar names back', 'Work', BetterCal\Domain\CalendarImport::calendarName('Work (2).ics', $work2));
+    check('export: nothing from another account', !str_contains(implode('', array_map(static fn($n) => (string) $z->getFromName($n), $names)), 'Not yours'));
+    $z->close();
+    unlink($zpath);
+    $threw = false;
+    try { (new BetterCal\Domain\Export($xdb))->calendar(1, 4); } catch (BetterCal\Http\HttpError $e) { $threw = $e->status === 404; }
+    check('export: another account\'s calendar is not found', $threw);
+    checkEq('export: a download name keeps the real name too', 'attachment; filename="Caf_ plans.ics"; filename*=UTF-8\'\'Caf%C3%A9%20plans.ics',
+        BetterCal\Http\Controllers\ExportController::attachment('Café plans.ics'));
 }
 
 $runLog = (string) @file_get_contents($GLOBALS['__runLog']);

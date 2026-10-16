@@ -1478,6 +1478,9 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-cron-fix strong { color: var(--danger); }
 .bc-cron-run { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .bc-cron-line { overflow-wrap: anywhere; }
+/* Where a feature needs the worker and it isn't running (system.js WorkerNote). */
+.bc-worker-note { flex-basis: 100%; margin: 4px 0 0; font-size: 12.5px; color: var(--fg-muted); }
+.bc-worker-note .bc-link-btn { font-size: inherit; padding: 0; }
 .bc-map-wrap { position: relative; margin-top: 6px; isolation: isolate; } /* Leaflet layers (z 400+) stay inside the map, under menus (0.6.10) */
 /* Leaflet ships a white attribution strip and light-grey tile gaps; both
    follow the theme here (the tiles themselves switch style, lib/maps.js). */

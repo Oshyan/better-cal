@@ -74,17 +74,42 @@ final class PlaceProviders
     }
 
     /**
+     * Whether a job is turned off: BETTERCAL_PLACE_SEARCH=off (and
+     * BETTERCAL_PLACE_LOOKUP=off, or empty to follow it). Off means no
+     * suggestions as you type, or no places looked up for events nobody
+     * picked one for, and no requests to any service for it, so nothing to
+     * fail. For people who don't want place search at all.
+     *
+     * @param array<string,mixed> $places
+     * @param 'provider'|'lookup' $job
+     */
+    public static function isOff(array $places, string $job): bool
+    {
+        $raw = trim((string) ($places[$job] ?? ''));
+        if ($raw === '' && $job === 'lookup') {
+            $raw = trim((string) ($places['provider'] ?? ''));
+        }
+        return strtolower($raw) === 'off';
+    }
+
+    /**
      * The System health subjects of the place search services in use for
-     * either job, Photon always among them: an outage of one is worth an
-     * alert only when all of them are down (SystemHealth::sweepAlerts).
+     * either job, Photon among them for a job that isn't off: an outage of
+     * one is worth an alert only when all of them are down
+     * (SystemHealth::sweepAlerts). None when both are off.
      *
      * @param array<string,mixed> $places
      * @return list<string>
      */
     public static function healthSubjects(array $places): array
     {
-        $services = array_unique(array_merge(self::chain($places, 'provider')['active'], self::chain($places, 'lookup')['active'], ['photon']));
-        return array_values(array_map(static fn(string $s): string => 'geocoder:' . $s, $services));
+        $services = [];
+        foreach (['provider', 'lookup'] as $job) {
+            if (!self::isOff($places, $job)) {
+                $services = array_merge($services, self::chain($places, $job)['active'], ['photon']);
+            }
+        }
+        return array_values(array_map(static fn(string $s): string => 'geocoder:' . $s, array_unique($services)));
     }
 
     /** What to tell an owner whose only place search service, Photon, is down. */
@@ -113,15 +138,16 @@ final class PlaceProviders
         if (in_array('maptiler', $named, true)) {
             $notes[] = ['text' => self::MAPTILER_NOTE, 'url' => self::MAPTILER_PRICING_URL, 'link' => 'MapTiler\'s plans'];
         }
-        $summary = static fn(array $c): array => [
-            'requested' => $c['requested'] === [] ? 'photon' : implode(',', $c['requested']),
-            'active' => $c['active'] === [] ? 'photon' : implode(',', $c['active']),
-            'name' => $c['active'] === [] ? 'Photon' : implode(', then ', array_map(static fn(string $s): string => self::NAMES[$s], $c['active'])),
-            'problem' => $c['problems'] === [] ? null : implode(' ', $c['problems']),
+        $summary = static fn(array $c, bool $off): array => [
+            'requested' => $off ? 'off' : ($c['requested'] === [] ? 'photon' : implode(',', $c['requested'])),
+            'active' => $off ? 'off' : ($c['active'] === [] ? 'photon' : implode(',', $c['active'])),
+            'name' => $off ? 'Off' : ($c['active'] === [] ? 'Photon' : implode(', then ', array_map(static fn(string $s): string => self::NAMES[$s], $c['active']))),
+            'problem' => $off || $c['problems'] === [] ? null : implode(' ', $c['problems']),
+            'off' => $off,
         ];
-        $s = $summary($search);
+        $s = $summary($search, self::isOff($places, 'provider'));
         return $s + [
-            'fallback' => $search['active'] === [] ? null : 'Photon',
+            'fallback' => $s['off'] || $search['active'] === [] ? null : 'Photon',
             'note' => $stadia ? self::STADIA_NOTE : null,
             'termsUrl' => $stadia ? self::STADIA_TERMS_URL : null,
             'notes' => $notes,
@@ -129,7 +155,7 @@ final class PlaceProviders
             // when every one of them is down (only Photon in use: get a key).
             'healthSubjects' => self::healthSubjects($places),
             'downAdvice' => self::healthSubjects($places) === ['geocoder:photon'] ? self::PHOTON_DOWN_ADVICE : null,
-            'lookup' => $summary($lookup),
+            'lookup' => $summary($lookup, self::isOff($places, 'lookup')),
         ];
     }
 
@@ -155,8 +181,8 @@ final class PlaceProviders
         $active = [];
         $problems = [];
         foreach ($requested as $service) {
-            if ($service === 'photon') {
-                continue; // always last, whether listed or not
+            if ($service === 'photon' || $service === 'off') {
+                continue; // Photon is always last, whether listed or not; off is isOff()
             }
             if (!isset(self::NAMES[$service])) {
                 $problems[] = $setting . ' names "' . $service . '", which Better-Cal does not know, so it is skipped. Services can be photon, locationiq, stadia or maptiler.';

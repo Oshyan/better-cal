@@ -26,6 +26,9 @@ final class Geocode
         private readonly Db $db,
         private readonly GeocoderTransport $transport,
         private readonly ?PinProvider $keyed = null,
+        // Looking places up turned off (PlaceProviders::isOff 'lookup'):
+        // every lookup is "not found", and no service is asked.
+        private readonly bool $off = false,
     ) {
     }
 
@@ -448,6 +451,9 @@ final class Geocode
         $normalized = self::normalize($q);
         if ($normalized === '') {
             throw HttpError::badRequest('q is required');
+        }
+        if ($this->off) {
+            return ['lat' => null, 'lng' => null, 'display' => null, 'off' => true];
         }
         $result = $this->lookupExact($normalized, $biasLat, $biasLng);
         if ($result['lat'] !== null || !empty($result['transport'])) {

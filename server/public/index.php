@@ -104,8 +104,10 @@ function bc_handle_api(Request $request, array $cfg): void
         $outFeeds = new Domain\OutFeeds($db, $search, $cfg);
         $settings = new Domain\Settings($db);
         $geocoderTransport = new \BetterCal\Infra\PoliciedGeocoderTransport($db);
-        $geocode = new Domain\Geocode($db, $geocoderTransport, Domain\PlaceProviders::pin($cfg['places'], $geocoderTransport));
-        $placeSearch = new Domain\PlaceSearch(Domain\PlaceProviders::build($cfg['places'], $geocoderTransport));
+        $geocode = new Domain\Geocode($db, $geocoderTransport, Domain\PlaceProviders::pin($cfg['places'], $geocoderTransport),
+            Domain\PlaceProviders::isOff($cfg['places'], 'lookup'));
+        $placeSearch = new Domain\PlaceSearch(Domain\PlaceProviders::isOff($cfg['places'], 'provider')
+            ? new Domain\NoPlaces() : Domain\PlaceProviders::build($cfg['places'], $geocoderTransport));
         $pushSubscriptions = new Domain\PushSubscriptions($db, $cfg['push']['extra_hosts']);
         $pushSender = new \BetterCal\Infra\PushSender($cfg);
         $emailSender = new \BetterCal\Infra\EmailSender($cfg);
@@ -116,6 +118,7 @@ function bc_handle_api(Request $request, array $cfg): void
         $loginGuard = new Domain\LoginGuard($throttle, $cfg['auth']['trusted_proxies'], $cfg['auth']['max_failures'], $db);
         $authController = new Controllers\AuthController($auth, $loginGuard, new Domain\TrustedDevices($db));
         $calendarsController = new Controllers\CalendarsController($db, $calendars, $feeds);
+        $exportController = new Controllers\ExportController(new Domain\Export($db));
         $foldersController = new Controllers\FoldersController($folders);
         $rsvp = new Domain\Rsvp($db, $emailSender, $cfg, new Domain\GoogleWriter($db, $googleAuth, $feeds));
         $eventsController = new Controllers\EventsController($events, $trips, $rsvp);
@@ -156,6 +159,9 @@ function bc_handle_api(Request $request, array $cfg): void
         $router->add('POST', "$base/calendars/import", [$calendarsController, 'import']);
         $router->add('POST', "$base/calendars", [$calendarsController, 'create']);
         $router->add('POST', "$base/calendars/:id/refresh", [$calendarsController, 'refresh']);
+        // Taking your calendars out: one as .ics, or all as a zip (Domain\Export).
+        $router->add('GET', "$base/calendars/:id/export", [$exportController, 'calendar']);
+        $router->add('GET', "$base/export", [$exportController, 'all']);
         $router->add('POST', "$base/calendars/:id/claim-subscription", [$calendarsController, 'claimSubscription']);
         $router->add('PATCH', "$base/calendars/:id", [$calendarsController, 'patch']);
         $router->add('POST', "$base/calendars/:id/adopt", [$calendarsController, 'adopt']);
@@ -297,6 +303,8 @@ function bc_handle_api(Request $request, array $cfg): void
         // Can the private files be downloaded (#142): Settings, System.
         $router->add('GET', "$base/system/private-files", [$systemController, 'privateFiles']);
         $router->add('POST', "$base/system/private-files/check", [$systemController, 'checkPrivateFiles']);
+        // The worker turned off on purpose (Domain\WorkerWatch).
+        $router->add('POST', "$base/system/worker-off", [$systemController, 'workerOff']);
         // Google Calendar connector (docs/google-calendar.md).
         $router->add('GET', "$base/google/status", [$googleController, 'status']);
         $router->add('GET', "$base/google/connect", [$googleController, 'connect']);

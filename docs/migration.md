@@ -107,7 +107,7 @@ Going back is stopping.
 
 1. **Toggle off or uninstall the extension.** Links open at Google again immediately.
 2. **Anything on a Google calendar is already at Google.** You did not move it; you edited it in place.
-3. **Anything in a local calendar** that you want at Google: move it there from its settings (**Move to Google…**), or create an outbound feed for that calendar (Settings → Connections) and subscribe Google to its URL, or export it once by opening that URL and importing the file at Google. Or leave it; local calendars keep working through CalDAV whether or not you use the web app.
+3. **Anything in a local calendar** that you want at Google: move it there from its settings (**Move to Google…**), or create an outbound feed for that calendar and subscribe Google to its URL, or export it once and import the file at Google: **Download .ics** in the calendar's settings, or **Settings, Account, Export everything** for all of them (a zip of `.ics` files; Google imports them one calendar at a time). Or leave it; local calendars keep working through CalDAV whether or not you use the web app.
 4. **Turn Google's notifications back on**, and disconnect the account here if you want the token revoked.
 
 Nothing you did in steps 1 and 2 needs undoing.

@@ -112,6 +112,56 @@ final class PlaceProviders
         return array_values(array_map(static fn(string $s): string => 'geocoder:' . $s, array_unique($services)));
     }
 
+    /** How long a failing place search service waits before it's asked again on its own. */
+    public const RECHECK_AFTER_SECONDS = 7200;
+
+    /**
+     * Ask each failing place search service in use once more, with a plain
+     * query, when it hasn't been asked for RECHECK_AFTER_SECONDS. A service
+     * behind another (Photon behind LocationIQ, say) is reached only when
+     * the one in front fails, so after an outage it could go untried for
+     * weeks and stay "failing" on Settings, System long after it came back.
+     * The transport records the answer either way. Returns the services
+     * asked.
+     *
+     * @param array<string,mixed> $places
+     * @param list<array{subject:string,last_failed_at:?string}> $failing failing geocoder rows
+     * @return list<string>
+     */
+    public static function recheck(array $places, array $failing, GeocoderTransport&KeyedGeocoderTransport $transport, int $now): array
+    {
+        $inUse = self::healthSubjects($places);
+        $asked = [];
+        foreach ($failing as $row) {
+            $subject = (string) $row['subject'];
+            if (!in_array($subject, $inUse, true)) {
+                continue;
+            }
+            $last = $row['last_failed_at'] !== null ? strtotime($row['last_failed_at'] . ' UTC') : false;
+            if ($last !== false && $now - $last < self::RECHECK_AFTER_SECONDS) {
+                continue;
+            }
+            $service = substr($subject, strlen('geocoder:'));
+            $provider = match ($service) {
+                'photon' => new PhotonPlaces($transport),
+                'locationiq' => new LocationIqPlaces($transport, (string) $places['locationiq_key']),
+                'stadia' => new StadiaPlaces($transport, (string) $places['stadia_key']),
+                'maptiler' => new MapTilerPlaces($transport, (string) $places['maptiler_key']),
+                default => null,
+            };
+            if ($provider === null) {
+                continue;
+            }
+            try {
+                $provider->candidates('London', null, null, 1, null);
+            } catch (\Throwable) {
+                // Recorded by the transport, or not worth recording.
+            }
+            $asked[] = $service;
+        }
+        return $asked;
+    }
+
     /** What to tell an owner whose only place search service, Photon, is down. */
     public const PHOTON_DOWN_ADVICE = 'Photon, the free service Better-Cal searches places with, is down. Free keys from LocationIQ or MapTiler put another service in front of it, so place search keeps working when Photon doesn\'t; see docs/geocoding.md.';
 

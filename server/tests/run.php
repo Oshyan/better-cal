@@ -9972,6 +9972,24 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
     check('place search: off turns both jobs off', $PP::isOff(['provider' => 'off'], 'provider') && $PP::isOff(['provider' => 'off'], 'lookup'));
     check('place search: lookup can stay on', !$PP::isOff(['provider' => 'off', 'lookup' => 'photon'], 'lookup'));
     checkEq('place search: off has no services to watch', [], $PP::healthSubjects(['provider' => 'off']));
+    // A failing service standing behind another is asked again now and then, so its row can recover.
+    $asks = new class implements BetterCal\Infra\GeocoderTransport, BetterCal\Infra\KeyedGeocoderTransport {
+        public array $calls = [];
+        public function photon(array $paramSets): array { $this->calls[] = 'photon'; return array_map(static fn() => ['features' => []], $paramSets); }
+        public function openMeteo(array $params): ?array { $this->calls[] = 'open-meteo'; return null; }
+        public function keyed(string $provider, array $urls): array { $this->calls[] = $provider; return array_map(static fn() => [], $urls); }
+    };
+    $chainCfg = ['provider' => 'locationiq', 'locationiq_key' => 'k'];
+    $now = strtotime('2026-10-16 12:00:00 UTC');
+    $asked = $PP::recheck($chainCfg, [
+        ['subject' => 'geocoder:photon', 'last_failed_at' => '2026-10-16 09:00:00'],
+        ['subject' => 'geocoder:locationiq', 'last_failed_at' => '2026-10-16 11:30:00'],
+        ['subject' => 'geocoder:stadia', 'last_failed_at' => '2026-10-01 00:00:00'],
+        ['subject' => 'geocoder:open-meteo', 'last_failed_at' => '2026-10-01 00:00:00'],
+    ], $asks, $now);
+    checkEq('place search: a failing service untried for two hours is asked again, a recent one is not', ['photon'], $asked);
+    checkEq('place search: and services not in use are never asked', ['photon'], array_values(array_unique($asks->calls)));
+    checkEq('place search: nothing is rechecked when place search is off', [], $PP::recheck(['provider' => 'off'], [['subject' => 'geocoder:photon', 'last_failed_at' => '2026-10-01 00:00:00']], $asks, $now));
     checkEq('place search: off is not an unknown service', [null, true, 'Off'], [($d = $PP::describe(['provider' => 'off']))['problem'], $d['off'], $d['name']]);
     $geoOff = new BetterCal\Domain\Geocode($wdb, new class implements BetterCal\Infra\GeocoderTransport {
         public function photon(array $paramSets): array { throw new RuntimeException('asked a service while off'); }

@@ -4,6 +4,10 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## Unreleased
+
+- **A place search service that came back stops showing as failing.** A service behind another one (Photon behind LocationIQ, say) is only asked when the one in front fails, so after an outage it could stay "failing" on Settings, System for weeks after it recovered. The worker now asks a failing service once more every two hours.
+
 ## 0.9.86 (2026-10-16)
 
 From a review of everything since installing and updating moved into the app.

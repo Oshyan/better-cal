@@ -297,6 +297,18 @@ try {
                         . ($r['error'] !== null ? ' error=' . $r['error'] : '') . "\n";
                     break;
                 case 'system_alerts':
+                    // A failing place search service nothing else asks (one
+                    // standing behind another) gets a plain query now and
+                    // then, so its row recovers when it does.
+                    $rechecked = BetterCal\Domain\PlaceProviders::recheck(
+                        $cfg['places'],
+                        $db->all("SELECT subject, last_failed_at FROM system_health WHERE status = 'failing' AND subject LIKE 'geocoder:%'"),
+                        $workerGeocoderTransport,
+                        time(),
+                    );
+                    if ($rechecked !== []) {
+                        echo bc_ts() . ' system_alerts rechecked=' . implode(',', $rechecked) . "\n";
+                    }
                     $r = $systemHealth->sweepAlerts($emailSender, $cfg['alert_email'] ?? null, BetterCal\Domain\PlaceProviders::healthSubjects($cfg['places']));
                     if ($r['failureEmails'] + $r['recoveryEmails'] > 0 || $r['skipped'] !== null) {
                         echo bc_ts() . " system_alerts failure_emails={$r['failureEmails']} recovery_emails={$r['recoveryEmails']}"

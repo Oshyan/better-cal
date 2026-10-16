@@ -14,6 +14,7 @@ Security fixes are tracked privately as GitHub security advisories until they sh
 - **Export everything:** Settings, Account downloads a zip with one `.ics` file per calendar, every event whatever its date, the same shape as Google Calendar's export. Better-Cal imports the zip in one step; Google, Apple, Outlook, Fastmail, Proton and Thunderbird import the files a calendar at a time. Each calendar's settings also have **Download .ics**.
 - **Import into a calendar you already have**, not only a new one: Import's new "Into" choice takes any of your own calendars, and events it already has (from an earlier import of the same file) are left as they are.
 - **Settings, System says what's off.** Background work shows "off" for what you turned off (the worker, place lookups) and "not set up" for services this server has no settings for (mail import, prompt filters and ranking without an AI key, alert emails without SMTP), instead of "ok". A failing row reads "failing (41×)", with its last good time in red beside it.
+- **Stepping through an event's day finds all of it.** An event opened from Review, search, People, Activity or a trip could arrive on its own, without the rest of its day, so the previous and next arrows skipped events the day showed (a possible duplicate's twin, for one) or didn't appear at all. Opening an event now loads its whole day.
 - [Installing](docs/install.md#removing-better-cal) has a new section on removing Better-Cal completely, and lists the shared hosts it has been installed on.
 
 Operators: no migration.

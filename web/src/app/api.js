@@ -3,7 +3,7 @@
 // out-of-order responses never render.
 
 import { state, set, mergeWindow, pruneOccurrenceCache, missingRanges, patchOccurrence, invalidateRecords, toast } from './store.js';
-import { toISOWithOffset } from '../lib/dates.js';
+import { toISOWithOffset, dateOfDayKey } from '../lib/dates.js';
 import { adoptSettings } from './settings.js';
 import { clearEditorDraft, clearQuickAddText } from './drafts.js';
 import { clearResume } from './resume-storage.js';
@@ -467,6 +467,25 @@ export async function loadWindow(startISO, endISO, { force = false } = {}) {
   } catch (err) {
     windowFailed(startISO, endISO, err);
   }
+}
+
+// One day, complete: an open event steps through its day's events, but it
+// can be cached on its own (Review, a notification, search, People, Activity
+// and trips insert just the one), with the rest of the day never loaded, so
+// stepping showed only it. Fetch whatever of the day isn't held or on its
+// way; the open event redraws when it lands. lastWindow is the view's, so
+// this leaves it alone.
+export async function ensureDayLoaded(dayKey) {
+  const s = dateOfDayKey(dayKey).getTime();
+  const next = dateOfDayKey(dayKey);
+  next.setDate(next.getDate() + 1);
+  const gaps = missingRanges(s, next.getTime(), [
+    ...state.loadedRanges,
+    ...inFlight.map((r) => ({ start: r.start, end: r.end })),
+  ]);
+  try {
+    for (const gap of gaps) await fetchRange(gap.start, gap.end);
+  } catch { /* offline: the day steps through what is held, as before */ }
 }
 
 // The window carries what the grid draws. Description, cadence, reminders,

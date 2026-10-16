@@ -16,7 +16,7 @@
 
 import { html, useState, useRef, useEffect } from '../../vendor/index.js';
 import { useStore, set, state } from './store.js';
-import { ensureFullOccurrence } from './api.js';
+import { ensureFullOccurrence, ensureDayLoaded } from './api.js';
 import { CopyTo } from './CopyTo.js';
 import { DeleteScope, ScopeChoice } from './DeleteScope.js';
 import { RelationshipControl } from './Relationship.js';
@@ -234,6 +234,9 @@ export function EventPopover() {
   // Outline the event where the day being browsed shows it, and keep that
   // outline as the views behind re-render (virtualized rows come and go).
   const focusDay = popover && (popover.dayKey || (occ ? occDayKey(occ) : null));
+  // Stepping goes through the day's events, so the whole day has to be
+  // loaded, not just this one (opened from Review, search, People, a trip).
+  useEffect(() => { if (focusDay) ensureDayLoaded(focusDay); }, [focusDay]);
   useEffect(() => {
     if (!open || !popover) return undefined;
     const panel = panelRef.current;

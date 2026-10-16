@@ -29,6 +29,21 @@ final class Migrator
     }
 
     /**
+     * Changes the database has that this code doesn't know: a newer version
+     * updated it, and its files were replaced by older ones since (put back
+     * by hand). This code would run against a schema it wasn't written for.
+     *
+     * @return list<string>
+     */
+    public function unknown(): array
+    {
+        $this->ensureTable();
+        $known = array_fill_keys(array_map('basename', $this->files()), true);
+        return array_values(array_filter(array_column($this->db->all('SELECT filename FROM schema_migrations ORDER BY filename'), 'filename'),
+            static fn($f): bool => !isset($known[(string) $f])));
+    }
+
+    /**
      * Apply everything pending. $log gets one line per file. Throws on the
      * first failure, naming the file; later files are left unapplied.
      *

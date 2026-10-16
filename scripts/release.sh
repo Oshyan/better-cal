@@ -9,21 +9,65 @@ ASSET="bettercal-release.json"
 # The release zip (source plus PHP libraries), built by .github/workflows/release-zip.yml.
 zip_name() { echo "better-cal-$1.zip"; }
 SIG="bettercal-release.sig"
+# The Composer that builds the release's PHP libraries, here and in
+# .github/workflows/release-zip.yml: the same version, so the same files.
+COMPOSER_VERSION=2.10.3
+COMPOSER_SHA256=7a2d379d5b8ffdaa028580ef26494c36d2feef4b178d3dd1473a4dbc5e17c8d6
+
+# Rebuild the release here, from the tag and the lock file, and compare it
+# file by file with the zip GitHub built: the signature vouches for the zip's
+# bytes, so it must never be put on a zip that differs from the tagged source
+# (a changed build, or a zip swapped on the draft by someone holding the
+# GitHub account).
+verify_zip() {
+  local zip=$1 work phar
+  work=$(mktemp -d)
+  phar="$HOME/.cache/better-cal/composer-$COMPOSER_VERSION.phar"
+  if [[ ! -f "$phar" ]]; then
+    mkdir -p "$(dirname "$phar")"
+    curl -fsSLo "$phar.part" "https://getcomposer.org/download/$COMPOSER_VERSION/composer.phar"
+    mv "$phar.part" "$phar"
+  fi
+  [[ $(shasum -a 256 "$phar" | cut -d' ' -f1) == "$COMPOSER_SHA256" ]] || die "$phar isn't Composer $COMPOSER_VERSION (SHA-256 differs)"
+  mkdir -p "$work/src" "$work/ours" "$work/theirs"
+  # Outside git, as on GitHub, where the build sees no repository: Composer
+  # records the app's version from git when it can.
+  git archive "$tag" server | tar -x -C "$work/src"
+  (cd "$work/src/server" && COMPOSER_HOME="$work/composer-home" php "$phar" install --no-dev --no-interaction --prefer-dist --optimize-autoloader --quiet)
+  scripts/release-assemble.sh "$tag" "$work/src/server/vendor" "$work/build" "$work/ours.zip"
+  (cd "$work/ours" && unzip -q ../ours.zip)
+  (cd "$work/theirs" && unzip -q "$zip")
+  if ! diff -r "$work/ours" "$work/theirs" >"$work/diff.txt"; then
+    head -20 "$work/diff.txt" >&2
+    die "GitHub's $(basename "$zip") differs from the release rebuilt here from $tag; not signing it"
+  fi
+  rm -rf "$work"
+  echo "$(basename "$zip") matches the release rebuilt here from $tag."
+}
 
 # Check (and with "sign", first make) the release signature for $tag: the
 # statement names the version, the tag's commit and the SHA-256 of the zip and
-# manifest as attached to the release, signed with the maintainer's key file
-# (scripts/release-sign.php, docs/releasing.md). The private key never leaves
-# this machine; installs verify with server/config/release-keys.php.
+# manifest as attached to the release. Signed with the hardware security key
+# (scripts/release-sign-fido.py: its PIN and a touch), or with --recovery, the
+# key file kept in the password manager (scripts/release-sign.php), for when
+# the hardware key is lost (docs/releasing.md). No private key touches
+# GitHub; installs verify with server/config/release-keys.php.
 release_signature() {
   local mode=$1 dir commit
   dir=$(mktemp -d)
   gh release download "$tag" --repo "$REPO" --pattern "$(zip_name "$version")" --pattern "$ASSET" --dir "$dir"
   commit=$(git rev-parse "$tag^{commit}")
   if [[ "$mode" == sign ]]; then
+    verify_zip "$dir/$(zip_name "$version")"
     php scripts/release-sign.php --statement --version="$version" --commit="$commit" \
       --zip="$dir/$(zip_name "$version")" --manifest="$dir/$ASSET" --out="$dir/statement.txt"
-    php scripts/release-sign.php --sign --statement-file="$dir/statement.txt" --out="$dir/$SIG"
+    if [[ "$recovery" == true ]]; then
+      echo "Signing with the recovery key file."
+      php scripts/release-sign.php --sign --statement-file="$dir/statement.txt" --out="$dir/$SIG"
+    else
+      echo "Signing with the security key: enter its PIN, then touch it."
+      uv run --quiet --with fido2==2.2.1 scripts/release-sign-fido.py sign --statement-file "$dir/statement.txt" --out "$dir/$SIG"
+    fi
   else
     gh release download "$tag" --repo "$REPO" --pattern "$SIG" --dir "$dir"
   fi
@@ -60,10 +104,13 @@ clean_main() {
   [[ "$ci" == $'completed\tsuccess' ]] || die "the tests workflow for $head is not green"
 }
 
+recovery=false
 case "${1:-}" in
   prepare)
     priority=${2:-}
     floor=${3:-}
+    [[ "${4:-}" == "" || "${4:-}" == --recovery ]] || die "unknown option ${4:-}"
+    [[ "${4:-}" == --recovery ]] && recovery=true
     [[ "$priority" == routine || "$priority" == recommended || "$priority" == security ]] || die "priority must be routine, recommended, or security"
     [[ "$floor" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "minimum secure version must be X.Y.Z"
     clean_main
@@ -134,7 +181,7 @@ case "${1:-}" in
     echo "Published and verified immutable: $tag"
     ;;
   *)
-    echo "usage: scripts/release.sh prepare routine|recommended|security MINIMUM_SECURE_VERSION" >&2
+    echo "usage: scripts/release.sh prepare routine|recommended|security MINIMUM_SECURE_VERSION [--recovery]" >&2
     echo "   or: scripts/release.sh publish --deployment-verified" >&2
     exit 2
     ;;

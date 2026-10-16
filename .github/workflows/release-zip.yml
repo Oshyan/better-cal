@@ -42,7 +42,9 @@ jobs:
           php -r 'copy("https://getcomposer.org/installer", "/tmp/composer-setup.php");'
           php -r 'copy("https://composer.github.io/installer.sig", "/tmp/composer-setup.sig");'
           php -r '$expected = trim(file_get_contents("/tmp/composer-setup.sig")); $actual = hash_file("sha384", "/tmp/composer-setup.php"); if (!hash_equals($expected, $actual)) { fwrite(STDERR, "Composer installer signature mismatch\n"); exit(1); }'
-          php /tmp/composer-setup.php --quiet --install-dir=/usr/local/bin --filename=composer
+          # The same Composer scripts/release.sh rebuilds with, so the
+          # maintainer's check before signing finds the same files.
+          php /tmp/composer-setup.php --quiet --version=2.10.3 --install-dir=/usr/local/bin --filename=composer
       - name: Install from the lock file
         working-directory: server
         env:
@@ -81,34 +83,10 @@ jobs:
           version="${TAG#v}"
           [[ "$(tr -d '[:space:]' < VERSION)" == "$version" ]] || { echo "VERSION does not match $TAG" >&2; exit 1; }
           out="$RUNNER_TEMP/out"
-          mkdir -p "$out"
-          # Everything but CI and the test suites, which aren't for running
-          # Better-Cal. (Excluded here rather than marked export-ignore, since
-          # the deploy script runs the suites from its own git archive.)
-          git archive --format=tar --prefix=better-cal/ "$TAG" -- . \
-            ':(exclude).github' ':(exclude)server/tests' ':(exclude)web/tests' \
-            ':(exclude)scripts/tests' ':(exclude)tools/tz-harness' | tar -x -C "$out"
-          # The files this release ships, so bin/update.php can tell the
-          # ones someone added from ones a later release simply dropped.
-          (cd "$out/better-cal" && find . -type f | sed 's|^\./||' | sort > .release-files)
-          tar -xzf /tmp/vendor/vendor.tar.gz -C "$out/better-cal/server"
-          [[ -f "$out/better-cal/server/vendor/autoload.php" ]]
-          # The libraries' own command-line tools, examples, tests and docs:
-          # Better-Cal never runs them, and on a host that serves the app
-          # folder as a web root, a PHP script among them would run outside
-          # Better-Cal's checks. Only the libraries' code goes in the zip.
-          rm -rf "$out/better-cal/server/vendor/bin"
-          find "$out/better-cal/server/vendor" -mindepth 3 -maxdepth 3 -type d \
-            \( -name bin -o -name examples -o -name example -o -name tests -o -name test -o -name Tests -o -name docs \) \
-            -prune -exec rm -rf {} +
-          [[ -f "$out/better-cal/server/vendor/autoload.php" ]]
-          # Files at the zip's top level, no better-cal/ folder around them
-          # (since 0.9.84): hosting file managers extract into a folder you
-          # pick or name, often one the panel already made for a subdomain.
-          # update.php reads both layouts since 0.9.83.
-          (cd "$out/better-cal" && zip -q -r -X "$out/better-cal-$version.zip" .)
-          unzip -l "$out/better-cal-$version.zip" | grep -q ' VERSION$'
-          ! unzip -l "$out/better-cal-$version.zip" | grep -q ' better-cal/'
+          mkdir -p "$RUNNER_TEMP/vendor"
+          tar -xzf /tmp/vendor/vendor.tar.gz -C "$RUNNER_TEMP/vendor"
+          # The tree and the zip, as scripts/release.sh rebuilds them to check.
+          scripts/release-assemble.sh "$TAG" "$RUNNER_TEMP/vendor/vendor" "$out" "$out/better-cal-$version.zip"
           sha256sum "$out/better-cal-$version.zip"
           echo "ZIP=$out/better-cal-$version.zip" >> "$GITHUB_ENV"
       - name: Attach to the draft release

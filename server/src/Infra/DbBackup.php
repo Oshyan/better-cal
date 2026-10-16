@@ -49,6 +49,19 @@ final class DbBackup
     /** @return array{tables:int,rows:int,bytes:int} */
     public function dump(string $path, string $note = ''): array
     {
+        // Readable by this account alone from the moment it exists, whatever
+        // folder it lands in.
+        $umask = umask(0077);
+        try {
+            return $this->dumpTo($path, $note);
+        } finally {
+            umask($umask);
+        }
+    }
+
+    /** @return array{tables:int,rows:int,bytes:int} */
+    private function dumpTo(string $path, string $note): array
+    {
         $pdo = $this->db->pdo();
         $tables = [];
         foreach ($pdo->query("SHOW FULL TABLES WHERE Table_type = 'BASE TABLE'")->fetchAll(\PDO::FETCH_NUM) as $row) {

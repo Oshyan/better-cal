@@ -15,6 +15,11 @@ use BetterCal\Infra\JobQueue;
 use BetterCal\Infra\LlmGateway;
 
 define('BETTERCAL_WEB_ENTRY', true);
+// Right after an update swapped the code, compiled copies of the old files
+// may still be cached: clear them, once (Support\Maintenance::CODE_CHANGED).
+if (is_file(dirname(__DIR__, 2) . '/.code-changed') && @unlink(dirname(__DIR__, 2) . '/.code-changed') && function_exists('opcache_reset')) {
+    @opcache_reset();
+}
 require dirname(__DIR__) . '/src/bootstrap.php';
 
 // Not set up yet (no .env): the setup page, for every path, until it is.
@@ -31,9 +36,17 @@ if (!BetterCal\Http\HostCheck::allowed($cfg['base_url'], (string) ($_SERVER['HTT
     BetterCal\Http\HostCheck::respond($cfg['base_url'], (string) ($_SERVER['REQUEST_METHOD'] ?? 'GET'), (string) ($_SERVER['REQUEST_URI'] ?? '/'));
 }
 
-// bin/update.php is swapping the code or migrating: answer "updating".
+// bin/update.php is swapping the code or migrating: answer "updating". Left
+// on by a database update page request that was cut off, the page itself
+// takes over, since it's the way back without a command line.
 if (BetterCal\Support\Maintenance::active($cfg['app_root'])) {
-    BetterCal\Support\Maintenance::respond($requestPath);
+    $stopped = BetterCal\Http\InstallPages::stoppedDatabaseWork($cfg);
+    if ($stopped === null) {
+        BetterCal\Support\Maintenance::respond($requestPath);
+    }
+    if ($stopped === 'page') {
+        BetterCal\Http\InstallPages::databaseUpdate($cfg, $requestPath);
+    }
 }
 
 // New files with database changes still to apply (an update uploaded by

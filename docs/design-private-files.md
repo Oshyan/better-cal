@@ -13,7 +13,7 @@ That isn't always possible. Some hosts (Hostinger, and any cPanel server with it
 ## Goals
 
 - Secrets can't be downloaded whatever the web server does with `.htaccess`, as long as it runs PHP files as PHP, which any host running Better-Cal must.
-- Backups are useless to whoever downloads them, on any server.
+- Backups are useless to whoever downloads them, on any server, as long as the settings file (which holds their key) isn't downloadable too.
 - A non-technical person learns, in plain words, whether their install is safe, without worrying messages when it is.
 - Existing installs keep working through the update, convert without anyone doing anything by hand, and can still roll back.
 

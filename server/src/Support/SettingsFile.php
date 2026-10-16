@@ -22,6 +22,14 @@ final class SettingsFile
     public const GUARD_PREFIX = '<?php __halt_compiler();';
     public const GUARD = self::GUARD_PREFIX . " // Better-Cal settings. Keep this first line: it stops this file being shown on the web.\n";
 
+    /**
+     * Line breaks are \n, \r\n and \r only. PCRE's \R also breaks at
+     * vertical tab, form feed and byte 0x85, which is inside the UTF-8 for
+     * letters like Å, ą and х, so a password containing one came back cut in
+     * two.
+     */
+    private const LINES = '/\r\n|\n|\r/';
+
     public static function guarded(string $appRoot): string
     {
         return $appRoot . '/.env.php';
@@ -88,7 +96,7 @@ final class SettingsFile
             throw new SettingsFileError(basename($path) . ' is empty (it may be in the middle of being saved).');
         }
         $firstContent = '';
-        foreach (preg_split('/\R/', $lead) ?: [] as $line) {
+        foreach (preg_split(self::LINES, $lead) ?: [] as $line) {
             $t = trim($line);
             if ($t !== '') {
                 $firstContent = $t;
@@ -97,18 +105,75 @@ final class SettingsFile
         }
         $looksLikeSettings = (str_starts_with($firstContent, '#') || preg_match('/^[A-Z][A-Z0-9_]*=/', $firstContent) === 1)
             && preg_match('/^\s*[A-Z][A-Z0-9_]*=/m', $lead) === 1;
-        if ($looksLikeSettings && self::writeAtomic($path, self::GUARD . $lead)) {
+        // Never through a symbolic link: replacing it would put a copy of
+        // settings kept elsewhere on purpose into the app folder.
+        if ($looksLikeSettings && !is_link($path) && self::repairGuard($path, $raw, $lead)) {
             error_log('settings: put back the first line of ' . basename($path) . ', which keeps it from being shown on the web');
             return $lead;
         }
         throw new SettingsFileError(basename($path) . " has lost or changed its first line, which keeps it from being shown on the web. Make its first line exactly:\n" . rtrim(self::GUARD));
     }
 
+    /**
+     * Put the guard back, holding the settings lock and only if the file
+     * still reads as it did: one being uploaded a piece at a time must not
+     * be replaced with the part that has arrived.
+     */
+    private static function repairGuard(string $path, string $raw, string $lead): bool
+    {
+        $lock = self::lock(dirname($path));
+        if ($lock === null) {
+            return false;
+        }
+        try {
+            clearstatcache(true, $path);
+            if (@file_get_contents($path) !== $raw) {
+                return false;
+            }
+            return self::writeAtomic($path, self::GUARD . $lead);
+        } finally {
+            flock($lock, LOCK_UN);
+            fclose($lock);
+        }
+    }
+
+    /**
+     * The settings lock (.runtime-cache/settings.lock), held while the file
+     * is converted or repaired; null when another process holds it or it
+     * can't be made. Made as root, it still belongs to the app's account.
+     *
+     * @return resource|null
+     */
+    private static function lock(string $appRoot)
+    {
+        $lockDir = $appRoot . '/.runtime-cache';
+        $asRoot = function_exists('posix_geteuid') && posix_geteuid() === 0;
+        if (!is_dir($lockDir) && @mkdir($lockDir, 0700) && $asRoot) {
+            @chown($lockDir, (int) fileowner($appRoot));
+            @chgrp($lockDir, (int) filegroup($appRoot));
+        }
+        $lockFile = $lockDir . '/settings.lock';
+        $newLock = !file_exists($lockFile);
+        $lock = @fopen($lockFile, 'c');
+        if ($lock === false) {
+            return null;
+        }
+        if ($newLock && $asRoot) {
+            @chown($lockFile, (int) fileowner($appRoot));
+            @chgrp($lockFile, (int) filegroup($appRoot));
+        }
+        if (!flock($lock, LOCK_EX | LOCK_NB)) {
+            fclose($lock);
+            return null;
+        }
+        return $lock;
+    }
+
     /** KEY=VALUE lines, as config.php has always read them. @return array<string,string> */
     public static function parse(string $text): array
     {
         $out = [];
-        foreach (preg_split('/\R/', $text) ?: [] as $line) {
+        foreach (preg_split(self::LINES, $text) ?: [] as $line) {
             $line = trim($line);
             if ($line === '' || str_starts_with($line, '#') || !str_contains($line, '=')) {
                 continue;
@@ -141,7 +206,14 @@ final class SettingsFile
         $tmp = dirname($path) . '/.' . basename($path, '.php') . '.tmp-' . bin2hex(random_bytes(8)) . '.php';
         $old = umask(0077);
         try {
-            if (@file_put_contents($tmp, $contents, LOCK_EX) !== strlen($contents)) {
+            // On disk before the rename, so a crash can't leave an empty file.
+            $fh = @fopen($tmp, 'x');
+            if ($fh === false) {
+                return false;
+            }
+            $ok = @fwrite($fh, $contents) === strlen($contents) && fflush($fh) && (!function_exists('fsync') || @fsync($fh));
+            fclose($fh);
+            if (!$ok) {
                 @unlink($tmp);
                 return false;
             }
@@ -177,22 +249,9 @@ final class SettingsFile
         if (!$anyOwner && function_exists('posix_geteuid') && @fileowner($plain) !== posix_geteuid()) {
             return null;
         }
-        $lockDir = $appRoot . '/.runtime-cache';
         $asRoot = function_exists('posix_geteuid') && posix_geteuid() === 0;
-        if (!is_dir($lockDir) && @mkdir($lockDir, 0700) && $asRoot) {
-            // Converting as root (a root-owned .env): what's made here still
-            // belongs to the app's account, which writes in it every day.
-            @chown($lockDir, (int) fileowner($appRoot));
-            @chgrp($lockDir, (int) filegroup($appRoot));
-        }
-        $lockFile = $lockDir . '/settings.lock';
-        $newLock = !file_exists($lockFile);
-        $lock = @fopen($lockFile, 'c');
-        if ($lock !== false && $newLock && $asRoot) {
-            @chown($lockFile, (int) fileowner($appRoot));
-            @chgrp($lockFile, (int) filegroup($appRoot));
-        }
-        if ($lock === false || !flock($lock, LOCK_EX | LOCK_NB)) {
+        $lock = self::lock($appRoot);
+        if ($lock === null) {
             return null; // another process is converting
         }
         try {
@@ -208,6 +267,12 @@ final class SettingsFile
                 return null; // both exist and differ: reported by the private-files check, never resolved silently
             }
             $mode = fileperms($plain) & 0777;
+            if (PHP_SAPI !== 'cli') {
+                // Converted by the web server's own PHP, which owns the file
+                // and so reads it at 0600: a hand-made .env is usually 0644,
+                // readable by other accounts on a shared server.
+                $mode = 0600;
+            }
             $body = ltrim(str_starts_with($text, "\xEF\xBB\xBF") ? substr($text, 3) : $text, "\r\n");
             if (str_starts_with($body, self::GUARD_PREFIX)) {
                 $nl = strpos($body, "\n");

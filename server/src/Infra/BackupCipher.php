@@ -129,7 +129,9 @@ final class BackupCipher
             if (!hash_equals(self::keyId($key), substr($preface, strlen(self::MAGIC), 8))) {
                 throw new \RuntimeException(basename($path) . ' was made with different settings (another BETTERCAL_SESSION_SECRET), so these settings can\'t open it.');
             }
-            $chunkSize = unpack('N', substr($preface, -4))[1];
+            // Read before anything is authenticated, so never trusted beyond
+            // the size this code writes: a crafted file can't make it read 4 GB.
+            $chunkSize = min(unpack('N', substr($preface, -4))[1], self::CHUNK);
             $header = (string) fread($fh, SODIUM_CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_HEADERBYTES);
             if (strlen($header) !== SODIUM_CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_HEADERBYTES) {
                 throw new \RuntimeException(basename($path) . ' is cut short.');

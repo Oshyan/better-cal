@@ -26,7 +26,7 @@ final class Updater
     private const MAX_ENTRIES = 20000;
     private const MAX_UNPACKED_BYTES = 400 * 1024 * 1024;
     /** Never carried into the new copy, never reported as left behind. */
-    private const NOT_CARRIED = ['server/vendor', '.runtime-cache', '.maintenance', '.git', 'worker.log', '.backups', '.release-files',
+    private const NOT_CARRIED = ['server/vendor', '.runtime-cache', '.maintenance', '.code-changed', '.git', 'worker.log', '.backups', '.release-files',
         'better-cal-code.php', 'better-cal-code.txt'];
     /** Carried across when present: settings and per-host PHP or web-server files. */
     private const CARRIED = ['.env.php', '.env', '.user.ini', 'server/public/.user.ini', 'server/public/.well-known'];
@@ -208,6 +208,137 @@ final class Updater
     {
         preg_match('/dbname=([^;]+)/', $dsn, $m);
         return 'bettercal_worker:' . ($m[1] ?? 'default');
+    }
+
+    /**
+     * The lock every update holds (bin/update.php, the database update page),
+     * so two can't run at once: two terminals, or a double-click on a slow
+     * button. A MySQL lock, since the update moves the app's own folder.
+     */
+    public static function updateLockName(string $dsn): string
+    {
+        preg_match('/dbname=([^;]+)/', $dsn, $m);
+        return 'bettercal_update:' . ($m[1] ?? 'default');
+    }
+
+    /**
+     * The release signing keys a copy of the app trusts, read from its
+     * config/release-keys.php, as id => public key.
+     *
+     * @return array<string,string>
+     */
+    public static function keysAt(string $root): array
+    {
+        $file = $root . '/server/config/release-keys.php';
+        $keys = is_file($file) ? (static fn(string $f): mixed => require $f)($file) : [];
+        $out = [];
+        foreach (is_array($keys) ? $keys : [] as $k) {
+            if (is_array($k) && isset($k['id'], $k['publicKey'])) {
+                $out[(string) $k['id']] = (string) $k['publicKey'];
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * What a release changes about who may sign the next one, in words:
+     * empty when nothing. Shown on every update, so a key swap is never quiet.
+     *
+     * @param array<string,string> $before
+     * @param array<string,string> $after
+     * @return list<string>
+     */
+    public static function keyChanges(array $before, array $after): array
+    {
+        $out = [];
+        foreach ($after as $id => $key) {
+            if (!isset($before[$id])) {
+                $out[] = "adds the signing key $id";
+            } elseif ($before[$id] !== $key) {
+                $out[] = "replaces the signing key $id with a different one";
+            }
+        }
+        foreach (array_keys(array_diff_key($before, $after)) as $id) {
+            $out[] = "removes the signing key $id";
+        }
+        return $out;
+    }
+
+    /**
+     * Where an update that stopped in the middle of its swap really is. The
+     * previous copy present and the unpacked one gone: both renames happened,
+     * so it's "swapped". Otherwise the old code is still in place (this runs
+     * from it): "backed-up". Other stages are what they say.
+     *
+     * @param array<string,mixed> $state
+     */
+    public static function settledStage(array $state): string
+    {
+        if (($state['stage'] ?? '') !== 'swapping') {
+            return (string) ($state['stage'] ?? '');
+        }
+        $previous = $state['previous'] ?? null;
+        $tree = $state['tree'] ?? null;
+        return is_string($previous) && is_dir($previous) && (!is_string($tree) || !is_dir($tree)) ? 'swapped' : 'backed-up';
+    }
+
+    /** Delete a folder and everything in it, never following a symbolic link out of it. */
+    public static function removeTree(string $dir): void
+    {
+        if (is_link($dir) || is_file($dir)) {
+            @unlink($dir);
+            return;
+        }
+        if (!is_dir($dir)) {
+            return;
+        }
+        foreach (scandir($dir) ?: [] as $entry) {
+            if ($entry !== '.' && $entry !== '..') {
+                self::removeTree($dir . '/' . $entry);
+            }
+        }
+        @rmdir($dir);
+    }
+
+    /**
+     * After an update is done: keep the newest $keep previous copies this
+     * updater made and the newest $keep database backups, and remove the
+     * rest, with any downloaded zips and unpacking folders a failed update
+     * left. Each copy is a whole app (thousands of files), and shared hosts
+     * limit how many files an account may have. The update's own previous
+     * copy and backup always stay, so --rollback keeps working. Copies made
+     * by hand (any other name) are never touched. Returns what went.
+     *
+     * @return list<string>
+     */
+    public function prune(int $keep = 2): array
+    {
+        $state = $this->readState() ?? [];
+        $pattern = '/^' . preg_quote($this->name(), '/') . '-\d+\.\d+\.\d+(-rolled-back)?(-\d+)?$/';
+        $copies = array_values(array_filter($this->siblingCopies(), static fn(string $d): bool => preg_match($pattern, basename($d)) === 1));
+        $backupDir = $this->backupDir();
+        $backups = array_values(array_filter(glob($backupDir . '/db-*') ?: [], 'is_file'));
+        $removed = [];
+        // Newest first by when it was set aside (renaming a folder updates its ctime).
+        foreach ([[$copies, $state['previous'] ?? null], [$backups, $state['backup'] ?? null]] as [$list, $current]) {
+            usort($list, static fn(string $a, string $b): int => (int) @filectime($b) <=> (int) @filectime($a));
+            foreach (array_slice($list, $keep) as $path) {
+                if ($path === $current) {
+                    continue;
+                }
+                self::removeTree($path);
+                $removed[] = basename($path);
+            }
+        }
+        $leftovers = array_merge(
+            glob($backupDir . '/' . $this->name() . '-*.zip') ?: [],
+            glob($this->parent() . '/.' . $this->name() . '-*-unpacking*') ?: [],
+        );
+        foreach ($leftovers as $path) {
+            self::removeTree($path);
+            $removed[] = basename($path);
+        }
+        return $removed;
     }
 
     /** A path that doesn't exist yet: $base, or $base-2, $base-3 … */

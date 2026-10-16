@@ -53,6 +53,8 @@ final class Updates
         private readonly Db $db,
         private readonly array $cfg,
         private readonly ?\Closure $fetch = null,
+        /** Keys a release's signature must verify with; null: config/release-keys.php. */
+        private readonly ?array $signingKeys = null,
     ) {
     }
 
@@ -108,6 +110,13 @@ final class Updates
         } catch (\Throwable) {
         }
         return $stored;
+    }
+
+    /** The oldest version with every security fix, as last recorded from a signed release. */
+    public function securityFloor(): ?string
+    {
+        $floor = $this->row()['minimum_secure_version'] ?? null;
+        return is_string($floor) && $floor !== '' ? $floor : null;
     }
 
     public function status(int $userId): array
@@ -268,6 +277,28 @@ final class Updates
     }
 
     /**
+     * The release's signature, verified with the trusted keys, for this
+     * version and this manifest. Throws otherwise.
+     */
+    private function requireSigned(array $release, string $version, string $manifestSha256): void
+    {
+        $url = self::RELEASE_BASE . rawurlencode('v' . $version) . '/' . \BetterCal\Support\ReleaseSignature::ASSET;
+        $sigs = array_values(array_filter(is_array($release['assets'] ?? null) ? $release['assets'] : [],
+            static fn($asset): bool => is_array($asset) && ($asset['name'] ?? null) === \BetterCal\Support\ReleaseSignature::ASSET));
+        if (count($sigs) !== 1 || ($sigs[0]['browser_download_url'] ?? null) !== $url
+            || preg_match('/^sha256:([0-9a-f]{64})$/D', (string) ($sigs[0]['digest'] ?? ''), $sm) !== 1) {
+            throw new \RuntimeException("Release $version has no signature (" . \BetterCal\Support\ReleaseSignature::ASSET . ')');
+        }
+        $signed = \BetterCal\Support\ReleaseSignature::verify(
+            $this->fetchSignature(['url' => $url, 'sha256' => $sm[1], 'size' => (int) ($sigs[0]['size'] ?? 0)]),
+            $this->signingKeys ?? \BetterCal\Support\ReleaseSignature::trustedKeys(),
+        );
+        if ($signed['version'] !== $version || !hash_equals($signed['manifest'], $manifestSha256)) {
+            throw new \RuntimeException("Release $version's signature is for a different release");
+        }
+    }
+
+    /**
      * Download a release zip found by newestRelease() to $path, refusing it
      * unless its SHA-256 matches GitHub's digest.
      *
@@ -350,6 +381,12 @@ final class Updates
             && version_compare($manifest['minimumSecureVersion'], (string) $previous['minimum_secure_version'], '<')) {
             throw new \RuntimeException('The cumulative minimum secure version moved backwards');
         }
+        // Only a signed release moves what this install remembers (0.9.86).
+        // The newest version and the security floor only ever go up, so an
+        // unsigned one stored from GitHub alone (by someone who took over the
+        // account) would announce a release that can't be installed and then
+        // refuse every real one, until someone edited the database.
+        $this->requireSigned($release, $version, $m[1]);
         return [
             'checked_at' => Time::nowDb(),
             'latest_version' => $version,

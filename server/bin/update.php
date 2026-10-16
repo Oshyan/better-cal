@@ -67,8 +67,8 @@ try {
     Cli::say();
     Cli::say('Stopped: ' . $e->getMessage());
     $state = $updater->readState();
-    if (is_array($state) && in_array($state['stage'] ?? '', ['swapped', 'failed'], true)) {
-        Cli::say('To put the previous version and the database back: php ' . $appRoot . '/server/bin/update.php --rollback');
+    if (is_array($state) && in_array($state['stage'] ?? '', ['backed-up', 'swapping', 'swapped', 'failed'], true)) {
+        Cli::say('To put the previous version (and, if it changed, the database) back: php ' . $appRoot . '/server/bin/update.php --rollback');
     }
     exit(1);
 }
@@ -80,12 +80,17 @@ function update(array $cfg, Updater $updater, bool $checkOnly, bool $yes): int
     $state = $updater->readState();
     if (is_array($state) && !in_array($state['stage'] ?? '', ['done', 'rolled-back'], true)) {
         Cli::say("An update from {$state['from']} to {$state['to']} didn't finish (stage: {$state['stage']}).");
-        Cli::say('Finish it:  php ' . $appRoot . '/server/bin/update.php --finish');
-        Cli::say('Or undo it: php ' . $appRoot . '/server/bin/update.php --rollback');
+        if (in_array($state['stage'] ?? '', ['swapped', 'failed'], true)) {
+            Cli::say('Finish it:  php ' . $appRoot . '/server/bin/update.php --finish');
+        }
+        Cli::say('Undo it:    php ' . $appRoot . '/server/bin/update.php --rollback');
         return 1;
     }
 
     $db = new Db($cfg['db']);
+    if (!updateLock($db, $cfg)) {
+        return 1;
+    }
     Cli::say("This is Better-Cal $current. Checking for a newer release...");
     $release = (new Updates($db, $cfg))->newestRelease();
     $to = $release['version'];
@@ -95,6 +100,23 @@ function update(array $cfg, Updater $updater, bool $checkOnly, bool $yes): int
     }
     Cli::say();
     Cli::say("Better-Cal $to is available" . ($release['priority'] === 'security' ? ' (a security update)' : '') . '.');
+
+    // The release must be signed by a key this copy trusts (config/release-keys.php):
+    // GitHub's checks alone would let anyone who took over the GitHub account
+    // publish code every install accepts. No keys means nothing verifies.
+    if ($release['signature'] === null) {
+        Cli::say("  Not signed: $to has no " . ReleaseSignature::ASSET . '. Not installing it; please report this.');
+        return 1;
+    }
+    $signed = ReleaseSignature::verify((new Updates($db, $cfg))->fetchSignature($release['signature']), ReleaseSignature::trustedKeys());
+    if ($signed['version'] !== $to || $signed['manifest'] !== $release['manifestSha256']
+        || ($release['zip'] !== null && $signed['zip'] !== $release['zip']['sha256'])) {
+        Cli::say("  The signature is for a different release than $to. Not installing it; please report this.");
+        return 1;
+    }
+    Cli::say("  Signed by {$signed['key']}.");
+    // The notes aren't signed (they can be edited after publishing), so
+    // they're shown only for a release whose signature checked out.
     Cli::say('  What changed: ' . $release['releaseUrl']);
     $operators = Updater::operatorsLine($release['notes']);
     if ($operators !== null) {
@@ -103,25 +125,6 @@ function update(array $cfg, Updater $updater, bool $checkOnly, bool $yes): int
     if (!in_array($to, nextVersions($current), true)) {
         Cli::say('  If this skips versions, that is fine; read the Operators lines of the ones in between too:');
         Cli::say('  https://github.com/Oshyan/better-cal/releases');
-    }
-
-    // The release must be signed by a key this copy trusts (config/release-keys.php):
-    // GitHub's checks alone would let anyone who took over the GitHub account
-    // publish code every install accepts.
-    $signed = null;
-    $keys = ReleaseSignature::trustedKeys();
-    if ($keys !== []) {
-        if ($release['signature'] === null) {
-            Cli::say("  Not signed: $to has no " . ReleaseSignature::ASSET . '. Not installing it; please report this.');
-            return 1;
-        }
-        $signed = ReleaseSignature::verify((new Updates($db, $cfg))->fetchSignature($release['signature']), $keys);
-        if ($signed['version'] !== $to || $signed['manifest'] !== $release['manifestSha256']
-            || ($release['zip'] !== null && $signed['zip'] !== $release['zip']['sha256'])) {
-            Cli::say("  The signature is for a different release than $to. Not installing it; please report this.");
-            return 1;
-        }
-        Cli::say("  Signed by {$signed['key']}.");
     }
     if ($checkOnly) {
         return 0;
@@ -193,20 +196,21 @@ function update(array $cfg, Updater $updater, bool $checkOnly, bool $yes): int
     $dumper = DbBackup::forConfig($db, $cfg);
     $backup = $updater->backupDir() . "/db-$current-$stamp-" . bin2hex(random_bytes(16)) . $dumper->extension();
     Cli::say('Backing up the database...');
+    $state = [
+        'from' => $current, 'to' => $to, 'mode' => $git ? 'git' : 'zip', 'appRoot' => $appRoot,
+        'backup' => $backup, 'previous' => null, 'startedAt' => gmdate('c'), 'stage' => 'backed-up',
+    ];
     try {
         $dump = $dumper->dump($backup, "before updating $current to $to");
+        // Until the record exists, nothing could finish or undo this update,
+        // so a failure writing it leaves the site as it was.
+        $updater->writeState($state);
     } catch (\Throwable $e) {
         Maintenance::off($appRoot);
         throw new \RuntimeException('The backup failed: ' . $e->getMessage() . '. Nothing changed: still ' . $current . '.', 0, $e);
     }
     @chmod($backup, 0600);
     Cli::say("  $backup (" . $dump['tables'] . ' tables, ' . number_format($dump['rows']) . ' rows, ' . round($dump['bytes'] / 1024) . ' KB)');
-
-    $state = [
-        'from' => $current, 'to' => $to, 'mode' => $git ? 'git' : 'zip', 'appRoot' => $appRoot,
-        'backup' => $backup, 'previous' => null, 'startedAt' => gmdate('c'), 'stage' => 'backed-up',
-    ];
-    $updater->writeState($state);
 
     // 2. The new code.
     try {
@@ -221,22 +225,29 @@ function update(array $cfg, Updater $updater, bool $checkOnly, bool $yes): int
             }
             [, $json] = Updater::capture(['git', 'show', "v$to:server/composer.json"], $appRoot);
             requirePhp(Updater::phpRequirement($json), $to);
+            $keysBefore = Updater::keysAt($appRoot);
             if (Updater::run(['git', '-c', 'advice.detachedHead=false', 'checkout', '--quiet', "v$to"], $appRoot) !== 0) {
                 throw new \RuntimeException("git checkout v$to failed");
             }
             $state['stage'] = 'swapped';
             $updater->writeState($state);
+            Maintenance::codeChanged($appRoot);
+            sayKeyChanges($keysBefore, Updater::keysAt($appRoot), $to);
             Cli::say('Installing the PHP libraries...');
             if (Updater::run(['composer', 'install', '--no-dev', '--no-interaction', '--quiet'], $appRoot . '/server') !== 0) {
                 throw new \RuntimeException('composer install failed');
             }
         } else {
             $zipPath = $updater->backupDir() . "/better-cal-$to.zip";
+            $state['zip'] = $zipPath;
             Cli::say('Downloading better-cal-' . $to . '.zip (' . round($release['zip']['size'] / 1048576, 1) . ' MB)...');
             (new Updates($db, $cfg))->downloadZip($release['zip'], $zipPath);
             Cli::say("  SHA-256 matches GitHub's digest.");
             $tree = $updater->unpack($zipPath, $to);
+            $state['tree'] = $tree;
+            @unlink($zipPath);
             requirePhp(Updater::phpRequirement((string) @file_get_contents($tree . '/server/composer.json')), $to);
+            sayKeyChanges(Updater::keysAt($appRoot), Updater::keysAt($tree), $to);
             $kept = $updater->carryOver($tree);
             Cli::say('  Carried over: ' . implode(', ', $kept['carried']) . '.');
             Maintenance::on($tree, "updating $current to $to");
@@ -253,6 +264,7 @@ function update(array $cfg, Updater $updater, bool $checkOnly, bool $yes): int
                 throw new \RuntimeException('Could not move the new version into place; the current one was put back');
             }
             @rmdir(dirname($tree));
+            Maintenance::codeChanged($appRoot);
             Updater::denyWeb($previous);
             $state['stage'] = 'swapped';
             $updater->writeState($state);
@@ -266,6 +278,7 @@ function update(array $cfg, Updater $updater, bool $checkOnly, bool $yes): int
         }
     } catch (\Throwable $e) {
         if (($state['stage'] ?? '') !== 'swapped') {
+            discardStaging($state);
             Maintenance::off($appRoot);
             $state['stage'] = 'rolled-back';
             $updater->writeState($state);
@@ -276,7 +289,8 @@ function update(array $cfg, Updater $updater, bool $checkOnly, bool $yes): int
         throw $e;
     }
 
-    // 3. The new code takes it from here.
+    // 3. The new code takes it from here, and takes the update lock.
+    $db->scalar('SELECT RELEASE_LOCK(?)', [Updater::updateLockName((string) $cfg['db']['dsn'])]);
     Cli::say('Finishing with the new version...');
     if (!Updater::canRun()) {
         Cli::say('This PHP may not start programs, so run this to finish:');
@@ -296,6 +310,9 @@ function finish(array $cfg, Updater $updater): int
         return 1;
     }
     $db = new Db($cfg['db']);
+    if (!updateLock($db, $cfg)) {
+        return 1;
+    }
     try {
         $ran = (new Migrator($db, $appRoot . '/server/migrations'))->run(static function (string $line): void {
             Cli::say('  ' . $line);
@@ -334,9 +351,13 @@ function finish(array $cfg, Updater $updater): int
     Cli::say();
     Cli::say("Updated to Better-Cal {$state['to']}. The site is back.");
     Cli::say('Check ' . $cfg['base_url'] . '/api/v1/health, and Settings, About shows the new version.');
-    Cli::say('Kept, until you remove them: the database backup, ' . $state['backup']
+    Cli::say('Kept: the database backup, ' . $state['backup']
         . ($state['previous'] ? ', and the previous version, ' . $state['previous'] : '') . '.');
     Cli::say('If something is wrong, php server/bin/update.php --rollback puts both back.');
+    $pruned = $updater->prune(2);
+    if ($pruned !== []) {
+        Cli::say('Removed older copies and backups beyond the newest two: ' . implode(', ', $pruned) . '.');
+    }
     try {
         $r = PrivateFilesCheck::run($cfg);
         if ($r['status'] !== 'safe') {
@@ -357,12 +378,33 @@ function rollback(array $cfg, Updater $updater, bool $yes): int
 {
     $appRoot = $updater->appRoot;
     $state = $updater->readState();
-    if (!is_array($state) || !in_array($state['stage'] ?? '', ['swapped', 'failed', 'done'], true)) {
+    if (!is_array($state) || !in_array($state['stage'] ?? '', ['backed-up', 'swapping', 'swapped', 'failed', 'done'], true)) {
         Cli::say('There is no update to roll back.');
+        return 1;
+    }
+    $db = new Db($cfg['db']);
+    if (!updateLock($db, $cfg)) {
         return 1;
     }
     $from = (string) $state['from'];
     $to = (string) $state['to'];
+    $state['stage'] = Updater::settledStage($state);
+    if ($state['stage'] === 'backed-up') {
+        // Stopped before the code changed (a closed terminal, a killed
+        // process): the database and the code are still the old ones, so
+        // undoing is only tidying up.
+        discardStaging($state);
+        Maintenance::off($appRoot);
+        $state['stage'] = 'rolled-back';
+        $state['rolledBackAt'] = gmdate('c');
+        $updater->writeState($state);
+        Cli::say("The update to $to stopped before anything changed. Tidied up; still on Better-Cal $from.");
+        return 0;
+    }
+    $floor = (new Updates($db, $cfg))->securityFloor();
+    if ($floor !== null && version_compare($from, $floor, '<')) {
+        Cli::say("Warning: $from is below $floor, the oldest version with every security fix. Update again once the problem is fixed.");
+    }
     Cli::say("This puts Better-Cal $from back, with the database as it was before the update ({$state['startedAt']}).");
     Cli::say('Anything entered since then is lost.');
     if (!$yes && (!Cli::interactive() || !Cli::confirm('Roll back now?', false))) {
@@ -379,7 +421,7 @@ function rollback(array $cfg, Updater $updater, bool $yes): int
     }
     Maintenance::on($appRoot, "rolling back $to to $from");
     Cli::say('Restoring the database...');
-    $restored = DbBackup::forConfig(new Db($cfg['db']), $cfg)->restore((string) $state['backup']);
+    $restored = DbBackup::forConfig($db, $cfg)->restore((string) $state['backup']);
     Cli::say('  ' . $restored['tables'] . ' tables restored' . ($restored['dropped'] > 0 ? ', ' . $restored['dropped'] . ' added by the update removed' : '') . '.');
     if ($state['mode'] === 'git') {
         if (Updater::run(['git', '-c', 'advice.detachedHead=false', 'checkout', '--quiet', "v$from"], $appRoot) !== 0
@@ -387,13 +429,19 @@ function rollback(array $cfg, Updater $updater, bool $yes): int
             throw new \RuntimeException("Going back to v$from with git failed; check out v$from and run composer install by hand");
         }
         plainSettingsFor($appRoot, $from);
+        Maintenance::codeChanged($appRoot);
         Maintenance::off($appRoot);
     } else {
         plainSettingsFor((string) $state['previous'], $from);
         $failed = Updater::freePath($updater->parent() . '/' . $updater->name() . '-' . $to . '-rolled-back');
-        if (!@rename($appRoot, $failed) || !@rename((string) $state['previous'], $appRoot)) {
-            throw new \RuntimeException("Swapping the folders back failed; move {$state['previous']} to $appRoot by hand");
+        if (!@rename($appRoot, $failed)) {
+            throw new \RuntimeException("Moving $to aside failed; move {$state['previous']} to $appRoot by hand");
         }
+        if (!@rename((string) $state['previous'], $appRoot)) {
+            @rename($failed, $appRoot); // never leave no app at all
+            throw new \RuntimeException("Putting {$state['previous']} back failed; move it to $appRoot by hand");
+        }
+        Maintenance::codeChanged($appRoot);
         Maintenance::off($appRoot);
         Cli::say("  $to is set aside in $failed.");
     }
@@ -432,6 +480,38 @@ function plainSettingsFor(string $root, string $version): void
     @unlink($guarded);
     Cli::say("  Better-Cal $version reads its settings from .env, so .env was written from .env.php. That version");
     Cli::say('  doesn\'t protect its settings file the way 0.9.83 and later do; update again when you can.');
+}
+
+/** The update lock (Infra\Updater::updateLockName), held until this process ends. */
+function updateLock(Db $db, array $cfg): bool
+{
+    if ((int) $db->scalar('SELECT GET_LOCK(?, 0)', [Updater::updateLockName((string) $cfg['db']['dsn'])]) === 1) {
+        return true;
+    }
+    Cli::say('Another update is running (in another terminal, or the database update page). Nothing changed.');
+    return false;
+}
+
+/** Remove what an update unpacked or downloaded before the swap. */
+function discardStaging(array $state): void
+{
+    if (is_string($state['tree'] ?? null)) {
+        Updater::removeTree(dirname($state['tree']));
+    }
+    if (is_string($state['zip'] ?? null)) {
+        @unlink($state['zip']);
+    }
+}
+
+/** Say what a release changes about who may sign the next one: never quietly. */
+function sayKeyChanges(array $before, array $after, string $to): void
+{
+    $changes = Updater::keyChanges($before, $after);
+    if ($changes === []) {
+        return;
+    }
+    Cli::say("  Note: $to " . implode('; ', $changes) . '. From then on, releases must be signed by: ' . implode(', ', array_keys($after)) . '.');
+    Cli::say('  If the release notes don\'t explain this change, report it: https://github.com/Oshyan/better-cal/issues');
 }
 
 function requirePhp(?string $min, string $to): void

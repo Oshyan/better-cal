@@ -8895,6 +8895,42 @@ use BetterCal\Domain\GoogleWriter;
 // Update awareness: canonical immutable app releases, cumulative secure floor
 // ---------------------------------------------------------------------------
 
+// Releases in these tests are signed with a key made here, the way
+// release.sh signs real ones: the update check records nothing unsigned.
+$testSignPair = sodium_crypto_sign_keypair();
+$testSignKeys = [['id' => 'test-key', 'type' => 'ed25519', 'publicKey' => base64_encode(sodium_crypto_sign_publickey($testSignPair))]];
+$signReleases = static function (callable $fetch) use ($testSignPair): Closure {
+    $sigs = [];
+    return static function (string $url, array $headers = []) use ($fetch, $testSignPair, &$sigs): array {
+        if (isset($sigs[$url])) {
+            return ['status' => 200, 'body' => $sigs[$url]];
+        }
+        $r = $fetch($url, $headers);
+        $list = str_contains($url, '/releases?') && ($r['status'] ?? 0) === 200 ? json_decode((string) $r['body'], true) : null;
+        if (!is_array($list) || !array_is_list($list)) {
+            return $r;
+        }
+        foreach ($list as &$rel) {
+            $v = substr((string) ($rel['tag_name'] ?? ''), 1);
+            $names = array_column(is_array($rel['assets'] ?? null) ? $rel['assets'] : [], 'name');
+            $manifest = array_values(array_filter(is_array($rel['assets'] ?? null) ? $rel['assets'] : [], static fn($a): bool => ($a['name'] ?? null) === Updates::MANIFEST_NAME));
+            if (preg_match('/^\d+\.\d+\.\d+$/D', $v) !== 1 || in_array(BetterCal\Support\ReleaseSignature::ASSET, $names, true) || count($manifest) !== 1
+                || preg_match('/^sha256:([0-9a-f]{64})$/D', (string) ($manifest[0]['digest'] ?? ''), $dm) !== 1) {
+                continue;
+            }
+            $statement = BetterCal\Support\ReleaseSignature::statement($v, str_repeat('0', 40), hash('sha256', ''), $dm[1]);
+            $body = json_encode(['statement' => $statement, 'signatures' => [['key' => 'test-key', 'type' => 'ed25519',
+                'sig' => base64_encode(sodium_crypto_sign_detached($statement, sodium_crypto_sign_secretkey($testSignPair)))]]]);
+            $sigUrl = Updates::RELEASE_BASE . rawurlencode('v' . $v) . '/' . BetterCal\Support\ReleaseSignature::ASSET;
+            $sigs[$sigUrl] = $body;
+            $rel['assets'][] = ['name' => BetterCal\Support\ReleaseSignature::ASSET, 'browser_download_url' => $sigUrl, 'digest' => 'sha256:' . hash('sha256', $body), 'size' => strlen($body)];
+        }
+        unset($rel);
+        return ['status' => 200, 'body' => json_encode($list)] + $r;
+    };
+};
+$U = static fn(BetterCal\Infra\Db $db, array $cfg, callable $fetch): Updates => new Updates($db, $cfg, $signReleases($fetch), $testSignKeys);
+
 if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
     $udb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
     $udb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT NOT NULL, settings_json TEXT NULL)');
@@ -8935,9 +8971,27 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
         }
         return ['status' => 200, 'body' => $manifest];
     };
-    $updates = new Updates($udb, ['version' => '1.0.0'], $fetch);
+    $updates = $U($udb, ['version' => '1.0.0'], $fetch);
     $checked = $updates->check(false);
     checkEq('updates: extension and out-of-order older releases are ignored', '1.1.0', $checked['latest_version']);
+    // Someone with the GitHub account publishes 9.9.0, unsigned or signed by a key installs don't trust.
+    $bogus = Updates::manifestJson('9.9.0', 'security', '9.9.0');
+    $bogusFetch = static fn(string $url): array => str_contains($url, '/releases?')
+        ? ['status' => 200, 'body' => json_encode([[
+            'tag_name' => 'v9.9.0', 'draft' => false, 'prerelease' => false, 'immutable' => true,
+            'html_url' => 'https://github.com/Oshyan/better-cal/releases/tag/v9.9.0', 'published_at' => '2026-10-09T12:00:00Z',
+            'assets' => [['name' => Updates::MANIFEST_NAME, 'browser_download_url' => Updates::RELEASE_BASE . 'v9.9.0/' . Updates::MANIFEST_NAME, 'digest' => 'sha256:' . hash('sha256', $bogus)]],
+        ]])]
+        : ['status' => 200, 'body' => $bogus];
+    $otherPair = sodium_crypto_sign_keypair();
+    $otherKeys = [['id' => 'test-key', 'type' => 'ed25519', 'publicKey' => base64_encode(sodium_crypto_sign_publickey($otherPair))]];
+    foreach (['unsigned' => new Updates($udb, ['version' => '1.0.0'], $bogusFetch, $testSignKeys),
+              'signed by an untrusted key' => new Updates($udb, ['version' => '1.0.0'], $signReleases($bogusFetch), $otherKeys)] as $how => $u) {
+        $threw = false;
+        try { $u->check(false); } catch (RuntimeException) { $threw = true; }
+        $row = $udb->one('SELECT latest_version, minimum_secure_version FROM app_update_state WHERE id = 1');
+        check("updates: a release $how is not recorded, so it can't block real ones", $threw && $row['latest_version'] === '1.1.0' && $row['minimum_secure_version'] === '1.0.0');
+    }
 
     // A failing streak from the daily job ends with the next successful check,
     // whoever runs it (Settings, the banner), not a day later.
@@ -8980,7 +9034,7 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
         }
         return ['status' => 200, 'body' => $manifest];
     };
-    $crowded = (new Updates($udb, ['version' => '1.0.0'], $crowdedFetch))->check(false);
+    $crowded = ($U($udb, ['version' => '1.0.0'], $crowdedFetch))->check(false);
     checkEq('updates: bounded pagination finds an app release after a full extension page',
         ['1.1.0', 2], [$crowded['latest_version'], $pageCalls]);
 
@@ -9001,7 +9055,7 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
         }
         return ['status' => 200, 'body' => json_encode($page)];
     };
-    $long = (new Updates($udb, ['version' => '1.0.0'], $longFetch))->check(false);
+    $long = ($U($udb, ['version' => '1.0.0'], $longFetch))->check(false);
     checkEq('updates: the newest page with an app release is the only request, however long the list', ['1.1.0', 1], [$long['latest_version'], $longCalls]);
 
     $boundedCalls = 0;
@@ -9014,7 +9068,7 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
         return ['status' => 200, 'body' => json_encode($page)];
     };
     try {
-        (new Updates($udb, ['version' => '1.0.0'], $truncatedFetch))->check(false);
+        ($U($udb, ['version' => '1.0.0'], $truncatedFetch))->check(false);
         check('updates: no app release in the newest pages is a failure, not a quiet success', false);
     } catch (RuntimeException $e) {
         check('updates: no app release in the newest pages is a failure, not a quiet success',
@@ -9032,12 +9086,12 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
             'digest' => 'sha256:' . hash('sha256', $manifest12),
         ]],
     ];
-    $failedRelease = static function (string $name, array $release, string $body, string $needle = '') use ($udb): void {
+    $failedRelease = static function (string $name, array $release, string $body, string $needle = '') use ($udb, $U): void {
         $fixture = static fn(string $url): array => str_contains($url, 'api.github.com')
             ? ['status' => 200, 'body' => json_encode([$release])]
             : ['status' => 200, 'body' => $body];
         try {
-            (new Updates($udb, ['version' => '1.0.0'], $fixture))->check(false);
+            ($U($udb, ['version' => '1.0.0'], $fixture))->check(false);
             check($name, false);
         } catch (RuntimeException $e) {
             check($name, $needle === '' || str_contains($e->getMessage(), $needle));
@@ -9090,7 +9144,7 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
         ], 'id = 1', []);
         return ['status' => 200, 'body' => $manifest12];
     };
-    $raceResult = (new Updates($raceDb, ['version' => '1.0.0'], $raceFetch))->check(false);
+    $raceResult = ($U($raceDb, ['version' => '1.0.0'], $raceFetch))->check(false);
     checkEq('updates: a slower older success cannot overwrite newer accepted release state',
         ['1.3.0', '1.3.0', 1], [$raceResult['latest_version'], $raceResult['minimum_secure_version'], $raceResult['revision']]);
 
@@ -9102,7 +9156,7 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
         ], 'id = 1', []);
         return ['status' => 503, 'body' => ''];
     };
-    try { (new Updates($raceDb, ['version' => '1.0.0'], $staleFailureFetch))->check(false); }
+    try { ($U($raceDb, ['version' => '1.0.0'], $staleFailureFetch))->check(false); }
     catch (RuntimeException) { /* expected */ }
     checkEq('updates: an older failed request cannot mark newer success as failed', ['1.4.0', null, 2], [
         $raceDb->scalar('SELECT latest_version FROM app_update_state WHERE id = 1'),
@@ -9140,7 +9194,7 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
         ]])]
         : ['status' => 404, 'body' => ''];
     try {
-        (new Updates($udb, ['version' => '1.0.0'], $mutableFetch))->check(false);
+        ($U($udb, ['version' => '1.0.0'], $mutableFetch))->check(false);
         check('updates: newer mutable release rejected', false);
     } catch (RuntimeException $e) {
         check('updates: newer mutable release rejected', str_contains($e->getMessage(), 'not immutable'));
@@ -9164,7 +9218,7 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
         return ['status' => 200, 'body' => $equalManifest];
     };
     $udb->run("UPDATE app_update_state SET latest_version = NULL, minimum_secure_version = NULL, last_error = NULL");
-    (new Updates($udb, ['version' => '1.1.0'], $equalFetch))->check(false);
+    ($U($udb, ['version' => '1.1.0'], $equalFetch))->check(false);
     checkEq('updates: installed immutable release reads its manifest floor rather than inventing one', '1.0.0',
         $udb->scalar('SELECT minimum_secure_version FROM app_update_state WHERE id = 1'));
 
@@ -9185,7 +9239,7 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
         return ['status' => 200, 'body' => $lowerFloorManifest];
     };
     try {
-        (new Updates($udb, ['version' => '1.1.0'], $lowerFloorFetch))->check(false);
+        ($U($udb, ['version' => '1.1.0'], $lowerFloorFetch))->check(false);
         check('updates: cumulative secure floor cannot move backwards', false);
     } catch (RuntimeException $e) {
         check('updates: cumulative secure floor cannot move backwards', str_contains($e->getMessage(), 'moved backwards'));
@@ -9327,14 +9381,14 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
         };
     };
     $canonical = Updates::RELEASE_BASE . 'v2.0.0/better-cal-2.0.0.zip';
-    $found = (new Updates($rdb, ['version' => '1.0.0'], $relFetch($zipAsset($canonical, 'sha256:' . hash('sha256', $zipBody)))))->newestRelease();
+    $found = ($U($rdb, ['version' => '1.0.0'], $relFetch($zipAsset($canonical, 'sha256:' . hash('sha256', $zipBody)))))->newestRelease();
     check('update: the newest release comes with its zip and notes', $found['version'] === '2.0.0' && $found['zip']['url'] === $canonical
         && BetterCal\Infra\Updater::operatorsLine($found['notes']) === 'Operators: run the migration.');
     $threw = false;
-    try { (new Updates($rdb, ['version' => '1.0.0'], $relFetch($zipAsset('https://example.com/better-cal-2.0.0.zip', 'sha256:' . hash('sha256', $zipBody)))))->newestRelease(); }
+    try { ($U($rdb, ['version' => '1.0.0'], $relFetch($zipAsset('https://example.com/better-cal-2.0.0.zip', 'sha256:' . hash('sha256', $zipBody)))))->newestRelease(); }
     catch (RuntimeException) { $threw = true; }
     check('update: a zip from anywhere but the release is refused', $threw);
-    $ok = new Updates($rdb, ['version' => '1.0.0'], $relFetch($zipAsset($canonical, 'sha256:' . hash('sha256', $zipBody))));
+    $ok = $U($rdb, ['version' => '1.0.0'], $relFetch($zipAsset($canonical, 'sha256:' . hash('sha256', $zipBody))));
     $ok->downloadZip(['url' => $canonical, 'sha256' => hash('sha256', $zipBody), 'size' => strlen($zipBody)], "$tmp/dl.zip");
     check('update: a download matching GitHub\'s digest is saved', file_get_contents("$tmp/dl.zip") === $zipBody);
     $threw = false;
@@ -9388,6 +9442,62 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
     check('release signature: this copy ships at least one trusted key', count($RS::trustedKeys()) >= 1);
 
     checkEq('update: the worker lock is named per database', 'bettercal_worker:cal_one', BetterCal\Infra\Updater::workerLockName('mysql:host=x;dbname=cal_one;charset=utf8mb4'));
+    checkEq('update: so is the update lock, apart from the worker\'s', 'bettercal_update:cal_one', BetterCal\Infra\Updater::updateLockName('mysql:host=x;dbname=cal_one;charset=utf8mb4'));
+    $UP = BetterCal\Infra\Updater::class;
+    checkEq('update: a release that changes no keys says nothing', [], $UP::keyChanges(['a' => 'k1', 'b' => 'k2'], ['b' => 'k2', 'a' => 'k1']));
+    checkEq('update: key changes are spelled out', ['replaces the signing key b with a different one', 'adds the signing key c', 'removes the signing key a'],
+        $UP::keyChanges(['a' => 'k1', 'b' => 'k2'], ['b' => 'k9', 'c' => 'k3']));
+    checkEq('update: this copy\'s keys read by id', array_column(BetterCal\Support\ReleaseSignature::trustedKeys(), 'publicKey', 'id'), $UP::keysAt(dirname(__DIR__, 2)));
+
+    // An update stopped in the middle of its swap (a killed process): where is it really?
+    $sw = sys_get_temp_dir() . '/bc-swap-' . bin2hex(random_bytes(3));
+    mkdir("$sw/prev", 0777, true);
+    mkdir("$sw/stage/better-cal", 0777, true);
+    checkEq('update: stopped before the first rename, it is still the old code', 'backed-up',
+        $UP::settledStage(['stage' => 'swapping', 'previous' => "$sw/not-yet", 'tree' => "$sw/stage/better-cal"]));
+    checkEq('update: both renames done, it is swapped', 'swapped',
+        $UP::settledStage(['stage' => 'swapping', 'previous' => "$sw/prev", 'tree' => "$sw/gone/better-cal"]));
+    checkEq('update: other stages are what they say', 'failed', $UP::settledStage(['stage' => 'failed']));
+    $UP::removeTree($sw);
+    check('update: a folder is removed whole', !file_exists($sw));
+    $outside = sys_get_temp_dir() . '/bc-outside-' . bin2hex(random_bytes(3));
+    mkdir($outside);
+    file_put_contents("$outside/keep.txt", 'x');
+    mkdir("$sw/inner", 0777, true);
+    symlink($outside, "$sw/inner/link");
+    $UP::removeTree($sw);
+    check('update: removing never follows a link out of the folder', !file_exists($sw) && is_file("$outside/keep.txt"));
+    $UP::removeTree($outside);
+
+    // Pruning: the newest two copies and backups stay, and always the update's own.
+    $parent = sys_get_temp_dir() . '/bc-prune-' . bin2hex(random_bytes(3));
+    mkdir("$parent/better-cal/server", 0777, true);
+    file_put_contents("$parent/better-cal/VERSION", "1.5.0\n");
+    foreach (['1.1.0', '1.2.0', '1.3.0', '1.4.0'] as $v) {
+        mkdir("$parent/better-cal-$v/server", 0777, true);
+        file_put_contents("$parent/better-cal-$v/VERSION", "$v\n");
+    }
+    mkdir("$parent/better-cal-old/server", 0777, true);
+    file_put_contents("$parent/better-cal-old/VERSION", "1.0.0\n");
+    $pu = new BetterCal\Infra\Updater("$parent/better-cal");
+    $pu->ensureBackupDir();
+    $bd = $pu->backupDir();
+    foreach (['db-1.1.0-a.bcbackup', 'db-1.2.0-b.bcbackup', 'db-before-1.3.0-c.bcbackup', 'db-1.4.0-d.bcbackup'] as $b) {
+        file_put_contents("$bd/$b", 'x');
+    }
+    file_put_contents("$bd/better-cal-1.5.0.zip", 'x');
+    mkdir("$parent/.better-cal-1.5.0-unpacking/better-cal", 0777, true);
+    // Copies made within the same second share a ctime, so only the counts are checked.
+    $pu->writeState(['from' => '1.1.0', 'to' => '1.5.0', 'stage' => 'done', 'previous' => "$parent/better-cal-1.1.0", 'backup' => "$bd/db-1.1.0-a.bcbackup"]);
+    $removed = $pu->prune(2);
+    check('update: pruning keeps the update\'s own previous copy and backup', is_dir("$parent/better-cal-1.1.0") && is_file("$bd/db-1.1.0-a.bcbackup"));
+    check('update: and never a copy made by hand', is_dir("$parent/better-cal-old"));
+    check('update: leftover zips and unpacking folders go', !is_file("$bd/better-cal-1.5.0.zip") && !is_dir("$parent/.better-cal-1.5.0-unpacking"));
+    $copiesLeft = count(array_filter(['1.1.0', '1.2.0', '1.3.0', '1.4.0'], static fn($v) => is_dir("$parent/better-cal-$v")));
+    $backupsLeft = count(glob("$bd/db-*") ?: []);
+    check('update: at most two copies and two backups beyond the update\'s own stay', $copiesLeft <= 3 && $backupsLeft <= 3 && $copiesLeft >= 2 && $backupsLeft >= 2);
+    $UP::removeTree($parent);
+
     check('update: an app under public_html is noticed', (new BetterCal\Infra\Updater('/home/someone/public_html/better-cal'))->looksServed());
     check('update: an app outside a web root is not', !(new BetterCal\Infra\Updater('/srv/better-cal'))->looksServed());
     $deny = sys_get_temp_dir() . '/bc-deny-' . bin2hex(random_bytes(3));
@@ -9460,7 +9570,6 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
     $ac->ensure();
     check('access code: stays the same while it is valid', str_contains((string) file_get_contents($ac->codePath()), $typed));
     checkEq('access code: a wrong code is refused', null, $ac->verify('AAAA-BBBB-CCCC'));
-    checkEq('access code: and counts as a try', 4, $ac->triesLeft());
     check('access code: no session without the code', !$ac->hasSession('anything'));
     check('access code: the other purpose cannot use it', (new BetterCal\Http\AccessCode($root, 'update'))->verify($typed) === null);
     $session = $ac->verify(strtolower(str_replace('-', ' ', $typed)));
@@ -9472,11 +9581,22 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
     $ac2 = new BetterCal\Http\AccessCode($root, 'update');
     $ac2->ensure();
     preg_match('/code: ([A-Z0-9-]+)/', (string) file_get_contents($ac2->codePath()), $m2);
-    for ($i = 0; $i < 5; $i++) { $ac2->verify('WRONG-WRONG-' . $i); }
-    check('access code: five wrong tries use the code up', $ac2->verify($m2[1]) === null);
+    for ($i = 0; $i < 2; $i++) { $ac2->verify('WRONG-WRONG-' . $i); }
     $ac2->ensure();
     preg_match('/code: ([A-Z0-9-]+)/', (string) file_get_contents($ac2->codePath()), $m3);
-    check('access code: and a new one replaces it', ($m3[1] ?? '') !== ($m2[1] ?? '') && is_string($ac2->verify($m3[1])));
+    check('access code: wrong tries never replace it, so a stranger can\'t keep the owner out', ($m3[1] ?? '') === ($m2[1] ?? ''));
+    $session2 = $ac2->verify($m2[1]);
+    check('access code: and the right one still works after them', is_string($session2));
+    // The code's hour runs out while its session is in use: a new code, the same session.
+    $statePath = "$root/.runtime-cache/access-code.php";
+    $raw = (string) file_get_contents($statePath);
+    $st = json_decode(substr($raw, strpos($raw, "\n") + 1), true);
+    $st['expires'] = time() - 1;
+    file_put_contents($statePath, BetterCal\Support\SettingsFile::GUARD_PREFIX . "\n" . json_encode($st));
+    $ac2->ensure();
+    preg_match('/code: ([A-Z0-9-]+)/', (string) file_get_contents($ac2->codePath()), $m4);
+    check('access code: an expired code is replaced', ($m4[1] ?? '') !== ($m2[1] ?? ''));
+    check('access code: but the session it started lasts its own hour', $ac2->hasSession($session2));
     $ac2->finish();
 
     check('setup: needed without .env', BetterCal\Http\InstallPages::needsSetup($root));
@@ -9603,6 +9723,32 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
     try { BetterCal\Infra\Setup::writeEnv("$root/.env.php", $text); } catch (RuntimeException) { $threw = true; }
     check('settings: setup never replaces existing settings', $threw);
     check('setup: not needed once .env.php exists', !BetterCal\Http\InstallPages::needsSetup($root));
+    // Letters whose UTF-8 holds byte 0x85 (Å, ą, х), which PCRE's \R takes for a line break.
+    $odd = ['DB_PASS' => "p\u{00C5}ss w\u{0105}rd \u{0445}#1", 'NAME' => "tab\tinside"];
+    checkEq('settings: values with Å, ą or х read back whole', $odd, $SF::parse(BetterCal\Infra\Setup::envText('', $odd)));
+    $fresh = sys_get_temp_dir() . '/bc-envw-' . bin2hex(random_bytes(3));
+    mkdir($fresh);
+    BetterCal\Infra\Setup::writeEnv("$fresh/.env.php", BetterCal\Infra\Setup::envText($SF::GUARD, $odd));
+    checkEq('settings: and survive setup writing them', $odd, $SF::load($fresh));
+    unlink("$fresh/.env.php");
+    rmdir($fresh);
+    foreach (["\x0b", "\x0c", "\x1b", "\x7f"] as $ctl) {
+        $threw = false;
+        try { BetterCal\Infra\Setup::envText('', ['DB_PASS' => "a{$ctl}b"]); } catch (InvalidArgumentException) { $threw = true; }
+        check('settings: control character ' . bin2hex($ctl) . ' is refused in a value', $threw);
+    }
+    // A guard line deleted from a settings file kept elsewhere through a link.
+    file_put_contents("$tmp/linked.env.php", "A=1\n");
+    $linkRoot = "$tmp/linked-app";
+    @mkdir($linkRoot);
+    symlink("$tmp/linked.env.php", "$linkRoot/.env.php");
+    $threw = false;
+    try { $SF::load($linkRoot); } catch (BetterCal\Support\SettingsFileError) { $threw = true; }
+    check('settings: a linked file missing its guard is refused, never replaced by a copy', $threw && is_link("$linkRoot/.env.php"));
+    unlink("$linkRoot/.env.php");
+    unlink("$tmp/linked.env.php");
+    @rmdir("$linkRoot/.runtime-cache");
+    rmdir($linkRoot);
     check('setup: the worker\'s cron line discards output', str_ends_with(BetterCal\Infra\Setup::cronLine('/srv/x', 'php'), 'worker.php >/dev/null 2>&1'));
 
     $ac = new BetterCal\Http\AccessCode($root, 'setup');

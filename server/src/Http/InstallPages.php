@@ -195,11 +195,16 @@ final class InstallPages
             return false;
         }
         try {
-            $pending = (new Migrator(new Db($cfg['db']), $dir))->pending();
+            $migrator = new Migrator(new Db($cfg['db']), $dir);
+            $pending = $migrator->pending();
+            // Or the database is ahead of these files (a newer version's
+            // update, then older files put back by hand): this code must not
+            // run on a schema it wasn't written for.
+            $unknown = $migrator->unknown();
         } catch (\Throwable) {
             return false; // the database is unreachable: the app reports that itself
         }
-        if ($pending === []) {
+        if ($pending === [] && $unknown === []) {
             if (is_dir(dirname($marker)) || @mkdir(dirname($marker), 0700)) {
                 @file_put_contents($marker, $sig);
             }
@@ -214,6 +219,77 @@ final class InstallPages
      * the normal routes. Returns only for those.
      */
     public static function databaseUpdate(array $cfg, string $path): void
+    {
+        self::databaseUpdatePage($cfg, $path);
+    }
+
+    /** What this page writes into the maintenance file while it works. */
+    private const PAGE_WORK = ['database update', 'restoring the database'];
+
+    /**
+     * Maintenance left on by this page's own work after the request doing it
+     * was cut off (a host's time limit, a lost connection): nothing holds the
+     * update lock any more, so nothing is working. 'continue' when the update
+     * had in fact finished (maintenance is turned off), 'page' when this page
+     * should take it from here, null otherwise: really at work, or
+     * bin/update.php's own maintenance, which --finish or --rollback ends.
+     */
+    public static function stoppedDatabaseWork(array $cfg): ?string
+    {
+        $info = Maintenance::info($cfg['app_root']);
+        if (!in_array($info['reason'] ?? null, self::PAGE_WORK, true)) {
+            return null;
+        }
+        // Anything uncertain (the database unreachable, an error) keeps the
+        // site closed: only a clear "nothing is working on it, and nothing is
+        // left to apply" opens it.
+        try {
+            $db = new Db($cfg['db']);
+            if ((int) $db->scalar('SELECT IS_FREE_LOCK(?)', [Updater::updateLockName((string) $cfg['db']['dsn'])]) !== 1) {
+                return null;
+            }
+            $migrator = new Migrator($db, $cfg['app_root'] . '/server/migrations');
+            $settled = $migrator->pending() === [] && $migrator->unknown() === [];
+        } catch (\Throwable) {
+            return null;
+        }
+        if ($info['reason'] === 'database update' && $settled) {
+            try {
+                Maintenance::off($cfg['app_root']);
+            } catch (\Throwable) {
+                return null;
+            }
+            return 'continue';
+        }
+        return 'page';
+    }
+
+    /** Hold the update lock for the rest of this request, or say who has it. */
+    private static function lockUpdate(Db $db, array $cfg): void
+    {
+        if ((int) $db->scalar('SELECT GET_LOCK(?, 0)', [Updater::updateLockName((string) $cfg['db']['dsn'])]) !== 1) {
+            self::page('Database update needed', '<div class="note">An update is already running (in another tab, or from a command line). Wait a minute, then <a href="/update-database">reload this page</a>.</div>', 409);
+        }
+    }
+
+    /**
+     * Restore forms for the newest database backups an update made (this
+     * page, or bin/update.php), newest first, by when they were made.
+     */
+    private static function restoreForms(Updater $updater, string $token, int $max = 3): string
+    {
+        $mine = array_filter(glob($updater->backupDir() . '/db-*') ?: [], 'is_file');
+        usort($mine, static fn(string $a, string $b): int => filemtime($b) <=> filemtime($a));
+        $out = '';
+        foreach (array_slice($mine, 0, $max) as $f) {
+            $out .= '<form method="post"><input type="hidden" name="step" value="restore"><input type="hidden" name="backup" value="' . self::e(basename($f)) . '">'
+                . '<input type="hidden" name="form" value="' . self::e(AccessCode::formToken($token)) . '">'
+                . '<button type="submit">Restore the backup from ' . self::e(gmdate('Y-m-d H:i:s', (int) filemtime($f))) . ' UTC</button></form>';
+        }
+        return $out;
+    }
+
+    private static function databaseUpdatePage(array $cfg, string $path): void
     {
         if (str_starts_with($path, '/api/') || str_starts_with($path, '/dav')) {
             http_response_code(503);
@@ -235,13 +311,17 @@ final class InstallPages
         $db = new Db($cfg['db']);
         $migrator = new Migrator($db, $appRoot . '/server/migrations');
         $pending = $migrator->pending();
+        $unknown = $migrator->unknown();
         $updater = new Updater($appRoot);
+        $version = (string) $cfg['version'];
         if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && ($_POST['step'] ?? '') === 'restore') {
             self::checkForm($token);
+            self::lockUpdate($db, $cfg);
             self::restoreBackup($cfg, $db, $updater, (string) ($_POST['backup'] ?? ''));
         }
-        if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && ($_POST['step'] ?? '') === 'update') {
+        if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && ($_POST['step'] ?? '') === 'update' && $unknown === []) {
             self::checkForm($token);
+            self::lockUpdate($db, $cfg);
             @set_time_limit(300);
             try {
                 $updater->ensureBackupDir();
@@ -253,6 +333,12 @@ final class InstallPages
                 self::page('Database update needed', '<div class="err">The backup failed, so nothing was changed: ' . self::e($e->getMessage()) . '</div><p><a href="/update-database">Try again</a></p>', 500);
             }
             Maintenance::on($appRoot, 'database update');
+            // Wait out a worker job already running (it checks for maintenance
+            // before each one), as bin/update.php does.
+            if ((int) $db->scalar('SELECT GET_LOCK(?, 60)', [Updater::workerLockName((string) $cfg['db']['dsn'])]) !== 1) {
+                Maintenance::off($appRoot);
+                self::page('Database update needed', '<div class="note">The worker has been busy for a minute, so nothing was changed. <a href="/update-database">Try again</a> in a few minutes.</div>', 503);
+            }
             try {
                 $ran = $migrator->run(static function (string $line): void {});
             } catch (\Throwable $e) {
@@ -279,8 +365,26 @@ final class InstallPages
                 . '<p class="hint">A backup from just before is in <code>' . self::e($backup) . '</code>; delete it once you\'re happy.</p>'
                 . '<p><a class="btn" href="/">Open Better-Cal</a></p>');
         }
+        $stopped = Maintenance::active($appRoot) ? Maintenance::info($appRoot) : null;
+        $restores = self::restoreForms($updater, $token);
+        if (($stopped['reason'] ?? null) === 'restoring the database') {
+            self::page('Database restore stopped', '<div class="err">A database restore started here at ' . self::e((string) ($stopped['since'] ?? '?')) . ' stopped before it finished, '
+                . 'often because the host ends long requests. The site stays closed until it\'s done: run it again.</div>'
+                . ($restores !== '' ? $restores : '<p>The backup it was restoring isn\'t there any more. Please <a href="https://github.com/Oshyan/better-cal/issues">report this</a>.</p>'), 503);
+        }
+        if ($unknown !== []) {
+            $u = count($unknown);
+            self::page('These files are older than the database', '<p>The database was updated by a newer version of Better-Cal: it has ' . $u . ' change' . ($u === 1 ? '' : 's')
+                . ' that these files (Better-Cal ' . self::e($version) . ') don\'t know, so they can\'t safely open it.</p>'
+                . '<p>Put the newer version\'s files back, or, to go back to ' . self::e($version) . ', restore the backup made before it was updated. Anything entered since that backup is lost.</p>'
+                . ($restores !== '' ? $restores : '<p class="hint">No backup from before that update was found beside the Better-Cal folder; use your host\'s backups.</p>'), 503);
+        }
         $n = count($pending);
-        self::page('Database update needed', '<p>Better-Cal ' . self::e((string) $cfg['version']) . ' has ' . $n . ' database change' . ($n === 1 ? '' : 's') . ' to apply.</p>'
+        $note = ($stopped['reason'] ?? null) === 'database update'
+            ? '<div class="err">A database update started here at ' . self::e((string) ($stopped['since'] ?? '?')) . ' stopped before it finished, often because the host ends long requests. '
+                . 'Run it again (it carries on from where it stopped), or restore the backup from just before it and put the previous version\'s files back.</div>' . $restores
+            : '';
+        self::page('Database update needed', $note . '<p>Better-Cal ' . self::e($version) . ' has ' . $n . ' database change' . ($n === 1 ? '' : 's') . ' to apply.</p>'
             . '<p>This backs up the database first (beside the Better-Cal folder), shows "updating" to anyone else for the few seconds it takes, then applies them.</p>'
             . '<form method="post"><input type="hidden" name="step" value="update"><input type="hidden" name="form" value="' . self::e(AccessCode::formToken($token)) . '">'
             . '<button type="submit">Back up and update the database</button></form>', 503);
@@ -294,7 +398,7 @@ final class InstallPages
     private static function restoreBackup(array $cfg, Db $db, Updater $updater, string $name): never
     {
         $path = $updater->backupDir() . '/' . $name;
-        if (preg_match('/^db-before-[0-9][0-9A-Za-z.\-]*\.(bcbackup|sql\.gz)$/D', $name) !== 1 || !is_file($path)) {
+        if (preg_match('/^db-(before-)?[0-9][0-9A-Za-z.\-]*\.(bcbackup|sql\.gz)$/D', $name) !== 1 || !is_file($path)) {
             self::page('Database update needed', '<div class="err">That backup isn\'t there any more.</div><p><a href="/update-database">Back</a></p>', 404);
         }
         @set_time_limit(300);
@@ -306,7 +410,9 @@ final class InstallPages
             self::page('Database update needed', '<div class="err">Restoring stopped: ' . self::e($e->getMessage()) . '</div><p>Please <a href="https://github.com/Oshyan/better-cal/issues">report the error</a>.</p>', 500);
         }
         Maintenance::off($cfg['app_root']);
-        self::page('Database restored', '<p>The database is back as it was before the update (' . $r['tables'] . ' tables). Now put the previous version\'s files back, as <a href="https://github.com/Oshyan/better-cal/blob/main/docs/install.md#updating">Updating</a> shows; until then this page keeps asking to update the database.</p>');
+        @unlink($cfg['app_root'] . '/.runtime-cache/schema-current');
+        self::page('Database restored', '<p>The database is back as it was when that backup was made (' . $r['tables'] . ' tables).</p>'
+            . '<p>If these files are the version from before the update, <a href="/">open Better-Cal</a>. If they are the newer version, put the previous version\'s files back first, as <a href="https://github.com/Oshyan/better-cal/blob/main/docs/install.md#updating">Updating</a> shows; until then this page keeps asking to update the database.</p>');
     }
 
     // ---- Shared ------------------------------------------------------------
@@ -349,11 +455,14 @@ final class InstallPages
                 header('Location: ' . (string) parse_url((string) ($_SERVER['REQUEST_URI'] ?? '/'), PHP_URL_PATH), true, 303);
                 exit;
             }
-            $left = $code->triesLeft();
-            $msg = '<div class="err">That code didn\'t match.' . ($left > 0 ? " $left tries left." : ' A new code has been written to the file; enter that one.') . '</div>';
+            $msg = '<div class="err">That code didn\'t match. Check it against the file and try again.</div>';
         }
-        $code->ensure();
-        self::page($title, "<p>$intro</p>$msg<form method=\"post\" autocomplete=\"off\"><input type=\"hidden\" name=\"step\" value=\"code\">"
+        try {
+            $code->ensure();
+        } catch (\RuntimeException) {
+            self::page('Better-Cal can\'t write its files', '<p>Better-Cal couldn\'t write the code file into its folder. Check that the account PHP runs as can write there and that the disk isn\'t full, then reload this page.</p>', 503);
+        }
+        self::page($title, "<p>$intro</p>" . self::httpWarning() . "$msg<form method=\"post\" autocomplete=\"off\"><input type=\"hidden\" name=\"step\" value=\"code\">"
             . '<label>Code<input name="code" placeholder="XXXX-XXXX-XXXX" autocapitalize="characters" spellcheck="false" required></label>'
             . '<button type="submit">Continue</button></form>', 403);
     }
@@ -368,6 +477,21 @@ final class InstallPages
     private static function clearCookie(): void
     {
         setcookie(AccessCode::COOKIE, '', ['expires' => time() - 3600, 'path' => '/', 'secure' => self::https(), 'httponly' => true, 'samesite' => 'Strict']);
+    }
+
+    /**
+     * Over plain HTTP, the code and the passwords typed next cross the
+     * network unencrypted. A warning, not a refusal: some hosts end HTTPS in
+     * front of PHP without saying so.
+     */
+    private static function httpWarning(): string
+    {
+        $host = strtolower((string) preg_replace('/:\d+$/', '', (string) ($_SERVER['HTTP_HOST'] ?? '')));
+        if (self::https() || $host === '' || $host === 'localhost' || $host === '127.0.0.1' || $host === '[::1]' || str_ends_with($host, '.localhost') || str_ends_with($host, '.test')) {
+            return '';
+        }
+        $url = 'https://' . $host . (string) parse_url((string) ($_SERVER['REQUEST_URI'] ?? '/'), PHP_URL_PATH);
+        return '<div class="note">This page isn\'t using HTTPS, so what you type here travels unencrypted. If your site has a certificate, <a href="' . self::e($url) . '">open it over HTTPS</a> instead.</div>';
     }
 
     private static function https(): bool

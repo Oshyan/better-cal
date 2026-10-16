@@ -4,6 +4,23 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.86 (2026-10-16)
+
+From a review of everything since installing and updating moved into the app.
+
+- **A release is signed only after it's checked.** The maintainer's machine now rebuilds each release from its tag and the lock file and compares it, file by file, with the zip GitHub built; it signs only when they match. Before, it signed GitHub's zip as it was, so someone who took over the build could have had a changed zip signed. Releases are now signed with a hardware security key (its PIN and a touch); the key file is kept offline for recovery.
+- **The update notice only believes signed releases.** A release is announced, and a raised security floor recorded, only when its signature verifies. An unsigned one could otherwise have announced a version that can't be installed and then blocked every real update.
+- **Passwords with letters like Å, ą or х work in the settings file.** Reading it split lines at a byte inside those letters, so a database password containing one came back cut short: setup seemed to finish, then the site couldn't reach its database. Setup also checks the file reads back as written, and refuses control characters.
+- **A stranger can't keep you out of setup.** Wrong codes used to replace the code after five tries, so someone sending wrong codes could keep it changing before you typed it. Wrong tries now just wait a second. Entering the code starts a session good for an hour from then, and the page warns when it isn't on HTTPS.
+- **Updates that stop partway can always be undone.** `update.php --rollback` now also tidies up after an update cut off before or during the swap (a closed terminal, a killed process), which used to leave it unable to finish or undo. One update runs at a time, shared with the database update page. A rollback that can't put the previous version back puts the current one back instead of leaving neither.
+- **The database update page recovers too.** If the host cuts its request off, the page comes back (instead of "updating" forever) to run it again or restore the backup it made. It waits for a running worker job first. And older files put back over a database a newer version updated are noticed: the page offers to restore the backup from before the update instead of letting old code run on a newer schema.
+- **Old copies and backups are pruned.** After an update, the newest two previous versions and database backups stay and older ones go, with downloaded zips and anything a failed update left. Each copy is thousands of files, and shared hosts limit how many an account may have. Copies you made yourself are never touched.
+- **No old code for a moment after an update.** PHP caches compiled files by path, so right after the folders were swapped a request could run a cached file from the old version beside the new ones (in testing, that briefly reopened a site still mid-update). An update or rollback now has the next request clear that cache, and the database update page keeps the site closed whenever it can't be sure the work is done.
+- **`update.php` says when a release changes the signing keys,** shows release notes only after the signature checks out, and warns when a rollback goes below the security floor.
+- Smaller fixes: a settings file reached through a symbolic link is never replaced by a copy; backups are private from the moment they're created; a hand-made `.env` converted by the web server becomes owner-only; the private-files check names the file that leaked and says to change every secret in it; the docs say plainly that backup encryption holds only while the settings file stays private.
+
+Operators: no migration. Maintainers: `scripts/release.sh prepare` now needs the hardware security key, or `--recovery` with the key file.
+
 ## 0.9.85 (2026-10-16)
 
 - **A stopped worker is hard to miss.** Its banner now sits at the top of the page, under the toolbar, instead of along the bottom where a tall window hid it. A red dot on Settings in the sidebar, and on the System tab, stays until the worker runs again, even after the banner is dismissed. The dot also shows when the private-files check finds your settings file readable from the web.

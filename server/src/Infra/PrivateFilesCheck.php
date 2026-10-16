@@ -33,6 +33,10 @@ use BetterCal\Support\SettingsFile;
  */
 final class PrivateFilesCheck
 {
+    /** What an exposed settings file means for the secrets in it. */
+    private const CHANGE_SECRETS = "Once it's fixed, change the passwords and keys in it, since they may already have been copied: "
+        . 'the database password first, then any mail, Google or other service passwords and keys it holds. The install guide, under Keeping private files private, says what changing the session secret involves.';
+
     public const COOLDOWN_SECONDS = 60;
     public const DOCS = 'https://github.com/Oshyan/better-cal/blob/main/docs/install.md#keeping-private-files-private';
     /** Folder names hosts use for a site's public files. */
@@ -163,12 +167,12 @@ final class PrivateFilesCheck
         if (($host = $first('exposed')) !== null) {
             return self::finish('exposed', 'Fix this now: your settings can be downloaded.',
                 "$host{$place['path']}.env.php shows your database password to anyone, because this server isn't running PHP for that folder. "
-                . "Move the $folder folder out of $docroot, or ask your host to turn PHP on for it. Once it's fixed, change your database password, since it may already have been copied.", $cfg, 'exposed');
+                . "Move the $folder folder out of $docroot, or ask your host to turn PHP on for it. " . self::CHANGE_SECRETS, $cfg, 'exposed');
         }
         if (($host = $first('exposed-plain')) !== null) {
             return self::finish('exposed', 'Fix this now: your settings can be downloaded.',
                 "$host{$place['path']}.env shows your database password to anyone. Run php server/bin/settings.php --convert as the account that owns .env, "
-                . "or move the $folder folder out of $docroot. Once it's fixed, change your database password, since it may already have been copied.", $cfg, 'exposed');
+                . "or move the $folder folder out of $docroot. " . self::CHANGE_SECRETS, $cfg, 'exposed');
         }
         if (($host = $first('php-off')) !== null) {
             return self::finish('probably', 'Probably safe, but fix this.',
@@ -215,15 +219,17 @@ final class PrivateFilesCheck
         foreach ($hosts as $host) {
             // The settings file that reads, if any (.env first: it isn't guarded).
             $env = null;
+            $envFile = null;
             foreach ($settingsFiles as $f) {
                 $r = $answers[$host][$f];
                 if ($r['status'] === 200 && str_contains($r['body'], 'BETTERCAL_')) {
                     $env = $r;
+                    $envFile = $f;
                     break;
                 }
                 $env ??= $r;
             }
-            $findings[$host] = self::classify($answers[$host]['probe'], $answers[$host]['control'], $env, $token);
+            $findings[$host] = self::classify($answers[$host]['probe'], $answers[$host]['control'], $env, $token, $envFile);
         }
         return $findings;
     }
@@ -235,11 +241,16 @@ final class PrivateFilesCheck
      * @param array{status:int,body:string} $control
      * @param ?array{status:int,body:string} $env
      */
-    public static function classify(array $probe, array $control, ?array $env, string $token): string
+    public static function classify(array $probe, array $control, ?array $env, string $token, ?string $envFile = null): string
     {
         $settingsRead = $env !== null && $env['status'] === 200 && str_contains((string) $env['body'], 'BETTERCAL_');
         $phpOff = $probe['status'] === 200 && str_contains((string) $probe['body'], $token);
         if ($settingsRead) {
+            // Which file answered, not what it holds: a .env copied from the
+            // example starts with the guard line too, and still needs converting.
+            if ($envFile !== null) {
+                return $envFile === '.env' ? 'exposed-plain' : 'exposed';
+            }
             return str_contains((string) $env['body'], SettingsFile::GUARD_PREFIX) ? 'exposed' : 'exposed-plain';
         }
         if ($phpOff) {

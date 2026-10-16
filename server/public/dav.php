@@ -13,6 +13,11 @@ use BetterCal\Domain\Undo;
 use BetterCal\Infra\Db;
 
 define('BETTERCAL_WEB_ENTRY', true);
+// Right after an update swapped the code, compiled copies of the old files
+// may still be cached: clear them, once (Support\Maintenance::CODE_CHANGED).
+if (is_file(dirname(__DIR__, 2) . '/.code-changed') && @unlink(dirname(__DIR__, 2) . '/.code-changed') && function_exists('opcache_reset')) {
+    @opcache_reset();
+}
 require dirname(__DIR__) . '/src/bootstrap.php';
 
 if (BetterCal\Http\InstallPages::needsSetup(dirname(__DIR__, 2))) {

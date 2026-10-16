@@ -14,10 +14,13 @@ namespace BetterCal\Http;
  * (Support\SettingsFile), so a web server shows it as a blank page even where
  * the app folder sits inside a web root; a file manager shows the code. Anyone
  * who can read that file could already change the app, so a stranger who
- * finds the page first gets nowhere. The code is 60 bits, expires after an
- * hour, and is replaced after 5 wrong tries. Entering it starts a session
- * held in an HttpOnly, SameSite=Strict cookie; forms also carry a token
- * derived from it. Used once, the files are removed.
+ * finds the page first gets nowhere. The code is 60 bits and expires after
+ * an hour. Wrong tries never replace it (0.9.86): at 60 bits guessing is
+ * hopeless anyway, and replacing it after a few let a stranger keep the owner
+ * locked out by sending wrong codes. Each wrong try waits a second instead.
+ * Entering it starts a session good for an hour from then, held in an
+ * HttpOnly, SameSite=Strict cookie; forms also carry a token derived from it.
+ * Used once, the files are removed.
  */
 final class AccessCode
 {
@@ -26,7 +29,6 @@ final class AccessCode
     private const OLD_FILE = 'better-cal-code.txt';
     public const COOKIE = 'bc_access';
     private const TTL = 3600;
-    private const MAX_TRIES = 5;
     private const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
     public function __construct(private readonly string $appRoot, private readonly string $purpose)
@@ -55,52 +57,50 @@ final class AccessCode
 
     /**
      * Make sure a current code exists, writing a fresh one when there's none,
-     * it expired, it belongs to the other purpose, or too many tries used it up.
+     * it expired, or it belongs to the other purpose. A session already
+     * started stays: only its own hour ends it.
      */
     public function ensure(): void
     {
         $s = $this->state();
-        if ($s !== null && $s['purpose'] === $this->purpose && $s['expires'] > time() && $s['tries'] < self::MAX_TRIES && is_file($this->codePath())) {
+        if ($s !== null && $s['purpose'] === $this->purpose && $s['expires'] > time() && is_file($this->codePath())) {
             return;
         }
+        $keep = $s !== null && $s['purpose'] === $this->purpose && $s['session'] !== null && $s['sessionExpires'] > time();
         $code = '';
         for ($i = 0; $i < 12; $i++) {
             $code .= self::ALPHABET[random_int(0, strlen(self::ALPHABET) - 1)];
         }
         $display = implode('-', str_split($code, 4));
-        $this->save(['purpose' => $this->purpose, 'hash' => hash('sha256', $code), 'expires' => time() + self::TTL, 'tries' => 0, 'session' => null]);
+        $this->save(['purpose' => $this->purpose, 'hash' => hash('sha256', $code), 'expires' => time() + self::TTL,
+            'session' => $keep ? $s['session'] : null, 'sessionExpires' => $keep ? $s['sessionExpires'] : 0]);
         $what = $this->purpose === 'setup' ? 'setup' : 'database update';
         @unlink($this->appRoot . '/' . self::OLD_FILE);
-        \BetterCal\Support\SettingsFile::writeAtomic($this->codePath(), \BetterCal\Support\SettingsFile::GUARD_PREFIX . " // Better-Cal code file: the line below is the code.\n"
+        $ok = \BetterCal\Support\SettingsFile::writeAtomic($this->codePath(), \BetterCal\Support\SettingsFile::GUARD_PREFIX . " // Better-Cal code file: the line below is the code.\n"
             . "Better-Cal $what code: $display\n\n"
             . "Enter it on the page that asked for it. It works for an hour and only once;\n"
             . "the page writes a new one when needed. This file is safe to delete.\n", 0600);
+        if (!$ok) {
+            // Never ask for a code that isn't in the file.
+            @unlink($this->statePath());
+            throw new \RuntimeException('Could not write the code file.');
+        }
     }
 
     /** Check a typed code. On success, returns the session token to set as a cookie. */
     public function verify(string $typed): ?string
     {
         $s = $this->state();
-        if ($s === null || $s['purpose'] !== $this->purpose || $s['expires'] <= time() || $s['tries'] >= self::MAX_TRIES) {
-            return null;
-        }
         $clean = strtoupper((string) preg_replace('/[^A-Za-z0-9]/', '', $typed));
-        if (!hash_equals($s['hash'], hash('sha256', $clean))) {
-            $s['tries']++;
-            $this->save($s);
+        if ($s === null || $s['purpose'] !== $this->purpose || $s['expires'] <= time() || !hash_equals($s['hash'], hash('sha256', $clean))) {
+            sleep(1);
             return null;
         }
         $token = bin2hex(random_bytes(32));
         $s['session'] = hash('sha256', $token);
-        $s['tries'] = 0;
+        $s['sessionExpires'] = time() + self::TTL;
         $this->save($s);
         return $token;
-    }
-
-    public function triesLeft(): int
-    {
-        $s = $this->state();
-        return $s === null ? self::MAX_TRIES : max(0, self::MAX_TRIES - $s['tries']);
     }
 
     /** Whether this cookie value is the session a correct code started, still in time. */
@@ -108,7 +108,7 @@ final class AccessCode
     {
         $s = $this->state();
         return $token !== null && $token !== '' && $s !== null && $s['purpose'] === $this->purpose
-            && $s['session'] !== null && $s['expires'] > time() && hash_equals($s['session'], hash('sha256', $token));
+            && $s['session'] !== null && $s['sessionExpires'] > time() && hash_equals($s['session'], hash('sha256', $token));
     }
 
     /** The token a form carries to show it came from this session's own page. */
@@ -126,13 +126,17 @@ final class AccessCode
         @unlink(dirname($this->statePath()) . '/access-code.json');
     }
 
-    /** @return ?array{purpose:string,hash:string,expires:int,tries:int,session:?string} */
+    /** @return ?array{purpose:string,hash:string,expires:int,session:?string,sessionExpires:int} */
     private function state(): ?array
     {
         $raw = @file_get_contents($this->statePath());
         $nl = $raw === false ? false : strpos($raw, "\n");
         $s = $raw === false || $nl === false ? null : json_decode(substr($raw, $nl + 1), true);
-        return is_array($s) && isset($s['purpose'], $s['hash'], $s['expires']) ? $s + ['tries' => 0, 'session' => null] : null;
+        if (!is_array($s) || !isset($s['purpose'], $s['hash'], $s['expires'])) {
+            return null;
+        }
+        // A session from before 0.9.86 ended with the code.
+        return $s + ['session' => null, 'sessionExpires' => (int) $s['expires']];
     }
 
     private function save(array $s): void
@@ -143,7 +147,7 @@ final class AccessCode
         }
         $ok = \BetterCal\Support\SettingsFile::writeAtomic($this->statePath(), \BetterCal\Support\SettingsFile::GUARD_PREFIX . "\n" . json_encode($s), 0600);
         if (!$ok) {
-            throw new \RuntimeException('Could not save the access code state in ' . $dir);
+            throw new \RuntimeException('Could not save the access code state.'); // no path: this can show before the code
         }
     }
 }

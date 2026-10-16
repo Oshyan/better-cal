@@ -143,8 +143,8 @@ final class Setup
             if (preg_match('/^[A-Z][A-Z0-9_]*$/D', $key) !== 1) {
                 throw new \InvalidArgumentException("Bad setting name $key");
             }
-            if (preg_match('/[\r\n\x00]/', $value) === 1) {
-                throw new \InvalidArgumentException("$key can't contain a line break.");
+            if (preg_match('/[\x00-\x08\x0a-\x1f\x7f]/', $value) === 1) {
+                throw new \InvalidArgumentException("$key can't contain a line break or other control character.");
             }
         }
         $example = ltrim(str_starts_with($example, "\xEF\xBB\xBF") ? substr($example, 3) : $example, "\r\n");
@@ -197,12 +197,24 @@ final class Setup
             if ($fh === false) {
                 throw new \RuntimeException("Could not create $path: check that this account can write to " . dirname($path) . '.');
             }
-            fwrite($fh, $text);
+            $ok = fwrite($fh, $text) === strlen($text) && fflush($fh) && (!function_exists('fsync') || @fsync($fh));
             fclose($fh);
+            if (!$ok) {
+                @unlink($path);
+                throw new \RuntimeException("Could not write all of $path: check that the disk isn't full.");
+            }
         } finally {
             umask($old);
         }
         @chmod($path, 0600);
+        // Read it back as the app will: settings that come back different
+        // would let setup succeed and every later request fail. (The guard
+        // line holds no "=", so parse() passes over it.)
+        $parse = [\BetterCal\Support\SettingsFile::class, 'parse'];
+        if ($parse((string) file_get_contents($path)) !== $parse($text)) {
+            @unlink($path);
+            throw new \RuntimeException("$path didn't read back as written, so it was removed. Please report this.");
+        }
     }
 
     /**

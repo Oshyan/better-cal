@@ -13,6 +13,19 @@ namespace BetterCal\Support;
 final class Maintenance
 {
     public const FILE = '.maintenance';
+    /**
+     * Written when an update swaps the code. PHP's opcode cache keys compiled
+     * files by path, so for a moment (or until a restart, where a host turns
+     * timestamp checks off) a request can run the old version's compiled
+     * copy of a file beside the new version's others. The next web request
+     * clears the cache (index.php, dav.php) and removes this.
+     */
+    public const CODE_CHANGED = '.code-changed';
+
+    public static function codeChanged(string $appRoot): void
+    {
+        @file_put_contents($appRoot . '/' . self::CODE_CHANGED, gmdate('c') . "\n");
+    }
 
     public static function active(string $appRoot): bool
     {
@@ -24,6 +37,14 @@ final class Maintenance
         if (file_put_contents($appRoot . '/' . self::FILE, json_encode(['since' => gmdate('c'), 'reason' => $reason]) . "\n") === false) {
             throw new \RuntimeException('Could not turn on maintenance mode in ' . $appRoot);
         }
+    }
+
+    /** What the maintenance file says (since, reason), or null. @return ?array<string,string> */
+    public static function info(string $appRoot): ?array
+    {
+        $raw = @file_get_contents($appRoot . '/' . self::FILE);
+        $info = $raw === false ? null : json_decode($raw, true);
+        return is_array($info) ? $info : null;
     }
 
     public static function off(string $appRoot): void

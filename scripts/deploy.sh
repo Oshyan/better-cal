@@ -2,25 +2,14 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# Target host and paths come from scripts/deploy.env (copy deploy.env.example;
-# ignored by git). Real environment variables win over the file.
-if [ -f "${ROOT_DIR}/scripts/deploy.env" ]; then
-  while IFS='=' read -r key value; do
-    case "${key}" in ''|\#*) continue ;; esac
-    if [ -z "${!key:-}" ]; then export "${key}=${value}"; fi
-  done < "${ROOT_DIR}/scripts/deploy.env"
-fi
-for v in REMOTE APP_USER APP_DIR HEALTH_URL; do
-  if [ -z "${!v:-}" ]; then
-    echo "${v} is not set. Copy scripts/deploy.env.example to scripts/deploy.env and fill it in." >&2
-    exit 1
-  fi
-done
+source "${ROOT_DIR}/scripts/deploy-config.sh"
+deploy_load_config "${ROOT_DIR}/scripts/deploy.env"
+deploy_require REMOTE APP_USER APP_DIR HEALTH_URL DOCROOT
+deploy_check_flags
 BACKUP_DIR="${BACKUP_DIR:-/home/bettercal-backups}"
-if [ -z "${DOCROOT:-}" ]; then
-  echo "DOCROOT is not set (the web server's document root; see scripts/deploy.env.example)." >&2
-  exit 1
-fi
+deploy_target production "${APP_DIR}"
+printf 'Application user: %s; document root: %s (from scripts/deploy.env)\n' "${APP_USER}" "${DOCROOT}"
+deploy_confirm_skip_backup
 
 # Production deploys ship main. Feature branches go to the dev instance via
 # scripts/deploy-dev.sh; FORCE_BRANCH=1 overrides for the rare deliberate
@@ -138,7 +127,7 @@ fi
 if [ "${move_integrity_rollout}" = "1" ]; then
   stage "quiesce move-integrity migration"
   DEPLOY_TOUCHED=1
-  rssh "APP_DIR='${APP_DIR}' APP_USER='${APP_USER}' PHP_FPM_SERVICE='${PHP_FPM_SERVICE}' bash -s" <<'EOF'
+  rssh_args env "APP_DIR=${APP_DIR}" "APP_USER=${APP_USER}" "PHP_FPM_SERVICE=${PHP_FPM_SERVICE}" bash -s <<'EOF'
 set -euo pipefail
 # Graceful service stop drains current PHP requests. Remove only this app's
 # worker line, then wait for a worker already in its bounded run to finish.
@@ -183,7 +172,7 @@ if awk -v worker="${APP_DIR}/server/bin/worker.php" 'index($0, worker) > 0 { fou
 fi
 deadline=$((SECONDS + 75))
 while true; do
-  if pgrep -u "${APP_USER}" -f "${APP_DIR}/server/bin/[w]orker.php" >/dev/null; then
+  if pgrep -u "${APP_USER}" -f "${APP_DIR//./\\.}/server/bin/[w]orker\.php" >/dev/null; then
     process_status=0
   else
     process_status=$?
@@ -210,7 +199,7 @@ deploy_rsync "${APP_DIR}" "${DEPLOY_SNAPSHOT}"
 reconcile_release_plugins "${APP_DIR}" "${DEPLOY_SNAPSHOT}" "${APP_USER}"
 
 stage "composer + migrate + link"
-rssh "APP_DIR='${APP_DIR}' DOCROOT='${DOCROOT}' APP_USER='${APP_USER}' bash -s" <<'EOF'
+rssh_args env "APP_DIR=${APP_DIR}" "DOCROOT=${DOCROOT}" "APP_USER=${APP_USER}" bash -s <<'EOF'
 set -euo pipefail
 # The settings file (.env.php, or .env until it's converted) is provisioned
 # once, outside deployment. Never repair it through this APP_USER-owned
@@ -230,7 +219,7 @@ if sudo -n -u "${APP_USER}" -- test -L "${settings}" \
   echo "${settings} must be a readable regular file, not a symlink; provision it before deploying." >&2
   exit 1
 fi
-sudo -u "${APP_USER}" bash -c "cd ${APP_DIR}/server && composer install --no-dev --quiet --no-interaction"
+sudo -n -u "${APP_USER}" -- composer install --working-dir="${APP_DIR}/server" --no-dev --quiet --no-interaction
 sudo -u "${APP_USER}" php "${APP_DIR}/server/bin/migrate.php"
 # Docroot -> app/server/public. Its parent belongs to APP_USER, so every
 # pathname operation there runs as APP_USER rather than lending root to a
@@ -247,11 +236,8 @@ disable_missing_plugins "${APP_DIR}" "${APP_USER}"
 # Restore/create the worker schedule only after removed plugin rows and pending
 # jobs are disabled. A plugin-retirement deploy pauses this exact cron line
 # before moving code, so re-adding it earlier would reopen a one-minute race.
-rssh "APP_DIR='${APP_DIR}' APP_USER='${APP_USER}' bash -s" <<'EOF'
-set -euo pipefail
-WORKER_LOG="$(dirname "${APP_DIR}")/worker.log"
-sudo -u "${APP_USER}" bash -c "crontab -l 2>/dev/null | grep -Fq '${APP_DIR}/server/bin/worker.php' || (crontab -l 2>/dev/null; echo \"* * * * * php ${APP_DIR}/server/bin/worker.php >> ${WORKER_LOG} 2>&1\") | crontab -"
-EOF
+rssh_args env "APP_DIR=${APP_DIR}" "APP_USER=${APP_USER}" bash -s \
+  < "${DEPLOY_SNAPSHOT}/scripts/deploy-worker-cron.sh"
 
 if [ "${move_integrity_rollout}" = "1" ]; then
   stage "resume request traffic"
@@ -287,5 +273,5 @@ sleep 1
 # (curl on its own line: inside `curl && echo`, set -e ignored a failing /health.)
 curl -fsS --max-time 10 "${HEALTH_URL}"
 echo
-rssh "sudo -u ${APP_USER} php ${APP_DIR}/server/bin/smoke.php"
+rssh_args sudo -n -u "${APP_USER}" -- php "${APP_DIR}/server/bin/smoke.php"
 echo "Deploy OK"

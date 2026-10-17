@@ -24,6 +24,7 @@ SSH_OPTS=(-o "ControlPath=${SSH_CTL_DIR}/ctl" -o ControlMaster=no
   -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4)
 
 rssh() { ssh "${SSH_OPTS[@]}" "${REMOTE}" "$@"; }
+rssh_args() { rssh "$(deploy_command "$@")"; }
 
 stage() { DEPLOY_STAGE="$1"; echo "== $1 =="; }
 
@@ -62,7 +63,7 @@ deploy_rsync() {
   local run_user="${3:-${APP_USER}}"
   local extra=()
   case "${run_user}" in
-    ''|[0-9]*|*[!A-Za-z0-9_-]*)
+    ''|[0-9-]*|*[!A-Za-z0-9_-]*)
       echo 'Deployment application user must be a plain Unix account name.' >&2
       return 1
       ;;
@@ -265,7 +266,7 @@ if [ -n "${STALE_PLUGINS}" ]; then
   awk -v worker="${DEPLOY_DEST}/server/bin/worker.php" 'index($0, worker) == 0' "${cron_before}" >"${cron_after}"
   sudo -n -u "${DEPLOY_RUN_USER}" -- crontab - <"${cron_after}"
   deadline=$((SECONDS + 75))
-  while pgrep -u "${DEPLOY_RUN_USER}" -f "${DEPLOY_DEST}/server/bin/[w]orker.php" >/dev/null; do
+  while pgrep -u "${DEPLOY_RUN_USER}" -f "${DEPLOY_DEST//./\\.}/server/bin/[w]orker\.php" >/dev/null; do
     if [ "${SECONDS}" -ge "${deadline}" ]; then
       echo 'An application worker did not finish before plugin retirement.' >&2
       exit 1
@@ -369,7 +370,7 @@ cleanup_composer_audit_dir() {
     *) echo 'Refusing to clean an unexpected Composer audit path.' >&2; return 1 ;;
   esac
   case "${COMPOSER_AUDIT_USER:-}" in
-    ''|[0-9]*|*[!A-Za-z0-9_-]*) echo 'Refusing to clean a Composer audit path for an invalid account.' >&2; return 1 ;;
+    ''|[0-9-]*|*[!A-Za-z0-9_-]*) echo 'Refusing to clean a Composer audit path for an invalid account.' >&2; return 1 ;;
   esac
   local dir_q user_q
   printf -v dir_q '%q' "${COMPOSER_AUDIT_DIR}"
@@ -383,7 +384,7 @@ audit_composer_snapshot() {
   local snapshot="$1"
   local run_user="${2:-${APP_USER}}"
   case "${run_user}" in
-    ''|[0-9]*|*[!A-Za-z0-9_-]*)
+    ''|[0-9-]*|*[!A-Za-z0-9_-]*)
       echo 'Composer audit application user must be a plain Unix account name.' >&2
       return 1
       ;;

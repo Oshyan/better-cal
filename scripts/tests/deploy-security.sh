@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PHP_BIN="$(command -v php)"
+bash "${ROOT_DIR}/scripts/tests/deploy-config.sh"
 source "${ROOT_DIR}/scripts/deploy-backup.sh"
 
 passed=0

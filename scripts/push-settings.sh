@@ -20,14 +20,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-if [ ! -f "${ROOT_DIR}/scripts/deploy.env" ]; then
-  echo "scripts/deploy.env is missing (copy scripts/deploy.env.example)." >&2
-  exit 1
-fi
-set -a
-# shellcheck disable=SC1091
-. "${ROOT_DIR}/scripts/deploy.env"
-set +a
+source "${ROOT_DIR}/scripts/deploy-config.sh"
+deploy_load_config "${ROOT_DIR}/scripts/deploy.env"
 
 target="${1:-prod}"
 case "${target}" in
@@ -39,6 +33,7 @@ if [ -z "${REMOTE:-}" ] || [ -z "${dir}" ]; then
   echo "REMOTE and the ${target} directory must be set in scripts/deploy.env." >&2
   exit 1
 fi
+deploy_target "${target} settings" "${dir}"
 if [ ! -f "${settings}" ]; then
   echo "No settings file: ${settings#"${ROOT_DIR}/"}" >&2
   exit 1
@@ -68,7 +63,6 @@ fi
 echo "== pushing $(printf '%s\n' "${payload}" | wc -l | tr -d ' ') setting(s) to ${target} (${dir}) =="
 merge_b64="$(base64 < "${ROOT_DIR}/scripts/merge-env.py" | tr -d '\n')"
 # The folder: merge-env.py picks .env.php, or .env until it's converted.
-printf -v env_q '%q' "${dir}"
-printf -v label_q '%q' "${label}"
+env_q="$(deploy_command "${dir}" "${label}")"
 printf '%s\n' "${payload}" | ssh "${REMOTE}" \
-  "python3 -c \"\$(printf '%s' '${merge_b64}' | base64 -d)\" ${env_q} ${label_q}"
+  "python3 -c \"\$(printf '%s' '${merge_b64}' | base64 -d)\" ${env_q}"

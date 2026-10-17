@@ -47,14 +47,9 @@ set -euo pipefail
 # SKIP_TESTS=1 skips the local pre-flight suites.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# Target host and paths come from scripts/deploy.env (copy deploy.env.example;
-# ignored by git). Real environment variables win over the file.
-if [ -f "${ROOT_DIR}/scripts/deploy.env" ]; then
-  while IFS='=' read -r key value; do
-    case "${key}" in ''|\#*) continue ;; esac
-    if [ -z "${!key:-}" ]; then export "${key}=${value}"; fi
-  done < "${ROOT_DIR}/scripts/deploy.env"
-fi
+source "${ROOT_DIR}/scripts/deploy-config.sh"
+deploy_load_config "${ROOT_DIR}/scripts/deploy.env"
+deploy_check_flags
 for v in REMOTE APP_USER APP_DIR HEALTH_URL DB_USER PHP_FPM_SERVICE; do
   if [ -z "${!v:-}" ]; then
     echo "${v} is not set. Copy scripts/deploy.env.example to scripts/deploy.env and fill it in." >&2
@@ -140,6 +135,8 @@ if [ "${DEV_CLONE_SUBSCRIPTIONS}" = strip ]; then
   echo 'NOTICE: DEV_CLONE_SUBSCRIPTIONS=strip will turn cloned ICS subscriptions into inert local snapshots.' >&2
 fi
 HEALTH_URL="${DEV_HEALTH_URL}"
+deploy_target development "${DEV_DIR}"
+printf 'Application user: %s (from scripts/deploy.env)\n' "${DEV_APP_USER}"
 
 BRANCH="$(git -C "${ROOT_DIR}" branch --show-current)"
 echo "== deploying branch '${BRANCH}' to dev (${DEV_DIR}) =="
@@ -495,7 +492,7 @@ deploy_rsync "${DEV_DIR}" '' "${DEV_APP_USER}"
 reconcile_release_plugins "${DEV_DIR}" '' "${DEV_APP_USER}"
 
 stage "composer + migrate (dev)"
-rssh "DEV_DIR='${DEV_DIR}' DEV_APP_USER='${DEV_APP_USER}' bash -s" <<'EOF'
+rssh_args env "DEV_DIR=${DEV_DIR}" "DEV_APP_USER=${DEV_APP_USER}" bash -s <<'EOF'
 set -euo pipefail
 settings="${DEV_DIR}/.env"
 if sudo -n -u "${DEV_APP_USER}" -- test -e "${DEV_DIR}/.env.php" || sudo -n -u "${DEV_APP_USER}" -- test -L "${DEV_DIR}/.env.php"; then
@@ -507,7 +504,7 @@ if sudo -n -u "${DEV_APP_USER}" -- test -L "${settings}" \
   echo "${settings} must be a readable regular file, not a symlink; provision it before deploying." >&2
   exit 1
 fi
-sudo -u "${DEV_APP_USER}" bash -c "cd ${DEV_DIR}/server && composer install --no-dev --quiet --no-interaction"
+sudo -n -u "${DEV_APP_USER}" -- composer install --working-dir="${DEV_DIR}/server" --no-dev --quiet --no-interaction
 sudo -u "${DEV_APP_USER}" php "${DEV_DIR}/server/bin/migrate.php"
 EOF
 

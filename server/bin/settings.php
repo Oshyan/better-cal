@@ -15,16 +15,27 @@ require dirname(__DIR__) . '/src/bootstrap.php';
 
 use BetterCal\Infra\PrivateFiles;
 use BetterCal\Infra\PrivateFilesCheck;
+use BetterCal\Infra\DbBackup;
 use BetterCal\Support\Cli;
 use BetterCal\Support\SettingsFile;
 
-$opt = getopt('', ['convert', 'check', 'help']);
-if (!isset($opt['convert']) && !isset($opt['check'])) {
-    Cli::say('Usage: php server/bin/settings.php --convert | --check');
+$opt = getopt('', ['convert', 'check', 'new-secret-line', 'help']);
+if (!isset($opt['convert']) && !isset($opt['check']) && !isset($opt['new-secret-line'])) {
+    Cli::say('Usage: php server/bin/settings.php --convert | --check | --new-secret-line');
     exit(isset($opt['help']) ? 0 : 1);
 }
 
 $cfg = config();
+if (isset($opt['new-secret-line'])) {
+    if ((string) ($cfg['session_secret'] ?? '') !== '') {
+        Cli::say('A session secret is already configured. Nothing changed.');
+        exit(1);
+    }
+    Cli::say('Add this private line to .env.php, or replace its empty BETTERCAL_SESSION_SECRET= line. Keep the first guard line.');
+    Cli::say('If the original secret was lost, recover it instead to keep old encrypted backups and service credentials readable.');
+    Cli::say(DbBackup::newSecretLine());
+    exit(0);
+}
 if (isset($opt['check'])) {
     $r = PrivateFilesCheck::run($cfg);
     Cli::say($r['title'] . ' ' . $r['message']);

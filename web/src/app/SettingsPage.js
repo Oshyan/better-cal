@@ -203,6 +203,13 @@ function PrivateFilesRow() {
   const hint = busy ? 'Checking… this asks your main domain for a test file and takes a few seconds.'
     : (r ? 'Checked ' + fmtSince(r.checkedAt) + '.' : (state ? 'Not checked yet.' : 'Loading…'));
   return html`<${Block} title="Private files" aside=${r ? html`<span class=${'bc-set-block-aside' + (r.status === 'exposed' ? ' is-bad' : '')}>${PF_WORD[r.status] || ''}</span>` : null}>
+    ${state && state.backupWarning && html`<div class="bc-set-warn">
+      <p>${state.backupWarning.message}</p>
+      <p>In your file manager, add this line to <code>.env.php</code>, or replace its empty <code>BETTERCAL_SESSION_SECRET=</code> line. Keep the first guard line unchanged. Then reload this page.</p>
+      <code class="bc-cron-line">${state.backupWarning.settingsLine}</code>
+      <p>If a previous secret was lost, recover that original value instead so older encrypted backups and service credentials still work. Keep this value private.</p>
+    </div>`}
+    ${state && state.storageWarnings && state.storageWarnings.map((message) => html`<p class="bc-set-warn" key=${message}>${message}</p>`)}
     <div class="bc-cron-run">
       <span class=${'bc-pf' + (r && r.status === 'exposed' ? ' bc-set-warn' : '')}>
         ${r ? html`<strong>${r.title}</strong> ${r.message}` : (state ? 'Not checked yet.' : 'Loading…')}

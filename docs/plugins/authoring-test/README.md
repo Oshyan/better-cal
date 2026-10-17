@@ -1,6 +1,6 @@
 # Docs-only authoring test
 
-Before open-sourcing the plugin system, two agents each built a real plugin from `../authoring.md` alone. Neither could read the app source, the `PluginHost` implementation, or the five bundled plugins; both had a live instance, an API token, and the guide. They worked independently of each other and logged friction as they hit it.
+This exercise tested whether an external author could build plugins from `../authoring.md` alone, without reading the app implementation or bundled plugin source. The notes retain contract gaps and general lessons, not details of a particular install.
 
 The point was not to get two more plugins. It was to find out what the guide fails to say, by making someone rely on it with no fallback. Both plugins shipped and both are in `server/plugins/`, but the findings below are the deliverable.
 

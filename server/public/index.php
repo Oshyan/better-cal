@@ -131,7 +131,7 @@ function bc_handle_api(Request $request, array $cfg): void
         $loginGuard = new Domain\LoginGuard($throttle, $cfg['auth']['trusted_proxies'], $cfg['auth']['max_failures'], $db);
         $authController = new Controllers\AuthController($auth, $loginGuard, new Domain\TrustedDevices($db));
         $calendarsController = new Controllers\CalendarsController($db, $calendars, $feeds);
-        $exportController = new Controllers\ExportController(new Domain\Export($db));
+        $exportController = new Controllers\ExportController(new Domain\Export($db), $cfg['app_root']);
         $foldersController = new Controllers\FoldersController($folders);
         $rsvp = new Domain\Rsvp($db, $emailSender, $cfg, new Domain\GoogleWriter($db, $googleAuth, $feeds));
         $eventsController = new Controllers\EventsController($events, $trips, $rsvp);

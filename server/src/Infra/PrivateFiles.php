@@ -37,8 +37,14 @@ final class PrivateFiles
             return true;
         }
         $updater = new Updater($appRoot);
+        try {
+            $dirs = self::backupDirs($updater);
+        } catch (\Throwable $e) {
+            error_log('Better-Cal: unsafe backup storage: ' . $e->getMessage());
+            return false;
+        }
         if ((string) ($cfg['session_secret'] ?? '') !== '') {
-            foreach (self::backupDirs($updater) as $dir) {
+            foreach ($dirs as $dir) {
                 foreach (glob($dir . '/*.sql.gz') ?: [] as $f) {
                     if ($mine($f)) {
                         return true;
@@ -67,7 +73,13 @@ final class PrivateFiles
         $appRoot = $cfg['app_root'];
         $updater = new Updater($appRoot);
         $done = [];
-        foreach (array_merge([$appRoot], $updater->convertibleCopies()) as $dir) {
+        try {
+            $copies = $updater->convertibleCopies();
+        } catch (\Throwable $e) {
+            $copies = [];
+            $done[] = "Couldn't inspect older copies: " . $e->getMessage();
+        }
+        foreach (array_merge([$appRoot], $copies) as $dir) {
             try {
                 $what = SettingsFile::convert($dir, $anyOwner);
                 if ($what !== null) {
@@ -82,9 +94,15 @@ final class PrivateFiles
             return $done;
         }
         $key = BackupCipher::keyFrom($secret);
-        $state = $updater->readState();
+        try {
+            $state = $updater->readState();
+            $dirs = self::backupDirs($updater);
+        } catch (\Throwable $e) {
+            $done[] = "Couldn't secure the backups: " . $e->getMessage();
+            return $done;
+        }
         $stateChanged = false;
-        foreach (self::backupDirs($updater) as $dir) {
+        foreach ($dirs as $dir) {
             foreach (glob($dir . '/*.sql.gz') ?: [] as $plain) {
                 if (!$anyOwner && function_exists('posix_geteuid') && @fileowner($plain) !== posix_geteuid()) {
                     continue;
@@ -113,6 +131,8 @@ final class PrivateFiles
     {
         $dirs = [];
         foreach ([$updater->parent() . '/' . $updater->name() . '-backups', $updater->appRoot . '/.backups'] as $dir) {
+            if (PrivatePath::scope($dir) === null) { continue; }
+            Updater::checkBackupDir($dir);
             if (is_dir($dir)) {
                 $dirs[] = $dir;
             }

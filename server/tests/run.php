@@ -9251,7 +9251,7 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
 // file-system parts. The database backup is MySQL-only and checked on a real
 // server.
 {
-    $tmp = sys_get_temp_dir() . '/bc-setup-' . bin2hex(random_bytes(4));
+    $tmp = realpath(sys_get_temp_dir()) . '/bc-setup-' . bin2hex(random_bytes(4));
     mkdir($tmp);
 
     checkEq('migrator: statements split on semicolons outside quotes and comments',
@@ -9474,7 +9474,7 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
     $UP::removeTree($outside);
 
     // Pruning: the newest two copies and backups stay, and always the update's own.
-    $parent = sys_get_temp_dir() . '/bc-prune-' . bin2hex(random_bytes(3));
+    $parent = realpath(sys_get_temp_dir()) . '/bc-prune-' . bin2hex(random_bytes(3));
     mkdir("$parent/better-cal/server", 0777, true);
     file_put_contents("$parent/better-cal/VERSION", "1.5.0\n");
     foreach (['1.1.0', '1.2.0', '1.3.0', '1.4.0'] as $v) {
@@ -9596,9 +9596,10 @@ check('access code: process/security regression suite', $accessStatus === 0, $ac
     // The code's hour runs out while its session is in use: no replacement code.
     $statePath = $ac2->codePath();
     $raw = (string) file_get_contents($statePath);
-    $st = json_decode(explode("\n", $raw)[1], true);
+    $lines = explode("\n", rtrim($raw, "\n"));
+    $st = json_decode(array_pop($lines), true);
     $st['expires'] = time() - 1;
-    file_put_contents($statePath, BetterCal\Support\SettingsFile::GUARD_PREFIX . "\n" . json_encode($st));
+    file_put_contents($statePath, implode("\n", $lines) . "\n" . json_encode($st) . "\n");
     $ac2->ensure();
     preg_match('/code: ([A-Z0-9-]+)/', (string) file_get_contents($ac2->codePath()), $m4);
     check('access code: no new code while its session is valid', !isset($m4[1]));
@@ -9656,7 +9657,7 @@ check('access code: process/security regression suite', $accessStatus === 0, $ac
 // backups, the update record, the error log, and the private-files check.
 {
     $SF = BetterCal\Support\SettingsFile::class;
-    $tmp = sys_get_temp_dir() . '/bc-private-' . bin2hex(random_bytes(3));
+    $tmp = realpath(sys_get_temp_dir()) . '/bc-private-' . bin2hex(random_bytes(3));
     mkdir($tmp);
     $rm = static function (string $dir) use (&$rm): void {
         foreach (scandir($dir) ?: [] as $e) {
@@ -9761,7 +9762,8 @@ check('access code: process/security regression suite', $accessStatus === 0, $ac
     $ac = new BetterCal\Http\AccessCode($root, 'setup');
     $ac->ensure();
     check('access code: its file is guarded, and named .php', str_ends_with($ac->codePath(), '.php') && str_starts_with((string) file_get_contents($ac->codePath()), $SF::GUARD_PREFIX));
-    check('access code: state and display are one guarded file', json_decode(explode("\n", (string) file_get_contents($ac->codePath()))[1], true)['format'] === 2);
+    $lines = explode("\n", rtrim((string) file_get_contents($ac->codePath()), "\n"));
+    check('access code: state follows the display in one guarded file', json_decode(end($lines), true)['format'] === 2);
     $ac->finish();
     unlink("$root/.runtime-cache/access-code-lock.php");
 
@@ -10037,8 +10039,11 @@ check('access code: process/security regression suite', $accessStatus === 0, $ac
         [BetterCal\Domain\Export::fileName('Work', $used), BetterCal\Domain\Export::fileName('work', $used),
          BetterCal\Domain\Export::fileName('Trips: "far" / near', $used), BetterCal\Domain\Export::fileName('  ', $used)]);
     if (class_exists(ZipArchive::class)) {
-        $zpath = sys_get_temp_dir() . '/bc-export-test-' . bin2hex(random_bytes(4)) . '.zip';
-        $sum = (new BetterCal\Domain\Export($xdb))->zip(1, $zpath);
+        $exportRoot = realpath(sys_get_temp_dir()) . '/bc-export-test-' . bin2hex(random_bytes(4));
+        mkdir($exportRoot, 0700);
+        $workspace = new BetterCal\Infra\ExportWorkspace($exportRoot);
+        $zpath = $workspace->file('zip');
+        $sum = (new BetterCal\Domain\Export($xdb))->zip(1, $zpath, $workspace);
         checkEq('export: every calendar of the user, every live event whatever its date', ['calendars' => 3, 'events' => 2], $sum);
         $z = new ZipArchive();
         $z->open($zpath);
@@ -10068,7 +10073,11 @@ check('access code: process/security regression suite', $accessStatus === 0, $ac
         try { $importer->importIcs(1, $work, 'ignored', null, 4); } catch (BetterCal\Http\HttpError $e) { $threw = $e->status; }
         checkEq('import: nor is another account\'s calendar', 404, $threw);
         $z->close();
-        unlink($zpath);
+        $workspace->close();
+        unlink($exportRoot . '/.runtime-cache/export-lock.php');
+        rmdir($exportRoot . '/.runtime-cache/exports');
+        rmdir($exportRoot . '/.runtime-cache');
+        rmdir($exportRoot);
     }
     $threw = false;
     try { (new BetterCal\Domain\Export($xdb))->calendar(1, 4); } catch (BetterCal\Http\HttpError $e) { $threw = $e->status === 404; }
@@ -10076,6 +10085,8 @@ check('access code: process/security regression suite', $accessStatus === 0, $ac
     checkEq('export: a download name keeps the real name too', 'attachment; filename="Caf_ plans.ics"; filename*=UTF-8\'\'Caf%C3%A9%20plans.ics',
         BetterCal\Http\Controllers\ExportController::attachment('Café plans.ics'));
 }
+
+require __DIR__ . '/files-security.php';
 
 $runLog = (string) @file_get_contents($GLOBALS['__runLog']);
 @unlink($GLOBALS['__runLog']);

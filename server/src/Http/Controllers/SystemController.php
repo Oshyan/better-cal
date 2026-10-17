@@ -87,7 +87,8 @@ final class SystemController
     {
         $req->requireSession('Reading the private-files check');
         $root = (string) $this->cfg['app_root'];
-        return Response::json(['result' => PrivateFilesCheck::last($root), 'wait' => PrivateFilesCheck::wait($root)]);
+        return Response::json(['result' => PrivateFilesCheck::last($root), 'wait' => PrivateFilesCheck::wait($root)] + $this->backupReadiness())
+            ->withHeader('Cache-Control', 'no-store');
     }
 
     /** Run the check now: at most once a minute, since it asks other servers. */
@@ -101,7 +102,34 @@ final class SystemController
         }
         @set_time_limit(60);
         $result = PrivateFilesCheck::run($this->cfg);
-        return Response::json(['result' => $result, 'wait' => PrivateFilesCheck::COOLDOWN_SECONDS]);
+        return Response::json(['result' => $result, 'wait' => PrivateFilesCheck::COOLDOWN_SECONDS] + $this->backupReadiness())
+            ->withHeader('Cache-Control', 'no-store');
+    }
+
+    /** Current local state, independent of the cached web-exposure probe. */
+    private function backupReadiness(): array
+    {
+        $warning = (string) ($this->cfg['session_secret'] ?? '') === '' ? [
+            'message' => \BetterCal\Infra\DbBackup::missingSecretMessage(),
+            'settingsLine' => \BetterCal\Infra\DbBackup::newSecretLine(),
+        ] : null;
+        $storage = [];
+        try {
+            (new \BetterCal\Infra\Updater($this->cfg['app_root']))->backupDir();
+            $cache = $this->cfg['app_root'] . '/.runtime-cache';
+            if (is_dir($cache) || is_link($cache)) {
+                \BetterCal\Infra\PrivatePath::check($cache, true);
+                \BetterCal\Infra\PrivatePath::check($cache . '/exports', true, true);
+                if (!is_writable($cache)) {
+                    $storage[] = 'Private export storage is not writable by Better-Cal.';
+                }
+            } elseif (!is_writable($this->cfg['app_root'])) {
+                $storage[] = 'Better-Cal cannot create its private export storage.';
+            }
+        } catch (\Throwable $e) {
+            $storage[] = 'Private storage needs attention: ' . $e->getMessage();
+        }
+        return ['backupWarning' => $warning, 'storageWarnings' => $storage];
     }
 
     public function health(Request $req): Response
@@ -148,6 +176,7 @@ final class SystemController
             'worker' => $worker,
             // The last private-files verdict, for the attention dot (null before the first check).
             'privateFiles' => PrivateFilesCheck::last($root)['status'] ?? null,
+            'backupsReady' => (string) ($this->cfg['session_secret'] ?? '') !== '',
             // The worker's cron job as this server needs it now (Setup::workerPhp).
             'cron' => [
                 'command' => Setup::cronCommand($root, $php['php']),

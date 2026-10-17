@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "${ROOT_DIR}/scripts/deploy-config.sh"
 TEST_DIR="$(mktemp -d "${TMPDIR:-/tmp}/bc-deploy-config.XXXXXX")"
+TEST_DIR="$(cd "${TEST_DIR}" && pwd -P)"
 trap 'rm -rf -- "${TEST_DIR}"' EXIT
 mkdir -p "${TEST_DIR}/scripts"
 cp "${ROOT_DIR}/scripts/"{deploy.sh,deploy-dev.sh,push-settings.sh,deploy-config.sh} "${TEST_DIR}/scripts/"
@@ -121,12 +122,16 @@ crontab() {
   fi
 }
 export -f sudo crontab
+printf 'synthetic worker metadata\n' >"${TEST_DIR}/worker.log"
+chmod 644 "${TEST_DIR}/worker.log"
 for attempt in 1 2; do
-  APP_DIR=/srv/sample.app APP_USER=sample bash "${ROOT_DIR}/scripts/deploy-worker-cron.sh"
+  APP_DIR="${TEST_DIR}/app" APP_USER=sample bash "${ROOT_DIR}/scripts/deploy-worker-cron.sh"
 done
 check test "$(wc -l <"${CRON_FIXTURE}" | tr -d ' ')" = 2
 check grep -Fxq '0 3 * * * echo unrelated' "${CRON_FIXTURE}"
-check grep -Fxq "* * * * * php '/srv/sample.app/server/bin/worker.php' >> '/srv/worker.log' 2>&1" "${CRON_FIXTURE}"
-check bash -c '! CRON_FAIL=1 APP_DIR=/srv/other APP_USER=sample bash "$1"' _ "${ROOT_DIR}/scripts/deploy-worker-cron.sh"
+check grep -Fxq "* * * * * umask 0077; php '${TEST_DIR}/app/server/bin/worker.php' >> '${TEST_DIR}/worker.log' 2>&1" "${CRON_FIXTURE}"
+check php -r 'exit((fileperms($argv[1]) & 0777) === 0600 ? 0 : 1);' "${TEST_DIR}/worker.log"
+check grep -Fxq 'synthetic worker metadata' "${TEST_DIR}/worker.log"
+check bash -c '! CRON_FAIL=1 APP_DIR="$2/app" APP_USER=sample bash "$1"' _ "${ROOT_DIR}/scripts/deploy-worker-cron.sh" "${TEST_DIR}"
 unset -f sudo crontab
 echo "Deploy configuration tests: ${passed} passed, 0 failed"

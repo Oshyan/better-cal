@@ -51,7 +51,7 @@ $updater = new Updater($appRoot);
 // Everything used after the code is swapped must already be loaded: the
 // autoloader looks for classes under the old path, which by then holds the
 // new version.
-foreach ([DbBackup::class, BackupCipher::class, Migrator::class, Maintenance::class, Setup::class, ReleaseSignature::class, SettingsFile::class, PrivateFiles::class] as $class) {
+foreach ([DbBackup::class, BackupCipher::class, \BetterCal\Infra\PrivatePath::class, Migrator::class, Maintenance::class, Setup::class, ReleaseSignature::class, SettingsFile::class, PrivateFiles::class] as $class) {
     class_exists($class);
 }
 
@@ -66,8 +66,8 @@ try {
 } catch (\Throwable $e) {
     Cli::say();
     Cli::say('Stopped: ' . $e->getMessage());
-    $state = $updater->readState();
-    if (is_array($state) && in_array($state['stage'] ?? '', ['backed-up', 'swapping', 'swapped', 'failed'], true)) {
+    try { $state = $updater->readState(); } catch (\Throwable) { $state = null; }
+    if (is_array($state) && in_array($state['stage'] ?? '', ['backed-up', 'swapping', 'swapped', 'failed', 'done'], true)) {
         Cli::say('To put the previous version (and, if it changed, the database) back: php ' . $appRoot . '/server/bin/update.php --rollback');
     }
     exit(1);
@@ -75,6 +75,12 @@ try {
 
 function update(array $cfg, Updater $updater, bool $checkOnly, bool $yes): int
 {
+    if ((string) ($cfg['session_secret'] ?? '') === '') {
+        Cli::say(DbBackup::missingSecretMessage());
+        if (!$checkOnly) {
+            return 1;
+        }
+    }
     $appRoot = $updater->appRoot;
     $current = (string) $cfg['version'];
     $state = $updater->readState();
@@ -420,6 +426,13 @@ function rollback(array $cfg, Updater $updater, bool $yes): int
         return 1;
     }
     Maintenance::on($appRoot, "rolling back $to to $from");
+    if (dirname((string) $state['backup']) !== $updater->backupDir()) {
+        throw new \RuntimeException('The recorded backup is outside this install\'s backup directory.');
+    }
+    if ((int) $db->scalar('SELECT GET_LOCK(?, 0)', [Updater::workerLockName((string) $cfg['db']['dsn'])]) !== 1) {
+        Cli::say('The worker is finishing a job. Nothing has been restored; the site stays closed. Run --rollback again after the job finishes.');
+        return 1;
+    }
     Cli::say('Restoring the database...');
     $restored = DbBackup::forConfig($db, $cfg)->restore((string) $state['backup']);
     Cli::say('  ' . $restored['tables'] . ' tables restored' . ($restored['dropped'] > 0 ? ', ' . $restored['dropped'] . ' added by the update removed' : '') . '.');

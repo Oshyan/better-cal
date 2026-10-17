@@ -15,6 +15,7 @@ final class Response
         public readonly string $body = '',
         public readonly ?string $filePath = null,
         public readonly array $cookies = [],
+        private readonly ?\Closure $stream = null,
     ) {
         $this->headers = $headers + [
             'Content-Security-Policy' => "frame-ancestors 'none'",
@@ -54,16 +55,22 @@ final class Response
         return new self(200, ['Content-Type' => $mime] + $headers, '', $path);
     }
 
+    /** The callback owns its resources through completion, including on failure. */
+    public static function stream(\Closure $send, string $mime, array $headers = []): self
+    {
+        return new self(200, ['Content-Type' => $mime] + $headers, '', null, [], $send);
+    }
+
     public function withHeader(string $name, string $value): self
     {
-        return new self($this->status, [$name => $value] + $this->headers, $this->body, $this->filePath, $this->cookies);
+        return new self($this->status, [$name => $value] + $this->headers, $this->body, $this->filePath, $this->cookies, $this->stream);
     }
 
     public function withCookie(string $name, string $value, array $options): self
     {
         $cookies = $this->cookies;
         $cookies[] = [$name, $value, $options];
-        return new self($this->status, $this->headers, $this->body, $this->filePath, $cookies);
+        return new self($this->status, $this->headers, $this->body, $this->filePath, $cookies, $this->stream);
     }
 
     public function send(): void
@@ -74,6 +81,27 @@ final class Response
         }
         foreach ($this->headers as $name => $value) {
             header($name . ': ' . $value);
+        }
+        if ($this->stream !== null) {
+            // Do not let the API exception handler append JSON to a partly
+            // sent calendar. A failed stream has no END:VCALENDAR trailer.
+            try {
+                // PHP output buffering must not accumulate the whole export.
+                // A reverse proxy may still buffer independently of PHP.
+                while (ob_get_level() > 0 && @ob_end_flush()) {
+                }
+                ($this->stream)();
+            } catch (\Throwable $e) {
+                error_log('Better-Cal download stopped: ' . $e->getMessage());
+                if (!headers_sent()) {
+                    http_response_code(500);
+                    header_remove('Content-Disposition');
+                    header_remove('Content-Length');
+                    header('Content-Type: text/plain; charset=utf-8');
+                    echo 'The export could not be completed. Please try again.';
+                }
+            }
+            return;
         }
         if ($this->filePath !== null) {
             header('Content-Length: ' . (string) filesize($this->filePath));

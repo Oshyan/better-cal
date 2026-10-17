@@ -14,15 +14,19 @@ export function CopyTo({ occ, onDone, compact }) {
   const [target, setTarget] = useState('');
   const [busy, setBusy] = useState(false);
   const targets = state.calendars.filter((c) => c.editable && c.id !== occ.calendarId);
-  const run = async (scope) => {
+  const run = async (scope, destination) => {
+    if (busy || !destination) return;
     setBusy(true);
-    const ok = await copyEventTo(occ, Number(target), scope);
-    setBusy(false);
-    if (ok && onDone) onDone();
+    try {
+      const ok = await copyEventTo(occ, Number(destination), scope);
+      if (ok && onDone) onDone();
+    } finally {
+      setBusy(false);
+    }
   };
   const choose = (id) => {
     setTarget(id);
-    if (id && !occ.recurring) run('all');
+    if (id && !occ.recurring) run('all', id);
   };
   if (targets.length === 0) {
     return html`<div class="bc-copyto"><span class="bc-copyto-note">No other calendar can take a copy.</span></div>`;
@@ -33,8 +37,8 @@ export function CopyTo({ occ, onDone, compact }) {
       ${targets.map((c) => html`<option key=${c.id} value=${String(c.id)}>${c.name}${c.provider === 'google' ? ' (Google)' : ''}</option>`)}
     </select>
     ${occ.recurring && target && html`
-      <button type="button" class="bc-btn" disabled=${busy} onClick=${() => run('this')}>This occurrence</button>
-      <button type="button" class="bc-btn" disabled=${busy} onClick=${() => run('all')}>Whole series</button>`}
+      <button type="button" class="bc-btn" disabled=${busy} onClick=${() => run('this', target)}>This occurrence</button>
+      <button type="button" class="bc-btn" disabled=${busy} onClick=${() => run('all', target)}>Whole series</button>`}
     ${busy && html`<span class="bc-copyto-note">Copying…</span>`}
   </div>`;
 }

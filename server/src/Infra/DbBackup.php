@@ -40,15 +40,22 @@ final class DbBackup
         return new self($db, $secret !== '' ? BackupCipher::keyFrom($secret) : null);
     }
 
-    /** The file name ending a new backup gets: encrypted when there's a key. */
+    /** New backups are always encrypted; legacy plaintext remains readable. */
     public function extension(): string
     {
-        return $this->key !== null ? BackupCipher::EXTENSION : '.sql.gz';
+        return BackupCipher::EXTENSION;
     }
 
     /** @return array{tables:int,rows:int,bytes:int} */
     public function dump(string $path, string $note = ''): array
     {
+        if ($this->key === null) {
+            throw new \RuntimeException(self::missingSecretMessage());
+        }
+        PrivatePath::check($path, false, true);
+        if (file_exists($path)) {
+            throw new \RuntimeException('The backup output already exists.');
+        }
         // Readable by this account alone from the moment it exists, whatever
         // folder it lands in.
         $umask = umask(0077);
@@ -67,7 +74,7 @@ final class DbBackup
         foreach ($pdo->query("SHOW FULL TABLES WHERE Table_type = 'BASE TABLE'")->fetchAll(\PDO::FETCH_NUM) as $row) {
             $tables[] = (string) $row[0];
         }
-        if ($this->key !== null) {
+        {
             $cipher = new BackupCipher($path, $this->key);
             $deflate = deflate_init(ZLIB_ENCODING_GZIP, ['level' => 6]);
             $sink = static function (string $line) use ($cipher, $deflate): void {
@@ -76,19 +83,6 @@ final class DbBackup
             $finish = static function () use ($cipher, $deflate): void {
                 $cipher->write((string) deflate_add($deflate, '', ZLIB_FINISH));
                 $cipher->close();
-            };
-        } else {
-            $gz = gzopen($path, 'wb6');
-            if ($gz === false) {
-                throw new \RuntimeException("Could not write the backup to $path");
-            }
-            $sink = static function (string $line) use ($gz): void {
-                if (gzwrite($gz, $line) === false) {
-                    throw new \RuntimeException('Writing the backup failed (is the disk full?)');
-                }
-            };
-            $finish = static function () use ($gz): void {
-                gzclose($gz);
             };
         }
         $rows = 0;
@@ -160,6 +154,7 @@ final class DbBackup
      */
     public function restore(string $path): array
     {
+        PrivatePath::check($path, false);
         // First pass: is it whole? (Read as a stream; a backup can be large.)
         $head = [];
         $last = null;
@@ -280,13 +275,21 @@ final class DbBackup
      */
     public static function encryptFile(string $plainPath, string $key): string
     {
+        PrivatePath::check($plainPath, false);
         $out = (string) preg_replace('/\.sql\.gz$/', '', $plainPath) . BackupCipher::EXTENSION;
+        PrivatePath::check($out, false, true);
+        PrivatePath::directory(dirname($plainPath));
         if (is_file($out)) {
             // Left by a run that was cut short: the plain backup is still
             // here, so that copy was never checked. Start again.
             @unlink($out);
         }
-        $cipher = new BackupCipher($out, $key);
+        $mask = umask(0077);
+        try {
+            $cipher = new BackupCipher($out, $key);
+        } finally {
+            umask($mask);
+        }
         $in = @fopen($plainPath, 'rb');
         try {
             if ($in === false) {
@@ -326,6 +329,18 @@ final class DbBackup
         }
         @unlink($plainPath);
         return $out;
+    }
+
+    public static function missingSecretMessage(): string
+    {
+        return 'Backups and updates are blocked because BETTERCAL_SESSION_SECRET is missing. '
+            . 'In Settings, System, copy the new settings line into .env.php, or run: php server/bin/settings.php --new-secret-line';
+    }
+
+    /** A suggestion only, never persisted or applied without the owner's edit. */
+    public static function newSecretLine(): string
+    {
+        return 'BETTERCAL_SESSION_SECRET=' . Setup::secret();
     }
 
     private function literal(mixed $v): string

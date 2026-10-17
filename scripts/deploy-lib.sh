@@ -429,6 +429,9 @@ deploy_on_exit() {
     deploy_failure_recovery "${rc}" || true
   fi
   cleanup_composer_audit_dir || true
+  if declare -F deploy_cleanup >/dev/null 2>&1; then
+    deploy_cleanup || echo 'WARNING: temporary deployment helper cleanup failed.' >&2
+  fi
   ssh -o "ControlPath=${SSH_CTL_DIR}/ctl" -O exit "${REMOTE}" >/dev/null 2>&1 || true
   rm -f "${SSH_CTL_DIR}/ctl"
   rmdir "${SSH_CTL_DIR}" 2>/dev/null || true

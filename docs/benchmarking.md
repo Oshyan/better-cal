@@ -8,9 +8,9 @@ The theme: **most bad performance conclusions here came from a broken measuremen
 
 ### A background browser tab lies about frame rate
 
-Chrome suspends `requestAnimationFrame` entirely in a hidden tab and throttles `setTimeout` hard — measured on this app, a 16ms timer took **372ms**. Both symptoms read exactly like a stalled main thread: zero frames captured, and instrumentation scripts blowing their timeouts because inner loops run 20-40x slower than written.
+A hidden browser tab may suspend animation callbacks and throttle timers. Check visibility before interpreting slow measurements as a busy main thread.
 
-This produced a filed issue claiming month scrolling froze the UI. It does not; re-measured visible, it holds a 16.6ms median frame with zero frames over 32ms.
+Repeat a suspicious measurement in a visible tab before filing a performance issue.
 
 **Always assert visibility inside the measuring script**, not by looking at the screen:
 
@@ -25,20 +25,20 @@ await new Promise(r => setTimeout(r, 200));
 
 ### curl does not request compression
 
-`curl` sends no `Accept-Encoding` unless told, so it measures the **uncompressed** path. Browsers get brotli. On the events window that is 2.8 MB versus 188 KB — about 400ms of difference, which is larger than most things you would be trying to measure.
+`curl` does not ask for compression by default. Compare it with the browser only when both request the same encoding.
 
 ```bash
 curl -s -o /dev/null -w '%{time_starttransfer} %{time_total}\n' \
-  -H 'Accept-Encoding: gzip, br' -H "$AUTH" "$URL"
+  -H 'Accept-Encoding: gzip, br' -H "@$AUTH_FILE" "$URL"
 ```
 
 Compare encodings deliberately when that is the question; otherwise always send the header, because that is what a real client does.
 
 ### Reverse DNS is not a location
 
-A hosting provider can put its own home-country domain on every machine it owns, whatever continent the machine is on. One server measured here was confidently placed in the wrong country on the strength of its hostname.
+A provider's reverse-DNS naming convention is not evidence of where a server is located. Network latency must be measured, not inferred from a name.
 
-`traceroute` answers it in seconds — watch the city codes in the hop names.
+Do not retain hostnames, addresses or network layout from a real install in public benchmark notes.
 
 ### Measure at the size the thing ships at
 
@@ -46,11 +46,11 @@ A design comparison rendered in a viewer at a different zoom than the app made a
 
 ### Comparing two apps means comparing them in one browser
 
-Numbers from the in-app Browser pane are not comparable to numbers from Chrome: different profile, extensions, cache state, window size, and whatever else is running. When benchmarking against another product, measure **both** in the same browser, back to back, and say what the dataset difference was — chip counts rarely match, and that usually matters more than the timings.
+Numbers from the in-app Browser pane are not comparable to numbers from Chrome: different profile, extensions, cache state, window size, and whatever else is running. When benchmarking against another product, measure **both** in the same browser, back to back, and say what the dataset difference was , chip counts rarely match, and that usually matters more than the timings.
 
 ### Sub-linear scaling means a fixed cost is hiding
 
-The events query looked "slow for large windows". It was not: 1 month cost 376ms and 12 months cost 582ms. Eleven times the work for 1.5x the time means almost all of it was fixed overhead — in this case sabre's `fastForward` walking a recurring series from its DTSTART to the window, once per master, per request.
+The events query looked "slow for large windows". It was not: 1 month cost 376ms and 12 months cost 582ms. Eleven times the work for 1.5x the time means almost all of it was fixed overhead , in this case sabre's `fastForward` walking a recurring series from its DTSTART to the window, once per master, per request.
 
 **Always measure at least three window sizes.** The shape of the curve tells you where to look far faster than a profiler does.
 
@@ -78,32 +78,12 @@ php server/bin/profile-recurrence.php --months=5 --top=15
 
 Both run against real data and must be run on the server, since they need the app's database credentials and its installed dependencies.
 
-## Baselines
+## Recording a baseline
 
-Measured 2026-08-06 on the production install (a small virtual server, about 40% loaded), from a client on a long-distance link. Conditions stated because they matter.
+Use an invented fixture and record its shape with each benchmark: a mix of ordinary events, repeating series, exceptions, all-day events and empty calendars. A recurrence-heavy fixture answers a different question from a mixed calendar. Keep real-install workload figures, activity patterns, hosting details and timings out of the repository.
 
-| what | value | conditions |
-|---|---|---|
-| `Events::window` | 167ms median | 5-month window, 3,585 occurrences, task calendar on |
-| — recurrence expansion | 105ms | the dominant phase; SQL is only 15ms |
-| `/events` end to end | 476ms | browser, brotli; TTFB 317, body 171, parse 5 |
-| cold load, fully loaded | ~950ms | warm HTTP cache, 1500x800 |
-| — first contentful paint | ~436ms | |
-| — modules finished | ~370ms | 61 modules, modulepreload generated |
-| month scroll | 16.6ms median frame | 0 frames >32ms, 1500x800, task calendar on |
-| month step (next/prev) | 16-28ms | |
-| payload | 373 bytes/occurrence | list shape after #15 (was 793: uid, timestamps, reminders, rrule, description, tzid moved to the single-event record; nulls and empty lists omitted) plus two bits, `hasReminders`/`hasDescription`, sent only when true (+25 B average) so the popover reserves space for what the record fills in. Single record fetched on open, ~400ms on a long-distance link, RTT-dominated; prefetched on chip hover/focus and from the popover, and kept across window refreshes, so most opens are instant |
-| brotli ratio | 15x | 2.8 MB → 188 KB on a 5-month window |
+Measure server query time, recurrence expansion, serialization, transfer, parsing and rendering separately. Repeat with the same fixture and conditions before attributing a change to code. Measure low-end clients separately when that is the question.
 
-"Task calendar on" is doing more work in those conditions than it looks. That calendar is left over from an old two-way sync with a task app, and its unbounded series carry neither UNTIL nor COUNT, so it expands forever and supplies **nearly all of each month's occurrences** (checked across several months, near and far; see #49). These figures are therefore a recurrence-expansion benchmark far more than a mixed-workload one, which is useful — expansion is the dominant phase at 105ms of the 167ms — but it does mean occurrence counts here are not a typical user's, and anything tuned against per-day density is being tuned against the wrong distribution.
+## Choosing what to optimise
 
-If a number here moves by more than about 30%, something changed — check the measurement before concluding it was the code.
-
-## Things that are not worth optimising
-
-Recorded so they are not rediscovered:
-
-- **SQL.** Masters plus overrides is 15ms; the window-overlap query is a full table scan over 8,400 rows at 10ms. Indexing it would win nothing.
-- **`JSON.parse` on the client.** 5ms for 2.8 MB on a desktop. Worth revisiting only for low-end mobile.
-- **`json_encode` server-side.** ~10ms.
-- **Round-trip latency.** On a long-distance link, every request carries a fixed network round trip between the client and the server's region, and for small requests it is most of the time. Not a configuration problem.
+Optimise the measured bottleneck. SQL, serialization, browser parsing and network latency can each dominate under different conditions; none is universally negligible. Keep benchmark fixtures and acceptance thresholds in the test plan rather than treating one install as representative.

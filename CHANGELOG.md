@@ -6,9 +6,16 @@ Security fixes are tracked privately as GitHub security advisories until they sh
 
 ## Unreleased
 
+- **Exports stay complete without holding the whole calendar in memory.** A single calendar streams directly; Export everything builds its ZIP in private storage, then downloads it. Only one export runs at a time, with a clear busy message. Temporary files are removed after sending or failure, and abandoned files on the next export. There is no event cap.
+- **Backups refuse unsafe storage and missing encryption settings.** Linked or foreign-owned backup paths are refused before they can be changed. A missing session secret blocks new backups and updates; Settings, System shows the problem immediately and supplies a settings line to paste. Older plain backups remain readable.
+- **A restore cannot race the worker.** Browser restores and command-line rollback take the worker lock before changing the database. A stopped restore keeps the site closed and offers **Run the restore again**.
+- **Copy to calendar uses the destination just selected,** including the first choice, instead of the previous selection.
+
+Maintainers: strict dev deployments now check that the dev identity cannot rewrite production files; clone settings are read once per phase without following links. Deployment makes an existing worker log private without truncating it, and the managed cron creates missing logs privately. Timezone test tools refuse web requests. API examples keep tokens out of process arguments, and public docs omit install-specific context.
+
 - **A place search service that came back stops showing as failing.** A service behind another one (Photon behind LocationIQ, say) is only asked when the one in front fails, so after an outage it could stay "failing" on Settings, System for weeks after it recovered. The worker now asks a failing service once more every two hours.
 
-- **Setup codes really work once.** Reusing a code no longer replaces the owner's session, and the page explains how to recover a lost session. Code and session state are written together; wrong codes no longer hold a PHP worker for a second. Old in-progress codes start afresh. Hosts without file locking remain usable, with the concurrency limitation recorded in the error log.
+- **Setup codes really work once.** Reusing a code no longer replaces the owner's session, and the page explains how to recover a lost session. Code and session state are written together, with the readable code first when opened in a file manager; wrong codes no longer hold a PHP worker for a second. Old in-progress codes start afresh. Hosts without file locking remain usable, with the concurrency limitation recorded in the error log.
 - **Release verification checks intent and library source.** Before either signer runs, the downloaded manifest must match the local one, libraries must reproduce from their locked Git commits, and the ZIP is checked and compared without extraction. The hardware-key signer uses a prepared, hash-locked environment with pinned uv-managed Python.
 - **Unsigned release notes cannot control updater terminal output.** Notes remain editable and are labelled unsigned. The install guide explains first-use trust and optional local verification before an upload.
 

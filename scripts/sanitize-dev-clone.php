@@ -229,27 +229,121 @@ function bcDevCloneSettings(string $root): string
     return file_exists($root . '/.env.php') || is_link($root . '/.env.php') ? $root . '/.env.php' : $root . '/.env';
 }
 
-function bcDevCloneEnvValue(string $path, string $key): string
+/** Runs as the file's application identity, never as the privileged clone reader. */
+function bcReadCloneSettings(string $root): array
 {
-    if (is_link($path) || !is_file($path) || !is_readable($path)) {
-        throw new RuntimeException('A clone environment file is missing, unreadable, or a symbolic link');
+    if ($root === '' || $root[0] !== '/' || str_contains($root, '//') || str_contains($root, "\0")) {
+        throw new RuntimeException('The clone settings root must be an absolute path');
     }
-    foreach (file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $line) {
+    if ((file_exists($root . '/.env.php') || is_link($root . '/.env.php')) && (file_exists($root . '/.env') || is_link($root . '/.env'))) {
+        throw new RuntimeException('Both .env.php and .env exist; keep one before cloning');
+    }
+    $path = bcDevCloneSettings($root);
+    $at = '';
+    foreach (explode('/', trim($path, '/')) as $part) {
+        $at .= '/' . $part;
+        if ($part === '.' || $part === '..' || is_link($at)) {
+            throw new RuntimeException('A clone settings path contains a symbolic link or relative component');
+        }
+    }
+    clearstatcache(true, $path);
+    $before = @lstat($path);
+    if ($before === false || ($before['mode'] & 0170000) !== 0100000 || $before['nlink'] !== 1) {
+        throw new RuntimeException('A clone settings file must be a regular file without links');
+    }
+    $fh = @fopen($path, 'rb');
+    if ($fh === false) {
+        throw new RuntimeException('The application identity cannot read its settings');
+    }
+    try {
+        $opened = fstat($fh);
+        clearstatcache(true, $path);
+        $after = @lstat($path);
+        foreach ([$before, $after] as $st) {
+            if ($st === false || $st['dev'] !== $opened['dev'] || $st['ino'] !== $opened['ino']
+                || ($st['mode'] & 0170000) !== 0100000 || $st['nlink'] !== 1) {
+                throw new RuntimeException('The clone settings file changed while it was opened');
+            }
+        }
+        $raw = stream_get_contents($fh);
+        if ($raw === false) {
+            throw new RuntimeException('Could not read the clone settings');
+        }
+    } finally {
+        fclose($fh);
+    }
+    $values = [];
+    foreach (preg_split('/\r\n|\n|\r/', $raw) as $line) {
         $line = trim($line);
         if ($line === '' || str_starts_with($line, '#') || !str_contains($line, '=')) {
             continue;
         }
         [$found, $value] = explode('=', $line, 2);
-        if (trim($found) !== $key) {
-            continue;
-        }
         $value = trim($value);
         if ($value !== '' && ($value[0] === '"' || $value[0] === "'") && str_ends_with($value, $value[0])) {
             $value = substr($value, 1, -1);
         }
-        return $value;
+        $key = trim($found);
+        if (isset($values[$key])) {
+            throw new RuntimeException('The clone settings contain a repeated key');
+        }
+        $values[$key] = $value;
     }
-    return '';
+    return $values;
+}
+
+/** Snapshots are captured once, under each identity, by the trusted remote shell. */
+function bcDevCloneSnapshot(string $root): array
+{
+    $name = $root === (string) getenv('PROD_APP_ROOT') ? 'PROD_SETTINGS_SNAPSHOT' : 'DEV_SETTINGS_SNAPSHOT';
+    $values = json_decode((string) getenv($name), true);
+    if (!is_array($values) || array_filter($values, static fn($v): bool => !is_string($v)) !== []) {
+        throw new RuntimeException('The private clone settings snapshot is missing or invalid');
+    }
+    return $values;
+}
+
+/** Effective-access checks run as dev, including the right to chmod or replace. */
+function bcCheckProductionNotWritable(string $root): void
+{
+    if (!function_exists('posix_geteuid')) {
+        throw new RuntimeException('Strict deployment write checks need the POSIX extension in the maintenance PHP command.');
+    }
+    $uid = posix_geteuid();
+    $at = '';
+    foreach (explode('/', trim($root, '/')) as $part) {
+        $at .= '/' . $part;
+        $st = @lstat($at);
+        if ($st === false || ($st['mode'] & 0170000) !== 0040000) {
+            throw new RuntimeException('Could not verify a real production directory');
+        }
+        $stickySystem = ($st['mode'] & 01000) !== 0 && $st['uid'] === 0;
+        if ($st['uid'] === $uid || (is_writable($at) && !$stickySystem)) {
+            throw new RuntimeException('The dev identity can modify or replace production files through a writable parent');
+        }
+        if (!is_executable($at)) {
+            return; // No traversal and no ownership with which to grant it.
+        }
+    }
+    $walk = static function (string $dir) use (&$walk, $uid): void {
+        $names = @scandir($dir);
+        if ($names === false) {
+            throw new RuntimeException('Could not inspect production write access completely');
+        }
+        foreach ($names as $name) {
+            if ($name === '.' || $name === '..') { continue; }
+            $path = $dir . '/' . $name;
+            $st = @lstat($path);
+            if ($st === false || is_link($path)) {
+                throw new RuntimeException('Strict dev isolation cannot verify a linked or changing production path');
+            }
+            if ($st['uid'] === $uid || is_writable($path)) {
+                throw new RuntimeException('The dev identity can rewrite a production file or directory');
+            }
+            if (is_dir($path) && is_executable($path)) { $walk($path); }
+        }
+    };
+    $walk($root);
 }
 
 function bcDevCloneDsnForDatabase(string $dsn, string $database): string
@@ -287,10 +381,10 @@ function bcVerifyDevCloneStagePrivacy(): void
         [$developmentRoot, $developmentDatabase],
     ];
     foreach ($configs as [$root, $expectedDatabase]) {
-        $env = bcDevCloneSettings($root);
-        $dsn = bcDevCloneEnvValue($env, 'BETTERCAL_DB_DSN');
-        $user = bcDevCloneEnvValue($env, 'BETTERCAL_DB_USER');
-        $password = bcDevCloneEnvValue($env, 'BETTERCAL_DB_PASS');
+        $env = bcDevCloneSnapshot($root);
+        $dsn = $env['BETTERCAL_DB_DSN'] ?? '';
+        $user = $env['BETTERCAL_DB_USER'] ?? '';
+        $password = $env['BETTERCAL_DB_PASS'] ?? '';
         if ($dsn === '' || $user === '' || $password === '') {
             throw new RuntimeException('An application database configuration is incomplete');
         }
@@ -335,8 +429,8 @@ function bcRunDevCloneSanitizer(): void
         throw new RuntimeException('Clone sanitizer configuration is invalid');
     }
 
-    $productionSecret = bcDevCloneEnvValue(bcDevCloneSettings($productionRoot), 'BETTERCAL_SESSION_SECRET');
-    $developmentSecret = bcDevCloneEnvValue(bcDevCloneSettings($developmentRoot), 'BETTERCAL_SESSION_SECRET');
+    $productionSecret = bcDevCloneSnapshot($productionRoot)['BETTERCAL_SESSION_SECRET'] ?? '';
+    $developmentSecret = bcDevCloneSnapshot($developmentRoot)['BETTERCAL_SESSION_SECRET'] ?? '';
     $loginPassword = (string) getenv('DEV_LOGIN_PASSWORD');
     $rootPassword = (string) getenv('MYSQL_ROOT_PASSWORD');
     $pdo = new PDO(
@@ -359,7 +453,11 @@ function bcRunDevCloneSanitizer(): void
         . ($result['stripped'] ? ' (stripping requested)' : '') . ".\n";
 }
 
-if (getenv('BETTERCAL_VERIFY_DEV_CLONE_STAGE') === '1') {
+if (getenv('BETTERCAL_READ_CLONE_SETTINGS') === '1') {
+    echo json_encode(bcReadCloneSettings((string) getenv('APP_ROOT')), JSON_THROW_ON_ERROR);
+} elseif (getenv('BETTERCAL_CHECK_PROD_WRITE') === '1') {
+    bcCheckProductionNotWritable((string) getenv('APP_ROOT'));
+} elseif (getenv('BETTERCAL_VERIFY_DEV_CLONE_STAGE') === '1') {
     bcVerifyDevCloneStagePrivacy();
 } elseif (getenv('BETTERCAL_RUN_DEV_CLONE_SANITIZER') === '1') {
     bcRunDevCloneSanitizer();

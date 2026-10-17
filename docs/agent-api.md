@@ -40,17 +40,20 @@ curl -s https://cal.example.com/api/v1/tokens/3 -X DELETE -b cookies.txt -H "X-C
 
 ## curl examples
 
-Set up once:
+Create a private header file outside your repository once. Use a text editor to put `Authorization: Bearer ` followed by your token on its only line. Do not paste the token into a shell command or enable shell tracing. These Bash commands create the file with private permissions before you edit it:
 
 ```sh
 BC=https://cal.example.com/api/v1
-AUTH="Authorization: Bearer bc_yourtokenhere"
+umask 077
+AUTH_FILE="$HOME/.bettercal-auth"
+(set -C; : > "$AUTH_FILE")
+chmod 600 "$AUTH_FILE"
 ```
 
 Create an event:
 
 ```sh
-curl -s "$BC/events" -X POST -H "$AUTH" -H 'Content-Type: application/json' -d '{
+curl -s "$BC/events" -X POST -H "@$AUTH_FILE" -H 'Content-Type: application/json' -d '{
   "calendarId": 1,
   "title": "Dinner with Sam",
   "start": "2026-08-06T19:00:00-07:00",
@@ -62,19 +65,19 @@ curl -s "$BC/events" -X POST -H "$AUTH" -H 'Content-Type: application/json' -d '
 Window of expanded occurrences:
 
 ```sh
-curl -s -H "$AUTH" "$BC/events?start=2026-08-01T00:00:00-07:00&end=2026-08-08T00:00:00-07:00&calendars=1,2"
+curl -s -H "@$AUTH_FILE" "$BC/events?start=2026-08-01T00:00:00-07:00&end=2026-08-08T00:00:00-07:00&calendars=1,2"
 ```
 
 Full-text search (past included):
 
 ```sh
-curl -s -H "$AUTH" "$BC/search?q=dinner&limit=20"
+curl -s -H "@$AUTH_FILE" "$BC/search?q=dinner&limit=20"
 ```
 
 Natural-language quick add (omit `commit` to preview the parsed draft first):
 
 ```sh
-curl -s "$BC/quickadd" -X POST -H "$AUTH" -H 'Content-Type: application/json' \
+curl -s "$BC/quickadd" -X POST -H "@$AUTH_FILE" -H 'Content-Type: application/json' \
   -d '{"text":"Standup tomorrow 9:30am for 15 minutes","tz":"America/Los_Angeles","commit":true}'
 ```
 
@@ -83,28 +86,23 @@ Preview and commit calls use the same per-account/per-token model budget when AI
 Undo the last mutation:
 
 ```sh
-curl -s "$BC/undo" -X POST -H "$AUTH"
+curl -s "$BC/undo" -X POST -H "@$AUTH_FILE"
 ```
 
 Update / delete (an update to a recurring event needs `scope`, a delete defaults to `all`; `this`/`following` also need `instanceStart`):
 
 ```sh
-curl -s "$BC/events/42" -X PATCH -H "$AUTH" -H 'Content-Type: application/json' \
+curl -s "$BC/events/42" -X PATCH -H "@$AUTH_FILE" -H 'Content-Type: application/json' \
   -d '{"title":"Dinner (moved)","start":"2026-08-06T20:00:00-07:00","end":"2026-08-06T22:00:00-07:00","scope":"this","instanceStart":"2026-08-06T19:00:00-07:00"}'
 
-curl -s "$BC/events/42" -X DELETE -H "$AUTH" -H 'Content-Type: application/json' -d '{"scope":"all"}'
+curl -s "$BC/events/42" -X DELETE -H "@$AUTH_FILE" -H 'Content-Type: application/json' -d '{"scope":"all"}'
 ```
 
 ## MCP setup
 
 `tools/mcp/server.mjs` is a zero-dependency Node (>= 20) MCP server over stdio that wraps the endpoints above. See [tools/mcp/README.md](../tools/mcp/README.md) for the tool list and `.mcp.json` snippet.
 
-```sh
-claude mcp add better-cal \
-  --env BETTERCAL_URL=https://cal.example.com \
-  --env BETTERCAL_TOKEN=bc_yourtokenhere \
-  -- node /path/to/better-cal/tools/mcp/server.mjs
-```
+Use the secret-free configuration in that guide. The Node process reads `BETTERCAL_TOKEN` from its environment itself. Do not pass a token with a command-line `--env` option: shell expansion still puts the value in process arguments.
 
 ## Capabilities map
 
@@ -130,8 +128,10 @@ claude mcp add better-cal \
 #!/bin/sh
 # Tomorrow's agenda, e.g. piped into a notifier.
 BC=https://cal.example.com/api/v1
-AUTH="Authorization: Bearer $BETTERCAL_TOKEN"
+AUTH_FILE="$HOME/.bettercal-auth"
 START=$(date -v+1d +%Y-%m-%dT00:00:00%z)
 END=$(date -v+2d +%Y-%m-%dT00:00:00%z)
-curl -s -H "$AUTH" "$BC/events?start=$START&end=$END"
+curl -s -H "@$AUTH_FILE" "$BC/events?start=$START&end=$END"
 ```
+
+The header file is a long-lived account credential. Keep it outside web roots and repositories, readable only by your account. This avoids process-argument exposure, not access by another process running as you or by the host administrator. Revoke the token and remove the file when it is no longer needed.

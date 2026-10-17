@@ -34,18 +34,8 @@ $cfg = config();
 // to the private log rather than nowhere, or a file in the app folder.
 ini_set('display_errors', '0');
 BetterCal\Support\ErrorLog::route($cfg['app_root'], true);
-if (BetterCal\Support\Maintenance::active($cfg['app_root']) || BetterCal\Http\InstallPages::needsDatabaseUpdate($cfg)) {
+if (BetterCal\Support\Maintenance::active($cfg['app_root'])) {
     exit(0);
-}
-// Settings still in .env, or backups from before they were encrypted
-// (#142): convert them, when they belong to the account this runs as.
-if (BetterCal\Infra\PrivateFiles::pending($cfg)) {
-    foreach (BetterCal\Infra\PrivateFiles::secure($cfg) as $line) {
-        echo bc_ts() . " private_files $line\n";
-        if (str_starts_with($line, "Couldn't")) {
-            error_log('Better-Cal worker: ' . $line);
-        }
-    }
 }
 $db = new Db($cfg['db']);
 // GET_LOCK is server-global in MySQL, not per-database: namespace the lock by
@@ -53,6 +43,16 @@ $db = new Db($cfg['db']);
 // block each other while sharing one MySQL server. bin/update.php takes the
 // same lock to wait out a running job before it backs up.
 define('WORKER_LOCK', BetterCal\Infra\Updater::workerLockName((string) $cfg['db']['dsn']));
+$locked = $db->scalar('SELECT GET_LOCK(?, 0)', [WORKER_LOCK]);
+if ((int) $locked !== 1) {
+    exit(0); // another worker or database restore is running
+}
+// No schema checks, constructors with database work, or writes before the
+// worker lock. Maintenance can begin after the initial fast check.
+clearstatcache();
+if (BetterCal\Support\Maintenance::active($cfg['app_root']) || BetterCal\Http\InstallPages::needsDatabaseUpdate($cfg)) {
+    exit(0); // disconnect releases the named lock
+}
 $queue = new JobQueue($db);
 $feeds = new Feeds($db, $queue, $cfg);
 $llm = new LlmGateway($cfg);
@@ -83,8 +83,6 @@ $geocodeSweep = new BetterCal\Domain\GeocodeSweep(
     new BetterCal\Domain\Settings($db)
 );
 $systemHealth = new BetterCal\Domain\SystemHealth($db);
-// It ran: what the app checks to notice a cron job that stopped (Domain\WorkerWatch).
-BetterCal\Domain\WorkerWatch::ran($systemHealth);
 $emailSender = new EmailSender($cfg);
 $updates = new BetterCal\Domain\Updates($db, $cfg);
 
@@ -104,13 +102,21 @@ const HEALTH_JOB_LABELS = [
     'update_check' => BetterCal\Domain\Updates::HEALTH_LABEL,
 ];
 
-$locked = $db->scalar('SELECT GET_LOCK(?, 0)', [WORKER_LOCK]);
-if ((int) $locked !== 1) {
-    exit(0); // another worker is running
-}
-
 $started = time();
 try {
+    // Maintenance may have started after the startup check, before this lock.
+    if (BetterCal\Support\Maintenance::active($cfg['app_root'])) {
+        exit(0);
+    }
+    if (BetterCal\Infra\PrivateFiles::pending($cfg)) {
+        foreach (BetterCal\Infra\PrivateFiles::secure($cfg) as $line) {
+            echo bc_ts() . " private_files $line\n";
+            if (str_starts_with($line, "Couldn't")) {
+                error_log('Better-Cal worker: ' . $line);
+            }
+        }
+    }
+    BetterCal\Domain\WorkerWatch::ran($systemHealth);
     foreach ($queue->reapStalled() as $stalledId) {
         echo bc_ts() . " job $stalledId reaped: stuck in running, retried or failed\n";
     }
@@ -118,6 +124,9 @@ try {
     bc_enqueue_recurring($db, $queue);
 
     while (time() - $started < MAX_RUNTIME_SECONDS) {
+        if (BetterCal\Support\Maintenance::active($cfg['app_root'])) {
+            break;
+        }
         $job = $queue->claimNext();
         if ($job === null) {
             break;

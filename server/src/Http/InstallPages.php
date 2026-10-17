@@ -314,16 +314,37 @@ final class InstallPages
         }
         $token = self::gate($code, 'Database update needed', 'Better-Cal\'s files were updated, and its database needs a matching update before it can open. To show this is your server, open <strong>'
             . AccessCode::FILE . '</strong> in the Better-Cal folder (with your host\'s file manager or FTP) and enter the code in it.');
+        $updater = new Updater($appRoot);
+        try {
+            $updater->backupDir();
+        } catch (\Throwable $e) {
+            self::page('Private backup storage needs attention', '<div class="err">' . self::e($e->getMessage()) . '</div>'
+                . '<p>No backup or restore was started. Use a real backup folder owned by the account running Better-Cal, without linked files. Your host can help correct its ownership. Then reload this page.</p>', 503);
+        }
         $db = new Db($cfg['db']);
         $migrator = new Migrator($db, $appRoot . '/server/migrations');
         $pending = $migrator->pending();
         $unknown = $migrator->unknown();
-        $updater = new Updater($appRoot);
         $version = (string) $cfg['version'];
         if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && ($_POST['step'] ?? '') === 'restore') {
             self::checkForm($token);
             self::lockUpdate($db, $cfg);
-            self::restoreBackup($cfg, $db, $updater, (string) ($_POST['backup'] ?? ''));
+            self::restoreBackup($cfg, $db, $updater, (string) ($_POST['backup'] ?? ''), $token);
+        }
+        // A partial restore is not an update candidate. Even a stale form
+        // posting step=update must not migrate it and reopen the site.
+        $stopped = Maintenance::active($appRoot) ? Maintenance::info($appRoot) : null;
+        if (($stopped['reason'] ?? null) === 'restoring the database') {
+            $restores = self::restoreForms($updater, $token);
+            self::page('Database restore stopped', '<div class="err">A database restore stopped before it finished. The site stays closed until it is done: run the restore again.</div>'
+                . ($restores !== '' ? $restores : '<p>The backup is no longer there. Restore a complete backup through your host before reopening the site.</p>'), 503);
+        }
+        if ((string) ($cfg['session_secret'] ?? '') === '') {
+            self::page('Database update needed', '<div class="err">' . self::e(DbBackup::missingSecretMessage()) . '</div>'
+                . '<p>In your file manager, add this line to <code>.env.php</code>, or replace its empty <code>BETTERCAL_SESSION_SECRET=</code> line. Keep the first guard line unchanged, then reload this page.</p>'
+                . '<p><code>' . self::e(DbBackup::newSecretLine()) . '</code></p>'
+                . '<p>If an original secret was lost, recover it instead to keep older encrypted backups and service credentials readable. Keep this value private.</p>'
+                . self::restoreForms($updater, $token), 503);
         }
         if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && ($_POST['step'] ?? '') === 'update' && $unknown === []) {
             self::checkForm($token);
@@ -373,11 +394,6 @@ final class InstallPages
         }
         $stopped = Maintenance::active($appRoot) ? Maintenance::info($appRoot) : null;
         $restores = self::restoreForms($updater, $token);
-        if (($stopped['reason'] ?? null) === 'restoring the database') {
-            self::page('Database restore stopped', '<div class="err">A database restore started here at ' . self::e((string) ($stopped['since'] ?? '?')) . ' stopped before it finished, '
-                . 'often because the host ends long requests. The site stays closed until it\'s done: run it again.</div>'
-                . ($restores !== '' ? $restores : '<p>The backup it was restoring isn\'t there any more. Please <a href="https://github.com/Oshyan/better-cal/issues">report this</a>.</p>'), 503);
-        }
         if ($unknown !== []) {
             $u = count($unknown);
             self::page('These files are older than the database', '<p>The database was updated by a newer version of Better-Cal: it has ' . $u . ' change' . ($u === 1 ? '' : 's')
@@ -401,7 +417,7 @@ final class InstallPages
      * failed. Only a backup of that kind, by its file name in the backup
      * folder; restore() checks the whole file before it changes anything.
      */
-    private static function restoreBackup(array $cfg, Db $db, Updater $updater, string $name): never
+    private static function restoreBackup(array $cfg, Db $db, Updater $updater, string $name, string $token): never
     {
         $path = $updater->backupDir() . '/' . $name;
         if (preg_match('/^db-(before-)?[0-9][0-9A-Za-z.\-]*\.(bcbackup|sql\.gz)$/D', $name) !== 1 || !is_file($path)) {
@@ -409,11 +425,16 @@ final class InstallPages
         }
         @set_time_limit(300);
         Maintenance::on($cfg['app_root'], 'restoring the database');
+        if ((int) $db->scalar('SELECT GET_LOCK(?, 0)', [Updater::workerLockName((string) $cfg['db']['dsn'])]) !== 1) {
+            self::page('Database restore waiting', '<div class="note">The worker is finishing a job. Nothing has been restored. The site stays closed so new jobs cannot start.</div>'
+                . self::restoreAgainForm($name, $token), 409);
+        }
         try {
             $r = DbBackup::forConfig($db, $cfg)->restore($path);
         } catch (\Throwable $e) {
-            Maintenance::off($cfg['app_root']);
-            self::page('Database update needed', '<div class="err">Restoring stopped: ' . self::e($e->getMessage()) . '</div><p>Please <a href="https://github.com/Oshyan/better-cal/issues">report the error</a>.</p>', 500);
+            self::page('Database restore stopped', '<div class="err">Restoring stopped: ' . self::e($e->getMessage()) . '</div>'
+                . '<p>The site stays closed because the restore did not finish. Run the restore again, or choose another backup.</p>'
+                . self::restoreAgainForm($name, $token) . self::restoreForms($updater, $token), 500);
         }
         Maintenance::off($cfg['app_root']);
         @unlink($cfg['app_root'] . '/.runtime-cache/schema-current');
@@ -422,6 +443,12 @@ final class InstallPages
     }
 
     // ---- Shared ------------------------------------------------------------
+
+    private static function restoreAgainForm(string $name, string $token): string
+    {
+        return '<form method="post"><input type="hidden" name="step" value="restore"><input type="hidden" name="backup" value="' . self::e($name)
+            . '"><input type="hidden" name="form" value="' . self::e(AccessCode::formToken($token)) . '"><button type="submit">Run the restore again</button></form>';
+    }
 
     /**
      * The private-files check, shown only when it isn't plainly Safe (Safe

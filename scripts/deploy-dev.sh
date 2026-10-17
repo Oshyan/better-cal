@@ -175,6 +175,17 @@ fi
 stage "connect"
 ssh_open
 
+# The reviewed helper is root-owned, outside either application's tree.
+# Root opens its code on stdin for lower-privilege settings and access checks.
+clone_helper="$(rssh 'sudo -n mktemp /tmp/bc-dev-clone.XXXXXXXX.php')"
+if [[ ! "${clone_helper}" =~ ^/tmp/bc-dev-clone\.[A-Za-z0-9]{8}\.php$ ]]; then
+  echo 'Could not create a safe remote isolation helper.' >&2
+  exit 1
+fi
+printf -v clone_helper_q '%q' "${clone_helper}"
+deploy_cleanup() { rssh "sudo -n rm -f -- ${clone_helper_q}" >/dev/null; }
+rssh "sudo -n install -m 0700 -o root -g root /dev/stdin ${clone_helper_q}" < "${ROOT_DIR}/scripts/sanitize-dev-clone.php"
+
 stage "verify dev isolation"
 printf -v app_dir_q '%q' "${APP_DIR}"
 printf -v dev_dir_q '%q' "${DEV_DIR}"
@@ -190,7 +201,7 @@ printf -v dev_db_user_q '%q' "${DEV_DB_USER}"
 printf -v isolation_mode_q '%q' "${DEV_ISOLATION_MODE}"
 printf -v external_services_q '%q' "${DEV_EXTERNAL_SERVICES}"
 fpm_relation_file="$(mktemp "${TMPDIR:-/tmp}/bc-dev-fpm.XXXXXX")"
-if ! rssh "sudo -n env APP_DIR=${app_dir_q} DEV_DIR=${dev_dir_q} APP_USER=${app_user_q} DEV_APP_USER=${dev_app_user_q} BACKUP_DIR=${backup_dir_q} PHP_FPM_SERVICE=${prod_fpm_q} DEV_PHP_FPM_SERVICE=${dev_fpm_q} PROD_DB=${prod_db_q} DEV_DB=${dev_db_q} DB_USER=${db_user_q} DEV_DB_USER=${dev_db_user_q} DEV_ISOLATION_MODE=${isolation_mode_q} DEV_EXTERNAL_SERVICES=${external_services_q} bash -s" >"${fpm_relation_file}" <<'EOF'
+if ! rssh "sudo -n env CLONE_HELPER=${clone_helper_q} APP_DIR=${app_dir_q} DEV_DIR=${dev_dir_q} APP_USER=${app_user_q} DEV_APP_USER=${dev_app_user_q} BACKUP_DIR=${backup_dir_q} PHP_FPM_SERVICE=${prod_fpm_q} DEV_PHP_FPM_SERVICE=${dev_fpm_q} PROD_DB=${prod_db_q} DEV_DB=${dev_db_q} DB_USER=${db_user_q} DEV_DB_USER=${dev_db_user_q} DEV_ISOLATION_MODE=${isolation_mode_q} DEV_EXTERNAL_SERVICES=${external_services_q} bash -s" >"${fpm_relation_file}" <<'EOF'
 set -euo pipefail
 if [ -L "${APP_DIR}" ] || [ ! -d "${APP_DIR}" ] || [ -L "${DEV_DIR}" ] || [ ! -d "${DEV_DIR}" ]; then
   echo 'Production and development application roots must be real directories, not symbolic links.' >&2
@@ -201,6 +212,9 @@ same_uid=0
 if [ "${DEV_ISOLATION_MODE}" = strict ] && [ "${same_uid}" = 1 ]; then
   echo 'Strict development isolation requires a distinct Unix identity.' >&2
   exit 1
+fi
+if [ "${DEV_ISOLATION_MODE}" = strict ]; then
+  sudo -n -u "${DEV_APP_USER}" -- env -i PATH="${PATH}" BETTERCAL_CHECK_PROD_WRITE=1 APP_ROOT="${APP_DIR}" php <"${CLONE_HELPER}"
 fi
 if ! sudo -n -u "${DEV_APP_USER}" -- test -d "${DEV_DIR}" \
   || ! sudo -n -u "${DEV_APP_USER}" -- test -w "${DEV_DIR}"; then
@@ -244,38 +258,13 @@ if [ "${prod_fpm_id}" = "${dev_fpm_id}" ]; then
 fi
 
 env_value() {
-  local file="$1" key="$2" value
-  value="$(awk -F= -v wanted="${key}" '{
-    found=$1; gsub(/^[[:space:]]+|[[:space:]]+$/, "", found)
-    if (found == wanted) {
-      sub(/^[^=]*=/, ""); gsub(/^[[:space:]]+|[[:space:]]+$/, ""); print; exit
-    }
-  }' "${file}")"
-  value="${value#\"}"; value="${value%\"}"
-  value="${value#\'}"; value="${value%\'}"
-  printf '%s' "${value}"
+  SNAPSHOT_NAME="$1" SETTING_KEY="$2" php -r '$v = json_decode(getenv(getenv("SNAPSHOT_NAME")), true, 512, JSON_THROW_ON_ERROR); echo $v[getenv("SETTING_KEY")] ?? "";'
 }
-# The settings file: .env.php, or .env until it's converted (#142). Its first
-# line holds no '=', so env_value reads both alike. Both at once is ambiguous.
-settings_of() {
-  if [ -e "$1/.env.php" ] || [ -L "$1/.env.php" ]; then
-    if [ -e "$1/.env" ]; then
-      echo "$1 has both .env.php and .env; keep one." >&2
-      return 1
-    fi
-    printf '%s/.env.php' "$1"
-  else
-    printf '%s/.env' "$1"
-  fi
-}
-prod_env="$(settings_of "${APP_DIR}")"
-dev_env="$(settings_of "${DEV_DIR}")"
-for file in "${prod_env}" "${dev_env}"; do
-  if [ -L "${file}" ] || [ ! -f "${file}" ] || [ ! -r "${file}" ]; then
-    echo 'Each environment must have a readable regular settings file, not a symlink.' >&2
-    exit 1
-  fi
-done
+PROD_SETTINGS_SNAPSHOT="$(sudo -n -u "${APP_USER}" -- env -i PATH="${PATH}" BETTERCAL_READ_CLONE_SETTINGS=1 APP_ROOT="${APP_DIR}" php <"${CLONE_HELPER}")"
+DEV_SETTINGS_SNAPSHOT="$(sudo -n -u "${DEV_APP_USER}" -- env -i PATH="${PATH}" BETTERCAL_READ_CLONE_SETTINGS=1 APP_ROOT="${DEV_DIR}" php <"${CLONE_HELPER}")"
+export PROD_SETTINGS_SNAPSHOT DEV_SETTINGS_SNAPSHOT
+prod_env=PROD_SETTINGS_SNAPSHOT
+dev_env=DEV_SETTINGS_SNAPSHOT
 prod_user="$(env_value "${prod_env}" BETTERCAL_DB_USER)"
 dev_user="$(env_value "${dev_env}" BETTERCAL_DB_USER)"
 prod_dsn="$(env_value "${prod_env}" BETTERCAL_DB_DSN)"
@@ -393,17 +382,6 @@ if [ "${CLONE_DB}" = 1 ]; then
   # and only then publish the sanitized snapshot to DEV_DB.
   clone_suffix="$(php -r 'echo bin2hex(random_bytes(12));')"
   clone_stage_db="bc_dev_stage_${clone_suffix}"
-  clone_helper="$(rssh 'sudo -n mktemp /tmp/bc-dev-clone.XXXXXXXX.php')"
-  if [[ ! "${clone_helper}" =~ ^/tmp/bc-dev-clone\.[A-Za-z0-9]{8}\.php$ ]]; then
-    echo 'Could not create a safe remote clone helper.' >&2
-    exit 1
-  fi
-  printf -v clone_helper_q '%q' "${clone_helper}"
-  if ! rssh "sudo -n install -m 0700 -o root -g root /dev/stdin ${clone_helper_q}" \
-    < "${ROOT_DIR}/scripts/sanitize-dev-clone.php"; then
-    rssh "sudo -n rm -f -- ${clone_helper_q}" >/dev/null 2>&1 || true
-    exit 1
-  fi
   printf -v clone_stage_db_q '%q' "${clone_stage_db}"
   printf -v strip_subscriptions_q '%q' "$([ "${DEV_CLONE_SUBSCRIPTIONS}" = strip ] && printf 1 || printf 0)"
   DEPLOY_TOUCHED=1
@@ -412,7 +390,7 @@ if [ "${CLONE_DB}" = 1 ]; then
   # remote root shell reads them from stdin and exposes them only to its child
   # sanitizer/database clients for the lifetime of this clone operation.
   set +e
-  { printf '%s\n' "${MYSQL_ROOT_PASSWORD:-}"; printf '%s\n' "${DEV_LOGIN_PASSWORD}"; cat <<'EOF'; } | rssh "sudo -n env PROD_DB=${prod_db_q} DEV_DB=${dev_db_q} PROD_APP_ROOT=${app_dir_q} DEV_APP_ROOT=${dev_dir_q} STAGING_DB=${clone_stage_db_q} CLONE_HELPER=${clone_helper_q} STRIP_DEV_SUBSCRIPTIONS=${strip_subscriptions_q} bash -c 'IFS= read -r MYSQL_ROOT_PASSWORD; IFS= read -r DEV_LOGIN_PASSWORD; export MYSQL_ROOT_PASSWORD DEV_LOGIN_PASSWORD; exec bash -s'"
+  { printf '%s\n' "${MYSQL_ROOT_PASSWORD:-}"; printf '%s\n' "${DEV_LOGIN_PASSWORD}"; cat <<'EOF'; } | rssh "sudo -n env APP_USER=${app_user_q} DEV_APP_USER=${dev_app_user_q} PROD_DB=${prod_db_q} DEV_DB=${dev_db_q} PROD_APP_ROOT=${app_dir_q} DEV_APP_ROOT=${dev_dir_q} STAGING_DB=${clone_stage_db_q} CLONE_HELPER=${clone_helper_q} STRIP_DEV_SUBSCRIPTIONS=${strip_subscriptions_q} bash -c 'IFS= read -r MYSQL_ROOT_PASSWORD; IFS= read -r DEV_LOGIN_PASSWORD; export MYSQL_ROOT_PASSWORD DEV_LOGIN_PASSWORD; exec bash -s'"
 set -euo pipefail
 if [ -z "${MYSQL_ROOT_PASSWORD}" ]; then
   MYSQL_ROOT_PASSWORD="$(clpctl db:show:master-credentials | awk -F'|' '/Password/ {gsub(/ /,"",$3); print $3}')"
@@ -436,6 +414,9 @@ if [ -L "${CLONE_HELPER}" ] || [ ! -f "${CLONE_HELPER}" ] \
   echo 'The development clone sanitizer is not a private root-owned file.' >&2
   exit 1
 fi
+PROD_SETTINGS_SNAPSHOT="$(sudo -n -u "${APP_USER}" -- env -i PATH="${PATH}" BETTERCAL_READ_CLONE_SETTINGS=1 APP_ROOT="${PROD_APP_ROOT}" php <"${CLONE_HELPER}")"
+DEV_SETTINGS_SNAPSHOT="$(sudo -n -u "${DEV_APP_USER}" -- env -i PATH="${PATH}" BETTERCAL_READ_CLONE_SETTINGS=1 APP_ROOT="${DEV_APP_ROOT}" php <"${CLONE_HELPER}")"
+export PROD_SETTINGS_SNAPSHOT DEV_SETTINGS_SNAPSHOT
 mysql -h 127.0.0.1 -u root -e "CREATE DATABASE \`${STAGING_DB}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
 stage_created=1
 BETTERCAL_VERIFY_DEV_CLONE_STAGE=1 php "${CLONE_HELPER}"

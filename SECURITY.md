@@ -25,7 +25,7 @@ Known residuals, accepted and documented rather than fixed:
 
 - The overall sign-in brake can still be triggered by an attacker controlling 10 or more addresses (cheap with IPv6). While it is on, password sign-ins are refused from addresses that have not signed in during the last 30 days, unless the browser has signed in here before (it carries a device cookie, since 0.2.3). CalDAV devices using API tokens are unaffected. A brand-new device has to wait for the attack to subside; a one-time code to let it in is planned in issue #59.
 - Prompt filters and ranking judge events in batches of 25, so one event's text can in principle sway the model's verdicts on the others in its batch. The text is sent as separate, marked data.
-- The project's own dev install runs in `DEV_ISOLATION_MODE=shared`: it uses the same Unix, database and PHP accounts as production, so code deployed to dev could read production's files and database. This is accepted because dev only ever runs the maintainer's own code, its port is closed to the outside, and each dev clone is still stripped of production's sessions, tokens, push devices, feeds and Google connections. `strict` stays the default and the recommendation for anyone running a dev copy alongside production (see [docs/install.md](docs/install.md)).
+- `DEV_ISOLATION_MODE=shared` deliberately permits shared Unix, database and PHP identities. In that mode, dev code can reach production files and data. Clone sanitation reduces carried-over credentials but does not create an isolation boundary. `strict` remains the default and checks both read access and production write access; see [docs/install.md](docs/install.md).
 - When the deploy script connects as root, it leaves the settings file root-owned, but the app user owns the directory it sits in, so this is not a hard boundary. Deploying as a non-root user with sudo skips that step.
 
 The latest full scan covers the code as of release 0.9.13 (2026-10-06), and its fixes run through 0.9.42. Changes since then have had tests, including regression tests for every fixed finding, and review as they were made, but not yet a full scan; a final scan of the 1.0 release candidate is planned (issue #81). Anything you find is worth telling us about.
@@ -86,6 +86,18 @@ How code reaches an install, and what has to be true before it does.
 - The deny-all `.htaccess` files work only on servers that read them; with Nginx, the guard lines and encryption are what protect the private files. The self-check covers the main domain at the place it would serve the folder, not every domain on a hosting account.
 
 ## Design trade-offs
+
+### Private exports and database recovery
+
+New database backups require a non-empty `BETTERCAL_SESSION_SECRET`; there is no plaintext fallback. Settings, System checks this independently of the cached private-files probe and offers a generated settings line. The database update page offers the same repair before starting an update. The app never writes this setting automatically. If a previously configured secret was lost, restore that original value instead: changing it makes older encrypted backups and sealed credentials unreadable. Older plaintext backups remain readable for recovery.
+
+Backup paths and their entries must be real, owned directories and regular files, without symbolic links or hard-linked files. They are checked before permission changes, encryption, writes or pruning. Run conversion as the storage owner, not root inside an application-controlled tree. These checks do not protect against malicious code already running as the same account or a host administrator.
+
+Database restore takes the same update and worker locks as updating. If a worker still holds its lock, restore changes nothing and offers a manual retry. Maintenance stays on after a failed or interrupted restore, with a retry form on the database update page. Filesystem ownership and MySQL named locks must work correctly for these boundaries to hold.
+
+Calendar exports remain session-only and have no event cap. Single calendars stream from bounded database batches without a data file. Account exports spool each calendar and a native ZIP under `.runtime-cache/exports` with owner-only permissions and random 128-bit names. A nonblocking lock permits one export at a time. Cleanup runs on completion, failure and shutdown, with abandoned files removed under the next export's lock. ZIP contents are finished before download; a failed direct stream has no closing calendar marker and must be downloaded again. Memory grows with a batch, an individual event and ZIP directory metadata, not the whole event collection. Disk space and host-enforced request limits can still stop an export; nothing is silently omitted to fit.
+
+Export spools are not encrypted or PHP-guarded. Keep the cache outside publicly served folders or deny access to it. On a misconfigured host, a web server with the same account could serve a spool if its random address became known while it exists. Owner-only permissions do not stop that account or root, and the private-files web probe does not certify every export address or domain. This is an explicit limit of the private-files promise, not equivalent to encrypted backups.
 
 These are deliberate choices, not oversights. Each makes daily use easier and costs something if a device you use is lost or stolen.
 

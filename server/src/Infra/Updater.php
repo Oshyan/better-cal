@@ -58,10 +58,22 @@ final class Updater
     public function backupDir(): string
     {
         $beside = $this->parent() . '/' . $this->name() . '-backups';
-        if (is_dir($beside) || is_writable($this->parent())) {
-            return $beside;
+        $dir = PrivatePath::scope($beside) !== null && (file_exists($beside) || is_link($beside) || @is_writable($this->parent())) ? $beside : $this->appRoot . '/.backups';
+        self::checkBackupDir($dir);
+        return $dir;
+    }
+
+    /** Validate every entry before any caller chmods, writes, reads or prunes. */
+    public static function checkBackupDir(string $dir): void
+    {
+        PrivatePath::check($dir, true, true);
+        if (is_dir($dir)) {
+            foreach (scandir($dir) ?: [] as $name) {
+                if ($name !== '.' && $name !== '..') {
+                    PrivatePath::check($dir . '/' . $name, false);
+                }
+            }
         }
-        return $this->appRoot . '/.backups';
     }
 
     /**
@@ -166,10 +178,7 @@ final class Updater
     public function ensureBackupDir(): void
     {
         $dir = $this->backupDir();
-        if (!is_dir($dir) && !@mkdir($dir, 0700, true)) {
-            throw new \RuntimeException("Could not create $dir");
-        }
-        @chmod($dir, 0700);
+        PrivatePath::directory($dir, true);
         self::denyWeb($dir);
     }
 

@@ -1,14 +1,14 @@
-# Authoring friction log — `trip-planner` (agent B)
+# Authoring friction log , `trip-planner` (agent B)
 
 Written as I go. Timestamps are local to the user's zone.
 
 ---
 
-## 2026-08-07T09:35-07:00 — before writing any code
+## before writing any code
 
 ### The per-run HTTP request budget is a number I am never told
 **Needed:** To decide my fetch strategy. I want 1 climate-normals request + 1 forecast request + possibly a geocode. I need to know whether that fits, and what happens when it does not.
-**Docs said:** `http(): HttpClient` — "...caps at 5 MB / 20 s / 3 redirects, and enforces a per-run request budget." Every other cap in that sentence has a number. This one does not.
+**Docs said:** `http(): HttpClient` , "...caps at 5 MB / 20 s / 3 redirects, and enforces a per-run request budget." Every other cap in that sentence has a number. This one does not.
 **Reality:** Unknown until I trip it. I also do not know the failure mode - exception, `null`, or a silently-empty body - so I cannot write the right `catch`.
 **Cost:** A guess at design time. Designing defensively (batch everything into as few requests as possible) and will probe empirically.
 **Fix:** State the number and the failure mode: "...and a budget of N requests per run; the (N+1)th throws X." Same for the 20 s and 5 MB caps - what does exceeding them raise?
@@ -38,11 +38,11 @@ Written as I go. Timestamps are local to the user's zone.
 **Cost:** API archaeology against someone else's plugin output. An author without a populated instance could not have done this.
 **Fix:** Say it: "`start`/`end` are ISO instants; date-only strings are/are not accepted; bands may span multiple days."
 
-## 2026-08-07T10:20-07:00 — first deploy, settings probes
+## first deploy, settings probes
 
 ### SEVERE: `validateSettings()` receives only the keys being changed, not the effective settings
 **Needed:** Cross-field validation ("shortest trip must not exceed longest trip") and a required-field rule ("you need a destination, or a sentence describing one").
-**Docs said:** "`public function validateSettings(array $values): array` — Return {key: error}. Empty = accept. Runs synchronously on save." Nothing about what `$values` contains.
+**Docs said:** "`public function validateSettings(array $values): array` , Return {key: error}. Empty = accept. Runs synchronously on save." Nothing about what `$values` contains.
 **Reality:** `$values` is **only the patch body**. Stored settings are not merged in first. Reproduction, against a plugin whose stored `idea` is a non-empty string:
 ```
 PATCH /plugins/trip-planner/settings  {"minDays":30}
@@ -86,7 +86,7 @@ An author who trusts the field builds a URL with `latitude=991`. I now range-che
 ### `budgetRemaining()` unit and `logTail` length were both guesses
 **Needed:** To write a "stop when the budget runs low" loop, and to know how much I could log.
 **Docs said:** "`log(msg)` / `budgetRemaining()` / `overBudget()` - the 60 s soft budget; long loops should check and stop."
-**Reality:** `budgetRemaining()` returned `59.9993679523468` at the top of the job - float **seconds**. `logTail` keeps multiple lines joined with `\n`, not just the last one. Neither is stated; both are things you have to log-and-look to learn.
+**Reality:** The remaining budget is elapsed time in seconds. Its units need documenting.
 **Cost:** One diagnostic run. Trivial, but it is the kind of thing that should not need a run.
 **Fix:** "`budgetRemaining()` returns seconds as a float." "`log()` lines are newline-joined and the last N appear as `lastRun.logTail`."
 
@@ -94,7 +94,7 @@ An author who trusts the field builds a URL with `latitude=991`. I now range-che
 **Reality:** `lastRun.logTail` for my job contained `[18:48:28] llm not configured; using fallback` - a line I never wrote, emitted by the host when `llmJson()` cannot run. That is genuinely useful (the docs promise the *return value* is indistinguishable between "unconfigured" and "failed", and it is - but the log tells you which). It is also surprising: my log is not only mine, and a plugin that parses its own log would break.
 **Fix:** Mention that the host may add lines to a job's log, and that `llmJson()` leaves a breadcrumb there.
 
-## 2026-08-07T10:50-07:00 — first real runs, and the sanitizer
+## first real runs, and the sanitizer
 
 ### SEVERE: the HTML allowlist for `detailHtml` / `rationaleHtml` is undocumented, and it is not the one you would guess
 **Needed:** Structured, legible reasoning in a proposal - headings, a small weather table, a link to the event that blocked a window.
@@ -124,9 +124,9 @@ The `div`-yes/`h4`-no and `ol`-yes/`table`-no combination is not guessable. Neit
 
 ### GOOD: the timezone warning was worth its weight
 **Docs said:** "`timezone(): DateTimeZone` - **the user's** zone... `date_default_timezone_get()` is the server's zone and may be a continent away." And: all-day occurrences "come back as `YYYY-MM-DDT00:00:00+00:00`... Do **not** timezone-convert it; converting slides Saturday into Friday west of UTC."
-**Reality:** Both true and both load-bearing. My run logged `tz=<user zone> serverTz=<server zone>`, two zones several hours apart. And my band boundaries came out at the user's local midnight on both sides of the autumn clock change, their UTC hour shifting by one - correct across the DST change, first time, because I built every local midnight through `timezone()`. This is the single best part of the docs. Without those two paragraphs I would have shipped an off-by-one-day bug.
+**Reality:** The contract correctly distinguishes the user's zone from the server's zone. Build local midnight through `timezone()`, including across daylight-saving changes, and keep date-only all-day values as dates.
 
-## 2026-08-07T11:05-07:00 — contract probes
+## contract probes
 
 ### SEVERE: a date-only `start` in a proposal's `plan.events` silently becomes a TIMED midnight-to-midnight event
 **Needed:** All-day travel-day markers in the proposed plan. I have no idea what time the flight is, so inventing "09:00-17:00" is a lie the user has to correct.
@@ -158,19 +158,19 @@ The one wrinkle: a bracketed IPv6 literal fails at DNS rather than at the addres
 ### The "per-run request budget" is not a real constraint, and the sentence made me design around a ghost
 **Needed:** To know whether I could afford a forecast call as well as a climate-archive call.
 **Docs said:** "...and enforces a per-run request budget."
-**Reality:** **60 sequential HTTP requests in one run all succeeded** (24.8 s, `outcome=ok`). Whatever the budget is, it is above 60 and is not something a normal plugin will hit. I spent real design effort collapsing 10 years of climate data into a single request because that sentence made me think requests were scarce. (The single-request design is still better, but I should have chosen it for latency reasons, not fear.)
+**Reality:** A statement that a request budget exists is not enough to design against it. Document the limit, the remaining budget and how exhaustion is reported; design batched requests for latency as well as cost.
 **Fix:** Either give the number or drop the clause. As written it is a cost with no information.
 
 ### `budgetRemaining()` measured across a long run
-**Reality:** Confirmed float seconds and it decrements in real time: `59.99` at start, `47.6` after 30 HTTP calls. Useful and it works. Still undocumented as to units.
+**Reality:** The budget is elapsed-time based. Its units and behavior during an external request need an explicit contract.
 
-## 2026-08-07T11:25-07:00 — proposal lifecycle
+## proposal lifecycle
 
 ### SEVERE: there is no way to withdraw a proposal, and the two available key strategies are both broken
 **Needed:** Keep exactly one live suggestion. My natural `sourceKey` was `trip-<dest>-<startDate>-<len>`, because that is what identifies a window.
 **Docs said:** "`sourceKey` - stable: re-running REPLACES your own open proposal" and "on a proposal the user already decided `propose()` silently no-ops and returns the old one - so check `myProposals(null)` first and skip decided keys".
 **Reality:** Those two sentences describe the trap without naming it. With a window-derived key:
-- nudge the horizon from 120 to 90 days, and "Oct 12–Nov 1" becomes "Oct 15–Nov 4" - a **new** key, so the old proposal stays open forever. After an afternoon of ordinary setting changes I had **five** open Trip Planner proposals suggesting overlapping trips, and no API to retract any of them. The `open` ones are dead weight the user must reject by hand.
+- Changing a window changes its derived key, leaving an obsolete open proposal behind. Without withdrawal, the owner must dismiss stale proposals manually.
 - with a *stable* key instead, one rejection permanently silences the plugin, because `propose()` no-ops on a decided key for good. There is no `withdraw()`/`retract()`/`replaceProposals()`. This is the one place the platform's otherwise-consistent "wholesale replace" model is missing: `replaceRanges` and `replaceWarnings` are wholesale, `propose` is an upsert with no delete.
 **Cost:** A full redesign late in the build. I ended up with a **generation counter in kv** - `sourceKey = trip-plan-g<N>` - so there is never more than one open proposal; a rejection burns generation N and the next run offers the next-best window under N+1. I also had to keep every offered window's dates in kv myself, because `myProposals()` returns only `{sourceKey, status}`, so "is this new window basically the one they already said no to?" is unanswerable from the host API alone.
 **Fix:** Add `withdrawProposal(sourceKey)` or make proposals wholesale like ranges. Failing that, document the generation-counter pattern explicitly - it is not obvious and every proposal-emitting plugin needs it.
@@ -181,17 +181,17 @@ The one wrinkle: a bracketed IPv6 literal fails at DNS rather than at the addres
 
 ### `undo` returns a proposal to `open`, which is a fourth state transition nobody documents
 **Docs said:** "**Statuses are `open`, `accepted`, `rejected`.**"
-**Reality:** `POST /proposals/8/undo` -> `{"undone":5,"skipped":0}`, the 3 created events vanish, and the proposal goes back to **`open`** - so it will be re-proposed and can be accepted again. Sensible, but it is a real state machine edge that changes how you write the "have I already handled this?" check.
+**Reality:** Undo reverses the accepted plan and returns its proposal to `open`, so it can be considered and accepted again. That transition belongs in the lifecycle contract.
 **Fix:** "Undo reverses the mutations and returns the proposal to `open`."
 
 ### Uninstall purges proposals (undocumented) but leaves `calendarSettings` behind (also undocumented)
 **Docs said:** "Uninstall always purges your ranges, warnings, runs, and KV."
-**Reality:** `POST /uninstall` -> `{"ok":true,"purged":{"events":0,"calendars":0,"ranges":2,"warnings":14,"kv":7}}`. Two things the list does not cover:
-- **Proposals are purged too** - `GET /proposals?status=all` went from a handful of trip-planner rows to zero - but they are not in the `purged` breakdown, so the receipt under-reports what was destroyed.
-- **Per-calendar settings survive.** After uninstalling, `GET /calendars` still shows `"pluginSettings": {"trip-planner": {"travel": "Ignore"}}` on two calendars, while plugin-scope settings were reset to manifest defaults. So half my configuration is orphaned on the calendars forever.
+**Reality:** The uninstall receipt lists only some kinds of removed state.
+- **Proposals are purged too**, but that category is missing from the purge receipt.
+- **Per-calendar settings survive.** Uninstall can leave plugin-specific calendar settings even when plugin-level settings are reset. Document whether these are preserved intentionally.
 **Fix:** Add proposals to both the sentence and the `purged` breakdown, and say explicitly that `calendarSettings` are kept (or purge them).
 
-## 2026-08-07T11:45-07:00 — the brief versus the platform
+## the brief versus the platform
 
 ### The request's headline feature - "a separate AI chat mode" - is structurally unbuildable, and the docs say so clearly enough that I knew within five minutes
 **Docs said:** "Your plugin's code runs in exactly two places: inside a worker job (`runJob`), and inside the settings-validation hook (`validateSettings`)... It never runs during a page request. ...it is enforced structurally - there is no hook that runs your code on the render path."
@@ -217,7 +217,7 @@ The one wrinkle: a bracketed IPv6 literal fails at DNS rather than at the addres
 ### `calendars()` returns less than the calendar API does, and the missing field is the one I needed
 **Needed:** Sensible defaults for "does this calendar block travel?" - the whole point of the requested feature.
 **Docs said:** "`calendars(): array` - the user's calendars (`id`, `name`, `kind`, `visible`)."
-**Reality:** Accurate, and `kind` carries real signal (`local` / `subscribed` / `plugin`), which let me default plugin calendars to ignored and subscribed feeds to non-blocking. But the REST API's calendar objects also carry `folderIds`, `tagNames`, `sourceUrl` and `position` - and a plugin sees none of them. On this instance the user has a calendar of speculative trips and a task-app calendar with **thousands of chore occurrences over a few months**; both are `kind: local`, indistinguishable from their everyday personal calendar. I had to write an auto-quiet heuristic ("this calendar has something on nearly every day, so it is not telling me anything") to stop the task calendar destroying every score.
+**Reality:** `kind` distinguishes local, subscribed and plugin calendars, but not whether a local calendar should block time. Offer explicit per-calendar choices instead of guessing from titles or event density. The REST API exposes metadata that the plugin API does not.
 **Cost:** Real design work, and a wrong first run. The docs *do* warn about this ("recurring all-day chores are all-day events too, and they are not what 'this day is taken' means") - that warning was accurate and valuable, it just does not come with the data you would need to act on it automatically.
 **Fix:** Either expose `tagNames`/`folderIds` on `calendars()`, or say plainly that `kind` is the only signal and every other distinction must come from `calendarSettings`.
 
@@ -226,9 +226,11 @@ The one wrinkle: a bracketed IPv6 literal fails at DNS rather than at the addres
 **Reality:** No parameter list, no return type, no statement about whether values may be arrays or must be strings, and no size cap. I JSON-encoded everything defensively. It happily stored a ~40 KB JSON blob (366 days of derived climate normals), and `kvGet` on a missing key returns null. All fine - but every bit of that was a guess I had to verify by running.
 **Fix:** `kvSet(string $key, string $value): void` / `kvGet(string $key): ?string`, plus the size cap, plus whether keys are truncated like `setEventData`'s 120 chars.
 
-### `geocode()` has no documented return shape, and on this instance it returns null
-**Docs said:** "`geocode(string $query): ?array` - the host geocoder (cached)."
-**Reality:** `?array` of *what*? I guessed `{name, lat, lng}` to match the `location` field and wrote a fallback to Open-Meteo's geocoder. Just as well: `$host->geocode('Hawaii')` returned **null** on the live instance, so the host geocoder never actually served me. I never found out what a successful call looks like.
+### `geocode()` needs a documented return shape and failure behavior
+
+**Docs said:** `geocode(string $query): ?array`.
+
+**Reality:** The nullable type does not explain the keys in a successful result or whether null means no match, no service or failure. Plugins need a fallback.
 **Fix:** Document the returned keys, and say what makes it return null (no result? not configured? rate-limited?).
 
 ### `POST /plugins/:id/run` runs every job; you cannot ask for one
@@ -237,13 +239,13 @@ The one wrinkle: a bracketed IPv6 literal fails at DNS rather than at the addres
 
 ### GOOD: the parts that were right, and that I leaned on
 - **The two timezone paragraphs.** Best-written thing in the doc. Both warnings were real and both would have cost me a day.
-- **"The window includes plugin-owned calendars."** Named the exact failure mode (Weather's one-all-day-event-per-day) *and* prescribed the fix (`kind === 'plugin'`, plus offer a toggle). I implemented it straight from that paragraph and it was correct on first run: Weather and Tides contributed a few dozen occurrences to my window, all correctly ignored.
+- **The window includes plugin-owned calendars.** A generated all-day context event does not necessarily mean a day is busy. Filter by purpose and offer a per-calendar choice.
 - **"Host coercions you will not be told about."** A table of silent clamps, in the docs, before I hit any of them. That is exactly the right instinct; the section just needs to be twice as long (the HTML allowlist and the plan-event date rule belong in it).
-- **The proposals model itself.** "Generating a proposal never touches the calendar - only the user pressing Accept does, and acceptance materializes the whole plan atomically under one run id." All true. Accept created a trip container plus two linked events; undo removed all five mutations in one call. This is the single best-designed capability in the platform and it is exactly what the brief's "nothing reaches my calendar without me saying yes" needs.
-- **`llmJson()` returning null indistinguishably**, stated up front. It meant I designed the deterministic fallback first rather than bolting it on - which turned out to matter, because the model is not configured on this instance and **every run of this plugin has been in fallback mode**. The plugin has never once needed the model to produce its output.
-- **Circuit breaker and `consecutiveFailures`** exposed in `GET /plugins`. I stayed at 0 throughout, but knowing the number was visible made me willing to probe destructive edges.
+- **The proposals model itself.** Generating a proposal does not change the calendar. Accepting it applies the plan together, and undo can reverse that accepted plan.
+- **`llmJson()` can return null.** Documenting that result makes a deterministic fallback part of the design, not an afterthought.
+- **Circuit breaker and `consecutiveFailures`.** Exposing failure state makes controlled failure tests diagnosable.
 
-## 2026-08-07T12:15-07:00 — last pass
+## last pass
 
 ### `decoration.icon` has no documented value space
 **Docs said:** "`decoration` is optional: `{icon, color, animation}` where animation is `none`, `pulse`, or `shimmer`."

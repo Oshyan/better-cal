@@ -281,6 +281,28 @@ final class Ics
         return $out;
     }
 
+    /** Export only: preserve the string/budget APIs used by feeds and CalDAV. */
+    public static function writeCalendar(string $name, array $zones, iterable $events, callable $write): int
+    {
+        $empty = self::buildCalendar($name, null, []);
+        $write(substr($empty, 0, -strlen("END:VCALENDAR\r\n")));
+        $seenZones = [];
+        foreach ($zones as $zone) {
+            if (($z = self::zoneOf(['tzid' => $zone])) !== null && !isset($seenZones[$z])) {
+                $seenZones[$z] = true;
+                $write(self::vtimezone($z));
+            }
+        }
+        $stamp = Time::nowUtc()->format('Ymd\THis\Z');
+        $count = 0;
+        foreach ($events as $event) {
+            $write(self::buildEvent($event, $stamp, $event['_series'] ?? null, $write));
+            $count++;
+        }
+        $write("END:VCALENDAR\r\n");
+        return $count;
+    }
+
     /**
      * Build a single CalDAV calendar-object body: a bare VCALENDAR (no X-WR-
      * metadata) wrapping one uid's VEVENTs (master first, then RECURRENCE-ID
@@ -457,7 +479,7 @@ final class Ics
         return $out . "END:VTIMEZONE\r\n";
     }
 
-    private static function buildEvent(array $ev, string $stamp, ?array $series = null): string
+    private static function buildEvent(array $ev, string $stamp, ?array $series = null, ?callable $write = null): string
     {
         $out = "BEGIN:VEVENT\r\n";
         $out .= self::line('UID', self::structural((string) $ev['uid']));
@@ -511,9 +533,18 @@ final class Ics
         // RELTYPE=PARENT. Callers opt in by decorating rows with
         // related_children / related_parents uid lists (Trips::relatedUidMap);
         // undecorated rows write nothing. Import ignores RELATED-TO (parse()).
+        if ($write !== null) {
+            $write($out);
+            $out = '';
+        }
         foreach (['related_children' => 'CHILD', 'related_parents' => 'PARENT'] as $key => $reltype) {
-            foreach (is_array($ev[$key] ?? null) ? $ev[$key] : [] as $relUid) {
-                $out .= self::line('RELATED-TO;RELTYPE=' . $reltype, self::escape((string) $relUid));
+            foreach (is_iterable($ev[$key] ?? null) ? $ev[$key] : [] as $relUid) {
+                $line = self::line('RELATED-TO;RELTYPE=' . $reltype, self::escape((string) $relUid));
+                if ($write !== null) {
+                    $write($line);
+                } else {
+                    $out .= $line;
+                }
             }
         }
         $status = strtoupper((string) ($ev['status'] ?? 'confirmed'));

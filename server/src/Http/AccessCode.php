@@ -133,7 +133,8 @@ final class AccessCode
         if (!is_string($raw) || !str_starts_with($raw, SettingsFile::GUARD_PREFIX . "\n")) {
             return null;
         }
-        $s = json_decode(explode("\n", $raw, 3)[1] ?? '', true);
+        $lines = explode("\n", rtrim($raw, "\n"));
+        $s = json_decode(end($lines), true);
         if (!is_array($s) || ($s['format'] ?? null) !== 2 || !is_string($s['purpose'] ?? null)
             || !is_string($s['hash'] ?? null) || preg_match('/^[a-f0-9]{64}$/D', $s['hash']) !== 1
             || !is_int($s['expires'] ?? null) || !is_int($s['sessionExpires'] ?? null)
@@ -148,15 +149,20 @@ final class AccessCode
         } elseif (!is_string($s['session']) || preg_match('/^[a-f0-9]{64}$/D', $s['session']) !== 1 || $s['code'] !== null) {
             return null;
         }
-        return $s;
+        // Edited instructions, extra lines or changed line endings start afresh too.
+        return $raw === $this->contents($s) ? $s : null;
+    }
+
+    private function contents(array $s): string
+    {
+        $display = $s['code'] === null ? self::USED_MESSAGE : 'Better-Cal ' . $s['purpose'] . ' code: ' . implode('-', str_split($s['code'], 4))
+            . "\n\nEnter it on the page that asked for it. It works for an hour and only once.";
+        return SettingsFile::GUARD_PREFIX . "\n" . $display . "\n\n" . json_encode($s) . "\n";
     }
 
     private function save(array $s): void
     {
-        $display = $s['code'] === null ? self::USED_MESSAGE : 'Better-Cal ' . $this->purpose . ' code: ' . implode('-', str_split($s['code'], 4))
-            . "\n\nEnter it on the page that asked for it. It works for an hour and only once.";
-        if (!SettingsFile::writeAtomic($this->codePath(), SettingsFile::GUARD_PREFIX . "\n" . json_encode($s)
-            . "\n\n" . $display . "\n", 0600)) {
+        if (!SettingsFile::writeAtomic($this->codePath(), $this->contents($s), 0600)) {
             throw new \RuntimeException('Could not save the access code state.');
         }
     }

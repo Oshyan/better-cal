@@ -1,6 +1,7 @@
 // Static smoke test for pure logic: date utils, overlap layout, month
 // virtualization math. Run: node web/tests/smoke.mjs
 
+import './copy-to.mjs';
 import {
   parseISO, toISOWithOffset, dayKeyOf, dateOfDayKey, epochDayOfKey,
   keyOfEpochDay, addDaysKey, diffDaysKey, weekIndexOfKey, firstEpochDayOfWeek,

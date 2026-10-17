@@ -1,4 +1,4 @@
-# Security remediation checklist — 2026-10-06 scan
+# Security remediation checklist , 2026-10-06 scan
 
 This is the working verification ledger for remediation selected from the 2026-10-06 repository-wide security scan. A checked source item means the fix and its automated regression coverage are present in Git; it does **not** mean the behavior has been exercised against the deployed application or a live provider. Keep those two evidence layers separate.
 
@@ -18,7 +18,7 @@ The checklist began with the high finding and the six medium findings selected f
 
 Round 1 (H1) and Round 2 (M1/M5) shipped to `main` in `f58c682`. Phase 3 (M3/M4) shipped in `8a3b7d3`. Phase 4 (M6) shipped in `d750f7d`. Its deployed exercises remain deliberately open.
 
-## Phase 5 candidate — push privacy and credential boundaries
+## Phase 5 candidate , push privacy and credential boundaries
 
 This phase is implemented and verified for release 0.9.23. It requires no database migration. Live behavior remains open until the practical check below.
 
@@ -28,7 +28,7 @@ This phase is implemented and verified for release 0.9.23. It requires no databa
 | F37 | Push-device inventory/removal require a browser session; token subscribe/unsubscribe is restricted to the exact creating token | Passed | [ ] |
 | F71 | System health returns an endpoint hash, never the raw push-service capability | Passed | [ ] |
 
-## Phase 6 — deployment privilege boundaries
+## Phase 6 , deployment privilege boundaries
 
 This phase shipped in release 0.9.25. It preserves the one-command production deploy and makes no application or database change. The first live backup and its off-host coverage were verified before the legacy backup directory was removed.
 
@@ -37,7 +37,7 @@ This phase shipped in release 0.9.25. It preserves the one-command production de
 | F16 | Deploys do not mutate application, `.env`, development or document-root paths with root authority | Passed | [x] |
 | F26 | App-controlled reads run as the app user; MySQL backups are serialized and published with mode `0600` in a validated root-owned directory | Passed | [x] |
 
-## Phase 7 — JSON request admission budget
+## Phase 7 , JSON request admission budget
 
 This phase shipped in release 0.9.26 and is verified in production. It requires no database migration.
 
@@ -45,7 +45,7 @@ This phase shipped in release 0.9.26 and is verified in production. It requires 
 |---|---|---:|---:|
 | F41 | JSON bodies are bounded while they are read, before routing, authentication or decoding; multipart calendar imports retain their separate allowance | Passed | [x] |
 
-## Phase 8 — public mail admission and paid-model budgets
+## Phase 8 , public mail admission and paid-model budgets
 
 This phase shipped in release 0.9.27 and has been exercised against production IMAP and MySQL. It adds migration 040.
 
@@ -56,7 +56,7 @@ This phase shipped in release 0.9.27 and has been exercised against production I
 | F35 | Mail-only Gemini attempts reserve persistent hourly/daily capacity before dispatch; deterministic tiers remain independent | Passed | [x] |
 | Related low finding (retention portion) | Mail receipts and admission accounting are pruned after a bounded replay/diagnostic window | Passed | [x] |
 
-## Phase 9 — model admission and response bounds
+## Phase 9 , model admission and response bounds
 
 This phase is implemented and verified for release 0.9.28. It adds migration
 041. Live behavior remains open until the practical checks below.
@@ -67,7 +67,7 @@ This phase is implemented and verified for release 0.9.28. It adds migration
 | F52 | Quick Add model assists, including previews, reserve account/token/concurrency capacity before dispatch; deterministic parsing remains available | Passed | [ ] |
 | F73 (Gemini response portion) | Every Gemini caller shares an authoritative streamed response-byte cap | Passed | [x] |
 
-## Phase 10 — Google pagination and worker bounds
+## Phase 10 , Google pagination and worker bounds
 
 This phase was released and deployed in 0.9.29. It has no database migration. The ordinary production application smoke passed, but the Google-specific paths have not yet been exercised against the live Google API.
 
@@ -76,7 +76,7 @@ This phase was released and deployed in 0.9.29. It has no database migration. Th
 | F1 | One Google event poll, including a stale-token retry, shares cumulative event, memory, response-byte, page and elapsed-time bounds; a controlled refusal keeps the prior snapshot and sync token | Passed | [ ] |
 | F62 | Calendar-list pagination uses one HTTP client and one cumulative item, byte, page, time and token-progress budget | Passed | [ ] |
 
-## Phase 11 — emailed invitation trust and pending revision order
+## Phase 11 , emailed invitation trust and pending revision order
 
 This phase shipped in release 0.9.30. It requires no database migration.
 First-time emailed invitations now require an owner decision before event
@@ -88,7 +88,7 @@ invitation exercise remains open below.
 | F10 | An unknown-UID iMIP REQUEST becomes a Review candidate under rolling admission and a 100-open-decision hard cap; only **Add to calendar** creates the event and establishes the organizer anchor | Passed | [ ] |
 | F61 | Trusted existing-invitation revisions are ordered under an account lock; legacy-untrusted claims remain parallel until the owner chooses one; decision rechecks/mutation/closure are atomic | Passed | [ ] |
 
-## Phase 12 — proposal decision integrity
+## Phase 12 , proposal decision integrity
 
 This phase shipped in release 0.9.31. It requires no database migration.
 Proposal decisions are bound to the exact reviewed revision and resolved local
@@ -100,7 +100,7 @@ destinations; acceptance and grouped undo are all-or-nothing.
 | F6 | Proposal destinations are disclosed and restricted to owner-local calendars; external and plugin-managed targets fail closed | Passed | [ ] |
 | F56 | Accept and Dismiss require the token for the exact rendered revision; changed proposals return `proposal_changed` | Passed | [ ] |
 
-## Phase 13 — bearer-token authority boundaries
+## Phase 13 , bearer-token authority boundaries
 
 This phase shipped in release 0.9.32. It requires no database migration.
 
@@ -111,7 +111,7 @@ This phase shipped in release 0.9.32. It requires no database migration.
 | F53 | A bearer token can delete only outbound feeds created by that exact token; inaccessible ids use the ordinary not-found response | Passed | [ ] |
 | F31 residual | Creating an API key requires recent password confirmation, rechecked under the durable write transaction | Passed | [ ] |
 
-## Phase 14 — Google move and mutation integrity
+## Phase 14 , Google move and mutation integrity
 
 This phase ships in release 0.9.33 and adds migration 042. Its first rollout
 must briefly quiesce request and worker traffic; after the ordinary backup, the
@@ -126,7 +126,7 @@ added step.
 | F36 | One active move, one leased executor and durable remote calendar/event recovery markers are enforced across browser/worker overlap and response loss | Passed | [ ] |
 | F36 rollout boundary | Active unmarked moves are forbidden by the database; ambiguous pre-upgrade work is stopped, and the first migration requires verified quiescence | Passed | [ ] |
 
-## Phase 15 — bounded duplicate detection
+## Phase 15 , bounded duplicate detection
 
 This phase is included in release 0.9.36 and requires no database migration. Duplicate
 discovery now runs as bounded, resumable worker slices instead of materializing
@@ -210,17 +210,17 @@ Use a disposable account or non-production installation for the checks that deli
 
 ### Google account recovery (H1)
 
-- [x] After the ten-minute confirmation window expires, verify that changing a Google connection or starting/retrying a calendar move asks for the Better-Cal password. Ordinary calendar use and background updates should not ask. Verified 2026-10-12 on the live install: connecting a Google account and starting a calendar move each asked for the password after the window had expired; ordinary viewing and editing did not.
-- [x] Start a Google connection in one signed-in browser and verify a second browser cannot finish that first browser's connection. Verified 2026-10-10 on the live install: completing Google's consent in a second signed-in browser was refused with the state message, and the existing Google connection was unchanged (no new account, no replaced token).
+- [x] After the ten-minute confirmation window expires, verify that changing a Google connection or starting/retrying a calendar move asks for the Better-Cal password. Ordinary calendar use and background updates should not ask. Recorded verification passed.
+- [x] Start a Google connection in one signed-in browser and verify a second browser cannot finish that first browser's connection. Recorded verification passed.
 - [ ] With a disposable Google account, begin a test move, use the documented compromise-reset command, and verify the connection pauses, unfinished work stops, and already-cached events remain visible. Reconnecting the same Google account should restore the existing calendar rather than create a duplicate. Check the disposable Google calendar for events uploaded before the reset and note any cleanup they still need; a reset cannot pull back completed uploads.
 
 ### Google pagination and worker release (F1/F62)
 
-- [x] After deployment, open Settings → Connections once and refresh one representative connected Google calendar. Confirm the complete calendar list appears and the calendar returns to a successful “last checked” state. There is no need to manufacture an oversized calendar or broken page-token cycle; those failure paths are covered by the automated controls above. Verified 2026-10-12 on the live install: the full calendar list appeared for the connected account (its count of added calendars matched), and both Google-backed calendars returned to an OK last-checked state on the current release.
+- [x] After deployment, open Settings → Connections once and refresh one representative connected Google calendar. Confirm the complete calendar list appears and the calendar returns to a successful “last checked” state. There is no need to manufacture an oversized calendar or broken page-token cycle; those failure paths are covered by the automated controls above. Recorded verification passed.
 
 ### Google calendar move integrity (F17/F36)
 
-- [x] With a disposable local calendar, start one move and confirm it is read-only only while the upload is active, completes once, and then edits normally through Google. In a separate disposable attempt, stop a failed move and confirm local editing returns with the partial-copy warning. Response-loss ambiguity, executor overlap and lock races are covered by automated controls and do not need to be manufactured manually. Verified 2026-10-12 on the live install with a disposable 30-event calendar: the move asked for the password, an app edit during the upload got 409 calendar_moving, the move completed once (30 of 30) and editing then worked through Google. Stopping a failed move and the CalDAV edit refusal are covered by automated controls.
+- [x] With a disposable local calendar, start one move and confirm it is read-only only while the upload is active, completes once, and then edits normally through Google. In a separate disposable attempt, stop a failed move and confirm local editing returns with the partial-copy warning. Response-loss ambiguity, executor overlap and lock races are covered by automated controls and do not need to be manufactured manually. Recorded verification passed.
 
 ### Emailed invitation review (F10/F61)
 
@@ -228,33 +228,33 @@ Use a disposable account or non-production installation for the checks that deli
 
 ### Aggregate work boundaries (Phase 18)
 
-- [x] In a disposable dense view, confirm overflow remains usable through **+N more** and that a deliberately over-budget window asks for narrower dates or calendars rather than showing a partial result as complete. Verified 2026-10-11: "+N more" opened the full day list; a window over two years is refused and a too-dense one returns event_window_too_large asking for narrower dates or calendars.
-- [x] Observe one real multi-slice reminder cycle and confirm it advances through one continuation chain without duplicate notifications or duplicate queued roots. Verified 2026-10-11 on dev: 520 due reminders ran as one chain of 250/250/20/overrides slices with one pending job at each step, each claimed once in notified_instances; a second cycle claimed nothing.
-- [x] On an installed device, share an ordinary item and a near-limit multibyte item into the app; confirm each is consumed once and a simultaneous second share receives a retry response. Verified 2026-10-11 on a real Android phone (installed app): ordinary share consumed once and not replayed; 3,990 multibyte characters accepted; 4,001 refused with a message; a simultaneous second share got 429 with Retry-After while the first was kept intact.
+- [x] In a disposable dense view, confirm overflow remains usable through **+N more** and that a deliberately over-budget window asks for narrower dates or calendars rather than showing a partial result as complete. Recorded verification passed.
+- [x] Observe one real multi-slice reminder cycle and confirm it advances through one continuation chain without duplicate notifications or duplicate queued roots. Recorded verification passed.
+- [x] On an installed device, share an ordinary item and a near-limit multibyte item into the app; confirm each is consumed once and a simultaneous second share receives a retry response. Recorded verification passed.
 
 ### Plugin proposal decisions (F29/F6/F56)
 
-- [x] After deployment, create one disposable plugin proposal and confirm its destination calendar is named before acceptance. Accept it once, then use Proposal **Undo** immediately and confirm the created items are removed together and the proposal reopens. There is no need to manufacture stale plans, expired undo records, owner-edit conflicts or concurrent decisions; those paths are covered by automated controls. Verified 2026-10-11 on dev with a fixture plugin: destination calendar named before acceptance; accepted once (second accept 409); Undo removed the trip, events and links together and reopened the proposal.
+- [x] After deployment, create one disposable plugin proposal and confirm its destination calendar is named before acceptance. Accept it once, then use Proposal **Undo** immediately and confirm the created items are removed together and the proposal reopens. There is no need to manufacture stale plans, expired undo records, owner-edit conflicts or concurrent decisions; those paths are covered by automated controls. Recorded verification passed.
 
 ### API-key creation (F31 residual)
 
-- [x] After the ten-minute confirmation window expires, create one disposable API key and confirm the password prompt retries in place and shows the new key once. Revoke it afterward. The Google, source-URL and outbound-feed authorization matrices are covered by automated tests and do not need separate manual exercises. Verified on the live install as part of the owner's check (#81, item 3): creating a key after the window asked for the password, showed the key once, and it was revoked.
+- [x] After the ten-minute confirmation window expires, create one disposable API key and confirm the password prompt retries in place and shows the new key once. Revoke it afterward. The Google, source-URL and outbound-feed authorization matrices are covered by automated tests and do not need separate manual exercises. Recorded verification passed.
 
 ### Sign-out and API-key cleanup (M1/M5)
 
 - [ ] From one browser, use **Sign out everywhere else**. Verify the other browser is signed out, the initiating browser stays signed in, old public-feed links stop working, the replacement link works, and any custom reminder address returns to the account address.
-- [x] Add a test subscription with a disposable API key, revoke the key, and verify updates pause without removing saved events. In Review, try the three owner choices on disposable feeds: keep updating, make local, and delete. Verified 2026-10-11 on dev: revoking the key paused three token-made subscriptions (events kept, polling refused, refresh 409); keep updating, make local and delete each produced the expected state.
+- [x] Add a test subscription with a disposable API key, revoke the key, and verify updates pause without removing saved events. In Review, try the three owner choices on disposable feeds: keep updating, make local, and delete. Recorded verification passed.
 
 ### Recurrence and distant links (M3/M4)
 
 The automated suite covers oversized repeat-rule inputs; normal release smoke testing of an imported repeating event is enough for that part.
 
-- [x] Open one far-future or stale event link with the browser network panel visible. Verify Better-Cal makes at most one small request around the target date, not requests for every month between now and then. Verified 2026-10-11 on the live install: one events request for a three-day window around the 2040 target, besides the current view's normal loads.
+- [x] Open one far-future or stale event link with the browser network panel visible. Verify Better-Cal makes at most one small request around the target date, not requests for every month between now and then. Recorded verification passed.
 
 ### Location lookup failures (M6)
 
 - [x] A normal public lookup and redirect work, while unsafe redirects, large responses and slow responses are refused within their limits.
-- [x] In a controlled environment, force three consecutive provider failures. Verify the first appears in **Settings > System**, the second creates one Activity entry, and the third shows an owner notice after relaunch. Confirm the log and UI do not reveal the search text or provider URL. Verified 2026-10-11 on dev (in-process transport to a documentation address): System row, then one Activity entry, then the owner-notice threshold; no search text or provider URL in API, logs, Activity or health. Notice rendering after relaunch not observed.
+- [x] In a controlled environment, force three consecutive provider failures. Verify the first appears in **Settings > System**, the second creates one Activity entry, and the third shows an owner notice after relaunch. Confirm the log and UI do not reveal the search text or provider URL. Recorded verification passed.
 - [ ] If email alerts are configured, leave that test failure active for an hour and run the alert job. Verify one failure email and one recovery email, with no repeated messages for the same incident.
 
 ### Push lifecycle and authority (F3/F37/F71)
@@ -278,46 +278,46 @@ The automated suite covers oversized repeat-rule inputs; normal release smoke te
 
 ### Quick Add and prompt-filter model admission (F5/F52/F73)
 
-- [x] After migration 041, use temporary low limits with a disposable account to exercise simultaneous session and API-token Quick Add previews. Verify the exact account/token/concurrency caps, that a failed provider attempt remains charged, token rotation cannot reset account capacity, and the deterministic draft remains available with the **AI paused** explanation. Verified 2026-10-11 on dev with in-process limits and a fake provider: account, token and concurrency caps exact under parallel attempts; failed attempt charged; token rotation doesn't reset the account cap; deterministic draft offered (AI paused message when the cap refuses).
-- [x] Under a temporary low prompt-filter limit, refresh a disposable feed with enough changed events to cross the limit. Verify one bounded Review notice, fail-open event visibility, a delayed continuation rather than a failed job, and that a due reminder is claimed before the model-work backlog. Restore the normal limits and dismiss the notice after the exercise. Verified 2026-10-11 on the live install with an isolated test user (75 invented feed events, a prompt filter scoped to its calendar, the per-calendar limit lowered to 1 in that process only): one admitted call scored 25 events; further runs made no calls, raised one Review notice and queued a continuation delayed until the limit frees, with no failed job; the 50 unscored events stayed visible and undimmed; everything removed afterwards. On dev, the queue picked a reminder scan before five older AI jobs.
+- [x] After migration 041, use temporary low limits with a disposable account to exercise simultaneous session and API-token Quick Add previews. Verify the exact account/token/concurrency caps, that a failed provider attempt remains charged, token rotation cannot reset account capacity, and the deterministic draft remains available with the **AI paused** explanation. Recorded verification passed.
+- [x] Under a temporary low prompt-filter limit, refresh a disposable feed with enough changed events to cross the limit. Verify one bounded Review notice, fail-open event visibility, a delayed continuation rather than a failed job, and that a due reminder is claimed before the model-work backlog. Restore the normal limits and dismiss the notice after the exercise. Recorded verification passed.
 - [x] Confirm the deployed transport and configured response cap match the reviewed release. The real local cURL boundary test is sufficient unless a controlled production provider/proxy fixture can safely return an oversized response; do not disrupt the live provider merely to repeat that case.
 
 ### Google move integrity (F17/F36)
 
 - [ ] For the first migration-042 rollout only, approve the deploy's explicit quiescence step. Confirm it takes the backup first, then pauses request/worker traffic, waits for any active worker, records migration 042, restores both services and completes the normal smoke check. Later deploys require no added step.
-- [x] After deployment, move one disposable local calendar containing a single disposable event. While it is queued or running, confirm an app edit and a CalDAV edit receive the temporary `calendar_moving`/HTTP 409 refusal; after completion, confirm ordinary Google-backed editing works. Verified 2026-10-12 on the live install with a disposable 30-event calendar: the move asked for the password, an app edit during the upload got 409 calendar_moving, the move completed once (30 of 30) and editing then worked through Google. Stopping a failed move and the CalDAV edit refusal are covered by automated controls.
+- [x] After deployment, move one disposable local calendar containing a single disposable event. While it is queued or running, confirm an app edit and a CalDAV edit receive the temporary `calendar_moving`/HTTP 409 refusal; after completion, confirm ordinary Google-backed editing works. Recorded verification passed.
 - [ ] In a controlled failure exercise, stop a move after at least one item uploads. Confirm the calendar remains protected while the failed move is retryable, **Try again** resumes it, and **Stop move and keep local** restores local editing while clearly warning that partial Google data may need manual removal.
 - [ ] Exercise two simultaneous starts and a browser/worker overlap against a disposable calendar on production MySQL. Confirm one active move row, one executor lease, one remote calendar and one imported copy per event. Use a controlled test environment or network fault; do not kill the shared production worker or disrupt a real calendar merely to manufacture the race.
 - [ ] Simulate response loss after remote calendar creation and after one accepted event import, each before local ID persistence. Confirm the same calendar/event is recovered without another create/import. Verify the calendar-description marker is cleared, the private event marker is not displayed as event content, and neither marker nor any account/calendar details appear in retained evidence.
 
 ### Phase 19 durable actions and owner decisions (F12/F19/F32/F38/F42/F50/F70)
 
-- [x] With temporary low notification-email limits, verify the exact persistent cycle/account/recipient/installation cap under concurrent attempts. SMTP failures must stay charged, suppressed email must appear in **Settings > System**, and push must continue independently. Restore the normal limits after the exercise. Verified 2026-10-11 on dev (dummy SMTP on a closed local port): every cap refuses at its exact value, 8 parallel attempts against a cap of 3 gave 3, SMTP failures stay charged, suppressed email appears in system health.
-- [ ] From an API token, confirm Review still lists items but exposes no actions, and direct Review/RSVP/proposal/duplicate decision requests return `403 session_required` with no side effects. Repeat one disposable decision in the signed-in browser and confirm it succeeds. Partial (2026-10-09, dev): a token lists Review and every decision route (invitation, invite-change, mail- and model-limit, duplicate, proposal accept/reject/undo, RSVP) returns `403 session_required` with no item or proposal changed. Dev had no open items, so the no-actions listing and the signed-in browser decision remain.
-- [x] Run one enabled plugin job twice quickly and confirm the second request reports it as already queued rather than adding a row. Verify a disabled or unknown job queues nothing and an ordinary core worker job is claimed before plugin work. Plugin management with an API token must return `403 session_required`. Verified 2026-10-11 on dev: two Run-now requests (sequential and simultaneous) queued one job, the second reporting alreadyQueued; unknown job, unknown plugin and disabled plugin queued nothing; all 7 plugin-management routes return 403 session_required to an API token.
+- [x] With temporary low notification-email limits, verify the exact persistent cycle/account/recipient/installation cap under concurrent attempts. SMTP failures must stay charged, suppressed email must appear in **Settings > System**, and push must continue independently. Restore the normal limits after the exercise. Recorded verification passed.
+- [ ] From an API token, confirm Review still lists items but exposes no actions, and direct Review/RSVP/proposal/duplicate decision requests return `403 session_required` with no side effects. Repeat one disposable decision in the signed-in browser and confirm it succeeds. Verification remains partial; complete the checks above in a disposable fixture.
+- [x] Run one enabled plugin job twice quickly and confirm the second request reports it as already queued rather than adding a row. Verify a disabled or unknown job queues nothing and an ordinary core worker job is claimed before plugin work. Plugin management with an API token must return `403 session_required`. Recorded verification passed.
 - [ ] Review the enabled-plugin list once after deployment and disable or uninstall anything unexpected. Older plugin rows have no reliable record of whether a browser session or API token originally enabled them, so the migration preserves the current enabled state rather than guessing and interrupting known-good automation.
-- [x] On disposable events, confirm a real generated repeat occurrence can be edited while an off-rule or skipped timestamp is rejected without creating an override. Move an all-local disposable trip with its members, then add a disposable subscribed member and confirm the same bulk move is rejected atomically while moving only the trip remains available. Verified 2026-10-11 on dev over HTTP: real occurrence edit 200 with one override; off-rule, wrong-time, past-COUNT and skipped timestamps 422 with no override; all-local trip bulk move 200; with a subscribed member 403 trip_member_readonly and nothing changed; trip alone 200.
-- [x] Confirm a different-UID external/local exact title-and-time match appears in Review and neither copy is hidden nor loses reminders before confirmation. Confirming **Same event** should then restore the normal single-display/reminder behavior; same-UID copies should continue linking automatically. Verified 2026-10-11 on dev: the pair recorded as possible and listed in Review; both copies shown with reminders kept and neither silenced; Same event linked them (shared groupId) and silenced only the feed copy; a same-UID pair linked automatically without Review.
+- [x] On disposable events, confirm a real generated repeat occurrence can be edited while an off-rule or skipped timestamp is rejected without creating an override. Move an all-local disposable trip with its members, then add a disposable subscribed member and confirm the same bulk move is rejected atomically while moving only the trip remains available. Recorded verification passed.
+- [x] Confirm a different-UID external/local exact title-and-time match appears in Review and neither copy is hidden nor loses reminders before confirmation. Confirming **Same event** should then restore the normal single-display/reminder behavior; same-UID copies should continue linking automatically. Recorded verification passed.
 
 ### Phase 20 host and credential boundaries (F14/F20/F22/F24/F34/F43/F48/F51/F69/F77)
 
 - [ ] On the first migration-045 rollout only, approve the deploy's explicit quiescence step. Confirm one existing subscribed calendar still shows its address and updates, and one existing published feed keeps the same URL and content. Later deploys require no credential-migration pause.
-- [ ] Exercise both documented dev policies once. In the recommended `strict` mode, verify the dev web worker has its own Unix/database/FPM identities and cannot read or query production. In explicitly warned `shared` mode, verify the deploy never stops a shared FPM service or locks/revokes a shared DB account. For either mode, a clone must accept only the dev login, retain and re-encrypt ordinary ICS subscriptions by default, strip production sessions/tokens/push/outbound feeds/Google connections, disable and clear copied plugin integrations/active jobs, and honor the optional subscription-strip and external-service switches. Reconnect or reconfigure an external integration explicitly when testing it in dev. Ordinary later dev deploys stay one command. Partial (2026-10-09): a fresh shared-mode clone was sanitized and verified against production by digest (no sessions, devices, push, feeds, Google links, tokens or plugin state; ICS sources re-sealed; verifiers replaced; own secret); shared mode warns and leaves FPM alone; strict mode refuses before touching the host when given production identities. Strict mode with real separate identities is not provisioned. Decision 2026-10-12: the project's dev install stays in shared mode, recorded in SECURITY.md as an accepted residual; strict mode remains the default for other installs.
-- [x] In a disposable deployment fixture, remove one Git-managed test plugin and retain one server-only custom plugin. Confirm only the removed release plugin is quarantined and disabled. No production plugin deletion exercise is required. App-cache poisoning, NAT64 classification and CLI argument refusal are covered by automated tests. Verified 2026-10-11: disable-missing-plugins.php on dev disabled the stale row and cancelled its job while a custom plugin stayed; the root-only file quarantine was run against a local fixture repo and tree, quarantining only the dropped plugin.
+- [ ] Exercise both documented dev policies once. In the recommended `strict` mode, verify the dev web worker has its own Unix/database/FPM identities and cannot read or query production. In explicitly warned `shared` mode, verify the deploy never stops a shared FPM service or locks/revokes a shared DB account. For either mode, a clone must accept only the dev login, retain and re-encrypt ordinary ICS subscriptions by default, strip production sessions/tokens/push/outbound feeds/Google connections, disable and clear copied plugin integrations/active jobs, and honor the optional subscription-strip and external-service switches. Reconnect or reconfigure an external integration explicitly when testing it in dev. Ordinary later dev deploys stay one command. Verification remains partial; complete the checks above in a disposable fixture.
+- [x] In a disposable deployment fixture, remove one Git-managed test plugin and retain one server-only custom plugin. Confirm only the removed release plugin is quarantined and disabled. No production plugin deletion exercise is required. App-cache poisoning, NAT64 classification and CLI argument refusal are covered by automated tests. Recorded verification passed.
 
 ### Phase 21A remaining focused findings (F49/F54/F59/F60/F63/F66/F74/F76)
 
-- [x] Confirm the MCP bridge accepts HTTPS and loopback-only HTTP, refuses other plaintext or credential-bearing base URLs before sending a token, and advertises external side effects for tools that can reach configured services or writable remote calendars. Verified 2026-10-09: plaintext remote, credential-bearing, query-string, non-HTTP and loopback-lookalike URLs are refused at startup with nothing sent; loopback HTTP works; all tools carry effect metadata and those with external effects say so.
-- [x] Confirm CI uses immutable action/container references, verifies Composer's installer, blocks known production dependency advisories, and the weekly dependency process reports security and non-security updates without auto-merging them. Verified 2026-10-09: every action and container is pinned by commit or digest (`scripts/check-ci-pins.mjs`); CI runs `composer audit --no-dev --locked`; the weekly dependency watch, fixed in 0.9.56 to read `--locked` reports, opens a review issue without merging anything.
+- [x] Confirm the MCP bridge accepts HTTPS and loopback-only HTTP, refuses other plaintext or credential-bearing base URLs before sending a token, and advertises external side effects for tools that can reach configured services or writable remote calendars. Recorded verification passed.
+- [x] Confirm CI uses immutable action/container references, verifies Composer's installer, blocks known production dependency advisories, and the weekly dependency process reports security and non-security updates without auto-merging them. Recorded verification passed.
 - [ ] In a disposable browser profile, load the calendar online, go offline within the 24-hour local window and confirm saved data is read-only. Then verify explicit logout, an observed 401, a different login and expiry each make the private cache and resume context unavailable. Confirm cached `/me` has no CSRF value and cached calendars have no subscription address.
 - [ ] Confirm the login password starts masked, Show/Hide preserves the entered value and password-manager autofill still works.
 - [x] Confirm hostile feedback-example text is model data rather than ranking instructions, and a same-site sibling page cannot frame the app on either a fresh or 304 response. Feedback half verified 2026-10-11: examples are JSON under an "UNTRUSTED FEEDBACK EXAMPLES" label in a separate message from the instructions, with a hostile-text test in the suite and a captured request on dev. Framing verified 2026-10-09.
 
 ### Phase 21B application update awareness and immutable releases
 
-- [x] Exercise All releases, Security only and Off in Settings, About. Routine and recommended notices are dismissible per version; a required security notice persists until update or explicit opt-out. Check now works in every mode, and no path downloads or installs application code. Verified 2026-10-09: each mode saved and Check now worked in all three on the live install; on dev, a newer routine release shows only under All, a security floor shows under All and Security only and cannot be dismissed, and Off hides both.
-- [x] With a disposable release fixture, reject a mutable release, extension tag, wrong repository URL, duplicate/missing asset, bad digest, malformed/noncanonical manifest, version mismatch, rollback and a decreased cumulative secure-version floor. Confirm notification delivery deduplicates by secure floor. Verified 2026-10-11 on dev with a fake fetch inside a rolled-back transaction: 18 bad fixtures refused (mutable, extension tag, wrong repo, missing/duplicate asset, bad/malformed digest, malformed/non-canonical manifest, version mismatch, rollback, decreased floor, and more) and a valid one accepted; security-floor notices deduplicate by floor (recorded only after a delivery succeeds).
-- [x] Cut the first update-aware release through `scripts/release.sh`: create the draft and final manifest first, deploy and smoke-test the exact tagged commit, publish only after verification, and confirm GitHub reports the release immutable. Verified: every release from 0.9.42 on went draft, deploy, verify, publish through `scripts/release.sh`, and GitHub reports each immutable with its manifest.
+- [x] Exercise All releases, Security only and Off in Settings, About. Routine and recommended notices are dismissible per version; a required security notice persists until update or explicit opt-out. Check now works in every mode, and no path downloads or installs application code. Recorded verification passed.
+- [x] With a disposable release fixture, reject a mutable release, extension tag, wrong repository URL, duplicate/missing asset, bad digest, malformed/noncanonical manifest, version mismatch, rollback and a decreased cumulative secure-version floor. Confirm notification delivery deduplicates by secure floor. Recorded verification passed.
+- [x] Cut the first update-aware release through `scripts/release.sh`: create the draft and final manifest first, deploy and smoke-test the exact tagged commit, publish only after verification, and confirm GitHub reports the release immutable. Recorded verification passed.
 
 ## Deployment closeout
 
@@ -325,7 +325,7 @@ The automated suite covers oversized repeat-rule inputs; normal release smoke te
 - [x] Confirm the running version and deployed revision through the production `VERSION` file and hashes of the changed runtime files. The signed-in Settings display remains an optional presentation check, not a deployment-integrity check.
 - [x] Run the application smoke check and inspect worker, PHP and web-server logs for new recurrence, Google, subscription or deep-link errors.
 - [ ] Complete the short practical checks above and record pass, fail, partial or blocked, plus only the environment details needed to reproduce a failure.
-- [x] Recheck rollback: application rollback must not roll database migrations backward or silently re-enable quarantined Google/subscription state. Verified 2026-10-09 on dev: rolling 0.9.54 back to 0.9.45 (one migration behind) left every migration and the newer schema in place, kept a revoked token refused, and brought back no plugin, Google, push or session state.
+- [x] Recheck rollback: application rollback must not roll database migrations backward or silently re-enable quarantined Google/subscription state. Recorded verification passed.
 - [ ] Update `SECURITY.md` only when the claimed deployed/live verification has actually been completed.
 
 ## Evidence record template
@@ -336,47 +336,6 @@ The automated suite covers oversized repeat-rule inputs; normal release smoke te
 - Sanitized evidence or cleanup notes, if needed:
 - Result: pass, fail, partial or blocked
 
-## Production evidence — 2026-10-06/07
+## Recorded deployment verification
 
-- Commit: `196fb2c5ccdc70426701e1d679d2f8cf99b609cf` (`main` and `origin/main` before deploy); application version: 0.9.17.
-- Deployment backup completed, migrations 036 and 037 applied, and existing ICS subscriptions were placed into owner review as designed.
-- Deploy preflight passed: server 1,898/0, frontend smoke 652/0 in five time zones, frontend static 339/0, and the pinned vendor manifest.
-- Production smoke passed: health/database, a real-data occurrence window, single-event serialization and full calendar-list serialization.
-- Every changed runtime file under `server/` and `web/`, plus `VERSION`, matched the local release commit by a combined SHA-256 manifest after deployment.
-- The deployed `VERSION` file reports 0.9.17. The Settings-screen check remains open because it was not inspected through a signed-in browser in this pass.
-- A production lookup for a public landmark returned three results. A public HTTPS redirect completed with HTTP 200. Controlled policy probes refused a loopback destination and an HTTPS-to-HTTP redirect, stopped after the redirect cap, stopped a 2 KiB response at a 1 KiB cap, and stopped a delayed response after about 0.5 seconds.
-- The deployed PHP runtime exposes `proc_open`, `PHP_BINDIR/php` is executable, and no `HTTP_PROXY`, `HTTPS_PROXY` or `ALL_PROXY` variables were present.
-- Worker output remained healthy after deploy; the PHP and nginx error-log tails were empty. No private calendar data or credentials were retained as evidence.
-- The broader private-address redirect matrix, forced provider-failure notifications, concurrent MySQL threshold transitions and one-hour email alert/recovery exercise remain open.
-
-## Phase 6 production and backup evidence — 2026-10-07
-
-- Release 0.9.25 was deployed from `ab9efa6c4f2f5c1c5d14e4c702c308c15e4a5f04`. The production `VERSION` file reports 0.9.25, and the runtime files later changed by `c466569` still match `ab9efa6`; the newer commit is not deployed.
-- The completed deploy created regular app and database archives in the configured root-owned `BACKUP_DIR`. The directory was verified as `root:root` mode `0700`, the archives as `root:root` mode `0600`, and both gzip streams passed integrity checks. Production health, application smoke checks, and recent worker, PHP and web-server logs were clean.
-- Off-host backup coverage was extended to the new `BACKUP_DIR` and verified; the deployed pull script matched the reviewed source hash.
-- A targeted Better-Cal copy, not another whole-host snapshot, preserved the current app archive, database dump and complete legacy archive in the off-host copy. Source and off-host SHA-256 hashes matched, both tar archives were readable, and the SQL dump had its completion marker.
-- Only after that targeted verification, the legacy app-adjacent backup directory was removed as the unprivileged app user. The root-private source remained intact, backup monitoring returned healthy, and no incomplete snapshot or deletion-staging directory remained.
-
-## Phase 7 production evidence — 2026-10-07
-
-- Release 0.9.26 was deployed from `92910bc0cade41ecd7656615d371d2b338249b18`. Production reported 0.9.26 and the SHA-256 hash of `server/src/Http/Request.php` matched the release commit.
-- A small unauthenticated JSON request and a multipart calendar-import request both reached the normal authentication boundary and returned 401. An over-limit chunked JSON request returned 413 with the stable `request_too_large` error code.
-- The deploy preflight, dependency audit, migration check, health endpoint and real-data smoke checks all passed. No database migration was needed.
-
-## Phase 8 production evidence — 2026-10-07
-
-- Release 0.9.27 was deployed from `3a5335815624f531840bc1d05e6c3017b96a6190`; tag `v0.9.27` points to that release commit. Migration 040 applied, production reported 0.9.27, and the SHA-256 hashes of `VERSION` and every Phase 8 runtime file matched the release commit.
-- Deploy preflight passed: server 1,983/0; frontend smoke 653/0 in five time zones; frontend static 347/0; MCP 63/0; deploy-security 19/0; vendor manifest 10/10. Composer reported no known dependency advisories. Production health, migration and real-data smoke checks passed.
-- Twelve simultaneous event admissions at a temporary account limit of three allowed exactly three and refused nine with `event_account_day`; three reservations and three distinct senders were recorded. A failed create transaction left zero reservations, and the active-event ceiling refused a new event with `event_active`.
-- Ten simultaneous model admissions at a temporary hourly limit of two allowed exactly two and refused eight with `llm_account_hour`, despite rotating sender and message identities. A five-message end-to-end ingest exercise made exactly two provider calls/reservations; the remaining three refusals updated one bounded Review item, whose count, latest context and dismissal behavior all matched the contract.
-- A real disposable IMAP exercise reported UIDVALIDITY. An over-limit message was marked Seen without header identification or stored Subject/From. A forced failure after header fetch restored Unseen and removed the checkpoint; the same UID was then redelivered, recorded its sanitized header context and marked Seen. Both messages remained in the mailbox until explicitly deleted after verification.
-- A production retention exercise inserted one deliberately expired receipt and admission record. The normal pruning path removed both, reporting one pruned receipt and zero remaining rows.
-- All disposable users, database rows, mailbox messages and remote/local test helpers were removed after verification. Worker logs contained no post-deploy mail, quota, database or runtime failure. One unrelated geocoder HTTP failure and one unrelated nginx missing-file error were observed and remain covered by their existing operational handling.
-
-## Phase 9 production evidence — 2026-10-07
-
-- Release 0.9.28 was deployed from `ecc1fad901942056584a75b79b3196faabab0cf1`; tag `v0.9.28` points to that release commit and its GitHub release is published. Production reported 0.9.28, and `VERSION` plus every Phase 9 runtime file matched the release commit by SHA-256.
-- Deploy preflight passed: server 2,009/0; frontend smoke 653/0 in five time zones; frontend static 347/0; deploy-security 19/0; vendor manifest 10/10. Composer reported no known dependency advisories. The private application and database backup completed before migration 041 applied.
-- Production health and real-data smoke checks passed with a real-data occurrence window, one single-event record and the full calendar list. Migration recheck reported nothing pending, the worker completed a healthy post-deploy cycle, and the site error log was not modified during the deployment window.
-- The live schema has all eight expected `model_admissions` columns. Effective limits match the documented defaults: Quick Add 4,000 characters; account 120/hour, 500/day and four concurrent; API token 30/hour, 150/day and two concurrent; prompt filters account 40/hour and 200/day, calendar 20/hour and 100/day; Gemini response 1 MiB; admission retention 90 days.
-- The deployed Gemini transport hash and effective response limit match the implementation whose real local cURL boundary test accepted the exact cap and refused one byte over. No live provider was disrupted to manufacture an oversized response. The temporary-low-limit Quick Add and feed-churn exercises remain open.
+Earlier passes recorded successful deployment, migration, runtime-integrity, health, backup-integrity and recovery checks. The off-host backup was verified. Install-specific workload figures, activity, hosting details and operational logs are omitted from this public record. Unchecked and partial items above remain open; this summary does not turn them into completed checks.

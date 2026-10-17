@@ -54,6 +54,10 @@ namespace {
         $gate->ensure();
         $code = $readCode();
         $before = file_get_contents($gate->codePath());
+        $lines = explode("\n", rtrim($before, "\n"));
+        $check($lines[0] === SettingsFile::GUARD_PREFIX && $lines[1] === 'Better-Cal setup code: ' . $code
+            && str_starts_with($lines[3], 'Enter it on the page') && json_decode(end($lines), true)['format'] === 2,
+            'file-manager layout: guard, readable code and instructions, JSON last');
         $start = hrtime(true);
         for ($i = 0; $i < 3; $i++) { $check($gate->verify('wrong') === null, 'wrong code refused'); }
         $check(hrtime(true) - $start < 2_000_000_000, 'wrong codes do not deliberately park workers');
@@ -65,6 +69,8 @@ namespace {
         $check(AccessCode::USED_MESSAGE === 'This code was already used. If that was you and the page lost your session, delete better-cal-code.php in your file manager and reload this page for a new code.', 'exact recovery wording');
         $gate->ensure();
         $check($readCode() === '', 'consumed file no longer advertises a code');
+        $lines = explode("\n", rtrim(file_get_contents($gate->codePath()), "\n"));
+        $check($lines[1] === AccessCode::USED_MESSAGE && json_decode(end($lines), true)['code'] === null, 'used-code instructions also precede JSON');
         unlink($gate->codePath());
         $check(!$gate->hasSession($session), 'file-manager reset invalidates session');
         $gate->ensure();
@@ -80,6 +86,30 @@ namespace {
         $gate->ensure();
         $check($readCode() !== 'AAAA-BBBB-CCCC' && !is_file("$root/.runtime-cache/access-code.php"), 'legacy state replaced, not imported');
         $gate->finish();
+
+        foreach (['broken JSON', 'edited instructions', 'extra line', 'Windows line endings'] as $edit) {
+            $gate->ensure();
+            $oldCode = $readCode();
+            $raw = file_get_contents($gate->codePath());
+            $edited = match ($edit) {
+                'broken JSON' => substr($raw, 0, strrpos(rtrim($raw, "\n"), "\n") + 1) . "{broken\n",
+                'edited instructions' => str_replace('Enter it on the page', 'Edited instructions', $raw),
+                'extra line' => $raw . "A hand-written note\n",
+                'Windows line endings' => str_replace("\n", "\r\n", $raw),
+            };
+            file_put_contents($gate->codePath(), $edited);
+            set_error_handler(static function (int $severity, string $message): bool {
+                if ((error_reporting() & $severity) !== 0) { throw new ErrorException($message, 0, $severity); }
+                return false; // Respect intentionally suppressed missing-file cleanup.
+            });
+            try {
+                $check($gate->verify($oldCode) === null, $edit . ': edited state grants no authority');
+                $gate->ensure();
+                $fresh = $readCode();
+                $check($fresh !== $oldCode && strlen($fresh) === 14 && is_string($gate->verify($fresh)), $edit . ': fresh usable code without errors');
+            } finally { restore_error_handler(); }
+            $gate->finish();
+        }
 
         // Hold the same lock in the parent until every child reaches lock acquisition.
         foreach (['ensure', 'redeem'] as $mode) {

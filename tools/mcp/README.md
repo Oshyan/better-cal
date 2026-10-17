@@ -19,16 +19,7 @@ export BETTERCAL_TOKEN=bc_...
 
 ## Claude Code setup
 
-```sh
-claude mcp add better-cal \
-  --env BETTERCAL_URL="$BETTERCAL_URL" \
-  --env BETTERCAL_TOKEN="$BETTERCAL_TOKEN" \
-  -- node /path/to/better-cal/tools/mcp/server.mjs
-```
-
-This writes to your personal Claude Code config, outside any repository. Passing `"$BETTERCAL_TOKEN"` rather than the literal value keeps the token out of your shell history.
-
-Or as a project-level `.mcp.json`. Copy [`mcp.example.json`](mcp.example.json): it names the variables and contains no secret, because Claude Code expands `${VAR}` from the environment when it starts the server.
+Use a secret-free `.mcp.json`. Copy [`mcp.example.json`](mcp.example.json): it names the variables and contains no secret, because Claude Code expands `${VAR}` from the environment when it starts the server. Edit your private shell startup file in an editor to add the exports above, or use a secret manager. Do not type the token into a shell command or pass it with `--env`: even `"$BETTERCAL_TOKEN"` expands into process arguments. Keep private startup files readable only by your account and keep shell tracing off. The Node server reads the environment directly; the token never needs to be an argument.
 
 ```json
 {

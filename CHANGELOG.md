@@ -6,6 +6,7 @@ Security fixes are tracked privately as GitHub security advisories until they sh
 
 ## Unreleased
 
+- **Private storage works under account-group-writable home and app folders.** Exports and backups no longer reject these normal hosting layouts. World-writable parents without the sticky bit remain refused.
 - **Exports stay complete without holding the whole calendar in memory.** A single calendar streams directly; Export everything builds its ZIP in private storage, then downloads it. Only one export runs at a time, with a clear busy message. Temporary files are removed after sending or failure, and abandoned files on the next export. There is no event cap.
 - **Backups refuse unsafe storage and missing encryption settings.** Linked or foreign-owned backup paths are refused before they can be changed. A missing session secret blocks new backups and updates; Settings, System shows the problem immediately and supplies a settings line to paste. Older plain backups remain readable.
 - **A restore cannot race the worker.** Browser restores and command-line rollback take the worker lock before changing the database. A stopped restore keeps the site closed and offers **Run the restore again**.

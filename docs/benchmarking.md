@@ -46,11 +46,11 @@ A design comparison rendered in a viewer at a different zoom than the app made a
 
 ### Comparing two apps means comparing them in one browser
 
-Numbers from the in-app Browser pane are not comparable to numbers from Chrome: different profile, extensions, cache state, window size, and whatever else is running. When benchmarking against another product, measure **both** in the same browser, back to back, and say what the dataset difference was , chip counts rarely match, and that usually matters more than the timings.
+Numbers from the in-app Browser pane are not comparable to numbers from Chrome: different profile, extensions, cache state, window size, and whatever else is running. When benchmarking against another product, measure **both** in the same browser, back to back. Describe any differences in the test data, since the number of visible events can matter more than the timings.
 
 ### Sub-linear scaling means a fixed cost is hiding
 
-The events query looked "slow for large windows". It was not: 1 month cost 376ms and 12 months cost 582ms. Eleven times the work for 1.5x the time means almost all of it was fixed overhead , in this case sabre's `fastForward` walking a recurring series from its DTSTART to the window, once per master, per request.
+If a much wider event window takes only slightly longer to query, look for work that happens once per request rather than once per returned event. For example, sabre's `fastForward` may walk a recurring series from its DTSTART to the window once per master, per request. Compare several window sizes using invented test data before choosing what to optimise.
 
 **Always measure at least three window sizes.** The shape of the curve tells you where to look far faster than a profiler does.
 

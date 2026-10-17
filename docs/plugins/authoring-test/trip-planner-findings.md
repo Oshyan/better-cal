@@ -1,4 +1,4 @@
-# Authoring friction log , `trip-planner` (agent B)
+# Authoring friction while building `trip-planner` (agent B)
 
 Written as I go. Timestamps are local to the user's zone.
 
@@ -8,7 +8,7 @@ Written as I go. Timestamps are local to the user's zone.
 
 ### The per-run HTTP request budget is a number I am never told
 **Needed:** To decide my fetch strategy. I want 1 climate-normals request + 1 forecast request + possibly a geocode. I need to know whether that fits, and what happens when it does not.
-**Docs said:** `http(): HttpClient` , "...caps at 5 MB / 20 s / 3 redirects, and enforces a per-run request budget." Every other cap in that sentence has a number. This one does not.
+**Docs said:** The `http(): HttpClient` description promises "...caps at 5 MB / 20 s / 3 redirects, and enforces a per-run request budget." Every other cap in that sentence has a number. This one does not.
 **Reality:** Unknown until I trip it. I also do not know the failure mode - exception, `null`, or a silently-empty body - so I cannot write the right `catch`.
 **Cost:** A guess at design time. Designing defensively (batch everything into as few requests as possible) and will probe empirically.
 **Fix:** State the number and the failure mode: "...and a budget of N requests per run; the (N+1)th throws X." Same for the 20 s and 5 MB caps - what does exceeding them raise?
@@ -42,7 +42,7 @@ Written as I go. Timestamps are local to the user's zone.
 
 ### SEVERE: `validateSettings()` receives only the keys being changed, not the effective settings
 **Needed:** Cross-field validation ("shortest trip must not exceed longest trip") and a required-field rule ("you need a destination, or a sentence describing one").
-**Docs said:** "`public function validateSettings(array $values): array` , Return {key: error}. Empty = accept. Runs synchronously on save." Nothing about what `$values` contains.
+**Docs said:** The description of `public function validateSettings(array $values): array` says "Return {key: error}. Empty = accept. Runs synchronously on save." It says nothing about what `$values` contains.
 **Reality:** `$values` is **only the patch body**. Stored settings are not merged in first. Reproduction, against a plugin whose stored `idea` is a non-empty string:
 ```
 PATCH /plugins/trip-planner/settings  {"minDays":30}

@@ -48,3 +48,28 @@ echo 'PASS: privileged conversion refuses an app-controlled tree without changin
 runuser -u sample-prod -- php -r 'require "/code/server/src/bootstrap.php"; BetterCal\Infra\DbBackup::encryptFile($argv[1], BetterCal\Infra\BackupCipher::keyFrom("synthetic"));' "${prod}/backups/db-old.sql.gz"
 test -f "${prod}/backups/db-old.bcbackup"
 echo 'PASS: ordinary storage-owner conversion still succeeds'
+# Hosting account groups may write their own home and application folders.
+layout="${fixture}/home"
+mkdir -p "${layout}/site"
+chown -R sample-prod:sample-prod "${layout}"
+storage_probe='require "/code/server/src/bootstrap.php"; $w = new BetterCal\Infra\ExportWorkspace($argv[1]); $w->file("ics"); $w->close(); (new BetterCal\Infra\Updater($argv[1]))->ensureBackupDir();'
+for modes in '770 755' '755 775' '770 775'; do
+  read -r home_mode app_mode <<< "${modes}"
+  chmod "${home_mode}" "${layout}"
+  chmod "${app_mode}" "${layout}/site"
+  runuser -u sample-prod -- php -r "${storage_probe}" "${layout}/site"
+  runuser -u sample-prod -- php -d disable_functions=posix_geteuid,posix_getegid -r "${storage_probe}" "${layout}/site"
+done
+echo 'PASS: account-group home and app folders support exports and backups with or without POSIX'
+chgrp sample-shared "${layout}"
+refused runuser -u sample-prod -- php -r "${storage_probe}" "${layout}/site"
+echo 'PASS: a different writable parent group is refused with POSIX'
+chgrp sample-prod "${layout}"
+chmod 777 "${layout}"
+refused runuser -u sample-prod -- php -r "${storage_probe}" "${layout}/site"
+refused runuser -u sample-prod -- php -d disable_functions=posix_geteuid,posix_getegid -r "${storage_probe}" "${layout}/site"
+echo 'PASS: world-writable non-sticky parent is refused even without POSIX'
+chmod 1777 "${layout}"
+runuser -u sample-prod -- php -r "${storage_probe}" "${layout}/site"
+refused php -r "${storage_probe}" "${layout}/site"
+echo 'PASS: sticky parent permits owner access but does not let root enter a foreign-owned tree'

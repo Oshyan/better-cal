@@ -12,6 +12,29 @@ declare(strict_types=1);
         try { $fn(); return false; } catch (RuntimeException) { return true; }
     };
     try {
+        // Ordinary account-group hosting layouts must work at the shared
+        // export/backup boundary, not just in a mode-0755 container tree.
+        mkdir($root . '/home', 0700);
+        mkdir($root . '/home/site', 0700);
+        if (function_exists('posix_getegid')) {
+            chgrp($root . '/home', posix_getegid());
+            chgrp($root . '/home/site', posix_getegid());
+        }
+        $layoutProbe = 'require $argv[1]; $w = new BetterCal\\Infra\\ExportWorkspace($argv[2]); $p = $w->file("ics"); if ((fileperms($p) & 0777) !== 0600) { exit(2); } $w->close(); $u = new BetterCal\\Infra\\Updater($argv[2]); $u->ensureBackupDir(); echo "ready";';
+        foreach ([[0770, 0755], [0755, 0775], [0770, 0775]] as [$homeMode, $appMode]) {
+            chmod($root . '/home', $homeMode);
+            chmod($root . '/home/site', $appMode);
+            foreach (['', 'posix_geteuid,posix_getegid'] as $disabled) {
+                $proc = proc_open([PHP_BINARY, '-d', 'disable_functions=' . $disabled, '-r', $layoutProbe, dirname(__DIR__) . '/src/bootstrap.php', $root . '/home/site'], [1 => ['pipe','w'], 2 => ['pipe','w']], $pipes);
+                $out = stream_get_contents($pipes[1]); $errors = stream_get_contents($pipes[2]); fclose($pipes[1]); fclose($pipes[2]);
+                check(sprintf('private storage: home %o / app %o works %s', $homeMode, $appMode, $disabled === '' ? 'with POSIX' : 'without POSIX'), proc_close($proc) === 0 && $out === 'ready', $errors);
+            }
+        }
+        chmod($root . '/home', 0777);
+        check('private storage: world-writable non-sticky parent stays refused', $refuses(fn() => BetterCal\Infra\PrivatePath::check($root . '/home/site', true)));
+        chmod($root . '/home', 01777);
+        check('private storage: sticky parent supports an owned child', !$refuses(fn() => BetterCal\Infra\PrivatePath::check($root . '/home/site', true)));
+        chmod($root . '/home', 0700);
         $proc = proc_open([PHP_BINARY, '-d', 'memory_limit=32M', __DIR__ . '/export-memory.php'], [1 => ['pipe','w'], 2 => ['pipe','w']], $pipes);
         $out = stream_get_contents($pipes[1]); $errors = stream_get_contents($pipes[2]); fclose($pipes[1]); fclose($pipes[2]);
         check('export memory: a complete large synthetic calendar fits a small worker', proc_close($proc) === 0 && str_contains($out, 'Complete synthetic export'), $errors);

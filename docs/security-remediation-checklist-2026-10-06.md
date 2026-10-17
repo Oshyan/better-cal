@@ -1,4 +1,4 @@
-# Security remediation checklist , 2026-10-06 scan
+# Security remediation checklist for the 2026-10-06 scan
 
 This is the working verification ledger for remediation selected from the 2026-10-06 repository-wide security scan. A checked source item means the fix and its automated regression coverage are present in Git; it does **not** mean the behavior has been exercised against the deployed application or a live provider. Keep those two evidence layers separate.
 
@@ -18,7 +18,7 @@ The checklist began with the high finding and the six medium findings selected f
 
 Round 1 (H1) and Round 2 (M1/M5) shipped to `main` in `f58c682`. Phase 3 (M3/M4) shipped in `8a3b7d3`. Phase 4 (M6) shipped in `d750f7d`. Its deployed exercises remain deliberately open.
 
-## Phase 5 candidate , push privacy and credential boundaries
+## Phase 5 candidate: push privacy and credential boundaries
 
 This phase is implemented and verified for release 0.9.23. It requires no database migration. Live behavior remains open until the practical check below.
 
@@ -28,7 +28,7 @@ This phase is implemented and verified for release 0.9.23. It requires no databa
 | F37 | Push-device inventory/removal require a browser session; token subscribe/unsubscribe is restricted to the exact creating token | Passed | [ ] |
 | F71 | System health returns an endpoint hash, never the raw push-service capability | Passed | [ ] |
 
-## Phase 6 , deployment privilege boundaries
+## Phase 6: deployment privilege boundaries
 
 This phase shipped in release 0.9.25. It preserves the one-command production deploy and makes no application or database change. The first live backup and its off-host coverage were verified before the legacy backup directory was removed.
 
@@ -37,7 +37,7 @@ This phase shipped in release 0.9.25. It preserves the one-command production de
 | F16 | Deploys do not mutate application, `.env`, development or document-root paths with root authority | Passed | [x] |
 | F26 | App-controlled reads run as the app user; MySQL backups are serialized and published with mode `0600` in a validated root-owned directory | Passed | [x] |
 
-## Phase 7 , JSON request admission budget
+## Phase 7: JSON request admission budget
 
 This phase shipped in release 0.9.26 and is verified in production. It requires no database migration.
 
@@ -45,7 +45,7 @@ This phase shipped in release 0.9.26 and is verified in production. It requires 
 |---|---|---:|---:|
 | F41 | JSON bodies are bounded while they are read, before routing, authentication or decoding; multipart calendar imports retain their separate allowance | Passed | [x] |
 
-## Phase 8 , public mail admission and paid-model budgets
+## Phase 8: public mail admission and paid-model budgets
 
 This phase shipped in release 0.9.27 and has been exercised against production IMAP and MySQL. It adds migration 040.
 
@@ -56,7 +56,7 @@ This phase shipped in release 0.9.27 and has been exercised against production I
 | F35 | Mail-only Gemini attempts reserve persistent hourly/daily capacity before dispatch; deterministic tiers remain independent | Passed | [x] |
 | Related low finding (retention portion) | Mail receipts and admission accounting are pruned after a bounded replay/diagnostic window | Passed | [x] |
 
-## Phase 9 , model admission and response bounds
+## Phase 9: model admission and response bounds
 
 This phase is implemented and verified for release 0.9.28. It adds migration
 041. Live behavior remains open until the practical checks below.
@@ -67,7 +67,7 @@ This phase is implemented and verified for release 0.9.28. It adds migration
 | F52 | Quick Add model assists, including previews, reserve account/token/concurrency capacity before dispatch; deterministic parsing remains available | Passed | [ ] |
 | F73 (Gemini response portion) | Every Gemini caller shares an authoritative streamed response-byte cap | Passed | [x] |
 
-## Phase 10 , Google pagination and worker bounds
+## Phase 10: Google pagination and worker bounds
 
 This phase was released and deployed in 0.9.29. It has no database migration. The ordinary production application smoke passed, but the Google-specific paths have not yet been exercised against the live Google API.
 
@@ -76,7 +76,7 @@ This phase was released and deployed in 0.9.29. It has no database migration. Th
 | F1 | One Google event poll, including a stale-token retry, shares cumulative event, memory, response-byte, page and elapsed-time bounds; a controlled refusal keeps the prior snapshot and sync token | Passed | [ ] |
 | F62 | Calendar-list pagination uses one HTTP client and one cumulative item, byte, page, time and token-progress budget | Passed | [ ] |
 
-## Phase 11 , emailed invitation trust and pending revision order
+## Phase 11: emailed invitation trust and pending revision order
 
 This phase shipped in release 0.9.30. It requires no database migration.
 First-time emailed invitations now require an owner decision before event
@@ -88,7 +88,7 @@ invitation exercise remains open below.
 | F10 | An unknown-UID iMIP REQUEST becomes a Review candidate under rolling admission and a 100-open-decision hard cap; only **Add to calendar** creates the event and establishes the organizer anchor | Passed | [ ] |
 | F61 | Trusted existing-invitation revisions are ordered under an account lock; legacy-untrusted claims remain parallel until the owner chooses one; decision rechecks/mutation/closure are atomic | Passed | [ ] |
 
-## Phase 12 , proposal decision integrity
+## Phase 12: proposal decision integrity
 
 This phase shipped in release 0.9.31. It requires no database migration.
 Proposal decisions are bound to the exact reviewed revision and resolved local
@@ -100,7 +100,7 @@ destinations; acceptance and grouped undo are all-or-nothing.
 | F6 | Proposal destinations are disclosed and restricted to owner-local calendars; external and plugin-managed targets fail closed | Passed | [ ] |
 | F56 | Accept and Dismiss require the token for the exact rendered revision; changed proposals return `proposal_changed` | Passed | [ ] |
 
-## Phase 13 , bearer-token authority boundaries
+## Phase 13: bearer-token authority boundaries
 
 This phase shipped in release 0.9.32. It requires no database migration.
 
@@ -111,7 +111,7 @@ This phase shipped in release 0.9.32. It requires no database migration.
 | F53 | A bearer token can delete only outbound feeds created by that exact token; inaccessible ids use the ordinary not-found response | Passed | [ ] |
 | F31 residual | Creating an API key requires recent password confirmation, rechecked under the durable write transaction | Passed | [ ] |
 
-## Phase 14 , Google move and mutation integrity
+## Phase 14: Google move and mutation integrity
 
 This phase ships in release 0.9.33 and adds migration 042. Its first rollout
 must briefly quiesce request and worker traffic; after the ordinary backup, the
@@ -126,7 +126,7 @@ added step.
 | F36 | One active move, one leased executor and durable remote calendar/event recovery markers are enforced across browser/worker overlap and response loss | Passed | [ ] |
 | F36 rollout boundary | Active unmarked moves are forbidden by the database; ambiguous pre-upgrade work is stopped, and the first migration requires verified quiescence | Passed | [ ] |
 
-## Phase 15 , bounded duplicate detection
+## Phase 15: bounded duplicate detection
 
 This phase is included in release 0.9.36 and requires no database migration. Duplicate
 discovery now runs as bounded, resumable worker slices instead of materializing

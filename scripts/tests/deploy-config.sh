@@ -81,6 +81,18 @@ for script in deploy.sh deploy-dev.sh push-settings.sh; do
   check test "$(printf '%s' "${output}" | grep -c 'unsupported key BASH_ENV')" = 1
   check test "$(printf '%s' "${output}" | grep -c 'SHOULD_NOT_EXECUTE\|UNEXPECTED_SSH' || true)" = 0
 done
+# Warn about an ignored one-off clone credential without logging either secret.
+fixture
+for configured in no yes; do
+  expected_warning=1
+  if [ "${configured}" = yes ]; then
+    printf 'MYSQL_ROOT_PASSWORD=synthetic-file-secret\n' >>"${config}"
+    expected_warning=0
+  fi
+  output="$(MYSQL_ROOT_PASSWORD=synthetic-environment-secret bash "${TEST_DIR}/scripts/deploy-dev.sh" 2>&1 || true)"
+  check test "$(printf '%s' "${output}" | grep -c 'MYSQL_ROOT_PASSWORD from the environment is ignored' || true)" = "${expected_warning}"
+  check test "$(printf '%s' "${output}" | grep -c 'synthetic-.*-secret\|UNEXPECTED_SSH' || true)" = 0
+done
 unset -f git ssh
 fixture
 output="$(SKIP_BACKUP=1 bash "${TEST_DIR}/scripts/deploy.sh" </dev/null 2>&1 || true)"

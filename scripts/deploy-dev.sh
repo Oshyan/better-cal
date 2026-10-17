@@ -6,7 +6,7 @@ set -euo pipefail
 # its own Unix identity, PHP-FPM service, database identity, database, .env and
 # login password. Explicit shared mode retains the lower-friction legacy host
 # model and prints its risk on every run. For the MySQL root password the
-# CLONE_DB step uses MYSQL_ROOT_PASSWORD when set; otherwise it falls back to
+# CLONE_DB step uses MYSQL_ROOT_PASSWORD from deploy.env; otherwise it falls back to
 # CloudPanel's clpctl, one supported host option.
 #
 # Keep the dev port closed at your firewall by default, so the URL above times
@@ -48,7 +48,12 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${ROOT_DIR}/scripts/deploy-config.sh"
+mysql_root_password_in_environment="${MYSQL_ROOT_PASSWORD+x}"
 deploy_load_config "${ROOT_DIR}/scripts/deploy.env"
+if [ "${mysql_root_password_in_environment}" = x ] && [ "${MYSQL_ROOT_PASSWORD+x}" != x ]; then
+  echo 'WARNING: MYSQL_ROOT_PASSWORD from the environment is ignored; set it in scripts/deploy.env to avoid the control-panel credential fallback when cloning.' >&2
+fi
+unset mysql_root_password_in_environment
 deploy_check_flags
 for v in REMOTE APP_USER APP_DIR HEALTH_URL DB_USER PHP_FPM_SERVICE; do
   if [ -z "${!v:-}" ]; then

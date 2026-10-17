@@ -120,7 +120,7 @@ function update(array $cfg, Updater $updater, bool $checkOnly, bool $yes): int
     Cli::say('  What changed: ' . $release['releaseUrl']);
     $operators = Updater::operatorsLine($release['notes']);
     if ($operators !== null) {
-        Cli::say('  ' . $operators);
+        Cli::say('  Release notes (unsigned): ' . $operators);
     }
     if (!in_array($to, nextVersions($current), true)) {
         Cli::say('  If this skips versions, that is fine; read the Operators lines of the ones in between too:');

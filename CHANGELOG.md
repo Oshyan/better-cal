@@ -8,6 +8,12 @@ Security fixes are tracked privately as GitHub security advisories until they sh
 
 - **A place search service that came back stops showing as failing.** A service behind another one (Photon behind LocationIQ, say) is only asked when the one in front fails, so after an outage it could stay "failing" on Settings, System for weeks after it recovered. The worker now asks a failing service once more every two hours.
 
+- **Setup codes really work once.** Reusing a code no longer replaces the owner's session, and the page explains how to recover a lost session. Code and session state are written together; wrong codes no longer hold a PHP worker for a second. Old in-progress codes start afresh. Hosts without file locking remain usable, with the concurrency limitation recorded in the error log.
+- **Release verification checks intent and library source.** Before either signer runs, the downloaded manifest must match the local one, libraries must reproduce from their locked Git commits, and the ZIP is checked and compared without extraction. The hardware-key signer uses a prepared, hash-locked environment with pinned uv-managed Python.
+- **Unsigned release notes cannot control updater terminal output.** Notes remain editable and are labelled unsigned. The install guide explains first-use trust and optional local verification before an upload.
+
+Maintainers: prepare the signing environment once with `bash scripts/release-signer.sh prepare`; Python or signer dependency updates need an explicit environment refresh. Ordinary Composer lockfile updates need no checksum list, but library export differences stop preparation for review.
+
 Maintainers: deployment and settings-push configuration now comes only from `scripts/deploy.env`, ignoring environment overrides; run `chmod 600 scripts/deploy.env`. One-off flags remain in the command environment; `SKIP_BACKUP=1` now requires typing `skip backup` at an interactive terminal and is refused for unattended deploys.
 
 ## 0.9.86 (2026-10-16)

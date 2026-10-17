@@ -9297,6 +9297,10 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
 
     checkEq('update: the Operators line is found in release notes', 'Operators: no migration.',
         BetterCal\Infra\Updater::operatorsLine("- A fix.\n\nOperators: no migration.\n\n---\n"));
+    checkEq('update: editable notes cannot control the terminal', 'Operators: café [2Jtext',
+        BetterCal\Infra\Updater::operatorsLine("Operators: café \x1b[2J\x08\u{202E}text\x7f\u{009D}"));
+    checkEq('update: notes preserve ordinary Unicode letters', 'Operators: Å, ą, х.',
+        BetterCal\Infra\Updater::operatorsLine("Operators: Å, ą, х.\nNext line"));
     checkEq('update: a release\'s PHP floor from composer.json', '8.4.1', BetterCal\Infra\Updater::phpRequirement('{"require":{"php":">=8.4.1"}}'));
 
     BetterCal\Support\Maintenance::on($tmp, 'test');
@@ -9557,6 +9561,8 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
 // ---------------------------------------------------------------------------
 // The access code for setup in the browser and the database update page:
 // only someone who can read the app folder gets past the first screen.
+[$accessStatus, $accessOutput] = BetterCal\Infra\Updater::capture([PHP_BINARY, __DIR__ . '/access-code-security.php']);
+check('access code: process/security regression suite', $accessStatus === 0, $accessOutput);
 {
     $root = sys_get_temp_dir() . '/bc-access-' . bin2hex(random_bytes(3));
     mkdir($root);
@@ -9587,15 +9593,15 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
     check('access code: wrong tries never replace it, so a stranger can\'t keep the owner out', ($m3[1] ?? '') === ($m2[1] ?? ''));
     $session2 = $ac2->verify($m2[1]);
     check('access code: and the right one still works after them', is_string($session2));
-    // The code's hour runs out while its session is in use: a new code, the same session.
-    $statePath = "$root/.runtime-cache/access-code.php";
+    // The code's hour runs out while its session is in use: no replacement code.
+    $statePath = $ac2->codePath();
     $raw = (string) file_get_contents($statePath);
-    $st = json_decode(substr($raw, strpos($raw, "\n") + 1), true);
+    $st = json_decode(explode("\n", $raw)[1], true);
     $st['expires'] = time() - 1;
     file_put_contents($statePath, BetterCal\Support\SettingsFile::GUARD_PREFIX . "\n" . json_encode($st));
     $ac2->ensure();
     preg_match('/code: ([A-Z0-9-]+)/', (string) file_get_contents($ac2->codePath()), $m4);
-    check('access code: an expired code is replaced', ($m4[1] ?? '') !== ($m2[1] ?? ''));
+    check('access code: no new code while its session is valid', !isset($m4[1]));
     check('access code: but the session it started lasts its own hour', $ac2->hasSession($session2));
     $ac2->finish();
 
@@ -9603,6 +9609,7 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
     file_put_contents("$root/.env", "A=1\n");
     check('setup: gone for good once .env exists', !BetterCal\Http\InstallPages::needsSetup($root));
     unlink("$root/.env");
+    unlink("$root/.runtime-cache/access-code-lock.php");
     @rmdir("$root/.runtime-cache");
     @rmdir($root);
 }
@@ -9754,8 +9761,9 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
     $ac = new BetterCal\Http\AccessCode($root, 'setup');
     $ac->ensure();
     check('access code: its file is guarded, and named .php', str_ends_with($ac->codePath(), '.php') && str_starts_with((string) file_get_contents($ac->codePath()), $SF::GUARD_PREFIX));
-    check('access code: so is its state', str_starts_with((string) @file_get_contents("$root/.runtime-cache/access-code.php"), $SF::GUARD_PREFIX));
+    check('access code: state and display are one guarded file', json_decode(explode("\n", (string) file_get_contents($ac->codePath()))[1], true)['format'] === 2);
     $ac->finish();
+    unlink("$root/.runtime-cache/access-code-lock.php");
 
     // Encrypted backups.
     $BC = BetterCal\Infra\BackupCipher::class;

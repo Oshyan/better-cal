@@ -39,7 +39,7 @@ final class InstallPages
 
     public static function setup(string $appRoot): never
     {
-        $code = new AccessCode($appRoot, 'setup');
+        $code = new AccessCode($appRoot, 'setup', static fn(): bool => self::needsSetup($appRoot));
         if (!$code->writable()) {
             self::page('Set up Better-Cal', '<p>PHP can\'t write to the Better-Cal folder, so setup has nowhere to save its settings.</p>'
                 . '<p>Make the folder writable by the account PHP runs as (on most shared hosting it already is), or install from a command line instead: <code>php server/bin/install.php</code>. <a href="https://github.com/Oshyan/better-cal/blob/main/docs/install.md">The install guide</a> covers both.</p>', 503);
@@ -103,7 +103,7 @@ final class InstallPages
                 }
             }
             if ($errors === [] && $dsn !== null) {
-                self::install($appRoot, $code, $url, $dsn, $v['db_user'], $dbPass, $v['email'], $pass);
+                self::install($appRoot, $code, $token, $url, $dsn, $v['db_user'], $dbPass, $v['email'], $pass);
             }
         }
 
@@ -124,7 +124,7 @@ final class InstallPages
             . '<button type="submit">Set up Better-Cal</button></form>');
     }
 
-    private static function install(string $appRoot, AccessCode $code, string $url, string $dsn, string $dbUser, string $dbPass, string $email, string $pass): never
+    private static function install(string $appRoot, AccessCode $code, string $token, string $url, string $dsn, string $dbUser, string $dbPass, string $email, string $pass): never
     {
         @set_time_limit(300);
         try {
@@ -161,7 +161,7 @@ final class InstallPages
             }
             self::page('Set up Better-Cal', '<div class="err">Setup stopped: ' . self::e($e->getMessage()) . '</div><p>Nothing that would get in the way of trying again was saved. <a href="">Back to setup</a></p>', 500);
         }
-        $code->finish();
+        self::finishCode($code, $token);
         self::clearCookie();
         $php = Setup::workerPhp($appRoot);
         $command = Setup::cronCommand($appRoot, $php['php']);
@@ -187,9 +187,7 @@ final class InstallPages
     public static function needsDatabaseUpdate(array $cfg): bool
     {
         $dir = $cfg['app_root'] . '/server/migrations';
-        $files = array_map('basename', array_merge(glob($dir . '/*.sql') ?: [], glob($dir . '/*.php') ?: []));
-        sort($files, SORT_STRING);
-        $sig = hash('sha256', implode("\n", $files));
+        $sig = self::schemaSignature($dir);
         $marker = $cfg['app_root'] . '/.runtime-cache/schema-current';
         if (@file_get_contents($marker) === $sig) {
             return false;
@@ -211,6 +209,13 @@ final class InstallPages
             return false;
         }
         return true;
+    }
+
+    private static function schemaSignature(string $dir): string
+    {
+        $files = array_map('basename', array_merge(glob($dir . '/*.sql') ?: [], glob($dir . '/*.php') ?: []));
+        sort($files, SORT_STRING);
+        return hash('sha256', implode("\n", $files));
     }
 
     /**
@@ -302,7 +307,8 @@ final class InstallPages
             return;
         }
         $appRoot = $cfg['app_root'];
-        $code = new AccessCode($appRoot, 'update');
+        $schema = self::schemaSignature($appRoot . '/server/migrations');
+        $code = new AccessCode($appRoot, 'update', static fn(): bool => @file_get_contents($appRoot . '/.runtime-cache/schema-current') !== $schema);
         if (!$code->writable()) {
             self::page('Database update needed', '<p>Better-Cal\'s files were updated and its database needs updating too, but PHP can\'t write to the Better-Cal folder to do it from here.</p><p>From a command line: <code>php server/bin/migrate.php</code>.</p>', 503);
         }
@@ -358,9 +364,9 @@ final class InstallPages
             } catch (\Throwable $e) {
                 error_log('Better-Cal: converting private files after the database update: ' . $e->getMessage());
             }
-            $code->finish();
-            self::clearCookie();
             self::needsDatabaseUpdate($cfg);
+            self::finishCode($code, $token);
+            self::clearCookie();
             self::page('Database updated', self::privateFilesNotice($cfg) . '<p>Better-Cal ' . self::e((string) $cfg['version']) . ' is ready: ' . $ran . ' database change' . ($ran === 1 ? '' : 's') . ' applied.</p>'
                 . '<p class="hint">A backup from just before is in <code>' . self::e($backup) . '</code>; delete it once you\'re happy.</p>'
                 . '<p><a class="btn" href="/">Open Better-Cal</a></p>');
@@ -443,28 +449,41 @@ final class InstallPages
      */
     private static function gate(AccessCode $code, string $title, string $intro): string
     {
-        $cookie = $_COOKIE[AccessCode::COOKIE] ?? null;
-        if (is_string($cookie) && $code->hasSession($cookie)) {
-            return $cookie;
-        }
-        $msg = '';
-        if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && ($_POST['step'] ?? '') === 'code') {
-            $token = $code->verify((string) ($_POST['code'] ?? ''));
-            if ($token !== null) {
-                setcookie(AccessCode::COOKIE, $token, ['expires' => time() + 3600, 'path' => '/', 'secure' => self::https(), 'httponly' => true, 'samesite' => 'Strict']);
-                header('Location: ' . (string) parse_url((string) ($_SERVER['REQUEST_URI'] ?? '/'), PHP_URL_PATH), true, 303);
+        try {
+            $cookie = $_COOKIE[AccessCode::COOKIE] ?? null;
+            if (is_string($cookie) && $code->hasSession($cookie)) {
+                return $cookie;
+            }
+            $msg = '';
+            if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && ($_POST['step'] ?? '') === 'code') {
+                $token = $code->verify((string) ($_POST['code'] ?? ''));
+                if ($token !== null) {
+                    setcookie(AccessCode::COOKIE, $token, ['expires' => time() + 3600, 'path' => '/', 'secure' => self::https(), 'httponly' => true, 'samesite' => 'Strict']);
+                    header('Location: ' . (string) parse_url((string) ($_SERVER['REQUEST_URI'] ?? '/'), PHP_URL_PATH), true, 303);
+                    exit;
+                }
+                $msg = '<div class="err">' . ($code->wasUsed() ? self::e(AccessCode::USED_MESSAGE) : 'That code didn\'t match. Check it against the file and try again.') . '</div>';
+            }
+            if (!$code->ensure()) {
+                header('Location: /', true, 303);
                 exit;
             }
-            $msg = '<div class="err">That code didn\'t match. Check it against the file and try again.</div>';
-        }
-        try {
-            $code->ensure();
         } catch (\RuntimeException) {
             self::page('Better-Cal can\'t write its files', '<p>Better-Cal couldn\'t write the code file into its folder. Check that the account PHP runs as can write there and that the disk isn\'t full, then reload this page.</p>', 503);
         }
         self::page($title, "<p>$intro</p>" . self::httpWarning() . "$msg<form method=\"post\" autocomplete=\"off\"><input type=\"hidden\" name=\"step\" value=\"code\">"
             . '<label>Code<input name="code" placeholder="XXXX-XXXX-XXXX" autocapitalize="characters" spellcheck="false" required></label>'
             . '<button type="submit">Continue</button></form>', 403);
+    }
+
+    private static function finishCode(AccessCode $code, string $token): void
+    {
+        try {
+            $code->finish($token);
+        } catch (\RuntimeException) {
+            // The completed operation is no longer eligible for a code or session.
+            error_log('Better-Cal: could not remove the completed access-code file.');
+        }
     }
 
     private static function checkForm(string $token): void

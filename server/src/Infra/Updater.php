@@ -357,9 +357,10 @@ final class Updater
     /** The "Operators:" line of a release's notes: what an update needs. */
     public static function operatorsLine(string $notes): ?string
     {
-        foreach (preg_split('/\R/', $notes) ?: [] as $line) {
+        foreach (preg_split('/\R/u', $notes) ?: [] as $line) {
             if (str_starts_with(trim($line), 'Operators:')) {
-                return trim($line);
+                // Editable notes are not signed. Keep prose, never terminal or bidi controls.
+                return trim((string) preg_replace('/[\x00-\x1F\x7F]|[\x{0080}-\x{009F}\x{061C}\x{200E}\x{200F}\x{202A}-\x{202E}\x{2066}-\x{2069}]/u', '', $line));
             }
         }
         return null;
@@ -403,20 +404,41 @@ final class Updater
         }
         $root = self::zipRoot($zip) ?? self::ZIP_ROOT;
         $total = 0;
+        $paths = [];
         for ($i = 0; $i < $zip->numFiles; $i++) {
             $stat = $zip->statIndex($i);
             $name = is_array($stat) ? (string) $stat['name'] : '';
             if ($name === '' || !str_starts_with($name, $root) || str_starts_with($name, '/') || str_contains($name, '\\') || str_contains($name, "\0")
-                || preg_match('~^[A-Za-z]:~', $name) === 1 || in_array('..', explode('/', $name), true)) {
-                throw new \RuntimeException("The zip holds an unexpected path: $name");
+                || preg_match('~^[A-Za-z]:|[\x00-\x1F\x7F]~', $name) === 1
+                || str_contains($name, '//') || array_intersect(['.', '..', ''], explode('/', rtrim($name, '/'))) !== []) {
+                throw new \RuntimeException('The zip holds an unexpected path');
             }
-            if ($zip->getExternalAttributesIndex($i, $opsys, $attr) && $opsys === \ZipArchive::OPSYS_UNIX
-                && (($attr >> 16) & 0170000) === 0120000) {
-                throw new \RuntimeException("The zip holds a symbolic link: $name");
+            $directory = str_ends_with($name, '/');
+            $path = rtrim($name, '/');
+            if (array_key_exists($path, $paths)) {
+                throw new \RuntimeException('The zip repeats a path');
+            }
+            $paths[$path] = $directory;
+            if ($zip->getExternalAttributesIndex($i, $opsys, $attr) && $opsys === \ZipArchive::OPSYS_UNIX) {
+                $type = ($attr >> 16) & 0170000;
+                if (!in_array($type, [0, $directory ? 0040000 : 0100000], true)) {
+                    throw new \RuntimeException('The zip holds a symbolic link or special file');
+                }
+            }
+            if (($stat['size'] ?? -1) < 0 || ($directory && $stat['size'] !== 0)
+                || ($stat['encryption_method'] ?? 0) !== 0) {
+                throw new \RuntimeException('The zip holds an unsupported entry');
             }
             $total += (int) ($stat['size'] ?? 0);
             if ($total > self::MAX_UNPACKED_BYTES) {
                 throw new \RuntimeException('The zip unpacks to more than expected');
+            }
+        }
+        foreach ($paths as $path => $_) {
+            for ($parent = dirname($path); $parent !== '.'; $parent = dirname($parent)) {
+                if (isset($paths[$parent]) && !$paths[$parent]) {
+                    throw new \RuntimeException('The zip uses a file as a directory');
+                }
             }
         }
         if ($zip->locateName($root . 'VERSION') === false || $zip->locateName($root . 'server/vendor/autoload.php') === false) {

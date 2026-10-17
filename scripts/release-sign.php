@@ -19,7 +19,9 @@ declare(strict_types=1);
 // Keep a copy in a password manager: without it, and without the hardware
 // key, no further release can be signed.
 
-require dirname(__DIR__) . '/server/src/bootstrap.php';
+// Verification/signing must not execute Composer packages or load site settings.
+if (PHP_SAPI !== 'cli') { http_response_code(404); exit; }
+require dirname(__DIR__) . '/server/src/Support/ReleaseSignature.php';
 
 use BetterCal\Support\ReleaseSignature;
 

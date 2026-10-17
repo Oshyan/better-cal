@@ -42,7 +42,7 @@ BETTERCAL_BASE_URL=https://cal.example.com
 
 ### 2. Every other secret-bearing file is guarded too
 
-- The access code is `better-cal-code.php` (guard line, then the human-readable code); its state is `.runtime-cache/access-code.php`. The old `.txt` and `.json` names are removed.
+- The access code and its session state share `better-cal-code.php`: a guard line, one JSON state line, then readable instructions. The first successful entry consumes the code and starts one session. A separate `.runtime-cache/access-code-lock.php` is never replaced or removed during the flow. Old split-file state is discarded on the next visit. Deleting the code file resets access if the browser loses its session. Unsupported locking is logged, not shown on the page; atomic writes still work, but concurrent requests may race on hosts that cannot enforce locks.
 - The update record is `update-state.php` (guard, then JSON); `update-state.json`, written by older updaters, is still read, so an update from 0.9.82 is finished by the new code, and removed on the next write.
 - The self-check's result is `.runtime-cache/private-files.php`.
 - **PHP's error log** (`Support\ErrorLog`): where the host's `error_log` setting is a bare name or points inside the app folder (shared hosts often write `error_log` beside the running script, which for Better-Cal is `server/public`), errors go to `.runtime-cache/php-errors.php`, guarded, trimmed past 2 MB. A log the host keeps elsewhere is left alone.
@@ -60,7 +60,7 @@ BETTERCAL_BASE_URL=https://cal.example.com
 ### 4. Copies beside the app
 
 - Settings in copies `update.php` made (`<name>-<version>`, `<name>-<version>-rolled-back`) are converted when their code reads `.env.php`, or when the copy is the update's previous version, which a rollback gives its `.env` back. A copy someone made by hand (`better-cal-old`, a staging copy) runs as it is and is never touched; the self-check notes it when it still keeps `.env`.
-- Nothing is deleted automatically: an earlier draft removed older copies after each update, but they can hold files the updater listed as only in the previous version, or settings edited after a rollback. The self-check lists older copies instead.
+- Since 0.9.86, the updater keeps its newest two previous versions and database backups, and prunes older updater-owned copies. Copies made by hand are not removed. This supersedes the earlier design that kept every copy.
 - **Rollback to a version before 0.9.83**, which reads only `.env`: `update.php --rollback` writes `.env` from `.env.php` into that version's folder (and removes the `.env.php` it can't read), and says that version doesn't guard its settings.
 
 ### 5. The worker's output

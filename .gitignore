@@ -24,3 +24,4 @@ scripts/server-dev.env
 better-cal-code.txt
 better-cal-code.php
 bc-probe-*
+.release-signer/

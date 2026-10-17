@@ -19,9 +19,11 @@ COMPOSER_SHA256=7a2d379d5b8ffdaa028580ef26494c36d2feef4b178d3dd1473a4dbc5e17c8d6
 # bytes, so it must never be put on a zip that differs from the tagged source
 # (a changed build, or a zip swapped on the draft by someone holding the
 # GitHub account).
-verify_zip() {
+verify_zip() (
   local zip=$1 work phar
+  php scripts/release-archive.php "$zip"
   work=$(mktemp -d)
+  trap 'rm -rf "$work"' EXIT
   phar="$HOME/.cache/better-cal/composer-$COMPOSER_VERSION.phar"
   if [[ ! -f "$phar" ]]; then
     mkdir -p "$(dirname "$phar")"
@@ -29,21 +31,16 @@ verify_zip() {
     mv "$phar.part" "$phar"
   fi
   [[ $(shasum -a 256 "$phar" | cut -d' ' -f1) == "$COMPOSER_SHA256" ]] || die "$phar isn't Composer $COMPOSER_VERSION (SHA-256 differs)"
-  mkdir -p "$work/src" "$work/ours" "$work/theirs"
+  mkdir -p "$work/src"
   # Outside git, as on GitHub, where the build sees no repository: Composer
   # records the app's version from git when it can.
   git archive "$tag" server | tar -x -C "$work/src"
-  (cd "$work/src/server" && COMPOSER_HOME="$work/composer-home" php "$phar" install --no-dev --no-interaction --prefer-dist --optimize-autoloader --quiet)
+  php scripts/release-dependencies.php "$work/src/server/composer.lock" "$zip" "$HOME/.cache/better-cal/dependency-git"
+  (cd "$work/src/server" && COMPOSER_HOME="$work/composer-home" php "$phar" install --no-dev --no-interaction --no-plugins --no-scripts --prefer-dist --optimize-autoloader --quiet)
   scripts/release-assemble.sh "$tag" "$work/src/server/vendor" "$work/build" "$work/ours.zip"
-  (cd "$work/ours" && unzip -q ../ours.zip)
-  (cd "$work/theirs" && unzip -q "$zip")
-  if ! diff -r "$work/ours" "$work/theirs" >"$work/diff.txt"; then
-    head -20 "$work/diff.txt" >&2
-    die "GitHub's $(basename "$zip") differs from the release rebuilt here from $tag; not signing it"
-  fi
-  rm -rf "$work"
+  php scripts/release-archive.php "$work/ours.zip" "$zip" || die "GitHub's zip differs from the release rebuilt here; not signing it"
   echo "$(basename "$zip") matches the release rebuilt here from $tag."
-}
+)
 
 # Check (and with "sign", first make) the release signature for $tag: the
 # statement names the version, the tag's commit and the SHA-256 of the zip and
@@ -52,12 +49,15 @@ verify_zip() {
 # key file kept in the password manager (scripts/release-sign.php), for when
 # the hardware key is lost (docs/releasing.md). No private key touches
 # GitHub; installs verify with server/config/release-keys.php.
-release_signature() {
-  local mode=$1 dir commit
+release_signature() (
+  local mode=$1 expected=${2:-} dir commit
   dir=$(mktemp -d)
-  gh release download "$tag" --repo "$REPO" --pattern "$(zip_name "$version")" --pattern "$ASSET" --dir "$dir"
+  trap 'rm -rf "$dir"' EXIT
+  download_asset "$(zip_name "$version")" "$dir/$(zip_name "$version")" 104857600
+  download_asset "$ASSET" "$dir/$ASSET" 4096
   commit=$(git rev-parse "$tag^{commit}")
   if [[ "$mode" == sign ]]; then
+    [[ -f "$expected" ]] && cmp -s "$expected" "$dir/$ASSET" || die 'downloaded manifest differs from local intent; not signing'
     verify_zip "$dir/$(zip_name "$version")"
     php scripts/release-sign.php --statement --version="$version" --commit="$commit" \
       --zip="$dir/$(zip_name "$version")" --manifest="$dir/$ASSET" --out="$dir/statement.txt"
@@ -66,16 +66,23 @@ release_signature() {
       php scripts/release-sign.php --sign --statement-file="$dir/statement.txt" --out="$dir/$SIG"
     else
       echo "Signing with the security key: enter its PIN, then touch it."
-      uv run --quiet --with fido2==2.2.1 scripts/release-sign-fido.py sign --statement-file "$dir/statement.txt" --out "$dir/$SIG"
+      bash scripts/release-signer.sh sign --statement-file "$dir/statement.txt" --out "$dir/$SIG"
     fi
   else
-    gh release download "$tag" --repo "$REPO" --pattern "$SIG" --dir "$dir"
+    download_asset "$SIG" "$dir/$SIG" 16384
   fi
   php scripts/release-sign.php --verify="$dir/$SIG" --version="$version" --commit="$commit" \
     --zip="$dir/$(zip_name "$version")" --manifest="$dir/$ASSET" || die "the release signature does not verify"
   if [[ "$mode" == sign ]]; then
     gh release upload "$tag" --repo "$REPO" --clobber "$dir/$SIG"
   fi
+)
+
+# Bound the actual bytes, not just the asset size advertised by GitHub. The
+# pipe closes at the limit; pipefail also propagates transport errors.
+download_asset() {
+  local name=$1 out=$2 limit=$3
+  gh release download "$tag" --repo "$REPO" --pattern "$name" --output - | php scripts/release-download.php "$out" "$limit"
 }
 
 die() { echo "release: $*" >&2; exit 1; }
@@ -113,6 +120,7 @@ case "${1:-}" in
     [[ "${4:-}" == --recovery ]] && recovery=true
     [[ "$priority" == routine || "$priority" == recommended || "$priority" == security ]] || die "priority must be routine, recommended, or security"
     [[ "$floor" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "minimum secure version must be X.Y.Z"
+    [[ "$recovery" == true ]] || bash scripts/release-signer.sh check
     clean_main
     manifest_dir=$(mktemp -d)
     trap 'rm -rf "$manifest_dir"' EXIT
@@ -156,7 +164,7 @@ case "${1:-}" in
     gh run watch "$run_id" --repo "$REPO" --exit-status >/dev/null || die "the release zip build failed: gh run view $run_id --repo $REPO --log-failed"
     [[ $(gh release view "$tag" --repo "$REPO" --json assets --jq '[.assets[] | select(.name == "'"$(zip_name "$version")"'")] | length') == 1 ]] \
       || die "the draft has no $(zip_name "$version")"
-    release_signature sign
+    release_signature sign "$manifest_dir/$ASSET"
     echo "Draft $tag is ready, with $(zip_name "$version") and its signature. Deploy this exact commit and complete smoke checks before publishing."
     ;;
   publish)
@@ -168,7 +176,7 @@ case "${1:-}" in
     [[ "$draft" == true ]] || die "$tag is not a draft release"
     manifest_dir=$(mktemp -d)
     trap 'rm -rf "$manifest_dir"' EXIT
-    gh release download "$tag" --repo "$REPO" --pattern "$ASSET" --dir "$manifest_dir"
+    download_asset "$ASSET" "$manifest_dir/$ASSET" 4096
     [[ $(gh release view "$tag" --repo "$REPO" --json assets --jq '[.assets[] | select(.name == "'"$ASSET"'")] | length') == 1 ]] || die "draft must contain exactly one $ASSET"
     [[ $(gh release view "$tag" --repo "$REPO" --json assets --jq '[.assets[] | select(.name == "'"$(zip_name "$version")"'")] | length') == 1 ]] || die "draft must contain exactly one $(zip_name "$version"); run prepare again"
     node scripts/release-manifest.mjs --verify "$manifest_dir/$ASSET" --version "$version"

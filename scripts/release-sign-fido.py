@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-# Release signing with a hardware security key (FIDO2), the backup to the
-# key file (docs/releasing.md, Signing). Maintainer tooling; installs only
+# Release signing with the everyday hardware security key (FIDO2), with an
+# offline recovery key file (docs/releasing.md, Signing). Installs only
 # verify. Needs the key plugged in, its FIDO2 PIN and a touch.
 #
-#   uv run --with fido2==2.2.1 scripts/release-sign-fido.py enroll [--key-id yubikey-1]
+#   bash scripts/release-signer.sh enroll [--key-id yubikey-1]
 #       make a signing credential on the key (stored on the key itself, so it
 #       works from any computer) and print its entry for server/config/release-keys.php
-#   uv run --with fido2==2.2.1 scripts/release-sign-fido.py sign --statement-file FILE --out SIG [--key-id yubikey-1]
+#   bash scripts/release-signer.sh sign --statement-file FILE --out SIG [--key-id yubikey-1]
 #       sign a release statement, adding to SIG (created if missing)
 #
 # The key signs its authenticator data followed by SHA-256 of the statement;

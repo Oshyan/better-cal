@@ -51,7 +51,7 @@ jobs:
           COMPOSER_ALLOW_SUPERUSER: 1
         run: |
           composer check-platform-reqs --lock --no-dev
-          composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader
+          composer install --no-dev --no-interaction --no-plugins --no-scripts --prefer-dist --optimize-autoloader
           composer audit --no-dev --locked
       - name: Pack the libraries
         run: tar -czf /tmp/vendor.tar.gz -C server vendor

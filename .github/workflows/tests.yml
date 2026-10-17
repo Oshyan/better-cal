@@ -56,7 +56,7 @@ jobs:
       - name: The extensions docs/install.md lists, and Composer
         run: |
           apt-get update -qq
-          apt-get install -y -qq --no-install-recommends libzip-dev unzip
+          apt-get install -y -qq --no-install-recommends libzip-dev unzip git python3
           docker-php-ext-install zip pdo_mysql
           php -r 'copy("https://getcomposer.org/installer", "/tmp/composer-setup.php");'
           php -r 'copy("https://composer.github.io/installer.sig", "/tmp/composer-setup.sig");'
@@ -75,6 +75,8 @@ jobs:
         run: composer audit --no-dev --locked
       - name: Server tests with the installed libraries
         run: php server/tests/run.php
+      - name: Release trust-boundary tests (offline fixtures, no signing key)
+        run: bash scripts/tests/release-security.sh
 
   web:
     name: Frontend suites

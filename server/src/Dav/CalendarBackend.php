@@ -35,7 +35,21 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
     public function __construct(
         private readonly Db $db,
         private readonly Undo $undo,
+        private readonly ?\Closure $authority = null,
     ) {
+    }
+
+    private function assertAuthority(int $userId): void
+    {
+        $authority = $this->authority === null ? null : ($this->authority)();
+        if (!$authority instanceof \BetterCal\Domain\RequestAuthority || $authority->userId !== $userId) {
+            throw new \Sabre\DAV\Exception\NotAuthenticated('Authenticate again before changing this calendar');
+        }
+        try {
+            $authority->assertValid($this->db);
+        } catch (\BetterCal\Http\HttpError) {
+            throw new \Sabre\DAV\Exception\NotAuthenticated('This credential was revoked or changed; authenticate again');
+        }
     }
 
     // ---- Calendars ----------------------------------------------------
@@ -109,6 +123,7 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
                 }
                 if ($fields !== []) {
                     $this->db->tx(function () use ($calendar, $fields, $mutations): void {
+                        $this->assertAuthority((int) $calendar['user_id']);
                         CalendarMoveGuard::lockCalendar($this->db, (int) $calendar['id']);
                         $fresh = $this->calendarRow((int) $calendar['id']);
                         if ((string) $fresh['kind'] === 'local' && array_key_exists('{DAV:}displayname', $mutations)) {
@@ -235,7 +250,8 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
     {
         $calendar = $this->calendarRow($calendarId);
         $this->assertWritable($calendar);
-        return $this->db->tx(function () use ($calendarId, $objectUri) {
+        return $this->db->tx(function () use ($calendarId, $objectUri, $calendar) {
+            $this->assertAuthority((int) $calendar['user_id']);
             $fresh = CalendarMoveGuard::lockCalendar($this->db, (int) $calendarId);
             if ($fresh !== null && (string) $fresh['kind'] === 'local') {
                 $this->assertMoveMutable((int) $calendarId);
@@ -308,6 +324,7 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
         }
 
         return $this->db->tx(function () use ($masters, $parsedOverrides, $calendarId, $uid): ?string {
+            $this->assertAuthority((int) $this->calendarRow($calendarId)['user_id']);
             $this->assertMoveMutable($calendarId);
             $calendar = $this->calendarRow($calendarId);
             $this->assertWritable($calendar);

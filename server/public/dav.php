@@ -55,7 +55,9 @@ $requestPath = (string) (parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH)
 $baseUri = str_starts_with($requestPath, '/dav.php') ? '/dav.php' : '/dav';
 
 $principalBackend = new PrincipalBackend($db);
-$calendarBackend = new CalendarBackend($db, new Undo($db));
+$loginGuard = new \BetterCal\Domain\LoginGuard(new \BetterCal\Infra\Throttle($db), $cfg['auth']['trusted_proxies'], $cfg['auth']['max_failures'], $db);
+$authBackend = new AuthBackend($db, $loginGuard);
+$calendarBackend = new CalendarBackend($db, new Undo($db), fn() => $authBackend->authority());
 
 $server = new \Sabre\DAV\Server([
     new \Sabre\DAVACL\PrincipalCollection($principalBackend),
@@ -64,8 +66,7 @@ $server = new \Sabre\DAV\Server([
 $server->setBaseUri($baseUri);
 
 // CalDAV sign-in shares the login form's limits on password guessing.
-$loginGuard = new \BetterCal\Domain\LoginGuard(new \BetterCal\Infra\Throttle($db), $cfg['auth']['trusted_proxies'], $cfg['auth']['max_failures'], $db);
-$server->addPlugin(new \Sabre\DAV\Auth\Plugin(new AuthBackend($db, $loginGuard)));
+$server->addPlugin(new \Sabre\DAV\Auth\Plugin($authBackend));
 $server->addPlugin(new \BetterCal\Dav\SizedCalDavPlugin()); // sabre's CalDAV plugin, advertising our object size limit
 $server->addPlugin(new \Sabre\DAV\Sync\Plugin());
 

@@ -178,6 +178,7 @@ final class Calendars
         ?string $sourceUrl = null,
         ?array $google = null,
         ?int $creatorTokenId = null,
+        ?string $creatorSession = null,
     ): array
     {
         if ($sourceUrl !== null && strlen($sourceUrl) > 8_192) {
@@ -188,12 +189,14 @@ final class Calendars
             throw HttpError::badRequest('name is required');
         }
         $position = (int) ($this->db->scalar('SELECT COALESCE(MAX(position), -1) + 1 FROM calendars WHERE user_id = ?', [$userId]) ?? 0);
-        $id = $this->db->tx(function () use ($userId, $in, $name, $kind, $sourceUrl, $google, $creatorTokenId, $position): int {
+        $id = $this->db->tx(function () use ($userId, $in, $name, $kind, $sourceUrl, $google, $creatorTokenId, $creatorSession, $position): int {
             if ($creatorTokenId !== null) {
                 // Authentication happened before the controller ran. Lock and
                 // recheck at the durable boundary so a concurrent revoke either
                 // pauses this newly committed subscription or wins first.
-                ApiTokens::assertStillValid($this->db, $creatorTokenId, $userId, true);
+                RequestAuthority::credential($userId, $creatorTokenId, null)->assertValid($this->db);
+            } elseif ($creatorSession !== null) {
+                RequestAuthority::credential($userId, null, $creatorSession)->assertValid($this->db);
             }
             $row = [
                 'user_id' => $userId,
@@ -208,6 +211,9 @@ final class Calendars
                 // do, things I could do, or information. Changeable later.
                 'role' => in_array($in['role'] ?? null, self::ROLES, true) ? $in['role'] : ($kind === 'subscribed' ? 'opportunities' : 'mine'),
             ] + SubscriptionAuthority::creationFields($kind, $sourceUrl, $google, $creatorTokenId);
+            if ($kind === 'subscribed' && $google === null && $creatorTokenId === null && $creatorSession !== null) {
+                $row['created_by_session_hash'] = hash('sha256', $creatorSession);
+            }
             if ($google !== null) {
                 // Incremental sync is one small request when nothing changed,
                 // so a Google calendar can be checked far more often than an
@@ -362,9 +368,10 @@ final class Calendars
      * review action for legacy rows and the recovery path after an API token
      * is revoked; cached events and the source address are left untouched.
      */
-    public function claimSubscription(int $userId, int $id): array
+    public function claimSubscription(int $userId, int $id, ?string $sessionToken = null): array
     {
-        $before = $this->db->tx(function () use ($userId, $id): array {
+        $before = $this->db->tx(function () use ($userId, $id, $sessionToken): array {
+            RequestAuthority::credential($userId, null, $sessionToken)->assertValid($this->db, true, true);
             $lock = $this->db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
             $row = $this->db->one('SELECT * FROM calendars WHERE id = ? AND user_id = ?' . $lock, [$id, $userId]);
             if ($row === null) {
@@ -373,9 +380,12 @@ final class Calendars
             if ((string) $row['kind'] !== 'subscribed' || (string) ($row['provider'] ?? 'ics') !== 'ics') {
                 throw HttpError::badRequest('Only ICS subscriptions can be kept active this way');
             }
+            if ((SubscriptionAuthority::describe($this->db, $row)['status'] ?? null) !== 'paused') {
+                throw HttpError::conflict('subscription_already_authorized', 'This subscription is already authorized. An active API-key subscription must stay bound to its key.');
+            }
             $this->db->run(
-                "UPDATE calendars SET subscription_authority = 'owner', created_by_token_id = NULL WHERE id = ?",
-                [$id]
+                "UPDATE calendars SET subscription_authority = 'owner', created_by_token_id = NULL, created_by_session_hash = ? WHERE id = ?",
+                [hash('sha256', (string) $sessionToken), $id]
             );
             return $row;
         });
@@ -388,8 +398,8 @@ final class Calendars
                 'calendar',
                 $id,
                 'update',
-                ['calendars' => [$before]],
-                ['calendars' => [$after]],
+                null,
+                null,
                 'Kept subscription "' . (string) $after['name'] . '" active as an account-owned feed'
             );
         }
@@ -542,7 +552,7 @@ final class Calendars
             'color' => (string) $c['color'],
             'kind' => (string) $c['kind'],
             'pluginId' => isset($c['plugin_id']) && $c['plugin_id'] !== null ? (string) $c['plugin_id'] : null,
-            'pluginSettings' => self::pluginSettingsFor($c['settings_json'] !== null ? (string) $c['settings_json'] : null),
+            'pluginSettings' => $this->pluginSettingsFor($c['settings_json'] !== null ? (string) $c['settings_json'] : null),
             'sourceUrl' => $c['source_url'] !== null
                 && ($viewerTokenId === null || (int) ($c['created_by_token_id'] ?? 0) === $viewerTokenId)
                     ? FeedCredentials::openSourceUrl((string) $c['source_url'], $this->secret())
@@ -605,10 +615,16 @@ final class Calendars
      * side; the server only persists the preference.
      */
     /** settings_json.plugins verbatim (per-plugin calendar-scope values). */
-    private static function pluginSettingsFor(?string $settingsJson): array
+    private function pluginSettingsFor(?string $settingsJson): array
     {
         $s = is_string($settingsJson) ? (json_decode($settingsJson, true) ?: []) : [];
-        return is_array($s['plugins'] ?? null) ? $s['plugins'] : [];
+        $values = is_array($s['plugins'] ?? null) ? $s['plugins'] : [];
+        $plugins = new Plugins($this->db);
+        foreach ($values as $id => &$settings) {
+            $settings = $plugins->publicValues((string) $id, 'calendarSettings', is_array($settings) ? $settings : []);
+        }
+        unset($settings);
+        return $values;
     }
 
     public static function groupSimilarFor(?string $settingsJson, string $kind): bool

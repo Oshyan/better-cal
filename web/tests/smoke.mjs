@@ -2,6 +2,7 @@
 // virtualization math. Run: node web/tests/smoke.mjs
 
 import './copy-to.mjs';
+import './credentials.mjs';
 import {
   parseISO, toISOWithOffset, dayKeyOf, dateOfDayKey, epochDayOfKey,
   keyOfEpochDay, addDaysKey, diffDaysKey, weekIndexOfKey, firstEpochDayOfWeek,

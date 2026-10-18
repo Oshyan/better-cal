@@ -251,6 +251,11 @@ final class PushSubscriptions
         return $this->db->all('SELECT * FROM push_subscriptions WHERE user_id = ? AND ' . self::LIVE . ' ORDER BY id', [$userId, Time::nowDb()]);
     }
 
+    public function currentForSend(array $expected): ?array
+    {
+        return NotificationDestinations::push($this->db, $expected);
+    }
+
     /** @return array<int, list<array>> all subscriptions grouped by user id */
     public function allByUser(): array
     {

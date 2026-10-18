@@ -63,6 +63,8 @@ final class Notifier
 
         if ($push->configured() && $channel !== 'email') {
             foreach ($rows as $sub) {
+                $sub = $subs->currentForSend($sub);
+                if ($sub === null) continue;
                 $result = $push->send($sub, $payload, 900);
                 $outcomes[] = $result;
                 if ($result === PushSender::OK) {
@@ -81,7 +83,7 @@ final class Notifier
             $admitted = (new ExternalActionAdmission($this->db))->admitEmail($userId, $to, null);
             $health = new SystemHealth($this->db);
             if ($admitted['admitted']) {
-                $emailed = $email->sendReminder($to, [
+                $emailed = \BetterCal\Domain\NotificationDestinations::email($this->db, $userId, $to) && $email->sendReminder($to, [
                     'title' => $payload['title'],
                     'body' => $payload['body'],
                     'url' => $payload['url'],

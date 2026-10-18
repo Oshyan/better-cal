@@ -46,6 +46,9 @@ final class SubscriptionAuthority
                 'reason' => 'Updates are paused because this feed was added before Better-Cal recorded who authorized subscriptions. Its saved events are still visible. Choose Keep updating if you recognize it, make it local to stop following the feed, or delete it.',
             ];
         }
+        if ($origin === 'session_review') {
+            return ['status' => 'paused', 'origin' => $origin, 'reason' => 'You paused this subscription during account recovery. Its saved events stay visible. Keep updating if you recognize it, keep a local copy, or remove it.'];
+        }
         if ($origin !== self::TOKEN) {
             return [
                 'status' => 'paused',

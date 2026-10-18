@@ -163,6 +163,8 @@ final class ReviewController
                 ],
                 'actions' => $canDecide ? [
                     self::action('keep_updating', 'Keep updating', "/calendars/{$calendar['id']}/claim-subscription"),
+                    self::action('keep_local', 'Keep a local copy', "/calendars/{$calendar['id']}/adopt"),
+                    array_replace(self::action('remove', 'Remove', "/calendars/{$calendar['id']}"), ['method' => 'DELETE']),
                 ] : [],
             ];
         }
@@ -217,10 +219,10 @@ final class ReviewController
                 'createdAt' => Time::dbToIso((string) $p['created_at'], 'UTC'),
                 'eventId' => $a['eventId'],
                 'detail' => ['pairId' => (int) $p['id'], 'a' => $a, 'b' => $b],
-                'actions' => $canDecide ? [
+                'actions' => [
                     self::action('linked', 'Same event', "/duplicates/{$p['id']}", ['status' => 'linked']),
                     self::action('dismissed', 'Not the same', "/duplicates/{$p['id']}", ['status' => 'dismissed']),
-                ] : [],
+                ],
             ];
         }
 
@@ -256,11 +258,10 @@ final class ReviewController
     /** POST /duplicates/:id {status: linked|dismissed}: the owner's word on a pair. */
     public function decideDuplicate(Request $req, array $params): Response
     {
-        $req->requireSession('Review decisions');
         if ($this->duplicates === null) {
             return Response::json(['ok' => false], 404);
         }
-        $this->duplicates->decide((int) $req->user['id'], (int) $params['id'], (string) ($req->str('status') ?? ''));
+        $this->duplicates->decide((int) $req->user['id'], (int) $params['id'], (string) ($req->str('status') ?? ''), \BetterCal\Domain\RequestAuthority::request($req));
         return Response::json(['ok' => true]);
     }
 
@@ -285,7 +286,7 @@ final class ReviewController
         // event's own Accept would. A reply that can't go still leaves the
         // invitation added; the outcome says why.
         if ($req->str('answer') === 'accepted' && $this->rsvp !== null) {
-            $result['reply'] = $this->rsvp->answer($userId, (int) $result['eventId'], 'accepted');
+            $result['reply'] = $this->rsvp->answer($userId, (int) $result['eventId'], 'accepted', $req->cookies[\BetterCal\Domain\Auth::COOKIE] ?? null);
         }
         return Response::json($result);
     }

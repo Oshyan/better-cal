@@ -366,24 +366,38 @@ function TokensSection() {
 function OtherBrowsersRow() {
   const [others, setOthers] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [review, setReview] = useState(null);
   useEffect(() => {
     api('/auth/sessions').then((d) => setOthers(d.others)).catch(() => setOthers(null));
   }, []);
-  const run = async () => {
-    if (!window.confirm('Sign out every other browser and device? They will need your password to sign in again, and stop getting push reminders until they do. Public calendar feeds created while signed in will get new URLs, so external calendars using the old URLs stop updating until you replace them. A custom reminder email will return to the account address. This browser stays signed in. API keys and things they created are not affected.')) return;
+  const prepare = async () => {
+    setBusy(true);
+    try {
+      const data = await api('/auth/sessions');
+      setOthers(data.others);
+      setReview(data);
+    } catch (e) {
+      toast('Could not prepare sign-out: ' + e.message, { error: true });
+    } finally { setBusy(false); }
+  };
+  const run = async (choice) => {
+    if (!review) return;
     setBusy(true);
     try {
       const keepPushHash = await currentEndpointHash().catch(() => null);
-      const r = await api('/auth/sign-out-others', { method: 'POST', body: { keepPushHash } });
+      const r = await api('/auth/sign-out-others', { method: 'POST', body: { keepPushHash, subscriptionReview: { version: review.version, choice } } });
       setOthers(0);
+      setReview(null);
       if (r.notifyEmailReset) {
         await api('/settings').then((current) => adoptSettings(current.settings)).catch(() => {});
       }
       toast('Signed out ' + r.sessions + ' other browser' + (r.sessions === 1 ? '' : 's')
         + (r.pushDevices ? ' and removed ' + r.pushDevices + ' push device' + (r.pushDevices === 1 ? '' : 's') : '')
         + (r.feedsRotated ? '. Changed ' + r.feedsRotated + ' public feed URL' + (r.feedsRotated === 1 ? '' : 's') : '')
-        + (r.notifyEmailReset ? '. Reminder email returned to the account address' : '') + '.');
+        + (r.notifyEmailReset ? '. Reminder email returned to the account address' : '')
+        + (r.subscriptionsPaused ? '. Subscriptions paused; open Review to keep or remove them' : '') + '.');
     } catch (err) {
+      if (err.code === 'subscription_review_changed') setReview(null);
       toast('Could not sign out other browsers: ' + err.message, { error: true });
     } finally {
       setBusy(false);
@@ -392,7 +406,15 @@ function OtherBrowsersRow() {
   const count = others === null ? '' : others === 0 ? 'No other browsers are signed in.' : others === 1 ? '1 other browser is signed in.' : others + ' other browsers are signed in.';
   return html`<${Row} label="Other browsers" hint="If a device is lost or stolen, this signs it out, stops its push reminders, changes signed-in public feed URLs, and returns custom reminder email to the account address. External calendars need the new feed URLs. If the device used an API key, revoke that below too.">
     <span class="bc-set-value">${count}</span>
-    <button type="button" class="bc-btn" disabled=${busy} onClick=${run}>Sign out everywhere else</button>
+    <button type="button" class="bc-btn" disabled=${busy} onClick=${prepare}>Sign out everywhere else</button>
+    ${review && html`<div role="group" aria-label="Confirm signing out other browsers">
+      <p>Other browsers will need your password again and stop getting push reminders. Signed-in public feed URLs will change, and custom reminder email returns to the account address. This browser and API keys stay active. A disconnected device may keep cached calendar data for up to 24 hours after its last online check.</p>
+      ${(review.subscriptions || []).length > 0 && html`<p>These subscriptions were added or confirmed from other browsers. Choose whether to keep them running or pause them for Review. Saved events stay visible either way.</p>
+        <ul>${review.subscriptions.map((s) => html`<li key=${s.id}>${s.name} · ${s.host} · added ${new Date(s.addedAt).toLocaleString()}</li>`)}</ul>`}
+      <button type="button" class="bc-btn" disabled=${busy} onClick=${() => run('keep')}>${review.subscriptions.length ? 'Keep subscriptions and sign out' : 'Confirm sign out'}</button>
+      ${review.subscriptions.length > 0 && html`<button type="button" class="bc-btn" disabled=${busy} onClick=${() => run('pause')}>Pause for Review and sign out</button>`}
+      <button type="button" class="bc-link-btn" disabled=${busy} onClick=${() => setReview(null)}>Cancel</button>
+    </div>`}
   <//>`;
 }
 

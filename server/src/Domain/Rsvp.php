@@ -216,7 +216,7 @@ final class Rsvp
      *
      * @return array{myPartstat:string,sent:bool,reason:?string,message:?string}
      */
-    public function answer(int $userId, int $eventId, string $answer): array
+    public function answer(int $userId, int $eventId, string $answer, ?string $sessionToken = null): array
     {
         $partstat = self::PARTSTATS[strtolower($answer)] ?? null;
         if ($partstat === null) {
@@ -244,7 +244,7 @@ final class Rsvp
             return ['myPartstat' => $partstat, 'sent' => true, 'reason' => null, 'message' => null, 'unchanged' => true];
         }
         $outcome = $via === 'google'
-            ? $this->answerAtGoogle($row, $invite, $partstat)
+            ? $this->answerAtGoogle($row, $invite, $partstat, RequestAuthority::credential($userId, null, $sessionToken))
             : $this->answerByMail($row, $invite, $partstat);
 
         $verb = ['ACCEPTED' => 'Accepted', 'DECLINED' => 'Declined', 'TENTATIVE' => 'Maybe'][$partstat];
@@ -304,7 +304,7 @@ final class Rsvp
     }
 
     /** @return array{sent:bool,reason:?string,message:?string} */
-    private function answerAtGoogle(array $row, array $invite, string $partstat): array
+    private function answerAtGoogle(array $row, array $invite, string $partstat, RequestAuthority $authority): array
     {
         $calendar = $this->db->one('SELECT * FROM calendars WHERE id = ?', [(int) $row['calendar_id']]);
         if ($this->google === null || $calendar === null || ($calendar['provider'] ?? '') !== 'google' || $calendar['google_account_id'] === null) {
@@ -314,6 +314,25 @@ final class Rsvp
         if ($googleId === '') {
             throw new HttpError('google_write_failed', 'Better-Cal doesn\'t know this event\'s Google id yet; try again after the next sync.', 409);
         }
+        $account = $this->db->one('SELECT * FROM google_accounts WHERE id = ?', [(int) $calendar['google_account_id']]);
+        if ($account === null) throw HttpError::conflict('google_disconnected', 'Reconnect this Google account in Settings, Connections.');
+        $check = function (bool $lock) use ($row, $calendar, $account, $authority): void {
+            $authority->assertValid($this->db, $lock);
+            $fresh = $this->db->one('SELECT * FROM calendars WHERE id = ?' . ($lock ? $this->db->forUpdate() : ''), [(int) $calendar['id']]);
+            if (!GoogleSync::sameBinding($calendar, $fresh)) {
+                throw HttpError::conflict('google_binding_changed', 'This calendar changed while the reply was running. Reload before replying again.');
+            }
+            $current = $this->db->one('SELECT * FROM google_accounts WHERE id = ?' . ($lock ? $this->db->forUpdate() : ''), [(int) $account['id']]);
+            if ($current === null || ($current['reauth_required_at'] ?? null) !== null) {
+                throw HttpError::conflict('google_reconnect_needed', 'Reconnect needed. Open Settings, Connections.');
+            }
+            GoogleAuth::assertSameCredential($account, $current);
+            $event = $this->db->one('SELECT calendar_id, google_event_id FROM events WHERE id = ? AND deleted_at IS NULL' . ($lock ? $this->db->forUpdate() : ''), [(int) $row['id']]);
+            if ($event === null || (int) $event['calendar_id'] !== (int) $calendar['id'] || $event['google_event_id'] !== $row['google_event_id']) {
+                throw HttpError::conflict('google_binding_changed', 'This event changed while the reply was running. Reload before replying again.');
+            }
+        };
+        $check(false);
         // Google replaces the whole guest list on a write, so send back the
         // list it has now (not our copy) with only our own answer changed.
         $current = $this->google->get($calendar, $googleId);
@@ -330,11 +349,14 @@ final class Rsvp
         }
         // sendUpdates=none (GoogleWriter's default): Google passes a guest's
         // answer to the organizer by itself; nobody else gets mail.
-        $resp = $this->google->patch($calendar, $googleId, ['attendees' => array_values($attendees)]);
-        $this->google->apply($calendar, [$resp]);
-        // The answer decides Planned or Maybe again (Events::relationship),
-        // over any choice made by hand since the last answer.
-        $this->db->run("UPDATE events SET attendance = 'none' WHERE id = ? AND attendance IN ('going', 'interested')", [(int) $row['id']]);
+        $resp = $this->google->patch($calendar, $googleId, ['attendees' => array_values($attendees)], fn() => $check(false));
+        $this->db->tx(function () use ($check, $calendar, $resp, $row): void {
+            $check(true);
+            $this->google->apply($calendar, [$resp]);
+            // The answer decides Planned or Maybe again (Events::relationship),
+            // over any choice made by hand since the last answer.
+            $this->db->run("UPDATE events SET attendance = 'none' WHERE id = ? AND attendance IN ('going', 'interested')", [(int) $row['id']]);
+        });
         return ['sent' => true, 'reason' => null, 'message' => null];
     }
 }

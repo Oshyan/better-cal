@@ -50,6 +50,9 @@ export function GoogleConnector() {
       setLists((l) => ({ ...l, [accountId]: d.calendars || [] }));
     } catch (e) {
       setLists((l) => ({ ...l, [accountId]: 'error:' + e.message }));
+      if (e.code === 'google_reconnect_needed') {
+        setStatus((s) => s && ({ ...s, accounts: s.accounts.map((a) => a.id === accountId ? { ...a, reauthRequired: true, error: e.message } : a) }));
+      }
     }
   };
   useEffect(() => { load(); }, []);
@@ -68,7 +71,8 @@ export function GoogleConnector() {
   const disconnect = async (a) => {
     setBusy('disconnect:' + a.id);
     try {
-      await api('/google/accounts/' + a.id + '/disconnect', { method: 'POST' });
+      const result = await stepUp.run('disconnect this Google account', () => api('/google/accounts/' + a.id + '/disconnect', { method: 'POST' }));
+      if (!result) return;
       toast('Disconnected ' + a.email + '. Its calendars stay; connect it again and Re-attach them to resume syncing.');
       setConfirmDisconnect(null);
       await load();
@@ -124,9 +128,9 @@ export function GoogleConnector() {
           ${status.accounts.map((a) => html`<div class="bc-google-account" key=${a.id}>
             <span class="bc-google-email">${a.email}</span>
             ${a.reauthRequired
-              ? html`<span class="bc-google-err" title=${a.error || ''}>paused by security reset</span>
+              ? html`<span class="bc-google-err" title=${a.error || ''}>Reconnect needed</span>
                   <button type="button" class="bc-link-btn" disabled=${busy === 'connect'} onClick=${connect}>Reconnect</button>`
-              : a.status !== 'ok' && html`<span class="bc-google-err" title=${a.error || ''}>needs reconnecting</span>`}
+              : a.status !== 'ok' && html`<span class="bc-google-err" title=${a.error || ''}>Connection problem</span>`}
             ${confirmDisconnect === a.id
               ? html`<span class="bc-google-confirm">Disconnect? Its calendars stay, but stop updating.${(a.unfinishedMoves || []).map((m) => html` <strong>This also stops moving "${m.calendarName}" to Google${m.total ? ' (' + m.done + ' of ' + m.total + ' uploaded)' : ''}: it stays here as it was, and anything already uploaded stays in the Google calendar.</strong>`)}
                   <button type="button" class="bc-btn bc-btn-danger" disabled=${busy === 'disconnect:' + a.id} onClick=${() => disconnect(a)}>Disconnect</button>
@@ -144,7 +148,7 @@ export function GoogleConnector() {
           ${Array.isArray(list) && list.length > 0 && html`<p class="bc-google-sub">Every calendar this Google account can see. The last column shows which are in your calendars here (${addedCount} of ${list.length}); add any of the others.</p>`}
           ${a.reauthRequired && html`<span class="bc-set-value">Cached calendars stay visible, but Google syncing and editing are paused until this account is reconnected.</span>`}
           ${!a.reauthRequired && (list === undefined || list === 'loading') && html`<span class="bc-set-value">Asking Google…</span>`}
-          ${typeof list === 'string' && list.startsWith('error:') && html`<span class="bc-set-value bc-google-err">${list.slice(6)} <button type="button" class="bc-link-btn" onClick=${() => loadList(a.id)}>Retry</button></span>`}
+          ${!a.reauthRequired && typeof list === 'string' && list.startsWith('error:') && html`<span class="bc-set-value bc-google-err">${list.slice(6)} <button type="button" class="bc-link-btn" onClick=${() => loadList(a.id)}>Retry</button></span>`}
           ${Array.isArray(list) && list.length === 0 && html`<span class="bc-set-value">Google lists no calendars for this account.</span>`}
           ${Array.isArray(list) && list.length > 0 && html`<table class="bc-sys-table bc-google-list">
             <thead><tr><th>Calendar</th><th>Type</th><th>Your access</th><th>In Better-Cal</th></tr></thead>

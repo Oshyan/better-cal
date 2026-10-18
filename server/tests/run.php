@@ -6,6 +6,7 @@ declare(strict_types=1);
 //   php server/tests/run.php
 
 require dirname(__DIR__) . '/src/bootstrap.php';
+require __DIR__ . '/credential-barriers.php';
 
 // The run's error log goes to a file, printed at the end, so a database
 // error logged anywhere fails the run (#119): code under test that catches
@@ -4831,7 +4832,9 @@ if (class_exists(\Sabre\CalDAV\Backend\AbstractBackend::class)) {
     $moveDavDb->run("INSERT INTO users VALUES (1, '{}')");
     $moveDavDb->run("INSERT INTO calendars VALUES (1, 1, 'local', 'Sample calendar', '#336699')");
     $moveDavDb->run("INSERT INTO calendar_moves VALUES (1, 1, 'running', NULL)");
-    $moveDav = new BetterCal\Dav\CalendarBackend($moveDavDb, new BetterCal\Domain\Undo($moveDavDb));
+    $moveDavDb->run('CREATE TABLE api_tokens (id INTEGER PRIMARY KEY, user_id INTEGER, expires_at TEXT)');
+    $moveDavDb->run('INSERT INTO api_tokens VALUES (1, 1, NULL)');
+    $moveDav = new BetterCal\Dav\CalendarBackend($moveDavDb, new BetterCal\Domain\Undo($moveDavDb), fn() => BetterCal\Domain\RequestAuthority::credential(1, 1, null));
     $deleteConflict = false;
     try {
         $moveDav->deleteCalendarObject(1, 'sample-event.ics');
@@ -5438,7 +5441,7 @@ checkEq('push endpoint hash is sha256', hash('sha256', 'https://x.example/e'), P
         && !str_contains($p5system->health($p5sessionReq)->body, $endpoints[2])
     );
     $p5tokenHealth = $p5system->health($p5tokenReq)->body;
-    check('push health: bearer response is also hash-only', str_contains($p5tokenHealth, PushSubscriptions::endpointHash($endpoints[2])) && !str_contains($p5tokenHealth, $endpoints[2]));
+    check('push health: bearer response omits endpoint hashes as well as endpoints', !str_contains($p5tokenHealth, PushSubscriptions::endpointHash($endpoints[2])) && !str_contains($p5tokenHealth, $endpoints[2]));
 }
 
 // ---------------------------------------------------------------------------
@@ -7246,6 +7249,7 @@ checkEq('google sync: without a synctoken the poll applies as before', false,
     }
     checkEq('step-up: a stale session gets the retryable password challenge', 'step_up_required', $staleCode);
 
+    $pdb->run('ALTER TABLE calendars ADD COLUMN created_by_session_hash TEXT');
     $revoked = $pauth->setPassword(1, 'new-password');
     checkEq('reset: both of the owner\'s sessions are reported revoked', 2, $revoked['sessions']);
     checkEq('reset: every push device of the owner goes (F5)', [2, 0], [$revoked['pushDevices'], (int) $pdb->scalar('SELECT COUNT(*) FROM push_subscriptions WHERE user_id = 1')]);
@@ -7410,6 +7414,7 @@ checkEq('google sync: without a synctoken the poll applies as before', false,
 
     // A reset forgets every remembered browser of that account.
     $ddb->run("INSERT INTO trusted_devices (user_id, token_hash, created_at, expires_at) VALUES (2, 'x', '2026-09-24 00:00:00', '2099-01-01 00:00:00')");
+    $ddb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, provider TEXT, subscription_authority TEXT, created_by_session_hash TEXT)');
     $rev = $dauth->setPassword(1, 'new-password');
     check('reset: remembered browsers are forgotten', $rev['trustedDevices'] > 0 && (int) $ddb->scalar('SELECT COUNT(*) FROM trusted_devices WHERE user_id = 1') === 0);
     checkEq('reset: another account\'s browsers are untouched', 1, (int) $ddb->scalar('SELECT COUNT(*) FROM trusted_devices WHERE user_id = 2'));
@@ -7423,6 +7428,7 @@ checkEq('google sync: without a synctoken the poll applies as before', false,
 // --- Sign out everywhere else: the in-app answer to a lost device ---
 {
     $odb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $odb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, source_url TEXT, created_at TEXT, kind TEXT, provider TEXT, subscription_authority TEXT, created_by_session_hash TEXT)');
     $odb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, password_hash TEXT, display_name TEXT, settings_json TEXT)');
     $odb->run('CREATE TABLE sessions (token_hash TEXT PRIMARY KEY, user_id INTEGER, csrf TEXT, expires_at TEXT, last_seen_at TEXT DEFAULT CURRENT_TIMESTAMP, authenticated_at TEXT)');
     $odb->run('CREATE TABLE trusted_devices (id INTEGER PRIMARY KEY, user_id INTEGER, token_hash TEXT UNIQUE, created_at TEXT, expires_at TEXT)');
@@ -7475,10 +7481,10 @@ checkEq('google sync: without a synctoken the poll applies as before', false,
         return $r;
     };
     $cookies = [BetterCal\Domain\Auth::COOKIE => $here['token'], BetterCal\Domain\TrustedDevices::COOKIE => $hereDev];
-    checkEq('sessions: the Account tab sees two other browsers', ['others' => 2], json_decode($octl->otherSessions($asOwner('GET', '/api/v1/auth/sessions', [], $cookies))->body, true));
+    checkEq('sessions: the Account tab sees two other browsers', 2, json_decode($octl->otherSessions($asOwner('GET', '/api/v1/auth/sessions', [], $cookies))->body, true)['others']);
     $r = $octl->signOutOthers($asOwner('POST', '/api/v1/auth/sign-out-others', ['keepPushHash' => $hereHash], $cookies));
     $out = json_decode($r->body, true);
-    checkEq('sign out elsewhere: counts what went', ['sessions' => 2, 'devices' => 1, 'pushDevices' => 1, 'feedsRotated' => 1, 'notifyEmailReset' => true], $out);
+    checkEq('sign out elsewhere: counts what went', ['sessions' => 2, 'devices' => 1, 'pushDevices' => 1, 'feedsRotated' => 1, 'notifyEmailReset' => true, 'subscriptionsPaused' => 0], $out);
     check('sign out elsewhere: the lost device and the laptop are signed out', $oauth->resolve($lost['token']) === null && $oauth->resolve($laptop['token']) === null);
     check('sign out elsewhere: this browser stays signed in', $oauth->resolve($here['token']) !== null);
     check('sign out elsewhere: only this browser is still remembered', $odev->find($hereDev, 'owner@example.com') !== null && $odev->find($lostDev, 'owner@example.com') === null);
@@ -8853,12 +8859,6 @@ use BetterCal\Domain\GoogleWriter;
     $tokenReq->user = ['id' => 1];
     $withoutConstructor = static fn(string $class): object => (new ReflectionClass($class))->newInstanceWithoutConstructor();
     $decisionCalls = [
-        [new BetterCal\Http\Controllers\ReviewController(
-            $withoutConstructor(BetterCal\Domain\ReviewQueue::class),
-            $withoutConstructor(BetterCal\Domain\Proposals::class),
-            $withoutConstructor(BetterCal\Domain\Calendars::class),
-            $withoutConstructor(BetterCal\Domain\Duplicates::class),
-        ), 'decideDuplicate', ['id' => 1]],
         [new BetterCal\Http\Controllers\ProposalsController($withoutConstructor(BetterCal\Domain\Proposals::class)), 'accept', ['id' => 1]],
         [new BetterCal\Http\Controllers\EventsController(
             $withoutConstructor(BetterCal\Domain\Events::class),
@@ -8868,7 +8868,7 @@ use BetterCal\Domain\GoogleWriter;
         [new BetterCal\Http\Controllers\PluginsController(
             $withoutConstructor(BetterCal\Domain\Plugins::class),
             $withoutConstructor(BetterCal\Infra\JobQueue::class),
-        ), 'enable', ['id' => 'sample']],
+        ), 'uninstall', ['id' => 'sample']],
     ];
     foreach ($decisionCalls as [$controller, $method, $params]) {
         try {
@@ -9951,7 +9951,9 @@ check('access code: process/security regression suite', $accessStatus === 0, $ac
     check('worker watch: and reported after that', $WW::check($wdb, $wcfg, $noMail, $t('2026-10-15 10:40:00')));
     checkEq('worker watch: stopped', 'stopped', $WW::state($wdb)['state']);
     check('worker watch: once, not on every check', !$WW::check($wdb, $wcfg, $noMail, $t('2026-10-15 10:50:00')));
-    $WW::turnOff($wdb);
+    $wdb->run('CREATE TABLE sessions (token_hash TEXT PRIMARY KEY, user_id INTEGER, authenticated_at TEXT, expires_at TEXT)');
+    $wdb->run('INSERT INTO sessions VALUES (?, 1, CURRENT_TIMESTAMP, ?)', [hash('sha256', 'sample-worker-session'), '2099-01-01 00:00:00']);
+    $WW::turnOff($wdb, 'sample-worker-session');
     checkEq('worker watch: turned off on purpose, it is off', 'off', $WW::state($wdb)['state']);
     checkEq('worker watch: no longer failing', 'ok', $wdb->scalar("SELECT status FROM system_health WHERE subject = 'worker'"));
     check('worker watch: and never reported while off', !$WW::check($wdb, $wcfg, $noMail, $t('2026-12-01 10:00:00')));
@@ -10087,6 +10089,7 @@ check('access code: process/security regression suite', $accessStatus === 0, $ac
 }
 
 require __DIR__ . '/files-security.php';
+require __DIR__ . '/credentials-security.php';
 
 $runLog = (string) @file_get_contents($GLOBALS['__runLog']);
 @unlink($GLOBALS['__runLog']);

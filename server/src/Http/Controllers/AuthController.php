@@ -95,7 +95,8 @@ final class AuthController
     public function otherSessions(Request $req): Response
     {
         $req->requireSession('Seeing where you are signed in');
-        return Response::json(['others' => $this->auth->otherSessionCount((int) $req->user['id'], $req->cookies[Auth::COOKIE] ?? null)]);
+        return Response::json(['others' => $this->auth->otherSessionCount((int) $req->user['id'], $req->cookies[Auth::COOKIE] ?? null)]
+            + $this->auth->subscriptionRecoveryPreview((int) $req->user['id'], $req->cookies[Auth::COOKIE] ?? null));
     }
 
     /**
@@ -114,7 +115,9 @@ final class AuthController
             $keepPush = null;
         }
         $device = $this->devices?->find($req->cookies[TrustedDevices::COOKIE] ?? null, (string) ($req->user['email'] ?? ''));
-        return Response::json($this->auth->signOutOthers($userId, $req->cookies[Auth::COOKIE] ?? null, $device, $keepPush));
+        $review = $req->body['subscriptionReview'] ?? null;
+        if ($review !== null && !is_array($review)) throw HttpError::badRequest('subscriptionReview must be an object');
+        return Response::json($this->auth->signOutOthers($userId, $req->cookies[Auth::COOKIE] ?? null, $device, $keepPush, $review));
     }
 
     public function me(Request $req): Response

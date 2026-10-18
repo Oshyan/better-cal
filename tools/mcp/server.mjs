@@ -92,6 +92,11 @@ function idSegment(id) {
   return encodeURIComponent(String(id));
 }
 
+function pluginSegment(id) {
+  if (typeof id !== 'string' || !/^[a-z][a-z0-9-]{1,62}[a-z0-9]$/.test(id)) throw new Error('pluginId must be a plugin identifier');
+  return id;
+}
+
 // ---------------------------------------------------------------------------
 // Argument validation
 // ---------------------------------------------------------------------------
@@ -106,6 +111,10 @@ function valueErrors(name, value, schema) {
   switch (schema.type) {
     case 'string':
       if (typeof value !== 'string') return [`${name} must be a string`];
+      if (schema.pattern && !new RegExp(schema.pattern).test(value)) return [`${name} has an invalid format`];
+      break;
+    case 'object':
+      if (value === null || typeof value !== 'object' || Array.isArray(value)) return [`${name} must be an object`];
       break;
     case 'boolean':
       if (typeof value !== 'boolean') return [`${name} must be a boolean`];
@@ -159,6 +168,8 @@ const INSTANCE_START = {
 // path (see idSegment).
 const EVENT_ID ={ type: 'integer', minimum: 1, description: 'Numeric eventId (from an occurrence, not the instanceId)' };
 const EVENT_PATCH_KEYS = ['title', 'start', 'end', 'allDay', 'location', 'description', 'rrule', 'calendarId', 'tzid', 'url', 'scope', 'instanceStart'];
+const PLUGIN_ID = { type: 'string', pattern: '^[a-z][a-z0-9-]{1,62}[a-z0-9]$', description: 'Plugin id from list_plugins' };
+const PLUGIN_VALUES = { type: 'object', description: 'Settings matching the plugin schema. Omit a secret to retain it; null clears it. Submitted values may be retained by your MCP client.' };
 
 const TOOLS = [
   {
@@ -303,7 +314,7 @@ const TOOLS = [
   },
   {
     name: 'list_review',
-    description: 'Read the Review queue: everything waiting on the owner\'s decision. Kinds include first-time emailed invitations not yet added, held invitation changes, unanswered invitations, plugin proposals, possible duplicates, and paused calendar subscriptions. Review decisions require the owner\'s signed-in browser session and are not exposed to MCP.',
+    description: 'Read the Review queue. Possible duplicates can be decided with resolve_duplicate. Invitations, replies, proposals, safety dismissals and subscription claims require a signed-in browser.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -311,6 +322,54 @@ const TOOLS = [
       },
     },
     handler: (a) => api('GET', '/review', { query: { status: a.status } }),
+  },
+  {
+    name: 'list_plugins',
+    description: 'List installed plugins, schemas, settings and job status. Secret values are write-only; only set/unset status is returned.',
+    inputSchema: { type: 'object', properties: {} },
+    handler: () => api('GET', '/plugins'),
+  },
+  {
+    name: 'get_system_health',
+    description: 'Read worker and integration health, with token-safe diagnostics. Private server paths and delivery addresses are omitted.',
+    inputSchema: { type: 'object', properties: {} },
+    handler: () => api('GET', '/system/health'),
+  },
+  {
+    name: 'update_plugin_settings',
+    description: 'Update plugin settings. This can change background work and outside effects; read the plugin schema first.',
+    inputSchema: { type: 'object', properties: { pluginId: PLUGIN_ID, values: PLUGIN_VALUES }, required: ['pluginId', 'values'] },
+    handler: (a) => api('PATCH', `/plugins/${pluginSegment(a.pluginId)}/settings`, { body: a.values }),
+  },
+  {
+    name: 'update_plugin_calendar_settings',
+    description: 'Update one calendar\'s plugin settings; this can affect background work and outside services.',
+    inputSchema: { type: 'object', properties: { pluginId: PLUGIN_ID, calendarId: EVENT_ID, values: PLUGIN_VALUES }, required: ['pluginId', 'calendarId', 'values'] },
+    handler: (a) => api('PATCH', `/plugins/${pluginSegment(a.pluginId)}/calendar-settings/${idSegment(a.calendarId)}`, { body: a.values }),
+  },
+  {
+    name: 'set_plugin_enabled',
+    description: 'Enable or disable an installed plugin. Enabling permits its scheduled work and may cause outside effects; disabling stops pending work.',
+    inputSchema: { type: 'object', properties: { pluginId: PLUGIN_ID, enabled: { type: 'boolean' } }, required: ['pluginId', 'enabled'] },
+    handler: (a) => api('POST', `/plugins/${pluginSegment(a.pluginId)}/${a.enabled ? 'enable' : 'disable'}`, { body: {} }),
+  },
+  {
+    name: 'run_plugin',
+    description: 'Queue a plugin run, optionally one job. The worker may change calendars or contact outside services.',
+    inputSchema: { type: 'object', properties: { pluginId: PLUGIN_ID, job: { type: 'string' } }, required: ['pluginId'] },
+    handler: (a) => api('POST', `/plugins/${pluginSegment(a.pluginId)}/run`, { query: { job: a.job }, body: {} }),
+  },
+  {
+    name: 'update_event_plugin_data',
+    description: 'Update an event\'s plugin controls. These settings can affect the plugin\'s later work.',
+    inputSchema: { type: 'object', properties: { pluginId: PLUGIN_ID, id: EVENT_ID, values: PLUGIN_VALUES }, required: ['pluginId', 'id', 'values'] },
+    handler: (a) => api('PATCH', `/events/${idSegment(a.id)}/plugin-data/${pluginSegment(a.pluginId)}`, { body: a.values }),
+  },
+  {
+    name: 'resolve_duplicate',
+    description: 'Mark a possible duplicate pair as the same event or separate events. Does not delete either event or send an invitation reply.',
+    inputSchema: { type: 'object', properties: { id: EVENT_ID, status: { type: 'string', enum: ['linked', 'dismissed'] } }, required: ['id', 'status'] },
+    handler: (a) => api('POST', `/duplicates/${idSegment(a.id)}`, { body: { status: a.status } }),
   },
   {
     name: 'undo',
@@ -324,6 +383,14 @@ const TOOLS = [
 // a destructive tool (MCP tool annotations), and which tools return text that
 // third parties wrote (scan 2026-09-23, F18).
 const EFFECTS = {
+  list_plugins: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  get_system_health: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  update_plugin_settings: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
+  update_plugin_calendar_settings: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
+  set_plugin_enabled: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
+  run_plugin: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
+  update_event_plugin_data: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
+  resolve_duplicate: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
   list_events:    { readOnlyHint: true,  destructiveHint: false, openWorldHint: false },
   search_events:  { readOnlyHint: true,  destructiveHint: false, openWorldHint: false },
   create_event:   { readOnlyHint: false, destructiveHint: false, openWorldHint: true },

@@ -24,7 +24,7 @@ final class Plugins
     public const HOST_VERSION = '0.1.0';
     public const FAILURE_DISABLE_THRESHOLD = 5;
     public const RANGE_RESPONSE_CAP = 500; // per plugin per window request
-    private const FIELD_TYPES = ['text', 'textarea', 'number', 'select', 'toggle', 'location', 'person'];
+    private const FIELD_TYPES = ['text', 'textarea', 'secret', 'number', 'select', 'toggle', 'location', 'person'];
     public const TEXT_MAX = 500;       // single-line
     public const TEXTAREA_MAX = 10000; // list-shaped settings live here
     /** Declarative chip animations a plugin may request (host-provided CSS). */
@@ -203,6 +203,12 @@ final class Plugins
                 if (!in_array($f['type'] ?? null, self::FIELD_TYPES, true)) {
                     $errs[] = $section . '.' . $f['key'] . ': type must be one of ' . implode('/', self::FIELD_TYPES);
                 }
+                if (($f['type'] ?? '') === 'secret' && array_key_exists('default', $f)) {
+                    $errs[] = $section . '.' . $f['key'] . ': secret fields cannot have defaults';
+                }
+                if ($f['key'] === PluginSecrets::PRIVATE_DIAGNOSTICS) {
+                    $errs[] = $section . ': reserved field key';
+                }
                 if (($f['type'] ?? null) === 'select' && (!isset($f['options']) || !is_array($f['options']) || $f['options'] === [])) {
                     $errs[] = $section . '.' . $f['key'] . ': select needs options';
                 }
@@ -290,6 +296,7 @@ final class Plugins
             $id = (string) $p['id'];
             $st = $states[$id] ?? null;
             $m = $p['manifest'];
+            $privateDiagnostics = $this->privateDiagnostics($id, $m, $st);
             $lastRun = $this->db->one('SELECT * FROM plugin_runs WHERE plugin_id = ? ORDER BY id DESC LIMIT 1', [$id]);
             $out[] = [
                 'id' => $id,
@@ -298,9 +305,9 @@ final class Plugins
                 'description' => (string) ($m['description'] ?? ''),
                 'permissions' => array_values($m['permissions'] ?? []),
                 'jobs' => array_values($m['jobs'] ?? []),
-                'settingsSchema' => array_values($m['settings'] ?? []),
-                'calendarSettingsSchema' => array_values($m['calendarSettings'] ?? []),
-                'eventSettingsSchema' => array_values($m['eventSettings'] ?? []),
+                'settingsSchema' => PluginSecrets::schema($m['settings'] ?? []),
+                'calendarSettingsSchema' => PluginSecrets::schema($m['calendarSettings'] ?? []),
+                'eventSettingsSchema' => PluginSecrets::schema($m['eventSettings'] ?? []),
                 'decoration' => is_array($m['decoration'] ?? null) ? $m['decoration'] : null,
                 'requires' => array_values($m['requires'] ?? []),
                 'optional' => array_values($m['optional'] ?? []),
@@ -310,15 +317,15 @@ final class Plugins
                 'errors' => $p['errors'],
                 'installed' => $st !== null,
                 'enabled' => $st !== null && (int) $st['enabled'] === 1,
-                'disabledReason' => $st !== null ? $st['disabled_reason'] : null,
+                'disabledReason' => $st !== null && $st['disabled_reason'] !== null ? ($privateDiagnostics ? PluginSecrets::HIDDEN_DIAGNOSTIC : $st['disabled_reason']) : null,
                 'consecutiveFailures' => $st !== null ? (int) $st['consecutive_failures'] : 0,
-                'settings' => $this->settingsValues($id, $m, $st),
+                'settings' => PluginSecrets::project($m['settings'] ?? [], $this->settingsValues($id, $m, $st)),
                 'lastRun' => $lastRun === null ? null : [
                     'job' => (string) $lastRun['job_id'],
                     'at' => Time::iso(Time::fromDb((string) $lastRun['started_at'])),
                     'durationMs' => $lastRun['duration_ms'] !== null ? (int) $lastRun['duration_ms'] : null,
                     'outcome' => (string) $lastRun['outcome'],
-                    'logTail' => (string) ($lastRun['log_tail'] ?? ''),
+                    'logTail' => $privateDiagnostics ? PluginSecrets::HIDDEN_DIAGNOSTIC : (string) ($lastRun['log_tail'] ?? ''),
                     'runId' => $lastRun['run_id'] !== null ? (string) $lastRun['run_id'] : null,
                     // How many undoable mutations that run made: the ops page
                     // only offers "Undo this run" when there is something to
@@ -368,6 +375,45 @@ final class Plugins
             $out[$k] = array_key_exists($k, $stored) ? $stored[$k] : ($f['default'] ?? null);
         }
         return $out;
+    }
+
+    public function publicValues(string $id, string $scope, array $values): array
+    {
+        return PluginSecrets::project(($this->manifest($id) ?? [])[$scope] ?? [], $values);
+    }
+
+    public function sealValues(string $id, string $scope, array $values): array
+    {
+        $this->rememberPrivateDiagnostics($id);
+        return PluginSecrets::seal($id, $scope, ($this->manifest($id) ?? [])[$scope] ?? [], $values, (string) ($this->cfg['session_secret'] ?? ''));
+    }
+
+    private function rememberPrivateDiagnostics(string $id): void
+    {
+        if (!PluginSecrets::hasSecrets($this->manifest($id) ?? [])) return;
+        $this->db->tx(function () use ($id): void {
+            $raw = $this->db->scalar('SELECT settings_json FROM plugins WHERE id = ?' . $this->db->forUpdate(), [$id]);
+            $values = is_string($raw) ? (json_decode($raw, true) ?: []) : [];
+            if (!empty($values[PluginSecrets::PRIVATE_DIAGNOSTICS])) return;
+            $values[PluginSecrets::PRIVATE_DIAGNOSTICS] = true;
+            $this->db->update('plugins', ['settings_json' => json_encode($values)], 'id = ?', [$id]);
+        });
+    }
+
+    private function privateDiagnostics(string $id, array $manifest, ?array $row = null): bool
+    {
+        if (PluginSecrets::hasSecrets($manifest)) return true;
+        $row ??= $this->db->one('SELECT settings_json FROM plugins WHERE id = ?', [$id]);
+        $stored = json_decode((string) ($row['settings_json'] ?? '{}'), true);
+        return !empty($stored[PluginSecrets::PRIVATE_DIAGNOSTICS]);
+    }
+
+    public function withAuthority(RequestAuthority $authority, callable $write): mixed
+    {
+        return $this->db->tx(function () use ($authority, $write): mixed {
+            $authority->assertValid($this->db);
+            return $write();
+        });
     }
 
     // ---- lifecycle ------------------------------------------------------
@@ -554,6 +600,13 @@ final class Plugins
                 continue;
             }
             switch ($f['type']) {
+                case 'secret':
+                    if (!is_string($v) || $v === '' || strlen($v) > 16384) {
+                        $errs[$k] = 'must be nonempty text of at most 16384 bytes, or null to clear';
+                    } else {
+                        $clean[$k] = $v;
+                    }
+                    break;
                 case 'number':
                     if (!is_numeric($v)) {
                         $errs[$k] = 'must be a number';
@@ -632,12 +685,13 @@ final class Plugins
         return [$clean, $errs];
     }
 
-    public function saveSettings(string $id, array $values): array
+    public function saveSettings(string $id, array $values, ?RequestAuthority $authority = null): array
     {
         $m = $this->manifest($id);
         if ($m === null) {
             throw HttpError::badRequest('Unknown plugin');
         }
+        $authority?->assertValid($this->db, false);
         [$clean, $errs] = self::validateAgainstSchema($m['settings'] ?? [], $values);
         if ($errs === []) {
             // Plugin-level validation hook (short, synchronous, explicit save).
@@ -649,22 +703,27 @@ final class Plugins
             }
         }
         if ($errs !== []) {
-            throw HttpError::badRequest('Invalid settings: ' . json_encode($errs));
+            throw HttpError::badRequest($this->privateDiagnostics($id, $m) ? 'Plugin settings were refused. Check the values you entered; private diagnostic details are not returned.' : 'Invalid settings: ' . json_encode($errs));
         }
-        $row = $this->db->one('SELECT settings_json FROM plugins WHERE id = ?', [$id]);
-        if ($row === null) {
-            throw HttpError::badRequest('Plugin is not installed (enable it first)');
-        }
-        $stored = is_string($row['settings_json']) ? (json_decode((string) $row['settings_json'], true) ?: []) : [];
-        $this->db->run(
-            'UPDATE plugins SET settings_json = ? WHERE id = ?',
-            [json_encode(array_merge($stored, $clean)), $id]
-        );
-        return array_merge($stored, $clean);
+        return $this->db->tx(function () use ($id, $m, $clean, $authority): array {
+            $authority?->assertValid($this->db);
+            $row = $this->db->one('SELECT settings_json FROM plugins WHERE id = ?' . $this->db->forUpdate(), [$id]);
+            if ($row === null) {
+                throw HttpError::badRequest('Plugin is not installed (enable it first)');
+            }
+            $stored = is_string($row['settings_json']) ? (json_decode((string) $row['settings_json'], true) ?: []) : [];
+            $merged = $this->sealValues($id, 'settings', array_merge($stored, $clean));
+            if (PluginSecrets::hasSecrets($m)) $merged[PluginSecrets::PRIVATE_DIAGNOSTICS] = true;
+            $this->db->run(
+                'UPDATE plugins SET settings_json = ? WHERE id = ?',
+                [json_encode($merged), $id]
+            );
+            return $this->publicValues($id, 'settings', $merged);
+        });
     }
 
     /** Calendar-scope values for one plugin, validated, merged into settings_json.plugins.<id>. */
-    public function saveCalendarSettings(int $userId, int $calendarId, string $id, array $values): array
+    public function saveCalendarSettings(int $userId, int $calendarId, string $id, array $values, ?RequestAuthority $authority = null): array
     {
         $m = $this->manifest($id);
         if ($m === null) {
@@ -674,14 +733,17 @@ final class Plugins
         if ($errs !== []) {
             throw HttpError::badRequest('Invalid settings: ' . json_encode($errs));
         }
-        $raw = $this->db->scalar('SELECT settings_json FROM calendars WHERE id = ? AND user_id = ?', [$calendarId, $userId]);
-        if ($raw === null && $this->db->one('SELECT id FROM calendars WHERE id = ? AND user_id = ?', [$calendarId, $userId]) === null) {
-            throw HttpError::badRequest('Unknown calendar');
-        }
-        $all = is_string($raw) ? (json_decode($raw, true) ?: []) : [];
-        $all['plugins'][$id] = array_merge($all['plugins'][$id] ?? [], $clean);
-        $this->db->run('UPDATE calendars SET settings_json = ? WHERE id = ?', [json_encode($all), $calendarId]);
-        return $all['plugins'][$id];
+        return $this->db->tx(function () use ($userId, $calendarId, $id, $clean, $authority): array {
+            $authority?->assertValid($this->db);
+            $raw = $this->db->scalar('SELECT settings_json FROM calendars WHERE id = ? AND user_id = ?' . $this->db->forUpdate(), [$calendarId, $userId]);
+            if ($raw === null && $this->db->one('SELECT id FROM calendars WHERE id = ? AND user_id = ?', [$calendarId, $userId]) === null) {
+                throw HttpError::badRequest('Unknown calendar');
+            }
+            $all = is_string($raw) ? (json_decode($raw, true) ?: []) : [];
+            $all['plugins'][$id] = $this->sealValues($id, 'calendarSettings', array_merge($all['plugins'][$id] ?? [], $clean));
+            $this->db->run('UPDATE calendars SET settings_json = ? WHERE id = ?', [json_encode($all), $calendarId]);
+            return $this->publicValues($id, 'calendarSettings', $all['plugins'][$id]);
+        });
     }
 
     // ---- execution ------------------------------------------------------
@@ -703,6 +765,7 @@ final class Plugins
      */
     public function runJob(int $userId, string $id, string $jobId): array
     {
+        $this->rememberPrivateDiagnostics($id);
         $state = $this->db->one('SELECT * FROM plugins WHERE id = ? AND enabled = 1', [$id]);
         $m = $this->manifest($id);
         if ($state === null || $m === null) {
@@ -728,7 +791,7 @@ final class Plugins
             }
         } catch (\Throwable $e) {
             $outcome = 'error';
-            $error = mb_substr($e->getMessage(), 0, 300);
+            $error = $this->privateDiagnostics($id, $m, $state) ? PluginSecrets::HIDDEN_DIAGNOSTIC : mb_substr($e->getMessage(), 0, 300);
         }
         $ms = (int) round((microtime(true) - $t0) * 1000);
         $this->db->insert('plugin_runs', [
@@ -823,12 +886,13 @@ final class Plugins
 
     public function warnings(string $id): array
     {
+        $private = $this->privateDiagnostics($id, $this->manifest($id) ?? []);
         return array_map(static fn($r) => [
             'id' => (int) $r['id'],
             'eventId' => $r['event_id'] !== null ? (int) $r['event_id'] : null,
             'severity' => (string) $r['severity'],
-            'message' => (string) $r['message'],
-            'fix' => $r['fix_text'] !== null ? (string) $r['fix_text'] : null,
+            'message' => $private ? PluginSecrets::HIDDEN_DIAGNOSTIC : (string) $r['message'],
+            'fix' => $private ? null : ($r['fix_text'] !== null ? (string) $r['fix_text'] : null),
         ], $this->db->all('SELECT * FROM plugin_warnings WHERE plugin_id = ? AND dismissed_at IS NULL ORDER BY severity DESC, id', [$id]));
     }
 }

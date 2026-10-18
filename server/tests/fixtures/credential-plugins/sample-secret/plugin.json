@@ -1,0 +1,14 @@
+{
+  "id": "sample-secret",
+  "name": "Sample secret plugin",
+  "version": "1.0.0",
+  "description": "Invented credential regression fixture",
+  "permissions": [],
+  "jobs": [{"id": "sample", "label": "Sample job", "interval": "PT1H"}],
+  "settings": [
+    {"key": "credential", "label": "Credential", "type": "secret"},
+    {"key": "mode", "label": "Mode", "type": "text"}
+  ],
+  "calendarSettings": [{"key": "credential", "label": "Credential", "type": "secret"}],
+  "eventSettings": [{"key": "credential", "label": "Credential", "type": "secret"}]
+}

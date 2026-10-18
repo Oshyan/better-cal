@@ -87,6 +87,8 @@ const mock = createServer((req, res) => {
       });
     } else if (req.method === 'POST' && (path === '/api/v1/review/invitations/13/accept' || path === '/api/v1/review/invite-changes/12/accept' || path === '/api/v1/events/4410/rsvp' || path === '/api/v1/proposals/7/accept')) {
       respond(200, { ok: true });
+    } else if (path.startsWith('/api/v1/plugins') || path === '/api/v1/system/health' || path.startsWith('/api/v1/duplicates/') || path.includes('/plugin-data/')) {
+      respond(200, { ok: true, settings: { credential: { set: true } } });
     } else if (req.method === 'PATCH' && path.startsWith('/api/v1/events/')) {
       respond(200, { eventId: 42, title: entry.body.title ?? 'Dinner' });
     } else if (req.method === 'DELETE' && path.startsWith('/api/v1/events/')) {
@@ -191,14 +193,22 @@ async function main() {
   checkEq('tools/list names', [
     'create_event',
     'delete_event',
+    'get_system_health',
     'list_calendars',
     'list_events',
+    'list_plugins',
     'list_review',
     'quick_add',
+    'resolve_duplicate',
+    'run_plugin',
     'search_events',
     'set_attendance',
+    'set_plugin_enabled',
     'undo',
     'update_event',
+    'update_event_plugin_data',
+    'update_plugin_calendar_settings',
+    'update_plugin_settings',
   ], names);
   check('every tool has description and inputSchema', (list.result?.tools ?? []).every(
     (t) => typeof t.description === 'string' && t.inputSchema?.type === 'object'
@@ -288,6 +298,36 @@ async function main() {
     checkEq(`${label}: rejected as invalid params`, -32602, res.error?.code);
   }
   checkEq('invalid arguments never reach the API', 0, received.length);
+
+  for (const [name, args, method, path] of [
+    ['list_plugins', {}, 'GET', '/plugins'],
+    ['get_system_health', {}, 'GET', '/system/health'],
+    ['update_plugin_settings', { pluginId: 'sample-plugin', values: { credential: 'invented-secret' } }, 'PATCH', '/plugins/sample-plugin/settings'],
+    ['update_plugin_calendar_settings', { pluginId: 'sample-plugin', calendarId: 7, values: { types: 'music' } }, 'PATCH', '/plugins/sample-plugin/calendar-settings/7'],
+    ['set_plugin_enabled', { pluginId: 'sample-plugin', enabled: true }, 'POST', '/plugins/sample-plugin/enable'],
+    ['set_plugin_enabled', { pluginId: 'sample-plugin', enabled: false }, 'POST', '/plugins/sample-plugin/disable'],
+    ['run_plugin', { pluginId: 'sample-plugin', job: 'refresh' }, 'POST', '/plugins/sample-plugin/run?job=refresh'],
+    ['update_event_plugin_data', { pluginId: 'sample-plugin', id: 7, values: { credential: null } }, 'PATCH', '/events/7/plugin-data/sample-plugin'],
+    ['resolve_duplicate', { id: 7, status: 'linked' }, 'POST', '/duplicates/7'],
+  ]) {
+    received.length = 0;
+    const result = await rpc('tools/call', { name, arguments: args });
+    checkEq(`${name}: method and path`, [method, '/api/v1' + path], [received[0]?.method, received[0]?.url]);
+    check(`${name}: success does not echo submitted secret`, !result.result?.isError && !JSON.stringify(result).includes('invented-secret'));
+  }
+  for (const name of ['run_plugin', 'set_plugin_enabled', 'update_plugin_settings', 'update_plugin_calendar_settings', 'update_event_plugin_data']) {
+    check(`${name}: outside effects declared`, byName[name]?.annotations?.openWorldHint === true);
+  }
+  for (const pluginId of ['../tokens', 'sample/../../settings', 'sample%2Fsettings', '', 'sample?x=1']) {
+    received.length = 0;
+    const result = await rpc('tools/call', { name: 'run_plugin', arguments: { pluginId } });
+    check('plugin tool: rejects path injection without sending', result.error?.code === -32602 && received.length === 0);
+  }
+  received.length = 0;
+  await rpc('tools/call', { name: 'run_plugin', arguments: { pluginId: 'sample--plugin' } });
+  checkEq('plugin tools accept the established manifest identifier syntax', '/api/v1/plugins/sample--plugin/run', received[0]?.url);
+  const invalidValues = await rpc('tools/call', { name: 'update_plugin_settings', arguments: { pluginId: 'sample', values: [] } });
+  checkEq('plugin settings require an object', -32602, invalidValues.error?.code);
 
   // ---- Review queue: readable, while decisions stay in the browser ---------
   received.length = 0;

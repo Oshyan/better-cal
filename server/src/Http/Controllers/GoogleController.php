@@ -122,8 +122,8 @@ final class GoogleController
 
     public function disconnect(Request $req, array $params): Response
     {
-        $req->requireSession('Disconnecting a Google account');
-        $this->auth->disconnect((int) $req->user['id'], (int) $params['id']);
+        $req->requireRecentAuthentication('Disconnecting a Google account');
+        $this->auth->disconnect((int) $req->user['id'], (int) $params['id'], $req->cookies[Auth::COOKIE] ?? null);
         return Response::json(['ok' => true]);
     }
 

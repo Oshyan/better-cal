@@ -398,6 +398,8 @@ final class Reminders
                 $outcomes = [];
                 if ($wantsPush) {
                     foreach ($subs as $sub) {
+                        $sub = $this->subscriptions->currentForSend($sub);
+                        if ($sub === null) continue;
                         // Reminders lose their value fast: if the push service
                         // cannot deliver within 15 minutes (device unreachable
                         // or dozing), drop it rather than arriving hours stale.
@@ -437,7 +439,7 @@ final class Reminders
                         // Email failures log inside sendReminder and never
                         // block the scan. The reservation and dedup row stay:
                         // failures must not become a quota or retry bypass.
-                        if ($this->email->sendReminder($emailTo, $due['payload'])) {
+                        if (NotificationDestinations::email($this->db, $userId, $emailTo) && $this->email->sendReminder($emailTo, $due['payload'])) {
                             $emailed++;
                         }
                     }

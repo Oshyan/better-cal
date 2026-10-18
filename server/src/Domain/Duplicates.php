@@ -873,28 +873,31 @@ final class Duplicates
     // ---- Deciding ------------------------------------------------------------------
 
     /** The owner's word on a pair: the same event (linked) or not (dismissed). */
-    public function decide(int $userId, int $pairId, string $status): void
+    public function decide(int $userId, int $pairId, string $status, ?RequestAuthority $authority = null): void
     {
         if (!in_array($status, ['linked', 'dismissed'], true)) {
             throw HttpError::badRequest('status must be linked or dismissed');
         }
-        $pair = $this->db->one(
-            'SELECT p.*, a.title FROM event_duplicates p JOIN events a ON a.id = p.event_a WHERE p.id = ? AND p.user_id = ?',
-            [$pairId, $userId]
-        );
-        if ($pair === null) {
-            throw HttpError::notFound('No such pair');
-        }
-        $this->db->update('event_duplicates', ['status' => $status, 'basis' => 'owner', 'decided_at' => Time::nowDb()], 'id = ?', [$pairId]);
-        ActivityContext::with('dedup', fn() => (new Undo($this->db))->record(
-            $userId,
-            'event',
-            (int) $pair['event_a'],
-            'update',
-            null,
-            null,
-            ($status === 'linked' ? 'Shown as one event: ' : 'Not the same event: ') . "'" . (string) $pair['title'] . "'"
-        ));
+        $this->db->tx(function () use ($userId, $pairId, $status, $authority): void {
+            $authority?->assertValid($this->db);
+            $pair = $this->db->one(
+                'SELECT p.*, a.title FROM event_duplicates p JOIN events a ON a.id = p.event_a WHERE p.id = ? AND p.user_id = ?',
+                [$pairId, $userId]
+            );
+            if ($pair === null) {
+                throw HttpError::notFound('No such pair');
+            }
+            $this->db->update('event_duplicates', ['status' => $status, 'basis' => 'owner', 'decided_at' => Time::nowDb()], 'id = ?', [$pairId]);
+            ActivityContext::with('dedup', fn() => (new Undo($this->db))->record(
+                $userId,
+                'event',
+                (int) $pair['event_a'],
+                'update',
+                null,
+                null,
+                ($status === 'linked' ? 'Shown as one event: ' : 'Not the same event: ') . "'" . (string) $pair['title'] . "'"
+            ));
+        });
     }
 
     /** A copy made on purpose (Copy to) is never a duplicate of its source. */

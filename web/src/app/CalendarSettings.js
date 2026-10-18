@@ -13,6 +13,7 @@ import { parseHex, PALETTE } from '../lib/color.js';
 import { SchemaForm } from './SchemaForm.js';
 import { Icon, GoogleG } from '../ui/icons.js';
 import { MoveToGoogle } from './MoveToGoogle.js';
+import { usePasswordStepUp } from './PasswordStepUp.js';
 import { TimedDefault, AllDayDefault } from './ReminderDefaults.js';
 import { summarizeDefaults, FOLLOW_DEFAULTS } from '../lib/reminders.js';
 
@@ -97,6 +98,7 @@ function ReminderField({ cal }) {
 }
 
 export function CalendarSettings({ cal, folders, onClose }) {
+  const stepUp = usePasswordStepUp();
   const [name, setName] = useState(cal.name);
   const [hex, setHex] = useState(cal.color);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -141,7 +143,8 @@ export function CalendarSettings({ cal, folders, onClose }) {
 
   const keepSubscriptionActive = async () => {
     try {
-      await api('/calendars/' + cal.id + '/claim-subscription', { method: 'POST' });
+      const result = await stepUp.run('keep this subscription updating', () => api('/calendars/' + cal.id + '/claim-subscription', { method: 'POST' }));
+      if (!result) return;
       toast('Calendar updates resumed');
       await Promise.allSettled([loadCalendars(), loadReviewCount()]);
     } catch (e) {
@@ -150,6 +153,7 @@ export function CalendarSettings({ cal, folders, onClose }) {
   };
 
   return html`<div class="bc-calset" role="group" aria-label=${'Settings for ' + cal.name}>
+    ${stepUp.prompt}
     <div class="bc-calset-field">
       <span class="bc-calset-label">Name</span>
       <input

@@ -32,6 +32,7 @@ final class GoogleWriter
         private readonly Db $db,
         private readonly GoogleAuth $auth,
         private readonly Feeds $feeds,
+        private readonly ?\Closure $jsonTransport = null,
     ) {
     }
 
@@ -199,9 +200,9 @@ final class GoogleWriter
         return $this->call($calendar, 'GET', '/' . rawurlencode($googleId), null);
     }
 
-    public function patch(array $calendar, string $googleId, array $body): array
+    public function patch(array $calendar, string $googleId, array $body, ?\Closure $beforeSend = null): array
     {
-        return $this->call($calendar, 'PATCH', '/' . rawurlencode($googleId), $body);
+        return $this->call($calendar, 'PATCH', '/' . rawurlencode($googleId), $body, beforeSend: $beforeSend);
     }
 
     public function delete(array $calendar, string $googleId): void
@@ -242,7 +243,7 @@ final class GoogleWriter
         return ['cancelled' => true, 'uid' => $uid, 'recurrence_instance_utc' => $instanceUtc];
     }
 
-    private function call(array $calendar, string $method, string $path, ?array $payload, array $query = []): array
+    private function call(array $calendar, string $method, string $path, ?array $payload, array $query = [], ?\Closure $beforeSend = null): array
     {
         $account = $this->db->one('SELECT * FROM google_accounts WHERE id = ?', [(int) $calendar['google_account_id']]);
         if ($account === null) {
@@ -263,8 +264,12 @@ final class GoogleWriter
             $url .= '?' . http_build_query($query, '', '&', PHP_QUERY_RFC3986);
         }
         $http = new HttpClient(requestBudget: 10, userAgent: HttpClient::userAgentFor('google-connector'));
+        // Refreshing a token is network work too. Recheck after it, not before it.
+        if ($beforeSend !== null) $beforeSend();
         try {
-            $r = $http->json($method, $url, $payload, ['Authorization: Bearer ' . $access]);
+            $r = $this->jsonTransport !== null
+                ? ($this->jsonTransport)($method, $url, $payload)
+                : $http->json($method, $url, $payload, ['Authorization: Bearer ' . $access]);
         } catch (\RuntimeException $e) {
             throw new HttpError('google_write_failed', 'Google could not be reached: ' . $e->getMessage(), 502);
         }

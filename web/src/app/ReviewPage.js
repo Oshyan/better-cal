@@ -29,6 +29,7 @@ import { PageShell, EmptyState, Skeleton } from './PageShell.js';
 import { Icon } from '../ui/icons.js';
 import { ProposalCard } from './ProposalCard.js';
 import { rsvpOutcome } from './actions.js';
+import { usePasswordStepUp } from './PasswordStepUp.js';
 import { fmtSince } from '../lib/since.js';
 import { parseISO, dateOfDayKey, fmtRange, fmtDayMedium, fmtTime } from '../lib/dates.js';
 
@@ -64,13 +65,18 @@ function whenLine(detail) {
 }
 
 function ReviewCard({ item, onChanged }) {
+  const stepUp = usePasswordStepUp();
   const [busy, setBusy] = useState(false);
   const d = item.detail || {};
 
   const run = async (action) => {
     setBusy(true);
     try {
-      const res = await api(action.path, { method: action.method || 'POST', body: action.body || {} });
+      if (item.kind === 'subscription' && action.name === 'remove' && !window.confirm('Remove this subscription and its saved events?')) return;
+      const send = () => api(action.path, { method: action.method || 'POST', body: action.body || {} });
+      const res = item.kind === 'subscription' && action.name === 'keep_updating'
+        ? await stepUp.run('keep this subscription updating', send) : await send();
+      if (!res) return;
       const accepted = action.name !== 'dismiss';
       if (item.kind === 'rsvp' && action.name === 'dismiss') {
         toast('Dismissed without answering. You can still answer from the event.');
@@ -81,7 +87,7 @@ function ReviewCard({ item, onChanged }) {
       } else if (item.kind === 'duplicate') {
         toast(action.name === 'linked' ? 'Shown as one event from now on' : 'Kept as separate events');
       } else if (item.kind === 'subscription') {
-        toast('Calendar updates resumed');
+        toast(action.name === 'keep_updating' ? 'Calendar updates resumed' : action.name === 'remove' ? 'Subscription removed' : 'Saved events kept as a local calendar');
         await loadCalendars().catch(() => {});
       } else if (item.kind === 'mail_limit') {
         toast('Email automation notice dismissed');
@@ -120,6 +126,7 @@ function ReviewCard({ item, onChanged }) {
     : null;
   const open = item.link ? () => { set({ route: 'calendar' }); openOccurrence(item.link.instanceId, item.link.at); } : openOptions;
   return html`<div class=${'bc-review-card' + (item.status !== 'open' ? ' is-decided' : '')}>
+    ${stepUp.prompt}
     <div class="bc-review-head">
       <span class="bc-review-kind" title=${KIND_LABEL[item.kind]}><${Icon} name=${KIND_ICON[item.kind] || 'proposals'} size=${13} /></span>
       ${open

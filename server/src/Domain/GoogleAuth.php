@@ -36,7 +36,7 @@ final class GoogleAuth
     private const CALENDAR_LIST_URL = 'https://www.googleapis.com/calendar/v3/users/me/calendarList';
     private const STATE_TTL = 600;
 
-    public function __construct(private readonly Db $db, private readonly array $cfg)
+    public function __construct(private readonly Db $db, private readonly array $cfg, private readonly ?\Closure $postFormTransport = null)
     {
     }
 
@@ -125,16 +125,23 @@ final class GoogleAuth
     }
 
     /** Revoke at Google (best effort) and forget the token. Calendars stay; their next poll says why it failed. */
-    public function disconnect(int $userId, int $accountId): void
+    public function disconnect(int $userId, int $accountId, ?string $sessionToken = null): void
     {
         $account = $this->account($userId, $accountId);
+        $authority = RequestAuthority::credential($userId, null, $sessionToken);
+        $authority->assertValid($this->db, false, true);
         try {
             $refresh = Secrets::open((string) $account['refresh_token_enc'], (string) $this->cfg['session_secret']);
-            $this->http()->postForm(self::REVOKE_URL, ['token' => $refresh]);
+            self::assertSameCredential($account, $this->account($userId, $accountId));
+            $authority->assertValid($this->db, false, true);
+            $this->postForm(self::REVOKE_URL, ['token' => $refresh]);
+        } catch (HttpError $e) {
+            throw $e;
         } catch (\Throwable) {
             // Already revoked, or unreachable: the row goes regardless.
         }
-        $this->db->tx(function () use ($userId, $account): void {
+        $this->db->tx(function () use ($userId, $account, $authority): void {
+            $authority->assertValid($this->db, true, true);
             $lock = $this->db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
             // Calendar -> account -> move is the same order as polling,
             // write-through, move start and compromise reset. The FK delete
@@ -144,12 +151,13 @@ final class GoogleAuth
                 [$userId, (int) $account['id']]
             );
             $fresh = $this->db->one(
-                'SELECT id FROM google_accounts WHERE id = ? AND user_id = ?' . $lock,
+                'SELECT * FROM google_accounts WHERE id = ? AND user_id = ?' . $lock,
                 [(int) $account['id'], $userId]
             );
             if ($fresh === null) {
                 return;
             }
+            self::assertSameCredential($account, $fresh);
             $this->db->all(
                 'SELECT id FROM calendar_moves WHERE google_account_id = ? ORDER BY id' . $lock,
                 [(int) $account['id']]
@@ -177,7 +185,12 @@ final class GoogleAuth
                 'grant_type' => 'refresh_token',
             ], $absoluteDeadline);
         } catch (\RuntimeException $e) {
-            $this->db->update('google_accounts', ['status' => 'error', 'last_error' => mb_substr($e->getMessage(), 0, 2000)], 'id = ?', [(int) $account['id']]);
+            // A failed request for an old grant must not poison a newer connection.
+            $fields = ['status' => 'error', 'last_error' => mb_substr($e->getMessage(), 0, 2000)];
+            if ($e instanceof HttpError && $e->errorCode === 'google_reconnect_needed') {
+                $fields['reauth_required_at'] = Time::nowDb();
+            }
+            $this->db->update('google_accounts', $fields, 'id = ? AND refresh_token_enc = ?', [(int) $account['id'], (string) $account['refresh_token_enc']]);
             throw $e;
         }
         // The reset may have committed while Google's token endpoint was in
@@ -185,7 +198,7 @@ final class GoogleAuth
         self::assertWithinDeadline($absoluteDeadline, 'Google token refresh');
         $account = $this->assertUsable($account);
         if (($account['status'] ?? 'ok') !== 'ok') {
-            $this->db->update('google_accounts', ['status' => 'ok', 'last_error' => null], 'id = ?', [(int) $account['id']]);
+            $this->db->update('google_accounts', ['status' => 'ok', 'last_error' => null], 'id = ? AND refresh_token_enc = ? AND reauth_required_at IS NULL', [(int) $account['id'], (string) $account['refresh_token_enc']]);
         }
         return (string) $token['access_token'];
     }
@@ -200,9 +213,17 @@ final class GoogleAuth
             throw HttpError::conflict('google_disconnected', 'The Google account is disconnected; reconnect it under Settings, Connections.');
         }
         if (($fresh['reauth_required_at'] ?? null) !== null) {
-            throw HttpError::conflict('google_reconnect_needed', 'Google access was paused by the account compromise reset; reconnect this account under Settings, Connections.');
+            throw HttpError::conflict('google_reconnect_needed', 'Reconnect needed. Open Settings, Connections and reconnect this Google account. Cached events stay visible.');
         }
+        self::assertSameCredential($account, $fresh);
         return $fresh;
+    }
+
+    public static function assertSameCredential(array $expected, array $current): void
+    {
+        if (isset($expected['refresh_token_enc']) && !hash_equals((string) $expected['refresh_token_enc'], (string) ($current['refresh_token_enc'] ?? ''))) {
+            throw HttpError::conflict('google_connection_changed', 'This Google connection changed while the request was running. Reload and try again.');
+        }
     }
 
     /** Best-effort remote cleanup after local compromise quarantine has committed. */
@@ -438,9 +459,12 @@ final class GoogleAuth
     private function tokenRequest(array $fields, ?float $absoluteDeadline = null): array
     {
         self::assertWithinDeadline($absoluteDeadline, 'Google token request');
-        $r = $this->http(absoluteDeadline: $absoluteDeadline)->postForm(self::TOKEN_URL, $fields);
+        $r = $this->postForm(self::TOKEN_URL, $fields, $absoluteDeadline);
         self::assertWithinDeadline($absoluteDeadline, 'Google token request');
         $data = json_decode($r['body'], true);
+        if (is_array($data) && ($data['error'] ?? null) === 'invalid_grant') {
+            throw HttpError::conflict('google_reconnect_needed', 'Reconnect needed. Google no longer accepts this account\'s access. Open Settings, Connections and reconnect it.');
+        }
         if ($r['status'] < 200 || $r['status'] >= 300 || !is_array($data)) {
             $why = is_array($data) ? (string) ($data['error_description'] ?? $data['error'] ?? '') : '';
             throw new \RuntimeException('Google token request failed: HTTP ' . $r['status'] . ($why !== '' ? " ($why)" : ''));
@@ -453,6 +477,14 @@ final class GoogleAuth
         if ($deadline !== null && microtime(true) >= $deadline) {
             throw new \RuntimeException($operation . ' exceeded its elapsed-time safety limit');
         }
+    }
+
+    /** Explicit transport seam for deterministic provider-response tests. */
+    private function postForm(string $url, array $fields, ?float $deadline = null): array
+    {
+        return $this->postFormTransport !== null
+            ? ($this->postFormTransport)($url, $fields, $deadline)
+            : $this->http(absoluteDeadline: $deadline)->postForm($url, $fields);
     }
 
     private function http(

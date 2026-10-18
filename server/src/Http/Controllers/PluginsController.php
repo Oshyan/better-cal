@@ -7,6 +7,7 @@ namespace BetterCal\Http\Controllers;
 use BetterCal\Domain\Plugins;
 use BetterCal\Domain\Proposals;
 use BetterCal\Domain\Undo;
+use BetterCal\Domain\RequestAuthority;
 use BetterCal\Infra\Db;
 use BetterCal\Http\HttpError;
 use BetterCal\Http\Request;
@@ -37,15 +38,13 @@ final class PluginsController
 
     public function enable(Request $req, array $params): Response
     {
-        $req->requireSession('Plugin management');
-        $this->plugins->enable((string) $params['id']);
+        $this->plugins->withAuthority(RequestAuthority::request($req), fn() => $this->plugins->enable((string) $params['id']));
         return Response::json(['ok' => true]);
     }
 
     public function disable(Request $req, array $params): Response
     {
-        $req->requireSession('Plugin management');
-        $this->plugins->disable((string) $params['id']);
+        $this->plugins->withAuthority(RequestAuthority::request($req), fn() => $this->plugins->disable((string) $params['id']));
         return Response::json(['ok' => true]);
     }
 
@@ -59,25 +58,23 @@ final class PluginsController
 
     public function saveSettings(Request $req, array $params): Response
     {
-        $req->requireSession('Plugin management');
-        return Response::json(['settings' => $this->plugins->saveSettings((string) $params['id'], is_array($req->body) ? $req->body : [])]);
+        return Response::json(['settings' => $this->plugins->saveSettings((string) $params['id'], is_array($req->body) ? $req->body : [], RequestAuthority::request($req))]);
     }
 
     public function saveCalendarSettings(Request $req, array $params): Response
     {
-        $req->requireSession('Plugin management');
         return Response::json(['settings' => $this->plugins->saveCalendarSettings(
             (int) $req->user['id'],
             (int) $params['calendarId'],
             (string) $params['id'],
-            is_array($req->body) ? $req->body : []
+            is_array($req->body) ? $req->body : [],
+            RequestAuthority::request($req),
         )]);
     }
 
     /** "Run now": enqueue every job (or one, via ?job=) for the worker's next tick. */
     public function runNow(Request $req, array $params): Response
     {
-        $req->requireSession('Plugin management');
         $id = (string) $params['id'];
         $only = isset($req->query['job']) ? (string) $req->query['job'] : null;
         $m = $this->plugins->manifest($id);
@@ -95,7 +92,7 @@ final class PluginsController
         if ($only !== null && $jobIds === []) {
             throw HttpError::badRequest('Unknown plugin job', 'unknown_plugin_job');
         }
-        $result = $this->queue->enqueuePluginJobs((int) $req->user['id'], $id, $jobIds, true);
+        $result = $this->plugins->withAuthority(RequestAuthority::request($req), fn() => $this->queue->enqueuePluginJobs((int) $req->user['id'], $id, $jobIds, true));
         if ($result['status'] === 'disabled') {
             throw HttpError::conflict('plugin_disabled', 'Enable this plugin before running it.');
         }
@@ -131,13 +128,14 @@ final class PluginsController
         ) as $r) {
             $out[(string) $r['plugin_id']][(string) $r['k']] = json_decode((string) $r['v_json'], true);
         }
+        foreach ($out as $pluginId => &$values) $values = $this->plugins->publicValues($pluginId, 'eventSettings', $values);
+        unset($values);
         return Response::json(['data' => $out]);
     }
 
     /** Save the user's answers to one plugin's event-scope controls (C8). */
     public function saveEventData(Request $req, array $params): Response
     {
-        $req->requireSession('Plugin management');
         $eventId = (int) $params['id'];
         $pluginId = (string) $params['pluginId'];
         $this->requireOwnedEvent($req, $eventId);
@@ -149,18 +147,27 @@ final class PluginsController
         if ($errs !== []) {
             throw HttpError::badRequest('Invalid values: ' . json_encode($errs));
         }
-        foreach ($clean as $k => $v) {
-            if ($v === null) {
-                $this->db->run('DELETE FROM event_plugin_data WHERE event_id = ? AND plugin_id = ? AND k = ?', [$eventId, $pluginId, $k]);
-                continue;
+        $saved = $this->plugins->withAuthority(RequestAuthority::request($req), function () use ($req, $eventId, $pluginId, $clean): array {
+            $this->requireOwnedEvent($req, $eventId);
+            $sealed = $this->plugins->sealValues($pluginId, 'eventSettings', $clean);
+            foreach ($sealed as $k => $v) {
+                if ($v === null) {
+                    $this->db->run('DELETE FROM event_plugin_data WHERE event_id = ? AND plugin_id = ? AND k = ?', [$eventId, $pluginId, $k]);
+                    continue;
+                }
+                $this->db->run(
+                    'INSERT INTO event_plugin_data (event_id, plugin_id, k, v_json) VALUES (?, ?, ?, ?)
+                     ON DUPLICATE KEY UPDATE v_json = VALUES(v_json)',
+                    [$eventId, $pluginId, mb_substr((string) $k, 0, 120), json_encode($v, JSON_INVALID_UTF8_SUBSTITUTE)]
+                );
             }
-            $this->db->run(
-                'INSERT INTO event_plugin_data (event_id, plugin_id, k, v_json) VALUES (?, ?, ?, ?)
-                 ON DUPLICATE KEY UPDATE v_json = VALUES(v_json)',
-                [$eventId, $pluginId, mb_substr((string) $k, 0, 120), json_encode($v, JSON_INVALID_UTF8_SUBSTITUTE)]
-            );
-        }
-        return Response::json(['saved' => $clean]);
+            $stored = [];
+            foreach ($this->db->all('SELECT k, v_json FROM event_plugin_data WHERE event_id = ? AND plugin_id = ?', [$eventId, $pluginId]) as $row) {
+                $stored[(string) $row['k']] = json_decode((string) $row['v_json'], true);
+            }
+            return $this->plugins->publicValues($pluginId, 'eventSettings', $stored);
+        });
+        return Response::json(['saved' => $saved]);
     }
 
     private function requireOwnedEvent(Request $req, int $eventId): void

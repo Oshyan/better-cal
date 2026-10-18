@@ -14,7 +14,11 @@ Bearer requests are CSRF-exempt (no cookie is involved, so there is nothing to f
 
 Tokens are stored sha256-hashed; the plaintext value is shown exactly once at creation. Optional `expires_at` is supported in the schema (NULL = never); tokens created via the API or CLI currently don't expire, so revoke them when done.
 
-Durable channels follow the token too. A public outbound feed or push device created by a token is removed when it is revoked; an inbound ICS subscription created by a token is paused, preserving its cached events for the owner to review. Direct refresh and background polling both stop. The owner can explicitly keep that subscription active from its calendar settings.
+An API key remains a broad account key, not a read-only or per-calendar permission. It can edit calendar data, resolve duplicates, enable or disable plugins, configure plugin and calendar settings, save event plugin fields, and queue plugin jobs. Jobs and configuration can have outside effects through an installed plugin. All ordinary settings remain writable except `workerOffAt` and `updateNotifications: "off"`, which need a signed-in browser; `"all"` and `"security"` are allowed. A mixed settings patch containing a forbidden change is refused as a whole.
+
+Browser-only actions also include plugin uninstall and run undo, invitation decisions and replies, proposals, paid-model and mail-limit dismissals, exports, updates and the private-files check. Secret plugin fields are write-only for everyone: responses contain `{set: true}` or `{set: false}`, omission preserves the value, and `null` clears it. System health keeps failure counts and cleaned reasons, but omits cron commands, absolute paths, notification addresses, push endpoints and hashes, and device labels. Cleaning keeps a recognized failure reason and URL host, not the original error text.
+
+Durable channels follow the token too. A public outbound feed or push device created by a token is removed when it is revoked; an inbound ICS subscription created by a token is paused, preserving its cached events for the owner to review. Direct refresh and background polling both stop. The owner can explicitly keep a paused subscription from its calendar settings or Review, after recent password confirmation. An active token-owned feed cannot be detached from its token this way. Revocation is checked again before a notification send, but a message already handed to its provider cannot be recalled.
 
 ### Creating a token
 
@@ -115,7 +119,11 @@ Use the secret-free configuration in that guide. The Node process reads `BETTERC
 | Edit event | `PATCH /events/:id` | `update_event` | `scope` required when recurring |
 | Delete event | `DELETE /events/:id` | `delete_event` | `scope`/`instanceStart` for instances |
 | Attendance (going / interested / hide) | `POST /events/:id/attendance` | `set_attendance` | Works on read-only feed events; the MCP tool sets the whole series |
-| Review queue (held invitation changes, unanswered invitations, plugin proposals, possible duplicates) | `GET /review` | `list_review` | Tokens can list Review items but receive no decision actions. Accept, dismiss, RSVP, proposal and duplicate decisions require a signed-in browser session. |
+| Review queue (held invitation changes, unanswered invitations, plugin proposals, possible duplicates) | `GET /review` | `list_review` | Tokens receive duplicate actions only. Invitations, dismissals, replies and proposals need a browser. |
+| Plugins and health | `GET /plugins`, `GET /system/health` | `list_plugins`, `get_system_health` | Secret fields report only set/unset; health hides private host and destination details |
+| Configure plugins | `PATCH /plugins/:id/settings`, `PATCH /plugins/:id/calendar-settings/:calendarId`, `PATCH /events/:id/plugin-data/:pluginId` | `update_plugin_settings`, `update_plugin_calendar_settings`, `update_event_plugin_data` | Omit a secret to keep it, send null to clear; configuration can change outside behavior |
+| Enable or run plugins | `POST /plugins/:id/enable`, `/disable`, `/run` | `set_plugin_enabled`, `run_plugin` | Can have outside effects; runs are queued for the worker |
+| Decide duplicates | `POST /duplicates/:id` | `resolve_duplicate` | `linked` or `dismissed` |
 | List calendars | `GET /calendars` | `list_calendars` | Includes folders, tags and feed health; stored ICS source capabilities are redacted unless this token created the subscription |
 | Undo last change | `POST /undo` | `undo` | Per user; each call undoes the most recent create, update or delete not yet undone, so repeating it steps further back (7-day snapshots); log-only entries are passed over |
 | Manage calendars/folders | `POST/PATCH/DELETE /calendars`, `/folders` | — | REST only for now |

@@ -6,6 +6,10 @@ Security fixes are tracked privately as GitHub security advisories until they sh
 
 ## Unreleased
 
+- **Agents can configure and run plugins.** API keys can also change event plugin fields and decide duplicates. They cannot turn off worker warnings or security update notices. Plugin authors can mark credentials as write-only secret fields; neither browsers nor agents receive their values back. System health remains available to agents with private host and destination details removed.
+- **Signing out other browsers offers a subscription choice.** Review the feeds those browsers added and choose to keep them running or pause them for Review. Existing browser subscriptions from before this update remain owner-confirmed. Ordinary sign-out and session expiry do not pause feeds.
+- **Revocation is checked again when changes are saved or messages sent.** This closes races involving sign-in, settings, CalDAV, subscription ownership and Google replies or disconnects. Google grants that are no longer accepted now say **Reconnect needed** in Settings. An outside request already sent cannot be recalled, and an offline phone can still show its cached calendar for up to 24 hours after its last confirmed sign-in.
+
 - **Private storage works under account-group-writable home and app folders.** Exports and backups no longer reject these normal hosting layouts. World-writable parents without the sticky bit remain refused.
 - **Exports stay complete without holding the whole calendar in memory.** A single calendar streams directly; Export everything builds its ZIP in private storage, then downloads it. Only one export runs at a time, with a clear busy message. Temporary files are removed after sending or failure, and abandoned files on the next export. There is no event cap.
 - **Backups refuse unsafe storage and missing encryption settings.** Linked or foreign-owned backup paths are refused before they can be changed. A missing session secret blocks new backups and updates; Settings, System shows the problem immediately and supplies a settings line to paste. Older plain backups remain readable.

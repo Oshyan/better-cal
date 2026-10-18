@@ -20,6 +20,12 @@ use BetterCal\Support\Time;
  */
 final class AuthBackend extends \Sabre\DAV\Auth\Backend\AbstractBasic
 {
+    private ?\BetterCal\Domain\RequestAuthority $authority = null;
+
+    public function authority(): ?\BetterCal\Domain\RequestAuthority
+    {
+        return $this->authority;
+    }
     public function __construct(private readonly Db $db, private readonly ?LoginGuard $guard = null)
     {
         $this->setRealm('Better-Cal');
@@ -27,6 +33,7 @@ final class AuthBackend extends \Sabre\DAV\Auth\Backend\AbstractBasic
 
     protected function validateUserPass($username, $password)
     {
+        $this->authority = null;
         $source = $this->guard?->source($_SERVER) ?? '';
         // An API token is 256 random bits and cannot be guessed, so a valid one
         // is accepted outside the password limit: a device syncing with a
@@ -57,10 +64,13 @@ final class AuthBackend extends \Sabre\DAV\Auth\Backend\AbstractBasic
         if ($user === null) {
             return false;
         }
-        return $this->db->one(
+        $matched = $this->db->one(
             'SELECT id FROM api_tokens WHERE user_id = ? AND token_hash = ? AND (expires_at IS NULL OR expires_at > ?)',
             [(int) $user['id'], hash('sha256', $token), Time::nowDb()]
-        ) !== null;
+        );
+        if ($matched === null) return false;
+        $this->authority = \BetterCal\Domain\RequestAuthority::credential((int) $user['id'], (int) $matched['id'], null);
+        return true;
     }
 
     private function passwordOrTokenMatches(string $username, string $password): bool
@@ -71,12 +81,15 @@ final class AuthBackend extends \Sabre\DAV\Auth\Backend\AbstractBasic
             return false;
         }
         if (password_verify($password, (string) $user['password_hash'])) {
+            $this->authority = \BetterCal\Domain\RequestAuthority::password((int) $user['id'], (string) $user['password_hash']);
             return true;
         }
         $token = $this->db->one(
             'SELECT id FROM api_tokens WHERE user_id = ? AND token_hash = ? AND (expires_at IS NULL OR expires_at > ?)',
             [(int) $user['id'], hash('sha256', $password), Time::nowDb()]
         );
-        return $token !== null;
+        if ($token === null) return false;
+        $this->authority = \BetterCal\Domain\RequestAuthority::credential((int) $user['id'], (int) $token['id'], null);
+        return true;
     }
 }

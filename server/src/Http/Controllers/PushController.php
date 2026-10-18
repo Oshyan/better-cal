@@ -130,6 +130,8 @@ final class PushController
         $sent = 0;
         $failed = 0;
         foreach ($subs as $sub) {
+            $sub = $this->subscriptions->currentForSend($sub);
+            if ($sub === null) continue;
             $result = $this->sender->send($sub, $payload);
             if ($result === PushSender::OK) {
                 $this->subscriptions->recordSuccess((int) $sub['id']);
@@ -169,6 +171,9 @@ final class PushController
         $admitted = (new ExternalActionAdmission($this->db))->admitEmail((int) $req->user['id'], $to, null);
         if (!$admitted['admitted']) {
             throw new HttpError('email_safety_limit', 'The email safety limit has been reached. Try again later.', 429);
+        }
+        if (!\BetterCal\Domain\NotificationDestinations::email($this->db, (int) $req->user['id'], $to)) {
+            throw HttpError::conflict('notification_destination_changed', 'The reminder destination changed before this test could be sent. Try again.');
         }
         $ok = $this->email->sendReminder($to, [
             'title' => 'Better-Cal test email',

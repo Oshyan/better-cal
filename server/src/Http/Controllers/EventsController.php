@@ -123,7 +123,7 @@ final class EventsController
         if ($this->rsvp === null) {
             throw HttpError::notFound('RSVP unavailable');
         }
-        return Response::json($this->rsvp->answer((int) $req->user['id'], (int) $params['id'], (string) ($req->str('answer') ?? '')));
+        return Response::json($this->rsvp->answer((int) $req->user['id'], (int) $params['id'], (string) ($req->str('answer') ?? ''), $req->cookies[\BetterCal\Domain\Auth::COOKIE] ?? null));
     }
 
     /** POST /events/:id/relationship {relationship, scope?, instanceStart?} -> {ok:true} */

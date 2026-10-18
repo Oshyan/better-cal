@@ -78,7 +78,7 @@ final class SystemController
     public function workerOff(Request $req): Response
     {
         $req->requireSession('Turning the background worker off');
-        \BetterCal\Domain\WorkerWatch::turnOff($this->health->db());
+        \BetterCal\Domain\WorkerWatch::turnOff($this->health->db(), $req->cookies[\BetterCal\Domain\Auth::COOKIE] ?? null);
         return Response::json(['worker' => \BetterCal\Domain\WorkerWatch::state($this->health->db())]);
     }
 
@@ -170,7 +170,7 @@ final class SystemController
         $alertTo = (string) ($this->cfg['alert_email'] ?? '');
         $root = (string) $this->cfg['app_root'];
         $php = Setup::workerPhp($root);
-        return Response::json([
+        $result = [
             'rows' => $rows,
             // running, never, off or stopped (Domain\WorkerWatch::state).
             'worker' => $worker,
@@ -190,6 +190,7 @@ final class SystemController
                 'systemTo' => $alertTo !== '' ? $alertTo : (string) $req->user['email'],
                 'accountTo' => (string) $req->user['email'],
             ],
-        ]);
+        ];
+        return Response::json($req->authMethod === 'token' ? \BetterCal\Domain\HealthDiagnostics::forToken($result) : $result);
     }
 }

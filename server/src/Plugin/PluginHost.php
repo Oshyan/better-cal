@@ -15,6 +15,7 @@ use BetterCal\Domain\Recurrence;
 use BetterCal\Domain\Sanitize;
 use BetterCal\Domain\Trips;
 use BetterCal\Domain\Undo;
+use BetterCal\Domain\PluginSecrets;
 use BetterCal\Infra\Db;
 use BetterCal\Infra\HttpClient;
 use BetterCal\Infra\JobQueue;
@@ -82,6 +83,7 @@ final class PluginHost
 
     public function log(string $message): void
     {
+        if ($this->privateDiagnostics()) $message = PluginSecrets::HIDDEN_DIAGNOSTIC;
         $this->log[] = '[' . date('H:i:s') . '] ' . mb_substr($message, 0, 300);
         if (count($this->log) > 100) {
             array_shift($this->log);
@@ -91,6 +93,14 @@ final class PluginHost
     public function logTail(): string
     {
         return implode("\n", $this->log);
+    }
+
+    private function privateDiagnostics(): bool
+    {
+        if (PluginSecrets::hasSecrets($this->manifest)) return true;
+        $raw = $this->db->scalar('SELECT settings_json FROM plugins WHERE id = ?', [$this->pluginId]);
+        $settings = is_string($raw) ? json_decode($raw, true) : [];
+        return !empty($settings[PluginSecrets::PRIVATE_DIAGNOSTICS]);
     }
 
     /** Seconds left in the soft budget. Long loops should check and stop. */
@@ -125,7 +135,7 @@ final class PluginHost
             $k = (string) $field['key'];
             $out[$k] = array_key_exists($k, $stored) ? $stored[$k] : ($field['default'] ?? null);
         }
-        return $out;
+        return PluginSecrets::open($this->pluginId, 'settings', $out, (string) ($this->cfg['session_secret'] ?? ''));
     }
 
     /** Per-calendar values for this plugin (settings_json.plugins.<id>). */
@@ -139,7 +149,7 @@ final class PluginHost
             $k = (string) $field['key'];
             $out[$k] = array_key_exists($k, $mine) ? $mine[$k] : ($field['default'] ?? null);
         }
-        return $out;
+        return PluginSecrets::open($this->pluginId, 'calendarSettings', $out, (string) ($this->cfg['session_secret'] ?? ''));
     }
 
     /**
@@ -248,7 +258,7 @@ final class PluginHost
         ) as $r) {
             $out[(string) $r['k']] = json_decode((string) $r['v_json'], true);
         }
-        return $out;
+        return PluginSecrets::open($this->pluginId, 'eventSettings', $out, (string) ($this->cfg['session_secret'] ?? ''));
     }
 
     public function setEventData(int $eventId, string $key, mixed $value): void
@@ -266,6 +276,8 @@ final class PluginHost
             );
             return;
         }
+        $values = PluginSecrets::seal($this->pluginId, 'eventSettings', $this->manifest['eventSettings'] ?? [], [$key => $value], (string) ($this->cfg['session_secret'] ?? ''));
+        $value = $values[$key];
         $this->db->run(
             'INSERT INTO event_plugin_data (event_id, plugin_id, k, v_json) VALUES (?, ?, ?, ?)
              ON DUPLICATE KEY UPDATE v_json = VALUES(v_json)',
@@ -288,7 +300,8 @@ final class PluginHost
              WHERE d.plugin_id = ? AND d.k = ?',
             [$this->userId, $this->pluginId, $key]
         ) as $r) {
-            $out[(int) $r['event_id']] = json_decode((string) $r['v_json'], true);
+            $values = PluginSecrets::open($this->pluginId, 'eventSettings', [$key => json_decode((string) $r['v_json'], true)], (string) ($this->cfg['session_secret'] ?? ''));
+            $out[(int) $r['event_id']] = $values[$key];
         }
         return $out;
     }
@@ -898,10 +911,11 @@ final class PluginHost
      */
     public function replaceWarnings(array $warnings): int
     {
+        $private = $this->privateDiagnostics();
         $this->db->run('DELETE FROM plugin_warnings WHERE plugin_id = ?', [$this->pluginId]);
         $n = 0;
         foreach (array_slice($warnings, 0, 500) as $w) {
-            $msg = mb_substr(Sanitize::toText((string) ($w['message'] ?? '')), 0, 500);
+            $msg = $private ? PluginSecrets::HIDDEN_DIAGNOSTIC : mb_substr(Sanitize::toText((string) ($w['message'] ?? '')), 0, 500);
             if ($msg === '') {
                 continue;
             }
@@ -910,7 +924,7 @@ final class PluginHost
                 'event_id' => isset($w['eventId']) ? (int) $w['eventId'] : null,
                 'severity' => ($w['severity'] ?? 'warn') === 'info' ? 'info' : 'warn',
                 'message' => $msg,
-                'fix_text' => isset($w['fix']) ? mb_substr(Sanitize::toText((string) $w['fix']), 0, 300) : null,
+                'fix_text' => !$private && isset($w['fix']) ? mb_substr(Sanitize::toText((string) $w['fix']), 0, 300) : null,
             ]);
             $n++;
         }

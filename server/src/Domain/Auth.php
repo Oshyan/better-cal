@@ -53,22 +53,29 @@ final class Auth
         if (!password_verify($password, (string) $user['password_hash'])) {
             return null;
         }
-        if (password_needs_rehash((string) $user['password_hash'], PASSWORD_DEFAULT)) {
-            $this->db->run('UPDATE users SET password_hash = ? WHERE id = ?', [password_hash($password, PASSWORD_DEFAULT), $user['id']]);
-        }
-        $token = Ids::base64url(random_bytes(32));
-        $csrf = bin2hex(random_bytes(16));
-        $expires = Time::nowUtc()->add(new \DateInterval('P' . self::TTL_DAYS . 'D'));
-        $this->db->insert('sessions', [
-            'token_hash' => hash('sha256', $token),
-            'user_id' => (int) $user['id'],
-            'csrf' => $csrf,
-            'authenticated_at' => Time::nowDb(),
-            'expires_at' => Time::toDb($expires),
-        ]);
-        // Opportunistic cleanup of expired sessions.
-        $this->db->run('DELETE FROM sessions WHERE expires_at < ?', [Time::nowDb()]);
-        return ['token' => $token, 'csrf' => $csrf, 'user' => $user];
+        $replacement = password_needs_rehash((string) $user['password_hash'], PASSWORD_DEFAULT)
+            ? password_hash($password, PASSWORD_DEFAULT) : null;
+        return $this->db->tx(function () use ($user, $replacement): ?array {
+            if (!RequestAuthority::passwordStillCurrent($this->db, (int) $user['id'], (string) $user['password_hash'])) {
+                return null;
+            }
+            if ($replacement !== null) {
+                $this->db->run('UPDATE users SET password_hash = ? WHERE id = ?', [$replacement, $user['id']]);
+            }
+            $token = Ids::base64url(random_bytes(32));
+            $csrf = bin2hex(random_bytes(16));
+            $expires = Time::nowUtc()->add(new \DateInterval('P' . self::TTL_DAYS . 'D'));
+            $this->db->insert('sessions', [
+                'token_hash' => hash('sha256', $token),
+                'user_id' => (int) $user['id'],
+                'csrf' => $csrf,
+                'authenticated_at' => Time::nowDb(),
+                'expires_at' => Time::toDb($expires),
+            ]);
+            // Opportunistic cleanup of expired sessions.
+            $this->db->run('DELETE FROM sessions WHERE expires_at < ?', [Time::nowDb()]);
+            return ['token' => $token, 'csrf' => $csrf, 'user' => $user];
+        });
     }
 
     /**
@@ -92,6 +99,9 @@ final class Auth
         $tokenHash = hash('sha256', $token);
         return $this->db->tx(function () use ($tokenHash, $pushEndpointHash): int {
             $lock = $this->db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
+            $owner = $this->db->scalar('SELECT user_id FROM sessions WHERE token_hash = ?', [$tokenHash]);
+            if ($owner === null) return 0;
+            if ($lock !== '') $this->db->one('SELECT id FROM users WHERE id = ?' . $lock, [(int) $owner]);
             $session = $this->db->one('SELECT user_id FROM sessions WHERE token_hash = ?' . $lock, [$tokenHash]);
             if ($session === null) {
                 return 0; // Already signed out (or reset) is an idempotent success.
@@ -142,6 +152,7 @@ final class Auth
         return $this->db->tx(function () use ($userId, $password, $revokeTokens): array {
             $this->db->run('UPDATE users SET password_hash = ? WHERE id = ?', [password_hash($password, PASSWORD_DEFAULT), $userId]);
             $sessions = $this->db->run('DELETE FROM sessions WHERE user_id = ?', [$userId])->rowCount();
+            $browserPaused = $this->db->run("UPDATE calendars SET subscription_authority = 'session_review' WHERE user_id = ? AND kind = 'subscribed' AND COALESCE(provider, 'ics') = 'ics' AND subscription_authority = 'owner' AND created_by_session_hash IS NOT NULL", [$userId])->rowCount();
             $push = $this->db->run('DELETE FROM push_subscriptions WHERE user_id = ?', [$userId])->rowCount();
             // Browsers that signed in under the old password stop vouching
             // through the sign-in brake (issue #59); each earns it again.
@@ -149,11 +160,11 @@ final class Auth
             $tokens = 0;
             $feeds = 0;
             $emailReset = false;
-            $subscriptionsPaused = 0;
+            $subscriptionsPaused = $browserPaused;
             $googleAccounts = 0;
             $googleMoves = 0;
             if ($revokeTokens) {
-                $subscriptionsPaused = (int) $this->db->scalar(
+                $subscriptionsPaused += (int) $this->db->scalar(
                     "SELECT COUNT(*) FROM calendars c JOIN api_tokens t ON t.id = c.created_by_token_id
                      WHERE c.user_id = ? AND t.user_id = ? AND c.kind = 'subscribed'
                        AND COALESCE(c.provider, 'ics') = 'ics' AND c.subscription_authority = 'token'",
@@ -233,16 +244,19 @@ final class Auth
         if (!is_string($hash) || !password_verify($password, $hash)) {
             return false;
         }
-        $tokenHash = hash('sha256', $token);
-        $session = $this->db->one(
-            'SELECT token_hash FROM sessions WHERE token_hash = ? AND user_id = ? AND expires_at > ?',
-            [$tokenHash, $userId, Time::nowDb()]
-        );
-        if ($session === null) {
-            return false;
-        }
-        $this->db->run('UPDATE sessions SET authenticated_at = ? WHERE token_hash = ?', [Time::nowDb(), $tokenHash]);
-        return true;
+        return $this->db->tx(function () use ($userId, $token, $hash): bool {
+            if (!RequestAuthority::passwordStillCurrent($this->db, $userId, $hash)) return false;
+            $tokenHash = hash('sha256', $token);
+            $session = $this->db->one(
+                'SELECT token_hash FROM sessions WHERE token_hash = ? AND user_id = ? AND expires_at > ?' . $this->db->forUpdate(),
+                [$tokenHash, $userId, Time::nowDb()]
+            );
+            if ($session === null) {
+                return false;
+            }
+            $this->db->run('UPDATE sessions SET authenticated_at = ? WHERE token_hash = ?', [Time::nowDb(), $tokenHash]);
+            return true;
+        });
     }
 
     /**
@@ -325,13 +339,19 @@ final class Auth
      *
      * @return array{sessions:int,devices:int,pushDevices:int,feedsRotated:int,notifyEmailReset:bool}
      */
-    public function signOutOthers(int $userId, ?string $keepToken, ?int $keepDevice, ?string $keepPushHash): array
+    public function subscriptionRecoveryPreview(int $userId, ?string $keepToken): array
     {
-        $out = $this->db->tx(function () use ($userId, $keepToken, $keepDevice, $keepPushHash): array {
+        return BrowserSubscriptions::preview($this->db, $userId, $keepToken, (string) ($this->cfg['session_secret'] ?? ''));
+    }
+
+    public function signOutOthers(int $userId, ?string $keepToken, ?int $keepDevice, ?string $keepPushHash, ?array $subscriptionReview = null): array
+    {
+        $out = $this->db->tx(function () use ($userId, $keepToken, $keepDevice, $keepPushHash, $subscriptionReview): array {
             // Serialize recovery with session-created channel writes. If a
             // password reset or earlier recovery already ended this browser,
             // it must not perform another partially authorized cleanup.
             self::assertSession($this->db, $userId, $keepToken, true);
+            $subscriptionsPaused = BrowserSubscriptions::decide($this->db, $userId, $keepToken, $subscriptionReview);
             $sessions = $this->db->run(
                 'DELETE FROM sessions WHERE user_id = ? AND token_hash <> ?',
                 [$userId, hash('sha256', (string) $keepToken)]
@@ -361,7 +381,7 @@ final class Auth
                 $this->db->run('UPDATE users SET settings_json = ? WHERE id = ?', [json_encode($settings), $userId]);
                 $emailReset = true;
             }
-            return ['sessions' => $sessions, 'devices' => $devices, 'pushDevices' => $push, 'feedsRotated' => $feeds, 'notifyEmailReset' => $emailReset];
+            return ['sessions' => $sessions, 'devices' => $devices, 'pushDevices' => $push, 'feedsRotated' => $feeds, 'notifyEmailReset' => $emailReset, 'subscriptionsPaused' => $subscriptionsPaused];
         });
         $parts = [$out['sessions'] . ' other browser' . ($out['sessions'] === 1 ? '' : 's') . ' signed out'];
         if ($out['pushDevices'] > 0) {

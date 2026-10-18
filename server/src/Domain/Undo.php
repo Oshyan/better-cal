@@ -258,6 +258,10 @@ final class Undo
         }
 
         $this->db->tx(function () use ($mutation, $before, $after, $calendarIds): void {
+            // Recovery uses this lock before changing channel authorization.
+            if ($this->db->forUpdate() !== '') {
+                $this->db->one('SELECT id FROM users WHERE id = ? FOR UPDATE', [(int) $mutation['user_id']]);
+            }
             CalendarMoveGuard::lockAndAssertMutable($this->db, $calendarIds);
             foreach (array_values(array_unique($calendarIds)) as $calendarId) {
                 $calendar = CalendarMoveGuard::lockCalendar($this->db, $calendarId);
@@ -300,6 +304,35 @@ final class Undo
             // Restore original rows.
             foreach (self::TABLE_ORDER as $table) {
                 foreach ($before[$table] ?? [] as $row) {
+                    if ($table === 'calendars') {
+                        $live = $this->db->one('SELECT * FROM calendars WHERE id = ?', [(int) $row['id']]);
+                        if ($live !== null) {
+                            foreach (['subscription_authority', 'created_by_token_id', 'created_by_session_hash'] as $key) {
+                                if (array_key_exists($key, $live)) $row[$key] = $live[$key];
+                            }
+                            if (($row['kind'] ?? '') === 'subscribed' && (($live['kind'] ?? '') !== 'subscribed' || ($row['source_url'] ?? null) !== ($live['source_url'] ?? null))) {
+                                throw HttpError::badRequest('Subscription source changes cannot be restored from an older undo snapshot. Review this calendar instead.', 'not_undoable');
+                            }
+                            // Calendar name/color undo must not restore cleared plugin credentials.
+                            if (array_key_exists('settings_json', $row)) {
+                                $oldSettings = json_decode((string) ($row['settings_json'] ?? '{}'), true) ?: [];
+                                $liveSettings = json_decode((string) ($live['settings_json'] ?? '{}'), true) ?: [];
+                                $oldSettings['plugins'] = $liveSettings['plugins'] ?? [];
+                                $row['settings_json'] = json_encode($oldSettings);
+                            }
+                        } elseif (($row['kind'] ?? '') === 'subscribed') {
+                            if (!empty($row['created_by_session_hash'])) $row['subscription_authority'] = 'session_review';
+                            if (!empty($row['created_by_token_id']) && !ApiTokens::stillValid($this->db, (int) $row['created_by_token_id'])) $row['created_by_token_id'] = null;
+                        }
+                    } elseif ($table === 'out_feeds') {
+                        $live = $this->db->one('SELECT * FROM out_feeds WHERE id = ?', [(int) $row['id']]);
+                        if ($live === null) {
+                            throw HttpError::badRequest('A deleted public feed cannot be restored with an old URL. Create a new feed instead.', 'not_undoable');
+                        }
+                        foreach (['token', 'token_sealed', 'created_by_token_id'] as $key) {
+                            if (array_key_exists($key, $live)) $row[$key] = $live[$key];
+                        }
+                    }
                     $this->db->upsert($table, $row);
                 }
             }

@@ -54,10 +54,20 @@ Every call's arguments are validated against the tool's schema before any reques
 | `delete_event` | `id`, `scope?`, `instanceStart?` | Delete an event / instance(s) |
 | `set_attendance` | `id`, `attendance` | none / interested / going / hidden |
 | `list_calendars` | — | Calendars, folders, tags |
-| `list_review` | `status?` | Read the Review queue: first-time emailed invitations, held changes, unanswered invitations, plugin proposals, and possible duplicates. Decisions are made in the signed-in browser. |
+| `list_review` | `status?` | Read Review; tokens receive actions for duplicates only |
+| `list_plugins` | none | Plugin schemas and settings; secrets show only set/unset |
+| `get_system_health` | none | Worker and failure status with private host and destination details omitted |
+| `update_plugin_settings` | `pluginId`, `values` | Save global plugin fields |
+| `update_plugin_calendar_settings` | `pluginId`, `calendarId`, `values` | Save calendar-specific plugin fields |
+| `set_plugin_enabled` | `pluginId`, `enabled` | Enable or disable an installed plugin |
+| `run_plugin` | `pluginId`, `job?` | Queue plugin jobs for the worker |
+| `update_event_plugin_data` | `pluginId`, `id`, `values` | Save event-specific plugin fields |
+| `resolve_duplicate` | `id`, `status` | Link or dismiss a duplicate pair |
 | `undo` | — | Revert the latest mutation |
 
 Datetimes are ISO8601 with offset (`2026-08-01T19:00:00-07:00`). `id` is the numeric `eventId` from an occurrence; `instanceStart` is that occurrence's `start` value.
+
+Plugin mutations are marked as having possible outside effects: changing configuration, enabling a plugin or queueing a run can affect its external services. Secret values are write-only. Omit a secret to preserve it, pass `null` to clear it, and never put a real secret into a saved conversation or example. The API key remains a broad account key; the browser-only exceptions and alert-setting restrictions are listed in [the agent guide](../../docs/agent-api.md#authentication-for-agents).
 
 ## Testing
 

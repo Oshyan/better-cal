@@ -69,8 +69,8 @@ export function EventPluginData({ eventId, readOnly }) {
         saveLabel="Save"
         onSave=${async (draft) => {
           try {
-            await api('/events/' + eventId + '/plugin-data/' + p.id, { method: 'PATCH', body: draft });
-            setData({ ...data, [p.id]: { ...mine, ...draft } });
+            const result = await api('/events/' + eventId + '/plugin-data/' + p.id, { method: 'PATCH', body: draft });
+            setData({ ...data, [p.id]: result.saved });
             toast(p.name + ' updated for this event');
             return true;
           } catch (e) {

@@ -62,13 +62,13 @@ final class WorkerWatch
     }
 
     /** The owner turned the worker off on purpose: no warnings until it runs again. */
-    public static function turnOff(Db $db): void
+    public static function turnOff(Db $db, ?string $sessionToken = null): void
     {
         $owner = $db->scalar('SELECT id FROM users ORDER BY id LIMIT 1');
         if ($owner === null) {
             return;
         }
-        (new Settings($db))->patch((int) $owner, ['workerOffAt' => Time::nowDb()]);
+        (new Settings($db))->patch((int) $owner, ['workerOffAt' => Time::nowDb()], null, $sessionToken);
         (new SystemHealth($db))->markOff(self::SUBJECT, self::LABEL, 'turned off on purpose; it is back on when the cron job runs it again.');
     }
 

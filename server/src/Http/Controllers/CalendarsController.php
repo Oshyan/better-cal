@@ -74,6 +74,7 @@ final class CalendarsController
             kind: 'subscribed',
             sourceUrl: $url,
             creatorTokenId: $req->authMethod === 'token' ? $req->tokenId : null,
+            creatorSession: $req->authMethod === 'session' ? (string) ($req->cookies[\BetterCal\Domain\Auth::COOKIE] ?? '') : null,
         );
         try {
             $this->feeds->poll((int) $calendar['id']);
@@ -105,8 +106,8 @@ final class CalendarsController
     /** Explicit owner review/rebinding for a paused token or legacy subscription. */
     public function claimSubscription(Request $req, array $params): Response
     {
-        $req->requireSession('Keeping this subscription active');
-        return Response::json($this->calendars->claimSubscription((int) $req->user['id'], (int) $params['id']));
+        $req->requireRecentAuthentication('Keeping this subscription active');
+        return Response::json($this->calendars->claimSubscription((int) $req->user['id'], (int) $params['id'], $req->cookies[\BetterCal\Domain\Auth::COOKIE] ?? null));
     }
 
     /**

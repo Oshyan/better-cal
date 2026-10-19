@@ -14,11 +14,20 @@ Bearer requests are CSRF-exempt (no cookie is involved, so there is nothing to f
 
 Tokens are stored sha256-hashed; the plaintext value is shown exactly once at creation. Optional `expires_at` is supported in the schema (NULL = never); tokens created via the API or CLI currently don't expire, so revoke them when done.
 
-An API key remains a broad account key, not a read-only or per-calendar permission. It can edit calendar data, resolve duplicates, enable or disable plugins, configure plugin and calendar settings, save event plugin fields, and queue plugin jobs. Jobs and configuration can have outside effects through an installed plugin. All ordinary settings remain writable except `workerOffAt` and `updateNotifications: "off"`, which need a signed-in browser; `"all"` and `"security"` are allowed. A mixed settings patch containing a forbidden change is refused as a whole.
+### What a key can and can't do
 
-Browser-only actions also include plugin uninstall and run undo, invitation decisions and replies, proposals, paid-model and mail-limit dismissals, exports, updates and the private-files check. Secret plugin fields are write-only for everyone: responses contain `{set: true}` or `{set: false}`, omission preserves the value, and `null` clears it. System health keeps failure counts and cleaned reasons, but omits cron commands, absolute paths, notification addresses, push endpoints and hashes, and device labels. Cleaning keeps a recognized failure reason and URL host, not the original error text.
+An API key is a broad account key, not a read-only or per-calendar one. That's deliberate: it lets an agent do real work.
 
-Durable channels follow the token too. A public outbound feed or push device created by a token is removed when it is revoked; an inbound ICS subscription created by a token is paused, preserving its cached events for the owner to review. Direct refresh and background polling both stop. The owner can explicitly keep a paused subscription from its calendar settings or Review, after recent password confirmation. An active token-owned feed cannot be detached from its token this way. Revocation is checked again before a notification send, but a message already handed to its provider cannot be recalled.
+**A key can:** read and edit events, calendars, folders, people and availability; search; undo; change settings; decide possible duplicates; enable, disable, configure and run installed plugins, including their per-calendar and per-event fields. Plugin jobs and settings can have effects outside Better-Cal, through what the plugin does.
+
+**A key can't:**
+
+- mark the worker as intentionally off (`workerOffAt`) or turn update notices off (`updateNotifications: "off"`), since those are how you'd notice something wrong. Switching notices between `"all"` and `"security"` is fine. A settings patch that includes a forbidden change is refused whole, with nothing applied.
+- uninstall a plugin or undo its run; decide, dismiss or answer invitations; accept or reject proposals; dismiss paid-AI or email limit notices; export; check for or dismiss updates; run the private-files check. These need a signed-in browser.
+- read a plugin setting marked `secret`. Responses say only `{set: true}` or `{set: false}`; leaving the field out keeps the stored value, and `null` clears it.
+- see server details in system health. Keys get the status of each check, failure counts and a cleaned-up reason (a recognized cause and the web host involved, never the original error text), without cron commands, server paths, notification addresses, push endpoints or device names.
+
+**When you revoke a key,** what it set up stops with it: public calendar feeds and push devices it created are removed, and calendar subscriptions it created are paused (their saved events stay) for you to keep or remove. Keeping one is done from its calendar settings or Review, with your password. A notification is checked against the key just before sending, but one already handed to the delivery service can't be recalled.
 
 ### Creating a token
 

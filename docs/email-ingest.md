@@ -12,11 +12,19 @@ The worker checks the ingest mailbox about every two minutes. It reads calendar 
 
 The choice applies to invitations as well as bookings, regardless of how the event was read. It does not change how updates and cancellations to invitations already on your calendar are handled.
 
-In Review, **Add** adds just this event. **Always add from bookings@example.com** adds it and approves that address. **Always add from example.com** adds it and approves every address at that domain, useful when a merchant sends from several addresses. Neither approval button sends a reply. The domain button is absent for common shared mailbox providers such as Gmail, Outlook, iCloud and Yahoo, where only individual addresses can be approved. The built-in list cannot name every small mail provider; approve a domain only when you mean everyone who can send from it. Settings shows the approved list and lets you remove entries. API clients can also save addresses, domains and `*.example.com` entries; the wildcard covers subdomains, not the base domain. A bulk text editor is not included yet.
+An event from a sender you haven't approved waits in Review, with three ways to add it:
 
-On upgrade, successful senders recorded in the retained mail history are approved as exact addresses. Already added events are untouched. History is kept for 90 days, so a sender whose only successful mail is older than that may need approval the next time. Existing held items stay in Review when you change the mode or approve a sender.
+- **Add** adds just this one.
+- **Always add from bookings@example.com** adds it and approves that address from now on.
+- **Always add from example.com** adds it and approves every address at that domain, handy when a merchant sends from several addresses.
 
-These are convenience preferences, not sender authentication: a sender can forge the From address. Keep the ingest address private. A mailbox alias you never give out makes it harder to guess. If you give the address directly to a booking service, use **From approved senders** and approve that service after checking its first event.
+None of them sends a reply. The domain button doesn't appear for shared mail providers like Gmail, Outlook, iCloud and Yahoo, where you can only approve one address at a time, since approving the whole domain would let in everyone who uses it. Better-Cal's list of those providers can't name every small one, so approve a domain only when you mean everyone who can send from it.
+
+Settings lists your approved senders, and you can remove any of them there. Through the API you can also add addresses, domains and wildcards like `*.example.com` (which covers `mail.example.com` and the like, but not `example.com` itself). Editing the whole list in one go is planned (issue #151).
+
+When you update to 0.9.87, every sender whose events were added in the last 90 days is approved for you, as an exact address, so merchants you already use keep working. A sender you last heard from longer ago than that needs one approval next time. Changing the mode or approving a sender doesn't release events already waiting in Review; add or dismiss those yourself.
+
+Approving a sender is a convenience, not proof of who sent a message: anyone can put any address in the From line. So keep the ingest address private; an alias you never give out makes it harder to guess. If you give the address straight to a booking service, keep **From approved senders** on and approve the service after checking its first event.
 
 ## How messages are read
 
@@ -29,9 +37,9 @@ The reader tries these sources in order:
 
 Mail is processed one message at a time. The server checks its size before decoding headers or downloading the body. Messages over 5 MiB and calendar parts over 1 MiB or 200 events are not parsed. Text and HTML supplied to extraction are limited to 512 KiB. The original email stays in the mailbox.
 
-Each unreadable or oversized message produces an **An email couldn't be read** notice in Review, with its sender and subject when those could be recovered. Check the original email and your calendar, then add any missing event by hand or forward a corrected copy. The notice stays until you dismiss it; it does not depend on the 90-day mail log. **Show older notices and decisions** reaches entries beyond the first page. Ordinary mail with no recognized event is not a parsing failure and does not create a notice.
+An email Better-Cal can't read, or that's too large, gets an **An email couldn't be read** notice in Review, with its sender and subject when those could be made out. Check the original in your mailbox and add the event by hand, or forward a corrected copy. The notice stays until you dismiss it. **Show older notices and decisions** reaches ones past the first page. An ordinary email with no event in it isn't a failure and gets no notice.
 
-A stable mailbox identifier is recorded before parsing begins. A malformed message is marked handled instead of being retried forever, even if the mailbox refuses its read flag. Later messages still get a turn. If the host stops the worker while parsing, the next worker run turns its unfinished checkpoint into a notice. Connection failures are retried when the message can safely be made unread again; otherwise a notice asks you to check it. Message receipts prevent replay for 90 days, then are removed.
+One bad message never holds up the mail behind it. Each one is noted before it's read, so a message that can't be read is set aside rather than retried forever, and if reading it ever stops the worker outright, the next run turns it into a notice. A lost connection is different: that message is simply tried again later. Each message is recorded for 90 days so it's never added twice.
 
 ## Aggregate safety and paid-model limits
 
@@ -43,19 +51,19 @@ Per-message limits are not enough when many messages arrive. These persistent li
 
 From, Message-ID and calendar UID are sender-controlled, so changing them does not reset the account-wide limits. A full model budget does not block deterministic extraction. New-event limits do not stop you deciding changes to an event already on your calendar.
 
-When a limit is reached, no over-budget event or model call is made. The email is marked read and stays in the mailbox. Review shows one **Email automation paused** notice per reason, with the affected count and the latest subject and sender. Dismissing it changes no events. For a legitimate burst, add missing events manually from the mailbox or adjust the documented `BETTERCAL_LIMIT_MAIL_*` settings within their hard ceilings. Retrying later requires forwarding a new copy; handled mail is not automatically replayed.
+When a limit is reached, the email is marked read, stays in your mailbox, and adds nothing. Review shows one **Email automation paused** notice per reason, with how many emails were affected and the latest one's subject and sender; dismissing it changes nothing on your calendar. If a real burst of bookings hit the limit, add the missing events from your mailbox by hand, forward fresh copies later, or raise the `BETTERCAL_LIMIT_MAIL_*` settings (within their maximums). Mail already handled isn't processed again on its own.
 
-Feed-triggered ranking has its own model budget: 40 batches per account per hour and 200 per day, with 20 per calendar per hour and 100 per day. A saturated calendar does not prevent another calendar using its allowance. Review shows a notice, existing scores stay unchanged, and ordinary worker runs try again when capacity is available. These budgets are separate from mail extraction and prompt filters.
+Ranking events from subscribed calendars uses AI too, with its own budget: 40 requests an hour and 200 a day for the account, and 20 an hour and 100 a day per calendar, so one busy feed can't use up everyone's share. When it runs out, Review shows a notice, existing scores stay as they are, and ranking picks up again on its own once there's room. These are separate from the email and prompt-filter budgets.
 
 ## Invitations, changes and cancellations wait for you
 
-A new invitation follows **Add events from email**. When added automatically or with **Add**, it is a Maybe with no RSVP. Review's explicit **Add and accept** also sends an acceptance when a reply route is configured. An added invitation's organizer becomes the address used to check later changes, whether it was added through your mail preference or an explicit decision. Older invitations without that recorded choice remain unbound until an owner decision.
+A new invitation follows **Add events from email**. Added automatically or with **Add**, it lands as a Maybe and nothing is sent. **Add and accept** in Review also sends your acceptance, when Better-Cal has a way to reply. Once an invitation is on your calendar, its organizer's address is what later updates are checked against. (Invitations added before 0.9.87 get that check once you've made a decision about them.)
 
-Changes or cancellations to an invitation already on your calendar are never applied just because its sender is approved. They pass the existing organizer checks, then wait in Review with the old and new values. Messages are refused if they collide with an event without an invitation, target a Google-managed invitation, fail the organizer check, or carry a sequence older than the one already applied. Reopening a cancelled invitation requires a higher sequence. A message that changes nothing visible creates no decision.
+An update or cancellation to an invitation already on your calendar is never applied automatically, even from an approved sender. It waits in Review showing the old and new values, and you accept or dismiss it. Some are refused outright and never reach Review: one claiming to update an event that was never an invitation, or a Google-managed one, or that doesn't come from its organizer, or that's an older version than the one you already have. A message that wouldn't change anything visible is simply skipped.
 
-Pending sequence numbers are only claims. Different pending revisions remain side by side, including a lower claimed sequence, so a forged high number cannot hide a genuine change. Exact replays share one item. Accepting rechecks the current event under the account lock; only an applied decision closes revisions that have become stale or redundant. Other revisions remain available. A preview that no longer matches the current event must be reviewed again. Dismiss leaves the calendar alone, and deleting an event closes its pending changes.
+Each version of an invitation carries a number, and a sender can claim any number. So Better-Cal only trusts the numbers of versions you've accepted: if several different updates are waiting, they're all shown side by side, and a forged "newer" one can't hide the genuine update. The same message arriving twice shows once. Accepting checks the event as it is right now; if it changed since you looked, you're asked to look again. Dismiss leaves your calendar alone, and deleting the event clears its waiting updates.
 
-The organizer address check is not proof of who sent the message. DKIM verification could help later, but forwarding can break it, so it cannot replace owner review of changes.
+Checking the organizer's address isn't proof of who sent a message. Verifying email signatures (DKIM) could help later, but forwarding often breaks those, so it can't replace your review of changes.
 
 ## RSVP
 
@@ -63,9 +71,9 @@ Only an iMIP REQUEST is an invitation with someone to answer. PUBLISH, structure
 
 Accept makes the event Planned; Maybe and Decline leave it as Maybe. Changing Planned or Maybe by hand sends nothing. Google calendar invitations are answered at Google instead; see [Google invitations](google-calendar.md#invitations).
 
-Email replies reserve the same persistent outbound-email allowance as reminders and system alerts before sending. A limit refusal saves your answer here and clearly says no reply was sent. Only one reply for an event can be in progress, and repeating an answer already sent sends nothing new. SMTP connections and commands have explicit timeouts; an outside send and a database save cannot be one transaction.
+Replies count against the same outgoing-email limits as reminders and alerts. If you've hit the limit, your answer is still saved here, and the event says plainly that no reply went out. Only one reply per event can be sending at a time, and giving the same answer again sends nothing new.
 
-If a request stops after sending but before saving the result, Better-Cal cannot know whether the organizer received it. The event explains that uncertainty. **Retry** asks you to confirm that another copy may be sent; it never automatically resends an uncertain reply. A failed send still uses its reserved allowance. Your initiating browser session is checked again immediately before sending and before saving the result, but an email already submitted cannot be recalled.
+If sending is interrupted after the reply may have gone out, Better-Cal can't know whether the organizer got it, and the event says so. **Retry** asks before sending another copy; it never resends on its own. A failed attempt still counts against the limit. If you sign that browser out while a reply is sending, it's checked again just before sending and before saving, but an email already sent can't be recalled.
 
 Configure the dedicated RSVP sending account if invitations arrive for a different address from the main notification account. For Gmail, use an app password:
 
@@ -87,4 +95,4 @@ If Google Calendar is also creating events from those messages, you can turn off
 
 ## Server settings
 
-IMAP defaults reuse the main SMTP mailbox host, user and password on port 993. Set `BETTERCAL_IMAP_HOST`, `BETTERCAL_IMAP_PORT`, `BETTERCAL_IMAP_USER` and `BETTERCAL_IMAP_PASS` if the ingest mailbox differs. The existing webklex/php-imap library supplies the protocol client; the PHP IMAP extension is not needed. Plugin location queries honor `BETTERCAL_PLACE_LOOKUP=off` just like application queries.
+IMAP defaults reuse the main SMTP mailbox host, user and password on port 993. Set `BETTERCAL_IMAP_HOST`, `BETTERCAL_IMAP_PORT`, `BETTERCAL_IMAP_USER` and `BETTERCAL_IMAP_PASS` if the ingest mailbox differs. Better-Cal reads mail with its own library (webklex/php-imap), so PHP's IMAP extension isn't needed.

@@ -43,7 +43,7 @@ Either one alone works too (`locationiq` or `maptiler`). Photon stays behind wha
 
 **Also supported: Stadia Maps.** [Stadia Maps](https://stadiamaps.com) had the best results of anything tested on addresses (it carries far more US house numbers than OpenStreetMap alone) and was fast. Set `BETTERCAL_PLACE_SEARCH=stadia` and `BETTERCAL_STADIA_KEY`. **But note:** Better-Cal saves the coordinates of places you pick. Stadia Maps' terms allow keeping them only on a paid plan that includes storing results, so check [Stadia's current plans](https://stadiamaps.com/pricing/). Making sure your plan fits is your responsibility; Better-Cal does not check. Settings says the same wherever Stadia is mentioned.
 
-**Or none: `BETTERCAL_PLACE_SEARCH=off`.** Places are typed as plain text, with no suggestions, and events nobody picked a place for get no map pin. No service is ever asked, so nothing can fail or show as failing in Settings, System. `BETTERCAL_PLACE_LOOKUP` follows it unless set to a list of its own.
+**Or none: `BETTERCAL_PLACE_SEARCH=off`.** Places are typed as plain text, with no suggestions, and events nobody picked a place for get no map pin. No service is ever asked, by Better-Cal or its plugins (since 0.9.87), so nothing can fail or show as failing in Settings, System. `BETTERCAL_PLACE_LOOKUP` follows it unless set to a list of its own.
 
 **More than one service:** both settings take a list, tried in order, with Photon always last. `BETTERCAL_PLACE_SEARCH=locationiq,maptiler` asks LocationIQ first, MapTiler when LocationIQ can't answer, then Photon.
 

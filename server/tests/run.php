@@ -10161,6 +10161,12 @@ check('access code: process/security regression suite', $accessStatus === 0, $ac
         $threw = null;
         try { $importer->importIcs(1, $work, 'ignored', null, 4); } catch (BetterCal\Http\HttpError $e) { $threw = $e->status; }
         checkEq('import: nor is another account\'s calendar', 404, $threw);
+        $listLimit = Limits::get('ICS_LIST_VALUES_PER_INPUT');
+        Limits::configure(['ICS_LIST_VALUES_PER_INPUT' => 2]);
+        $threw = null;
+        try { $importer->importIcs(1, str_replace("END:VEVENT", "CATEGORIES:a,b,c,d\r\nEND:VEVENT", $work), 'ignored'); } catch (BetterCal\Http\HttpError $e) { $threw = $e->getMessage(); }
+        check('import: a comma-list refusal names the setting that raises it', str_contains((string) $threw, 'BETTERCAL_LIMIT_ICS_LIST_VALUES_PER_INPUT') && !str_contains((string) $threw, 'IMPORT_EVENTS'));
+        Limits::configure(['ICS_LIST_VALUES_PER_INPUT' => $listLimit]);
         $z->close();
         $workspace->close();
         unlink($exportRoot . '/.runtime-cache/export-lock.php');

@@ -7506,7 +7506,7 @@ checkEq('google sync: without a synctoken the poll applies as before', false,
     checkEq('sessions: the Account tab sees two other browsers', 2, json_decode($octl->otherSessions($asOwner('GET', '/api/v1/auth/sessions', [], $cookies))->body, true)['others']);
     $r = $octl->signOutOthers($asOwner('POST', '/api/v1/auth/sign-out-others', ['keepPushHash' => $hereHash], $cookies));
     $out = json_decode($r->body, true);
-    checkEq('sign out elsewhere: counts what went', ['sessions' => 2, 'devices' => 1, 'pushDevices' => 1, 'feedsRotated' => 1, 'notifyEmailReset' => true, 'subscriptionsPaused' => 0], $out);
+    checkEq('sign out elsewhere: counts what went', ['sessions' => 2, 'devices' => 1, 'pushDevices' => 1, 'feedsRotated' => 1, 'notifyEmailReset' => true, 'subscriptionsPaused' => 0, 'subscriptionsChanged' => 0], $out);
     check('sign out elsewhere: the lost device and the laptop are signed out', $oauth->resolve($lost['token']) === null && $oauth->resolve($laptop['token']) === null);
     check('sign out elsewhere: this browser stays signed in', $oauth->resolve($here['token']) !== null);
     check('sign out elsewhere: only this browser is still remembered', $odev->find($hereDev, 'owner@example.com') !== null && $odev->find($lostDev, 'owner@example.com') === null);
@@ -7595,6 +7595,16 @@ checkEq('google sync: without a synctoken the poll applies as before', false,
         $r['notifyEmailReset'],
         json_decode((string) $odb->scalar('SELECT settings_json FROM users WHERE id = 1'), true)['notifyEmail'],
     ]);
+    // The 0.9.87 regression: a signed-in thief renames its own subscription
+    // between the owner's preview and confirm. Sign-out must still happen.
+    $thief = $oauth->login('owner@example.com', 'pw');
+    $odb->run("INSERT INTO calendars (id, user_id, name, source_url, created_at, kind, provider, subscription_authority, created_by_session_hash) VALUES (900, 1, 'Thief feed', 'sealed-invented', '2026-10-19 00:00:00', 'subscribed', 'ics', 'owner', ?)", [hash('sha256', $thief['token'])]);
+    $seen = json_decode($octl->otherSessions($asOwner('GET', '/api/v1/auth/sessions', [], $cookies))->body, true);
+    $odb->run("UPDATE calendars SET name = 'Renamed mid-review' WHERE id = 900");
+    $odb->run("INSERT INTO calendars (id, user_id, name, source_url, created_at, kind, provider, subscription_authority, created_by_session_hash) VALUES (901, 1, 'Added mid-review', 'sealed-invented-2', '2026-10-19 00:00:01', 'subscribed', 'ics', 'owner', ?)", [hash('sha256', $thief['token'])]);
+    $r = json_decode($octl->signOutOthers($asOwner('POST', '/api/v1/auth/sign-out-others', ['subscriptionReview' => ['version' => $seen['version'], 'choice' => 'keep', 'reviewed' => array_column($seen['subscriptions'], 'fingerprint')]], $cookies))->body, true);
+    checkEq('sign out elsewhere: a rename and an addition mid-review cannot block it', [1, 1, 1, null], [$r['sessions'], $r['subscriptionsPaused'], $r['subscriptionsChanged'], $oauth->resolve($thief['token'])]);
+    checkEq('sign out elsewhere: the reviewed feed is kept, the one added mid-review is paused', ['owner', 'session_review'], array_column($odb->all('SELECT subscription_authority a FROM calendars WHERE id IN (900, 901) ORDER BY id'), 'a'));
     // An API token cannot do it (it must not be able to sign the owner out).
     $tokReq = new BetterCal\Http\Request('POST', '/api/v1/auth/sign-out-others', [], [], [], []);
     $tokReq->user = ['id' => 1, 'email' => 'owner@example.com'];

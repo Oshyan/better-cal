@@ -85,15 +85,37 @@ $preview = BrowserSubscriptions::preview($db, 1, 'sample-session', $cfg['session
 checkEq('recovery preview: only other-browser feeds need a choice', [2], array_column($preview['subscriptions'], 'id'));
 check('recovery preview: no URL credentials or path', !str_contains(json_encode($preview), 'invented-secret') && !str_contains(json_encode($preview), 'private.ics') && !str_contains(json_encode($preview), 'invented-password'));
 checkEq('recovery preview: feed host remains useful', 'feeds.example.test', $preview['subscriptions'][0]['host']);
+$fingerprints = static fn(array $p): array => array_column($p['subscriptions'], 'fingerprint');
 $addFeed(5, 'other-browser');
-$credentialRefused('recovery race: new feed invalidates old preview', fn() => $db->tx(fn() => BrowserSubscriptions::decide($db, 1, 'sample-session', ['version' => $preview['version'], 'choice' => 'pause'])), 'subscription_review_changed');
-checkEq('recovery race: stale preview pauses nothing', 0, (int) $db->scalar("SELECT COUNT(*) FROM calendars WHERE subscription_authority = 'session_review'"));
+checkEq('recovery race: a feed added after the preview is paused, never refused', ['paused' => 1, 'changed' => 1], $db->tx(fn() => BrowserSubscriptions::decide($db, 1, 'sample-session', ['version' => $preview['version'], 'choice' => 'keep', 'reviewed' => $fingerprints($preview)])));
+checkEq('recovery race: the reviewed feed is kept, the new one paused', [[null, 'owner'], [hash('sha256', 'other-browser'), 'session_review']], array_map(static fn(array $r): array => [$r['h'], $r['a']], $db->all('SELECT created_by_session_hash h, subscription_authority a FROM calendars WHERE id IN (2,5) ORDER BY id')));
+$db->run("UPDATE calendars SET subscription_authority='owner', created_by_session_hash=? WHERE id IN (2,5)", [hash('sha256', 'other-browser')]);
 $preview = BrowserSubscriptions::preview($db, 1, 'sample-session', $cfg['session_secret']);
-checkEq('recovery control: explicit pause applies to listed feeds', 2, $db->tx(fn() => BrowserSubscriptions::decide($db, 1, 'sample-session', ['version' => $preview['version'], 'choice' => 'pause'])));
+check('recovery preview: fingerprint does not reveal the feed address', !str_contains(json_encode($preview), 'invented'));
+// The 0.9.87 regression: the other browser renames its feeds between every
+// preview and confirm. A rename is not a change the owner has to re-review.
+$db->run("UPDATE calendars SET name = 'Renamed by the other browser' WHERE id IN (2,5)");
+checkEq('recovery race: renaming a reviewed feed cannot block or alter the choice', ['paused' => 0, 'changed' => 0], $db->tx(fn() => BrowserSubscriptions::decide($db, 1, 'sample-session', ['version' => $preview['version'], 'choice' => 'keep', 'reviewed' => $fingerprints($preview)])));
+checkEq('recovery control: keep confirms the reviewed feeds', 0, (int) $db->scalar('SELECT COUNT(*) FROM calendars WHERE id IN (2,5) AND created_by_session_hash IS NOT NULL'));
+$db->run("UPDATE calendars SET created_by_session_hash=? WHERE id IN (2,5)", [hash('sha256', 'other-browser')]);
+$preview = BrowserSubscriptions::preview($db, 1, 'sample-session', $cfg['session_secret']);
+$db->run("UPDATE calendars SET source_url = 'https://elsewhere.example.test/other.ics' WHERE id = 5");
+checkEq('recovery race: a reviewed feed pointed elsewhere is paused even on keep', ['paused' => 1, 'changed' => 1], $db->tx(fn() => BrowserSubscriptions::decide($db, 1, 'sample-session', ['version' => $preview['version'], 'choice' => 'keep', 'reviewed' => $fingerprints($preview)])));
+checkEq('recovery race: only the repointed feed is paused', ['owner', 'session_review'], array_column($db->all('SELECT subscription_authority a FROM calendars WHERE id IN (2,5) ORDER BY id'), 'a'));
+$db->run("UPDATE calendars SET subscription_authority='owner', created_by_session_hash=? WHERE id IN (2,5)", [hash('sha256', 'other-browser')]);
+$preview = BrowserSubscriptions::preview($db, 1, 'sample-session', $cfg['session_secret']);
+$db->run("UPDATE calendars SET name = 'Renamed again' WHERE id = 2");
+checkEq('recovery compatibility: a version-only page with a stale list pauses everything instead of refusing', ['paused' => 2, 'changed' => 2], $db->tx(fn() => BrowserSubscriptions::decide($db, 1, 'sample-session', ['version' => $preview['version'], 'choice' => 'keep'])));
+$db->run("UPDATE calendars SET subscription_authority='owner' WHERE id IN (2,5)");
+checkEq('recovery control: no decision at all pauses everything', ['paused' => 2, 'changed' => 2], $db->tx(fn() => BrowserSubscriptions::decide($db, 1, 'sample-session', null)));
+$db->run("DELETE FROM calendars WHERE id = 5");
+$db->run("UPDATE calendars SET subscription_authority='owner' WHERE id = 2");
+$preview = BrowserSubscriptions::preview($db, 1, 'sample-session', $cfg['session_secret']);
+checkEq('recovery control: explicit pause applies to listed feeds', ['paused' => 1, 'changed' => 0], $db->tx(fn() => BrowserSubscriptions::decide($db, 1, 'sample-session', ['version' => $preview['version'], 'choice' => 'pause', 'reviewed' => $fingerprints($preview)])));
 checkEq('recovery compatibility: old owner/current-browser/token authority preserved', ['owner','owner','token'], array_column($db->all('SELECT subscription_authority FROM calendars WHERE id IN (1,3,4) ORDER BY id'), 'subscription_authority'));
 $db->run("UPDATE calendars SET subscription_authority='owner' WHERE id=2");
 $preview = BrowserSubscriptions::preview($db, 1, 'sample-session', $cfg['session_secret']);
-$db->tx(fn() => BrowserSubscriptions::decide($db, 1, 'sample-session', ['version' => $preview['version'], 'choice' => 'keep']));
+$db->tx(fn() => BrowserSubscriptions::decide($db, 1, 'sample-session', ['version' => $preview['version'], 'choice' => 'keep', 'reviewed' => $fingerprints($preview)]));
 checkEq('recovery control: explicit keep confirms ownership', null, $db->scalar('SELECT created_by_session_hash FROM calendars WHERE id=2'));
 
 $db = $credentialDb();

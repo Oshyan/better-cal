@@ -158,7 +158,15 @@ final class Ics
         $totalValues = 0;
         $maxPerEvent = Limits::get('EXDATE_VALUES_PER_EVENT');
         $maxPerInput = Limits::get('EXDATE_VALUES_PER_INPUT');
+        $listValues = 0;
+        $maxListValues = Limits::get('ICS_LIST_VALUES_PER_INPUT');
         foreach (explode("\n", $unfolded) as $line) {
+            if (str_contains($line, ',')) {
+                $listValues += self::parserView($line)['values'] - 1;
+                if ($listValues > $maxListValues) {
+                    return 'The calendar file holds more than ' . number_format($maxListValues) . ' comma-separated values';
+                }
+            }
             $marker = strtoupper(trim($line));
             if ($marker === 'BEGIN:VEVENT') {
                 if ($eventDepth === 0) {
@@ -683,6 +691,55 @@ final class Ics
         return ['', '', ''];
     }
 
+    /**
+     * A line as Sabre's parser will read it, judged without trusting quotes.
+     * contentLine() pairs every quote; Sabre only honours a quoted parameter
+     * after "=" or "," that closes before ";", ":" or ",". A stray quote made
+     * the two disagree, so a packed date list passed as a nameless line
+     * (review of 0.9.87). The name here is Sabre's own leading token, and
+     * every comma Sabre could split on counts: unquoted parameter commas and
+     * everything after the first colon. Free text is the exception, see
+     * freeText().
+     *
+     * @return array{name:string,values:int,valueCommas:int,line:string}
+     */
+    private static function parserView(string $line): array
+    {
+        $colon = strpos($line, ':');
+        if ($colon === false || preg_match('/^([A-Za-z0-9\-._\\\\\/]+)(?=[;:])/', $line, $m) !== 1) {
+            return ['name' => '', 'values' => substr_count($line, ',') + 1, 'valueCommas' => substr_count($line, ','), 'line' => $line];
+        }
+        $name = strtoupper($m[1]);
+        $dot = strrpos($name, '.');
+        if ($dot !== false) $name = substr($name, $dot + 1);
+        $params = substr_count((string) preg_replace('/(?<=[=,])"[^"]*"(?=[;:,]|$)/', '', substr($line, 0, $colon)), ',');
+        $after = substr_count($line, ',', $colon + 1);
+        if (self::freeText($name)) {
+            [$textName, $value, $head] = self::contentLine($line);
+            if ($textName !== '') {
+                $between = strlen($head) > $colon ? substr_count(substr($line, $colon + 1, strlen($head) - $colon - 1), ',') : 0;
+                return ['name' => $name, 'values' => $params + $between + 1, 'valueCommas' => $after, 'line' => $head . ':' . self::escapeCommas($value)];
+            }
+        }
+        return ['name' => $name, 'values' => $params + $after + 1, 'valueCommas' => $after, 'line' => $line];
+    }
+
+    /**
+     * Free text whose bare commas are punctuation, not a list. Many senders
+     * don't escape them; Sabre would split one description into thousands of
+     * values. Escaped here, the parser keeps one value with the same text.
+     */
+    private static function freeText(string $name): bool
+    {
+        return in_array($name, ['SUMMARY', 'DESCRIPTION', 'LOCATION', 'COMMENT', 'CONTACT', 'X-ALT-DESC', 'X-WR-CALNAME', 'X-WR-CALDESC'], true);
+    }
+
+    private static function escapeCommas(string $value): string
+    {
+        if (!str_contains($value, ',')) return $value;
+        return (string) preg_replace_callback('/\\\\.|,/s', static fn(array $m): string => $m[0] === ',' ? '\\,' : $m[0], $value);
+    }
+
     public static function singletonDate(string $name): bool
     {
         return in_array(strtoupper($name), ['DTSTART', 'DTEND', 'RECURRENCE-ID', 'DTSTAMP', 'CREATED', 'LAST-MODIFIED', 'DUE', 'COMPLETED', 'ACKNOWLEDGED', 'TRIGGER'], true);
@@ -700,8 +757,18 @@ final class Ics
         $text = preg_replace('/\n[ \t]/', '', $text) ?? $text;
         $out = []; $event = []; $skipped = []; $depth = 0;
         $uid = null; $title = ''; $reason = null;
+        $maxValues = Limits::get('ICS_LIST_VALUES_PER_LINE');
         foreach (explode("\n", $text) as $line) {
             [$name, $value] = self::contentLine($line);
+            $view = self::parserView($line);
+            $line = $view['line'];
+            $problem = null;
+            if (self::singletonDate($view['name']) && $view['valueCommas'] > 0) {
+                $problem = $view['name'] . ' must contain one date, not a list';
+            } elseif ($view['values'] > $maxValues) {
+                $problem = ($view['name'] ?: 'A line') . ' holds more than ' . number_format($maxValues) . ' values';
+            }
+            if ($problem !== null && $depth === 0) throw new \InvalidArgumentException('The calendar has a malformed line outside its events: ' . $problem);
             if ($name === 'BEGIN' && strtoupper(trim($value)) === 'VEVENT') {
                 if ($depth++ === 0) { $event = []; $uid = null; $title = ''; $reason = null; }
             }
@@ -713,10 +780,7 @@ final class Ics
                 }
                 if ($name === 'SUMMARY') $title = mb_substr(self::structural($value), 0, 160);
             }
-            if (self::singletonDate($name) && str_contains($value, ',')) {
-                if ($depth === 0) throw new \InvalidArgumentException('A calendar date outside an event has multiple values');
-                $reason ??= $name . ' must contain one date, not a list';
-            }
+            if ($problem !== null) $reason ??= $problem;
             if ($depth === 0) $out[] = $line;
             if ($name === 'END' && strtoupper(trim($value)) === 'VEVENT' && $depth > 0 && --$depth === 0) {
                 if ($reason !== null) $skipped[] = ['uid' => $uid, 'title' => $title, 'reason' => $reason];
@@ -837,6 +901,12 @@ final class Ics
     {
         if (!isset($vevent->DTSTART)) {
             return null;
+        }
+        // Before anything reads a date: getDateTime() builds every listed value.
+        foreach ($vevent->children() as $prop) {
+            if ($prop instanceof \Sabre\VObject\Property && self::singletonDate((string) $prop->name) && count($prop->getParts()) !== 1) {
+                return null;
+            }
         }
         $dtstart = $vevent->DTSTART;
         $isDate = $dtstart->getValueType() === 'DATE';

@@ -4726,34 +4726,34 @@ checkEq('list budget: operator overrides stay under the hard ceilings', [10000, 
 Limits::configure(['ICS_LIST_VALUES_PER_LINE' => 5, 'ICS_LIST_VALUES_PER_INPUT' => 11]);
 $listEvent = static fn(string $uid, string $properties): string => "BEGIN:VEVENT\r\nUID:$uid\r\nSUMMARY:Sample $uid\r\nDTSTART:20260101T090000Z\r\nDTEND:20260101T100000Z\r\n$properties\r\nEND:VEVENT\r\n";
 $listCalendar = static fn(array $events, string $top = ''): string => "BEGIN:VCALENDAR\r\nVERSION:2.0\r\n$top" . implode('', $events) . "END:VCALENDAR\r\n";
-$admitted = Ics::admitEvents($listCalendar([$listEvent('flood', 'CATEGORIES:' . implode(',', array_fill(0, 6, 'a'))), $listEvent('fine', 'CATEGORIES:a,b,c,d,e')]));
-checkEq('list budget: a CATEGORIES line over the line limit drops only its event', [['flood'], 'CATEGORIES holds more than 5 values'], [array_column($admitted['skipped'], 'uid'), $admitted['skipped'][0]['reason'] ?? null]);
-check('list budget: the event at the limit is kept', str_contains($admitted['ics'], 'UID:fine') && !str_contains($admitted['ics'], 'UID:flood'));
-$admitted = Ics::admitEvents($listCalendar([$listEvent('params', 'ATTENDEE;MEMBER=a,b,c,d,e,f:mailto:sam@example.test')]));
-checkEq('list budget: unquoted parameter lists count too', ['params'], array_column($admitted['skipped'], 'uid'));
-$admitted = Ics::admitEvents($listCalendar([$listEvent('quoted', 'ATTENDEE;CN="Lee, Sam, Jo, Al, Bo, Cy":mailto:sam@example.test')]));
-checkEq('list budget: commas inside a quoted parameter are not a list', [], $admitted['skipped']);
-$admitted = Ics::admitEvents($listCalendar([$listEvent('quote', 'DTSTART;TZID=Sample;X=":20260101T090000,20260102T090000')]));
-checkEq('stray quote: a packed date list behind an unclosed quote is caught', [['quote'], 'DTSTART must contain one date, not a list'], [array_column($admitted['skipped'], 'uid'), $admitted['skipped'][0]['reason'] ?? null]);
-$admitted = Ics::admitEvents($listCalendar([$listEvent('midword', 'DTSTART;X=a"b:20260101T090000,20260102T090000"c:20260101T090000Z')]));
-checkEq('stray quote: quotes the parser does not honour cannot hide a date list', ['midword'], array_column($admitted['skipped'], 'uid'));
-$admitted = Ics::admitEvents($listCalendar([$listEvent('nickname', 'ATTENDEE;CN="O"Brien, Pat":mailto:pat@example.test')]));
-checkEq('stray quote: an odd quote in a name alone does not drop the event', [], $admitted['skipped']);
-$outsideRefused = false;
-try {
-    Ics::admitEvents($listCalendar([$listEvent('fine', '')], "BEGIN:VTIMEZONE\r\nTZID:Sample\r\nBEGIN:STANDARD\r\nDTSTART;X=\":19700101T000000,19700102T000000\r\nEND:STANDARD\r\nEND:VTIMEZONE\r\n"));
-} catch (\InvalidArgumentException $e) {
-    $outsideRefused = str_contains($e->getMessage(), 'outside its events');
-}
-check('stray quote: a date list outside every event refuses the whole file', $outsideRefused);
-$admitted = Ics::admitEvents($listCalendar([$listEvent('prose', 'DESCRIPTION:One, two, three, four, five, six, seven\, eight')]));
-checkEq('list budget: bare commas in a description are prose, not a list', [], $admitted['skipped']);
-check('list budget: a description is escaped into one parser value', str_contains($admitted['ics'], 'DESCRIPTION:One\, two\, three\, four\, five\, six\, seven\, eight'));
 check('list budget: the file-wide comma budget refuses a flood across events', str_contains((string) Ics::budgetProblem($listCalendar([
     $listEvent('a', 'CATEGORIES:a,b,c,d,e'), $listEvent('b', 'CATEGORIES:a,b,c,d,e'), $listEvent('c', 'CATEGORIES:a,b,c,d,e'),
 ]), 1 << 20, 3), 'more than 11 comma-separated values'));
 checkEq('list budget: descriptions do not spend the file-wide budget', null, Ics::budgetProblem($listCalendar([$listEvent('a', 'DESCRIPTION:' . str_repeat('x,', 50))]), 1 << 20, 3));
-if (class_exists(\Sabre\VObject\Reader::class)) {
+if (class_exists(\Sabre\VObject\Reader::class)) { // admitEvents reads UIDs with sabre/vobject (the install job runs it)
+    $admitted = Ics::admitEvents($listCalendar([$listEvent('flood', 'CATEGORIES:' . implode(',', array_fill(0, 6, 'a'))), $listEvent('fine', 'CATEGORIES:a,b,c,d,e')]));
+    checkEq('list budget: a CATEGORIES line over the line limit drops only its event', [['flood'], 'CATEGORIES holds more than 5 values'], [array_column($admitted['skipped'], 'uid'), $admitted['skipped'][0]['reason'] ?? null]);
+    check('list budget: the event at the limit is kept', str_contains($admitted['ics'], 'UID:fine') && !str_contains($admitted['ics'], 'UID:flood'));
+    $admitted = Ics::admitEvents($listCalendar([$listEvent('params', 'ATTENDEE;MEMBER=a,b,c,d,e,f:mailto:sam@example.test')]));
+    checkEq('list budget: unquoted parameter lists count too', ['params'], array_column($admitted['skipped'], 'uid'));
+    $admitted = Ics::admitEvents($listCalendar([$listEvent('quoted', 'ATTENDEE;CN="Lee, Sam, Jo, Al, Bo, Cy":mailto:sam@example.test')]));
+    checkEq('list budget: commas inside a quoted parameter are not a list', [], $admitted['skipped']);
+    $admitted = Ics::admitEvents($listCalendar([$listEvent('quote', 'DTSTART;TZID=Sample;X=":20260101T090000,20260102T090000')]));
+    checkEq('stray quote: a packed date list behind an unclosed quote is caught', [['quote'], 'DTSTART must contain one date, not a list'], [array_column($admitted['skipped'], 'uid'), $admitted['skipped'][0]['reason'] ?? null]);
+    $admitted = Ics::admitEvents($listCalendar([$listEvent('midword', 'DTSTART;X=a"b:20260101T090000,20260102T090000"c:20260101T090000Z')]));
+    checkEq('stray quote: quotes the parser does not honour cannot hide a date list', ['midword'], array_column($admitted['skipped'], 'uid'));
+    $admitted = Ics::admitEvents($listCalendar([$listEvent('nickname', 'ATTENDEE;CN="O"Brien, Pat":mailto:pat@example.test')]));
+    checkEq('stray quote: an odd quote in a name alone does not drop the event', [], $admitted['skipped']);
+    $outsideRefused = false;
+    try {
+        Ics::admitEvents($listCalendar([$listEvent('fine', '')], "BEGIN:VTIMEZONE\r\nTZID:Sample\r\nBEGIN:STANDARD\r\nDTSTART;X=\":19700101T000000,19700102T000000\r\nEND:STANDARD\r\nEND:VTIMEZONE\r\n"));
+    } catch (\InvalidArgumentException $e) {
+        $outsideRefused = str_contains($e->getMessage(), 'outside its events');
+    }
+    check('stray quote: a date list outside every event refuses the whole file', $outsideRefused);
+    $admitted = Ics::admitEvents($listCalendar([$listEvent('prose', 'DESCRIPTION:One, two, three, four, five, six, seven\, eight')]));
+    checkEq('list budget: bare commas in a description are prose, not a list', [], $admitted['skipped']);
+    check('list budget: a description is escaped into one parser value', str_contains($admitted['ics'], 'DESCRIPTION:One\, two\, three\, four\, five\, six\, seven\, eight'));
     $parsed = Ics::parse($listCalendar([$listEvent('prose', 'DESCRIPTION:One, two, three, four, five, six, seven')]));
     checkEq('list budget: an escaped description reads back unchanged', 'One, two, three, four, five, six, seven', $parsed[0]['description'] ?? null);
     $parsed = Ics::parse($listCalendar([$listEvent('quote', 'DTSTART;TZID=Sample;X=":20260101T090000,20260102T090000'), $listEvent('fine', '')]), null, $skippedQuote);

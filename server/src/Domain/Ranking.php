@@ -29,6 +29,8 @@ final class Ranking
         private readonly Db $db,
         private readonly LlmGateway $llm,
         private readonly ?JobQueue $queue = null,
+        private readonly ?ModelAdmission $admission = null,
+        private readonly ?ReviewQueue $review = null,
     ) {
     }
 
@@ -46,6 +48,7 @@ final class Ranking
         $failures = 0;
         $calls = 0;
         $remaining = false;
+        $admission = $this->admission ?? new ModelAdmission($this->db);
         $users = $this->db->all(
             'SELECT user_id, COUNT(*) AS n, MAX(created_at) AS latest FROM feedback_signals GROUP BY user_id'
         );
@@ -63,23 +66,39 @@ final class Ranking
             if ($examples === []) {
                 continue;
             }
-            $candidates = $this->staleEvents($userId, (string) $user['latest']);
-            foreach (PromptEval::batches($candidates) as $batch) {
-                if ($calls >= self::MAX_CALLS_PER_RUN) {
-                    $remaining = true;
-                    break 2;
-                }
-                $calls++;
-                $payload = array_map(static fn(array $row) => PromptEval::eventPayload($row), $batch);
-                $raw = $this->llm->rankEvents($examples, $payload);
-                if ($raw === null) {
-                    $failures++;
-                    continue; // events stay unscored/stale; retried via job backoff
-                }
-                $scores = self::validateRankResponse(['results' => $raw], array_column($payload, 'eventId'));
-                foreach ($scores as $eventId => $score) {
-                    $this->db->update('events', ['score' => $score, 'scored_at' => Time::nowDb()], 'id = ?', [$eventId]);
-                    $scored++;
+            // Pick calendars before the candidate limit: a saturated feed's
+            // first hundred events must not hide every other calendar.
+            $calendars = $this->db->all("SELECT id, name FROM calendars WHERE user_id = ? ORDER BY id", [$userId]);
+            foreach ($calendars as $calendar) {
+                $candidates = $this->staleEvents($userId, (string) $user['latest'], (int) $calendar['id']);
+                foreach (PromptEval::batches($candidates) as $batch) {
+                    if ($calls >= self::MAX_CALLS_PER_RUN) {
+                        $remaining = true;
+                        break 3;
+                    }
+                    $reservation = $admission->reserveRanking($userId, (int) $calendar['id']);
+                    if (!$reservation['allowed']) {
+                        $this->review?->holdModelLimit($userId, 'ranking_' . $reservation['code'], (string) $reservation['message'],
+                            (string) $reservation['retryAt'], (int) $calendar['id'], (string) $calendar['name'], count($batch), 'ranking');
+                        if (str_starts_with((string) $reservation['code'], 'model_account_') || $reservation['code'] === 'model_admission_unavailable') continue 3;
+                        break; // another calendar can still have capacity
+                    }
+                    $calls++;
+                    $payload = array_map(static fn(array $row) => PromptEval::eventPayload($row), $batch);
+                    try {
+                        $raw = $this->llm->rankEvents($examples, $payload);
+                    } finally {
+                        $admission->finish($reservation['reservationId']);
+                    }
+                    if ($raw === null) {
+                        $failures++;
+                        continue; // events stay unscored/stale; retried via job backoff
+                    }
+                    $scores = self::validateRankResponse(['results' => $raw], array_column($payload, 'eventId'));
+                    foreach ($scores as $eventId => $score) {
+                        $this->db->update('events', ['score' => $score, 'scored_at' => Time::nowDb()], 'id = ?', [$eventId]);
+                        $scored++;
+                    }
                 }
             }
         }
@@ -109,17 +128,17 @@ final class Ranking
      *
      * @return list<array<string,mixed>>
      */
-    private function staleEvents(int $userId, string $latestSignalAt): array
+    private function staleEvents(int $userId, string $latestSignalAt, int $calendarId): array
     {
         return $this->db->all(
             "SELECT id, title, description, location, start_utc, tzid FROM events
-             WHERE user_id = ? AND source = 'feed' AND deleted_at IS NULL
+             WHERE user_id = ? AND calendar_id = ? AND source = 'feed' AND deleted_at IS NULL
                AND attendance <> 'hidden'
                AND (end_utc >= ? OR rrule IS NOT NULL)
                AND (scored_at IS NULL OR scored_at < updated_at OR scored_at < ?)
              ORDER BY start_utc, id
              LIMIT " . (self::BATCH_SIZE * self::MAX_CALLS_PER_RUN),
-            [$userId, Time::nowDb(), $latestSignalAt]
+            [$userId, $calendarId, Time::nowDb(), $latestSignalAt]
         );
     }
 
@@ -160,7 +179,7 @@ final class Ranking
 
     /**
      * Validate a raw model response: keep only expected event ids, require a
-     * numeric score, clamp into [0,1].
+     * finite numeric score in [0,1], and reject duplicate IDs.
      *
      * @param list<int> $expectedEventIds
      * @return array<int,float> eventId => score
@@ -173,15 +192,20 @@ final class Ranking
         }
         $expected = array_fill_keys(array_map('intval', $expectedEventIds), true);
         $out = [];
+        $seen = [];
         foreach ($results as $entry) {
-            if (!is_array($entry) || !is_numeric($entry['eventId'] ?? null) || !is_numeric($entry['score'] ?? null)) {
+            if (!is_array($entry) || !is_int($entry['eventId'] ?? null)) {
                 continue;
             }
-            $eventId = (int) $entry['eventId'];
+            $eventId = $entry['eventId'];
             if (!isset($expected[$eventId])) {
                 continue;
             }
-            $out[$eventId] = max(0.0, min(1.0, (float) $entry['score']));
+            if (isset($seen[$eventId])) { unset($out[$eventId]); continue; }
+            $seen[$eventId] = true;
+            $score = $entry['score'] ?? null;
+            if ((!is_int($score) && !is_float($score)) || !is_finite((float) $score) || $score < 0 || $score > 1) continue;
+            $out[$eventId] = (float) $score;
         }
         return $out;
     }

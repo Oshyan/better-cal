@@ -170,6 +170,8 @@ final class EmailSender
         }
         try {
             $mail = new \PHPMailer\PHPMailer\PHPMailer(true);
+            $mail->Timeout = 10;
+            $mail->getSMTPInstance()->Timelimit = 15;
             $mail->isSMTP();
             $mail->Host = (string) $smtp['host'];
             $mail->Port = (int) ($smtp['port'] ?? 587);

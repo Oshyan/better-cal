@@ -140,8 +140,10 @@ function InviteBlock({ occ }) {
     </div>`;
   }
   const answer = async (a) => {
+    const uncertain = ['sending', 'uncertain'].includes(inv.reply?.reason);
+    if (uncertain && !window.confirm('The previous reply may have been sent. Send another reply?')) return;
     setBusy(true);
-    const r = await rsvpEvent(occ, a);
+    const r = await rsvpEvent(occ, a, uncertain);
     setBusy(false);
     if (r) setChanging(false);
   };
@@ -156,7 +158,7 @@ function InviteBlock({ occ }) {
     </div>
     ${!inv.canReply && html`<p class="bc-es-invite-note">${inv.myPartstat && ANSWERED[inv.myPartstat] ? ANSWERED[inv.myPartstat] + ' here. ' : ''}Can't be answered from Better-Cal: ${inv.why}</p>`}
     ${inv.canReply && failed && !changing && html`<div class="bc-es-invite-note is-failed">
-      <span>${ANSWERED[failed.partstat]} here; the reply couldn't be sent: ${failed.message || 'unknown error'}</span>
+      <span>${ANSWERED[failed.partstat]} here. ${failed.message || "The reply couldn't be sent."}</span>
       <span class="bc-es-invite-acts">
         <button type="button" class="bc-btn" disabled=${busy} onClick=${() => answer(ANSWERS.find((x) => x[1] === failed.partstat)[0])}>Retry</button>
         <button type="button" class="bc-btn" onClick=${() => setChanging(true)}>Change answer</button>

@@ -56,7 +56,6 @@ if (BetterCal\Support\Maintenance::active($cfg['app_root']) || BetterCal\Http\In
 $queue = new JobQueue($db);
 $feeds = new Feeds($db, $queue, $cfg);
 $llm = new LlmGateway($cfg);
-$ranking = new Ranking($db, $llm, $queue);
 $reminders = new Reminders($db, new PushSubscriptions($db), new PushSender($cfg), new EmailSender($cfg), new Recurrence());
 // Mail ingest needs the full Events domain (create/patch invited events).
 $undo = new BetterCal\Domain\Undo($db);
@@ -64,6 +63,7 @@ $labels = new BetterCal\Domain\Labels($db);
 $filters = new BetterCal\Domain\Filters($db, $undo, $queue);
 $trips = new BetterCal\Domain\Trips($db, $undo);
 $eventsDomain = new BetterCal\Domain\Events($db, new Recurrence(), $undo, $labels, $filters, $trips);
+$ranking = new Ranking($db, $llm, $queue, new BetterCal\Domain\ModelAdmission($db), new BetterCal\Domain\ReviewQueue($db, $eventsDomain));
 $promptEval = new PromptEval(
     $db,
     $llm,
@@ -71,7 +71,7 @@ $promptEval = new PromptEval(
     new BetterCal\Domain\ModelAdmission($db),
     new BetterCal\Domain\ReviewQueue($db, $eventsDomain),
 );
-$pluginsDomain = new BetterCal\Domain\Plugins($db);
+$pluginsDomain = new BetterCal\Domain\Plugins($db, null, $cfg);
 $geocodeSweep = new BetterCal\Domain\GeocodeSweep(
     $db,
     new BetterCal\Domain\Geocode(
@@ -216,6 +216,7 @@ try {
                         $tzSettings = is_string($tzRow) ? (json_decode($tzRow, true) ?: []) : [];
                         $tz = is_string($tzSettings['tz'] ?? null) && $tzSettings['tz'] !== '' ? $tzSettings['tz'] : 'UTC';
                         $hereTz = \BetterCal\Infra\LlmGateway::validZone($tzSettings['hereTz'] ?? null);
+                        $ingest->recoverInterrupted($uid);
                         $ingest->pruneReceipts();
                         $done = 0;
                         // begin/abort: a message is recorded as started before its
@@ -225,7 +226,8 @@ try {
                             10,
                             $ingest->beginTransport(...),
                             $ingest->identifyTransport(...),
-                            $ingest->abortTransport(...)
+                            $ingest->abortTransport(...),
+                            fn(string $key, array $envelope, string $reason) => $ingest->failTransport($uid, $key, $envelope, $reason),
                         ) as $msg) {
                             $r = $ingest->ingestMessage($uid, $msg, $tz, $hereTz);
                             // A held change waits for a decision, and the
@@ -241,7 +243,7 @@ try {
                                         : (string) ($db->scalar('SELECT title FROM events WHERE id = ?', [(int) $r['eventId']]) ?? 'an invitation');
                                     (new \BetterCal\Infra\Notifier($db, $cfg))->send(
                                         $uid,
-                                        $isNewInvitation ? 'New emailed invitation to review' : 'An organizer changed "' . $heldTitle . '"',
+                                        $isNewInvitation ? 'New emailed event to review' : 'An organizer changed "' . $heldTitle . '"',
                                         $isNewInvitation
                                             ? 'It has not been added to your calendar. Review it to add or dismiss.'
                                             : 'Nothing has changed on your calendar yet. Review it to accept or dismiss.',

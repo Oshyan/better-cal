@@ -56,6 +56,7 @@ final class MailFetcher
         ?callable $begin = null,
         ?callable $identify = null,
         ?callable $abort = null,
+        ?callable $failed = null,
     ): \Generator
     {
         if (!$this->isConfigured() || !class_exists(\Webklex\PHPIMAP\ClientManager::class)) {
@@ -82,7 +83,7 @@ final class MailFetcher
             // search() returns only integer UIDs. Query::get() is deliberately
             // not used: Webklex batch-fetches and parses every RFC822 header in
             // get(), even when setFetchBody(false) is set.
-            $uids = array_slice(array_values($query->search()->toArray()), 0, max(0, $limit));
+            $uids = array_values($query->search()->toArray());
             if ($uids === []) {
                 return;
             }
@@ -92,26 +93,28 @@ final class MailFetcher
             }
             $uidValidity = (string) ($status['uidvalidity'] ?? $status['UIDVALIDITY']);
             $connection = $client->getConnection();
-            $sizes = $connection->sizes($uids, IMAP::ST_UID)->validatedData();
             $mailbox = (string) ($this->cfg['imap']['host'] ?? '') . "\0"
                 . (string) ($this->cfg['imap']['user'] ?? '') . "\0INBOX\0" . $uidValidity;
-            $candidates = (static function () use ($uids, $sizes, $mailbox, $connection, $query): \Generator {
+            $candidates = (static function () use ($uids, $mailbox, $connection, $query): \Generator {
                 foreach ($uids as $uid) {
                     $uid = (int) $uid;
-                    if (!array_key_exists($uid, $sizes) && !array_key_exists((string) $uid, $sizes)) {
-                        throw new \RuntimeException("IMAP did not report a size for UID $uid");
-                    }
-                    $size = (int) ($sizes[$uid] ?? $sizes[(string) $uid]);
                     yield [
                         'transportKey' => 'imap-' . hash('sha256', $mailbox . "\0" . $uid),
-                        'size' => $size,
+                        // Only fresh work fetches metadata or materializes a
+                        // message. Previously handled unseen UIDs do not own
+                        // the ten-message work budget.
+                        'size' => static function () use ($connection, $uid): int {
+                            $sizes = $connection->sizes([$uid], IMAP::ST_UID)->validatedData();
+                            if (!isset($sizes[$uid])) throw new \RuntimeException('IMAP did not report a message size');
+                            return (int) $sizes[$uid];
+                        },
                         'load' => static fn(): object => $query->getMessageByUid($uid),
                         'markSeen' => static fn() => $connection->store(['\\Seen'], $uid, $uid, '+', true, IMAP::ST_UID)->validatedData(),
                         'markUnseen' => static fn() => $connection->store(['\\Seen'], $uid, $uid, '-', true, IMAP::ST_UID)->validatedData(),
                     ];
                 }
             })();
-            yield from $this->processCandidates($candidates, $begin, $identify, $abort);
+            yield from $this->processCandidates($candidates, $begin, $identify, $abort, $failed, max(0, $limit));
         } finally {
             try {
                 $client->disconnect();
@@ -132,20 +135,26 @@ final class MailFetcher
         ?callable $begin = null,
         ?callable $identify = null,
         ?callable $abort = null,
+        ?callable $failed = null,
+        int $limit = PHP_INT_MAX,
     ): \Generator {
+        $attempted = 0;
         foreach ($candidates as $candidate) {
+            if ($attempted >= $limit) break;
             $key = $candidate['transportKey'];
             $begun = false;
+            $envelope = ['messageId' => $key, 'subject' => '', 'from' => ''];
             try {
                 if ($begin !== null && $begin($key) === false) {
-                    ($candidate['markSeen'])();
+                    try { ($candidate['markSeen'])(); } catch (\Throwable) { /* Durable checkpoint still excludes it. */ }
                     continue;
                 }
                 $begun = true;
+                $attempted++;
                 // Seen BEFORE header/body materialization: a fatal leaves the
                 // durable started row and prevents the next run retrying it.
-                ($candidate['markSeen'])();
-                $size = (int) $candidate['size'];
+                try { ($candidate['markSeen'])(); } catch (\Throwable) { /* The checkpoint is authoritative. */ }
+                $size = is_callable($candidate['size']) ? ($candidate['size'])() : (int) $candidate['size'];
                 if ($size > Limits::get('MAIL_BYTES')) {
                     yield [
                         'transportKey' => $key,
@@ -177,18 +186,36 @@ final class MailFetcher
                 }
                 yield $result;
             } catch (\Throwable $e) {
-                // Caught means survivable (a dropped connection, malformed
-                // header/part): put it back so the next run may try again.
-                error_log('mail ingest fetch failed: ' . $e->getMessage());
-                try {
-                    ($candidate['markUnseen'])();
-                } catch (\Throwable) {
+                if (!$begun || $e instanceof \PDOException) throw $e;
+                if (self::retryableTransportFailure($e)) {
+                    $restored = false;
+                    try {
+                        ($candidate['markUnseen'])();
+                        $restored = true;
+                    } catch (\Throwable) {
+                        // The message might still be Seen. Keep its checkpoint
+                        // and notice instead of silently losing the retry.
+                    }
+                    if ($restored) {
+                        if ($abort !== null) $abort($key);
+                        throw $e; // A transport failure is a retryable job failure.
+                    }
                 }
-                if ($begun && $abort !== null) {
-                    $abort($key);
-                }
+                $reason = 'Message could not be decoded (' . (new \ReflectionClass($e))->getShortName() . ').';
+                error_log('mail ingest: ' . $reason);
+                if ($failed !== null) $failed($key, $envelope, $reason);
             }
         }
+    }
+
+    public static function retryableTransportFailure(\Throwable $error): bool
+    {
+        do {
+            if ($error instanceof \Webklex\PHPIMAP\Exceptions\ConnectionFailedException
+                || $error instanceof \Webklex\PHPIMAP\Exceptions\ImapServerErrorException
+                || $error instanceof \Webklex\PHPIMAP\Exceptions\ResponseException) return true;
+        } while (($error = $error->getPrevious()) !== null);
+        return false;
     }
 
     /** @return array{messageId:string,subject:string,from:string} from headers alone */
@@ -231,7 +258,7 @@ final class MailFetcher
             if (strlen($content) <= $maxIcs) {
                 $icsParts[] = $content;
             } else {
-                error_log('mail ingest: ignored a ' . strlen($content) . ' byte calendar part in ' . $envelope['messageId']);
+                throw new \UnexpectedValueException('Calendar attachment exceeds the safe parsing size');
             }
         }
         // Inline text/calendar bodies (Google sends invites this way too).
@@ -244,7 +271,7 @@ final class MailFetcher
             $e = $b === false ? false : stripos($decoded, 'END:VCALENDAR', $b);
             if ($b !== false && $e !== false && $e + 13 - $b <= $maxIcs) {
                 $icsParts[] = substr($decoded, $b, $e + 13 - $b);
-            }
+            } else throw new \UnexpectedValueException('Incomplete or oversized calendar body');
         }
         unset($raw);
 

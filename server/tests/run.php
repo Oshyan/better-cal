@@ -1152,19 +1152,19 @@ check('imip live event: equal sequence still allowed', $mayWhen('confirmed', 2)[
     $first = $queue->holdInviteChange(1, $stored, 'uid-1', 'REQUEST', ['location' => 'Corner Bistro'] + $same, $alice, 'alice@example.com');
     check('review hold: a real change is held', is_int($first) && $first > 0);
     $stalePending = $queue->holdInviteChange(1, $stored, 'uid-1', 'REQUEST', ['location' => 'Old place'] + $same, ['sequence' => 2] + $alice, 'alice@example.com');
-    checkEq('review hold: a lower pending sequence cannot replace the newer one', [null, [$first]], [$stalePending, array_column($queue->listFor(1), 'id')]);
+    checkEq('review hold: pending high sequence cannot hide another revision', [$stalePending, $first], array_column($queue->listFor(1), 'id'));
     $equalPending = $queue->holdInviteChange(1, $stored, 'uid-1', 'REQUEST', ['location' => 'Equal-sequence correction'] + $same, $alice, 'alice@example.com');
-    checkEq('review hold: a legitimate equal-sequence correction remains supported', [$equalPending], array_column($queue->listFor(1), 'id'));
+    checkEq('review hold: equal-sequence corrections stay alongside other claims', [$equalPending, $stalePending, $first], array_column($queue->listFor(1), 'id'));
     $second = $queue->holdInviteChange(1, $stored, 'uid-1', 'CANCEL', [], ['sequence' => 4] + $alice, 'alice@example.com');
     $open = $queue->listFor(1);
-    checkEq('review hold: a newer change for the same meeting replaces the open one', [$second], array_column($open, 'id'));
+    checkEq('review hold: even a claimed cancellation leaves competing revisions visible', [$second, $equalPending, $stalePending, $first], array_column($open, 'id'));
     checkEq('review hold: summary names who and what', 'Alice cancelled this.', $open[0]['summary']);
-    checkEq('review hold: another meeting is its own item', 2, count((function () use ($queue, $stored, $same, $alice) {
+    checkEq('review hold: another meeting is its own item', 5, count((function () use ($queue, $stored, $same, $alice) {
         $queue->holdInviteChange(1, ['id' => 41] + $stored, 'uid-2', 'REQUEST', ['title' => 'Planning lunch'] + $same, $alice, 'alice@example.com');
         return $queue->listFor(1);
     })()));
     checkEq('review hold: another user sees none of it', [], $queue->listFor(2));
-    checkEq('review count', 2, $queue->openCount(1));
+    checkEq('review count', 5, $queue->openCount(1));
     $dismissed = $queue->dismiss(1, $second);
     checkEq('review dismiss: closes the item', 'dismissed', $dismissed['status']);
     checkEq('review dismiss: leaves a trace in Activity', 'Dismissed an emailed cancellation of "Planning dinner"', $rdb->scalar("SELECT summary FROM mutations WHERE op = 'refuse'"));
@@ -1180,7 +1180,7 @@ check('imip live event: equal sequence still allowed', $mayWhen('confirmed', 2)[
     } catch (HttpError $e) {
         checkEq('review: another user\'s item is a 404, not a 403 (no existence leak)', 404, $e->status);
     }
-    checkEq('review list all: superseded items stay out, decided ones show', ['open', 'dismissed'], array_column($queue->listFor(1, false), 'status'));
+    checkEq('review list all: competing and decided items show', ['open', 'dismissed', 'open', 'open', 'open'], array_column($queue->listFor(1, false), 'status'));
 
     $legacyHigh = $queue->holdInviteChange(2, $stored, 'legacy-uid', 'REQUEST', ['location' => 'Forged place'] + $same,
         ['organizer' => ['email' => 'mallory@example.test'], 'sequence' => 999], 'mallory@example.test', false);
@@ -1243,7 +1243,7 @@ check('imip live event: equal sequence still allowed', $mayWhen('confirmed', 2)[
 // the same sender-controlled UID remains visible.
 {
     $idb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
-    $idb->run('CREATE TABLE users (id INTEGER PRIMARY KEY)');
+    $idb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, settings_json TEXT)');
     $idb->run('INSERT INTO users (id) VALUES (1)');
     $idb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, uid TEXT, deleted_at TEXT, recurrence_parent_id INTEGER, created_via TEXT, end_utc TEXT, rrule TEXT)');
     $idb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, message_key TEXT, sender_key TEXT, admitted_at TEXT, UNIQUE(user_id, kind, message_key))');
@@ -1428,9 +1428,16 @@ check('imip live event: equal sequence still allowed', $mayWhen('confirmed', 2)[
     $published = $applyA->invoke($mailA, 1, 'PUBLISH', $publish, 'UTC', [
         'messageId' => 'publish@example.test', 'subject' => 'Booking', 'from' => 'venue@example.test',
     ]);
-    checkEq('imip booking control: PUBLISH retains direct event creation', ['created', 2, 2], [
+    checkEq('imip booking policy: PUBLISH from an unapproved sender is held', ['held', null, 1], [
         $published[0], $published[1], (int) $adb->scalar('SELECT COUNT(*) FROM events'),
     ]);
+    $bookingReviewId = (int) $adb->scalar("SELECT id FROM review_items WHERE kind = 'invite_new' AND title = 'Published booking'");
+    $acceptedBooking = $queueA->accept(1, $bookingReviewId, 'domain');
+    checkEq('imip booking policy: Add and approve domain creates a confirmed booking', ['confirmed', 'PUBLISH'], [
+        $adb->scalar('SELECT status FROM events WHERE id = ?', [$acceptedBooking['eventId']]),
+        json_decode((string) $adb->scalar('SELECT invite_json FROM events WHERE id = ?', [$acceptedBooking['eventId']]), true)['method'],
+    ]);
+    check('imip booking policy: approval uses the stored sender domain', in_array('example.test', (new BetterCal\Domain\Settings($adb))->forUser(1)['mailApprovedSenders'], true));
 
     // Phase 12: the proposal object the owner reviewed is the exact object the
     // server may materialize. Destinations are explicit owner-local calendars,
@@ -4000,10 +4007,10 @@ $evalOut = PromptEval::validateEvalResponse(['results' => [
     ['eventId' => 4, 'pass' => 'yes', 'score' => 0.5],
     'garbage',
 ]], [1, 2, 3, 4]);
-checkEq('pe response clamps high score to 1', 1.0, $evalOut[1]['score']);
-checkEq('pe response clamps low score to 0', 0.0, $evalOut[2]['score']);
+checkEq('pe response rejects high score', false, isset($evalOut[1]));
+checkEq('pe response rejects low score', false, isset($evalOut[2]));
 checkEq('pe response missing score is null', null, $evalOut[3]['score']);
-checkEq('pe response keeps pass flags', [true, false], [$evalOut[1]['pass'], $evalOut[2]['pass']]);
+checkEq('pe response keeps valid pass flag', true, $evalOut[3]['pass']);
 checkEq('pe response drops unknown event id', false, array_key_exists(99, $evalOut));
 checkEq('pe response drops non-bool pass', false, array_key_exists(4, $evalOut));
 checkEq('pe response garbage payload -> empty', [], PromptEval::validateEvalResponse('garbage', [1]));
@@ -4518,8 +4525,8 @@ $rankOut = Ranking::validateRankResponse(['results' => [
     ['eventId' => 99, 'score' => 0.9],
     ['eventId' => 4, 'score' => 'high'],
 ]], [1, 2, 3, 4]);
-checkEq('rk response clamps high', 1.0, $rankOut[1]);
-checkEq('rk response clamps low', 0.0, $rankOut[2]);
+checkEq('rk response rejects high', false, isset($rankOut[1]));
+checkEq('rk response rejects low', false, isset($rankOut[2]));
 checkEq('rk response passes in-range', 0.42, $rankOut[3]);
 checkEq('rk response drops unknown id', false, array_key_exists(99, $rankOut));
 checkEq('rk response drops non-numeric score', false, array_key_exists(4, $rankOut));
@@ -6404,7 +6411,9 @@ require __DIR__ . '/plugins.php';
     // BC-10: a message is recorded as started before its body is touched.
     $mdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
     $mdb->run('CREATE TABLE mail_ingest (id INTEGER PRIMARY KEY, transport_key TEXT UNIQUE, message_id TEXT UNIQUE, subject TEXT, from_addr TEXT, tier TEXT, outcome TEXT NOT NULL, event_id INTEGER, error TEXT, processed_at TEXT DEFAULT CURRENT_TIMESTAMP)');
-    $mdb->run('CREATE TABLE review_items (id INTEGER PRIMARY KEY)');
+    $mdb->run("CREATE TABLE review_items (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, event_id INTEGER, source_key TEXT, title TEXT, summary TEXT, payload_json TEXT, status TEXT DEFAULT 'open', created_at TEXT DEFAULT CURRENT_TIMESTAMP, decided_at TEXT)");
+    $mdb->run('CREATE TABLE users (id INTEGER PRIMARY KEY)');
+    $mdb->run('INSERT INTO users VALUES (1)');
     $mail = new MailIngest($mdb, (new ReflectionClass(Events::class))->newInstanceWithoutConstructor(), null);
     $env = ['messageId' => 'poison@example.test', 'subject' => 'Huge', 'from' => 'x@example.test'];
     check('mail: a new message may begin', $mail->begin($env));
@@ -6433,7 +6442,7 @@ require __DIR__ . '/plugins.php';
     check('mail transport: RFC Message-ID still deduplicates across transport identities', !$mail->identifyTransport('imap-b', [
         'messageId' => 'same@example.test', 'subject' => 'Again', 'from' => 'x@example.test',
     ]));
-    checkEq('mail transport: duplicate placeholder is removed', 0, (int) $mdb->scalar("SELECT COUNT(*) FROM mail_ingest WHERE transport_key = 'imap-b'"));
+    checkEq('mail transport: duplicate transport checkpoint stays handled', 'skipped', $mdb->scalar("SELECT outcome FROM mail_ingest WHERE transport_key = 'imap-b'"));
 
     // F21: transport metadata and poison checkpoint precede every display header.
     $fetcher = new BetterCal\Infra\MailFetcher([]);
@@ -6513,16 +6522,17 @@ require __DIR__ . '/plugins.php';
     $cyclic->next();
 
     $trace = [];
-    $retried = iterator_to_array($fetcher->processCandidates([[
+    $retried = [];
+    try { iterator_to_array($fetcher->processCandidates([[
         'transportKey' => 'imap-retry', 'size' => 100,
-        'load' => static function () use (&$trace): object { $trace[] = 'load'; throw new RuntimeException('temporary'); },
+        'load' => static function () use (&$trace): object { $trace[] = 'load'; throw new \Webklex\PHPIMAP\Exceptions\ConnectionFailedException('temporary'); },
         'markSeen' => static function () use (&$trace): void { $trace[] = 'seen'; },
         'markUnseen' => static function () use (&$trace): void { $trace[] = 'unseen'; },
     ]],
         static function (string $key) use (&$trace): bool { $trace[] = 'begin'; return true; },
         null,
         static function (string $key) use (&$trace): void { $trace[] = 'abort'; }
-    ));
+    )); } catch (\Webklex\PHPIMAP\Exceptions\ConnectionFailedException) { /* Retryable job failure. */ }
     checkEq('mail fetch: retryable header failure restores Unseen and aborts checkpoint', ['begin', 'seen', 'load', 'unseen', 'abort'], $trace);
     checkEq('mail fetch: retryable failure yields nothing', [], $retried);
 
@@ -10090,6 +10100,7 @@ check('access code: process/security regression suite', $accessStatus === 0, $ac
 
 require __DIR__ . '/files-security.php';
 require __DIR__ . '/credentials-security.php';
+require __DIR__ . '/mail-security.php';
 
 $runLog = (string) @file_get_contents($GLOBALS['__runLog']);
 @unlink($GLOBALS['__runLog']);

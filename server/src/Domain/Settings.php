@@ -59,6 +59,10 @@ final class Settings
         // Accepting an emailed cancellation deletes the event (with Undo)
         // instead of keeping it struck through (#132).
         'removeAcceptedCancellations' => false,
+        'mailEventMode' => 'approved',
+        'mailApprovedSenders' => [],
+        // Internal idempotency marker, never client-writable.
+        'mailSenderMigrationDone' => false,
         'pluginHidden' => [],
         'tz' => null,
         // Where the owner's device last was (its IANA zone), reported by the
@@ -228,6 +232,8 @@ final class Settings
                 'folderVisibility' => self::folderVisibility($value),
                 'sidebarActiveOnly' => self::bool($key, $value),
                 'removeAcceptedCancellations' => self::bool($key, $value),
+                'mailEventMode' => self::enum($key, $value, ['any', 'approved', 'review']),
+                'mailApprovedSenders' => MailPolicy::rules($value),
                 'pluginHidden' => self::pluginHidden($value),
                 'tz' => self::tzid($value),
                 'hereTz' => self::tzid($value),

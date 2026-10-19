@@ -1184,14 +1184,15 @@ export function rsvpOutcome(result, via) {
   if (result.sent) {
     return { text: via === 'google' ? verb + '. Google passes your answer to the organizer.' : verb + '. The reply went to the organizer.' };
   }
+  if (['sending', 'uncertain'].includes(result.reason)) return { text: result.message, error: true };
   return { text: verb + " here; the reply wasn't sent: " + (result.message || 'unknown reason'), error: true };
 }
 
 // Answer an invitation (#70): by email for one read from mail, at Google for
 // one on a Google calendar. The server says whether it went.
-export async function rsvpEvent(occ, answer) {
+export async function rsvpEvent(occ, answer, retryUncertain = false) {
   try {
-    const result = await api('/events/' + occ.eventId + '/rsvp', { method: 'POST', body: { answer } });
+    const result = await api('/events/' + occ.eventId + '/rsvp', { method: 'POST', body: { answer, retryUncertain } });
     const via = occ.invite && occ.invite.via;
     const reply = via === 'google' ? null
       : { partstat: result.myPartstat, sent: result.sent, reason: result.reason, message: result.message };

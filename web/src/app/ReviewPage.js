@@ -1,6 +1,6 @@
 // Review: everything waiting on your decision, in one list.
 //
-//   invite_new     a first-time emailed invitation, held before event creation.
+//   invite_new     a first-time emailed invitation or booking, held before creation.
 //   invite_change  an organizer emailed a change (or a cancellation) to an
 //                  invitation already on your calendar. An emailed change is
 //                  an unauthenticated message, so it is HELD, shown here with
@@ -29,12 +29,13 @@ import { PageShell, EmptyState, Skeleton } from './PageShell.js';
 import { Icon } from '../ui/icons.js';
 import { ProposalCard } from './ProposalCard.js';
 import { rsvpOutcome } from './actions.js';
+import { adoptSettings } from './settings.js';
 import { usePasswordStepUp } from './PasswordStepUp.js';
 import { fmtSince } from '../lib/since.js';
 import { parseISO, dateOfDayKey, fmtRange, fmtDayMedium, fmtTime } from '../lib/dates.js';
 
-const KIND_LABEL = { invite_new: 'New emailed invitation', invite_change: 'Invitation change', mail_limit: 'Email automation paused', model_limit: 'AI filter processing paused', rsvp: 'Invitation', proposal: 'Proposal', duplicate: 'Possible duplicate', subscription: 'Calendar updates paused' };
-const KIND_ICON = { invite_new: 'mail', invite_change: 'mail', mail_limit: 'warning', model_limit: 'warning', rsvp: 'mail', proposal: 'proposals', duplicate: 'stack', subscription: 'calendar' };
+const KIND_LABEL = { invite_new: 'New emailed invitation', invite_change: 'Invitation change', mail_error: 'Unreadable email', mail_limit: 'Email automation paused', model_limit: 'AI processing paused', rsvp: 'Invitation', proposal: 'Proposal', duplicate: 'Possible duplicate', subscription: 'Calendar updates paused' };
+const KIND_ICON = { invite_new: 'mail', invite_change: 'mail', mail_error: 'warning', mail_limit: 'warning', model_limit: 'warning', rsvp: 'mail', proposal: 'proposals', duplicate: 'stack', subscription: 'calendar' };
 
 // One side of a changed date. All-day values are bare dates; timed ones are
 // instants, shown on this device's clock like everything else on screen.
@@ -68,6 +69,7 @@ function ReviewCard({ item, onChanged }) {
   const stepUp = usePasswordStepUp();
   const [busy, setBusy] = useState(false);
   const d = item.detail || {};
+  const kindLabel = item.kind === 'invite_new' && !d.isInvitation ? 'New emailed event' : KIND_LABEL[item.kind];
 
   const run = async (action) => {
     setBusy(true);
@@ -77,6 +79,7 @@ function ReviewCard({ item, onChanged }) {
       const res = item.kind === 'subscription' && action.name === 'keep_updating'
         ? await stepUp.run('keep this subscription updating', send) : await send();
       if (!res) return;
+      if (res.settings) adoptSettings(res.settings);
       const accepted = action.name !== 'dismiss';
       if (item.kind === 'rsvp' && action.name === 'dismiss') {
         toast('Dismissed without answering. You can still answer from the event.');
@@ -89,6 +92,8 @@ function ReviewCard({ item, onChanged }) {
       } else if (item.kind === 'subscription') {
         toast(action.name === 'keep_updating' ? 'Calendar updates resumed' : action.name === 'remove' ? 'Subscription removed' : 'Saved events kept as a local calendar');
         await loadCalendars().catch(() => {});
+      } else if (item.kind === 'mail_error') {
+        toast('Notice dismissed. The original email remains in your mailbox.');
       } else if (item.kind === 'mail_limit') {
         toast('Email automation notice dismissed');
       } else if (item.kind === 'model_limit') {
@@ -101,7 +106,8 @@ function ReviewCard({ item, onChanged }) {
           toast('Added. ' + out.text, { error: !!out.error });
           loadReviewCount();
         } else {
-          toast('Added as a Maybe. You have not replied.');
+          toast((d.isInvitation ? 'Added as a Maybe. You have not replied.' : 'Added to your calendar.')
+            + (res.settings ? ' Sender approval saved.' : ''));
         }
       } else {
         toast(
@@ -128,7 +134,7 @@ function ReviewCard({ item, onChanged }) {
   return html`<div class=${'bc-review-card' + (item.status !== 'open' ? ' is-decided' : '')}>
     ${stepUp.prompt}
     <div class="bc-review-head">
-      <span class="bc-review-kind" title=${KIND_LABEL[item.kind]}><${Icon} name=${KIND_ICON[item.kind] || 'proposals'} size=${13} /></span>
+      <span class="bc-review-kind" title=${kindLabel}><${Icon} name=${KIND_ICON[item.kind] || 'proposals'} size=${13} /></span>
       ${open
         ? html`<button type="button" class="bc-link-btn bc-review-title" title=${openOptions ? 'Open calendar options' : 'Open this event'} onClick=${open}>${item.title}</button>`
         : html`<span class="bc-review-title">${item.title}</span>`}
@@ -145,6 +151,8 @@ function ReviewCard({ item, onChanged }) {
         onClick=${() => run(a)}
       >${a.label}</button>`)}${openOptions && html`<button type="button" class="bc-btn" disabled=${busy} onClick=${openOptions}>Calendar options</button>`}</span>`}
     </div>
+    ${item.kind === 'invite_new' && item.actions.some((a) => a.name.startsWith('approve_')) && html`<p class="bc-muted">Always add also adds this event, without sending a reply.</p>`}
+    ${item.kind === 'mail_error' && html`<p>${d.reason || 'The email could not be decoded.'} This notice stays until you dismiss it.</p>`}
     ${item.kind === 'invite_change' && d.diff && d.diff.length > 0 && html`<${DiffRows} diff=${d.diff} />`}
   </div>`;
 }
@@ -152,12 +160,14 @@ function ReviewCard({ item, onChanged }) {
 export function ReviewPage() {
   const [items, setItems] = useState(null);
   const [showDecided, setShowDecided] = useState(false);
+  const [nextBefore, setNextBefore] = useState(null);
 
-  const load = async () => {
+  const load = async (more = false) => {
     try {
-      const data = await api('/review?status=' + (showDecided ? 'all' : 'open'));
-      setItems(data.items || []);
-      set({ reviewCount: data.count || 0 });
+      const data = await api('/review?status=' + (showDecided ? 'all' : 'open') + (more && nextBefore ? '&before=' + nextBefore : ''));
+      setItems((previous) => more ? [...new Map([...(previous || []), ...(data.items || [])].map((item) => [item.key, item])).values()] : (data.items || []));
+      setNextBefore(data.nextBefore || null);
+      loadReviewCount();
     } catch (e) {
       toast('Load failed: ' + e.message, { error: true });
       setItems([]);
@@ -181,5 +191,6 @@ export function ReviewPage() {
     ${(items || []).map((item) => (item.kind === 'proposal'
       ? html`<${ProposalCard} key=${item.key} p=${item.detail} onChanged=${load} />`
       : html`<${ReviewCard} key=${item.key} item=${item} onChanged=${load} />`))}
+    ${nextBefore && html`<button type="button" class="bc-btn" onClick=${() => load(true)}>Show older notices and decisions</button>`}
   </${PageShell}>`;
 }

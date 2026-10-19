@@ -875,6 +875,19 @@ export function SettingsPage() {
     </section>
     <section class="bc-set-section">
       <h2 class="bc-set-h">Invitations</h2>
+      <${Row} label="Add events from email" hint="Choose which new events email can add to your calendar. Changes and cancellations to invitations already on your calendar still wait in Review. Adding an invitation never sends a reply.">
+        <select aria-label="Add events from email" value=${settings.mailEventMode || 'approved'} onChange=${(e) => save('mailEventMode')(e.target.value)}>
+          <option value="any">From any sender</option>
+          <option value="approved">From approved senders</option>
+          <option value="review">Hold everything for Review</option>
+        </select>
+      <//>
+      <${Row} label="Approved senders" hint="Approve an address or a domain from Review. Shared mail providers can only be approved as exact addresses. Sender addresses can be forged; keep your ingest address private. Approvals are used only in From approved senders mode.">
+        ${(settings.mailApprovedSenders || []).length === 0 && html`<span>No approved senders yet. The first event from a sender waits in Review.</span>`}
+        ${(settings.mailApprovedSenders || []).map((sender) => html`<div key=${sender}>
+          <span>${sender}</span> <button type="button" class="bc-link-btn" onClick=${() => save('mailApprovedSenders')((settings.mailApprovedSenders || []).filter((s) => s !== sender))}>Remove</button>
+        </div>`)}
+      <//>
       <${Row} label="Cancelled invitations" hint="When an organizer cancels, the cancellation waits in Review. Accepting it normally keeps the event, struck through, as a record. With this on, accepting removes it instead; Undo brings it back.">
         <label class="bc-set-check"><input
           type="checkbox" checked=${settings.removeAcceptedCancellations === true}

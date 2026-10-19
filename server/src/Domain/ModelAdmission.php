@@ -13,6 +13,7 @@ final class ModelAdmission
 {
     public const QUICKADD = 'quickadd';
     public const PROMPT_FILTER = 'prompt_filter';
+    public const RANKING = 'ranking';
 
     public function __construct(private readonly Db $db)
     {
@@ -74,6 +75,14 @@ final class ModelAdmission
             null,
             'AI filter processing is temporarily paused because the prompt-filter model-call limit was reached.',
         );
+    }
+
+    /** Ranking has its own account and calendar counters, separate from filters. */
+    public function reserveRanking(int $userId, int $calendarId, ?\DateTimeImmutable $now = null): array
+    {
+        return $this->reserve($userId, self::RANKING, 'calendar', (string) $calendarId, $now ?? Time::nowUtc(), 90,
+            'MODEL_RANKING_PER_HOUR', 'MODEL_RANKING_PER_DAY', 'MODEL_RANKING_PER_CALENDAR_HOUR', 'MODEL_RANKING_PER_CALENDAR_DAY',
+            null, null, 'Event ranking is paused because the AI call limit was reached.');
     }
 
     /** Mark the lease over; the attempt remains in the rolling counters. */

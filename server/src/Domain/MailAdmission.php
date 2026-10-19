@@ -6,6 +6,7 @@ namespace BetterCal\Domain;
 
 use BetterCal\Infra\Db;
 use BetterCal\Support\Limits;
+use BetterCal\Support\ExpansionBudget;
 use BetterCal\Support\Time;
 
 /**
@@ -16,6 +17,8 @@ use BetterCal\Support\Time;
  */
 final class MailAdmission
 {
+    /** Expired finite series do not need expanding again during this worker run. */
+    private array $expiredSeries = [];
     public const KIND_EVENT = 'event';
     public const KIND_LLM = 'llm';
 
@@ -33,6 +36,21 @@ final class MailAdmission
     public function eventCapacity(int $userId, string $from, ?\DateTimeImmutable $now = null): array
     {
         return $this->eventDecision($userId, self::senderKey($from), $now ?? Time::nowUtc());
+    }
+
+    /** Policy, capacity and the first durable representation share one account lock. */
+    public function createMailEvent(int $userId, string $key, string $from, callable $create, callable $hold): array
+    {
+        return $this->db->tx(function () use ($userId, $key, $from, $create, $hold): array {
+            $this->lockAccount($userId);
+            $settings = (new Settings($this->db))->forUser($userId);
+            $auto = MailPolicy::addsAutomatically($settings, $from);
+            $mode = (string) $settings['mailEventMode'];
+            $result = $auto
+                ? $this->createEvent($userId, $key, $from, fn() => $create($mode))
+                : $this->createInvitationCandidate($userId, $key, $from, fn() => $hold($mode));
+            return $result + ['held' => !$auto];
+        });
     }
 
     /**
@@ -176,17 +194,94 @@ final class MailAdmission
         $active = (int) $this->db->scalar(
             "SELECT COUNT(*) FROM events
              WHERE user_id = ? AND deleted_at IS NULL AND created_via LIKE 'mail:%'
-               AND recurrence_parent_id IS NULL AND (end_utc > ? OR rrule IS NOT NULL)",
+               AND recurrence_parent_id IS NULL AND rrule IS NULL AND end_utc > ?",
             [$userId, Time::toDb($now)]
         );
+        $series = $this->db->all("SELECT * FROM events WHERE user_id = ? AND deleted_at IS NULL
+            AND created_via LIKE 'mail:%' AND recurrence_parent_id IS NULL AND rrule IS NOT NULL", [$userId]);
+        $budget = ExpansionBudget::standard();
+        foreach ($series as $master) {
+            $overrides = $this->db->all('SELECT * FROM events WHERE recurrence_parent_id = ? AND user_id = ?', [(int) $master['id'], $userId]);
+            $key = hash('sha256', json_encode([$master, $overrides]));
+            if (isset($this->expiredSeries[$key]) && $now >= $this->expiredSeries[$key]) continue;
+            try {
+                if (self::seriesStillActive($master, $overrides, $now, $budget)) $active++;
+                else $this->expiredSeries[$key] = $now;
+            } catch (\Throwable $e) {
+                error_log('mail capacity: recurring event ' . (int) $master['id'] . ' could not be checked (' . get_class($e) . ')');
+                return self::denied('event_recurrence', 'New email events paused because repeating event #' . (int) $master['id'] . ' could not be checked within the safe work limit. Check or simplify its repeat rule before trying again.', null);
+            }
+            if ($active >= Limits::get('MAIL_ACTIVE_EVENTS')) break;
+        }
         if ($active >= Limits::get('MAIL_ACTIVE_EVENTS')) {
             return self::denied(
                 'event_active',
-                'New events from email paused because the active-email-event capacity was reached. Remove unneeded emailed events or wait for non-repeating events to end.',
+                'New events from email paused because the active-email-event capacity was reached. Remove unneeded emailed events or wait for events or finite repeating series to end.',
                 null,
             );
         }
         return self::allowed();
+    }
+
+    /** A capacity predicate, not a bounded display-window expansion. Failures are not exhaustion. */
+    public static function seriesStillActive(array $master, array $overrides, \DateTimeImmutable $now, ?ExpansionBudget $budget = null): bool
+    {
+        $budget ??= ExpansionBudget::standard();
+        $budget->beginSeries();
+        $skip = array_fill_keys(Recurrence::decodeExdates($master['exdates_json'] ?? null), true);
+        foreach ($overrides as $override) {
+            if (($override['deleted_at'] ?? null) === null && Time::fromDb((string) $override['end_utc']) > $now) return true;
+            $skip[(string) $override['recurrence_instance_utc']] = true;
+        }
+        $rule = Recurrence::validateRrule((string) $master['rrule']);
+        $parts = Recurrence::rruleParts($rule);
+        if (!isset($parts['COUNT']) && !isset($parts['UNTIL'])) return true;
+        $tz = Time::zone($master['tzid'] ?? null);
+        $start = Time::fromDb((string) $master['start_utc'])->setTimezone($tz);
+        $end = Time::fromDb((string) $master['end_utc'])->setTimezone($tz);
+        $duration = $start->diff($end);
+        $simple = array_diff(array_keys($parts), ['FREQ', 'INTERVAL', 'COUNT', 'UNTIL', 'WKST']) === [];
+        // Sabre accepts SECONDLY/MINUTELY but its iterator cannot advance
+        // those frequencies. Simple sub-hourly rules need no selector engine.
+        if ($simple && in_array($parts['FREQ'], ['SECONDLY', 'MINUTELY'], true)) {
+            $step = max(1, (int) ($parts['INTERVAL'] ?? 1)) * ($parts['FREQ'] === 'MINUTELY' ? 60 : 1);
+            $until = isset($parts['UNTIL']) ? \Sabre\VObject\DateTimeParser::parse($parts['UNTIL'], $tz) : null;
+            $index = max(0, intdiv(max(0, $now->getTimestamp() - $end->getTimestamp()), $step));
+            $occurrence = $start->add(new \DateInterval('PT' . ($index * $step) . 'S'));
+            while ((!isset($parts['COUNT']) || $index < (int) $parts['COUNT']) && ($until === null || $occurrence <= $until)) {
+                $budget->occurrence();
+                if ($occurrence->add($duration) > $now && !isset($skip[Time::toDb($occurrence)])) return true;
+                $index++;
+                $occurrence = $occurrence->add(new \DateInterval('PT' . $step . 'S'));
+            }
+            return false;
+        }
+        if (isset($parts['UNTIL']) && !isset($parts['COUNT'])) {
+            $until = \Sabre\VObject\DateTimeParser::parse($parts['UNTIL'], $tz);
+            // Include the last occurrence's duration, including an all-day
+            // event crossing a clock change in its own time zone.
+            if ($until->add($duration) <= $now) return false;
+        }
+        $iterator = new \Sabre\VObject\Recur\RRuleIterator($rule, $start);
+        // COUNT is bounded by validateRrule. UNTIL-only rules can begin far
+        // in the past; jump near now for the simple daily/weekly forms.
+        if (!isset($parts['COUNT'])) {
+            $periods = Recurrence::skippablePeriods($rule, $start, $now->sub($duration)->setTimezone($tz));
+            if ($periods > 0) {
+                $days = $periods * (int) ($parts['INTERVAL'] ?? 1) * ($parts['FREQ'] === 'WEEKLY' ? 7 : 1);
+                $iterator = new \Sabre\VObject\Recur\RRuleIterator($rule, $start->add(new \DateInterval('P' . $days . 'D')));
+            }
+        }
+        while ($iterator->valid()) {
+            $budget->occurrence();
+            $occurrence = \DateTimeImmutable::createFromInterface($iterator->current());
+            if ($occurrence->add($duration) > $now && !isset($skip[Time::toDb($occurrence)])) return true;
+            $iterator->next();
+            if ($iterator->valid() && $iterator->current() <= $occurrence) {
+                throw new \RuntimeException('The recurrence iterator did not advance');
+            }
+        }
+        return false;
     }
 
     private function lockAccount(int $userId): void

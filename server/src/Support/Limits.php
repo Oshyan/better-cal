@@ -135,6 +135,10 @@ final class Limits
         'MODEL_FILTER_PER_DAY' => 200,
         'MODEL_FILTER_PER_CALENDAR_HOUR' => 20,
         'MODEL_FILTER_PER_CALENDAR_DAY' => 100,
+        'MODEL_RANKING_PER_HOUR' => 40,
+        'MODEL_RANKING_PER_DAY' => 200,
+        'MODEL_RANKING_PER_CALENDAR_HOUR' => 20,
+        'MODEL_RANKING_PER_CALENDAR_DAY' => 100,
         'MODEL_RESPONSE_BYTES' => 1048576, // authoritative streamed cap, all Gemini callers
         'MODEL_LOG_RETENTION_DAYS' => 90,
         // Duplicate detection is periodic heuristic work over externally
@@ -216,6 +220,10 @@ final class Limits
         'MODEL_FILTER_PER_DAY' => 1000,
         'MODEL_FILTER_PER_CALENDAR_HOUR' => 100,
         'MODEL_FILTER_PER_CALENDAR_DAY' => 500,
+        'MODEL_RANKING_PER_HOUR' => 200,
+        'MODEL_RANKING_PER_DAY' => 1000,
+        'MODEL_RANKING_PER_CALENDAR_HOUR' => 100,
+        'MODEL_RANKING_PER_CALENDAR_DAY' => 500,
         'MODEL_RESPONSE_BYTES' => 4194304,
         'MODEL_LOG_RETENTION_DAYS' => 365,
         'DUPLICATE_SCAN_ROWS' => 2000,

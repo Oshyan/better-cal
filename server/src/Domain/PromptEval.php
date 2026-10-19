@@ -312,7 +312,8 @@ final class PromptEval
 
     /**
      * Validate a raw model response: keep only expected event ids, require a
-     * boolean pass, clamp score into [0,1] (null when absent or non-numeric).
+     * boolean pass, and a finite score in [0,1] when supplied. Duplicate IDs
+     * and malformed scores are rejected; an absent score remains null.
      *
      * @param list<int> $expectedEventIds
      * @return array<int,array{pass:bool,score:?float}> eventId => result
@@ -325,15 +326,21 @@ final class PromptEval
         }
         $expected = array_fill_keys(array_map('intval', $expectedEventIds), true);
         $out = [];
+        $seen = [];
         foreach ($results as $entry) {
-            if (!is_array($entry) || !is_numeric($entry['eventId'] ?? null) || !is_bool($entry['pass'] ?? null)) {
+            if (!is_array($entry) || !is_int($entry['eventId'] ?? null)) {
                 continue;
             }
-            $eventId = (int) $entry['eventId'];
+            $eventId = $entry['eventId'];
             if (!isset($expected[$eventId])) {
                 continue;
             }
-            $score = is_numeric($entry['score'] ?? null) ? max(0.0, min(1.0, (float) $entry['score'])) : null;
+            if (isset($seen[$eventId])) { unset($out[$eventId]); continue; }
+            $seen[$eventId] = true;
+            if (!is_bool($entry['pass'] ?? null)) continue;
+            $score = $entry['score'] ?? null;
+            if ($score !== null && ((!is_int($score) && !is_float($score)) || !is_finite((float) $score) || $score < 0 || $score > 1)) continue;
+            $score = $score !== null ? (float) $score : null;
             $out[$eventId] = ['pass' => (bool) $entry['pass'], 'score' => $score];
         }
         return $out;

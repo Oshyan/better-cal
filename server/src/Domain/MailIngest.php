@@ -305,10 +305,15 @@ final class MailIngest
             try {
                 $result = $this->runTiers($userId, $msg, $tz, $hereTz);
             } catch (\Throwable $e) {
-                $result = ['tier' => 'none', 'outcome' => 'error', 'eventId' => null, 'error' => mb_substr($e->getMessage(), 0, 500)];
+                $result = ['tier' => 'none', 'outcome' => 'error', 'eventId' => null, 'error' => 'Message processing failed (' . (new \ReflectionClass($e))->getShortName() . ').'];
             }
         }
-        $this->finish($msg, $result);
+        $this->db->tx(function () use ($userId, $msg, $result): void {
+            if ($result['outcome'] === 'error' || isset($msg['oversize'])) {
+                $this->review->holdMailError($userId, self::messageKey($msg), (string) ($msg['from'] ?? ''), (string) ($msg['subject'] ?? ''), (string) $result['error']);
+            }
+            $this->finish($msg, $result);
+        });
         return $result;
     }
 
@@ -367,7 +372,7 @@ final class MailIngest
 
     /**
      * Attach bounded header identity after size/checkpoint/Seen. A duplicate RFC
-     * Message-ID deletes the new transport placeholder and skips the replay.
+     * Message-ID marks the transport placeholder handled and skips the replay.
      *
      * @param array{messageId:string,subject:string,from:string} $envelope
      */
@@ -390,8 +395,36 @@ final class MailIngest
             if ((string) $e->getCode() !== '23000') {
                 throw $e;
             }
-            $this->abortTransport($transportKey);
+            // Retain the transport identity even for RFC Message-ID replays.
+            // Failed Seen updates must not put duplicates back in the prefix.
+            $this->db->run('UPDATE mail_ingest SET outcome = ?, subject = ?, from_addr = ? WHERE transport_key = ?',
+                ['skipped', mb_substr($envelope['subject'], 0, 500), mb_substr($envelope['from'], 0, 255), $transportKey]);
             return false;
+        }
+    }
+
+    public function failTransport(int $userId, string $key, array $envelope, string $reason): void
+    {
+        $this->db->tx(function () use ($userId, $key, $envelope, $reason): void {
+            $row = $this->db->one('SELECT * FROM mail_ingest WHERE transport_key = ?', [$key]);
+            $from = (string) (($envelope['from'] ?? '') ?: ($row['from_addr'] ?? ''));
+            $subject = (string) (($envelope['subject'] ?? '') ?: ($row['subject'] ?? ''));
+            $this->review->holdMailError($userId, $key, $from, $subject, $reason);
+            $this->db->run('UPDATE mail_ingest SET outcome = ?, error = ?, from_addr = ?, subject = ? WHERE transport_key = ?',
+                ['error', mb_substr($reason, 0, 500), $from, $subject, $key]);
+        });
+    }
+
+    /** Called only while the worker lock is held, before starting new mail. */
+    public function recoverInterrupted(int $userId): void
+    {
+        foreach ($this->db->all('SELECT * FROM mail_ingest WHERE outcome = ? ORDER BY id LIMIT 100', [self::OUTCOME_STARTED]) as $row) {
+            $key = (string) ($row['transport_key'] ?? $row['message_id']);
+            $this->db->tx(function () use ($userId, $row, $key): void {
+                $reason = 'Processing stopped before this email could be read.';
+                $this->review->holdMailError($userId, $key, (string) ($row['from_addr'] ?? ''), (string) ($row['subject'] ?? ''), $reason);
+                $this->db->update('mail_ingest', ['outcome' => 'error', 'error' => $reason], 'id = ?', [(int) $row['id']]);
+            });
         }
     }
 
@@ -416,7 +449,7 @@ final class MailIngest
         $now ??= Time::nowUtc();
         $cutoff = $now->sub(new \DateInterval('P' . Limits::get('MAIL_LOG_RETENTION_DAYS') . 'D'));
         $this->admission->prune($now);
-        return $this->db->run('DELETE FROM mail_ingest WHERE processed_at < ?', [Time::toDb($cutoff)])->rowCount();
+        return $this->db->run('DELETE FROM mail_ingest WHERE processed_at < ? AND outcome <> ?', [Time::toDb($cutoff), self::OUTCOME_STARTED])->rowCount();
     }
 
     /** Write the outcome over the 'started' row, or insert it when begin() was not used. */
@@ -458,9 +491,7 @@ final class MailIngest
         // Tier 1: iMIP.
         foreach ($msg['icsParts'] as $ics) {
             $imip = self::parseImip($ics);
-            if ($imip === null) {
-                continue;
-            }
+            if ($imip === null || $imip['events'] === []) throw new \UnexpectedValueException('Unreadable calendar attachment');
             foreach ($imip['events'] as $ev) {
                 $outcome = ActivityContext::with('mail:imip', fn() => $this->applyImipEvent($userId, $imip['method'], $ev, $tz, $msg));
                 if ($outcome !== null) {
@@ -534,6 +565,9 @@ final class MailIngest
             }
             $body = mb_substr(self::stripForwardPreamble($msg['subject']) . "\n\n" . $llmSource, 0, 4000);
             $parsed = $this->llm->parseEvent($body, Time::nowUtc(), $tz, true, $hereTz);
+            if ($parsed === null && $this->llm->isConfigured()) {
+                return ['tier' => 'llm', 'outcome' => 'error', 'eventId' => null, 'error' => 'The email reader could not return a usable event. Check the original message.'];
+            }
             if ($parsed !== null && !empty($parsed['title']) && $parsed['title'] !== 'New event') {
                 $result = ActivityContext::with('mail:llm', fn() => $this->createFromDraft($userId, $msg, [
                     'title' => $parsed['title'],
@@ -651,7 +685,7 @@ final class MailIngest
         if (($invite['via'] ?? 'mail') === 'google') {
             return true;
         }
-        if (($invite['organizerTrust'] ?? '') === 'owner') {
+        if (in_array($invite['organizerTrust'] ?? '', ['owner', 'mail-policy'], true)) {
             return true;
         }
         // An RSVP sent from Better-Cal is also an explicit owner decision and
@@ -768,41 +802,8 @@ final class MailIngest
             return [$held === null ? 'unchanged' : 'held', (int) $existing['id']];
         }
 
-        // A first-time iMIP REQUEST is an unauthenticated claim about both the
-        // meeting and its organizer. Reserve the ordinary mail-event admission,
-        // but create only a Review candidate. PUBLISH confirmations retain the
-        // existing direct-create booking behavior.
-        if ($method === 'REQUEST') {
-            $admitted = $this->admission->createInvitationCandidate(
-                $userId,
-                self::messageKey($msg),
-                $fromAddr,
-                fn(): int => $this->review->holdNewInvitation($userId, $uid, $fields, $ev['invite'] ?? null, $fromAddr)
-            );
-            if (!$admitted['allowed']) {
-                $limited = $this->limited($userId, $msg, 'imip', $admitted);
-                return [$limited['outcome'], null, $limited['error']];
-            }
-            return ['held', null];
-        }
-
-        $admitted = $this->admission->createEvent(
-            $userId,
-            self::messageKey($msg),
-            $fromAddr,
-            function () use ($userId, $fields, $uid, $ev): int {
-                $calendarId = $this->inviteCalendarId($userId);
-                $occurrence = $this->events->create($userId, $fields + ['calendarId' => $calendarId, 'uid' => $uid]);
-                $eventId = (int) $occurrence['eventId'];
-                self::storeInvite($this->db, $eventId, $ev['invite'] ?? null, false);
-                return $eventId;
-            }
-        );
-        if (!$admitted['allowed']) {
-            $limited = $this->limited($userId, $msg, 'imip', $admitted);
-            return [$limited['outcome'], null, $limited['error']];
-        }
-        return ['created', (int) $admitted['value']];
+        $result = $this->createNew($userId, $msg, $uid, $fields, (array) ($ev['invite'] ?? []), 'imip');
+        return $result['error'] === null ? [$result['outcome'], $result['eventId']] : [$result['outcome'], $result['eventId'], $result['error']];
     }
 
     /**
@@ -857,43 +858,54 @@ final class MailIngest
             return null;
         }
 
-        $admitted = $this->admission->createEvent(
-            $userId,
-            self::messageKey($msg),
-            (string) ($msg['from'] ?? ''),
-            function () use ($userId, $uid, $draft, $start, $end, $allDay, $tz, $msg, $tier): int {
-                $zone = Time::zone($tz);
-                $occurrence = $this->events->create($userId, [
-                    'calendarId' => $this->inviteCalendarId($userId),
-                    'uid' => $uid,
-                    'title' => $draft['title'],
-                    'start' => Time::iso($start->setTimezone($zone)),
-                    'end' => Time::iso($end->setTimezone($zone)),
-                    'allDay' => $allDay,
-                    'tzid' => $tz,
-                    'location' => $draft['location'],
-                    'url' => $draft['url'] ?? null,
-                    'description' => $draft['description'] ?? null,
-                ]);
+        $zone = Time::zone($tz);
+        return $this->createNew($userId, $msg, $uid, [
+            'title' => $draft['title'],
+            'start' => Time::iso($start->setTimezone($zone)),
+            'end' => Time::iso($end->setTimezone($zone)),
+            'allDay' => $allDay,
+            'tzid' => $tz,
+            'location' => $draft['location'],
+            'url' => $draft['url'] ?? null,
+            'description' => $draft['description'] ?? null,
+        ], [
+            'kind' => 'booking',
+            'via' => 'mail',
+            'method' => $tier,
+            'from' => strtolower((string) ($msg['from'] ?? '')),
+            'organizer' => null,
+            'attendees' => [],
+            'sequence' => 0,
+        ], $tier);
+    }
+
+    /** Every new mail event, including bookings and first REQUEST invitations. */
+    private function createNew(int $userId, array $msg, string $uid, array $fields, array $invite, string $tier): array
+    {
+        $from = (string) ($msg['from'] ?? '');
+        $admitted = $this->admission->createMailEvent(
+            $userId, self::messageKey($msg), $from,
+            function (string $mode) use ($userId, $uid, $fields, $invite): int {
+                $request = ($invite['method'] ?? '') === 'REQUEST';
+                $occurrence = $this->events->create($userId,
+                    ($request ? ['status' => 'tentative'] : []) + $fields
+                    + ['calendarId' => $this->inviteCalendarId($userId), 'uid' => $uid]);
                 $eventId = (int) $occurrence['eventId'];
-                // A reservation, ticket or confirmation: a booking, with
-                // nothing to answer (Rsvp).
-                self::storeInvite($this->db, $eventId, [
-                    'kind' => 'booking',
-                    'via' => 'mail',
-                    'method' => $tier,
-                    'from' => strtolower((string) ($msg['from'] ?? '')),
-                    'organizer' => null,
-                    'attendees' => [],
-                    'sequence' => 0,
-                ], false);
+                if ($request) {
+                    $invite['myPartstat'] = 'NEEDS-ACTION';
+                    $invite['organizerTrust'] = 'mail-policy';
+                    $invite['admissionMode'] = $mode;
+                }
+                self::storeInvite($this->db, $eventId, $invite, false);
                 return $eventId;
-            }
+            },
+            fn(string $mode): int => $this->review->holdNewInvitation($userId, $uid, $fields, $invite, $from, $tier, $mode),
         );
         if (!$admitted['allowed']) {
             return $this->limited($userId, $msg, $tier, $admitted);
         }
-        return ['tier' => $tier, 'outcome' => 'created', 'eventId' => (int) $admitted['value'], 'error' => null];
+        return ['tier' => $tier, 'outcome' => $admitted['held'] ? 'held' : 'created',
+            'eventId' => $admitted['held'] ? null : (int) $admitted['value'], 'error' => null];
     }
 
     /** @return array{tier:string,outcome:string,eventId:null,error:string} */

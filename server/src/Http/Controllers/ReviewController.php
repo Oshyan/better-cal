@@ -55,10 +55,14 @@ final class ReviewController
         $this->queue->closeOrphans($userId);
 
         $items = [];
-        foreach ($this->queue->listFor($userId, $openOnly) as $c) {
+        $storedItems = $this->queue->listFor($userId, $openOnly, isset($req->query['before']) ? max(1, (int) $req->query['before']) : null);
+        $mailSettings = $this->queue->mailSettings($userId);
+        foreach ($storedItems as $c) {
             $open = $c['status'] === 'open';
-            if ($c['kind'] === ReviewQueue::KIND_MAIL_LIMIT || $c['kind'] === ReviewQueue::KIND_MODEL_LIMIT) {
+            if (in_array($c['kind'], [ReviewQueue::KIND_MAIL_LIMIT, ReviewQueue::KIND_MODEL_LIMIT, ReviewQueue::KIND_MAIL_ERROR], true)) {
                 $isModel = $c['kind'] === ReviewQueue::KIND_MODEL_LIMIT;
+                $dismissPath = $c['kind'] === ReviewQueue::KIND_MAIL_ERROR ? "/review/mail-errors/{$c['id']}/dismiss"
+                    : ($isModel ? "/review/model-limits/{$c['id']}/dismiss" : "/review/mail-limits/{$c['id']}/dismiss");
                 $items[] = [
                     'key' => $c['kind'] . ':' . $c['id'],
                     'kind' => $c['kind'],
@@ -69,9 +73,7 @@ final class ReviewController
                     'eventId' => null,
                     'detail' => $c['detail'],
                     'actions' => $open && $canDecide ? [
-                        self::action('dismiss', 'Dismiss', $isModel
-                            ? "/review/model-limits/{$c['id']}/dismiss"
-                            : "/review/mail-limits/{$c['id']}/dismiss"),
+                        self::action('dismiss', 'Dismiss', $dismissPath),
                     ] : [],
                 ];
                 continue;
@@ -80,6 +82,13 @@ final class ReviewController
             $fields = is_array($c['detail']['fields'] ?? null) ? $c['detail']['fields'] : [];
             $heldInvite = is_array($c['detail']['invite'] ?? null) ? $c['detail']['invite'] : [];
             $replyable = $isNew && Rsvp::kind($heldInvite) === 'invitation' && Rsvp::blocker($heldInvite, config()) === null;
+            $approve = [];
+            if ($isNew && ($mailSettings['mailEventMode'] ?? 'approved') === 'approved') {
+                $address = \BetterCal\Domain\MailPolicy::address($c['from']);
+                $domain = \BetterCal\Domain\MailPolicy::domainFor($c['from']);
+                if ($address !== null) $approve[] = self::action('approve_address', 'Always add from ' . $address, "/review/invitations/{$c['id']}/accept", ['approveSender' => 'address']);
+                if ($domain !== null) $approve[] = self::action('approve_domain', 'Always add from ' . $domain, "/review/invitations/{$c['id']}/accept", ['approveSender' => 'domain']);
+            }
             $items[] = [
                 'key' => $c['kind'] . ':' . $c['id'],
                 'kind' => $c['kind'],
@@ -90,6 +99,7 @@ final class ReviewController
                 'eventId' => $c['eventId'],
                 'detail' => [
                     'method' => $c['method'],
+                    'isInvitation' => ($heldInvite['method'] ?? '') === 'REQUEST',
                     'from' => $c['from'],
                     'organizer' => $c['organizer'],
                     'sequence' => (int) ($c['detail']['sequence'] ?? $c['detail']['invite']['sequence'] ?? 0),
@@ -108,15 +118,24 @@ final class ReviewController
                     ...($isNew && $this->rsvp !== null && $replyable
                         ? [self::action('accept_reply', 'Add and accept', "/review/invitations/{$c['id']}/accept", ['answer' => 'accepted'])]
                         : []),
-                    self::action('accept', $isNew ? ($replyable ? 'Add' : 'Add to calendar') : ($c['method'] === 'CANCEL' ? 'Accept cancellation' : 'Accept change'), $isNew
+                    self::action('accept', $isNew ? 'Add' : ($c['method'] === 'CANCEL' ? 'Accept cancellation' : 'Accept change'), $isNew
                         ? "/review/invitations/{$c['id']}/accept"
                         : "/review/invite-changes/{$c['id']}/accept"),
+                    ...$approve,
                     self::action('dismiss', 'Dismiss', $isNew
                         ? "/review/invitations/{$c['id']}/dismiss"
                         : "/review/invite-changes/{$c['id']}/dismiss"),
                 ] : [],
             ];
         }
+        $versions = [];
+        foreach ($items as $item) if ($item['kind'] === 'invite_change' && $item['status'] === 'open') {
+            $versions[$item['eventId']] = ($versions[$item['eventId']] ?? 0) + 1;
+        }
+        foreach ($items as &$item) if ($item['kind'] === 'invite_change' && ($versions[$item['eventId']] ?? 0) > 1) {
+            $item['summary'] .= ' Several emailed versions are waiting. Compare them before choosing a change.';
+        }
+        unset($item);
         // An invitation can be waiting for a reply AND have a change held: two
         // decisions, two items. The reply card says so, because until the change
         // is decided it shows the time and place as they stand on the calendar.
@@ -235,7 +254,8 @@ final class ReviewController
         // Open first, then newest first: what needs a decision is never below
         // what has already had one.
         usort($items, static fn(array $a, array $b): int => [$b['status'] === 'open', (string) $b['createdAt']] <=> [$a['status'] === 'open', (string) $a['createdAt']]);
-        return Response::json(['count' => self::countOpen($items), 'items' => $items]);
+        return Response::json(['count' => self::countOpen($items), 'items' => $items,
+            'nextBefore' => count($storedItems) === 200 ? $storedItems[array_key_last($storedItems)]['id'] : null]);
     }
 
     /** GET /review/count: the sidebar badge, without the payloads. */
@@ -246,6 +266,7 @@ final class ReviewController
             'invite_new' => $this->queue->openCount($userId, ReviewQueue::KIND_INVITE_NEW),
             'invite_change' => $this->queue->openCount($userId, ReviewQueue::KIND_INVITE_CHANGE),
             'mail_limit' => $this->queue->openCount($userId, ReviewQueue::KIND_MAIL_LIMIT),
+            'mail_error' => $this->queue->openCount($userId, ReviewQueue::KIND_MAIL_ERROR),
             'model_limit' => $this->queue->openCount($userId, ReviewQueue::KIND_MODEL_LIMIT),
             'rsvp' => count($this->queue->invitationsAwaitingReply($userId)),
             'proposal' => count($this->proposals->listFor($userId, 'open')),
@@ -268,7 +289,7 @@ final class ReviewController
     public function acceptInviteChange(Request $req, array $params): Response
     {
         $req->requireSession('Review decisions');
-        return Response::json($this->queue->accept((int) $req->user['id'], (int) $params['id']));
+        return Response::json($this->queue->accept((int) $req->user['id'], (int) $params['id'], null, \BetterCal\Domain\RequestAuthority::request($req)));
     }
 
     public function dismissInviteChange(Request $req, array $params): Response
@@ -281,7 +302,8 @@ final class ReviewController
     {
         $req->requireSession('Review decisions');
         $userId = (int) $req->user['id'];
-        $result = $this->queue->accept($userId, (int) $params['id']);
+        $result = $this->queue->accept($userId, (int) $params['id'], $req->str('approveSender'), \BetterCal\Domain\RequestAuthority::request($req));
+        if ($req->str('approveSender') !== null) $result['settings'] = $this->queue->mailSettings($userId);
         // "Add and accept": the event exists now, so answer it the way the
         // event's own Accept would. A reply that can't go still leaves the
         // invitation added; the outcome says why.
@@ -313,6 +335,12 @@ final class ReviewController
     {
         $req->requireSession('Review decisions');
         return Response::json(['item' => $this->queue->dismissModelLimit((int) $req->user['id'], (int) $params['id'])]);
+    }
+
+    public function dismissMailError(Request $req, array $params): Response
+    {
+        $req->requireSession('Review decisions');
+        return Response::json(['item' => $this->queue->dismissMailError((int) $req->user['id'], (int) $params['id'])]);
     }
 
     /** @return array{name:string,label:string,method:string,path:string,body?:array<string,mixed>} */

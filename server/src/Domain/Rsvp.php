@@ -28,6 +28,8 @@ use BetterCal\Support\Time;
  */
 final class Rsvp
 {
+    /** SQLite is used only by the single-process domain tests. */
+    private static array $testLocks = [];
     /** iMIP methods that make an invitation; anything else read from mail is a booking. */
     private const INVITATION_METHODS = ['REQUEST', 'CANCEL', 'ADD'];
     private const PARTSTATS = ['accepted' => 'ACCEPTED', 'declined' => 'DECLINED', 'tentative' => 'TENTATIVE'];
@@ -216,8 +218,26 @@ final class Rsvp
      *
      * @return array{myPartstat:string,sent:bool,reason:?string,message:?string}
      */
-    public function answer(int $userId, int $eventId, string $answer, ?string $sessionToken = null): array
+    public function answer(int $userId, int $eventId, string $answer, ?string $sessionToken = null, bool $retryUncertain = false): array
     {
+        $mysql = $this->db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'mysql';
+        $database = $mysql ? (string) $this->db->scalar('SELECT DATABASE()') : (string) spl_object_id($this->db);
+        $key = 'bc-rsvp-' . substr(hash('sha256', "$database:$userId:$eventId"), 0, 48);
+        $locked = $mysql ? (int) $this->db->scalar('SELECT GET_LOCK(?, 0)', [$key]) === 1 : !isset(self::$testLocks[$key]);
+        if (!$locked) throw HttpError::conflict('rsvp_busy', 'A reply is already being sent for this event. Reload to see its result.');
+        self::$testLocks[$key] = true;
+        try {
+            return $this->answerLocked($userId, $eventId, $answer, $sessionToken, $retryUncertain);
+        } finally {
+            unset(self::$testLocks[$key]);
+            if ($mysql) $this->db->scalar('SELECT RELEASE_LOCK(?)', [$key]);
+        }
+    }
+
+    private function answerLocked(int $userId, int $eventId, string $answer, ?string $sessionToken, bool $retryUncertain): array
+    {
+        $authority = RequestAuthority::credential($userId, null, $sessionToken);
+        $authority->assertValid($this->db, false);
         $partstat = self::PARTSTATS[strtolower($answer)] ?? null;
         if ($partstat === null) {
             throw HttpError::badRequest('answer must be accepted, declined or tentative');
@@ -245,7 +265,7 @@ final class Rsvp
         }
         $outcome = $via === 'google'
             ? $this->answerAtGoogle($row, $invite, $partstat, RequestAuthority::credential($userId, null, $sessionToken))
-            : $this->answerByMail($row, $invite, $partstat);
+            : $this->answerByMail($row, $invite, $partstat, $authority, $retryUncertain);
 
         $verb = ['ACCEPTED' => 'Accepted', 'DECLINED' => 'Declined', 'TENTATIVE' => 'Maybe'][$partstat];
         ActivityContext::with('rsvp', fn() => (new Undo($this->db))->record(
@@ -263,11 +283,33 @@ final class Rsvp
     }
 
     /** @return array{sent:bool,reason:?string,message:?string} */
-    private function answerByMail(array $row, array $invite, string $partstat): array
+    private function answerByMail(array $row, array $invite, string $partstat, RequestAuthority $authority, bool $retryUncertain): array
     {
+        if (in_array($invite['reply']['reason'] ?? null, ['sending', 'uncertain'], true) && !$retryUncertain) {
+            throw HttpError::conflict('rsvp_uncertain', 'The previous reply may have been sent. Open this event and use Retry to confirm that another reply may be sent.');
+        }
         $block = self::blocker($invite, $this->cfg);
         $outcome = ['sent' => false, 'reason' => $block['code'] ?? null, 'message' => $block['text'] ?? null];
-        if ($block === null) {
+        $attempt = bin2hex(random_bytes(16));
+        $this->db->tx(function () use ($row, &$invite, $partstat, $authority, $attempt, $block, &$outcome): void {
+            $authority->assertValid($this->db);
+            $current = $this->db->one('SELECT invite_json FROM events WHERE id = ? AND deleted_at IS NULL' . $this->db->forUpdate(), [(int) $row['id']]);
+            if ($current === null || json_decode((string) $current['invite_json'], true) !== $invite) {
+                throw HttpError::conflict('invitation_changed', 'This invitation changed. Reload before replying.');
+            }
+            if ($block === null) {
+                $admission = (new ExternalActionAdmission($this->db))->admitEmail((int) $row['user_id'], (string) $invite['organizer']['email'], null);
+                $outcome = $admission['admitted']
+                    ? ['sent' => false, 'reason' => 'sending', 'message' => 'The reply may have been sent. Retrying can send another copy.']
+                    : ['sent' => false, 'reason' => 'email_limit', 'message' => 'The outbound email safety limit was reached or could not be checked. Your answer is saved here; no reply was sent.'];
+            }
+            $invite['myPartstat'] = $partstat;
+            $invite['organizerTrust'] = 'owner';
+            $invite['reply'] = ['attemptId' => $attempt, 'partstat' => $partstat, 'at' => Time::iso(Time::nowUtc())] + $outcome;
+            $this->db->run('UPDATE events SET invite_json = ? WHERE id = ?', [json_encode($invite), (int) $row['id']]);
+            $this->db->run("UPDATE events SET status = ? WHERE id = ? AND status <> 'cancelled'", [$partstat === 'ACCEPTED' ? 'confirmed' : 'tentative', (int) $row['id']]);
+        });
+        if ($outcome['reason'] === 'sending') {
             $organizer = (string) $invite['organizer']['email'];
             $route = (array) self::replyRoute($invite, $this->cfg);
             $me = (string) $route['address'];
@@ -282,24 +324,21 @@ final class Rsvp
                 ['start' => Time::fromDb((string) $row['start_utc']), 'end' => Time::fromDb((string) $row['end_utc']), 'allDay' => (int) $row['all_day'] === 1]
             );
             $verb = ['ACCEPTED' => 'Accepted', 'DECLINED' => 'Declined', 'TENTATIVE' => 'Tentative'][$partstat];
+            $authority->assertValid($this->db, false);
             $error = $this->mailer->sendImipReply($organizer, $verb . ': ' . (string) $row['title'], $ics, $verb . ': ' . (string) $row['title'], (string) $route['profile']);
             $outcome = $error === null
                 ? ['sent' => true, 'reason' => null, 'message' => null]
-                : ['sent' => false, 'reason' => 'send_failed', 'message' => $error];
+                : ['sent' => false, 'reason' => 'uncertain', 'message' => 'The reply could not be confirmed. It may have been sent; retrying can send another copy.'];
         }
-        $invite['myPartstat'] = $partstat;
-        $invite['organizerTrust'] = 'owner';
-        $invite['reply'] = ['partstat' => $partstat, 'sent' => $outcome['sent'], 'reason' => $outcome['reason'], 'message' => $outcome['message'], 'at' => Time::iso(Time::nowUtc())];
-        $this->db->run('UPDATE events SET invite_json = ? WHERE id = ?', [json_encode($invite), (int) $row['id']]);
-        // An answer sets Planned or Maybe on the event's own status
-        // (Events::relationship): Accept is Planned, Maybe and Decline are a
-        // Maybe, the nearest to "no" that keeps it on the calendar. Planned
-        // and Maybe stay the owner's to change afterwards; doing so sends
-        // nothing.
-        $status = ['ACCEPTED' => 'confirmed', 'TENTATIVE' => 'tentative', 'DECLINED' => 'tentative'][$partstat] ?? null;
-        if ($status !== null) {
-            $this->db->run("UPDATE events SET status = ? WHERE id = ? AND status <> 'cancelled'", [$status, (int) $row['id']]);
-        }
+        $this->db->tx(function () use ($row, $attempt, $outcome, $authority): void {
+            $authority->assertValid($this->db);
+            $fresh = $this->db->scalar('SELECT invite_json FROM events WHERE id = ? AND deleted_at IS NULL' . $this->db->forUpdate(), [(int) $row['id']]);
+            $current = json_decode((string) $fresh, true);
+            if (($current['reply']['attemptId'] ?? null) === $attempt) {
+                $current['reply'] = array_replace($current['reply'], $outcome);
+                $this->db->run('UPDATE events SET invite_json = ? WHERE id = ?', [json_encode($current), (int) $row['id']]);
+            }
+        });
         return $outcome;
     }
 

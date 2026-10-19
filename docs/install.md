@@ -29,7 +29,7 @@ Some hosts (Hostinger, for one) only let a subdomain point at a folder inside `p
 
 Run these as the account that will own Better-Cal's files. PHP must be able to read them, and the worker's cron entry goes in this account's crontab. On shared hosting that's simply your own login. The examples install into `/srv/better-cal`; use any directory outside the web root.
 
-A fresh downloaded ZIP is trusted on first use unless you [verify it locally before uploading or extracting it](#optional-verification-before-upload). The setup page cannot verify the code that is already running it.
+Installing from a downloaded ZIP means trusting that download: the setup page runs from the very files it would be checking, so it can't vouch for them. If you want to check it first, see [checking a download before you upload it](#optional-verification-before-upload).
 
 1. **Get the release zip.** On the [releases page](https://github.com/Oshyan/better-cal/releases), the newest release has `better-cal-X.Y.Z.zip`: the app with its PHP libraries included, so there's nothing else to install. Unpack it where it will live:
 
@@ -89,7 +89,7 @@ If something here didn't work as written on your host, please [report it](https:
 
 For hosting where you have a control panel and a file manager (or FTP) but no SSH. Everything the installer does, a setup page in the browser does instead.
 
-The upload does not check a release signature. You can [verify the ZIP on your own computer first](#optional-verification-before-upload); otherwise a first install trusts the download on first use.
+Uploading doesn't check the release's signature. You can [check the ZIP on your own computer first](#optional-verification-before-upload); otherwise you're trusting the download.
 
 1. **Upload the release zip** (`better-cal-X.Y.Z.zip` from the [releases page](https://github.com/Oshyan/better-cal/releases)) with your host's file manager and extract it into a folder named `better-cal`. Most file managers ask where to extract, or for a folder name to extract into; the zip's files go straight into that folder. Put it outside your web root if the host allows (beside `public_html` rather than in it); if subdomains must point inside `public_html`, make it `public_html/better-cal`. If the panel already made that folder when you set up the subdomain, extract into it with overwrite on.
 2. **Create a database and a user** on the control panel's database page. Note the host, database name, user and password.
@@ -172,7 +172,7 @@ The updater keeps the newest two previous versions and database backups, and rem
 
 ### Without a command line
 
-These steps do not check the release signature. You can [verify the ZIP on your own computer before uploading](#optional-verification-before-upload), using a copy of the verifier and keys you already trust.
+These steps don't check the release's signature the way `update.php` does. You can [check the ZIP on your own computer before uploading it](#optional-verification-before-upload).
 
 1. **Download the new release zip** and upload it with your host's file manager, next to the current `better-cal` folder (not into it), and extract it into a new folder named `better-cal-new`. (A zip from before 0.9.84 has its own `better-cal` folder inside; move that up a level.)
 2. **Copy your own files across** from `better-cal` into `better-cal-new`: `.env.php` (or `.env`, on a version before 0.9.83), and any plugins you added under `server/plugins/`. Names starting with a dot are hidden in some file managers; look for a "show hidden files" setting.
@@ -185,7 +185,7 @@ If the database update itself fails, the page offers **Restore the database as i
 
 The updater's steps yourself, as the user that owns the files, in the app directory (`/srv/better-cal` here):
 
-These manual steps skip the updater's signature checks. For a ZIP, [optional local verification](#optional-verification-before-upload) checks it before extraction. A plain `git checkout` followed by Composer is not a signed-release verification.
+These steps skip the updater's signature checks. For a ZIP, you can [check it on your own computer first](#optional-verification-before-upload). A `git checkout` followed by Composer isn't checked against a signature at all.
 
 1. **Back up the database**, and keep a copy of your settings:
 
@@ -207,21 +207,21 @@ If the migration stops with an error, don't keep using the app: restore the back
 
 ### Optional verification before upload
 
-This is optional and runs on your own computer with PHP, not on the hosting server. Keep the file-manager install and update steps if you do not have a local verifier, but understand that downloading from the release page alone is not a signature check.
+Optional, for anyone who wants proof that a download really is the signed release. It runs on your own computer, which needs PHP; nothing changes on your host. Without it, the file-manager steps still work, but downloading from the release page isn't proof on its own.
 
-Use the verifier and public keys from a copy of Better-Cal you already trust, such as a copy of your existing install made before downloading the update. From that trusted copy's folder, run:
+The check has to come from a copy of Better-Cal you already trust, such as your existing install (copied to your computer before you download the update). From that copy's folder, run:
 
 ```sh
 php scripts/release-sign.php --verify=/path/to/bettercal-release.sig --version=X.Y.Z --zip=/path/to/better-cal-X.Y.Z.zip --manifest=/path/to/bettercal-release.json
 ```
 
-Download all three assets from the same release. Continue only if verification succeeds, and upload the exact ZIP you checked. Do not run the verifier from the newly downloaded ZIP to establish trust in that same ZIP. For a first install, you need a verifier and public key obtained through a source you independently trust; otherwise the install is trust-on-first-use. A matching checksum downloaded beside the ZIP is not independent proof. The browser's setup and database-update codes prove access to your files, not the authenticity of a release.
+Download all three files from the same release page. Go ahead only if it says the release verified, and upload the exact ZIP you checked. Don't use the checker from inside the new ZIP: a tampered ZIP could carry a checker that says yes. For a first install you have no earlier copy to check with, so you're trusting the download. A checksum published next to the ZIP doesn't help, since anyone who could swap the ZIP could swap it too. (The setup code proves you can reach the server's files, not that the release is genuine.)
 
 ### Recovering a setup or database-update session
 
-A code works once. If the page says it was already used and your browser lost the session, delete `better-cal-code.php` in the host's file manager and reload the page to get a new code. This also ends the old setup session. The session normally lasts one hour from successful entry. Wrong codes never replace it or use up attempts. Updating the app while one of these pages is in progress may require reading a fresh code; ordinary signed-in sessions are not affected.
+A code works once. If the page says the code was already used and your browser lost its place (a closed private window, a crash, a different device), delete `better-cal-code.php` with your host's file manager and reload the page: a new code appears. Once entered, a code is good for an hour. Wrong codes never change it or count against you. If you update Better-Cal while one of these pages is open, you may need to read a new code; your normal sign-in isn't affected.
 
-The code and session share one guarded file. If the host does not support file locking, the app logs that limitation and continues without adding a warning to the page. Simultaneous requests can then interrupt each other; a host that silently ignores locks has the same limitation. Deleting the code file and reloading remains the recovery step.
+A few hosts don't support file locking. There, two requests at the same moment could trip over each other; deleting the code file and reloading fixes it, as above.
 
 ### The deploy script (optional)
 

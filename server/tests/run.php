@@ -6521,6 +6521,7 @@ require __DIR__ . '/plugins.php';
     check('mail fetch: decoded message cycles are released before each yielded result', $weakMessage?->get() === null);
     $cyclic->next();
 
+    if (class_exists(\Webklex\PHPIMAP\Exceptions\ConnectionFailedException::class)) { // needs webklex/php-imap (the install job runs it)
     $trace = [];
     $retried = [];
     try { iterator_to_array($fetcher->processCandidates([[
@@ -6535,6 +6536,7 @@ require __DIR__ . '/plugins.php';
     )); } catch (\Webklex\PHPIMAP\Exceptions\ConnectionFailedException) { /* Retryable job failure. */ }
     checkEq('mail fetch: retryable header failure restores Unseen and aborts checkpoint', ['begin', 'seen', 'load', 'unseen', 'abort'], $trace);
     checkEq('mail fetch: retryable failure yields nothing', [], $retried);
+    }
 
     // F28/F35: persistent account quotas cannot be reset with fresh message IDs,
     // UIDs, or From values; event and paid-model capacities stay separate.
@@ -10060,7 +10062,8 @@ check('access code: process/security regression suite', $accessStatus === 0, $ac
     checkEq('export: file names are safe and unique', ['Work.ics', 'work (2).ics', 'Trips far near.ics', 'Calendar.ics'],
         [BetterCal\Domain\Export::fileName('Work', $used), BetterCal\Domain\Export::fileName('work', $used),
          BetterCal\Domain\Export::fileName('Trips: "far" / near', $used), BetterCal\Domain\Export::fileName('  ', $used)]);
-    if (class_exists(ZipArchive::class)) {
+    // The zip extension, and sabre/vobject to import the export back (the install job runs it).
+    if (class_exists(ZipArchive::class) && class_exists(\Sabre\VObject\Reader::class)) {
         $exportRoot = realpath(sys_get_temp_dir()) . '/bc-export-test-' . bin2hex(random_bytes(4));
         mkdir($exportRoot, 0700);
         $workspace = new BetterCal\Infra\ExportWorkspace($exportRoot);

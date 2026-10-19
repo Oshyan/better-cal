@@ -91,12 +91,14 @@ declare(strict_types=1);
         $controller = new BetterCal\Http\Controllers\ExportController($export, $root . '/app');
         $response = $controller->all($req);
         check('export HTTP: busy download has readable text, not a corrupt attachment', $response->status === 409 && !isset($response->headers['Content-Disposition']) && str_contains($response->body, 'already running'));
-        $zipPath = $workspace->file('zip');
-        $summary = $export->snapshot(fn() => $export->zip(1, $zipPath, $workspace));
-        $zip = new ZipArchive(); $zip->open($zipPath);
-        $ics = $zip->getFromName('Sample archive.ics');
-        check('export ZIP: native addFile keeps all events through close', $summary['events'] >= 1200 && substr_count($ics, 'END:VEVENT') === 1200 && str_ends_with($ics, "END:VCALENDAR\r\n"));
-        $zip->close(); unset($ics);
+        if (class_exists(ZipArchive::class)) { // needs the zip extension (the install job runs it)
+            $zipPath = $workspace->file('zip');
+            $summary = $export->snapshot(fn() => $export->zip(1, $zipPath, $workspace));
+            $zip = new ZipArchive(); $zip->open($zipPath);
+            $ics = $zip->getFromName('Sample archive.ics');
+            check('export ZIP: native addFile keeps all events through close', $summary['events'] >= 1200 && substr_count($ics, 'END:VEVENT') === 1200 && str_ends_with($ics, "END:VCALENDAR\r\n"));
+            $zip->close(); unset($ics);
+        }
         $workspace->close();
         checkEq('export ZIP: cleanup removes archive and every calendar spool', [], array_values(array_diff(scandir($workspace->dir), ['.', '..'])));
         file_put_contents($root . '/sentinel', 'untouched');

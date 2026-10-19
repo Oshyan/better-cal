@@ -106,6 +106,8 @@ iterator_to_array($fetcher->processCandidates($candidates, $begin, null, null, $
 checkEq('malformed mail: a failed Seen flag cannot starve messages beyond first ten', range(0, 12), $loads);
 checkEq('malformed mail: every terminal failure reaches durable notice callback', 13, count($failures));
 
+// Recurrence semantics need sabre/vobject (the install job runs it).
+if (class_exists(\Sabre\VObject\Recur\RRuleIterator::class)) {
 $now = new DateTimeImmutable('2026-02-01T00:00:00Z');
 $series = ['id' => 1, 'start_utc' => '2026-01-01 10:00:00', 'end_utc' => '2026-01-01 11:00:00', 'tzid' => 'UTC', 'all_day' => 0];
 foreach ([['FREQ=DAILY;COUNT=3', false], ['FREQ=DAILY;COUNT=100', true], ['FREQ=DAILY;UNTIL=20260115T100000Z', false], ['FREQ=DAILY;UNTIL=20260301T100000Z', true], ['FREQ=DAILY', true]] as [$rrule, $active]) {
@@ -129,6 +131,7 @@ $db->insert('events', $series + ['user_id' => 1, 'created_via' => 'mail:imip', '
 Limits::configure(['MAIL_ACTIVE_EVENTS' => 1]);
 check('mail capacity: ended series releases actual account cap', (new MailAdmission($db))->eventCapacity(1, 'sam@example.test', $now)['allowed']);
 Limits::reset();
+}
 
 $db = $mailDb();
 $db->insert('calendars', ['id' => 1, 'user_id' => 1, 'name' => 'Sample feed']);

@@ -1,6 +1,6 @@
 // Deep-link entry paths (all serve the SPA shell; the path carries intent):
-//   /add?<gcal template params>  -> editor prefilled (extension redirect target)
-//   /subscribe?url=<ics|webcal>  -> subscribe drawer prefilled (webcal: handler)
+//   /add#<gcal template params>  -> editor prefilled (extension redirect target)
+//   /subscribe#url=<ics|webcal>  -> subscribe drawer prefilled (webcal: handler)
 //   /import                      -> import drawer (file arrives via launchQueue)
 //   /review                      -> the Review queue (held-change notification target)
 //   /new                         -> quick add, open and empty (the app icon's
@@ -11,11 +11,13 @@
 //   /share  (POST title/text/url) -> Web Share Target: route by content
 //
 // None of them is read from the address bar. The shell's head script moves a
-// GET path and query into sessionStorage and rewrites the address to "/"
+// GET path, fragment and legacy query into sessionStorage and rewrites the address to "/"
 // before the first asset request, and the service worker parks a POST share
 // in a cache entry and redirects to "/"; takeHandoff() collects whichever is
 // there, once, before boot makes its first request. A shared link or a feed
-// URL (a capability) therefore never appears in a request line or a Referer.
+// URL (a capability) in a new fragment link never enters the initial request.
+// Legacy query links still enter that first request; clearing the address only
+// protects later asset requests and referrers.
 
 import { api } from './api.js';
 import { set, toast } from './store.js';
@@ -99,7 +101,10 @@ export async function runHandoff(handoff) {
     return;
   }
   const { path } = handoff;
-  const params = new URLSearchParams(handoff.search || '');
+  const search = ['/add', '/subscribe'].includes(path) && handoff.hash
+    ? '?' + handoff.hash.slice(1) : (handoff.search || '');
+  if (search.length > MAX_HANDOFF_BYTES) { toast('That link is too large to open.', { error: true }); return; }
+  const params = new URLSearchParams(search);
 
   const openGcal = async (url) => {
     // One parser for every entry path: QuickAdd handles GCal template links.
@@ -125,7 +130,7 @@ export async function runHandoff(handoff) {
   if (path === '/add') {
     // /add carries the GCal template params verbatim (extension redirect);
     // hand the parser a canonical GCal URL so it matches strictly.
-    await openGcal('https://calendar.google.com/calendar/render' + (handoff.search || ''));
+    await openGcal('https://calendar.google.com/calendar/render' + search);
   } else if (path === '/subscribe') {
     openSubscribe(params.get('url') || '');
   } else if (path === '/import') {

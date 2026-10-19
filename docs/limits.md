@@ -30,7 +30,7 @@ Imports, subscribed feeds, CalDAV objects, incoming email, skipped occurrences, 
 - One ordinary ICS subscription: 20,000 events per poll (and 20 MiB, which isn't configurable).
 - One Google calendar poll: 20,000 remote resources, 32 MiB of decompressed responses, 20 pages and 40 seconds, including any retry after Google expires a sync token. The event count is lowered automatically when PHP's `memory_limit` cannot safely carry the decoded changes, cached snapshot and database sync structures at once; the stored snapshot's actual text/JSON size is checked before it is loaded, so calendars with unusually large but valid descriptions fail cleanly too. A refusal keeps the last successful calendar and sync position, records the reason on the calendar, and lets the worker continue. `BETTERCAL_LIMIT_GOOGLE_SYNC_*` settings can raise these only to the hard ceilings in `.env.example`.
 - One Google account inventory: 5,000 calendars, 5 MiB, 20 pages and 20 seconds, including its access-token refresh. `BETTERCAL_LIMIT_GOOGLE_CALENDAR_LIST_*` settings have hard ceilings as documented in `.env.example`.
-- One CalDAV object: 1 MiB, with up to 500 changed occurrences.
+- One CalDAV object: 1 MiB, with up to 500 changed occurrences. The declared length is checked first and the actual stream is read only up to the limit plus one byte, before parsing. Normal events, even with long descriptions, are much smaller. The web server may still buffer requests before PHP receives them.
 - One incoming email: 5 MiB (operator-adjustable up to a 25 MiB hard ceiling); up to 200 events in an emailed invitation. Size is checked from IMAP metadata before display headers or bodies are decoded.
 - Public email in aggregate: 100 new events or first-invitation candidates per rolling day, 25 per claimed sender, 500 future/repeating mail-created events, and at most 100 open emailed invitation decisions in Review; paid mail reading is 20 model calls per hour, 50 per day, and 20 per claimed sender/day. Separate account-wide limits cannot be reset with a new From, Message-ID, or event UID. Review shows one aggregate notice when a limit is reached; the original email remains in the mailbox. The open-decision ceiling is a hard cap so public mail cannot bury the Review list, though an operator may lower it.
 - Quick Add model assist: 120 calls per rolling hour and 500 per day account-wide, with smaller 30/hour and 150/day shares for each API token and at most four concurrent calls (two per token). Preview calls count because they use the same paid model; deterministic parsing remains available when capacity is reached. Quick Add text is limited to 4,000 characters.
@@ -39,6 +39,24 @@ Imports, subscribed feeds, CalDAV objects, incoming email, skipped occurrences, 
 - An event description: 65,535 characters, after which it's cut.
 
 An import that runs into one of these says which setting raises it.
+
+### ZIP imports and malformed dates
+
+A ZIP may contain 10,000 entries, 1 GiB of expanded data across all entries, 1,000 admitted calendar files and 250,000 events across those files. Ignored files count toward entry and byte budgets too. The settings are `BETTERCAL_LIMIT_IMPORT_ZIP_ENTRIES`, `BETTERCAL_LIMIT_IMPORT_ZIP_TOTAL_BYTES`, `BETTERCAL_LIMIT_TAKEOUT_FILES` and `BETTERCAL_LIMIT_IMPORT_ZIP_EVENTS`; their ceilings are 50,000 entries, 4 GiB, 5,000 calendar files and 1,000,000 events. Existing per-file and admitted-calendar-byte limits still apply. These budgets leave room for an invented heavy-use export with 50 calendars, 50,000 events and about 100 MiB of expanded text, provided each calendar fits the host's memory budget.
+
+The whole ZIP is checked before any calendar is created. Calendar contents are read twice, one file at a time: first to count events, then to import. Duplicate archive names are refused. A bad calendar file is listed as skipped, while other files can import. A host can still stop a long request; each calendar commits separately, and retrying leaves calendars already imported alone. To recover rejected events from a partly imported ZIP, extract the affected .ics file, correct its dates and import it into the calendar already created. Reimporting the ZIP skips calendars with names already present.
+
+A date field that should contain one date cannot contain a comma-separated list. Such an event is rejected before parsing in feeds, email and imports; good events in the same input continue. Imports report skipped events, feeds show a warning in their settings and Settings, System, and mail creates a durable Review notice. Feeds keep previous rows for a rejected event's UID. If its UID cannot be recovered, that poll skips deletions but still applies valid events; normal deletion resumes on a completely readable poll. CalDAV refuses a malformed submitted object as a whole, including jCal, so no recurring series is saved partially. Correct the dates in the original calendar and retry.
+
+An import into a calendar moving to Google is refused until the move finishes or is stopped. A finished Google calendar is not a local import target. No event is acknowledged and then lost at cutover.
+
+### Trips and reminder devices
+
+Trip Planner keeps its existing input and candidate budgets. Event text is stored once in date intervals; candidate windows keep scores, and only selected windows get conflict explanations. Its existing run budget is checked during large loops, and a refusal keeps previous suggestions. Trip membership Undo records contain only the changed link, so adding many members does not repeatedly store the whole trip. Reading a whole trip still costs work proportional to its members.
+
+An account may register 100 distinct push destinations by default, adjustable with `BETTERCAL_LIMIT_PUSH_DEVICES_PER_ACCOUNT` up to 500. A person normally has a handful of phones and browser profiles, so this leaves room for many old devices. A URL fragment does not make another device. Existing registrations can refresh at the limit, and an upgrade never removes distinct devices merely because the account is above it. Remove old devices in Settings, Notifications to make room. Old aliases with different credential owners cannot silently take over each other; the enrollment error asks you to remove conflicting registrations first.
+
+Delivery still visits devices in order and each outside request has its own timeout. This bounds new enrollment, not the total duration of a delivery run: many slow destinations, especially an existing account already above the limit, can still occupy the worker for a long time. There is no new delivery queue in this change.
 
 ## Background work
 

@@ -262,6 +262,11 @@ final class Undo
             if ($this->db->forUpdate() !== '') {
                 $this->db->one('SELECT id FROM users WHERE id = ? FOR UPDATE', [(int) $mutation['user_id']]);
             }
+            // Link deltas (and older link snapshots) carry their calendars in
+            // the durable reference table, not full event rows.
+            if ($mutation['entity'] === 'event_links') {
+                foreach ($this->db->all('SELECT calendar_id FROM mutation_calendar_refs WHERE mutation_id = ?', [$mutation['id']]) as $ref) $calendarIds[] = (int) $ref['calendar_id'];
+            }
             CalendarMoveGuard::lockAndAssertMutable($this->db, $calendarIds);
             foreach (array_values(array_unique($calendarIds)) as $calendarId) {
                 $calendar = CalendarMoveGuard::lockCalendar($this->db, $calendarId);

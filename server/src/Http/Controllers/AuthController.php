@@ -139,7 +139,7 @@ final class AuthController
         $minutes = (int) ceil($wait / 60);
         $when = 'Try again in ' . ($minutes <= 1 ? 'a minute' : $minutes . ' minutes') . '.';
         $message = $refusal === 'brake'
-            ? 'Sign-ins from new devices are paused because of many failed attempts from elsewhere. Browsers that have signed in here before can still sign in. ' . $when
+            ? 'Sign-ins from new devices are paused because of failed attempts from elsewhere. Use a browser or network that has signed in here before.'
             : 'Too many wrong passwords from this network. ' . $when;
         return Response::json(
             ['error' => [

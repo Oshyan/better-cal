@@ -64,8 +64,8 @@ final class Feeds
             if ($problem !== null) {
                 throw new \RuntimeException(str_replace('calendar file', 'feed', $problem) . '; it was not read');
             }
-            $parsed = Ics::parse($ics, Settings::homeTzid($this->db, (int) $calendar['user_id']));
-            $count = $this->db->tx(function () use ($calendar, $parsed): int {
+            $parsed = Ics::parse($ics, Settings::homeTzid($this->db, (int) $calendar['user_id']), $skipped);
+            $count = $this->db->tx(function () use ($calendar, $parsed, $skipped): int {
                 // A token can be revoked while the remote server is answering.
                 // Lock user -> token -> calendar, then reread every governing
                 // field. Revocation/reset or an owner adopting the feed either
@@ -82,8 +82,8 @@ final class Feeds
                 }
                 SubscriptionAuthority::lockForPoll($this->db, $current);
                 SubscriptionAuthority::assertCanPoll($this->db, $current);
-                $count = $this->sync($current, $parsed);
-                $this->pollSucceeded($current, count($parsed), $count);
+                $count = $this->sync($current, $parsed, true, null, $skipped);
+                $this->pollSucceeded($current, count($parsed), $count, Ics::skippedMessage($skipped));
                 return $count;
             });
             return $count;
@@ -99,16 +99,19 @@ final class Feeds
     }
 
     /** Bookkeeping for a poll that worked: status, stats, health, follow-up jobs. */
-    public function pollSucceeded(array $calendar, int $rawCount, int $upserts): void
+    public function pollSucceeded(array $calendar, int $rawCount, int $upserts, ?string $warning = null): void
     {
         $calendarId = (int) $calendar['id'];
         $this->db->update('calendars', [
             'last_polled_at' => Time::nowDb(),
             'last_poll_status' => 'ok',
-            'last_poll_error' => null,
+            'last_poll_error' => $warning,
         ], 'id = ?', [$calendarId]);
         $this->recordStats($calendarId, $rawCount);
         (new SystemHealth($this->db))->recordOk('feed:' . $calendarId, 'feed', (int) $calendar['user_id'], 'Feed: ' . (string) $calendar['name']);
+        $health = new SystemHealth($this->db);
+        if ($warning !== null) $health->recordFailure('feed-input:' . $calendarId, 'feed', (int) $calendar['user_id'], 'Skipped events: ' . (string) $calendar['name'], $warning);
+        else $health->recordOk('feed-input:' . $calendarId, 'feed', (int) $calendar['user_id'], 'Skipped events: ' . (string) $calendar['name'], false);
         // New/updated feed events need background prompt-filter evaluation
         // and rank scoring (mirrors the ChangeLog hook: fired per poll).
         if ($upserts > 0 && $this->queue !== null) {
@@ -232,7 +235,7 @@ final class Feeds
      *
      * @param list<array<string,mixed>> $parsed
      */
-    public function sync(array $calendar, array $parsed, bool $journal = true, ?float $deadline = null): int
+    public function sync(array $calendar, array $parsed, bool $journal = true, ?float $deadline = null, array $skipped = []): int
     {
         // Keep direct callers inside the same boundary as Ics::parse. Google
         // and tests can hand parsed shapes to this method without passing
@@ -274,7 +277,9 @@ final class Feeds
         $updatedEventIds = [];
         $addedTitles = [];
         $removedCount = 0;
-        $this->db->tx(function () use ($parsed, $existingByKey, &$masterIdByUid, &$seen, &$upserts, &$changedUids, &$newMasterUids, &$updatedEventIds, &$addedTitles, &$removedCount, $calendarId, $userId, $deadline): void {
+        $protected = array_fill_keys(array_filter(array_column($skipped, 'uid')), true);
+        $unknownSkipped = count(array_filter($skipped, static fn(array $s): bool => empty($s['uid']))) > 0;
+        $this->db->tx(function () use ($parsed, $protected, $unknownSkipped, $existingByKey, &$masterIdByUid, &$seen, &$upserts, &$changedUids, &$newMasterUids, &$updatedEventIds, &$addedTitles, &$removedCount, $calendarId, $userId, $deadline): void {
             foreach ($parsed as $index => $ev) {
                 if (($index & 127) === 0) {
                     self::assertSyncDeadline($deadline);
@@ -382,7 +387,7 @@ final class Feeds
                 if (($removeIndex++ & 127) === 0) {
                     self::assertSyncDeadline($deadline);
                 }
-                if (isset($seen[$key])) {
+                if ($unknownSkipped || isset($protected[$row['uid']]) || isset($seen[$key])) {
                     continue;
                 }
                 if ($row['recurrence_parent_id'] !== null && (string) ($row['created_via'] ?? '') !== 'feed' && isset($seen[$row['uid'] . '|'])) {

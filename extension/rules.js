@@ -14,7 +14,7 @@
 const RULE_IDS = [1, 2];
 
 function rulesFor(origin) {
-  const redirect = { type: 'redirect', redirect: { regexSubstitution: origin + '/add?\\1' } };
+  const redirect = { type: 'redirect', redirect: { regexSubstitution: origin + '/add#\\1' } };
   return [
     {
       id: 1, priority: 1, action: redirect,

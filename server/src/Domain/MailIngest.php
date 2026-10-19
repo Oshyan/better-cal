@@ -54,7 +54,7 @@ final class MailIngest
      * Parse an iMIP payload: calendar METHOD plus per-event invite fields on
      * top of the shared Ics::parse event shape.
      *
-     * @return array{method: string, events: list<array<string,mixed>>}|null
+     * @return array{method: string, events: list<array<string,mixed>>, skipped: list<array<string,mixed>>}|null
      */
     public static function parseImip(string $ics): ?array
     {
@@ -64,6 +64,8 @@ final class MailIngest
             return null;
         }
         try {
+            $admitted = Ics::admitEvents($ics);
+            $ics = $admitted['ics'];
             $vcal = \Sabre\VObject\Reader::read(
                 $ics,
                 \Sabre\VObject\Reader::OPTION_FORGIVING | \Sabre\VObject\Reader::OPTION_IGNORE_INVALID_LINES
@@ -72,19 +74,14 @@ final class MailIngest
             return null;
         }
         $method = strtoupper(trim((string) ($vcal->METHOD ?? 'PUBLISH')));
-        $base = Ics::parse($ics);
-        $byUid = [];
-        foreach ($base as $ev) {
-            if (!empty($ev['uid'])) {
-                $byUid[(string) $ev['uid']] = $ev;
-            }
-        }
         $events = [];
         foreach ($vcal->select('VEVENT') as $vevent) {
-            // Same cleaning Ics::parse gave the key, or the two never meet.
-            $uid = isset($vevent->UID) ? substr(Ics::structural(trim((string) $vevent->UID)), 0, 255) : null;
-            $parsed = $uid !== null && isset($byUid[$uid]) ? $byUid[$uid] : null;
+            // Keep the original calendar (and VTIMEZONE) as the component's
+            // parent. Never join recurrence siblings by UID.
+            try { $parsed = Ics::parseVevent($vevent, Time::normalizeTzid((string) ($vcal->{'X-WR-TIMEZONE'} ?? 'UTC'))); }
+            catch (\Throwable) { $parsed = null; }
             if ($parsed === null) {
+                $admitted['skipped'][] = Ics::unreadableEvent($vevent);
                 continue;
             }
             $mailto = static fn(string $v): string => strtolower(preg_replace('/^mailto:/i', '', trim($v)) ?? '');
@@ -112,10 +109,11 @@ final class MailIngest
             ];
             $events[] = $parsed;
         }
-        if ($events === []) {
+        Recurrence::assertExdateBatch($events);
+        if ($events === [] && $admitted['skipped'] === []) {
             return null;
         }
-        return ['method' => $method, 'events' => $events];
+        return ['method' => $method, 'events' => $events, 'skipped' => $admitted['skipped']];
     }
 
     /**
@@ -309,7 +307,7 @@ final class MailIngest
             }
         }
         $this->db->tx(function () use ($userId, $msg, $result): void {
-            if ($result['outcome'] === 'error' || isset($msg['oversize'])) {
+            if ($result['outcome'] === 'error' || !empty($result['partialError']) || isset($msg['oversize'])) {
                 $this->review->holdMailError($userId, self::messageKey($msg), (string) ($msg['from'] ?? ''), (string) ($msg['subject'] ?? ''), (string) $result['error']);
             }
             $this->finish($msg, $result);
@@ -489,13 +487,18 @@ final class MailIngest
     private function runTiers(int $userId, array $msg, string $tz, ?string $hereTz = null): array
     {
         // Tier 1: iMIP.
-        foreach ($msg['icsParts'] as $ics) {
+        $imipResult = null;
+        $warnings = [];
+        foreach ($msg['icsParts'] as $partIndex => $ics) {
             $imip = self::parseImip($ics);
-            if ($imip === null || $imip['events'] === []) throw new \UnexpectedValueException('Unreadable calendar attachment');
-            foreach ($imip['events'] as $ev) {
-                $outcome = ActivityContext::with('mail:imip', fn() => $this->applyImipEvent($userId, $imip['method'], $ev, $tz, $msg));
+            if ($imip === null) { $warnings[] = 'An attached calendar could not be read.'; continue; }
+            if ($imip['skipped'] !== []) $warnings[] = Ics::skippedMessage($imip['skipped']);
+            foreach ($imip['events'] as $eventIndex => $ev) {
+                $eventMsg = $msg;
+                $eventMsg['transportKey'] = self::messageKey($msg) . ':imip:' . $partIndex . ':' . $eventIndex;
+                $outcome = ActivityContext::with('mail:imip', fn() => $this->applyImipEvent($userId, $imip['method'], $ev, $tz, $eventMsg));
                 if ($outcome !== null) {
-                    return [
+                    $imipResult = [
                         'tier' => 'imip',
                         'outcome' => $outcome[0],
                         'eventId' => $outcome[1],
@@ -503,6 +506,14 @@ final class MailIngest
                     ];
                 }
             }
+        }
+        if ($msg['icsParts'] !== []) {
+            $imipResult ??= ['tier' => 'imip', 'outcome' => $warnings === [] ? 'skipped' : 'error', 'eventId' => null, 'error' => null];
+            if ($warnings !== []) {
+                $imipResult['error'] = mb_substr(implode(' ', $warnings), 0, 1500);
+                $imipResult['partialError'] = true;
+            }
+            return $imipResult; // Never recreate a rejected attachment through another tier.
         }
 
         // Tier 2: schema.org markup.

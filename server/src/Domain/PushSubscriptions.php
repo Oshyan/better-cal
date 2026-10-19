@@ -8,6 +8,7 @@ use BetterCal\Http\HttpError;
 use BetterCal\Infra\Db;
 use BetterCal\Infra\PushSender;
 use BetterCal\Support\Time;
+use BetterCal\Support\Limits;
 
 /**
  * Web Push subscription storage. Endpoints are unique via a sha256 hash
@@ -24,7 +25,20 @@ final class PushSubscriptions
 
     public static function endpointHash(string $endpoint): string
     {
-        return hash('sha256', $endpoint);
+        return hash('sha256', self::canonicalEndpoint($endpoint));
+    }
+
+    public static function canonicalEndpoint(string $endpoint): string
+    {
+        return explode('#', trim($endpoint), 2)[0];
+    }
+
+    /** Also finds aliases saved before fragments were removed at enrollment. */
+    private function identitySql(): string
+    {
+        return $this->db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'mysql'
+            ? "BINARY SUBSTRING_INDEX(endpoint, '#', 1)"
+            : "CASE WHEN instr(endpoint, '#') > 0 THEN substr(endpoint, 1, instr(endpoint, '#') - 1) ELSE endpoint END";
     }
 
     /**
@@ -39,7 +53,7 @@ final class PushSubscriptions
      */
     public static function validate(array $in, array $extraPushHosts = []): array
     {
-        $endpoint = trim((string) ($in['endpoint'] ?? ''));
+        $endpoint = self::canonicalEndpoint((string) ($in['endpoint'] ?? ''));
         if ($endpoint === '' || strlen($endpoint) > 2000) {
             throw HttpError::badRequest('endpoint must be an https push endpoint URL', 'invalid_subscription');
         }
@@ -88,10 +102,13 @@ final class PushSubscriptions
             // it, so a token cannot race a browser/other token and take over
             // its device by replacing the keys and creator id.
             $lock = $this->db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
-            $existing = $this->db->one(
-                'SELECT id, user_id, created_by_token_id FROM push_subscriptions WHERE endpoint_hash = ?' . $lock,
-                [$hash]
+            $aliases = $this->db->all(
+                'SELECT id, user_id, endpoint_hash, created_by_token_id FROM push_subscriptions WHERE ' . $this->identitySql() . ' = ? ORDER BY id' . $lock,
+                [$sub['endpoint']]
             );
+            $existing = $aliases[0] ?? null;
+            $authorities = array_unique(array_map(static fn(array $r): string => $r['user_id'] . ':' . ($r['created_by_token_id'] ?? 'browser'), $aliases));
+            if (count($authorities) > 1) throw HttpError::conflict('push_alias_conflict', 'This device has registrations from different credentials. Remove its old registrations in Settings, Notifications, then enable reminders again.');
             if ($existing !== null) {
                 $existingUser = (int) $existing['user_id'];
                 $existingToken = $existing['created_by_token_id'] === null ? null : (int) $existing['created_by_token_id'];
@@ -105,6 +122,14 @@ final class PushSubscriptions
                 }
             }
             $existed = $existing !== null;
+            if (!$existed && (int) $this->db->scalar('SELECT COUNT(DISTINCT ' . $this->identitySql() . ') FROM push_subscriptions WHERE user_id = ?', [$userId]) >= Limits::get('PUSH_DEVICES_PER_ACCOUNT')) {
+                throw HttpError::conflict('push_device_limit', 'This account has reached its reminder-device limit (' . Limits::get('PUSH_DEVICES_PER_ACCOUNT') . '). Remove old devices in Settings, Notifications, then try again. Existing devices still work.');
+            }
+            if ($existed) {
+                // Same authority only. Keep one real destination and its history.
+                foreach (array_slice($aliases, 1) as $alias) $this->db->run('DELETE FROM push_subscriptions WHERE id = ?', [(int) $alias['id']]);
+                $this->db->update('push_subscriptions', ['endpoint' => $sub['endpoint'], 'endpoint_hash' => $hash], 'id = ?', [(int) $existing['id']]);
+            }
             if ($resync) {
                 // The quiet re-registration a browser does when it opens the app:
                 // it restores a device a password reset cleared, and nothing else.
@@ -190,7 +215,7 @@ final class PushSubscriptions
                 'id' => (int) $r['id'],
                 'service' => self::service((string) $r['endpoint']),
                 'label' => $r['device_label'] !== null ? (string) $r['device_label'] : null,
-                'endpointHash' => (string) $r['endpoint_hash'],
+                'endpointHash' => self::endpointHash((string) $r['endpoint']),
                 'createdAt' => $r['created_at'] !== null ? Time::iso(Time::fromDb((string) $r['created_at'])) : null,
                 'lastUsedAt' => $r['last_used_at'] !== null ? Time::iso(Time::fromDb((string) $r['last_used_at'])) : null,
                 'failing' => $r['failing_since'] !== null,
@@ -207,7 +232,7 @@ final class PushSubscriptions
         if ($row === null) {
             throw HttpError::notFound('No such device');
         }
-        $this->db->run('DELETE FROM push_subscriptions WHERE id = ?', [$id]);
+        $this->db->run('DELETE FROM push_subscriptions WHERE user_id = ? AND ' . $this->identitySql() . ' = ?', [$userId, self::canonicalEndpoint((string) $row['endpoint'])]);
         $hash = self::endpointHash((string) $row['endpoint']);
         if ($this->db->scalar('SELECT 1 FROM push_removed WHERE user_id = ? AND endpoint_hash = ?', [$userId, $hash]) === null) {
             $this->db->insert('push_removed', ['user_id' => $userId, 'endpoint_hash' => $hash]);
@@ -221,21 +246,21 @@ final class PushSubscriptions
         if (trim($endpoint) === '') {
             return false;
         }
-        $hash = self::endpointHash(trim($endpoint));
+        $endpoint = self::canonicalEndpoint($endpoint);
         if ($tokenId === null) {
             return $this->db->run(
-                'DELETE FROM push_subscriptions WHERE user_id = ? AND endpoint_hash = ?',
-                [$userId, $hash]
+                'DELETE FROM push_subscriptions WHERE user_id = ? AND ' . $this->identitySql() . ' = ?',
+                [$userId, $endpoint]
             )->rowCount() > 0;
         }
         // A token may remove the standing channel it created, never a
         // browser-owned or different-token device. A mismatch stays a quiet
         // no-op so this idempotent endpoint does not become an ownership oracle.
-        return $this->db->tx(function () use ($userId, $hash, $tokenId): bool {
+        return $this->db->tx(function () use ($userId, $endpoint, $tokenId): bool {
             ApiTokens::assertStillValid($this->db, $tokenId, $userId, true);
             return $this->db->run(
-                'DELETE FROM push_subscriptions WHERE user_id = ? AND endpoint_hash = ? AND created_by_token_id = ?',
-                [$userId, $hash, $tokenId]
+                'DELETE FROM push_subscriptions WHERE user_id = ? AND ' . $this->identitySql() . ' = ? AND created_by_token_id = ?',
+                [$userId, $endpoint, $tokenId]
             )->rowCount() > 0;
         });
     }
@@ -248,7 +273,14 @@ final class PushSubscriptions
     /** @return list<array> */
     public function forUser(int $userId): array
     {
-        return $this->db->all('SELECT * FROM push_subscriptions WHERE user_id = ? AND ' . self::LIVE . ' ORDER BY id', [$userId, Time::nowDb()]);
+        return self::distinctDestinations($this->db->all('SELECT * FROM push_subscriptions WHERE user_id = ? AND ' . self::LIVE . ' ORDER BY id', [$userId, Time::nowDb()]));
+    }
+
+    private static function distinctDestinations(array $rows): array
+    {
+        $out = [];
+        foreach ($rows as $row) $out[self::endpointHash((string) $row['endpoint'])] ??= $row;
+        return array_values($out);
     }
 
     public function currentForSend(array $expected): ?array
@@ -263,6 +295,8 @@ final class PushSubscriptions
         foreach ($this->db->all('SELECT * FROM push_subscriptions WHERE ' . self::LIVE . ' ORDER BY user_id, id', [Time::nowDb()]) as $row) {
             $out[(int) $row['user_id']][] = $row;
         }
+        foreach ($out as &$rows) $rows = self::distinctDestinations($rows);
+        unset($rows);
         return $out;
     }
 

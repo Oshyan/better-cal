@@ -134,7 +134,7 @@ final class CalendarsController
         if ($head === "PK\x03\x04" || str_ends_with(strtolower((string) ($file['name'] ?? '')), '.zip')) {
             $result = $importer->importZip($userId, $tmp);
             return Response::json([
-                'calendars' => array_map(fn(array $c): array => $this->calendars->serializeById($userId, $c['calendarId']) + ['imported' => $c['imported']], $result['calendars']),
+                'calendars' => array_map(fn(array $c): array => $this->calendars->serializeById($userId, $c['calendarId']) + ['imported' => $c['imported'], 'skippedEvents' => $c['skippedEvents']], $result['calendars']),
                 'skipped' => $result['skipped'],
                 'imported' => array_sum(array_column($result['calendars'], 'imported')),
             ], $result['calendars'] === [] ? 200 : 201);
@@ -153,6 +153,7 @@ final class CalendarsController
         $out = $this->calendars->serializeById($userId, $done['calendarId']);
         $out['imported'] = $done['imported'];
         $out['alreadyThere'] = $done['alreadyThere'];
+        $out['skippedEvents'] = $done['skippedEvents'];
         return Response::json($out, $into !== null && $into !== '' ? 200 : 201);
     }
 

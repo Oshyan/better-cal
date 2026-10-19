@@ -77,7 +77,7 @@ if ('launchQueue' in window) {
       toast('That share arrived without its content. Share it again, or paste it into quick add.', { error: true });
       return;
     }
-    runHandoff({ path: url.pathname, search: url.search }).catch(() => { /* best-effort */ });
+    runHandoff({ path: url.pathname, search: url.search, hash: url.hash }).catch(() => { /* best-effort */ });
   });
 }
 

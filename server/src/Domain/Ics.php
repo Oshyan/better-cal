@@ -632,12 +632,14 @@ final class Ics
      *   start_utc, end_utc, all_day, tzid, rrule, exdates (list), status,
      *   recurrence_instance_utc, reminders (list of {minutes} from display VALARMs)
      */
-    public static function parse(string $ics, ?string $floatingTzid = null): array
+    public static function parse(string $ics, ?string $floatingTzid = null, ?array &$skipped = null): array
     {
         if (!class_exists(\Sabre\VObject\Reader::class)) {
             throw new \RuntimeException('sabre/vobject is not installed');
         }
-        $ics = self::normalizeEventRrules($ics);
+        $admitted = self::admitEvents($ics);
+        $skipped = $admitted['skipped'];
+        $ics = self::normalizeEventRrules($admitted['ics']);
         $vcal = \Sabre\VObject\Reader::read($ics, \Sabre\VObject\Reader::OPTION_FORGIVING | \Sabre\VObject\Reader::OPTION_IGNORE_INVALID_LINES);
         // A floating time ("9:00", no zone) means 9:00 where the calendar is:
         // the calendar's own X-WR-TIMEZONE when it names one, else the zone
@@ -648,13 +650,90 @@ final class Ics
             : ($floatingTzid !== null && $floatingTzid !== '' ? Time::normalizeTzid($floatingTzid) : 'UTC');
         $events = [];
         foreach ($vcal->select('VEVENT') as $vevent) {
-            $parsed = self::parseVevent($vevent, $floatName);
+            try { $parsed = self::parseVevent($vevent, $floatName); }
+            catch (\Throwable) { $parsed = null; }
             if ($parsed !== null) {
                 $events[] = $parsed;
-            }
+            } else $skipped[] = self::unreadableEvent($vevent);
         }
         Recurrence::assertExdateBatch($events);
         return $events;
+    }
+
+    public static function unreadableEvent(object $vevent): array
+    {
+        return ['uid' => isset($vevent->UID) ? (substr(self::structural(trim((string) $vevent->UID)), 0, 255) ?: null) : null,
+            'title' => mb_substr(self::structural((string) ($vevent->SUMMARY ?? '')), 0, 160),
+            'reason' => 'The event dates could not be read'];
+    }
+
+    /** Split a content line at its actual value, not a colon in a quoted parameter. */
+    public static function contentLine(string $line): array
+    {
+        $quoted = false;
+        for ($i = 0, $n = strlen($line); $i < $n; $i++) {
+            if ($line[$i] === '"') $quoted = !$quoted;
+            if ($line[$i] === ':' && !$quoted) {
+                $head = substr($line, 0, $i);
+                $name = strtoupper(explode(';', $head, 2)[0]);
+                $name = substr($name, (int) (strrpos($name, '.') === false ? 0 : strrpos($name, '.') + 1));
+                return [$name, substr($line, $i + 1), $head];
+            }
+        }
+        return ['', '', ''];
+    }
+
+    public static function singletonDate(string $name): bool
+    {
+        return in_array(strtoupper($name), ['DTSTART', 'DTEND', 'RECURRENCE-ID', 'DTSTAMP', 'CREATED', 'LAST-MODIFIED', 'DUE', 'COMPLETED', 'ACKNOWLEDGED', 'TRIGGER'], true);
+    }
+
+    /**
+     * Reject malformed events BEFORE Sabre expands date lists. Good siblings
+     * survive. Rejected identities let a feed retain its previous copy rather
+     * than misinterpret a parse refusal as a publisher deleting an event.
+     * @return array{ics:string,skipped:list<array{uid:?string,title:string,reason:string}>}
+     */
+    public static function admitEvents(string $ics): array
+    {
+        $text = preg_replace('/\r*\n|\r+/', "\n", $ics) ?? $ics;
+        $text = preg_replace('/\n[ \t]/', '', $text) ?? $text;
+        $out = []; $event = []; $skipped = []; $depth = 0;
+        $uid = null; $title = ''; $reason = null;
+        foreach (explode("\n", $text) as $line) {
+            [$name, $value] = self::contentLine($line);
+            if ($name === 'BEGIN' && strtoupper(trim($value)) === 'VEVENT') {
+                if ($depth++ === 0) { $event = []; $uid = null; $title = ''; $reason = null; }
+            }
+            if ($depth > 0) {
+                $event[] = $line;
+                if ($name === 'UID' && $uid === null) {
+                    $decoded = \Sabre\VObject\Parser\MimeDir::unescapeValue($value, null);
+                    $uid = substr(self::structural(trim($decoded)), 0, 255) ?: null;
+                }
+                if ($name === 'SUMMARY') $title = mb_substr(self::structural($value), 0, 160);
+            }
+            if (self::singletonDate($name) && str_contains($value, ',')) {
+                if ($depth === 0) throw new \InvalidArgumentException('A calendar date outside an event has multiple values');
+                $reason ??= $name . ' must contain one date, not a list';
+            }
+            if ($depth === 0) $out[] = $line;
+            if ($name === 'END' && strtoupper(trim($value)) === 'VEVENT' && $depth > 0 && --$depth === 0) {
+                if ($reason !== null) $skipped[] = ['uid' => $uid, 'title' => $title, 'reason' => $reason];
+                else array_push($out, ...$event);
+                $event = [];
+            }
+        }
+        if ($depth > 0) throw new \InvalidArgumentException('An event is missing its closing line');
+        return ['ics' => implode("\r\n", $out), 'skipped' => $skipped];
+    }
+
+    /** A bounded, readable warning; all rejected identities remain in the structured result. */
+    public static function skippedMessage(array $skipped): ?string
+    {
+        if ($skipped === []) return null;
+        $examples = array_map(static fn(array $s): string => ($s['title'] ?: 'Untitled event') . ': ' . $s['reason'], array_slice($skipped, 0, 3));
+        return count($skipped) . ' event(s) skipped. ' . implode('; ', $examples) . '. Correct their dates in the original calendar and try again.';
     }
 
     /**
@@ -719,6 +798,9 @@ final class Ics
      */
     private static function utcInstants(object $prop, ?\DateTimeZone $readTz): array
     {
+        if (self::singletonDate((string) $prop->name) && count($prop->getParts()) !== 1) {
+            throw new \InvalidArgumentException($prop->name . ' must contain one date');
+        }
         if ($prop->getValueType() === 'DATE') {
             $out = [];
             foreach ($prop->getParts() as $part) {
@@ -751,7 +833,7 @@ final class Ics
         }, $prop->getDateTimes($readTz));
     }
 
-    private static function parseVevent(object $vevent, string $floatName = 'UTC'): ?array
+    public static function parseVevent(object $vevent, string $floatName = 'UTC'): ?array
     {
         if (!isset($vevent->DTSTART)) {
             return null;

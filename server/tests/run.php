@@ -7102,6 +7102,16 @@ checkEq('google sync: without a synctoken the poll applies as before', false,
         (int) $tdb->scalar('SELECT COUNT(*) FROM event_links'),
         (int) $tdb->scalar('SELECT COUNT(*) FROM events'),
     ]);
+    $tdb->run("INSERT INTO events VALUES (30,1,2,'second-member',0,NULL,NULL)");
+    $tripDomain->attach(1, 10, 20);
+    $tripDomain->attach(1, 10, 30);
+    $delta = $tdb->one('SELECT before_json, after_json FROM mutations ORDER BY id DESC LIMIT 1');
+    checkEq('trip link undo stores only the changed link', [0, 1], [
+        count(json_decode($delta['before_json'], true)['tables']['event_links']),
+        count(json_decode($delta['after_json'], true)['tables']['event_links']),
+    ]);
+    $tripUndo->undoLatest(1);
+    checkEq('trip link delta undo preserves other members', [20], array_map('intval', array_column($tdb->all('SELECT event_id FROM event_links'), 'event_id')));
 }
 
 // Token-created subscriptions remain as cached calendars, but every future
@@ -10077,6 +10087,13 @@ check('access code: process/security regression suite', $accessStatus === 0, $ac
         checkEq('import: into a calendar that has them already, nothing is added', ['imported' => 0, 'alreadyThere' => 1], ['imported' => $again['imported'], 'alreadyThere' => $again['alreadyThere']]);
         $into = $importer->importIcs(1, $work, 'ignored', null, 2);
         checkEq('import: into another of your calendars, they come in', [2, 1, 0], [$into['calendarId'], $into['imported'], $into['alreadyThere']]);
+        $xdb->run('CREATE TABLE calendar_moves (id INTEGER PRIMARY KEY, calendar_id INTEGER, status TEXT, cancelled_at TEXT)');
+        $xdb->run("INSERT INTO calendar_moves VALUES (1,2,'running',NULL)");
+        $blocked = false;
+        try { $importer->importIcs(1, str_replace('a@example.test', 'new@example.test', $work), 'ignored', null, 2); }
+        catch (BetterCal\Http\HttpError $e) { $blocked = $e->errorCode === 'calendar_moving'; }
+        check('import move boundary refuses active move', $blocked);
+        checkEq('import move refusal writes no event', 0, (int) $xdb->scalar("SELECT COUNT(*) FROM events WHERE uid = 'new@example.test'"));
         $xdb->run("UPDATE calendars SET kind = 'subscribed' WHERE id = 3");
         $threw = null;
         try { $importer->importIcs(1, $work, 'ignored', null, 3); } catch (BetterCal\Http\HttpError $e) { $threw = $e->errorCode; }
@@ -10101,6 +10118,7 @@ check('access code: process/security regression suite', $accessStatus === 0, $ac
 require __DIR__ . '/files-security.php';
 require __DIR__ . '/credentials-security.php';
 require __DIR__ . '/mail-security.php';
+require __DIR__ . '/resource-security.php';
 
 $runLog = (string) @file_get_contents($GLOBALS['__runLog']);
 @unlink($GLOBALS['__runLog']);

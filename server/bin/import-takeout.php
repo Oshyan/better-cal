@@ -50,6 +50,7 @@ if (is_file($source)) {
     }
     foreach ($result['calendars'] as $c) {
         echo "imported: {$c['name']} — {$c['imported']} events\n";
+        if ($c['skippedEvents'] !== []) echo Ics::skippedMessage($c['skippedEvents']) . "\n";
     }
     foreach ($result['skipped'] as $s) {
         echo "skip: {$s['file']} — {$s['reason']}\n";
@@ -117,6 +118,7 @@ foreach ($files as $path) {
     $position++;
     $calendarsMade++;
     $totalImported += $done['imported'];
+    if ($done['skippedEvents'] !== []) { echo Ics::skippedMessage($done['skippedEvents']) . "\n"; $failures++; }
     echo "imported: $name — {$done['imported']} events\n";
 }
 echo "done: $totalImported events across $calendarsMade calendars\n";

@@ -44,6 +44,12 @@ return new class implements PluginInterface {
 
     /** @var string[] diagnostic lines, surfaced as info warnings when debug is on */
     private array $diag = [];
+    private ?PluginHost $runHost = null;
+
+    private function checkpoint(): void
+    {
+        if ($this->runHost?->overBudget()) throw new RuntimeException('Trip planning reached this run\'s work budget; previous suggestions were kept. Try a shorter search horizon.');
+    }
 
     /** Set when a destination had to be inferred from a region name rather than found outright. */
     private ?string $regionGuess = null;
@@ -110,6 +116,7 @@ return new class implements PluginInterface {
 
     public function runJob(PluginHost $host, string $jobId): void
     {
+        $this->runHost = $host;
         if ($jobId !== 'plan') {
             $host->log("unknown job '{$jobId}', nothing to do");
             return;
@@ -239,6 +246,10 @@ return new class implements PluginInterface {
             return $b['score'] <=> $a['score'];
         });
         $picked = $this->pickDistinct($cands, max(1, (int)$cfg['candidates']));
+        foreach ($picked as &$candidate) $this->describeCandidate($candidate, $load);
+        unset($candidate);
+        // Finish bounded explanatory work before publishing any new output.
+        $load['hardSpans'] = $this->hardSpans($load);
         $best   = $picked[0];
 
         // ---- 5. What have I already offered, and what did you decide? -- //
@@ -703,13 +714,15 @@ return new class implements PluginInterface {
     private function classifyDays(array $occ, array $policies, DateTimeZone $tz, array $cfg,
                                   string $from, string $to): array
     {
-        $hard = [];      // date => [ ['t'=>title,'c'=>calName], ... ]
+        $hard = [];      // date => occupied; text lives once in intervals
         $soft = [];
+        $intervals = [];
         $byCal = [];     // calId => [date => true]  (soft coverage, for auto-quiet)
         $seen  = [];     // calId => occurrence count inside the horizon
         $skipped = 0;
 
         foreach ($occ as $o) {
+            $this->checkpoint();
             if (!is_array($o)) { continue; }
             $calId = (int)($o['calendarId'] ?? 0);
             $seen[$calId] = ($seen[$calId] ?? 0) + 1;
@@ -752,21 +765,24 @@ return new class implements PluginInterface {
                 'k' => $isContainer,
                 'w' => $why,
             ];
-
+            $end = min($ed, $this->addDays($sd, 499), $to);
+            $start = max($sd, $from);
+            if ($start > $end) continue;
+            $intervals[] = $entry + ['start' => $start, 'end' => $end, 'kind' => $hardness];
             $guard = 0;
             for ($d = $sd; strcmp($d, $ed) <= 0; $d = $this->addDays($d, 1)) {
                 if (++$guard > 500) { break; }
                 if (strcmp($d, $from) < 0 || strcmp($d, $to) > 0) { continue; }
                 if ($hardness === 'hard') {
-                    $hard[$d][] = $entry;
+                    $hard[$d] = true;
                 } else {
-                    $soft[$d][] = $entry;
+                    $soft[$d] = true;
                     $byCal[$calId][$d] = true;
                 }
             }
         }
 
-        return ['hard' => $hard, 'soft' => $soft, 'byCal' => $byCal, 'from' => $from, 'to' => $to,
+        return ['hard' => $hard, 'soft' => $soft, 'intervals' => $intervals, 'byCal' => $byCal, 'from' => $from, 'to' => $to,
                 'seen' => $seen, 'policies' => $policies, 'skipped' => $skipped, 'quiet' => []];
     }
 
@@ -792,14 +808,12 @@ return new class implements PluginInterface {
             ];
         }
         if ($load['quiet']) {
-            foreach ($load['soft'] as $d => $rows) {
-                $keep = [];
-                foreach ($rows as $r) {
-                    $isQuiet = false;
-                    foreach ($load['quiet'] as $qn) { if ($r['c'] === $qn) { $isQuiet = true; break; } }
-                    if (!$isQuiet) { $keep[] = $r; }
-                }
-                if ($keep) { $load['soft'][$d] = $keep; } else { unset($load['soft'][$d]); }
+            $load['intervals'] = array_values(array_filter($load['intervals'], static fn(array $r): bool => $r['kind'] !== 'soft' || !in_array($r['c'], $load['quiet'], true)));
+            $load['soft'] = [];
+            foreach ($load['intervals'] as $r) {
+                $this->checkpoint();
+                if ($r['kind'] !== 'soft') continue;
+                for ($d = $r['start']; $d <= $r['end']; $d = $this->addDays($d, 1)) $load['soft'][$d] = true;
             }
         }
     }
@@ -1029,17 +1043,14 @@ return new class implements PluginInterface {
             for ($len = $top; $len >= $minDays; $len--) {
                 $lastStart = $r['j'] - $buffer - $len + 1;
                 for ($s = $r['i'] + $buffer; $s <= $lastStart; $s++) {
+                    $this->checkpoint();
                     if (++$seen > self::MAX_CANDIDATES) { break 3; }
                     $win  = array_slice($dates, $s, $len);
                     $w    = $this->windowWeather($normals, $win);
-                    $soft = 0; $softList = []; $softWhy = [];
+                    $soft = 0;
                     foreach ($win as $d) {
                         if (!empty($load['soft'][$d])) {
                             $soft++;
-                            foreach ($load['soft'][$d] as $row) {
-                                $softList[$row['t']] = ($softList[$row['t']] ?? 0) + 1;
-                                $softWhy[$row['t']]  = $row['w'] ?? '';
-                            }
                         }
                     }
                     $ws    = $this->weatherScore($w);
@@ -1051,13 +1062,33 @@ return new class implements PluginInterface {
                     $cands[] = [
                         'start' => $win[0], 'end' => $win[$len - 1], 'len' => $len,
                         'score' => $score, 'weather' => $w, 'wScore' => $ws,
-                        'softDays' => $soft, 'softList' => $softList, 'softWhy' => $softWhy, 'freeScore' => $free,
+                        'softDays' => $soft, 'freeScore' => $free,
                         'slack' => $slack, 'run' => $r, 'buffer' => $buffer,
                     ];
                 }
             }
         }
         return $cands;
+    }
+
+    /** Only selected windows retain explanations, in the same day/event order as before. */
+    private function describeCandidate(array &$candidate, array $load): void
+    {
+        $candidate['softList'] = $candidate['softWhy'] = [];
+        for ($d = $candidate['start']; $d <= $candidate['end']; $d = $this->addDays($d, 1)) {
+            $this->checkpoint();
+            foreach ($this->rowsOn($load, $d, 'soft') as $row) {
+                $candidate['softList'][$row['t']] = ($candidate['softList'][$row['t']] ?? 0) + 1;
+                $candidate['softWhy'][$row['t']] = $row['w'];
+            }
+        }
+    }
+
+    private function rowsOn(array $load, string $day, string $kind): iterable
+    {
+        foreach ($load['intervals'] as $r) {
+            if ($r['kind'] === $kind && $r['start'] <= $day && $r['end'] >= $day) yield $r;
+        }
     }
 
     /** Take the best N candidates that do not overlap each other. */
@@ -1211,7 +1242,7 @@ return new class implements PluginInterface {
                 continue;
             }
             $titles = [];
-            foreach ($load['hard'][$d] as $r) { $titles[$r['t']] = true; }
+            foreach ($this->rowsOn($load, $d, 'hard') as $r) { $titles[$r['t']] = true; }
             $out[] = ucfirst($side) . ' it: ' . implode(', ', array_slice(array_keys($titles), 0, 3))
                    . ' (' . $this->pretty($d) . ')';
         }
@@ -1474,17 +1505,19 @@ return new class implements PluginInterface {
     /** Contiguous hard-blocked spans across the horizon, biggest first. */
     private function hardSpans(array $load): array
     {
+        if (isset($load['hardSpans'])) return $load['hardSpans'];
         $days = array_keys($load['hard']);
         sort($days);
         $out = []; $cur = null;
         foreach ($days as $d) {
+            $this->checkpoint();
             if ($cur !== null && $this->addDays($cur['end'], 1) === $d) {
                 $cur['end'] = $d;
             } else {
                 if ($cur !== null) { $out[] = $cur; }
                 $cur = ['start' => $d, 'end' => $d, 'titles' => []];
             }
-            foreach ($load['hard'][$d] as $r) { $cur['titles'][$r['t']] = true; }
+            foreach ($this->rowsOn($load, $d, 'hard') as $r) { $cur['titles'][$r['t']] = true; }
         }
         if ($cur !== null) { $out[] = $cur; }
         foreach ($out as &$o) { $o['titles'] = array_keys($o['titles']); $o['len'] = $this->daysBetween($o['start'], $o['end']) + 1; }

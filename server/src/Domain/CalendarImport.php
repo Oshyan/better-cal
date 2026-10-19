@@ -71,13 +71,19 @@ final class CalendarImport
             throw new HttpError('import_too_large', $problem . '. ' . $how, 413);
         }
         try {
-            $parsed = Ics::parse($ics, Settings::homeTzid($this->db, $userId));
+            $parsed = Ics::parse($ics, Settings::homeTzid($this->db, $userId), $skippedEvents);
         } catch (\Throwable $e) {
             throw HttpError::badRequest('Could not parse ICS: ' . $e->getMessage(), 'invalid_ics');
         }
         // Masters before their edited occurrences, so each override finds its parent.
         usort($parsed, static fn(array $a, array $b): int => ($a['recurrence_instance_utc'] === null ? 0 : 1) <=> ($b['recurrence_instance_utc'] === null ? 0 : 1));
-        return $this->db->tx(function () use ($parsed, $userId, $name, $color, $intoCalendarId): array {
+        return $this->db->tx(function () use ($parsed, $skippedEvents, $userId, $name, $color, $intoCalendarId): array {
+            if ($intoCalendarId !== null) {
+                $target = CalendarMoveGuard::lockCalendar($this->db, $intoCalendarId);
+                if ($target === null || (int) $target['user_id'] !== $userId) throw HttpError::notFound('No such calendar');
+                CalendarMoveGuard::assertMutableLocked($this->db, $intoCalendarId);
+                if ($target['kind'] !== 'local') throw HttpError::conflict('import_target', 'This calendar is no longer local. Import into another local calendar. Nothing was imported.');
+            }
             // The new calendar and every imported row become visible in one
             // commit. A concurrent move cannot discover/count a half-imported
             // calendar between two transactions.
@@ -134,7 +140,7 @@ final class CalendarImport
                 }
                 $imported++;
             }
-            return ['calendarId' => $calendarId, 'imported' => $imported, 'alreadyThere' => $alreadyThere];
+            return ['calendarId' => $calendarId, 'imported' => $imported, 'alreadyThere' => $alreadyThere, 'skippedEvents' => $skippedEvents];
         });
     }
 
@@ -157,6 +163,7 @@ final class CalendarImport
         }
         try {
             $entries = self::icsEntries($zip);
+            self::preflightEvents($zip, $entries);
             $taken = array_fill_keys(array_map(static fn(array $r): string => (string) $r['name'],
                 $this->db->all('SELECT name FROM calendars WHERE user_id = ?', [$userId])), true);
             $position = (int) $this->db->scalar('SELECT COUNT(*) FROM calendars WHERE user_id = ?', [$userId]);
@@ -181,7 +188,7 @@ final class CalendarImport
                 }
                 $taken[$name] = true;
                 $position++;
-                $calendars[] = ['name' => $name, 'calendarId' => $done['calendarId'], 'imported' => $done['imported']];
+                $calendars[] = ['name' => $name, 'calendarId' => $done['calendarId'], 'imported' => $done['imported'], 'skippedEvents' => $done['skippedEvents']];
             }
         } finally {
             $zip->close();
@@ -204,9 +211,17 @@ final class CalendarImport
     {
         $out = [];
         $total = 0;
+        $allBytes = 0;
+        $names = [];
+        if ($zip->numFiles > Limits::get('IMPORT_ZIP_ENTRIES')) self::zipBudgetError('too many archive entries');
         for ($i = 0; $i < $zip->numFiles; $i++) {
             $stat = $zip->statIndex($i);
             $path = is_array($stat) ? (string) $stat['name'] : '';
+            if (!is_array($stat) || (int) $stat['size'] < 0 || (int) $stat['size'] > Limits::get('IMPORT_ZIP_TOTAL_BYTES') - $allBytes) self::zipBudgetError('too much expanded data');
+            $allBytes += (int) $stat['size'];
+            // Name-based ZipArchive streams must not resolve a different entry.
+            if (isset($names[$path])) throw HttpError::badRequest('The zip contains duplicate file names. Rebuild the archive with unique names.', 'invalid_zip');
+            $names[$path] = true;
             if (!str_ends_with(strtolower($path), '.ics') || str_starts_with($path, '__MACOSX/') || str_contains($path, '/._')) {
                 continue;
             }
@@ -219,6 +234,25 @@ final class CalendarImport
         }
         usort($out, static fn(array $a, array $b): int => strcmp($a['file'], $b['file']));
         return $out;
+    }
+
+    private static function zipBudgetError(string $reason): never
+    {
+        throw new HttpError('import_too_large', 'The zip has ' . $reason . '. Nothing was imported. Split it into smaller archives or adjust the IMPORT_ZIP limits on the server.', 413);
+    }
+
+    /** Count raw event openings across the archive before the first calendar commits. */
+    public static function preflightEvents(\ZipArchive $zip, array $entries): void
+    {
+        $events = 0;
+        foreach ($entries as $entry) {
+            $ics = self::readEntry($zip, $entry['index'], Limits::get('IMPORT_BYTES'));
+            if ($ics === null) continue; // Report this individual file during import.
+            $ics = preg_replace('/\r*\n|\r+/', "\n", $ics) ?? $ics;
+            $ics = preg_replace('/\n[ \t]/', '', $ics) ?? $ics;
+            $events += (int) preg_match_all('/^BEGIN:VEVENT[ \t]*$/mi', $ics);
+            if ($events > Limits::get('IMPORT_ZIP_EVENTS')) self::zipBudgetError('too many events across its calendars');
+        }
     }
 
     /** One entry's text, or null when it's bigger than $maxBytes, whatever its header claimed. */
@@ -236,7 +270,8 @@ final class CalendarImport
         while (!feof($stream)) {
             $chunk = fread($stream, 1 << 16);
             if ($chunk === false) {
-                break;
+                fclose($stream);
+                return null;
             }
             $data .= $chunk;
             if (strlen($data) > $maxBytes) {

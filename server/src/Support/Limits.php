@@ -41,6 +41,10 @@ final class Limits
         // unbounded filesystem walk/read job.
         'TAKEOUT_FILES' => 1000,
         'TAKEOUT_TOTAL_BYTES' => 1073741824, // 1 GiB of admitted .ics files
+        'IMPORT_ZIP_ENTRIES' => 10000,
+        'IMPORT_ZIP_TOTAL_BYTES' => 1073741824, // Includes ignored members.
+        'IMPORT_ZIP_EVENTS' => 250000,
+        'PUSH_DEVICES_PER_ACCOUNT' => 100,
         // One subscribed feed, per poll. Parsing is bounded before it starts,
         // like an import: a hostile feed of tiny events otherwise exhausted the
         // worker's memory on every poll (scan 2026-09-23, F8). Also capped by
@@ -171,6 +175,10 @@ final class Limits
         'IMPORT_EVENTS' => 50000,
         'TAKEOUT_FILES' => 5000,
         'TAKEOUT_TOTAL_BYTES' => 4294967296,
+        'IMPORT_ZIP_ENTRIES' => 50000,
+        'IMPORT_ZIP_TOTAL_BYTES' => 4294967296,
+        'IMPORT_ZIP_EVENTS' => 1000000,
+        'PUSH_DEVICES_PER_ACCOUNT' => 500,
         'GOOGLE_SYNC_EVENTS' => 50000,
         'GOOGLE_SYNC_BYTES' => 67108864,
         'GOOGLE_SYNC_PAGES' => 60,

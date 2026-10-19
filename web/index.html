@@ -10,11 +10,11 @@
   <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#16181d">
   <meta name="referrer" content="strict-origin-when-cross-origin">
   <script>try{var t=localStorage.getItem('bc-theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch(e){}</script>
-  <!-- Deep-link handoff (/add, /subscribe?url=, ...): the path and query move
+  <!-- Deep-link handoff (/add, /subscribe#url=, ...): path, fragment and legacy query move
        to sessionStorage and the address becomes "/" before the first request
-       below is made, so no asset request or Referer ever carries them
+       below is made. Legacy queries still enter the initial request; fragments do not
        (src/app/handoff.js collects them at boot). -->
-  <script>try{if(location.pathname!=='/'){sessionStorage.setItem('bc-handoff',JSON.stringify({path:location.pathname,search:location.search}));history.replaceState(null,'','/')}}catch(e){}</script>
+  <script>try{if(location.pathname!=='/'){var h=JSON.stringify({path:location.pathname,search:location.search,hash:location.hash});if(h.length<=20480)sessionStorage.setItem('bc-handoff',h);history.replaceState(null,'','/')}}catch(e){}</script>
   <!-- Start record: this start is noted before any app code loads, and
        main.js marks it finished once the app has rendered, so a start that
        never got that far (a hung download: a white screen) is still on record

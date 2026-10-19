@@ -20,6 +20,7 @@ import { CalDot, TripBadge, LinkIcon, Icon, PinIcon } from '../ui/icons.js';
 import { onOutsidePress, insideAny } from '../ui/outside.js';
 import { loadLeaflet, addBaseTiles, linkify } from './eventparts.js';
 import { DurationSuffix } from '../ui/EventChip.js';
+import { stripToText } from '../lib/richtext.js';
 import { tripSpan, tripSpanLabel, candidateTrips, attachableInSpan } from '../ui/trips.js';
 import {
   parseISO, dateOfDayKey, addDaysDate, toISOWithOffset, occDayKey, fmtTime,
@@ -276,7 +277,7 @@ export function TripSheetBody({ occ, cal, panel = false, full = true, bodyRef })
 
     ${/* Events first, then where they are: on a phone only once the sheet is pulled up, as with an event's map. */ ''}
     ${points.length > 0 && (panel || full) && html`<${TripMap} points=${points} />`}
-    ${occ.description && html`<div class="bc-es-desc"><div class="bc-es-desctext">${linkify(String(occ.description).replace(/<[^>]+>/g, ' '))}</div></div>`}
+    ${occ.description && html`<div class="bc-es-desc"><div class="bc-es-desctext">${linkify(stripToText(String(occ.description)))}</div></div>`}
   </div>`;
 }
 

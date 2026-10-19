@@ -86,14 +86,14 @@ final class Trips
             if ($this->db->scalar('SELECT id FROM event_links WHERE container_id = ? AND event_id = ?', [$containerId, $eventId]) !== null) {
                 return; // already attached: idempotent, nothing to journal
             }
-            $before = $this->linkRows($containerId);
             $position = (int) $this->db->scalar(
                 'SELECT COALESCE(MAX(position) + 1, 0) FROM event_links WHERE container_id = ?',
                 [$containerId]
             );
-            $this->db->insert('event_links', ['container_id' => $containerId, 'event_id' => $eventId, 'position' => $position]);
+            $id = $this->db->insert('event_links', ['container_id' => $containerId, 'event_id' => $eventId, 'position' => $position]);
             $this->touchEvents([$containerId, $eventId]);
-            $this->undo->record($userId, 'event_links', $containerId, 'create', ['event_links' => $before], ['event_links' => $this->linkRows($containerId)], calendarIds: $calendarIds);
+            $link = $this->db->one('SELECT * FROM event_links WHERE id = ?', [$id]);
+            $this->undo->record($userId, 'event_links', $containerId, 'create', ['event_links' => []], ['event_links' => [$link]], calendarIds: $calendarIds);
             $this->journalBoth($container, $member);
         });
     }
@@ -106,10 +106,9 @@ final class Trips
             if ($link === null) {
                 throw HttpError::notFound('Event is not part of this trip');
             }
-            $before = $this->linkRows($containerId);
             $this->db->run('DELETE FROM event_links WHERE id = ?', [(int) $link['id']]);
             $this->touchEvents([$containerId, $eventId]);
-            $this->undo->record($userId, 'event_links', $containerId, 'delete', ['event_links' => $before], ['event_links' => $this->linkRows($containerId)], calendarIds: $calendarIds);
+            $this->undo->record($userId, 'event_links', $containerId, 'delete', ['event_links' => [$link]], ['event_links' => []], calendarIds: $calendarIds);
             $this->journalBoth($container, $member);
         });
     }

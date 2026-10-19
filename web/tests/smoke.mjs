@@ -4,6 +4,7 @@
 import './copy-to.mjs';
 import './credentials.mjs';
 import './mail.mjs';
+import './resources.mjs';
 import {
   parseISO, toISOWithOffset, dayKeyOf, dateOfDayKey, epochDayOfKey,
   keyOfEpochDay, addDaysKey, diffDaysKey, weekIndexOfKey, firstEpochDayOfWeek,

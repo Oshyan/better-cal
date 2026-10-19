@@ -97,6 +97,8 @@ export function CreateDrawer() {
           toast('Imported ' + ((res && res.imported) || 0) + ' events' + (into && res ? ' into ' + res.name : '')
             + (again ? '; ' + again + ' already there' : ''));
         }
+        const eventSkips = (res && res.skippedEvents) || ((res && res.calendars) || []).flatMap(c => c.skippedEvents || []);
+        if (eventSkips.length) toast(eventSkips.length + ' event(s) skipped. ' + eventSkips.slice(0, 3).map(s => (s.title || 'Untitled event') + ': ' + s.reason).join('; ') + '. Correct their dates, then import the corrected .ics file into its existing calendar.', { error: true, duration: 20000 });
         await loadCalendars();
       } else if (kind === 'folder') {
         await createFolder(name.trim() || 'New folder');

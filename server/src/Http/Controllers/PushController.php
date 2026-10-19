@@ -63,6 +63,7 @@ final class PushController
             'subscribed' => $this->subscriptions->hasAny((int) $req->user['id']),
             'vapidConfigured' => $this->sender->configured(),
             'emailConfigured' => $this->email->isConfigured(),
+            'deviceLimit' => \BetterCal\Support\Limits::get('PUSH_DEVICES_PER_ACCOUNT'),
         ]);
     }
 

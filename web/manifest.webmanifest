@@ -26,7 +26,7 @@
     "params": { "title": "title", "text": "text", "url": "url" }
   },
   "protocol_handlers": [
-    { "protocol": "webcal", "url": "/subscribe?url=%s" }
+    { "protocol": "webcal", "url": "/subscribe#url=%s" }
   ],
   "file_handlers": [
     {

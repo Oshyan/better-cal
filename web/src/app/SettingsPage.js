@@ -530,6 +530,7 @@ function NotificationsSection({ settings, user }) {
         onClick=${run(sendTestNotification, (r) => 'Test sent to ' + ((r && r.sent) || 0) + ' device(s)')}>Send test notification</button>`}
     <//>
     ${devices && devices.length > 0 && html`<${Row} label="Devices receiving reminders" hint="Every browser or phone reminders are sent to. Remove any you do not recognise.">
+      ${status && new Set(devices.map(d => d.endpointHash)).size >= status.deviceLimit && html`<p class="bc-hint">The reminder-device limit (${status.deviceLimit}) is reached. Existing devices still work. Remove old devices below before adding another.</p>`}
       <ul class="bc-devices">
         ${devices.map((d) => html`<li key=${d.id} class="bc-device">
           <span class="bc-device-name">${d.label || d.service}${d.endpointHash === myHash ? html` <span class="bc-badge">this device</span>` : ''}${d.failing ? html` <span class="bc-badge bc-badge-warn">not reachable</span>` : ''}</span>

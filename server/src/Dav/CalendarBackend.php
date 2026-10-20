@@ -149,7 +149,7 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
     {
         // Metadata only; bodies are built on demand in getCalendarObject().
         $rows = $this->db->all(
-            'SELECT m.id, m.uid, m.updated_at,
+            'SELECT m.id, m.calendar_id, m.uid, m.updated_at,
                     (SELECT MAX(o.updated_at) FROM events o
                       WHERE o.calendar_id = m.calendar_id AND o.uid = m.uid
                         AND o.recurrence_instance_utc IS NOT NULL AND o.deleted_at IS NULL) AS override_updated_at
@@ -470,6 +470,8 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
         $updated = max((string) $row['updated_at'], (string) ($row['override_updated_at'] ?? ''));
         return [
             'id' => (int) $row['id'],
+            // Sabre's default calendarQuery fetches each body by calendarid.
+            'calendarid' => (int) $row['calendar_id'],
             'uri' => DavIcs::objectUri((string) $row['uid']),
             'lastmodified' => Time::fromDb($updated)->getTimestamp(),
             'etag' => '"' . DavIcs::etag($updated, (int) $row['id']) . '"',

@@ -4870,6 +4870,10 @@ if (class_exists(\Sabre\CalDAV\Backend\AbstractBackend::class)) {
         $putConflict = true;
     }
     check('dav move guard: PUT reports temporary conflict before changing rows', $putConflict);
+    $moveDavDb->run('ALTER TABLE events ADD COLUMN updated_at TEXT');
+    $moveDavDb->run("INSERT INTO events (id, calendar_id, uid, updated_at) VALUES (5, 1, 'listed', '2026-01-01 00:00:00')");
+    checkEq('dav listing names its calendar, so Sabre\'s calendar-query can fetch each body', [1],
+        array_column($moveDav->getCalendarObjects(1), 'calendarid'));
 }
 
 // ---------------------------------------------------------------------------

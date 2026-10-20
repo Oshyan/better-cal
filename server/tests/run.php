@@ -4717,6 +4717,53 @@ try {
 }
 check('exdate budget: parsed batches enforce the cumulative input limit', $batchRejected);
 Limits::configure(['EXDATE_VALUES_PER_EVENT' => $oldExdateEventLimit, 'EXDATE_VALUES_PER_INPUT' => $oldExdateInputLimit]);
+
+// Comma lists in any property (review of 0.9.87): the parser makes one value
+// per comma, and an unclosed quote used to hide a line's name from the checks.
+$listLimits = [Limits::get('ICS_LIST_VALUES_PER_LINE'), Limits::get('ICS_LIST_VALUES_PER_INPUT')];
+Limits::configure(['ICS_LIST_VALUES_PER_LINE' => 999999, 'ICS_LIST_VALUES_PER_INPUT' => 99999999]);
+checkEq('list budget: operator overrides stay under the hard ceilings', [10000, 1000000], [Limits::get('ICS_LIST_VALUES_PER_LINE'), Limits::get('ICS_LIST_VALUES_PER_INPUT')]);
+Limits::configure(['ICS_LIST_VALUES_PER_LINE' => 5, 'ICS_LIST_VALUES_PER_INPUT' => 11]);
+$listEvent = static fn(string $uid, string $properties): string => "BEGIN:VEVENT\r\nUID:$uid\r\nSUMMARY:Sample $uid\r\nDTSTART:20260101T090000Z\r\nDTEND:20260101T100000Z\r\n$properties\r\nEND:VEVENT\r\n";
+$listCalendar = static fn(array $events, string $top = ''): string => "BEGIN:VCALENDAR\r\nVERSION:2.0\r\n$top" . implode('', $events) . "END:VCALENDAR\r\n";
+check('list budget: the file-wide comma budget refuses a flood across events', str_contains((string) Ics::budgetProblem($listCalendar([
+    $listEvent('a', 'CATEGORIES:a,b,c,d,e'), $listEvent('b', 'CATEGORIES:a,b,c,d,e'), $listEvent('c', 'CATEGORIES:a,b,c,d,e'),
+]), 1 << 20, 3), 'more than 11 comma-separated values'));
+checkEq('list budget: descriptions do not spend the file-wide budget', null, Ics::budgetProblem($listCalendar([$listEvent('a', 'DESCRIPTION:' . str_repeat('x,', 50))]), 1 << 20, 3));
+if (class_exists(\Sabre\VObject\Reader::class)) { // admitEvents reads UIDs with sabre/vobject (the install job runs it)
+    $admitted = Ics::admitEvents($listCalendar([$listEvent('flood', 'CATEGORIES:' . implode(',', array_fill(0, 6, 'a'))), $listEvent('fine', 'CATEGORIES:a,b,c,d,e')]));
+    checkEq('list budget: a CATEGORIES line over the line limit drops only its event', [['flood'], 'CATEGORIES holds more than 5 values'], [array_column($admitted['skipped'], 'uid'), $admitted['skipped'][0]['reason'] ?? null]);
+    check('list budget: the event at the limit is kept', str_contains($admitted['ics'], 'UID:fine') && !str_contains($admitted['ics'], 'UID:flood'));
+    $admitted = Ics::admitEvents($listCalendar([$listEvent('params', 'ATTENDEE;MEMBER=a,b,c,d,e,f:mailto:sam@example.test')]));
+    checkEq('list budget: unquoted parameter lists count too', ['params'], array_column($admitted['skipped'], 'uid'));
+    $admitted = Ics::admitEvents($listCalendar([$listEvent('quoted', 'ATTENDEE;CN="Lee, Sam, Jo, Al, Bo, Cy":mailto:sam@example.test')]));
+    checkEq('list budget: commas inside a quoted parameter are not a list', [], $admitted['skipped']);
+    $admitted = Ics::admitEvents($listCalendar([$listEvent('quote', 'DTSTART;TZID=Sample;X=":20260101T090000,20260102T090000')]));
+    checkEq('stray quote: a packed date list behind an unclosed quote is caught', [['quote'], 'DTSTART must contain one date, not a list'], [array_column($admitted['skipped'], 'uid'), $admitted['skipped'][0]['reason'] ?? null]);
+    $admitted = Ics::admitEvents($listCalendar([$listEvent('midword', 'DTSTART;X=a"b:20260101T090000,20260102T090000"c:20260101T090000Z')]));
+    checkEq('stray quote: quotes the parser does not honour cannot hide a date list', ['midword'], array_column($admitted['skipped'], 'uid'));
+    $admitted = Ics::admitEvents($listCalendar([$listEvent('nickname', 'ATTENDEE;CN="O"Brien, Pat":mailto:pat@example.test')]));
+    checkEq('stray quote: an odd quote in a name alone does not drop the event', [], $admitted['skipped']);
+    $outsideRefused = false;
+    try {
+        Ics::admitEvents($listCalendar([$listEvent('fine', '')], "BEGIN:VTIMEZONE\r\nTZID:Sample\r\nBEGIN:STANDARD\r\nDTSTART;X=\":19700101T000000,19700102T000000\r\nEND:STANDARD\r\nEND:VTIMEZONE\r\n"));
+    } catch (\InvalidArgumentException $e) {
+        $outsideRefused = str_contains($e->getMessage(), 'outside its events');
+    }
+    check('stray quote: a date list outside every event refuses the whole file', $outsideRefused);
+    $admitted = Ics::admitEvents($listCalendar([$listEvent('prose', 'DESCRIPTION:One, two, three, four, five, six, seven\, eight')]));
+    checkEq('list budget: bare commas in a description are prose, not a list', [], $admitted['skipped']);
+    check('list budget: a description is escaped into one parser value', str_contains($admitted['ics'], 'DESCRIPTION:One\, two\, three\, four\, five\, six\, seven\, eight'));
+    $parsed = Ics::parse($listCalendar([$listEvent('prose', 'DESCRIPTION:One, two, three, four, five, six, seven')]));
+    checkEq('list budget: an escaped description reads back unchanged', 'One, two, three, four, five, six, seven', $parsed[0]['description'] ?? null);
+    $parsed = Ics::parse($listCalendar([$listEvent('quote', 'DTSTART;TZID=Sample;X=":20260101T090000,20260102T090000'), $listEvent('fine', '')]), null, $skippedQuote);
+    checkEq('stray quote: the parse keeps good siblings and reports the bad event', [['fine'], ['quote']], [array_column($parsed, 'uid'), array_column($skippedQuote, 'uid')]);
+    $vevent = \Sabre\VObject\Reader::read($listCalendar([$listEvent('packed', '')]))->VEVENT;
+    $vevent->DTSTART->setParts(['20260101T090000Z', '20260102T090000Z']);
+    $vevent->DTSTART['TZID'] = 'Sample';
+    checkEq('singleton dates: a listed date is refused before any date is built', null, Ics::parseVevent($vevent));
+}
+Limits::configure(['ICS_LIST_VALUES_PER_LINE' => $listLimits[0], 'ICS_LIST_VALUES_PER_INPUT' => $listLimits[1]]);
 checkEq('feed budget: FEED_EVENTS when memory is plentiful', BetterCal\Support\Limits::get('FEED_EVENTS'), BetterCal\Support\Limits::feedEventBudget('-1', 0));
 checkEq('dav uid from object uri', 'ABC123', DavIcs::uidFromObjectUri('ABC123.ics'));
 $ulidUid = Ids::ulid();
@@ -7506,7 +7553,7 @@ checkEq('google sync: without a synctoken the poll applies as before', false,
     checkEq('sessions: the Account tab sees two other browsers', 2, json_decode($octl->otherSessions($asOwner('GET', '/api/v1/auth/sessions', [], $cookies))->body, true)['others']);
     $r = $octl->signOutOthers($asOwner('POST', '/api/v1/auth/sign-out-others', ['keepPushHash' => $hereHash], $cookies));
     $out = json_decode($r->body, true);
-    checkEq('sign out elsewhere: counts what went', ['sessions' => 2, 'devices' => 1, 'pushDevices' => 1, 'feedsRotated' => 1, 'notifyEmailReset' => true, 'subscriptionsPaused' => 0], $out);
+    checkEq('sign out elsewhere: counts what went', ['sessions' => 2, 'devices' => 1, 'pushDevices' => 1, 'feedsRotated' => 1, 'notifyEmailReset' => true, 'subscriptionsPaused' => 0, 'subscriptionsChanged' => 0], $out);
     check('sign out elsewhere: the lost device and the laptop are signed out', $oauth->resolve($lost['token']) === null && $oauth->resolve($laptop['token']) === null);
     check('sign out elsewhere: this browser stays signed in', $oauth->resolve($here['token']) !== null);
     check('sign out elsewhere: only this browser is still remembered', $odev->find($hereDev, 'owner@example.com') !== null && $odev->find($lostDev, 'owner@example.com') === null);
@@ -7595,6 +7642,16 @@ checkEq('google sync: without a synctoken the poll applies as before', false,
         $r['notifyEmailReset'],
         json_decode((string) $odb->scalar('SELECT settings_json FROM users WHERE id = 1'), true)['notifyEmail'],
     ]);
+    // The 0.9.87 regression: a signed-in thief renames its own subscription
+    // between the owner's preview and confirm. Sign-out must still happen.
+    $thief = $oauth->login('owner@example.com', 'pw');
+    $odb->run("INSERT INTO calendars (id, user_id, name, source_url, created_at, kind, provider, subscription_authority, created_by_session_hash) VALUES (900, 1, 'Thief feed', 'sealed-invented', '2026-10-19 00:00:00', 'subscribed', 'ics', 'owner', ?)", [hash('sha256', $thief['token'])]);
+    $seen = json_decode($octl->otherSessions($asOwner('GET', '/api/v1/auth/sessions', [], $cookies))->body, true);
+    $odb->run("UPDATE calendars SET name = 'Renamed mid-review' WHERE id = 900");
+    $odb->run("INSERT INTO calendars (id, user_id, name, source_url, created_at, kind, provider, subscription_authority, created_by_session_hash) VALUES (901, 1, 'Added mid-review', 'sealed-invented-2', '2026-10-19 00:00:01', 'subscribed', 'ics', 'owner', ?)", [hash('sha256', $thief['token'])]);
+    $r = json_decode($octl->signOutOthers($asOwner('POST', '/api/v1/auth/sign-out-others', ['subscriptionReview' => ['version' => $seen['version'], 'choice' => 'keep', 'reviewed' => array_column($seen['subscriptions'], 'fingerprint')]], $cookies))->body, true);
+    checkEq('sign out elsewhere: a rename and an addition mid-review cannot block it', [1, 1, 1, null], [$r['sessions'], $r['subscriptionsPaused'], $r['subscriptionsChanged'], $oauth->resolve($thief['token'])]);
+    checkEq('sign out elsewhere: the reviewed feed is kept, the one added mid-review is paused', ['owner', 'session_review'], array_column($odb->all('SELECT subscription_authority a FROM calendars WHERE id IN (900, 901) ORDER BY id'), 'a'));
     // An API token cannot do it (it must not be able to sign the owner out).
     $tokReq = new BetterCal\Http\Request('POST', '/api/v1/auth/sign-out-others', [], [], [], []);
     $tokReq->user = ['id' => 1, 'email' => 'owner@example.com'];
@@ -10104,6 +10161,12 @@ check('access code: process/security regression suite', $accessStatus === 0, $ac
         $threw = null;
         try { $importer->importIcs(1, $work, 'ignored', null, 4); } catch (BetterCal\Http\HttpError $e) { $threw = $e->status; }
         checkEq('import: nor is another account\'s calendar', 404, $threw);
+        $listLimit = Limits::get('ICS_LIST_VALUES_PER_INPUT');
+        Limits::configure(['ICS_LIST_VALUES_PER_INPUT' => 2]);
+        $threw = null;
+        try { $importer->importIcs(1, str_replace("END:VEVENT", "CATEGORIES:a,b,c,d\r\nEND:VEVENT", $work), 'ignored'); } catch (BetterCal\Http\HttpError $e) { $threw = $e->getMessage(); }
+        check('import: a comma-list refusal names the setting that raises it', str_contains((string) $threw, 'BETTERCAL_LIMIT_ICS_LIST_VALUES_PER_INPUT') && !str_contains((string) $threw, 'IMPORT_EVENTS'));
+        Limits::configure(['ICS_LIST_VALUES_PER_INPUT' => $listLimit]);
         $z->close();
         $workspace->close();
         unlink($exportRoot . '/.runtime-cache/export-lock.php');

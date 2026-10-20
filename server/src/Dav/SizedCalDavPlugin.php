@@ -60,6 +60,17 @@ final class SizedCalDavPlugin extends \Sabre\CalDAV\Plugin
         foreach (($component[2] ?? []) as $child) self::checkJcal($child, $events, $properties, $exdates);
     }
 
+    /**
+     * Sabre's own validation reads the object as sent, so the escaping
+     * admitEvents() gives free text doesn't apply there: every bare comma,
+     * descriptions included, is a value it will make.
+     */
+    public static function commaProblem(string $data): ?string
+    {
+        $max = Limits::get('ICS_LIST_VALUES_PER_INPUT');
+        return substr_count($data, ',') > $max ? 'The calendar object holds more than ' . number_format($max) . ' comma-separated values' : null;
+    }
+
     protected function validateICalendar(&$data, $path, &$modified, \Sabre\HTTP\RequestInterface $request, \Sabre\HTTP\ResponseInterface $response, $isNew)
     {
         $data = self::readBody($data, $request->getHeader('Content-Length'));
@@ -71,6 +82,8 @@ final class SizedCalDavPlugin extends \Sabre\CalDAV\Plugin
                 $data = ltrim($data);
             } else {
                 $problem = Ics::budgetProblem($data, Limits::get('DAV_OBJECT_BYTES'), Limits::get('DAV_OVERRIDES') + 1);
+                if ($problem !== null) throw new \InvalidArgumentException($problem);
+                $problem = self::commaProblem($data);
                 if ($problem !== null) throw new \InvalidArgumentException($problem);
                 $admitted = Ics::admitEvents($data);
                 if ($admitted['skipped'] !== []) throw new \InvalidArgumentException(Ics::skippedMessage($admitted['skipped']));

@@ -23,27 +23,50 @@ final class BrowserSubscriptions
             } catch (\Throwable) {
                 $host = null;
             }
-            $items[] = ['id' => (int) $row['id'], 'name' => (string) $row['name'], 'host' => is_string($host) ? $host : 'Host unavailable', 'addedAt' => Time::dbToIso((string) $row['created_at'])];
+            $items[] = ['id' => (int) $row['id'], 'name' => (string) $row['name'], 'host' => is_string($host) ? $host : 'Host unavailable', 'addedAt' => Time::dbToIso((string) $row['created_at']), 'fingerprint' => self::fingerprint($row)];
         }
         return ['subscriptions' => $items, 'version' => self::version($rows)];
     }
 
-    /** Caller holds the user lock, shared with subscription creation/claim. */
-    public static function decide(Db $db, int $userId, ?string $keepSession, ?array $decision): int
+    /**
+     * Apply the owner's reviewed choice, then let the sign-out finish. A
+     * mismatch must never refuse: a signed-in thief could rename or add a
+     * feed between preview and confirm on every attempt and keep its session
+     * forever (review of 0.9.87). So the choice covers only rows the owner
+     * saw with the same feed address and creator; anything added or
+     * repointed since is paused, the safe side of either choice.
+     * Caller holds the user lock, shared with subscription creation/claim.
+     *
+     * @return array{paused:int,changed:int} changed: paused because they were not reviewed as they now are
+     */
+    public static function decide(Db $db, int $userId, ?string $keepSession, ?array $decision): array
     {
         $rows = self::rows($db, $userId, $keepSession, true);
-        if ($rows === [] && $decision === null) return 0;
-        if ($decision === null || !is_string($decision['version'] ?? null)
-            || !hash_equals(self::version($rows), $decision['version'])
-            || !in_array($decision['choice'] ?? null, ['keep', 'pause'], true)) {
-            throw HttpError::conflict('subscription_review_changed', 'Review the subscriptions from other browsers again before signing them out. Nothing has changed yet.');
-        }
+        if ($rows === []) return ['paused' => 0, 'changed' => 0];
+        $choice = in_array($decision['choice'] ?? null, ['keep', 'pause'], true) ? $decision['choice'] : 'pause';
+        $reviewed = is_array($decision['reviewed'] ?? null) ? array_fill_keys(array_filter($decision['reviewed'], 'is_string'), true) : null;
+        // A page from before per-row review sends only the version: it then
+        // covers all rows or none.
+        $whole = $reviewed === null && is_string($decision['version'] ?? null) && hash_equals(self::version($rows), $decision['version']);
+        $paused = 0;
+        $changed = 0;
         foreach ($rows as $row) {
-            $db->update('calendars', $decision['choice'] === 'pause'
-                ? ['subscription_authority' => 'session_review']
-                : ['created_by_session_hash' => null], 'id = ?', [(int) $row['id']]);
+            $seen = $whole || isset($reviewed[self::fingerprint($row)]);
+            if ($seen && $choice === 'keep') {
+                $db->update('calendars', ['created_by_session_hash' => null], 'id = ?', [(int) $row['id']]);
+                continue;
+            }
+            $db->update('calendars', ['subscription_authority' => 'session_review'], 'id = ?', [(int) $row['id']]);
+            $paused++;
+            if (!$seen) $changed++;
         }
-        return $decision['choice'] === 'pause' ? count($rows) : 0;
+        return ['paused' => $paused, 'changed' => $changed];
+    }
+
+    /** What the owner's choice is about: which feed, fetched from where, added by which browser. Not its name. */
+    private static function fingerprint(array $row): string
+    {
+        return hash('sha256', json_encode([(int) $row['id'], (string) $row['source_url'], (string) $row['created_by_session_hash']], JSON_THROW_ON_ERROR));
     }
 
     private static function rows(Db $db, int $userId, ?string $keepSession, bool $lock = false): array

@@ -385,7 +385,7 @@ function OtherBrowsersRow() {
     setBusy(true);
     try {
       const keepPushHash = await currentEndpointHash().catch(() => null);
-      const r = await api('/auth/sign-out-others', { method: 'POST', body: { keepPushHash, subscriptionReview: { version: review.version, choice } } });
+      const r = await api('/auth/sign-out-others', { method: 'POST', body: { keepPushHash, subscriptionReview: { version: review.version, choice, reviewed: (review.subscriptions || []).map((s) => s.fingerprint) } } });
       setOthers(0);
       setReview(null);
       if (r.notifyEmailReset) {
@@ -395,9 +395,9 @@ function OtherBrowsersRow() {
         + (r.pushDevices ? ' and removed ' + r.pushDevices + ' push device' + (r.pushDevices === 1 ? '' : 's') : '')
         + (r.feedsRotated ? '. Changed ' + r.feedsRotated + ' public feed URL' + (r.feedsRotated === 1 ? '' : 's') : '')
         + (r.notifyEmailReset ? '. Reminder email returned to the account address' : '')
+        + (r.subscriptionsChanged ? '. ' + r.subscriptionsChanged + ' subscription' + (r.subscriptionsChanged === 1 ? ' was' : 's were') + ' added or changed while you were deciding, so ' + (r.subscriptionsChanged === 1 ? 'it was' : 'they were') + ' paused' : '')
         + (r.subscriptionsPaused ? '. Subscriptions paused; open Review to keep or remove them' : '') + '.');
     } catch (err) {
-      if (err.code === 'subscription_review_changed') setReview(null);
       toast('Could not sign out other browsers: ' + err.message, { error: true });
     } finally {
       setBusy(false);

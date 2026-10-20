@@ -38,7 +38,8 @@ final class PluginsController
 
     public function enable(Request $req, array $params): Response
     {
-        $this->plugins->withAuthority(RequestAuthority::request($req), fn() => $this->plugins->enable((string) $params['id']));
+        $authority = RequestAuthority::request($req);
+        $this->plugins->withAuthority($authority, fn() => $this->plugins->enable((string) $params['id'], $authority->tokenId()));
         return Response::json(['ok' => true]);
     }
 

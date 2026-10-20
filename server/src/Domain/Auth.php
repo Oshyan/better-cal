@@ -163,6 +163,7 @@ final class Auth
             $subscriptionsPaused = $browserPaused;
             $googleAccounts = 0;
             $googleMoves = 0;
+            $plugins = [];
             if ($revokeTokens) {
                 $subscriptionsPaused += (int) $this->db->scalar(
                     "SELECT COUNT(*) FROM calendars c JOIN api_tokens t ON t.id = c.created_by_token_id
@@ -170,6 +171,9 @@ final class Auth
                        AND COALESCE(c.provider, 'ics') = 'ics' AND c.subscription_authority = 'token'",
                     [$userId, $userId]
                 );
+                foreach ($this->db->all('SELECT id FROM api_tokens WHERE user_id = ?', [$userId]) as $token) {
+                    array_push($plugins, ...Plugins::disableForRevokedToken($this->db, (int) $token['id']));
+                }
                 $tokens = $this->db->run('DELETE FROM api_tokens WHERE user_id = ?', [$userId])->rowCount();
                 foreach ($this->db->all('SELECT id FROM out_feeds WHERE user_id = ?', [$userId]) as $f) {
                     $protected = FeedCredentials::protectOutboundToken(
@@ -230,7 +234,7 @@ final class Auth
                     ['Google access was paused by the account compromise reset; reconnect under Settings, Connections.', $userId]
                 );
             }
-            return ['sessions' => $sessions, 'tokens' => $tokens, 'pushDevices' => $push, 'trustedDevices' => $devices, 'feedsRotated' => $feeds, 'notifyEmailReset' => $emailReset, 'subscriptionsPaused' => $subscriptionsPaused, 'googleAccounts' => $googleAccounts, 'googleMoves' => $googleMoves];
+            return ['sessions' => $sessions, 'tokens' => $tokens, 'pushDevices' => $push, 'trustedDevices' => $devices, 'feedsRotated' => $feeds, 'notifyEmailReset' => $emailReset, 'subscriptionsPaused' => $subscriptionsPaused, 'googleAccounts' => $googleAccounts, 'googleMoves' => $googleMoves, 'pluginsDisabled' => count($plugins)];
         });
     }
 

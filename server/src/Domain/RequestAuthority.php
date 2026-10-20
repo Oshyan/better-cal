@@ -32,6 +32,12 @@ final class RequestAuthority
         return self::credential((int) $request->user['id'], null, $request->cookies[Auth::COOKIE] ?? null);
     }
 
+    /** The API key behind this request, or null for a browser session or password. */
+    public function tokenId(): ?int
+    {
+        return $this->tokenId;
+    }
+
     /** The hash must be the exact version against which the password was verified. */
     public static function password(int $userId, string $verifiedHash): self
     {

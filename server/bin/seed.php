@@ -101,6 +101,9 @@ if ($existing !== null) {
         if ($revoked['subscriptionsPaused'] > 0) {
             echo "Paused {$revoked['subscriptionsPaused']} ICS subscription(s) created by those tokens; review them in calendar settings.\n";
         }
+        if ($revoked['pluginsDisabled'] > 0) {
+            echo "Turned off {$revoked['pluginsDisabled']} plugin(s) those tokens enabled or configured; turn them back on from Review.\n";
+        }
         echo "Gave {$revoked['feedsRotated']} outbound feed(s) new addresses; copy them again from Settings, Connections.\n";
         if ($revoked['notifyEmailReset']) {
             echo "Reminder email goes to the account address again (a different one had been set).\n";

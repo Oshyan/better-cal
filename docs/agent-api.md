@@ -18,7 +18,7 @@ Tokens are stored sha256-hashed; the plaintext value is shown exactly once at cr
 
 An API key is a broad account key, not a read-only or per-calendar one. That's deliberate: it lets an agent do real work.
 
-**A key can:** read and edit events, calendars, folders, people and availability; search; undo; change settings; decide possible duplicates; enable, disable, configure and run installed plugins, including their per-calendar and per-event fields. Plugin jobs and settings can have effects outside Better-Cal, through what the plugin does.
+**A key can:** read and edit events, calendars, folders, people and availability; search; undo; change settings; decide possible duplicates; enable, disable, configure and run installed plugins, including their per-calendar and per-event fields. Plugin jobs and settings can have effects outside Better-Cal, through what the plugin does. A plugin a key enables or configures is tied to that key until a browser enables it again: revoking the key (or `seed.php --revoke-tokens`) turns the plugin off and lists it in Review, where one click turns it back on.
 
 **A key can't:**
 

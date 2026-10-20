@@ -7187,6 +7187,10 @@ checkEq('google sync: without a synctoken the poll applies as before', false,
         $blockedCode = $e->errorCode;
     }
     checkEq('subscription authority: the poll sink refuses before fetching an expired-token feed', 'subscription_authorization_revoked', $blockedCode);
+    $sdb->run('CREATE TABLE plugins (id TEXT PRIMARY KEY, enabled INTEGER, disabled_reason TEXT, changed_by_token_id INTEGER)');
+    $sdb->run('CREATE TABLE jobs (id INTEGER PRIMARY KEY, type TEXT, payload_json TEXT, status TEXT, last_error TEXT)');
+    $sdb->run("INSERT INTO plugins VALUES ('by-key', 1, NULL, 1), ('by-browser', 1, NULL, NULL), ('other-key', 1, NULL, 3), ('off-by-key', 0, 'Turned off by the owner', 1)");
+    $sdb->run("INSERT INTO jobs (type, payload_json, status) VALUES ('plugin_job', '{\"plugin\":\"by-key\"}', 'pending'), ('plugin_job', '{\"plugin\":\"by-browser\"}', 'pending')");
     $impact = (new BetterCal\Domain\ApiTokens($sdb))->revokeWithImpact(1, 1);
     checkEq('subscription authority: revocation reports one paused subscription and preserves its calendar', [1, 1], [
         $impact['subscriptionsPaused'],
@@ -7194,6 +7198,15 @@ checkEq('google sync: without a synctoken the poll applies as before', false,
     ]);
     checkEq('subscription authority: the same row becomes paused as soon as its token is gone', 'paused',
         BetterCal\Domain\SubscriptionAuthority::describe($sdb, $sdb->one('SELECT * FROM calendars WHERE id = 2'))['status']);
+    checkEq('plugin authority: revoking a key turns off only the plugins it enabled or configured', ['by-key'], $impact['pluginsDisabled']);
+    checkEq('plugin authority: state after revocation', [
+        ['id' => 'by-browser', 'enabled' => 1, 'disabled_reason' => null, 'changed_by_token_id' => null],
+        ['id' => 'by-key', 'enabled' => 0, 'disabled_reason' => BetterCal\Domain\Plugins::TOKEN_REVOKED, 'changed_by_token_id' => null],
+        ['id' => 'off-by-key', 'enabled' => 0, 'disabled_reason' => 'Turned off by the owner', 'changed_by_token_id' => null],
+        ['id' => 'other-key', 'enabled' => 1, 'disabled_reason' => null, 'changed_by_token_id' => 3],
+    ], array_map(static fn(array $r): array => array_map(static fn($v) => is_numeric($v) ? (int) $v : $v, $r), $sdb->all('SELECT * FROM plugins ORDER BY id')));
+    checkEq('plugin authority: the turned-off plugin\'s waiting jobs are cancelled, others keep theirs', ['failed', 'pending'],
+        array_column($sdb->all('SELECT status FROM jobs ORDER BY id'), 'status'));
 }
 
 // --- Password reset ends the sessions opened under the old password (BC-21) ---
@@ -7211,6 +7224,9 @@ checkEq('google sync: without a synctoken the poll applies as before', false,
     $pdb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, provider TEXT, source_url TEXT, subscription_authority TEXT, created_by_token_id INTEGER, google_account_id INTEGER, google_access_role TEXT, last_poll_status TEXT, last_poll_error TEXT)');
     davJournal($pdb);
     $pdb->run('CREATE TABLE calendar_moves (id INTEGER PRIMARY KEY, user_id INTEGER, status TEXT, cancelled_at TEXT, finished_at TEXT, error TEXT)');
+    $pdb->run('CREATE TABLE plugins (id TEXT PRIMARY KEY, enabled INTEGER, disabled_reason TEXT, changed_by_token_id INTEGER)');
+    $pdb->run('CREATE TABLE jobs (id INTEGER PRIMARY KEY, type TEXT, payload_json TEXT, status TEXT, last_error TEXT)');
+    $pdb->run("INSERT INTO plugins VALUES ('owner-key', 1, NULL, 2), ('other-user-key', 1, NULL, 3)");
     $pdb->run("INSERT INTO push_subscriptions (user_id, endpoint) VALUES (1, 'https://fcm.googleapis.com/a'), (1, 'https://attacker.example/b'), (2, 'https://fcm.googleapis.com/c')");
     $resetSecret = str_repeat('r', 32);
     $ownerFeedBefore = BetterCal\Infra\FeedCredentials::protectOutboundToken('feed-one', $resetSecret);
@@ -7338,6 +7354,9 @@ checkEq('google sync: without a synctoken the poll applies as before', false,
     checkEq('reset --revoke-tokens: another user\'s feed keeps its address verifier', $otherFeedBefore['hash'], $pdb->scalar('SELECT token FROM out_feeds WHERE user_id = 2'));
     check('reset --revoke-tokens: a foreign reminder address is cleared (F6)', $revoked['notifyEmailReset'] && json_decode((string) $pdb->scalar('SELECT settings_json FROM users WHERE id = 1'), true)['notifyEmail'] === null);
     checkEq('reset --revoke-tokens: another user\'s token is untouched', 1, (int) $pdb->scalar('SELECT COUNT(*) FROM api_tokens WHERE user_id = 2'));
+    checkEq('reset --revoke-tokens: plugins the owner\'s keys enabled are turned off, others stay', [1, [['enabled' => 1], ['enabled' => 0]]], [
+        $revoked['pluginsDisabled'], array_map(static fn(array $r): array => ['enabled' => (int) $r['enabled']], $pdb->all('SELECT enabled FROM plugins ORDER BY id')),
+    ]);
     checkEq('reset --revoke-tokens: Google connections are quarantined and reported', [1, true, 'error'], [
         $revoked['googleAccounts'],
         $pdb->scalar('SELECT reauth_required_at FROM google_accounts WHERE id = 1') !== null,

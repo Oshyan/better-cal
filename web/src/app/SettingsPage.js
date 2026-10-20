@@ -307,11 +307,12 @@ function TokensSection() {
       const result = await api('/tokens/' + t.id, { method: 'DELETE' });
       if (fresh && fresh.id === t.id) setFresh(null);
       toast('Revoked "' + t.name + '". Anything using it stops working now.'
-        + (result.subscriptionsPaused ? ' Paused ' + result.subscriptionsPaused + ' calendar subscription' + (result.subscriptionsPaused === 1 ? '' : 's') + ' for review.' : ''));
+        + (result.subscriptionsPaused ? ' Paused ' + result.subscriptionsPaused + ' calendar subscription' + (result.subscriptionsPaused === 1 ? '' : 's') + ' for review.' : '')
+        + (result.pluginsDisabled ? ' Turned off ' + result.pluginsDisabled + ' plugin' + (result.pluginsDisabled === 1 ? '' : 's') + ' it enabled; Review can turn ' + (result.pluginsDisabled === 1 ? 'it' : 'them') + ' back on.' : ''));
       await Promise.all([
         load(),
         result.subscriptionsPaused ? loadCalendars().catch(() => {}) : Promise.resolve(),
-        result.subscriptionsPaused ? loadReviewCount() : Promise.resolve(),
+        result.subscriptionsPaused || result.pluginsDisabled ? loadReviewCount() : Promise.resolve(),
       ]);
     } catch (err) {
       toast('Could not revoke: ' + err.message, { error: true });

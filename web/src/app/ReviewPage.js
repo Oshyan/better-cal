@@ -12,6 +12,7 @@
 //   proposal       a plan one of your plugins suggests.
 //   duplicate      two events that might be the same event.
 //   subscription   a feed whose automatic updates need your decision.
+//   plugin         a plugin turned off because the API key that enabled it was revoked.
 //
 // The rule that makes it trustworthy, stated in the UI: an emailed change or a
 // suggested plan is not on the calendar until accepted. A paused feed keeps its
@@ -34,8 +35,8 @@ import { usePasswordStepUp } from './PasswordStepUp.js';
 import { fmtSince } from '../lib/since.js';
 import { parseISO, dateOfDayKey, fmtRange, fmtDayMedium, fmtTime } from '../lib/dates.js';
 
-const KIND_LABEL = { invite_new: 'New emailed invitation', invite_change: 'Invitation change', mail_error: 'Unreadable email', mail_limit: 'Email automation paused', model_limit: 'AI processing paused', rsvp: 'Invitation', proposal: 'Proposal', duplicate: 'Possible duplicate', subscription: 'Calendar updates paused' };
-const KIND_ICON = { invite_new: 'mail', invite_change: 'mail', mail_error: 'warning', mail_limit: 'warning', model_limit: 'warning', rsvp: 'mail', proposal: 'proposals', duplicate: 'stack', subscription: 'calendar' };
+const KIND_LABEL = { invite_new: 'New emailed invitation', invite_change: 'Invitation change', mail_error: 'Unreadable email', mail_limit: 'Email automation paused', model_limit: 'AI processing paused', rsvp: 'Invitation', proposal: 'Proposal', duplicate: 'Possible duplicate', subscription: 'Calendar updates paused', plugin: 'Plugin turned off' };
+const KIND_ICON = { invite_new: 'mail', invite_change: 'mail', mail_error: 'warning', mail_limit: 'warning', model_limit: 'warning', rsvp: 'mail', proposal: 'proposals', duplicate: 'stack', subscription: 'calendar', plugin: 'warning' };
 
 // One side of a changed date. All-day values are bare dates; timed ones are
 // instants, shown on this device's clock like everything else on screen.
@@ -92,6 +93,8 @@ function ReviewCard({ item, onChanged }) {
       } else if (item.kind === 'subscription') {
         toast(action.name === 'keep_updating' ? 'Calendar updates resumed' : action.name === 'remove' ? 'Subscription removed' : 'Saved events kept as a local calendar');
         await loadCalendars().catch(() => {});
+      } else if (item.kind === 'plugin') {
+        toast(action.name === 'enable' ? 'Plugin turned back on' : 'Plugin left off');
       } else if (item.kind === 'mail_error') {
         toast('Notice dismissed. The original email remains in your mailbox.');
       } else if (item.kind === 'mail_limit') {

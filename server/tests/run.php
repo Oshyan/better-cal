@@ -1500,14 +1500,16 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
         $occCancel[0], $adb->scalar('SELECT status FROM events WHERE id = ?', [$seriesId]),
         str_contains((string) $adb->scalar('SELECT summary FROM review_items WHERE id = ?', [$occCancelItem]), 'Mon 9 Nov 2026 occurrence'),
     ]);
-    $queueA->accept(1, $occCancelItem);
-    checkEq('one occurrence: accepting the cancellation skips just that occurrence', [['2026-11-09 18:00:00'], 'tentative', 'FREQ=WEEKLY'], [
-        BetterCal\Domain\Recurrence::decodeExdates($adb->scalar('SELECT exdates_json FROM events WHERE id = ?', [$seriesId])),
-        $adb->scalar('SELECT status FROM events WHERE id = ?', [$seriesId]),
-        $adb->scalar('SELECT rrule FROM events WHERE id = ?', [$seriesId]),
-    ]);
-    checkEq('one occurrence: cancelling an already skipped occurrence holds nothing', ['unchanged'],
-        [$applyA->invoke($mailA, 1, 'CANCEL', ['invite' => ['method' => 'CANCEL', 'sequence' => 3] + $cancelInvite] + $occurrenceEv, 'UTC', $occMsg)[0]]);
+    if (class_exists(\Sabre\VObject\Reader::class)) { // skipping an occurrence proves it through sabre/vobject
+        $queueA->accept(1, $occCancelItem);
+        checkEq('one occurrence: accepting the cancellation skips just that occurrence', [['2026-11-09 18:00:00'], 'tentative', 'FREQ=WEEKLY'], [
+            BetterCal\Domain\Recurrence::decodeExdates($adb->scalar('SELECT exdates_json FROM events WHERE id = ?', [$seriesId])),
+            $adb->scalar('SELECT status FROM events WHERE id = ?', [$seriesId]),
+            $adb->scalar('SELECT rrule FROM events WHERE id = ?', [$seriesId]),
+        ]);
+        checkEq('one occurrence: cancelling an already skipped occurrence holds nothing', ['unchanged'],
+            [$applyA->invoke($mailA, 1, 'CANCEL', ['invite' => ['method' => 'CANCEL', 'sequence' => 3] + $cancelInvite] + $occurrenceEv, 'UTC', $occMsg)[0]]);
+    }
     $moved = ['start_utc' => '2026-11-17 20:00:00', 'end_utc' => '2026-11-17 21:00:00', 'recurrence_instance_utc' => '2026-11-16 18:00:00',
         'location' => 'Library', 'invite' => ['method' => 'REQUEST', 'sequence' => 3] + $cancelInvite] + $occurrenceEv;
     $occMove = $applyA->invoke($mailA, 1, 'REQUEST', $moved, 'UTC', ['messageId' => 'occ2@example.test'] + $occMsg);

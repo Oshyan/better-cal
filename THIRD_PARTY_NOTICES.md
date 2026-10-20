@@ -16,13 +16,13 @@ These front-end libraries are copied into `web/vendor/`, pinned and checksummed 
 
 The Apache-2.0 licensed files (htm, DOMPurify) are redistributed unmodified; their license text is at the links above. Only Preact's two files are changed: the source-map comment is removed, and `hooks.module.js` imports Preact by its local path.
 
-## Installed by Composer
+## PHP libraries (Composer)
 
-The server's PHP dependencies are not stored in this repository; `composer install` fetches them (see `server/composer.json` and `server/composer.lock`). They are MIT or BSD-3-Clause licensed (including sabre/dav and sabre/vobject, BSD-3-Clause), except:
+The server's PHP libraries aren't stored in this repository; `server/composer.json` and `server/composer.lock` pin them. Each release zip includes them, installed from that lock file into `server/vendor/`, each with its own license file. A git checkout gets them with `composer install`. They are MIT or BSD-3-Clause licensed (the sabre libraries, including sabre/dav and sabre/vobject, are BSD-3-Clause), except:
 
-- **PHPMailer** (`phpmailer/phpmailer`), LGPL-2.1-only. It is used unmodified as a separate library, installed and replaceable through Composer, which the LGPL allows for a differently licensed application.
+- **PHPMailer** (`phpmailer/phpmailer`), LGPL-2.1-only. It's included unmodified, as a separate library in its own folder (`server/vendor/phpmailer/phpmailer`), so it can be replaced or changed, which the LGPL allows for a differently licensed application.
 
-`composer licenses` (run in `server/`) lists every installed package with its license.
+The release zip leaves out the libraries' own command-line tools, examples, tests and docs, which Better-Cal never runs. Their code and license files are as published. `composer licenses` (run in `server/`) lists every installed package with its license.
 
 ## Data and services
 

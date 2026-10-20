@@ -40,6 +40,10 @@ final class ReviewQueue
     public const KIND_MAIL_ERROR = 'mail_error';
 
     private const PREVIEW_CHARS = 400;
+    /** Open competing change candidates kept for one meeting. */
+    public const CHANGES_PER_EVENT = 3;
+    /** Unreadable-email notices shown one by one; more fold into one counted notice. */
+    public const MAIL_ERROR_NOTICES = 20;
 
     public function __construct(private readonly Db $db, private readonly Events $events)
     {
@@ -211,6 +215,32 @@ final class ReviewQueue
                     return (int) $pending['id'];
                 }
             }
+            $admitted = (new MailAdmission($this->db))->admitHeldChange($userId, $candidateKey, $fromAddr);
+            if (!$admitted['allowed']) {
+                $this->holdMailLimit($userId, (string) $admitted['code'], (string) $admitted['message'], (string) ($admitted['retryAt'] ?? ''), $title, $fromAddr);
+                return null;
+            }
+            $row = [
+                'title' => mb_substr($title, 0, 300),
+                'summary' => mb_substr($summary, 0, 1000),
+                'payload_json' => json_encode([
+                    'method' => $method,
+                    'uid' => $uid,
+                    'from' => $fromAddr,
+                    'fields' => $method === 'CANCEL' ? null : $fields,
+                    'invite' => $invite,
+                    'diff' => $diff,
+                    'sequenceAuthoritative' => $sequenceAuthoritative,
+                    'candidateKey' => $candidateKey,
+                ], JSON_INVALID_UTF8_SUBSTITUTE | JSON_UNESCAPED_SLASHES),
+            ];
+            // One meeting keeps at most a few competing candidates: the first
+            // ones received stay, and the newest slot follows the latest
+            // claim, so one known UID cannot fill the whole Review ceiling.
+            if (count($open) >= self::CHANGES_PER_EVENT) {
+                $this->db->update('review_items', $row + ['created_at' => Time::nowDb()], 'id = ?', [(int) $open[0]['id']]);
+                return (int) $open[0]['id'];
+            }
             // An unaccepted sequence is only a sender claim, even when the
             // organizer matches. Every distinct candidate consumes a slot.
             if ($this->pendingInvitationCount($userId) >= Limits::get('MAIL_PENDING_INVITATIONS')) {
@@ -229,19 +259,7 @@ final class ReviewQueue
                 'kind' => self::KIND_INVITE_CHANGE,
                 'event_id' => (int) $event['id'],
                 'source_key' => $sourceKey,
-                'title' => mb_substr($title, 0, 300),
-                'summary' => mb_substr($summary, 0, 1000),
-                'payload_json' => json_encode([
-                    'method' => $method,
-                    'uid' => $uid,
-                    'from' => $fromAddr,
-                    'fields' => $method === 'CANCEL' ? null : $fields,
-                    'invite' => $invite,
-                    'diff' => $diff,
-                    'sequenceAuthoritative' => $sequenceAuthoritative,
-                    'candidateKey' => $candidateKey,
-                ], JSON_INVALID_UTF8_SUBSTITUTE | JSON_UNESCAPED_SLASHES),
-            ]);
+            ] + $row);
         });
     }
 
@@ -800,6 +818,11 @@ final class ReviewQueue
             $key = hash('sha256', $key);
             $existing = $this->db->scalar('SELECT id FROM review_items WHERE user_id = ? AND kind = ? AND source_key = ?', [$userId, self::KIND_MAIL_ERROR, $key]);
             if ($existing !== null) return (int) $existing;
+            // Junk mail can't bury real invitations under its own notices
+            // (review of 0.9.87): past a screenful, one notice counts the rest.
+            if ($this->openCount($userId, self::KIND_MAIL_ERROR) >= self::MAIL_ERROR_NOTICES) {
+                return $this->holdMailLimit($userId, 'mail_unreadable', 'More emails could not be read than Review lists one by one. Check the mailbox for them.', '', $subject, $from);
+            }
             $from = mb_substr($from, 0, 255);
             $subject = mb_substr($subject, 0, 500);
             return $this->db->insert('review_items', [

@@ -85,10 +85,11 @@ $mail->recoverInterrupted(1);
 checkEq('unreadable mail: interrupted started record becomes visible error', ['error', 2], [$db->scalar("SELECT outcome FROM mail_ingest WHERE transport_key='interrupted-sample'"), $queue->openCount(1, ReviewQueue::KIND_MAIL_ERROR)]);
 $queue->dismissMailError(1, $notice['id']);
 checkEq('unreadable mail: explicit dismissal closes only that notice', 1, $queue->openCount(1, ReviewQueue::KIND_MAIL_ERROR));
-for ($i = 0; $i < 205; $i++) $queue->holdMailError(1, 'sample-' . $i, 'sam@example.test', 'Sample message', 'Unreadable');
-$firstPage = $queue->listFor(1);
-$secondPage = $queue->listFor(1, true, $firstPage[array_key_last($firstPage)]['id']);
-checkEq('unreadable mail: older notices remain reachable beyond first page', [200, 6], [count($firstPage), count($secondPage)]);
+for ($i = 0; $i < 205; $i++) $queue->holdMailError(1, 'sample-' . $i, 'sam@example.test', 'Sample message ' . $i, 'Unreadable');
+$flood = $queue->listFor(1, true, null);
+checkEq('unreadable mail: a flood shows a screenful of notices, then one counted notice', [ReviewQueue::MAIL_ERROR_NOTICES, 1], [$queue->openCount(1, ReviewQueue::KIND_MAIL_ERROR), $queue->openCount(1, ReviewQueue::KIND_MAIL_LIMIT)]);
+check('unreadable mail: the counted notice says how many and names the latest', str_contains((string) $db->scalar("SELECT summary FROM review_items WHERE kind = 'mail_limit'"), '186 emails were affected') && str_contains((string) $db->scalar("SELECT summary FROM review_items WHERE kind = 'mail_limit'"), 'Sample message 204'));
+checkEq('unreadable mail: a flood cannot push other Review items off the first page', 21, count($flood));
 
 $fetcher = new MailFetcher([]);
 $seen = $failures = $loads = [];

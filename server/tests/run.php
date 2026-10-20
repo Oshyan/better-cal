@@ -1145,6 +1145,7 @@ check('imip live event: equal sequence still allowed', $mayWhen('confirmed', 2)[
     $rdb->run("CREATE TABLE users (id INTEGER PRIMARY KEY)");
     $rdb->run("INSERT INTO users (id) VALUES (1), (2)");
     $rdb->run("CREATE TABLE review_items (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, event_id INTEGER, source_key TEXT, title TEXT, summary TEXT, payload_json TEXT, status TEXT DEFAULT 'open', created_at TEXT DEFAULT CURRENT_TIMESTAMP, decided_at TEXT)");
+$rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, message_key TEXT, sender_key TEXT, admitted_at TEXT, UNIQUE(user_id, kind, message_key))');
     $rdb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT)');
     $queue = new BetterCal\Domain\ReviewQueue($rdb, (new ReflectionClass(Events::class))->newInstanceWithoutConstructor());
     $alice = ['organizer' => ['email' => 'alice@example.com', 'name' => 'Alice'], 'sequence' => 3, 'attendees' => []];
@@ -1157,14 +1158,14 @@ check('imip live event: equal sequence still allowed', $mayWhen('confirmed', 2)[
     checkEq('review hold: equal-sequence corrections stay alongside other claims', [$equalPending, $stalePending, $first], array_column($queue->listFor(1), 'id'));
     $second = $queue->holdInviteChange(1, $stored, 'uid-1', 'CANCEL', [], ['sequence' => 4] + $alice, 'alice@example.com');
     $open = $queue->listFor(1);
-    checkEq('review hold: even a claimed cancellation leaves competing revisions visible', [$second, $equalPending, $stalePending, $first], array_column($open, 'id'));
+    checkEq('review hold: past three candidates for a meeting the newest slot follows the latest claim, and the first ones stay', [[$equalPending, $stalePending, $first], $equalPending], [array_column($open, 'id'), $second]);
     checkEq('review hold: summary names who and what', 'Alice cancelled this.', $open[0]['summary']);
-    checkEq('review hold: another meeting is its own item', 5, count((function () use ($queue, $stored, $same, $alice) {
+    checkEq('review hold: another meeting is its own item', 4, count((function () use ($queue, $stored, $same, $alice) {
         $queue->holdInviteChange(1, ['id' => 41] + $stored, 'uid-2', 'REQUEST', ['title' => 'Planning lunch'] + $same, $alice, 'alice@example.com');
         return $queue->listFor(1);
     })()));
     checkEq('review hold: another user sees none of it', [], $queue->listFor(2));
-    checkEq('review count', 5, $queue->openCount(1));
+    checkEq('review count', 4, $queue->openCount(1));
     $dismissed = $queue->dismiss(1, $second);
     checkEq('review dismiss: closes the item', 'dismissed', $dismissed['status']);
     checkEq('review dismiss: leaves a trace in Activity', 'Dismissed an emailed cancellation of "Planning dinner"', $rdb->scalar("SELECT summary FROM mutations WHERE op = 'refuse'"));
@@ -1180,7 +1181,7 @@ check('imip live event: equal sequence still allowed', $mayWhen('confirmed', 2)[
     } catch (HttpError $e) {
         checkEq('review: another user\'s item is a 404, not a 403 (no existence leak)', 404, $e->status);
     }
-    checkEq('review list all: competing and decided items show', ['open', 'dismissed', 'open', 'open', 'open'], array_column($queue->listFor(1, false), 'status'));
+    checkEq('review list all: competing and decided items show', ['open', 'dismissed', 'open', 'open'], array_column($queue->listFor(1, false), 'status'));
 
     $legacyHigh = $queue->holdInviteChange(2, $stored, 'legacy-uid', 'REQUEST', ['location' => 'Forged place'] + $same,
         ['organizer' => ['email' => 'mallory@example.test'], 'sequence' => 999], 'mallory@example.test', false);
@@ -1201,6 +1202,19 @@ check('imip live event: equal sequence still allowed', $mayWhen('confirmed', 2)[
         $queue->openCount(2, BetterCal\Domain\ReviewQueue::KIND_INVITE_CHANGE),
         $queue->openCount(2, BetterCal\Domain\ReviewQueue::KIND_MAIL_LIMIT),
     ]);
+    Limits::reset();
+    // Held changes have their own daily limits (review of 0.9.87): knowing a
+    // UID and its organizer's address must not fill the Review ceiling.
+    Limits::configure(['MAIL_EVENTS_PER_SENDER_DAY' => 2]);
+    $rdb->run('INSERT INTO users (id) VALUES (3)');
+    $carol = ['organizer' => ['email' => 'carol@example.com'], 'sequence' => 1, 'attendees' => []];
+    $throttled = [];
+    foreach (['t-1', 't-2', 't-3'] as $n => $tuid) {
+        $throttled[] = $queue->holdInviteChange(3, ['id' => 60 + $n] + $stored, $tuid, 'REQUEST', ['location' => 'Spoofed ' . $n] + $same, $carol, 'carol@example.com');
+    }
+    check('review hold: a sender over its daily limit holds no more changes', is_int($throttled[0]) && is_int($throttled[1]) && $throttled[2] === null);
+    checkEq('review hold: the limit is one counted notice', 1, (int) $rdb->scalar("SELECT COUNT(*) FROM review_items WHERE user_id = 3 AND kind = 'mail_limit' AND source_key = 'change_sender_day' AND status = 'open'"));
+    check('review hold: another sender still gets through', is_int($queue->holdInviteChange(3, ['id' => 70] + $stored, 't-4', 'REQUEST', ['location' => 'Real change'] + $same, ['organizer' => ['email' => 'bo@example.com']] + $carol, 'bo@example.com')));
     Limits::reset();
 
     $newFields = [

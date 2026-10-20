@@ -85,6 +85,10 @@ final class ReviewController
             $fields = is_array($c['detail']['fields'] ?? null) ? $c['detail']['fields'] : [];
             $heldInvite = is_array($c['detail']['invite'] ?? null) ? $c['detail']['invite'] : [];
             $replyable = $isNew && Rsvp::kind($heldInvite) === 'invitation' && Rsvp::blocker($heldInvite, config()) === null;
+            // One occurrence: a cancellation can be accepted (it skips that
+            // one); any other change is shown for the owner to make by hand.
+            $occurrence = !$isNew && isset($c['detail']['occurrence']) ? (string) $c['detail']['occurrence'] : null;
+            $occurrenceCancel = $occurrence !== null && ($c['method'] === 'CANCEL' || ($fields['status'] ?? null) === 'cancelled');
             $approve = [];
             if ($isNew && ($mailSettings['mailEventMode'] ?? 'approved') === 'approved') {
                 $address = \BetterCal\Domain\MailPolicy::address($c['from']);
@@ -113,6 +117,7 @@ final class ReviewController
                     'recurring' => !empty($fields['rrule']),
                     'location' => $fields['location'] ?? null,
                     'decidedAt' => $c['decidedAt'],
+                    'occurrence' => $occurrence !== null ? Time::dbToIso($occurrence, 'UTC') : null,
                 ],
                 'actions' => $open && $canDecide ? [
                     // A new invitation that can be answered from here offers
@@ -121,9 +126,9 @@ final class ReviewController
                     ...($isNew && $this->rsvp !== null && $replyable
                         ? [self::action('accept_reply', 'Add and accept', "/review/invitations/{$c['id']}/accept", ['answer' => 'accepted'])]
                         : []),
-                    self::action('accept', $isNew ? 'Add' : ($c['method'] === 'CANCEL' ? 'Accept cancellation' : 'Accept change'), $isNew
+                    ...($occurrence !== null && !$occurrenceCancel ? [] : [self::action('accept', $isNew ? 'Add' : ($occurrenceCancel ? 'Skip that occurrence' : ($c['method'] === 'CANCEL' ? 'Accept cancellation' : 'Accept change')), $isNew
                         ? "/review/invitations/{$c['id']}/accept"
-                        : "/review/invite-changes/{$c['id']}/accept"),
+                        : "/review/invite-changes/{$c['id']}/accept")]),
                     ...$approve,
                     self::action('dismiss', 'Dismiss', $isNew
                         ? "/review/invitations/{$c['id']}/dismiss"

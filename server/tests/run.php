@@ -1476,6 +1476,42 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
         $adb->scalar("SELECT before_json FROM mutations WHERE entity_id = ? AND op = 'delete' ORDER BY id DESC LIMIT 1", [$cancelEventId]) !== null);
     $adb->run('UPDATE users SET settings_json = ? WHERE id = 1', [$priorSettings]);
 
+    // One occurrence (RECURRENCE-ID) never changes the whole series (review of
+    // 0.9.87): a cancellation skips that occurrence once accepted; a move is
+    // shown for the owner to make by hand.
+    $weekly = ['title' => 'Weekly sync', 'start' => '2026-11-02T18:00:00+00:00', 'end' => '2026-11-02T19:00:00+00:00', 'rrule' => 'FREQ=WEEKLY'] + $fieldsA;
+    $seriesId = (int) $queueA->accept(1, $queueA->holdNewInvitation(1, 'series-uid', $weekly, $cancelInvite, 'alice@example.test'))['eventId'];
+    $occurrenceEv = ['uid' => 'series-uid', 'title' => 'Weekly sync', 'start_utc' => '2026-11-09 18:00:00', 'end_utc' => '2026-11-09 19:00:00',
+        'all_day' => false, 'tzid' => 'UTC', 'location' => 'Cafe', 'description' => null, 'rrule' => null, 'status' => 'confirmed',
+        'recurrence_instance_utc' => '2026-11-09 18:00:00', 'invite' => ['method' => 'CANCEL', 'sequence' => 2] + $cancelInvite];
+    $occMsg = ['messageId' => 'occ@example.test', 'subject' => 'Cancelled: Weekly sync', 'from' => 'alice@example.test'];
+    $occCancel = $applyA->invoke($mailA, 1, 'CANCEL', $occurrenceEv, 'UTC', $occMsg);
+    $occCancelItem = (int) $adb->scalar("SELECT id FROM review_items WHERE kind = 'invite_change' AND event_id = ? AND status = 'open' ORDER BY id DESC LIMIT 1", [$seriesId]);
+    checkEq('one occurrence: a cancellation is held, names the day, and leaves the series alone', ['held', 'tentative', true], [
+        $occCancel[0], $adb->scalar('SELECT status FROM events WHERE id = ?', [$seriesId]),
+        str_contains((string) $adb->scalar('SELECT summary FROM review_items WHERE id = ?', [$occCancelItem]), 'Mon 9 Nov 2026 occurrence'),
+    ]);
+    $queueA->accept(1, $occCancelItem);
+    checkEq('one occurrence: accepting the cancellation skips just that occurrence', [['2026-11-09 18:00:00'], 'tentative', 'FREQ=WEEKLY'], [
+        BetterCal\Domain\Recurrence::decodeExdates($adb->scalar('SELECT exdates_json FROM events WHERE id = ?', [$seriesId])),
+        $adb->scalar('SELECT status FROM events WHERE id = ?', [$seriesId]),
+        $adb->scalar('SELECT rrule FROM events WHERE id = ?', [$seriesId]),
+    ]);
+    checkEq('one occurrence: cancelling an already skipped occurrence holds nothing', ['unchanged'],
+        [$applyA->invoke($mailA, 1, 'CANCEL', ['invite' => ['method' => 'CANCEL', 'sequence' => 3] + $cancelInvite] + $occurrenceEv, 'UTC', $occMsg)[0]]);
+    $moved = ['start_utc' => '2026-11-17 20:00:00', 'end_utc' => '2026-11-17 21:00:00', 'recurrence_instance_utc' => '2026-11-16 18:00:00',
+        'location' => 'Library', 'invite' => ['method' => 'REQUEST', 'sequence' => 3] + $cancelInvite] + $occurrenceEv;
+    $occMove = $applyA->invoke($mailA, 1, 'REQUEST', $moved, 'UTC', ['messageId' => 'occ2@example.test'] + $occMsg);
+    $occMoveItem = (int) $adb->scalar("SELECT id FROM review_items WHERE kind = 'invite_change' AND event_id = ? AND status = 'open' ORDER BY id DESC LIMIT 1", [$seriesId]);
+    $manual = null;
+    try { $queueA->accept(1, $occMoveItem); } catch (HttpError $e) { $manual = $e->errorCode; }
+    checkEq('one occurrence: a moved occurrence is shown, not applied to the series', ['held', 'review_manual', '2026-11-02 18:00:00', 'Cafe'], [
+        $occMove[0], $manual, $adb->scalar('SELECT start_utc FROM events WHERE id = ?', [$seriesId]), $adb->scalar('SELECT location FROM events WHERE id = ?', [$seriesId]),
+    ]);
+    checkEq('one occurrence: the change lists what moved for that day', ['Starts', 'Ends', 'Location'],
+        array_column(BetterCal\Domain\ReviewQueue::occurrenceDiff($adb->one('SELECT * FROM events WHERE id = ?', [$seriesId]), '2026-11-16 18:00:00', 'REQUEST',
+            ['title' => 'Weekly sync', 'start' => '2026-11-17T20:00:00+00:00', 'end' => '2026-11-17T21:00:00+00:00', 'allDay' => false, 'location' => 'Library', 'description' => null]), 'label'));
+
     // Where an event's coordinates came from (migration 048).
     $prov = static fn(int $id): array => $adb->one('SELECT location_source AS s, location_provider AS p, location_placed_at IS NOT NULL AS t FROM events WHERE id = ?', [$id]);
     $placeBase = ['calendarId' => 10, 'start' => '2026-12-08T18:00:00+00:00', 'end' => '2026-12-08T19:00:00+00:00', 'allDay' => false, 'tzid' => 'UTC'];

@@ -419,6 +419,40 @@ function OtherBrowsersRow() {
   <//>`;
 }
 
+// Change password: the fallback when signing out other browsers isn't enough
+// (someone may know the password). Every browser signs in again, this one
+// automatically; "everything" also ends API keys, feed URLs and Google access.
+function ChangePasswordRow() {
+  const [open, setOpen] = useState(false);
+  const [current, setCurrent] = useState('');
+  const [next, setNext] = useState('');
+  const [everything, setEverything] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const submit = async (e) => {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      await api('/auth/change-password', { method: 'POST', body: { currentPassword: current, newPassword: next, everything } });
+      toast('Password changed. Every other browser has to sign in again.');
+      // The new session has its own CSRF token and offline cache: start fresh.
+      setTimeout(() => window.location.reload(), 800);
+    } catch (err) {
+      toast('Password not changed: ' + err.message, { error: true });
+      setBusy(false);
+    }
+  };
+  return html`<${Row} label="Password" hint="Change it if someone may know it. Every browser and device is signed out; this one signs straight back in.">
+    ${!open && html`<button type="button" class="bc-btn" onClick=${() => setOpen(true)}>Change password</button>`}
+    ${open && html`<form class="bc-change-password" onSubmit=${submit}>
+      <label>Current password <input type="password" value=${current} onInput=${(e) => setCurrent(e.target.value)} required autocomplete="current-password" /></label>
+      <label>New password <input type="password" value=${next} onInput=${(e) => setNext(e.target.value)} required minlength="8" maxlength="1024" autocomplete="new-password" /></label>
+      <label><input type="checkbox" checked=${everything} onChange=${(e) => setEverything(e.target.checked)} /> Also sign out everything else: revoke every API key, change all public feed URLs, return reminder email to the account address, and pause Google connections until you reconnect them</label>
+      <button type="submit" class="bc-btn bc-btn-primary" disabled=${busy || next.length < 8 || !current}>Change password and sign out</button>
+      <button type="button" class="bc-link-btn" disabled=${busy} onClick=${() => { setOpen(false); setCurrent(''); setNext(''); }}>Cancel</button>
+    </form>`}
+  <//>`;
+}
+
 function Row({ label, hint, children }) {
   return html`<div class="bc-set-row">
     <span class="bc-set-label">${label}</span>
@@ -927,6 +961,7 @@ export function SettingsPage() {
         <button type="button" class="bc-btn" disabled=${busy} onClick=${signOut}>Sign out</button>
       <//>
       <${OtherBrowsersRow} />
+      <${ChangePasswordRow} />
       <${Row} label="Export everything" hint="A zip with one .ics file per calendar, every event in it whatever its date, the same shape as Google Calendar's export. Better-Cal imports the whole zip in one step; Google, Apple, Outlook, Fastmail, Proton and Thunderbird import the files one calendar at a time. People, labels, filters and settings aren't calendar data and aren't included; a database backup keeps those.">
         <a class="bc-btn" href="/api/v1/export" download>Download all calendars (.zip)</a>
       <//>

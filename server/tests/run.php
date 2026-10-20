@@ -7378,6 +7378,32 @@ checkEq('google sync: without a synctoken the poll applies as before', false,
         $pdb->scalar('SELECT google_access_role FROM calendars WHERE id = 2'),
         $pdb->scalar('SELECT cancelled_at FROM calendar_moves WHERE id = 4'),
     ]);
+
+    // In-app change password (review of 0.9.87): current password required,
+    // this exact session still live, every browser out, keys only on request.
+    $pdb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT)');
+    $mine = $pauth->login('owner@example.com', 'newer-password');
+    $pauth->login('owner@example.com', 'newer-password');
+    $pdb->run("INSERT INTO api_tokens (user_id, token_hash) VALUES (1, 'kept')");
+    checkEq('change password: a wrong current password changes nothing', [null, 2], [
+        $pauth->changePassword(1, $mine['token'], 'not-it', 'changed-password', false),
+        (int) $pdb->scalar('SELECT COUNT(*) FROM sessions WHERE user_id = 1'),
+    ]);
+    checkEq('change password: an ended session cannot change it', null, $pauth->changePassword(1, 'gone-session', 'newer-password', 'changed-password', false));
+    $changed = $pauth->changePassword(1, $mine['token'], 'newer-password', 'changed-password', false);
+    checkEq('change password: every browser is signed out, API keys stay unless asked', [2, 0, 0, 1], [
+        $changed['sessions'], $changed['tokens'],
+        (int) $pdb->scalar('SELECT COUNT(*) FROM sessions WHERE user_id = 1'),
+        (int) $pdb->scalar('SELECT COUNT(*) FROM api_tokens WHERE user_id = 1'),
+    ]);
+    check('change password: the new password signs in and the Activity entry says so',
+        $pauth->login('owner@example.com', 'changed-password') !== null
+        && str_starts_with((string) $pdb->scalar('SELECT summary FROM mutations ORDER BY id DESC LIMIT 1'), 'Password changed: every browser signed out'));
+    $again = $pauth->login('owner@example.com', 'changed-password');
+    $everything = $pauth->changePassword(1, $again['token'], 'changed-password', 'changed-again', true);
+    checkEq('change password: sign out everything also revokes keys', [1, 0], [
+        $everything['tokens'], (int) $pdb->scalar('SELECT COUNT(*) FROM api_tokens WHERE user_id = 1'),
+    ]);
 }
 
 // --- Device cookies: the owner's browsers get past the sign-in brake (#59) ---
@@ -7650,6 +7676,16 @@ checkEq('google sync: without a synctoken the poll applies as before', false,
         $refused = $e->getMessage();
     }
     check('sign out elsewhere: refused to an API token', $refused !== null);
+    $tokReq = new BetterCal\Http\Request('POST', '/api/v1/auth/change-password', [], [], ['currentPassword' => 'x', 'newPassword' => 'new-password'], []);
+    $tokReq->user = ['id' => 1, 'email' => 'owner@example.com'];
+    $tokReq->authMethod = 'token';
+    $refusedCode = null;
+    try {
+        $octl->changePassword($tokReq);
+    } catch (BetterCal\Http\HttpError $e) {
+        $refusedCode = $e->errorCode;
+    }
+    checkEq('change password: refused to an API token', 'session_required', $refusedCode);
 }
 
 // --- Phase 13: bearer credentials do not inherit browser-only capabilities ---

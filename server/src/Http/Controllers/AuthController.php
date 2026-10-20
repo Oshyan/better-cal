@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace BetterCal\Http\Controllers;
 
 use BetterCal\Domain\Auth;
+use BetterCal\Domain\GoogleAuth;
 use BetterCal\Domain\LoginGuard;
 use BetterCal\Domain\TrustedDevices;
 use BetterCal\Http\HttpError;
@@ -17,6 +18,7 @@ final class AuthController
         private readonly Auth $auth,
         private readonly ?LoginGuard $guard = null,
         private readonly ?TrustedDevices $devices = null,
+        private readonly ?GoogleAuth $google = null,
     ) {
     }
 
@@ -89,6 +91,53 @@ final class AuthController
         }
         $this->guard?->succeeded($source);
         return Response::json(['ok' => true]);
+    }
+
+    /**
+     * Change the password and sign out every browser; with `everything`, also
+     * revoke API keys, change feed addresses and pause Google. Session only,
+     * with the current password, under the same guessing limits as sign-in.
+     * This browser is signed in again under the new password.
+     */
+    public function changePassword(Request $req): Response
+    {
+        $req->requireSession('Changing your password');
+        $new = (string) ($req->str('newPassword') ?? '');
+        if (strlen($new) < 8 || strlen($new) > 1024) {
+            throw HttpError::badRequest('The new password needs 8 to 1024 characters.', 'invalid_password');
+        }
+        $userId = (int) $req->user['id'];
+        $email = (string) ($req->user['email'] ?? '');
+        $source = $this->guard?->source($_SERVER) ?? '';
+        $device = $this->devices?->find($req->cookies[TrustedDevices::COOKIE] ?? null, $email);
+        $wait = $this->guard?->begin($source, null, $device) ?? 0;
+        if ($wait > 0) {
+            return self::tooMany($wait, $this->guard?->refusal);
+        }
+        $everything = filter_var($req->body['everything'] ?? false, FILTER_VALIDATE_BOOL);
+        $out = $this->auth->changePassword($userId, $req->cookies[Auth::COOKIE] ?? null, (string) ($req->str('currentPassword') ?? ''), $new, $everything);
+        if ($out === null) {
+            $this->guard?->rejected($source, 'web');
+            return Response::error('invalid_credentials', 'Current password is incorrect', 403);
+        }
+        $this->guard?->succeeded($source);
+        if ($everything && $out['googleAccounts'] > 0) {
+            try {
+                $this->google?->revokeQuarantinedTokens($userId);
+            } catch (\Throwable $e) {
+                error_log('Google revocation after a password change failed: ' . $e->getMessage());
+            }
+        }
+        $login = $this->auth->login($email, $new);
+        $response = Response::json(['ok' => true] + $out);
+        if ($login !== null) {
+            $response = $response->withCookie(Auth::COOKIE, $login['token'], $this->auth->cookieOptions());
+            $deviceToken = $this->devices?->remember($userId);
+            if ($deviceToken !== null) {
+                $response = $response->withCookie(TrustedDevices::COOKIE, $deviceToken, $this->auth->deviceCookieOptions());
+            }
+        }
+        return $response;
     }
 
     /** How many other browsers are signed in, for the Account tab. */

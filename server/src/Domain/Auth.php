@@ -238,6 +238,44 @@ final class Auth
         });
     }
 
+    /**
+     * Change the password from a signed-in browser, ending every session
+     * (this one included; the caller signs it in again). With $everything,
+     * the same as seed.php --revoke-tokens: API keys, feed addresses, a
+     * custom reminder address and Google access go too. The fallback for
+     * when Sign out everywhere else isn't enough (review of 0.9.87).
+     *
+     * Null when the current password is wrong or changed meanwhile, or this
+     * session already ended.
+     */
+    public function changePassword(int $userId, ?string $session, string $current, string $new, bool $everything): ?array
+    {
+        $hash = $this->db->scalar('SELECT password_hash FROM users WHERE id = ?', [$userId]);
+        if (!is_string($hash) || !password_verify($current, $hash)) {
+            return null;
+        }
+        $out = $this->db->tx(function () use ($userId, $session, $hash, $new, $everything): ?array {
+            if (!RequestAuthority::passwordStillCurrent($this->db, $userId, $hash)) return null;
+            try {
+                self::assertSession($this->db, $userId, $session, true);
+            } catch (HttpError) {
+                return null;
+            }
+            return $this->setPassword($userId, $new, $everything);
+        });
+        if ($out !== null) {
+            $parts = ['every browser signed out'];
+            if ($everything) {
+                $parts[] = $out['tokens'] . ' API key' . ($out['tokens'] === 1 ? '' : 's') . ' revoked';
+                $parts[] = $out['feedsRotated'] . ' public feed URL' . ($out['feedsRotated'] === 1 ? '' : 's') . ' changed';
+                if ($out['googleAccounts'] > 0) $parts[] = $out['googleAccounts'] . ' Google connection' . ($out['googleAccounts'] === 1 ? '' : 's') . ' paused';
+            }
+            (new Undo($this->db))->record($userId, 'system', 0, 'delete', null, null,
+                'Password changed: ' . implode(', ', $parts), $out);
+        }
+        return $out;
+    }
+
     /** Verify the current user's password and refresh only this browser session's step-up time. */
     public function confirmPassword(int $userId, ?string $token, string $password): bool
     {

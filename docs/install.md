@@ -37,11 +37,11 @@ Installing from a downloaded ZIP means trusting that download: the setup page ru
 
    ```sh
    cd /srv
-   curl -LO https://github.com/Oshyan/better-cal/releases/download/v0.9.84/better-cal-0.9.84.zip
-   unzip better-cal-0.9.84.zip -d better-cal
+   curl -LO https://github.com/Oshyan/better-cal/releases/download/v1.0.0/better-cal-1.0.0.zip
+   unzip better-cal-1.0.0.zip -d better-cal
    ```
 
-   Use the newest version in place of `0.9.84`. That makes `/srv/better-cal`. The zip's files sit at its top level, so `-d better-cal` names the folder; without it they'd land in `/srv` itself. (Releases before 0.9.84 had a `better-cal` folder inside, and plain `unzip` made it.) Uploading the zip through your host's file manager and extracting it into a `better-cal` folder works too.
+   Use the newest version in place of `1.0.0`. That makes `/srv/better-cal`. The zip's files sit at its top level, so `-d better-cal` names the folder; without it they'd land in `/srv` itself. (Releases before 0.9.84 had a `better-cal` folder inside, and plain `unzip` made it.) Uploading the zip through your host's file manager and extracting it into a `better-cal` folder works too.
 
 2. **Create a database and a user for it.** On shared hosting, use the control panel's database page and note the host, database name, user and password. On your own server:
 

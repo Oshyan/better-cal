@@ -1,14 +1,18 @@
 # Changelog
 
-Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0, the minor number moves for new features or anything that changes how an existing install behaves, and the patch number for fixes, including security fixes. Every release is a git tag (`v0.1.1`) and a GitHub release; the running version is the `VERSION` file at the repository root, which the Settings page shows. Database migrations always run forward, so you can skip versions. [Updating](docs/install.md#updating) has the steps, with a backup first and what to do if something goes wrong.
+Better-Cal uses [semantic versioning](https://semver.org). Minor versions bring features, and patch versions generally bring bug fixes and refinements, security fixes included. Every release is a git tag (`v1.0.0`) and a GitHub release; the running version is the `VERSION` file at the repository root, which the Settings page shows. Database migrations always run forward, so you can skip versions. [Updating](docs/install.md#updating) has the steps, with a backup first and what to do if something goes wrong.
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
-## Unreleased
+## 1.0.0 (2026-10-20)
+
+1.0: someone other than me can install Better-Cal on ordinary hosting, use it on a computer and a phone, and move over from Google Calendar at their own pace. Five full security scans and their fixes are behind it, plus a last look at the changes since ([SECURITY.md](SECURITY.md#what-has-been-reviewed)). From here, minor versions bring features, and patch versions generally bring bug fixes and refinements.
 
 - **Updates keep your own lines in `.htaccess`.** A PHP version picked in a hosting control panel is written into `server/public/.htaccess`, and `update.php` used to replace that file, which could quietly put the site back on an older PHP. Rules you added were lost the same way. Better-Cal's rules now sit between `# BEGIN Better-Cal` and `# END Better-Cal` lines, and updates replace only those. If you had changed Better-Cal's own lines, the update says so and saves your file beside the new one. Other shipped files edited on the server are named after an update; the edited copies stay in the previous version's folder.
 - **On too old a PHP, the site says so** instead of showing a blank page, and says what to pick in the control panel.
 - **A reminder device can't be registered twice under a different spelling.** Letter case in a push address's host, a trailing dot or an explicit `:443` reach the same push service, but they counted as separate devices, so a signed-in browser or API key could get past the device limit and have reminders sent twice. They're now one device, and any already saved that way get one reminder.
+
+Operators: no database change. `update.php` keeps a control panel's PHP version lines in `.htaccess` from this update on; updating through the file manager means picking the PHP version again after swapping folders ([Updating](docs/install.md#without-a-command-line)).
 
 ## 0.9.88 (2026-10-20)
 

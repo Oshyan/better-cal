@@ -23,6 +23,8 @@ Include what you found, how to reproduce it, and what you think it allows. You w
 
 - **2026-10-16**: the final security scan before 1.0, a full Codex Security scan of the repository at revision `b56422b` (0.9.86 and one later commit): 54 findings, 5 High, 33 Medium and 16 Low. All five High findings concerned the maintainer's own tooling and the release chain (deployment configuration, unsigned install paths and the libraries in a signed release), not an install's running code. Each finding was revalidated against the code, fixed with regression tests that fail on the earlier code, and reviewed; all fixes shipped together in **0.9.87**. 47 were fixed outright; 5 were reduced, with what remains listed under Known residuals below or in Design trade-offs (sender approval for emailed events, push delivery time, the deep-link transition, batched model judgments, and trust on first install); 2 were accepted by design and documented (the phone app's offline allowance after remote sign-out, and new-device sign-in during a distributed attack). None was left open. The record of every finding is `docs/security-remediation-checklist-2026-10-16.md`. A re-review of those fixes against 0.9.87 found some only partly closed; those, and two bugs found along the way, were fixed in **0.9.88**.
 
+- **2026-10-20**: a Codex Security review of every change in the 48 hours before 1.0 (revisions `bc91d65` to `98d3bad`): 1 Low finding, reminder devices registered under different spellings of one push address getting past the per-account device limit, fixed in **1.0.0**. A longstanding candidate outside that range, the mail job reading every unread message's ID each run, is tracked in [issue #157](https://github.com/Oshyan/better-cal/issues/157).
+
 Known residuals, accepted and documented rather than fixed:
 
 - **Push reminders to many devices.** An account can register up to 100 devices by default, and the same device counts once. Reminders still go out one device at a time, each with its own timeout, so a long list of unreachable devices can slow delivery; there is no hard cap on the total time. Devices registered before 0.9.87 are kept, even past the limit.
@@ -32,7 +34,7 @@ Known residuals, accepted and documented rather than fixed:
 - **Shared dev mode.** `DEV_ISOLATION_MODE=shared` deliberately lets the dev copy share the production account, database user and PHP pool, so dev code can reach production files and data. Cleaning the cloned data removes copied credentials but doesn't make a boundary. `strict` is the default; it checks that dev can neither read nor write production ([docs/deploying.md](docs/deploying.md#development-deployments)).
 - **Deploying as root.** When the deploy script connects as root, the settings file stays root-owned, but the app account owns the folder it sits in, so that isn't a hard boundary. Deploying as a non-root user with sudo skips that step.
 
-The latest full scan covers the code as of 0.9.86 (2026-10-16); its fixes are in 0.9.87, and the re-review's in 0.9.88. Changes after that have tests and review as they are made, and full scans will continue at regular intervals after 1.0. Anything you find is worth telling us about.
+The latest full scan covers the code as of 0.9.86 (2026-10-16); its fixes are in 0.9.87, the re-review's in 0.9.88, and the last review of the changes before 1.0 in 1.0.0. Changes after that have tests and review as they are made, and full scans will continue at regular intervals. Anything you find is worth telling us about.
 
 ### Past advisories
 

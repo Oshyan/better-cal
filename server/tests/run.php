@@ -8,6 +8,15 @@ declare(strict_types=1);
 require dirname(__DIR__) . '/src/bootstrap.php';
 require __DIR__ . '/credential-barriers.php';
 
+// BC_REQUIRE_LIBS=1 (the CI install job) fails at once if a library the
+// guarded blocks below need is missing, so those tests can't silently skip.
+if (getenv('BC_REQUIRE_LIBS') === '1') {
+    $missing = array_filter([\Sabre\VObject\Reader::class, \Sabre\CalDAV\Backend\AbstractBackend::class,
+        \PHPMailer\PHPMailer\PHPMailer::class, \GuzzleHttp\Client::class, \Minishlink\WebPush\WebPush::class,
+        \Webklex\PHPIMAP\Exceptions\ConnectionFailedException::class], static fn(string $c): bool => !class_exists($c));
+    if ($missing) { fwrite(STDERR, 'BC_REQUIRE_LIBS: missing ' . implode(', ', $missing) . "\n"); exit(1); }
+}
+
 // The run's error log goes to a file, printed at the end, so a database
 // error logged anywhere fails the run (#119): code under test that catches
 // a PDOException and logs it would otherwise pass while a setup is missing a

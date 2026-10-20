@@ -278,4 +278,4 @@ Dogfooding is the test plan: the milestone 3 gate forces real usage early, and e
 ## 10. Deployment Target
 
 - Any LAMP-style host: PHP 8.3+, MySQL 8, nginx or Apache, cron. `docs/install.md` is the guide; `scripts/deploy.sh` ships to the host named in `scripts/deploy.env`.
-- The reference install is the author's own single-server box, and every change is deployed there and used for real before it is considered done.
+- Every change is deployed to a real single-server install and used day to day before it is considered done.

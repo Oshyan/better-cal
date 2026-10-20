@@ -470,7 +470,7 @@ Refusals are recorded twice, for two different readers: `mail_ingest` keeps the 
 
 ### Residual risk: no inbound authentication verdict is available
 
-The review's fix note says to match "authenticated mail identity where available". On the reference deployment it is not available. The ingest mailbox's provider adds no `Authentication-Results` header: inspection of real delivered messages found **none** on any of them, only a spam-score header and an upstream `ARC-Authentication-Results` reading `arc=none`. So there is no inbound verdict to consult and a check for one would be dead code there.
+The review's fix note says to match "authenticated mail identity where available". Many mailbox providers add no `Authentication-Results` header to delivered mail, so there is often no inbound verdict to consult, and the app does not rely on one.
 
 Some mail providers deliberately do not act on ARC, on the grounds that trust is not transitive and there is no universal trust network that would say which forwarders deserve to be believed. That argument applies to us too. A stamped verdict is an intermediary's assertion, so consuming one would move the trust boundary rather than close it. Any real fix has to verify signatures against the message we actually hold.
 
@@ -482,7 +482,7 @@ The complete fix is verifying DKIM in-process against the organizer's domain, on
 
 Ten unit checks in `server/tests/run.php` cover the pure predicate: address normalisation (case, display name, `mailto:`), trusted-sender relay, forged organizer, missing organizer, stale and equal sequence, and both unbound-event cases.
 
-Twenty assertions were run end to end against the deployed code and the production database, exercising the real `ingestMessage` path with generated messages: a genuine REQUEST creates and binds the organizer; a forged CANCEL is refused and the event stays uncancelled; a forged REQUEST is refused with title and start unchanged; both refusals appear in the activity feed with the correct source, summary, sender, and no snapshot; a stale SEQUENCE from the real organizer is refused; and the legitimate organizer can still update and cancel. The probe created and removed its own rows by exact id.
+Twenty assertions were run end to end against a deployed install, exercising the real `ingestMessage` path with generated messages: a genuine REQUEST creates and binds the organizer; a forged CANCEL is refused and the event stays uncancelled; a forged REQUEST is refused with title and start unchanged; both refusals appear in the activity feed with the correct source, summary, sender, and no snapshot; a stale SEQUENCE from the real organizer is refused; and the legitimate organizer can still update and cancel. The probe created and removed its own rows by exact id.
 
 ## Fixed: IATA generator (BC-20) — 2026-09-22
 

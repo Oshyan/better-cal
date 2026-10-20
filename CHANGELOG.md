@@ -4,6 +4,26 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## 0.9.88 (2026-10-20)
+
+Fixes from a re-review of 0.9.87's security work, plus two bugs found along the way. Most only matter under attack; the ones you might notice come first.
+
+- **Change your password in Settings, Account.** It asks for the current password and can sign out every other browser, API key and CalDAV client at the same time.
+- **Sign out everywhere else always finishes.** Another signed-in browser renaming its feed subscriptions can no longer make it fail.
+- **One cancelled occurrence of an invitation skips just that occurrence.** Accepting it in Review adds a skip for that date; the rest of the series stays. Any other change to a single occurrence is shown in Review for you to make by hand, and is never applied to the whole series.
+- **CalDAV clients that search by date work again.** Apps that ask for a date range (a calendar-query) got an error from any calendar with events in it.
+- **Revoking an API key turns off the plugins it turned on or configured.** Review lists each one with **Turn back on**. A key that expires does the same at the plugin's next run.
+- **Restoring an unencrypted backup asks first.** Older plain backups still restore after you confirm; `update.php` takes `--allow-plain` for the same thing.
+- **Very long comma lists in calendars are refused.** One line may hold 1,000 comma-separated values and a whole calendar 200,000 (both adjustable; [limits](docs/limits.md#zip-imports-and-malformed-dates)). Bare commas in titles and descriptions don't count. A feed over the limit keeps its last good copy.
+- **Changes to existing invitations have their own Review limits,** 100 a day and 25 per sender, with at most three waiting per event. Unreadable emails are listed one by one up to 20, then counted in one notice.
+- **CalDAV bounds every request body** before parsing: 1 MiB, or one object plus 64 KiB for an upload.
+- **ZIP imports count the bytes each calendar actually unpacks to,** so an archive that understates its sizes is refused before anything is created.
+- **Security update notices go only to destinations the owner set.** Turning place lookup off also stops opening-hours queries for planned visits.
+
+Operators: one database change, applied automatically by `update.php` or the database update page. [Known hosting limits](docs/limits.md#known-hosting-limits) covers exports on network filesystems, hard-linked backup snapshots, and senders approved by the 0.9.87 upgrade.
+
+Maintainers: release ZIPs are opened with a consistency check; the dependency check uses a private temp folder; CI's install job fails if a library its guarded tests need is missing (`BC_REQUIRE_LIBS=1`). Public docs no longer quote the reference install's figures or setup.
+
 ## 0.9.87 (2026-10-19)
 
 Fixes from the final security scan before 1.0, a full review of the code as of 0.9.86 (SECURITY.md lists it). Most affect how Better-Cal behaves under attack or on unusual hosting; a few change what you see, listed first below.

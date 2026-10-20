@@ -58,6 +58,14 @@ An account may register 100 distinct push destinations by default, adjustable wi
 
 Delivery still visits devices in order and each outside request has its own timeout. This bounds new enrollment, not the total duration of a delivery run: many slow destinations, especially an existing account already above the limit, can still occupy the worker for a long time. There is no new delivery queue in this change.
 
+## Known hosting limits
+
+These don't affect security; they can only make one feature refuse to work on an unusual setup.
+
+- **Exports on network filesystems.** Export takes a file lock so two exports can't overlap. On NFS and some other network mounts that lock may never succeed, so every export answers "An export is already running". Keep the app folder on a local disk.
+- **Backups and hard links.** Restore and the backup checks refuse a backup file with more than one hard link, because another name could change it under the app. Snapshot tools that hard-link unchanged files (rsync `--link-dest`, some NAS snapshots) produce exactly that; copy the backup out of the snapshot before restoring it.
+- **Approved senders from 0.9.87.** The update that added approved email senders approved every address that had already sent a successfully processed invitation. That can include your own forwarding address. Review the list in Settings if you forward mail into the app.
+
 ## Background work
 
 The worker runs every minute and spreads slow work across runs: up to ten emails per run, one plain-language filter model call per job, and a few ranking calls at a time. On a busy day that means a new invitation or filter verdict can take a few minutes to appear, not that the calendar event is skipped.

@@ -459,7 +459,7 @@ final class Updater
     public function unpack(string $zipPath, string $version): string
     {
         $zip = new \ZipArchive();
-        if ($zip->open($zipPath, \ZipArchive::RDONLY) !== true) {
+        if ($zip->open($zipPath, \ZipArchive::RDONLY | \ZipArchive::CHECKCONS) !== true) {
             throw new \RuntimeException('Could not open the downloaded zip');
         }
         try {

@@ -12,7 +12,7 @@ function releaseArchiveFiles(string $path): array
         throw new RuntimeException('Release zip missing or larger than 100 MiB');
     }
     $zip = new ZipArchive();
-    if ($zip->open($path, ZipArchive::RDONLY) !== true) {
+    if ($zip->open($path, ZipArchive::RDONLY | ZipArchive::CHECKCONS) !== true) {
         throw new RuntimeException('Cannot open release zip');
     }
     try {

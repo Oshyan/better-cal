@@ -128,7 +128,7 @@ What `install.php` does, step by step, if you'd rather:
 
 ### Where it has been tested
 
-- **Production:** Nginx with PHP-FPM 8.4 and MySQL 8.4, on Linux.
+- **Day-to-day use:** Nginx with PHP-FPM 8.4 and MySQL 8.4, on Linux.
 - **Clean-install test (2026-10-03):** Ubuntu 24.04 with Apache 2.4 and mod_php 8.3 (the minimum then; it is 8.4 since 0.9.0, and the GitHub check installs on 8.4 on every push), MariaDB 10.11 (and MariaDB 10.6 for the migrations, the smoke test and the worker), following this page from an empty machine. Everything below was checked there: install, migrations, sign-in, events and undo, search, repeating events, CalDAV and API tokens through Apache, a subscribed feed, a plugin, the worker under cron.
 - **Repeated on 2026-10-05** with PHP 8.4 from the Ubuntu PPA described above (mod_php, only the listed extensions) and MariaDB 10.11: install, migrations, the worker under cron, and the first sign-in to a new account with its welcome.
 - **Shared hosting (2026-10-15):** LiteSpeed with PHP chosen in the control panel and the app folder inside `public_html` (Hostinger), installed from the release zip with the setup page and a control-panel cron job, then updated by extracting a newer zip over it. And DreamHost shared hosting, installed by someone other than the maintainer following this page.
@@ -292,7 +292,7 @@ server {
 }
 ```
 
-Optional: let Nginx serve the static files itself, which is what the production install does. Add these above `location /`, mirroring the app's cache policy:
+Optional: let Nginx serve the static files itself. Add these above `location /`, mirroring the app's cache policy:
 
 ```nginx
     location ^~ /assets/vendor/ {

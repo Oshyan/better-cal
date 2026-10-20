@@ -28,6 +28,10 @@ function dependencyExport(string $repo, string $commit): array
     // A private directory, so no other local user can swap the archive mid-read.
     $dir = sys_get_temp_dir() . '/bc-dependency-' . bin2hex(random_bytes(8));
     if (!@mkdir($dir, 0700)) { throw new RuntimeException('Cannot create a private temp directory'); }
+    // PharData reports resolved paths, and the temp directory can be a symlink (macOS /var -> /private/var).
+    $real = realpath($dir);
+    if ($real === false) { @rmdir($dir); throw new RuntimeException('Cannot resolve the private temp directory'); }
+    $dir = $real;
     $tar = $dir . '/export.tar';
     try {
         // git archive writes data only; no checkout filters, hooks or package code run.

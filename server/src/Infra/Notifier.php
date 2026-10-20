@@ -33,9 +33,15 @@ final class Notifier
     }
 
     /**
+     * $ownerOnly is for security notices: push and email both, and only to
+     * destinations the owner set up from a browser. An API key can choose
+     * the channel, an address and a push device; a stolen key must not be
+     * able to receive the notice in the owner's place, and so have it
+     * marked delivered (review of 0.9.87).
+     *
      * @return array{push:int,email:bool} pushes delivered, email sent
      */
-    public function send(int $userId, string $title, string $body, string $url = '/', string $tag = ''): array
+    public function send(int $userId, string $title, string $body, string $url = '/', string $tag = '', bool $ownerOnly = false): array
     {
         $push = $this->push ?? new PushSender($this->cfg);
         $email = $this->email ?? new EmailSender($this->cfg);
@@ -54,9 +60,9 @@ final class Notifier
         }
         $stored = is_string($user['settings_json'] ?? null) ? json_decode((string) $user['settings_json'], true) : null;
         $settings = Settings::withDefaults(is_array($stored) ? $stored : []);
-        $channel = (string) ($settings['notifyChannel'] ?? 'push-fallback');
-
         $rows = $subs->forUser($userId);
+        if ($ownerOnly) [$settings, $rows] = self::ownerOnly($settings, $rows);
+        $channel = (string) ($settings['notifyChannel'] ?? 'push-fallback');
         $hasLiveSub = $rows !== [];
         $outcomes = [];
         $delivered = 0;
@@ -83,7 +89,8 @@ final class Notifier
             $admitted = (new ExternalActionAdmission($this->db))->admitEmail($userId, $to, null);
             $health = new SystemHealth($this->db);
             if ($admitted['admitted']) {
-                $emailed = \BetterCal\Domain\NotificationDestinations::email($this->db, $userId, $to) && $email->sendReminder($to, [
+                $current = $ownerOnly && $to === (string) $user['email'] || \BetterCal\Domain\NotificationDestinations::email($this->db, $userId, $to);
+                $emailed = $current && $email->sendReminder($to, [
                     'title' => $payload['title'],
                     'body' => $payload['body'],
                     'url' => $payload['url'],
@@ -109,5 +116,22 @@ final class Notifier
             }
         }
         return ['push' => $delivered, 'email' => $emailed];
+    }
+
+    /**
+     * Settings and push devices narrowed to what the owner set up from a
+     * browser: both channels, the account address in place of a key-set
+     * one, and no key-registered push devices.
+     *
+     * @return array{0:array<string,mixed>,1:list<array<string,mixed>>}
+     */
+    public static function ownerOnly(array $settings, array $rows): array
+    {
+        $settings['notifyChannel'] = 'both';
+        if (!empty($settings['notifyEmailToken'])) {
+            $settings['notifyEmail'] = null;
+            $settings['notifyEmailToken'] = null;
+        }
+        return [$settings, array_values(array_filter($rows, static fn(array $r): bool => empty($r['created_by_token_id'])))];
     }
 }

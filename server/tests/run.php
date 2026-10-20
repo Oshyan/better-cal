@@ -5209,6 +5209,17 @@ checkEq(
     'account@example.com',
     Settings::notifyDestination(Settings::withDefaults([]), 'account@example.com')
 );
+// Security notices go only where the owner set things up (review of 0.9.87):
+// a key that chose the channel, an address and a push device gets none of it.
+[$secSettings, $secRows] = BetterCal\Infra\Notifier::ownerOnly(
+    Settings::withDefaults(['notifyChannel' => 'email', 'notifyEmail' => 'key-holder@example.com', 'notifyEmailToken' => 7]),
+    [['id' => 1, 'created_by_token_id' => null], ['id' => 2, 'created_by_token_id' => 7]]
+);
+checkEq('security notice: both channels, the account address, browser push devices only',
+    ['both', 'account@example.com', [1]],
+    [$secSettings['notifyChannel'], Settings::notifyDestination($secSettings, 'account@example.com'), array_column($secRows, 'id')]);
+[$secSettings] = BetterCal\Infra\Notifier::ownerOnly(Settings::withDefaults(['notifyEmail' => 'inbox@example.com']), []);
+checkEq('security notice: an address the owner set in the browser is kept', 'inbox@example.com', Settings::notifyDestination($secSettings, 'account@example.com'));
 
 // Push subscription validation.
 $psub = PushSubscriptions::validate([

@@ -169,6 +169,12 @@ checkEq('mail security: fractional IDs cannot select a real event', [], Ranking:
 
 $host = new BetterCal\Plugin\PluginHost($mailDb(), 'sample', 1, new BetterCal\Infra\HttpClient(), [], ['places' => ['lookup' => 'off']]);
 checkEq('plugin lookup off: no provider or cache access is needed', [null, ''], [$host->geocode('Sample venue'), $host->logTail()]);
+checkEq('plugin lookup off: plugins are told outside place lookups are off', false, $host->placeLookupAllowed());
+$host = new BetterCal\Plugin\PluginHost($mailDb(), 'sample', 1, new BetterCal\Infra\HttpClient(), [], []);
+checkEq('plugin lookup: a host built without the server settings fails closed', [false, null, ''], [$host->placeLookupAllowed(), $host->geocode('Sample venue'), $host->logTail()]);
+$host = new BetterCal\Plugin\PluginHost($mailDb(), 'sample', 1, new BetterCal\Infra\HttpClient(), [], ['places' => ['provider' => 'photon', 'lookup' => '']]);
+checkEq('plugin lookup on: the default configuration allows it', true, $host->placeLookupAllowed());
+check('visit-intents asks the host before OpenStreetMap hours lookups', str_contains((string) file_get_contents(dirname(__DIR__) . '/plugins/visit-intents/Plugin.php'), '$host->placeLookupAllowed() && '));
 $workerSource = file_get_contents(dirname(__DIR__) . '/bin/worker.php');
 check('worker passes the real application configuration into plugin jobs', str_contains($workerSource, 'new BetterCal\Domain\Plugins($db, null, $cfg)'));
 

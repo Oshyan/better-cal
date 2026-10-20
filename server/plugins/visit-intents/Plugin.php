@@ -104,7 +104,9 @@ return new class implements PluginInterface {
             $policy = 'away';
         }
         $weekOnly  = !empty($s['weekendsOnly']);
-        $lookup    = !array_key_exists('lookupHours', $s) || !empty($s['lookupHours']);
+        // OpenStreetMap hours send place names and coordinates out, so the
+        // server's place-lookup switch governs them as well as geocoding.
+        $lookup    = $host->placeLookupAllowed() && (!array_key_exists('lookupHours', $s) || !empty($s['lookupHours']));
         $notifyNew = !array_key_exists('notifyNew', $s) || !empty($s['notifyNew']);
         $color     = preg_match('/^#[0-9a-fA-F]{6}$/', (string)($s['color'] ?? ''))
             ? strtolower((string)$s['color'])

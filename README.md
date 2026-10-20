@@ -54,12 +54,12 @@ It hasn't been tried on an iPhone yet, so if you have one, I'd especially like t
 
 For a one-person project, taking security seriously means doing the work in public rather than making promises:
 
-- **Five full scans** of the whole codebase so far (Codex Security in August, September and twice in October 2026, Claude Security on 2026-09-23), with every finding independently verified. The last, on 2026-10-16, was the final scan before 1.0; its fixes are all in 0.9.87, and [SECURITY.md](SECURITY.md#what-has-been-reviewed) lists what was found and what remains.
+- **Five full scans** of the whole codebase so far (Codex Security in August, September and twice in October 2026, Claude Security on 2026-09-23), with every finding independently verified. The last, on 2026-10-16, was the final scan before 1.0; its fixes are all in 0.9.87, a re-review of those fixes led to more in 0.9.88, and [SECURITY.md](SECURITY.md#what-has-been-reviewed) lists what was found and what remains.
 - **Every finding fixed**, deployed and checked on the reference install, and the fix commit names the finding it closes. The 2026-09-23 round found 29 issues (none High or Critical), all fixed the same day. The 2026-10-06 round found 77 (one High), fixed in phases through 0.9.42, except one set aside after testing showed it was already bounded and one Low accepted with the reason recorded.
 - **The fixes reviewed too.** Three more passes looked for incomplete fixes, ways around them and anything they broke, and those were fixed as well (0.1.6 to 0.1.8).
 - **Published advisories.** The 2026-09-23 findings were published as GitHub security advisories; [SECURITY.md](SECURITY.md#past-advisories) lists each with the affected and fixed versions.
 - **Tests** run on every change and before every deploy, including regression tests for each security fix.
-- **Signed releases.** Every release is signed with keys that never touch GitHub, and the updater refuses any it can't verify, so a hijacked GitHub account alone can't push code to your install.
+- **Signed releases.** Every release since 0.9.75 is signed with keys that never touch GitHub, and the updater refuses any it can't verify, so a hijacked GitHub account alone can't push code to your install.
 - **Third-party code you can check.** The browser libraries are committed as their published releases, pinned by fingerprint; `node scripts/vendor.mjs --check-upstream` confirms every one against npm ([web/vendor/README.md](web/vendor/README.md)).
 
 [SECURITY.md](SECURITY.md) has the details: the risks I accepted rather than fixed, the trade-offs made on purpose (staying signed in on your own devices, for example, and what to do if one is lost), and how to report a problem privately.
@@ -80,7 +80,7 @@ MIT (see [LICENSE](LICENSE)). Use it, fork it, host it, sell it. If you build so
 
 ## Docs
 
-- [Installing](docs/install.md): what you need, nine steps with the exact commands, updating (with a backup first and a way back), and web server setup for Nginx and Apache (both tested), on MySQL or MariaDB. Shared hosting should work (the `.htaccess` routing is tested on Apache), but it hasn't been tried on a real shared host yet.
+- [Installing](docs/install.md): what you need, six steps with the exact commands (or the same from a control panel and the browser, without SSH), updating (with a backup first and a way back), and web server setup for Nginx and Apache (both tested), on MySQL or MariaDB. It has also been installed on two shared hosts, from the release zip.
 - [Architecture](docs/architecture.md)
 - [API contract](docs/api-contract.md) and [agent API](docs/agent-api.md)
 - [Calendar roles and event relationships](docs/relationships.md): planned, maybe, available and context, i.e. what a calendar is to you and what that makes its events
@@ -94,7 +94,7 @@ MIT (see [LICENSE](LICENSE)). Use it, fork it, host it, sell it. If you build so
 
 ## Configuration
 
-Copy [`.env.example`](.env.example) to `.env.php` in the app root and fill it in, keeping its first line. It lists every setting the server reads and what each is for; only the database, base URL and session secret are required. Create your account with `php server/bin/seed.php --email=...`, which asks for the password (or reads `BETTERCAL_SEED_PASSWORD` when run from a script). Running it again for an existing account resets the password and signs out every browser. After a suspected compromise, add `--revoke-tokens` to revoke all API tokens as well.
+The installer (or the setup page, without SSH) writes the settings file, `.env.php`, for you. [`.env.example`](.env.example) lists every setting the server reads and what each is for; to change one, edit `.env.php` and keep its first line. You can change your password in Settings, Account. From the command line, `php server/bin/seed.php --email=...` resets it (it asks for the password, or reads `BETTERCAL_SEED_PASSWORD` when run from a script) and signs out every browser. After a suspected compromise, add `--revoke-tokens` to revoke all API tokens as well.
 
 ## Development
 

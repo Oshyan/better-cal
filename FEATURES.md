@@ -174,7 +174,7 @@ Multi-day events show their total duration beside the title on every visible seg
 
 ### Self-hosting and privacy
 
-- Plain PHP 8.4+ with MySQL or MariaDB on your own server (Nginx and Apache tested; shared hosting should work but hasn't been tried on a real shared host yet); no framework, no build step (Preact + HTM served as-is), no telemetry.
+- Plain PHP 8.4+ with MySQL or MariaDB on your own server (Nginx and Apache tested, and ordinary shared hosting, with a setup page for hosts without SSH); no framework, no build step (Preact + HTM served as-is), no telemetry.
 - A first-run welcome confirms the basics from your device (Home time zone, week start, 12- or 24-hour clock, theme, the first calendar's name) and offers places to start: subscribe, import, connect Google, install the app, turn on reminders, browse plugins. Skippable at every step; Settings can show it again.
 - `php server/bin/demo-seed.php` fills an empty account with invented calendars, events and people around today, for a first look.
 - Your data is ordinary SQL you can query, back up, and take with you.

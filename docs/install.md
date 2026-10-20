@@ -6,7 +6,7 @@ Better-Cal is plain PHP and MySQL with a no-build frontend. It runs on any host 
 
 - **A server or hosting account**, and a domain or subdomain of Better-Cal's own (say `cal.example.com`, not `example.com/cal/`; [why](#choosing-where-to-put-it)) with HTTPS. SSH helps but isn't required. Sessions, the installable app and push reminders all require HTTPS.
 - **PHP 8.4 or newer** with the extensions listed under [Requirements in detail](#requirements-in-detail). Most hosts let you pick the version in their control panel. The installer checks all of it and says what's missing.
-- **MySQL 8.4 or MariaDB 10.6 or newer:** one empty database and a user for it.
+- **MySQL 8 (8.4 tested) or MariaDB 10.6 or newer:** one empty database and a user for it.
 - **Cron**, or any scheduler that can run a command every minute.
 
 ## Choosing where to put it
@@ -121,7 +121,7 @@ What `install.php` does, step by step, if you'd rather:
   - Debian 13 and Ubuntu 26.04 ship PHP 8.4 and 8.5 respectively: `apt install php8.4-cli php8.4-mysql php8.4-curl php8.4-mbstring php8.4-xml php8.4-zip` (use `8.5` on Ubuntu 26.04), plus `libapache2-mod-php8.4` or `php8.4-fpm` for the web server.
   - Ubuntu 24.04 and Debian 12 ship older PHP. Add the widely used packages by Ondřej Surý first: `sudo add-apt-repository ppa:ondrej/php` on Ubuntu (Debian: https://packages.sury.org/php/), then the `php8.4-*` packages above.
 - Composer, only to install from git rather than the release zip.
-- MySQL 8.4 or MariaDB 10.6 or newer, with one empty database and a user with full rights on it. Tested on MySQL 8.4 (Percona Server) and MariaDB 10.6 and 10.11. MySQL 8.0 should work, since nothing here needs newer SQL, but it is past end of life and untested.
+- MySQL 8 or MariaDB 10.6 or newer, with one empty database and a user with full rights on it. Tested on MySQL 8.4 (Percona Server) and MariaDB 10.6 and 10.11. MySQL 8.0 should work, since nothing here needs newer SQL, but it is past end of life and untested.
 - A cron entry (or any scheduler) that can run a PHP script every minute.
 - HTTPS.
 - Node 20+ only if you want to run the frontend tests, `scripts/deploy.sh` (which runs them) or the MCP server. The app itself needs no build step.
@@ -196,7 +196,7 @@ These steps skip the updater's signature checks. For a ZIP, you can [check it on
 
    Your host's own database backup works too, as long as you can restore it.
 2. **Get the new code.**
-   - From a git clone: `git fetch --tags` and then `git checkout v0.9.74`, with the version you're updating to, then `cd server && composer install --no-dev && cd ..`. Releases are tags; `main` can be ahead of the newest release.
+   - From a git clone: `git fetch --tags` and then `git checkout vX.Y.Z`, with the version you're updating to, then `cd server && composer install --no-dev && cd ..`. Releases are tags; `main` can be ahead of the newest release.
    - From a release zip: unpack the new one into a fresh directory beside the current one (`unzip better-cal-X.Y.Z.zip -d /srv/better-cal-new`), copy `.env.php` into it along with any plugins you added under `server/plugins/`, then swap the two: `mv /srv/better-cal /srv/better-cal-old && mv /srv/better-cal-new /srv/better-cal`. Your web server and cron entry keep pointing at the same path.
 3. **Apply database changes:** `php server/bin/migrate.php`. It lists each change it applies, or none.
 4. **Check it:** `https://your-host/api/v1/health` should say `{"ok":true,"db":true,...}`, and Settings, About should show the new version.
@@ -351,7 +351,7 @@ This exact block was used in the clean-install test under mod_php: CalDAV, API t
 
 `[END]` rather than `[L]` matters: in a directory context `[L]` starts another rewrite pass, which would send `dav.php` on to `index.php`. This routes every request through PHP, including static files, so the symlinks and `FollowSymLinks` are not involved and the app's cache headers apply as they are.
 
-**On shared hosting, or anywhere you cannot edit the virtual host, there is nothing to add:** the repository ships `server/public/.htaccess` with the same routing, using the older way of passing the Authorization header, which works where `CGIPassAuth` is not allowed. The host only has to allow `FileInfo` overrides for that directory, which shared hosts do. Tested on Apache 2.4 with `AllowOverride FileInfo` and nothing else: every page, CalDAV and API tokens. It has not yet been tried on an actual shared host (issue #22). It should behave the same on LiteSpeed, which reads `.htaccess` rewrites, but that hasn't been tried yet either. With a virtual host like the one above (`AllowOverride None`), the file is ignored.
+**On shared hosting, or anywhere you cannot edit the virtual host, there is nothing to add:** the repository ships `server/public/.htaccess` with the same routing, using the older way of passing the Authorization header, which works where `CGIPassAuth` is not allowed. The host only has to allow `FileInfo` overrides for that directory, which shared hosts do. Tested on Apache 2.4 with `AllowOverride FileInfo` and nothing else: every page, CalDAV and API tokens. It has also worked on real shared hosts, on Apache and on LiteSpeed, which reads `.htaccess` rewrites ([where it has been tested](#where-it-has-been-tested)). With a virtual host like the one above (`AllowOverride None`), the file is ignored.
 
 If the host forces the document root to a directory you do not control (`public_html`), make that directory a symlink to `server/public`, or put the repository beside it and symlink `index.php` and `dav.php` in; both files locate the rest of the app relative to their real path.
 

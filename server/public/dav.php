@@ -47,6 +47,16 @@ if (!class_exists(\Sabre\DAV\Server::class)) {
     exit;
 }
 
+// Before Sabre builds its request from $_SERVER: no X-Expected-Entity-Length,
+// and a body over the limit is refused without being parsed.
+$body = BetterCal\Dav\RequestBudget::body($_SERVER, fopen('php://input', 'rb'));
+if ($body === null) {
+    http_response_code(413);
+    header('Content-Type: text/plain; charset=utf-8');
+    echo "Request body too large for CalDAV.\n";
+    exit;
+}
+
 $cfg = config();
 $db = new Db($cfg['db']);
 
@@ -64,6 +74,7 @@ $server = new \Sabre\DAV\Server([
     new \Sabre\CalDAV\CalendarRoot($principalBackend, $calendarBackend),
 ]);
 $server->setBaseUri($baseUri);
+$server->httpRequest->setBody($body);
 
 // CalDAV sign-in shares the login form's limits on password guessing.
 $server->addPlugin(new \Sabre\DAV\Auth\Plugin($authBackend));

@@ -55,6 +55,21 @@ $reject = static function (string $name, callable $fn): void {
     try { $fn(); check($name, false, 'accepted'); } catch (\Exception) { check($name, true); }
 };
 $resourceLimits = array_combine(Limits::names(), array_map([Limits::class, 'get'], Limits::names()));
+Limits::configure(['DAV_OBJECT_BYTES' => 1024]);
+$davBody = static function (array $server, string $data) {
+    $in = fopen('php://temp', 'w+b'); fwrite($in, $data); rewind($in);
+    $body = BetterCal\Dav\RequestBudget::body($server, $in);
+    return [$body === null ? null : stream_get_contents($body), $server, ftell($in)];
+};
+[$got, $srv] = $davBody(['REQUEST_METHOD' => 'PUT', 'CONTENT_LENGTH' => '6', 'HTTP_X_EXPECTED_ENTITY_LENGTH' => '999999999'], 'sample');
+check('CalDAV request: an ordinary PUT keeps its body and loses X-Expected-Entity-Length', $got === 'sample' && !isset($srv['HTTP_X_EXPECTED_ENTITY_LENGTH']));
+[$got, , $read] = $davBody(['REQUEST_METHOD' => 'PUT', 'CONTENT_LENGTH' => (string) (1024 + 65537)], 'x');
+check('CalDAV request: a declared oversize PUT is refused before reading', $got === null && $read === 0);
+check('CalDAV request: a PUT gets one object plus slack', BetterCal\Dav\RequestBudget::limit('put') === 1024 + 65536 && $davBody(['REQUEST_METHOD' => 'PUT'], str_repeat('x', 1024 + 65536))[0] !== null);
+[$got, , $read] = $davBody(['REQUEST_METHOD' => 'REPORT'], str_repeat('x', BetterCal\Dav\RequestBudget::OTHER_BYTES + 4096));
+check('CalDAV request: an undeclared (chunked) REPORT stops one byte past 1 MiB', $got === null && $read === BetterCal\Dav\RequestBudget::OTHER_BYTES + 1);
+check('CalDAV request: a malformed Content-Length is refused', $davBody(['REQUEST_METHOD' => 'PROPPATCH', 'CONTENT_LENGTH' => '12abc'], 'x')[0] === null);
+Limits::configure($resourceLimits);
 if (!class_exists(\Sabre\CalDAV\Plugin::class)) {
     // SizedCalDavPlugin extends sabre/dav's plugin (the install job runs it).
 } elseif (method_exists(SizedCalDavPlugin::class, 'readBody')) {

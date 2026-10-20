@@ -393,7 +393,7 @@ final class Auth
             // password reset or earlier recovery already ended this browser,
             // it must not perform another partially authorized cleanup.
             self::assertSession($this->db, $userId, $keepToken, true);
-            $subscriptionsPaused = BrowserSubscriptions::decide($this->db, $userId, $keepToken, $subscriptionReview);
+            $review = BrowserSubscriptions::decide($this->db, $userId, $keepToken, $subscriptionReview);
             $sessions = $this->db->run(
                 'DELETE FROM sessions WHERE user_id = ? AND token_hash <> ?',
                 [$userId, hash('sha256', (string) $keepToken)]
@@ -423,7 +423,7 @@ final class Auth
                 $this->db->run('UPDATE users SET settings_json = ? WHERE id = ?', [json_encode($settings), $userId]);
                 $emailReset = true;
             }
-            return ['sessions' => $sessions, 'devices' => $devices, 'pushDevices' => $push, 'feedsRotated' => $feeds, 'notifyEmailReset' => $emailReset, 'subscriptionsPaused' => $subscriptionsPaused];
+            return ['sessions' => $sessions, 'devices' => $devices, 'pushDevices' => $push, 'feedsRotated' => $feeds, 'notifyEmailReset' => $emailReset, 'subscriptionsPaused' => $review['paused'], 'subscriptionsChanged' => $review['changed']];
         });
         $parts = [$out['sessions'] . ' other browser' . ($out['sessions'] === 1 ? '' : 's') . ' signed out'];
         if ($out['pushDevices'] > 0) {
@@ -431,6 +431,9 @@ final class Auth
         }
         if ($out['feedsRotated'] > 0) {
             $parts[] = $out['feedsRotated'] . ' public feed URL' . ($out['feedsRotated'] === 1 ? '' : 's') . ' changed';
+        }
+        if ($out['subscriptionsPaused'] > 0) {
+            $parts[] = $out['subscriptionsPaused'] . ' subscription' . ($out['subscriptionsPaused'] === 1 ? '' : 's') . ' paused for Review';
         }
         if ($out['notifyEmailReset']) {
             $parts[] = 'reminder email reset to the account address';

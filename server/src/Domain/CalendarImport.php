@@ -63,6 +63,8 @@ final class CalendarImport
         if ($problem !== null) {
             if (str_contains($problem, 'skipped occurrences')) {
                 $how = 'Split unusually exception-heavy repeating series into smaller parts, or adjust BETTERCAL_LIMIT_EXDATE_VALUES_PER_EVENT and BETTERCAL_LIMIT_EXDATE_VALUES_PER_INPUT within their hard ceilings.';
+            } elseif (str_contains($problem, 'comma-separated values')) {
+                $how = 'Split the file, or raise BETTERCAL_LIMIT_ICS_LIST_VALUES_PER_INPUT on the server within its hard ceiling.';
             } else {
                 $how = $maxEvents < Limits::get('IMPORT_EVENTS')
                     ? 'This server has memory for about ' . number_format($maxEvents) . ' events at once: split the file, or raise PHP memory_limit.'

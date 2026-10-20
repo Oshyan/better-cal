@@ -80,6 +80,11 @@ if (!class_exists(\Sabre\CalDAV\Plugin::class)) {
     $reject('CalDAV undeclared length stops at the byte boundary', fn() => SizedCalDavPlugin::readBody($stream));
     checkEq('bounded stream consumed max plus one only', 1025, ftell($stream)); fclose($stream);
     checkEq('ordinary CalDAV body preserved', 'sample', SizedCalDavPlugin::readBody('sample', '6'));
+    $listLimit = Limits::get('ICS_LIST_VALUES_PER_INPUT');
+    Limits::configure(['ICS_LIST_VALUES_PER_INPUT' => 4]);
+    checkEq('CalDAV comma budget: a description at the limit passes', null, SizedCalDavPlugin::commaProblem("DESCRIPTION:a,b,c,d,e\r\n"));
+    check('CalDAV comma budget: bare description commas count, since Sabre validates the object as sent', str_contains((string) SizedCalDavPlugin::commaProblem("DESCRIPTION:a,b,c,d,e,f\r\n"), 'more than 4'));
+    Limits::configure(['ICS_LIST_VALUES_PER_INPUT' => $listLimit]);
     Limits::configure($resourceLimits);
     foreach ([['2027-01-01T09:00:00Z', '2027-01-02T09:00:00Z'], ['2027-01-01T09:00:00Z,2027-01-02T09:00:00Z']] as $dates) {
         $reject('jCal singleton list rejected before VObject', static function () use ($dates): void {

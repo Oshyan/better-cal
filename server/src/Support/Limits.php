@@ -164,6 +164,11 @@ final class Limits
         // and keep one series from becoming a permanent expansion tax.
         'EXDATE_VALUES_PER_EVENT' => 1024,
         'EXDATE_VALUES_PER_INPUT' => 4096,
+        // The same for every other comma list (CATEGORIES, RDATE, parameter
+        // lists): the parser makes one value per comma. A line over the line
+        // limit drops its event; a file over the input limit is refused.
+        'ICS_LIST_VALUES_PER_LINE' => 1000,
+        'ICS_LIST_VALUES_PER_INPUT' => 200000,
         // Regex filter evaluations per request or job, across all filters.
         'REGEX_EVALS' => 20000,
     ];
@@ -245,6 +250,8 @@ final class Limits
         'DUPLICATE_SCAN_SECONDS' => 10,
         'EXDATE_VALUES_PER_EVENT' => 2048,
         'EXDATE_VALUES_PER_INPUT' => 8192,
+        'ICS_LIST_VALUES_PER_LINE' => 10000,
+        'ICS_LIST_VALUES_PER_INPUT' => 1000000,
     ];
 
     /** @var array<string,int> */

@@ -60,7 +60,7 @@ const recoveryWrites = [];
 const recovery = component('SettingsPage.js', 'OtherBrowsersRow', {
   useEffect: () => {}, Row: () => {}, toast: () => {}, currentEndpointHash: async () => null,
   api: async (path, options) => {
-    if (!options) return { others: 1, version: 'sample-version', subscriptions: [{ id: 1, name: 'Sample feed', host: 'feeds.example.test', addedAt: '2027-01-01T00:00:00Z' }] };
+    if (!options) return { others: 1, version: 'sample-version', subscriptions: [{ id: 1, name: 'Sample feed', host: 'feeds.example.test', addedAt: '2027-01-01T00:00:00Z', fingerprint: 'sample-fingerprint' }] };
     recoveryWrites.push(options.body);
     return { sessions: 1, subscriptionsPaused: options.body.subscriptionReview.choice === 'pause' ? 1 : 0 };
   },
@@ -72,4 +72,5 @@ assert.ok(JSON.stringify(recoveryTree).includes('feeds.example.test'), 'confirma
 await walk(recoveryTree).find((n) => typeof n === 'function' && n.toString().includes("run('pause')"))();
 assert.equal(recoveryWrites[0].subscriptionReview.choice, 'pause');
 assert.equal(recoveryWrites[0].subscriptionReview.version, 'sample-version');
+assert.deepEqual(recoveryWrites[0].subscriptionReview.reviewed, ['sample-fingerprint'], 'the page names exactly the subscriptions the owner saw');
 console.log('Credential UI regression tests passed');

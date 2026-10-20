@@ -40,6 +40,10 @@ final class ReviewQueue
     public const KIND_MAIL_ERROR = 'mail_error';
 
     private const PREVIEW_CHARS = 400;
+    /** Open competing change candidates kept for one meeting. */
+    public const CHANGES_PER_EVENT = 3;
+    /** Unreadable-email notices shown one by one; more fold into one counted notice. */
+    public const MAIL_ERROR_NOTICES = 20;
 
     public function __construct(private readonly Db $db, private readonly Events $events)
     {
@@ -110,6 +114,33 @@ final class ReviewQueue
         return $out;
     }
 
+    /**
+     * What an email about ONE occurrence would change, compared with that
+     * occurrence as the series has it. A cancellation of an occurrence the
+     * series already skips changes nothing. Pure; unit-tested.
+     *
+     * @return list<array{field:string,label:string,from:?string,to:?string}>
+     */
+    public static function occurrenceDiff(array $series, string $occurrence, string $method, array $fields): array
+    {
+        $skipped = in_array($occurrence, Recurrence::decodeExdates($series['exdates_json'] ?? null), true);
+        if ($method === 'CANCEL' || ($fields['status'] ?? null) === 'cancelled') {
+            return $skipped ? [] : [['field' => 'occurrence', 'label' => 'Occurrence', 'from' => self::occurrenceLabel($series, $occurrence), 'to' => 'cancelled']];
+        }
+        if ($skipped) {
+            return [];
+        }
+        $length = Time::fromDb((string) $series['end_utc'])->getTimestamp() - Time::fromDb((string) $series['start_utc'])->getTimestamp();
+        $as = ['start_utc' => $occurrence, 'end_utc' => Time::fromDb($occurrence)->add(new \DateInterval('PT' . max(0, $length) . 'S'))->format(Time::DB), 'rrule' => null] + $series;
+        return self::inviteDiff($as, 'REQUEST', ['rrule' => null] + $fields);
+    }
+
+    /** "Tue 3 Nov 2026", in the series' zone. */
+    public static function occurrenceLabel(array $series, string $occurrence): string
+    {
+        return Time::fromDb($occurrence)->setTimezone(Time::zone((string) ($series['tzid'] ?? 'UTC')))->format('D j M Y');
+    }
+
     // ---- Holding -------------------------------------------------------
 
     /**
@@ -173,6 +204,10 @@ final class ReviewQueue
      * @param array<string,mixed> $event  the existing events row
      * @param array<string,mixed> $fields Events::patch payload (ignored for CANCEL)
      * @param array<string,mixed>|null $invite the incoming invite block (organizer, attendees, sequence)
+     * @param ?string $occurrence RECURRENCE-ID (UTC, DB format) when the email
+     *   is about one occurrence of the series, never the whole of it. A
+     *   cancellation then skips that occurrence; a change is shown for the
+     *   owner to make by hand (issue #155 tracks applying it).
      */
     public function holdInviteChange(
         int $userId,
@@ -183,23 +218,32 @@ final class ReviewQueue
         ?array $invite,
         string $fromAddr,
         bool $sequenceAuthoritative = true,
+        ?string $occurrence = null,
     ): ?int {
-        $diff = self::inviteDiff($event, $method, $fields);
+        $diff = $occurrence === null ? self::inviteDiff($event, $method, $fields) : self::occurrenceDiff($event, $occurrence, $method, $fields);
         if ($diff === []) {
             return null;
         }
         $invite = is_array($invite) ? $invite : [];
         $candidateKey = hash('sha256', json_encode(
-            [$uid, $method, $fromAddr, $method === 'CANCEL' ? null : $fields, $invite],
+            [$uid, $method, $fromAddr, $method === 'CANCEL' ? null : $fields, $invite, $occurrence],
             JSON_INVALID_UTF8_SUBSTITUTE | JSON_UNESCAPED_SLASHES,
         ) ?: '');
         $title = (string) ($event['title'] ?? '(untitled)');
         $who = (string) ($invite['organizer']['name'] ?? '') ?: (string) ($invite['organizer']['email'] ?? '') ?: $fromAddr;
-        $summary = $method === 'CANCEL'
-            ? ($who !== '' ? "$who cancelled this." : 'The organizer cancelled this.')
-            : ($who !== '' ? "$who changed: " : 'Changed: ') . implode(', ', array_map(static fn(array $d): string => strtolower($d['label']), $diff)) . '.';
+        $changed = implode(', ', array_map(static fn(array $d): string => strtolower($d['label']), $diff));
+        if ($occurrence !== null) {
+            $day = self::occurrenceLabel($event, $occurrence);
+            $summary = $method === 'CANCEL'
+                ? ($who !== '' ? $who : 'The organizer') . " cancelled the $day occurrence. Accepting skips just that one."
+                : ($who !== '' ? $who : 'The organizer') . " changed the $day occurrence: $changed. Edit that occurrence to match if you want it, then dismiss this.";
+        } else {
+            $summary = $method === 'CANCEL'
+                ? ($who !== '' ? "$who cancelled this." : 'The organizer cancelled this.')
+                : ($who !== '' ? "$who changed: " : 'Changed: ') . $changed . '.';
+        }
 
-        return $this->db->tx(function () use ($userId, $event, $uid, $method, $fields, $invite, $fromAddr, $diff, $title, $summary, $candidateKey, $sequenceAuthoritative): ?int {
+        return $this->db->tx(function () use ($userId, $event, $uid, $method, $fields, $invite, $fromAddr, $diff, $title, $summary, $candidateKey, $sequenceAuthoritative, $occurrence): ?int {
             $this->lockAccount($userId);
             $sourceKey = mb_substr($uid, 0, 255);
             $open = $this->db->all(
@@ -210,6 +254,32 @@ final class ReviewQueue
                 if ((string) (self::payload($pending)['candidateKey'] ?? '') === $candidateKey) {
                     return (int) $pending['id'];
                 }
+            }
+            $admitted = (new MailAdmission($this->db))->admitHeldChange($userId, $candidateKey, $fromAddr);
+            if (!$admitted['allowed']) {
+                $this->holdMailLimit($userId, (string) $admitted['code'], (string) $admitted['message'], (string) ($admitted['retryAt'] ?? ''), $title, $fromAddr);
+                return null;
+            }
+            $row = [
+                'title' => mb_substr($title, 0, 300),
+                'summary' => mb_substr($summary, 0, 1000),
+                'payload_json' => json_encode([
+                    'method' => $method,
+                    'uid' => $uid,
+                    'from' => $fromAddr,
+                    'fields' => $method === 'CANCEL' ? null : $fields,
+                    'invite' => $invite,
+                    'diff' => $diff,
+                    'sequenceAuthoritative' => $sequenceAuthoritative,
+                    'candidateKey' => $candidateKey,
+                ] + ($occurrence !== null ? ['occurrence' => $occurrence] : []), JSON_INVALID_UTF8_SUBSTITUTE | JSON_UNESCAPED_SLASHES),
+            ];
+            // One meeting keeps at most a few competing candidates: the first
+            // ones received stay, and the newest slot follows the latest
+            // claim, so one known UID cannot fill the whole Review ceiling.
+            if (count($open) >= self::CHANGES_PER_EVENT) {
+                $this->db->update('review_items', $row + ['created_at' => Time::nowDb()], 'id = ?', [(int) $open[0]['id']]);
+                return (int) $open[0]['id'];
             }
             // An unaccepted sequence is only a sender claim, even when the
             // organizer matches. Every distinct candidate consumes a slot.
@@ -229,19 +299,7 @@ final class ReviewQueue
                 'kind' => self::KIND_INVITE_CHANGE,
                 'event_id' => (int) $event['id'],
                 'source_key' => $sourceKey,
-                'title' => mb_substr($title, 0, 300),
-                'summary' => mb_substr($summary, 0, 1000),
-                'payload_json' => json_encode([
-                    'method' => $method,
-                    'uid' => $uid,
-                    'from' => $fromAddr,
-                    'fields' => $method === 'CANCEL' ? null : $fields,
-                    'invite' => $invite,
-                    'diff' => $diff,
-                    'sequenceAuthoritative' => $sequenceAuthoritative,
-                    'candidateKey' => $candidateKey,
-                ], JSON_INVALID_UTF8_SUBSTITUTE | JSON_UNESCAPED_SLASHES),
-            ]);
+            ] + $row);
         });
     }
 
@@ -628,6 +686,24 @@ final class ReviewQueue
                 $this->close((int) $row['id'], 'superseded');
                 return self::decisionError('review_stale', 'This change is out of date (' . $why . '): a newer version of the invitation has already been applied. The item has been closed.');
             }
+            $occurrence = isset($payload['occurrence']) ? (string) $payload['occurrence'] : null;
+            if ($occurrence !== null) {
+                // One occurrence never changes the whole series. A cancellation
+                // skips it; any other change is the owner's to make by hand.
+                if (($payload['method'] ?? '') !== 'CANCEL' && (($payload['fields']['status'] ?? null) !== 'cancelled')) {
+                    return self::decisionError('review_manual', 'Edit that occurrence on your calendar to apply this change, then dismiss the item.');
+                }
+                if (self::occurrenceDiff($event, $occurrence, 'CANCEL', []) === []) {
+                    $this->close((int) $row['id'], 'superseded');
+                    return self::decisionError('review_stale', 'That occurrence is already skipped. The item has been closed.');
+                }
+                $instance = (int) ($event['all_day'] ?? 0) === 1
+                    ? Time::fromDb($occurrence)->setTimezone(Time::zone((string) $event['tzid']))->format('Y-m-d')
+                    : Time::iso(Time::fromDb($occurrence));
+                $this->events->deleteEvent($userId, $eventId, 'this', $instance);
+                $this->close((int) $row['id'], 'accepted');
+                return ['eventId' => $eventId, 'removed' => false];
+            }
 
             $method = (string) ($payload['method'] ?? '');
             $fields = (array) ($payload['fields'] ?? []);
@@ -800,6 +876,11 @@ final class ReviewQueue
             $key = hash('sha256', $key);
             $existing = $this->db->scalar('SELECT id FROM review_items WHERE user_id = ? AND kind = ? AND source_key = ?', [$userId, self::KIND_MAIL_ERROR, $key]);
             if ($existing !== null) return (int) $existing;
+            // Junk mail can't bury real invitations under its own notices
+            // (review of 0.9.87): past a screenful, one notice counts the rest.
+            if ($this->openCount($userId, self::KIND_MAIL_ERROR) >= self::MAIL_ERROR_NOTICES) {
+                return $this->holdMailLimit($userId, 'mail_unreadable', 'More emails could not be read than Review lists one by one. Check the mailbox for them.', '', $subject, $from);
+            }
             $from = mb_substr($from, 0, 255);
             $subject = mb_substr($subject, 0, 500);
             return $this->db->insert('review_items', [

@@ -50,7 +50,12 @@ final class PrivatePath
         }
     }
 
-    public static function check(string $path, bool $directory, bool $missing = false): void
+    /**
+     * $strictGroup: without POSIX the effective group is unknown, so refuse
+     * every group-writable parent instead of leaving that to the host. For
+     * files whose contents get executed (a database restore).
+     */
+    public static function check(string $path, bool $directory, bool $missing = false, bool $strictGroup = false): void
     {
         if (!str_starts_with($path, '/') || preg_match('~(?:^|/)\.\.?(/|$)|//|\x00~', $path)) {
             throw new \RuntimeException('Private storage needs a canonical absolute path.');
@@ -90,12 +95,49 @@ final class PrivatePath
             // group. Without POSIX, leave group isolation to the host.
             // A sticky system temporary directory is safe for an owned child.
             // Root must not use its authority inside a lower-trust writable tree.
-            $otherGroupWritable = ($st['mode'] & 0020) !== 0 && $group !== null && (int) $st['gid'] !== $group;
-            if (!$last && ((($st['mode'] & 0002) !== 0 || $otherGroupWritable) && ($st['mode'] & 01000) === 0
-                || $owner === 0 && (int) $st['uid'] !== 0)) {
+            if (!$last && self::parentOpen($st, $group, $owner, $strictGroup)) {
                 throw new \RuntimeException('A private storage parent can be changed by another account. Run this operation as the storage owner.');
             }
         }
+    }
+
+    /** Can another account change what is inside this parent directory? */
+    public static function parentOpen(array $st, ?int $group, int $owner, bool $strictGroup = false): bool
+    {
+        $otherGroupWritable = ($st['mode'] & 0020) !== 0 && ($group === null ? $strictGroup : (int) $st['gid'] !== $group);
+        return (($st['mode'] & 0002) !== 0 || $otherGroupWritable) && ($st['mode'] & 01000) === 0
+            || $owner === 0 && (int) $st['uid'] !== 0;
+    }
+
+    /**
+     * Open a private file once for reading, so every later pass reads the
+     * file that was checked: the handle must be the same regular, owned,
+     * singly-linked file the path named before and after it was opened.
+     *
+     * @return resource
+     */
+    public static function open(string $path, bool $strictGroup = false)
+    {
+        self::check($path, false, false, $strictGroup);
+        $fh = @fopen($path, 'rb');
+        if ($fh === false) {
+            throw new \RuntimeException('Could not read ' . basename($path) . '.');
+        }
+        $st = fstat($fh);
+        try {
+            self::check($path, false, false, $strictGroup);
+        } catch (\Throwable $e) {
+            fclose($fh);
+            throw $e;
+        }
+        clearstatcache(true, $path);
+        $named = @lstat($path);
+        if ($st === false || $named === false || ($st['mode'] & 0170000) !== 0100000 || (int) $st['nlink'] !== 1
+            || $st['dev'] !== $named['dev'] || $st['ino'] !== $named['ino'] || $st['uid'] !== $named['uid']) {
+            fclose($fh);
+            throw new \RuntimeException(basename($path) . ' changed while it was being opened; nothing was changed.');
+        }
+        return $fh;
     }
 
     public static function directory(string $path, bool $create = false): void

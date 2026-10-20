@@ -166,7 +166,9 @@ try {
     $legacy = $updater->backupDir() . '/db-before-0.9.85-1.sql.gz';
     file_put_contents($legacy, gzencode("-- Better-Cal database backup\n-- tables: marker\nUPDATE marker SET value='legacy';\n-- end\n"));
     [$status, $body] = $request('/update-database', ['step' => 'restore', 'backup' => basename($legacy), 'form' => $form], $token);
-    $assert($status === 200 && $db->scalar('SELECT value FROM marker') === 'legacy', 'older plaintext backups remain recoverable');
+    $assert($status === 409 && str_contains($body, 'Restore it anyway') && !Maintenance::active($root . '/app') && $db->scalar('SELECT value FROM marker') === 'original', 'an older plaintext backup asks first and changes nothing');
+    [$status, $body] = $request('/update-database', ['step' => 'restore', 'backup' => basename($legacy), 'allowPlain' => '1', 'form' => $form], $token);
+    $assert($status === 200 && $db->scalar('SELECT value FROM marker') === 'legacy', 'older plaintext backups remain recoverable once confirmed');
 } finally {
     $held?->close();
     if (is_resource($server)) { proc_terminate($server); foreach ($pipes as $p) { if (is_resource($p)) { fclose($p); } } proc_close($server); }

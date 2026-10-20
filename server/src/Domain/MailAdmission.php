@@ -21,6 +21,7 @@ final class MailAdmission
     private array $expiredSeries = [];
     public const KIND_EVENT = 'event';
     public const KIND_LLM = 'llm';
+    public const KIND_CHANGE = 'change';
 
     public function __construct(private readonly Db $db)
     {
@@ -116,6 +117,31 @@ final class MailAdmission
             $this->record($userId, self::KIND_EVENT, $messageKey, self::senderKey($from), $now);
             return $decision + ['value' => $create()];
         });
+    }
+
+    /**
+     * A held change to an invitation the owner already has. It creates no
+     * event, so it doesn't spend the new-event budget, but it does fill the
+     * shared Review ceiling; without its own daily limits anyone knowing a
+     * UID and its organizer's address could fill that in minutes and crowd
+     * out real changes (review of 0.9.87). Caller holds the account lock.
+     *
+     * @return array{allowed:bool,code:?string,message:?string,retryAt:?string}
+     */
+    public function admitHeldChange(int $userId, string $candidateKey, string $from, ?\DateTimeImmutable $now = null): array
+    {
+        $now ??= Time::nowUtc();
+        $day = $now->sub(new \DateInterval('P1D'));
+        $sender = self::senderKey($from);
+        if ($this->count(self::KIND_CHANGE, $userId, $day) >= Limits::get('MAIL_EVENTS_PER_DAY')) {
+            return self::denied('change_account_day', 'Emailed changes to your events paused for Review because the account-wide daily limit was reached.', $now->add(new \DateInterval('P1D')));
+        }
+        if ($this->count(self::KIND_CHANGE, $userId, $day, $sender) >= Limits::get('MAIL_EVENTS_PER_SENDER_DAY')) {
+            return self::denied('change_sender_day', 'Emailed changes from this sender paused for Review because its daily limit was reached.', $now->add(new \DateInterval('P1D')));
+        }
+        // A dismissed change may be sent again: each holding is its own admission.
+        $this->record($userId, self::KIND_CHANGE, $candidateKey . ':' . bin2hex(random_bytes(8)), $sender, $now);
+        return self::allowed();
     }
 
     /**

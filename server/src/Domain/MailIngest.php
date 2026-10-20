@@ -493,7 +493,17 @@ final class MailIngest
             $imip = self::parseImip($ics);
             if ($imip === null) { $warnings[] = 'An attached calendar could not be read.'; continue; }
             if ($imip['skipped'] !== []) $warnings[] = Ics::skippedMessage($imip['skipped']);
+            $series = [];
+            foreach ($imip['events'] as $ev) {
+                if (empty($ev['recurrence_instance_utc'])) $series[(string) ($ev['uid'] ?? '')] = true;
+            }
             foreach ($imip['events'] as $eventIndex => $ev) {
+                // An occurrence sent along with its own series is part of a
+                // new invitation, which arrives whole through the series.
+                if (!empty($ev['recurrence_instance_utc']) && isset($series[(string) ($ev['uid'] ?? '')])
+                    && $this->db->scalar('SELECT 1 FROM events WHERE user_id = ? AND uid = ? AND deleted_at IS NULL AND recurrence_parent_id IS NULL', [$userId, (string) $ev['uid']]) === null) {
+                    continue;
+                }
                 $eventMsg = $msg;
                 $eventMsg['transportKey'] = self::messageKey($msg) . ':imip:' . $partIndex . ':' . $eventIndex;
                 $outcome = ActivityContext::with('mail:imip', fn() => $this->applyImipEvent($userId, $imip['method'], $ev, $tz, $eventMsg));
@@ -760,6 +770,39 @@ final class MailIngest
                 );
                 return ['refused', (int) $existing['id'], $why];
             }
+        }
+
+        // An email about ONE occurrence (RECURRENCE-ID) of a series the owner
+        // has must never be applied to the series itself (review of 0.9.87):
+        // a cancellation can skip that occurrence, and any other change is
+        // shown for the owner to make by hand (issue #155).
+        $occurrence = !empty($ev['recurrence_instance_utc']) ? (string) $ev['recurrence_instance_utc'] : null;
+        if ($occurrence !== null && $existing !== null) {
+            $cancel = $method === 'CANCEL' || ($ev['status'] ?? '') === 'cancelled';
+            $occurrenceFields = [];
+            if (!$cancel) {
+                $zone = Time::zone(is_string($ev['tzid'] ?? null) && $ev['tzid'] !== '' ? $ev['tzid'] : $tz);
+                $occurrenceFields = [
+                    'title' => (string) ($ev['title'] ?? '(untitled)'),
+                    'start' => Time::iso((new \DateTimeImmutable((string) $ev['start_utc'], Time::utc()))->setTimezone($zone)),
+                    'end' => Time::iso((new \DateTimeImmutable((string) $ev['end_utc'], Time::utc()))->setTimezone($zone)),
+                    'allDay' => (bool) ($ev['all_day'] ?? false),
+                    'location' => isset($ev['location']) && $ev['location'] !== '' ? (string) $ev['location'] : null,
+                    'description' => isset($ev['description']) && $ev['description'] !== '' ? (string) $ev['description'] : null,
+                ];
+            }
+            $held = $this->review->holdInviteChange(
+                $userId,
+                $existing,
+                $uid,
+                $cancel ? 'CANCEL' : 'REQUEST',
+                $occurrenceFields,
+                $ev['invite'] ?? null,
+                $fromAddr,
+                self::organizerTrustEstablished(is_array($storedInvite) ? $storedInvite : null),
+                $occurrence,
+            );
+            return [$held === null ? 'unchanged' : 'held', (int) $existing['id']];
         }
 
         // From here on, a message about an event the owner ALREADY HAS never

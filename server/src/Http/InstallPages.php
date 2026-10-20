@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace BetterCal\Http;
 
+use BetterCal\Infra\BackupCipher;
 use BetterCal\Infra\Db;
 use BetterCal\Infra\DbBackup;
 use BetterCal\Infra\Migrator;
@@ -329,7 +330,7 @@ final class InstallPages
         if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && ($_POST['step'] ?? '') === 'restore') {
             self::checkForm($token);
             self::lockUpdate($db, $cfg);
-            self::restoreBackup($cfg, $db, $updater, (string) ($_POST['backup'] ?? ''), $token);
+            self::restoreBackup($cfg, $db, $updater, (string) ($_POST['backup'] ?? ''), $token, ($_POST['allowPlain'] ?? '') === '1');
         }
         // A partial restore is not an update candidate. Even a stale form
         // posting step=update must not migrate it and reopen the site.
@@ -417,11 +418,19 @@ final class InstallPages
      * failed. Only a backup of that kind, by its file name in the backup
      * folder; restore() checks the whole file before it changes anything.
      */
-    private static function restoreBackup(array $cfg, Db $db, Updater $updater, string $name, string $token): never
+    private static function restoreBackup(array $cfg, Db $db, Updater $updater, string $name, string $token, bool $allowPlain = false): never
     {
         $path = $updater->backupDir() . '/' . $name;
         if (preg_match('/^db-(before-)?[0-9][0-9A-Za-z.\-]*\.(bcbackup|sql\.gz)$/D', $name) !== 1 || !is_file($path)) {
             self::page('Database update needed', '<div class="err">That backup isn\'t there any more.</div><p><a href="/update-database">Back</a></p>', 404);
+        }
+        // restore() refuses it without the flag too; asking first keeps the site open.
+        if (!$allowPlain && !BackupCipher::isEncrypted($path)) {
+            self::page('Restore an unencrypted backup?', '<div class="note">' . self::e(DbBackup::plainMessage($path)) . '</div>'
+                . '<p>Backups made since Better-Cal 0.9.83 are encrypted, so a change to one is caught. This one is older, and anyone who could write the backup folder could have changed what it puts in your database.</p>'
+                . '<form method="post"><input type="hidden" name="step" value="restore"><input type="hidden" name="backup" value="' . self::e($name)
+                . '"><input type="hidden" name="allowPlain" value="1"><input type="hidden" name="form" value="' . self::e(AccessCode::formToken($token)) . '"><button type="submit">Restore it anyway</button></form>'
+                . '<p><a href="/update-database">Back</a></p>', 409);
         }
         @set_time_limit(300);
         Maintenance::on($cfg['app_root'], 'restoring the database');
@@ -430,7 +439,7 @@ final class InstallPages
                 . self::restoreAgainForm($name, $token), 409);
         }
         try {
-            $r = DbBackup::forConfig($db, $cfg)->restore($path);
+            $r = DbBackup::forConfig($db, $cfg)->restore($path, $allowPlain);
         } catch (\Throwable $e) {
             self::page('Database restore stopped', '<div class="err">Restoring stopped: ' . self::e($e->getMessage()) . '</div>'
                 . '<p>The site stays closed because the restore did not finish. Run the restore again, or choose another backup.</p>'

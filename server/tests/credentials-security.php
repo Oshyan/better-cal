@@ -26,7 +26,7 @@ $credentialDb = static function (): Db {
         'calendars' => "id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, source_url TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, kind TEXT, provider TEXT, subscription_authority TEXT, created_by_token_id INTEGER, created_by_session_hash TEXT, settings_json TEXT, google_account_id INTEGER, google_calendar_id TEXT, google_binding_version INTEGER DEFAULT 0",
         'google_accounts' => 'id INTEGER PRIMARY KEY, user_id INTEGER, email TEXT, refresh_token_enc TEXT, status TEXT, last_error TEXT, reauth_required_at TEXT, scopes TEXT, created_at TEXT',
         'calendar_moves' => 'id INTEGER PRIMARY KEY, google_account_id INTEGER',
-        'plugins' => 'id TEXT PRIMARY KEY, settings_json TEXT, enabled INTEGER DEFAULT 1, disabled_reason TEXT, consecutive_failures INTEGER DEFAULT 0',
+        'plugins' => 'id TEXT PRIMARY KEY, settings_json TEXT, enabled INTEGER DEFAULT 1, disabled_reason TEXT, consecutive_failures INTEGER DEFAULT 0, changed_by_token_id INTEGER',
         'push_subscriptions' => 'id INTEGER PRIMARY KEY, user_id INTEGER, endpoint TEXT, endpoint_hash TEXT, p256dh TEXT, auth TEXT, created_by_token_id INTEGER',
         'mutations' => 'id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT',
         'events' => 'id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, google_event_id TEXT, invite_json TEXT, deleted_at TEXT, attendance TEXT',
@@ -135,6 +135,7 @@ $saved = $plugins->saveSettings('sample-secret', ['credential'=>'invented-privat
 checkEq('plugin settings: secret save response is write-only', ['set'=>true], $saved['credential']);
 $saved = $plugins->saveSettings('sample-secret', ['mode'=>'normal'], RequestAuthority::credential(1, 1, null));
 checkEq('plugin settings: omission preserves secret', ['set'=>true], $saved['credential']);
+checkEq('plugin settings: a key save records that key for revocation', 1, (int) $db->scalar("SELECT changed_by_token_id FROM plugins WHERE id='sample-secret'"));
 $credentialRefused('plugin validation: private errors refused', fn() => $plugins->saveSettings('sample-secret',['mode'=>'reject','credential'=>'invented-leak'], RequestAuthority::credential(1, 1, null)));
 try { $plugins->saveSettings('sample-secret',['mode'=>'reject','credential'=>'invented-leak']); } catch (HttpError $e) { check('plugin validation: error does not echo secret', !str_contains($e->getMessage(),'invented-leak')); }
 $host = new BetterCal\Plugin\PluginHost($db,'sample-secret',1,new BetterCal\Infra\HttpClient(),$plugins->manifest('sample-secret'),$cfg);

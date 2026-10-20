@@ -25,7 +25,7 @@ Stated plainly, because pretending otherwise would be worse than the reality:
 ## Goals
 
 - One person can install a plugin by dropping a directory into `server/plugins/` and enabling it in the UI, with no build step, matching the codebase philosophy.
-- The three demo plugins run on the production box with zero measurable change to the hot-path baselines (window 167ms median, month scroll 16.6ms median frame, 793 bytes/occurrence payload).
+- The three demo plugins run on a typical install with no measurable change to the hot-path baselines in `docs/benchmarking.md` (window query time, month-scroll frame time, payload bytes per occurrence).
 - A misbehaving plugin cannot break the calendar: worst case is stale plugin data plus a visible error on the ops page.
 - The People availability overlay becomes the first consumer of the generalized client-side seam (provider registry for pseudo-occurrences, click routing, sidebar sections), so the plugin path is exercised by existing production behavior. People's data and management UI stay where they are.
 - Every plugin action is attributed in the activity log under `plugin:<id>`.

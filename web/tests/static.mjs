@@ -126,8 +126,10 @@ for (const file of files) {
     'calendarMeta must carry editable and provider: the grids\' drags read them to allow copying and sidebar drops');
   check(review.includes("item.kind === 'invite_new'") && review.includes("'Dismissed. Nothing was added.'"),
     'dismissing a first-time emailed invitation must say that no event was added');
-  check(settings.includes('subscriptionsPaused ? loadReviewCount()'),
-    'revoking a key that pauses subscriptions must refresh the Review badge');
+  check(settings.includes('result.subscriptionsPaused || result.pluginsDisabled ? loadReviewCount()'),
+    'revoking a key that pauses subscriptions or turns plugins off must refresh the Review badge');
+  check(settings.includes("api('/auth/change-password'") && settings.includes('window.location.reload()'),
+    'changing the password must reload: the new session carries a new CSRF token and offline cache');
 }
 
 // --- 6. proposal decisions stay bound to what Review displayed -------------

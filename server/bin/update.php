@@ -39,9 +39,10 @@ use BetterCal\Support\Maintenance;
 use BetterCal\Support\ReleaseSignature;
 use BetterCal\Support\SettingsFile;
 
-$opt = getopt('', ['check', 'yes', 'finish', 'rollback', 'help']);
+$opt = getopt('', ['check', 'yes', 'finish', 'rollback', 'allow-plain', 'help']);
 if (isset($opt['help'])) {
-    Cli::say('Usage: php server/bin/update.php [--check | --yes | --rollback]');
+    Cli::say('Usage: php server/bin/update.php [--check | --yes | --rollback [--allow-plain]]');
+    Cli::say('  --allow-plain  let --rollback restore an unencrypted backup from before 0.9.83');
     exit(0);
 }
 
@@ -60,7 +61,7 @@ try {
         exit(finish($cfg, $updater));
     }
     if (isset($opt['rollback'])) {
-        exit(rollback($cfg, $updater, isset($opt['yes'])));
+        exit(rollback($cfg, $updater, isset($opt['yes']), isset($opt['allow-plain'])));
     }
     exit(update($cfg, $updater, isset($opt['check']), isset($opt['yes'])));
 } catch (\Throwable $e) {
@@ -380,7 +381,7 @@ function finish(array $cfg, Updater $updater): int
 }
 
 /** Put the previous version and the pre-update database back. */
-function rollback(array $cfg, Updater $updater, bool $yes): int
+function rollback(array $cfg, Updater $updater, bool $yes, bool $allowPlain = false): int
 {
     $appRoot = $updater->appRoot;
     $state = $updater->readState();
@@ -421,6 +422,11 @@ function rollback(array $cfg, Updater $updater, bool $yes): int
         Cli::say("The backup {$state['backup']} is missing; not rolling back.");
         return 1;
     }
+    if (!$allowPlain && !BackupCipher::isEncrypted((string) $state['backup'])) {
+        Cli::say(DbBackup::plainMessage((string) $state['backup']));
+        Cli::say('To restore it anyway: php ' . $cfg['app_root'] . '/server/bin/update.php --rollback --allow-plain');
+        return 1;
+    }
     if ($state['mode'] === 'zip' && (!is_string($state['previous']) || !is_dir($state['previous']))) {
         Cli::say("The previous version's folder is missing; not rolling back.");
         return 1;
@@ -434,7 +440,7 @@ function rollback(array $cfg, Updater $updater, bool $yes): int
         return 1;
     }
     Cli::say('Restoring the database...');
-    $restored = DbBackup::forConfig($db, $cfg)->restore((string) $state['backup']);
+    $restored = DbBackup::forConfig($db, $cfg)->restore((string) $state['backup'], $allowPlain);
     Cli::say('  ' . $restored['tables'] . ' tables restored' . ($restored['dropped'] > 0 ? ', ' . $restored['dropped'] . ' added by the update removed' : '') . '.');
     if ($state['mode'] === 'git') {
         if (Updater::run(['git', '-c', 'advice.detachedHead=false', 'checkout', '--quiet', "v$from"], $appRoot) !== 0

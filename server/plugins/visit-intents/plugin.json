@@ -115,7 +115,7 @@
     {
       "key": "lookupHours",
       "type": "toggle",
-      "label": "Look up missing hours from OpenStreetMap",
+      "label": "Look up missing hours from OpenStreetMap (never when the server's place lookup is off)",
       "default": true
     },
     {

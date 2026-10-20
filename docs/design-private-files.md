@@ -52,7 +52,7 @@ BETTERCAL_BASE_URL=https://cal.example.com
 
 - `DbBackup` streams gzip into `Infra\BackupCipher`: libsodium's secretstream (XChaCha20-Poly1305) in 64 KB chunks, under a `BCBK1` preface with an 8-byte key id, authenticated with every chunk; the last chunk is tagged final and nothing may follow it. Files end in `.bcbackup` and carry 128 random bits in their names.
 - **The key is derived from `BETTERCAL_SESSION_SECRET`** (libsodium KDF, context `bcbackup`). A restore needs the session secret anyway (feed credentials and Google tokens are sealed with it), so there's no new key to keep or lose. A restore with other settings says so plainly.
-- `restore()` reads the whole file, authenticating it, before it changes anything, and still reads older plain `.sql.gz` backups.
+- `restore()` opens the file once and reads the whole of it, authenticating it, before it changes anything; the SQL pass reads the same handle. It still reads older plain `.sql.gz` backups once confirmed (`--allow-plain`, or the restore page's second click). Without POSIX it refuses group-writable parent folders.
 - Older plain backups beside the app are encrypted in place by the conversion above; the update record follows the new name.
 - `php server/bin/backup.php --decrypt FILE OUT` writes a plain `.sql.gz` for phpMyAdmin or `mysql`.
 - After a failed database update, the database update page offers "Restore the database as it was" from the backup it just made.

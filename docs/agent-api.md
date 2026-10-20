@@ -10,7 +10,7 @@ Agents authenticate with a personal access token in the `Authorization` header i
 Authorization: Bearer bc_<43 url-safe chars>
 ```
 
-Bearer requests are CSRF-exempt (no cookie is involved, so there is nothing to forge). Most data operations are identical to session auth. Endpoints that need a person signed in with a password answer a bearer token with 403 `session_required`: token management itself (`/api/v1/tokens`, so a leaked token cannot mint or revoke tokens), account recovery (`/auth/step-up`, `/auth/sessions`, `/auth/sign-out-others`), Google account linking, remote calendar discovery and moves, keeping a paused subscription (`POST /calendars/:id/claim-subscription`), and reporting a browser start that never finished (`POST /system/client-event`). Calendar responses redact stored ICS source capabilities except for a subscription that exact token created. A token can delete only the outbound feeds and reminder devices it created.
+Bearer requests are CSRF-exempt (no cookie is involved, so there is nothing to forge). Most data operations are identical to session auth. Endpoints that need a person signed in with a password answer a bearer token with 403 `session_required`: token management itself (`/api/v1/tokens`, so a leaked token cannot mint or revoke tokens), account recovery (`/auth/step-up`, `/auth/sessions`, `/auth/sign-out-others`, `/auth/change-password`), Google account linking, remote calendar discovery and moves, keeping a paused subscription (`POST /calendars/:id/claim-subscription`), and reporting a browser start that never finished (`POST /system/client-event`). Calendar responses redact stored ICS source capabilities except for a subscription that exact token created. A token can delete only the outbound feeds and reminder devices it created.
 
 Tokens are stored sha256-hashed; the plaintext value is shown exactly once at creation. Optional `expires_at` is supported in the schema (NULL = never); tokens created via the API or CLI currently don't expire, so revoke them when done.
 
@@ -18,7 +18,7 @@ Tokens are stored sha256-hashed; the plaintext value is shown exactly once at cr
 
 An API key is a broad account key, not a read-only or per-calendar one. That's deliberate: it lets an agent do real work.
 
-**A key can:** read and edit events, calendars, folders, people and availability; search; undo; change settings; decide possible duplicates; enable, disable, configure and run installed plugins, including their per-calendar and per-event fields. Plugin jobs and settings can have effects outside Better-Cal, through what the plugin does.
+**A key can:** read and edit events, calendars, folders, people and availability; search; undo; change settings; decide possible duplicates; enable, disable, configure and run installed plugins, including their per-calendar and per-event fields. Plugin jobs and settings can have effects outside Better-Cal, through what the plugin does. A plugin a key enables or configures is tied to that key until a browser enables it again: revoking the key (or `seed.php --revoke-tokens`, or the key expiring) turns the plugin off and lists it in Review, where one click turns it back on.
 
 **A key can't:**
 

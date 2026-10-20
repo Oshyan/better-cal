@@ -25,8 +25,10 @@ function dependencyGit(string $repo, array $args): string
 /** Exact exported library bytes, using attributes committed in the locked Git tree. */
 function dependencyExport(string $repo, string $commit): array
 {
-    $tmp = tempnam(sys_get_temp_dir(), 'bc-dependency-');
-    $tar = $tmp . '.tar';
+    // A private directory, so no other local user can swap the archive mid-read.
+    $dir = sys_get_temp_dir() . '/bc-dependency-' . bin2hex(random_bytes(8));
+    if (!@mkdir($dir, 0700)) { throw new RuntimeException('Cannot create a private temp directory'); }
+    $tar = $dir . '/export.tar';
     try {
         // git archive writes data only; no checkout filters, hooks or package code run.
         dependencyGit($repo, ['archive', '--format=tar', '--output=' . $tar, $commit]);
@@ -41,7 +43,7 @@ function dependencyExport(string $repo, string $commit): array
         unset($archive);
         ksort($files, SORT_STRING);
         return $files;
-    } finally { @unlink($tar); @unlink($tmp); }
+    } finally { @unlink($tar); @rmdir($dir); }
 }
 
 function verifyReleaseDependencies(string $lockPath, string $zipPath, string $cache): int

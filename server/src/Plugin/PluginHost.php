@@ -647,6 +647,17 @@ final class PluginHost
      * place on another continent. Plugins that geocode user-typed place names
      * should bias toward the region they mean.
      */
+    /**
+     * Whether a plugin may send place names or coordinates to an outside
+     * service. Off when the server's place lookup is off, and when this host
+     * was built without the server's settings: a caller that forgot them
+     * must not turn lookups back on (review of 0.9.87).
+     */
+    public function placeLookupAllowed(): bool
+    {
+        return is_array($this->cfg['places'] ?? null) && !\BetterCal\Domain\PlaceProviders::isOff($this->cfg['places'], 'lookup');
+    }
+
     public function geocode(string $query, ?float $biasLat = null, ?float $biasLng = null): ?array
     {
         try {
@@ -655,7 +666,7 @@ final class PluginHost
             // returning empty. Indexing it like a list yields null every time.
             $transport = new PoliciedGeocoderTransport($this->db);
             $hit = (new Geocode($this->db, $transport, \BetterCal\Domain\PlaceProviders::pin($this->cfg['places'] ?? [], $transport),
-                \BetterCal\Domain\PlaceProviders::isOff($this->cfg['places'] ?? [], 'lookup')))
+                !$this->placeLookupAllowed()))
                 ->lookup($query, $biasLat, $biasLng);
             return isset($hit['lat'], $hit['lng']) ? $hit : null;
         } catch (\Throwable $e) {

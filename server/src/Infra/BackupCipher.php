@@ -47,14 +47,16 @@ final class BackupCipher
         return substr(sodium_crypto_generichash($key, '', 16), 0, 8);
     }
 
-    public static function isEncrypted(string $path): bool
+    /** @param string|resource $source a path, or an open handle (rewound, left open) */
+    public static function isEncrypted(mixed $source): bool
     {
-        $fh = @fopen($path, 'rb');
+        $fh = is_resource($source) ? $source : @fopen($source, 'rb');
         if ($fh === false) {
             return false;
         }
+        if (is_resource($source)) rewind($fh);
         $head = (string) fread($fh, strlen(self::MAGIC));
-        fclose($fh);
+        if (!is_resource($source)) fclose($fh);
         return $head === self::MAGIC;
     }
 
@@ -113,14 +115,19 @@ final class BackupCipher
      * the stream ends without its final chunk, or anything follows it. Callers
      * that act on the contents run it once to the end first (DbBackup::restore).
      *
+     * $source is a path, or an open handle, which is rewound and left open.
+     *
+     * @param string|resource $source
      * @param callable(string):void $onPlain
      */
-    public static function decrypt(string $path, string $key, callable $onPlain): void
+    public static function decrypt(mixed $source, string $key, callable $onPlain): void
     {
-        $fh = @fopen($path, 'rb');
+        $path = is_resource($source) ? 'The backup' : $source;
+        $fh = is_resource($source) ? $source : @fopen($source, 'rb');
         if ($fh === false) {
             throw new \RuntimeException("Could not read $path");
         }
+        if (is_resource($source)) rewind($fh);
         try {
             $preface = (string) fread($fh, strlen(self::MAGIC) + 8 + 4);
             if (strlen($preface) !== strlen(self::MAGIC) + 12 || !str_starts_with($preface, self::MAGIC)) {
@@ -165,7 +172,7 @@ final class BackupCipher
                 }
             }
         } finally {
-            fclose($fh);
+            if (!is_resource($source)) fclose($fh);
         }
     }
 }

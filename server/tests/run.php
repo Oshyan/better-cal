@@ -8,6 +8,15 @@ declare(strict_types=1);
 require dirname(__DIR__) . '/src/bootstrap.php';
 require __DIR__ . '/credential-barriers.php';
 
+// BC_REQUIRE_LIBS=1 (the CI install job) fails at once if a library the
+// guarded blocks below need is missing, so those tests can't silently skip.
+if (getenv('BC_REQUIRE_LIBS') === '1') {
+    $missing = array_filter([\Sabre\VObject\Reader::class, \Sabre\CalDAV\Backend\AbstractBackend::class,
+        \PHPMailer\PHPMailer\PHPMailer::class, \GuzzleHttp\Client::class, \Minishlink\WebPush\WebPush::class,
+        \Webklex\PHPIMAP\Exceptions\ConnectionFailedException::class], static fn(string $c): bool => !class_exists($c));
+    if ($missing) { fwrite(STDERR, 'BC_REQUIRE_LIBS: missing ' . implode(', ', $missing) . "\n"); exit(1); }
+}
+
 // The run's error log goes to a file, printed at the end, so a database
 // error logged anywhere fails the run (#119): code under test that catches
 // a PDOException and logs it would otherwise pass while a setup is missing a
@@ -1145,6 +1154,7 @@ check('imip live event: equal sequence still allowed', $mayWhen('confirmed', 2)[
     $rdb->run("CREATE TABLE users (id INTEGER PRIMARY KEY)");
     $rdb->run("INSERT INTO users (id) VALUES (1), (2)");
     $rdb->run("CREATE TABLE review_items (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, event_id INTEGER, source_key TEXT, title TEXT, summary TEXT, payload_json TEXT, status TEXT DEFAULT 'open', created_at TEXT DEFAULT CURRENT_TIMESTAMP, decided_at TEXT)");
+$rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, message_key TEXT, sender_key TEXT, admitted_at TEXT, UNIQUE(user_id, kind, message_key))');
     $rdb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT)');
     $queue = new BetterCal\Domain\ReviewQueue($rdb, (new ReflectionClass(Events::class))->newInstanceWithoutConstructor());
     $alice = ['organizer' => ['email' => 'alice@example.com', 'name' => 'Alice'], 'sequence' => 3, 'attendees' => []];
@@ -1157,14 +1167,14 @@ check('imip live event: equal sequence still allowed', $mayWhen('confirmed', 2)[
     checkEq('review hold: equal-sequence corrections stay alongside other claims', [$equalPending, $stalePending, $first], array_column($queue->listFor(1), 'id'));
     $second = $queue->holdInviteChange(1, $stored, 'uid-1', 'CANCEL', [], ['sequence' => 4] + $alice, 'alice@example.com');
     $open = $queue->listFor(1);
-    checkEq('review hold: even a claimed cancellation leaves competing revisions visible', [$second, $equalPending, $stalePending, $first], array_column($open, 'id'));
+    checkEq('review hold: past three candidates for a meeting the newest slot follows the latest claim, and the first ones stay', [[$equalPending, $stalePending, $first], $equalPending], [array_column($open, 'id'), $second]);
     checkEq('review hold: summary names who and what', 'Alice cancelled this.', $open[0]['summary']);
-    checkEq('review hold: another meeting is its own item', 5, count((function () use ($queue, $stored, $same, $alice) {
+    checkEq('review hold: another meeting is its own item', 4, count((function () use ($queue, $stored, $same, $alice) {
         $queue->holdInviteChange(1, ['id' => 41] + $stored, 'uid-2', 'REQUEST', ['title' => 'Planning lunch'] + $same, $alice, 'alice@example.com');
         return $queue->listFor(1);
     })()));
     checkEq('review hold: another user sees none of it', [], $queue->listFor(2));
-    checkEq('review count', 5, $queue->openCount(1));
+    checkEq('review count', 4, $queue->openCount(1));
     $dismissed = $queue->dismiss(1, $second);
     checkEq('review dismiss: closes the item', 'dismissed', $dismissed['status']);
     checkEq('review dismiss: leaves a trace in Activity', 'Dismissed an emailed cancellation of "Planning dinner"', $rdb->scalar("SELECT summary FROM mutations WHERE op = 'refuse'"));
@@ -1180,7 +1190,7 @@ check('imip live event: equal sequence still allowed', $mayWhen('confirmed', 2)[
     } catch (HttpError $e) {
         checkEq('review: another user\'s item is a 404, not a 403 (no existence leak)', 404, $e->status);
     }
-    checkEq('review list all: competing and decided items show', ['open', 'dismissed', 'open', 'open', 'open'], array_column($queue->listFor(1, false), 'status'));
+    checkEq('review list all: competing and decided items show', ['open', 'dismissed', 'open', 'open'], array_column($queue->listFor(1, false), 'status'));
 
     $legacyHigh = $queue->holdInviteChange(2, $stored, 'legacy-uid', 'REQUEST', ['location' => 'Forged place'] + $same,
         ['organizer' => ['email' => 'mallory@example.test'], 'sequence' => 999], 'mallory@example.test', false);
@@ -1201,6 +1211,19 @@ check('imip live event: equal sequence still allowed', $mayWhen('confirmed', 2)[
         $queue->openCount(2, BetterCal\Domain\ReviewQueue::KIND_INVITE_CHANGE),
         $queue->openCount(2, BetterCal\Domain\ReviewQueue::KIND_MAIL_LIMIT),
     ]);
+    Limits::reset();
+    // Held changes have their own daily limits (review of 0.9.87): knowing a
+    // UID and its organizer's address must not fill the Review ceiling.
+    Limits::configure(['MAIL_EVENTS_PER_SENDER_DAY' => 2]);
+    $rdb->run('INSERT INTO users (id) VALUES (3)');
+    $carol = ['organizer' => ['email' => 'carol@example.com'], 'sequence' => 1, 'attendees' => []];
+    $throttled = [];
+    foreach (['t-1', 't-2', 't-3'] as $n => $tuid) {
+        $throttled[] = $queue->holdInviteChange(3, ['id' => 60 + $n] + $stored, $tuid, 'REQUEST', ['location' => 'Spoofed ' . $n] + $same, $carol, 'carol@example.com');
+    }
+    check('review hold: a sender over its daily limit holds no more changes', is_int($throttled[0]) && is_int($throttled[1]) && $throttled[2] === null);
+    checkEq('review hold: the limit is one counted notice', 1, (int) $rdb->scalar("SELECT COUNT(*) FROM review_items WHERE user_id = 3 AND kind = 'mail_limit' AND source_key = 'change_sender_day' AND status = 'open'"));
+    check('review hold: another sender still gets through', is_int($queue->holdInviteChange(3, ['id' => 70] + $stored, 't-4', 'REQUEST', ['location' => 'Real change'] + $same, ['organizer' => ['email' => 'bo@example.com']] + $carol, 'bo@example.com')));
     Limits::reset();
 
     $newFields = [
@@ -1461,6 +1484,44 @@ check('imip live event: equal sequence still allowed', $mayWhen('confirmed', 2)[
     check('cancellation: the removal is an ordinary delete in Activity, with a snapshot to undo',
         $adb->scalar("SELECT before_json FROM mutations WHERE entity_id = ? AND op = 'delete' ORDER BY id DESC LIMIT 1", [$cancelEventId]) !== null);
     $adb->run('UPDATE users SET settings_json = ? WHERE id = 1', [$priorSettings]);
+
+    // One occurrence (RECURRENCE-ID) never changes the whole series (review of
+    // 0.9.87): a cancellation skips that occurrence once accepted; a move is
+    // shown for the owner to make by hand.
+    $weekly = ['title' => 'Weekly sync', 'start' => '2026-11-02T18:00:00+00:00', 'end' => '2026-11-02T19:00:00+00:00', 'rrule' => 'FREQ=WEEKLY'] + $fieldsA;
+    $seriesId = (int) $queueA->accept(1, $queueA->holdNewInvitation(1, 'series-uid', $weekly, $cancelInvite, 'alice@example.test'))['eventId'];
+    $occurrenceEv = ['uid' => 'series-uid', 'title' => 'Weekly sync', 'start_utc' => '2026-11-09 18:00:00', 'end_utc' => '2026-11-09 19:00:00',
+        'all_day' => false, 'tzid' => 'UTC', 'location' => 'Cafe', 'description' => null, 'rrule' => null, 'status' => 'confirmed',
+        'recurrence_instance_utc' => '2026-11-09 18:00:00', 'invite' => ['method' => 'CANCEL', 'sequence' => 2] + $cancelInvite];
+    $occMsg = ['messageId' => 'occ@example.test', 'subject' => 'Cancelled: Weekly sync', 'from' => 'alice@example.test'];
+    $occCancel = $applyA->invoke($mailA, 1, 'CANCEL', $occurrenceEv, 'UTC', $occMsg);
+    $occCancelItem = (int) $adb->scalar("SELECT id FROM review_items WHERE kind = 'invite_change' AND event_id = ? AND status = 'open' ORDER BY id DESC LIMIT 1", [$seriesId]);
+    checkEq('one occurrence: a cancellation is held, names the day, and leaves the series alone', ['held', 'tentative', true], [
+        $occCancel[0], $adb->scalar('SELECT status FROM events WHERE id = ?', [$seriesId]),
+        str_contains((string) $adb->scalar('SELECT summary FROM review_items WHERE id = ?', [$occCancelItem]), 'Mon 9 Nov 2026 occurrence'),
+    ]);
+    if (class_exists(\Sabre\VObject\Reader::class)) { // skipping an occurrence proves it through sabre/vobject
+        $queueA->accept(1, $occCancelItem);
+        checkEq('one occurrence: accepting the cancellation skips just that occurrence', [['2026-11-09 18:00:00'], 'tentative', 'FREQ=WEEKLY'], [
+            BetterCal\Domain\Recurrence::decodeExdates($adb->scalar('SELECT exdates_json FROM events WHERE id = ?', [$seriesId])),
+            $adb->scalar('SELECT status FROM events WHERE id = ?', [$seriesId]),
+            $adb->scalar('SELECT rrule FROM events WHERE id = ?', [$seriesId]),
+        ]);
+        checkEq('one occurrence: cancelling an already skipped occurrence holds nothing', ['unchanged'],
+            [$applyA->invoke($mailA, 1, 'CANCEL', ['invite' => ['method' => 'CANCEL', 'sequence' => 3] + $cancelInvite] + $occurrenceEv, 'UTC', $occMsg)[0]]);
+    }
+    $moved = ['start_utc' => '2026-11-17 20:00:00', 'end_utc' => '2026-11-17 21:00:00', 'recurrence_instance_utc' => '2026-11-16 18:00:00',
+        'location' => 'Library', 'invite' => ['method' => 'REQUEST', 'sequence' => 3] + $cancelInvite] + $occurrenceEv;
+    $occMove = $applyA->invoke($mailA, 1, 'REQUEST', $moved, 'UTC', ['messageId' => 'occ2@example.test'] + $occMsg);
+    $occMoveItem = (int) $adb->scalar("SELECT id FROM review_items WHERE kind = 'invite_change' AND event_id = ? AND status = 'open' ORDER BY id DESC LIMIT 1", [$seriesId]);
+    $manual = null;
+    try { $queueA->accept(1, $occMoveItem); } catch (HttpError $e) { $manual = $e->errorCode; }
+    checkEq('one occurrence: a moved occurrence is shown, not applied to the series', ['held', 'review_manual', '2026-11-02 18:00:00', 'Cafe'], [
+        $occMove[0], $manual, $adb->scalar('SELECT start_utc FROM events WHERE id = ?', [$seriesId]), $adb->scalar('SELECT location FROM events WHERE id = ?', [$seriesId]),
+    ]);
+    checkEq('one occurrence: the change lists what moved for that day', ['Starts', 'Ends', 'Location'],
+        array_column(BetterCal\Domain\ReviewQueue::occurrenceDiff($adb->one('SELECT * FROM events WHERE id = ?', [$seriesId]), '2026-11-16 18:00:00', 'REQUEST',
+            ['title' => 'Weekly sync', 'start' => '2026-11-17T20:00:00+00:00', 'end' => '2026-11-17T21:00:00+00:00', 'allDay' => false, 'location' => 'Library', 'description' => null]), 'label'));
 
     // Where an event's coordinates came from (migration 048).
     $prov = static fn(int $id): array => $adb->one('SELECT location_source AS s, location_provider AS p, location_placed_at IS NOT NULL AS t FROM events WHERE id = ?', [$id]);
@@ -4903,6 +4964,10 @@ if (class_exists(\Sabre\CalDAV\Backend\AbstractBackend::class)) {
         $putConflict = true;
     }
     check('dav move guard: PUT reports temporary conflict before changing rows', $putConflict);
+    $moveDavDb->run('ALTER TABLE events ADD COLUMN updated_at TEXT');
+    $moveDavDb->run("INSERT INTO events (id, calendar_id, uid, updated_at) VALUES (5, 1, 'listed', '2026-01-01 00:00:00')");
+    checkEq('dav listing names its calendar, so Sabre\'s calendar-query can fetch each body', [1],
+        array_column($moveDav->getCalendarObjects(1), 'calendarid'));
 }
 
 // ---------------------------------------------------------------------------
@@ -5256,6 +5321,17 @@ checkEq(
     'account@example.com',
     Settings::notifyDestination(Settings::withDefaults([]), 'account@example.com')
 );
+// Security notices go only where the owner set things up (review of 0.9.87):
+// a key that chose the channel, an address and a push device gets none of it.
+[$secSettings, $secRows] = BetterCal\Infra\Notifier::ownerOnly(
+    Settings::withDefaults(['notifyChannel' => 'email', 'notifyEmail' => 'key-holder@example.com', 'notifyEmailToken' => 7]),
+    [['id' => 1, 'created_by_token_id' => null], ['id' => 2, 'created_by_token_id' => 7]]
+);
+checkEq('security notice: both channels, the account address, browser push devices only',
+    ['both', 'account@example.com', [1]],
+    [$secSettings['notifyChannel'], Settings::notifyDestination($secSettings, 'account@example.com'), array_column($secRows, 'id')]);
+[$secSettings] = BetterCal\Infra\Notifier::ownerOnly(Settings::withDefaults(['notifyEmail' => 'inbox@example.com']), []);
+checkEq('security notice: an address the owner set in the browser is kept', 'inbox@example.com', Settings::notifyDestination($secSettings, 'account@example.com'));
 
 // Push subscription validation.
 $psub = PushSubscriptions::validate([
@@ -7209,6 +7285,10 @@ checkEq('google sync: without a synctoken the poll applies as before', false,
         $blockedCode = $e->errorCode;
     }
     checkEq('subscription authority: the poll sink refuses before fetching an expired-token feed', 'subscription_authorization_revoked', $blockedCode);
+    $sdb->run('CREATE TABLE plugins (id TEXT PRIMARY KEY, enabled INTEGER, disabled_reason TEXT, changed_by_token_id INTEGER)');
+    $sdb->run('CREATE TABLE jobs (id INTEGER PRIMARY KEY, type TEXT, payload_json TEXT, status TEXT, last_error TEXT)');
+    $sdb->run("INSERT INTO plugins VALUES ('by-key', 1, NULL, 1), ('by-browser', 1, NULL, NULL), ('other-key', 1, NULL, 3), ('off-by-key', 0, 'Turned off by the owner', 1)");
+    $sdb->run("INSERT INTO jobs (type, payload_json, status) VALUES ('plugin_job', '{\"plugin\":\"by-key\"}', 'pending'), ('plugin_job', '{\"plugin\":\"by-browser\"}', 'pending')");
     $impact = (new BetterCal\Domain\ApiTokens($sdb))->revokeWithImpact(1, 1);
     checkEq('subscription authority: revocation reports one paused subscription and preserves its calendar', [1, 1], [
         $impact['subscriptionsPaused'],
@@ -7216,6 +7296,21 @@ checkEq('google sync: without a synctoken the poll applies as before', false,
     ]);
     checkEq('subscription authority: the same row becomes paused as soon as its token is gone', 'paused',
         BetterCal\Domain\SubscriptionAuthority::describe($sdb, $sdb->one('SELECT * FROM calendars WHERE id = 2'))['status']);
+    checkEq('plugin authority: revoking a key turns off only the plugins it enabled or configured', ['by-key'], $impact['pluginsDisabled']);
+    checkEq('plugin authority: state after revocation', [
+        ['id' => 'by-browser', 'enabled' => 1, 'disabled_reason' => null, 'changed_by_token_id' => null],
+        ['id' => 'by-key', 'enabled' => 0, 'disabled_reason' => BetterCal\Domain\Plugins::TOKEN_REVOKED, 'changed_by_token_id' => null],
+        ['id' => 'off-by-key', 'enabled' => 0, 'disabled_reason' => 'Turned off by the owner', 'changed_by_token_id' => null],
+        ['id' => 'other-key', 'enabled' => 1, 'disabled_reason' => null, 'changed_by_token_id' => 3],
+    ], array_map(static fn(array $r): array => array_map(static fn($v) => is_numeric($v) ? (int) $v : $v, $r), $sdb->all('SELECT * FROM plugins ORDER BY id')));
+    checkEq('plugin authority: the turned-off plugin\'s waiting jobs are cancelled, others keep theirs', ['failed', 'pending'],
+        array_column($sdb->all('SELECT status FROM jobs ORDER BY id'), 'status'));
+    $sdb->run('ALTER TABLE plugins ADD COLUMN settings_json TEXT');
+    $sdb->run("INSERT INTO plugins (id, enabled, changed_by_token_id) VALUES ('sample-secret', 1, 2)");
+    $expiredRun = (new BetterCal\Domain\Plugins($sdb, __DIR__ . '/fixtures/credential-plugins', ['session_secret' => 'synthetic-secret']))->runJob(1, 'sample-secret', 'refresh');
+    checkEq('plugin authority: a plugin whose key expired is turned off at its next run, not run', ['error', 0, BetterCal\Domain\Plugins::TOKEN_REVOKED], [
+        $expiredRun['outcome'], (int) $sdb->scalar("SELECT enabled FROM plugins WHERE id = 'sample-secret'"), $sdb->scalar("SELECT disabled_reason FROM plugins WHERE id = 'sample-secret'"),
+    ]);
 }
 
 // --- Password reset ends the sessions opened under the old password (BC-21) ---
@@ -7233,6 +7328,9 @@ checkEq('google sync: without a synctoken the poll applies as before', false,
     $pdb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, provider TEXT, source_url TEXT, subscription_authority TEXT, created_by_token_id INTEGER, google_account_id INTEGER, google_access_role TEXT, last_poll_status TEXT, last_poll_error TEXT)');
     davJournal($pdb);
     $pdb->run('CREATE TABLE calendar_moves (id INTEGER PRIMARY KEY, user_id INTEGER, status TEXT, cancelled_at TEXT, finished_at TEXT, error TEXT)');
+    $pdb->run('CREATE TABLE plugins (id TEXT PRIMARY KEY, enabled INTEGER, disabled_reason TEXT, changed_by_token_id INTEGER)');
+    $pdb->run('CREATE TABLE jobs (id INTEGER PRIMARY KEY, type TEXT, payload_json TEXT, status TEXT, last_error TEXT)');
+    $pdb->run("INSERT INTO plugins VALUES ('owner-key', 1, NULL, 2), ('other-user-key', 1, NULL, 3)");
     $pdb->run("INSERT INTO push_subscriptions (user_id, endpoint) VALUES (1, 'https://fcm.googleapis.com/a'), (1, 'https://attacker.example/b'), (2, 'https://fcm.googleapis.com/c')");
     $resetSecret = str_repeat('r', 32);
     $ownerFeedBefore = BetterCal\Infra\FeedCredentials::protectOutboundToken('feed-one', $resetSecret);
@@ -7360,6 +7458,9 @@ checkEq('google sync: without a synctoken the poll applies as before', false,
     checkEq('reset --revoke-tokens: another user\'s feed keeps its address verifier', $otherFeedBefore['hash'], $pdb->scalar('SELECT token FROM out_feeds WHERE user_id = 2'));
     check('reset --revoke-tokens: a foreign reminder address is cleared (F6)', $revoked['notifyEmailReset'] && json_decode((string) $pdb->scalar('SELECT settings_json FROM users WHERE id = 1'), true)['notifyEmail'] === null);
     checkEq('reset --revoke-tokens: another user\'s token is untouched', 1, (int) $pdb->scalar('SELECT COUNT(*) FROM api_tokens WHERE user_id = 2'));
+    checkEq('reset --revoke-tokens: plugins the owner\'s keys enabled are turned off, others stay', [1, [['enabled' => 1], ['enabled' => 0]]], [
+        $revoked['pluginsDisabled'], array_map(static fn(array $r): array => ['enabled' => (int) $r['enabled']], $pdb->all('SELECT enabled FROM plugins ORDER BY id')),
+    ]);
     checkEq('reset --revoke-tokens: Google connections are quarantined and reported', [1, true, 'error'], [
         $revoked['googleAccounts'],
         $pdb->scalar('SELECT reauth_required_at FROM google_accounts WHERE id = 1') !== null,
@@ -7380,6 +7481,32 @@ checkEq('google sync: without a synctoken the poll applies as before', false,
         $pdb->scalar('SELECT reauth_required_at FROM google_accounts WHERE id = 2'),
         $pdb->scalar('SELECT google_access_role FROM calendars WHERE id = 2'),
         $pdb->scalar('SELECT cancelled_at FROM calendar_moves WHERE id = 4'),
+    ]);
+
+    // In-app change password (review of 0.9.87): current password required,
+    // this exact session still live, every browser out, keys only on request.
+    $pdb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT)');
+    $mine = $pauth->login('owner@example.com', 'newer-password');
+    $pauth->login('owner@example.com', 'newer-password');
+    $pdb->run("INSERT INTO api_tokens (user_id, token_hash) VALUES (1, 'kept')");
+    checkEq('change password: a wrong current password changes nothing', [null, 2], [
+        $pauth->changePassword(1, $mine['token'], 'not-it', 'changed-password', false),
+        (int) $pdb->scalar('SELECT COUNT(*) FROM sessions WHERE user_id = 1'),
+    ]);
+    checkEq('change password: an ended session cannot change it', null, $pauth->changePassword(1, 'gone-session', 'newer-password', 'changed-password', false));
+    $changed = $pauth->changePassword(1, $mine['token'], 'newer-password', 'changed-password', false);
+    checkEq('change password: every browser is signed out, API keys stay unless asked', [2, 0, 0, 1], [
+        $changed['sessions'], $changed['tokens'],
+        (int) $pdb->scalar('SELECT COUNT(*) FROM sessions WHERE user_id = 1'),
+        (int) $pdb->scalar('SELECT COUNT(*) FROM api_tokens WHERE user_id = 1'),
+    ]);
+    check('change password: the new password signs in and the Activity entry says so',
+        $pauth->login('owner@example.com', 'changed-password') !== null
+        && str_starts_with((string) $pdb->scalar('SELECT summary FROM mutations ORDER BY id DESC LIMIT 1'), 'Password changed: every browser signed out'));
+    $again = $pauth->login('owner@example.com', 'changed-password');
+    $everything = $pauth->changePassword(1, $again['token'], 'changed-password', 'changed-again', true);
+    checkEq('change password: sign out everything also revokes keys', [1, 0], [
+        $everything['tokens'], (int) $pdb->scalar('SELECT COUNT(*) FROM api_tokens WHERE user_id = 1'),
     ]);
 }
 
@@ -7663,6 +7790,16 @@ checkEq('google sync: without a synctoken the poll applies as before', false,
         $refused = $e->getMessage();
     }
     check('sign out elsewhere: refused to an API token', $refused !== null);
+    $tokReq = new BetterCal\Http\Request('POST', '/api/v1/auth/change-password', [], [], ['currentPassword' => 'x', 'newPassword' => 'new-password'], []);
+    $tokReq->user = ['id' => 1, 'email' => 'owner@example.com'];
+    $tokReq->authMethod = 'token';
+    $refusedCode = null;
+    try {
+        $octl->changePassword($tokReq);
+    } catch (BetterCal\Http\HttpError $e) {
+        $refusedCode = $e->errorCode;
+    }
+    checkEq('change password: refused to an API token', 'session_required', $refusedCode);
 }
 
 // --- Phase 13: bearer credentials do not inherit browser-only capabilities ---
@@ -9634,6 +9771,28 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
         $z->close();
         BetterCal\Support\Limits::configure(['TAKEOUT_FILES' => $keepFiles]);
         unlink($zpath);
+        // A header that understates an entry's size (review of 0.9.87): the
+        // budget is spent on bytes actually inflated, not on what was claimed.
+        $lie = sys_get_temp_dir() . '/bc-ziplie-' . bin2hex(random_bytes(3)) . '.zip';
+        $z->open($lie, ZipArchive::CREATE | ZipArchive::OVERWRITE);
+        foreach (['a', 'b'] as $n) $z->addFromString("$n.ics", "BEGIN:VCALENDAR\n" . str_repeat("X-PAD:x\n", 1000) . "END:VCALENDAR\n");
+        $z->close();
+        $bytes = (string) file_get_contents($lie);
+        foreach (["PK\x01\x02" => 24, "PK\x03\x04" => 22] as $sig => $at) {
+            for ($o = strpos($bytes, $sig); $o !== false; $o = strpos($bytes, $sig, $o + 4)) $bytes = substr_replace($bytes, pack('V', 10), $o + $at, 4);
+        }
+        file_put_contents($lie, $bytes);
+        $keepTotal = BetterCal\Support\Limits::get('TAKEOUT_TOTAL_BYTES');
+        BetterCal\Support\Limits::configure(['TAKEOUT_TOTAL_BYTES' => 12000]);
+        $z->open($lie, ZipArchive::RDONLY);
+        $entries = $CI::icsEntries($z);
+        checkEq('zip import: the lying headers pass the declared-size check', 2, count($entries));
+        $threw = null;
+        try { $CI::preflightEvents($z, $entries); } catch (BetterCal\Http\HttpError $e) { $threw = $e->getMessage(); }
+        check('zip import: bytes actually inflated spend the budget, whatever the header claimed', str_contains((string) $threw, 'too much expanded data'));
+        $z->close();
+        BetterCal\Support\Limits::configure(['TAKEOUT_TOTAL_BYTES' => $keepTotal]);
+        unlink($lie);
     }
 }
 
@@ -9880,14 +10039,44 @@ check('access code: process/security regression suite', $accessStatus === 0, $ac
     $lines = [];
     $each = new ReflectionMethod(BetterCal\Infra\DbBackup::class, 'eachLine');
     $dbb = new BetterCal\Infra\DbBackup(new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]), $key);
-    $each->invoke($dbb, $converted, static function (string $l) use (&$lines): void { $lines[] = $l; });
+    $fh = fopen($converted, 'rb');
+    $each->invoke($dbb, $fh, static function (string $l) use (&$lines): void { $lines[] = $l; });
+    fclose($fh);
     checkEq('backup: restore reads an encrypted backup line by line', explode("\n", rtrim($sql, "\n")), $lines);
     BetterCal\Infra\DbBackup::decryptFile($converted, $key, "$tmp/out.sql.gz");
     checkEq('backup: --decrypt gives back a plain .sql.gz', $sql, gzdecode((string) file_get_contents("$tmp/out.sql.gz")));
     file_put_contents("$tmp/db-plain.sql.gz", gzencode($sql));
     $lines = [];
-    $each->invoke($dbb, "$tmp/db-plain.sql.gz", static function (string $l) use (&$lines): void { $lines[] = $l; });
+    $fh = fopen("$tmp/db-plain.sql.gz", 'rb');
+    $each->invoke($dbb, $fh, static function (string $l) use (&$lines): void { $lines[] = $l; });
+    fclose($fh);
     checkEq('backup: and still reads a plain one', 5, count($lines));
+    $plainRefusal = '';
+    try { $dbb->restore("$tmp/db-plain.sql.gz"); } catch (RuntimeException $e) { $plainRefusal = $e->getMessage(); }
+    check('backup: restore asks before using an unencrypted backup', str_contains($plainRefusal, 'unencrypted backup') && str_contains($plainRefusal, 'nothing was changed'));
+    symlink("$tmp/db-plain.sql.gz", "$tmp/db-link.sql.gz");
+    $linkRefusal = '';
+    try { BetterCal\Infra\PrivatePath::open("$tmp/db-link.sql.gz", true); } catch (RuntimeException $e) { $linkRefusal = $e->getMessage(); }
+    check('backup: restore refuses a link in place of the backup', str_contains($linkRefusal, 'symbolic links'));
+    link("$tmp/db-plain.sql.gz", "$tmp/db-hard.sql.gz");
+    $hardRefusal = '';
+    try { BetterCal\Infra\PrivatePath::open("$tmp/db-plain.sql.gz", true); } catch (RuntimeException $e) { $hardRefusal = $e->getMessage(); }
+    check('backup: restore refuses a hard-linked backup', str_contains($hardRefusal, 'hard links'));
+    unlink("$tmp/db-hard.sql.gz"); unlink("$tmp/db-link.sql.gz");
+    $opened = BetterCal\Infra\PrivatePath::open("$tmp/db-plain.sql.gz", true);
+    rename("$tmp/db-plain.sql.gz", "$tmp/db-moved.sql.gz");
+    file_put_contents("$tmp/db-plain.sql.gz", gzencode("-- Better-Cal database backup\n-- tables: a\nDROP TABLE a;\n-- end\n"));
+    $lines = [];
+    $each->invoke($dbb, $opened, static function (string $l) use (&$lines): void { $lines[] = $l; });
+    fclose($opened);
+    checkEq('backup: a file swapped in after opening is never read', 5, count($lines));
+    $groupOpen = ['mode' => 040775, 'gid' => 50, 'uid' => 1000];
+    checkEq('backup: a group-writable parent is trusted for its own group, refused for another, and refused for restore without POSIX', [false, true, false, true], [
+        BetterCal\Infra\PrivatePath::parentOpen($groupOpen, 50, 1000),
+        BetterCal\Infra\PrivatePath::parentOpen($groupOpen, 60, 1000),
+        BetterCal\Infra\PrivatePath::parentOpen($groupOpen, null, 1000),
+        BetterCal\Infra\PrivatePath::parentOpen($groupOpen, null, 1000, true),
+    ]);
 
     // The update record, the copies beside the app, and converting all of it.
     $parent = "$tmp/sites";

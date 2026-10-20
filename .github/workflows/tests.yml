@@ -74,6 +74,8 @@ jobs:
         working-directory: server
         run: composer audit --no-dev --locked
       - name: Server tests with the installed libraries
+        env:
+          BC_REQUIRE_LIBS: '1'
         run: php server/tests/run.php
       - name: Release trust-boundary tests (offline fixtures, no signing key)
         run: bash scripts/tests/release-security.sh

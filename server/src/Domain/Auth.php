@@ -163,6 +163,7 @@ final class Auth
             $subscriptionsPaused = $browserPaused;
             $googleAccounts = 0;
             $googleMoves = 0;
+            $plugins = [];
             if ($revokeTokens) {
                 $subscriptionsPaused += (int) $this->db->scalar(
                     "SELECT COUNT(*) FROM calendars c JOIN api_tokens t ON t.id = c.created_by_token_id
@@ -170,6 +171,9 @@ final class Auth
                        AND COALESCE(c.provider, 'ics') = 'ics' AND c.subscription_authority = 'token'",
                     [$userId, $userId]
                 );
+                foreach ($this->db->all('SELECT id FROM api_tokens WHERE user_id = ?', [$userId]) as $token) {
+                    array_push($plugins, ...Plugins::disableForRevokedToken($this->db, (int) $token['id']));
+                }
                 $tokens = $this->db->run('DELETE FROM api_tokens WHERE user_id = ?', [$userId])->rowCount();
                 foreach ($this->db->all('SELECT id FROM out_feeds WHERE user_id = ?', [$userId]) as $f) {
                     $protected = FeedCredentials::protectOutboundToken(
@@ -230,8 +234,46 @@ final class Auth
                     ['Google access was paused by the account compromise reset; reconnect under Settings, Connections.', $userId]
                 );
             }
-            return ['sessions' => $sessions, 'tokens' => $tokens, 'pushDevices' => $push, 'trustedDevices' => $devices, 'feedsRotated' => $feeds, 'notifyEmailReset' => $emailReset, 'subscriptionsPaused' => $subscriptionsPaused, 'googleAccounts' => $googleAccounts, 'googleMoves' => $googleMoves];
+            return ['sessions' => $sessions, 'tokens' => $tokens, 'pushDevices' => $push, 'trustedDevices' => $devices, 'feedsRotated' => $feeds, 'notifyEmailReset' => $emailReset, 'subscriptionsPaused' => $subscriptionsPaused, 'googleAccounts' => $googleAccounts, 'googleMoves' => $googleMoves, 'pluginsDisabled' => count($plugins)];
         });
+    }
+
+    /**
+     * Change the password from a signed-in browser, ending every session
+     * (this one included; the caller signs it in again). With $everything,
+     * the same as seed.php --revoke-tokens: API keys, feed addresses, a
+     * custom reminder address and Google access go too. The fallback for
+     * when Sign out everywhere else isn't enough (review of 0.9.87).
+     *
+     * Null when the current password is wrong or changed meanwhile, or this
+     * session already ended.
+     */
+    public function changePassword(int $userId, ?string $session, string $current, string $new, bool $everything): ?array
+    {
+        $hash = $this->db->scalar('SELECT password_hash FROM users WHERE id = ?', [$userId]);
+        if (!is_string($hash) || !password_verify($current, $hash)) {
+            return null;
+        }
+        $out = $this->db->tx(function () use ($userId, $session, $hash, $new, $everything): ?array {
+            if (!RequestAuthority::passwordStillCurrent($this->db, $userId, $hash)) return null;
+            try {
+                self::assertSession($this->db, $userId, $session, true);
+            } catch (HttpError) {
+                return null;
+            }
+            return $this->setPassword($userId, $new, $everything);
+        });
+        if ($out !== null) {
+            $parts = ['every browser signed out'];
+            if ($everything) {
+                $parts[] = $out['tokens'] . ' API key' . ($out['tokens'] === 1 ? '' : 's') . ' revoked';
+                $parts[] = $out['feedsRotated'] . ' public feed URL' . ($out['feedsRotated'] === 1 ? '' : 's') . ' changed';
+                if ($out['googleAccounts'] > 0) $parts[] = $out['googleAccounts'] . ' Google connection' . ($out['googleAccounts'] === 1 ? '' : 's') . ' paused';
+            }
+            (new Undo($this->db))->record($userId, 'system', 0, 'delete', null, null,
+                'Password changed: ' . implode(', ', $parts), $out);
+        }
+        return $out;
     }
 
     /** Verify the current user's password and refresh only this browser session's step-up time. */

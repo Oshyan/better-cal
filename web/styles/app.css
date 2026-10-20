@@ -1456,6 +1456,10 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-tokens-revoke { color: var(--danger); padding: 0; }
 .bc-tokens-new { display: inline-flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .bc-tokens-new input { min-width: 260px; }
+.bc-change-password { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; max-width: 520px; }
+.bc-change-password label { display: flex; flex-direction: column; gap: 4px; }
+.bc-change-password label:has(input[type="checkbox"]) { flex-direction: row; align-items: flex-start; gap: 8px; }
+.bc-change-password input[type="password"] { min-width: 260px; }
 .bc-tokens-fresh { display: inline-flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .bc-tokens-value { font-family: var(--mono); font-size: 12.5px; background: var(--bg-inset); border-radius: 4px; padding: 2px 6px; user-select: all; word-break: break-all; }
 .bc-sys-ok { color: var(--fg-muted); }

@@ -457,7 +457,11 @@ final class Plugins
         return $out;
     }
 
-    public function enable(string $id): void
+    /** disabled_reason when revoking an API key turned the plugin off; Review lists these. */
+    public const TOKEN_REVOKED = 'Turned off because the API key that enabled or configured it was revoked or expired.';
+
+    /** $tokenId: the API key doing this, or null from a browser (which clears any earlier key). */
+    public function enable(string $id, ?int $tokenId = null): void
     {
         $m = $this->manifest($id);
         if ($m === null) {
@@ -476,16 +480,16 @@ final class Plugins
             );
         }
         $this->db->run(
-            'INSERT INTO plugins (id, version, enabled, consecutive_failures, disabled_reason)
-             VALUES (?, ?, 1, 0, NULL)
-             ON DUPLICATE KEY UPDATE enabled = 1, version = VALUES(version), consecutive_failures = 0, disabled_reason = NULL',
-            [$id, (string) $m['version']]
+            'INSERT INTO plugins (id, version, enabled, consecutive_failures, disabled_reason, changed_by_token_id)
+             VALUES (?, ?, 1, 0, NULL, ?)
+             ON DUPLICATE KEY UPDATE enabled = 1, version = VALUES(version), consecutive_failures = 0, disabled_reason = NULL, changed_by_token_id = VALUES(changed_by_token_id)',
+            [$id, (string) $m['version'], $tokenId]
         );
     }
 
     public function disable(string $id, ?string $reason = null): void
     {
-        $this->db->run('UPDATE plugins SET enabled = 0, disabled_reason = ? WHERE id = ?', [$reason, $id]);
+        $this->db->run('UPDATE plugins SET enabled = 0, disabled_reason = ?, changed_by_token_id = NULL WHERE id = ?', [$reason, $id]);
         $this->cancelPendingJobs($id, 'cancelled because the plugin was disabled');
     }
 
@@ -718,6 +722,7 @@ final class Plugins
                 'UPDATE plugins SET settings_json = ? WHERE id = ?',
                 [json_encode($merged), $id]
             );
+            $this->markTokenChange($id, $authority);
             return $this->publicValues($id, 'settings', $merged);
         });
     }
@@ -742,8 +747,56 @@ final class Plugins
             $all = is_string($raw) ? (json_decode($raw, true) ?: []) : [];
             $all['plugins'][$id] = $this->sealValues($id, 'calendarSettings', array_merge($all['plugins'][$id] ?? [], $clean));
             $this->db->run('UPDATE calendars SET settings_json = ? WHERE id = ?', [json_encode($all), $calendarId]);
+            $this->markTokenChange($id, $authority);
             return $this->publicValues($id, 'calendarSettings', $all['plugins'][$id]);
         });
+    }
+
+    /**
+     * A key that changes what a plugin does owns it until a browser enables it
+     * again: revoking that key turns the plugin off (review of 0.9.87).
+     */
+    private function markTokenChange(string $id, ?RequestAuthority $authority): void
+    {
+        $tokenId = $authority?->tokenId();
+        if ($tokenId !== null) {
+            $this->db->run('UPDATE plugins SET changed_by_token_id = ? WHERE id = ?', [$tokenId, $id]);
+        }
+    }
+
+    /**
+     * Turn off the plugins a revoked key enabled or configured. Runs inside
+     * the revocation's transaction, so no job starts under a key that is gone.
+     *
+     * @return list<string> plugin ids turned off
+     */
+    public static function disableForRevokedToken(Db $db, int $tokenId): array
+    {
+        $ids = array_map('strval', array_column($db->all('SELECT id FROM plugins WHERE enabled = 1 AND changed_by_token_id = ?', [$tokenId]), 'id'));
+        // disabled_reason first: MySQL assigns left to right and would see enabled = 0.
+        $db->run('UPDATE plugins SET disabled_reason = CASE WHEN enabled = 1 THEN ? ELSE disabled_reason END, enabled = 0, changed_by_token_id = NULL WHERE changed_by_token_id = ?', [self::TOKEN_REVOKED, $tokenId]);
+        if ($ids !== []) {
+            $extract = $db->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'sqlite'
+                ? "JSON_EXTRACT(payload_json, '$.plugin')"
+                : "JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.plugin'))";
+            $marks = implode(',', array_fill(0, count($ids), '?'));
+            $db->run(
+                "UPDATE jobs SET status = 'failed', last_error = ? WHERE type = 'plugin_job' AND status = 'pending' AND $extract IN ($marks)",
+                ['cancelled because the API key that enabled the plugin was revoked', ...$ids]
+            );
+        }
+        return $ids;
+    }
+
+    /** Plugins revoking a key turned off, for Review: [{id, name}]. */
+    public function turnedOffByRevokedKey(): array
+    {
+        $out = [];
+        foreach ($this->db->all('SELECT id FROM plugins WHERE enabled = 0 AND disabled_reason = ?', [self::TOKEN_REVOKED]) as $r) {
+            $m = $this->manifest((string) $r['id']);
+            if ($m !== null) $out[] = ['id' => (string) $r['id'], 'name' => (string) ($m['name'] ?? $r['id'])];
+        }
+        return $out;
     }
 
     // ---- execution ------------------------------------------------------
@@ -770,6 +823,13 @@ final class Plugins
         $m = $this->manifest($id);
         if ($state === null || $m === null) {
             return ['outcome' => 'error', 'error' => 'plugin not enabled or invalid'];
+        }
+        // A key can also stop being valid without a revocation (it expired):
+        // the plugin it enabled stops the same way, on its next run.
+        $tokenId = $state['changed_by_token_id'] ?? null;
+        if ($tokenId !== null && !ApiTokens::stillValid($this->db, (int) $tokenId)) {
+            $this->db->tx(fn() => self::disableForRevokedToken($this->db, (int) $tokenId));
+            return ['outcome' => 'error', 'error' => 'plugin turned off: the API key that enabled it is no longer valid'];
         }
         $instance = $this->load($id);
         if ($instance === null) {

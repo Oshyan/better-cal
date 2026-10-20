@@ -529,6 +529,7 @@ final class Updates
                 'Update to version ' . $floor . ' or newer. Open Better-Cal for the release link and instructions.',
                 '/settings/about',
                 'better-cal-security-update-' . $floor,
+                true,
             );
             if ($sent['push'] > 0 || $sent['email']) {
                 $this->saveNotice($userId, ['notified_secure_floor' => $floor]);

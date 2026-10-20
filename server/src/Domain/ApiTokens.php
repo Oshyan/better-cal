@@ -92,7 +92,7 @@ final class ApiTokens
         return $this->revokeWithImpact($userId, $id) !== null;
     }
 
-    /** @return ?array{subscriptionsPaused:int} null when the token does not exist */
+    /** @return ?array{subscriptionsPaused:int,pluginsDisabled:list<string>} null when the token does not exist */
     public function revokeWithImpact(int $userId, int $id): ?array
     {
         return $this->db->tx(function () use ($userId, $id): ?array {
@@ -110,8 +110,9 @@ final class ApiTokens
                  AND COALESCE(provider, 'ics') = 'ics' AND subscription_authority = 'token' AND created_by_token_id = ?",
                 [$userId, $id]
             );
+            $plugins = Plugins::disableForRevokedToken($this->db, $id);
             $this->db->run('DELETE FROM api_tokens WHERE id = ? AND user_id = ?', [$id, $userId]);
-            return ['subscriptionsPaused' => $paused];
+            return ['subscriptionsPaused' => $paused, 'pluginsDisabled' => $plugins];
         });
     }
 

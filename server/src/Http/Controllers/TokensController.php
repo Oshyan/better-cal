@@ -49,7 +49,7 @@ final class TokensController
         if ($impact === null) {
             throw HttpError::notFound('No such token');
         }
-        return Response::json(['ok' => true, 'subscriptionsPaused' => $impact['subscriptionsPaused']]);
+        return Response::json(['ok' => true, 'subscriptionsPaused' => $impact['subscriptionsPaused'], 'pluginsDisabled' => count($impact['pluginsDisabled'])]);
     }
 
     /** Token management is session-only: a bearer token must not mint or revoke tokens. */

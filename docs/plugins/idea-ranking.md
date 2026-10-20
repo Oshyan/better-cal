@@ -63,4 +63,4 @@ Refused explicitly so the architecture never has to accommodate them. Each is in
 | Unbundling People into a removable plugin | Quick-add, search, the editor, and the palette depend on it; conversion is all cost and no user-visible benefit, so People stays bundled and its seams become the generic machinery instead |
 | Arbitrary plugin UI code (JS bundles, iframes, sandboxing) | The one capability that converts every other risk from "worker misbehaves" to "hostile code in the page"; declarative rendering plus sanitized text covers the actual demos, and the thread's own constraint says declarative first |
 | In-app scraping engine | Brittleness and legal gray zones concentrated inside the calendar; companion services emitting feeds, or custom-source plugins, carry it outside |
-| Per-occurrence server hooks, plugin data on the window payload | Banned by measured arithmetic: 167ms window and 793 bytes/occurrence do not survive per-occurrence anything |
+| Per-occurrence server hooks, plugin data on the window payload | Banned by measured arithmetic: the window query and per-occurrence payload in `docs/benchmarking.md` do not survive per-occurrence anything |

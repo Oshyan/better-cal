@@ -6,6 +6,7 @@ namespace BetterCal\Http\Controllers;
 
 use BetterCal\Domain\Calendars;
 use BetterCal\Domain\Duplicates;
+use BetterCal\Domain\Plugins;
 use BetterCal\Domain\Proposals;
 use BetterCal\Domain\Rsvp;
 use BetterCal\Domain\ReviewQueue;
@@ -16,7 +17,7 @@ use BetterCal\Support\Time;
 /**
  * The Review queue: everything waiting on the owner's decision, in one list.
  *
- * Eight kinds, one shape. Each item says what it is, what it would do, and
+ * Nine kinds, one shape. Each item says what it is, what it would do, and
  * carries its own `actions` ({name, label, method, path, body?}) for a signed-in
  * browser. Bearer-token callers can inspect the queue but receive no actions:
  *
@@ -29,9 +30,10 @@ use BetterCal\Support\Time;
  *   proposal       a plan a plugin suggests (plugin_proposals)
  *   duplicate      two events that may be one, arriving by two routes (#9)
  *   subscription   an ICS feed whose updates need an owner decision
+ *   plugin         a plugin turned off because the API key that enabled it was revoked
  *
  * invite_new, invite_change, mail_limit and model_limit are stored by the queue itself;
- * the other four live where they always did and keep their own endpoints,
+ * the others live where they always did and keep their own endpoints,
  * which the actions point at.
  */
 final class ReviewController
@@ -42,6 +44,7 @@ final class ReviewController
         private readonly Calendars $calendars,
         private readonly ?Duplicates $duplicates = null,
         private readonly ?Rsvp $rsvp = null,
+        private readonly ?Plugins $plugins = null,
     )
     {
     }
@@ -82,6 +85,10 @@ final class ReviewController
             $fields = is_array($c['detail']['fields'] ?? null) ? $c['detail']['fields'] : [];
             $heldInvite = is_array($c['detail']['invite'] ?? null) ? $c['detail']['invite'] : [];
             $replyable = $isNew && Rsvp::kind($heldInvite) === 'invitation' && Rsvp::blocker($heldInvite, config()) === null;
+            // One occurrence: a cancellation can be accepted (it skips that
+            // one); any other change is shown for the owner to make by hand.
+            $occurrence = !$isNew && isset($c['detail']['occurrence']) ? (string) $c['detail']['occurrence'] : null;
+            $occurrenceCancel = $occurrence !== null && ($c['method'] === 'CANCEL' || ($fields['status'] ?? null) === 'cancelled');
             $approve = [];
             if ($isNew && ($mailSettings['mailEventMode'] ?? 'approved') === 'approved') {
                 $address = \BetterCal\Domain\MailPolicy::address($c['from']);
@@ -110,6 +117,7 @@ final class ReviewController
                     'recurring' => !empty($fields['rrule']),
                     'location' => $fields['location'] ?? null,
                     'decidedAt' => $c['decidedAt'],
+                    'occurrence' => $occurrence !== null ? Time::dbToIso($occurrence, 'UTC') : null,
                 ],
                 'actions' => $open && $canDecide ? [
                     // A new invitation that can be answered from here offers
@@ -118,9 +126,9 @@ final class ReviewController
                     ...($isNew && $this->rsvp !== null && $replyable
                         ? [self::action('accept_reply', 'Add and accept', "/review/invitations/{$c['id']}/accept", ['answer' => 'accepted'])]
                         : []),
-                    self::action('accept', $isNew ? 'Add' : ($c['method'] === 'CANCEL' ? 'Accept cancellation' : 'Accept change'), $isNew
+                    ...($occurrence !== null && !$occurrenceCancel ? [] : [self::action('accept', $isNew ? 'Add' : ($occurrenceCancel ? 'Skip that occurrence' : ($c['method'] === 'CANCEL' ? 'Accept cancellation' : 'Accept change')), $isNew
                         ? "/review/invitations/{$c['id']}/accept"
-                        : "/review/invite-changes/{$c['id']}/accept"),
+                        : "/review/invite-changes/{$c['id']}/accept")]),
                     ...$approve,
                     self::action('dismiss', 'Dismiss', $isNew
                         ? "/review/invitations/{$c['id']}/dismiss"
@@ -184,6 +192,22 @@ final class ReviewController
                     self::action('keep_updating', 'Keep updating', "/calendars/{$calendar['id']}/claim-subscription"),
                     self::action('keep_local', 'Keep a local copy', "/calendars/{$calendar['id']}/adopt"),
                     array_replace(self::action('remove', 'Remove', "/calendars/{$calendar['id']}"), ['method' => 'DELETE']),
+                ] : [],
+            ];
+        }
+        foreach ($this->plugins?->turnedOffByRevokedKey() ?? [] as $plugin) {
+            $items[] = [
+                'key' => 'plugin:' . $plugin['id'],
+                'kind' => 'plugin',
+                'status' => 'open',
+                'title' => $plugin['name'],
+                'summary' => Plugins::TOKEN_REVOKED . ' Turn it back on if you still want it.',
+                'createdAt' => null,
+                'eventId' => null,
+                'detail' => ['pluginId' => $plugin['id']],
+                'actions' => $canDecide ? [
+                    self::action('enable', 'Turn back on', "/plugins/{$plugin['id']}/enable"),
+                    self::action('leave_off', 'Leave off', "/plugins/{$plugin['id']}/disable"),
                 ] : [],
             ];
         }
@@ -272,6 +296,7 @@ final class ReviewController
             'proposal' => count($this->proposals->listFor($userId, 'open')),
             'duplicate' => count($this->duplicates?->possible($userId) ?? []),
             'subscription' => count($this->calendars->subscriptionsAwaitingReview($userId)),
+            'plugin' => count($this->plugins?->turnedOffByRevokedKey() ?? []),
         ];
         return Response::json(['count' => array_sum($byKind), 'byKind' => $byKind]);
     }

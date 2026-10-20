@@ -52,6 +52,7 @@ $request = static function (array $body = []) use ($tokenId): Request {
     return $req;
 };
 $pc->enable($request(), ['id' => 'sample-secret']);
+verifyCredential('token plugin enable records the key', (int) $db->scalar("SELECT changed_by_token_id FROM plugins WHERE id='sample-secret'") === $tokenId);
 $pc->saveSettings($request(['credential' => 'invented-global-secret']), ['id' => 'sample-secret']);
 $pc->saveCalendarSettings($request(['credential' => 'invented-calendar-secret']), ['id' => 'sample-secret', 'calendarId' => $calendarId]);
 $pc->saveEventData($request(['credential' => 'invented-event-secret']), ['id' => $eventId, 'pluginId' => 'sample-secret']);
@@ -76,7 +77,9 @@ verifyCredential('live CalDAV token can write', (int) $db->scalar("SELECT COUNT(
 
 $feed = $calendars->create(1, ['name' => 'Sample feed'], 'subscribed', 'https://feeds.example.test/sample.ics', creatorTokenId: $tokenId);
 refusedCredential(fn() => $calendars->claimSubscription(1, (int) $feed['id'], $session), 'subscription_already_authorized');
+$pc->enable($request(), ['id' => 'sample-secret']);
 $tokens->revoke(1, $tokenId);
+verifyCredential('revoking the key turns its plugin off for Review', !(bool) $db->scalar("SELECT enabled FROM plugins WHERE id='sample-secret'") && $plugins->turnedOffByRevokedKey() === [['id' => 'sample-secret', 'name' => (string) $plugins->manifest('sample-secret')['name']]]);
 try {
     $dav->deleteCalendarObject($calendarId, 'sample-dav.ics');
     throw new RuntimeException('Revoked CalDAV write was admitted');

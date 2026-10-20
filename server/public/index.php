@@ -129,7 +129,7 @@ function bc_handle_api(Request $request, array $cfg): void
 
         $throttle = new \BetterCal\Infra\Throttle($db);
         $loginGuard = new Domain\LoginGuard($throttle, $cfg['auth']['trusted_proxies'], $cfg['auth']['max_failures'], $db);
-        $authController = new Controllers\AuthController($auth, $loginGuard, new Domain\TrustedDevices($db));
+        $authController = new Controllers\AuthController($auth, $loginGuard, new Domain\TrustedDevices($db), $googleAuth);
         $calendarsController = new Controllers\CalendarsController($db, $calendars, $feeds);
         $exportController = new Controllers\ExportController(new Domain\Export($db), $cfg['app_root']);
         $foldersController = new Controllers\FoldersController($folders);
@@ -148,7 +148,7 @@ function bc_handle_api(Request $request, array $cfg): void
         $proposalsDomain = new Domain\Proposals($db, $events, $trips);
         $pluginsController = new Controllers\PluginsController($pluginsDomain, $jobQueue, $proposalsDomain, $undo, $db);
         $proposalsController = new Controllers\ProposalsController($proposalsDomain);
-        $reviewController = new Controllers\ReviewController(new Domain\ReviewQueue($db, $events), $proposalsDomain, $calendars, new Domain\Duplicates($db), $rsvp);
+        $reviewController = new Controllers\ReviewController(new Domain\ReviewQueue($db, $events), $proposalsDomain, $calendars, new Domain\Duplicates($db), $rsvp, $pluginsDomain);
         $configController = new Controllers\ConfigController($settings, $cfg);
         $pushController = new Controllers\PushController($pushSubscriptions, $pushSender, $emailSender, $throttle, $db);
         $systemController = new Controllers\SystemController(new Domain\SystemHealth($db), $pushSubscriptions, $emailSender, $cfg);
@@ -165,6 +165,7 @@ function bc_handle_api(Request $request, array $cfg): void
         $router->add('POST', "$base/auth/step-up", [$authController, 'stepUp']);
         $router->add('GET', "$base/auth/sessions", [$authController, 'otherSessions']);
         $router->add('POST', "$base/auth/sign-out-others", [$authController, 'signOutOthers']);
+        $router->add('POST', "$base/auth/change-password", [$authController, 'changePassword']);
         $router->add('GET', "$base/me", [$authController, 'me']);
 
         $router->add('GET', "$base/calendars", [$calendarsController, 'index']);

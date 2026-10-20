@@ -23,7 +23,7 @@ The thread's own observation holds up under inspection: most of the plugin syste
 | External identity for automation | Bearer tokens + MCP wrapper | Agents already mutate the calendar through the API; plugins are a second automation citizen, not the first |
 | LLM access | `LlmGateway` (quick-add tier 3, prompt filters, ranking) | A permission-gated pass-through is wiring, not construction |
 
-Two hot-path facts from `docs/benchmarking.md` constrain everything below: `Events::window` is 167ms median for a 5-month window of 3,585 occurrences, and the payload is 793 bytes per occurrence with #15 aiming to cut it. The thread's constraints (no per-occurrence hooks, no plugin data on the window response) are treated as hard rules, not preferences.
+Two hot-path facts from `docs/benchmarking.md` constrain everything below: `Events::window` time grows with every occurrence in the visible range, and so does the payload size per occurrence, which #15 aims to cut. The thread's constraints (no per-occurrence hooks, no plugin data on the window response) are treated as hard rules, not preferences.
 
 ## 2. Capability inventory
 
@@ -80,7 +80,7 @@ The survey already made the right call: extraction lives outside Better-Cal. Two
 
 ### Task manager integrations (sync adapter)
 
-Decomposes into three very different things. Read-only display of tasks with dates: already works today via ICS feeds (a task app's calendar on the reference install arrived that way), or via a v2 custom-source plugin for providers without feeds; near-zero cost. Completion write-back: per-provider auth and conflict semantics, medium cost, unclear demand; questionable. Scheduling tasks into calendar blocks: that is the C21 solver; out of scope.
+Decomposes into three very different things. Read-only display of tasks with dates: already works today via ICS feeds (many task apps publish one), or via a v2 custom-source plugin for providers without feeds; near-zero cost. Completion write-back: per-provider auth and conflict semantics, medium cost, unclear demand; questionable. Scheduling tasks into calendar blocks: that is the C21 solver; out of scope.
 
 ### Restaurant Visit Planner → Place Visit Planner (Visit Intents)
 
@@ -128,7 +128,7 @@ Requires a second party interacting with your calendar. Directly violates the si
 
 ### Time accounting (GCal Time Insights, Sunsama-style review)
 
-Read-only aggregation over events/tags/people/trips, rendered on a page. No hot path (its queries run on demand over an 8,400-row table that full-scans in 10ms). Needs C15-lite for display. The budget-*enforcement* half stays out with C21; the reporting half is a cheap, likable v2 plugin. The Sunsama planning-ritual variant layers guided flow on the same queries; fine as a community plugin, not a priority.
+Read-only aggregation over events/tags/people/trips, rendered on a page. No hot path (its queries run on demand over the events table, which is small for a personal calendar). Needs C15-lite for display. The budget-*enforcement* half stays out with C21; the reporting half is a cheap, likable v2 plugin. The Sunsama planning-ritual variant layers guided flow on the same queries; fine as a community plugin, not a priority.
 
 ## 4. Reading the whole list against the closing directive
 

@@ -89,6 +89,12 @@ const mock = createServer((req, res) => {
       respond(200, { ok: true });
     } else if (path.startsWith('/api/v1/plugins') || path === '/api/v1/system/health' || path.startsWith('/api/v1/duplicates/') || path.includes('/plugin-data/')) {
       respond(200, { ok: true, settings: { credential: { set: true } } });
+    } else if (req.method === 'GET' && path === '/api/v1/calendars') {
+      respond(200, { calendars: [{ id: 1, name: 'Sample' }], folders: [], tags: [] });
+    } else if (req.method === 'GET' && path === '/api/v1/search') {
+      respond(200, { results: [{ eventId: 42, title: 'Dinner' }] });
+    } else if (req.method === 'POST' && path === '/api/v1/quickadd') {
+      respond(200, { draft: { title: 'dinner', start: '2026-08-07T19:00:00Z' } });
     } else if (req.method === 'PATCH' && path.startsWith('/api/v1/events/')) {
       respond(200, { eventId: 42, title: entry.body.title ?? 'Dinner' });
     } else if (req.method === 'DELETE' && path.startsWith('/api/v1/events/')) {
@@ -177,18 +183,28 @@ async function main() {
   const byName = Object.fromEntries((list.result?.tools ?? []).map((t) => [t.name, t]));
   checkEq('annotations: delete_event is destructive', true, byName.delete_event?.annotations?.destructiveHint);
   checkEq('annotations: list_events is read-only', true, byName.list_events?.annotations?.readOnlyHint);
+  // [readOnly, destructive, idempotent, openWorld] for every tool.
   const expectedEffects = {
-    list_events: [true, false, false], search_events: [true, false, false],
-    create_event: [false, false, true], quick_add: [false, false, true],
-    update_event: [false, true, true], delete_event: [false, true, true],
-    set_attendance: [false, true, false], list_calendars: [true, false, false],
-    list_review: [true, false, false], undo: [false, true, false],
+    list_events: [true, false, true, false], search_events: [true, false, true, false],
+    create_event: [false, false, false, true], quick_add: [false, false, false, true],
+    update_event: [false, true, true, true], delete_event: [false, true, true, true],
+    set_attendance: [false, true, true, false], list_calendars: [true, false, true, false],
+    list_review: [true, false, true, false], list_plugins: [true, false, true, false],
+    get_system_health: [true, false, true, false], update_plugin_settings: [false, true, true, true],
+    update_plugin_calendar_settings: [false, true, true, true], set_plugin_enabled: [false, true, true, true],
+    run_plugin: [false, true, false, true], update_event_plugin_data: [false, true, true, true],
+    resolve_duplicate: [false, true, true, false], undo: [false, true, false, false],
   };
   for (const [name, expected] of Object.entries(expectedEffects)) {
     const a = byName[name]?.annotations || {};
     checkEq(`annotations: ${name} complete effect metadata`, expected,
-      [a.readOnlyHint, a.destructiveHint, a.openWorldHint]);
+      [a.readOnlyHint, a.destructiveHint, a.idempotentHint, a.openWorldHint]);
   }
+  check('annotations: every tool declares exactly the four hints, as booleans', (list.result?.tools ?? []).every((t) =>
+    JSON.stringify(Object.keys(t.annotations ?? {}).sort()) === JSON.stringify(['destructiveHint', 'idempotentHint', 'openWorldHint', 'readOnlyHint'])
+    && Object.values(t.annotations).every((v) => typeof v === 'boolean')));
+  checkEq('annotations: the expectations cover every listed tool', Object.keys(expectedEffects).sort(),
+    (list.result?.tools ?? []).map((t) => t.name).sort());
   const names = (list.result?.tools ?? []).map((t) => t.name).sort();
   checkEq('tools/list names', [
     'create_event',
@@ -300,6 +316,9 @@ async function main() {
   checkEq('invalid arguments never reach the API', 0, received.length);
 
   for (const [name, args, method, path] of [
+    ['list_calendars', {}, 'GET', '/calendars'],
+    ['search_events', { q: 'dinner', limit: 5 }, 'GET', '/search?q=dinner&limit=5'],
+    ['quick_add', { text: 'dinner fri 7pm', tz: 'UTC' }, 'POST', '/quickadd'],
     ['list_plugins', {}, 'GET', '/plugins'],
     ['get_system_health', {}, 'GET', '/system/health'],
     ['update_plugin_settings', { pluginId: 'sample-plugin', values: { credential: 'invented-secret' } }, 'PATCH', '/plugins/sample-plugin/settings'],
@@ -315,6 +334,9 @@ async function main() {
     checkEq(`${name}: method and path`, [method, '/api/v1' + path], [received[0]?.method, received[0]?.url]);
     check(`${name}: success does not echo submitted secret`, !result.result?.isError && !JSON.stringify(result).includes('invented-secret'));
   }
+  received.length = 0;
+  await rpc('tools/call', { name: 'quick_add', arguments: { text: 'dinner fri 7pm', tz: 'UTC' } });
+  checkEq('quick_add: parses only unless commit is set', { text: 'dinner fri 7pm', tz: 'UTC', commit: false }, received[0]?.body);
   for (const name of ['run_plugin', 'set_plugin_enabled', 'update_plugin_settings', 'update_plugin_calendar_settings', 'update_event_plugin_data']) {
     check(`${name}: outside effects declared`, byName[name]?.annotations?.openWorldHint === true);
   }

@@ -4,6 +4,10 @@ Better-Cal uses [semantic versioning](https://semver.org). Minor versions bring 
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## Unreleased
+
+- **MCP: every tool says whether repeating it is safe.** Each tool now declares all four MCP hints (read-only, destructive, idempotent, open-world), which some MCP directories require. Setting a value or deleting is safe to repeat; creating an event, running a plugin and undo are not.
+
 ## 1.0.0 (2026-10-20)
 
 1.0: someone other than me can install Better-Cal on ordinary hosting, use it on a computer and a phone, and move over from Google Calendar at their own pace. Five full security scans and their fixes are behind it, plus a last look at the changes since ([SECURITY.md](SECURITY.md#what-has-been-reviewed)). From here, minor versions bring features, and patch versions generally bring bug fixes and refinements.

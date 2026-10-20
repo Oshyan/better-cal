@@ -5421,6 +5421,39 @@ checkEq('push defaults still allowed alongside extras', null, BetterCal\Infra\Pu
     @unlink($pushLog);
 }
 checkEq('push endpoint hash is sha256', hash('sha256', 'https://x.example/e'), PushSubscriptions::endpointHash('https://x.example/e'));
+// One spelling per destination: every variant endpointProblem accepts and
+// Guzzle sends to the same place is the same device, so it can't be added
+// again to get past the device limit or to be sent to twice.
+foreach ([
+    'HTTPS://FCM.GoogleAPIs.com/fcm/send/AbC',
+    'https://fcm.googleapis.com.:443/fcm/send/AbC',
+    'https://fcm.googleapis.com:0443/fcm/send/AbC',
+    'https://fcm.googleapis.com:/fcm/send/AbC',
+    ' https://fcm.googleapis.com/fcm/send/AbC#alias',
+] as $variant) {
+    checkEq("push endpoint canonical: $variant", 'https://fcm.googleapis.com/fcm/send/AbC', PushSubscriptions::canonicalEndpoint($variant));
+}
+checkEq('push endpoint canonical: path case and query are the service\'s own, kept', 'https://x.notify.windows.com/w/?token=AB%2bC',
+    PushSubscriptions::canonicalEndpoint('https://X.Notify.Windows.com/w/?token=AB%2bC'));
+checkEq('push endpoint canonical: an empty path is the root', 'https://web.push.apple.com/', PushSubscriptions::canonicalEndpoint('https://WEB.push.apple.com'));
+foreach (['http://FCM.googleapis.com/x', 'https://user:pw@FCM.googleapis.com/x', 'https://FCM.googleapis.com:8443/x', 'not a url'] as $refused) {
+    checkEq("push endpoint canonical: left for validation to refuse: $refused", $refused, PushSubscriptions::canonicalEndpoint($refused));
+}
+checkEq('push validate stores the canonical spelling', 'https://fcm.googleapis.com/fcm/send/AbC',
+    PushSubscriptions::validate(['endpoint' => 'https://FCM.googleapis.com.:443/fcm/send/AbC', 'keys' => ['p256dh' => 'k', 'auth' => 'a']])['endpoint']);
+{
+    // Rows saved before the fold still go out once.
+    $aliasDb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $aliasDb->run('CREATE TABLE api_tokens (id INTEGER PRIMARY KEY, user_id INTEGER, expires_at TEXT NULL)');
+    $aliasDb->run('CREATE TABLE push_subscriptions (id INTEGER PRIMARY KEY, user_id INTEGER, endpoint TEXT, endpoint_hash TEXT UNIQUE,
+        p256dh TEXT, auth TEXT, created_at TEXT, last_used_at TEXT, failing_since TEXT, created_by_token_id INTEGER NULL, device_label TEXT NULL)');
+    foreach (['https://fcm.googleapis.com/fcm/send/AbC', 'https://FCM.GOOGLEAPIS.COM/fcm/send/AbC', 'https://fcm.googleapis.com:443/fcm/send/AbC', 'https://fcm.googleapis.com/fcm/send/abc'] as $i => $stored) {
+        $aliasDb->insert('push_subscriptions', ['user_id' => 1, 'endpoint' => $stored, 'endpoint_hash' => hash('sha256', $stored), 'p256dh' => 'k', 'auth' => 'a']);
+    }
+    checkEq('push: old case and :443 aliases are delivered to once; a different path is its own device',
+        ['https://fcm.googleapis.com/fcm/send/AbC', 'https://fcm.googleapis.com/fcm/send/abc'],
+        array_column((new PushSubscriptions($aliasDb))->forUser(1), 'endpoint'));
+}
 
 // Phase 5: signing out stops this browser's reminders, token credentials may
 // administer only their own push channel, and health never returns a raw push

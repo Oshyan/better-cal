@@ -8,6 +8,7 @@ Security fixes are tracked privately as GitHub security advisories until they sh
 
 - **Updates keep your own lines in `.htaccess`.** A PHP version picked in a hosting control panel is written into `server/public/.htaccess`, and `update.php` used to replace that file, which could quietly put the site back on an older PHP. Rules you added were lost the same way. Better-Cal's rules now sit between `# BEGIN Better-Cal` and `# END Better-Cal` lines, and updates replace only those. If you had changed Better-Cal's own lines, the update says so and saves your file beside the new one. Other shipped files edited on the server are named after an update; the edited copies stay in the previous version's folder.
 - **On too old a PHP, the site says so** instead of showing a blank page, and says what to pick in the control panel.
+- **A reminder device can't be registered twice under a different spelling.** Letter case in a push address's host, a trailing dot or an explicit `:443` reach the same push service, but they counted as separate devices, so a signed-in browser or API key could get past the device limit and have reminders sent twice. They're now one device, and any already saved that way get one reminder.
 
 ## 0.9.88 (2026-10-20)
 

@@ -28,9 +28,24 @@ final class PushSubscriptions
         return hash('sha256', self::canonicalEndpoint($endpoint));
     }
 
+    /**
+     * One spelling per push destination. Letter case in the scheme and host,
+     * a trailing dot, an explicit :443 and an empty path all reach the same
+     * service (Guzzle sends them alike), so they are one device and count
+     * once against the device limit. The path and query stay as sent: they
+     * carry the service's own token. Anything PushSender::endpointProblem
+     * would refuse is returned as is, for it to refuse.
+     */
     public static function canonicalEndpoint(string $endpoint): string
     {
-        return explode('#', trim($endpoint), 2)[0];
+        $endpoint = explode('#', trim($endpoint), 2)[0];
+        $p = parse_url($endpoint);
+        if ($p === false || strtolower((string) ($p['scheme'] ?? '')) !== 'https' || isset($p['user']) || isset($p['pass'])
+            || (isset($p['port']) && (int) $p['port'] !== 443) || rtrim((string) ($p['host'] ?? ''), '.') === '') {
+            return $endpoint;
+        }
+        return 'https://' . strtolower(rtrim((string) $p['host'], '.')) . (($p['path'] ?? '') !== '' ? $p['path'] : '/')
+            . (isset($p['query']) && $p['query'] !== '' ? '?' . $p['query'] : '');
     }
 
     /** Also finds aliases saved before fragments were removed at enrollment. */
@@ -232,7 +247,9 @@ final class PushSubscriptions
         if ($row === null) {
             throw HttpError::notFound('No such device');
         }
-        $this->db->run('DELETE FROM push_subscriptions WHERE user_id = ? AND ' . $this->identitySql() . ' = ?', [$userId, self::canonicalEndpoint((string) $row['endpoint'])]);
+        // By id as well: a row saved before canonicalEndpoint folded case and
+        // :443 may not match its own canonical spelling.
+        $this->db->run('DELETE FROM push_subscriptions WHERE user_id = ? AND (id = ? OR ' . $this->identitySql() . ' = ?)', [$userId, $id, self::canonicalEndpoint((string) $row['endpoint'])]);
         $hash = self::endpointHash((string) $row['endpoint']);
         if ($this->db->scalar('SELECT 1 FROM push_removed WHERE user_id = ? AND endpoint_hash = ?', [$userId, $hash]) === null) {
             $this->db->insert('push_removed', ['user_id' => $userId, 'endpoint_hash' => $hash]);

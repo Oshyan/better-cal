@@ -151,14 +151,37 @@ final class DbBackup
      * list (made by a migration that ran after it) are dropped, so the
      * schema matches the code being restored. Refuses a file that doesn't
      * end the way dump() ends one: a cut-off backup must not half-restore.
+     *
+     * The file is opened once and every pass reads that handle, so it cannot
+     * be swapped between the check and the SQL (review of 0.9.87). A legacy
+     * unencrypted backup needs $allowPlain: anyone who could write the backup
+     * folder could have made it.
      */
-    public function restore(string $path): array
+    public function restore(string $path, bool $allowPlain = false): array
     {
-        PrivatePath::check($path, false);
+        $fh = PrivatePath::open($path, true);
+        try {
+            if (!$allowPlain && !BackupCipher::isEncrypted($fh)) {
+                throw new \RuntimeException(self::plainMessage($path));
+            }
+            return $this->restoreFrom($fh, $path);
+        } finally {
+            fclose($fh);
+        }
+    }
+
+    public static function plainMessage(string $path): string
+    {
+        return basename($path) . ' is an unencrypted backup from an older version, so it can\'t be checked for changes. Restore it only if you know where it came from; nothing was changed.';
+    }
+
+    /** @param resource $fh */
+    private function restoreFrom($fh, string $path): array
+    {
         // First pass: is it whole? (Read as a stream; a backup can be large.)
         $head = [];
         $last = null;
-        $this->eachLine($path, static function (string $line) use (&$head, &$last): void {
+        $this->eachLine($fh, static function (string $line) use (&$head, &$last): void {
             if (count($head) < 2) {
                 $head[] = $line;
             }
@@ -178,7 +201,7 @@ final class DbBackup
             }
         }
         $statements = 0;
-        $this->eachLine($path, static function (string $line) use ($pdo, &$statements): void {
+        $this->eachLine($fh, static function (string $line) use ($pdo, &$statements): void {
             if ($line === '' || str_starts_with($line, '-- ')) {
                 return;
             }
@@ -189,8 +212,11 @@ final class DbBackup
         return ['tables' => count($listed), 'statements' => $statements, 'dropped' => $dropped];
     }
 
-    /** @param callable(string):void $fn */
-    private function eachLine(string $path, callable $fn): void
+    /**
+     * @param resource $fh
+     * @param callable(string):void $fn
+     */
+    private function eachLine($fh, callable $fn): void
     {
         $partial = '';
         $emit = static function (string $bytes) use (&$partial, $fn): void {
@@ -200,33 +226,28 @@ final class DbBackup
                 $partial = substr($partial, $nl + 1);
             }
         };
-        if (BackupCipher::isEncrypted($path)) {
+        $inflate = inflate_init(ZLIB_ENCODING_GZIP);
+        $unpack = static function (string $chunk) use ($inflate, $emit): void {
+            $out = @inflate_add($inflate, $chunk, ZLIB_SYNC_FLUSH);
+            if ($out === false) {
+                throw new \RuntimeException('The backup is damaged (it doesn\'t unpack).');
+            }
+            $emit($out);
+        };
+        if (BackupCipher::isEncrypted($fh)) {
             if ($this->key === null) {
-                throw new \RuntimeException(basename($path) . ' is encrypted, and these settings have no BETTERCAL_SESSION_SECRET to open it.');
+                throw new \RuntimeException('The backup is encrypted, and these settings have no BETTERCAL_SESSION_SECRET to open it.');
             }
-            $inflate = inflate_init(ZLIB_ENCODING_GZIP);
-            BackupCipher::decrypt($path, $this->key, static function (string $chunk) use ($inflate, $emit): void {
-                $out = inflate_add($inflate, $chunk, ZLIB_SYNC_FLUSH);
-                if ($out === false) {
-                    throw new \RuntimeException('The backup is damaged (it doesn\'t unpack).');
-                }
-                $emit($out);
-            });
+            BackupCipher::decrypt($fh, $this->key, $unpack);
         } else {
-            $gz = gzopen($path, 'rb');
-            if ($gz === false) {
-                throw new \RuntimeException("Could not read $path");
-            }
-            try {
-                while (!gzeof($gz)) {
-                    $chunk = gzread($gz, 1 << 20);
-                    if ($chunk === false) {
-                        break;
-                    }
-                    $emit($chunk);
+            // A legacy .sql.gz, read from the same handle.
+            rewind($fh);
+            while (!feof($fh)) {
+                $chunk = fread($fh, 1 << 20);
+                if ($chunk === false) {
+                    throw new \RuntimeException('Could not read the backup.');
                 }
-            } finally {
-                gzclose($gz);
+                if ($chunk !== '') $unpack($chunk);
             }
         }
         if ($partial !== '') {

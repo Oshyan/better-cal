@@ -9889,14 +9889,44 @@ check('access code: process/security regression suite', $accessStatus === 0, $ac
     $lines = [];
     $each = new ReflectionMethod(BetterCal\Infra\DbBackup::class, 'eachLine');
     $dbb = new BetterCal\Infra\DbBackup(new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]), $key);
-    $each->invoke($dbb, $converted, static function (string $l) use (&$lines): void { $lines[] = $l; });
+    $fh = fopen($converted, 'rb');
+    $each->invoke($dbb, $fh, static function (string $l) use (&$lines): void { $lines[] = $l; });
+    fclose($fh);
     checkEq('backup: restore reads an encrypted backup line by line', explode("\n", rtrim($sql, "\n")), $lines);
     BetterCal\Infra\DbBackup::decryptFile($converted, $key, "$tmp/out.sql.gz");
     checkEq('backup: --decrypt gives back a plain .sql.gz', $sql, gzdecode((string) file_get_contents("$tmp/out.sql.gz")));
     file_put_contents("$tmp/db-plain.sql.gz", gzencode($sql));
     $lines = [];
-    $each->invoke($dbb, "$tmp/db-plain.sql.gz", static function (string $l) use (&$lines): void { $lines[] = $l; });
+    $fh = fopen("$tmp/db-plain.sql.gz", 'rb');
+    $each->invoke($dbb, $fh, static function (string $l) use (&$lines): void { $lines[] = $l; });
+    fclose($fh);
     checkEq('backup: and still reads a plain one', 5, count($lines));
+    $plainRefusal = '';
+    try { $dbb->restore("$tmp/db-plain.sql.gz"); } catch (RuntimeException $e) { $plainRefusal = $e->getMessage(); }
+    check('backup: restore asks before using an unencrypted backup', str_contains($plainRefusal, 'unencrypted backup') && str_contains($plainRefusal, 'nothing was changed'));
+    symlink("$tmp/db-plain.sql.gz", "$tmp/db-link.sql.gz");
+    $linkRefusal = '';
+    try { BetterCal\Infra\PrivatePath::open("$tmp/db-link.sql.gz", true); } catch (RuntimeException $e) { $linkRefusal = $e->getMessage(); }
+    check('backup: restore refuses a link in place of the backup', str_contains($linkRefusal, 'symbolic links'));
+    link("$tmp/db-plain.sql.gz", "$tmp/db-hard.sql.gz");
+    $hardRefusal = '';
+    try { BetterCal\Infra\PrivatePath::open("$tmp/db-plain.sql.gz", true); } catch (RuntimeException $e) { $hardRefusal = $e->getMessage(); }
+    check('backup: restore refuses a hard-linked backup', str_contains($hardRefusal, 'hard links'));
+    unlink("$tmp/db-hard.sql.gz"); unlink("$tmp/db-link.sql.gz");
+    $opened = BetterCal\Infra\PrivatePath::open("$tmp/db-plain.sql.gz", true);
+    rename("$tmp/db-plain.sql.gz", "$tmp/db-moved.sql.gz");
+    file_put_contents("$tmp/db-plain.sql.gz", gzencode("-- Better-Cal database backup\n-- tables: a\nDROP TABLE a;\n-- end\n"));
+    $lines = [];
+    $each->invoke($dbb, $opened, static function (string $l) use (&$lines): void { $lines[] = $l; });
+    fclose($opened);
+    checkEq('backup: a file swapped in after opening is never read', 5, count($lines));
+    $groupOpen = ['mode' => 040775, 'gid' => 50, 'uid' => 1000];
+    checkEq('backup: a group-writable parent is trusted for its own group, refused for another, and refused for restore without POSIX', [false, true, false, true], [
+        BetterCal\Infra\PrivatePath::parentOpen($groupOpen, 50, 1000),
+        BetterCal\Infra\PrivatePath::parentOpen($groupOpen, 60, 1000),
+        BetterCal\Infra\PrivatePath::parentOpen($groupOpen, null, 1000),
+        BetterCal\Infra\PrivatePath::parentOpen($groupOpen, null, 1000, true),
+    ]);
 
     // The update record, the copies beside the app, and converting all of it.
     $parent = "$tmp/sites";

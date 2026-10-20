@@ -9577,6 +9577,28 @@ if (in_array('sqlite', PDO::getAvailableDrivers(), true)) {
         $z->close();
         BetterCal\Support\Limits::configure(['TAKEOUT_FILES' => $keepFiles]);
         unlink($zpath);
+        // A header that understates an entry's size (review of 0.9.87): the
+        // budget is spent on bytes actually inflated, not on what was claimed.
+        $lie = sys_get_temp_dir() . '/bc-ziplie-' . bin2hex(random_bytes(3)) . '.zip';
+        $z->open($lie, ZipArchive::CREATE | ZipArchive::OVERWRITE);
+        foreach (['a', 'b'] as $n) $z->addFromString("$n.ics", "BEGIN:VCALENDAR\n" . str_repeat("X-PAD:x\n", 1000) . "END:VCALENDAR\n");
+        $z->close();
+        $bytes = (string) file_get_contents($lie);
+        foreach (["PK\x01\x02" => 24, "PK\x03\x04" => 22] as $sig => $at) {
+            for ($o = strpos($bytes, $sig); $o !== false; $o = strpos($bytes, $sig, $o + 4)) $bytes = substr_replace($bytes, pack('V', 10), $o + $at, 4);
+        }
+        file_put_contents($lie, $bytes);
+        $keepTotal = BetterCal\Support\Limits::get('TAKEOUT_TOTAL_BYTES');
+        BetterCal\Support\Limits::configure(['TAKEOUT_TOTAL_BYTES' => 12000]);
+        $z->open($lie, ZipArchive::RDONLY);
+        $entries = $CI::icsEntries($z);
+        checkEq('zip import: the lying headers pass the declared-size check', 2, count($entries));
+        $threw = null;
+        try { $CI::preflightEvents($z, $entries); } catch (BetterCal\Http\HttpError $e) { $threw = $e->getMessage(); }
+        check('zip import: bytes actually inflated spend the budget, whatever the header claimed', str_contains((string) $threw, 'too much expanded data'));
+        $z->close();
+        BetterCal\Support\Limits::configure(['TAKEOUT_TOTAL_BYTES' => $keepTotal]);
+        unlink($lie);
     }
 }
 

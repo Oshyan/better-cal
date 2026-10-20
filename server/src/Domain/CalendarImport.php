@@ -241,12 +241,19 @@ final class CalendarImport
         throw new HttpError('import_too_large', 'The zip has ' . $reason . '. Nothing was imported. Split it into smaller archives or adjust the IMPORT_ZIP limits on the server.', 413);
     }
 
-    /** Count raw event openings across the archive before the first calendar commits. */
+    /**
+     * Count raw event openings across the archive before the first calendar
+     * commits. Bytes are counted as actually read: a header can claim 100
+     * bytes for an entry that inflates to the per-file limit, a thousand
+     * times over (review of 0.9.87).
+     */
     public static function preflightEvents(\ZipArchive $zip, array $entries): void
     {
         $events = 0;
+        $read = 0;
         foreach ($entries as $entry) {
-            $ics = self::readEntry($zip, $entry['index'], Limits::get('IMPORT_BYTES'));
+            $ics = self::readEntry($zip, $entry['index'], Limits::get('IMPORT_BYTES'), $read);
+            if ($read > Limits::get('TAKEOUT_TOTAL_BYTES')) self::zipBudgetError('too much expanded data');
             if ($ics === null) continue; // Report this individual file during import.
             $ics = preg_replace('/\r*\n|\r+/', "\n", $ics) ?? $ics;
             $ics = preg_replace('/\n[ \t]/', '', $ics) ?? $ics;
@@ -255,8 +262,8 @@ final class CalendarImport
         }
     }
 
-    /** One entry's text, or null when it's bigger than $maxBytes, whatever its header claimed. */
-    public static function readEntry(\ZipArchive $zip, int $index, int $maxBytes): ?string
+    /** One entry's text, or null when it's bigger than $maxBytes, whatever its header claimed. $read gains the bytes inflated. */
+    public static function readEntry(\ZipArchive $zip, int $index, int $maxBytes, int &$read = 0): ?string
     {
         $stat = $zip->statIndex($index);
         if (!is_array($stat) || (int) $stat['size'] > $maxBytes) {
@@ -274,6 +281,7 @@ final class CalendarImport
                 return null;
             }
             $data .= $chunk;
+            $read += strlen($chunk);
             if (strlen($data) > $maxBytes) {
                 fclose($stream);
                 return null;

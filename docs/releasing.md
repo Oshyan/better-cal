@@ -1,5 +1,7 @@
 # Releasing Better-Cal
 
+Deploying a release to a server with the maintainer's scripts is in [deploying.md](deploying.md).
+
 Published releases are immutable: their tag and assets cannot be replaced. Titles, notes, prerelease state and the “latest” designation remain editable. A bad tag or asset is corrected by a new patch release.
 
 ## Application release

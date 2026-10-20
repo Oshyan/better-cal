@@ -458,7 +458,7 @@ final class Plugins
     }
 
     /** disabled_reason when revoking an API key turned the plugin off; Review lists these. */
-    public const TOKEN_REVOKED = 'Turned off because the API key that enabled or configured it was revoked.';
+    public const TOKEN_REVOKED = 'Turned off because the API key that enabled or configured it was revoked or expired.';
 
     /** $tokenId: the API key doing this, or null from a browser (which clears any earlier key). */
     public function enable(string $id, ?int $tokenId = null): void
@@ -823,6 +823,13 @@ final class Plugins
         $m = $this->manifest($id);
         if ($state === null || $m === null) {
             return ['outcome' => 'error', 'error' => 'plugin not enabled or invalid'];
+        }
+        // A key can also stop being valid without a revocation (it expired):
+        // the plugin it enabled stops the same way, on its next run.
+        $tokenId = $state['changed_by_token_id'] ?? null;
+        if ($tokenId !== null && !ApiTokens::stillValid($this->db, (int) $tokenId)) {
+            $this->db->tx(fn() => self::disableForRevokedToken($this->db, (int) $tokenId));
+            return ['outcome' => 'error', 'error' => 'plugin turned off: the API key that enabled it is no longer valid'];
         }
         $instance = $this->load($id);
         if ($instance === null) {

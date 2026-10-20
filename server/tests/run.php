@@ -7207,6 +7207,12 @@ checkEq('google sync: without a synctoken the poll applies as before', false,
     ], array_map(static fn(array $r): array => array_map(static fn($v) => is_numeric($v) ? (int) $v : $v, $r), $sdb->all('SELECT * FROM plugins ORDER BY id')));
     checkEq('plugin authority: the turned-off plugin\'s waiting jobs are cancelled, others keep theirs', ['failed', 'pending'],
         array_column($sdb->all('SELECT status FROM jobs ORDER BY id'), 'status'));
+    $sdb->run('ALTER TABLE plugins ADD COLUMN settings_json TEXT');
+    $sdb->run("INSERT INTO plugins (id, enabled, changed_by_token_id) VALUES ('sample-secret', 1, 2)");
+    $expiredRun = (new BetterCal\Domain\Plugins($sdb, __DIR__ . '/fixtures/credential-plugins', ['session_secret' => 'synthetic-secret']))->runJob(1, 'sample-secret', 'refresh');
+    checkEq('plugin authority: a plugin whose key expired is turned off at its next run, not run', ['error', 0, BetterCal\Domain\Plugins::TOKEN_REVOKED], [
+        $expiredRun['outcome'], (int) $sdb->scalar("SELECT enabled FROM plugins WHERE id = 'sample-secret'"), $sdb->scalar("SELECT disabled_reason FROM plugins WHERE id = 'sample-secret'"),
+    ]);
 }
 
 // --- Password reset ends the sessions opened under the old password (BC-21) ---

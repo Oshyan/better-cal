@@ -4,6 +4,11 @@ Better-Cal uses [semantic versioning](https://semver.org). While it is below 1.0
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## Unreleased
+
+- **Updates keep your own lines in `.htaccess`.** A PHP version picked in a hosting control panel is written into `server/public/.htaccess`, and `update.php` used to replace that file, which could quietly put the site back on an older PHP. Rules you added were lost the same way. Better-Cal's rules now sit between `# BEGIN Better-Cal` and `# END Better-Cal` lines, and updates replace only those. If you had changed Better-Cal's own lines, the update says so and saves your file beside the new one. Other shipped files edited on the server are named after an update; the edited copies stay in the previous version's folder.
+- **On too old a PHP, the site says so** instead of showing a blank page, and says what to pick in the control panel.
+
 ## 0.9.88 (2026-10-20)
 
 Fixes from a re-review of 0.9.87's security work, plus two bugs found along the way. Most only matter under attack; the ones you might notice come first.

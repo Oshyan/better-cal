@@ -9872,16 +9872,123 @@ check('access code: process/security regression suite', $accessStatus === 0, $ac
 }
 
 // ---------------------------------------------------------------------------
+// Edits made on the server survive an update (#149): a control panel's PHP
+// version lines and the owner's own rules in .htaccess, merged around
+// Better-Cal's marked block; other edited shipped files are named.
+{
+    $H = BetterCal\Infra\Htaccess::class;
+    $app = dirname(__DIR__, 2);
+    foreach ($H::FILES as $rel) {
+        $text = (string) file_get_contents("$app/$rel");
+        check("htaccess: $rel is exactly Better-Cal's marked block", $H::block($text) === [0, strlen($text)]);
+    }
+    $ours = "# BEGIN Better-Cal\nRewriteEngine On\nRewriteRule ^ index.php [END]\n# END Better-Cal\n";
+    $next = "# BEGIN Better-Cal\nRewriteEngine On\nRewriteRule ^ index.php [END,QSA]\n# END Better-Cal\n";
+    $panel = "# php -- BEGIN example-panel handler, do not edit\nAddHandler application/x-httpd-ea-php84 .php\n# php -- END example-panel handler, do not edit\n";
+    $legacy = (new ReflectionClassConstant($H, 'LEGACY'))->getValue()[1];
+
+    $r = $H::merge($ours, $next, hash('sha256', $ours));
+    check('htaccess: an untouched file simply becomes the new one', $r === ['text' => $next, 'kept' => false, 'replaced' => false]);
+    $r = $H::merge($panel . $ours . "Header set X-Mine 1\n", $next, hash('sha256', $ours));
+    checkEq('htaccess: a panel\'s lines above and rules below are kept around the new block', $panel . $next . "Header set X-Mine 1\n", $r['text']);
+    check('htaccess: ... and reported as kept, nothing replaced', $r['kept'] && !$r['replaced']);
+    $r = $H::merge(str_replace('[END]', '[END,NC]', $ours), $next, hash('sha256', $ours));
+    check('htaccess: an edit inside Better-Cal\'s lines is replaced, and said', $r['text'] === $next && $r['replaced']);
+    $r = $H::merge($ours, $next, null);
+    check('htaccess: with no shipped hash, a changed block counts as replaced (the old file gets saved)', $r['text'] === $next && $r['replaced']);
+    $r = $H::merge($next, $next, null);
+    check('htaccess: with no shipped hash, an identical block is not', !$r['replaced'] && !$r['kept']);
+    $r = $H::merge($panel . $legacy, $next, null);
+    check('htaccess: from before 1.0, the old unmarked rules are found and swapped, the panel lines kept', $r['text'] === $panel . $next && $r['kept'] && !$r['replaced']);
+    $r = $H::merge($legacy, $next, null);
+    check('htaccess: an untouched pre-1.0 file becomes the new one', $r['text'] === $next && !$r['kept'] && !$r['replaced']);
+    $r = $H::merge("RewriteEngine On\nRewriteRule ^ mine.php\n", $next, null);
+    check('htaccess: a file it can\'t match is replaced and counted as such', $r['text'] === $next && $r['replaced']);
+    $r = $H::merge("AddHandler x .php", $ours, null);
+    check('htaccess: an unmatched file without a final newline is still replaced whole', $r['text'] === $ours && $r['replaced']);
+    $r = $H::merge("# BEGIN Better-Cal\n# BEGIN Better-Cal\nx\n# END Better-Cal\n", $next, null);
+    check('htaccess: two BEGIN lines are not a block', $H::block("# BEGIN Better-Cal\n# BEGIN Better-Cal\nx\n# END Better-Cal\n") === null && $r['text'] === $next && $r['replaced']);
+    $r = $H::merge("AddHandler x .php" . "\n" . $ours, $next, hash('sha256', $ours));
+    checkEq('htaccess: lines above the block keep their place', "AddHandler x .php\n" . $next, $r['text']);
+
+    $tmp = realpath(sys_get_temp_dir()) . '/bc-htaccess-' . bin2hex(random_bytes(3));
+    $prev = "$tmp/better-cal-1.0.0";
+    $root = "$tmp/better-cal";
+    foreach ([$prev, $root] as $d) {
+        mkdir("$d/server/public", 0777, true);
+    }
+    file_put_contents("$prev/.htaccess", $ours);
+    file_put_contents("$prev/server/public/.htaccess", $panel . $ours);
+    file_put_contents("$prev/FEATURES.md", "edited on the server\n");
+    file_put_contents("$prev/VERSION", "1.0.0\n");
+    file_put_contents("$prev/" . BetterCal\Infra\Updater::RELEASE_FILES, implode('', array_map(
+        static fn(array $f): string => $f[0] . '  ' . $f[1] . "\n",
+        [[hash('sha256', $ours), '.htaccess'], [hash('sha256', $ours), 'server/public/.htaccess'],
+         [hash('sha256', "as shipped\n"), 'FEATURES.md'], [hash('sha256', "1.0.0\n"), 'VERSION']])));
+    file_put_contents("$root/.htaccess", $next);
+    file_put_contents("$root/server/public/.htaccess", $next);
+    chmod("$root/server/public/.htaccess", 0644);
+    $U = BetterCal\Infra\Updater::class;
+    checkEq('release files: the 1.0 list has a hash per path', ['.htaccess', 'server/public/.htaccess', 'FEATURES.md', 'VERSION'], array_keys(array_filter($U::releaseFiles($prev))));
+    mkdir("$tmp/old-list");
+    file_put_contents("$tmp/old-list/" . BetterCal\Infra\Updater::RELEASE_FILES, "VERSION\nserver/public/.htaccess\n");
+    checkEq('release files: a pre-1.0 list still reads, paths without hashes', ['VERSION' => null, 'server/public/.htaccess' => null], $U::releaseFiles("$tmp/old-list"));
+    $said = (new $U($root))->mergeHtaccess($prev, '1.0.1');
+    check('update: the panel\'s lines are kept in the new server/public/.htaccess', file_get_contents("$root/server/public/.htaccess") === $panel . $next
+        && in_array('Kept your own lines in server/public/.htaccess.', $said, true));
+    check('update: the merged file keeps its mode', (fileperms("$root/server/public/.htaccess") & 0777) === 0644);
+    check('update: an untouched top-level .htaccess is left as shipped, and nothing is said about it', file_get_contents("$root/.htaccess") === $next
+        && !array_filter($said, static fn(string $l): bool => str_contains($l, ' .htaccess') && !str_contains($l, 'server/public')));
+    checkEq('update: an edited shipped file is named', ['FEATURES.md'], $U::editedShipped($prev));
+    checkEq('update: nothing is named for a pre-1.0 list', [], $U::editedShipped("$tmp/old-list"));
+    file_put_contents("$prev/.htaccess", "Options -Indexes\n");
+    $said = (new $U($root))->mergeHtaccess($prev, '1.0.1');
+    check('update: a top-level file it can\'t match is saved as .htaccess-before-1.0.1, and the way back is said',
+        file_get_contents("$root/.htaccess-before-1.0.1") === "Options -Indexes\n" && file_get_contents("$root/.htaccess") === $next
+        && (bool) array_filter($said, static fn(string $l): bool => str_contains($l, 'above the "# BEGIN Better-Cal" line')));
+    $again = (new $U($root))->mergeHtaccess($prev, '1.0.1');
+    check('update: running the merge again changes nothing', file_get_contents("$root/server/public/.htaccess") === $panel . $next && file_get_contents("$root/.htaccess") === $next && count($again) === count($said));
+    exec('rm -r ' . escapeshellarg($tmp));
+
+    // The PHP version check in the two web entries (#149).
+    $min = BetterCal\Infra\Setup::MIN_PHP;
+    [$maj, $minr, $pat] = array_map('intval', explode('.', $min));
+    $composer = json_decode((string) file_get_contents(dirname(__DIR__) . '/composer.json'), true);
+    checkEq('php check: composer.json asks for the same minimum as Setup', '>=' . $min, $composer['require']['php'] ?? null);
+    foreach (['index.php', 'dav.php'] as $front) {
+        $src = (string) file_get_contents(dirname(__DIR__) . '/public/' . $front);
+        $check = substr($src, 0, (int) strpos($src, "define('BETTERCAL_WEB_ENTRY'"));
+        check("php check: $front compares against Setup::MIN_PHP", str_contains($check, 'PHP_VERSION_ID < ' . ($maj * 10000 + $minr * 100 + $pat)) && str_contains($check, "PHP $min or newer"));
+        // Only constructs every PHP since 5 reads, so the check can run on any of them.
+        $allowed = [T_OPEN_TAG, T_COMMENT, T_WHITESPACE, T_IF, T_STRING, T_LNUMBER, T_CONSTANT_ENCAPSED_STRING, T_ECHO, T_EXIT];
+        $odd = [];
+        foreach (token_get_all($check) as $t) {
+            if (is_array($t) ? !in_array($t[0], $allowed, true) : !in_array($t, ['(', ')', '{', '}', ',', ';', '<', '.'], true)) {
+                $odd[] = is_array($t) ? token_name($t[0]) . ' ' . $t[1] : $t;
+            }
+        }
+        checkEq("php check: $front's check uses only syntax any PHP reads", [], $odd);
+        $run = sys_get_temp_dir() . '/bc-phpcheck-' . bin2hex(random_bytes(3)) . '.php';
+        file_put_contents($run, str_replace('PHP_VERSION_ID < ', '1 || PHP_VERSION_ID < ', $check) . "echo 'went on';\n");
+        $out = (string) shell_exec(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($run));
+        unlink($run);
+        check("php check: on too old a PHP, $front explains and stops", str_contains($out, 'Better-Cal needs PHP') && !str_contains($out, 'went on'));
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Only the two front controllers run from the web (0.9.82): bootstrap.php
 // refuses any non-CLI run that didn't declare itself, before anything else.
 {
     $boot = (string) file_get_contents(dirname(__DIR__) . '/src/bootstrap.php');
     $guardAt = strpos($boot, "!defined('BETTERCAL_WEB_ENTRY')");
     check('web entry: bootstrap refuses undeclared web runs, first thing', $guardAt !== false && $guardAt < (int) strpos($boot, 'vendor/autoload.php'));
-    foreach (['index.php', 'dav.php'] as $front) {
+    foreach (['index.php' => 'entry-web.php', 'dav.php' => 'entry-dav.php'] as $front => $entry) {
         $src = (string) file_get_contents(dirname(__DIR__) . '/public/' . $front);
         $def = strpos($src, "define('BETTERCAL_WEB_ENTRY', true);");
-        check("web entry: $front declares itself before loading the bootstrap", $def !== false && $def < (int) strpos($src, "/src/bootstrap.php'"));
+        check("web entry: $front declares itself before loading the app", $def !== false && $def < (int) strpos($src, "/src/$entry'"));
+        $app = (string) file_get_contents(dirname(__DIR__) . '/src/' . $entry);
+        check("web entry: $entry loads the bootstrap and never declares itself", str_contains($app, "/src/bootstrap.php'") && !str_contains($app, 'BETTERCAL_WEB_ENTRY'));
     }
     foreach (glob(dirname(__DIR__) . '/bin/*.php') ?: [] as $script) {
         if (str_contains((string) file_get_contents($script), 'BETTERCAL_WEB_ENTRY')) {

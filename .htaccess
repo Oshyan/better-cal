@@ -1,3 +1,4 @@
+# BEGIN Better-Cal
 # Better-Cal: nothing in this folder is meant to be served except
 # server/public, which has its own .htaccess and is where your domain or
 # subdomain should point (docs/install.md, Choosing where to put it).
@@ -13,8 +14,13 @@
 # A rewrite rule rather than "Require all denied", which needs AuthConfig
 # overrides that some shared hosts don't allow (an error on every request).
 # The app needs mod_rewrite anyway.
+#
+# Updates replace everything from BEGIN Better-Cal to END Better-Cal and keep
+# the rest of this file. Put your own rules (and let your control panel put
+# its PHP version lines) above or below these lines, not between them.
 
 <IfModule mod_rewrite.c>
     RewriteEngine On
     RewriteRule ^ - [F]
 </IfModule>
+# END Better-Cal

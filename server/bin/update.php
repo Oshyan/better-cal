@@ -341,6 +341,32 @@ function finish(array $cfg, Updater $updater): int
         return 1;
     }
     Cli::say($ran === 0 ? '  No database changes in this release.' : "  Applied $ran database change(s).");
+    // Edits made on the server to shipped files (#149): a control panel's
+    // PHP version lines and the owner's own rules in .htaccess are kept; other
+    // edited files are named, since this version's copies replaced them.
+    $previous = is_string($state['previous'] ?? null) && is_dir($state['previous']) ? $state['previous'] : null;
+    if ($previous !== null) {
+        try {
+            foreach ($updater->mergeHtaccess($previous, (string) $state['to']) as $line) {
+                Cli::say('  ' . $line);
+            }
+        } catch (\Throwable $e) {
+            Cli::say('  ' . $e->getMessage() . '. If you or your control panel had added lines to an .htaccess file,');
+            Cli::say("  copy them from the same file in $previous.");
+        }
+        $edited = Updater::editedShipped($previous);
+        if ($edited !== []) {
+            Cli::say('  These files had been changed on the server. This version\'s copies replaced them; yours are still in');
+            Cli::say("  $previous:");
+            foreach (array_slice($edited, 0, 15) as $rel) {
+                Cli::say("    $rel");
+            }
+            if (count($edited) > 15) {
+                Cli::say('    and ' . (count($edited) - 15) . ' more');
+            }
+            Cli::say('  Code of your own belongs in server/plugins/<name>, which updates keep.');
+        }
+    }
     // Private files in the current layout (#142): settings in .env.php, here
     // and in the previous copy, backups encrypted.
     foreach (PrivateFiles::secure($cfg) as $line) {

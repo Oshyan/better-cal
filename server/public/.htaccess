@@ -1,3 +1,4 @@
+# BEGIN Better-Cal
 # Apache and LiteSpeed routing for Better-Cal (docs/install.md). Nginx ignores
 # this file; its configuration is in the same document.
 #
@@ -11,6 +12,10 @@
 # No Options line: hosts that allow FileInfo but not Options would answer
 # every request with an error, and listings can't happen anyway, since every
 # path goes to the app.
+#
+# Updates replace everything from BEGIN Better-Cal to END Better-Cal and keep
+# the rest of this file. Put your own rules (and let your control panel put
+# its PHP version lines) above or below these lines, not between them.
 
 <IfModule mod_rewrite.c>
     RewriteEngine On
@@ -18,3 +23,4 @@
     RewriteRule ^dav(/|$) dav.php [END]
     RewriteRule ^ index.php [END]
 </IfModule>
+# END Better-Cal

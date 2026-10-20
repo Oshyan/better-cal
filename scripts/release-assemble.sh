@@ -28,9 +28,13 @@ mkdir -p "$out"
 git archive --format=tar --prefix=better-cal/ "$tag" -- . \
   ':(exclude).github' ':(exclude)server/tests' ':(exclude)web/tests' \
   ':(exclude)scripts/tests' ':(exclude)tools/tz-harness' | tar -x -C "$out"
-# The files this release ships, so bin/update.php can tell the ones someone
-# added from ones a later release simply dropped.
-(cd "$out/better-cal" && find . -type f | sed 's|^\./||' | LC_ALL=C sort > .release-files)
+# The files this release ships, with their SHA-256 (since 1.0, in shasum's
+# "HASH  PATH" form), so bin/update.php can tell the ones someone added from
+# ones a later release simply dropped, and see which shipped ones were edited
+# on the server. Written outside the tree first so it doesn't list itself.
+(cd "$out/better-cal" && find . -type f | sed 's|^\./||' | LC_ALL=C sort | tr '\n' '\0' \
+  | xargs -0 shasum -a 256 > "$out/release-files.tmp")
+mv "$out/release-files.tmp" "$out/better-cal/.release-files"
 cp -R "$vendor" "$out/better-cal/server/vendor"
 # The libraries' own command-line tools, examples, tests and docs: Better-Cal
 # never runs them, and on a host that serves the app folder as a web root, a

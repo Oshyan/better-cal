@@ -511,7 +511,7 @@ final class Updater
         }
         // Files the current release shipped (its .release-files list) were
         // simply removed in the new one; only files someone added count.
-        $shipped = array_fill_keys(array_filter(explode("\n", (string) @file_get_contents($this->appRoot . '/' . self::RELEASE_FILES))), true);
+        $shipped = self::releaseFiles($this->appRoot);
         $leftBehind = [];
         $this->walk($this->appRoot, '', static function (string $rel) use ($newRoot, &$leftBehind, $carried, $shipped): bool {
             foreach (array_merge(self::NOT_CARRIED, $carried) as $skip) {
@@ -519,7 +519,7 @@ final class Updater
                     return false;
                 }
             }
-            if (isset($shipped[$rel])) {
+            if (array_key_exists($rel, $shipped)) {
                 return false;
             }
             if (!file_exists($newRoot . '/' . $rel)) {
@@ -534,6 +534,95 @@ final class Updater
             }
         }
         return ['carried' => $carried, 'leftBehind' => $leftBehind];
+    }
+
+    /**
+     * The files a release shipped, from its .release-files list: path =>
+     * SHA-256, or null for lists from before 1.0, which named paths only.
+     *
+     * @return array<string, ?string>
+     */
+    public static function releaseFiles(string $root): array
+    {
+        $files = [];
+        foreach (explode("\n", (string) @file_get_contents($root . '/' . self::RELEASE_FILES)) as $line) {
+            if (preg_match('/^([0-9a-f]{64})  (.+)$/', $line, $m) === 1) {
+                $files[$m[2]] = $m[1];
+            } elseif ($line !== '') {
+                $files[$line] = null;
+            }
+        }
+        return $files;
+    }
+
+    /**
+     * Keep the owner's own lines from the previous version's .htaccess files
+     * in this one's (#149): a control panel's PHP version choice, rules they
+     * added. Run by the new code after the swap. Says what it kept, and,
+     * when the owner had changed Better-Cal's own lines, saves their file
+     * beside the new one and says what to do.
+     *
+     * @return list<string>
+     */
+    public function mergeHtaccess(string $previous, string $to): array
+    {
+        $said = [];
+        $hashes = self::releaseFiles($previous);
+        foreach (Htaccess::FILES as $rel) {
+            $old = "$previous/$rel";
+            $new = $this->appRoot . '/' . $rel;
+            if (!is_file($old) || is_link($old) || !is_file($new) || is_link($new)) {
+                continue;
+            }
+            $shipped = (string) file_get_contents($new);
+            $r = Htaccess::merge((string) file_get_contents($old), $shipped, $hashes[$rel] ?? null);
+            if ($r['replaced']) {
+                $saved = dirname($new) . '/.htaccess-before-' . $to;
+                if (!@copy($old, $saved)) {
+                    throw new \RuntimeException("Could not save your previous $rel as $saved");
+                }
+                @chmod($saved, 0644);
+            }
+            if ($r['text'] !== $shipped) {
+                $tmp = $new . '.' . bin2hex(random_bytes(4)) . '.tmp';
+                if (@file_put_contents($tmp, $r['text']) !== strlen($r['text']) || !@chmod($tmp, fileperms($new) & 0777) || !@rename($tmp, $new)) {
+                    @unlink($tmp);
+                    throw new \RuntimeException("Could not write $new");
+                }
+            }
+            if ($r['replaced']) {
+                $said[] = "Your changes to Better-Cal's own lines in $rel were replaced with this version's"
+                    . ($r['kept'] ? ' (your other lines there are kept)' : '') . '.';
+                $said[] = '  Your file is saved beside it as .htaccess-before-' . $to . '. If you still need a change from it,';
+                $said[] = '  move it above the "' . Htaccess::BEGIN . '" line, where updates keep it.';
+            } elseif ($r['kept']) {
+                $said[] = "Kept your own lines in $rel.";
+            }
+        }
+        return $said;
+    }
+
+    /**
+     * Shipped files in the previous version that differ from what its
+     * release shipped: edited on the server. The new version's copies
+     * replace them; the edited ones stay in the previous folder. Empty for a
+     * previous version from before 1.0, whose list has no hashes.
+     *
+     * @return list<string>
+     */
+    public static function editedShipped(string $previous): array
+    {
+        $edited = [];
+        foreach (self::releaseFiles($previous) as $rel => $hash) {
+            if ($hash === null || in_array($rel, Htaccess::FILES, true) || $rel === self::RELEASE_FILES) {
+                continue;
+            }
+            $path = "$previous/$rel";
+            if (is_file($path) && !is_link($path) && !hash_equals($hash, (string) hash_file('sha256', $path))) {
+                $edited[] = $rel;
+            }
+        }
+        return $edited;
     }
 
     /** @param callable(string):bool $visit returns whether to descend */

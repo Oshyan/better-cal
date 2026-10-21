@@ -190,9 +190,9 @@ export function isMultiDay(occ) {
 }
 
 // Month label info for the left gutter: for each row in [firstRow, lastRow]
-// that contains the 1st of a month, return {weekIndex, year, month} (month
-// 1-12). weekIndex is the row index (historical name; 7-column callers see
-// real week indexes).
+// that contains the 1st of a month, return {weekIndex, year, month, col}
+// (month 1-12; col is the 1st's column in that row). weekIndex is the row
+// index (historical name; 7-column callers see real week indexes).
 export function monthStartsInRange(firstRow, lastRow, columns = 7) {
   const out = [];
   for (let ri = firstRow; ri <= lastRow; ri++) {
@@ -201,7 +201,7 @@ export function monthStartsInRange(firstRow, lastRow, columns = 7) {
       const key = keyOfEpochDay(start + i);
       if (key.endsWith('-01')) {
         const [y, m] = key.split('-').map(Number);
-        out.push({ weekIndex: ri, year: y, month: m });
+        out.push({ weekIndex: ri, year: y, month: m, col: i });
       }
     }
   }

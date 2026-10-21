@@ -6,6 +6,7 @@ Security fixes are tracked privately as GitHub security advisories until they sh
 
 ## Unreleased
 
+- **Months are marked by a line, not a gray background.** Every other month used to be tinted, which made a whole month look dimmed or past. Now every month has the same background, and one line runs where each month meets the next, stepping around the week the 1st falls in. A trip crossing into a new month isn't cut by it.
 - **MCP: every tool says whether repeating it is safe.** Each tool now declares all four MCP hints (read-only, destructive, idempotent, open-world), which some MCP directories require. Setting a value or deleting is safe to repeat; creating an event, running a plugin and undo are not.
 
 ## 1.0.0 (2026-10-20)

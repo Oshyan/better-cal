@@ -220,6 +220,9 @@ assert('isMultiDay true for 3-day event',
 const labels = monthStartsInRange(weekIndexOfKey('2026-07-20'), weekIndexOfKey('2026-08-10'));
 assert('monthStartsInRange finds Aug 1',
   labels.some((l) => l.year === 2026 && l.month === 8 && l.weekIndex === weekIndexOfKey('2026-07-27')));
+// The column of the 1st places the stepped line where the months meet.
+assert('monthStartsInRange: col is the column holding the 1st',
+  labels.length > 0 && labels.every((l) => keyOfEpochDay(firstEpochDayOfRow(l.weekIndex, 7) + l.col).endsWith('-01')));
 
 // 26. Dominant month of a boundary week (Jul 27 - Aug 2: 5 July days).
 eq('dominantMonthOfWeek boundary', dominantMonthOfWeek(weekIndexOfKey('2026-07-30')), { year: 2026, month: 7 });
@@ -334,6 +337,8 @@ eq('segmentSpan delegates to rowSpanSegments(7)',
 const labels3 = monthStartsInRange(r801 - 4, r801 + 4, 3);
 assert('3col: monthStartsInRange finds Aug 1',
   labels3.some((l) => l.year === 2026 && l.month === 8 && l.weekIndex === r801));
+assert('3col: col is the column holding the 1st',
+  labels3.length > 0 && labels3.every((l) => keyOfEpochDay(firstEpochDayOfRow(l.weekIndex, 3) + l.col).endsWith('-01')));
 
 // Dominant month of the boundary chunk Jul 30, Jul 31, Aug 1: July (2 of 3).
 eq('3col: dominantMonthOfRow boundary chunk', dominantMonthOfRow(r801, 3), { year: 2026, month: 7 });

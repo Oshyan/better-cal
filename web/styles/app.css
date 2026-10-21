@@ -8,7 +8,6 @@
   --bg: #f6f7f9;
   --bg-raised: #ffffff;
   --bg-inset: #eef0f3;
-  --bg-alt: #e9ecf1;
   --fg: #1e2430;
   --fg-muted: #6b7280;
   --border: #e2e5ea;
@@ -45,7 +44,6 @@
     --bg: #16181d;
     --bg-raised: #1e2128;
     --bg-inset: #23262e;
-    --bg-alt: #1f2229;
     --fg: #e6e8ec;
     --fg-muted: #9aa1ac;
     --border: #2c3038;
@@ -72,7 +70,6 @@
   --bg: #16181d;
   --bg-raised: #1e2128;
   --bg-inset: #23262e;
-  --bg-alt: #1f2229;
   --fg: #e6e8ec;
   --fg-muted: #9aa1ac;
   --border: #2c3038;
@@ -598,25 +595,19 @@ a.bc-btn { color: var(--fg); text-decoration: none; display: inline-flex; align-
   position: absolute; left: 0; width: var(--bc-gutter-w, 44px);
   z-index: 2; pointer-events: none;
 }
-/* The gutter alternates by month with the cells (.bc-cell.alt-month). A
-   see-through tint, since this box sits over the week numbers below it; it
-   runs from the row holding the 1st to the next month's, as the label does. */
-.bc-gutter-month.alt-month { background: color-mix(in srgb, var(--fg) 7%, transparent); }
 .bc-gutter-label {
   position: sticky; top: 0;
   font-size: 14px; font-weight: 800; color: var(--fg); letter-spacing: 0.01em;
   padding: 5px 3px 2px 7px; line-height: 1.15;
-  /* Solid, in the column's own colour (tinted in alternate months, as the
-     column is), so a week number scrolling up under the pinned month name
-     slides beneath it; the short fade below softens the edge it goes under. */
+  /* Solid, in the column's own colour, so a week number scrolling up under
+     the pinned month name slides beneath it; the short fade below softens the
+     edge it goes under. */
   background: var(--bg-inset);
 }
 .bc-gutter-label::after {
   content: ""; position: absolute; left: 0; right: 0; top: 100%; height: 10px;
   background: linear-gradient(var(--bg-inset), transparent); pointer-events: none;
 }
-.bc-gutter-month.alt-month .bc-gutter-label { background: color-mix(in srgb, var(--fg) 7%, var(--bg-inset)); }
-.bc-gutter-month.alt-month .bc-gutter-label::after { background: linear-gradient(color-mix(in srgb, var(--fg) 7%, var(--bg-inset)), transparent); }
 .bc-gutter-year { display: block; font-size: 10px; font-weight: 600; color: var(--fg-muted); }
 .bc-week { position: absolute; left: 0; right: 0; display: flex; }
 .bc-week-gutter {
@@ -634,17 +625,13 @@ a.bc-btn { color: var(--fg); text-decoration: none; display: inline-flex; align-
   container: bc-cell / inline-size;
 }
 .bc-cell:last-child { border-right: none; }
-.bc-cell.alt-month { background: var(--bg-alt); }
 /* 3-day ribbon: weekends carry a subtle tint for orientation (there is no
    weekday header row in that mode). Today and drop tints still win. */
 .bc-cell.is-weekend:not(.is-today):not(.bc-drop-target) { background: color-mix(in srgb, var(--fg) 4%, var(--bg)); }
-.bc-cell.alt-month.is-weekend:not(.is-today):not(.bc-drop-target) { background: color-mix(in srgb, var(--fg) 4%, var(--bg-alt)); }
-/* Month starts get a quiet but legible cue: accent-tinted day label and a
-   hairline top rule that reads as a "chapter break" while scrolling. */
-.bc-cell.is-month-start { box-shadow: inset 0 2px 0 color-mix(in srgb, var(--accent) 55%, transparent); }
+/* A month's 1st gets an accent day label; the line where months meet is
+   drawn over the grid (.bc-month-rule). */
 .bc-cell.is-month-start .bc-daynum { color: var(--accent); font-weight: 700; }
 .bc-cell.is-today { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--today) 40%, transparent); }
-.bc-cell.is-month-start.is-today { box-shadow: inset 0 2px 0 color-mix(in srgb, var(--accent) 55%, transparent), inset 0 0 0 1px color-mix(in srgb, var(--today) 40%, transparent); }
 .bc-cell.is-today { background: color-mix(in srgb, var(--today) 9%, var(--bg)); }
 .bc-cell.bc-drop-target { background: color-mix(in srgb, var(--accent) 22%, var(--bg)); }
 .bc-daynum {
@@ -691,13 +678,17 @@ a.bc-btn { color: var(--fg); text-decoration: none; display: inline-flex; align-
 .bc-cell-chips > * { pointer-events: auto; }
 .bc-week-bars { position: absolute; left: 0; right: 0; pointer-events: none; }
 .bc-bar-slot { position: absolute; height: var(--chip-h); padding: 0 2px; pointer-events: auto; }
-/* Full-width month boundary rule: spans the whole grid, gutter included,
-   at the top of each month's first week row. */
+/* The line where one month meets the next (MonthGrid places its pieces).
+   Above the day cells, below multi-day bars and bands, so a trip crossing
+   into a new month isn't cut by it; the gutter piece (and a straight
+   full-row line) sits over the sticky month label. */
 .bc-month-rule {
-  position: absolute; left: 0; right: 0; height: 2px;
+  position: absolute; height: 2px;
   background: color-mix(in srgb, var(--accent) 60%, var(--border-strong));
-  z-index: 3; pointer-events: none;
+  z-index: 1; pointer-events: none;
 }
+.bc-month-rule.is-over { z-index: 3; }
+.bc-week-bars, .bc-week-bands { z-index: 2; }
 
 /* --- chips, bars, blocks ---------------------------------------------------- */
 

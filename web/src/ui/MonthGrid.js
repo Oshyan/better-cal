@@ -665,20 +665,33 @@ export function MonthGrid({
     const bottom = next ? weekTop(next.weekIndex, minWeek, rowH) : top + lookRows * rowH;
     return html`<div
       key=${'m' + year + '-' + month}
-      class=${'bc-gutter-month' + (month % 2 === 0 ? ' alt-month' : '')}
+      class="bc-gutter-month"
       style=${`top:${top}px;height:${bottom - top}px`}
     >
       <div class="bc-gutter-label">${fmtMonthShort(new Date(year, month - 1, 1))}<span class="bc-gutter-year">${month === 1 ? year : ''}</span></div>
     </div>`;
   });
 
-  // Crisp full-width divider (gutter included) at the top of each month's
-  // first row; the per-cell accent cue stays as the mid-row marker.
-  const rules = monthStarts.map(({ weekIndex, year, month }) => html`<div
-    key=${'r' + year + '-' + month}
-    class="bc-month-rule"
-    style=${`top:${weekTop(weekIndex, minWeek, rowH)}px`}
-  ></div>`);
+  // Where one month meets the next. Every month has the same background;
+  // this line alone marks the change: across the top of the new month's days
+  // in the row holding the 1st, down the left of the 1st, and under the old
+  // month's days in that row (a straight line when the 1st starts the row).
+  // Three pieces, overlapping at the corners so they join; each sits on the
+  // cell borders. The gutter's own piece marks where the month label starts.
+  const colX = (c) => `(var(--bc-gutter-w) + (100% - var(--bc-gutter-w)) * ${c} / ${columns})`;
+  const rules = monthStarts.flatMap(({ weekIndex, year, month, col }) => {
+    const top = weekTop(weekIndex, minWeek, rowH);
+    const key = 'r' + year + '-' + month;
+    if (col === 0) {
+      return [html`<div key=${key} class="bc-month-rule is-over" style=${`top:${top}px;left:0;right:0`}></div>`];
+    }
+    return [
+      html`<div key=${key + 'g'} class="bc-month-rule is-over" style=${`top:${top}px;left:0;width:var(--bc-gutter-w)`}></div>`,
+      html`<div key=${key + 't'} class="bc-month-rule" style=${`top:${top}px;left:calc(${colX(col)} - 1px);right:0`}></div>`,
+      html`<div key=${key + 'v'} class="bc-month-rule" style=${`top:${top}px;height:${rowH + 2}px;width:2px;left:calc(${colX(col)} - 1px)`}></div>`,
+      html`<div key=${key + 'b'} class="bc-month-rule" style=${`top:${top + rowH}px;left:var(--bc-gutter-w);width:calc(${colX(col)} - var(--bc-gutter-w) + 1px)`}></div>`,
+    ];
+  });
 
   return html`<div
     class="bc-month${ribbon ? ' is-ribbon' : ''}"
@@ -804,7 +817,7 @@ function WeekRow({
       : (ribbon ? fmtWeekdayShort(dateOfDayKey(k)) + ' ' + d : d);
     return html`<div
       key=${k}
-      class="bc-cell${m % 2 === 0 ? ' alt-month' : ''}${weekend ? ' is-weekend' : ''}${k === tKey ? ' is-today' : ''}${d === 1 ? ' is-month-start' : ''}${selected ? ' bc-drop-target' : ''}"
+      class="bc-cell${weekend ? ' is-weekend' : ''}${k === tKey ? ' is-today' : ''}${d === 1 ? ' is-month-start' : ''}${selected ? ' bc-drop-target' : ''}"
       data-day=${k}
       onPointerDown=${dragCreate}
       onClick=${cellClickSelect}

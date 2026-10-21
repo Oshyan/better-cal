@@ -677,16 +677,16 @@ export function MonthGrid({
   // in the row holding the 1st, down the left of the 1st, and under the old
   // month's days in that row (a straight line when the 1st starts the row).
   // Three pieces, overlapping at the corners so they join; each sits on the
-  // cell borders. The gutter's own piece marks where the month label starts.
+  // cell borders. The line stays out of the gutter: the month label there
+  // marks the month, and the line marks exactly where the days change.
   const colX = (c) => `(var(--bc-gutter-w) + (100% - var(--bc-gutter-w)) * ${c} / ${columns})`;
   const rules = monthStarts.flatMap(({ weekIndex, year, month, col }) => {
     const top = weekTop(weekIndex, minWeek, rowH);
     const key = 'r' + year + '-' + month;
     if (col === 0) {
-      return [html`<div key=${key} class="bc-month-rule is-over" style=${`top:${top}px;left:0;right:0`}></div>`];
+      return [html`<div key=${key} class="bc-month-rule" style=${`top:${top}px;left:var(--bc-gutter-w);right:0`}></div>`];
     }
     return [
-      html`<div key=${key + 'g'} class="bc-month-rule is-over" style=${`top:${top}px;left:0;width:var(--bc-gutter-w)`}></div>`,
       html`<div key=${key + 't'} class="bc-month-rule" style=${`top:${top}px;left:calc(${colX(col)} - 1px);right:0`}></div>`,
       html`<div key=${key + 'v'} class="bc-month-rule" style=${`top:${top}px;height:${rowH + 2}px;width:2px;left:calc(${colX(col)} - 1px)`}></div>`,
       html`<div key=${key + 'b'} class="bc-month-rule" style=${`top:${top + rowH}px;left:var(--bc-gutter-w);width:calc(${colX(col)} - var(--bc-gutter-w) + 1px)`}></div>`,

@@ -678,16 +678,14 @@ a.bc-btn { color: var(--fg); text-decoration: none; display: inline-flex; align-
 .bc-cell-chips > * { pointer-events: auto; }
 .bc-week-bars { position: absolute; left: 0; right: 0; pointer-events: none; }
 .bc-bar-slot { position: absolute; height: var(--chip-h); padding: 0 2px; pointer-events: auto; }
-/* The line where one month meets the next (MonthGrid places its pieces).
-   Above the day cells, below multi-day bars and bands, so a trip crossing
-   into a new month isn't cut by it; the gutter piece (and a straight
-   full-row line) sits over the sticky month label. */
+/* The line where one month meets the next (MonthGrid places its pieces,
+   all in the day area). Above the day cells, below multi-day bars and
+   bands, so a trip crossing into a new month isn't cut by it. */
 .bc-month-rule {
   position: absolute; height: 2px;
   background: color-mix(in srgb, var(--accent) 60%, var(--border-strong));
   z-index: 1; pointer-events: none;
 }
-.bc-month-rule.is-over { z-index: 3; }
 .bc-week-bars, .bc-week-bands { z-index: 2; }
 
 /* --- chips, bars, blocks ---------------------------------------------------- */

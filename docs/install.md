@@ -117,6 +117,7 @@ What `install.php` does, step by step, if you'd rather:
 
 ## Requirements in detail
 
+- Keeping PHP, the database and the web server updated is up to you or your host, not Better-Cal ([SECURITY.md](../SECURITY.md#scope-notes)).
 - PHP 8.4 or newer (8.4.1 or later) with these extensions: `pdo_mysql`, `curl`, `mbstring`, `xml` (dom, simplexml, xmlreader, xmlwriter: CalDAV needs them), `zip`, plus `json`, `openssl`, `sodium`, `ctype`, `iconv` and `fileinfo`, which nearly every PHP build already has. `composer check-platform-reqs --lock --no-dev`, run in `server/`, lists anything missing.
   - Best with `proc_open` allowed and the PHP command-line binary installed in PHP's own bin directory (`php8.4-cli` below does this on Debian and Ubuntu). Every outbound request (feeds, Google, place search, plugins) then looks up its address in a short-lived child process with a time limit, so a slow DNS server cannot stall it. Where either is missing (some shared hosts disable `proc_open`), the lookup runs in-process instead and the PHP error log says so once: everything still works and private addresses are still refused, but a stuck DNS server can hold a request until the system resolver gives up. Outbound requests connect directly: proxy variables such as `HTTPS_PROXY` are ignored.
   - Shared hosting: pick PHP 8.4 or 8.5 in the host's panel (DreamHost offers both as of October 2026; elsewhere, check the host's PHP version picker).

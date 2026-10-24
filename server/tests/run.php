@@ -416,6 +416,99 @@ $d = $p('Party the Saturday after next 8pm');
 checkEq('fp leftover temporal words demote completeness', false, $d['complete']);
 check('fp leftover temporal words cap confidence', $d['confidence'] <= 0.5);
 
+// --- Repeats in quick add (#165), same fixed now (Thursday 10:00) ----------
+// Each row: text, expected title, expected start, expected rrule.
+$repeatCases = [
+    // Daily
+    ['Walk every day at 7am', 'Walk', '2026-07-31T07:00', 'FREQ=DAILY'],
+    ['Vitamins daily', 'Vitamins', '2026-07-30T00:00', 'FREQ=DAILY'],
+    ['Journal everyday at 9pm', 'Journal', '2026-07-30T21:00', 'FREQ=DAILY'],
+    ['Gym every morning', 'Gym', '2026-07-31T09:00', 'FREQ=DAILY'],
+    ['Stretch every evening', 'Stretch', '2026-07-30T18:00', 'FREQ=DAILY'],
+    ['Read every night', 'Read', '2026-07-30T20:00', 'FREQ=DAILY'],
+    // Weekdays and weekends
+    ['Standup every weekday at 9am', 'Standup', '2026-07-31T09:00', 'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR'],
+    ['Standup weekdays 9:30am', 'Standup', '2026-07-31T09:30', 'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR'],
+    ['Hike every weekend', 'Hike', '2026-08-01T00:00', 'FREQ=WEEKLY;BYDAY=SA,SU'],
+    ['Work every Monday to Friday 9am', 'Work', '2026-07-31T09:00', 'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR'],
+    // Weekly
+    ['Piano every Tuesday 4pm', 'Piano', '2026-08-04T16:00', 'FREQ=WEEKLY;BYDAY=TU'],
+    ['Piano Tuesdays at 4pm', 'Piano', '2026-08-04T16:00', 'FREQ=WEEKLY;BYDAY=TU'],
+    ['Gym Mondays and Thursdays 6pm', 'Gym', '2026-07-30T18:00', 'FREQ=WEEKLY;BYDAY=MO,TH'],
+    ['Run every Mon, Wed, Fri at 7am', 'Run', '2026-07-31T07:00', 'FREQ=WEEKLY;BYDAY=MO,WE,FR'],
+    ['Gym every mon wed fri 6am', 'Gym', '2026-07-31T06:00', 'FREQ=WEEKLY;BYDAY=MO,WE,FR'],
+    ['Lunch every Friday night', 'Lunch', '2026-07-31T20:00', 'FREQ=WEEKLY;BYDAY=FR'],
+    ['Weekly review Friday 3pm', 'Weekly review', '2026-07-31T15:00', 'FREQ=WEEKLY'],
+    ['Team sync weekly on Tue and Thu at 10am', 'Team sync', '2026-08-04T10:00', 'FREQ=WEEKLY;BYDAY=TU,TH'],
+    // Intervals
+    ['Payroll every other week Friday', 'Payroll', '2026-07-31T00:00', 'FREQ=WEEKLY;INTERVAL=2'],
+    ['Dinner every other Saturday', 'Dinner', '2026-08-01T00:00', 'FREQ=WEEKLY;INTERVAL=2;BYDAY=SA'],
+    ['Cleaners every 2 weeks on Monday', 'Cleaners', '2026-08-03T00:00', 'FREQ=WEEKLY;INTERVAL=2;BYDAY=MO'],
+    ['Biweekly 1:1 Monday 2pm', 'Biweekly 1:1', '2026-08-03T14:00', 'FREQ=WEEKLY;INTERVAL=2'],
+    ['Water plants every 3 days', 'Water plants', '2026-07-30T00:00', 'FREQ=DAILY;INTERVAL=3'],
+    ['Board meeting every quarter', 'Board meeting', '2026-07-30T00:00', 'FREQ=MONTHLY;INTERVAL=3'],
+    // Monthly
+    ['Bills monthly', 'Bills', '2026-07-30T00:00', 'FREQ=MONTHLY'],
+    ['Rent monthly on the 15th', 'Rent', '2026-08-15T00:00', 'FREQ=MONTHLY;BYMONTHDAY=15'],
+    ['Pay card every 15th', 'Pay card', '2026-08-15T00:00', 'FREQ=MONTHLY;BYMONTHDAY=15'],
+    ['Book club first Monday of the month 7pm', 'Book club', '2026-08-03T19:00', 'FREQ=MONTHLY;BYDAY=1MO'],
+    ['Trivia every 3rd Friday 8pm', 'Trivia', '2026-08-21T20:00', 'FREQ=MONTHLY;BYDAY=3FR'],
+    ['Review last Friday of the month', 'Review', '2026-07-31T00:00', 'FREQ=MONTHLY;BYDAY=-1FR'],
+    ['Invoices last day of the month', 'Invoices', '2026-07-31T00:00', 'FREQ=MONTHLY;BYMONTHDAY=-1'],
+    ['Rent every first of the month', 'Rent', '2026-08-01T00:00', 'FREQ=MONTHLY;BYMONTHDAY=1'],
+    ['Rent on the 1st of every month', 'Rent', '2026-08-01T00:00', 'FREQ=MONTHLY;BYMONTHDAY=1'],
+    ['Report every 2nd Tuesday of the month', 'Report', '2026-08-11T00:00', 'FREQ=MONTHLY;BYDAY=2TU'],
+    ['Report last weekday of the month', 'Report', '2026-07-31T00:00', 'FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1'],
+    // Yearly
+    ['Dues yearly', 'Dues', '2026-07-30T00:00', 'FREQ=YEARLY'],
+    ['Taxes annually Apr 10', 'Taxes', '2027-04-10T00:00', 'FREQ=YEARLY'],
+    ['Birthday every year on 12/23', 'Birthday', '2026-12-23T00:00', 'FREQ=YEARLY'],
+    ['Anniversary every Jan 27', 'Anniversary', '2027-01-27T00:00', 'FREQ=YEARLY'],
+    // Start and end
+    ['Class every Wednesday starting Nov 3 at 6pm', 'Class', '2026-11-04T18:00', 'FREQ=WEEKLY;BYDAY=WE'],
+    ['Yoga every Monday from Sep 7 to Dec 14', 'Yoga', '2026-09-07T00:00', 'FREQ=WEEKLY;BYDAY=MO;UNTIL=20261214'],
+    ['Yoga every Monday Sep 7 to Dec 14', 'Yoga', '2026-09-07T00:00', 'FREQ=WEEKLY;BYDAY=MO;UNTIL=20261214'],
+    ['Swim every Tuesday until Dec 15', 'Swim', '2026-08-04T00:00', 'FREQ=WEEKLY;BYDAY=TU;UNTIL=20261215'],
+    ['Choir every Thursday ending Dec 10 7pm', 'Choir', '2026-07-30T19:00', 'FREQ=WEEKLY;BYDAY=TH;UNTIL=20261211T075959Z'],
+    ['Lessons every Friday through Dec 18', 'Lessons', '2026-07-31T00:00', 'FREQ=WEEKLY;BYDAY=FR;UNTIL=20261218'],
+    ['Tutoring every Monday to May 23', 'Tutoring', '2026-08-03T00:00', 'FREQ=WEEKLY;BYDAY=MO;UNTIL=20270523'],
+    ['PT every Tuesday for 6 weeks', 'PT', '2026-08-04T00:00', 'FREQ=WEEKLY;BYDAY=TU;UNTIL=20260914'],
+    ['Class every Sunday 10 times', 'Class', '2026-08-02T00:00', 'FREQ=WEEKLY;BYDAY=SU;COUNT=10'],
+    // Shortcuts
+    ['Meds :daily 8am', 'Meds', '2026-07-31T08:00', 'FREQ=DAILY'],
+    ['Retro :weekly Friday', 'Retro', '2026-07-31T00:00', 'FREQ=WEEKLY'],
+    ['Bills :monthly', 'Bills', '2026-07-30T00:00', 'FREQ=MONTHLY'],
+    ['Checkup :yearly', 'Checkup', '2026-07-30T00:00', 'FREQ=YEARLY'],
+    // Not repeats
+    ['Meet each other Friday', 'Meet each other', '2026-07-31T00:00', null],
+    ['Lunch tomorrow at noon', 'Lunch', '2026-07-31T12:00', null],
+    ['Annual checkup tomorrow 9am', 'Annual checkup', '2026-07-31T09:00', null],
+    ['Study every day 7 until 9pm', 'Study', '2026-07-30T19:00', 'FREQ=DAILY'],
+];
+foreach ($repeatCases as [$text, $title, $start, $rrule]) {
+    $d = $p($text);
+    checkEq("repeat '$text' title", $title, $d['title']);
+    checkEq("repeat '$text' start", $start, substr($d['start'], 0, 16));
+    checkEq("repeat '$text' rrule", $rrule, $d['rrule']);
+}
+$d = $p('Choir every Thursday ending Dec 10 7pm');
+checkEq('repeat keeps the time and length', '2026-07-30T20:00', substr($d['end'], 0, 16));
+$d = $p('Yoga every Monday Sep 7 to Dec 14');
+checkEq('repeat with a range is one day, not a multi-day event', '2026-09-08T00:00', substr($d['end'], 0, 16));
+check('repeat with a day and time is complete', $p('Piano every Tuesday 4pm')['complete']);
+$invalid = [];
+foreach ($repeatCases as [$text, , , $rrule]) {
+    if ($rrule === null) {
+        continue;
+    }
+    try {
+        Recurrence::validateRrule((string) $p($text)['rrule']);
+    } catch (HttpError) {
+        $invalid[] = $text;
+    }
+}
+checkEq('every parsed repeat passes server validation', [], $invalid);
+
 // ---------------------------------------------------------------------------
 // People::normalizeName (pure)
 // ---------------------------------------------------------------------------
@@ -2852,6 +2945,22 @@ $m = QuickAdd::mergeLlm($mkLlm(), $mkFb(['location' => 'Example Cafe']), $mergeN
 checkEq('qam location backfills from fallback', 'Example Cafe', $m['location']);
 $m = QuickAdd::mergeLlm($mkLlm(['location' => 'Corner Bistro']), $mkFb(['location' => 'Example Cafe']), $mergeNow);
 checkEq('qam LLM location wins when present', 'Corner Bistro', $m['location']);
+
+// Repeats (#165). 2026-08-04 is a Tuesday.
+$m = QuickAdd::mergeLlm($mkLlm(['rrule' => 'FREQ=WEEKLY;BYDAY=TH']), $mkFb(['rrule' => 'FREQ=WEEKLY;BYDAY=TU']), $mergeNow);
+checkEq('qam the deterministic repeat wins', 'FREQ=WEEKLY;BYDAY=TU', $m['rrule']);
+checkEq('qam start already on the rule stays', '2026-08-04T16:00:00-07:00', $m['start']);
+$m = QuickAdd::mergeLlm($mkLlm(['rrule' => 'FREQ=WEEKLY;BYDAY=TH']), $mkFb(['rrule' => null]), $mergeNow);
+checkEq('qam the model repeat is used when the parser found none', 'FREQ=WEEKLY;BYDAY=TH', $m['rrule']);
+checkEq('qam start moves to the rule\'s first day', '2026-08-06T16:00:00-07:00', $m['start']);
+checkEq('qam the move keeps the length', '2026-08-06T17:00:00-07:00', $m['end']);
+$m = QuickAdd::mergeLlm($mkLlm(['rrule' => null]), $mkFb(['rrule' => null]), $mergeNow);
+checkEq('qam no repeat stays none', null, $m['rrule']);
+checkEq('qam kept model rule is normalized', 'FREQ=WEEKLY;BYDAY=MO', LlmGateway::keptRrule('RRULE:freq=weekly;byday=MO'));
+checkEq('qam hourly model rule is dropped', null, LlmGateway::keptRrule('FREQ=HOURLY;INTERVAL=2'));
+checkEq('qam a daily rule at set hours is dropped', null, LlmGateway::keptRrule('FREQ=DAILY;BYHOUR=9,17'));
+checkEq('qam an invalid model rule is dropped', null, LlmGateway::keptRrule('FREQ=WEEKLY;BYDAY=XX'));
+checkEq('qam an empty model rule is none', null, LlmGateway::keptRrule(''));
 
 // ---------------------------------------------------------------------------
 // ICS escaping and folding

@@ -18,11 +18,14 @@ import { PeopleInput } from './PeopleInput.js';
 import { ZonePicker } from './ZonePicker.js';
 import { RichText } from './RichText.js';
 import { Icon } from '../ui/icons.js';
+import {
+  DAY_CODES, ruleParts, ruleBase, joinRule, weekOfMonth, describeRepeat, repeatEnd, withRepeatEnd,
+} from '../lib/repeat.js';
 import { isEmptyHtml } from '../lib/richtext.js';
 import {
   parseISO, toInputValue, fromInputValue, toISOWithOffset, addDaysDate, pad, localTz,
   dateOfDayKey, eventDuration, instantFromWallTime, wallTimeInZone, sameClock, tzCity, tzOffsetLabel, fmtRange,
-  allDayFields, allDayInputs, addDaysKey, diffDaysKey, fmtTime, fmtWeekdayShort, todayKey, untilDayKey,
+  allDayFields, allDayInputs, addDaysKey, diffDaysKey, fmtTime, fmtWeekdayShort, todayKey,
 } from '../lib/dates.js';
 import {
   TIMED_CHOICES, ALLDAY_CHOICES, REMINDER_UNITS, fmtOffsetMinutes, fmtReminder,
@@ -50,23 +53,33 @@ function toPeopleChips(names) {
     });
 }
 
-function buildRrule(r, allDay = false, tz = null) {
-  if (!r || r.freq === 'none') return null;
+// The repeat controls -> RRULE text. Monthly follows the start the way
+// Google's does: day N, or the Nth (or last) weekday of the start. A rule the
+// controls can't say (r.custom) is kept as it came, with only its end taken
+// from the Ends controls. `start` is the start as a Date of wall fields.
+function buildRrule(r, allDay = false, tz = null, start = null) {
+  if (!r) return null;
+  const end = { kind: r.ends, until: r.until, count: r.count };
+  if (r.custom) return withRepeatEnd(r.custom, end, allDay, tz);
+  if (r.freq === 'none') return null;
   const parts = ['FREQ=' + r.freq];
   if (r.interval > 1) parts.push('INTERVAL=' + r.interval);
   if (r.freq === 'WEEKLY' && r.byday && r.byday.length) parts.push('BYDAY=' + r.byday.join(','));
-  if (r.ends === 'until' && r.until && allDay) {
-    // A date series ends on a date (RFC 5545: UNTIL takes DTSTART's type).
-    parts.push('UNTIL=' + r.until.replace(/-/g, ''));
-  } else if (r.ends === 'until' && r.until) {
-    // The end of that day on the event's clock: the zone picked for it, else
-    // this device's (0.9.15; device time alone could drop or add the last day).
-    const d = tz ? instantFromWallTime(r.until + 'T23:59', tz) : new Date(r.until + 'T23:59:59');
-    parts.push('UNTIL=' + d.getUTCFullYear() + pad(d.getUTCMonth() + 1) + pad(d.getUTCDate()) + 'T' + pad(d.getUTCHours()) + pad(d.getUTCMinutes()) + '00Z');
-  } else if (r.ends === 'count' && r.count > 0) {
-    parts.push('COUNT=' + r.count);
+  if (r.freq === 'MONTHLY' && start && r.monthly !== 'day') {
+    const { nth, last } = weekOfMonth(start);
+    const n = (r.monthly === 'last' && last) || nth === 5 ? -1 : nth;
+    parts.push('BYDAY=' + n + DAY_CODES[start.getDay()]);
   }
-  return parts.join(';');
+  return withRepeatEnd(parts.join(';'), end, allDay, tz);
+}
+
+// A rule without its end, compared loosely: INTERVAL=1 and a monthly
+// BYMONTHDAY on the start's own day say nothing a bare rule doesn't.
+function looseBase(rrule, start) {
+  const p = ruleParts(ruleBase(rrule));
+  if (p.INTERVAL === '1') delete p.INTERVAL;
+  if (p.FREQ === 'MONTHLY' && start && p.BYMONTHDAY === String(start.getDate()) && !p.BYDAY && !p.BYSETPOS) delete p.BYMONTHDAY;
+  return joinRule(p);
 }
 
 // The clock a timed series' end date is read and written on: the zone the
@@ -75,21 +88,21 @@ function untilZone(occ) {
   return occ && !occ.allDay && occ.tzid && occ.tzid !== 'UTC' && !sameClock(occ.tzid, localTz()) ? occ.tzid : null;
 }
 
-function parseRrule(rrule, tz = null) {
-  const r = { freq: 'none', interval: 1, byday: [], ends: 'never', until: '', count: 10 };
+// RRULE text -> the repeat controls. A rule they can't rebuild exactly
+// ("every 2nd and 4th Tuesday", a rule from another app) is kept whole as
+// r.custom rather than flattened into something else on the next save.
+function parseRrule(rrule, tz = null, start = null) {
+  const r = { freq: 'none', interval: 1, byday: [], monthly: 'day', ends: 'never', until: '', count: 10, custom: null };
   if (!rrule) return r;
-  for (const part of rrule.split(';')) {
-    const [k, v] = part.split('=');
-    if (k === 'FREQ') r.freq = v;
-    if (k === 'INTERVAL') r.interval = Number(v) || 1;
-    if (k === 'BYDAY') r.byday = v.split(',');
-    if (k === 'COUNT') { r.ends = 'count'; r.count = Number(v) || 10; }
-    if (k === 'UNTIL') {
-      r.ends = 'until';
-      r.until = untilDayKey(v, tz);
-    }
+  const p = ruleParts(rrule);
+  if (['DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY'].includes(p.FREQ)) r.freq = p.FREQ;
+  r.interval = Number(p.INTERVAL) || 1;
+  if (p.FREQ === 'WEEKLY' && p.BYDAY) r.byday = p.BYDAY.split(',');
+  if (p.FREQ === 'MONTHLY' && p.BYDAY) r.monthly = /^-1/.test(p.BYDAY) ? 'last' : 'nth';
+  Object.assign(r, (({ kind, until, count }) => ({ ends: kind, until, count }))(repeatEnd(rrule, tz)));
+  if (r.freq === 'none' || looseBase(buildRrule({ ...r, ends: 'never' }, false, null, start), start) !== looseBase(rrule, start)) {
+    r.custom = rrule;
   }
-  if (r.freq !== 'none' && r.ends === 'until' && !r.until) r.ends = 'never';
   return r;
 }
 
@@ -240,11 +253,14 @@ export function EditorDrawer() {
         nf.locationLng = base.locationLng;
         nf.locationProvider = base.locationProvider;
       }
+      // A repeat the text names (#165); otherwise the editor's own stays.
+      nf.rrule = d.rrule ? parseRrule(d.rrule, null, fromInputValue(nf.start)) : base.rrule;
       // People the editor started with stay; the text adds to them.
       const named = toPeopleChips(d.personNames || []);
       nf.people = [...base.people, ...named.filter((p) => !base.people.some((b) => b.name.toLowerCase() === p.name.toLowerCase()))];
       for (const k of ['title', 'start', 'end', 'allDay', 'location']) if (nf[k] !== f[k]) touched.push(k);
       if (JSON.stringify(nf.people) !== JSON.stringify(f.people)) touched.push('people');
+      if (JSON.stringify(nf.rrule) !== JSON.stringify(f.rrule)) touched.push('rrule');
       return nf;
     });
     if (touched.length) {
@@ -401,7 +417,7 @@ export function EditorDrawer() {
       people: toPeopleChips(occ ? (occ.people || []) : (draft.personNames || [])),
       rrule: parseRrule(occ
         ? (occ.recurring ? (occ.rrule || editor.rrule || '') : '')
-        : (draft.rrule || ''), untilZone(occ)),
+        : (draft.rrule || ''), untilZone(occ), start),
       // null = inherit calendar/global defaults; a list = explicit override
       // (minutes before start; [] = no reminders). remInitial detects changes.
       reminders: occ && occ.reminderSource === 'event'
@@ -655,7 +671,7 @@ export function EditorDrawer() {
       // duplicate. Proposed chips (id null) are blocked above, so every chip
       // here is a directory person the user confirmed.
       personIds: form.people.map((c) => c.id),
-      rrule: buildRrule(form.rrule, form.allDay, form.tzTouched ? form.tz : untilZone(occ)),
+      rrule: buildRrule(form.rrule, form.allDay, form.tzTouched ? form.tz : untilZone(occ), fromInputValue(form.start)),
     };
     // A zone the owner picked becomes the event's own zone: it is what a
     // repeating event keeps its clock time in across DST changes. All-day
@@ -698,6 +714,19 @@ export function EditorDrawer() {
   };
 
   const r = form.rrule;
+  // Monthly choices come from the start: "on day 24", "on the fourth
+  // Thursday", and "on the last Thursday" when it is the month's last.
+  const repeatStart = fromInputValue(form.start);
+  const startWeek = repeatStart && !isNaN(repeatStart) ? weekOfMonth(repeatStart) : null;
+  const startDayName = startWeek ? repeatStart.toLocaleDateString(undefined, { weekday: 'long' }) : '';
+  const monthlyChoices = startWeek ? [
+    { value: 'day', label: 'on day ' + repeatStart.getDate() },
+    ...(startWeek.nth <= 4 ? [{ value: 'nth', label: `on the ${['first', 'second', 'third', 'fourth'][startWeek.nth - 1]} ${startDayName}` }] : []),
+    ...(startWeek.last ? [{ value: 'last', label: 'on the last ' + startDayName }] : []),
+  ] : [];
+  // What buildRrule will write for this start (a fifth weekday is "last").
+  const monthlyMode = !startWeek || r.monthly === 'day' ? 'day'
+    : (r.monthly === 'last' && startWeek.last) || startWeek.nth === 5 ? 'last' : 'nth';
   const allDayView = form.allDay ? allDayFields(form.start, form.end) : null;
   const duration = allDayView ? eventDuration({ ...allDayInputs(allDayView.start, allDayView.end), allDay: true }) : eventDuration(form);
 
@@ -944,8 +973,11 @@ export function EditorDrawer() {
         </div>
 
         ${lab('Repeat', ' is-top')}
-        <div class="bc-ed-ctl bc-ed-repeat">
-          <div class="bc-ed-inline">
+        <div class=${'bc-ed-ctl bc-ed-repeat' + flash('rrule')}>
+          ${r.custom ? html`<div class="bc-ed-inline">
+            <span class="bc-ed-custom-rule">${describeRepeat(r.custom, { start: repeatStart, ends: false }) || 'Custom repeat'}</span>
+            <button type="button" class="bc-link-btn" title="Set the repeat with the usual choices; the rule above is replaced when you save" onClick=${() => updRrule({ custom: null })}>Change</button>
+          </div>` : html`<div class="bc-ed-inline">
             <select value=${r.freq} onChange=${(e) => updRrule({ freq: e.target.value })} aria-label="Repeat frequency">
               <option value="none">Does not repeat</option>
               <option value="DAILY">Daily</option>
@@ -958,8 +990,11 @@ export function EditorDrawer() {
               <input class="bc-num" type="number" min="1" max="99" value=${r.interval} onInput=${(e) => updRrule({ interval: Number(e.target.value) || 1 })} aria-label="Interval" />
               <span>${r.freq === 'DAILY' ? 'day(s)' : r.freq === 'WEEKLY' ? 'week(s)' : r.freq === 'MONTHLY' ? 'month(s)' : 'year(s)'}</span>
             </label>`}
-          </div>
-          ${r.freq === 'WEEKLY' && html`<div class="bc-byday">
+            ${r.freq === 'MONTHLY' && monthlyChoices.length > 0 && html`<select value=${monthlyMode} onChange=${(e) => updRrule({ monthly: e.target.value })} aria-label="Day of the month">
+              ${monthlyChoices.map((c) => html`<option key=${c.value} value=${c.value}>${c.label}</option>`)}
+            </select>`}
+          </div>`}
+          ${!r.custom && r.freq === 'WEEKLY' && html`<div class="bc-byday">
             ${BYDAY.map(([code, label]) => html`<label key=${code} class="bc-byday-day${r.byday.includes(code) ? ' is-on' : ''}">
               <input
                 type="checkbox"
@@ -968,7 +1003,7 @@ export function EditorDrawer() {
               />${label}
             </label>`)}
           </div>`}
-          ${r.freq !== 'none' && html`<div class="bc-ed-inline">
+          ${(r.custom || r.freq !== 'none') && html`<div class="bc-ed-inline">
             <span class="bc-ed-sub">Ends</span>
             <select value=${r.ends} onChange=${(e) => updRrule({ ends: e.target.value, until: e.target.value === 'until' && !r.until ? defaultUntil(fromInputValue(form.start) || new Date()) : r.until })} aria-label="Ends">
               <option value="never">Never</option>

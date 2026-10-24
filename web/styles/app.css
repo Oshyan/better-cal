@@ -1546,6 +1546,53 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-qa-allday { font-size: 12.5px; color: var(--fg); flex: none; }
 .bc-qa-calfield { min-width: 0; }
 .bc-qa-cal { max-width: 150px; }
+/* Repeat (#165): a chip in the preview row once there is a rule, a small
+   button in the strip before; both drop the menu (RepeatMenu.js). */
+.bc-quickadd { position: relative; }
+.bc-qchip-repeat {
+  font: inherit; font-size: 12px; color: var(--accent); cursor: pointer;
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+.bc-qchip-repeat:hover { background: color-mix(in srgb, var(--accent) 10%, var(--bg-inset)); }
+.bc-qchip.bc-nl-applied { animation: bc-nl-flash 0.9s ease; }
+@media (prefers-reduced-motion: reduce) { .bc-qchip.bc-nl-applied { animation: none; } }
+.bc-qa-repeat {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: 28px; height: 28px; padding: 0; border: 1px solid var(--border-strong); border-radius: 6px;
+  background: none; color: var(--fg-muted); cursor: pointer;
+}
+.bc-qa-repeat:hover, .bc-qa-repeat[aria-expanded="true"] { color: var(--accent); border-color: var(--accent); }
+.bc-repeat-menu {
+  position: absolute; z-index: 8; display: flex; flex-direction: column;
+  background: var(--bg-raised); border: 1px solid var(--border-strong); border-radius: var(--radius);
+  box-shadow: var(--shadow); padding: 4px 0; overflow: hidden;
+}
+.bc-repeat-list {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain;
+  scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent;
+}
+.bc-repeat-opt {
+  display: flex; align-items: center; gap: 6px; width: 100%; flex: none;
+  padding: 6px 12px 6px 8px; border: 0; background: none; color: var(--fg);
+  font: inherit; font-size: 13px; text-align: left; cursor: pointer;
+}
+.bc-repeat-opt:hover, .bc-repeat-opt:focus-visible { background: color-mix(in srgb, var(--accent) 10%, var(--bg-raised)); outline: none; }
+.bc-repeat-opt.is-on { color: var(--accent); font-weight: 600; }
+.bc-repeat-tick { display: inline-flex; width: 14px; flex: none; }
+.bc-repeat-custom small { margin-left: auto; padding-left: 10px; color: var(--fg-muted); font-size: 11.5px; font-weight: 400; }
+.bc-repeat-ends {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap; flex: none;
+  padding: 7px 12px 7px 28px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
+  font-size: 12.5px;
+}
+.bc-repeat-ends select, .bc-repeat-ends input { font-size: 12.5px; padding: 3px 6px; }
+.bc-repeat-count { display: inline-flex; align-items: center; gap: 5px; }
+@media (pointer: coarse) {
+  .bc-repeat-opt { min-height: 40px; font-size: 14px; }
+  .bc-repeat-ends select, .bc-repeat-ends input { font-size: 16px; }
+  .bc-qa-repeat { width: 34px; height: 34px; }
+}
+.bc-ed-custom-rule { font-size: 13px; }
 .bc-quickadd-actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
 .bc-quickadd-expand { font-size: 12.5px; }
 .bc-quickadd-hint { color: var(--fg-muted); font-size: 11.5px; margin-left: auto; }

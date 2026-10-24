@@ -7,7 +7,8 @@ import {
 import { api, refreshWindow, undo, loadCalendars, loadPeople, loadReviewCount } from './api.js';
 import { adoptSettings } from './settings.js';
 import { discardEditorWithUndo, clearQuickAddText } from './drafts.js';
-import { localTz, todayKey, addDaysKey, occDayKey, pad, parseISO, toISOWithOffset, addDaysDate } from '../lib/dates.js';
+import { localTz, todayKey, addDaysKey, occDayKey, pad, parseISO, toISOWithOffset, addDaysDate, dateOfDayKey } from '../lib/dates.js';
+import { repeatSentence } from '../lib/repeat.js';
 import { shiftOccurrenceDays } from '../ui/monthmath.js';
 import { extendTripSpan } from '../ui/trips.js';
 import { dayStepList } from '../ui/daysteps.js';
@@ -368,16 +369,20 @@ export async function createEvent(fields) {
     // legitimate choice, so don't override it — just say where the event went
     // and offer the one click that makes it visible.
     const cal = occ && state.calendars.find((c) => c.id === occ.calendarId);
+    // A series says so: "Event created, repeats weekly on Tuesday" (#165).
+    const repeats = fields.rrule
+      ? ', r' + repeatSentence(fields.rrule, { start: occ && occ.start ? dateOfDayKey(occDayKey(occ)) : null, ends: false }).slice(1)
+      : '';
     if (cal && !cal.visible) {
-      toast(`Created in ${cal.name}, which is hidden`, {
+      toast(`Created in ${cal.name}, which is hidden${repeats}`, {
         actionLabel: 'Show it',
         onAction: () => toggleCalendarVisible(cal),
       });
     } else if (cal && cal.provider === 'google') {
       // Created at Google through the connector: no local snapshot to undo to.
-      toast('Event created at Google', { note: NO_UNDO });
+      toast('Event created at Google' + repeats, { note: NO_UNDO });
     } else {
-      toast('Event created', { undoable: true });
+      toast('Event created' + repeats, { undoable: true });
     }
     refreshWindow();
     return occ;

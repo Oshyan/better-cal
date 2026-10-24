@@ -161,7 +161,7 @@ final class QuickAdd
             $admission = $admitter->reserveQuickAdd($userId, $tokenId, $now);
             if ($admission['allowed']) {
                 try {
-                    $parsed = $this->llm->parseEvent($text, $now, $tz);
+                    $parsed = $this->llm->parseEvent($text, $now, $tz, repeat: true);
                     if ($parsed !== null) {
                         $draft = self::mergeLlm($parsed, $fallback, $now->setTimezone(Time::zone($tz)))
                             + ['confidence' => 0.9, 'source' => 'llm'];
@@ -203,6 +203,7 @@ final class QuickAdd
                 'tzid' => $tz,
                 'location' => $draft['location'],
                 'personNames' => $draft['personNames'],
+                'rrule' => $draft['rrule'] ?? null,
             ]));
         }
 
@@ -222,6 +223,9 @@ final class QuickAdd
      *   date/time/location phrases only, so restore the fallback title.
      * - Location or people the fallback found but the LLM dropped: union
      *   people (LLM first), backfill location.
+     * - Repeat: the fallback's rule wins when it found one (#165); either
+     *   way the start moves to the rule's first day, keeping the model's
+     *   time and length, so the series never opens with an extra day.
      *
      * @param array{title:string,start:string,end:string,allDay:bool,location:?string,personNames:list<string>} $llm
      */
@@ -290,6 +294,23 @@ final class QuickAdd
 
         if (($merged['location'] ?? null) === null && ($fallback['location'] ?? null) !== null) {
             $merged['location'] = $fallback['location'];
+        }
+
+        $merged['rrule'] = ($fallback['rrule'] ?? null) ?: (($llm['rrule'] ?? null) ?: null);
+        if ($merged['rrule'] !== null) {
+            try {
+                // On the owner's clock, so a move across a DST change keeps the hour.
+                $start = (new \DateTimeImmutable((string) $merged['start']))->setTimezone($now->getTimezone());
+                $end = new \DateTimeImmutable((string) $merged['end']);
+                $first = RepeatParser::firstOn(RepeatParser::ruleParts($merged['rrule']), $start);
+                if ($first != $start) {
+                    $seconds = max(0, $end->getTimestamp() - $start->getTimestamp());
+                    $merged['start'] = Time::iso($first);
+                    $merged['end'] = Time::iso($first->modify('+' . $seconds . ' seconds'));
+                }
+            } catch (\Exception) {
+                // Times already guarded above; a rule that can't move them stays as is.
+            }
         }
 
         return $merged;

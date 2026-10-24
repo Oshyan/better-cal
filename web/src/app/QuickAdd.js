@@ -11,9 +11,18 @@
 // click in and type "fri" or "7p", or pick a quarter hour from the list. The
 // end list runs on from the start with each length, so overnight is one
 // pick; an end at or before the start is the next day.
+//
+// #165: repeats. "every Tuesday until Dec 15" parses into a repeat chip in
+// the preview row; with none, a small repeat button sits in the strip. Both
+// open the menu of presets for the date (RepeatMenu.js). A preset picked
+// there follows the date when it changes, as Google's does; a typed rule
+// stays as typed.
 
 import { html, useState, useRef, useEffect } from '../../vendor/index.js';
 import { useStore, set, state, toast } from './store.js';
+import { RepeatMenu } from './RepeatMenu.js';
+import { Icon } from '../ui/icons.js';
+import { describeRepeat, repeatPresets, repeatEnd, withRepeatEnd, retypeUntil } from '../lib/repeat.js';
 import { useBackClose } from './backclose.js';
 import { quickAddParse, quickAddCreate, defaultTargetCalendarId } from './actions.js';
 import { api, loadPeople } from './api.js';
@@ -55,7 +64,28 @@ function defaultForm() {
     location: '',
     locationLat: null,
     locationLng: null,
+    rrule: '',        // the repeat, as parsed or picked ('' = none)
+    repeatKey: null,  // the menu preset it came from, which follows the date
   };
+}
+
+// The repeat to save. A preset from the menu is rebuilt for the current date
+// (keeping its end; a fourth weekday that stops being the last, or a fifth,
+// swaps between "fourth" and "last"); a parsed rule is kept. Its UNTIL takes
+// the event's type: a date for all-day, the end of that day otherwise.
+function effectiveRrule(form) {
+  if (!form.rrule) return '';
+  let rule = form.rrule;
+  if (form.repeatKey && form.dateKey) {
+    const presets = repeatPresets(dateOfDayKey(form.dateKey));
+    const has = (k) => presets.some((p) => p.key === k);
+    let key = form.repeatKey;
+    if (key === 'monthly-last' && !has(key)) key = 'monthly-nth';
+    if (key === 'monthly-nth' && !has(key)) key = 'monthly-last';
+    const preset = presets.find((p) => p.key === key);
+    if (preset && preset.rrule) rule = withRepeatEnd(preset.rrule, repeatEnd(form.rrule), form.allDay);
+  }
+  return retypeUntil(rule, form.allDay);
 }
 
 function defaultCalendarId() {
@@ -78,6 +108,7 @@ function parseWants(d) {
   if (d.end && !d.allDay) want.endTime = hm(parseISO(d.end));
   if (d.allDay != null) want.allDay = !!d.allDay;
   if (d.location) want.location = d.location;
+  want.rrule = d.rrule || '';
   if (d.calendarId != null &&
       state.calendars.some((c) => c.id === d.calendarId && c.kind !== 'subscribed')) {
     want.calendarId = d.calendarId;
@@ -130,6 +161,8 @@ export function QuickAdd() {
   const [form, setForm] = useState(defaultForm);
   const [flash, setFlash] = useState(null); // Set of strip field names, or null
   const [busy, setBusy] = useState(false);
+  const [repeatOpen, setRepeatOpen] = useState(false);
+  const repeatRef = useRef(null); // the chip or the button, whichever shows
   const inputRef = useRef(null);
   const timerRef = useRef(0);
   const reqRef = useRef(0);
@@ -159,6 +192,7 @@ export function QuickAdd() {
       formRef.current = f;
       draftRef.current = null;
       setFlash(null);
+      setRepeatOpen(false);
       touchedRef.current = new Set();
       prevParseRef.current = {};
       lastParsedRef.current = '';
@@ -209,6 +243,8 @@ export function QuickAdd() {
       touched.delete(k); // the parse re-took this field
     }
     prevParseRef.current = { ...prev, ...want };
+    // A rule from the text replaces a picked preset rather than following it.
+    if (flashed.includes('rrule')) nf.repeatKey = null;
     if (flashed.length) {
       setForm(nf);
       formRef.current = nf;
@@ -300,6 +336,7 @@ export function QuickAdd() {
       start: range.start,
       end: range.end,
       allDay: f.allDay,
+      rrule: effectiveRrule(f) || null,
       location,
       locationLat: location && f.locationLat != null ? f.locationLat : null,
       locationLng: location && f.locationLng != null ? f.locationLng : null,
@@ -351,6 +388,7 @@ export function QuickAdd() {
           // Carry the parsed people across; the editor resolves them to chips
           // and asks about any that aren't in the directory yet.
           personNames: (draft && draft.personNames) || [],
+          rrule: effectiveRrule(form) || '',
         },
         nlText: touchedRef.current.size === 0 ? text : '',
       },
@@ -388,6 +426,34 @@ export function QuickAdd() {
     return { value: (startMins + len) % 1440, label: clockLabel((startMins + len) % 1440), note: (startMins + len >= 1440 ? 'next day · ' : '') + durationLabel(len), current: len === span };
   });
 
+  // Repeat: the chip's words, and the menu's picks.
+  const rrule = effectiveRrule(form);
+  const repeatDay = form.dateKey ? dateOfDayKey(form.dateKey) : new Date();
+  const repeatWords = rrule ? (describeRepeat(rrule, { start: repeatDay, short: true }) || 'Repeats') : '';
+  const closeRepeat = (refocus) => {
+    setRepeatOpen(false);
+    if (refocus && repeatRef.current) repeatRef.current.focus();
+  };
+  const pickRepeat = (key, rule) => {
+    setRepeatOpen(false);
+    if (key === 'parsed') return; // the rule it already has
+    touchedRef.current.add('rrule');
+    setForm((f) => {
+      const nf = { ...f, rrule: rule ? withRepeatEnd(rule, repeatEnd(f.rrule), f.allDay) : '', repeatKey: rule ? key : null };
+      formRef.current = nf;
+      return nf;
+    });
+  };
+  const setRepeatEnd = (end) => {
+    touchedRef.current.add('rrule');
+    setForm((f) => {
+      const nf = { ...f, rrule: withRepeatEnd(effectiveRrule(f), end, f.allDay) };
+      formRef.current = nf;
+      return nf;
+    });
+  };
+  const repeatToggle = () => setRepeatOpen((o) => !o);
+
   const localCals = state.calendars.filter((c) => c.editable);
   const flashCls = (f) => (flash && flash.has(f) ? ' bc-nl-applied' : '');
   const canCreate = (!busy && draft && draft.intent === 'availability') || (!busy && !!((draft && draft.title) || text.trim()) &&
@@ -409,16 +475,21 @@ export function QuickAdd() {
         <span class="bc-qchip">${fmtAvailRange(draft)}</span>
         <span class="bc-qchip bc-qchip-fallback">records availability, not an event</span>
       </div>`}
-      ${draft && draft.intent !== 'availability' && html`<div class="bc-quickadd-preview">
-        <span class="bc-qchip bc-qchip-title">${draft.title || '(untitled)'}</span>
-        ${draft.location && html`<span class="bc-qchip">@ ${draft.location}</span>`}
-        ${draft.personNames && draft.personNames.map((n) => html`<span
+      ${((draft && draft.intent !== 'availability') || (!draft && rrule)) && html`<div class="bc-quickadd-preview">
+        ${draft && html`<span class="bc-qchip bc-qchip-title">${draft.title || '(untitled)'}</span>`}
+        ${rrule && html`<button
+          type="button" ref=${repeatRef} class=${'bc-qchip bc-qchip-repeat' + flashCls('rrule')}
+          aria-haspopup="menu" aria-expanded=${repeatOpen ? 'true' : 'false'}
+          title="Change how it repeats" onClick=${repeatToggle}
+        ><${Icon} name="repeat" size=${12} />${repeatWords}</button>`}
+        ${draft && draft.location && html`<span class="bc-qchip">@ ${draft.location}</span>`}
+        ${draft && draft.personNames && draft.personNames.map((n) => html`<span
           key=${n}
           class=${'bc-qchip' + (knownPerson(n) ? '' : ' bc-qchip-newperson')}
           title=${knownPerson(n) ? 'In your people' : 'Not in your people yet — you will be asked'}
         >with ${n}</span>`)}
-        ${draft.source === 'fallback' && html`<span class="bc-qchip bc-qchip-fallback" title="Parsed without the language model">basic parse</span>`}
-        ${draft.modelLimit && html`<span class="bc-qchip bc-qchip-fallback" title=${draft.modelLimit.message || 'AI parsing is temporarily paused'}>AI paused</span>`}
+        ${draft && draft.source === 'fallback' && html`<span class="bc-qchip bc-qchip-fallback" title="Parsed without the language model">basic parse</span>`}
+        ${draft && draft.modelLimit && html`<span class="bc-qchip bc-qchip-fallback" title=${draft.modelLimit.message || 'AI parsing is temporarily paused'}>AI paused</span>`}
       </div>`}
       ${(!draft || draft.intent !== 'availability') && html`<div class="bc-quickadd-strip">
         <div class=${'bc-qa-field bc-qa-date' + flashCls('dateKey')}>
@@ -447,6 +518,11 @@ export function QuickAdd() {
           />
           <span>All day</span>
         </label>
+        ${!rrule && html`<button
+          type="button" ref=${repeatRef} class="bc-qa-repeat"
+          aria-label="Repeat" title="Repeat" aria-haspopup="menu" aria-expanded=${repeatOpen ? 'true' : 'false'}
+          onClick=${repeatToggle}
+        ><${Icon} name="repeat" size=${15} /></button>`}
         <label class=${'bc-qa-field bc-qa-locfield' + flashCls('location')}>
           <span class="bc-qa-label">Where</span>
           <${PlaceInput}
@@ -485,6 +561,11 @@ export function QuickAdd() {
           />
         </label>
       </div>`}
+      ${repeatOpen && html`<${RepeatMenu}
+        day=${repeatDay} rrule=${rrule} triggerRef=${repeatRef} cardRef=${cardRef}
+        onPick=${pickRepeat} onEnd=${setRepeatEnd} onClose=${closeRepeat}
+        onCustom=${() => { setRepeatOpen(false); openFullEditor(); }}
+      />`}
       <div class="bc-quickadd-actions">
         <button type="button" class="bc-btn bc-btn-primary" disabled=${!canCreate} onClick=${submit}>Create</button>
         <button type="button" class="bc-btn" onClick=${cancel}>Cancel</button>

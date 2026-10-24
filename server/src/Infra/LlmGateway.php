@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace BetterCal\Infra;
 
+use BetterCal\Domain\Recurrence;
+use BetterCal\Http\HttpError;
 use BetterCal\Support\Time;
 
 /**
@@ -37,9 +39,13 @@ final class LlmGateway
      * the owner was last seen), else $tz. The result then carries 'tzid'.
      * Quick-add leaves it off: there the owner types times on their own clock.
      *
-     * @return ?array{title:string,start:string,end:string,allDay:bool,location:?string,personNames:list<string>,tzid?:string}
+     * $repeat (quick add) also asks for a repeat rule ("every Tuesday") and
+     * returns it as 'rrule' when it is one the app keeps: daily or longer,
+     * valid, with the start on its first occurrence left to the caller.
+     *
+     * @return ?array{title:string,start:string,end:string,allDay:bool,location:?string,personNames:list<string>,tzid?:string,rrule?:?string}
      */
-    public function parseEvent(string $text, \DateTimeImmutable $now, string $tz, bool $placeZone = false, ?string $hereTz = null): ?array
+    public function parseEvent(string $text, \DateTimeImmutable $now, string $tz, bool $placeZone = false, ?string $hereTz = null, bool $repeat = false): ?array
     {
         if (!$this->isConfigured()) {
             return null;
@@ -64,6 +70,13 @@ final class LlmGateway
             . "street address leaves the title for the location field; "
             . "location is a place name or empty string; personNames are people mentioned as companions "
             . "(e.g. \"with Sam\" -> [\"Sam\"], also listed in personNames while staying in the title).\n"
+            . ($repeat
+                ? "If the text asks for a repeating event (\"every Tuesday\", \"weekdays\", \"monthly on the 15th\", "
+                    . "\"first Monday of the month\", \"until Dec 15\", \"10 times\"), rrule is the RFC 5545 RRULE without "
+                    . "the RRULE: prefix (e.g. FREQ=WEEKLY;BYDAY=TU or FREQ=MONTHLY;BYDAY=1MO;UNTIL=20261215), start is the "
+                    . "first occurrence, and the repeat phrases leave the title like dates do; repeats are daily or longer, "
+                    . "never hourly; otherwise rrule is empty string.\n"
+                : '')
             . "Text: " . $text;
 
         $body = [
@@ -79,7 +92,8 @@ final class LlmGateway
                         'allDay' => ['type' => 'BOOLEAN'],
                         'location' => ['type' => 'STRING'],
                         'personNames' => ['type' => 'ARRAY', 'items' => ['type' => 'STRING']],
-                    ] + ($placeZone ? ['timezone' => ['type' => 'STRING', 'description' => 'IANA zone of the event\'s place']] : []),
+                    ] + ($placeZone ? ['timezone' => ['type' => 'STRING', 'description' => 'IANA zone of the event\'s place']] : [])
+                      + ($repeat ? ['rrule' => ['type' => 'STRING', 'description' => 'RFC 5545 RRULE without prefix, or empty']] : []),
                     'required' => ['title', 'start', 'end', 'allDay'],
                 ],
                 'temperature' => 0.1,
@@ -113,7 +127,9 @@ final class LlmGateway
             $end = $start->add(new \DateInterval('PT1H'));
         }
         $tzZone = Time::zone($zoneId);
-        return ($placeZone ? ['tzid' => $zoneId] : []) + [
+        return ($placeZone ? ['tzid' => $zoneId] : [])
+            + ($repeat ? ['rrule' => self::keptRrule($parsed['rrule'] ?? null)] : [])
+            + [
             'title' => trim((string) ($parsed['title'] ?? '')) ?: 'New event',
             'start' => Time::iso($start->setTimezone($tzZone)),
             'end' => Time::iso($end->setTimezone($tzZone)),
@@ -124,6 +140,26 @@ final class LlmGateway
                 is_array($parsed['personNames'] ?? null) ? $parsed['personNames'] : []
             ))),
         ];
+    }
+
+    /** The model's repeat rule if the app keeps it (valid, daily or longer), else null. */
+    public static function keptRrule(mixed $rule): ?string
+    {
+        if (!is_string($rule)) {
+            return null;
+        }
+        $rule = preg_replace('/^RRULE:/i', '', trim($rule)) ?? '';
+        if ($rule === '') {
+            return null;
+        }
+        try {
+            $rule = Recurrence::validateRrule($rule);
+        } catch (HttpError) {
+            return null;
+        }
+        return preg_match('/(?:^|;)FREQ=(?:DAILY|WEEKLY|MONTHLY|YEARLY)(?:;|$)/', $rule) === 1
+            && preg_match('/(?:^|;)BY(?:HOUR|MINUTE|SECOND)=/', $rule) !== 1
+            ? $rule : null;
     }
 
     /** An IANA zone name PHP knows, or null. */

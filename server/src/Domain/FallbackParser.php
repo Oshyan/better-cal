@@ -26,7 +26,10 @@ final class FallbackParser
      * (date resolved AND (time resolved OR all-day)); it is stripped before the
      * draft reaches the API response.
      *
-     * @return array{title:string,start:string,end:string,allDay:bool,location:?string,personNames:list<string>,confidence:float,source:string,complete:bool,dateFound:bool,timeFound:bool}
+     * `rrule` is the repeat the text asked for ("every Tuesday until Dec 15"),
+     * or null; the first occurrence is the event's start (#165).
+     *
+     * @return array{title:string,start:string,end:string,allDay:bool,location:?string,personNames:list<string>,rrule:?string,confidence:float,source:string,complete:bool,dateFound:bool,timeFound:bool}
      */
     public static function parse(string $text, string $tzid, ?\DateTimeImmutable $now = null): array
     {
@@ -45,6 +48,13 @@ final class FallbackParser
             $work = self::cut($work, $m[0]);
         }
 
+        // Repeats first: "every Tuesday", "until Dec 15" and "for 6 weeks"
+        // would otherwise read as a date, a range or a duration.
+        $repeat = RepeatParser::extract($work, $now);
+        if ($repeat !== null) {
+            $work = $repeat['work'];
+        }
+
         // Duration: "for 2 hours", "for 30 min"
         $durationMin = null;
         if (preg_match('/\bfor\s+(\d+(?:\.\d+)?)\s*(hours?|hrs?|hr|h|minutes?|mins?|min|m)\b/i', $work, $m)) {
@@ -57,6 +67,22 @@ final class FallbackParser
 
         [$work, $date, $dateFound, $rangeEnd] = self::extractDate($work, $now);
         [$work, $startTime, $endTime, $timeFound] = self::extractTime($work);
+        $repeatDayGiven = false;
+        if ($repeat !== null) {
+            // A range with a repeat is the series' start and end, not one
+            // multi-day event ("every Monday Jan 5 to Feb 23").
+            if ($rangeEnd !== null) {
+                $repeat['until'] ??= $rangeEnd;
+                $rangeEnd = null;
+            }
+            if (!$timeFound && !$allDayKeyword && $repeat['time'] !== null) {
+                $startTime = $repeat['time']; // "every morning"
+                $timeFound = true;
+            }
+            $repeatDayGiven = $repeat['startOn'] !== null || $dateFound;
+            $date = RepeatParser::firstOn($repeat['rule'], $repeat['startOn'] ?? ($dateFound ? $date : $now));
+            $dateFound = true;
+        }
         if ($allDayKeyword || $rangeEnd !== null) {
             $timeFound = false; // "all day" / a date range wins over a stray time
         }
@@ -131,6 +157,18 @@ final class FallbackParser
             $end = $start->add(new \DateInterval('PT' . ($durationMin ?? 60) . 'M'));
         }
 
+        // A series with no day given starts at its next occurrence, so
+        // "standup every weekday at 9am" typed at 10 starts tomorrow.
+        $rrule = null;
+        if ($repeat !== null) {
+            if (!$repeatDayGiven && !$allDay && $start <= $now) {
+                $minutes = (int) round(($end->getTimestamp() - $start->getTimestamp()) / 60);
+                $start = RepeatParser::firstOn($repeat['rule'], $start->modify('+1 day'));
+                $end = $start->add(new \DateInterval('PT' . $minutes . 'M'));
+            }
+            $rrule = RepeatParser::rrule($repeat, $start, $allDay);
+        }
+
         if ($dateFound) {
             $confidence += 0.25;
         }
@@ -159,6 +197,7 @@ final class FallbackParser
             'allDay' => $allDay,
             'location' => $location,
             'personNames' => $personNames,
+            'rrule' => $rrule,
             'confidence' => round(min(0.95, max(0.05, $confidence)), 2),
             'source' => 'fallback',
             'complete' => $dateFound && ($timeFound || $allDay) && !$suspect,
@@ -322,6 +361,28 @@ final class FallbackParser
         }
 
         return [$work, $date, $found, null];
+    }
+
+    /**
+     * The date that opens $text ("Nov 3 at 7pm", "Jan 21 to May 23",
+     * "Friday"), for RepeatParser's start and end phrases: the longest run of
+     * up to six leading words that extractDate reads in full. `length` counts
+     * from the start of $text.
+     *
+     * @return null|array{date:\DateTimeImmutable,length:int,rangeEnd:?\DateTimeImmutable}
+     */
+    public static function leadingDate(string $text, \DateTimeImmutable $now): ?array
+    {
+        preg_match_all('/\S+/', $text, $words, PREG_OFFSET_CAPTURE);
+        $best = null;
+        foreach (array_slice($words[0], 0, 6) as [$word, $at]) {
+            $length = $at + strlen($word);
+            [$rest, $date, $found, $rangeEnd] = self::extractDate(' ' . substr($text, 0, $length) . ' ', $now);
+            if ($found && trim($rest, " \t,.") === '') {
+                $best = ['date' => $date, 'length' => $length, 'rangeEnd' => $rangeEnd];
+            }
+        }
+        return $best;
     }
 
     /** @return array{0:string,1:?array{0:int,1:int},2:?array{0:int,1:int},3:bool} */

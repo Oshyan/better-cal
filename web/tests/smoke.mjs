@@ -38,6 +38,10 @@ import {
   dragCreateMode, allDayRangeDraft,
 } from '../src/lib/quickcreate.js';
 import { HOTKEYS, HOTKEY_GROUPS } from '../src/app/hotkeys.js';
+import {
+  describeRepeat, repeatSentence, repeatPresets, presetOf, ruleBase, joinRule, ruleParts,
+  withRepeatEnd, repeatEnd, retypeUntil, describable, weekOfMonth,
+} from '../src/lib/repeat.js';
 import { hiddenDayCounts, relShown, showRelFromConfig } from '../src/lib/relfilter.js';
 import { contextToken, contextTitle, contextByDay, withoutContext, dayLabelsByDay, isDayLabel, dayLabelText } from '../src/lib/context.js';
 import {
@@ -2626,6 +2630,59 @@ eq('gmaps: text alone is a search', gmapsUrl('Example Cafe', null, null), 'https
   assert('zones: a city by its current name, whatever the browser calls the zone', filterZones(zones, 'kolkata').length > 0);
   assert('zones: cities that start with it come first', filterZones(zones, 'lond')[0].city === 'London');
   eq('zones: nothing for nonsense', filterZones(zones, 'qqzzx').length, 0);
+}
+
+// --- repeats in words, presets and ends (lib/repeat.js, #165) ----------------------
+{
+  const thu = new Date(2026, 6, 30); // Thursday Jul 30, 2026: the fifth (and last) Thursday
+  const tue = new Date(2026, 7, 4); // Tuesday Aug 4: the first
+  const said = (r, o) => describeRepeat(r, o);
+  eq('repeat: daily', said('FREQ=DAILY'), 'Daily');
+  eq('repeat: every 3 days', said('FREQ=DAILY;INTERVAL=3'), 'Every 3 days');
+  eq('repeat: weekly on a day', said('FREQ=WEEKLY;BYDAY=TU'), 'Weekly on Tuesday');
+  eq('repeat: weekly takes the start day', said('FREQ=WEEKLY', { start: thu }), 'Weekly on Thursday');
+  eq('repeat: two days', said('FREQ=WEEKLY;BYDAY=MO,TH'), 'Weekly on Monday and Thursday');
+  eq('repeat: three days go short', said('FREQ=WEEKLY;BYDAY=MO,WE,FR'), 'Weekly on Mon, Wed and Fri');
+  eq('repeat: weekdays', said('FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR'), 'Every weekday');
+  eq('repeat: weekends', said('FREQ=WEEKLY;BYDAY=SA,SU'), 'Every weekend');
+  eq('repeat: every other week', said('FREQ=WEEKLY;INTERVAL=2;BYDAY=SA'), 'Every 2 weeks on Saturday');
+  eq('repeat: monthly on a day', said('FREQ=MONTHLY;BYMONTHDAY=15'), 'Monthly on day 15');
+  eq('repeat: monthly takes the start day', said('FREQ=MONTHLY', { start: tue }), 'Monthly on day 4');
+  eq('repeat: first Monday', said('FREQ=MONTHLY;BYDAY=1MO'), 'Monthly on the first Monday');
+  eq('repeat: last Friday', said('FREQ=MONTHLY;BYDAY=-1FR'), 'Monthly on the last Friday');
+  eq('repeat: last day', said('FREQ=MONTHLY;BYMONTHDAY=-1'), 'Monthly on the last day');
+  eq('repeat: last weekday', said('FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1'), 'Monthly on the last weekday');
+  eq('repeat: quarterly', said('FREQ=MONTHLY;INTERVAL=3'), 'Every 3 months');
+  assert('repeat: yearly takes the start day', /^Yearly on /.test(said('FREQ=YEARLY', { start: thu })));
+  eq('repeat: count', said('FREQ=WEEKLY;BYDAY=SU;COUNT=10'), 'Weekly on Sunday, 10 times');
+  assert('repeat: until', /^Weekly on Tuesday, until /.test(said('FREQ=WEEKLY;BYDAY=TU;UNTIL=20261215')));
+  eq('repeat: ends left out on request', said('FREQ=WEEKLY;BYDAY=TU;COUNT=3', { ends: false }), 'Weekly on Tuesday');
+  eq('repeat: a rule it cannot say', said('FREQ=YEARLY;BYMONTH=3;BYDAY=2SU'), null);
+  eq('repeat: hourly is not ours', describable('FREQ=HOURLY'), false);
+  eq('repeat: the sentence', repeatSentence('FREQ=WEEKLY;BYDAY=MO'), 'Repeats weekly on Monday');
+  eq('repeat: the sentence falls back', repeatSentence('FREQ=YEARLY;BYWEEKNO=20'), 'Repeats');
+  eq('repeat: parts and join', joinRule(ruleParts('rrule:until=20261215;byday=TU;freq=weekly')), 'FREQ=WEEKLY;BYDAY=TU;UNTIL=20261215');
+  eq('repeat: base drops the end', ruleBase('FREQ=WEEKLY;COUNT=4;BYDAY=TU'), 'FREQ=WEEKLY;BYDAY=TU');
+
+  const keys = (d) => repeatPresets(d).map((p) => p.key);
+  eq('presets: a fifth weekday offers only last', keys(thu).filter((k) => k.startsWith('monthly-')), ['monthly-last', 'monthly-day']);
+  eq('presets: a first weekday offers first', keys(tue).filter((k) => k.startsWith('monthly-')), ['monthly-nth', 'monthly-day']);
+  const fourthLast = new Date(2026, 1, 26); // Thursday Feb 26: fourth and last
+  eq('presets: a fourth that is last offers both', keys(fourthLast).filter((k) => k.startsWith('monthly-')), ['monthly-nth', 'monthly-last', 'monthly-day']);
+  eq('presets: the weekly one names the day', repeatPresets(tue).find((p) => p.key === 'weekly').label, 'Weekly on Tuesday');
+  eq('presets: monthly nth rule', repeatPresets(tue).find((p) => p.key === 'monthly-nth').rrule, 'FREQ=MONTHLY;BYDAY=1TU');
+  eq('presets: a rule with an end is still its preset', (presetOf('FREQ=WEEKLY;BYDAY=TU;COUNT=5', tue) || {}).key, 'weekly');
+  eq('presets: none for a rule that is not one', presetOf('FREQ=DAILY;INTERVAL=3', tue), null);
+  eq('presets: weekOfMonth', weekOfMonth(thu), { nth: 5, last: true });
+
+  eq('ends: until on a date series', withRepeatEnd('FREQ=DAILY', { kind: 'until', until: '2026-12-15' }, true), 'FREQ=DAILY;UNTIL=20261215');
+  assert('ends: until on a timed series is an instant', /^FREQ=DAILY;UNTIL=2026121[56]T\d{4}00Z$/.test(withRepeatEnd('FREQ=DAILY', { kind: 'until', until: '2026-12-15' }, false)));
+  eq('ends: count replaces until', withRepeatEnd('FREQ=DAILY;UNTIL=20261215', { kind: 'count', count: 4 }, true), 'FREQ=DAILY;COUNT=4');
+  eq('ends: never clears it', withRepeatEnd('FREQ=DAILY;COUNT=4', { kind: 'never' }, true), 'FREQ=DAILY');
+  eq('ends: read back', repeatEnd('FREQ=DAILY;COUNT=4'), { kind: 'count', until: '', count: 4 });
+  eq('ends: until read back', repeatEnd('FREQ=DAILY;UNTIL=20261215').until, '2026-12-15');
+  eq('ends: all day makes UNTIL a date', retypeUntil(withRepeatEnd('FREQ=DAILY', { kind: 'until', until: '2026-12-15' }, false), true), 'FREQ=DAILY;UNTIL=20261215');
+  eq('ends: no end, nothing to retype', retypeUntil('FREQ=DAILY', true), 'FREQ=DAILY');
 }
 
 console.log(passed + ' passed, ' + failed + ' failed');

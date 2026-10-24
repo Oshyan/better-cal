@@ -8,57 +8,17 @@ import { html, useState, useRef, useEffect } from '../../vendor/index.js';
 import { state, patchOccurrence } from './store.js';
 import { api } from './api.js';
 import { PinIcon } from '../ui/icons.js';
-import { fmtDateFull, untilDayKey, dateOfDayKey } from '../lib/dates.js';
+import { repeatSentence } from '../lib/repeat.js';
 import { splitUrlTail } from '../lib/richtext.js';
 import { mapMosaic, stadiaStyle, mapTilerStyle, isPendingLocation, validCoordinates } from '../lib/maps.js';
 
 // --- recurrence in words ----------------------------------------------------
 
-const BYDAY_NAMES = {
-  MO: 'Monday', TU: 'Tuesday', WE: 'Wednesday', TH: 'Thursday',
-  FR: 'Friday', SA: 'Saturday', SU: 'Sunday',
-};
-
-// "FREQ=WEEKLY;BYDAY=MO" -> "Repeats weekly on Monday". Falls back to a plain
-// "Repeats" for anything it cannot describe (overrides carry no rrule).
-export function describeRrule(rrule) {
-  if (!rrule) return 'Repeats';
-  const parts = {};
-  for (const piece of String(rrule).split(';')) {
-    const [k, v] = piece.split('=');
-    if (k) parts[k.toUpperCase()] = (v || '').toUpperCase();
-  }
-  const n = parseInt(parts.INTERVAL || '1', 10) || 1;
-  let text;
-  switch (parts.FREQ) {
-    case 'DAILY':
-      text = n === 1 ? 'Repeats daily' : `Repeats every ${n} days`;
-      break;
-    case 'WEEKLY': {
-      text = n === 1 ? 'Repeats weekly' : `Repeats every ${n} weeks`;
-      const days = (parts.BYDAY || '')
-        .split(',')
-        .map((d) => BYDAY_NAMES[d.replace(/^[+-]?\d+/, '')])
-        .filter(Boolean);
-      if (days.length > 0) text += ' on ' + days.join(', ');
-      break;
-    }
-    case 'MONTHLY':
-      text = n === 1 ? 'Repeats monthly' : `Repeats every ${n} months`;
-      if (parts.BYMONTHDAY && /^\d+$/.test(parts.BYMONTHDAY)) text += ` on day ${parts.BYMONTHDAY}`;
-      break;
-    case 'YEARLY':
-      text = n === 1 ? 'Repeats yearly' : `Repeats every ${n} years`;
-      break;
-    default:
-      return 'Repeats';
-  }
-  if (parts.COUNT && /^\d+$/.test(parts.COUNT)) {
-    text += `, ${parts.COUNT} times`;
-  } else if (parts.UNTIL && /^\d{8}/.test(parts.UNTIL)) {
-    text += ', until ' + fmtDateFull(dateOfDayKey(untilDayKey(parts.UNTIL)));
-  }
-  return text;
+// "FREQ=WEEKLY;BYDAY=MO" -> "Repeats weekly on Monday" (lib/repeat.js). Falls
+// back to a plain "Repeats" for anything it cannot describe (overrides carry
+// no rrule). `start` (a Date) names what a bare rule takes from its first day.
+export function describeRrule(rrule, start = null) {
+  return repeatSentence(rrule, { start });
 }
 
 // --- safe URL linkification -------------------------------------------------

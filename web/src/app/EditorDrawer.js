@@ -429,7 +429,11 @@ export function EditorDrawer() {
     };
     setForm(initial);
     nlBase.current = initial;
-    initialSnapRef.current = JSON.stringify(initial);
+    // A new event that arrives with a title (quick add's More options, a
+    // pasted calendar link, a copy) is work already done: it is measured
+    // against an untitled one, so closing it offers Undo instead of
+    // silently dropping it.
+    initialSnapRef.current = JSON.stringify(!occ && initial.title.trim() ? { ...initial, title: '' } : initial);
     set({ editorDirty: false });
     // Putting a draft back (Undo after a close, or after a reload): the form
     // as it was, against the ORIGINAL baseline so it is still dirty.

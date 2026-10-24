@@ -19,6 +19,7 @@ import { pushSupported, permissionState, enablePush, currentPushEndpoint } from 
 import { isInstalled, canPromptInstall, promptInstall, onInstallChange, installHint, needsHomeScreenForPush } from './install.js';
 import { PHONE_QUERY } from '../lib/breakpoints.js';
 import { GOOGLE_SETUP_URL } from './GoogleConnector.js';
+import { stepBack, afterHistorySettles } from './historysteps.js';
 
 // What the device's locale says, for the settings a new account hasn't chosen.
 function localeWeekStart() {
@@ -105,35 +106,62 @@ export function Welcome() {
   // from inside a Back sent the next Back out of the app.
   const step2Ref = useRef(false);
   const ignorePopRef = useRef(0);
+  // Its entries go in only once any step back still on its way has landed
+  // (a page closing as the welcome comes back), and it leaves them with
+  // stepBack, so a page opening from step 2 waits for that (#164).
+  const ownsRef = useRef(false); // its first entry is in
+  const leftRef = useRef(false);  // leave() took its entries out
   useEffect(() => {
     if (!show || !phone) return undefined;
-    if (!(history.state && history.state.bcWelcome)) history.pushState({ bcWelcome: 1 }, '');
+    leftRef.current = false;
     let popped = false;
     const onPop = () => {
+      if (leftRef.current) return;
       if (ignorePopRef.current > 0) { ignorePopRef.current -= 1; return; }
       if (step2Ref.current) { step2Ref.current = false; setStep(1); return; }
       popped = true;
       set({ welcomeOpen: false, welcomeLater: true });
     };
-    window.addEventListener('popstate', onPop);
+    const cancel = afterHistorySettles(() => {
+      if (!(history.state && history.state.bcWelcome)) history.pushState({ bcWelcome: 1 }, '');
+      ownsRef.current = true;
+      window.addEventListener('popstate', onPop);
+      syncStep(lastStep);
+    });
     return () => {
+      cancel();
       window.removeEventListener('popstate', onPop);
-      if (!popped && history.state && history.state.bcWelcome) history.go(-(1 + (step2Ref.current ? 1 : 0)));
+      if (ownsRef.current && !popped && history.state && history.state.bcWelcome) stepBack(1 + (step2Ref.current ? 1 : 0));
+      ownsRef.current = false;
       step2Ref.current = false;
       ignorePopRef.current = 0;
     };
   }, [show, phone]); // eslint-disable-line
-  useEffect(() => {
-    if (!show || !phone) return;
-    if (step === 2 && !step2Ref.current) {
+  // A step-2 action that opens something else (a page, a drawer) takes the
+  // welcome's entries out first and opens it once they are gone, so its own
+  // entry goes where they were instead of on top of them (#164).
+  const leave = (fn) => {
+    if (!phone || !ownsRef.current) { fn(); return; }
+    leftRef.current = true;
+    stepBack(1 + (step2Ref.current ? 1 : 0));
+    ownsRef.current = false;
+    step2Ref.current = false;
+    afterHistorySettles(fn);
+  };
+  // Step 2 gets its entry when you go to it; its own Back button takes it out.
+  const syncStep = (n) => {
+    if (!ownsRef.current) return; // the first entry isn't in yet; it syncs then
+    if (n === 2 && !step2Ref.current) {
       step2Ref.current = true;
       history.pushState({ bcWelcome: 1, bcWelcomeStep: 2 }, '');
-    } else if (step === 1 && step2Ref.current) {
-      // Back to step 1 by its own button rather than the phone's Back.
+    } else if (n === 1 && step2Ref.current) {
       step2Ref.current = false;
       ignorePopRef.current += 1;
-      history.back();
+      stepBack(1);
     }
+  };
+  useEffect(() => {
+    if (show && phone) syncStep(step);
   }, [show, phone, step]); // eslint-disable-line
 
   if (!show || !form) return null;
@@ -177,13 +205,13 @@ export function Welcome() {
     {
       id: 'subscribe', icon: 'link', title: 'Subscribe to a calendar',
       sub: "By its address: holidays, a venue, a team's or a friend's public calendar.",
-      act: 'Subscribe', run: () => { mark('subscribe'); set({ createDrawer: { kind: 'subscribe' } }); },
+      act: 'Subscribe', run: () => { mark('subscribe'); leave(() => set({ createDrawer: { kind: 'subscribe' } })); },
       isDone: hasFeeds,
     },
     {
       id: 'import', icon: 'calendar', title: 'Import a file',
       sub: 'An .ics file, or the whole zip from Google Calendar\u2019s export (Settings, Import & export).',
-      act: 'Import', run: () => { mark('import'); set({ createDrawer: { kind: 'import' } }); },
+      act: 'Import', run: () => { mark('import'); leave(() => set({ createDrawer: { kind: 'import' } })); },
     },
     {
       id: 'google', icon: 'google', title: 'Connect Google Calendar',
@@ -193,7 +221,7 @@ export function Welcome() {
       act: google && google.configured ? 'Connect' : null,
       href: google && !google.configured ? GOOGLE_SETUP_URL : null,
       hrefLabel: 'Setup guide',
-      run: () => { mark('google'); set({ route: 'settings', settingsTab: 'connections' }); },
+      run: () => { mark('google'); leave(() => set({ route: 'settings', settingsTab: 'connections' })); },
       isDone: !!(google && google.connected),
     },
     {
@@ -219,7 +247,7 @@ export function Welcome() {
     {
       id: 'plugins', icon: 'plugins', title: 'Weather, sun and tides',
       sub: 'Plugins that add the day’s context to your calendar.',
-      act: 'Browse', run: () => { mark('plugins'); set({ route: 'plugins' }); },
+      act: 'Browse', run: () => { mark('plugins'); leave(() => set({ route: 'plugins' })); },
       isDone: hasPlugin,
     },
   ];

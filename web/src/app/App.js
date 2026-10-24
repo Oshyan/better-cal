@@ -58,6 +58,7 @@ import { sanitizeHtml } from '../lib/richtext.js';
 import { onOutsidePress, insideAny, consumeOutsidePress } from '../ui/outside.js';
 import { installDrawerSwipe } from '../ui/drawerswipe.js';
 import { SplitView } from '../ui/SplitView.js';
+import { stepBack, afterHistorySettles } from './historysteps.js';
 
 const MONTH_ROWS = { month: 6, weeks3: 3, weeks2: 2 };
 
@@ -689,12 +690,8 @@ export function App() {
   const route = s.route;
   useEffect(() => {
     if (!route || route === 'calendar') return undefined;
-    // Already this page's entry (back from a reload, 0.9.1): keep it as it
-    // is, with whatever a page within it (a Settings section) added.
-    if (history.state && history.state.bcRoute === route) { /* adopt */ }
-    else if (history.state && (history.state.bcRoute || history.state.bcDrawer)) history.replaceState({ bcRoute: route }, '');
-    else history.pushState({ bcRoute: route }, '');
     let popped = false;
+    let listening = false;
     const onPop = () => {
       // Back from something on top of this page (a Settings section, the
       // welcome) lands on one of this page's own entries: stay.
@@ -702,10 +699,22 @@ export function App() {
       popped = true;
       set({ route: 'calendar' });
     };
-    window.addEventListener('popstate', onPop);
+    // After any step back still on its way (the welcome closing as this
+    // page opens), or this entry would be pushed onto one being left (#164).
+    const cancel = afterHistorySettles(() => {
+      // Already this page's entry (back from a reload, 0.9.1): keep it as it
+      // is, with whatever a page within it (a Settings section) added.
+      if (history.state && history.state.bcRoute === route) { /* adopt */ }
+      else if (history.state && (history.state.bcRoute || history.state.bcDrawer)) history.replaceState({ bcRoute: route }, '');
+      else history.pushState({ bcRoute: route }, '');
+      window.addEventListener('popstate', onPop);
+      listening = true;
+    });
     return () => {
+      cancel();
+      if (!listening) return;
       window.removeEventListener('popstate', onPop);
-      if (!popped && state.route === 'calendar' && history.state && history.state.bcRoute) history.back();
+      if (!popped && state.route === 'calendar' && history.state && history.state.bcRoute) stepBack(1);
     };
   }, [route]);
 

@@ -15,6 +15,7 @@
 import { useEffect } from '../../vendor/index.js';
 import { state } from './store.js';
 import { PHONE_QUERY } from '../lib/breakpoints.js';
+import { stepBack } from './historysteps.js';
 
 let seq = 0;
 const isPhone = () => { try { return matchMedia(PHONE_QUERY).matches; } catch { return false; } };
@@ -47,7 +48,7 @@ export function useBackClose(active, close) {
       window.removeEventListener('popstate', onPop);
       if (popped || !history.state || history.state.bcOverlay !== id) return;
       if (handedOver()) history.replaceState({ bcSheet: 1, bcHandoff: 1 }, '');
-      else history.back();
+      else stepBack(1); // tracked, so a surface coming back (the welcome) waits for it
     };
   }, [active]); // eslint-disable-line
 }

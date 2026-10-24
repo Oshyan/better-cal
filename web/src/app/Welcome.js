@@ -16,7 +16,7 @@ import { Icon } from '../ui/icons.js';
 import { localTz } from '../lib/dates.js';
 import { ZonePicker } from './ZonePicker.js';
 import { pushSupported, permissionState, enablePush, currentPushEndpoint } from './push.js';
-import { isInstalled, canPromptInstall, promptInstall, onInstallChange, installHint } from './install.js';
+import { isInstalled, canPromptInstall, promptInstall, onInstallChange, installHint, needsHomeScreenForPush } from './install.js';
 import { PHONE_QUERY } from '../lib/breakpoints.js';
 import { GOOGLE_SETUP_URL } from './GoogleConnector.js';
 
@@ -205,7 +205,8 @@ export function Welcome() {
     },
     {
       id: 'reminders', icon: 'bell', title: 'Reminders on this device',
-      sub: pushState === 'unsupported' ? 'This browser has no push notifications; reminders can come by email instead (Settings, Notifications).'
+      sub: pushState === 'unsupported' && needsHomeScreenForPush() ? 'On iPhone and iPad, reminders come to the app on your Home Screen (iOS 16.4 or later): install it first, as above, and turn them on there.'
+        : pushState === 'unsupported' ? 'This browser has no push notifications; reminders can come by email instead (Settings, Notifications).'
         : pushState === 'denied' ? 'Notifications are blocked for this site in the browser.'
           : workerState && workerState !== 'running' ? "Notifications for your events, even with the app closed. They need the background worker (a cron job), which isn't running on this server yet: Settings, System shows how."
             : 'Notifications for your events, even with the app closed.',

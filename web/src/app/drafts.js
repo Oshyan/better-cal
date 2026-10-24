@@ -13,7 +13,11 @@
 //     moment and nobody has to read a toast.
 //
 // sessionStorage, not localStorage: a draft belongs to this tab's session.
-// Closing the tab is a deliberate act; an unexpected reload is not.
+// Closing the tab is a deliberate act; an unexpected reload is not. In the
+// installed app, localStorage, as resume.js does: a phone (iOS especially)
+// closes a Home Screen app in the background, and it starts again with a new
+// session, so a draft typed before switching to another app would be lost.
+// There a draft lasts a day; one older than that is dropped, not restored.
 
 import { state, set, toast } from './store.js';
 import { saveResume, UPDATE_FLAG } from './resume.js';
@@ -21,18 +25,27 @@ import { saveResume, UPDATE_FLAG } from './resume.js';
 const EDITOR_KEY = 'bc-editor-draft';
 const QUICKADD_KEY = 'bc-quickadd-draft';
 
+const INSTALLED_MAX_AGE_MS = 24 * 3600000;
+const installed = () => { try { return matchMedia('(display-mode: standalone)').matches; } catch { return false; } };
+const store = () => (installed() ? localStorage : sessionStorage);
+
 function read(key) {
   try {
-    const raw = sessionStorage.getItem(key);
-    return raw ? JSON.parse(raw) : null;
+    const raw = store().getItem(key);
+    const value = raw ? JSON.parse(raw) : null;
+    if (value && installed() && !(value.at && Date.now() - value.at <= INSTALLED_MAX_AGE_MS)) {
+      store().removeItem(key);
+      return null;
+    }
+    return value;
   } catch {
     return null;
   }
 }
 function write(key, value) {
   try {
-    if (value == null) sessionStorage.removeItem(key);
-    else sessionStorage.setItem(key, JSON.stringify(value));
+    if (value == null) store().removeItem(key);
+    else store().setItem(key, JSON.stringify(value));
   } catch { /* private mode or quota: the draft simply is not durable */ }
 }
 

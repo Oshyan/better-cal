@@ -43,6 +43,18 @@ export function onInstallChange(fn) {
   return () => listeners.delete(fn);
 }
 
+/**
+ * iPhone or iPad, not installed: Safari only offers web push to a Home Screen
+ * app (iOS 16.4 on), so "no push in this browser" would be wrong there; it's
+ * one Add to Home Screen away. iPadOS in desktop mode reports a Mac user
+ * agent, hence the touch check (a Mac has none).
+ */
+export function needsHomeScreenForPush() {
+  const ua = navigator.userAgent || '';
+  const ios = /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+  return ios && !isInstalled();
+}
+
 /** Where this browser's own menu offers installing, for when there's no prompt. */
 export function installHint() {
   const ua = navigator.userAgent || '';

@@ -887,7 +887,7 @@ button.bc-hidden-mark { cursor: pointer; }
   display: flex; align-items: center; gap: 4px;
   height: 100%; padding: 0 6px; border-radius: 5px;
   font-size: 11.5px; overflow: hidden; white-space: nowrap;
-  user-select: none; cursor: pointer; position: relative;
+  user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; cursor: pointer; position: relative;
   touch-action: pan-y;
 }
 /* Continuation beyond this row: GCal-style angled arrow ends pointing the
@@ -2479,7 +2479,7 @@ body.bc-rescheduling { user-select: none; }
   position: relative; /* anchors the resize handles at the band's own ends */
   height: 100%; display: flex; align-items: center;
   padding: 0 6px; overflow: hidden;
-  border-radius: 0 0 4px 4px; cursor: pointer; user-select: none;
+  border-radius: 0 0 4px 4px; cursor: pointer; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
 }
 .bc-band.cont-l { border-bottom-left-radius: 0; }
 .bc-band.cont-r { border-bottom-right-radius: 0; }
@@ -4311,7 +4311,7 @@ button.bc-es-alsoon-cal { cursor: pointer; text-decoration: underline; text-deco
 .bc-welcome-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-top: 4px; }
 @media (max-width: 640px), (pointer: coarse) and (max-height: 500px) and (max-width: 1000px) {
   .bc-welcome-wrap { align-items: flex-end; padding: 0; }
-  .bc-welcome { width: 100%; max-height: 92vh; border-radius: 18px 18px 0 0; padding: 18px 16px calc(16px + env(safe-area-inset-bottom, 0px)); }
+  .bc-welcome { width: 100%; max-height: 92vh; max-height: 92dvh; border-radius: 18px 18px 0 0; padding: 18px 16px calc(16px + env(safe-area-inset-bottom, 0px)); }
   .bc-welcome-row > span:first-child { width: 100%; }
   .bc-welcome-row .bc-seg-btn { min-height: 40px; padding: 0 14px; font-size: 15px; }
   .bc-welcome-row select, .bc-welcome-row input { min-height: 44px; font-size: 16px; }

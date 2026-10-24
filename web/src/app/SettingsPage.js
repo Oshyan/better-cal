@@ -21,6 +21,7 @@ import { usePasswordStepUp } from './PasswordStepUp.js';
 import { OutfeedsSection } from './OutfeedsPage.js';
 import { PlaceInput, pickFillText, placeBias } from './PlaceInput.js';
 import { allowDeviceLocation, deviceLocationPermission } from './devicelocation.js';
+import { needsHomeScreenForPush } from './install.js';
 import { localTz, sameClock, tzOffsetLabel, tzCity, fmtDayMedium, fmtTime } from '../lib/dates.js';
 import { ZonePicker } from './ZonePicker.js';
 import {
@@ -531,7 +532,7 @@ function NotificationsSection({ settings, user }) {
   const enabled = !!(thisRegistered && perm === 'granted');
 
   let statusText;
-  if (!pushSupported()) statusText = 'Not supported in this browser';
+  if (!pushSupported()) statusText = needsHomeScreenForPush() ? 'Add Better-Cal to your Home Screen to get reminders here (iOS 16.4 or later): the Share button, then Add to Home Screen' : 'Not supported in this browser';
   else if (status && !status.vapidConfigured) statusText = 'Server not configured (VAPID keys missing)';
   else if (perm === 'denied') statusText = 'Blocked in this browser; allow notifications in site settings';
   else if (enabled) statusText = 'Enabled';

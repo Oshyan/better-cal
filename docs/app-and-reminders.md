@@ -39,7 +39,7 @@ If no question appeared:
 
 - **Chrome may have asked quietly.** It sometimes shows a small crossed-out bell in the address bar instead of a pop-up. Click it and choose Allow.
 - **"Blocked in this browser"** next to the button means notifications were refused for Better-Cal at some point. Allow them in the phone's or browser's settings (next section), then press **Enable** again.
-- **"Not supported in this browser"** on an iPhone or iPad usually means you're in a Safari tab. Install the app and turn reminders on there.
+- **"Add Better-Cal to your Home Screen"** on an iPhone or iPad means you're in a Safari tab. Install the app and turn reminders on there.
 - **"Server not configured"** means whoever runs the server hasn't set up push yet. It takes one command; see [Install](install.md#install), under the optional extras. Email reminders still work if email is set up.
 
 If you've already allowed notifications but this device isn't signed up (after reinstalling the app, say), Better-Cal turns reminders back on by itself when it opens. If you never decided, it asks at most once a fortnight, with a **Turn on** button, since only a button press can bring up the browser's question.

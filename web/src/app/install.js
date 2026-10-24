@@ -4,6 +4,8 @@
 // Safari and Firefox have no such prompt: the welcome says where their own
 // menu puts it.
 
+import { isIOS } from '../lib/ioskeyboard.js';
+
 let deferred = null;
 let listeners = new Set();
 
@@ -50,9 +52,7 @@ export function onInstallChange(fn) {
  * agent, hence the touch check (a Mac has none).
  */
 export function needsHomeScreenForPush() {
-  const ua = navigator.userAgent || '';
-  const ios = /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
-  return ios && !isInstalled();
+  return isIOS() && !isInstalled();
 }
 
 /** Where this browser's own menu offers installing, for when there's no prompt. */

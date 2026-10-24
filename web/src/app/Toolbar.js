@@ -16,6 +16,7 @@ import { fmtMonthYear, fmtDayLong, dateOfDayKey } from '../lib/dates.js';
 import { ViewSwitcher } from './ViewSwitcher.js';
 import { REL_LABEL, REL_ORDER } from './Relationship.js';
 import { Icon } from '../ui/icons.js';
+import { primeKeyboard } from '../lib/ioskeyboard.js';
 import { JumpPopover } from './JumpPopover.js';
 import { onOutsidePress, insideAny } from '../ui/outside.js';
 
@@ -159,6 +160,7 @@ function PhoneChips() {
   const text = (filterText || '').trim();
   if (all && !text && !activeView) return null;
   const openFilter = () => {
+    primeKeyboard();
     set({ phoneSheet: 'filter' });
     // After the sheet has taken focus for itself (BottomBar Sheet).
     setTimeout(() => { const el = document.getElementById('bc-phone-filter'); if (el) el.focus(); }, 60);
@@ -236,7 +238,7 @@ export function Toolbar({ onToggleSidebar }) {
           type="button" class="bc-toolbar-month bc-toolbar-date"
           aria-haspopup="dialog" aria-expanded=${jumpOpen}
           title="Jump to date (g)" aria-live="polite"
-          onClick=${() => set({ jumpOpen: !jumpOpen })}
+          onClick=${() => { if (!jumpOpen) primeKeyboard(); set({ jumpOpen: !jumpOpen }); }}
         ><span class="bc-toolbar-label">${label}</span><span class="bc-toolbar-jump" aria-hidden="true"><${Icon} name="jumpDate" size=${15} /></span></button>
         ${dayCtx.length > 0 && html`<span class="bc-toolbar-ctx"><${ContextStrip}
           occs=${dayCtx} calendars=${calMeta} max=${3} more=${false} onOpen=${openCtx}
@@ -258,8 +260,8 @@ export function Toolbar({ onToggleSidebar }) {
     <${RelFilter} />
     <${ViewMenu} view=${view} narrow=${narrow} />
     <button type="button" class="bc-icon-btn bc-kbd-btn" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)" onClick=${() => set({ shortcutsOpen: true })}><${Icon} name="keyboard" size=${16} /></button>
-    <button type="button" class="bc-icon-btn bc-tb-search" aria-label="Search" title="Search ( / )" onClick=${() => set({ searchOpen: true })}><${Icon} name="search" size=${16} /></button>
-    <button type="button" class="bc-icon-btn bc-qa-btn" aria-label="Quick add" title="Quick add: type it in plain language (c)" onClick=${() => set({ quickAddOpen: true })}><${Icon} name="quickadd" size=${16} /></button>
+    <button type="button" class="bc-icon-btn bc-tb-search" aria-label="Search" title="Search ( / )" onClick=${() => { primeKeyboard(); set({ searchOpen: true }); }}><${Icon} name="search" size=${16} /></button>
+    <button type="button" class="bc-icon-btn bc-qa-btn" aria-label="Quick add" title="Quick add: type it in plain language (c)" onClick=${() => { primeKeyboard(); set({ quickAddOpen: true }); }}><${Icon} name="quickadd" size=${16} /></button>
     <${NewMenu} />
     <button type="button" class="bc-tb-todaybadge" aria-label=${'Go to today, the ' + todayDate + ordinalSuffix(todayDate)} title="Go to today" onClick=${goToday}><span>${todayDate}<small>${ordinalSuffix(todayDate)}</small></span></button>
   </header>

@@ -24,6 +24,7 @@ import { REL_LABEL, REL_ORDER } from './Relationship.js';
 import { useSavedViewPicker } from './ViewSwitcher.js';
 import { trapFocus } from '../ui/DayExpand.js';
 import { Icon } from '../ui/icons.js';
+import { primeKeyboard } from '../lib/ioskeyboard.js';
 import { consumeOutsidePress, swallowClickOfThisPress } from '../ui/outside.js';
 
 const PHONE_VIEWS = [
@@ -203,12 +204,14 @@ function FilterSheet({ onClose }) {
 function NewSheet({ onClose }) {
   // What these open lives on the calendar (from Review, go back to it).
   const go = (patch) => () => { onClose(); set({ ...patch, route: 'calendar' }); };
+  // Quick add and the editor open on a box to type in (lib/ioskeyboard.js).
+  const goTyping = (patch) => () => { primeKeyboard(); go(patch)(); };
   return html`<${Sheet} label="New" onClose=${onClose}>
     <div class="bc-bsheet-h">New</div>
     <div role="menu" aria-label="Create">
-      <${Row} icon="quickadd" label="Quick add" role="menuitem" onClick=${go({ quickAddOpen: true })} />
-      <${Row} icon="calendar" label="Event" role="menuitem" onClick=${go({ editor: { mode: 'create', draft: {} } })} />
-      <${Row} icon="trip" label="Trip" role="menuitem" onClick=${go({ editor: { mode: 'create', draft: { isContainer: true, allDay: true } } })} />
+      <${Row} icon="quickadd" label="Quick add" role="menuitem" onClick=${goTyping({ quickAddOpen: true })} />
+      <${Row} icon="calendar" label="Event" role="menuitem" onClick=${goTyping({ editor: { mode: 'create', draft: {} } })} />
+      <${Row} icon="trip" label="Trip" role="menuitem" onClick=${goTyping({ editor: { mode: 'create', draft: { isContainer: true, allDay: true } } })} />
       <${Row} icon="people" label="Person" role="menuitem" onClick=${go({ createDrawer: { kind: 'person' } })} />
       <${Row} icon="folder" label="Calendar" role="menuitem" onClick=${go({ createDrawer: { kind: 'calendar' } })} />
     </div>
@@ -226,12 +229,12 @@ export function BottomBar() {
   const onReview = s.route === 'review';
   const close = () => set({ phoneSheet: null });
   const cur = PHONE_VIEWS.find(([k]) => k === phoneViewKey(s.view)) || PHONE_VIEWS[0];
-  const newPress = useHold(() => set({ quickAddOpen: true, phoneSheet: null, route: 'calendar' }), () => set({ phoneSheet: 'new' }));
+  const newPress = useHold(() => { primeKeyboard(); set({ quickAddOpen: true, phoneSheet: null, route: 'calendar' }); }, () => set({ phoneSheet: 'new' }));
   return html`<nav class="bc-bottombar" aria-label="Calendar actions">
       <button type="button" class=${'bc-bb-btn' + (s.sheet === 'view' ? ' is-open' : '')} aria-haspopup="dialog" aria-expanded=${s.sheet === 'view'} onClick=${() => toggle('view')}>
         <${Icon} name=${cur[2]} size=${22} /><span>${viewLabel(cur, s.phoneWide)}</span>
       </button>
-      <button type="button" class="bc-bb-btn" onClick=${() => set({ phoneSheet: null, searchOpen: true, route: 'calendar' })}>
+      <button type="button" class="bc-bb-btn" onClick=${() => { primeKeyboard(); set({ phoneSheet: null, searchOpen: true, route: 'calendar' }); }}>
         <${Icon} name="search" size=${22} /><span>Search</span>
       </button>
       <button type="button" class="bc-bb-btn bc-bb-new" aria-label="New: tap for quick add, hold for more" ...${newPress}>

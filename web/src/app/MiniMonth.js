@@ -15,6 +15,7 @@ import {
 } from '../lib/dates.js';
 import { occurrenceDaySpan } from '../ui/monthmath.js';
 import { Icon } from '../ui/icons.js';
+import { primeKeyboard } from '../lib/ioskeyboard.js';
 
 export function MiniMonth() {
   const s = useStore(
@@ -61,7 +62,7 @@ export function MiniMonth() {
       <button
         type="button" class="bc-mm-title"
         title="Jump to date (g)" aria-haspopup="dialog"
-        onClick=${() => set({ jumpOpen: true })}
+        onClick=${() => { primeKeyboard(); set({ jumpOpen: true }); }}
       >${fmtMonthYear(dateOfDayKey(monthPrefix + '-01'))}</button>
       <button type="button" class="bc-icon-btn bc-mm-step" aria-label="Previous month" onClick=${() => setDisp(stepMonthOf(shown.year, shown.month, -1))}><${Icon} name="chevronLeft" size=${13} /></button>
       <button type="button" class="bc-icon-btn bc-mm-step" aria-label="Next month" onClick=${() => setDisp(stepMonthOf(shown.year, shown.month, 1))}><${Icon} name="chevronRight" size=${13} /></button>

@@ -12,6 +12,7 @@ import { api, loadPeople, ensureFullOccurrence } from './api.js';
 import { saveEditorDraft, clearEditorDraft, discardEditorWithUndo } from './drafts.js';
 import { TripRow } from './Trips.js';
 import { trapFocus } from '../ui/DayExpand.js';
+import { primeKeyboard } from '../lib/ioskeyboard.js';
 import { PlaceInput, pickFillText, calendarPlaceNear } from './PlaceInput.js';
 import { PeopleInput } from './PeopleInput.js';
 import { ZonePicker } from './ZonePicker.js';
@@ -137,7 +138,7 @@ function ZoneControl({ form, occ, onPick }) {
   return html`<span class="bc-zone">
     ${open
       ? html`<${ZonePicker} className="bc-zone-select" ariaLabel="Time zone" value=${tz} extra=${[device, occ && occ.tzid].filter(Boolean)} autoFocus=${true} onChange=${onPick} />`
-      : html`<button type="button" class="bc-ed-chip bc-zone-btn" title=${title} aria-label=${'Time zone: ' + tzCity(tz) + '. Change'} onClick=${() => setOpen(true)}><${Icon} name="globe" size=${12} />${tzCity(tz)} time<${Icon} name="chevronDown" size=${10} /></button>
+      : html`<button type="button" class="bc-ed-chip bc-zone-btn" title=${title} aria-label=${'Time zone: ' + tzCity(tz) + '. Change'} onClick=${() => { primeKeyboard(); setOpen(true); }}><${Icon} name="globe" size=${12} />${tzCity(tz)} time<${Icon} name="chevronDown" size=${10} /></button>
           ${stored && html`<button
             type="button" class="bc-link-btn bc-zone-btn"
             title=${'This event is stored in ' + tzCity(stored) + ' time (' + tzOffsetLabel(stored) + '). Switch the fields to that clock; the event does not move.'}

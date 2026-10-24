@@ -4,7 +4,9 @@ Better-Cal uses [semantic versioning](https://semver.org). Minor versions bring 
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
-## Unreleased
+## 1.1.0 (2026-10-24)
+
+Quick add learns repeating events, the editor keeps repeat rules it can't show, and a round of fixes from an iPhone tester: the date picker, the keyboard, reminders and drafts.
 
 - **Quick add makes repeating events.** Type "every Tuesday", "Mondays and Thursdays", "every other week", "weekdays", "monthly on the 15th", "first Monday of the month", "last weekday of the month" or "every year on 12/23", with a start ("starting Nov 3") or an end ("until Dec 15", "for 6 weeks", "10 times") if you like. The common phrasings work without AI too. The repeat shows as a chip on the card: tap it for the usual choices for that date and when it ends, or Custom for the full editor. With nothing typed, the small repeat button beside All day opens the same menu. Hourly repeats and to-do style rules aren't part of it.
 - **The editor keeps repeats it can't show.** Monthly now offers "on day 15" or "on the third Thursday" (or "the last"), following the start date. Any other rule, from another calendar app say, is shown in words with a Change button and saved as it was, instead of being simplified on the next save. Event details say the whole rule too: "Repeats monthly on the third Thursday", not just "Repeats monthly".
@@ -18,6 +20,8 @@ Security fixes are tracked privately as GitHub security advisories until they sh
 - **Months are marked by a line, not a gray background.** Every other month used to be tinted, which made a whole month look dimmed or past. Now every month has the same background, and one line runs where each month meets the next, stepping around the week the 1st falls in. A trip crossing into a new month isn't cut by it.
 - **Guzzle 8.3** (from 8.2), the HTTP client reminders go out through, with psr7 3.2 and promises 3.1: stricter checks on malformed responses, and fixes. No change in behaviour.
 - **MCP: every tool says whether repeating it is safe.** Each tool now declares all four MCP hints (read-only, destructive, idempotent, open-world), which some MCP directories require. Setting a value or deleting is safe to repeat; creating an event, running a plugin and undo are not.
+
+Operators: no database change. The release zip carries the updated Guzzle libraries, as always.
 
 ## 1.0.0 (2026-10-20)
 

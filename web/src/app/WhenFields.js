@@ -20,7 +20,10 @@ import { COARSE_QUERY, PHONE_QUERY } from '../lib/breakpoints.js';
 // On a touch screen (0.6.0) the boxes open pickers rather than the keyboard:
 // a tap on a date opens the phone's own calendar, a tap on a time opens the
 // quarter-hour list, whose first row brings the keyboard when an exact time
-// is wanted. On a phone, a date in this year leaves the year off so the box
+// is wanted. The date picker opens because the tap lands on a real date
+// input laid invisibly over the box: iOS Safari's showPicker() does nothing
+// on a date input (WebKit bug 268114, no error either), and a picker opened
+// by a direct tap works the same on every phone. On a phone, a date in this year leaves the year off so the box
 // never cuts the date short.
 const isTouch = () => { try { return matchMedia(COARSE_QUERY).matches; } catch { return false; } };
 const isPhone = () => { try { return matchMedia(PHONE_QUERY).matches; } catch { return false; } };
@@ -65,12 +68,11 @@ export function DateField({ value, onChange, ariaLabel }) {
     try { el.showPicker(); } catch { el.focus(); el.click(); }
   };
 
-  return html`<span class=${'bc-when-date' + (bad ? ' is-bad' : '')}>
+  return html`<span class=${'bc-when-date' + (bad ? ' is-bad' : '') + (touch ? ' is-touch' : '')}>
     <input
       type="text" class="bc-when-text" value=${shown} aria-label=${ariaLabel} autocomplete="off" spellcheck="false"
       title=${bad ? 'Not a date I can read. Try fri, tomorrow, 10/5 or oct 5.' : 'Type a date: fri, tomorrow, 10/5, oct 5, or a day of this month'}
-      inputmode=${touch ? 'none' : undefined}
-      onClick=${touch ? openPicker : undefined}
+      readonly=${touch} tabindex=${touch ? -1 : undefined} aria-hidden=${touch ? 'true' : undefined}
       ...${sel}
       onInput=${(e) => { setText(e.target.value); setBad(false); }}
       onBlur=${commit}
@@ -79,12 +81,17 @@ export function DateField({ value, onChange, ariaLabel }) {
         else if (e.key === 'Escape' && text != null) { e.preventDefault(); e.stopPropagation(); setText(null); setBad(false); }
       }}
     />
-    <button type="button" class="bc-when-pick" aria-label=${'Pick ' + ariaLabel.toLowerCase()} title="Pick from a calendar" onClick=${openPicker}>
+    <button type="button" class="bc-when-pick" aria-label=${'Pick ' + ariaLabel.toLowerCase()} title="Pick from a calendar" onClick=${openPicker} tabindex=${touch ? -1 : undefined}>
       <${Icon} name="calendar" size=${15} />
     </button>
     <input
-      type="date" ref=${pickRef} class="bc-when-native" tabindex="-1" aria-hidden="true" value=${value}
-      onInput=${(e) => { if (e.target.value && e.target.value !== value) { setBad(false); onChange(e.target.value); } }}
+      type="date" ref=${pickRef} class="bc-when-native" value=${value}
+      tabindex=${touch ? undefined : -1} aria-hidden=${touch ? undefined : 'true'} aria-label=${touch ? ariaLabel : undefined}
+      onInput=${(e) => {
+        // The picker's Reset empties the input; an event always has a date.
+        if (!e.target.value) { e.target.value = value; return; }
+        if (e.target.value !== value) { setBad(false); onChange(e.target.value); }
+      }}
     />
   </span>`;
 }

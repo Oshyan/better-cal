@@ -3946,6 +3946,10 @@ button.bc-es-alsoon-cal { cursor: pointer; text-decoration: underline; text-deco
 /* The browser's own date picker, opened from the calendar button: invisible,
    the size of the field so the picker drops from under it, and unclickable. */
 .bc-when-native { position: absolute; left: 0; bottom: 0; width: 100%; height: 100%; opacity: 0; pointer-events: none; border: 0; padding: 0; }
+/* Touch: the invisible date input lies over the whole box and takes the tap
+   itself, so the phone opens its own picker (WhenFields.js). 16px keeps iOS
+   from zooming the page when it focuses. */
+.bc-when-date.is-touch .bc-when-native { pointer-events: auto; z-index: 1; margin: 0; font-size: 16px; -webkit-appearance: none; appearance: none; cursor: pointer; }
 .bc-when-date.is-bad .bc-when-text, .bc-when-time.is-bad .bc-when-text { border-color: var(--danger); }
 .bc-when-list {
   position: absolute; top: calc(100% + 3px); right: 0; z-index: 7;

@@ -4,11 +4,12 @@ Better-Cal uses [semantic versioning](https://semver.org). Minor versions bring 
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
-## Unreleased
+## 1.1.1 (2026-10-24)
 
 Fixes from a review of 1.1.0.
 
 - **Repeats in quick add read ordinary words as ordinary words.** A bare "to" ended a series at any day it could find, so "Delivery every month to Friday Warehouse" became a single event; after "to" only a calendar date ("to May 23") ends one now. And a repeat that names its own days leaves other weekdays in the title: "Report every Tuesday about Friday sales" keeps "Friday sales" and starts on the next Tuesday, not a week late. Start and end words are read past ordinary uses too, so "Pickup from school every Monday starting Nov 3" starts on Nov 3.
+- **A weekday right after "to" or "at" is part of a name,** for any event: "Ferry to Friday Harbor Saturday" is on Saturday, and "Drinks at Sunday Social" keeps its place name.
 - **A repeat set by hand stays put.** In the editor, changing the text in the quick fill box could put back the repeat you had just changed by hand. In quick add, a repeat (or date) picked before typing was cleared by the first parse of text that didn't mention one.
 - **A monthly repeat restored from an older draft keeps its day.** A draft saved before 1.1 could come back as "the fourth Saturday" instead of "on the 24th".
 - **Logging out removes every unsaved draft.** Logging out in a browser tab now also clears what the installed app kept (on Android and computers the two share storage), and an installed-app draft past its day is removed at the next start instead of waiting for the app to open.

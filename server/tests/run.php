@@ -479,6 +479,16 @@ $repeatCases = [
     ['Retro :weekly Friday', 'Retro', '2026-07-31T00:00', 'FREQ=WEEKLY'],
     ['Bills :monthly', 'Bills', '2026-07-30T00:00', 'FREQ=MONTHLY'],
     ['Checkup :yearly', 'Checkup', '2026-07-30T00:00', 'FREQ=YEARLY'],
+    // Ordinary words around a repeat (1.1.1): a bare "to" ends a series only
+    // at a calendar date, and a repeat with its own days leaves weekdays to
+    // the title; the first start or end phrase followed by a date counts.
+    ['Delivery every month to Friday Warehouse', 'Delivery to Warehouse', '2026-07-31T00:00', 'FREQ=MONTHLY'],
+    ['Walk to Sunday market every week', 'Walk to market', '2026-08-02T00:00', 'FREQ=WEEKLY'],
+    ['Report every Tuesday about Friday sales', 'Report about Friday sales', '2026-08-04T00:00', 'FREQ=WEEKLY;BYDAY=TU'],
+    ['Call home every Sunday re Monday plan', 'Call home re Monday plan', '2026-08-02T00:00', 'FREQ=WEEKLY;BYDAY=SU'],
+    ['Rent monthly on the 15th Friday reminder', 'Rent Friday reminder', '2026-08-15T00:00', 'FREQ=MONTHLY;BYMONTHDAY=15'],
+    ['Walk to the park every Monday until Dec 15', 'Walk to the park', '2026-08-03T00:00', 'FREQ=WEEKLY;BYDAY=MO;UNTIL=20261215'],
+    ['Pickup from school every Monday starting Nov 3', 'Pickup from school', '2026-11-09T00:00', 'FREQ=WEEKLY;BYDAY=MO'],
     // Not repeats
     ['Meet each other Friday', 'Meet each other', '2026-07-31T00:00', null],
     ['Lunch tomorrow at noon', 'Lunch', '2026-07-31T12:00', null],

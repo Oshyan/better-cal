@@ -18,6 +18,11 @@
 // closes a Home Screen app in the background, and it starts again with a new
 // session, so a draft typed before switching to another app would be lost.
 // There a draft lasts a day; one older than that is dropped, not restored.
+//
+// Which storage depends on the window doing the writing, so anything that
+// must reach every draft (logout, the stale-draft sweep at boot) goes through
+// both, the way resume-storage.js does. A draft field added later must mean
+// "as before" when it is missing: a draft can be restored by a newer version.
 
 import { state, set, toast } from './store.js';
 import { saveResume, UPDATE_FLAG } from './resume.js';
@@ -47,6 +52,32 @@ function write(key, value) {
     if (value == null) store().removeItem(key);
     else store().setItem(key, JSON.stringify(value));
   } catch { /* private mode or quota: the draft simply is not durable */ }
+}
+
+// Every draft, in both storages: logging out from a browser tab also takes
+// what the installed app left in localStorage (shared on Android and
+// computers).
+export function clearAllDrafts() {
+  for (const name of ['localStorage', 'sessionStorage']) {
+    try {
+      const storage = globalThis[name];
+      if (storage) for (const key of [EDITOR_KEY, QUICKADD_KEY]) storage.removeItem(key);
+    } catch { /* storage unavailable */ }
+  }
+}
+
+// At boot, from any window: an installed-app draft past its day is removed,
+// not left until the installed app next opens (which may be never).
+export function sweepStaleDrafts() {
+  try {
+    for (const key of [EDITOR_KEY, QUICKADD_KEY]) {
+      const raw = localStorage.getItem(key);
+      if (raw == null) continue;
+      let value = null;
+      try { value = JSON.parse(raw); } catch { /* unreadable: remove */ }
+      if (!(value && value.at && Date.now() - value.at <= INSTALLED_MAX_AGE_MS)) localStorage.removeItem(key);
+    }
+  } catch { /* storage unavailable */ }
 }
 
 // --- editor -----------------------------------------------------------------
@@ -102,6 +133,7 @@ export function loadQuickAddText() {
 // Put back whatever was in progress when the page last unloaded: an editor
 // with its form, or quick add with its text. An editor wins if both exist.
 export function restoreDraftsAfterBoot() {
+  sweepStaleDrafts();
   const ed = loadEditorDraft();
   if (ed && ed.form && ed.editor) {
     set({ editor: { ...ed.editor, restore: { form: ed.form, nlText: ed.nlText, initialSnap: ed.initialSnap } } });

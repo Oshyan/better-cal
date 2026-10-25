@@ -65,7 +65,11 @@ final class FallbackParser
             $confidence += 0.05;
         }
 
-        [$work, $date, $dateFound, $rangeEnd] = self::extractDate($work, $now);
+        // A repeat that names its own days ("every Tuesday", "the 15th")
+        // leaves a lone weekday to the title: in "Report every Tuesday about
+        // Friday sales" Friday is a word, not the start.
+        $ownDays = $repeat !== null && (isset($repeat['rule']['BYDAY']) || isset($repeat['rule']['BYMONTHDAY']));
+        [$work, $date, $dateFound, $rangeEnd] = self::extractDate($work, $now, !$ownDays);
         [$work, $startTime, $endTime, $timeFound] = self::extractTime($work);
         $repeatDayGiven = false;
         if ($repeat !== null) {
@@ -214,7 +218,7 @@ final class FallbackParser
      * @return array{0:string,1:\DateTimeImmutable,2:bool,3:?\DateTimeImmutable}
      *         [remaining text, start date, found?, inclusive range end date]
      */
-    private static function extractDate(string $work, \DateTimeImmutable $now): array
+    private static function extractDate(string $work, \DateTimeImmutable $now, bool $weekdays = true): array
     {
         $date = $now;
         $found = false;
@@ -341,6 +345,9 @@ final class FallbackParser
         $dayAlt = implode('|', array_keys(self::WEEKDAYS));
         // "next week thursday": the named weekday within the next calendar week
         // (weeks start Monday). Checked before the bare-weekday branch below.
+        if (!$weekdays) {
+            return [$work, $date, $found, null];
+        }
         if (preg_match('/\bnext\s+week(?:\s+(?:on\s+)?(' . $dayAlt . '))\b/i', $work, $m)) {
             $target = self::WEEKDAYS[strtolower($m[1])];
             $todayW = (int) $now->format('w');

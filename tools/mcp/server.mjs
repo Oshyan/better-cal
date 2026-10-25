@@ -382,17 +382,20 @@ const TOOLS = [
 // What each tool does to the calendar, for clients that ask before running
 // a destructive tool (MCP tool annotations), and which tools return text that
 // third parties wrote (scan 2026-09-23, F18). All four hints on every tool:
-// some directories refuse a tool missing any. Idempotent means repeating the
-// same call leaves things as one call did: setting a value or deleting is;
-// creating, running a plugin and undo (each steps further back) are not.
+// some directories refuse a tool missing any. Idempotent means a repeat of
+// the same call has no further effect at all (MCP's definition): deleting
+// and setting plugin values are; creating, running a plugin and undo are
+// not, and neither are the event changes that journal every call (a new
+// undo and Activity entry, a CalDAV change, another write to Google, and a
+// second "this and following" split).
 const EFFECTS = {
   list_events:                     { readOnlyHint: true,  destructiveHint: false, idempotentHint: true,  openWorldHint: false },
   search_events:                   { readOnlyHint: true,  destructiveHint: false, idempotentHint: true,  openWorldHint: false },
   create_event:                    { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   quick_add:                       { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
-  update_event:                    { readOnlyHint: false, destructiveHint: true,  idempotentHint: true,  openWorldHint: true },
+  update_event:                    { readOnlyHint: false, destructiveHint: true,  idempotentHint: false, openWorldHint: true },
   delete_event:                    { readOnlyHint: false, destructiveHint: true,  idempotentHint: true,  openWorldHint: true },
-  set_attendance:                  { readOnlyHint: false, destructiveHint: true,  idempotentHint: true,  openWorldHint: false },
+  set_attendance:                  { readOnlyHint: false, destructiveHint: true,  idempotentHint: false, openWorldHint: false },
   list_calendars:                  { readOnlyHint: true,  destructiveHint: false, idempotentHint: true,  openWorldHint: false },
   list_review:                     { readOnlyHint: true,  destructiveHint: false, idempotentHint: true,  openWorldHint: false },
   list_plugins:                    { readOnlyHint: true,  destructiveHint: false, idempotentHint: true,  openWorldHint: false },
@@ -402,7 +405,7 @@ const EFFECTS = {
   set_plugin_enabled:              { readOnlyHint: false, destructiveHint: true,  idempotentHint: true,  openWorldHint: true },
   run_plugin:                      { readOnlyHint: false, destructiveHint: true,  idempotentHint: false, openWorldHint: true },
   update_event_plugin_data:        { readOnlyHint: false, destructiveHint: true,  idempotentHint: true,  openWorldHint: true },
-  resolve_duplicate:               { readOnlyHint: false, destructiveHint: true,  idempotentHint: true,  openWorldHint: false },
+  resolve_duplicate:               { readOnlyHint: false, destructiveHint: true,  idempotentHint: false, openWorldHint: false },
   undo:                            { readOnlyHint: false, destructiveHint: true,  idempotentHint: false, openWorldHint: false },
 };
 const HINTS = ['readOnlyHint', 'destructiveHint', 'idempotentHint', 'openWorldHint'];

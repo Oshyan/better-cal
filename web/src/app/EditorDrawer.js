@@ -65,7 +65,9 @@ function buildRrule(r, allDay = false, tz = null, start = null) {
   const parts = ['FREQ=' + r.freq];
   if (r.interval > 1) parts.push('INTERVAL=' + r.interval);
   if (r.freq === 'WEEKLY' && r.byday && r.byday.length) parts.push('BYDAY=' + r.byday.join(','));
-  if (r.freq === 'MONTHLY' && start && r.monthly !== 'day') {
+  // Only an explicit weekday choice; anything else (a draft saved before
+  // the choice existed) is day of the month, what a bare monthly rule means.
+  if (r.freq === 'MONTHLY' && start && (r.monthly === 'nth' || r.monthly === 'last')) {
     const { nth, last } = weekOfMonth(start);
     const n = (r.monthly === 'last' && last) || nth === 5 ? -1 : nth;
     parts.push('BYDAY=' + n + DAY_CODES[start.getDay()]);
@@ -628,8 +630,10 @@ export function EditorDrawer() {
     return true;
   };
 
+  // A hand edit, like the rest: a later parse of the quick fill text that
+  // names no repeat keeps it instead of putting the old one back.
   const updRrule = (patch) => {
-    setForm((f) => {
+    byHand((f) => {
       const r = { ...f.rrule, ...patch };
       if (patch.freq && patch.freq !== 'none' && r.ends === 'until' && !r.until) {
         r.until = defaultUntil(fromInputValue(f.start) || new Date());
@@ -729,7 +733,7 @@ export function EditorDrawer() {
     ...(startWeek.last ? [{ value: 'last', label: 'on the last ' + startDayName }] : []),
   ] : [];
   // What buildRrule will write for this start (a fifth weekday is "last").
-  const monthlyMode = !startWeek || r.monthly === 'day' ? 'day'
+  const monthlyMode = !startWeek || (r.monthly !== 'nth' && r.monthly !== 'last') ? 'day'
     : (r.monthly === 'last' && startWeek.last) || startWeek.nth === 5 ? 'last' : 'nth';
   const allDayView = form.allDay ? allDayFields(form.start, form.end) : null;
   const duration = allDayView ? eventDuration({ ...allDayInputs(allDayView.start, allDayView.end), allDay: true }) : eventDuration(form);

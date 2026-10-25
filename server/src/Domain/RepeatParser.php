@@ -162,8 +162,11 @@ final class RepeatParser
     private static function bounds(array $out, \DateTimeImmutable $now): array
     {
         $work = $out['work'];
-        // "from Jan 21 to May 23", "starting Nov 3", "beginning Monday".
-        if (preg_match('/\b(?:from|starting(?:\s+(?:on|from))?|beginning(?:\s+on)?|effective)\s+/i', $work, $m, PREG_OFFSET_CAPTURE)) {
+        // "from Jan 21 to May 23", "starting Nov 3", "beginning Monday". The
+        // first of these followed by a date ("Pickup from school every Monday
+        // starting Nov 3" reads past "from school").
+        preg_match_all('/\b(?:from|starting(?:\s+(?:on|from))?|beginning(?:\s+on)?|effective)\s+/i', $work, $all, PREG_SET_ORDER | PREG_OFFSET_CAPTURE);
+        foreach ($all as $m) {
             $at = $m[0][1];
             $rest = substr($work, $at + strlen($m[0][0]));
             $first = FallbackParser::leadingDate($rest, $now);
@@ -180,17 +183,27 @@ final class RepeatParser
                     }
                 }
                 $work = substr($work, 0, $at) . ' ' . substr($work, $at + $len);
+                break;
             }
         }
-        // "until Dec 15", "ending on Friday", "through May".
+        // "until Dec 15", "ending on Friday", "through May", "to May 23". The
+        // first of these words followed by a date wins, so "Walk to the park
+        // every Monday until Dec 15" still ends on Dec 15. A bare "to" is
+        // everyday English ("to Friday Warehouse", "to Sunday market"), so
+        // after it only a calendar date counts, one with a number in it.
         if ($out['until'] === null
-            && preg_match('/\b(?:until|till|through|thru|ending(?:\s+on)?|ends(?:\s+on)?|to)\s+/i', $work, $m, PREG_OFFSET_CAPTURE)
+            && preg_match_all('/\b(until|till|through|thru|ending(?:\s+on)?|ends(?:\s+on)?|to)\s+/i', $work, $all, PREG_SET_ORDER | PREG_OFFSET_CAPTURE)
         ) {
-            $at = $m[0][1];
-            $end = FallbackParser::leadingDate(substr($work, $at + strlen($m[0][0])), $now);
-            if ($end !== null) {
+            foreach ($all as $m) {
+                $at = $m[0][1];
+                $rest = substr($work, $at + strlen($m[0][0]));
+                $end = FallbackParser::leadingDate($rest, $now);
+                if ($end === null || (strtolower($m[1][0]) === 'to' && preg_match('/\d/', substr($rest, 0, $end['length'])) !== 1)) {
+                    continue;
+                }
                 $out['until'] = $end['date'];
                 $work = substr($work, 0, $at) . ' ' . substr($work, $at + strlen($m[0][0]) + $end['length']);
+                break;
             }
         }
         // "for 6 weeks", "for a month" (days and longer; "for 2 hours" is the

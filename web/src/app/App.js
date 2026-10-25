@@ -59,6 +59,7 @@ import { onOutsidePress, insideAny, consumeOutsidePress } from '../ui/outside.js
 import { installDrawerSwipe } from '../ui/drawerswipe.js';
 import { SplitView } from '../ui/SplitView.js';
 import { stepBack, afterHistorySettles } from './historysteps.js';
+import { primeKeyboard } from '../lib/ioskeyboard.js';
 
 const MONTH_ROWS = { month: 6, weeks3: 3, weeks2: 2 };
 
@@ -649,7 +650,10 @@ export function App() {
     const cell = document.querySelector(`[data-day="${dayKey}"]`);
     set({ expandedDay: { dayKey, anchorRect: cell ? cell.getBoundingClientRect() : null } });
   }, []);
+  // A tap or drag on empty calendar space opens a new event on its typing
+  // box; readying the keyboard inside that gesture lets iOS raise it.
   const onCreateRange = useCallback(({ start, end, allDay }) => {
+    primeKeyboard();
     set({ editor: { mode: 'create', draft: { start, end, allDay } } });
   }, []);
 

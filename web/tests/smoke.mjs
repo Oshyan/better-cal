@@ -2,6 +2,7 @@
 // virtualization math. Run: node web/tests/smoke.mjs
 
 import './copy-to.mjs';
+import './drafts.mjs';
 import './credentials.mjs';
 import './mail.mjs';
 import './resources.mjs';

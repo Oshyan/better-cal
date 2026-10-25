@@ -187,13 +187,13 @@ async function main() {
   const expectedEffects = {
     list_events: [true, false, true, false], search_events: [true, false, true, false],
     create_event: [false, false, false, true], quick_add: [false, false, false, true],
-    update_event: [false, true, true, true], delete_event: [false, true, true, true],
-    set_attendance: [false, true, true, false], list_calendars: [true, false, true, false],
+    update_event: [false, true, false, true], delete_event: [false, true, true, true],
+    set_attendance: [false, true, false, false], list_calendars: [true, false, true, false],
     list_review: [true, false, true, false], list_plugins: [true, false, true, false],
     get_system_health: [true, false, true, false], update_plugin_settings: [false, true, true, true],
     update_plugin_calendar_settings: [false, true, true, true], set_plugin_enabled: [false, true, true, true],
     run_plugin: [false, true, false, true], update_event_plugin_data: [false, true, true, true],
-    resolve_duplicate: [false, true, true, false], undo: [false, true, false, false],
+    resolve_duplicate: [false, true, false, false], undo: [false, true, false, false],
   };
   for (const [name, expected] of Object.entries(expectedEffects)) {
     const a = byName[name]?.annotations || {};

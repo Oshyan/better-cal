@@ -231,8 +231,19 @@ export function QuickAdd() {
     const touched = touchedRef.current;
     const nf = { ...formRef.current };
     const flashed = [];
+    // What the text itself said, as opposed to the parser's defaults (a
+    // server without these flags: all of it).
+    const when = d.when || { date: true, time: true };
+    const named = {
+      dateKey: when.date, startTime: when.time, endTime: when.time, allDay: when.date || when.time,
+      rrule: !!d.rrule, location: true, calendarId: true,
+    };
     for (const k of Object.keys(want)) {
-      if (touched.has(k) && want[k] === prev[k]) continue; // edit wins
+      // A field set by hand keeps its value until the text changes it: a
+      // later parse with a new value, or the first parse when the text names
+      // it. Before any parse there's nothing to compare with, so a repeat or
+      // date picked before typing survives text that doesn't mention one.
+      if (touched.has(k) && (want[k] === prev[k] || (prev[k] === undefined && !named[k]))) continue;
       if (nf[k] !== want[k]) {
         nf[k] = want[k];
         flashed.push(k);

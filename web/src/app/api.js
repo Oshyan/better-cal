@@ -5,7 +5,7 @@
 import { state, set, mergeWindow, pruneOccurrenceCache, missingRanges, patchOccurrence, invalidateRecords, toast } from './store.js';
 import { toISOWithOffset, dateOfDayKey } from '../lib/dates.js';
 import { adoptSettings } from './settings.js';
-import { clearEditorDraft, clearQuickAddText } from './drafts.js';
+import { clearAllDrafts } from './drafts.js';
 import { clearResume } from './resume-storage.js';
 
 const BASE = '/api/v1';
@@ -144,8 +144,7 @@ export async function logout(pushEndpointHash = null) {
     await purgePrivateCaches();
     // Unsaved drafts go too, but only here: a session that merely EXPIRED
     // mid-edit (the 401 path) must not cost the owner what they were typing.
-    clearEditorDraft();
-    clearQuickAddText();
+    clearAllDrafts();
     clearResume();
   }
 }

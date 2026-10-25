@@ -281,14 +281,16 @@ function NewMenu() {
 
   const go = (fn) => () => { setOpen(false); fn(); };
   const items = [
-    ['Event', () => set({ editor: { mode: 'create', draft: {} } })],
-    ['Trip', () => set({ editor: { mode: 'create', draft: { isContainer: true, allDay: true } } })],
+    // A new event or trip opens on its typing box (iPad's toolbar, a phone
+    // turned sideways): the keyboard comes up with the tap.
+    ['Event', () => { primeKeyboard(); set({ editor: { mode: 'create', draft: {} } }); }],
+    ['Trip', () => { primeKeyboard(); set({ editor: { mode: 'create', draft: { isContainer: true, allDay: true } } }); }],
     ['Person', () => set({ createDrawer: { kind: 'person' } })],
     ['Calendar', () => set({ createDrawer: { kind: 'calendar' } })],
   ];
 
   return html`<span class="bc-newmenu" ref=${wrapRef}>
-    <button type="button" class="bc-btn bc-btn-primary bc-newmenu-main" title="New event (n)" onClick=${() => set({ editor: { mode: 'create', draft: {} } })}>+ New</button>
+    <button type="button" class="bc-btn bc-btn-primary bc-newmenu-main" title="New event (n)" onClick=${() => { primeKeyboard(); set({ editor: { mode: 'create', draft: {} } }); }}>+ New</button>
     <button
       type="button" class="bc-btn bc-btn-primary bc-newmenu-caret"
       aria-label="More things to create" aria-expanded=${open} aria-haspopup="menu"

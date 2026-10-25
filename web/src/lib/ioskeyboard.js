@@ -33,7 +33,9 @@ export function primeKeyboard() {
       primer.type = 'text';
       primer.className = 'bc-kbd-primer';
       primer.tabIndex = -1;
-      primer.setAttribute('aria-hidden', 'true');
+      // Labelled, not aria-hidden: it holds focus for a moment, and focus on
+      // something hidden from screen readers leaves VoiceOver nowhere.
+      primer.setAttribute('aria-label', 'Text entry');
       primer.setAttribute('autocomplete', 'off');
       document.body.appendChild(primer);
     }

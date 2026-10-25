@@ -412,6 +412,13 @@ $d = $p('Retro last Friday of October');
 checkEq('fp last Friday of October', '2026-10-30', substr($d['start'], 0, 10));
 $d = $p('Standup first Monday of July 9am');
 checkEq('fp past nth-weekday month rolls to next year', '2027-07-05', substr($d['start'], 0, 10));
+// Right after "to" or "at" a weekday is a name, not the date (1.1.1).
+$d = $p('Ferry to Friday Harbor Saturday 9am');
+checkEq('fp weekday after "to" stays in the title', 'Ferry to Friday Harbor', $d['title']);
+checkEq('fp the next weekday is the date', '2026-08-01T09:00', substr($d['start'], 0, 16));
+$d = $p('Drinks at Sunday Social Friday 6pm');
+checkEq('fp weekday after "at" stays in the place', 'Sunday Social', $d['location']);
+checkEq('fp weekday after "at" is not the date', '2026-07-31T18:00', substr($d['start'], 0, 16));
 $d = $p('Party the Saturday after next 8pm');
 checkEq('fp leftover temporal words demote completeness', false, $d['complete']);
 check('fp leftover temporal words cap confidence', $d['confidence'] <= 0.5);
@@ -482,8 +489,8 @@ $repeatCases = [
     // Ordinary words around a repeat (1.1.1): a bare "to" ends a series only
     // at a calendar date, and a repeat with its own days leaves weekdays to
     // the title; the first start or end phrase followed by a date counts.
-    ['Delivery every month to Friday Warehouse', 'Delivery to Warehouse', '2026-07-31T00:00', 'FREQ=MONTHLY'],
-    ['Walk to Sunday market every week', 'Walk to market', '2026-08-02T00:00', 'FREQ=WEEKLY'],
+    ['Delivery every month to Friday Warehouse', 'Delivery to Friday Warehouse', '2026-07-30T00:00', 'FREQ=MONTHLY'],
+    ['Walk to Sunday market every week', 'Walk to Sunday market', '2026-07-30T00:00', 'FREQ=WEEKLY'],
     ['Report every Tuesday about Friday sales', 'Report about Friday sales', '2026-08-04T00:00', 'FREQ=WEEKLY;BYDAY=TU'],
     ['Call home every Sunday re Monday plan', 'Call home re Monday plan', '2026-08-02T00:00', 'FREQ=WEEKLY;BYDAY=SU'],
     ['Rent monthly on the 15th Friday reminder', 'Rent Friday reminder', '2026-08-15T00:00', 'FREQ=MONTHLY;BYMONTHDAY=15'],

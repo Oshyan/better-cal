@@ -356,15 +356,22 @@ final class FallbackParser
             return [self::cut($work, $m[0]), $now->add(new \DateInterval('P' . ($daysToNextMonday + $offsetInWeek) . 'D')), true, null];
         }
         // Weekday with optional next/this. "this"/bare = next occurrence (today
-        // counts); "next" = strictly future occurrence (1-7 days out).
-        if (preg_match('/\b(?:(next|this)\s+)?(' . $dayAlt . ')\b/i', $work, $m)) {
-            $target = self::WEEKDAYS[strtolower($m[2])];
+        // counts); "next" = strictly future occurrence (1-7 days out). Right
+        // after "to" or "at" a weekday names a place ("Ferry to Friday
+        // Harbor", "Drinks at Sunday Social"), so the first weekday not in
+        // that spot is the date.
+        preg_match_all('/\b(?:(next|this)\s+)?(' . $dayAlt . ')\b/i', $work, $all, PREG_SET_ORDER | PREG_OFFSET_CAPTURE);
+        foreach ($all as $m) {
+            if (preg_match('/\b(?:to|at)\s+$/i', substr($work, 0, $m[0][1])) === 1) {
+                continue;
+            }
+            $target = self::WEEKDAYS[strtolower($m[2][0])];
             $todayW = (int) $now->format('w');
             $diff = ($target - $todayW + 7) % 7;
-            if (strtolower($m[1] ?? '') === 'next' && $diff === 0) {
+            if (strtolower($m[1][0] ?? '') === 'next' && $diff === 0) {
                 $diff = 7;
             }
-            return [self::cut($work, $m[0]), $now->add(new \DateInterval('P' . $diff . 'D')), true, null];
+            return [self::cut($work, $m[0][0]), $now->add(new \DateInterval('P' . $diff . 'D')), true, null];
         }
 
         return [$work, $date, $found, null];

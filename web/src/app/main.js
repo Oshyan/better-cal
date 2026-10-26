@@ -129,8 +129,13 @@ if ('serviceWorker' in navigator) {
   // the new one; this page still runs what it loaded). Say so with a Reload
   // banner (updates.js), and apply it anyway when the app goes out of sight
   // (drafts.js). A page that loaded without a worker (the first visit) gets
-  // one notice for that first install, which is not an update.
+  // one notice for that first install, which is not an update. A hard reload
+  // also loads without one, but a worker is already active then: its next
+  // notice is a real update.
   let firstInstall = !navigator.serviceWorker.controller;
+  navigator.serviceWorker.getRegistration()
+    .then((reg) => { if (reg && reg.active) firstInstall = false; })
+    .catch(() => { /* unknown: treat as a first visit */ });
   navigator.serviceWorker.addEventListener('message', (e) => {
     if (!e.data || e.data.type !== 'sw-updated') return;
     if (firstInstall) { firstInstall = false; return; }

@@ -162,9 +162,15 @@ final class QuickAdd
             }
         }
         $literals = $markers['literals'];
-        $restore = static function (array $d) use ($literals): array {
-            $d['title'] = QuickAddMarkers::restore((string) ($d['title'] ?? ''), $literals);
-            $d['location'] = QuickAddMarkers::restore($d['location'] ?? null, $literals);
+        $restore = static function (array $d, bool $fromModel = false) use ($literals): array {
+            $d['title'] = QuickAddMarkers::restore((string) ($d['title'] ?? ''), $literals, $fromModel);
+            $d['location'] = QuickAddMarkers::restore($d['location'] ?? null, $literals, $fromModel);
+            // A quoted name ("with \"The Smiths\"") comes back as itself; a
+            // stand-in the model kept as a name is not a person.
+            $d['personNames'] = array_values(array_filter(
+                array_map(static fn($n): string => (string) QuickAddMarkers::restore((string) $n, $literals, $fromModel), (array) ($d['personNames'] ?? [])),
+                static fn(string $n): bool => $n !== '' && preg_match('/QUOTED\d+|[\x{E000}\x{E001}]/u', $n) !== 1
+            ));
             return $d;
         };
 
@@ -180,7 +186,7 @@ final class QuickAdd
                 try {
                     $parsed = $this->llm->parseEvent($markers['llmText'], $now, $tz, repeat: true);
                     if ($parsed !== null) {
-                        $draft = self::mergeLlm($restore($parsed), $fallback, $now->setTimezone(Time::zone($tz)))
+                        $draft = self::mergeLlm($restore($parsed, true), $fallback, $now->setTimezone(Time::zone($tz)))
                             + ['confidence' => 0.9, 'source' => 'llm'];
                         // A quoted title is the owner's own words: the model
                         // may not drop or reword it.
@@ -217,7 +223,17 @@ final class QuickAdd
         $draft['calendarFromText'] = $markedCalendarId !== null;
         $draft['tags'] = $markers['tags'];
         if ($markers['people'] !== []) {
-            $draft['personNames'] = self::markedPeople($markers['people'], $draft['personNames'] ?? [], $this->directory($userId));
+            $directory = $this->directory($userId);
+            $draft['personNames'] = self::markedPeople($markers['people'], $draft['personNames'] ?? [], $directory);
+            // Creating straight away (the API, an agent): an @name nobody in
+            // the directory has is left in the title, not made a person. The
+            // app asks first instead.
+            if ($commit) {
+                $known = array_map(static fn(array $p): string => mb_strtolower($p['name']), $directory);
+                $typed = array_map('mb_strtolower', $markers['people']);
+                $draft['personNames'] = array_values(array_filter($draft['personNames'],
+                    static fn(string $n): bool => !in_array(mb_strtolower($n), $typed, true) || in_array(mb_strtolower($n), $known, true)));
+            }
         }
 
         $event = null;

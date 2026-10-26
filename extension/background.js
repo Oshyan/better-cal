@@ -30,6 +30,6 @@ chrome.commands.onCommand.addListener(async (command) => {
     return;
   }
   // /new#window (2.1.2): quick add on its own, sized to the card, closing
-  // itself when done. A Better-Cal older than 1.1.2 reads it as plain /new.
+  // itself when done. A Better-Cal older than 1.2.0 reads it as plain /new.
   chrome.windows.create({ url: origin + '/new#window', type: 'popup', width: 560, height: 500, focused: true });
 });

@@ -1621,7 +1621,7 @@ body.bc-dragging * { cursor: grabbing !important; }
   .bc-qa-repeat { width: 34px; height: 34px; }
 }
 .bc-ed-custom-rule { font-size: 13px; }
-/* Quick add on its own (1.1.2, the extension's new-event key): the card fills
+/* Quick add on its own (1.2.0, the extension's new-event key): the card fills
    a small window of its own; no calendar behind it (QuickAddWindow.js). */
 .bc-qa-window { min-height: 100dvh; background: var(--bg-inset); }
 .bc-qa-window .bc-quickadd-wrap { position: static; padding: 14px; }

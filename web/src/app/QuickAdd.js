@@ -294,8 +294,14 @@ export function QuickAdd() {
           body: { start: d.start, end: d.end, kind: d.kind },
         });
         clearQuickAddText();
-        set({ availSeq: state.availSeq + 1, quickAddOpen: false });
-        toast(d.personName + ' marked ' + d.kind);
+        // The quick add window (QuickAddWindow.js) confirms what was added,
+        // an away or busy time as much as an event.
+        const message = d.personName + ' marked ' + d.kind;
+        set({
+          availSeq: state.availSeq + 1, quickAddOpen: false,
+          ...(state.quickAddWindow ? { lastCreated: { occ: { title: d.personName + ' ' + d.kind, start: d.start, end: d.end, allDay: d.allDay }, message } } : {}),
+        });
+        if (!state.quickAddWindow) toast(message);
         loadPeople().catch(() => {});
       } catch (err) {
         toast(err.message || 'Could not record availability', { error: true });

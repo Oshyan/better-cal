@@ -1,4 +1,4 @@
-// Quick add on its own (1.1.2): what the Chrome extension's new-event key
+// Quick add on its own (1.2.0): what the Chrome extension's new-event key
 // opens, at /new#window, in a small window of its own. Just the card, no
 // calendar loading behind it. Create shows what was made, then the window
 // closes itself; Cancel and Esc close it; More options turns the window into

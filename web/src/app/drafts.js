@@ -172,6 +172,12 @@ export function reloadForUpdate() {
 export function armBackgroundReload() {
   if (armed) return;
   armed = true;
+  // Out of sight already (the half-hourly check found it in a background
+  // tab): apply it now, so coming back finds the new version.
+  if (document.visibilityState === 'hidden') {
+    reloadForUpdate();
+    return;
+  }
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') reloadForUpdate();
   });

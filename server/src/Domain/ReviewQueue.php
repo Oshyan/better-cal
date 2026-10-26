@@ -758,6 +758,8 @@ final class ReviewQueue
                     if ($storedTrustEstablished && is_array($storedInvite) && !empty($storedInvite['organizer'])) {
                         $incoming['organizer'] = $storedInvite['organizer'];
                     }
+                    // Marked as this occurrence's own (MailIngest::occurrenceGate).
+                    if ($incoming !== []) $incoming['forOccurrence'] = $occurrence;
                     MailIngest::storeInvite($this->db, (int) $applied['id'], $incoming === [] ? null : $incoming, true);
                 }
                 $this->close((int) $row['id'], 'accepted');

@@ -42,13 +42,22 @@ final class RepeatParser
             return null;
         }
         [$work, $rule, $time] = $core;
+        $fromRange = $core[3] ?? false;
         // "Daily standup Mon-Fri": a day range narrows a plain daily repeat
         // to those days.
         if ($rule === ['FREQ' => 'DAILY'] && ($range = self::dayRangeAt($work)) !== null) {
             $rule = ['FREQ' => 'WEEKLY', 'BYDAY' => $range['byday']];
             $work = $range['rest'];
+            $fromRange = true;
         }
-        $out = ['work' => $work, 'rule' => $rule, 'startOn' => null, 'until' => null, 'count' => null, 'span' => null, 'time' => $time];
+        // "Standup Mon-Fri next week at 10am": the repeat starts next week
+        // (weeks from Monday, as "next week Thursday" reads).
+        $startOn = null;
+        if ($fromRange && preg_match('/\bnext\s+week\b/i', $work, $nw) === 1) {
+            $startOn = $now->modify('monday next week')->setTime(0, 0);
+            $work = self::cut($work, $nw[0]);
+        }
+        $out = ['work' => $work, 'rule' => $rule, 'startOn' => $startOn, 'until' => null, 'count' => null, 'span' => null, 'time' => $time];
         return self::bounds($out, $now);
     }
 
@@ -150,7 +159,7 @@ final class RepeatParser
         // the title ("Mon-Fri check friday 3pm").
         if (($range = self::dayRangeAt($work)) !== null && self::hasTime($work)
             && (!$range['leading'] || preg_match('/^\s*(?:at\s+)?(?:\d{1,2}(?::\d{2})?\s*(?:am|pm)\b|\d{1,2}:\d{2}\b|noon\b|midnight\b)/i', substr($work, $range['offset'] + strlen($range['match']))) === 1)) {
-            return [$range['rest'], ['FREQ' => 'WEEKLY', 'BYDAY' => $range['byday']], null];
+            return [$range['rest'], ['FREQ' => 'WEEKLY', 'BYDAY' => $range['byday']], null, true];
         }
         // "daily", "weekly on Tue and Thu", "biweekly", "annually". As the
         // first word it also names the event ("Weekly review"), so it stays
@@ -369,7 +378,7 @@ final class RepeatParser
     public static function dayRangeAt(string $work): ?array
     {
         $D = self::DAY;
-        $re = '/(?<![\w-])(?:from\s+)?(' . $D . ')\.?(?:\s*(?:-|–|—)\s*|\s+(?:to|through|thru)\s+)(' . $D . ')\.?(?![\w\'-])(?!\s+(?-i:[A-Z]))/i';
+        $re = '/(?<![\p{L}\p{N}_-])(?:from\s+)?(' . $D . ')\.?(?:\s*(?:-|–|—)\s*|\s+(?:to|through|thru)\s+)(' . $D . ')\.?(?![\p{L}\p{N}_\'-])(?!\s+(?-i:[A-Z]))/iu';
         if (preg_match_all($re, $work, $all, PREG_SET_ORDER | PREG_OFFSET_CAPTURE) === 0) {
             return null;
         }

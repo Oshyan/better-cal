@@ -104,17 +104,27 @@ final class FallbackParser
         // "Fri 5pm to Sun 2pm": one timed stretch over several days.
         [$work, $stretch] = $repeat === null ? self::timedStretch($work, $now) : [$work, null];
         [$work, $startOn, $startRangeEnd] = $repeat === null ? self::startPhrase($work, $now) : [$work, null, null];
+        $beforeDate = $work;
         [$work, $date, $dateFound, $rangeEnd] = self::extractDate($work, $now, !$ownDays);
         if ($startOn !== null) {
             $date = $startOn;
             $dateFound = true;
             $rangeEnd = $startRangeEnd ?? $rangeEnd;
         }
-        // "Party on Saturday": the "on" goes with the date. A cut leaves a
-        // gap (two spaces, or the end), so only an "on" right before the
-        // date's old place goes ("Hold on Friday" keeps nothing else).
-        if ($dateFound) {
-            $work = preg_replace('/\bon(?:\s{2,}|\s*$)/i', ' ', $work) ?? $work;
+        // "Party on Saturday": the "on" goes with the date, but only when it
+        // stood right before it, one space apart, in the text as written
+        // ("Log on for 30 min tomorrow" keeps its "on": the gap there is the
+        // duration taken out). The first difference between the text before
+        // and after the date's cut is where the date was.
+        if ($dateFound && $beforeDate !== $work) {
+            $i = 0;
+            $n = min(strlen($beforeDate), strlen($work));
+            while ($i < $n && $beforeDate[$i] === $work[$i]) {
+                $i++;
+            }
+            if (preg_match('/(?<![\p{L}\p{N}])on $/iu', substr($beforeDate, 0, $i)) === 1) {
+                $work = substr($work, 0, $i - 3) . substr($work, $i);
+            }
         }
         [$work, $startTime, $endTime, $timeFound, $timeZone] = self::extractTime($work);
         if ($stretch !== null) {
@@ -519,7 +529,7 @@ final class FallbackParser
         // day range ("Mon-Fri"), or as the first word unless a time follows
         // ("Sat exam prep" vs "Sat 10am brunch"); a full name wins over them.
         $abbrAlt = implode('|', array_keys(self::WEEKDAY_ABBR));
-        preg_match_all('/\b(?:(next|this)\s+)?(' . $dayAlt . '|(?:' . $abbrAlt . ')\.?(?!\s+(?-i:[A-Z])))(?![\w\'])/i', $work, $all, PREG_SET_ORDER | PREG_OFFSET_CAPTURE);
+        preg_match_all('/(?<![\p{L}\p{N}])(?:(next|this)\s+)?(' . $dayAlt . '|(?:' . $abbrAlt . ')\.?(?!\s+(?-i:[A-Z])))(?![\p{L}\p{N}_\'])/iu', $work, $all, PREG_SET_ORDER | PREG_OFFSET_CAPTURE);
         $pick = null;
         foreach ($all as $m) {
             $before = substr($work, 0, $m[0][1]);
@@ -586,16 +596,22 @@ final class FallbackParser
      */
     private static function extractTime(string $work): array
     {
-        $zoneAlt = '(?:\s*\b(' . implode('|', array_keys(self::ZONE_ABBR)) . ')\b)?';
-        $zone = static fn(array $m, int $i): ?string => isset($m[$i]) && $m[$i] !== '' ? self::ZONE_ABBR[$m[$i]] : null;
+        // Three- and four-letter zones in any case; the two-letter ones only
+        // in capitals and not before a word ("3pm CT scan", "3pm pt").
+        $long = array_filter(array_keys(self::ZONE_ABBR), static fn(string $z): bool => strlen($z) > 2);
+        $short = array_filter(array_keys(self::ZONE_ABBR), static fn(string $z): bool => strlen($z) === 2);
+        $zoneAlt = '(?:\s*\b(' . implode('|', $long) . '|(?-i:' . implode('|', $short) . ')(?!\s+[a-z]))\b)?';
+        $zone = static fn(array $m, int $i): ?string => isset($m[$i]) && $m[$i] !== '' ? (self::ZONE_ABBR[strtoupper($m[$i])] ?? null) : null;
         // Range with meridiem: "7-9pm", "7pm-9pm", "7:30pm to 9pm"
         if (preg_match('/\b(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*(?:-|–|—|to|until)\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b' . $zoneAlt . '/i', $work, $m)) {
             $mer2 = strtolower($m[6]);
             $mer1 = strtolower($m[3] ?? '') ?: $mer2;
             $start = self::to24((int) $m[1], (int) ($m[2] ?: 0), $mer1);
             $end = self::to24((int) $m[4], (int) ($m[5] ?: 0), $mer2);
-            if ($start[0] * 60 + $start[1] >= $end[0] * 60 + $end[1] && $start[0] >= 12) {
-                $start[0] -= 12; // "11-1pm" style: pull start back to am
+            // "11-1pm": the start took the end's pm, so pull it back to am. A
+            // start that says pm itself stays ("10pm to 6am" runs overnight).
+            if (($m[3] ?? '') === '' && $start[0] * 60 + $start[1] >= $end[0] * 60 + $end[1] && $start[0] >= 12) {
+                $start[0] -= 12;
             }
             return [self::cut($work, $m[0]), $start, $end, true, $zone($m, 7)];
         }
@@ -607,17 +623,18 @@ final class FallbackParser
         if (preg_match('/\b(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b' . $zoneAlt . '/i', $work, $m)) {
             return [self::cut($work, $m[0]), self::to24((int) $m[1], (int) ($m[2] ?: 0), strtolower($m[3])), null, true, $zone($m, 4)];
         }
-        // "h:mm" with no am/pm: 24-hour, except that 1:00 to 7:59 written
-        // without a leading zero means the afternoon ("at 2:30" is 2:30 PM,
-        // #33), unless the text says morning ("Breakfast at 7:30");
-        // "07:30" and "19:00" are taken as written.
+        // "h:mm" with no am/pm: 24-hour, except that "at" 1:00 to 7:59
+        // written without a leading zero means the afternoon ("at 2:30" is
+        // 2:30 PM, #33), unless the text says morning ("Breakfast at 7:30").
+        // Without "at" ("Gym 6:30"), "07:30" and "19:00" are taken as written,
+        // as a range is ("6:30-7:30").
         $morning = preg_match('/\b(?:morning|breakfast|sunrise|dawn)\b/i', $work) === 1;
-        if (preg_match('/\b(?:at\s+)?(\d{1,2}):(\d{2})\b' . $zoneAlt . '/', $work, $m)) {
-            $h = (int) $m[1];
-            $min = (int) $m[2];
+        if (preg_match('/\b(at\s+)?(\d{1,2}):(\d{2})\b' . $zoneAlt . '/', $work, $m)) {
+            $h = (int) $m[2];
+            $min = (int) $m[3];
             if ($h <= 23 && $min <= 59) {
-                if ($h >= 1 && $h <= 7 && $m[1][0] !== '0' && !$morning) $h += 12;
-                return [self::cut($work, $m[0]), [$h, $min], null, true, $zone($m, 3)];
+                if (($m[1] ?? '') !== '' && $h >= 1 && $h <= 7 && $m[2][0] !== '0' && !$morning) $h += 12;
+                return [self::cut($work, $m[0]), [$h, $min], null, true, $zone($m, 4)];
             }
         }
         // "at 1", "at 11": an hour on its own, after "at" and before the end
@@ -663,8 +680,12 @@ final class FallbackParser
             return (int) $n * (str_starts_with($u, 'd') ? 1440 : (str_starts_with($u, 'h') ? 60 : 1));
         };
         $out = [];
-        if (preg_match('/\b(?:alert|remind(?:er)?|notify)(?:\s+me)?\s+(\d{1,4})\s*' . $unit . '\b(?:\s+(?:before|early|earlier|ahead|prior))?/i', $work, $m)
-            || preg_match('/\b(?:with\s+)?(?:an?\s+)?(\d{1,4})[\s-]*' . $unit . '\s+(?:alert|reminder|warning|notice)\b/i', $work, $m)
+        // "alert" and "reminder" only: "30 day notice" is prose. An alert
+        // past the longest a reminder can be (four weeks) stays in the text
+        // rather than making Create fail.
+        if ((preg_match('/\b(?:alert|remind(?:er)?|notify)(?:\s+me)?\s+(\d{1,4})\s*' . $unit . '\b(?:\s+(?:before|early|earlier|ahead|prior))?/i', $work, $m)
+            || preg_match('/\b(?:with\s+)?(?:an?\s+)?(\d{1,4})[\s-]*' . $unit . '\s+(?:alert|reminder)\b/i', $work, $m))
+            && $minutes($m[1], $m[2]) <= Reminders::MAX_MINUTES
         ) {
             $out[] = $minutes($m[1], $m[2]);
             $work = self::cut($work, $m[0]);
@@ -691,7 +712,7 @@ final class FallbackParser
         $mon = '(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+\d{1,2}(?:st|nd|rd|th)?';
         $when = '(' . $day . '|' . $mon . '|\d{1,2}\/\d{1,2})';
         $time = '(\d{1,2}(?::\d{2})?\s*(?:am|pm)|noon|midnight)';
-        $re = '/\b(?:from\s+)?' . $when . ',?\s+(?:at\s+)?' . $time . '\s*(?:-|–|—|\bto\b|\buntil\b|\btill\b)\s*' . $when . ',?\s+(?:at\s+)?' . $time . '\b/i';
+        $re = '/(?<![\p{L}\p{N}])(?:from\s+)?' . $when . ',?\s+(?:at\s+)?' . $time . '\s*(?:-|–|—|\bto\b|\buntil\b|\btill\b)\s*' . $when . ',?\s+(?:at\s+)?' . $time . '\b/iu';
         if (preg_match($re, $work, $m) !== 1) {
             return [$work, null];
         }
@@ -738,6 +759,13 @@ final class FallbackParser
             if ($first === null) {
                 continue;
             }
+            // "from" starts something only when the date ends the phrase or
+            // a range follows ("from Aug 9 to Aug 18"); "Notes from Monday
+            // meeting" is where the notes came from.
+            if (preg_match('/^from\s/i', $m[0][0]) === 1
+                && preg_match('/^\s*(?:$|[,;.]|(?:to|until|till|through|thru)\b|[-–—]|\d|at\b|for\b|noon\b|midnight\b)/iu', substr($rest, $first['length'])) !== 1) {
+                continue;
+            }
             $len = strlen($m[0][0]) + $first['length'];
             $end = $first['rangeEnd'];
             if ($end === null && preg_match('/^\s*(?:to|until|till|through|thru|-|–|—)\s*/i', substr($rest, $first['length']), $t)) {
@@ -768,7 +796,9 @@ final class FallbackParser
         // noun it describes the thing ("2 week sprint review").
         if (preg_match('/\bfor\s+(' . $numAlt . ')[\s-]+(day|week|month)s?(?:[\s-]+long)?\b/i', $work, $m)
             || preg_match('/\b(' . $numAlt . ')[\s-]+(day|week|month)s?[\s-]+long\b/i', $work, $m)
-            || preg_match('/\b(' . $numAlt . ')[\s-]+(day|week|month)s?\b(?=[\s,.;!]*$)/i', $work, $m)) {
+            // Not after an alert word: "alert 30 days" past the longest
+            // reminder is left as words (extractReminders), not a length.
+            || preg_match('/(?<!alert )(?<!remind me )(?<!reminder )(?<!notify me )\b(' . $numAlt . ')[\s-]+(day|week|month)s?\b(?=[\s,.;!]*$)/i', $work, $m)) {
             $n = ctype_digit($m[1]) ? (int) $m[1] : self::NUMBER_WORDS[strtolower($m[1])];
             if ($n >= 1 && $n <= 366) {
                 return [self::cut($work, $m[0]), ['n' => $n, 'unit' => strtolower($m[2])]];

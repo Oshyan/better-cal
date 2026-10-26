@@ -587,6 +587,7 @@ $phraseCases = [
     // A day and time to another
     ['Camping Fri 5pm to Sun 2pm', 'Camping', '2026-07-31T17:00', '2026-08-02T14:00', null],
     ['Shift Thu 10pm to Fri 6am', 'Shift', '2026-07-30T22:00', '2026-07-31T06:00', null],
+    ['Party Fri 8pm to 1am', 'Party', '2026-07-31T20:00', '2026-08-01T01:00', null],
     ['Hackathon Aug 3 9am to Aug 5 noon', 'Hackathon', '2026-08-03T09:00', '2026-08-05T12:00', null],
 ];
 foreach ($phraseCases as [$text, $title, $start, $end, $reminders]) {
@@ -4523,7 +4524,7 @@ checkEq('pd fail -> highlight', 'highlight', Filters::promptDisposition($promptR
         QuickAdd::markedPeople(['Sam'], ['Sam', 'Robin'], $dir));
     checkEq('markers: restore puts quoted text back from either stand-in', ['Wacky Wednesday party', 'Wacky Wednesday party'], [
         BetterCal\Domain\QuickAddMarkers::restore(BetterCal\Domain\QuickAddMarkers::extract('"Wacky Wednesday" party')['text'], ['Wacky Wednesday']),
-        BetterCal\Domain\QuickAddMarkers::restore('QUOTED0 party', ['Wacky Wednesday'])]);
+        BetterCal\Domain\QuickAddMarkers::restore('QUOTED0 party', ['Wacky Wednesday'], true)]);
 
     $mkdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
     $mkdb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, settings_json TEXT)');
@@ -4567,6 +4568,49 @@ checkEq('pd fail -> highlight', 'highlight', Filters::promptDisposition($promptR
     checkEq('span edit: a note that is not text is refused', 400, $threw);
     $threw = null; try { $sp->updateSpan(2, 1, $span['id'], ['note' => 'mine now']); } catch (HttpError $e) { $threw = $e->status; }
     checkEq('span edit: another account cannot edit it', 404, $threw);
+}
+
+// Fixes from the 1.2.0 review: each of these read wrongly before.
+{
+    $rv = static fn(string $t): array => FallbackParser::parse($t, 'America/Los_Angeles', new DateTimeImmutable('2026-07-30T10:00:00', new DateTimeZone('America/Los_Angeles')));
+    $short = static fn(array $d): array => [$d['title'], substr($d['start'], 0, 16), $d['reminders'] ?? null];
+    // Typed zones: any case for three letters, capitals only for two, and
+    // never before a word.
+    checkEq('review: "est" in lower case is still Eastern', ['Call', '2026-07-31T06:00'], array_slice($short($rv('Call 9am est tomorrow')), 0, 2));
+    checkEq('review: "CT scan" is not Central time', ['Appointment CT scan', '2026-07-30T15:00'], array_slice($short($rv('Appointment 3pm CT scan')), 0, 2));
+    checkEq('review: "et al" is not Eastern time', 'Call et al', $rv('Call 7pm et al')['title']);
+    // Words with accents keep their letters.
+    checkEq('review: "Pokémon" is not a Monday', ['Pokémon cards', '2026-07-30T11:00'], array_slice($short($rv('Pokémon cards')), 0, 2));
+    checkEq('review: a name with an accent keeps its end', 'Dinner with Léon', $rv('Dinner with Léon Friday')['title']);
+    // "on" goes only when it stood right before the date.
+    checkEq('review: "Log on" keeps its "on" across a cut duration', 'Log on', $rv('Log on for 30 min tomorrow')['title']);
+    checkEq('review: "Hold on" too', 'Hold on', $rv('Hold on for 1 hour tomorrow 3pm')['title']);
+    // Alerts past four weeks stay words, and "notice" is prose.
+    checkEq('review: an alert past four weeks is not an alert or a length', [null, '2026-08-04T00:00'], [$rv('Dinner Aug 3 alert 30 days')['reminders'], substr($rv('Dinner Aug 3 alert 30 days')['end'], 0, 16)]);
+    checkEq('review: "30 day notice" is part of the title', ['Send 30 day notice to landlord', null], [$rv('Send 30 day notice to landlord Aug 3')['title'], $rv('Send 30 day notice to landlord Aug 3')['reminders']]);
+    // h:mm is the afternoon only after "at".
+    checkEq('review: "Gym 6:30" is the morning', '2026-07-31T06:30', substr($rv('Gym 6:30')['start'], 0, 16));
+    checkEq('review: "at 2:30" is still the afternoon', '2026-10-03T14:30', substr($rv('Doctor 10/3 at 2:30')['start'], 0, 16));
+    // A day range with a time and "next week" starts next week.
+    $nw = $rv('Offsite Mon-Fri next week at 10am');
+    checkEq('review: "Mon-Fri next week at 10am" starts next Monday, without "next week" in the title', ['Offsite', '2026-08-03T10:00'], [$nw['title'], substr($nw['start'], 0, 16)]);
+    // "from <day>" in the middle of a title is not a start.
+    checkEq('review: "Notes from Monday meeting" keeps "from"', 'Notes from meeting', $rv('Notes from Monday meeting')['title']);
+    // Markers: @ shorthand for "at", a possessive, typed placeholders.
+    checkEq('review: "@noon" and "@home" are not people', [[], [], 'home'], [
+        BetterCal\Domain\QuickAddMarkers::extract('Lunch @noon tomorrow')['people'],
+        BetterCal\Domain\QuickAddMarkers::extract('Call mom @home tomorrow 3pm')['people'],
+        $rv(BetterCal\Domain\QuickAddMarkers::extract('Call mom @home tomorrow 3pm')['text'])['location']]);
+    checkEq('review: "@Sam\'s place" links Sam and keeps the words', [['Sam'], "Dinner Sam's place"], [
+        BetterCal\Domain\QuickAddMarkers::extract("Dinner @Sam's place")['people'], BetterCal\Domain\QuickAddMarkers::extract("Dinner @Sam's place")['text']]);
+    checkEq('review: typed text reading QUOTED0 stays as typed', 'QUOTED0 party Wacky Wednesday',
+        BetterCal\Domain\QuickAddMarkers::restore($rv(BetterCal\Domain\QuickAddMarkers::extract('QUOTED0 party "Wacky Wednesday" Friday')['text'])['title'], ['Wacky Wednesday']));
+    checkEq('review: typed placeholder characters are dropped', 'Lunch 5 real', BetterCal\Domain\QuickAddMarkers::extract("Lunch \u{E000}5\u{E001} real")['text']);
+    // An occurrence's own invite watermark only counts when it was stored for that occurrence.
+    $series = ['sequence' => 5, 'organizer' => ['email' => 'organizer@example.test']];
+    checkEq('review: a hand-edited override does not carry the series sequence', [0, 3], [
+        MailIngest::occurrenceGate($series, ['invite_json' => json_encode(['sequence' => 5])])['sequence'],
+        MailIngest::occurrenceGate($series, ['invite_json' => json_encode(['sequence' => 3, 'forOccurrence' => '20260807T170000Z'])])['sequence']]);
 }
 
 // Prompt work is calendar-homogeneous, one call per job, and budget denial is

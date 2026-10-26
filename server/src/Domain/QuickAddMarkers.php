@@ -23,6 +23,8 @@ final class QuickAddMarkers
     /** Private-use characters around a quoted literal's index in the work text. */
     private const OPEN = "\u{E000}";
     private const CLOSE = "\u{E001}";
+    /** Words after @ that mean "at", not a person. */
+    private const NOT_PEOPLE = ['noon', 'midnight', 'home', 'work', 'office', 'school', 'night', 'morning', 'afternoon', 'evening', 'today', 'tomorrow', 'tonight'];
 
     /**
      * @return array{text:string, llmText:string, calendar:?string, tags:list<string>,
@@ -36,6 +38,8 @@ final class QuickAddMarkers
     public static function extract(string $text, bool $calendar = true): array
     {
         $readCalendar = $calendar;
+        // The placeholder characters are ours: typed ones go.
+        $text = str_replace([self::OPEN, self::CLOSE], '', $text);
         $literals = [];
         $work = preg_replace_callback('/(?<![\p{L}\p{N}])(["“”])([^"“”]{1,200})["“”]/u', static function (array $m) use (&$literals): string {
             $inner = trim($m[2]);
@@ -64,15 +68,21 @@ final class QuickAddMarkers
         }, $work) ?? $work;
 
         $people = [];
-        $work = preg_replace_callback('/(?<=^|\s)@(\p{L}[\p{L}\p{N}\'._-]{0,63})/u', static function (array $m) use (&$people): string {
+        $work = preg_replace_callback('/(?<=^|\s)@(\p{L}[\p{L}\p{N}\'’._-]{0,63})/u', static function (array $m) use (&$people): string {
             $name = rtrim($m[1], '.');
+            // "@noon", "@home": the old shorthand for at, not a person.
+            if (in_array(mb_strtolower($name), self::NOT_PEOPLE, true)) {
+                return 'at ' . $m[1];
+            }
+            // "@Sam's place": the person is Sam.
+            $name = preg_replace("/['’]s$/u", '', $name) ?? $name;
             if ($name === '') {
                 return $m[0];
             }
             if (!in_array(mb_strtolower($name), array_map('mb_strtolower', $people), true)) {
                 $people[] = $name;
             }
-            return $name . substr($m[1], strlen($name));
+            return $m[1];
         }, $work) ?? $work;
 
         $tidy = static fn(string $s): string => trim(preg_replace('/\s{2,}/u', ' ', $s) ?? $s);
@@ -103,13 +113,15 @@ final class QuickAddMarkers
      *
      * @param list<string> $literals
      */
-    public static function restore(?string $s, array $literals): ?string
+    public static function restore(?string $s, array $literals, bool $fromModel = false): ?string
     {
         if ($s === null || $literals === []) {
             return $s;
         }
         $s = preg_replace_callback('/' . self::OPEN . '(\d+)' . self::CLOSE . '/u', static fn(array $m): string => $literals[(int) $m[1]] ?? '', $s) ?? $s;
-        return preg_replace_callback('/\bQUOTED(\d+)\b/', static fn(array $m): string => $literals[(int) $m[1]] ?? $m[0], $s) ?? $s;
+        // The stand-in word only ever reaches the model; text the owner typed
+        // that happens to read "QUOTED0" is left alone.
+        return $fromModel ? (preg_replace_callback('/\bQUOTED(\d+)\b/', static fn(array $m): string => $literals[(int) $m[1]] ?? $m[0], $s) ?? $s) : $s;
     }
 
     /** Whether every quoted literal survived into $title (the model may drop one). */

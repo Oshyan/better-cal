@@ -712,8 +712,12 @@ final class MailIngest
         if ($seriesInvite === null) {
             return null;
         }
+        // Only an invite stored for this occurrence (ReviewQueue::accept
+        // marks it) carries the occurrence's own watermark. An override the
+        // owner made by hand holds a copy of the series' invite, and its
+        // sequence would refuse the organizer's first change to that day.
         $own = $override !== null && is_string($override['invite_json'] ?? null) ? json_decode((string) $override['invite_json'], true) : null;
-        $seriesInvite['sequence'] = is_array($own) ? (int) ($own['sequence'] ?? 0) : 0;
+        $seriesInvite['sequence'] = is_array($own) && !empty($own['forOccurrence']) ? (int) ($own['sequence'] ?? 0) : 0;
         return $seriesInvite;
     }
 

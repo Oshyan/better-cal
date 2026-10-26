@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-// The settings file and the other private files (docs/design-private-files.md).
+// The settings file and the other private files (docs/private-files.md).
 //
 //   php server/bin/settings.php --convert   move .env to .env.php and encrypt older backups
 //   php server/bin/settings.php --check     can the private files be downloaded? (as Settings, System says)

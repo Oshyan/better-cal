@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace BetterCal\Support;
 
 /**
- * The settings file, `.env.php` (docs/design-private-files.md, #142).
+ * The settings file, `.env.php` (docs/private-files.md, #142).
  *
  * The same KEY=VALUE lines as `.env`, after a first line that makes the file
  * inert if a web server is ever asked for it: PHP runs it, `__halt_compiler()`

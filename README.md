@@ -37,7 +37,7 @@ Self-hosting is table stakes: plain PHP and MySQL on the server, a no-build Prea
 
 ## What this is, and isn't
 
-I wanted infinite scroll in a calendar. That's really the whole origin story: Google's (and almost everyone else's) month and week views have never had it, and I've always found pagination needlessly jarring and limiting. So I sent Claude (Fable 5) on an overnight, one-shot mission to build a calendar app from scratch (something notoriously difficult, hence libraries like FullCalendar), with infinite scroll as the headline feature. By morning there was a working one. Within a week it was ready to replace Google Calendar for me, and by then it did quite a few things GCal doesn't (and probably never will): undo for any change, trips and people as real objects, a relationship on every event that tells "what am I doing" apart from "what could I do" and "what's the weather", and feeds that are actually pleasant to live with.
+I wanted infinite scroll in a calendar. That's really the whole origin story: Google's (and almost everyone else's) month and week views have never had it, and I've always found pagination needlessly jarring and limiting. Building a calendar interface from scratch is supposed to be notoriously hard, which is why libraries like FullCalendar exist. But I'd been down that road already: building an events calendar plugin for Discourse, I tried the existing libraries, found none of them good enough, and discovered that building my own was far more doable than its reputation suggests. So I sent Claude (Fable 5) on an overnight, one-shot mission to build a calendar app from scratch, with infinite scroll as the headline feature. By morning there was a working one. Within a week it was ready to replace Google Calendar for me, and by then it did quite a few things GCal doesn't (and probably never will): undo for any change, trips and people as real objects, a relationship on every event that tells "what am I doing" apart from "what could I do" and "what's the weather", and feeds that are actually pleasant to live with.
 
 So it's built for one person's daily use, and it runs my real calendar every day. It's single-user by design: one login, one owner, and everyone else reaches it through CalDAV, shared feeds and invitations. It's sized for one person's calendar, not a team's or a very heavy user's ([Scale and limits](docs/limits.md) has the numbers). I develop it in the open because there's no reason not to, not because it's a product: no support commitment, no roadmap promises and no compatibility guarantee between versions (though every update brings its own migrations).
 
@@ -48,7 +48,7 @@ What I focused on:
 - **Other people's calendars as first-class.** Most of what's on my calendar didn't start with me, so feeds and shared calendars aren't a grudging import.
 - **Honesty in the interface.** The app tells you what it did, what it can't undo, and what it's hiding.
 
-It hasn't been tried on an iPhone yet, so if you have one, I'd especially like to hear how it goes. Issues and pull requests are welcome; expect honest answers about what I will and won't take on.
+It's had less use on iPhone than on Android, so if you have one, I'd especially like to hear how it goes. Issues and pull requests are welcome; expect honest answers about what I will and won't take on.
 
 ## Security
 
@@ -86,7 +86,7 @@ MIT (see [LICENSE](LICENSE)). Use it, fork it, host it, sell it. If you build so
 - [Calendar roles and event relationships](docs/relationships.md): planned, maybe, available and context.
 - [CalDAV](docs/caldav.md), [Email ingest](docs/email-ingest.md), [Google Calendar connector](docs/google-calendar.md), [Geocoding and place search](docs/geocoding.md)
 - [Scale and limits](docs/limits.md): who it's sized for, and the limits you might run into.
-- [Architecture](docs/architecture.md), [API contract](docs/api-contract.md), [agent API](docs/agent-api.md), [writing a plugin](docs/plugins/authoring.md)
+- [Architecture](docs/architecture.md), [private files](docs/private-files.md), [API contract](docs/api-contract.md), [agent API](docs/agent-api.md), [writing a plugin](docs/plugins/authoring.md)
 - Roadmap: the [GitHub issues](https://github.com/Oshyan/better-cal/issues). There's no separate roadmap document.
 
 ## Configuration

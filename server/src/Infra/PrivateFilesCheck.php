@@ -8,7 +8,7 @@ use BetterCal\Support\SettingsFile;
 
 /**
  * Whether the install's private files can be downloaded, in plain words
- * (docs/design-private-files.md, #142). Shown on Settings, System as
+ * (docs/private-files.md, #142). Shown on Settings, System as
  * "Private files"; setup and the updaters show it only when it isn't Safe.
  *
  * Some hosts can only put a subdomain inside the main site's public_html, so

@@ -8,7 +8,7 @@ use BetterCal\Support\SettingsFile;
 
 /**
  * Brings an install's private files up to the 0.9.83 layout
- * (docs/design-private-files.md, #142), wherever they came from: `.env`
+ * (docs/private-files.md, #142), wherever they came from: `.env`
  * becomes the guarded `.env.php`, here and in previous versions update.php
  * kept beside the app (Updater::convertibleCopies), and database backups
  * written before backups were encrypted get encrypted. Safe to run any

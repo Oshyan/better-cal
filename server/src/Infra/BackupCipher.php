@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace BetterCal\Infra;
 
 /**
- * Encrypted backups (docs/design-private-files.md, #142): a backup someone
+ * Encrypted backups (docs/private-files.md, #142): a backup someone
  * downloads is useless to them, whatever the web server serves.
  *
  * The key is derived from BETTERCAL_SESSION_SECRET, which a restore needs

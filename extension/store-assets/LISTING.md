@@ -1,6 +1,6 @@
 # Chrome Web Store submission — copy-paste answers
 
-Upload zip: `better-cal-gcal-redirect-2.1.1.zip`, attached to the GitHub release `extension-v2.1.1` (each extension version is tagged `extension-vX.Y.Z` with its store zip attached; build with `cd extension && zip -r ../better-cal-gcal-redirect-<version>.zip manifest.json rules.js background.js options.html options.js icon-128.png README.md`). Screenshot: `extension/store-assets/screenshot-1280x800.png`.
+Upload zip: `better-cal-gcal-redirect-2.1.2.zip`, attached to the GitHub release `extension-v2.1.2` (each extension version is tagged `extension-vX.Y.Z` with its store zip attached; build with `cd extension && zip -r ../better-cal-gcal-redirect-<version>.zip manifest.json rules.js background.js options.html options.js icon-128.png README.md`). Screenshot: `extension/store-assets/screenshot-1280x800.png`.
 
 Version 2.1 adds an optional new event key (a `chrome.commands` entry with no suggested key: off until the user sets one; it opens `<address>/new#window`, quick add on its own, in a small window; no new permissions). 2.1.2 changes no permission and no listing text. The summary, description, single purpose and test instructions below are updated for it.
 

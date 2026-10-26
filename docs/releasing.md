@@ -6,7 +6,7 @@ Published releases are immutable: their tag and assets can't be replaced, though
 
 ## Application Release
 
-1. Make the release commit on `main`: update `VERSION`, add the matching `CHANGELOG.md` section (ending with its Operators line), run the full suite, push, and wait for the `tests` workflow to pass.
+1. Make the release commit on `main`: update `VERSION`, add the matching `CHANGELOG.md` section (ending with its Operators line), run the full suite, push, and wait for the `tests` workflow to pass. Keep the section brief: one short bullet per change saying what's new and how to use it, small fixes together in one Fixes bullet, and a link to the docs for details. It becomes the release page people read before updating.
 2. Prepare a draft:
 
    ```sh

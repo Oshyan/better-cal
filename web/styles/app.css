@@ -349,7 +349,8 @@ a.bc-btn { color: var(--fg); text-decoration: none; display: inline-flex; align-
 /* --- sidebar --------------------------------------------------------------- */
 
 .bc-sidebar {
-  width: 256px; flex: none;
+  /* Dragged at the right edge on desktop (#129, lib/sidebarwidth.js). */
+  width: var(--bc-sidebar-w, 256px); flex: none;
   border-right: 1px solid var(--border);
   background: var(--bg-raised);
   display: flex; flex-direction: column;
@@ -369,6 +370,28 @@ a.bc-btn { color: var(--fg); text-decoration: none; display: inline-flex; align-
    (mobile ignores this class; the drawer has its own open state). */
 @media (min-width: 801px) and (pointer: fine), (min-width: 801px) and (min-height: 501px), (min-width: 1001px) {
   .bc-sidebar.is-collapsed { display: none; }
+}
+/* The resize edge (#129): an 8px strip over the border, a line when pointed
+   at or focused. Desktop only. */
+.bc-sidebar-resize {
+  position: absolute; top: 0; bottom: 0; right: -4px; width: 8px; z-index: 6;
+  cursor: col-resize; touch-action: none;
+}
+.bc-sidebar-resize::after {
+  content: ""; position: absolute; top: 0; bottom: 0; left: 3px; width: 2px;
+  background: var(--accent); opacity: 0; transition: opacity 0.12s;
+}
+.bc-sidebar-resize:hover::after, .bc-sidebar-resize:focus-visible::after,
+html.bc-resizing-sidebar .bc-sidebar-resize::after { opacity: 1; }
+.bc-sidebar-resize:focus-visible { outline: none; }
+html.bc-resizing-sidebar, html.bc-resizing-sidebar * { cursor: col-resize !important; user-select: none; }
+@media (max-width: 800px), (pointer: coarse) and (max-height: 500px) and (max-width: 1000px) {
+  .bc-sidebar-resize { display: none; }
+}
+.bc-sidebar.is-collapsed .bc-sidebar-resize { display: none; }
+/* The boot frame's sidebar placeholder matches the remembered width. */
+@media (min-width: 801px) {
+  .bc-boot-body { grid-template-columns: var(--bc-sidebar-w, 256px) 1fr; }
 }
 
 /* Mini-month: compact always-on navigator at the top of the sidebar.
@@ -2148,6 +2171,7 @@ body.bc-rescheduling { user-select: none; }
 @media (max-width: 800px), (pointer: coarse) and (max-height: 500px) and (max-width: 1000px) {
   .bc-brand-name { display: none; }
   .bc-sidebar {
+    width: 256px; /* the drawer keeps its own width */
     position: fixed; left: 0; top: 0; bottom: 0; z-index: 50;
     transform: translateX(-100%); transition: transform 0.18s ease;
     box-shadow: var(--shadow);
@@ -4072,7 +4096,7 @@ button.bc-es-alsoon-cal { cursor: pointer; text-decoration: underline; text-deco
     transition: margin-left 0.3s cubic-bezier(0.2, 0, 0, 1), visibility 0s linear 0s;
   }
   .bc-sidebar.is-collapsed {
-    display: flex; margin-left: -257px; visibility: hidden;
+    display: flex; margin-left: calc(-1px - var(--bc-sidebar-w, 256px)); visibility: hidden;
     transition: margin-left 0.3s cubic-bezier(0.2, 0, 0, 1), visibility 0s linear 0.3s;
   }
 }

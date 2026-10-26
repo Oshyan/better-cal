@@ -33,6 +33,7 @@ import { parseJumpText, jumpGranularity } from '../src/lib/jumpparse.js';
 import { parseClockText, resolveClock, minsToHHMM, hhmmToMins, parseDateText, durationLabel } from '../src/lib/whenparse.js';
 import { monthWeeks, stepMonthOf } from '../src/lib/minimonth.js';
 import { buildRange } from '../src/lib/quickrange.js';
+import { clampSidebarWidth, readSidebarWidth, saveSidebarWidth } from '../src/lib/sidebarwidth.js';
 import { toISOWithOffset as isoAt } from '../src/lib/dates.js';
 import { state as storeState, missingRanges, pruneOccurrenceCache, invalidateRecords, mergeWindow, insertOccurrence } from '../src/app/store.js';
 import { formattingReasons } from '../src/lib/eventwhy.js';
@@ -2686,6 +2687,22 @@ eq('gmaps: text alone is a search', gmapsUrl('Example Cafe', null, null), 'https
   eq('ends: until read back', repeatEnd('FREQ=DAILY;UNTIL=20261215').until, '2026-12-15');
   eq('ends: all day makes UNTIL a date', retypeUntil(withRepeatEnd('FREQ=DAILY', { kind: 'until', until: '2026-12-15' }, false), true), 'FREQ=DAILY;UNTIL=20261215');
   eq('ends: no end, nothing to retype', retypeUntil('FREQ=DAILY', true), 'FREQ=DAILY');
+}
+
+// The sidebar's width (#129, web/src/lib/sidebarwidth.js).
+{
+  eq('sidebar width: clamped to 200-420', [clampSidebarWidth(100), clampSidebarWidth(300.4), clampSidebarWidth(900), clampSidebarWidth('x')], [200, 300, 420, 256]);
+  const store = new Map();
+  const had = globalThis.localStorage;
+  globalThis.localStorage = { getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)), removeItem: (k) => store.delete(k) };
+  eq('sidebar width: nothing stored reads as the default', readSidebarWidth(), 256);
+  saveSidebarWidth(333);
+  eq('sidebar width: a saved width reads back', [readSidebarWidth(), store.get('bc-sidebar-w')], [333, '333']);
+  saveSidebarWidth(256);
+  eq('sidebar width: the default forgets the stored width', store.has('bc-sidebar-w'), false);
+  store.set('bc-sidebar-w', '9999');
+  eq('sidebar width: a stored width out of range is clamped', readSidebarWidth(), 420);
+  globalThis.localStorage = had;
 }
 
 // Quick add's strip -> what Create saves (web/src/lib/quickrange.js).

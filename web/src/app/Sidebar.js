@@ -30,6 +30,9 @@ import { Icon, CalDot, GoogleG } from '../ui/icons.js';
 import { attachScrollRail } from '../ui/scrollrail.js';
 import { COARSE_QUERY, PHONE_QUERY } from '../lib/breakpoints.js';
 import { onOutsidePress, insideAny } from '../ui/outside.js';
+import {
+  readSidebarWidth, saveSidebarWidth, applySidebarWidth, clampSidebarWidth, SIDEBAR_DEFAULT, SIDEBAR_MIN, SIDEBAR_MAX,
+} from '../lib/sidebarwidth.js';
 
 // Solo ("show only this calendar"): transient, session-scoped. Entering solo
 // captures the current visibility set; exiting restores it exactly. Switching
@@ -142,6 +145,50 @@ function RowMenu({ head, color, items, onClose }) {
       <${Icon} name=${icon} size=${18} /><span>${label}</span>
     </button>`)}
   </div>`;
+}
+
+// The sidebar's right edge (#129): drag to resize, arrows to nudge, Home or a
+// double click for the default. Desktop only; the drawer layouts hide it.
+function SidebarResize() {
+  const [width, setWidth] = useState(readSidebarWidth);
+  const drag = useRef(null);
+  const commit = (w) => setWidth(saveSidebarWidth(w));
+  const onPointerDown = (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    drag.current = { x: e.clientX, w: width, last: width };
+    document.documentElement.classList.add('bc-resizing-sidebar');
+  };
+  const onPointerMove = (e) => {
+    const d = drag.current;
+    if (!d) return;
+    d.last = clampSidebarWidth(d.w + e.clientX - d.x);
+    applySidebarWidth(d.last);
+  };
+  const end = () => {
+    const d = drag.current;
+    if (!d) return;
+    drag.current = null;
+    document.documentElement.classList.remove('bc-resizing-sidebar');
+    commit(d.last);
+  };
+  const onKeyDown = (e) => {
+    const step = e.shiftKey ? 48 : 16;
+    if (e.key === 'ArrowLeft') commit(width - step);
+    else if (e.key === 'ArrowRight') commit(width + step);
+    else if (e.key === 'Home') commit(SIDEBAR_DEFAULT);
+    else return;
+    e.preventDefault();
+  };
+  return html`<div
+    class="bc-sidebar-resize" role="separator" aria-orientation="vertical" tabindex="0"
+    aria-label="Sidebar width" title="Drag to resize; double-click for the default"
+    aria-valuemin=${SIDEBAR_MIN} aria-valuemax=${SIDEBAR_MAX} aria-valuenow=${width}
+    onPointerDown=${onPointerDown} onPointerMove=${onPointerMove}
+    onPointerUp=${end} onPointerCancel=${end} onLostPointerCapture=${end}
+    onDblClick=${() => commit(SIDEBAR_DEFAULT)} onKeyDown=${onKeyDown}
+  ></div>`;
 }
 
 function CalendarRow({ cal, folders, open, onGear, soloed, onSolo, filedIn, phone = false, onMenu = null }) {
@@ -620,6 +667,7 @@ export function Sidebar({ open, collapsed, onClose }) {
   </nav>`;
 
   return html`<aside class="bc-sidebar${open ? ' is-open' : ''}${collapsed ? ' is-collapsed' : ''}">
+    ${!phone && html`<${SidebarResize} />`}
     ${onClose && html`<div class="bc-sidebar-mobilehead">
       <span class="bc-manage-head">Better-Cal</span>
       <button type="button" class="bc-icon-btn" aria-label="Close sidebar" onClick=${onClose}><${Icon} name="close" size=${15} /></button>

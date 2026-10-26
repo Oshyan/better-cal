@@ -32,6 +32,8 @@ import { zoneIndex, filterZones, parseOffset } from '../src/lib/zonesearch.js';
 import { parseJumpText, jumpGranularity } from '../src/lib/jumpparse.js';
 import { parseClockText, resolveClock, minsToHHMM, hhmmToMins, parseDateText, durationLabel } from '../src/lib/whenparse.js';
 import { monthWeeks, stepMonthOf } from '../src/lib/minimonth.js';
+import { buildRange } from '../src/lib/quickrange.js';
+import { toISOWithOffset as isoAt } from '../src/lib/dates.js';
 import { state as storeState, missingRanges, pruneOccurrenceCache, invalidateRecords, mergeWindow, insertOccurrence } from '../src/app/store.js';
 import { formattingReasons } from '../src/lib/eventwhy.js';
 import {
@@ -2684,6 +2686,26 @@ eq('gmaps: text alone is a search', gmapsUrl('Example Cafe', null, null), 'https
   eq('ends: until read back', repeatEnd('FREQ=DAILY;UNTIL=20261215').until, '2026-12-15');
   eq('ends: all day makes UNTIL a date', retypeUntil(withRepeatEnd('FREQ=DAILY', { kind: 'until', until: '2026-12-15' }, false), true), 'FREQ=DAILY;UNTIL=20261215');
   eq('ends: no end, nothing to retype', retypeUntil('FREQ=DAILY', true), 'FREQ=DAILY');
+}
+
+// Quick add's strip -> what Create saves (web/src/lib/quickrange.js).
+{
+  const at = (y, mo, d, h = 0, mi = 0) => isoAt(new Date(y, mo - 1, d, h, mi));
+  const timed = { dateKey: '2026-07-31', startTime: '17:00', endTime: '14:00', allDay: false };
+  // "Camping Fri 5pm to Sun 2pm": the parsed end keeps its day.
+  const stretch = { allDay: false, start: at(2026, 7, 31, 17), end: at(2026, 8, 2, 14) };
+  eq('quick range: a parsed end two days on is kept', buildRange(timed, stretch, false), { start: at(2026, 7, 31, 17), end: at(2026, 8, 2, 14) });
+  eq('quick range: moving the date drops the parsed span', buildRange(timed, stretch, true).end, at(2026, 8, 1, 14));
+  eq('quick range: an end before the start is the next day', buildRange(timed, null, false).end, at(2026, 8, 1, 14));
+  const overnight = { allDay: false, start: at(2026, 7, 31, 22), end: at(2026, 8, 1, 2) };
+  eq('quick range: overnight stays overnight', buildRange({ ...timed, startTime: '22:00', endTime: '02:00' }, overnight, false).end, at(2026, 8, 1, 2));
+  eq('quick range: same day', buildRange({ ...timed, startTime: '09:00', endTime: '10:00' }, null, false), { start: at(2026, 7, 31, 9), end: at(2026, 7, 31, 10) });
+  // "Workshop Mon-Fri": the all-day span is kept until the date moves.
+  const allDay = { dateKey: '2026-08-03', allDay: true };
+  const span = { allDay: true, start: '2026-08-03T00:00:00Z', end: '2026-08-08T00:00:00Z' };
+  eq('quick range: an all-day span is kept', buildRange(allDay, span, false).end, at(2026, 8, 8));
+  eq('quick range: moving the date makes it one day', buildRange(allDay, span, true).end, at(2026, 8, 4));
+  eq('quick range: no date, nothing to save', buildRange({ ...timed, dateKey: '' }, null, false), null);
 }
 
 console.log(passed + ' passed, ' + failed + ' failed');

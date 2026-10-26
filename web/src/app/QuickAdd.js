@@ -31,11 +31,12 @@ import { saveQuickAddText, clearQuickAddText } from './drafts.js';
 import { PlaceInput, pickFillText } from './PlaceInput.js';
 import { onOutsidePress, insideAny } from '../ui/outside.js';
 import {
-  parseISO, dayKeyOf, dateOfDayKey, addDaysKey, toISOWithOffset, pad, localTz, fmtTime,
+  parseISO, dayKeyOf, dateOfDayKey, pad, localTz, fmtTime,
 } from '../lib/dates.js';
 import { CalendarSelect } from '../ui/CalendarSelect.js';
 import { DateField, TimeField } from './WhenFields.js';
 import { parseClockText, resolveClock, minsToHHMM, hhmmToMins, durationLabel } from '../lib/whenparse.js';
+import { buildRange } from '../lib/quickrange.js';
 
 const hm = (d) => pad(d.getHours()) + ':' + pad(d.getMinutes());
 const reads24h = () => /13/.test(fmtTime(new Date(2000, 0, 1, 13, 0)));
@@ -115,31 +116,6 @@ function parseWants(d) {
     want.calendarId = d.calendarId;
   }
   return want;
-}
-
-// Strip values -> {start, end} ISO strings, or null when incomplete.
-function buildRange(form, draft, dateTouched) {
-  if (!form.dateKey) return null;
-  if (form.allDay) {
-    let endKey = addDaysKey(form.dateKey, 1);
-    // Preserve a parsed multi-day all-day span while the date is untouched.
-    if (draft && draft.allDay && draft.end && !dateTouched) {
-      const parsedEnd = draft.end.slice(0, 10);
-      if (parsedEnd > endKey) endKey = parsedEnd;
-    }
-    return {
-      start: toISOWithOffset(dateOfDayKey(form.dateKey)),
-      end: toISOWithOffset(dateOfDayKey(endKey)),
-    };
-  }
-  if (!form.startTime || !form.endTime) return null;
-  const base = dateOfDayKey(form.dateKey);
-  const [sh, sm] = form.startTime.split(':').map(Number);
-  const [eh, em] = form.endTime.split(':').map(Number);
-  const s = new Date(base.getFullYear(), base.getMonth(), base.getDate(), sh, sm);
-  let e = new Date(base.getFullYear(), base.getMonth(), base.getDate(), eh, em);
-  if (e <= s) e = new Date(base.getFullYear(), base.getMonth(), base.getDate() + 1, eh, em); // overnight
-  return { start: toISOWithOffset(s), end: toISOWithOffset(e) };
 }
 
 // "Aug 10 – Aug 15" for an availability draft (end exclusive -> inclusive).
@@ -472,8 +448,21 @@ export function QuickAdd() {
 
   const localCals = state.calendars.filter((c) => c.editable);
   const flashCls = (f) => (flash && flash.has(f) ? ' bc-nl-applied' : '');
+  const range = buildRange(form, draft, touchedRef.current.has('dateKey'));
   const canCreate = (!busy && draft && draft.intent === 'availability') || (!busy && !!((draft && draft.title) || text.trim()) &&
-    !!buildRange(form, draft, touchedRef.current.has('dateKey')) && form.calendarId != null);
+    !!range && form.calendarId != null);
+  // An event that ends on a later day says so: the strip shows one date.
+  let spanLabel = '';
+  if (draft && draft.intent !== 'availability' && range) {
+    const rs = parseISO(range.start);
+    const re = parseISO(range.end);
+    if (form.allDay) {
+      const n = Math.round((dateOfDayKey(range.end.slice(0, 10)) - dateOfDayKey(range.start.slice(0, 10))) / 86400000);
+      if (n > 1) spanLabel = fmtAvailRange(range) + ' · ' + n + ' days';
+    } else if (dayKeyOf(re) !== dayKeyOf(rs)) {
+      spanLabel = 'until ' + re.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }) + ', ' + fmtTime(re);
+    }
+  }
 
   return html`<div class="bc-quickadd-wrap">
     <div class="bc-quickadd" ref=${cardRef} role="dialog" aria-label="Quick add event" onKeyDown=${onCardKeyDown}>
@@ -498,6 +487,7 @@ export function QuickAdd() {
           aria-haspopup="menu" aria-expanded=${repeatOpen ? 'true' : 'false'}
           title="Change how it repeats" onClick=${repeatToggle}
         ><${Icon} name="repeat" size=${12} />${repeatWords}</button>`}
+        ${spanLabel && html`<span class="bc-qchip" title="Ends on a later day">${spanLabel}</span>`}
         ${draft && Array.isArray(draft.reminders) && draft.reminders.length > 0 && html`<span class="bc-qchip" title="Alert"><${Icon} name="bell" size=${12} />${draft.reminders.map(fmtOffsetMinutes).join(', ')}</span>`}
         ${draft && draft.location && html`<span class="bc-qchip">@ ${draft.location}</span>`}
         ${draft && draft.personNames && draft.personNames.map((n) => html`<span

@@ -1,18 +1,12 @@
 # Benchmarking Better-Cal
 
-Notes from measuring this app, written down because every one of these cost real time to learn and one of them produced a bug report for a bug that did not exist.
+Maintainer notes on measuring this app. Most bad performance conclusions here came from a broken measurement, not a broken app, so assume the instrument is wrong before you assume the code is.
 
-The theme: **most bad performance conclusions here came from a broken measurement, not a broken app.** Assume the instrument is wrong before you assume the code is.
+## Traps
 
-## Traps that have actually bitten
+### A Background Tab Lies About Frame Rate
 
-### A background browser tab lies about frame rate
-
-A hidden browser tab may suspend animation callbacks and throttle timers. Check visibility before interpreting slow measurements as a busy main thread.
-
-Repeat a suspicious measurement in a visible tab before filing a performance issue.
-
-**Always assert visibility inside the measuring script**, not by looking at the screen:
+A hidden tab may suspend animation callbacks and throttle timers, which looks like a busy main thread. Repeat a suspicious measurement in a visible tab before filing a performance issue, and **assert visibility inside the measuring script**, not by looking at the screen:
 
 ```js
 const t0 = performance.now();
@@ -23,67 +17,60 @@ await new Promise(r => setTimeout(r, 200));
 // require: document.visibilityState === 'visible' && raf && drift < 40
 ```
 
-### curl does not request compression
+### curl Doesn't Request Compression
 
-`curl` does not ask for compression by default. Compare it with the browser only when both request the same encoding.
+`curl` doesn't ask for compression by default, so its numbers aren't comparable to a browser's. Send the header unless encoding is the question:
 
 ```bash
 curl -s -o /dev/null -w '%{time_starttransfer} %{time_total}\n' \
   -H 'Accept-Encoding: gzip, br' -H "@$AUTH_FILE" "$URL"
 ```
 
-Compare encodings deliberately when that is the question; otherwise always send the header, because that is what a real client does.
+### Reverse DNS Isn't a Location
 
-### Reverse DNS is not a location
+A provider's reverse-DNS naming isn't evidence of where a server is. Measure latency; don't infer it from a name. Keep hostnames, addresses and network layout from a real install out of these notes.
 
-A provider's reverse-DNS naming convention is not evidence of where a server is located. Network latency must be measured, not inferred from a name.
+### Compare Visuals at Shipping Size
 
-Do not retain hostnames, addresses or network layout from a real install in public benchmark notes.
+A screenshot viewed at a different zoom than the app can make a 2px line look like 3px. When comparing visual weight, match the app's viewport and device pixel ratio.
 
-### Measure at the size the thing ships at
+### Compare Two Apps in One Browser
 
-A design comparison rendered in a viewer at a different zoom than the app made a 2px underline look like 3px, and led to a whole exchange about a thickness difference that did not exist. If you are comparing visual weight, match the app's viewport and device pixel ratio, or you are comparing screenshots rather than designs.
+Numbers from the in-app Browser pane aren't comparable to numbers from Chrome (different profile, extensions, cache, window size and background load). Measure **both** products in the same browser, back to back, and note any difference in test data, since the number of visible events can matter more than the timings.
 
-### Comparing two apps means comparing them in one browser
+### Sub-Linear Scaling Means a Fixed Cost Is Hiding
 
-Numbers from the in-app Browser pane are not comparable to numbers from Chrome: different profile, extensions, cache state, window size, and whatever else is running. When benchmarking against another product, measure **both** in the same browser, back to back. Describe any differences in the test data, since the number of visible events can matter more than the timings.
+If a much wider event window takes only slightly longer to query, look for work done once per request rather than once per returned event. For example, sabre's `fastForward` may walk a recurring series from its DTSTART to the window once per master, per request. **Always measure at least three window sizes**, with invented test data: the shape of the curve tells you where to look faster than a profiler does.
 
-### Sub-linear scaling means a fixed cost is hiding
+### Layout Changes Break Code That Reasons About Layout
 
-If a much wider event window takes only slightly longer to query, look for work that happens once per request rather than once per returned event. For example, sabre's `fastForward` may walk a recurring series from its DTSTART to the window once per master, per request. Compare several window sizes using invented test data before choosing what to optimise.
+Making month rows taller once broke month navigation: `stepAnchor` steps from the dominant visible month, computed over `round(viewH / rowH)` rows, so fewer, taller rows let a mostly off-screen row carry the vote and Next-month appeared to do nothing. After any change to how much is on screen, re-test month stepping, the toolbar label, the mini-month and window demand.
 
-**Always measure at least three window sizes.** The shape of the curve tells you where to look far faster than a profiler does.
+### Check Whether the Work Already Exists
 
-### Changing layout changes everything that reasons about layout
+Search `docs/` before scoping new analysis. An audit was once scoped while a better one already sat in `docs/security-review-2026-08-04.md`.
 
-Raising month row height from ~116px to 182px silently broke month navigation: `stepAnchor` steps from the *dominant visible month*, which is computed over `round(viewH / rowH)` rows. Fewer, taller rows changed that count, a mostly off-screen row started carrying the vote, and Next-month appeared to do nothing.
-
-The row geometry itself was verified carefully. Nothing that *depended* on row count was re-tested. After any change to how much is on screen, re-run month stepping, the toolbar label, the mini-month, and window demand.
-
-### Check whether the work already exists
-
-A security audit was proposed and scoped before anyone noticed `docs/security-review-2026-08-04.md` already existed, with better analysis. Search `docs/` first.
-
-## Tools in the repo
+## Tools in the Repo
 
 ```bash
 # Server-side phase breakdown of the events window: SQL, expansion, sort,
 # filters, labels/trips, json_encode, plus a scaling table.
-php server/bin/profile-events.php --months=5 --runs=3
+php server/bin/profile-events.php --months=5 --runs=3 [--user=1]
 
 # Per-master recurrence cost, split into building the sabre object,
 # fast-forwarding to the window, and walking inside it.
-php server/bin/profile-recurrence.php --months=5 --top=15
+php server/bin/profile-recurrence.php --months=5 --top=15 [--user=1]
 ```
 
-Both run against real data and must be run on the server, since they need the app's database credentials and its installed dependencies.
+Both read the app's database and need its installed dependencies, so run them on the server.
 
-## Recording a baseline
+## Recording a Baseline
 
-Use an invented fixture and record its shape with each benchmark: a mix of ordinary events, repeating series, exceptions, all-day events and empty calendars. A recurrence-heavy fixture answers a different question from a mixed calendar. Keep real-install workload figures, activity patterns, hosting details and timings out of the repository.
+- Use an invented fixture and record its shape with each result: a mix of ordinary events, repeating series, exceptions, all-day events and empty calendars. A recurrence-heavy fixture answers a different question from a mixed calendar.
+- Measure server query time, recurrence expansion, serialization, transfer, parsing and rendering separately. Measure low-end clients separately when that's the question.
+- Repeat with the same fixture and conditions before attributing a change to code.
+- Keep real-install workload figures, activity patterns, hosting details and timings out of the repository.
 
-Measure server query time, recurrence expansion, serialization, transfer, parsing and rendering separately. Repeat with the same fixture and conditions before attributing a change to code. Measure low-end clients separately when that is the question.
+## Choosing What to Optimize
 
-## Choosing what to optimise
-
-Optimise the measured bottleneck. SQL, serialization, browser parsing and network latency can each dominate under different conditions; none is universally negligible. Keep benchmark fixtures and acceptance thresholds in the test plan rather than treating one install as representative.
+Optimize the measured bottleneck. SQL, serialization, browser parsing and network latency can each dominate under different conditions, and none is always negligible. Keep fixtures and acceptance thresholds in the test plan rather than treating one install as representative.

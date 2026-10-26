@@ -1,66 +1,66 @@
 # Releasing Better-Cal
 
-Deploying a release to a server with the maintainer's scripts is in [deploying.md](deploying.md).
+How the maintainer cuts a release. Deploying it to a server with the maintainer's scripts is in [deploying.md](deploying.md); what installs check is in [SECURITY.md](../SECURITY.md#releases-and-updates).
 
-Published releases are immutable: their tag and assets cannot be replaced. Titles, notes, prerelease state and the “latest” designation remain editable. A bad tag or asset is corrected by a new patch release.
+Published releases are immutable: their tag and assets can't be replaced, though titles, notes, prerelease state and the "latest" label can still be edited. A bad tag or asset is fixed with a new patch release.
 
-## Application release
+## Application Release
 
-1. Make the release commit on `main`: update `VERSION`, add the matching `CHANGELOG.md` section, run the full suite, push, and wait for the `tests` workflow to pass.
-2. Prepare a draft with the final release manifest:
+1. Make the release commit on `main`: update `VERSION`, add the matching `CHANGELOG.md` section (ending with its Operators line), run the full suite, push, and wait for the `tests` workflow to pass.
+2. Prepare a draft:
 
    ```sh
    scripts/release.sh prepare routine 1.1.0
    ```
 
-   The second argument is `routine`, `recommended`, or `security`. The third is the cumulative minimum secure version. A security fix normally sets that floor to the new version; later routine releases retain the same floor until another security release raises it.
-3. The helper creates and pushes the annotated version tag at the exact green commit, generates and verifies `bettercal-release.json`, and creates a draft GitHub release with that final asset. The release notes are the version's `CHANGELOG.md` section, with repository links made absolute, then a pointer to the update steps in `docs/install.md` and the commit comparison with the previous tag (`scripts/release-notes.mjs`). The app's update notice links to this page, so the changelog section's Operators line is what someone updating reads first. The helper then starts `.github/workflows/release-zip.yml`, which builds `better-cal-X.Y.Z.zip` from the tag (the source without CI and tests, a `.release-files` list of what it ships, and the PHP libraries installed from the lock file in the pinned PHP 8.4 image), attaches it to the draft, and waits for it; `publish` refuses a draft without exactly one. `scripts/release-assemble.sh` does the assembling. The helper then rebuilds the same release on the maintainer's machine (the tagged source, and the libraries installed from the lock file with the same pinned Composer, outside git as on GitHub) and compares it file by file with GitHub's zip; it signs only when they match, then asks for the security key's PIN and a touch. `server/bin/update.php` installs from that zip, after checking it against GitHub's SHA-256 digest and the signature.
-4. Deploy that exact commit and complete the production smoke checks while the release is still a draft.
-5. Publish only after those checks succeed:
+   After `prepare` comes the priority, `routine`, `recommended` or `security`, then the cumulative minimum secure version: a security fix normally sets it to the new version, and later routine releases keep that floor until another security release raises it.
+
+   The helper tags the green commit and pushes the tag, writes and verifies the manifest (`bettercal-release.json`), and creates a draft GitHub release with it. The notes are the version's `CHANGELOG.md` section with links made absolute, then a pointer to the update steps and the comparison with the previous tag (`scripts/release-notes.mjs`); the app's update notice links there, so the Operators line is what someone updating reads first. It then runs `.github/workflows/release-zip.yml`, which builds `better-cal-X.Y.Z.zip` from the tag (the source without CI and tests, a `.release-files` list of what it ships, and the PHP libraries installed from the lock file in the pinned PHP 8.4 image, assembled by `scripts/release-assemble.sh`) and attaches it to the draft. Finally it runs the [checks below](#checks-before-signing) and signs, asking for the security key's PIN and a touch.
+3. Deploy that exact commit and complete the production smoke checks while the release is still a draft.
+4. Publish only after those checks pass:
 
    ```sh
    scripts/release.sh publish --deployment-verified
    ```
 
-   The explicit flag records the human gate. The helper rechecks the clean commit, tag, CI result and manifest, refuses to publish unless the repository's immutable-release setting is enabled, publishes the existing draft, and confirms GitHub reports the release immutable.
+   The flag records the human check. The helper rechecks the clean commit, tag, CI result and manifest, refuses to publish unless the repository's immutable-release setting is on and the draft has exactly one zip, publishes the draft, and confirms GitHub reports it immutable.
 
-The application trusts only a published, non-prerelease, immutable `vX.Y.Z` release in this repository with exactly one canonical manifest asset whose GitHub-provided SHA-256 digest matches. It never installs code automatically; `server/bin/update.php`, run by the operator, installs a release only when its signature also verifies (below).
+Installs trust only a published, non-prerelease, immutable `vX.Y.Z` release of this repository with exactly one manifest whose GitHub SHA-256 digest matches, and `server/bin/update.php` installs one only when its signature also verifies.
 
 ## Signing
 
-Every release carries `bettercal-release.sig`: one statement naming the version, the tag's commit and the SHA-256 of the zip and the manifest, signed by at least one key listed in `server/config/release-keys.php`. `update.php` refuses a release unless one of those signatures verifies, and in a git checkout it also checks that the tag points at the signed commit. The app's update check records a release (and a raised security floor) only when its signature verifies too. So publishing a release on GitHub isn't enough to reach installs: it also takes a signing key, and those never touch GitHub. These checks protect the signed updater, not a fresh install or an unchecked upload. [Optional local verification](install.md#optional-verification-before-upload) explains the trust needed before running downloaded code.
+Every release carries `bettercal-release.sig`: one statement naming the version, the tag's commit and the SHA-256 of the zip and the manifest, signed by at least one key in `server/config/release-keys.php`. `update.php` refuses a release unless a signature verifies, and in a git checkout it also checks that the tag points at the signed commit; the app's update notice records a release (and a raised security floor) only when it verifies too. So publishing on GitHub isn't enough to reach installs: it also takes a signing key, and those never touch GitHub. These checks protect the updater, not a fresh install or a hand upload ([Optional verification before upload](install.md#optional-verification-before-upload) covers those).
 
-Two keys, either one enough. Installs can't tell them apart, so what keeps each safe is where it's kept:
+Any one listed key is enough. Installs can't tell the keys apart, so what keeps each safe is where it's kept:
 
-- **A hardware security key** (`fido2-ed25519`), the everyday signer since 0.9.86: a FIDO2 credential stored on the key itself, used with its PIN and a touch, from any computer. The key protects its private key, but malicious software on the computer could substitute a statement during a legitimate PIN and touch. `release.sh prepare` signs with it (`scripts/release-sign-fido.py`; `enroll` made the credential). The key signs its authenticator data followed by SHA-256 of the statement, and the app requires the touch and PIN flags.
-- **The key file** (`ed25519`), the recovery signer. It lives in the maintainer's password manager, not on disk. To use it, save it to a file for the moment, then `BETTERCAL_RELEASE_KEY=FILE scripts/release.sh prepare routine X.Y.Z --recovery`, and delete the file afterwards. `scripts/release-sign.php` does the work.
+- **Hardware security keys** (`fido2-ed25519`), the everyday signers (two are listed; either signs): a FIDO2 credential on each key itself, used with its PIN and a touch, from any computer. `release.sh prepare` signs with it (`scripts/release-sign-fido.py`; `bash scripts/release-signer.sh enroll --key-id NAME`, named after the key's model, makes a credential and prints its entry for `release-keys.php`, and `show` prints it again). The key signs its authenticator data followed by the SHA-256 of the statement, and installs require the touch and PIN flags. It protects its private key, but malicious software on the computer could substitute a statement during a genuine PIN and touch.
+- **The key file** (`ed25519`), the recovery signer, kept in the maintainer's password manager, not on disk. To use it, save it to a file for the moment, run `BETTERCAL_RELEASE_KEY=FILE scripts/release.sh prepare routine X.Y.Z --recovery`, and delete the file. `scripts/release-sign.php` does the work.
 
-Verification is sodium's Ed25519 for both, so installs need nothing new.
+Both verify with sodium's Ed25519, so installs need nothing extra.
 
-**Changing keys.** Installs check each update with the key list they already have, so a release signed by a key on the current list can add a key or drop one. `update.php` says so whenever a release changes the list ("adds the signing key …, removes …"), so a change is never quiet. A lost or broken hardware key: enroll a new one, add it to `release-keys.php`, remove the old entry, and sign that release with the key file (`--recovery`). An exposed key file: make a new one (`php scripts/release-sign.php --new-key`), replace the old entry, and sign that release with the hardware key. Only if every listed key were lost at once would installs need one update by hand, to a release carrying new keys.
+**Changing keys.** Installs check each update with the key list of the release they run, so a release signed by a key already listed can add or drop one, and `update.php` says so whenever a release changes the list. A newly added key can sign on its own only once a release listing it has shipped; `prepare` refuses a signature the previous release's keys wouldn't accept. For a lost or broken hardware key: enroll a new one, add it to `release-keys.php`, remove the old entry, and sign that release with the other hardware key or `--recovery`. For an exposed key file: make a new one (`php scripts/release-sign.php --new-key`), replace the old entry, and sign that release with the hardware key. Only if every listed key were lost at once would installs need one update by hand.
 
-**Always prepare releases through the checked helper.** Use `scripts/release.sh prepare` for both the hardware key and `--recovery`. The low-level statement and signing commands do not check the release contents or maintainer intent; they are not an alternative release workflow. A signature check after signing only proves which bytes were signed, not that those bytes were the intended release. To check an existing release without signing, use [optional local verification](install.md#optional-verification-before-upload).
+**Always sign through `scripts/release.sh prepare`,** with either key. The low-level statement and signing commands don't check the release contents or your intent, and a signature check afterwards only proves which bytes were signed, not that they were the intended release. To check an existing release without signing, use [optional verification](install.md#optional-verification-before-upload).
 
-## Preparing the signing environment
+## Preparing the Signing Environment
 
-Before preparing a release, run `bash scripts/release-signer.sh prepare` with a current uv that can download the Python version in `scripts/release-signer/python-version`. This downloads that exact uv-managed Python and installs only binary wheels matching the complete hashes in `scripts/release-signer/requirements.txt`. Nothing accesses the hardware key during preparation. Homebrew and system Python are not used for signing.
+Before preparing a release, run `bash scripts/release-signer.sh prepare` with a current uv. It downloads the exact uv-managed Python named in `scripts/release-signer/python-version` and installs only binary wheels matching the hashes in `scripts/release-signer/requirements.txt`, into the ignored `.release-signer/` folder. It doesn't touch the hardware key, and Homebrew or system Python is never used for signing.
 
-Run `bash scripts/release-signer.sh check` to check the prepared environment without a key. The environment is kept in the ignored `.release-signer/` folder. Ordinary signing checks the pinned interpreter, lockfile and installed files, then runs that interpreter directly, without a package resolver or network downloads. Release preparation checks this before creating a tag or draft. A missing or changed environment stops with instructions, not an automatic repair.
+`bash scripts/release-signer.sh check` checks the environment without a key. Signing checks the pinned interpreter, lock file and installed files, then runs that interpreter directly, with no package resolver or downloads. Release preparation runs this check before creating a tag or draft, and a missing or changed environment stops with instructions rather than repairing itself.
 
-To update signer libraries, edit `scripts/release-signer/requirements.in`, then run `uv pip compile --managed-python --python 3.14.8 --generate-hashes --no-header --no-annotate --only-binary :all: scripts/release-signer/requirements.in -o scripts/release-signer/requirements.txt`. Review the versions and hashes. Change the Python pin deliberately when updating Python. Prepare a replacement with `BETTERCAL_SIGNER_DIR=/path/to/new-environment bash scripts/release-signer.sh prepare`, check it, and use that same setting for releases. Keep the previous environment until the replacement checks out. Neither a version pin nor a file hash proves a dependency is benign.
+To update the signer's libraries, edit `scripts/release-signer/requirements.in`, run `uv pip compile --managed-python --python 3.14.8 --generate-hashes --no-header --no-annotate --only-binary :all: scripts/release-signer/requirements.in -o scripts/release-signer/requirements.txt`, and review the versions and hashes (change the Python pin only on purpose). Prepare the replacement with `BETTERCAL_SIGNER_DIR=/path/to/new-environment bash scripts/release-signer.sh prepare`, check it, and use the same setting for releases; keep the old environment until the new one checks out. Pins and hashes don't prove a dependency is benign.
 
-## Checks before either signer
+## Checks Before Signing
 
-The downloaded manifest must match the locally generated manifest byte for byte. A mismatch stops before the hardware key or recovery key is used. Re-running prepare regenerates intent from the explicit priority and security-floor arguments.
+Before either key is used, `prepare`:
 
-The draft ZIP is checked for compressed and expanded size, unsafe paths, duplicate entries, links and special files before comparison. Its entries are streamed and hashed, never extracted on the signing computer. The existing outside-git rebuild with Composer 2.10.3 and shared assembler remains required. Both builds disable Composer scripts and plugins.
+- **compares the manifest** GitHub holds with the one it generated, byte for byte, from the priority and floor arguments;
+- **checks the draft zip** for size, unsafe paths, duplicate entries, links and special files, streaming and hashing its entries without extracting them;
+- **rebuilds the release** outside git from the tagged source with Composer 2.10.3 and the same assembler (Composer scripts and plugins off in both builds) and compares it with GitHub's zip file by file;
+- **checks every library** in the tagged lock file against an export made from its exact Git commit, rejecting added, missing or changed files.
 
-Every library in the tagged Composer lockfile is also checked against an export made locally from its exact Git commit. The verifier checks received and cached Git objects, uses committed export rules and the assembler's existing exclusions, and rejects additions, missing files and changed bytes. Composer-generated files remain covered by the whole-release rebuild comparison. No per-file hash list needs refreshing on an ordinary dependency update.
+The library check caches Git objects in `~/.cache/better-cal/dependency-git`, which can be deleted between releases; a cold check needs network access and takes longer. A package without a supported Git source, or whose generated files don't reproduce, stops the release for review: don't bypass the difference or keep a list of exceptions. Checking a commit doesn't audit its code. The git-checkout updater still installs libraries with Composer after checking the signed commit, outside this guarantee.
 
-The object cache is under `~/.cache/better-cal/dependency-git`; it can be removed when not preparing a release. A cold check needs network access and more time; cached unchanged packages do not need fetching. A package without the supported Git source mapping, or with generated distribution files that do not reproduce, stops release preparation for review. Do not bypass differences or grow a silent exception list. Checking a selected commit does not audit the code in that commit.
+## Extension Release
 
-The git-based updater still installs libraries independently with Composer after checking the signed application commit. That documented path is outside the release ZIP's dependency guarantee.
-
-## Extension release
-
-Browser-extension releases use `extension-vX.Y.Z`, remain separate from application tags, and must be marked not-latest. Prepare their complete final assets on a draft and publish only after verification. Do not attach `bettercal-release.json`; the application update checker deliberately ignores extension tags.
+Browser-extension releases are tagged `extension-vX.Y.Z`, separate from application tags, and must be marked not-latest. Prepare their final assets on a draft and publish only after checking it. Don't attach `bettercal-release.json`; the app's update check ignores extension tags.

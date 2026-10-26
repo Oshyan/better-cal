@@ -1,44 +1,45 @@
 # CalDAV Sync
 
-Better-Cal exposes a CalDAV server at `https://cal.example.com/dav`, so Apple Calendar (macOS/iOS), Android clients, Thunderbird, etc. can sync natively — including two-way editing of local calendars.
+Better-Cal is a CalDAV server at `https://cal.example.com/dav`, so Apple Calendar (macOS and iOS), Android clients, Thunderbird and the like can sync with it natively, including two-way editing of local calendars.
 
 ## Credentials
 
 - **Username:** your Better-Cal account email.
-- **Password:** either your account password, or (recommended for devices) a personal access token created in the app or via `php server/bin/token.php --create --name="iPhone CalDAV"`. Paste the full `bc_...` value as the password. Revoking the token cuts that device off without touching your real password.
+- **Password:** an API key (recommended) or your account password. Create a key per device in Settings, Account, under **API keys**, or on the server with `php server/bin/token.php --create --name="iPhone CalDAV"`, and paste the full `bc_...` value as the password. Revoking that key cuts the device off without changing your real password.
 
-Auth is HTTP Basic, so it is only safe over TLS. The server is HTTPS-only; never point a client at a plain-http URL.
+Sign-in is HTTP Basic, so it's only safe over HTTPS. The server doesn't serve `/dav` over plain HTTP; never point a client at an `http://` URL.
 
-## Adding the account
+## Adding the Account
 
-**iOS:** Settings → Apps → Calendar → Calendar Accounts → Add Account → Other → Add CalDAV Account. Server: `cal.example.com/dav` (if validation fails, use the full URL `https://cal.example.com/dav`). Username = email, password = token or account password.
+**iOS:** Settings → Apps → Calendar → Calendar Accounts → Add Account → Other → Add CalDAV Account. Server: `cal.example.com/dav` (if validation fails, use the full URL `https://cal.example.com/dav`).
 
 **macOS Calendar:** Calendar → Settings → Accounts → + → CalDAV Account → Account Type: Advanced. Server address: `cal.example.com`, Server path: `/dav`, port 443 with SSL. (Account Type "Manual" with address `cal.example.com/dav` usually works too.)
 
-**Android:** stock Android has no CalDAV support; install [DAVx5](https://www.davx5.com/) (Play Store or F-Droid). Add account → "Login with URL and user name" → base URL `https://cal.example.com/dav`, username = email, password = token. DAVx5 syncs the calendars into the regular Android calendar app.
+**Android:** stock Android has no CalDAV support, so install [DAVx5](https://www.davx5.com/) (Play Store or F-Droid). Add account → "Login with URL and user name" → base URL `https://cal.example.com/dav`. DAVx5 syncs the calendars into the regular Android calendar app.
 
-**Thunderbird:** New Calendar → On the Network → enter username and `https://cal.example.com/dav`; it discovers all calendars.
+**Thunderbird:** New Calendar → On the Network → your username and `https://cal.example.com/dav`; it finds all your calendars.
 
-## What syncs
+## What Syncs
 
-- Every Better-Cal calendar appears as a CalDAV collection (`/dav/calendars/{email}/cal-{id}/`), with its name, color, and order.
-- Events sync both ways on **local** calendars: create, edit, move, delete, recurring rules (RRULE), skipped instances (EXDATE), and edited single occurrences (RECURRENCE-ID overrides) all round-trip. Fields carried: title, description, location, URL, status, start/end (all-day supported), timezone, recurrence. A timed event goes out in its own zone (`TZID` plus a `VTIMEZONE`); an all-day event, and its skipped or changed dates, go out as plain dates. A time a client sends with no zone is read in your Home zone, and a Windows zone name (Outlook's "Pacific Standard Time") is kept as the real zone it stands for. A rich description goes out as plain text in `DESCRIPTION` and allowlisted HTML (plain formatting and http(s) links) in `X-ALT-DESC`; one written by a client is cleaned the same way when it arrives.
-- Changes made via the web app, JSON API, or agents show up on your devices via efficient delta sync (sync-collection/ctag), and undo in the app propagates too.
-- Subscriptions are polled server-side (an ICS feed hourly by default, a connected Google calendar every 5 minutes; set per calendar under "Check for updates"); their events flow out to your devices after each poll.
+- Every Better-Cal calendar appears as a CalDAV collection (`/dav/calendars/{email}/cal-{id}/`), with its name, color and order.
+- On **local** calendars, events sync both ways: create, edit, move and delete, plus repeat rules (RRULE), skipped dates (EXDATE) and edited single occurrences (RECURRENCE-ID). Fields carried: title, description, location, URL, status, start and end (all-day included), time zone and recurrence.
+- Time zones: a timed event goes out in its own zone (`TZID` plus a `VTIMEZONE`); all-day events, and their skipped or changed dates, go out as plain dates. A time a client sends with no zone is read in your Home zone, and a Windows zone name (Outlook's "Pacific Standard Time") becomes the real zone it stands for.
+- A rich description goes out as plain text in `DESCRIPTION` and allowlisted HTML (plain formatting and http(s) links) in `X-ALT-DESC`. One written by a client is cleaned the same way when it arrives.
+- Changes made in the web app, the API or by agents reach your devices through delta sync (sync-collection and ctag), and so does Undo in the app.
+- Subscribed calendars are polled by the server (an ICS feed hourly by default, a connected Google calendar every 5 minutes; set per calendar under "Check for updates"), and their events reach your devices after each poll.
 
-## Read-only rules
+## Read-Only Rules
 
-- **Subscribed calendars (ICS feeds and connected Google calendars) are read-only.** A Google calendar you can edit in the app is still read-only over CalDAV. They are advertised to clients as read-only, and any write attempt is rejected with `403 Forbidden`. Edit or hide those events in the Better-Cal app instead (attendance/tags live only in Better-Cal and do not sync over CalDAV).
-- Creating or deleting whole calendars over CalDAV is not supported — do that in the app or API. Renaming a local calendar or changing its color from a client does work.
-- Better-Cal-only concepts (tags, people, attendance, filters, scores) do not appear in CalDAV and are preserved untouched when a client edits an event.
+- **Subscribed calendars (ICS feeds and connected Google calendars) are read-only over CalDAV,** even a Google calendar you can edit in the app. Clients see them as read-only, and a write gets `403 Forbidden`. Edit or hide those events in the app instead.
+- Creating or deleting whole calendars over CalDAV isn't supported; do that in the app or API. Renaming a local calendar or changing its color from a client works.
+- Better-Cal-only details (tags, people, attendance, filters, scores) don't appear over CalDAV, and they're kept untouched when a client edits an event.
 
 ## Troubleshooting
 
-- **401 Unauthorized:** username must be the exact account email; if using a token, paste the full `bc_...` value (46 chars). Check the token has not been revoked or expired.
+- **401 Unauthorized:** the username must be the exact account email. With an API key, paste the full `bc_...` value (46 characters), and check the key hasn't been revoked or expired.
 - **Account validates but no calendars appear:** make sure the URL path is `/dav` (some clients silently drop the path). On macOS use the Advanced account type with server path `/dav`.
-- **403 on save:** you edited an event on a subscribed (feed) calendar, which is read-only over CalDAV. A 403 whose message mentions `max-resource-size` means the object itself was refused: one event with its changed occurrences may be at most 1 MiB and 500 overrides (`BETTERCAL_LIMIT_DAV_OBJECT_BYTES`, `BETTERCAL_LIMIT_DAV_OVERRIDES`). The size limit is published to clients as `CALDAV:max-resource-size`.
-- **429 Too Many Requests:** this network address sent too many wrong passwords (to CalDAV or the login form; they share a limit). Syncing resumes by itself within 15 minutes. It is a 429 rather than a 401 so the client does not decide the saved password is wrong.
-- **400 "Object URI must be <UID>.ics":** the client PUT a resource whose filename does not match the VEVENT UID. Mainstream clients (Apple, DAVx5, Thunderbird) always match; if you script against the endpoint, name objects `{uid}.ics`.
-- **Sync seems stale:** clients poll; pull-to-refresh (iOS) or force sync (DAVx5) fetches immediately. Subscribed calendars only update when their server-side poll runs (hourly by default for a feed).
-- **Plain HTTP:** Basic auth credentials are only sent over TLS; the server does not serve the DAV endpoint over http.
-- **Endpoint check:** `curl -u 'sam@example.com' https://cal.example.com/dav/` prompts for a password; paste the account token at that prompt, not into the command. It should return XML/HTML, not a 404. If nginx has not been configured with the `/dav` location yet, `https://cal.example.com/dav.php/` works as a fallback.
+- **403 on save:** you edited an event on a subscribed calendar, which is read-only over CalDAV. A 403 that mentions `max-resource-size` means the event itself was too big: one event with its changed occurrences may be at most 1 MiB and 500 overrides (`BETTERCAL_LIMIT_DAV_OBJECT_BYTES`, `BETTERCAL_LIMIT_DAV_OVERRIDES`; clients are told the size limit as `CALDAV:max-resource-size`).
+- **429 Too Many Requests:** this network address sent too many wrong passwords (to CalDAV or the sign-in page; they share a limit). Syncing resumes by itself within 15 minutes. It's a 429 rather than a 401 so the client doesn't decide the saved password is wrong.
+- **400 "Object URI must be <UID>.ics":** the client saved an event under a filename that doesn't match its UID. Apple Calendar, DAVx5 and Thunderbird always match; if you script against the server, name objects `{uid}.ics`.
+- **Sync seems stale:** clients poll on their own schedule; pull to refresh (iOS) or force a sync (DAVx5) to fetch now. Subscribed calendars only change when their server-side poll runs.
+- **Checking the endpoint:** `curl -u 'sam@example.com' https://cal.example.com/dav/` prompts for a password; paste the API key at that prompt, not into the command. It should return XML or HTML, not a 404. If the web server doesn't have the `/dav` rule yet, `https://cal.example.com/dav.php/` works as a fallback.

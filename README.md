@@ -37,13 +37,13 @@ Self-hosting is table stakes: plain PHP and MySQL on the server, a no-build Prea
 
 ## What this is, and isn't
 
-I wanted infinite scroll in a calendar. That's really the whole origin story: Google's (and almost everyone else's) month and week views have never had it, and I've always found pagination needlessly jarring and limiting. So I sent Claude (Fable 5) on an overnight, one-shot mission to build a calendar app from scratch (something that used to be notoriously difficult, hence libraries like FullCalendar), with infinite scroll as the headline differentiator. By morning there was a working one. Within a week it was ready to replace Google Calendar for me, and by then it did quite a few things GCal doesn't (and probably never will): undo for any change, not just the last one, trips and people as real objects, a relationship to every event that tells "what am I doing" apart from "what could I do" and "what's the weather", and feeds that are actually pleasant to live with.
+I wanted infinite scroll in a calendar. That's really the whole origin story: Google's (and almost everyone else's) month and week views have never had it, and I've always found pagination needlessly jarring and limiting. So I sent Claude (Fable 5) on an overnight, one-shot mission to build a calendar app from scratch (something notoriously difficult, hence libraries like FullCalendar), with infinite scroll as the headline feature. By morning there was a working one. Within a week it was ready to replace Google Calendar for me, and by then it did quite a few things GCal doesn't (and probably never will): undo for any change, trips and people as real objects, a relationship on every event that tells "what am I doing" apart from "what could I do" and "what's the weather", and feeds that are actually pleasant to live with.
 
-So it's built for one person's daily use, and it runs my real calendar every day. It's single-user by design: one login, one owner, and everyone else reaches it through CalDAV, shared feeds and invitations. It's sized for one person's calendar too, not a team's or a very heavy user's; [Scale and limits](docs/limits.md) has the numbers. I develop it in the open because there's no reason not to, not because it's a product. That means no support commitment, no roadmap promises and no compatibility guarantee between versions (though every update brings its own migrations).
+So it's built for one person's daily use, and it runs my real calendar every day. It's single-user by design: one login, one owner, and everyone else reaches it through CalDAV, shared feeds and invitations. It's sized for one person's calendar, not a team's or a very heavy user's ([Scale and limits](docs/limits.md) has the numbers). I develop it in the open because there's no reason not to, not because it's a product: no support commitment, no roadmap promises and no compatibility guarantee between versions (though every update brings its own migrations).
 
 What I focused on:
 
-- **Desktop first, phones close behind.** I mostly use it on a laptop with a keyboard, so that's where the polish started: hotkeys for everything, a command palette, drag and drop that behaves. Phones got a pass of their own from 0.4 to 0.8: an installable app, a split month (dense weeks over a list that scrolls with them), an event sheet you can step through, a full-screen editor, and Back that works everywhere. I use it daily on Android.
+- **Desktop first, phones close behind.** I mostly use it on a laptop with a keyboard, so that's where the polish started: hotkeys for everything, a command palette, drag and drop that behaves. Phones have their own layout too: an installable app, a split month (dense weeks over a list that scrolls with them), an event sheet you can step through, a full-screen editor, and Back that works everywhere. I use it daily on Android.
 - **Questioning defaults.** Wherever Google Calendar does something just because it always has, I asked whether it's actually good. Sometimes it is, and I kept it. Often it isn't, and that's where infinite scroll, the Show filter, context in the day header and the honest "can't be undone" on Google edits come from.
 - **Other people's calendars as first-class.** Most of what's on my calendar didn't start with me, so feeds and shared calendars aren't a grudging import.
 - **Honesty in the interface.** The app tells you what it did, what it can't undo, and what it's hiding.
@@ -54,19 +54,18 @@ It hasn't been tried on an iPhone yet, so if you have one, I'd especially like t
 
 For a one-person project, taking security seriously means doing the work in public rather than making promises:
 
-- **Five full scans** of the whole codebase so far (Codex Security in August, September and twice in October 2026, Claude Security on 2026-09-23), with every finding independently verified. The last, on 2026-10-16, was the final scan before 1.0; its fixes are all in 0.9.87, a re-review of those fixes led to more in 0.9.88, and [SECURITY.md](SECURITY.md#what-has-been-reviewed) lists what was found and what remains.
-- **Every finding fixed**, deployed and checked on the reference install, and the fix commit names the finding it closes. The 2026-09-23 round found 29 issues (none High or Critical), all fixed the same day. The 2026-10-06 round found 77 (one High), fixed in phases through 0.9.42, except one set aside after testing showed it was already bounded and one Low accepted with the reason recorded.
-- **The fixes reviewed too.** Three more passes looked for incomplete fixes, ways around them and anything they broke, and those were fixed as well (0.1.6 to 0.1.8).
-- **Published advisories.** The 2026-09-23 findings were published as GitHub security advisories; [SECURITY.md](SECURITY.md#past-advisories) lists each with the affected and fixed versions.
-- **Tests** run on every change and before every deploy, including regression tests for each security fix.
-- **Signed releases.** Every release since 0.9.75 is signed with keys that never touch GitHub, and the updater refuses any it can't verify, so a hijacked GitHub account alone can't push code to your install.
-- **Third-party code you can check.** The browser libraries are committed as their published releases, pinned by fingerprint; `node scripts/vendor.mjs --check-upstream` confirms every one against npm ([web/vendor/README.md](web/vendor/README.md)).
+- **Five full scans** of the whole codebase before 1.0 (Codex Security and Claude Security). Every finding was independently verified, then fixed or, in a handful of cases, accepted with the reason recorded. Each fix commit names the finding it closes, and [SECURITY.md](SECURITY.md#what-has-been-reviewed) lists each round, what it found and what remains.
+- **The fixes reviewed too**, for gaps, ways around them and anything they broke.
+- **Tests** run on every change and before every deploy, including a regression test for each security fix.
+- **Published advisories**, listed in [SECURITY.md](SECURITY.md#past-advisories) with the affected and fixed versions.
+- **Signed releases.** Releases are signed with keys that never touch GitHub, and the updater refuses any it can't verify, so a hijacked GitHub account alone can't push code to your install.
+- **Third-party code you can check.** The browser libraries are committed as their published releases, pinned by fingerprint, and `node scripts/vendor.mjs --check-upstream` confirms every one against npm ([web/vendor/README.md](web/vendor/README.md)).
 
-[SECURITY.md](SECURITY.md) has the details: the risks I accepted rather than fixed, the trade-offs made on purpose (staying signed in on your own devices, for example, and what to do if one is lost), and how to report a problem privately.
+[SECURITY.md](SECURITY.md) also covers the risks I accepted rather than fixed, the trade-offs made on purpose (staying signed in on your own devices, for example, and what to do if one is lost), and how to report a problem privately.
 
 ## Versions
 
-Releases are tagged (`v1.0.0`) and listed on GitHub, `CHANGELOG.md` says what changed and why, and Settings shows the version you're running and tells you when there's a new one. Each release page says what the update needs; [Updating](docs/install.md#updating) has the steps. Minor versions bring features, and patch versions generally bring bug fixes and refinements.
+Releases are tagged (`v1.0.0`) and listed on GitHub, and [CHANGELOG.md](CHANGELOG.md) says what changed. Settings shows the version you're running and tells you when there's a new one. Minor versions bring features; patch versions bring fixes and refinements. Each release page says what the update needs, and [Updating](docs/install.md#updating) has the steps.
 
 ## License
 
@@ -75,30 +74,27 @@ MIT (see [LICENSE](LICENSE)). Use it, fork it, host it, sell it. If you build so
 ## Stack
 
 - **Server:** PHP 8.4+, MySQL 8 or MariaDB 10.6+, no framework. CalDAV via sabre/dav. A cron worker polls feeds, reads mail, sends reminders, ranks events and prunes old data.
-- **Web:** Preact and HTM served as-is (no build step), installable as an app. The libraries it uses are committed as published (some minified); [web/vendor/README.md](web/vendor/README.md) lists each with its version, license, upstream link and fingerprint, and one command re-checks them all against npm.
-- **Optional:** an LLM provider key for plain-language help, prompt filters and ranking; a MapTiler key for map tiles; SMTP for reminder email and RSVP replies.
+- **Web:** Preact and HTM served as-is (no build step), installable as an app. Its libraries are committed as published, listed in [web/vendor/README.md](web/vendor/README.md).
+- **Optional:** an LLM provider key for plain-language help, prompt filters and ranking; a MapTiler key for map tiles; LocationIQ or MapTiler keys for faster place search ([geocoding](docs/geocoding.md)); SMTP for reminder email and RSVP replies.
 
 ## Docs
 
-- [Installing](docs/install.md): what you need, six steps with the exact commands (or the same from a control panel and the browser, without SSH), updating (with a backup first and a way back), and web server setup for Nginx and Apache (both tested), on MySQL or MariaDB. It has also been installed on two shared hosts, from the release zip.
-- [Architecture](docs/architecture.md)
-- [API contract](docs/api-contract.md) and [agent API](docs/agent-api.md)
-- [Calendar roles and event relationships](docs/relationships.md): planned, maybe, available and context, i.e. what a calendar is to you and what that makes its events
-- [Geocoding and place search](docs/geocoding.md): which services find places, why those, and what to set up after installing for faster results
-- [CalDAV](docs/caldav.md)
-- [Email ingest](docs/email-ingest.md)
-- [Quick add](docs/quick-add.md): what you can type to make an event, with examples that work, the markers that say it outright (`/calendar`, `#tag`, `@person`, `"quoted title"`), a reference of everything it reads, and its known limits
-- [The app and reminders](docs/app-and-reminders.md): why and how to install it on a phone or computer, turning on reminders (and the browser's question that follows), and changing notification settings in Better-Cal and on the device
-- [Moving from Google Calendar](docs/migration.md): ways to start, by how much you want to commit (subscribe to try it, feeds both ways, import to switch, connect to live in both), mixed per calendar; other calendar services; keeping your current calendar app through CalDAV; then running both, switching fully, or going back
-- [Scale and limits](docs/limits.md): who it's sized for, and the limits you might run into
+- [Installing](docs/install.md): requirements, install with SSH or from a control panel and the browser, updating (with a backup first and a way back), and Nginx and Apache setup.
+- [Moving from Google Calendar](docs/migration.md): ways to start, from subscribing to try it to a full switch, and going back.
+- [The app and reminders](docs/app-and-reminders.md): installing it on a phone or computer and turning on reminders.
+- [Quick add](docs/quick-add.md): what you can type to make an event.
+- [Calendar roles and event relationships](docs/relationships.md): planned, maybe, available and context.
+- [CalDAV](docs/caldav.md), [Email ingest](docs/email-ingest.md), [Google Calendar connector](docs/google-calendar.md), [Geocoding and place search](docs/geocoding.md)
+- [Scale and limits](docs/limits.md): who it's sized for, and the limits you might run into.
+- [Architecture](docs/architecture.md), [API contract](docs/api-contract.md), [agent API](docs/agent-api.md), [writing a plugin](docs/plugins/authoring.md)
 - Roadmap: the [GitHub issues](https://github.com/Oshyan/better-cal/issues). There's no separate roadmap document.
 
 ## Configuration
 
-The installer (or the setup page, without SSH) writes the settings file, `.env.php`, for you. [`.env.example`](.env.example) lists every setting the server reads and what each is for; to change one, edit `.env.php` and keep its first line. You can change your password in Settings, Account. From the command line, `php server/bin/seed.php --email=...` resets it (it asks for the password, or reads `BETTERCAL_SEED_PASSWORD` when run from a script) and signs out every browser. After a suspected compromise, add `--revoke-tokens` to revoke all API tokens as well.
+The installer (or the setup page, without SSH) writes the settings file, `.env.php`. [`.env.example`](.env.example) lists every setting the server reads and what each is for; to change one, edit `.env.php` and keep its first line. Change your password in Settings, Account, or reset it from the command line with `php server/bin/seed.php --email=you@example.com`, which signs out every browser (add `--revoke-tokens` after a suspected compromise; [If a device is lost or stolen](SECURITY.md#if-a-device-is-lost-or-stolen) has the details).
 
 ## Development
 
-- **Deploy:** `./scripts/deploy.sh` (tests, root-private backup, rsync, composer, migrations, smoke check); [deploying.md](docs/deploying.md) has the details.
-- **Tests:** `php server/tests/run.php` (server, pure PHP), `node web/tests/smoke.mjs` (frontend logic; it passes in any time zone, and the deploy runs it under five), `node --experimental-vm-modules web/tests/static.mjs` (module graph), `node tools/mcp/test.mjs` (MCP server), and `bash scripts/tests/deploy-security.sh` (deploy privilege boundaries). GitHub runs all of them on every push, plus a fresh install from the lock file on PHP 8.4, the minimum. For changes to repeating events, time zones or import and export, also run `tools/tz-harness/run.sh`.
-- **Chrome extension** (sends Google Calendar "add to calendar" links here instead): `extension/`.
+- **Tests and contributing:** [CONTRIBUTING.md](CONTRIBUTING.md) has every test suite and when to run it.
+- **Deploying:** `./scripts/deploy.sh` is the maintainer's deploy tool ([deploying.md](docs/deploying.md)); you don't need it to install or update.
+- **Chrome extension** (sends Google Calendar "add to calendar" links here instead): [`extension/`](extension/).

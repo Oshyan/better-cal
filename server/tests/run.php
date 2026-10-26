@@ -570,6 +570,10 @@ $phraseCases = [
     ['Brunch at Sunday Social Sunday', 'Brunch at Sunday Social', '2026-08-02T00:00', '2026-08-03T00:00', null],
     ['Breakfast at 7:30 tomorrow', 'Breakfast', '2026-07-31T07:30', '2026-07-31T08:30', null],
     ['Morning run tomorrow at 7', 'Morning run', '2026-07-31T07:00', '2026-07-31T08:00', null],
+    // "on" goes with its date (#86's example)
+    ['Party on Saturday at 8pm', 'Party', '2026-08-01T20:00', '2026-08-01T21:00', null],
+    ['Dinner with Sam on Tuesday 7pm at Luna', 'Dinner with Sam at Luna', '2026-08-04T19:00', '2026-08-04T20:00', null],
+    ['Carry on', 'Carry on', '2026-07-30T11:00', '2026-07-30T12:00', null],
     // Day ranges with no repeat: one event over those days
     ['Workshop Mon-Fri', 'Workshop', '2026-08-03T00:00', '2026-08-08T00:00', null],
     ['Workshop Thu-Fri next week', 'Workshop', '2026-08-06T00:00', '2026-08-08T00:00', null],
@@ -4485,6 +4489,64 @@ checkEq('pd fail -> highlight', 'highlight', Filters::promptDisposition($promptR
         checkEq('quick add model budget: oversized semantic input has a stable 413', [413, 'quickadd_text_too_long', 1], [$e->status, $e->errorCode, $qaTransport->calls]);
     }
     Limits::reset();
+}
+
+// Quick add markers (#86): /calendar, #tag, @person, "literal title".
+{
+    $m = BetterCal\Domain\QuickAddMarkers::extract('Dinner with @Sam on Tuesday #food /friends');
+    checkEq('markers: the issue example', ['Dinner with Sam on Tuesday', 'friends', ['food'], ['Sam'], []],
+        [$m['text'], $m['calendar'], $m['tags'], $m['people'], $m['literals']]);
+    $m = BetterCal\Domain\QuickAddMarkers::extract('"Wacky Wednesday" Friday 8pm');
+    checkEq('markers: a quoted title is kept apart', [['Wacky Wednesday'], 'QUOTED0 Friday 8pm'], [$m['literals'], $m['llmText']]);
+    $m = BetterCal\Domain\QuickAddMarkers::extract('Lunch 7/31 w/ Sam at noon, email sam@example.test, see https://example.test/a/b Room #5');
+    checkEq('markers: dates, w/, emails, URLs and #5 are not markers', [null, [], [], []], [$m['calendar'], $m['tags'], $m['people'], $m['literals']]);
+    $m = BetterCal\Domain\QuickAddMarkers::extract('Gym #health #Health /work /home');
+    checkEq('markers: repeated tags once; the first calendar decides, later ones stay text', ['Gym /home', 'work', ['health']], [$m['text'], $m['calendar'], $m['tags']]);
+    checkEq('markers: no calendar read when asked not to', ['Party /nowhere', null], [
+        BetterCal\Domain\QuickAddMarkers::extract('Party /nowhere', false)['text'],
+        BetterCal\Domain\QuickAddMarkers::extract('Party /nowhere', false)['calendar']]);
+    $cals = [['id' => 1, 'name' => 'Personal'], ['id' => 2, 'name' => 'Work'], ['id' => 3, 'name' => 'Friends & Family'], ['id' => 4, 'name' => 'Workouts']];
+    checkEq('markers: calendar by same name, prefix, or a word in it', [2, 2, 3, 3, 4, null], [
+        BetterCal\Domain\QuickAddMarkers::matchCalendar('work', $cals),
+        BetterCal\Domain\QuickAddMarkers::matchCalendar('w', $cals),
+        BetterCal\Domain\QuickAddMarkers::matchCalendar('friends', $cals),
+        BetterCal\Domain\QuickAddMarkers::matchCalendar('family', $cals),
+        BetterCal\Domain\QuickAddMarkers::matchCalendar('workout', $cals),
+        BetterCal\Domain\QuickAddMarkers::matchCalendar('zzz', $cals)]);
+    $dir = [['id' => 1, 'name' => 'Sam Sample'], ['id' => 2, 'name' => 'Alex Example'], ['id' => 3, 'name' => 'Alex (work)']];
+    checkEq('markers: a person by full name, or the only one with that first name', ['Sam Sample', 'Sam Sample', 'Alex', 'Robin'], [
+        BetterCal\Domain\QuickAddMarkers::matchPerson('sam sample', $dir),
+        BetterCal\Domain\QuickAddMarkers::matchPerson('Sam', $dir),
+        BetterCal\Domain\QuickAddMarkers::matchPerson('Alex', $dir),
+        BetterCal\Domain\QuickAddMarkers::matchPerson('Robin', $dir)]);
+    checkEq('markers: a marked name replaces the with-clause reading of it', ['Sam Sample', 'Robin'],
+        QuickAdd::markedPeople(['Sam'], ['Sam', 'Robin'], $dir));
+    checkEq('markers: restore puts quoted text back from either stand-in', ['Wacky Wednesday party', 'Wacky Wednesday party'], [
+        BetterCal\Domain\QuickAddMarkers::restore(BetterCal\Domain\QuickAddMarkers::extract('"Wacky Wednesday" party')['text'], ['Wacky Wednesday']),
+        BetterCal\Domain\QuickAddMarkers::restore('QUOTED0 party', ['Wacky Wednesday'])]);
+
+    $mkdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $mkdb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, settings_json TEXT)');
+    $mkdb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, position INTEGER, name TEXT, provider TEXT, google_calendar_id TEXT, google_account_id INTEGER, google_access_role TEXT)');
+    $mkdb->run('CREATE TABLE people (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT)');
+    $mkdb->run("INSERT INTO users (id, settings_json) VALUES (1, '{\"nlParseMode\":\"never\"}'), (2, '{}')");
+    $mkdb->run("INSERT INTO calendars (id, user_id, kind, position, name, provider) VALUES (10, 1, 'local', 0, 'Personal', 'ics'), (11, 1, 'local', 1, 'Friends', 'ics'), (12, 1, 'subscribed', 2, 'Feeds', 'ics'), (20, 2, 'local', 0, 'Secret', 'ics')");
+    $mkdb->run("INSERT INTO calendars (id, user_id, kind, position, name, provider, google_calendar_id, google_account_id, google_access_role) VALUES (13, 1, 'subscribed', 3, 'Shared', 'google', 'g1', 1, 'reader')");
+    $mkdb->run("INSERT INTO people (id, user_id, name) VALUES (1, 1, 'Sam Sample'), (2, 2, 'Sam Elsewhere')");
+    $mk = new QuickAdd($mkdb, new LlmGateway([]), (new ReflectionClass(Events::class))->newInstanceWithoutConstructor(), new Settings($mkdb));
+    $d = $mk->run(1, 'Dinner with @Sam on Tuesday 7pm #food /friends', 'America/Los_Angeles', false, null)['draft'];
+    checkEq('markers: run reads the calendar, tag and person', ['Dinner with Sam', 11, true, ['food'], ['Sam Sample']],
+        [$d['title'], $d['calendarId'], $d['calendarFromText'], $d['tags'], $d['personNames']]);
+    $d = $mk->run(1, 'Party /feeds tomorrow', 'UTC', false, null)['draft'];
+    checkEq('markers: a calendar you cannot add to is not chosen, and the word stays', ['Party /feeds', 10, false], [$d['title'], $d['calendarId'], $d['calendarFromText']]);
+    $d = $mk->run(1, 'Lunch /shared /secret tomorrow', 'UTC', false, null)['draft'];
+    checkEq('markers: read-only Google and another account\'s calendars are not matched', [10, false], [$d['calendarId'], $d['calendarFromText']]);
+    $d = $mk->run(1, '"Wacky Wednesday" Friday 8pm', 'America/Los_Angeles', false, null)['draft'];
+    checkEq('markers: a quoted title is never a date', ['Wacky Wednesday', true], [$d['title'], str_contains($d['start'], 'T20:00')]);
+    $d = $mk->run(1, 'Coffee @Robin tomorrow', 'UTC', false, null)['draft'];
+    checkEq('markers: an unknown @name is a new person, asked about in the app', ['Coffee Robin', ['Robin']], [$d['title'], $d['personNames']]);
+    $d = $mk->run(1, 'Plain lunch tomorrow', 'UTC', false, null)['draft'];
+    checkEq('markers: plain text keeps its default calendar and no tags', [10, false, []], [$d['calendarId'], $d['calendarFromText'], $d['tags']]);
 }
 
 // Prompt work is calendar-homogeneous, one call per job, and budget denial is

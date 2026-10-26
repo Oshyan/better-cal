@@ -151,7 +151,24 @@ final class QuickAdd
             }
         }
 
-        $fallback = FallbackParser::parse($text, $tz, $now);
+        // Explicit markers (#86): /calendar, #tag, @person, "literal title".
+        // A /word that names no calendar of yours stays in the text.
+        $markers = QuickAddMarkers::extract($text);
+        $markedCalendarId = null;
+        if ($markers['calendar'] !== null) {
+            $markedCalendarId = QuickAddMarkers::matchCalendar($markers['calendar'], $this->writableCalendars($userId));
+            if ($markedCalendarId === null) {
+                $markers = QuickAddMarkers::extract($text, false);
+            }
+        }
+        $literals = $markers['literals'];
+        $restore = static function (array $d) use ($literals): array {
+            $d['title'] = QuickAddMarkers::restore((string) ($d['title'] ?? ''), $literals);
+            $d['location'] = QuickAddMarkers::restore($d['location'] ?? null, $literals);
+            return $d;
+        };
+
+        $fallback = $restore(FallbackParser::parse($markers['text'], $tz, $now));
         $mode = (string) ($this->settings->forUser($userId)['nlParseMode'] ?? 'smart');
 
         $draft = null;
@@ -161,10 +178,15 @@ final class QuickAdd
             $admission = $admitter->reserveQuickAdd($userId, $tokenId, $now);
             if ($admission['allowed']) {
                 try {
-                    $parsed = $this->llm->parseEvent($text, $now, $tz, repeat: true);
+                    $parsed = $this->llm->parseEvent($markers['llmText'], $now, $tz, repeat: true);
                     if ($parsed !== null) {
-                        $draft = self::mergeLlm($parsed, $fallback, $now->setTimezone(Time::zone($tz)))
+                        $draft = self::mergeLlm($restore($parsed), $fallback, $now->setTimezone(Time::zone($tz)))
                             + ['confidence' => 0.9, 'source' => 'llm'];
+                        // A quoted title is the owner's own words: the model
+                        // may not drop or reword it.
+                        if (!QuickAddMarkers::keepsLiterals((string) $draft['title'], $literals)) {
+                            $draft['title'] = $fallback['title'];
+                        }
                     }
                 } catch (\Throwable $e) {
                     error_log('quickadd llm failure: ' . $e->getMessage());
@@ -190,7 +212,13 @@ final class QuickAdd
             $draft['modelLimit'] = $modelLimit;
         }
 
-        $draft['calendarId'] = $this->resolveCalendarId($userId, $calendarId);
+        // The text's own calendar wins over the one the caller suggests.
+        $draft['calendarId'] = $markedCalendarId ?? $this->resolveCalendarId($userId, $calendarId);
+        $draft['calendarFromText'] = $markedCalendarId !== null;
+        $draft['tags'] = $markers['tags'];
+        if ($markers['people'] !== []) {
+            $draft['personNames'] = self::markedPeople($markers['people'], $draft['personNames'] ?? [], $this->directory($userId));
+        }
 
         $event = null;
         if ($commit) {
@@ -204,7 +232,7 @@ final class QuickAdd
                 'location' => $draft['location'],
                 'personNames' => $draft['personNames'],
                 'rrule' => $draft['rrule'] ?? null,
-            ] + (!empty($draft['reminders']) ? [
+            ] + ($draft['tags'] !== [] ? ['tagNames' => $draft['tags']] : []) + (!empty($draft['reminders']) ? [
                 // "alert 30 minutes" (#33): this event's own reminder.
                 'reminders' => array_map(static fn($m): array => ['minutes' => (int) $m], $draft['reminders']),
             ] : [])));
@@ -336,6 +364,64 @@ final class QuickAdd
         }
         $complete = (bool) ($fallback['complete'] ?? false);
         return !($complete && (float) ($fallback['confidence'] ?? 0.0) >= self::FALLBACK_CONFIDENCE);
+    }
+
+    /**
+     * People for a draft with `@name` markers: each marked name as the
+     * directory knows it ("@Sam" -> "Sam Sample" when he is the only Sam),
+     * then the names the parse found, minus the ones a marker already
+     * covers (the with-clause reads the same "Sam").
+     *
+     * @param list<string> $typed
+     * @param list<string> $parsed
+     * @param list<array{id:int,name:string}> $directory
+     * @return list<string>
+     */
+    public static function markedPeople(array $typed, array $parsed, array $directory): array
+    {
+        $out = [];
+        $covered = [];
+        foreach ($typed as $name) {
+            $canonical = QuickAddMarkers::matchPerson($name, $directory);
+            if (!in_array(mb_strtolower($canonical), $covered, true)) {
+                $out[] = $canonical;
+            }
+            $covered[] = mb_strtolower($canonical);
+            $covered[] = mb_strtolower($name);
+        }
+        foreach ($parsed as $name) {
+            if (!in_array(mb_strtolower((string) $name), $covered, true)) {
+                $out[] = (string) $name;
+                $covered[] = mb_strtolower((string) $name);
+            }
+        }
+        return $out;
+    }
+
+    /** @return list<array{id:int,name:string}> calendars events can be added to, in display order */
+    private function writableCalendars(int $userId): array
+    {
+        $rows = $this->db->all(
+            'SELECT id, name, kind, provider, google_calendar_id, google_account_id, google_access_role
+               FROM calendars WHERE user_id = ? ORDER BY position, id',
+            [$userId]
+        );
+        $out = [];
+        foreach ($rows as $c) {
+            if ($c['kind'] === 'local' || GoogleWriter::writable($c)) {
+                $out[] = ['id' => (int) $c['id'], 'name' => (string) $c['name']];
+            }
+        }
+        return $out;
+    }
+
+    /** @return list<array{id:int,name:string}> */
+    private function directory(int $userId): array
+    {
+        return array_map(
+            static fn(array $p): array => ['id' => (int) $p['id'], 'name' => (string) $p['name']],
+            $this->db->all('SELECT id, name FROM people WHERE user_id = ?', [$userId])
+        );
     }
 
     private function resolveCalendarId(int $userId, ?int $calendarId): ?int

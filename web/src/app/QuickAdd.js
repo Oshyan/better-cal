@@ -333,6 +333,8 @@ export function QuickAdd() {
       locationLng: location && f.locationLng != null ? f.locationLng : null,
       ...(location && f.locationLat != null && f.locationProvider ? { locationProvider: f.locationProvider } : {}),
       ...(parsed.length ? { personIds: parsed.map((n) => knownPerson(n).id) } : {}),
+      // "#food" in the text (#86).
+      ...(d && Array.isArray(d.tags) && d.tags.length ? { tagNames: d.tags } : {}),
     });
     setBusy(false);
   };
@@ -381,6 +383,7 @@ export function QuickAdd() {
           personNames: (draft && draft.personNames) || [],
           rrule: effectiveRrule(form) || '',
           ...(draft && Array.isArray(draft.reminders) && draft.reminders.length ? { reminders: draft.reminders } : {}),
+          ...(draft && Array.isArray(draft.tags) && draft.tags.length ? { tags: draft.tags } : {}),
         },
         nlText: touchedRef.current.size === 0 ? text : '',
       },
@@ -490,6 +493,7 @@ export function QuickAdd() {
         ${spanLabel && html`<span class="bc-qchip" title="Ends on a later day">${spanLabel}</span>`}
         ${draft && Array.isArray(draft.reminders) && draft.reminders.length > 0 && html`<span class="bc-qchip" title="Alert"><${Icon} name="bell" size=${12} />${draft.reminders.map(fmtOffsetMinutes).join(', ')}</span>`}
         ${draft && draft.location && html`<span class="bc-qchip">@ ${draft.location}</span>`}
+        ${draft && Array.isArray(draft.tags) && draft.tags.map((t) => html`<span class="bc-qchip" title="Tag">#${t}</span>`)}
         ${draft && draft.personNames && draft.personNames.map((n) => html`<span
           key=${n}
           class=${'bc-qchip' + (knownPerson(n) ? '' : ' bc-qchip-newperson')}

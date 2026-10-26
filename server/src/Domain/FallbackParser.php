@@ -110,6 +110,12 @@ final class FallbackParser
             $dateFound = true;
             $rangeEnd = $startRangeEnd ?? $rangeEnd;
         }
+        // "Party on Saturday": the "on" goes with the date. A cut leaves a
+        // gap (two spaces, or the end), so only an "on" right before the
+        // date's old place goes ("Hold on Friday" keeps nothing else).
+        if ($dateFound) {
+            $work = preg_replace('/\bon(?:\s{2,}|\s*$)/i', ' ', $work) ?? $work;
+        }
         [$work, $startTime, $endTime, $timeFound, $timeZone] = self::extractTime($work);
         if ($stretch !== null) {
             [$date, $startTime] = [$stretch[0], [(int) $stretch[0]->format('G'), (int) $stretch[0]->format('i')]];

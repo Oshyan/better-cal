@@ -38,6 +38,7 @@ $goldenWhens = [
     'July 31 8pm', 'Aug 3-7', 'Aug 3 to Aug 7', '2026-08-15', 'tomorrow at 9am', 'Monday 9:30am', 'at 19:00',
     '7-9pm', 'tonight', 'this evening', 'next week', 'in the morning', 'Sunday', 'Saturday 10am', 'Sat 10am',
     'Dec 20', 'the day after tomorrow', 'a week from Friday', 'every Tuesday', 'weekly', 'tomorrow for 2 hours',
+    'on Friday', 'on Saturday at 8pm', 'on Jan 5',
 ];
 // Day ranges and stretches, on their own and against a few titles.
 $goldenExtra = [

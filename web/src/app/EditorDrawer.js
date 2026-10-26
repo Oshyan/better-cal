@@ -259,10 +259,20 @@ export function EditorDrawer() {
       nf.rrule = d.rrule ? parseRrule(d.rrule, null, fromInputValue(nf.start)) : base.rrule;
       // An alert the text names ("alert 30 minutes"); otherwise the editor's own.
       nf.reminders = Array.isArray(d.reminders) && d.reminders.length ? d.reminders.map((m) => Number(m) || 0) : base.reminders;
+      // "#food" adds to the tags the editor opened with, and "/friends" picks
+      // the calendar (#86); text without them leaves both as they are. From
+      // the opening tags, not the current ones, so typing "#f", "#fo",
+      // "#food" ends with one tag.
+      if (Array.isArray(d.tags) && d.tags.length) {
+        const baseTags = String(base.tags || '').split(',').map((t) => t.trim()).filter(Boolean);
+        const addTags = d.tags.filter((t) => !baseTags.some((b) => b.toLowerCase() === t.toLowerCase()));
+        nf.tags = baseTags.concat(addTags).join(', ');
+      }
+      if (d.calendarFromText && d.calendarId) nf.calendarId = d.calendarId;
       // People the editor started with stay; the text adds to them.
       const named = toPeopleChips(d.personNames || []);
       nf.people = [...base.people, ...named.filter((p) => !base.people.some((b) => b.name.toLowerCase() === p.name.toLowerCase()))];
-      for (const k of ['title', 'start', 'end', 'allDay', 'location']) if (nf[k] !== f[k]) touched.push(k);
+      for (const k of ['title', 'start', 'end', 'allDay', 'location', 'tags', 'calendarId']) if (nf[k] !== f[k]) touched.push(k);
       if (JSON.stringify(nf.people) !== JSON.stringify(f.people)) touched.push('people');
       if (JSON.stringify(nf.rrule) !== JSON.stringify(f.rrule)) touched.push('rrule');
       return nf;
@@ -417,7 +427,7 @@ export function EditorDrawer() {
       locationProvider: occ ? null : (draft.locationProvider || null),
       url: occ ? (occ.url || '') : '',
       description: occ ? (occ.description || '') : (draft.description || ''),
-      tags: occ && occ.tags ? occ.tags.join(', ') : '',
+      tags: occ ? (occ.tags ? occ.tags.join(', ') : '') : (Array.isArray(draft.tags) ? draft.tags.join(', ') : ''),
       people: toPeopleChips(occ ? (occ.people || []) : (draft.personNames || [])),
       rrule: parseRrule(occ
         ? (occ.recurring ? (occ.rrule || editor.rrule || '') : '')
@@ -830,7 +840,7 @@ export function EditorDrawer() {
 
       <div class="bc-ed-grid">
         ${lab('Calendar')}
-        <div class="bc-ed-ctl">
+        <div class=${'bc-ed-ctl' + flash('calendarId')}>
           <${CalendarSelect}
             calendars=${state.calendars.filter((c) => c.editable)}
             value=${form.calendarId}
@@ -927,7 +937,7 @@ export function EditorDrawer() {
           </div>`}
         </div>
         ${lab('Tags')}
-        <div class="bc-ed-ctl">
+        <div class=${'bc-ed-ctl' + flash('tags')}>
           <input placeholder="Comma separated" aria-label="Tags, comma separated" value=${form.tags} onInput=${(e) => upd({ tags: e.target.value })} />
         </div>
         ${lab(mineCal ? 'For me' : 'Trip')}

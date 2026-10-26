@@ -32,6 +32,7 @@ import { Toolbar } from './Toolbar.js';
 import { BottomBar } from './BottomBar.js';
 import { Sidebar } from './Sidebar.js';
 import { QuickAdd } from './QuickAdd.js';
+import { QuickAddWindow } from './QuickAddWindow.js';
 import { Welcome } from './Welcome.js';
 import { EventPopover } from './EventPopover.js';
 import { GroupPopover } from './GroupPopover.js';
@@ -737,6 +738,7 @@ export function App() {
   if (!s.authed) {
     return html`<${Login} />`;
   }
+  if (state.quickAddWindow) return html`<${QuickAddWindow} />`;
   if (s.route === 'organize') {
     return html`<div class="bc-app"><${WorkerBanner} /><${OrganizePage} /><${CreateDrawer} /><${ShortcutsSheet} /><${MoveDialog} /><${CommandPalette} /><${AppBanners} /><${Toasts} /></div>`;
   }

@@ -373,7 +373,14 @@ export async function createEvent(fields) {
     const repeats = fields.rrule
       ? ', r' + repeatSentence(fields.rrule, { start: occ && occ.start ? dateOfDayKey(occDayKey(occ)) : null, ends: false }).slice(1)
       : '';
-    if (cal && !cal.visible) {
+    if (occ) {
+      const message = cal && !cal.visible ? `Created in ${cal.name}, which is hidden${repeats}`
+        : cal && cal.provider === 'google' ? 'Event created at Google' + repeats : 'Event created' + repeats;
+      set({ lastCreated: { occ, message } });
+    }
+    if (state.quickAddWindow && occ) {
+      // Quick add's own window shows this itself, then closes (QuickAddWindow.js).
+    } else if (cal && !cal.visible) {
       toast(`Created in ${cal.name}, which is hidden${repeats}`, {
         actionLabel: 'Show it',
         onAction: () => toggleCalendarVisible(cal),
@@ -384,7 +391,7 @@ export async function createEvent(fields) {
     } else {
       toast('Event created' + repeats, { undoable: true });
     }
-    refreshWindow();
+    if (!state.quickAddWindow) refreshWindow(); // no calendar behind quick add's own window
     return occ;
   } catch (e) {
     toast('Create failed: ' + e.message, { error: true });

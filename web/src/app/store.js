@@ -141,6 +141,8 @@ export const state = {
   settingsFocus: null, // a part of the section to scroll to on arrival ('cron', from the stopped-worker banner)
 
   quickAddOpen: false,
+  quickAddWindow: false, // quick add on its own, the extension's key (/new#window, QuickAddWindow.js)
+  lastCreated: null, // {occ, message} for the newest event this page created (createEvent)
   paletteOpen: false, // command palette (Cmd/Ctrl-K)
   dropChoice: null,  // {x, y, title, options: [{label, value}], cb} — chip at a drop point
   pluginCard: null,  // {occ, anchorRect} — plugin band info card

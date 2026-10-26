@@ -8,6 +8,7 @@ import { loadSession, startSession } from './session.js';
 import { armQuietReload } from './drafts.js';
 import { restoreResume, recordStart } from './resume.js';
 import { takeHandoff, runHandoff } from './handoff.js';
+import { QA_WINDOW_KEY } from './QuickAddWindow.js';
 import { markBooted, reportStalledStart } from './bootlog.js';
 import { startHoverCards } from '../ui/HoverCard.js';
 import './install.js'; // keeps the browser's one-time install prompt for the welcome
@@ -20,6 +21,16 @@ async function boot() {
   // Whatever a deep link or a share handed over, collected before the first
   // request (the address is already a bare "/", see handoff.js).
   const handoff = await takeHandoff();
+  // The extension's new-event key opens quick add on its own (/new#window):
+  // known before the first render, so no calendar starts loading behind it.
+  // The window keeps that mode across a reload (an update applying while it
+  // sits in the background), in its own sessionStorage.
+  let qaWindow = !!(handoff && handoff.path === '/new' && handoff.hash === '#window');
+  try {
+    if (qaWindow) sessionStorage.setItem(QA_WINDOW_KEY, '1');
+    else qaWindow = !handoff && sessionStorage.getItem(QA_WINDOW_KEY) === '1';
+  } catch { /* storage unavailable: the mode lasts until a reload */ }
+  if (qaWindow) set({ quickAddWindow: true });
   try {
     // /me first and alone: it establishes the session, the CSRF token every
     // later write needs, and the settings that decide which view and window

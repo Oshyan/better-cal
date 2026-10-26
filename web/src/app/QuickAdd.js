@@ -178,7 +178,8 @@ export function QuickAdd() {
 
   // A press outside the card dismisses it and does nothing else (ui/outside.js).
   useEffect(() => {
-    if (!open) return undefined;
+    // In a window of its own (QuickAddWindow.js) the card is all there is.
+    if (!open || state.quickAddWindow) return undefined;
     return onOutsidePress(insideAny(cardRef), () => { clearQuickAddText(); set({ quickAddOpen: false }); });
   }, [open]);
 

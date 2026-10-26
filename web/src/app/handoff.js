@@ -4,7 +4,9 @@
 //   /import                      -> import drawer (file arrives via launchQueue)
 //   /review                      -> the Review queue (held-change notification target)
 //   /new                         -> quick add, open and empty (the app icon's
-//                                   "New event" shortcut and the extension's key)
+//                                   "New event" shortcut, extensions before 2.1.2)
+//   /new#window                  -> quick add on its own, no calendar (the
+//                                   extension's key since 2.1.2; QuickAddWindow.js)
 //   /google?connected=|error=    -> Settings, Connections (OAuth callback landing)
 //   /settings[/<tab>]            -> Settings, on that tab (general, notifications,
 //                                   location, connections, account, about, system)

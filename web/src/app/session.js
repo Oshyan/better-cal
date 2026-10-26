@@ -4,7 +4,7 @@
 // path loaded only the calendars, so people, saved views, plugins, the review
 // count and the device's time zone waited for the next full page load.
 
-import { state, toast } from './store.js';
+import { state, set, toast } from './store.js';
 import { saveSetting } from './actions.js';
 import { loadCalendars, loadSavedViews, loadConfig, loadPeople, loadPlugins, loadReviewCount, loadSystemHealth, loadUpdates } from './api.js';
 import { announceSystemHealth } from './system.js';
@@ -111,6 +111,14 @@ function wirePage() {
 // session's follow-ups. handoff: a deep link or share still owed.
 export function startSession(handoff) {
   wirePage();
+  // Quick add in a window of its own: just the card. No notices and no
+  // event link. Back from a reload, this window's own draft (its
+  // sessionStorage) comes back; otherwise quick add opens empty.
+  if (state.quickAddWindow) {
+    if (handoff) runHandoff(handoff).catch(() => { /* best-effort */ });
+    else if (!restoreDraftsAfterBoot()) set({ quickAddOpen: true });
+    return;
+  }
   // Notification deep link (/?event=instanceId): open that event's detail.
   handleEventLink().catch(() => { /* best-effort */ });
   if (handoff) runHandoff(handoff).catch(() => { /* best-effort */ });

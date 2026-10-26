@@ -9,7 +9,7 @@ import { saveSetting } from './actions.js';
 import { loadCalendars, loadSavedViews, loadConfig, loadPeople, loadPlugins, loadReviewCount, loadSystemHealth, loadUpdates } from './api.js';
 import { announceSystemHealth } from './system.js';
 import { installHoverPrefetch } from './prefetch.js';
-import { restoreDraftsAfterBoot, installActivityTracking } from './drafts.js';
+import { restoreDraftsAfterBoot } from './drafts.js';
 import { installResumeSaving } from './resume.js';
 import { preloadRichText } from './RichText.js';
 import { loadLeaflet } from './eventparts.js';
@@ -80,7 +80,6 @@ function wirePage() {
   document.addEventListener('visibilitychange', () => {
     if (state.authed && document.visibilityState === 'visible' && state.settings.hereTz !== localTz()) saveSetting('hereTz', localTz()).catch(() => {});
   });
-  installActivityTracking();
   // Prefetch on intent (hover/focus on a chip), and warm the two lazily
   // loaded scripts at idle so the FIRST editor and the FIRST interactive
   // map are as fast as later ones. Skipped when the browser says the user

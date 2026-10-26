@@ -147,44 +147,25 @@ export function restoreDraftsAfterBoot() {
   return false;
 }
 
-// --- quiet reload -----------------------------------------------------------
+// --- reloading into a new version -----------------------------------------
 
-// A new version is active behind this page. Apply it while the app is out of
-// sight (hidden), or after it has sat untouched for QUIET_MS with no gesture
-// or modal flow mid-way. Drafts survive, and so does where you were
-// (resume.js), so coming back finds the same place. A shorter idle wait used
-// to reload under someone who was only reading.
-const QUIET_MS = 10 * 60000;
-let lastInput = Date.now();
-let pointerDown = false;
+// A new version is active behind this page. The banner (updates.js) offers
+// the reload; one left alone applies when the app goes out of sight, so
+// coming back finds the new version. Drafts survive a reload, and so does
+// where you were (resume.js). An idle-time reload used to land under people
+// who were only reading.
 let armed = false;
 
-export function noteInput() {
-  lastInput = Date.now();
+export function reloadForUpdate() {
+  saveResume();
+  try { localStorage.setItem(UPDATE_FLAG, '1'); } catch { /* the start log just says reload */ }
+  location.reload();
 }
 
-export function armQuietReload() {
+export function armBackgroundReload() {
   if (armed) return;
   armed = true;
-  const tryReload = () => {
-    if (!armed) return;
-    const quiet = document.visibilityState === 'hidden'
-      || (Date.now() - lastInput > QUIET_MS && !pointerDown && !state.reschedule && !state.dropChoice);
-    if (quiet) {
-      armed = false;
-      saveResume();
-      try { localStorage.setItem(UPDATE_FLAG, '1'); } catch { /* the start log just says reload */ }
-      location.reload();
-    }
-  };
-  document.addEventListener('visibilitychange', tryReload);
-  setInterval(tryReload, 5000);
-}
-
-export function installActivityTracking() {
-  const bump = () => noteInput();
-  for (const ev of ['pointerdown', 'keydown', 'wheel', 'touchstart']) document.addEventListener(ev, bump, { passive: true, capture: true });
-  document.addEventListener('pointerdown', () => { pointerDown = true; }, { passive: true, capture: true });
-  document.addEventListener('pointerup', () => { pointerDown = false; }, { passive: true, capture: true });
-  document.addEventListener('pointercancel', () => { pointerDown = false; }, { passive: true, capture: true });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') reloadForUpdate();
+  });
 }

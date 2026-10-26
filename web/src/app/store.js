@@ -55,6 +55,7 @@ export const state = {
   reviewCount: 0,     // everything awaiting a decision, including paused calendar updates (sidebar badge)
   systemHealth: null, // GET /system/health: {rows, emailAlerts}; Settings panel, boot notices, device banner
   updates: null,      // checked release metadata and this user's banner decision
+  appUpdateReady: false, // a new version is active behind this page: the reload banner (updates.js)
   availSeq: 0,        // visible people's availability spans refetch trigger        // bumped on span/visibility changes to refetch availSpans
 
   // User settings (contract defaults until /me or /settings answers).

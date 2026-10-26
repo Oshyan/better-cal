@@ -44,7 +44,7 @@ import { MoveDialog } from './MoveToGoogle.js';
 import { CommandPalette } from './CommandPalette.js';
 import { Toasts } from './Toasts.js';
 import { SystemBanner, WorkerBanner } from './system.js';
-import { UpdateBanner, OfflineBanner } from './updates.js';
+import { UpdateBanner, OfflineBanner, AppReloadBanner } from './updates.js';
 import { Login } from './Login.js';
 import { OutfeedsPage } from './OutfeedsPage.js';
 import { FiltersPage } from './FiltersPage.js';
@@ -65,7 +65,7 @@ import { primeKeyboard } from '../lib/ioskeyboard.js';
 const MONTH_ROWS = { month: 6, weeks3: 3, weeks2: 2 };
 
 function AppBanners() {
-  return html`<${OfflineBanner} /><${UpdateBanner} /><${SystemBanner} />`;
+  return html`<${AppReloadBanner} /><${OfflineBanner} /><${UpdateBanner} /><${SystemBanner} />`;
 }
 // Rows the month view will hold on screen before it starts squashing row
 // height. Six is a month's worst case, not its usual one, so a short window

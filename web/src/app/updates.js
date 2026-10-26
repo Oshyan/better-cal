@@ -1,6 +1,7 @@
 import { html, useState } from '../../vendor/index.js';
-import { useStore, toast } from './store.js';
+import { useStore, toast, set } from './store.js';
 import { checkUpdates, dismissUpdate } from './api.js';
+import { reloadForUpdate } from './drafts.js';
 
 export function UpdateBanner() {
   const update = useStore((s) => s.updates);
@@ -24,6 +25,18 @@ export function UpdateBanner() {
     <span>${text}</span>
     ${update.releaseUrl && html`<a class="bc-btn" href=${update.releaseUrl} target="_blank" rel="noopener">View release</a>`}
     ${update.dismissible && html`<button type="button" class="bc-icon-btn" disabled=${busy} aria-label="Dismiss this release" title="Dismiss this release" onClick=${dismiss}>×</button>`}
+  </div>`;
+}
+
+// This page runs an older version than the one now installed on this device
+// (main.js). Not the release banner above, which is about the server.
+export function AppReloadBanner() {
+  const ready = useStore((s) => s.appUpdateReady);
+  if (!ready) return null;
+  return html`<div class="bc-sysbanner is-info" role="status">
+    <span>Better-Cal was updated. Reload to use the new version.</span>
+    <button type="button" class="bc-btn bc-btn-primary" onClick=${reloadForUpdate}>Reload</button>
+    <button type="button" class="bc-icon-btn" aria-label="Not now" title="Not now" onClick=${() => set({ appUpdateReady: false })}>×</button>
   </div>`;
 }
 

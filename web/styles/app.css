@@ -1404,6 +1404,11 @@ body.bc-dragging * { cursor: grabbing !important; }
   color: var(--fg);
 }
 .bc-sysbanner > span { flex: 1; min-width: 200px; }
+/* News, not trouble: the reload banner for a new version on this device. */
+.bc-sysbanner.is-info {
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg));
+  border-bottom-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+}
 /* The stopped-worker banner sits at the top, under the toolbar: at the bottom
    of a tall window it went unseen. */
 .bc-sysbanner-top { font-size: 13.5px; font-weight: 500; }

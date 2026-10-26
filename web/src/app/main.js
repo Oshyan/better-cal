@@ -5,7 +5,7 @@ import { App } from './App.js';
 import { set, toast } from './store.js';
 import { fetchMe } from './api.js';
 import { loadSession, startSession } from './session.js';
-import { armQuietReload } from './drafts.js';
+import { armBackgroundReload } from './drafts.js';
 import { restoreResume, recordStart } from './resume.js';
 import { takeHandoff, runHandoff } from './handoff.js';
 import { QA_WINDOW_KEY } from './QuickAddWindow.js';
@@ -115,28 +115,29 @@ if (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches
 
 if ('serviceWorker' in navigator) {
   // A new version installed and activated behind this page (its cache is
-  // the new one; this page still runs what it loaded). Apply it at the next
-  // quiet moment. Drafts are durable, so nothing typed is lost; the reload
-  // waits for the tab to be hidden or for input to pause (drafts.js).
+  // the new one; this page still runs what it loaded). Say so with a Reload
+  // banner (updates.js), and apply it anyway when the app goes out of sight
+  // (drafts.js). A page that loaded without a worker (the first visit) gets
+  // one notice for that first install, which is not an update.
+  let firstInstall = !navigator.serviceWorker.controller;
   navigator.serviceWorker.addEventListener('message', (e) => {
-    if (e.data && e.data.type === 'sw-updated') armQuietReload();
+    if (!e.data || e.data.type !== 'sw-updated') return;
+    if (firstInstall) { firstInstall = false; return; }
+    set({ appUpdateReady: true });
+    armBackgroundReload();
   });
   window.addEventListener('load', () => {
     // /sw.js only: the app fills in its version as it serves it. The same
     // file under /assets/ is the raw template, which would run without one.
     navigator.serviceWorker.register('/sw.js')
       .then((reg) => {
-        // The browser only looks for a new version when a page loads. An
-        // installed app brought back from the background loads nothing, so
-        // it could run an old version for hours after a deploy. Look when the
-        // app comes back into view (at most once a minute) and every 30
-        // minutes while it stays open; a new version reports 'sw-updated'.
-        let lastCheck = Date.now();
-        const check = () => {
-          if (Date.now() - lastCheck < 60000) return;
-          lastCheck = Date.now();
-          reg.update().catch(() => { /* offline: try again next time */ });
-        };
+        // Look for a new version as soon as the app has loaded, whenever it
+        // comes back into view (an installed app brought back from the
+        // background loads nothing, so the browser wouldn't look), and every
+        // 30 minutes while it stays open. Each look asks whether sw.js
+        // changed; a new version reports 'sw-updated'.
+        const check = () => reg.update().catch(() => { /* offline: try again next time */ });
+        check();
         document.addEventListener('visibilitychange', () => {
           if (document.visibilityState === 'visible') check();
         });

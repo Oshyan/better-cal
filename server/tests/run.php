@@ -563,6 +563,23 @@ checkEq('imip organizer name', 'Alice', $imip['events'][0]['invite']['organizer'
 checkEq('imip attendee partstat', 'NEEDS-ACTION', $imip['events'][0]['invite']['attendees'][0]['partstat']);
 checkEq('imip sequence', 2, $imip['events'][0]['invite']['sequence']);
 checkEq('imip garbage -> null', null, MailIngest::parseImip('not an ics'));
+
+// One occurrence, as Google, Outlook and Apple send it (#155): each names
+// the same day of the series, so a change finds the same exception.
+$occVtz = static fn(string $id): string => "BEGIN:VTIMEZONE\r\nTZID:$id\r\nBEGIN:STANDARD\r\nDTSTART:16011104T020000\r\nRRULE:FREQ=YEARLY;BYDAY=1SU;BYMONTH=11\r\nTZOFFSETFROM:-0700\r\nTZOFFSETTO:-0800\r\nEND:STANDARD\r\nBEGIN:DAYLIGHT\r\nDTSTART:16010311T020000\r\nRRULE:FREQ=YEARLY;BYDAY=2SU;BYMONTH=3\r\nTZOFFSETFROM:-0800\r\nTZOFFSETTO:-0700\r\nEND:DAYLIGHT\r\nEND:VTIMEZONE\r\n";
+$occCal = static fn(string $tz, string $props): string => "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Sample//EN\r\nMETHOD:REQUEST\r\n{$tz}BEGIN:VEVENT\r\nDTSTAMP:20261101T000000Z\r\nORGANIZER;CN=Alex Example:mailto:alex@example.test\r\nUID:occ-shape\r\nSUMMARY:Weekly sync\r\n{$props}END:VEVENT\r\nEND:VCALENDAR\r\n";
+$occShapes = [
+    'Google' => $occCal($occVtz('America/Los_Angeles'), "DTSTART;TZID=America/Los_Angeles:20261117T120000\r\nDTEND;TZID=America/Los_Angeles:20261117T130000\r\nRECURRENCE-ID;TZID=America/Los_Angeles:20261116T100000\r\nSEQUENCE:1\r\n"),
+    'Outlook (Windows zone name)' => $occCal($occVtz('Pacific Standard Time'), "DTSTART;TZID=\"Pacific Standard Time\":20261117T120000\r\nDTEND;TZID=\"Pacific Standard Time\":20261117T130000\r\nRECURRENCE-ID;TZID=\"Pacific Standard Time\":20261116T100000\r\nSEQUENCE:0\r\n"),
+    'Apple (UTC)' => $occCal('', "DTSTART:20261117T200000Z\r\nDTEND:20261117T210000Z\r\nRECURRENCE-ID:20261116T180000Z\r\nSEQUENCE:2\r\n"),
+];
+foreach ($occShapes as $shape => $ics) {
+    $occParsed = MailIngest::parseImip($ics)['events'][0] ?? [];
+    checkEq("imip one occurrence ($shape): the day it changes and its new time", ['2026-11-16 18:00:00', '2026-11-17 20:00:00'],
+        [$occParsed['recurrence_instance_utc'] ?? null, $occParsed['start_utc'] ?? null]);
+}
+$occDay = MailIngest::parseImip($occCal('', "DTSTART;VALUE=DATE:20261117\r\nDTEND;VALUE=DATE:20261118\r\nRECURRENCE-ID;VALUE=DATE:20261116\r\n"))['events'][0] ?? [];
+checkEq('imip one occurrence (all day): the day, as a mail-made all-day series keys it', ['2026-11-16 00:00:00', 1], [$occDay['recurrence_instance_utc'] ?? null, (int) ($occDay['all_day'] ?? 0)]);
 }
 
 // Plugin system (docs/plugins/prd-v1.md): pure pieces.
@@ -1596,8 +1613,8 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
     $adb->run('UPDATE users SET settings_json = ? WHERE id = 1', [$priorSettings]);
 
     // One occurrence (RECURRENCE-ID) never changes the whole series (review of
-    // 0.9.87): a cancellation skips that occurrence once accepted; a move is
-    // shown for the owner to make by hand.
+    // 0.9.87): a cancellation skips that occurrence once accepted, and a move
+    // becomes that occurrence's own exception (#155).
     $weekly = ['title' => 'Weekly sync', 'start' => '2026-11-02T18:00:00+00:00', 'end' => '2026-11-02T19:00:00+00:00', 'rrule' => 'FREQ=WEEKLY'] + $fieldsA;
     $seriesId = (int) $queueA->accept(1, $queueA->holdNewInvitation(1, 'series-uid', $weekly, $cancelInvite, 'alice@example.test'))['eventId'];
     $occurrenceEv = ['uid' => 'series-uid', 'title' => 'Weekly sync', 'start_utc' => '2026-11-09 18:00:00', 'end_utc' => '2026-11-09 19:00:00',
@@ -1624,14 +1641,48 @@ $rdb->run('CREATE TABLE mail_admissions (id INTEGER PRIMARY KEY, user_id INTEGER
         'location' => 'Library', 'invite' => ['method' => 'REQUEST', 'sequence' => 3] + $cancelInvite] + $occurrenceEv;
     $occMove = $applyA->invoke($mailA, 1, 'REQUEST', $moved, 'UTC', ['messageId' => 'occ2@example.test'] + $occMsg);
     $occMoveItem = (int) $adb->scalar("SELECT id FROM review_items WHERE kind = 'invite_change' AND event_id = ? AND status = 'open' ORDER BY id DESC LIMIT 1", [$seriesId]);
-    $manual = null;
-    try { $queueA->accept(1, $occMoveItem); } catch (HttpError $e) { $manual = $e->errorCode; }
-    checkEq('one occurrence: a moved occurrence is shown, not applied to the series', ['held', 'review_manual', '2026-11-02 18:00:00', 'Cafe'], [
-        $occMove[0], $manual, $adb->scalar('SELECT start_utc FROM events WHERE id = ?', [$seriesId]), $adb->scalar('SELECT location FROM events WHERE id = ?', [$seriesId]),
-    ]);
     checkEq('one occurrence: the change lists what moved for that day', ['Starts', 'Ends', 'Location'],
         array_column(BetterCal\Domain\ReviewQueue::occurrenceDiff($adb->one('SELECT * FROM events WHERE id = ?', [$seriesId]), '2026-11-16 18:00:00', 'REQUEST',
             ['title' => 'Weekly sync', 'start' => '2026-11-17T20:00:00+00:00', 'end' => '2026-11-17T21:00:00+00:00', 'allDay' => false, 'location' => 'Library', 'description' => null]), 'label'));
+    check('one occurrence: the held move says accepting changes just that one',
+        str_contains((string) $adb->scalar('SELECT summary FROM review_items WHERE id = ?', [$occMoveItem]), 'Accepting changes just that one'));
+    if (class_exists(\Sabre\VObject\Reader::class)) {
+        $queueA->accept(1, $occMoveItem);
+        $ov = $adb->one('SELECT * FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc = ? AND deleted_at IS NULL', [$seriesId, '2026-11-16 18:00:00']);
+        checkEq('one occurrence: accepting a move makes that occurrence its own exception, the series unchanged',
+            ['held', '2026-11-17 20:00:00', 'Library', 3, '2026-11-02 18:00:00', 'Cafe', 'FREQ=WEEKLY'], [
+            $occMove[0], $ov['start_utc'] ?? null, $ov['location'] ?? null, (int) (json_decode((string) ($ov['invite_json'] ?? 'null'), true)['sequence'] ?? -1),
+            $adb->scalar('SELECT start_utc FROM events WHERE id = ?', [$seriesId]), $adb->scalar('SELECT location FROM events WHERE id = ?', [$seriesId]),
+            $adb->scalar('SELECT rrule FROM events WHERE id = ?', [$seriesId]),
+        ]);
+        // Its own sequence: an older message about that day is a replay; a
+        // newer one is compared with the exception, not the series.
+        $replay = $applyA->invoke($mailA, 1, 'REQUEST', ['location' => 'Old room', 'invite' => ['method' => 'REQUEST', 'sequence' => 2] + $cancelInvite] + $moved, 'UTC', ['messageId' => 'occ3@example.test'] + $occMsg);
+        checkEq('one occurrence: an older message about a changed occurrence is refused as stale', ['refused', 'stale sequence'], [$replay[0], $replay[2] ?? null]);
+        $again = $applyA->invoke($mailA, 1, 'REQUEST', ['location' => 'Studio', 'invite' => ['method' => 'REQUEST', 'sequence' => 4] + $cancelInvite] + $moved, 'UTC', ['messageId' => 'occ4@example.test'] + $occMsg);
+        $againItem = (int) $adb->scalar("SELECT id FROM review_items WHERE kind = 'invite_change' AND event_id = ? AND status = 'open' ORDER BY id DESC LIMIT 1", [$seriesId]);
+        checkEq('one occurrence: a later change to the same day lists only what differs from its exception', ['held', ['Location']],
+            [$again[0], array_column(json_decode((string) $adb->scalar('SELECT payload_json FROM review_items WHERE id = ?', [$againItem]), true)['diff'], 'label')]);
+        $queueA->accept(1, $againItem);
+        checkEq('one occurrence: accepting it updates the same exception', ['Studio', 1], [
+            $adb->scalar('SELECT location FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$seriesId]),
+            (int) $adb->scalar('SELECT COUNT(*) FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$seriesId]),
+        ]);
+        // Another day starts from its own sequence (0), whatever the series' is.
+        $other = $applyA->invoke($mailA, 1, 'REQUEST', ['recurrence_instance_utc' => '2026-11-23 18:00:00', 'start_utc' => '2026-11-23 19:00:00', 'end_utc' => '2026-11-23 20:00:00',
+            'location' => 'Cafe', 'invite' => ['method' => 'REQUEST', 'sequence' => 0] + $cancelInvite] + $occurrenceEv, 'UTC', ['messageId' => 'occ5@example.test'] + $occMsg);
+        checkEq('one occurrence: another day is checked against its own sequence, not the series', 'held', $other[0]);
+        // A change to the whole series keeps the day it changed earlier.
+        $seriesChange = $queueA->holdInviteChange(1, $adb->one('SELECT * FROM events WHERE id = ?', [$seriesId]), 'series-uid', 'REQUEST',
+            ['title' => 'Weekly sync (new agenda)', 'start' => '2026-11-02T18:00:00+00:00', 'end' => '2026-11-02T19:00:00+00:00', 'allDay' => false, 'tzid' => 'UTC', 'location' => 'Cafe', 'description' => null, 'rrule' => 'FREQ=WEEKLY'],
+            ['method' => 'REQUEST', 'sequence' => 5] + $cancelInvite, 'alice@example.test');
+        $queueA->accept(1, $seriesChange);
+        checkEq('one occurrence: a later change to the whole series keeps the changed day', ['Weekly sync (new agenda)', 'Studio', '2026-11-17 20:00:00'], [
+            $adb->scalar('SELECT title FROM events WHERE id = ?', [$seriesId]),
+            $adb->scalar('SELECT location FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$seriesId]),
+            $adb->scalar('SELECT start_utc FROM events WHERE recurrence_parent_id = ? AND deleted_at IS NULL', [$seriesId]),
+        ]);
+    }
 
     // Where an event's coordinates came from (migration 048).
     $prov = static fn(int $id): array => $adb->one('SELECT location_source AS s, location_provider AS p, location_placed_at IS NOT NULL AS t FROM events WHERE id = ?', [$id]);

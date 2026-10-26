@@ -285,8 +285,8 @@ final class Events
             }
             $rowId = (int) $created['id'];
             // Same event on one day: it starts with the series' tags and people.
-            $this->db->run('INSERT IGNORE INTO event_tags (event_id, tag_id) SELECT ?, tag_id FROM event_tags WHERE event_id = ?', [$rowId, $masterId]);
-            $this->db->run('INSERT IGNORE INTO event_people (event_id, person_id) SELECT ?, person_id FROM event_people WHERE event_id = ?', [$rowId, $masterId]);
+            $this->db->run($this->db->insertIgnore() . ' INTO event_tags (event_id, tag_id) SELECT ?, tag_id FROM event_tags WHERE event_id = ?', [$rowId, $masterId]);
+            $this->db->run($this->db->insertIgnore() . ' INTO event_people (event_id, person_id) SELECT ?, person_id FROM event_people WHERE event_id = ?', [$rowId, $masterId]);
         }
         $this->db->tx(function () use ($rowId, $userId, $localFields, $in): void {
             if ($localFields !== []) {
@@ -1559,8 +1559,8 @@ final class Events
         $override['end_utc'] = Time::toDb($instStart->add(new \DateInterval('PT' . $duration . 'S')));
         $newId = $this->db->tx(function () use ($override, $masterId): int {
             $id = $this->db->insert('events', $override);
-            $this->db->run('INSERT IGNORE INTO event_tags (event_id, tag_id) SELECT ?, tag_id FROM event_tags WHERE event_id = ?', [$id, $masterId]);
-            $this->db->run('INSERT IGNORE INTO event_people (event_id, person_id) SELECT ?, person_id FROM event_people WHERE event_id = ?', [$id, $masterId]);
+            $this->db->run($this->db->insertIgnore() . ' INTO event_tags (event_id, tag_id) SELECT ?, tag_id FROM event_tags WHERE event_id = ?', [$id, $masterId]);
+            $this->db->run($this->db->insertIgnore() . ' INTO event_people (event_id, person_id) SELECT ?, person_id FROM event_people WHERE event_id = ?', [$id, $masterId]);
             return $id;
         });
         return $this->get($userId, $newId);
@@ -1610,8 +1610,8 @@ final class Events
         $newId = $this->db->tx(function () use ($row, $copyFromId, $existingOverrideId, $master, $instanceUtc, $userId, $in): int {
             $id = $this->db->insert('events', $row);
             if ($copyFromId !== null) {
-                $this->db->run('INSERT IGNORE INTO event_tags (event_id, tag_id) SELECT ?, tag_id FROM event_tags WHERE event_id = ?', [$id, $copyFromId]);
-                $this->db->run('INSERT IGNORE INTO event_people (event_id, person_id) SELECT ?, person_id FROM event_people WHERE event_id = ?', [$id, $copyFromId]);
+                $this->db->run($this->db->insertIgnore() . ' INTO event_tags (event_id, tag_id) SELECT ?, tag_id FROM event_tags WHERE event_id = ?', [$id, $copyFromId]);
+                $this->db->run($this->db->insertIgnore() . ' INTO event_people (event_id, person_id) SELECT ?, person_id FROM event_people WHERE event_id = ?', [$id, $copyFromId]);
             }
             if (array_key_exists('tagNames', $in) && is_array($in['tagNames'])) {
                 $this->labels->setEventTags($userId, $id, $in['tagNames']);
@@ -1701,11 +1701,11 @@ final class Events
             // replace them (this is what lets "add person to this occurrence
             // only" work at all — links are keyed by row id).
             $this->db->run(
-                'INSERT IGNORE INTO event_tags (event_id, tag_id) SELECT ?, tag_id FROM event_tags WHERE event_id = ?',
+                $this->db->insertIgnore() . ' INTO event_tags (event_id, tag_id) SELECT ?, tag_id FROM event_tags WHERE event_id = ?',
                 [$id, $masterId]
             );
             $this->db->run(
-                'INSERT IGNORE INTO event_people (event_id, person_id) SELECT ?, person_id FROM event_people WHERE event_id = ?',
+                $this->db->insertIgnore() . ' INTO event_people (event_id, person_id) SELECT ?, person_id FROM event_people WHERE event_id = ?',
                 [$id, $masterId]
             );
             if (array_key_exists('tagNames', $in) && is_array($in['tagNames'])) {

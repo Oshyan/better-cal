@@ -114,7 +114,7 @@ function ReviewCard({ item, onChanged }) {
         }
       } else {
         toast(
-          accepted ? (d.occurrence ? 'That occurrence is skipped; the rest of the series is unchanged' : d.method === 'CANCEL' ? (res && res.removed ? 'Cancellation accepted; the event was removed' : 'Cancellation accepted') : 'Change applied') : 'Dismissed. Your calendar is unchanged',
+          accepted ? (d.occurrence ? (d.method === 'CANCEL' ? 'That occurrence is skipped; the rest of the series is unchanged' : 'Applied to that occurrence; the rest of the series is unchanged') : d.method === 'CANCEL' ? (res && res.removed ? 'Cancellation accepted; the event was removed' : 'Cancellation accepted') : 'Change applied') : 'Dismissed. Your calendar is unchanged',
           { undoable: accepted && item.kind === 'invite_change' },
         );
       }

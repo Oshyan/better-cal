@@ -117,6 +117,16 @@ final class Db
         return $this->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
     }
 
+    /**
+     * "INSERT IGNORE" on MySQL, SQLite's "INSERT OR IGNORE" elsewhere (the
+     * tests): the same statement, so a path that copies tags and people onto
+     * a new row runs in the tests as it does in production.
+     */
+    public function insertIgnore(): string
+    {
+        return $this->pdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'mysql' ? 'INSERT IGNORE' : 'INSERT OR IGNORE';
+    }
+
     /** Build an IN clause: returns [sqlFragment, params]. */
     public static function in(array $values): array
     {

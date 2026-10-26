@@ -695,6 +695,28 @@ final class MailIngest
         return [true, ''];
     }
 
+    /**
+     * What an email about ONE occurrence is checked against (#155): the
+     * series' invite for the organizer, and the occurrence's own sequence.
+     * Organizers number an exception separately from its series, so the
+     * series' watermark would refuse a genuine later change to one day; a
+     * replay of an older message about that day is still refused once its
+     * exception holds a higher number.
+     *
+     * @param array<string,mixed>|null $seriesInvite decoded invite_json of the series
+     * @param array<string,mixed>|null $override the occurrence's exception row, if any
+     * @return array<string,mixed>|null
+     */
+    public static function occurrenceGate(?array $seriesInvite, ?array $override): ?array
+    {
+        if ($seriesInvite === null) {
+            return null;
+        }
+        $own = $override !== null && is_string($override['invite_json'] ?? null) ? json_decode((string) $override['invite_json'], true) : null;
+        $seriesInvite['sequence'] = is_array($own) ? (int) ($own['sequence'] ?? 0) : 0;
+        return $seriesInvite;
+    }
+
     /** Has the owner explicitly approved this mail invitation's organizer? */
     public static function organizerTrustEstablished(?array $invite): bool
     {
@@ -727,20 +749,26 @@ final class MailIngest
             [$userId, $uid]
         );
         $storedInvite = null;
+        $occurrence = !empty($ev['recurrence_instance_utc']) ? (string) $ev['recurrence_instance_utc'] : null;
 
         // Anything that would MUTATE an event the owner already has must prove
         // it comes from that event's organizer. Creating a new event from an
-        // unknown UID stays open — that is what an invitation is.
+        // unknown UID stays open — that is what an invitation is. An email
+        // about one occurrence is checked against that occurrence's own
+        // sequence (occurrenceGate).
         if ($existing !== null) {
             $storedInvite = is_string($existing['invite_json'] ?? null)
                 ? json_decode((string) $existing['invite_json'], true)
                 : null;
             $incoming = is_array($ev['invite'] ?? null) ? $ev['invite'] : [];
+            $override = $occurrence !== null ? ReviewQueue::occurrenceRow($this->db, (int) $existing['id'], $occurrence) : null;
             [$allowed, $why] = self::imipMayMutate(
-                is_array($storedInvite) ? $storedInvite : null,
+                $occurrence !== null
+                    ? self::occurrenceGate(is_array($storedInvite) ? $storedInvite : null, $override)
+                    : (is_array($storedInvite) ? $storedInvite : null),
                 $incoming,
                 $fromAddr,
-                (string) ($existing['status'] ?? 'confirmed')
+                $occurrence !== null ? (string) ($override['status'] ?? 'confirmed') : (string) ($existing['status'] ?? 'confirmed')
             );
             if (!$allowed) {
                 // Refused, not silently dropped. Two records, because they have
@@ -774,9 +802,7 @@ final class MailIngest
 
         // An email about ONE occurrence (RECURRENCE-ID) of a series the owner
         // has must never be applied to the series itself (review of 0.9.87):
-        // a cancellation can skip that occurrence, and any other change is
-        // shown for the owner to make by hand (issue #155).
-        $occurrence = !empty($ev['recurrence_instance_utc']) ? (string) $ev['recurrence_instance_utc'] : null;
+        // accepting it skips that occurrence or changes just that one (#155).
         if ($occurrence !== null && $existing !== null) {
             $cancel = $method === 'CANCEL' || ($ev['status'] ?? '') === 'cancelled';
             $occurrenceFields = [];

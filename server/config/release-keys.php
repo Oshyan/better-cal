@@ -16,5 +16,5 @@ return [
     ['id' => 'file-2026-10-94994bd0', 'type' => 'ed25519', 'publicKey' => 'OaKbZCAzGvEuhPhum0xlNmO2ijxEeVcUDDftx+7Jk/M='],
     // The maintainer's hardware security keys (FIDO2, PIN and touch): the everyday signers. Either one signs.
     ['id' => 'yubikey-1', 'type' => 'fido2-ed25519', 'rpId' => 'release-signing.better-cal', 'publicKey' => '19ZCGVKNsY16g8D+2d2mnioRUVsnGe1zMofx3qcLw34='],
-    ['id' => 'yubikey-2', 'type' => 'fido2-ed25519', 'rpId' => 'release-signing.better-cal', 'publicKey' => 'O77mg99IVZk0/zMXPREpbfWCEcePyEgYCPSpWC4Rgiw='],
+    ['id' => 'yubikey-5c-nano', 'type' => 'fido2-ed25519', 'rpId' => 'release-signing.better-cal', 'publicKey' => 'ipXGt9l1F0UAnfRvHvhhKv/LXY+6Xr4F3lMYZlMcdzs='],
 ];

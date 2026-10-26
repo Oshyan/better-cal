@@ -3,9 +3,11 @@
 # offline recovery key file (docs/releasing.md, Signing). Installs only
 # verify. Needs the key plugged in, its FIDO2 PIN and a touch.
 #
-#   bash scripts/release-signer.sh enroll --key-id yubikey-2
+#   bash scripts/release-signer.sh enroll --key-id yubikey-5c-nano [--replace]
 #       make a signing credential on the key (stored on the key itself, so it
-#       works from any computer) and print its entry for server/config/release-keys.php
+#       works from any computer) and print its entry for server/config/release-keys.php;
+#       name it after the key's model. --replace swaps a credential the key
+#       already has (only for a key no published release lists)
 #   bash scripts/release-signer.sh sign --statement-file FILE --out SIG [--key-id yubikey-1]
 #       sign a release statement, adding to SIG (created if missing); the
 #       credential names its key, so --key-id only insists on a particular one
@@ -51,11 +53,29 @@ def token(ctap: Ctap2, pin: str, permission) -> tuple[ClientPin, bytes]:
     return client_pin, client_pin.get_pin_token(pin, permission, RP_ID)
 
 
+def credentials(ctap: Ctap2, pin: str) -> tuple[CredentialManagement, list]:
+    """This key's Better-Cal signing credentials, and a manager to change them."""
+    client_pin, pin_token = token(ctap, pin, ClientPin.PERMISSION.CREDENTIAL_MGMT)
+    manager = CredentialManagement(ctap, client_pin.protocol, pin_token)
+    return manager, list(manager.enumerate_creds(hashlib.sha256(RP_ID.encode()).digest()))
+
+
+def cred_name(cred) -> str:
+    return cred[CredentialManagement.RESULT.USER]["id"].decode()
+
+
 def enroll(args) -> None:
     pin = ask_pin()
     ctap = device()
     if EDDSA not in [a.get("alg") for a in (ctap.info.algorithms or [])]:
         sys.exit("This key can't make Ed25519 credentials.")
+    # A key that already signs is left alone unless asked: replacing the
+    # credential of a key that releases list would retire that key.
+    _, existing = credentials(ctap, pin)
+    if existing and not args.replace:
+        names = ", ".join(cred_name(c) for c in existing)
+        sys.exit(f"This key already signs as {names}. Pass --replace to swap that for {args.key_id}, "
+                 "but only if no published release lists it.")
     client_pin, pin_token = token(ctap, pin, ClientPin.PERMISSION.MAKE_CREDENTIAL)
     cdh = os.urandom(32)
     print("Touch the key...")
@@ -68,6 +88,12 @@ def enroll(args) -> None:
         pin_uv_param=client_pin.protocol.authenticate(pin_token, cdh),
         pin_uv_protocol=client_pin.protocol.VERSION,
     )
+    # The same name replaced its old credential; a different one is removed.
+    manager, creds = credentials(ctap, pin)
+    for cred in creds:
+        if cred_name(cred) != args.key_id:
+            manager.delete_cred(cred[CredentialManagement.RESULT.CREDENTIAL_ID])
+            print(f"Removed {cred_name(cred)} from this key.")
     print("\nThe credential is stored on the key. Add this to server/config/release-keys.php:\n")
     print(entry_line(args.key_id, att.auth_data.credential_data.public_key))
 
@@ -75,16 +101,12 @@ def enroll(args) -> None:
 def show(args) -> None:
     # The entry enroll printed, read back from the credential on the key.
     pin = ask_pin()
-    ctap = device()
-    client_pin, pin_token = token(ctap, pin, ClientPin.PERMISSION.CREDENTIAL_MGMT)
-    manager = CredentialManagement(ctap, client_pin.protocol, pin_token)
-    creds = manager.enumerate_creds(hashlib.sha256(RP_ID.encode()).digest())
+    _, creds = credentials(device(), pin)
     if not creds:
         sys.exit("This key has no Better-Cal signing credential; enroll it first.")
     print("\nThe entry for server/config/release-keys.php:\n")
     for cred in creds:
-        user = cred[CredentialManagement.RESULT.USER]
-        print(entry_line(user["id"].decode(), cred[CredentialManagement.RESULT.PUBLIC_KEY]))
+        print(entry_line(cred_name(cred), cred[CredentialManagement.RESULT.PUBLIC_KEY]))
 
 
 def entry_line(key_id: str, key) -> str:
@@ -143,6 +165,7 @@ def main() -> None:
     sub = p.add_subparsers(dest="cmd", required=True)
     e = sub.add_parser("enroll")
     e.add_argument("--key-id", required=True)
+    e.add_argument("--replace", action="store_true")
     s = sub.add_parser("sign")
     s.add_argument("--statement-file", required=True)
     s.add_argument("--out", required=True)

@@ -4,6 +4,12 @@ Better-Cal uses [semantic versioning](https://semver.org). Minor versions bring 
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## Unreleased
+
+- **Fixes:** a Google calendar's "Check for updates" menu offers every 5 minutes, its starting setting; the menu showed 15 minutes, and choosing anything slowed it down for good.
+
+Maintainers: a second hardware security key signs releases, and the first release listing it must be signed by a key already listed ([Signing](docs/releasing.md#signing)).
+
 ## 1.2.0 (2026-10-26)
 
 Quick add understands a lot more, plus a few smaller features.

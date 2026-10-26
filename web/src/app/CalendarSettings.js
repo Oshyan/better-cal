@@ -23,6 +23,9 @@ const SWATCHES = [...PALETTE, '#3aa695', '#708090'];
 const POLL_OPTIONS = [
   [15, 'Every 15 minutes'], [60, 'Every hour'], [360, 'Every 6 hours'], [1440, 'Every 24 hours'],
 ];
+// A Google calendar starts at 5 minutes: each check asks only for what
+// changed. A feed is fetched whole, so it keeps 15 as its shortest.
+const GOOGLE_POLL_OPTIONS = [[5, 'Every 5 minutes'], ...POLL_OPTIONS];
 const STALE_OPTIONS = [
   [1, 'After 1 day'], [2, 'After 2 days'], [7, 'After 7 days'], [14, 'After 14 days'], [30, 'After 30 days'],
 ];
@@ -108,6 +111,7 @@ export function CalendarSettings({ cal, folders, onClose }) {
   const subscribed = cal.kind === 'subscribed';
   const subscriptionAuth = cal.subscriptionAuthorization;
   const subscriptionPaused = !!(subscriptionAuth && subscriptionAuth.status === 'paused');
+  const pollOptions = cal.provider === 'google' ? GOOGLE_POLL_OPTIONS : POLL_OPTIONS;
 
   const commitName = () => {
     const trimmed = name.trim();
@@ -229,10 +233,10 @@ export function CalendarSettings({ cal, folders, onClose }) {
       <span class="bc-calset-label">Check for updates</span>
       <select
         aria-label="Poll interval"
-        value=${String(nearest(POLL_OPTIONS, cal.pollIntervalMinutes || 60))}
+        value=${String(nearest(pollOptions, cal.pollIntervalMinutes || 60))}
         onChange=${(e) => updateCalendar(cal, { pollIntervalMinutes: Number(e.target.value) })}
       >
-        ${POLL_OPTIONS.map(([v, l]) => html`<option key=${v} value=${String(v)}>${l}</option>`)}
+        ${pollOptions.map(([v, l]) => html`<option key=${v} value=${String(v)}>${l}</option>`)}
       </select>
     </div>
     <div class="bc-calset-field">

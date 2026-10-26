@@ -101,6 +101,8 @@ final class FallbackParser
         $ownDays = $repeat !== null && (isset($repeat['rule']['BYDAY']) || isset($repeat['rule']['BYMONTHDAY']));
         // "starting Aug 12", "from Jan 21 to May 23" for a single event (#33);
         // with a repeat they are its bounds (RepeatParser).
+        // "Fri 5pm to Sun 2pm": one timed stretch over several days.
+        [$work, $stretch] = $repeat === null ? self::timedStretch($work, $now) : [$work, null];
         [$work, $startOn, $startRangeEnd] = $repeat === null ? self::startPhrase($work, $now) : [$work, null, null];
         [$work, $date, $dateFound, $rangeEnd] = self::extractDate($work, $now, !$ownDays);
         if ($startOn !== null) {
@@ -109,6 +111,10 @@ final class FallbackParser
             $rangeEnd = $startRangeEnd ?? $rangeEnd;
         }
         [$work, $startTime, $endTime, $timeFound, $timeZone] = self::extractTime($work);
+        if ($stretch !== null) {
+            [$date, $startTime] = [$stretch[0], [(int) $stretch[0]->format('G'), (int) $stretch[0]->format('i')]];
+            [$dateFound, $timeFound, $endTime, $rangeEnd] = [true, true, null, null];
+        }
         // A length in days or longer ("3 weeks long", "for 90 days",
         // "week-long", #33): a multi-day event from its start.
         $span = null;
@@ -197,7 +203,9 @@ final class FallbackParser
             if (!$dateFound && $start <= $now) {
                 $start = $start->add(new \DateInterval('P1D'));
             }
-            if ($endTime !== null) {
+            if ($stretch !== null) {
+                $end = $stretch[1];
+            } elseif ($endTime !== null) {
                 $minutes = ($endTime[0] * 60 + $endTime[1]) - ($startTime[0] * 60 + $startTime[1]);
                 $end = $start->add(new \DateInterval('PT' . ($minutes > 0 ? $minutes : $minutes + 1440) . 'M'));
             } elseif ($span !== null) {
@@ -463,6 +471,31 @@ final class FallbackParser
         if (!$weekdays) {
             return [$work, $date, $found, null];
         }
+        // "Workshop Mon-Fri", "Trip Fri-Mon": one event over those days, from
+        // the next time the first comes round (today counts). At the very
+        // start ("Mon-Fri schedule review") the range describes the title,
+        // as a short day name does there, so it stays and no day in it is
+        // read as the date.
+        $skip = null;
+        if (($range = RepeatParser::dayRangeAt($work)) !== null) {
+            if (!$range['leading']) {
+                $codes = ['SU' => 0, 'MO' => 1, 'TU' => 2, 'WE' => 3, 'TH' => 4, 'FR' => 5, 'SA' => 6];
+                $from = $codes[$range['from']];
+                $todayW = (int) $now->format('w');
+                $ahead = ($from - $todayW + 7) % 7;
+                $rest = $range['rest'];
+                // "Mon-Fri next week": in the next calendar week (from Monday).
+                $tail = substr($work, $range['offset'] + strlen($range['match']));
+                if (preg_match('/^\s*next\s+week\b/i', $tail, $nw) === 1) {
+                    $ahead = ((1 - $todayW + 7) % 7 ?: 7) + ($from - 1 + 7) % 7;
+                    $rest = substr($work, 0, $range['offset']) . ' ' . substr($tail, strlen($nw[0]));
+                }
+                $start = $now->add(new \DateInterval('P' . $ahead . 'D'));
+                $end = $start->add(new \DateInterval('P' . (($codes[$range['to']] - $from + 7) % 7) . 'D'));
+                return [$rest, $start, true, $end];
+            }
+            $skip = [$range['offset'], $range['offset'] + strlen($range['match'])];
+        }
         if (preg_match('/\bnext\s+week(?:\s+(?:on\s+)?(' . $dayAlt . '))\b/i', $work, $m)) {
             $target = self::WEEKDAYS[strtolower($m[1])];
             $todayW = (int) $now->format('w');
@@ -484,7 +517,8 @@ final class FallbackParser
         $pick = null;
         foreach ($all as $m) {
             $before = substr($work, 0, $m[0][1]);
-            if (preg_match('/\b(?:to|at)\s+$/i', $before) === 1) {
+            if (preg_match('/\b(?:to|at)\s+$/i', $before) === 1
+                || ($skip !== null && $m[0][1] >= $skip[0] && $m[0][1] < $skip[1])) {
                 continue;
             }
             if (!isset(self::WEEKDAYS[strtolower($m[2][0])])) {
@@ -636,6 +670,43 @@ final class FallbackParser
             if ($out === []) $out[] = 0; // an alert at the event's time
         }
         return [$work, $out === [] ? null : $out, $remindMe];
+    }
+
+    /**
+     * A day and time to a later day and time ("Fri 5pm to Sun 2pm", "Aug 3
+     * 9am - Aug 5 noon"): [remaining text, [start, end]] or no stretch. A
+     * weekday end counts from the start day.
+     *
+     * @return array{0:string,1:?array{0:\DateTimeImmutable,1:\DateTimeImmutable}}
+     */
+    private static function timedStretch(string $work, \DateTimeImmutable $now): array
+    {
+        $day = '(?:' . implode('|', array_keys(self::WEEKDAYS)) . '|' . implode('|', array_keys(self::WEEKDAY_ABBR)) . ')\.?';
+        $mon = '(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+\d{1,2}(?:st|nd|rd|th)?';
+        $when = '(' . $day . '|' . $mon . '|\d{1,2}\/\d{1,2})';
+        $time = '(\d{1,2}(?::\d{2})?\s*(?:am|pm)|noon|midnight)';
+        $re = '/\b(?:from\s+)?' . $when . ',?\s+(?:at\s+)?' . $time . '\s*(?:-|–|—|\bto\b|\buntil\b|\btill\b)\s*' . $when . ',?\s+(?:at\s+)?' . $time . '\b/i';
+        if (preg_match($re, $work, $m) !== 1) {
+            return [$work, null];
+        }
+        $at = static function (string $when, string $time, \DateTimeImmutable $from): ?\DateTimeImmutable {
+            // The time keeps a short day name from reading as a title word.
+            [, $date, $found] = self::extractDate(' ' . $when . ' 12pm ', $from);
+            [, $t, , $timeFound] = self::extractTime(' ' . $time . ' ');
+            return $found && $timeFound ? $date->setTime($t[0], $t[1]) : null;
+        };
+        $start = $at($m[1], $m[2], $now);
+        if ($start === null) {
+            return [$work, null];
+        }
+        $end = $at($m[3], $m[4], $start->setTime(0, 0));
+        if ($end === null) {
+            return [$work, null];
+        }
+        if ($end <= $start && preg_match('/^' . $day . '$/i', trim($m[3])) === 1) {
+            $end = $end->add(new \DateInterval('P7D'));
+        }
+        return $end > $start ? [self::cut($work, $m[0]), [$start, $end]] : [$work, null];
     }
 
     /**

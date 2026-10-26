@@ -42,6 +42,12 @@ final class RepeatParser
             return null;
         }
         [$work, $rule, $time] = $core;
+        // "Daily standup Mon-Fri": a day range narrows a plain daily repeat
+        // to those days.
+        if ($rule === ['FREQ' => 'DAILY'] && ($range = self::dayRangeAt($work)) !== null) {
+            $rule = ['FREQ' => 'WEEKLY', 'BYDAY' => $range['byday']];
+            $work = $range['rest'];
+        }
         $out = ['work' => $work, 'rule' => $rule, 'startOn' => null, 'until' => null, 'count' => null, 'span' => null, 'time' => $time];
         return self::bounds($out, $now);
     }
@@ -135,6 +141,16 @@ final class RepeatParser
         // "Mondays and Thursdays", "on Tuesdays".
         if (preg_match('/\b(?:on\s+)?(' . $plural . ')\b/i', $work, $m)) {
             return [self::cut($work, $m[0]), ['FREQ' => 'WEEKLY', 'BYDAY' => self::codes($m[1])], null];
+        }
+        // "Standup Mon-Fri 9am": a day range with a time (one time, not one
+        // at each end, which reads as a single stretch: "Fri 5pm to Sun 2pm")
+        // repeats on those days. Without a time it is one multi-day event,
+        // left to FallbackParser. At the very start the time must come right
+        // after it ("Mon-Fri 9am standup"); otherwise the range is part of
+        // the title ("Mon-Fri check friday 3pm").
+        if (($range = self::dayRangeAt($work)) !== null && self::hasTime($work)
+            && (!$range['leading'] || preg_match('/^\s*(?:at\s+)?(?:\d{1,2}(?::\d{2})?\s*(?:am|pm)\b|\d{1,2}:\d{2}\b|noon\b|midnight\b)/i', substr($work, $range['offset'] + strlen($range['match']))) === 1)) {
+            return [$range['rest'], ['FREQ' => 'WEEKLY', 'BYDAY' => $range['byday']], null];
         }
         // "daily", "weekly on Tue and Thu", "biweekly", "annually". As the
         // first word it also names the event ("Weekly review"), so it stays
@@ -340,6 +356,49 @@ final class RepeatParser
             'weekend day' => ['FREQ' => 'MONTHLY', 'BYDAY' => implode(',', self::WEEKEND), 'BYSETPOS' => (string) $n],
             default => ['FREQ' => 'MONTHLY', 'BYDAY' => $n . self::code($what)],
         };
+    }
+
+    /**
+     * The first day range in $work without "every" ("Mon-Fri", "Monday
+     * through Friday", "from Fri to Mon"): not a place after "to"/"at", and
+     * not when the second day starts a name ("Monday to Friday Harbor").
+     * `leading` is true when nothing comes before it.
+     *
+     * @return null|array{match:string,offset:int,from:string,to:string,byday:string,rest:string,leading:bool}
+     */
+    public static function dayRangeAt(string $work): ?array
+    {
+        $D = self::DAY;
+        $re = '/(?<![\w-])(?:from\s+)?(' . $D . ')\.?(?:\s*[-–—]\s*|\s+(?:to|through|thru)\s+)(' . $D . ')\.?(?![\w\'-])(?!\s+(?-i:[A-Z]))/i';
+        if (preg_match_all($re, $work, $all, PREG_SET_ORDER | PREG_OFFSET_CAPTURE) === 0) {
+            return null;
+        }
+        // One later in the text wins over one that opens it, which may be
+        // part of the title ("Mon-Fri check Mon-Fri 9am").
+        $leading = null;
+        foreach ($all as $m) {
+            $at = $m[0][1];
+            if (preg_match('/\b(?:to|at)\s+$/i', substr($work, 0, $at)) === 1) {
+                continue;
+            }
+            $range = [
+                'match' => $m[0][0], 'offset' => $at, 'from' => self::code($m[1][0]), 'to' => self::code($m[2][0]),
+                'byday' => self::dayRange($m[1][0], $m[2][0]),
+                'rest' => substr($work, 0, $at) . ' ' . substr($work, $at + strlen($m[0][0])),
+                'leading' => trim(substr($work, 0, $at)) === '',
+            ];
+            if (!$range['leading']) {
+                return $range;
+            }
+            $leading ??= $range;
+        }
+        return $leading;
+    }
+
+    /** A clock time or time of day anywhere in $work ("9am", "9:30", "noon", "in the morning"). */
+    private static function hasTime(string $work): bool
+    {
+        return preg_match('/\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b|\b\d{1,2}:\d{2}\b|\b(?:noon|midnight|tonight)\b|\bat\s+\d{1,2}\b|\b(?:in\s+the|this)\s+(?:morning|afternoon|evening)\b/i', $work) === 1;
     }
 
     /** "Mon-Fri", "Monday through Friday": every day in the range, wrapping past Sunday. */

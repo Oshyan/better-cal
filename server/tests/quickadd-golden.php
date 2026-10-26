@@ -39,12 +39,23 @@ $goldenWhens = [
     '7-9pm', 'tonight', 'this evening', 'next week', 'in the morning', 'Sunday', 'Saturday 10am', 'Sat 10am',
     'Dec 20', 'the day after tomorrow', 'a week from Friday', 'every Tuesday', 'weekly', 'tomorrow for 2 hours',
 ];
+// Day ranges and stretches, on their own and against a few titles.
+$goldenExtra = [
+    'Mon-Fri', 'Monday through Friday', 'Fri-Mon', 'Mon to Fri at 9am', 'Mon-Fri next week', 'Fri 5pm to Sun 2pm',
+    'Thu 10pm to Fri 6am', 'Aug 3 9am to Aug 5 noon', 'daily Mon-Fri', 'Mon-Fri 9am',
+];
 $goldenInputs = [];
 foreach ($goldenTitles as $title) {
     foreach ($goldenWhens as $when) {
         $goldenInputs[] = trim("$title $when");
     }
 }
+foreach (['Standup', 'Workshop', 'Trip', 'Mon-Fri check', 'Ferry to Friday Harbor', 'Office hours'] as $title) {
+    foreach ($goldenExtra as $when) {
+        $goldenInputs[] = "$title $when";
+    }
+}
+$goldenInputs = array_values(array_unique($goldenInputs));
 
 $goldenTz = 'America/Los_Angeles';
 $goldenNow = new DateTimeImmutable('2026-07-30T10:00:00', new DateTimeZone($goldenTz)); // a Thursday

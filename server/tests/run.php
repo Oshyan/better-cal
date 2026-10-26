@@ -440,6 +440,14 @@ $repeatCases = [
     ['Standup weekdays 9:30am', 'Standup', '2026-07-31T09:30', 'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR'],
     ['Hike every weekend', 'Hike', '2026-08-01T00:00', 'FREQ=WEEKLY;BYDAY=SA,SU'],
     ['Work every Monday to Friday 9am', 'Work', '2026-07-31T09:00', 'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR'],
+    // A day range without "every": with one time it repeats; "daily" narrows to it
+    ['Daily standup Mon-Fri', 'Daily standup', '2026-07-30T00:00', 'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR'],
+    ['Standup Mon-Fri 9am', 'Standup', '2026-07-31T09:00', 'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR'],
+    ['Mon-Fri 9am standup', 'Standup', '2026-07-31T09:00', 'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR'],
+    ['Standup Monday through Friday 9am', 'Standup', '2026-07-31T09:00', 'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR'],
+    ['Lunch Mon to Fri at noon', 'Lunch', '2026-07-30T12:00', 'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR'],
+    ['Gym Fri-Sun 8pm', 'Gym', '2026-07-31T20:00', 'FREQ=WEEKLY;BYDAY=FR,SA,SU'],
+    ['Mon-Fri check at 7pm', 'Mon-Fri check', '2026-07-30T19:00', null],
     // Weekly
     ['Piano every Tuesday 4pm', 'Piano', '2026-08-04T16:00', 'FREQ=WEEKLY;BYDAY=TU'],
     ['Piano Tuesdays at 4pm', 'Piano', '2026-08-04T16:00', 'FREQ=WEEKLY;BYDAY=TU'],
@@ -561,6 +569,17 @@ $phraseCases = [
     ['Brunch at Sunday Social Sunday', 'Brunch at Sunday Social', '2026-08-02T00:00', '2026-08-03T00:00', null],
     ['Breakfast at 7:30 tomorrow', 'Breakfast', '2026-07-31T07:30', '2026-07-31T08:30', null],
     ['Morning run tomorrow at 7', 'Morning run', '2026-07-31T07:00', '2026-07-31T08:00', null],
+    // Day ranges with no repeat: one event over those days
+    ['Workshop Mon-Fri', 'Workshop', '2026-08-03T00:00', '2026-08-08T00:00', null],
+    ['Workshop Thu-Fri next week', 'Workshop', '2026-08-06T00:00', '2026-08-08T00:00', null],
+    ['Trip from Fri to Mon', 'Trip', '2026-07-31T00:00', '2026-08-04T00:00', null],
+    ['Conference Mon-Wed at the Hilton', 'Conference at the Hilton', '2026-08-03T00:00', '2026-08-06T00:00', null],
+    ['Mon-Fri schedule review', 'Mon-Fri schedule review', '2026-07-30T11:00', '2026-07-30T12:00', null],
+    ['Ferry Monday to Friday Harbor', 'Ferry to Friday Harbor', '2026-08-03T00:00', '2026-08-04T00:00', null],
+    // A day and time to another
+    ['Camping Fri 5pm to Sun 2pm', 'Camping', '2026-07-31T17:00', '2026-08-02T14:00', null],
+    ['Shift Thu 10pm to Fri 6am', 'Shift', '2026-07-30T22:00', '2026-07-31T06:00', null],
+    ['Hackathon Aug 3 9am to Aug 5 noon', 'Hackathon', '2026-08-03T09:00', '2026-08-05T12:00', null],
 ];
 foreach ($phraseCases as [$text, $title, $start, $end, $reminders]) {
     $d = $p($text);

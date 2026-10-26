@@ -25,6 +25,7 @@ import { setResumeTime } from '../lib/resumetime.js';
 import { openOccurrence } from './push.js';
 import { searchSnapshot, reopenSearch, primeSearchBack } from './SearchOverlay.js';
 import { RESUME_KEY, clearResume } from './resume-storage.js';
+import { ANCHOR_LINE } from '../ui/monthmath.js';
 
 const MAX_AGE_MS = 30 * 60000;
 
@@ -47,7 +48,8 @@ function timeOfDay() {
 }
 
 // The day at the grid's anchor line: MonthGrid lands an anchor row 40% of
-// the way down, so restoring this day puts the grid back where it was.
+// the way down (or at the top, gridAnchor), so restoring this day puts the
+// grid back where it was.
 function dayAtAnchorLine() {
   const sc = document.querySelector('.bc-month-scroll');
   if (!sc) return null;
@@ -55,7 +57,8 @@ function dayAtAnchorLine() {
   const cell = sc.querySelector('.bc-cell');
   const rowH = cell ? cell.getBoundingClientRect().height : 0;
   if (!rowH || !box.height) return null;
-  const y = box.top + Math.max(0, (box.height - rowH) * 0.4) + rowH / 2;
+  const lead = state.settings.gridAnchor === 'top' ? 0 : Math.max(0, (box.height - rowH) * ANCHOR_LINE);
+  const y = box.top + lead + rowH / 2;
   let best = null;
   for (const c of sc.querySelectorAll('.bc-cell')) {
     const r = c.getBoundingClientRect();

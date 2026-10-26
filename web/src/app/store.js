@@ -73,6 +73,9 @@ export const state = {
     mapStyle: 'streets-v2',
     // Desktop: tuck the sidebar away while an event's panel is open.
     panelTucksSidebar: true,
+    // Month, 3-week and 2-week views: the day they go to sits a row or two
+    // below the top ('context') or at the top ('top', #91).
+    gridAnchor: 'context',
   },
   // Public-safe server config (GET /config), fetched once at boot.
   config: { maptilerKey: null, placeSearch: null },

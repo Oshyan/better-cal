@@ -133,6 +133,7 @@ export function App() {
       pluginCard: st.pluginCard,
       visibleMonth: st.reschedule ? st.visibleMonth : null,
       overviewMode: st.settings.overviewMode,
+      gridAnchor: st.settings.gridAnchor,
       nowMinute: st.nowMinute,
       viewportNarrow: st.viewportNarrow,
       phoneWide: st.phoneWide,
@@ -790,6 +791,7 @@ export function App() {
       scrollKey=${s.anchor}
       scrollSeq=${s.scrollSeq}
       glide=${s.glideSeq === s.scrollSeq}
+      anchorAtTop=${s.gridAnchor === 'top'}
       dimSet=${dimSet}
       nowMs=${nowMs}
       onRequestWindow=${onRequestWindow}

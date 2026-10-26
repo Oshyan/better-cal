@@ -4820,6 +4820,10 @@ checkEq('set unknown stored keys dropped', false, array_key_exists('legacyKey', 
 checkEq('set other defaults filled in', 'smart', $merged['nlParseMode']);
 
 checkEq('set validate weekStart', ['weekStart' => 'mon'], Settings::validate(['weekStart' => 'mon']));
+checkEq('set validate panelTucksSidebar and gridAnchor (#91)', ['panelTucksSidebar' => false, 'gridAnchor' => 'top'], Settings::validate(['panelTucksSidebar' => false, 'gridAnchor' => 'top']));
+checkEq('set defaults: sidebar tucks, today a week or two down', [true, 'context'], [Settings::DEFAULTS['panelTucksSidebar'], Settings::DEFAULTS['gridAnchor']]);
+$threw = false; try { Settings::validate(['gridAnchor' => 'middle']); } catch (HttpError) { $threw = true; }
+check('set validate gridAnchor rejects other values', $threw);
 checkEq('set validate numeric timeFormat', ['timeFormat' => '24'], Settings::validate(['timeFormat' => 24]));
 checkEq('set validate defaultView', ['defaultView' => 'agenda'], Settings::validate(['defaultView' => 'agenda']));
 checkEq('set validate defaultViewId', ['defaultViewId' => 5], Settings::validate(['defaultViewId' => '5']));

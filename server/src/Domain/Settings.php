@@ -56,6 +56,13 @@ final class Settings
         // Sidebar list density: hide unchecked calendars/people from the list
         // itself. Purely a display preference; it never changes visibility.
         'sidebarActiveOnly' => false,
+        // Desktop: tuck the sidebar away while an event's panel is open. The
+        // switch has been in Settings since 0.5.5 but the server refused it.
+        'panelTucksSidebar' => true,
+        // Where month, 3-week and 2-week views put the day they go to (today,
+        // a jump): with a row or two before it for context, or at the top
+        // so the screen is what's ahead (#91).
+        'gridAnchor' => 'context',
         // Accepting an emailed cancellation deletes the event (with Undo)
         // instead of keeping it struck through (#132).
         'removeAcceptedCancellations' => false,
@@ -231,6 +238,8 @@ final class Settings
                 'defaultViewId' => self::positiveIntOrNull($key, $value),
                 'folderVisibility' => self::folderVisibility($value),
                 'sidebarActiveOnly' => self::bool($key, $value),
+                'panelTucksSidebar' => self::bool($key, $value),
+                'gridAnchor' => self::enum($key, $value, ['context', 'top']),
                 'removeAcceptedCancellations' => self::bool($key, $value),
                 'mailEventMode' => self::enum($key, $value, ['any', 'approved', 'review']),
                 'mailApprovedSenders' => MailPolicy::rules($value),

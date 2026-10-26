@@ -881,6 +881,10 @@ export function SettingsPage() {
         <${Seg} label="Week starts on" value=${settings.weekStart}
           options=${[['sun', 'Sunday'], ['mon', 'Monday']]} onChange=${save('weekStart')} />
       <//>
+      <${Row} label="Today in month views" hint="Where today, or a day you jump to, sits in month, 3-week and 2-week views: below a week or two of what came before, or at the top with only what's ahead.">
+        <${Seg} label="Today in month views" value=${settings.gridAnchor === 'top' ? 'top' : 'context'}
+          options=${[['context', 'A week or two down'], ['top', 'At the top']]} onChange=${save('gridAnchor')} />
+      <//>
       <${Row} label="Time format">
         <${Seg} label="Time format" value=${settings.timeFormat}
           options=${[['12', '12-hour'], ['24', '24-hour']]} onChange=${save('timeFormat')} />

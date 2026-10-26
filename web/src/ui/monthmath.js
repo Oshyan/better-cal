@@ -136,6 +136,11 @@ export function rowSpanSegments(startKey, endKey, columns = 7) {
 // Spans over LONG_SPAN_ROWS are therefore NOT pre-segmented. The grid keeps
 // one record for them and asks rowSegmentAt() for just the rows it draws.
 
+// How far down the scroller a day gone to sits, as a share of the room
+// above a row: a row or two of context before it (MonthGrid; resume.js reads
+// the same line back).
+export const ANCHOR_LINE = 0.4;
+
 export const LONG_SPAN_ROWS = 60; // about 14 months of week rows
 
 // How many rows a [startKey..endKey] span touches. O(1).

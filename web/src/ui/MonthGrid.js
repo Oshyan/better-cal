@@ -26,7 +26,7 @@ import {
   visibleWeekRange, weekTop, totalHeight, occurrenceDaySpan, rowSpanSegments, shiftOccurrenceDays,
   spanRowCount, rowSegmentAt, clampDayRange, LONG_SPAN_ROWS,
   rowIndexOfDayKey, firstEpochDayOfRow, dayKeysOfRow, isWeekendEpochDay,
-  monthStartsInRange, dominantMonthOfRows,
+  monthStartsInRange, dominantMonthOfRows, ANCHOR_LINE,
   planCell,
 } from './monthmath.js';
 import { assignLanes } from './layout.js';
@@ -155,6 +155,8 @@ export function MonthGrid({
   // height (the handle adds or removes rows, it never squashes them), and
   // apiRef receives {el, rowH, minWeek} so the list can drive the scroll.
   fixedRows = false, apiRef,
+  // The day gone to sits at the very top instead of a little above centre (#91).
+  anchorAtTop = false,
 }) {
   const scrollRef = useRef(null);
   const [viewH, setViewH] = useState(600);
@@ -278,20 +280,21 @@ export function MonthGrid({
   // but still recomputes, and the demand effect below dutifully requested a
   // window from 2016 on the boot critical path before asking for today.
   const anchoredRef = useRef(false);
-  // Where the scroller sits to show a row a little above centre.
+  // Where the scroller sits to show a row a little above centre, or at the
+  // very top when the owner asked for that (gridAnchor 'top', #91).
   const anchorTop = useCallback((row) => {
     const el = scrollRef.current;
     const h = (el && el.clientHeight) || 0;
-    const lead = Math.max(0, Math.round((h - rowHRef.current) * 0.4));
+    const lead = anchorAtTop ? 0 : Math.max(0, Math.round((h - rowHRef.current) * ANCHOR_LINE));
     return Math.max(0, weekTop(row, minWeek, rowHRef.current) - lead);
-  }, [minWeek]);
+  }, [minWeek, anchorAtTop]);
   const applyAnchor = useCallback((row) => {
     const el = scrollRef.current;
     if (!el) return;
     el.scrollTop = anchorTop(row);
     topWeekRef.current = Math.max(minWeek, minWeek + Math.floor(el.scrollTop / rowHRef.current));
     anchoredRef.current = true;
-  }, [minWeek]);
+  }, [minWeek, anchorTop]);
 
   // An anchor is only SETTLED once the box we positioned against is the same
   // height that rowH was derived from. Until the ResizeObserver has measured

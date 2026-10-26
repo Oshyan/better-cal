@@ -142,7 +142,7 @@ Server config: VAPID keys in the settings file, `.env.php` (`BETTERCAL_VAPID_PUB
 Email preferences are token-writable: `mailEventMode` is `any|approved|review` (default `approved`), and `mailApprovedSenders` is a canonical list of exact addresses, domains or `*.example.com` subdomain rules. Common shared mailbox domains are refused unless given as exact addresses. Replacing the list does not decide existing Review items.
 
 User preferences stored in `users.settings_json`. The server stores and validates; enforcement is client-side except where the table's notes say the server uses a key (`nlParseMode` in `/quickadd`, the reminder keys in the reminder scan, `tz` and `hereTz`). Reads always return stored values merged over defaults; keys never set come back as their defaults. Settings changes are not undoable via `POST /undo`.
-- `GET /settings` → `{settings:{defaultView, defaultViewId, weekStart, timeFormat, defaultCalendarId, theme, nlParseMode, notifyChannel, notifyEmail, notifyEmailToken, overviewMode, folderVisibility, sidebarActiveOnly, removeAcceptedCancellations, pluginHidden, tz, hereTz, reminderTimed, reminderAllDay, homeLat, homeLng, homeLabel, mapStyle, placePastEvents, welcomeDone, welcomeSteps}}`.
+- `GET /settings` → `{settings:{defaultView, defaultViewId, weekStart, timeFormat, defaultCalendarId, theme, nlParseMode, notifyChannel, notifyEmail, notifyEmailToken, overviewMode, folderVisibility, sidebarActiveOnly, panelTucksSidebar, gridAnchor, removeAcceptedCancellations, pluginHidden, tz, hereTz, reminderTimed, reminderAllDay, homeLat, homeLng, homeLabel, mapStyle, placePastEvents, welcomeDone, welcomeSteps}}`.
 - `PATCH /settings` (any subset of the keys below) → `{settings:{...}}` (the full merged object). Unknown keys → 400 `unknown_setting`; invalid values → 400.
 
 | Key | Values | Default | Notes |
@@ -160,6 +160,8 @@ User preferences stored in `users.settings_json`. The server stores and validate
 | `overviewMode` | `month`\|`3day` or `null` | `null` | layout for the overview slot; null lets the client pick its device default |
 | `folderVisibility` | object: folder id → `{mode:"all"\|"none"\|"custom", custom:[calendarId]}` (≤200 folders, ≤500 ids each) | `{}` | per-folder calendar visibility; client-owned semantics |
 | `sidebarActiveOnly` | boolean | `false` | sidebar lists only checked calendars and people; display only |
+| `panelTucksSidebar` | boolean | `true` | desktop: the sidebar tucks away while an event's panel is open; display only |
+| `gridAnchor` | `context`\|`top` | `context` | where month, 3-week and 2-week views put the day they go to (today, a jump): a row or two below the top, or at the top (#91); display only |
 | `removeAcceptedCancellations` | boolean | `false` | accepting an emailed cancellation in Review deletes the event (with Undo) instead of keeping it struck through; the accept response carries `removed: true` |
 | `pluginHidden` | object: plugin id → boolean | `{}` | which plugins' overlay bands are hidden |
 | `hereTz` | IANA zone id or `null` | `null` | where the device last was, reported by the app at boot; email ingest reads times that name no place on this clock, and reminder text (push and email) shows times in it, else in `tz` |

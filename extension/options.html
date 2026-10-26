@@ -19,6 +19,7 @@
     code { font-size: 12.5px; }
     hr { border: 0; border-top: 1px solid #8884; margin: 16px 0 12px; }
     .hint { font-size: 13px; margin: 6px 0 0; opacity: 0.8; }
+    .hint.warn { color: #c37a1f; opacity: 1; }
     .linkish { border: 0; padding: 0; background: none; color: #5b7fd4; text-decoration: underline; cursor: pointer; font: inherit; }
   </style>
 </head>
@@ -35,7 +36,9 @@
   <hr>
   <h1>New event shortcut</h1>
   <p>A key that opens quick add in your Better-Cal, in a small window. Off until you set one.</p>
-  <p class="hint"><span id="keyName">No key set</span>. <button id="keys" type="button" class="linkish">Set or change the key</button> in Chrome's shortcut settings. Choose "Global" there to use it from any app while Chrome is running (Chrome allows Ctrl+Shift+digit for those, Cmd+Shift+digit on a Mac). Removing the key turns it off.</p>
+  <p class="hint"><strong id="keyName">No key set</strong>. <button id="keys" type="button" class="linkish">Set or change the key</button> in Chrome's shortcut settings.</p>
+  <p class="hint">Press <strong class="combo">Ctrl+Shift</strong> and a digit (1 to 9) there, then choose "Global" to use it from any app while Chrome is running. Chrome only takes those keys for Global and quietly ignores others: if the box stays empty, try another digit. Removing the key turns it off.</p>
+  <p id="keyNote" class="hint warn" hidden>Chrome didn't keep a key. Press <strong class="combo">Ctrl+Shift</strong> and a digit, all at once; if that combination is taken, Chrome refuses it, so try another digit.</p>
   <script src="rules.js"></script>
   <script src="options.js"></script>
 </body>

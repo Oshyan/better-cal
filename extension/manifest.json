@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Better-Cal: Google Calendar Link Redirect",
-  "version": "2.1.1",
+  "version": "2.1.2",
   "description": "Sends 'Add to Google Calendar' links to your own Better-Cal instead, and can open a new event there from a keyboard shortcut.",
   "permissions": [
     "declarativeNetRequest",

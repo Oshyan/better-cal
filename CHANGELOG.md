@@ -4,6 +4,13 @@ Better-Cal uses [semantic versioning](https://semver.org). Minor versions bring 
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## Unreleased
+
+- **The Chrome extension's new-event key opens just quick add.** Its small window used to load the whole calendar with quick add on top, which was cramped and hard to read at that size. With extension 2.1.2 it shows only the quick add card; Create shows what was made (with Add another and Open in Better-Cal) and the window closes itself, Cancel or Esc closes it, and More options turns it into the full editor. Better-Cal's own "New event" shortcut is unchanged.
+- **Chrome extension 2.1.2:** the options page now leads with the keys Chrome accepts for a Global shortcut (Cmd+Shift and a digit on a Mac, Ctrl+Shift and a digit elsewhere), and says so when you come back from Chrome's shortcut page with no key set, since Chrome refuses other keys without a word. Needs Better-Cal 1.1.2 for the quick-add-only window; with an older Better-Cal the key opens the calendar with quick add, as before.
+
+Operators: no database change. Update Better-Cal before the extension.
+
 ## 1.1.1 (2026-10-24)
 
 Fixes from a review of 1.1.0.

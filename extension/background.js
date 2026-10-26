@@ -29,5 +29,7 @@ chrome.commands.onCommand.addListener(async (command) => {
     chrome.runtime.openOptionsPage();
     return;
   }
-  chrome.windows.create({ url: origin + '/new', type: 'popup', width: 520, height: 760, focused: true });
+  // /new#window (2.1.2): quick add on its own, sized to the card, closing
+  // itself when done. A Better-Cal older than 1.1.2 reads it as plain /new.
+  chrome.windows.create({ url: origin + '/new#window', type: 'popup', width: 560, height: 500, focused: true });
 });

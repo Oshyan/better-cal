@@ -2,7 +2,7 @@
 
 Upload zip: `better-cal-gcal-redirect-2.1.1.zip`, attached to the GitHub release `extension-v2.1.1` (each extension version is tagged `extension-vX.Y.Z` with its store zip attached; build with `cd extension && zip -r ../better-cal-gcal-redirect-<version>.zip manifest.json rules.js background.js options.html options.js icon-128.png README.md`). Screenshot: `extension/store-assets/screenshot-1280x800.png`.
 
-Version 2.1 adds an optional new event key (a `chrome.commands` entry with no suggested key: off until the user sets one; it opens `<address>/new` in a small window; no new permissions). The summary, description, single purpose and test instructions below are updated for it.
+Version 2.1 adds an optional new event key (a `chrome.commands` entry with no suggested key: off until the user sets one; it opens `<address>/new#window`, quick add on its own, in a small window; no new permissions). 2.1.2 changes no permission and no listing text. The summary, description, single purpose and test instructions below are updated for it.
 
 Version 2.0 is generic: the Better-Cal address is set in the extension's options (dynamic declarativeNetRequest rules built from it, `storage` permission for the address). The listing text, the permission justifications and the test instructions below are the 2.0 versions. Distribution: set Regions to **All regions** (1.x was accidentally United States only, which made the item "not available" from anywhere else, including to users outside the US).
 
@@ -80,5 +80,5 @@ After approval, install from the item link on every Chrome profile you use; it s
 No credentials — the redirect is fully verifiable without any account:
 
 ```text
-No login needed. Install; the options page opens: enter any https address, e.g. https://cal.example.com, Save. Then open https://calendar.google.com/calendar/render?action=TEMPLATE&text=Test&dates=20260901T170000Z/20260901T180000Z — it redirects to <address>/add with the same parameters (two dynamic declarativeNetRequest rules, visible in the address bar). Optional: set a key for "New event in Better-Cal" at chrome://extensions/shortcuts; it opens <address>/new in a popup. "Stop redirecting" in the options removes the rules. Google Calendar's own event pages and browsing are unaffected.
+No login needed. Install; the options page opens: enter any https address, e.g. https://cal.example.com, Save. Then open https://calendar.google.com/calendar/render?action=TEMPLATE&text=Test&dates=20260901T170000Z/20260901T180000Z — it redirects to <address>/add with the same parameters (two dynamic declarativeNetRequest rules, visible in the address bar). Optional: set a key for "New event in Better-Cal" at chrome://extensions/shortcuts (Ctrl+Shift+digit, or Cmd+Shift+digit on a Mac, for Global); it opens <address>/new#window in a popup. "Stop redirecting" in the options removes the rules. Google Calendar's own event pages and browsing are unaffected.
 ```

@@ -447,6 +447,7 @@ $repeatCases = [
     ['Standup Monday through Friday 9am', 'Standup', '2026-07-31T09:00', 'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR'],
     ['Lunch Mon to Fri at noon', 'Lunch', '2026-07-30T12:00', 'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR'],
     ['Gym Fri-Sun 8pm', 'Gym', '2026-07-31T20:00', 'FREQ=WEEKLY;BYDAY=FR,SA,SU'],
+    ['Standup Mon–Fri 9am', 'Standup', '2026-07-31T09:00', 'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR'],
     ['Mon-Fri check at 7pm', 'Mon-Fri check', '2026-07-30T19:00', null],
     // Weekly
     ['Piano every Tuesday 4pm', 'Piano', '2026-08-04T16:00', 'FREQ=WEEKLY;BYDAY=TU'],
@@ -572,6 +573,9 @@ $phraseCases = [
     // Day ranges with no repeat: one event over those days
     ['Workshop Mon-Fri', 'Workshop', '2026-08-03T00:00', '2026-08-08T00:00', null],
     ['Workshop Thu-Fri next week', 'Workshop', '2026-08-06T00:00', '2026-08-08T00:00', null],
+    // En and em dashes, as phone keyboards and Option-hyphen type them
+    ['Workshop Mon–Fri', 'Workshop', '2026-08-03T00:00', '2026-08-08T00:00', null],
+    ['Retreat Aug 3—7', 'Retreat', '2026-08-03T00:00', '2026-08-08T00:00', null],
     ['Trip from Fri to Mon', 'Trip', '2026-07-31T00:00', '2026-08-04T00:00', null],
     ['Conference Mon-Wed at the Hilton', 'Conference at the Hilton', '2026-08-03T00:00', '2026-08-06T00:00', null],
     ['Mon-Fri schedule review', 'Mon-Fri schedule review', '2026-07-30T11:00', '2026-07-30T12:00', null],

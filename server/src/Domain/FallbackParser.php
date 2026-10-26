@@ -293,7 +293,7 @@ final class FallbackParser
         $date = $now;
         $found = false;
         $monthAlt = 'jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?';
-        $sep = '\s*(?:[-–—]|\b(?:to|through|until)\b)\s*';
+        $sep = '\s*(?:-|–|—|\b(?:to|through|until)\b)\s*';
 
         // Date range: "June 1-12", "Aug 3 to Aug 7", "Dec 30 to Jan 2, 2026".
         // Lookahead keeps "June 1 to 5pm" (a time tail) out of the range path.

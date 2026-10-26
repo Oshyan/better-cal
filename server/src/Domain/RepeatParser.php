@@ -369,7 +369,7 @@ final class RepeatParser
     public static function dayRangeAt(string $work): ?array
     {
         $D = self::DAY;
-        $re = '/(?<![\w-])(?:from\s+)?(' . $D . ')\.?(?:\s*[-–—]\s*|\s+(?:to|through|thru)\s+)(' . $D . ')\.?(?![\w\'-])(?!\s+(?-i:[A-Z]))/i';
+        $re = '/(?<![\w-])(?:from\s+)?(' . $D . ')\.?(?:\s*(?:-|–|—)\s*|\s+(?:to|through|thru)\s+)(' . $D . ')\.?(?![\w\'-])(?!\s+(?-i:[A-Z]))/i';
         if (preg_match_all($re, $work, $all, PREG_SET_ORDER | PREG_OFFSET_CAPTURE) === 0) {
             return null;
         }

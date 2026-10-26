@@ -204,7 +204,10 @@ final class QuickAdd
                 'location' => $draft['location'],
                 'personNames' => $draft['personNames'],
                 'rrule' => $draft['rrule'] ?? null,
-            ]));
+            ] + (!empty($draft['reminders']) ? [
+                // "alert 30 minutes" (#33): this event's own reminder.
+                'reminders' => array_map(static fn($m): array => ['minutes' => (int) $m], $draft['reminders']),
+            ] : [])));
         }
 
         return ['draft' => $draft, 'event' => $event];
@@ -297,6 +300,7 @@ final class QuickAdd
         }
 
         $merged['rrule'] = ($fallback['rrule'] ?? null) ?: (($llm['rrule'] ?? null) ?: null);
+        $merged['reminders'] = $fallback['reminders'] ?? null; // read from the text, never the model's
         if ($merged['rrule'] !== null) {
             try {
                 // On the owner's clock, so a move across a DST change keeps the hour.

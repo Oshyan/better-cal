@@ -257,6 +257,8 @@ export function EditorDrawer() {
       }
       // A repeat the text names (#165); otherwise the editor's own stays.
       nf.rrule = d.rrule ? parseRrule(d.rrule, null, fromInputValue(nf.start)) : base.rrule;
+      // An alert the text names ("alert 30 minutes"); otherwise the editor's own.
+      nf.reminders = Array.isArray(d.reminders) && d.reminders.length ? d.reminders.map((m) => Number(m) || 0) : base.reminders;
       // People the editor started with stay; the text adds to them.
       const named = toPeopleChips(d.personNames || []);
       nf.people = [...base.people, ...named.filter((p) => !base.people.some((b) => b.name.toLowerCase() === p.name.toLowerCase()))];
@@ -422,9 +424,10 @@ export function EditorDrawer() {
         : (draft.rrule || ''), untilZone(occ), start),
       // null = inherit calendar/global defaults; a list = explicit override
       // (minutes before start; [] = no reminders). remInitial detects changes.
+      // A new event brought from quick add may carry an alert from its text.
       reminders: occ && occ.reminderSource === 'event'
         ? (occ.reminders || []).map((r) => Number(r.minutes) || 0)
-        : null,
+        : (!occ && Array.isArray(draft.reminders) && draft.reminders.length ? draft.reminders.map((m) => Number(m) || 0) : null),
       remInitial: occ && occ.reminderSource === 'event'
         ? (occ.reminders || []).map((r) => Number(r.minutes) || 0).join(',')
         : null,

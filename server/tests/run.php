@@ -420,6 +420,8 @@ $d = $p('Drinks at Sunday Social Friday 6pm');
 checkEq('fp weekday after "at" stays in the place', 'Sunday Social', $d['location']);
 checkEq('fp weekday after "at" is not the date', '2026-07-31T18:00', substr($d['start'], 0, 16));
 $d = $p('Party the Saturday after next 8pm');
+checkEq('fp "the Saturday after next" is a week past the coming Saturday', ['2026-08-08T20:00', 'Party', true], [substr($d['start'], 0, 16), $d['title'], $d['complete']]);
+$d = $p('Party the week after the merger 8pm');
 checkEq('fp leftover temporal words demote completeness', false, $d['complete']);
 check('fp leftover temporal words cap confidence', $d['confidence'] <= 0.5);
 
@@ -513,6 +515,48 @@ checkEq('repeat keeps the time and length', '2026-07-30T20:00', substr($d['end']
 $d = $p('Yoga every Monday Sep 7 to Dec 14');
 checkEq('repeat with a range is one day, not a multi-day event', '2026-09-08T00:00', substr($d['end'], 0, 16));
 check('repeat with a day and time is complete', $p('Piano every Tuesday 4pm')['complete']);
+// --- #33: lengths, relative dates, short day names, alerts, typed zones -----
+// Each row: text, title, start, end (exclusive for all-day), reminders.
+$phraseCases = [
+    // Lengths in days or longer (#33's own examples)
+    ['New York Trip 3 weeks long starting August 12th', 'New York Trip', '2026-08-12T00:00', '2026-09-02T00:00', null],
+    ['Conference 3 days starting Sept 14', 'Conference', '2026-09-14T00:00', '2026-09-17T00:00', null],
+    ['Vacation for 90 days starting Oct 1', 'Vacation', '2026-10-01T00:00', '2026-12-30T00:00', null],
+    ['Sabbatical 3 months from Jan 5', 'Sabbatical', '2027-01-05T00:00', '2027-04-05T00:00', null],
+    ['Camping trip week-long starting Aug 20', 'Camping trip', '2026-08-20T00:00', '2026-08-27T00:00', null],
+    ['Holiday Dec 20 for 2 weeks', 'Holiday', '2026-12-20T00:00', '2027-01-03T00:00', null],
+    ['Lisbon trip 2 weeks', 'Lisbon trip', '2026-07-30T00:00', '2026-08-13T00:00', null],
+    ['Trip from Aug 9 to Aug 18', 'Trip', '2026-08-09T00:00', '2026-08-19T00:00', null],
+    ['Workshop all week next week', 'Workshop', '2026-08-03T00:00', '2026-08-10T00:00', null],
+    ['Party this weekend', 'Party', '2026-08-01T00:00', '2026-08-03T00:00', null],
+    // Relative dates
+    ['Dentist in 2 weeks', 'Dentist', '2026-08-13T00:00', '2026-08-14T00:00', null],
+    ['Dinner in 3 days at 7pm', 'Dinner', '2026-08-02T19:00', '2026-08-02T20:00', null],
+    ['Coffee 2 days from now 9am', 'Coffee', '2026-08-01T09:00', '2026-08-01T10:00', null],
+    ['Meeting 3 weeks from Monday 10am', 'Meeting', '2026-08-24T10:00', '2026-08-24T11:00', null],
+    ['Exam Friday after next', 'Exam', '2026-08-07T00:00', '2026-08-08T00:00', null],
+    ['Haircut end of the month', 'Haircut', '2026-07-31T00:00', '2026-08-01T00:00', null],
+    ['Picnic the 15th', 'Picnic', '2026-08-15T00:00', '2026-08-16T00:00', null],
+    ['Brunch on the 3rd at 11am', 'Brunch', '2026-08-03T11:00', '2026-08-03T12:00', null],
+    // Times and short day names
+    ['Lunch next Monday at 1', 'Lunch', '2026-08-03T13:00', '2026-08-03T14:00', null],
+    ['Doctor 10/3 at 2:30', 'Doctor', '2026-10-03T14:30', '2026-10-03T15:30', null],
+    ['Call at 07:30 tomorrow', 'Call', '2026-07-31T07:30', '2026-07-31T08:30', null],
+    ['Errands Sat afternoon', 'Errands', '2026-08-01T14:00', '2026-08-01T15:00', null],
+    ['Lunch Fri at noon', 'Lunch', '2026-07-31T12:00', '2026-07-31T13:00', null],
+    ['Sun Valley ski trip Friday', 'Sun Valley ski trip', '2026-07-31T00:00', '2026-08-01T00:00', null],
+    ['Dinner at 5 Main St Friday 7pm', 'Dinner at 5 Main St', '2026-07-31T19:00', '2026-07-31T20:00', null],
+    ['Flight Friday 9:40am EST', 'Flight', '2026-07-31T06:40', '2026-07-31T07:40', null],
+    // Alerts
+    ['Call with Sam tomorrow 3pm alert 30 minutes', 'Call with Sam', '2026-07-31T15:00', '2026-07-31T16:00', [30]],
+    ['Remind me tomorrow at 3PM to call the bank', 'Call the bank', '2026-07-31T15:00', '2026-07-31T16:00', [0]],
+    ['Dentist Friday 10am with a 1 hour reminder', 'Dentist', '2026-07-31T10:00', '2026-07-31T11:00', [60]],
+];
+foreach ($phraseCases as [$text, $title, $start, $end, $reminders]) {
+    $d = $p($text);
+    checkEq("phrase '$text'", [$title, $start, $end, $reminders], [$d['title'], substr($d['start'], 0, 16), substr($d['end'], 0, 16), $d['reminders']]);
+}
+
 $invalid = [];
 foreach ($repeatCases as [$text, , , $rrule]) {
     if ($rrule === null) {
@@ -3024,6 +3068,8 @@ checkEq('qam start moves to the rule\'s first day', '2026-08-06T16:00:00-07:00',
 checkEq('qam the move keeps the length', '2026-08-06T17:00:00-07:00', $m['end']);
 $m = QuickAdd::mergeLlm($mkLlm(['rrule' => null]), $mkFb(['rrule' => null]), $mergeNow);
 checkEq('qam no repeat stays none', null, $m['rrule']);
+checkEq('qam an alert read from the text survives the model draft (#33)', [30],
+    QuickAdd::mergeLlm($mkLlm(), $mkFb(['reminders' => [30]]), $mergeNow)['reminders']);
 checkEq('qam kept model rule is normalized', 'FREQ=WEEKLY;BYDAY=MO', LlmGateway::keptRrule('RRULE:freq=weekly;byday=MO'));
 checkEq('qam hourly model rule is dropped', null, LlmGateway::keptRrule('FREQ=HOURLY;INTERVAL=2'));
 checkEq('qam a daily rule at set hours is dropped', null, LlmGateway::keptRrule('FREQ=DAILY;BYHOUR=9,17'));

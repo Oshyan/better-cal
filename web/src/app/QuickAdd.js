@@ -23,6 +23,7 @@ import { useStore, set, state, toast } from './store.js';
 import { RepeatMenu } from './RepeatMenu.js';
 import { Icon } from '../ui/icons.js';
 import { describeRepeat, repeatPresets, repeatEnd, withRepeatEnd, retypeUntil } from '../lib/repeat.js';
+import { fmtOffsetMinutes } from '../lib/reminders.js';
 import { useBackClose } from './backclose.js';
 import { quickAddParse, quickAddCreate, defaultTargetCalendarId } from './actions.js';
 import { api, loadPeople } from './api.js';
@@ -349,6 +350,8 @@ export function QuickAdd() {
       end: range.end,
       allDay: f.allDay,
       rrule: effectiveRrule(f) || null,
+      // "alert 30 minutes" in the text (#33): this event's own reminder.
+      ...(d && Array.isArray(d.reminders) && d.reminders.length ? { reminders: d.reminders.map((m) => ({ minutes: m })) } : {}),
       location,
       locationLat: location && f.locationLat != null ? f.locationLat : null,
       locationLng: location && f.locationLng != null ? f.locationLng : null,
@@ -401,6 +404,7 @@ export function QuickAdd() {
           // and asks about any that aren't in the directory yet.
           personNames: (draft && draft.personNames) || [],
           rrule: effectiveRrule(form) || '',
+          ...(draft && Array.isArray(draft.reminders) && draft.reminders.length ? { reminders: draft.reminders } : {}),
         },
         nlText: touchedRef.current.size === 0 ? text : '',
       },
@@ -494,6 +498,7 @@ export function QuickAdd() {
           aria-haspopup="menu" aria-expanded=${repeatOpen ? 'true' : 'false'}
           title="Change how it repeats" onClick=${repeatToggle}
         ><${Icon} name="repeat" size=${12} />${repeatWords}</button>`}
+        ${draft && Array.isArray(draft.reminders) && draft.reminders.length > 0 && html`<span class="bc-qchip" title="Alert"><${Icon} name="bell" size=${12} />${draft.reminders.map(fmtOffsetMinutes).join(', ')}</span>`}
         ${draft && draft.location && html`<span class="bc-qchip">@ ${draft.location}</span>`}
         ${draft && draft.personNames && draft.personNames.map((n) => html`<span
           key=${n}

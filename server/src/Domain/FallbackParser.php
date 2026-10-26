@@ -20,6 +20,27 @@ final class FallbackParser
         'sunday' => 0, 'monday' => 1, 'tuesday' => 2, 'wednesday' => 3,
         'thursday' => 4, 'friday' => 5, 'saturday' => 6,
     ];
+    /** Short day names (#33), read only where they can't be a word ("Sun Valley"). */
+    private const WEEKDAY_ABBR = [
+        'sun' => 0, 'mon' => 1, 'tue' => 2, 'tues' => 2, 'wed' => 3,
+        'thu' => 4, 'thur' => 4, 'thurs' => 4, 'fri' => 5, 'sat' => 6,
+    ];
+    private const NUMBER_WORDS = [
+        'a' => 1, 'an' => 1, 'one' => 1, 'two' => 2, 'three' => 3, 'four' => 4, 'five' => 5, 'six' => 6,
+        'seven' => 7, 'eight' => 8, 'nine' => 9, 'ten' => 10, 'eleven' => 11, 'twelve' => 12,
+    ];
+    /**
+     * Zones typed after a time ("9:40am EST", #33). Each names the place's
+     * clock, so EST in July still means Eastern time as people use it.
+     */
+    private const ZONE_ABBR = [
+        'EST' => 'America/New_York', 'EDT' => 'America/New_York', 'ET' => 'America/New_York',
+        'CST' => 'America/Chicago', 'CDT' => 'America/Chicago', 'CT' => 'America/Chicago',
+        'MST' => 'America/Denver', 'MDT' => 'America/Denver', 'MT' => 'America/Denver',
+        'PST' => 'America/Los_Angeles', 'PDT' => 'America/Los_Angeles', 'PT' => 'America/Los_Angeles',
+        'AKST' => 'America/Anchorage', 'AKDT' => 'America/Anchorage', 'HST' => 'Pacific/Honolulu',
+        'GMT' => 'UTC', 'UTC' => 'UTC', 'BST' => 'Europe/London', 'CET' => 'Europe/Paris', 'CEST' => 'Europe/Paris',
+    ];
 
     /**
      * `complete` is internal quality metadata for QuickAdd's LLM-skip decision
@@ -29,7 +50,10 @@ final class FallbackParser
      * `rrule` is the repeat the text asked for ("every Tuesday until Dec 15"),
      * or null; the first occurrence is the event's start (#165).
      *
-     * @return array{title:string,start:string,end:string,allDay:bool,location:?string,personNames:list<string>,rrule:?string,confidence:float,source:string,complete:bool,dateFound:bool,timeFound:bool}
+     * `reminders` is minutes before the start the text asked to be alerted
+     * ("alert 30 minutes", "remind me ... to"), or null (#33).
+     *
+     * @return array{title:string,start:string,end:string,allDay:bool,location:?string,personNames:list<string>,rrule:?string,reminders:?list<int>,confidence:float,source:string,complete:bool,dateFound:bool,timeFound:bool}
      */
     public static function parse(string $text, string $tzid, ?\DateTimeImmutable $now = null): array
     {
@@ -47,6 +71,12 @@ final class FallbackParser
             $allDayKeyword = true;
             $work = self::cut($work, $m[0]);
         }
+
+        // Alerts (#33): "alert 30 minutes", "with a 1 hour reminder", and
+        // "Remind me ... to call the bank" (an event with an alert at its
+        // time, until there are reminders of their own). Before the duration,
+        // which "30 minutes" would otherwise be.
+        [$work, $reminders, $remindMe] = self::extractReminders($work);
 
         // Repeats first: "every Tuesday", "until Dec 15" and "for 6 weeks"
         // would otherwise read as a date, a range or a duration.
@@ -69,8 +99,22 @@ final class FallbackParser
         // leaves a lone weekday to the title: in "Report every Tuesday about
         // Friday sales" Friday is a word, not the start.
         $ownDays = $repeat !== null && (isset($repeat['rule']['BYDAY']) || isset($repeat['rule']['BYMONTHDAY']));
+        // "starting Aug 12", "from Jan 21 to May 23" for a single event (#33);
+        // with a repeat they are its bounds (RepeatParser).
+        [$work, $startOn, $startRangeEnd] = $repeat === null ? self::startPhrase($work, $now) : [$work, null, null];
         [$work, $date, $dateFound, $rangeEnd] = self::extractDate($work, $now, !$ownDays);
-        [$work, $startTime, $endTime, $timeFound] = self::extractTime($work);
+        if ($startOn !== null) {
+            $date = $startOn;
+            $dateFound = true;
+            $rangeEnd = $startRangeEnd ?? $rangeEnd;
+        }
+        [$work, $startTime, $endTime, $timeFound, $timeZone] = self::extractTime($work);
+        // A length in days or longer ("3 weeks long", "for 90 days",
+        // "week-long", #33): a multi-day event from its start.
+        $span = null;
+        if ($repeat === null && $rangeEnd === null) {
+            [$work, $span] = self::extractSpan($work);
+        }
         $repeatDayGiven = false;
         if ($repeat !== null) {
             // A range with a repeat is the series' start and end, not one
@@ -130,6 +174,12 @@ final class FallbackParser
             $title = mb_strtoupper(mb_substr($title, 0, 1)) . mb_substr($title, 1);
         }
 
+        // "Remind me tomorrow at 3pm to call the bank": the event is "Call
+        // the bank".
+        if ($remindMe && preg_match('/^to\s+(.+)$/i', $title, $m) === 1) {
+            $title = mb_strtoupper(mb_substr($m[1], 0, 1)) . mb_substr($m[1], 1);
+        }
+
         $allDay = false;
         if ($rangeEnd !== null) {
             // Multi-day all-day range, end exclusive.
@@ -139,17 +189,28 @@ final class FallbackParser
         } elseif ($timeFound) {
             $day = $dateFound ? $date : $now;
             $start = $day->setTime($startTime[0], $startTime[1]);
+            // A typed zone: that clock's time on that day, shown on ours.
+            $zoneOf = $timeZone !== null ? Time::zone($timeZone) : null;
+            if ($zoneOf !== null) {
+                $start = (new \DateTimeImmutable($start->format('Y-m-d H:i'), $zoneOf))->setTimezone($tz);
+            }
             if (!$dateFound && $start <= $now) {
                 $start = $start->add(new \DateInterval('P1D'));
             }
             if ($endTime !== null) {
-                $end = $start->setTime($endTime[0], $endTime[1]);
-                if ($end <= $start) {
-                    $end = $end->add(new \DateInterval('P1D'));
-                }
+                $minutes = ($endTime[0] * 60 + $endTime[1]) - ($startTime[0] * 60 + $startTime[1]);
+                $end = $start->add(new \DateInterval('PT' . ($minutes > 0 ? $minutes : $minutes + 1440) . 'M'));
+            } elseif ($span !== null) {
+                $end = $start->modify('+' . $span['n'] . ' ' . $span['unit']);
             } else {
                 $end = $start->add(new \DateInterval('PT' . ($durationMin ?? 60) . 'M'));
             }
+        } elseif ($span !== null) {
+            // "Lisbon trip 2 weeks": whole days, from the date or today.
+            $allDay = true;
+            $start = ($dateFound ? $date : $now)->setTime(0, 0);
+            $end = $start->modify('+' . $span['n'] . ' ' . $span['unit']);
+            $dateFound = true;
         } elseif ($dateFound || $allDayKeyword) {
             $allDay = true;
             $day = $dateFound ? $date : $now;
@@ -202,6 +263,7 @@ final class FallbackParser
             'location' => $location,
             'personNames' => $personNames,
             'rrule' => $rrule,
+            'reminders' => $reminders,
             'confidence' => round(min(0.95, max(0.05, $confidence)), 2),
             'source' => 'fallback',
             'complete' => $dateFound && ($timeFound || $allDay) && !$suspect,
@@ -290,6 +352,59 @@ final class FallbackParser
             }
         }
         $dayAltAll = implode('|', array_keys(self::WEEKDAYS));
+        $numAlt = '\d{1,3}|' . implode('|', array_keys(self::NUMBER_WORDS));
+        $num = static fn(string $n): int => ctype_digit($n) ? (int) $n : self::NUMBER_WORDS[strtolower($n)];
+        $today = $now->setTime(0, 0);
+        // Relative (#33): "in 2 weeks", "3 days from now", "2 weeks from
+        // Monday". Before the plain weekday, which "from Monday" would be.
+        if (preg_match('/\bin\s+(' . $numAlt . ')\s+(day|week|month)s?\b/i', $work, $m)) {
+            return [self::cut($work, $m[0]), $now->modify('+' . $num($m[1]) . ' ' . strtolower($m[2])), true, null];
+        }
+        if (preg_match('/\b(' . $numAlt . ')\s+(day|week|month)s?\s+(?:from|after)\s+(now|today|tomorrow|' . $dayAltAll . ')\b/i', $work, $m)) {
+            $base = strtolower($m[3]);
+            $from = match ($base) {
+                'now', 'today' => $now,
+                'tomorrow' => $now->add(new \DateInterval('P1D')),
+                default => $now->add(new \DateInterval('P' . ((self::WEEKDAYS[$base] - (int) $now->format('w') + 7) % 7 ?: 7) . 'D')),
+            };
+            return [self::cut($work, $m[0]), $from->modify('+' . $num($m[1]) . ' ' . strtolower($m[2])), true, null];
+        }
+        // "Friday after next": a week past the coming Friday.
+        if (preg_match('/\b(?:the\s+)?(' . $dayAltAll . ')\s+after\s+next\b/i', $work, $m)) {
+            $diff = (self::WEEKDAYS[strtolower($m[1])] - (int) $now->format('w') + 7) % 7 ?: 7;
+            return [self::cut($work, $m[0]), $now->add(new \DateInterval('P' . ($diff + 7) . 'D')), true, null];
+        }
+        // "end of the month", "end of next month": its last day.
+        if (preg_match('/\b(?:at\s+)?(?:the\s+)?end\s+of\s+(?:the\s+|this\s+)?(next\s+)?month\b/i', $work, $m)) {
+            $month = ($m[1] ?? '') !== '' ? $today->modify('first day of next month') : $today;
+            return [self::cut($work, $m[0]), $month->modify('last day of this month'), true, null];
+        }
+        // "this weekend", "next weekend": Saturday and Sunday.
+        if (preg_match('/\b(this|next|the)\s+weekend\b/i', $work, $m)) {
+            $w = (int) $now->format('w');
+            $sat = $w === 0 ? $today->sub(new \DateInterval('P1D')) : $today->add(new \DateInterval('P' . (6 - $w) . 'D'));
+            if (strtolower($m[1]) === 'next') $sat = $sat->add(new \DateInterval('P7D'));
+            $first = $sat < $today ? $today : $sat;
+            return [self::cut($work, $m[0]), $first, true, $sat->add(new \DateInterval('P1D'))];
+        }
+        // "all week next week", "next week all week": Monday to Sunday.
+        if (preg_match('/\ball\s+week\b/i', $work, $all) && preg_match('/\b(this|next)\s+week\b(?!\s+(?:on\s+)?(?:' . $dayAltAll . '))/i', $work, $m)) {
+            $monday = $today->sub(new \DateInterval('P' . (((int) $now->format('w') + 6) % 7) . 'D'));
+            if (strtolower($m[1]) === 'next') $monday = $monday->add(new \DateInterval('P7D'));
+            $work = self::cut(self::cut($work, $all[0]), $m[0]);
+            return [$work, $monday < $today ? $today : $monday, true, $monday->add(new \DateInterval('P6D'))];
+        }
+        // "the 15th", "on the 3rd": the next day with that number.
+        if (preg_match('/\b(?:on\s+)?the\s+(\d{1,2})(?:st|nd|rd|th)\b(?!\s+(?:of\s+)?(?:' . $monthAlt . '|every|each|the\s+month)\b)/i', $work, $m)) {
+            $d = (int) $m[1];
+            for ($i = 0; $i < 13; $i++) {
+                $month = $today->modify('first day of this month')->modify('+' . $i . ' month');
+                $candidate = self::mkDate($now, (int) $month->format('Y'), (int) $month->format('n'), $d);
+                if ($candidate !== null && $candidate->setTime(0, 0) >= $today) {
+                    return [self::cut($work, $m[0]), $candidate, true, null];
+                }
+            }
+        }
         // Compounds BEFORE their fragments, or "day after tomorrow" would
         // match as "tomorrow" and "a week from Friday" as "Friday".
         if (preg_match('/\b(?:the\s+)?day\s+after\s+tomorrow\b/i', $work, $m)) {
@@ -360,12 +475,16 @@ final class FallbackParser
         // after "to" or "at" a weekday names a place ("Ferry to Friday
         // Harbor", "Drinks at Sunday Social"), so the first weekday not in
         // that spot is the date.
-        preg_match_all('/\b(?:(next|this)\s+)?(' . $dayAlt . ')\b/i', $work, $all, PREG_SET_ORDER | PREG_OFFSET_CAPTURE);
+        // Short names ("Fri", "Sat") too, but not where they start a name
+        // ("Sun Valley", "Sat Nav"): followed by a capitalized word.
+        $abbrAlt = implode('|', array_keys(self::WEEKDAY_ABBR));
+        preg_match_all('/\b(?:(next|this)\s+)?(' . $dayAlt . '|(?:' . $abbrAlt . ')\.?(?!\s+(?-i:[A-Z])))(?![\w\'])/i', $work, $all, PREG_SET_ORDER | PREG_OFFSET_CAPTURE);
         foreach ($all as $m) {
             if (preg_match('/\b(?:to|at)\s+$/i', substr($work, 0, $m[0][1])) === 1) {
                 continue;
             }
-            $target = self::WEEKDAYS[strtolower($m[2][0])];
+            $name = strtolower(rtrim($m[2][0], '.'));
+            $target = self::WEEKDAYS[$name] ?? self::WEEKDAY_ABBR[$name];
             $todayW = (int) $now->format('w');
             $diff = ($target - $todayW + 7) % 7;
             if (strtolower($m[1][0] ?? '') === 'next' && $diff === 0) {
@@ -399,11 +518,18 @@ final class FallbackParser
         return $best;
     }
 
-    /** @return array{0:string,1:?array{0:int,1:int},2:?array{0:int,1:int},3:bool} */
+    /**
+     * A time, a time range, or a time-of-day word, with a zone typed right
+     * after it ("9:40am EST") as [4].
+     *
+     * @return array{0:string,1:?array{0:int,1:int},2:?array{0:int,1:int},3:bool,4:?string}
+     */
     private static function extractTime(string $work): array
     {
+        $zoneAlt = '(?:\s*\b(' . implode('|', array_keys(self::ZONE_ABBR)) . ')\b)?';
+        $zone = static fn(array $m, int $i): ?string => isset($m[$i]) && $m[$i] !== '' ? self::ZONE_ABBR[$m[$i]] : null;
         // Range with meridiem: "7-9pm", "7pm-9pm", "7:30pm to 9pm"
-        if (preg_match('/\b(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*(?:-|–|—|to|until)\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i', $work, $m)) {
+        if (preg_match('/\b(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*(?:-|–|—|to|until)\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b' . $zoneAlt . '/i', $work, $m)) {
             $mer2 = strtolower($m[6]);
             $mer1 = strtolower($m[3] ?? '') ?: $mer2;
             $start = self::to24((int) $m[1], (int) ($m[2] ?: 0), $mer1);
@@ -411,29 +537,41 @@ final class FallbackParser
             if ($start[0] * 60 + $start[1] >= $end[0] * 60 + $end[1] && $start[0] >= 12) {
                 $start[0] -= 12; // "11-1pm" style: pull start back to am
             }
-            return [self::cut($work, $m[0]), $start, $end, true];
+            return [self::cut($work, $m[0]), $start, $end, true, $zone($m, 7)];
         }
         // 24h range: "19:00-21:30"
-        if (preg_match('/\b(?:at\s+)?(\d{1,2}):(\d{2})\s*(?:-|–|—|to|until)\s*(\d{1,2}):(\d{2})\b/', $work, $m)) {
-            return [self::cut($work, $m[0]), [(int) $m[1], (int) $m[2]], [(int) $m[3], (int) $m[4]], true];
+        if (preg_match('/\b(?:at\s+)?(\d{1,2}):(\d{2})\s*(?:-|–|—|to|until)\s*(\d{1,2}):(\d{2})\b' . $zoneAlt . '/', $work, $m)) {
+            return [self::cut($work, $m[0]), [(int) $m[1], (int) $m[2]], [(int) $m[3], (int) $m[4]], true, $zone($m, 5)];
         }
         // Single time with meridiem: "7pm", "7:30 pm", "at 2pm"
-        if (preg_match('/\b(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i', $work, $m)) {
-            return [self::cut($work, $m[0]), self::to24((int) $m[1], (int) ($m[2] ?: 0), strtolower($m[3])), null, true];
+        if (preg_match('/\b(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b' . $zoneAlt . '/i', $work, $m)) {
+            return [self::cut($work, $m[0]), self::to24((int) $m[1], (int) ($m[2] ?: 0), strtolower($m[3])), null, true, $zone($m, 4)];
         }
-        // 24h single time: "19:00"
-        if (preg_match('/\b(?:at\s+)?(\d{1,2}):(\d{2})\b/', $work, $m)) {
+        // "h:mm" with no am/pm: 24-hour, except that 1:00 to 7:59 written
+        // without a leading zero means the afternoon ("at 2:30" is 2:30 PM,
+        // #33); "07:30" and "19:00" are taken as written.
+        if (preg_match('/\b(?:at\s+)?(\d{1,2}):(\d{2})\b' . $zoneAlt . '/', $work, $m)) {
             $h = (int) $m[1];
             $min = (int) $m[2];
             if ($h <= 23 && $min <= 59) {
-                return [self::cut($work, $m[0]), [$h, $min], null, true];
+                if ($h >= 1 && $h <= 7 && $m[1][0] !== '0') $h += 12;
+                return [self::cut($work, $m[0]), [$h, $min], null, true, $zone($m, 3)];
+            }
+        }
+        // "at 1", "at 11": an hour on its own, after "at" and before the end
+        // or another part of the phrase (never "at 5 Main St"). 1 to 7 is the
+        // afternoon, 8 to 11 the morning, 12 noon.
+        if (preg_match('/\bat\s+(\d{1,2})\b' . $zoneAlt . '(?=\s*(?:$|,|;|\b(?:with|w\/|for|on|in|at|tomorrow|today|tonight|next|this|every)\b))/i', $work, $m)) {
+            $h = (int) $m[1];
+            if ($h >= 1 && $h <= 12) {
+                return [self::cut($work, $m[0]), [$h <= 7 ? $h + 12 : $h, 0], null, true, $zone($m, 2)];
             }
         }
         if (preg_match('/\b(?:at\s+)?noon\b/i', $work, $m)) {
-            return [self::cut($work, $m[0]), [12, 0], null, true];
+            return [self::cut($work, $m[0]), [12, 0], null, true, null];
         }
         if (preg_match('/\b(?:at\s+)?midnight\b/i', $work, $m)) {
-            return [self::cut($work, $m[0]), [0, 0], null, true];
+            return [self::cut($work, $m[0]), [0, 0], null, true, null];
         }
         // Vague time-of-day words get sensible defaults — but only when
         // clearly meant as a time ("this evening", "in the morning", or
@@ -443,9 +581,96 @@ final class FallbackParser
         if (preg_match('/\b(?:in\s+the\s+|this\s+)(morning|afternoon|evening|night)\b/i', $work, $m)
             || preg_match('/\b(morning|afternoon|evening|night)\s*$/i', $work, $m)
         ) {
-            return [self::cut($work, $m[0]), $vague[strtolower($m[1])], null, true];
+            return [self::cut($work, $m[0]), $vague[strtolower($m[1])], null, true, null];
         }
-        return [$work, null, null, false];
+        return [$work, null, null, false, null];
+    }
+
+    /**
+     * Alerts in the text: [remaining text, minutes before (or null), whether
+     * it began "remind me"].
+     *
+     * @return array{0:string,1:?list<int>,2:bool}
+     */
+    private static function extractReminders(string $work): array
+    {
+        $unit = '(minutes?|mins?|min|m|hours?|hrs?|hr|h|days?|d)';
+        $minutes = static function (string $n, string $u): int {
+            $u = strtolower($u);
+            return (int) $n * (str_starts_with($u, 'd') ? 1440 : (str_starts_with($u, 'h') ? 60 : 1));
+        };
+        $out = [];
+        if (preg_match('/\b(?:alert|remind(?:er)?|notify)(?:\s+me)?\s+(\d{1,4})\s*' . $unit . '\b(?:\s+(?:before|early|earlier|ahead|prior))?/i', $work, $m)
+            || preg_match('/\b(?:with\s+)?(?:an?\s+)?(\d{1,4})[\s-]*' . $unit . '\s+(?:alert|reminder|warning|notice)\b/i', $work, $m)
+        ) {
+            $out[] = $minutes($m[1], $m[2]);
+            $work = self::cut($work, $m[0]);
+        }
+        $remindMe = false;
+        if (preg_match('/^\s*remind\s+me\b\s*/i', $work, $m)) {
+            $remindMe = true;
+            $work = ' ' . substr($work, strlen($m[0]));
+            if ($out === []) $out[] = 0; // an alert at the event's time
+        }
+        return [$work, $out === [] ? null : $out, $remindMe];
+    }
+
+    /**
+     * "starting Aug 12", "from Jan 21 to May 23", "beginning Monday" for a
+     * single event: [remaining text, start date, inclusive end date]. Not
+     * the "from" of "3 days from now", which extractDate reads.
+     *
+     * @return array{0:string,1:?\DateTimeImmutable,2:?\DateTimeImmutable}
+     */
+    private static function startPhrase(string $work, \DateTimeImmutable $now): array
+    {
+        preg_match_all('/\b(?:from|starting(?:\s+(?:on|from))?|beginning(?:\s+on)?)\s+/i', $work, $all, PREG_SET_ORDER | PREG_OFFSET_CAPTURE);
+        $numAlt = '\d{1,3}|' . implode('|', array_keys(self::NUMBER_WORDS));
+        foreach ($all as $m) {
+            $at = $m[0][1];
+            $rest = substr($work, $at + strlen($m[0][0]));
+            if (preg_match('/^from\s/i', $m[0][0]) === 1
+                && preg_match('/\b(?:' . $numAlt . ')\s+(?:days?|weeks?|months?)\s+$/i', substr($work, 0, $at)) === 1
+                && preg_match('/^(?:now|today|tomorrow|' . implode('|', array_keys(self::WEEKDAYS)) . ')\b/i', $rest) === 1) {
+                continue; // "3 days from now", read by extractDate
+            }
+            $first = self::leadingDate($rest, $now);
+            if ($first === null) {
+                continue;
+            }
+            $len = strlen($m[0][0]) + $first['length'];
+            $end = $first['rangeEnd'];
+            if ($end === null && preg_match('/^\s*(?:to|until|till|through|thru|-|–|—)\s*/i', substr($rest, $first['length']), $t)) {
+                $second = self::leadingDate(substr($rest, $first['length'] + strlen($t[0])), $now);
+                if ($second !== null && $second['date'] >= $first['date']) {
+                    $end = $second['date'];
+                    $len += strlen($t[0]) + $second['length'];
+                }
+            }
+            return [substr($work, 0, $at) . ' ' . substr($work, $at + $len), $first['date'], $end];
+        }
+        return [$work, null, null];
+    }
+
+    /**
+     * A length in whole days or longer: "3 weeks long", "for 90 days",
+     * "week-long", "2 months". [remaining text, {n, unit} or null].
+     *
+     * @return array{0:string,1:?array{n:int,unit:string}}
+     */
+    private static function extractSpan(string $work): array
+    {
+        $numAlt = '\d{1,3}|' . implode('|', array_keys(self::NUMBER_WORDS));
+        if (preg_match('/\b(?:for\s+)?(?:an?\s+)?(week|month)[\s-]long\b/i', $work, $m)) {
+            return [self::cut($work, $m[0]), ['n' => 1, 'unit' => strtolower($m[1])]];
+        }
+        if (preg_match('/\b(?:for\s+)?(' . $numAlt . ')[\s-]+(day|week|month)s?(?:[\s-]+long)?\b/i', $work, $m)) {
+            $n = ctype_digit($m[1]) ? (int) $m[1] : self::NUMBER_WORDS[strtolower($m[1])];
+            if ($n >= 1 && $n <= 366) {
+                return [self::cut($work, $m[0]), ['n' => $n, 'unit' => strtolower($m[2])]];
+            }
+        }
+        return [$work, null];
     }
 
     /** @return array{0:int,1:int} */

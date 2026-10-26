@@ -14,6 +14,7 @@ declare(strict_types=1);
 return [
     // The maintainer's key file, kept in a password manager: the recovery signer.
     ['id' => 'file-2026-10-94994bd0', 'type' => 'ed25519', 'publicKey' => 'OaKbZCAzGvEuhPhum0xlNmO2ijxEeVcUDDftx+7Jk/M='],
-    // The maintainer's hardware security key (FIDO2, PIN and touch): the everyday signer.
+    // The maintainer's hardware security keys (FIDO2, PIN and touch): the everyday signers. Either one signs.
     ['id' => 'yubikey-1', 'type' => 'fido2-ed25519', 'rpId' => 'release-signing.better-cal', 'publicKey' => '19ZCGVKNsY16g8D+2d2mnioRUVsnGe1zMofx3qcLw34='],
+    ['id' => 'yubikey-2', 'type' => 'fido2-ed25519', 'rpId' => 'release-signing.better-cal', 'publicKey' => 'O77mg99IVZk0/zMXPREpbfWCEcePyEgYCPSpWC4Rgiw='],
 ];

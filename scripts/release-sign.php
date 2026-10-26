@@ -12,8 +12,9 @@ declare(strict_types=1);
 //       print the statement a release signs
 //   php scripts/release-sign.php --sign --statement-file=FILE --out=SIG [--key-id=ID]
 //       sign it with the key file, adding to SIG (created if missing)
-//   php scripts/release-sign.php --verify=SIG [--version=… --commit=… --zip=FILE --manifest=FILE]
-//       check SIG against the keys in server/config/release-keys.php, and that it names these files
+//   php scripts/release-sign.php --verify=SIG [--version=… --commit=… --zip=FILE --manifest=FILE] [--keys=FILE]
+//       check SIG against the keys in server/config/release-keys.php (or FILE, an
+//       earlier release's copy of it), and that it names these files
 //
 // The key file is ~/.config/better-cal/release-signing.key, or BETTERCAL_RELEASE_KEY.
 // Keep a copy in a password manager: without it, and without the hardware
@@ -25,7 +26,7 @@ require dirname(__DIR__) . '/server/src/Support/ReleaseSignature.php';
 
 use BetterCal\Support\ReleaseSignature;
 
-$opt = getopt('', ['new-key', 'statement', 'sign', 'verify:', 'version:', 'commit:', 'zip:', 'manifest:', 'statement-file:', 'out:', 'key-id:']);
+$opt = getopt('', ['new-key', 'statement', 'sign', 'verify:', 'version:', 'commit:', 'zip:', 'manifest:', 'statement-file:', 'out:', 'key-id:', 'keys:']);
 $keyPath = getenv('BETTERCAL_RELEASE_KEY') ?: (getenv('HOME') . '/.config/better-cal/release-signing.key');
 $fail = static function (string $msg): never {
     fwrite(STDERR, "release-sign: $msg\n");
@@ -109,7 +110,11 @@ if (isset($opt['sign'])) {
 
 if (isset($opt['verify'])) {
     try {
-        $ok = ReleaseSignature::verify((string) @file_get_contents($opt['verify']), ReleaseSignature::trustedKeys());
+        $keys = isset($opt['keys']) ? (static fn(string $f) => require $f)($opt['keys']) : ReleaseSignature::trustedKeys();
+        if (!is_array($keys)) {
+            $fail("{$opt['keys']} isn't a key list");
+        }
+        $ok = ReleaseSignature::verify((string) @file_get_contents($opt['verify']), array_values($keys));
     } catch (\Throwable $e) {
         $fail($e->getMessage());
     }

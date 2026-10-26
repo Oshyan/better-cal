@@ -19,11 +19,11 @@ case "${1:-}" in
     "$base/venv/bin/python" -I -S "$ROOT/scripts/release-signer/check.py" prepare "$base" "$ROOT/scripts/release-signer"
     echo 'Signing environment prepared. No key was accessed.'
     ;;
-  check|sign|enroll)
+  check|sign|enroll|show)
     [[ -x "$base/venv/bin/python" ]] || fail 'run bash scripts/release-signer.sh prepare first (use a current uv with the pinned Python available)'
     "$base/venv/bin/python" -I -S "$ROOT/scripts/release-signer/check.py" check "$base" "$ROOT/scripts/release-signer"
     [[ "$1" != check ]] || exit 0
     exec "$base/venv/bin/python" -I -B "$ROOT/scripts/release-sign-fido.py" "$@"
     ;;
-  *) fail 'usage: bash scripts/release-signer.sh prepare|check|sign|enroll [signer options]' ;;
+  *) fail 'usage: bash scripts/release-signer.sh prepare|check|sign|enroll|show [signer options]' ;;
 esac

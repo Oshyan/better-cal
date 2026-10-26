@@ -73,6 +73,17 @@ release_signature() (
   fi
   php scripts/release-sign.php --verify="$dir/$SIG" --version="$version" --commit="$commit" \
     --zip="$dir/$(zip_name "$version")" --manifest="$dir/$ASSET" || die "the release signature does not verify"
+  # Installs check an update with the key list of the release they run, so
+  # this one must also verify with the previous release's list: a newly added
+  # key can sign on its own only once a release listing it has shipped.
+  local prev
+  prev=$(git describe --tags --abbrev=0 --match 'v[0-9]*' "$tag^" 2>/dev/null || true)
+  if [[ -n "$prev" ]] && git cat-file -e "$prev:server/config/release-keys.php" 2>/dev/null; then
+    git show "$prev:server/config/release-keys.php" > "$dir/previous-keys.php"
+    php scripts/release-sign.php --verify="$dir/$SIG" --keys="$dir/previous-keys.php" --version="$version" --commit="$commit" \
+      --zip="$dir/$(zip_name "$version")" --manifest="$dir/$ASSET" >/dev/null \
+      || die "no signature verifies with $prev's keys, so installs on $prev would refuse it; sign with a key $prev lists"
+  fi
   if [[ "$mode" == sign ]]; then
     gh release upload "$tag" --repo "$REPO" --clobber "$dir/$SIG"
   fi

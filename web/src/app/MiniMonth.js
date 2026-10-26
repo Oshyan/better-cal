@@ -20,7 +20,7 @@ import { primeKeyboard } from '../lib/ioskeyboard.js';
 export function MiniMonth() {
   const s = useStore(
     (st) => ({
-      anchor: st.anchor, visibleMonth: st.visibleMonth,
+      anchor: st.anchor, visibleMonth: st.visibleMonth, visibleDays: st.visibleDays,
       occVersion: st.occVersion, calendars: st.calendars,
       // The grid and weekday heads read the week start from the date utils,
       // so a change to it (Settings, the welcome) has to redraw this too.
@@ -28,8 +28,17 @@ export function MiniMonth() {
     }),
     shallowEq,
   );
-  const base = s.visibleMonth ||
-    { year: Number(s.anchor.slice(0, 4)), month: Number(s.anchor.slice(5, 7)) };
+  const anchorMonth = { year: Number(s.anchor.slice(0, 4)), month: Number(s.anchor.slice(5, 7)) };
+  let base = s.visibleMonth || anchorMonth;
+  // The selected day stays in view while it's on the calendar's screen: at
+  // a month that starts on the week's first day, its last week isn't in the
+  // next month's grid, and stepping through it with the arrows used to show
+  // the next month with nothing selected.
+  const vd = s.visibleDays;
+  if (vd && s.anchor >= vd.start && s.anchor <= vd.end) {
+    const grid = monthWeeks(base.year, base.month);
+    if (s.anchor < grid[0][0] || s.anchor > grid[grid.length - 1][6]) base = anchorMonth;
+  }
   const [disp, setDisp] = useState(null); // local stepping override
 
   // The main view moved: drop any local stepping and follow it again.

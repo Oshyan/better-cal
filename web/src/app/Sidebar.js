@@ -166,12 +166,16 @@ function SidebarResize() {
     d.last = clampSidebarWidth(d.w + e.clientX - d.x);
     applySidebarWidth(d.last);
   };
-  const end = () => {
+  // A mouse leaves no focus behind on the edge: the arrow keys go on
+  // moving through the calendar. Only a keyboard user who tabbed here
+  // resizes with them.
+  const end = (e) => {
     const d = drag.current;
     if (!d) return;
     drag.current = null;
     document.documentElement.classList.remove('bc-resizing-sidebar');
     commit(d.last);
+    if (e && e.currentTarget && e.currentTarget.blur) e.currentTarget.blur();
   };
   const onKeyDown = (e) => {
     const step = e.shiftKey ? 48 : 16;
@@ -180,6 +184,7 @@ function SidebarResize() {
     else if (e.key === 'Home') commit(SIDEBAR_DEFAULT);
     else return;
     e.preventDefault();
+    e.stopPropagation(); // not also a step through the calendar
   };
   return html`<div
     class="bc-sidebar-resize" role="separator" aria-orientation="vertical" tabindex="0"
@@ -187,7 +192,7 @@ function SidebarResize() {
     aria-valuemin=${SIDEBAR_MIN} aria-valuemax=${SIDEBAR_MAX} aria-valuenow=${width}
     onPointerDown=${onPointerDown} onPointerMove=${onPointerMove}
     onPointerUp=${end} onPointerCancel=${end} onLostPointerCapture=${end}
-    onDblClick=${() => commit(SIDEBAR_DEFAULT)} onKeyDown=${onKeyDown}
+    onDblClick=${(e) => { commit(SIDEBAR_DEFAULT); e.currentTarget.blur(); }} onKeyDown=${onKeyDown}
   ></div>`;
 }
 

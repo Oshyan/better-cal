@@ -124,6 +124,7 @@ export const state = {
   // (past dim, active gold ring) and the now-line advance as time passes.
   nowMinute: Math.floor(Date.now() / 60000),
   visibleMonth: null, // {year, month}
+  visibleDays: null, // {start, end} day keys on screen in the month grid (MiniMonth keeps the selected day in view)
   filterText: '',
   agendaShowPast: false,
   agendaSort: 'time', // 'time' | 'match' (rank score, PRD 5.8)

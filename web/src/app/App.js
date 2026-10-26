@@ -596,9 +596,13 @@ export function App() {
   }, [promptScopeAt]);
 
   const onRequestWindow = useCallback(({ start, end }) => { loadWindow(start, end); }, []);
-  const onVisibleMonthChange = useCallback((vm) => {
-    set((st) => (st.visibleMonth && st.visibleMonth.year === vm.year && st.visibleMonth.month === vm.month
-      ? {} : { visibleMonth: vm }));
+  const onVisibleMonthChange = useCallback((vm, days) => {
+    set((st) => {
+      const out = {};
+      if (!(st.visibleMonth && st.visibleMonth.year === vm.year && st.visibleMonth.month === vm.month)) out.visibleMonth = vm;
+      if (days && !(st.visibleDays && st.visibleDays.start === days.start && st.visibleDays.end === days.end)) out.visibleDays = days;
+      return out;
+    });
   }, []);
   const onOpenEvent = useCallback((instanceId, anchorRect, opts) => {
     // Plugin bands open a host-rendered info card (sanitized detail HTML).

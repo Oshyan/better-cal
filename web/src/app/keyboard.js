@@ -113,6 +113,9 @@ export function installKeyboard() {
       if (handlers.escape()) e.preventDefault();
       return;
     }
+    // A control that already used the key (the sidebar's resize edge takes
+    // the arrows) keeps it: no shortcut runs on top.
+    if (e.defaultPrevented) return;
     // Cmd/Ctrl bindings, and unlike every other one they must work while
     // typing — that is the point of a palette. Checked before both guards.
     if ((e.metaKey || e.ctrlKey) && !e.altKey) {

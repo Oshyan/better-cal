@@ -383,14 +383,25 @@ export function MonthGrid({
         Math.max(1, Math.round(viewH / rowH)), // rows the viewport shows
         range.last - top + 1,                  // never beyond rendered rows
       );
-      onVisibleMonthChange(dominantMonthOfRows(top, rows, columns));
+      // With the day gone to pinned at the top (gridAnchor 'top', #91) the
+      // top row is where you are: it names the month, so today's month
+      // stays the label until its row scrolls away, even with the next
+      // month filling the rest of the screen.
+      const month = dominantMonthOfRows(top, anchorAtTop ? 1 : rows, columns);
+      // The days on screen, so the mini-month can keep the selected day in
+      // view (MiniMonth.js).
+      const days = {
+        start: keyOfEpochDay(firstEpochDayOfRow(top, columns)),
+        end: keyOfEpochDay(firstEpochDayOfRow(top + rows, columns) - 1),
+      };
+      onVisibleMonthChange(month, days);
     }
     if (onRequestWindow) {
       const start = dateOfDayKey(keyOfEpochDay(firstEpochDayOfRow(range.first, columns) - 28));
       const end = dateOfDayKey(keyOfEpochDay(firstEpochDayOfRow(range.last + 1, columns) + 28));
       onRequestWindow({ start: toISOWithOffset(start), end: toISOWithOffset(end) });
     }
-  }, [range.first, range.last, range.top, range.topOffset, columns, viewH, rowH]);
+  }, [range.first, range.last, range.top, range.topOffset, columns, viewH, rowH, anchorAtTop]);
 
   // --- drag helpers ---------------------------------------------------------
 

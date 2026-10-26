@@ -19,6 +19,14 @@ namespace BetterCal\Http;
  *   VERSION is a hash of every file in the shell, so any change produces a
  *   new one and an unchanged deploy invalidates nothing.
  *
+ * The version also tags every app file the document loads (?v=, 1.2.0):
+ * the entry script, the stylesheet, each preload, and an import
+ * map naming every module under src/ and vendor/, so a module imported from
+ * another module carries it too. iPhone Safari reused the previous version's
+ * scripts for the first load after an update, by address, even though the
+ * worker held the new ones; new addresses can't be confused with old ones.
+ * The worker matches its cache ignoring the query, so nothing else changes.
+ *
  * These used to be generated into the committed files by a script at deploy
  * time, which left the working tree modified after every deploy and the
  * release tags out of step with what shipped. Here, the committed files stay
@@ -87,7 +95,8 @@ final class AppShell
     /** web/index.html with the preload block filled in. */
     public function renderIndex(): string
     {
-        return self::fillIndex($this->read('index.html'), $this->state()['modules']);
+        $s = $this->state();
+        return self::fillIndex($this->read('index.html'), $s['modules'], $s['version'], $s['mapped']);
     }
 
     /** web/sw.js with VERSION and SHELL filled in. */
@@ -103,7 +112,7 @@ final class AppShell
         return $this->state()['version'];
     }
 
-    /** @return array{version:string, modules:list<string>, shell:list<string>} */
+    /** @return array{version:string, modules:list<string>, shell:list<string>, mapped:list<string>} */
     public function state(): array
     {
         $this->computed = false;
@@ -112,7 +121,7 @@ final class AppShell
             $raw = @file_get_contents($this->cacheFile, false, null, 0, self::CACHE_MAX_BYTES + 1);
             $cached = is_string($raw) && strlen($raw) <= self::CACHE_MAX_BYTES ? json_decode($raw, true) : null;
             if (is_array($cached) && ($cached['sig'] ?? null) === $sig && self::validCacheState($cached)) {
-                return ['version' => $cached['version'], 'modules' => $cached['modules'], 'shell' => $cached['shell']];
+                return ['version' => $cached['version'], 'modules' => $cached['modules'], 'shell' => $cached['shell'], 'mapped' => $cached['mapped']];
             }
         }
         $this->computed = true;
@@ -123,7 +132,7 @@ final class AppShell
         return $state;
     }
 
-    /** @return array{version:string, modules:list<string>, shell:list<string>} */
+    /** @return array{version:string, modules:list<string>, shell:list<string>, mapped:list<string>} */
     private function compute(): array
     {
         $graph = $this->graph();
@@ -151,7 +160,7 @@ final class AppShell
         }
         // The worker's own code, without the block this fills in.
         hash_update($hash, self::replaceBlock($this->read('sw.js'), self::SW_START, self::SW_END, ''));
-        return ['version' => 'bc-' . substr(hash_final($hash), 0, 12), 'modules' => $modules, 'shell' => $shell];
+        return ['version' => 'bc-' . substr(hash_final($hash), 0, 12), 'modules' => $modules, 'shell' => $shell, 'mapped' => $this->moduleFiles()];
     }
 
     /**
@@ -221,14 +230,62 @@ final class AppShell
         return $order;
     }
 
-    public static function fillIndex(string $html, array $modules): string
+    /**
+     * The preload block; with a version, every app file the document loads
+     * carries it (see the class note), and an import map gives each module in
+     * $mapped its versioned address. The map comes first: a browser takes no
+     * import map once a module has started loading.
+     *
+     * @param list<string> $modules
+     * @param list<string> $mapped
+     */
+    public static function fillIndex(string $html, array $modules, ?string $version = null, array $mapped = []): string
     {
-        $block = implode("\n", array_merge(
-            [self::PRELOAD_START],
-            array_map(static fn(string $u): string => '  <link rel="modulepreload" href="' . htmlspecialchars($u, ENT_QUOTES) . '">', $modules),
-            [self::PRELOAD_END]
-        ));
-        return self::replaceBlock($html, self::PRELOAD_START, self::PRELOAD_END, $block);
+        $tag = $version !== null && $version !== self::UNVERSIONED ? '?v=' . rawurlencode(substr($version, 3)) : '';
+        $lines = [self::PRELOAD_START];
+        if ($tag !== '' && $mapped !== []) {
+            $imports = [];
+            foreach ($mapped as $u) {
+                $imports[$u] = $u . $tag;
+            }
+            $lines[] = '  <script type="importmap">' . json_encode(['imports' => $imports], JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP) . '</script>';
+        }
+        foreach ($modules as $u) {
+            $lines[] = '  <link rel="modulepreload" href="' . htmlspecialchars($u . $tag, ENT_QUOTES) . '">';
+        }
+        $lines[] = self::PRELOAD_END;
+        $out = self::replaceBlock($html, self::PRELOAD_START, self::PRELOAD_END, implode("\n", $lines));
+        if ($tag !== '') {
+            $out = preg_replace('~(src|href)="(/assets/(?:src/app/main\.js|styles/app\.css))(?:\?v=[^"]*)?"~', '$1="$2' . $tag . '"', $out) ?? $out;
+        }
+        return $out;
+    }
+
+    /** @return list<string> every module under src/ and vendor/, as /assets/ paths, sorted */
+    private function moduleFiles(): array
+    {
+        $out = [];
+        $walk = function (string $dir, string $rel) use (&$walk, &$out): void {
+            $names = @scandir($dir);
+            if ($names === false) {
+                return;
+            }
+            foreach ($names as $name) {
+                if ($name === '.' || $name === '..') {
+                    continue;
+                }
+                $path = $dir . '/' . $name;
+                if (is_dir($path)) {
+                    $walk($path, $rel . $name . '/');
+                } elseif (str_ends_with($name, '.js') && preg_match('~^[A-Za-z0-9/._-]+$~', $rel . $name) === 1) {
+                    $out[] = '/assets/' . $rel . $name;
+                }
+            }
+        };
+        $walk($this->webRoot . '/src', 'src/');
+        $walk($this->webRoot . '/vendor', 'vendor/');
+        sort($out);
+        return array_slice($out, 0, 1_000);
     }
 
     public static function fillWorker(string $js, string $version, array $shell): string
@@ -312,9 +369,14 @@ final class AppShell
     {
         if (!is_string($cached['version'] ?? null)
             || preg_match('/^bc-[0-9a-f]{12}$/', $cached['version']) !== 1
-            || !is_array($cached['modules'] ?? null) || !is_array($cached['shell'] ?? null)
-            || count($cached['modules']) > 1_000 || count($cached['shell']) > 1_000) {
+            || !is_array($cached['modules'] ?? null) || !is_array($cached['shell'] ?? null) || !is_array($cached['mapped'] ?? null)
+            || count($cached['modules']) > 1_000 || count($cached['shell']) > 1_000 || count($cached['mapped']) > 1_000) {
             return false;
+        }
+        foreach ($cached['mapped'] as $url) {
+            if (!is_string($url) || strlen($url) > 2_048 || preg_match('~^/assets/[A-Za-z0-9/._-]+\.js$~', $url) !== 1) {
+                return false;
+            }
         }
         foreach ($cached['modules'] as $url) {
             if (!is_string($url) || strlen($url) > 2_048 || !str_starts_with($url, '/assets/')) {

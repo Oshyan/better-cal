@@ -8492,7 +8492,24 @@ checkEq('google sync: without a synctoken the poll applies as before', false,
     $again = new BetterCal\Http\AppShell($root, $cache, $extra);
     checkEq('app shell: the next request uses the cache', [false, $st['version']], [$again->state()['version'] === $st['version'] ? $again->computed : 'changed', $st['version']]);
     $html = $again->renderIndex();
-    check('app shell: the document gets a preload link per module, and none for main.js', str_contains($html, '<link rel="modulepreload" href="/assets/src/lib/b.js">') && !str_contains($html, 'main.js') && str_contains($html, $AS::PRELOAD_END));
+    $tag = '?v=' . substr($st['version'], 3);
+    check('app shell: the document gets a versioned preload link per module, and none for main.js',
+        str_contains($html, '<link rel="modulepreload" href="/assets/src/lib/b.js' . $tag . '">')
+        && !str_contains($html, 'rel="modulepreload" href="/assets/src/app/main.js') && str_contains($html, $AS::PRELOAD_END));
+    preg_match('~<script type="importmap">(.*?)</script>~', $html, $im);
+    $imports = json_decode($im[1] ?? 'null', true)['imports'] ?? [];
+    checkEq('app shell: an import map gives every module its versioned address, before any preload',
+        ['/assets/src/lib/b.js' . $tag, '/assets/src/app/main.js' . $tag, true],
+        [$imports['/assets/src/lib/b.js'] ?? null, $imports['/assets/src/app/main.js'] ?? null, strpos($html, '<script type="importmap">') < strpos($html, '<link rel="modulepreload"')]);
+    checkEq('app shell: the entry script and stylesheet carry the version',
+        ['<link rel="stylesheet" href="/assets/styles/app.css?v=abc">', '<script type="module" src="/assets/src/app/main.js?v=abc"></script>'],
+        array_map(static fn(string $l): string => trim($l), array_values(array_filter(explode("\n", $AS::fillIndex(
+            "<link rel=\"stylesheet\" href=\"/assets/styles/app.css?v=3\">\n" . $AS::PRELOAD_START . "\n" . $AS::PRELOAD_END . "\n<script type=\"module\" src=\"/assets/src/app/main.js?v=3\"></script>",
+            [], 'bc-abc', ['/assets/src/app/main.js']
+        )), static fn(string $l): bool => str_starts_with(trim($l), '<script type="module"') || str_contains($l, 'app.css')))));
+    checkEq('app shell: without a version (the hash input) the document is as before', '<link rel="modulepreload" href="/assets/x.js">',
+        trim(explode("\n", $AS::fillIndex($AS::PRELOAD_START . "\n" . $AS::PRELOAD_END, ['/assets/x.js']))[1]));
+
     $sw = $again->renderServiceWorker();
     check('app shell: the worker gets its version and shell list, the rest of it untouched', str_contains($sw, 'const VERSION = "' . $st['version'] . '";') && str_contains($sw, '  "/assets/src/lib/side.js",') && str_contains($sw, "self.rest = 1;") && !str_contains($sw, 'bc-unversioned'));
     checkEq('app shell: the committed template itself is not changed', "const VERSION = 'bc-unversioned';", (static function () use ($root) { preg_match("/const VERSION = '[^']*';/", (string) file_get_contents("$root/sw.js"), $m); return $m[0] ?? ''; })());

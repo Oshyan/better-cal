@@ -156,10 +156,17 @@ export function restoreDraftsAfterBoot() {
 // who were only reading.
 let armed = false;
 
+// A fresh navigation rather than location.reload(), so the document is asked
+// for again, not reused; the new document's versioned script addresses
+// (server/src/Http/AppShell.php) then load the new version. iPhone Safari had
+// kept running the old scripts after a reload. main.js takes the marker off
+// the address again.
+export const UPDATED_PARAM = 'updated';
+
 export function reloadForUpdate() {
   saveResume();
   try { localStorage.setItem(UPDATE_FLAG, '1'); } catch { /* the start log just says reload */ }
-  location.reload();
+  location.replace('/?' + UPDATED_PARAM + '=' + Date.now().toString(36));
 }
 
 export function armBackgroundReload() {

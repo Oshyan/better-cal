@@ -5,7 +5,7 @@ import { App } from './App.js';
 import { set, toast } from './store.js';
 import { fetchMe } from './api.js';
 import { loadSession, startSession } from './session.js';
-import { armBackgroundReload } from './drafts.js';
+import { armBackgroundReload, UPDATED_PARAM } from './drafts.js';
 import { restoreResume, recordStart } from './resume.js';
 import { takeHandoff, runHandoff } from './handoff.js';
 import { QA_WINDOW_KEY } from './QuickAddWindow.js';
@@ -20,6 +20,12 @@ import {
 // The remembered sidebar width (#129) before the first frame, so the boot
 // shell's placeholder and the real sidebar don't jump.
 applySidebarWidth(readSidebarWidth());
+
+// Arriving from the update banner's reload (drafts.js reloadForUpdate): take
+// its marker back off the address.
+try {
+  if (new URLSearchParams(location.search).has(UPDATED_PARAM)) history.replaceState(history.state, '', '/' + location.hash);
+} catch { /* leave the address as it is */ }
 
 async function boot() {
   let authed = false;

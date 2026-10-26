@@ -6797,6 +6797,37 @@ require __DIR__ . '/plugins.php';
     checkEq('mail fetch: oversize never materializes a Message', 0, $loaded);
     checkEq('mail fetch: oversize result uses bounded transport identity', ['imap-big', 11], [$oversize[0]['messageId'], $oversize[0]['oversize']]);
 
+    // #157: a bounded list of unread UIDs. A normal count is one search; a
+    // large one is searched in windows from the oldest, only as far as read,
+    // widening across empty stretches, and nothing is skipped.
+    $MF = BetterCal\Infra\MailFetcher::class;
+    $calls = [];
+    $few = iterator_to_array($MF::unseenUids(3, 900, static function () use (&$calls): array { $calls[] = 'all'; return ['42', '7', '19']; },
+        static function (string $set) use (&$calls): array { $calls[] = $set; return []; }), false);
+    checkEq('mail unread: a normal count is one search, oldest first', [[7, 19, 42], ['all']], [$few, $calls]);
+    $unread = array_merge(range(3000, 3999), [250000, 250001]); // a flood, then two more far above
+    $calls = [];
+    $range = static function (string $set) use (&$calls, $unread): array {
+        $calls[] = $set;
+        [$a, $b] = array_map('intval', explode(':', $set));
+        return array_values(array_filter($unread, static fn(int $u): bool => $u >= $a && $u <= $b));
+    };
+    $first = [];
+    foreach ($MF::unseenUids(50000, 300000, static fn(): array => throw new RuntimeException('must not list everything'), $range) as $u) {
+        $first[] = $u;
+        if (count($first) === 10) break;
+    }
+    checkEq('mail unread: a flood is read from its oldest in a window, and later windows are never searched', [range(3000, 3009), ['1:2000', '2001:18000']], [$first, $calls]);
+    $calls = [];
+    $all = iterator_to_array($MF::unseenUids(50000, 300000, static fn(): array => [], $range), false);
+    checkEq('mail unread: reading on reaches every unread UID, none skipped or repeated', $unread, $all);
+    check('mail unread: empty stretches widen the window, up to its cap',
+        max(array_map(static function (string $set): int { [$a, $b] = array_map('intval', explode(':', $set)); return $b - $a + 1; }, $calls)) <= $MF::UID_WINDOW_MAX && count($calls) < 20);
+    checkEq('mail unread: no count reported falls back to windows, no UIDNEXT to one search', [[5], [5]], [
+        iterator_to_array($MF::unseenUids(null, 10, static fn(): array => [], static fn(string $s): array => ['5']), false),
+        iterator_to_array($MF::unseenUids(9000, 0, static fn(): array => ['5'], static fn(string $s): array => []), false),
+    ]);
+
     Limits::reset();
     $trace = [];
     $fakeMessage = new class(static function (string $step) use (&$trace): void { $trace[] = $step; }) {

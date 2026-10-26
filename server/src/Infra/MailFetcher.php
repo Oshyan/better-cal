@@ -31,9 +31,19 @@ use Webklex\PHPIMAP\IMAP;
  *   walk into it again. An ordinary failure undoes both, so it is retried.
  * - Parts have budgets too: a calendar part over MAIL_ICS_BYTES is ignored, and
  *   text/html is cut to MAIL_BODY_CHARS before anything downstream reads it.
+ * - A bounded list of unread UIDs (#157). Anyone who can send to the address
+ *   sets the unread count, so a large one is searched a window of UIDs at a
+ *   time, oldest first, only as far as this run gets (unseenUids).
  */
 final class MailFetcher
 {
+    /** Up to this many unread messages, one search lists them all, as before. */
+    public const SEARCH_ALL_MAX = 5000;
+    /** Past it, each search covers this many UIDs to begin with... */
+    public const UID_WINDOW = 2000;
+    /** ...widening while searches come back nearly empty, up to this many. */
+    public const UID_WINDOW_MAX = 128000;
+
     public function __construct(private readonly array $cfg)
     {
     }
@@ -80,19 +90,25 @@ final class MailFetcher
                 ->setFetchBody(false)
                 ->leaveUnread()
                 ->setSequence(IMAP::ST_UID);
-            // search() returns only integer UIDs. Query::get() is deliberately
-            // not used: Webklex batch-fetches and parses every RFC822 header in
-            // get(), even when setFetchBody(false) is set.
-            $uids = array_values($query->search()->toArray());
-            if ($uids === []) {
+            $status = $inbox->status();
+            $unseen = isset($status['unseen']) ? (int) $status['unseen'] : null;
+            if ($unseen === 0) {
                 return;
             }
-            $status = $inbox->status();
             if (!isset($status['uidvalidity']) && !isset($status['UIDVALIDITY'])) {
                 throw new \RuntimeException('IMAP did not report UIDVALIDITY for INBOX');
             }
             $uidValidity = (string) ($status['uidvalidity'] ?? $status['UIDVALIDITY']);
             $connection = $client->getConnection();
+            // search() returns only integer UIDs. Query::get() is deliberately
+            // not used: Webklex batch-fetches and parses every RFC822 header in
+            // get(), even when setFetchBody(false) is set.
+            $uids = self::unseenUids(
+                $unseen,
+                (int) ($status['uidnext'] ?? 0),
+                static fn(): array => array_values($query->search()->toArray()),
+                static fn(string $set): array => (array) $connection->search(['UNSEEN', 'UID', $set], IMAP::ST_UID)->validatedData(),
+            );
             $mailbox = (string) ($this->cfg['imap']['host'] ?? '') . "\0"
                 . (string) ($this->cfg['imap']['user'] ?? '') . "\0INBOX\0" . $uidValidity;
             $candidates = (static function () use ($uids, $mailbox, $connection, $query): \Generator {
@@ -120,6 +136,41 @@ final class MailFetcher
                 $client->disconnect();
             } catch (\Throwable) {
             }
+        }
+    }
+
+    /**
+     * Unread UIDs, oldest first, holding at most UID_WINDOW_MAX (or
+     * SEARCH_ALL_MAX) of them at a time. A normal unread count is one search,
+     * as it always was. A large one, or none reported, is searched in windows
+     * of UIDs from the first, and only as far as the caller keeps reading: a
+     * run that stops after ten messages never lists the rest. A window that
+     * comes back nearly empty makes the next one wider, so a mailbox whose
+     * UIDs run into the millions (Gmail) isn't crossed 2000 at a time. Nothing is remembered
+     * between runs, so a message marked unread again for a retry is found
+     * the same way as any other. Pure apart from the two searches; tested.
+     *
+     * @param callable():array $searchAll every unread UID
+     * @param callable(string):array $searchRange unread UIDs within "a:b"
+     * @return \Generator<int,int>
+     */
+    public static function unseenUids(?int $unseenCount, int $uidNext, callable $searchAll, callable $searchRange): \Generator
+    {
+        if (($unseenCount !== null && $unseenCount <= self::SEARCH_ALL_MAX) || $uidNext <= 1) {
+            $all = array_map('intval', $searchAll());
+            sort($all, SORT_NUMERIC);
+            yield from $all;
+            return;
+        }
+        $width = self::UID_WINDOW;
+        for ($low = 1; $low < $uidNext; $low = $high + 1) {
+            $high = min($low + $width - 1, $uidNext - 1);
+            $found = array_map('intval', $searchRange($low . ':' . $high));
+            sort($found, SORT_NUMERIC);
+            foreach ($found as $uid) {
+                if ($uid >= $low && $uid <= $high) yield $uid;
+            }
+            $width = count($found) < intdiv(self::UID_WINDOW, 4) ? min($width * 8, self::UID_WINDOW_MAX) : self::UID_WINDOW;
         }
     }
 

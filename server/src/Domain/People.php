@@ -192,10 +192,11 @@ final class People
     }
 
     /**
-     * Reposition or rekind an existing span (calendar band drag). Only the
-     * provided fields change.
+     * Reposition, rekind or re-note an existing span (calendar band drag,
+     * the People page's edit, #159). Only the provided fields change; a
+     * note of null or blank clears it.
      *
-     * @param array{start?:mixed,end?:mixed,kind?:mixed} $in
+     * @param array{start?:mixed,end?:mixed,kind?:mixed,note?:mixed} $in
      */
     public function updateSpan(int $userId, int $personId, int $spanId, array $in): array
     {
@@ -218,6 +219,13 @@ final class People
                 throw HttpError::badRequest('kind must be one of ' . implode('/', self::KINDS));
             }
             $fields['kind'] = $in['kind'];
+        }
+        if (array_key_exists('note', $in)) {
+            if ($in['note'] !== null && !is_string($in['note'])) {
+                throw HttpError::badRequest('note must be text or null');
+            }
+            $fields['note'] = is_string($in['note']) && trim($in['note']) !== ''
+                ? mb_substr(trim($in['note']), 0, self::MAX_SPAN_NOTE) : null;
         }
         $this->db->update('availability', $fields, 'id = ?', [$spanId]);
         $after = $this->db->one('SELECT * FROM availability WHERE id = ?', [$spanId]);

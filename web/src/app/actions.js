@@ -1275,6 +1275,14 @@ export async function addAvailabilitySpan(personId, fields) {
   return span;
 }
 
+// Change an away or busy time in place (#159): dates, kind or note.
+export async function updateAvailabilitySpan(personId, spanId, fields) {
+  const span = await api('/people/' + personId + '/availability/' + spanId, { method: 'PATCH', body: fields });
+  set({ availSeq: state.availSeq + 1 });
+  loadPeople().catch(() => {});
+  return span;
+}
+
 export async function deleteAvailabilitySpan(personId, spanId) {
   await api('/people/' + personId + '/availability/' + spanId, { method: 'DELETE' });
   set({ availSeq: state.availSeq + 1 });

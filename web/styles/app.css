@@ -2818,7 +2818,16 @@ body.bc-rescheduling { user-select: none; }
 .bc-person-availrow { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .bc-person-availrange { color: var(--fg); }
 .bc-person-availnote { color: var(--fg-muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+/* An entry opens for editing in the form below (#159). */
+.bc-person-availedit {
+  display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0;
+  border: 0; background: none; color: inherit; font: inherit; text-align: left;
+  padding: 3px 6px; margin-left: -6px; border-radius: 6px; cursor: pointer;
+}
+.bc-person-availedit:hover { background: var(--bg-inset); }
+.bc-person-availrow.is-editing .bc-person-availedit { background: color-mix(in srgb, var(--accent) 14%, transparent); }
 .bc-person-availform { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+.bc-person-availform.is-editing { padding: 6px; margin-left: -6px; border-radius: 8px; background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .bc-person-availform .bc-person-availnotein { flex: 1; min-width: 120px; }
 .bc-person-show { margin-top: 2px; color: var(--fg-muted); font-size: 12.5px; }
 

@@ -4549,6 +4549,26 @@ checkEq('pd fail -> highlight', 'highlight', Filters::promptDisposition($promptR
     checkEq('markers: plain text keeps its default calendar and no tags', [10, false, []], [$d['calendarId'], $d['calendarFromText'], $d['tags']]);
 }
 
+// People: editing an away or busy time keeps or changes its note (#159).
+{
+    $sdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $sdb->run('CREATE TABLE people (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT)');
+    $sdb->run('CREATE TABLE availability (id INTEGER PRIMARY KEY, person_id INTEGER, start_utc TEXT, end_utc TEXT, kind TEXT, note TEXT)');
+    $sdb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT, undone INTEGER DEFAULT 0, created_at TEXT DEFAULT CURRENT_TIMESTAMP)');
+    $sdb->run("INSERT INTO people (id, user_id, name) VALUES (1, 1, 'Sam Sample'), (2, 2, 'Alex Example')");
+    $sp = new BetterCal\Domain\People($sdb);
+    $span = $sp->addSpan(1, 1, ['start' => '2026-08-10T00:00:00-07:00', 'end' => '2026-08-15T00:00:00-07:00', 'kind' => 'away', 'note' => 'Conference']);
+    $moved = $sp->updateSpan(1, 1, $span['id'], ['start' => '2026-08-11T00:00:00-07:00']);
+    checkEq('span edit: moving it keeps the note', ['Conference', '2026-08-11T07:00:00+00:00'], [$moved['note'], $moved['start']]);
+    $renoted = $sp->updateSpan(1, 1, $span['id'], ['note' => '  Workshop  ', 'kind' => 'busy']);
+    checkEq('span edit: a new note and kind', ['Workshop', 'busy', '2026-08-11T07:00:00+00:00'], [$renoted['note'], $renoted['kind'], $renoted['start']]);
+    checkEq('span edit: a blank note clears it', null, $sp->updateSpan(1, 1, $span['id'], ['note' => ' '])['note']);
+    $threw = null; try { $sp->updateSpan(1, 1, $span['id'], ['note' => ['x']]); } catch (HttpError $e) { $threw = $e->status; }
+    checkEq('span edit: a note that is not text is refused', 400, $threw);
+    $threw = null; try { $sp->updateSpan(2, 1, $span['id'], ['note' => 'mine now']); } catch (HttpError $e) { $threw = $e->status; }
+    checkEq('span edit: another account cannot edit it', 404, $threw);
+}
+
 // Prompt work is calendar-homogeneous, one call per job, and budget denial is
 // a delayed successful continuation plus one bounded Review notice.
 {

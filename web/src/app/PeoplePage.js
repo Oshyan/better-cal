@@ -8,10 +8,10 @@
 import { html, useState, useEffect } from '../../vendor/index.js';
 import { useStore, set, state, toast } from './store.js';
 import { api, loadPeople, refreshWindow } from './api.js';
-import { jumpToDate, openDetail, addAvailabilitySpan, deleteAvailabilitySpan } from './actions.js';
+import { jumpToDate, openDetail, addAvailabilitySpan, updateAvailabilitySpan, deleteAvailabilitySpan } from './actions.js';
 import { PageShell, EmptyState, Skeleton } from './PageShell.js';
 import { CalDot, Icon } from '../ui/icons.js';
-import { parseISO, occDayKey, fmtTime, dateOfDayKey, toISOWithOffset } from '../lib/dates.js';
+import { parseISO, occDayKey, fmtTime, dateOfDayKey, dayKeyOf, toISOWithOffset } from '../lib/dates.js';
 
 function fmtDay(iso) {
   return parseISO(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
@@ -80,7 +80,17 @@ function PersonEvents({ personId }) {
   </div>`;
 }
 
-// Availability spans: list with delete, plus an inclusive date-range add form.
+// Availability spans: a list where each entry opens for editing in the form
+// below it (#159), with delete, and the same form adds a new one. Dates are
+// inclusive; a time that starts or ends partway through a day keeps its time
+// of day when only its dates move.
+const dayDiff = (a, b) => Math.round((dateOfDayKey(b) - dateOfDayKey(a)) / 86400000);
+const lastDayKey = (span) => dayKeyOf(new Date(parseISO(span.end).getTime() - 60000));
+const shiftDays = (iso, n) => {
+  const d = parseISO(iso);
+  return toISOWithOffset(new Date(d.getFullYear(), d.getMonth(), d.getDate() + n, d.getHours(), d.getMinutes(), d.getSeconds()));
+};
+
 function PersonAvailability({ person }) {
   const [spans, setSpans] = useState(null);
   const [kind, setKind] = useState('away');
@@ -88,29 +98,49 @@ function PersonAvailability({ person }) {
   const [endDate, setEndDate] = useState('');
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState(null); // the span being edited, or null
 
   const reload = () => api('/people/' + person.id + '/availability')
     .then((d) => setSpans((d && d.spans) || []))
     .catch(() => setSpans([]));
 
-  useEffect(() => { reload(); }, [person.id]); // eslint-disable-line
+  useEffect(() => { reload(); setEditing(null); }, [person.id]); // eslint-disable-line
+
+  const clearForm = () => { setStartDate(''); setEndDate(''); setNote(''); setKind('away'); setEditing(null); };
+
+  const edit = (span) => {
+    setEditing(span);
+    setKind(span.kind);
+    setStartDate(dayKeyOf(parseISO(span.start)));
+    setEndDate(lastDayKey(span));
+    setNote(span.note || '');
+  };
 
   const submit = async (e) => {
     e.preventDefault();
     if (!startDate) return;
     const endIncl = endDate || startDate;
-    const s = new Date(startDate + 'T00:00:00');
-    const eEx = new Date(new Date(endIncl + 'T00:00:00').getTime() + 86400000);
-    if (eEx <= s) { toast('End before start', { error: true }); return; }
+    if (endIncl < startDate) { toast('End before start', { error: true }); return; }
     setBusy(true);
     try {
-      await addAvailabilitySpan(person.id, {
-        start: toISOWithOffset(s), end: toISOWithOffset(eEx), kind, note: note.trim() || null,
-      });
-      setStartDate(''); setEndDate(''); setNote('');
+      if (editing) {
+        // Move each end by the days its date moved, keeping any time of day.
+        const fromStart = dayKeyOf(parseISO(editing.start));
+        const fields = { kind, note: note.trim() || null };
+        if (startDate !== fromStart) fields.start = shiftDays(editing.start, dayDiff(fromStart, startDate));
+        if (endIncl !== lastDayKey(editing)) fields.end = shiftDays(editing.end, dayDiff(lastDayKey(editing), endIncl));
+        await updateAvailabilitySpan(person.id, editing.id, fields);
+      } else {
+        const s = new Date(startDate + 'T00:00:00');
+        const eEx = new Date(new Date(endIncl + 'T00:00:00').getTime() + 86400000);
+        await addAvailabilitySpan(person.id, {
+          start: toISOWithOffset(s), end: toISOWithOffset(eEx), kind, note: note.trim() || null,
+        });
+      }
+      clearForm();
       reload();
     } catch (err) {
-      toast(err.message || 'Could not add that time', { error: true });
+      toast(err.message || (editing ? 'Could not save that time' : 'Could not add that time'), { error: true });
     } finally {
       setBusy(false);
     }
@@ -119,6 +149,7 @@ function PersonAvailability({ person }) {
   const remove = async (span) => {
     try {
       await deleteAvailabilitySpan(person.id, span.id);
+      if (editing && editing.id === span.id) clearForm();
       reload();
     } catch (err) {
       toast(err.message || 'Delete failed', { error: true });
@@ -128,13 +159,15 @@ function PersonAvailability({ person }) {
   return html`<div class="bc-person-avail">
     ${spans === null && html`<${Skeleton} rows=${2} compact=${true} />`}
     ${spans !== null && spans.length === 0 && html`<div class="bc-trip-empty">No away or busy times yet</div>`}
-    ${spans !== null && spans.map((span) => html`<div key=${span.id} class="bc-person-availrow">
-      <span class="bc-badge bc-away-pill is-${span.kind}">${span.kind}</span>
-      <span class="bc-person-availrange">${fmtSpanRange(span)}</span>
-      ${span.note && html`<span class="bc-person-availnote">${span.note}</span>`}
+    ${spans !== null && spans.map((span) => html`<div key=${span.id} class=${'bc-person-availrow' + (editing && editing.id === span.id ? ' is-editing' : '')}>
+      <button type="button" class="bc-person-availedit" title="Edit this time" aria-label=${'Edit ' + span.kind + ' ' + fmtSpanRange(span)} onClick=${() => edit(span)}>
+        <span class="bc-badge bc-away-pill is-${span.kind}">${span.kind}</span>
+        <span class="bc-person-availrange">${fmtSpanRange(span)}</span>
+        ${span.note && html`<span class="bc-person-availnote">${span.note}</span>`}
+      </button>
       <button type="button" class="bc-icon-btn bc-trip-x" title="Remove span" aria-label="Remove span" onClick=${() => remove(span)}><${Icon} name="close" size=${12} /></button>
     </div>`)}
-    <form class="bc-person-availform" onSubmit=${submit}>
+    <form class=${'bc-person-availform' + (editing ? ' is-editing' : '')} onSubmit=${submit}>
       <select value=${kind} onChange=${(e) => setKind(e.target.value)} aria-label="Kind">
         <option value="away">Away</option>
         <option value="busy">Busy</option>
@@ -144,7 +177,8 @@ function PersonAvailability({ person }) {
       <span>to</span>
       <input type="date" value=${endDate} min=${startDate} onInput=${(e) => setEndDate(e.target.value)} aria-label="Last day (inclusive)" title="Last day, inclusive; empty = single day" />
       <input class="bc-person-availnotein" placeholder="Note (optional)" value=${note} onInput=${(e) => setNote(e.target.value)} aria-label="Note" />
-      <button type="submit" class="bc-btn bc-btn-primary" disabled=${busy || !startDate}>Add</button>
+      <button type="submit" class="bc-btn bc-btn-primary" disabled=${busy || !startDate}>${editing ? 'Save' : 'Add'}</button>
+      ${editing && html`<button type="button" class="bc-btn" onClick=${clearForm}>Cancel</button>`}
     </form>
   </div>`;
 }

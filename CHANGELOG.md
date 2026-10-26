@@ -24,177 +24,164 @@ Operators: no database change. Update Better-Cal before the extension.
 
 Fixes from a review of 1.1.0.
 
-- **Repeats in quick add read ordinary words as ordinary words.** A bare "to" ended a series at any day it could find, so "Delivery every month to Friday Warehouse" became a single event; after "to" only a calendar date ("to May 23") ends one now. And a repeat that names its own days leaves other weekdays in the title: "Report every Tuesday about Friday sales" keeps "Friday sales" and starts on the next Tuesday, not a week late. Start and end words are read past ordinary uses too, so "Pickup from school every Monday starting Nov 3" starts on Nov 3.
-- **A weekday right after "to" or "at" is part of a name,** for any event: "Ferry to Friday Harbor Saturday" is on Saturday, and "Drinks at Sunday Social" keeps its place name.
-- **A repeat set by hand stays put.** In the editor, changing the text in the quick fill box could put back the repeat you had just changed by hand. In quick add, a repeat (or date) picked before typing was cleared by the first parse of text that didn't mention one.
-- **A monthly repeat restored from an older draft keeps its day.** A draft saved before 1.1 could come back as "the fourth Saturday" instead of "on the 24th".
-- **Logging out removes every unsaved draft.** Logging out in a browser tab now also clears what the installed app kept (on Android and computers the two share storage), and an installed-app draft past its day is removed at the next start instead of waiting for the app to open.
-- **iPhone and iPad: the keyboard comes up on the first tap from more places.** Tapping empty space in the calendar, and the toolbar's New, Event and Trip, now raise it along with the editor.
-- **MCP: three tools no longer claim to be safe to repeat.** Repeating `update_event`, `set_attendance` or `resolve_duplicate` adds undo and Activity entries and writes again to Google, so they're marked as not idempotent.
-- **Screen readers:** the brief stand-in the keyboard fix focuses is labelled instead of hidden.
+- **Quick add repeats read ordinary words as ordinary words:** after "to", only a calendar date ("to May 23") ends a series.
+- **A weekday right after "to" or "at" is part of a name:** "Ferry to Friday Harbor Saturday" is on Saturday.
+- **A repeat set by hand stays put,** in the editor and in quick add.
+- **MCP:** `update_event`, `set_attendance` and `resolve_duplicate` are marked as not idempotent.
+- **Fixes:** a monthly repeat restored from a draft saved before 1.1 keeps its day, logging out removes every unsaved draft (the installed app's too), the keyboard comes up on the first tap from more places on iPhone and iPad, and screen readers get a label on the keyboard fix's stand-in.
 
 Operators: no database change.
 
 ## 1.1.0 (2026-10-24)
 
-Quick add learns repeating events, the editor keeps repeat rules it can't show, and a round of fixes from an iPhone tester: the date picker, the keyboard, reminders and drafts.
+Quick add learns repeating events, plus a round of fixes from an iPhone tester.
 
-- **Quick add makes repeating events.** Type "every Tuesday", "Mondays and Thursdays", "every other week", "weekdays", "monthly on the 15th", "first Monday of the month", "last weekday of the month" or "every year on 12/23", with a start ("starting Nov 3") or an end ("until Dec 15", "for 6 weeks", "10 times") if you like. The common phrasings work without AI too. The repeat shows as a chip on the card: tap it for the usual choices for that date and when it ends, or Custom for the full editor. With nothing typed, the small repeat button beside All day opens the same menu. Hourly repeats and to-do style rules aren't part of it.
-- **The editor keeps repeats it can't show.** Monthly now offers "on day 15" or "on the third Thursday" (or "the last"), following the start date. Any other rule, from another calendar app say, is shown in words with a Change button and saved as it was, instead of being simplified on the next save. Event details say the whole rule too: "Repeats monthly on the third Thursday", not just "Repeats monthly".
-- **Closing a new event you brought over from quick add offers Undo.** Text typed into quick add and moved to the full editor with More options was dropped without a word if you closed the editor. It now counts as unsaved like anything typed in the editor itself: "Draft discarded", with Undo. The same goes for a new event opened from a pasted calendar link.
-- **Phones: the welcome no longer bounces after a detour.** Opening Plugins (or Subscribe, Import or Google) from the welcome's second step and coming back left Back to calendar and Done flipping between the welcome and that page. A step back through the browser's history lands a moment later, and the page or welcome opening in the meantime put its own entry in the wrong place. Now the welcome takes its entries out before the other opens, and anything that opens waits for a step back still on its way ([#164](https://github.com/Oshyan/better-cal/issues/164)).
-- **The date picker opens on iPhone.** In the event editor, tapping a date did nothing on iOS, and no keyboard came up either, so a date couldn't be changed at all. iOS ignores the request the editor used to open its picker (without an error), so the tap now lands directly on the phone's own date picker, which works the same on Android.
-- **iPhone and iPad: reminders say how to get them.** In Safari, Settings and the welcome said push wasn't supported. On iPhone and iPad it is, once Better-Cal is on the Home Screen (iOS 16.4 or later), and they now say so.
-- **An unsaved event survives the installed app being closed.** Phones, iPhones especially, close a Home Screen app in the background when you switch away, and a half-typed event was lost. In the installed app it's now kept for a day; in a browser tab it's kept for the tab, as before.
-- **The keyboard comes up on the first tap on iPhone and iPad.** Search, New, the date jump, the filter and the editor's time zone opened with their box selected but no keyboard, so typing took a second tap. iOS only raises the keyboard for a box selected during the tap itself, so the tap now readies the keyboard at once and the box takes it over as it opens. Android and computers are unchanged.
-- **Holding a multi-day event to drag it no longer selects text on iPhone,** and the welcome fits on screen under Safari's toolbar.
-- **Months are marked by a line, not a gray background.** Every other month used to be tinted, which made a whole month look dimmed or past. Now every month has the same background, and one line runs where each month meets the next, stepping around the week the 1st falls in. A trip crossing into a new month isn't cut by it.
-- **Guzzle 8.3** (from 8.2), the HTTP client reminders go out through, with psr7 3.2 and promises 3.1: stricter checks on malformed responses, and fixes. No change in behaviour.
-- **MCP: every tool says whether repeating it is safe.** Each tool now declares all four MCP hints (read-only, destructive, idempotent, open-world), which some MCP directories require. Setting a value or deleting is safe to repeat; creating an event, running a plugin and undo are not.
+- **Quick add makes repeating events:** "every Tuesday", "every other week", "first Monday of the month" and more, with a start ("starting Nov 3") or an end ("until Dec 15") if you like. Tap the repeat chip to change it.
+- **The editor keeps repeats it can't show:** Monthly offers "on day 15" or "on the third Thursday", and any other rule is shown in words and saved as it was.
+- **Closing a new event brought over from quick add offers Undo,** like anything typed in the editor.
+- **The date picker opens on iPhone** in the event editor.
+- **iPhone and iPad reminders:** push works once Better-Cal is on the Home Screen (iOS 16.4 or later), and Settings and the welcome now say so.
+- **An unsaved event survives the installed app being closed:** it's kept for a day.
+- **The keyboard comes up on the first tap on iPhone and iPad** for Search, New, the date jump, the filter and the editor's time zone.
+- **Months are marked by a line, not a gray background.**
+- **MCP: every tool says whether repeating it is safe,** with all four MCP hints.
+- **Fixes:** the phone welcome no longer bounces after a detour to Plugins ([#164](https://github.com/Oshyan/better-cal/issues/164)), holding a multi-day event to drag it no longer selects text on iPhone, and the welcome fits on screen under Safari's toolbar.
 
-Operators: no database change. The release zip carries the updated Guzzle libraries, as always.
+Operators: no database change. The release zip carries Guzzle 8.3, with no change in behavior.
 
 ## 1.0.0 (2026-10-20)
 
-1.0: someone other than me can install Better-Cal on ordinary hosting, use it on a computer and a phone, and move over from Google Calendar at their own pace. Five full security scans and their fixes are behind it, plus a last look at the changes since ([SECURITY.md](SECURITY.md#what-has-been-reviewed)). From here, minor versions bring features, and patch versions generally bring bug fixes and refinements.
+1.0: Better-Cal installs on ordinary hosting and moves you over from Google Calendar at your own pace ([SECURITY.md](SECURITY.md#what-has-been-reviewed)).
 
-- **Updates keep your own lines in `.htaccess`.** A PHP version picked in a hosting control panel is written into `server/public/.htaccess`, and `update.php` used to replace that file, which could quietly put the site back on an older PHP. Rules you added were lost the same way. Better-Cal's rules now sit between `# BEGIN Better-Cal` and `# END Better-Cal` lines, and updates replace only those. If you had changed Better-Cal's own lines, the update says so and saves your file beside the new one. Other shipped files edited on the server are named after an update; the edited copies stay in the previous version's folder.
-- **On too old a PHP, the site says so** instead of showing a blank page, and says what to pick in the control panel.
-- **A reminder device can't be registered twice under a different spelling.** Letter case in a push address's host, a trailing dot or an explicit `:443` reach the same push service, but they counted as separate devices, so a signed-in browser or API key could get past the device limit and have reminders sent twice. They're now one device, and any already saved that way get one reminder.
+- **Updates keep your own lines in `.htaccess`:** updates replace only what's between `# BEGIN Better-Cal` and `# END Better-Cal`, so a control panel's PHP version and your rules stay. If you changed Better-Cal's own lines, the update saves your file beside the new one.
+- **On too old a PHP, the site says so** and says what to pick in the control panel.
+- **A reminder device can't be registered twice under a different spelling,** which could get past the device limit and send reminders twice.
 
-Operators: no database change. `update.php` keeps a control panel's PHP version lines in `.htaccess` from this update on; updating through the file manager means picking the PHP version again after swapping folders ([Updating](docs/install.md#without-a-command-line)).
+Operators: no database change. Updating through the file manager means picking the PHP version again after swapping folders ([Updating](docs/install.md#without-a-command-line)).
 
 ## 0.9.88 (2026-10-20)
 
-Fixes from a re-review of 0.9.87's security work, plus two bugs found along the way. Most only matter under attack; the ones you might notice come first.
+Fixes from a re-review of 0.9.87's security work, plus two bugs found along the way.
 
-- **Change your password in Settings, Account.** It asks for the current password and can sign out every other browser, API key and CalDAV client at the same time.
-- **Sign out everywhere else always finishes.** Another signed-in browser renaming its feed subscriptions can no longer make it fail.
-- **One cancelled occurrence of an invitation skips just that occurrence.** Accepting it in Review adds a skip for that date; the rest of the series stays. Any other change to a single occurrence is shown in Review for you to make by hand, and is never applied to the whole series.
-- **CalDAV clients that search by date work again.** Apps that ask for a date range (a calendar-query) got an error from any calendar with events in it.
-- **Revoking an API key turns off the plugins it turned on or configured.** Review lists each one with **Turn back on**. A key that expires does the same at the plugin's next run.
-- **Restoring an unencrypted backup asks first.** Older plain backups still restore after you confirm; `update.php` takes `--allow-plain` for the same thing.
-- **Very long comma lists in calendars are refused.** One line may hold 1,000 comma-separated values and a whole calendar 200,000 (both adjustable; [limits](docs/limits.md#zip-imports-and-malformed-dates)). Bare commas in titles and descriptions don't count. A feed over the limit keeps its last good copy.
-- **Changes to existing invitations have their own Review limits,** 100 a day and 25 per sender, with at most three waiting per event. Unreadable emails are listed one by one up to 20, then counted in one notice.
-- **CalDAV bounds every request body** before parsing: 1 MiB, or one object plus 64 KiB for an upload.
-- **ZIP imports count the bytes each calendar actually unpacks to,** so an archive that understates its sizes is refused before anything is created.
-- **Security update notices go only to destinations the owner set.** Turning place lookup off also stops opening-hours queries for planned visits.
+- **Change your password in Settings, Account,** and optionally sign out every other browser, API key and CalDAV client.
+- **Sign out everywhere else always finishes.**
+- **One cancelled occurrence of an invitation skips just that occurrence;** the rest of the series stays.
+- **CalDAV clients that search by date work again.**
+- **Revoking an API key turns off the plugins it turned on or configured:** Review lists each one with **Turn back on**. A key that expires does the same.
+- **Restoring an unencrypted backup asks first;** `update.php` takes `--allow-plain` for the same thing.
+- **Very long comma lists in calendars are refused** ([limits](docs/limits.md#zip-imports-and-malformed-dates)).
+- **Changes to existing invitations have their own Review limits:** 100 a day and 25 per sender.
+- **CalDAV bounds every request body** before parsing.
+- **ZIP imports count the bytes each calendar actually unpacks to.**
+- **Security update notices go only to destinations the owner set,** and turning place lookup off also stops opening-hours queries.
 
-Operators: one database change, applied automatically by `update.php` or the database update page. [Known hosting limits](docs/limits.md#known-hosting-limits) covers exports on network filesystems, hard-linked backup snapshots, and senders approved by the 0.9.87 upgrade.
+Operators: one database change, applied automatically by `update.php` or the database update page. [Known hosting limits](docs/limits.md#known-hosting-limits) covers unusual hosting.
 
-Maintainers: release ZIPs are opened with a consistency check; the dependency check uses a private temp folder; CI's install job fails if a library its guarded tests need is missing (`BC_REQUIRE_LIBS=1`). Public docs no longer quote the reference install's figures or setup.
+Maintainers: release ZIPs are opened with a consistency check, and CI's install job fails if a library its guarded tests need is missing (`BC_REQUIRE_LIBS=1`).
 
 ## 0.9.87 (2026-10-19)
 
-Fixes from the final security scan before 1.0, a full review of the code as of 0.9.86 (SECURITY.md lists it). Most affect how Better-Cal behaves under attack or on unusual hosting; a few change what you see, listed first below.
+Fixes from the final security scan before 1.0 (SECURITY.md lists it); the ones that change what you see come first.
 
-- **Choose which emailed events are added automatically.** Settings offers any sender, approved senders (the default), or holding everything for Review. Review can approve an address or a merchant's domain while adding an event; common shared mail providers allow addresses only. Successful senders in retained email history are approved on upgrade. Adding an invitation never sends a reply unless you choose **Add and accept**.
-- **Setup codes really work once.** Reusing a code no longer replaces the owner's session, and the page explains how to recover a lost session. Code and session state are written together, with the readable code first when opened in a file manager; wrong codes no longer hold a PHP worker for a second. Old in-progress codes start afresh. Hosts without file locking remain usable, with the concurrency limitation recorded in the error log.
-- **Signing out other browsers offers a subscription choice.** Review the feeds those browsers added and choose to keep them running or pause them for Review. Existing browser subscriptions from before this update remain owner-confirmed. Ordinary sign-out and session expiry do not pause feeds.
-- **Agents can configure and run plugins.** API keys can also change event plugin fields and decide duplicates. They cannot turn off worker warnings or security update notices. Plugin authors can mark credentials as write-only secret fields; neither browsers nor agents receive their values back. System health remains available to agents with private host and destination details removed.
-- **Copy to calendar uses the destination just selected,** including the first choice, instead of the previous selection.
-- **Malformed dates skip one event, not a whole feed.** Feed updates, email and imports keep valid sibling events and report rejected ones. A feed keeps the last copy of a rejected event; unreadable email events get a Review notice. CalDAV refuses the whole submitted object so it never saves an incomplete recurring series.
-- **A place search service that came back stops showing as failing.** A service behind another one (Photon behind LocationIQ, say) is only asked when the one in front fails, so after an outage it could stay "failing" on Settings, System for weeks after it recovered. The worker now asks a failing service once more every two hours.
-- **Calendar uploads are checked before expensive parsing.** CalDAV reads only up to its existing size limit. ZIP imports check all entries, expanded bytes and total events before importing any calendar. Importing into a calendar that is moving to Google is refused without losing events.
-- **Large trips use less memory and history storage.** Trip Planner shares event descriptions of conflicts and builds explanations only for selected windows, without lowering its event or suggestion budgets. Adding or removing a trip member records only that link for Undo. Trip descriptions use linear-time text cleanup.
-- **Reminder devices have a generous enrollment limit.** Up to 100 distinct push destinations can be registered by default. URL fragments no longer create extra destinations. Existing devices remain, including accounts already above the limit; remove old devices in Settings, Notifications before adding more.
-- **Private deep links use fragments.** New webcal handlers and Chrome extension 2.1.1 keep feed secrets and event details out of the initial request to Better-Cal. Old query links still work during the transition and retain their initial-request exposure. A new-device sign-in refusal now points to a remembered browser or network instead of promising when a distributed attack will end.
-- **Unreadable email stays visible in Review.** Each notice keeps the available sender, subject and reason until dismissed, independently of the 90-day mail log. Malformed messages cannot repeatedly block later mail. Competing invitation changes stay visible instead of letting an unaccepted sequence number suppress another version.
-- **Outside calls respect persistent limits.** Email replies share the notification email limits and cannot be sent twice concurrently for one event. Interrupted replies require confirmation before retrying. Ranking uses account and calendar model-call budgets, and plugin place queries honor the place-lookup switch. Ended repeating email events release their active-event capacity.
-- **Revocation is checked again when changes are saved or messages sent.** This closes races involving sign-in, settings, CalDAV, subscription ownership and Google replies or disconnects. Google grants that are no longer accepted now say **Reconnect needed** in Settings. An outside request already sent cannot be recalled, and an offline phone can still show its cached calendar for up to 24 hours after its last confirmed sign-in.
-- **Private storage works under account-group-writable home and app folders.** Exports and backups no longer reject these normal hosting layouts. World-writable parents without the sticky bit remain refused.
-- **Exports stay complete without holding the whole calendar in memory.** A single calendar streams directly; Export everything builds its ZIP in private storage, then downloads it. Only one export runs at a time, with a clear busy message. Temporary files are removed after sending or failure, and abandoned files on the next export. There is no event cap.
-- **Backups refuse unsafe storage and missing encryption settings.** Linked or foreign-owned backup paths are refused before they can be changed. A missing session secret blocks new backups and updates; Settings, System shows the problem immediately and supplies a settings line to paste. Older plain backups remain readable.
-- **A restore cannot race the worker.** Browser restores and command-line rollback take the worker lock before changing the database. A stopped restore keeps the site closed and offers **Run the restore again**.
-- **Release verification checks intent and library source.** Before either signer runs, the downloaded manifest must match the local one, libraries must reproduce from their locked Git commits, and the ZIP is checked and compared without extraction. The hardware-key signer uses a prepared, hash-locked environment with pinned uv-managed Python.
-- **Unsigned release notes cannot control updater terminal output.** Notes remain editable and are labelled unsigned. The install guide explains first-use trust and optional local verification before an upload.
+- **Choose which emailed events are added automatically:** Settings offers any sender, approved senders (the default) or holding everything for Review. Adding an invitation sends a reply only with **Add and accept**.
+- **Setup codes really work once.**
+- **Signing out other browsers offers a subscription choice:** keep the feeds those browsers added running, or pause them for Review.
+- **Agents can configure and run plugins** and decide duplicates; plugin secret fields are write-only.
+- **Copy to calendar uses the destination just selected.**
+- **Malformed dates skip one event, not a whole feed.**
+- **A place search service that came back stops showing as failing.**
+- **Reminder devices have an enrollment limit** of 100 by default; remove old devices in Settings, Notifications before adding more.
+- **Private deep links use fragments:** new webcal handlers and Chrome extension 2.1.1 keep feed secrets and event details out of the first request.
+- **Unreadable email stays visible in Review** until dismissed.
+- **Google grants that are no longer accepted say Reconnect needed** in Settings.
+- **Exports stay complete** without holding the whole calendar in memory, one at a time.
+- **Backups refuse unsafe storage and missing encryption settings;** Settings, System supplies a settings line to paste.
+- **A stopped restore keeps the site closed** and offers **Run the restore again**.
+- **Calendar uploads are checked before expensive parsing.**
+- **Outside calls respect persistent limits.**
+- **Revocation is checked again when changes are saved or messages sent.**
+- **A restore cannot race the worker.**
+- **Release verification checks intent and library source.**
+- **Unsigned release notes cannot control updater terminal output.**
+- **Fixes:** large trips use less memory and history storage, and private storage works under account-group-writable home and app folders.
 
-Operators: two database changes, applied automatically by `update.php` or the database update page. Emailed events now come in only from approved senders by default; senders whose events were added in the last 90 days are approved for you, and Settings offers the other choices. If you use the Chrome extension, update it to 2.1.1 after this update, not before.
+Operators: two database changes, applied automatically by `update.php` or the database update page. Emailed events now come in only from approved senders by default; recent senders are approved for you. If you use the Chrome extension, update it to 2.1.1 after this update, not before.
 
-Maintainers: strict dev deployments now check that the dev identity cannot rewrite production files; clone settings are read once per phase without following links. Deployment makes an existing worker log private without truncating it, and the managed cron creates missing logs privately. Timezone test tools refuse web requests. API examples keep tokens out of process arguments, and public docs omit install-specific context.
-Maintainers: prepare the signing environment once with `bash scripts/release-signer.sh prepare`; Python or signer dependency updates need an explicit environment refresh. Ordinary Composer lockfile updates need no checksum list, but library export differences stop preparation for review.
-Maintainers: deployment and settings-push configuration now comes only from `scripts/deploy.env`, ignoring environment overrides; run `chmod 600 scripts/deploy.env`. One-off flags remain in the command environment; `SKIP_BACKUP=1` now requires typing `skip backup` at an interactive terminal and is refused for unattended deploys.
+Maintainers: prepare the signing environment once with `bash scripts/release-signer.sh prepare`. Deployment configuration now comes only from `scripts/deploy.env`; run `chmod 600 scripts/deploy.env`. `SKIP_BACKUP=1` now requires typing `skip backup` at an interactive terminal.
 
 ## 0.9.86 (2026-10-16)
 
 From a review of everything since installing and updating moved into the app.
 
-- **A release is signed only after it's checked.** The maintainer's machine now rebuilds each release from its tag and the lock file and compares it, file by file, with the zip GitHub built; it signs only when they match. Before, it signed GitHub's zip as it was, so someone who took over the build could have had a changed zip signed. Releases are now signed with a hardware security key (its PIN and a touch); the key file is kept offline for recovery.
-- **The update notice only believes signed releases.** A release is announced, and a raised security floor recorded, only when its signature verifies. An unsigned one could otherwise have announced a version that can't be installed and then blocked every real update.
-- **Passwords with letters like Å, ą or х work in the settings file.** Reading it split lines at a byte inside those letters, so a database password containing one came back cut short: setup seemed to finish, then the site couldn't reach its database. Setup also checks the file reads back as written, and refuses control characters.
-- **A stranger can't keep you out of setup.** Wrong codes used to replace the code after five tries, so someone sending wrong codes could keep it changing before you typed it. Wrong tries now just wait a second. Entering the code starts a session good for an hour from then, and the page warns when it isn't on HTTPS.
-- **Updates that stop partway can always be undone.** `update.php --rollback` now also tidies up after an update cut off before or during the swap (a closed terminal, a killed process), which used to leave it unable to finish or undo. One update runs at a time, shared with the database update page. A rollback that can't put the previous version back puts the current one back instead of leaving neither.
-- **The database update page recovers too.** If the host cuts its request off, the page comes back (instead of "updating" forever) to run it again or restore the backup it made. It waits for a running worker job first. And older files put back over a database a newer version updated are noticed: the page offers to restore the backup from before the update instead of letting old code run on a newer schema.
-- **Old copies and backups are pruned.** After an update, the newest two previous versions and database backups stay and older ones go, with downloaded zips and anything a failed update left. Each copy is thousands of files, and shared hosts limit how many an account may have. Copies you made yourself are never touched.
-- **No old code for a moment after an update.** PHP caches compiled files by path, so right after the folders were swapped a request could run a cached file from the old version beside the new ones (in testing, that briefly reopened a site still mid-update). An update or rollback now has the next request clear that cache, and the database update page keeps the site closed whenever it can't be sure the work is done.
-- **`update.php` says when a release changes the signing keys,** shows release notes only after the signature checks out, and warns when a rollback goes below the security floor.
-- Smaller fixes: a settings file reached through a symbolic link is never replaced by a copy; backups are private from the moment they're created; a hand-made `.env` converted by the web server becomes owner-only; the private-files check names the file that leaked and says to change every secret in it; the docs say plainly that backup encryption holds only while the settings file stays private.
+- **A release is signed only after it's checked** against a rebuild from its tag, with a hardware security key.
+- **The update notice only believes signed releases.**
+- **Passwords with letters like Å, ą or х work in the settings file.**
+- **A stranger can't keep you out of setup:** wrong tries now just wait a second.
+- **Updates that stop partway can always be undone** with `update.php --rollback`.
+- **The database update page recovers too** if the host cuts it off.
+- **Old copies and backups are pruned:** the newest two previous versions and database backups stay. Copies you made yourself are never touched.
+- **No old code for a moment after an update.**
+- **Fixes:** `update.php` says when a release changes the signing keys and warns when a rollback goes below the security floor, a settings file reached through a symbolic link is never replaced by a copy, backups are private from the moment they're created, a hand-made `.env` converted by the web server becomes owner-only, and the private-files check names the file that leaked.
 
 Operators: no migration. Maintainers: `scripts/release.sh prepare` now needs the hardware security key, or `--recovery` with the key file.
 
 ## 0.9.85 (2026-10-16)
 
-- **A stopped worker is hard to miss.** Its banner now sits at the top of the page, under the toolbar, instead of along the bottom where a tall window hid it. A red dot on Settings in the sidebar, and on the System tab, stays until the worker runs again, even after the banner is dismissed. The dot also shows when the private-files check finds your settings file readable from the web.
-- **"What to do" says what to do.** It opens Settings, System at the cron job, which, while the worker is stopped, says so in red and explains how to fix it: check the cron job in your host's control panel, add it again if it's missing, or replace its command if its PHP was removed. The schedule and a Copy command button follow, and the full crontab line appears once, below.
-- **Settings, System has room to read.** Each part's title sits above it rather than beside it, so the background work table uses the full width, its error details wrap instead of being cut off, and the title says "1 failing" (or "all working") before the list.
-- **The worker is optional for plain calendar use, and says so.** One that never ran isn't an error any more: Settings, System says what needs it and how to set it up, and reminders, subscribing to a calendar and connecting Google each say so where you turn them on. Removed it on purpose? "I turned it off on purpose" stops the warnings until it runs again.
-- **Place search can be turned off:** `BETTERCAL_PLACE_SEARCH=off` in the settings file. Places are typed as plain text, no service is ever asked, and nothing shows as failing.
-- **Export everything:** Settings, Account downloads a zip with one `.ics` file per calendar, every event whatever its date, the same shape as Google Calendar's export. Better-Cal imports the zip in one step; Google, Apple, Outlook, Fastmail, Proton and Thunderbird import the files a calendar at a time. Each calendar's settings also have **Download .ics**.
-- **Import into a calendar you already have**, not only a new one: Import's new "Into" choice takes any of your own calendars, and events it already has (from an earlier import of the same file) are left as they are.
-- **Settings, System says what's off.** Background work shows "off" for what you turned off (the worker, place lookups) and "not set up" for services this server has no settings for (mail import, prompt filters and ranking without an AI key, alert emails without SMTP), instead of "ok". A failing row reads "failing (41×)", with its last good time in red beside it.
-- **Stepping through an event's day finds all of it.** An event opened from Review, search, People, Activity or a trip could arrive on its own, without the rest of its day, so the previous and next arrows skipped events the day showed (a possible duplicate's twin, for one) or didn't appear at all. Opening an event now loads its whole day.
-- [Installing](docs/install.md#removing-better-cal) has a new section on removing Better-Cal completely, and lists the shared hosts it has been installed on.
+- **A stopped worker is hard to miss:** its banner sits at the top of the page, and a red dot on Settings and the System tab stays until it runs again.
+- **"What to do" says what to do:** it opens Settings, System at the cron job, with how to fix it.
+- **The worker is optional for plain calendar use, and says so.** "I turned it off on purpose" stops the warnings.
+- **Place search can be turned off:** `BETTERCAL_PLACE_SEARCH=off` in the settings file.
+- **Export everything:** Settings, Account downloads a zip with one `.ics` file per calendar. Each calendar's settings also have **Download .ics**.
+- **Import into a calendar you already have** with Import's new "Into" choice.
+- **Settings, System says what's off** ("off", "not set up") instead of "ok", and has room to read.
+- **Fixes:** stepping through an event's day finds all of it.
+- [Installing](docs/install.md#removing-better-cal) has a new section on removing Better-Cal completely.
 
 Operators: no migration.
 
 ## 0.9.84 (2026-10-15)
 
-- **The release zip has its files at the top**, with no `better-cal` folder inside. Hosting file managers extract into a folder you pick or name, often one the panel already made when you set up a subdomain, so now you extract straight into your `better-cal` folder. On the command line, `unzip better-cal-0.9.84.zip -d better-cal` names the folder. [Installing](docs/install.md#install) has the steps.
-- **Time zones are searchable.** Every time zone choice (Settings, the welcome, the event editor) lets you type a city, a country, a region like "Pacific", or an offset like "UTC-7", and narrows the long list as you type. Arrow keys and Enter pick.
-- The welcome comes back on the step you left (after browsing plugins, say) instead of starting over, and its link to the Google setup guide looks like the buttons beside it.
-- Plugins no longer flashes a loading placeholder above a list that's already there.
+- **The release zip has its files at the top,** with no `better-cal` folder inside, so you extract straight into your `better-cal` folder. [Installing](docs/install.md#install) has the steps.
+- **Time zones are searchable** by city, country, region or offset.
+- **Fixes:** the welcome comes back on the step you left, its link to the Google setup guide looks like the buttons beside it, and Plugins no longer flashes a loading placeholder.
 
-Operators: no migration. `php server/bin/update.php` from 0.9.83 handles the new zip layout. From 0.9.82 or older, it stops before changing anything ("unexpected path"); update by hand once ([Updating](docs/install.md#updating)), or to 0.9.83 first if it's still offered.
+Operators: no migration. `php server/bin/update.php` from 0.9.83 handles the new zip layout. From 0.9.82 or older, it stops before changing anything ("unexpected path"); update by hand once ([Updating](docs/install.md#updating)), or to 0.9.83 first.
 
 ## 0.9.83 (2026-10-15)
 
-Your private files now stay private on any host, not only where the server reads `.htaccess` ([#142](https://github.com/Oshyan/better-cal/issues/142)). Recommended for every install, and especially where the `better-cal` folder sits inside a web root, as some hosts require for subdomains.
+Your private files now stay private on any host ([#142](https://github.com/Oshyan/better-cal/issues/142)); recommended for every install.
 
-- **The settings file is now `.env.php`.** Same `KEY=VALUE` lines, behind a first line that makes a web server show the file as a blank page. Better-Cal reads it as text and converts `.env` on its own after this update (when the file belongs to the account it runs as); `php server/bin/settings.php --convert` does it by hand. `.env` keeps working until then. Keep the first line when you edit the file: Better-Cal puts it back if it's deleted, and refuses to start, saying why, if something else ends up in front of it.
-- **Backups are encrypted,** with a key made from your session secret, so a downloaded backup is useless. Older backups beside the app are encrypted during the update. `php server/bin/backup.php --decrypt FILE OUT.sql.gz` gives a plain copy for phpMyAdmin or `mysql`. Keep a copy of `.env.php` with any backup you store elsewhere.
-- **The setup code, the update record and PHP's error log are guarded the same way.** The code file is now `better-cal-code.php`. Where a host has PHP write errors into the app folder (a bare `error_log`, common on shared hosting), they go to `.runtime-cache/php-errors.php` instead.
-- **Settings, System has a Private files row** that says in plain words whether your settings could be downloaded: Better-Cal asks your main domain for a test file in its folder. It also runs at the end of setup and after each update, which show it only when something needs doing. "Check now" runs it again.
-- **The worker's cron line no longer writes a log into the app folder:** it's now `... worker.php >/dev/null 2>&1`. Failing jobs still show in Settings, System, and PHP errors go to the private log. If your cron line still writes `worker.log` into the folder, the Private files row says how to change it.
-- **Rolling back to a version before 0.9.83** writes `.env` back for it, since it can't read `.env.php`. Copies you made by hand beside the app (`better-cal-old`) are never touched.
+- **The settings file is now `.env.php`:** same `KEY=VALUE` lines, behind a first line that keeps it private. Keep that line when you edit the file. Better-Cal converts `.env` on its own, or `php server/bin/settings.php --convert` does it by hand.
+- **Backups are encrypted** with a key made from your session secret. `php server/bin/backup.php --decrypt FILE OUT.sql.gz` gives a plain copy. Keep a copy of `.env.php` with any backup you store elsewhere.
+- **The setup code, the update record and PHP's error log are guarded the same way;** the code file is now `better-cal-code.php`.
+- **Settings, System has a Private files row** that says whether your settings could be downloaded.
+- **The worker's cron line no longer writes a log into the app folder:** it's now `... worker.php >/dev/null 2>&1`.
+- **Better-Cal notices when its cron job stops** for 15 minutes, with a banner and one email where email is set up.
+- **The cron command follows your server's PHP where it can.**
+- **Rolling back to a version before 0.9.83** writes `.env` back for it.
 - **The database update page can restore the database** from the backup it just made, if the update fails.
-- **Better-Cal notices when its cron job stops.** If the worker hasn't run for 15 minutes, the app shows a banner, Settings, System marks it failing, it goes in Activity, and one email goes out where email is set up (one more when it recovers). The check rides on requests that arrive anyway (the app, phones syncing), so it adds no scheduled work. Before, a removed PHP version or a deleted cron job stopped reminders and feed refreshes without a word.
-- **The cron command follows your server's PHP where it can.** Setup checks whether the server's plain `php` is new enough, with the extensions Better-Cal needs; if so the command uses it, so it keeps working through PHP upgrades. If not, it names this site's PHP directly and says so. Settings, System now shows the command as the server needs it today, with the schedule (every minute) apart from the command, as control panels ask for them.
-- **Turning on notifications right after setup works.** On a brand-new install the app's background worker could still be starting, and enabling notifications failed with "no active Service Worker"; it now waits for it.
-- The setup check for a missing `sodium` extension says what Better-Cal uses it for.
-- **`update.php` also reads release zips with their files at the top** (no `better-cal` folder inside). Releases from 0.9.84 on use that layout, which hosting file managers unpack straight into the folder you choose; this version is the bridge that can install them.
+- **`update.php` also reads release zips with their files at the top,** the layout releases use from 0.9.84 on.
+- **Fixes:** turning on notifications right after setup works, and the setup check for a missing `sodium` extension says what Better-Cal uses it for.
 
-Operators: no migration. Update with `php server/bin/update.php`; it converts the settings and backups it owns. Where `.env` belongs to another account (root, as the deploy script sets it up), run `sudo php server/bin/settings.php --convert` once; the deploy scripts read `.env.php` and refuse to run with both files present. Change the worker's cron line to end in `>/dev/null 2>&1` if it writes `worker.log` inside the app folder.
+Operators: no migration. Update with `php server/bin/update.php`. Where `.env` belongs to another account (root, as the deploy script sets it up), run `sudo php server/bin/settings.php --convert` once; the deploy scripts refuse to run with both files present. Change the worker's cron line to end in `>/dev/null 2>&1` if it writes `worker.log` inside the app folder.
 
 ## 0.9.82 (2026-10-15)
 
-Security fix. Updating is recommended for every install whose `better-cal` folder sits inside a web root (for example under `public_html`, as some hosts require for subdomains).
+Security fix, recommended for every install whose `better-cal` folder sits inside a web root.
 
-- **Only Better-Cal's two front doors run from the web.** Its command-line scripts (`server/bin/*.php`: the installer, updater, worker, migration, token and account tools) didn't check how they were started. Where the whole folder is reachable from the web and the server ignores the folder's `.htaccess` (Nginx-family servers, or Apache with overrides off), they could be run from a browser: the worker and migrations with no arguments, and on PHP configurations that read arguments from the address, the token tool could create an API token. Every version before 0.9.81 was also exposed on Apache and LiteSpeed in that layout. Now every PHP file except `server/public/index.php` and `dav.php` answers 404 and does nothing when requested over the web, whatever the server's settings.
-- The release zip no longer includes the PHP libraries' own command-line tools, examples, tests and docs, which Better-Cal never uses.
-
-Found in a review of the design for keeping private files private on any host ([#142](https://github.com/Oshyan/better-cal/issues/142)); checked on Apache with `.htaccess` switched off, where every such script now answers 404.
+- **Only Better-Cal's two front doors run from the web:** every PHP file except `server/public/index.php` and `dav.php` answers 404 over the web, whatever the server's settings ([#142](https://github.com/Oshyan/better-cal/issues/142)).
 
 Operators: no migration. Update with `php server/bin/update.php`. Installs whose `better-cal` folder is outside any web root, as the install guide recommends, were not exposed.
 
 ## 0.9.81 (2026-10-15)
 
-- **The app folder refuses to be served, except for `server/public`.** Some hosts (Hostinger, for one) only let a subdomain point inside `public_html`, which puts the whole `better-cal` folder inside the main site's web root, where `.env`, the setup code and backups would otherwise be downloadable through the main domain. A `.htaccess` at the top of the folder now refuses every request for anything in it, while `server/public` keeps serving the app. [Choosing where to put it](docs/install.md#choosing-where-to-put-it) covers this layout, and how to check it after installing.
+- **The app folder refuses to be served, except for `server/public`,** for hosts that put it inside the main site's web root. [Choosing where to put it](docs/install.md#choosing-where-to-put-it) covers this layout.
 
 Operators: no migration. Apache and LiteSpeed read the new `.htaccess`; Nginx ignores it, so with Nginx keep the folder out of any web root, as before.
 
 ## 0.9.80 (2026-10-15)
 
-- **The address check compares host names only, not ports.** In 0.9.79 it also compared the port, and some web servers (nginx handing PHP its `$host`) leave the port out, so an install on a non-standard port was redirected to itself. A trailing dot (`cal.example.com.`) also counts as the same name now.
+- **The address check compares host names only, not ports,** so an install on a non-standard port isn't redirected to itself. A trailing dot counts as the same name.
 
 Operators: no migration. Everything listed under 0.9.79 ships here.
 
@@ -202,1209 +189,1076 @@ Operators: no migration. Everything listed under 0.9.79 ships here.
 
 *Not published; shipped in 0.9.80.*
 
-- **Better-Cal answers only at its own address.** Many hosts store a subdomain as a folder inside the main site, so the same files could also be reached at `example.com/cal/`, on the main site's origin, where its scripts count as the same site. Requests for any host but the one in `BETTERCAL_BASE_URL` are now redirected there, or refused. `BETTERCAL_ALLOWED_HOSTS` lists extra names for the rare setup that needs them.
-- **The install guide says where to put it, and why:** a domain or subdomain of its own (not a folder of another site), pointed at `server/public`, outside the main web root where the host allows, and with its own hosting user if the account runs other sites. [Choosing where to put it](docs/install.md#choosing-where-to-put-it).
-- The setup and database update code is replaced after 5 wrong tries, not 10.
+- **Better-Cal answers only at its own address:** requests for any host but the one in `BETTERCAL_BASE_URL` are redirected there, or refused. `BETTERCAL_ALLOWED_HOSTS` lists extra names.
+- **The install guide says where to put it, and why.** [Choosing where to put it](docs/install.md#choosing-where-to-put-it).
+- **The setup and database update code is replaced after 5 wrong tries,** not 10.
 
-Operators: no migration. If a proxy in front of Better-Cal rewrites the `Host` header, or you reach one install by two names, add the others to `BETTERCAL_ALLOWED_HOSTS` before updating, or those requests will be redirected to `BETTERCAL_BASE_URL`.
+Operators: no migration. If a proxy in front of Better-Cal rewrites the `Host` header, or you reach one install by two names, add the others to `BETTERCAL_ALLOWED_HOSTS` before updating.
 
 ## 0.9.78 (2026-10-15)
 
-- **The "Database update needed" and "Updating" screens actually show in the app.** In 0.9.77 the app knew the server had said so but didn't redraw, so an installed app would have shown an empty calendar instead.
+- **The "Database update needed" and "Updating" screens actually show in the app.**
 
 Operators: no migration.
 
 ## 0.9.77 (2026-10-15)
 
-- **Set up Better-Cal in the browser, no command line needed.** Upload the release zip with your host's file manager, point your domain at it, and open the address: a setup page asks for the database details and your account, checks the database before saving anything, creates the tables, writes the settings and makes your account, then shows the cron line to add in your control panel. To keep anyone who finds a new install first from setting it up, it starts by asking for a code it writes into `better-cal-code.txt` in the Better-Cal folder, which only someone with access to your files can read. Once set up, the page is gone for good. [Install without a command line](docs/install.md#install-without-a-command-line).
-- **Update without a command line.** Upload and unzip the new release beside the old one, copy `.env` across, and swap the folder names. If the new version has database changes, Better-Cal shows "Database update needed" (the installed app too) and the update page applies them after the same kind of code: it backs up first and shows "updating" to everyone else while it works. [Updating without a command line](docs/install.md#without-a-command-line).
-- While database changes are waiting, the app shows that instead of failing piecemeal, the API and CalDAV refuse rather than touch a half-updated database, and the worker pauses.
+- **Set up Better-Cal in the browser, no command line needed:** upload the release zip, point your domain at it and open the address, then enter the code from `better-cal-code.txt`. [Install without a command line](docs/install.md#install-without-a-command-line).
+- **Update without a command line:** unzip the new release beside the old one, copy `.env` across and swap the folder names; the update page applies any database changes. [Updating without a command line](docs/install.md#without-a-command-line).
+- **While database changes are waiting,** the app shows that, the API and CalDAV refuse, and the worker pauses.
 
-Operators: no migration. Nothing changes for an install with a command line; `php server/bin/update.php` still updates in one step.
+Operators: no migration. `php server/bin/update.php` still updates in one step.
 
 ## 0.9.76 (2026-10-14)
 
-- **Import your whole Google Calendar export in one step.** Google Calendar's own export (Settings, Import & export, Export) and Takeout both give you a zip with one file per calendar. **+ Import calendars** in the sidebar now takes that zip as it downloaded: each calendar comes in as its own, named as it was at Google, repeating events and their exceptions intact. Importing the same export again adds nothing, and anything skipped is listed with why. `server/bin/import-takeout.php` takes the zip too, for exports too large to upload.
-- **Vi-style navigation:** h and l move back and forward a day, k and j a week, like the arrow keys. Listed in the keyboard shortcuts (`?`).
-- Importing from Google no longer names a calendar "Book club_c" when its Google id starts with `c_`, as newer calendars' ids do.
+- **Import your whole Google Calendar export in one step:** **+ Import calendars** in the sidebar takes the zip from Google Calendar's export or Takeout, each calendar as its own. `server/bin/import-takeout.php` takes the zip too, for exports too large to upload.
+- **Vi-style navigation:** h and l move back and forward a day, k and j a week.
+- **Fixes:** importing from Google no longer names a calendar "Book club_c" when its Google id starts with `c_`.
 
 Operators: no migration. Update with `php server/bin/update.php`.
 
 ## 0.9.75 (2026-10-14)
 
-- **Releases are signed, and the updater checks.** Each release now carries a signature over its version, commit, zip and manifest, and `php server/bin/update.php` installs nothing unless it verifies against the signing keys Better-Cal ships with. The keys never touch GitHub, so someone who took over the GitHub account couldn't push code to installs with it. There are two keys, either one enough: a key file, and a hardware security key as its backup. Nothing changes for anyone installing or updating. [Releasing](docs/releasing.md#signing) explains it.
-- **The updater waits for a running worker job** (it takes the worker's own lock) before backing up, so a job can't be cut off halfway when the code swaps.
-- **Backups and the previous version are kept out of the web's reach.** Their folders get a deny-all `.htaccess` (for Apache, which most shared hosts run), backup names can't be guessed, and the updater warns when the app looks like it sits inside a web root, where the docs say it shouldn't.
+- **Releases are signed, and the updater checks:** `php server/bin/update.php` installs nothing unless the signature verifies against the signing keys Better-Cal ships with. [Releasing](docs/releasing.md#signing) explains it.
+- **The updater waits for a running worker job** before backing up.
+- **Backups and the previous version are kept out of the web's reach,** and the updater warns when the app looks like it sits inside a web root.
 
 Operators: no migration. Update with `php server/bin/update.php`; from this release on, it checks each release's signature.
 
 ## 0.9.74 (2026-10-14)
 
-- **Installing and updating take one command each.** Each release now has a zip with the PHP libraries included, so a new install needs no Composer: unpack it, create a database, and run `php server/bin/install.php`. It checks PHP, asks for your address, database and account, writes `.env` with a generated secret and push keys, creates the tables and your account, and prints the web root and cron line to set up. `php server/bin/update.php` updates to the newest release: it backs up the database, shows "updating" while it works, installs the new version (from the zip, checked against GitHub's SHA-256, keeping the previous version beside it; or by checking out the tag in a git install), and migrates. `--rollback` puts the previous version and the database back. [Installing](docs/install.md#install) and [Updating](docs/install.md#updating) lead with these now; the by-hand steps are still there.
-- **Maintenance mode.** An empty `.maintenance` file in the app directory makes the site answer "updating" and the worker pause. The updater uses it; you can too, when updating by hand.
-- **The vendored browser libraries are documented for review.** `web/vendor/README.md` lists each with its version, license, upstream link and fingerprints, and `node scripts/vendor.mjs --check-upstream` confirms every file against its published release.
-- The welcome's Import row points at Google Calendar's own export (Settings, Import & export) rather than Takeout.
+- **One-command install:** unpack the release zip (no Composer needed), create a database and run `php server/bin/install.php`. See [Installing](docs/install.md#install).
+- **One-command update:** `php server/bin/update.php` backs up the database and installs the newest release; `--rollback` puts both back. See [Updating](docs/install.md#updating).
+- **Maintenance mode:** an empty `.maintenance` file in the app directory makes the site answer "updating" and pauses the worker.
+- **Fixes:** the welcome's Import row points at Google Calendar's own export instead of Takeout.
 
-Operators: no migration. Nothing changes for a running install; from this release on, `php server/bin/update.php` is the easy way to update (it needs to create folders beside the app directory, or a git checkout with Composer).
+Maintainers: `web/vendor/README.md` documents the vendored browser libraries, and `node scripts/vendor.mjs --check-upstream` checks them.
+
+Operators: no migration. `update.php` needs to create folders beside the app directory, or a git checkout with Composer.
 
 ## 0.9.73 (2026-10-13)
 
-- **The event panel's header names the year too** when the day isn't in this one (it said "Sat, Oct 8" above a 2011 event), and the highlighted year in the date line sits closer to its comma.
+- **The event panel's header shows the year** when it isn't this one.
 
 Operators: no migration.
 
 ## 0.9.72 (2026-10-13)
 
-- **Past events aren't looked up for the map any more.** Connecting or importing a calendar sent every address in its history, back a decade or more, to the place lookup service, and filled Activity with addresses it couldn't place. Only upcoming events (and repeating ones still going) are placed in the background now; a past event you open is still placed then. Settings, Location & maps, "Look up addresses for past events too" brings back the old behavior.
-- **An event from another year says so.** The event panel, hover card and Review show the year whenever it isn't this one, and the panel highlights it, so an old imported event no longer reads as this year's.
-- **The duplicates line in Activity counts copies and names the events**: "Hid 8 duplicate copies, so each event shows once: (titles)" instead of "Found the same event twice: 8 shown as one".
-- **Opening an event from Activity no longer leaves a blank side panel** when the event is on a hidden calendar. The calendar's refresh dropped it right after it opened.
+- **Past events aren't looked up for the map any more,** only upcoming ones. Settings → Location & maps → "Look up addresses for past events too" brings them back.
+- **An event from another year shows the year** in the event panel, hover card and Review.
+- **Fixes:** Activity's duplicates line counts copies and names the events, and opening an event on a hidden calendar from Activity no longer leaves a blank panel.
 
-Operators: no migration. Settings gain `placePastEvents` (default off).
+Operators: no migration.
 
 ## 0.9.71 (2026-10-13)
 
-- **An open repeating event stays open after a "this and following" change.** Setting Planned or Maybe (or editing) with "This and following" splits the series, and the occurrence you had open moved to the new part under a new id, so the side panel went blank and stayed open. It now follows the occurrence to its new series and shows it with the change.
+- **An open repeating event stays open after a "this and following" change.**
 
-Operators: no migration. Event PATCH, relationship and attendance responses carry `splitEventId` after a "following" split.
+Operators: no migration.
 
 ## 0.9.70 (2026-10-12)
 
-- **Option/Alt-drag copying works**, and so does **dropping an event onto a calendar or person in the sidebar**. The week, day and month grids were told every event was read-only (their calendar list left out whether a calendar can be edited), so both were quietly refused. The sidebar drops had been broken since Google write-through arrived.
+- **Fixes:** Option/Alt-drag copying works, and dropping an event onto a calendar or person in the sidebar works again.
 
-Operators: no migration. 0.9.69 was prepared but never published: checking it live found the copy drag not working. Everything listed under it ships here.
+Operators: no migration. 0.9.69 was never published; its changes ship here.
 
 ## 0.9.69 (2026-10-12)
 
 *Not published; shipped in 0.9.70.*
 
-- **Duplicate an event.** In an event's More menu, Duplicate makes a copy on the same calendar and opens it in the editor with the date selected, so you type the new day and save. A repeating event's occurrence is copied as a single event.
-- **Hold Option (Mac) or Alt while dragging an event to copy it** instead of moving it. It works in the week, day and month views; the original stays put, the cursor and a + on the dragged event say it's a copy, and you can press or release the key mid-drag. Dropping onto a calendar in the sidebar with Option/Alt held copies it there. Listed in the keyboard shortcuts.
-- **Optionally remove an event when you accept its cancellation.** Settings, General, Invitations: with "Remove the event when you accept its cancellation" on, accepting an emailed cancellation in Review deletes the event right away, with Undo, instead of keeping it struck through.
-- **DOMPurify 3.4.17**, which cleans up event descriptions before they're shown: hardening and fixes.
+- **Duplicate an event:** More → Duplicate copies it to the same calendar and opens the editor so you type the new day.
+- **Option/Alt-drag copies an event** instead of moving it, in week, day and month views or onto a sidebar calendar.
+- **Remove an event when you accept its cancellation:** Settings → General → Invitations (with Undo).
+- **Fixes:** DOMPurify 3.4.17, which cleans up event descriptions.
 
-Operators: no migration. `POST /events/:id/copy` takes `duplicate`, `start` and `end`; settings gain `removeAcceptedCancellations`.
+Operators: no migration.
 
 ## 0.9.68 (2026-10-12)
 
-- **A Google-synced invitation shows as Planned or Maybe by your answer**, as an emailed one has since 0.9.67: Accept is Planned, and Maybe, Decline or no answer yet is a Maybe. It used to show as Planned whatever you'd answered, because such an event's status belongs to the organizer. Planned or Maybe chosen by hand still wins, until your next answer, whether you give it here or in Google Calendar.
-- **A Google calendar whose account was disconnected says so** in its settings and the sidebar, instead of claiming that changes still come in at each check.
-- **The password prompt reads properly:** "Confirm your Better-Cal password before adding a Google calendar", not "to adding".
+- **A Google-synced invitation shows as Planned or Maybe by your answer:** Accept is Planned; anything else is a Maybe. Choosing by hand still wins until your next answer.
+- **Fixes:** a calendar whose Google account was disconnected says so, and the password prompt reads properly.
 
 Operators: no migration.
 
 ## 0.9.67 (2026-10-12)
 
-- **Declining an invitation makes it a Maybe** instead of leaving it Planned, the nearest to "no" that keeps it on your calendar. Accept still makes it Planned. Whatever an answer sets, you can still change Planned or Maybe by hand afterwards; that sends nothing to the organizer.
-- **An unanswered invitation can be dismissed from Review** with a quiet Dismiss next to Accept / Maybe / Decline. Nothing is sent, the event keeps its answer buttons, and an updated invitation asks again.
+- **Declining an invitation makes it a Maybe** instead of Planned. Changing it by hand sends nothing to the organizer.
+- **Dismiss an unanswered invitation from Review:** nothing is sent, and an updated invitation asks again.
 
 Operators: no migration.
 
 ## 0.9.66 (2026-10-12)
 
-- **An open app keeps up with what happens in the background**, without reloading or taking anything out of your hands. Each kind of change reloads only its own part, merged into what's on screen, and nothing changes under a drag; the change waits until you let go.
-  - **Plugin calendars** (weather, sunrise and the like) now record their changes, so open tabs show them, and so do phones and desktop apps syncing over CalDAV, which until now missed them until something else on that calendar changed.
-  - **AI filter verdicts** show as they arrive: newly added feed events get hidden, dimmed or highlighted a minute later instead of staying unfiltered until something else changed.
-  - **Warnings and notices**: a feed starting or stopping failing, reminders no longer reaching this device, a Google account needing reconnecting, a plugin failing, and a new release (including a security one) now appear in an open tab.
-  - **Duplicates** that get linked show as one event, and plugin range bands and layers update.
-  - **Changes from another device**: saved views and settings follow (except while this tab is on the Settings page), and the Review badge reflects decisions made elsewhere.
-  - **An open Activity page** adds new entries at the top.
-- Ranking order isn't reapplied live, so a list you're reading doesn't reshuffle; new scores show the next time the view opens.
+- **An open app keeps up with background changes** without reloading or changing anything under a drag: plugin calendars, AI filter verdicts, warnings, duplicates, settings from another device, the Review badge and Activity.
+- **Plugin calendar changes reach CalDAV:** phones and desktop apps now see them.
 
-Operators: no migration. `GET /changes/cursor` also returns `status`.
+Operators: no migration.
 
 ## 0.9.65 (2026-10-12)
 
-- **Accepting an emailed change or cancellation works again.** Every Accept said the event had changed since the email arrived, refreshed the card and refused again, so only Dismiss worked. The stored differences come back from MySQL with their fields in another order, and that alone counted as a change; they are now compared field by field.
+- **Fixes:** accepting an emailed change or cancellation works again.
 
 Operators: no migration.
 
 ## 0.9.64 (2026-10-12)
 
-- **Invitation replies are laid out the way Google's own are.** A reply now carries the event's times and goes as a calendar part inside the message as well as an `invite.ics` attachment. Sent as an attachment alone, Gmail showed the organizer "Unable to load event" and the guest's answer didn't change.
-- **The answer you've already given can't be sent twice.** Pressing Accept again on an accepted invitation mailed the organizer again; now it does nothing, and choosing a different answer still sends. A reply that failed can still be retried.
+- **Invitation replies are laid out the way Google's own are,** so Gmail no longer shows the organizer "Unable to load event".
+- **The same answer can't be sent twice:** pressing Accept again does nothing; a different answer still sends.
 
 Operators: no migration.
 
 ## 0.9.63 (2026-10-12)
 
-- **Accepting an invitation now reaches the organizer when you invited yourself.** A reply went out from the address set up for replies even when that address was the organizer, so it told the organizer's calendar that the organizer was coming and the invited guest stayed "awaiting". Replies now go from whichever of the server's sending addresses was actually invited, never the organizer's, through that address's own mail account. An invitation sent from one of the server's addresses, with none of the others invited, offers no reply.
-- **Add and accept.** A new emailed invitation in Review can be added and accepted in one step, so no second "not replied" item follows. **Add** on its own still adds it without replying.
-- **An invitation you haven't answered is a Maybe.** It used to come in as Planned. Accept makes it Planned and Maybe keeps it a Maybe; Decline is unchanged.
-- **The Review badge keeps up while the app is open.** New invitations, held changes, proposals and possible duplicates arrive without changing an event, so the badge only refreshed when you did something; it now updates within 30 seconds, and only while the tab is visible.
-- **Invitation changes say which version they are** ("Updated invitation (v2)") instead of "Sequence 1", and a new invitation no longer shows a number at all.
-- **A reminder whose time passed before the event was added now fires, late.** Add an invitation at 1:30 for 2:00 with a two-hour reminder and you get the reminder right away, as Google Calendar does, instead of never. It only applies while the event is still ahead, up to six days late, and not to a calendar added after the reminder's time, so subscribing to or importing a calendar doesn't set off a burst.
-- **Connections calls a calendar made in the account "Account"** in its Type column, instead of "Owned"; the access column already says owner.
+- **Accepting reaches the organizer when you invited yourself:** replies go from the server address that was actually invited, never the organizer's.
+- **Add and accept:** a new emailed invitation in Review can be added and accepted in one step.
+- **An invitation you haven't answered is a Maybe** until you accept it.
+- **The Review badge keeps up while the app is open,** within 30 seconds.
+- **A reminder whose time passed before the event was added now fires, late:** up to six days late, while the event is still ahead.
+- **Fixes:** invitation changes say which version they are ("Updated invitation (v2)"), and Connections calls a calendar made in the account "Account".
 
-Operators: no migration. `GET /changes/cursor` also returns `review`.
+Operators: no migration.
 
 ## 0.9.62 (2026-10-12)
 
-- **Google calendars carry Google's own G, in color.** The small grey mark in the sidebar was hard to make out; the real G reads at a glance (and fades with the row when a calendar is hidden). A calendar's settings use the same G for its Source.
-- **Connections names each calendar's type from the account's side**: Owned, Shared, Feed copy or From Google, with a hover note on each. "Yours" was ambiguous once more than one account was connected.
+- **Google calendars carry Google's own G, in color,** in the sidebar and a calendar's settings.
+- **Connections names each calendar's type:** Owned, Shared, Feed copy or From Google.
 
 Operators: no migration.
 
 ## 0.9.61 (2026-10-12)
 
-- **A calendar's Source reads as one sentence.** In 0.9.60 it broke after "Google Calendar" and ran two sentences together.
+- **Fixes:** a calendar's Source reads as one sentence again.
 
 Operators: no migration.
 
 ## 0.9.60 (2026-10-12)
 
-- **You can tell at a glance which calendars come from somewhere else.** In the sidebar, a Google calendar has Google's mark after its name and a calendar subscribed by web address has a link mark; hovering says where it comes from and whether you can edit it. A calendar's settings now say plainly where it comes from (for Google, which account), instead of a cut-off line.
-- **Settings, Connections is clearer about what you're looking at.** Each Google account's list is titled "Calendars in you@...", even with one account, says it's every calendar that account can see, and counts how many are in your calendars here. The last column reads "In Better-Cal": Added, or Add. The introduction is shorter and plainer.
-- **The finished Move to Google message says where the calendar now lives** (your Google account, by name), that it stays on your calendar here with edits going both ways, and how to share it from Google Calendar.
+- **See which calendars come from somewhere else:** the sidebar marks Google calendars and web subscriptions, and a calendar's settings say where it comes from.
+- **Settings → Connections is clearer:** each Google account lists every calendar it can see, with an "In Better-Cal" column.
+- **The finished Move to Google message says where the calendar now lives** and how to share it.
 
-Operators: no migration. Calendars in the API carry `googleAccountEmail`.
+Operators: no migration.
 
 ## 0.9.59 (2026-10-12)
 
-- **An edit to a Google calendar no longer flips back for a few minutes.** If you changed an event while Better-Cal was in the middle of syncing that calendar from Google, the sync could put the old version back until the next one (up to about 5 minutes later; Google always had your edit). A sync that overlaps an edit now discards what it fetched and leaves it to the next one.
-- **The move dialog shows the move right away.** Starting a move used to leave a greyed-out button for several seconds before any progress appeared; it now shows "Starting the move…" as soon as you've confirmed, then the upload's progress.
-- **On a phone the move dialog fills the screen,** as intended in 0.9.58 (it showed as a floating card).
+- **Fixes:** an edit to a Google calendar no longer flips back for a few minutes during a sync, the move dialog shows progress right away, and on a phone it fills the screen.
 
 Operators: no migration.
 
 ## 0.9.58 (2026-10-12)
 
-- **Moving a calendar to Google has its own dialog.** It used to sit inside the sidebar's calendar settings, which were too narrow for it (parts ran off the edge). Now "Move to Google…" opens a dialog with room for the choice, the progress and the outcome; on a phone it's a full-screen sheet. Settings keep a line about any move in progress.
-- **Granting Google's create-calendars permission comes back to the move.** An account connected before moves existed has to allow one more permission. That step is now worded as what it is ("Allow on Google", adding a permission to your existing connection, not a second one), and Google sends you back to the move dialog instead of to Settings, Connections with a prompt to pick calendars. An account that already has the permission never sees the step.
-- **Disabled buttons look disabled everywhere.** A disabled main button kept its full colour outside the editor, so it looked ready to press.
-- **Settings, System forgets deleted feeds and push devices.** Their health rows stayed behind after the calendar or device was gone.
+- **Moving a calendar to Google has its own dialog:** "Move to Google…" (a full-screen sheet on a phone).
+- **Granting Google's create-calendars permission comes back to the move.**
+- **Fixes:** disabled buttons look disabled everywhere, and Settings → System forgets deleted feeds and push devices.
 
 Operators: no migration.
 
 ## 0.9.57 (2026-10-10)
 
-- **The day arrows on a phone's event sheet behave.** The arrow you last tapped kept a grey box through later swipes (a touch screen holds "hover" on the last thing tapped); icon buttons now show it only while pressed. A sideways swipe through the day now flashes the arrow it stands for, as a tap would.
-- **Guzzle 8.2** (from 7.15), the HTTP client push notifications go out through, with its psr7 3 and promises 3. No change in behaviour. sabre/vobject 5 waits for a sabre/dav release that allows it ([#128](https://github.com/Oshyan/better-cal/issues/128)).
+- **Fixes:** the day arrows on a phone's event sheet no longer keep a grey box after a tap, and a swipe flashes the matching arrow.
+
+Maintainers: Guzzle 8.2 (from 7.15), no change in behavior. sabre/vobject 5 waits for sabre/dav ([#128](https://github.com/Oshyan/better-cal/issues/128)).
 
 Operators: no migration. `composer install` brings the new Guzzle in, as deploys already do.
 
 ## 0.9.56 (2026-10-09)
 
-- **Back on a phone closes what's open instead of leaving the app.** The View, Filter and New sheets, quick add, jump to date and the day list ignored the phone's Back, so it closed the app. They now close on Back (a first Back with the keyboard up still just hides the keyboard).
-- **Back steps the event sheet down reliably.** From a full sheet, Back went to the short sheet as it should, but the next Back left the app instead of closing the sheet. The same happened going back from an event to its trip, and from the welcome's second step. Found by testing on a real Android phone.
-- **A turned phone keeps the event in view.** Held sideways, the event sheet now sits beside a narrowed calendar (as the desktop panel does), with the bottom bar still under it, so the event you opened is never hidden behind the sheet. ([#125](https://github.com/Oshyan/better-cal/issues/125))
-- **The weekly dependency check works.** It never had: it read Composer's report under the wrong name and failed every run.
+- **Back on a phone closes what's open** (sheets, quick add, jump to date, the day list) instead of leaving the app, and steps the event sheet down reliably.
+- **A turned phone keeps the event in view** beside a narrowed calendar. ([#125](https://github.com/Oshyan/better-cal/issues/125))
+
+Maintainers: the weekly dependency check works.
 
 Operators: no migration.
 
 ## 0.9.55 (2026-10-09)
 
-- **Stepping through a day skips duplicates.** An event linked across two visible calendars shows once in the views, but the event sheet and panel stepped onto both copies. Now it's one step, and the copy you opened keeps its place. ([#27](https://github.com/Oshyan/better-cal/issues/27))
-- **The hover card names the plain-language filter** that dimmed or highlighted an event, quoting its words, instead of "one of your plain-language filters".
-- **The Filters page notes a broad AI filter.** An AI prompt filter that applies to everything judges every event on every subscribed calendar, including ones added later; the form and the filter's card now say so.
-- **Hover card dates for all-day events.** West of UTC a one-day all-day event's card read as the day before to that day. It now shows the right single date.
-- **Context hover cards** leave off the reasons list, which explains how event chips are drawn and didn't apply to them.
-- **The overview says "5 day" on a turned phone,** where it shows five days a row (0.9.54).
+- **Stepping through a day skips duplicates.** ([#27](https://github.com/Oshyan/better-cal/issues/27))
+- **The hover card names the plain-language filter** that dimmed or highlighted an event.
+- **The Filters page notes a broad AI filter** that judges every event on every subscribed calendar.
+- **Fixes:** hover card dates for all-day events west of UTC, context hover cards leave off the reasons list, and the overview says "5 day" on a turned phone.
 
 Operators: no migration.
 
 ## 0.9.54 (2026-10-09)
 
-- **A phone turned sideways keeps the phone layout.** The layout was chosen by width alone, so a phone held sideways (wider than 640 points) got the desktop frame: the two-row toolbar, the sidebar, popovers and no bottom bar. A touch screen no taller than 500 points now counts as a phone too, and the turned shape gets its own touches: the bottom bar is slimmer with labels beside the icons, sheets open from the right at full height instead of covering most of the screen from below, the frame keeps clear of a side notch, the 3-day overview shows five days a row and three rows, and week view starts at five days across (a pinch still changes it, remembered separately from upright). ([#125](https://github.com/Oshyan/better-cal/issues/125))
-- **Context items show the hover card.** Hovering a context item (weather, air quality, sunrise and sunset, a holiday, a "+N") now shows the same card events do, after the same short pause. The browser's own tooltip, which these used, appeared for some items and not others.
+- **A phone turned sideways keeps the phone layout,** with a slimmer bottom bar, sheets from the right, and five days a row in the overview and week view. ([#125](https://github.com/Oshyan/better-cal/issues/125))
+- **Context items show the hover card,** like weather, sunrise and sunset, a holiday or a "+N".
 
 Operators: no migration.
 
 ## 0.9.53 (2026-10-09)
 
-- **Preact 11.** The app's UI framework moves from Preact 10.29.7 to 11.0.1, before the final pre-1.0 security scan so the scan covers what 1.0 ships. Nothing should look or work differently; if something does, that's a bug worth reporting.
+- **Preact 11:** the UI framework moves from 10.29.7 to 11.0.1. Nothing should look or work differently; if something does, that's a bug worth reporting.
 
-Operators: no migration. The vendored `preact.module.js` and `hooks.module.js` now come from Preact's `.mjs` builds and keep their `.js` names, so no web server MIME change is needed.
+Operators: no migration, and no web server MIME change is needed.
 
 ## 0.9.52 (2026-10-09)
 
-- **Settings shows the place search services in use.** Since 0.9.46 the "Place search service" row under Location & maps never appeared, with its notes on Stadia's and MapTiler's terms and any problem with the setting: the app kept only the map key from the server's configuration. It now keeps the place search part too, and the outage notice from 0.9.51 knows which services you use.
+- **Fixes:** Settings → Location & maps shows the "Place search service" row again.
 
 Operators: no migration.
 
 ## 0.9.51 (2026-10-09)
 
-- **Place search outages only interrupt when they matter.** With more than one place search service set up, one being down no longer earns an email or a notice at startup, since searches go to the next one; you hear about it only when all of them are down. When Photon is the only service and it's down, the notice, the email and Settings say so and point to free LocationIQ or MapTiler keys that keep place search working next time.
-- **Security record:** `SECURITY.md` and the README now include the 2026-10-06 scan (77 findings, fixed through 0.9.42), ahead of the final pre-1.0 scan.
+- **Place search outages only interrupt when they matter:** with more than one service, you hear only when all are down. When Photon alone is down, you're pointed to free LocationIQ or MapTiler keys.
+- **Security record:** `SECURITY.md` and the README include the 2026-10-06 scan (77 findings, fixed through 0.9.42).
 
-Operators: no migration. `GET /config`'s `placeSearch` adds `healthSubjects` and `downAdvice`. The PHP test suite no longer logs database errors, and fails if one is ever logged.
+Operators: no migration.
 
 ## 0.9.50 (2026-10-09)
 
-- **A bare house number finds the houses near you again.** In 0.9.49, with MapTiler in the list, typing just a number could show nothing: MapTiler reads a short number as the start of longer ones ("250" offered 2500 and 2507), those were rightly dropped, and the services after it were never asked. Now a service whose results would all be dropped counts as having found nothing, and the next one answers. So MapTiler finds bare numbers only when that exact number exists nearby; Photon covers the rest, as before.
+- **Fixes:** with MapTiler in the list, a bare house number finds the houses near you again.
 
 Operators: no migration.
 
 ## 0.9.49 (2026-10-09)
 
-- **Bare house numbers, fast, with MapTiler.** MapTiler's geocoding is now a place search option, and it's the one service besides Photon that finds addresses from a bare house number or a number with a letter or two of the street, in about a third of a second instead of one to three. Its terms allow keeping the places you pick.
-- **More than one service, in order.** The place search setting takes a list, tried in turn, with Photon always last: `locationiq,maptiler` lets LocationIQ answer places, venues and cities and MapTiler the addresses LocationIQ can't. In testing that pair got every kind of search right at about a tenth of a second. [Geocoding and place search](docs/geocoding.md) has the comparison and the setup.
-- **Events you didn't place by hand land faster and in the right country.** Imported, feed and typed locations are now placed by the same services you chose for search, before Photon. That's five to fifteen times faster with LocationIQ, and it fixes places Photon put near home instead of abroad (a city's name matching a local street, or a small American town sharing a European capital's name).
-- **A town comes first when you're typing its name**, ahead of a pond or a street that happens to share it.
-- **Venues whose names start with a number** (a convenience chain, a 24-hour gym) are found by every service.
+- **MapTiler place search:** fast addresses from a bare house number, and its terms allow keeping the places you pick.
+- **More than one service, in order:** the place search setting takes a list, Photon always last. [Geocoding and place search](docs/geocoding.md) has the setup.
+- **Events you didn't place by hand land faster and in the right country,** using your search services before Photon.
+- **Fixes:** a town comes first when you type its name, and venues whose names start with a number are found by every service.
 
-Operators: no migration. `BETTERCAL_PLACE_SEARCH` now takes a comma list from `locationiq`, `maptiler` and `stadia` (Photon always last); new: `BETTERCAL_PLACE_LOOKUP` (the same kind of list for placing events, empty meaning the search list) and `BETTERCAL_MAPTILER_GEOCODING_KEY` (a key the server may use: one locked to the site's address is refused). `GET /config`'s `placeSearch` lists services as comma lists, adds `notes` and `lookup`.
+Operators: no migration. `BETTERCAL_PLACE_SEARCH` takes a comma list from `locationiq`, `maptiler` and `stadia`. New: `BETTERCAL_PLACE_LOOKUP` (for placing events; empty means the search list) and `BETTERCAL_MAPTILER_GEOCODING_KEY` (a key locked to the site's address is refused).
 
 ## 0.9.48 (2026-10-09)
 
-- **A picked house address no longer repeats its street.** In 0.9.47, picking an address that Photon found filled the location as "250 Elm Street, 250 Elm Street, Sampleville". The street is now said once, and the list's second line no longer repeats it either.
+- **Fixes:** a picked house address no longer repeats its street.
 
 Operators: no migration.
 
 ## 0.9.47 (2026-10-09)
 
-- **A picked place keeps its address.** Picking a town used to save just its name ("Sampleville"), so the event looked as if nothing had been picked. Now it's the place and its address ("Sampleville, Example State", or a venue with its street and city), with the country added for places far away, and that's what the event panel, hover card, agenda and your other calendar apps show.
-- **The location box shows whether it's placed:** a solid pin once you've picked a suggestion, an outline while it's text you typed, and an x to clear it.
-- **Typing in the editor keeps the day you chose.** Dragging across four days and typing "stay at the lake" used to reset the event to today at 2 PM. The quick fill now changes the date only when the text names one, and a time on its own ("dinner at 7pm") lands on the day you picked. Dates you changed by hand, and people the event started with, stay too.
-- **Place search gives up sooner when Photon is slow.** A house number with a few letters of the street could wait six seconds for an empty answer; it's now three at most.
+- **A picked place keeps its address,** which the event panel, hover card, agenda and your other calendar apps show.
+- **The location box shows whether it's placed:** a solid pin once picked, an outline for typed text, and an x to clear.
+- **Typing in the editor keeps the day you chose** unless the text names a date.
+- **Fixes:** place search gives up after three seconds at most when Photon is slow.
 
-Operators: no migration. `/geocode/search` rows add `fill`, and `/quickadd` drafts add `when: {date, time}`.
+Operators: no migration.
 
 ## 0.9.46 (2026-10-09)
 
-- **Place search can be much faster.** With a free LocationIQ key, the location dropdown answers in about a tenth of a second instead of one to two, and finds parks and venues by their full name, world cities and airports by name more reliably. Photon still answers what LocationIQ can't (a house number with only a few letters of the street) and whenever it is slow, busy or finds nothing, so nothing gets worse. Stadia Maps is supported too; it is the strongest on addresses, but keeping the places you pick needs one of its paid plans, and Settings says so. Photon remains the default and needs no key. [Geocoding and place search](docs/geocoding.md) compares the services and says what to set up.
-- **The dropdown credits whoever answered**, in one small line under the list, as each service's terms ask.
-- **Each event knows where its coordinates came from:** a place you picked, a lookup from its location text, or coordinates that came with the event itself, and which service answered. Events placed before this release say unknown rather than guess.
-- **The filter box no longer leaves gaps.** Hidden events kept their lane in month, 3-day and week's all-day row, so an empty row could sit above the matches (#126).
-- **The test email's button says Open Better-Cal**, since there is no event behind it.
+- **Faster place search:** a free LocationIQ key answers in about a tenth of a second and finds venues, world cities and airports more reliably. Stadia Maps works too; Photon stays the default, no key. [Geocoding and place search](docs/geocoding.md) compares them.
+- **The dropdown credits whoever answered.**
+- **Each event knows where its coordinates came from.**
+- **Fixes:** the filter box no longer leaves gaps (#126), and the test email's button says Open Better-Cal.
 
-Operators: migration 048 adds `location_source`, `location_provider` and `location_placed_at` to events and `provider` to the geocode cache; existing rows stay null. New optional settings: `BETTERCAL_PLACE_SEARCH` (`photon`, `locationiq` or `stadia`), `BETTERCAL_LOCATIONIQ_KEY` and `BETTERCAL_STADIA_KEY` (see `.env.example`). LocationIQ is reached over IPv4 only, so a key restricted by address needs the server's IPv4 address. `GET /geocode/search` adds `credits`, `GET /config` adds `placeSearch`, and events carry `locationSource`, `locationProvider` and `locationPlacedAt` (detail only). `scripts/push-settings.sh` changes a server's `.env` from a local, gitignored `scripts/server.env`, backing it up first; deploys still never write `.env`. The dev deploy's shared database mode works again, and it refuses the new keys on dev like other service keys.
+Maintainers: `scripts/push-settings.sh` changes a server's `.env` from a local, gitignored `scripts/server.env`.
+
+Operators: migration 048. New optional settings: `BETTERCAL_PLACE_SEARCH` (`photon`, `locationiq` or `stadia`), `BETTERCAL_LOCATIONIQ_KEY` and `BETTERCAL_STADIA_KEY` (see `.env.example`). A LocationIQ key restricted by address needs the server's IPv4 address.
 
 ## 0.9.45 (2026-10-09)
 
-- **A filtered day shows its matches.** With text in the filter box, month and 3-day views gave grayed-out events their slots and counted them in "+N", so a busy day could show only grayed-out events with its matches behind the "+N". Matches now come first, grayed-out events fill only what's left, and "+N" counts matches that didn't fit. Events a dim filter grays out work the same way, as does the all-day row of week view.
-- **Typing a city's name offers the city.** "munich" used to list only nearby Munich Streets; now Munich comes first. A place named exactly what you typed goes to the top when it's a city, town, county, state or country and nothing nearby has that name.
-- **Reconnecting a Google account brings its calendars back.** After Disconnect, connecting the same account again shows Re-attach for each calendar it left behind, which reconnects it with its events and everything added to them, instead of making a duplicate.
-- **Reminder times follow your clock setting:** "Day before at 6:00 PM" on a 12-hour clock, in the event panel, the editor and calendar settings. A custom reminder amount in a calendar's settings now fits on one line.
-- **Dependencies:** PHPMailer 7 and web-push 11 for email and push notifications, with no change in how either behaves; web-push 11 is handed a client built with the same timeouts and redirects off as before.
+- **A filtered day shows its matches first,** and "+N" counts matches that didn't fit.
+- **Typing a city's name offers the city** first.
+- **Reconnecting a Google account brings its calendars back:** Re-attach restores each with its events instead of making a duplicate.
+- **Reminder times follow your clock setting.**
+- **Fixes:** PHPMailer 7 and web-push 11, with no change in behavior.
 
-Operators: no migration. `composer install` brings in the new versions (Guzzle is now a direct requirement, and php-http/discovery's Composer plugin is disabled in `composer.json`). The Google account's calendar list gains `reattachId`, and subscribing to a calendar a disconnected account left re-attaches it (200, `reattached: true`).
+Operators: no migration. `composer install` brings in the new versions.
 
 ## 0.9.44 (2026-10-09)
 
-- **Addresses find the one near you.** A bare house number now lists the nearest houses with that number, and a number with a half-typed street ("250 el") finds it nearby; both used to find nothing. Address results that contain every word you typed come first, nearest first, so an exact match a thousand miles away no longer beats the street down the road, and the world is searched only when nothing nearby fits.
-- **Famous places beat their replicas.** Place search now asks in your browser's language (English, German or French; other languages get each place's local name), so "Eiffel Tower" finds the one in Paris, and past 500 km results keep the search service's own order instead of the nearest replica winning.
-- **Each calendar chooses its reminders**, in its settings: your defaults (linked, so they follow Settings), none, or its own. Until you choose, its role decides: your own calendars use your defaults wherever they live, and Opportunities and Context calendars stay quiet. Connected Google calendars, including a calendar moved to Google, used to skip your defaults entirely, and a subscribed calendar couldn't follow them at all.
-- **Calendar tags are gone.** They were stored but nothing used them. Event tags are unchanged.
-- **Update check failures clear when checks work again.** Settings, System kept showing a failure for up to a day after the cause was fixed, until the daily check ran.
+- **Addresses find the one near you:** a bare house number or a half-typed street lists nearby matches first.
+- **Famous places beat their replicas:** "Eiffel Tower" finds the one in Paris.
+- **Each calendar chooses its reminders** in its settings: your defaults, none, or its own. Google calendars of your own now use your defaults too.
+- **Calendar tags are gone;** nothing used them. Event tags are unchanged.
+- **Fixes:** update check failures clear when checks work again.
 
-Operators: migration 047 drops the unused `calendar_tags` table when it is empty (an install that set calendar tags through the API keeps its rows). The calendar API no longer accepts or returns `tagNames`, and a calendar's `reminderDefaults` also takes `"defaults"`. Place search now has a provider interface (`PlaceProvider`), with Photon as the only provider so far.
+Operators: migration 047 drops the unused `calendar_tags` table when empty. The calendar API no longer accepts or returns `tagNames`.
 
 ## 0.9.43 (2026-10-09)
 
-- **Update checks work.** Every check failed with "HTTP request budget exhausted" from the first release that carried a manifest: GitHub answers a release file download with a redirect, and the checker allowed only one request. It also read the whole release list and would have stopped working once the repository passed 300 releases; it now reads the newest releases, normally one small request.
-- **The app starts from its offline cache.** Three modules it starts with were left out of the cache (imports written across lines were missed), so every start downloaded them, and on a weak connection the first start after an update could hang on a white screen. A start that never finishes is now noted in Settings, System and reported once to the server log, and a start file that fails to load shows a Try again message instead of a blank page.
-- **An open event keeps its details.** Its description and own time zone disappeared whenever anything changed on any device, until the event was reopened.
-- **Place search looks near you first.** Partly typed addresses came back as places on other continents. Suggestions now come from the region around where your calendar puts you (about 300 km), go worldwide only when the region has little, must contain the house number you typed, and a far result must contain every word.
-- **Hover any event for a card** with its full title, when, calendar and place, and a short line for each reason it looks the way it does, including which filter highlighted or dimmed it and where it matched. It replaces the browser's tooltip, which showed unreliably.
-- **A maybe looks like any other event, with a dashed outline.** Its title no longer takes the calendar's color.
-- **A new keyword filter matches titles** unless you tick more fields. Existing filters keep theirs.
+- **Update checks work.**
+- **The app starts from its offline cache,** and a failed start shows Try again instead of a blank page.
+- **Place search looks near you first** (about 300 km) before going worldwide.
+- **Hover any event for a card** with its full title, when, calendar, place and why it looks the way it does.
+- **A maybe has a dashed outline** and no longer takes the calendar's color for its title.
+- **A new keyword filter matches titles** unless you tick more fields.
+- **Fixes:** an open event keeps its description and time zone when something changes.
 
-Operators: no migration. New endpoint `POST /system/client-event` (browser sessions only). CI now fails a step whose test output is piped (it used to pass), and `scripts/deploy.sh` runs its pre-flight tests on the exact commit being shipped.
+Maintainers: CI fails a piped test step, and `scripts/deploy.sh` tests the exact commit being shipped.
+
+Operators: no migration.
 
 ## 0.9.42 (2026-10-08)
 
-- **Private offline calendar data is now bounded and read-only.** Saved calendar responses expire within 24 hours, exclude credentials and private feed addresses, and are invalidated across logout, revocation and account changes. Reconnecting restores editing only after the live session and CSRF protection are confirmed.
-- **The application can now report available releases without installing them.** Users may receive all update notices, security-only notices or none; Settings retains a manual check. Release metadata must come from an immutable application release with one canonical, digest-verified manifest, and rollback or security-floor regressions are refused.
-- **Dependency and release handling is reviewable by default.** CI inputs are immutable, weekly dependency checks open a review issue without auto-merging, deployment audits the exact Composer lock before changing production, and releases follow a draft-first verified workflow. Vendored DOMPurify is updated to 3.4.16 to close its published advisories, with Squire updated to 2.4.9.
-- **Browser, model and automation trust boundaries are narrower.** Remote MCP connections require HTTPS, tool effects are described accurately, mutable ranking data stays outside trusted model instructions, authenticated pages cannot be framed, logout clears resumable private context, and login passwords start masked with an explicit Show control.
+- **Offline calendar data is bounded and read-only:** it expires within 24 hours, excludes credentials and private feed addresses, and is invalidated on logout.
+- **Update notices:** all, security-only or none, plus a manual check in Settings. Release metadata is verified.
+- **Reviewable dependencies and releases:** DOMPurify 3.4.16 closes its published advisories, with Squire 2.4.9.
+- **Narrower trust boundaries:** remote MCP requires HTTPS, authenticated pages can't be framed, logout clears private context, and login passwords start masked.
 
-Operators: migration 046 adds instance update state and per-user notice state. No configuration is required. The worker performs a bounded daily GitHub release-metadata check; disabling update notifications suppresses proactive notices but leaves the manual Settings check available. Offline saved calendars remain viewable for up to 24 hours but cannot be edited until the server is reachable.
+Operators: migration 046, no configuration required. The worker checks GitHub for releases daily. Offline calendars stay viewable up to 24 hours but can't be edited until the server is reachable.
 
 ## 0.9.41 (2026-10-08)
 
-- **App-shell cache security coverage now uses the same private sibling-directory layout as production.** This corrects Linux CI validation without weakening the runtime cache ownership and permission checks or changing application behavior.
+Maintainers: a Linux CI validation fix for 0.9.40, no change in application behavior.
 
-Operators: no migration and no configuration change. This is a release-validation correction for 0.9.40.
+Operators: no migration and no configuration change.
 
 ## 0.9.40 (2026-10-08)
 
-- **Stored calendar capabilities are protected at rest.** Subscription source addresses and published-feed tokens are purpose-bound and encrypted; Undo history no longer retains usable copies. Existing feed addresses keep working through migration 045.
-- **Development clones are sanitized before publication.** Production authentication, Google connections, push devices, outbound feeds, active jobs and plugin integration state never enter the live dev database. Ordinary receive-only ICS subscriptions remain usable by default after being re-encrypted for dev; operators can explicitly strip them instead.
-- **Development isolation is secure by default without making it mandatory.** `DEV_ISOLATION_MODE=strict` requires separate Unix, database and PHP-FPM identities. Explicit `shared` mode permits reuse with a warning on every deploy and never stops a shared PHP service or changes database accounts. External integrations have a separate warned opt-in.
-- **Deployment and runtime helper boundaries are narrower.** Removed release plugins are quarantined without deleting operator additions, application-shell cache state cannot introduce private API paths or follow a planted symlink, IPv4-mapped/NAT64 private destinations stay blocked, and account seeding no longer accepts passwords in process arguments.
+- **Feed addresses and tokens are encrypted at rest,** and Undo history no longer keeps usable copies.
+- **Development clones are sanitized:** production authentication, Google connections, push devices, outbound feeds, jobs and plugin state never enter the dev database.
+- **Development isolation is secure by default:** `DEV_ISOLATION_MODE=strict` requires separate identities; `shared` mode permits reuse with a warning.
+- **Narrower deploy and helper boundaries:** removed plugins are quarantined, private destinations stay blocked, and account seeding no longer accepts passwords in process arguments.
 
-Operators: migration 045 needs one explicitly quiesced rollout so plaintext legacy feed capabilities cannot be used during conversion. Run the first deployment with `FEED_CREDENTIALS_QUIESCED=1`; later deployments do not pause for it. The three dev policy flags and their tradeoffs are documented in `docs/install.md` and `scripts/deploy.env.example`. No external account or plugin integration configuration is copied into a dev clone; reconnect or reconfigure those deliberately when testing them.
+Operators: migration 045 needs one quiesced rollout: run the first deployment with `FEED_CREDENTIALS_QUIESCED=1`. Dev flags are in `docs/install.md` and `scripts/deploy.env.example`; reconnect integrations in a dev clone by hand.
 
 ## 0.9.39 (2026-10-08)
 
-- **Externally visible actions now share durable authority and workload boundaries.** Reminder, notification and test email use persistent account, recipient and installation budgets; repeated plugin jobs coalesce behind rate and capacity limits; and core calendar work stays ahead of discretionary plugin work.
-- **Owner decisions stay with the signed-in owner.** API tokens and MCP can inspect Review but cannot accept, dismiss, RSVP, decide duplicates or proposals, or manage plugins. These consequential actions now require a browser session at the server boundary.
-- **Calendar mutations preserve source authority.** Occurrence edits must identify a generated, non-skipped instance; a trip cannot bulk-move externally managed members; and different-UID external matches wait for owner confirmation before copies collapse or reminders are suppressed.
+- **Outside actions share limits:** reminder, notification and test email have persistent budgets, plugin jobs are rate-limited, and core calendar work comes first.
+- **Owner decisions need a browser session:** API tokens and MCP can inspect Review but can't accept, dismiss, RSVP, decide duplicates or proposals, or manage plugins.
+- **Calendar edits respect their source:** a trip can't bulk-move externally managed members, and different-UID external matches wait for your confirmation.
 
-Operators: migration 044 adds persistent external-action admission, cancels pending plugin jobs created before the new queue boundary, and reopens unconfirmed external title/time links for Review. Existing enabled plugins and detached recurrence exceptions are preserved because their historical provenance cannot be reconstructed safely; review the enabled-plugin list once after upgrading. Excess scheduled email is dropped with a System status notice while push continues independently. Tunable limits are documented in `.env.example` and `docs/limits.md`.
+Operators: migration 044 cancels pending plugin jobs and reopens unconfirmed external links for Review. Review the enabled-plugin list once after upgrading. Excess scheduled email is dropped with a System notice. Limits are in `.env.example` and `docs/limits.md`.
 
 ## 0.9.38 (2026-10-08)
 
-- **Dense calendar data can no longer multiply into unbounded server or browser work.** Event windows share cumulative recurrence, elapsed-time and stored-data budgets; the browser bounds request fan-out, retained occurrences and rendered day layouts; and reminder scans advance through one durable cursor chain without spawning duplicate work.
-- **Bulk and public data paths now have aggregate, atomic limits.** Published feeds admit projected source data before bounded serialization, Takeout migrations preflight the complete remaining input and commit one calendar at a time, and plugin snapshot replacement rolls back additions, updates, deletions and Activity together on refusal or failure.
-- **Native share handoff is bounded before it reaches application state.** Cross-site requests are rejected, request bodies and decoded fields have explicit ceilings, and a simultaneous second share is asked to retry instead of being queued or overwriting the first.
+- **Dense calendar data can't multiply into unbounded work** on the server or in the browser.
+- **Bulk and public data paths have total limits:** published feeds, Takeout migrations and plugin snapshots.
+- **Share handoff is bounded:** cross-site requests are rejected and sizes are capped.
 
-Operators: no migration. Ordinary calendars, feeds, imports, plugins and shares keep their existing successful behavior. Exceptionally dense views ask for narrower dates or calendars instead of appearing complete with missing data; oversized published feeds return `413`; and the new aggregate limits can be tuned within the hard ceilings documented in `.env.example` and `docs/limits.md`.
+Operators: no migration. Exceptionally dense views ask for narrower dates or calendars, oversized published feeds return `413`, and limits can be tuned (see `.env.example` and `docs/limits.md`).
 
 ## 0.9.37 (2026-10-08)
 
-- **Untrusted calendar data is normalized before activation or expensive work.** Event links activate only for absolute web URLs; meeting links require the provider's actual HTTPS hostname; impossible coordinates never reach map work; and descriptions remain inert across import and export.
-- **Malformed or adversarial calendar snapshots can no longer turn into destructive or unbounded work.** Recurrence rules have structural and candidate-work budgets, malformed rules are isolated to their event, interrupted or incomplete feed downloads preserve the last good snapshot, and extreme event durations are clipped to loaded and rendered UI work instead of being walked day by day.
-- Existing unsafe URL, recurrence, and coordinate fields are normalized during upgrade without deleting their events.
+- **Untrusted calendar data is cleaned first:** links open only for web URLs, meeting links only on the provider's real HTTPS host, and descriptions stay inert.
+- **Malformed calendars can't cause runaway work:** repeat rules have work budgets, and incomplete feed downloads keep the last good copy.
 
-Operators: migration 043 cleans only unsafe legacy scalar fields. Ordinary HTTP(S) source links, provider meeting links, valid coordinates, ordinary repeat rules, and long events continue to work. Exceptionally complex repeat rules may become non-recurring; incomplete feeds now report a temporary error rather than reconciling a partial snapshot.
+Operators: migration 043 cleans unsafe legacy fields without deleting events. Exceptionally complex repeat rules may become non-recurring.
 
 ## 0.9.36 (2026-10-07)
 
-- **Duplicate detection can no longer turn a dense imported or subscribed calendar into an all-pairs worker load.** Scans now use bounded, resumable slices; persistent linked groups and Review suggestions have separate storage and read ceilings; and a sustained backlog appears in System Health instead of monopolizing background work.
-- **Sparse duplicate groups still behave as one event when their connecting copy is outside the visible window.** Calendar rendering and reminder selection share a component identifier, while soft-deleted automatic matches stop consuming hidden capacity.
+- **Duplicate detection stays bounded on dense calendars:** a sustained backlog shows in System Health.
+- **Fixes:** a duplicate group still shows as one event when its connecting copy is off screen.
 
-Operators: no migration. Ordinary calendars keep the same matching behavior. Exceptionally dense clusters may finish over several worker runs, and reaching a persistent ceiling raises a System Health notice rather than hiding or deleting events.
+Operators: no migration.
 
 ## 0.9.35 (2026-10-07)
 
-- **Migration 042 no longer rebuilds the existing Google-move table to add its active-move uniqueness key.** MySQL 8.4 could reject that rebuild while re-creating valid historical foreign keys. A normal nullable key maintained by database insert/update triggers enforces the same one-active-move rule without rebuilding the table.
+- **Fixes:** migration 042 no longer rebuilds the Google-move table, which MySQL 8.4 could reject.
 
-Operators: this fixes the migration failure possible in 0.9.33–0.9.34. The migration is restart-safe; an interrupted deployment retains its pause marker and rerunning 0.9.35 completes the remaining steps.
+Operators: this fixes the migration failure possible in 0.9.33–0.9.34. Rerunning 0.9.35 completes an interrupted deployment.
 
 ## 0.9.34 (2026-10-07)
 
-- **The one-time migration-042 deployment can pause and restore worker scheduling when its temporary files are private to the privileged deploy identity.** The filtered schedule is now passed to the application user's `crontab` over standard input instead of asking that user to open the privileged temporary pathname.
+- **Fixes:** the one-time migration-042 deploy can pause and restore worker scheduling again.
 
-Operators: this fixes the first-upgrade deployment path introduced in 0.9.33. An interrupted attempt keeps its restart marker; rerun the 0.9.34 deploy with `MOVE_INTEGRITY_QUIESCED=1` to finish the migration and restore request and worker traffic.
+Operators: to finish an interrupted 0.9.33 upgrade, rerun the 0.9.34 deploy with `MOVE_INTEGRITY_QUIESCED=1`.
 
 ## 0.9.33 (2026-10-07)
 
-- **Moving a local calendar to Google is now one coherent operation.** Calendar, event, CalDAV, trip and Undo changes cannot race the upload or silently disappear from the destination. The calendar is briefly read-only while moving; if an upload stops partway through, choose **Try again** or **Stop move and keep local** before editing it again.
-- **Interrupted Google responses no longer risk creating duplicate calendars or events.** Moves use exclusive worker leases and private recovery markers, verify the exact remote object before resuming, and reject ambiguous recovery instead of guessing. Stopping a partial move explains that its Google copy may need manual removal.
-- Existing unfinished moves that lack the new recovery evidence are stopped safely during the upgrade and shown for review rather than resumed automatically.
+- **Moving a local calendar to Google is one coherent operation:** the calendar is briefly read-only; if an upload stops partway, choose **Try again** or **Stop move and keep local**.
+- **Interrupted Google responses can't create duplicate calendars or events.**
 
-Operators: migration 042 adds Google-move integrity and mutation-reference state. Its first upgrade on an existing installation requires `MOVE_INTEGRITY_QUIESCED=1` and `PHP_FPM_SERVICE` in the ignored deployment configuration; after the normal backup, `scripts/deploy.sh` automatically pauses and verifies request/worker traffic, migrates, and resumes it. Clean installations and later deployments do not take this pause.
+Operators: migration 042. The first upgrade of an existing install needs `MOVE_INTEGRITY_QUIESCED=1` and `PHP_FPM_SERVICE` in the ignored deployment configuration; `scripts/deploy.sh` then pauses traffic, migrates and resumes it. Unfinished moves are stopped for review.
 
 ## 0.9.32 (2026-10-07)
 
-- **API keys no longer inherit browser-only access.** They cannot inspect the connected Google account's remote calendar list, see another credential's private subscription address, or delete an outbound feed they did not create. Browser owners keep their existing account-wide access, and an API key can still manage the subscriptions and outbound feeds it created.
-- **Creating an API key in Settings now requires recent password confirmation.** If the browser has not confirmed the Better-Cal password during the previous ten minutes, the existing password prompt appears and retries the creation in place. Existing keys and privileged local key creation are unchanged.
+- **API keys no longer inherit browser-only access** to the Google calendar list, other credentials' subscription addresses, or feeds they didn't create.
+- **Creating an API key needs a password confirmed in the last ten minutes.**
 
-Operators: no migration. API clients that relied on browser-only Google inventory or cross-credential feed management must use an authenticated browser session or the credential that created the resource.
+Operators: no migration. API clients that relied on that access must use a browser session or the credential that created the resource.
 
 ## 0.9.31 (2026-10-07)
 
-- **Plugin proposals now show exactly which local calendar each item will use.** Accept and Dismiss apply only to the proposal version that was reviewed; if a plugin changes the plan or its destination, Better-Cal asks for a fresh review instead of applying the replacement silently.
-- **Proposal acceptance and Undo are all-or-nothing.** A failed item cannot leave part of a plan behind or allow a duplicate retry. Undo also refuses to overwrite a later owner edit or reopen a proposal after its undo records expire.
-- Proposal plans can no longer write directly to subscribed, Google-backed or plugin-managed calendars. The bundled planners already use local calendars and continue to work unchanged.
+- **Plugin proposals show which local calendar each item uses,** and a changed plan needs a fresh review.
+- **Accepting a proposal and its Undo are all-or-nothing.**
+- **Proposals write only to local calendars.**
 
-Operators: no migration. Direct API and MCP clients must echo the proposal's `reviewToken` when accepting or dismissing it. Third-party plugins that explicitly targeted a non-local calendar must create a local proposal instead.
+Operators: no migration. API and MCP clients must echo the proposal's `reviewToken` when accepting or dismissing it.
 
 ## 0.9.30 (2026-10-07)
 
-- **A first-time emailed invitation waits in Review before it becomes an event.** Choose **Add to calendar** to create it (no reply is sent); Accept, Maybe and Decline work as before after that. Updates to an invitation you already have are applied in order, and a change claiming to come from a different organizer waits for your choice. Bookings, tickets and confirmations read from email still land automatically. At most 100 invitations can wait at once.
-- **No real personal data in the code, tests or docs.** Examples, test data and notes that had been built from the maintainer's own calendar, mail, trips and server now use invented people, places and numbers. Two plugin defaults changed with it: **visit-intents** starts with an empty wishlist, and **tides** has no default station (set one in the plugin's settings; until then it fetches nothing). Its daylight low-tide window now uses your own time zone instead of a fixed Pacific offset.
-- The quick-add and editor placeholders and the test push notification use invented places.
+- **A first-time emailed invitation waits in Review:** choose **Add to calendar** to create it. Bookings and tickets still land automatically.
+- **No real personal data in the code, tests or docs:** **visit-intents** starts with an empty wishlist, and **tides** has no default station.
 
-Operators: no migration. If you use the tides plugin without having set a station, set one (the old built-in default station is gone). `scripts/deploy.sh` now copies Composer's libraries into its test snapshot instead of linking them, so the pre-flight tests run the exact commit being shipped (before, they could load the working tree's code).
+Operators: no migration. If you use tides, set a station in its settings.
 
 ## 0.9.29 (2026-10-07)
 
-- **A broken or exceptionally large Google calendar cannot monopolize the shared worker.** One poll now shares item, response-size, page, elapsed-time and memory bounds across every page and a stale-token retry. Cached events and the previous sync position remain intact when a safety limit is reached, the calendar reports why it paused, and the worker continues to its other jobs.
-- **Google calendar discovery cannot reset its safety budget on every page.** Account inventory uses one cumulative pagination and transport budget, detects non-progressing page tokens, and includes access-token refresh in the same deadline. It remains all-or-nothing, so an incomplete list is never presented as complete.
+- **A broken or huge Google calendar can't monopolize the worker:** polls have size, time and memory limits, and a paused calendar says why.
 
-Operators: Google event polls default to 20,000 remote resources, 32 MiB of decompressed responses, 20 pages and 40 seconds. Calendar inventory defaults to 5,000 calendars, 5 MiB, 20 pages and 20 seconds. The event allowance is lowered when PHP memory cannot safely hold the live and cached snapshots, including the cached rows' actual text and JSON size. `BETTERCAL_LIMIT_GOOGLE_*` settings may tune these only within documented hard ceilings. No database migration is required.
+Operators: no database migration. `BETTERCAL_LIMIT_GOOGLE_*` settings tune the limits within documented hard ceilings.
 
 ## 0.9.28 (2026-10-07)
 
-- **Quick Add cannot make unbounded paid model calls.** Browser previews, committed additions and API-token previews now reserve persistent account capacity before dispatch; tokens also receive smaller fairness limits. When capacity is full, the deterministic parser remains available and the draft explains that AI parsing is paused.
-- **Busy subscribed feeds cannot monopolize model processing.** Prompt-filter work has persistent account and per-calendar budgets, performs one calendar-homogeneous model call per worker job and yields to due reminders. Unevaluated events remain visible, delayed work retries automatically, and Review shows one bounded notice for affected calendars.
-- **Gemini responses have an authoritative streamed size limit.** Every model caller stops reading at the shared response-byte cap and uses its existing fallback instead of buffering an unbounded provider response.
+- **Quick add can't make unbounded paid model calls:** when capacity is full, the regular parser still works and the draft says AI parsing is paused.
+- **Busy subscribed feeds can't monopolize model processing:** delayed work retries, and Review shows one notice.
 
-Operators: migration 041 adds the non-mail model-admission ledger. Default Quick Add limits are 120/500 model calls per rolling hour/day per account, 30/150 per API token and 4/2 concurrent per account/token. Prompt-filter defaults are 40/200 calls per hour/day per account and 20/100 per calendar. Quick Add input defaults to 4,000 characters, Gemini responses to 1 MiB, and admission records to 90-day retention. `BETTERCAL_LIMIT_MODEL_*` settings may tune these only within documented hard ceilings.
+Operators: migration 041. `BETTERCAL_LIMIT_MODEL_*` settings tune the limits within documented hard ceilings.
 
 ## 0.9.27 (2026-10-07)
 
-- **Public email can no longer create unbounded calendar data.** Every mail-ingest tier now shares persistent account-wide, claimed-sender and active-event capacity. Existing invitation changes and cancellations still reach Review without consuming new-event capacity.
-- **Forwarded email cannot trigger unbounded paid model calls.** Mail-reading Gemini attempts reserve separate hourly and daily capacity before the request, including failed or empty responses. Deterministic iCalendar, schema.org and Google-template extraction remains available when model capacity is full.
-- **Oversized mail is rejected before its display headers are decoded.** The worker checks stable IMAP UID and server-reported size, records a poison-message checkpoint and marks the message read before materializing one message at a time. Decoded attachment cycles are released between messages.
-- **Capacity refusals are visible without creating notification spam.** Review shows one aggregate Email automation notice per reason, with a count and bounded latest-message context. The original email stays in the mailbox for manual handling.
+- **Email can't create unbounded calendar data or paid model calls:** iCalendar, schema.org and Google-template extraction keep working when model capacity is full.
+- **Oversized mail is rejected early.**
+- **Refusals show as one Email automation notice in Review,** and the email stays in the mailbox.
 
-Operators: migration 040 adds the transport checkpoint and persistent mail-admission ledger. Defaults are 100 mail-created events per rolling day, 25 per claimed sender, 500 active future/repeating mail-created events, and 20/50 paid mail-reading calls per hour/day. `BETTERCAL_LIMIT_MAIL_*` settings may tune them only within documented hard ceilings. Mail receipt and admission history defaults to 90-day retention.
+Operators: migration 040. `BETTERCAL_LIMIT_MAIL_*` settings tune the limits within documented hard ceilings.
 
 ## 0.9.26 (2026-10-07)
 
-- **Oversized JSON requests are refused before they can consume a PHP worker.** JSON API bodies now have a 1 MiB default limit, enforced while the request stream is read and before routing, authentication or decoding. Missing, false and chunked content lengths cannot bypass it. Calendar-file imports keep their separate 25 MiB allowance.
-- **Requests to outside services identify Better-Cal and its purpose.** Feed polling, Google connections and place search now send an agent that includes the project URL, helping public providers distinguish legitimate traffic instead of rejecting the former generic identifier.
+- **Oversized JSON requests are refused early:** 1 MiB by default; calendar-file imports keep their 25 MiB.
+- **Requests to outside services identify Better-Cal** with the project URL.
 
-Operators: `BETTERCAL_LIMIT_JSON_BODY_BYTES` can raise the JSON allowance when necessary, up to a 4 MiB hard ceiling. No database migration is required.
+Operators: no database migration. `BETTERCAL_LIMIT_JSON_BODY_BYTES` raises the JSON limit, up to 4 MiB.
 
 ## 0.9.25 (2026-10-07)
 
-- **Production backups no longer trust application-controlled paths.** The deploy reads the app, `.env` and MySQL/MariaDB as the unprivileged application user, then publishes validated archives into a root-owned private directory. Backup files are mode `0600`, concurrent backup publication is refused, and unsafe or symlinked destinations stop the deploy.
-- **Deploys no longer use root to repair files inside the application tree.** The app account already owns deployed code and now performs document-root changes too. A replaced or misconfigured `.env` stops with provisioning instructions instead of being changed through an app-controlled pathname.
+- **Production backups no longer trust application-controlled paths,** and deploys no longer use root inside the application tree.
 
-Operators: `BACKUP_DIR` defaults to `/home/bettercal-backups` and must be a root-owned mode-`0700` direct child of `/home` or `/var/backups`. Existing app-adjacent backups are not moved automatically; confirm one new backup and its off-host coverage before archiving the legacy directory. The production backup helper supports MySQL/MariaDB and deliberately refuses SQLite. Normal deployment remains one command and requires no new prompt. No database migration is required.
+Operators: no database migration. `BACKUP_DIR` defaults to `/home/bettercal-backups` and must be a root-owned mode-`0700` direct child of `/home` or `/var/backups`. Existing backups aren't moved: confirm one new backup and its off-host coverage before archiving the legacy directory. The backup helper refuses SQLite.
 
 ## 0.9.24 (2026-10-06)
 
-- **The month view's day-expand button says what it does:** "Show all of this day's events in full" instead of "Show this day's events here".
+- **The month view's day-expand button says what it does:** "Show all of this day's events in full".
 
 ## 0.9.23 (2026-10-06)
 
-- **Signing out stops reminders on that device.** The server removes only that browser's reminder destination with its session, while leaving the browser permission intact so signing back in restores reminders without another prompt. Other devices and email reminders are unchanged.
-- **API keys cannot inspect or disable browser reminder devices.** Device inventory and removal require a signed-in browser. An API key may still create and remove its own push subscription, but cannot overwrite a browser's or another key's subscription.
-- **System health no longer returns raw push-service endpoints.** It uses an endpoint hash to recognize the current device without exposing the delivery capability.
+- **Signing out stops reminders on that device;** signing back in restores them.
+- **API keys can't inspect or disable browser reminder devices.**
+- **System health no longer returns raw push-service endpoints.**
 
 No database migration is required.
 
 ## 0.9.22 (2026-10-06)
 
-- **Hosts without `proc_open` work again.** Since 0.9.17 every outbound request (feeds, Google, place search, plugins) looked up its address in a separate PHP process with a time limit, and a host that disables `proc_open` or has no command-line PHP binary (some shared hosts) failed every one of them. Those hosts now look up in-process: private addresses are refused exactly as before, only the time limit is lost, and the PHP error log says so once.
+- **Hosts without `proc_open` work again,** broken since 0.9.17.
 
 ## 0.9.21 (2026-10-06)
 
-- **Every open device refreshes after a change made anywhere.** Each successful change moves one per-person marker, and open devices check it every 30 seconds and when you come back to them. Before, renaming a person, editing an away or busy time, or a thumbs up or down didn't reach your other devices until a reload. Calendars reload with it.
-- **Clicking a weather, sunset or other context item while an event is open opens it,** the way clicking another event does. It used to take a second click: the first one only closed the open event.
-- **Plugin calendars don't get your default reminders,** so turning on sunsets doesn't mean a reminder every evening. A reminder set on one of their events still works.
-- **A Google calendar you add starts with the right role:** yours as Mine, Google's holidays and birthdays as Context, one shared with you or copied from a feed as Opportunities. Before, every Google calendar started as Opportunities, your own primary included. Calendars already added keep theirs.
-- **Disconnecting a Google account says when it would stop a move to Google,** with how many events were already uploaded, before you confirm.
-- **A feed you publish keeps the events nearest today.** Over its 5,000-event cap it used to leave off the furthest-out ones without a word; now the oldest past events go first, the feed's card in Settings says when it's trimmed, and `BETTERCAL_LIMIT_OUTFEED_EVENTS` raises the cap.
-- **Paused calendar subscriptions wait in Review,** as "Calendar updates paused", with **Keep updating** right there (from a browser; an API key can't decide it).
-- The `o` shortcut and its "Open full detail" command are gone; the full-page view they opened was removed in 0.7.2.
+- **Every open device refreshes after a change made anywhere,** within 30 seconds.
+- **Plugin calendars don't get your default reminders.**
+- **A Google calendar you add starts with the right role:** yours as Mine, holidays and birthdays as Context, shared ones as Opportunities.
+- **A feed you publish keeps the events nearest today** when over its 5,000-event cap; `BETTERCAL_LIMIT_OUTFEED_EVENTS` raises it.
+- **Paused calendar subscriptions wait in Review** with **Keep updating**.
+- **Fixes:** clicking a context item while an event is open opens it on the first click, disconnecting Google warns when it would stop a move, and the `o` shortcut is gone.
 
-Operators: migration 039 adds the change marker. `scripts/deploy.sh` now ships the last commit, not the working tree: commit before deploying, and uncommitted edits are left out (it says how many). Its tests run on exactly the files that ship.
+Operators: migration 039. `scripts/deploy.sh` now ships the last commit, not the working tree: commit before deploying.
 
 ## 0.9.20 (2026-10-06)
 
-- **Undo right after creating something undoes that creation.** The Undo on the "Event created" toast (and the other "created" toasts, and an agent's `undo`) skipped the creation and reverted whatever you had changed before it, leaving the new event in place. It now removes what was just created. Found by the docs review.
+- **Undo right after creating something undoes that creation.**
 
 ## 0.9.19 (2026-10-06)
 
-- **A calendar moved to Google is checked every five minutes,** like every other Google calendar. It kept the hourly schedule it had as a local calendar, so changes people made at Google took up to an hour to show here. Moved calendars still on that default are switched; one you set yourself stays.
-- **CalDAV refuses edits to plugin calendars.** The app and the API already did; a phone could still change or delete a plugin's events, and the plugin overwrote them on its next run.
-- **The "Google account disconnected" error says what actually works:** delete the calendar or adopt it as local, then add it again from Settings, Connections. It pointed to a Settings section that has since been renamed, and to reconnecting, which doesn't re-attach a calendar.
+- **A calendar moved to Google is checked every five minutes.**
+- **CalDAV refuses edits to plugin calendars.**
+- **Fixes:** the "Google account disconnected" error says what actually works.
 
-Operators: migration 038 runs on deploy and reports how many moved calendars it switched.
+Operators: migration 038 runs on deploy.
 
 ## 0.9.18 (2026-10-06)
 
-- **A repeating event with too many occurrences to show says so.** A series is expanded up to 1,000 times per request (was 500), which covers a daily event across the two-year maximum the app ever asks for. A series that goes past that, something hourly for instance, used to be cut short without a word; now the app names it once ("repeats more often than one view can show"), and the events API lists it in a new `capped` field.
-- **[Scale and limits](docs/limits.md)** says who Better-Cal is sized for (one person's calendar) and which limits you might run into.
+- **A repeating event with too many occurrences to show says so,** and the events API lists it in a new `capped` field.
+- **[Scale and limits](docs/limits.md)** says who Better-Cal is sized for and which limits you might run into.
 
 ## 0.9.17 (2026-10-06)
 
-- **Exception-heavy repeating calendars fail safely instead of consuming unbounded work.** ICS files, feeds, emailed invitations, CalDAV, Google sync, API-created events, and stored series now share limits of 1,024 skipped occurrences per event and 4,096 per input or sync batch, with non-removable hard ceilings. Ordinary calendars are unaffected; an unusually large or broken series is rejected with an actionable error and the last good subscribed-calendar copy remains visible.
-- **Far-dated event links no longer make the browser page through every intervening date.** Notification, Review, and resume links use the occurrence cache first and a three-day lookup around distant targets. Normal links—including reminders up to 28 days ahead—keep their existing calendar preload; an invalid or stale distant link shows the existing “could not find” message after one bounded lookup.
-- **Lost-device recovery now closes session-created disclosure channels.** **Sign out everywhere else** still keeps this browser and its push reminders, but also gives every signed-in public calendar feed a new URL and returns a custom reminder address to the account email. The confirmation says that external calendar subscribers need the new URLs. API keys and the channels they created remain separately revocable.
-- **Calendar subscriptions created by an API key stop with that key.** Revoking or expiring the key pauses its recurring ICS fetches without deleting the calendar, cached events, folders, tags, or settings. Calendar settings can explicitly keep the subscription active as account-owned, adopt the cached copy as local, or delete it. Existing ICS subscriptions pause once for the same owner review because their historical creator cannot be recovered reliably.
-- **A compromise reset now stops every Google path too.** `server/bin/seed.php --revoke-tokens` pauses all connected Google accounts before it returns, stops unfinished calendar moves, prevents background polls and writes, and asks Google to revoke the refresh tokens. Cached calendar events stay visible; reconnect each account under Settings, Connections to resume. Partial moves are not silently retried, because events already copied to Google cannot be taken back automatically.
-- **Sensitive Google setup requires a recent password.** Connecting or reconnecting an account, adding one of its calendars, and starting or retrying a move ask for the Better-Cal password when the browser has not confirmed it in the last ten minutes. A fresh sign-in counts. Ordinary calendar use and synchronization do not prompt.
-- **Google consent belongs to one browser session.** An OAuth callback started in one signed-in browser can no longer be completed through another session for the same Better-Cal user.
-- **Location search follows the same outbound-network safety rules as calendar subscriptions.** Geocoding and weather lookups re-check and pin public DNS addresses after every redirect, ignore ambient proxy settings, and stop at strict redirect, response-size and time limits. Normal suggestions are unchanged; a slow or broken provider can return no result instead of tying up a PHP worker. Failures are logged without the place query or provider URL, appear in Settings immediately, reach Activity after two consecutive failures, show an owner notice after three, and qualify for the existing email alert after a three-failure streak lasts an hour.
+- **Exception-heavy repeating calendars fail safely:** a broken series is rejected with an actionable error, and the last good subscribed copy stays visible.
+- **Sign out everywhere else** also gives signed-in public calendar feeds new URLs.
+- **Calendar subscriptions created by an API key stop with that key:** keep, adopt or delete them in calendar settings.
+- **A compromise reset stops Google too:** `server/bin/seed.php --revoke-tokens` pauses connected accounts and revokes refresh tokens. Reconnect under Settings, Connections.
+- **Sensitive Google setup requires a recent password.**
+- **Google consent belongs to one browser session.**
+- **Location search follows the same outbound-network safety rules as calendar subscriptions.**
+- **Fixes:** far-dated event links load without paging through every date in between.
 
-Operators: migration 036 adds the per-session confirmation time and the durable Google quarantine/move-cancellation markers. Migration 037 adds subscription-authority provenance and pauses existing ICS subscriptions for review. An ordinary password change still leaves Google connections alone; only the explicit `--revoke-tokens` compromise reset pauses them.
+Operators: migrations 036 and 037; existing ICS subscriptions pause once for review.
 
 ## 0.9.16 (2026-10-06)
 
-- **All-day events are stored one way.** An all-day event is a date, and every path now stores it the same way: as UTC midnights, the way imports, Google and CalDAV already did. Events made in the app used to be stored as midnights in a time zone instead. Both showed on the right days, but a phone editing such a series over CalDAV switched it to the other form, which rebuilt its edited days as new entries and dropped their tags, people and reminders. A migration converts the existing ones, with their skipped and edited days, and every occurrence keeps its date.
-- **Search's "upcoming" uses your Home clock for all-day events,** so today's all-day event stays upcoming until the day ends where you are, not at midnight UTC (5 PM in Los Angeles).
+- **All-day events are stored one way,** so editing a series over CalDAV no longer drops its edited days' tags, people and reminders.
+- **Search's "upcoming" uses your Home clock for all-day events.**
 
-Operators: migration 035 runs on deploy; it reports how many all-day events it converted.
+Operators: migration 035 runs on deploy.
 
 ## 0.9.15 (2026-10-06)
 
-A second look at time zones, this time against independent calendar engines (a Python one built on the zone database, and ical.js, which Thunderbird and Nextcloud use) over about 3,800 generated repeating events. The core held up: every repeat came out the same, apart from cases the standard leaves undefined. What it found was in the code around it.
+A second look at time zones, checked against independent calendar engines.
 
-- **Editing "All events" from a later occurrence no longer restarts the series there.** The opened occurrence became the series' first: earlier ones disappeared, a repeat count started over from it, and edited days before it were left behind. Now the series changes by what you changed (a new time, a different day, a new length), from its own start. Moving it to another weekday moves its repeat day too ("every Monday" becomes "every Tuesday").
-- **Skipped and edited days move with their series.** Changing a series' time, day, zone or all-day setting used to leave them where they were, so a deleted day came back and an edited one showed twice.
-- **A weekly series starts on a day it repeats on.** Starting a Mon/Wed/Fri series on a Thursday was undefined, and calendar apps disagreed about it; such a start now moves to the next listed day.
-- **The repeated hour when clocks go back.** A change to an occurrence in that hour could come back an hour off from a calendar app, or show twice east of UTC. It is now written unambiguously and read as the standard says.
-- **Older events in Thunderbird and Outlook.** The time zone rules sent with feeds and CalDAV started this year, so those apps had no offset for anything earlier; they now start in 1970, as Google's and Outlook's do.
-- **Dragging an event that keeps its own zone** moves it by days on its own clock: a Lisbon 9:00 dragged a week from a device in Los Angeles stays 9:00 in Lisbon. A repeat's end date is read and written on the event's clock too.
-- **Meeting links and "address after RSVP" text** are recognized the same way by the app and by push notifications (one shared list); a location like "Registration desk, Hall B" is no longer mistaken for "address after RSVP" in a notification.
+- **Editing "All events" from a later occurrence no longer restarts the series there.**
+- **Skipped and edited days move with their series.**
+- **A weekly series starts on a day it repeats on.**
+- **Fixes:** the repeated hour when clocks go back, older events in Thunderbird and Outlook, dragging an event that keeps its own zone, and meeting link detection in push notifications.
 
-For contributors: a round-trip check (export, re-import, expand: same occurrences, 360 series) now runs with every test and deploy, and `tools/tz-harness` runs the full cross-check against the independent engines.
+Maintainers: `tools/tz-harness` runs the full cross-check against the independent engines.
 
 ## 0.9.14 (2026-10-06)
 
-A clean install found one time zone bug; an audit of every place the app converts between UTC, an event's own zone, the Home zone and all-day dates found the rest. Events already stored are unaffected unless noted.
+Time zone fixes from a clean install and an audit.
 
-Time zones:
-
-- **Repeating all-day events stay on their days.** One made in the app (or through the API without a time zone) anywhere west of UTC showed a day early: a weekly Wednesday event appeared on Tuesdays. Imported, Google and CalDAV events were not affected; they store all-day dates in UTC, where the two readings agree. Ending such a series with "this and following" no longer leaves the split day in the old series too.
-- **Feeds and CalDAV send timed events in their own zone.** A weekly 9:00 meeting went out as a UTC time, so calendar apps showed it at 8:00 after the clocks changed, and a CalDAV client saving it back stored it as UTC for good. Events now go out with their zone and its rules, and a series' skipped and edited days match its start (dates for all-day series).
-- **Imported times keep their zone.** Outlook's zone names ("Pacific Standard Time") were stored as UTC, so a repeating meeting from Outlook moved an hour at each DST change; and times with no zone at all were read as UTC. Now Outlook names map to the real zone, and zoneless times are read in the calendar's own zone, else your Home zone. A subscribed feed that sends zoneless times corrects itself at its next update.
-- **A repeat's end date stays put.** In the editor, "ends on Oct 20" came back as Oct 21 on every save west of UTC. All-day series now end on a plain date.
-- **Evening reminders for imported all-day events fire.** "6 PM that day" on an all-day event from an import or Google never fired west of UTC.
-- **An all-day event made timed takes your Home zone** instead of UTC, when it came from an import, Google or CalDAV.
-- **Moving a trip across a DST change keeps its events on their days and times.** They moved by the elapsed hours, so an all-day one could land a day off and a timed one an hour off.
-- **CalDAV all-day events sent as zoned midnights** stay on their day east of UTC; **duplicates** of an all-day event made in the app and its Google copy are found; a pasted **Google Calendar link** keeps its own time zone; **search** and **review** treat a series ending "on Oct 10" as running through that day in its own zone; **Google** occurrence ids for all-day series east of UTC name the right day.
-- **"This and following" on a series that repeats a set number of times** keeps the remaining count instead of running on for ever.
-
-Also:
-
-- **Thumbs up and down show your choice** (#107). The chosen one stays pressed and can't be sent twice; the other switches it.
-- **Month view fits the day's context to the width** (#108): weather, sun times and the rest show as many as fit, and "+N" only for what doesn't. Wide screens show them all.
-- **Signing in loads everything a page load does.** After signing in on the login screen, people, saved views, plugins, the review count and the device's time zone waited for the next reload.
-- **Sample data for a first look:** `php server/bin/demo-seed.php` fills an empty account with invented calendars, events and people around today (docs/install.md). The README screenshots are made from it.
+- **Repeating all-day events stay on their days** west of UTC.
+- **Feeds and CalDAV send timed events in their own zone.**
+- **Imported times keep their zone,** including Outlook's zone names.
+- **Thumbs up and down show your choice** (#107).
+- **Month view fits the day's context to the width** (#108).
+- **Sample data for a first look:** `php server/bin/demo-seed.php` (docs/install.md).
+- **Fixes:** repeat end dates, evening reminders for imported all-day events, trips moved across a DST change, "this and following" on counted series, several smaller zone fixes, and signing in loads everything a page load does.
 
 ## 0.9.13 (2026-10-05)
 
-Found in a clean install on a fresh machine, signing in to a brand-new account (#79):
-
-- **The welcome fills in your first calendar's name.** On a first sign-in it opened before the calendar list had loaded, so "Your first calendar" was blank. It now shows the name (Personal) as soon as the list arrives, and only renames the calendar if you change it.
-- **The small month in the sidebar follows a new week start right away.** Changing it in the welcome or in Settings redrew the main calendar but left the sidebar month on the old first day until the next reload.
+- **Fixes from a clean install (#79):** the welcome fills in your first calendar's name, and the sidebar month follows a new week start right away.
 
 ## 0.9.12 (2026-10-04)
 
-- **The app's "New event" shortcut uses the window you have open.** On a desktop, it (and a webcal link or an .ics file) started a second Better-Cal window. Now the open window comes forward with quick add ready, without reloading. Chrome picks up the change when it next refreshes the installed app's details, which can take a relaunch of the app or up to a day.
+- **The app's "New event" shortcut uses the window you have open.** Chrome may take a relaunch or up to a day to pick this up.
 
 ## 0.9.11 (2026-10-04)
 
-- **New event from the app icon.** The installed app's icon has a "New event" shortcut that opens quick add: long-press it on Android, or right-click it in the Windows taskbar or the Mac dock. The address behind it, `/new`, opens quick add from anywhere else too.
-- **Chrome extension 2.1.0: an optional new event key.** Set a key in Chrome's shortcut settings (linked from the extension's options) and it opens quick add in a small Better-Cal window, even from other apps while Chrome is running when set to "Global". No key is set by default, since the extension is public. No new permissions. Reaches users once the new version is published on the Chrome Web Store.
+- **New event from the app icon:** long-press it on Android, or right-click it in the Windows taskbar or Mac dock. `/new` opens quick add too.
+- **Chrome extension 2.1.0: an optional new event key,** set in Chrome's shortcut settings. No new permissions.
 
 ## 0.9.10 (2026-10-04)
 
-- **"Also on" takes one line.** An event's other copies are listed in a row, separated by dots, each with a small ✕ for "Not the same", instead of a button after each that wrapped onto extra lines.
+- **"Also on" takes one line.**
 
 ## 0.9.9 (2026-10-04)
 
-- **Repeating events with skipped dates no longer "change" on every poll.** MySQL hands the list of skipped dates back reformatted, and the comparison read that as a change. So on any feed or Google calendar, every series with two or more skipped dates was rewritten each poll, logged as updated in Activity (one feed showed "9 updated" every hour), and fetched again by CalDAV apps. They now compare by content, as the invitation details already did.
+- **Fixes:** repeating events with skipped dates no longer "change" on every poll.
 
 ## 0.9.8 (2026-10-04)
 
-- **Only clean HTML is stored (#58 follow-up).** Descriptions typed in Better-Cal were always cleaned when saved, but those from subscribed feeds, Google sync and the Takeout import were stored as they arrived, cleaned only when shown or exported, and "Adopt as local" carried them into your own calendars. Now every way in cleans them with the same allowlist, and a one-time migration cleans what is already stored. Showing and exporting still clean as a second layer.
-  - **Nothing visible changes:** the app never showed what the cleaning removes (styles, tables, scripts, unknown tags are unwrapped).
-  - **CalDAV apps** fetch the cleaned events once.
-- **Migrations can now be PHP** as well as SQL, for data changes that need the application's own code.
+- **Only clean HTML is stored (#58 follow-up):** every way in cleans descriptions, and a one-time migration cleans what's stored.
+
+Maintainers: migrations can now be PHP as well as SQL.
 
 ## 0.9.7 (2026-10-04)
 
-- **Descriptions leave Better-Cal inert (#58, security review D-02).** A subscribed feed or a Google calendar can put HTML in an event's description, and Better-Cal stores it as it arrived (it is cleaned when shown). Until now that HTML also went back out unchanged when the event was exported, so a script or a `javascript:` link in a feed could reach the other calendar apps reading your Better-Cal feeds or CalDAV. Every export now sends:
-  - the rich version (`X-ALT-DESC`) through the same allowlist the app displays it with: plain formatting and http(s) links only;
-  - the plain version (`DESCRIPTION`) with no markup at all, including markup that was only entity-escaped in the source, since some apps (Google among them) read that field as HTML.
-
-  Descriptions written by CalDAV clients are now cleaned when they arrive, like every other edit.
+- **Descriptions leave Better-Cal inert (#58, security review D-02)** in every export, and descriptions from CalDAV clients are cleaned when they arrive.
 
 ## 0.9.6 (2026-10-04)
 
-- **The same event, shown once (#9).** An event that reaches Better-Cal by two routes (a Luma feed and the confirmation forwarded from Gmail, a Takeout import and the Google calendar it came from, a booking and the venue's feed) no longer shows twice.
-  - **How it's found:** every ten minutes, Better-Cal looks for the same event ID on two calendars, or the same title at the same moment on two calendars. Those are shown as one.
-  - **When it isn't sure:** near-matches (close in time, similar titles, one calendar holding the same thing twice) go to Review as "Possible duplicate", with Same event / Not the same.
-  - **Which copy you see:** the most live one: Google, then your own calendars, then feeds, then a booking read from email. Its details say "Also on <calendar>", with a link to the other copy and "Not the same" for a wrong match. Hide a calendar and the copy elsewhere shows instead.
-  - **Nothing is merged or deleted:** every copy stays where it was, so a wrong match costs nothing to undo. Search shows one result per event too.
-  - **One reminder:** only the copy that would be shown reminds you, or the best-placed one that has reminders.
-  - **Copy to** is never mistaken for a duplicate: a copy you made on purpose shows on both calendars, as before.
-- **Activity filters** for Geocoding, System, Plugins and Review now filter. The server ignored them before and showed everything. There's a new Duplicates filter as well.
+- **The same event, shown once (#9):** an event that reaches Better-Cal by two routes shows once, with "Also on <calendar>"; near-matches go to Review as "Possible duplicate". Nothing is merged or deleted.
+- **Activity filters** now filter, plus a new Duplicates filter.
 
 ## 0.9.5 (2026-10-04)
 
-- **Answering invitations, finished (#70).**
-  - **Bookings aren't invitations.** A reservation, ticket or confirmation read from email no longer shows Accept / Maybe / Decline, which could never send anything. It reads "Booking via <site>".
-  - **Buttons only where a reply can go.** An invitation that can't be answered from here says why instead: no organizer named, no email account set up to send from, or replies would come from an address that wasn't invited (the organizer's calendar would ignore them).
-  - **Says whether it went.** The old "no reply sent (organizer unknown or RSVP mail not configured)" covered four different causes. Now the reason is given. A reply that failed to send keeps your answer, says why it didn't go, and offers Retry, and you can still change your answer.
-  - **Invitations from Google.** An event on a connected Google calendar that someone else invited you to shows Accept / Maybe / Decline with your current answer, and answering sets it at Google, which tells the organizer. Nobody else on the guest list is mailed. These also show on the Review page.
+- **Answering invitations, finished (#70):** bookings read "Booking via <site>", invitations that can't be answered say why, and a failed reply offers Retry.
+- **Invitations from Google** can be answered here, and Google tells the organizer.
 
 ## 0.9.4 (2026-10-04)
 
-- **Move a calendar to Google (#55).** A calendar that started in Better-Cal can now be seen live by people who use Google Calendar, and added to if you share it with them that way: its settings, **Move to Google…**.
-  - **How it works:** Better-Cal creates the calendar in your Google account (or uses one you pick), uploads every event without mailing anyone, and from then on edits it in place like your other Google calendars.
-  - **What stays:** the events keep their identity, so tags, people, reminders, trip membership and links stay with them.
-  - **Big calendars and failures:** a big calendar uploads in the background with its progress shown. A failed upload leaves the calendar untouched, and Try again continues where it stopped.
-  - **What you give up:** Undo on that calendar, as for any Google calendar.
-  - **Reversible:** "Adopt as local calendar" brings it back.
-
-  A full two-way bridge that keeps the calendar local is recorded separately (#83), with the cases where it would be better.
-- **Better-Cal asks Google for one more, narrow permission:** to create calendars of its own and manage only those (`calendar.app.created`). An account connected earlier is asked to reconnect once, when it first moves a calendar.
-- **Event links survive Google.** Writing to a Google calendar used to lose an event's link (a Partiful or Luma page, say): the next sync replaced it with Google's own page for the event. The link now travels as Google's `source` field and is read back from it.
+- **Move a calendar to Google (#55):** its settings, **Move to Google…**. Events keep their tags, people and reminders; "Adopt as local calendar" brings it back. A two-way bridge is recorded separately (#83).
+- **Better-Cal asks Google for one more, narrow permission** (`calendar.app.created`); earlier accounts reconnect once.
+- **Event links survive Google.**
 
 ## 0.9.3 (2026-10-04)
 
-- **The Google connector's setup guide links straight to each page it needs** in Google Cloud: create a project, enable the Calendar API, Branding, Audience, Data Access and Clients. It now says up front that the connector is optional, that a Google Cloud project costs nothing and needs no billing account, and why an "unverified" app is fine for your own install. Google's own docs for each part are linked for when a screen has moved. (docs/google-calendar.md)
-- **Where the app says Google isn't set up,** in Settings, Connections and in the welcome, it links to that guide.
-- **The install guide mentions the Google connector** as an optional last step.
+- **The Google connector's setup guide links straight to each page it needs** in Google Cloud (docs/google-calendar.md).
+- **Settings, Connections and the welcome link to that guide** where Google isn't set up.
 
 ## 0.9.2 (2026-10-04)
 
-- **A first-run welcome (#79).** A new account opens on two short steps over the calendar:
-  - **Confirm the basics,** filled in from the device: Home time zone, the day the week starts, 12- or 24-hour clock, theme, and the first calendar's name.
-  - **Where to start:** subscribe to a calendar by address, import a file or a Google Takeout export, connect Google (or a note that the server needs its Google setup first), install the app, turn on reminders on this device, and browse the plugins. Each one marks itself done.
-
-  The welcome is skippable at every step. It stands aside while something it opened is in use and comes back until Done. On a phone, Back steps from 2 to 1, and from 1 puts it aside until the next launch. Settings, General has "Show the welcome again", which opens it right there. Things already set up (subscriptions, a Google account, plugins, this device's reminders, the installed app) show as done. Existing accounts don't see it unasked.
-- **Every view can be the default view.** The server still listed an old "multiweek" view and refused 3 weeks, 2 weeks and Split as a default, though Settings offered them. A test now checks the server's list against the app's.
+- **A first-run welcome (#79):** two skippable steps for a new account, the basics and where to start. Settings, General has "Show the welcome again".
+- **Fixes:** 3 weeks, 2 weeks and Split can be the default view.
 
 ## 0.9.1 (2026-10-04)
 
-- **Reminders say the time on your clock.** A reminder's time was written in the event's own time zone. Events imported from Google Takeout are stored in UTC, so an afternoon flight in another time zone was announced an hour early: the stored UTC time was read without that zone's summer-time offset. Reminders, by push and by email, now read on the zone your device last reported (then your Home zone), the way the app shows times. An event that keeps a zone of its own whose clock differs adds that time in parentheses, on the event's own clock. They also follow the 12- or 24-hour setting.
-- **The app keeps track of where your device is while it stays open,** not only when it starts, so reminders follow you on a trip.
-- **Coming back after a reload puts you exactly where you were.** As well as the view, day, filter and saved view, it now brings back:
-  - the page you were on, and the Settings section;
-  - an open event, on the day it was opened from, with its way back to a trip or to search;
-  - an open search with its query;
-  - the time of day in week and day view.
-
-  In the installed app this also survives the phone ending the app in the background (which starts it with a new session), for up to 30 minutes as before. A notification you tap to open the app still opens its own event. Back keeps working after such a reload: a restored Settings section goes back to the list, then to the calendar, and a restored event opened from search goes back to the results.
-- **Settings, System lists why the app last started on this device:** a new version, the browser discarding it in the background, the phone ending it, or a plain launch. Kept on the device only. It shows which kind of reload is happening.
+- **Reminders say the time on your clock:** they use the zone your device last reported (then Home) and follow the 12- or 24-hour setting.
+- **The app keeps track of where your device is while it stays open,** so reminders follow you on a trip.
+- **A reload puts you back exactly where you were,** open event, search or Settings section included.
+- **Settings → System lists why the app last started on this device.**
 
 ## 0.9.0 (2026-10-03)
 
-- **Better-Cal now needs PHP 8.4 (8.4.1 or later).** Production has run 8.4 all along, so the minimum now matches what is used every day. 8.3 was a floor nothing else ran, and 0.8.3 showed how quietly it drifts. New servers ship 8.4 or 8.5 (Debian 13, Ubuntu 26.04), and shared hosts offer both in their panels. On Ubuntu 24.04 or Debian 12, the install guide shows how to add PHP 8.4 from the Ondřej Surý packages. The dependency lock is resolved for 8.4.1, which puts Symfony back on its current 8.1 line.
-- **The GitHub check installs and tests on PHP 8.4,** in the official PHP image rather than the runner's stock PHP.
+- **Better-Cal now needs PHP 8.4 (8.4.1 or later).** The install guide shows how to add it on Ubuntu 24.04 or Debian 12.
+
+Maintainers: the GitHub check installs and tests on PHP 8.4.
 
 ## 0.8.3 (2026-10-03)
 
-Installing on someone else's server, from a clean-install dry run (#22).
+Installing on someone else's server (#22).
 
-- **MariaDB is supported** (10.6 and later). Three queries used MySQL 8's `INSERT ... AS alias` form, which MariaDB rejects; they use the form both accept. Checked on MariaDB 10.11 (the whole app) and 10.6 (migrations, smoke test, worker).
-- **PHP 8.3 installs work again.** The dependency lock had been resolved on PHP 8.5, which pulled in Symfony 8 (PHP 8.4.1 or later) although Better-Cal says PHP 8.3. Composer now resolves for PHP 8.3 (`config.platform.php`), so Symfony is on its 7.4 long-term line; PHP 8.4 and later are unaffected.
-- **The install guide lists every PHP extension needed:** it was missing `xml` (dom, simplexml, xmlreader, xmlwriter, which CalDAV needs) and `zip`. It now gives the Debian/Ubuntu packages and the command that checks them.
-- **The Apache setup in the guide is tested** (Apache 2.4 with mod_php on Ubuntu 24.04): every page, CalDAV, and API tokens through the Authorization header.
-- **Apache and shared hosting need no web-server setup:** `server/public/.htaccess` now ships with the routing and the Authorization-header pass-through. A host only has to allow `FileInfo` overrides. Nginx ignores the file.
-- **`.env.example` includes the Google connector's two keys.**
+- **MariaDB is supported** (10.6 and later).
+- **PHP 8.3 installs work again.**
+- **The install guide lists every PHP extension needed,** and its Apache setup is tested.
+- **Apache and shared hosting need no web-server setup:** `server/public/.htaccess` ships with the routing and the Authorization-header pass-through. A host only has to allow `FileInfo` overrides.
+- **Fixes:** `.env.example` includes the Google connector's two keys.
 
 ## 0.8.2 (2026-10-03)
 
-- **The phone drawer's pages moved to the bottom,** under a Manage heading below the calendars, people and plugins, so the calendars come first. They are visited far less often on a phone. Review and Saved views left the grid, since the bottom bar already has them: Review with its count, and Saved views in the View sheet (switch views, or Manage views).
+- **The phone drawer's pages moved to the bottom,** under a Manage heading, so the calendars come first.
 
 ## 0.8.1 (2026-10-03)
 
-- **A person's away and busy times are called that,** or their availability, everywhere they were "spans": the sidebar's hold menu ("Show only this person's availability"), its tooltips, the People page, Activity ("Moved away time for Sam") and the toasts after moving one.
-- **"Open person"** replaces "Open in People" in the hold menu and on a person's name.
+- **A person's away and busy times are called that,** or their availability, everywhere they were "spans", and "Open person" replaces "Open in People".
 
 ## 0.8.0 (2026-10-03)
 
 The sidebar and Settings on phones.
 
-- **The sidebar's pages are a short grid at the top** of the phone drawer (Review with its count, Settings, Calendars & folders, People, Activity, Plugins, Filters, Saved views), instead of a folded list at the bottom. The drawer's title reads Better-Cal, since it holds more than calendars now.
-- **Each calendar is listed once on a phone:** in its folder, and the rest under Other calendars. All calendars used to repeat every filed calendar a second time. The controls that act on every calendar (new calendar, list only active ones, All / None / Custom) sit on one Calendars header above the folders, and "list only active" applies to every folder there.
-- **Only and a calendar's settings are a press and hold away** on a phone: hold a calendar to show only it or open its settings, and hold a person to show only their availability or open them. The row keeps its full width for the name. A calendar or person shown alone keeps its "Only ✓" in view, to tap back. Desktop is unchanged.
-- **Settings on a phone opens on a list of its sections,** each with a line of what it holds (General shows your default view, week start, time format and theme). A section opens as its own page with "‹ Settings" above it, and Back returns to the list. The two crowded rows of tabs are gone there; a desktop keeps its tabs.
+- **The sidebar's pages are a short grid at the top** of the phone drawer, now titled Better-Cal.
+- **Each calendar is listed once on a phone,** in its folder or under Other calendars.
+- **Only and a calendar's settings are a press and hold away on a phone:** hold a calendar to show only it or open its settings, or a person to show only their availability or open them. Desktop is unchanged.
+- **Settings on a phone opens on a list of its sections.** A desktop keeps its tabs.
 
 ## 0.7.4 (2026-10-03)
 
-- **Stepping from a multi-day event walks the day you opened it on.** Open Monday's part of a Sunday-to-Tuesday event and the previous and next arrows go through Monday's events; they used to go through Sunday's, the day it began. This holds in every view: month, week, Split and Agenda.
-- **Past search results are all in the past.** A repeating series that is still running matched Past by its first date and then showed under Upcoming at its next one. Under Past it now shows its latest date that has gone by.
+- **Fixes:** stepping from a multi-day event walks the day you opened it on, in every view, and Past search results show a running series at its latest date that has gone by.
 
 ## 0.7.3 (2026-10-03)
 
 Search, and the leftovers from the phone work.
 
-- **Search finds upcoming events first, and finds all of them** ([#60](https://github.com/Oshyan/better-cal/issues/60)). It used to take the 50 best matches across all time and only then split them into Upcoming and Past, so a word with a long history (a weekly class, a venue) could push the next event out of the results entirely. Now Upcoming (the default), All or Past is chosen under the search box and applied before the limit, with an optional calendar. An Upcoming search ends with "12 past matches, Show them". Both choices are remembered on each device. Results read in calendar order, the soonest upcoming first and the latest past first; relevance still decides which ones come back.
-- **A repeating series shows its next date** in search results and opens there, instead of the date it began. A series counts as upcoming until its last date.
-- **No result looks chosen until you choose it.** The first row was always marked as selected, so with no upcoming matches the first past result stood out at full strength as if it were current. Enter still opens the first result.
-- **Back from an event opened in search returns to the results,** with the query, filters and scroll position as they were. "‹ Search" above the event does the same on a desktop. Closing the event any other way (the close button, swiping the sheet away) goes to the calendar as before.
-- **Quick add uses the editor's date and time boxes:** click in and type "fri" or "7p", or pick a quarter hour from the list. The end list runs on from the start with each length, so an evening that ends after midnight is one pick, and moving the start keeps the length.
-- **Leaving the editor without saving returns to the event** it was opened from, with Back on a phone, the close button or Cancel, instead of dropping to the calendar.
+- **Search finds upcoming events first, and finds all of them** ([#60](https://github.com/Oshyan/better-cal/issues/60)): pick Upcoming (the default), All or Past under the search box.
+- **Back from an event opened in search returns to the results.**
+- **Quick add uses the editor's date and time boxes:** type "fri" or "7p", or pick a quarter hour from the list.
+- **Leaving the editor without saving returns to the event** it was opened from.
+- **Fixes:** a repeating series shows its next date in search results, and no result looks chosen until you choose it.
 
 ## 0.7.2 (2026-10-03)
 
-- **The old full-page event view is gone.** Since 0.7.0 every event and trip opens in the side panel or the sheet, so the view, its state, its keyboard stepping and 43 style rules that only it used are removed. Every way that could still have reached it (an event not yet loaded, the full-view request from a double-click or an Agenda line) now opens the panel or sheet. The pieces the panel, sheet and trips share (the mini-map and base map, links in descriptions, a repeat rule in words) moved to their own module.
+- **The old full-page event view is gone:** every event and trip opens in the side panel or the sheet.
 
 ## 0.7.1 (2026-10-03)
 
-- **A trip's events show their map numbers only when the map is in view.** On a phone the collapsed sheet hides the map, and the numbers beside the places pointed at nothing.
+- **Fixes:** a trip's events show their map numbers only when the map is in view.
 
 ## 0.7.0 (2026-10-03)
 
 Trips, in step with events.
 
-- **A trip opens where an event does:** the side panel on a desktop, the sheet on a phone, with the same toolbar, Back and stepping. It used to open as a small card in the middle of the screen on a desktop and a sparse page on a phone.
-- **It leads with the trip:** its dates and length, its place with Directions, its events as rows that say when, what and where, and a map numbering the places of its events (on a phone, once the sheet is pulled up, as with an event's map).
-- **Opening one of its events keeps the way back:** "‹ Trip name" above the event, and Back on a phone returns to the trip.
-- **Edit and Add events** are in the desktop toolbar; New event in this trip, the calendar's settings and Delete trip are in More. On a phone, Edit and More sit beside the title and Add events under the list.
-- **Removing an event from a trip asks first,** from that event's own row (its ⋯), instead of a bare x beside it.
-- **Adding events offers yours:** your planned and maybe events during the trip, on calendars you show, never weather or sunset entries; feed suggestions on request. A long trip offered hundreds of candidates before, a few dozen now.
+- **A trip opens where an event does:** the side panel on a desktop, the sheet on a phone, with the same toolbar, Back and stepping.
+- **It leads with the trip:** its dates, place, events and a map.
+- **Opening one of its events keeps the way back:** "‹ Trip name" above the event, and Back on a phone.
+- **Removing an event from a trip asks first,** from that event's ⋯.
+- **Adding events offers yours:** your planned and maybe events during the trip.
 
 ## 0.6.10 (2026-10-03)
 
-- **More on the desktop event panel draws over the map.** The map's layers (Leaflet's, at z-index 400) shared a stacking layer with the menu and covered its lower items, Delete included. Every map now keeps its layers to itself.
-- **Stepping through a day keeps the event you opened.** Open an event on a hidden calendar (from search, say), step to its neighbour, and it is still in the day's list to step back to ("3 of 3" no longer turns into "2 of 2"). Opening another event starts afresh.
-- **Past search results recede** the way past events do on the calendar, so it is plain which results are behind you; the one under the pointer or keyboard comes back to full strength.
+- **Past search results recede** the way past events do on the calendar.
+- **Fixes:** More on the desktop event panel draws over the map, and stepping through a day keeps the event you opened.
 
 ## 0.6.9 (2026-10-03)
 
 Search, the sidebar and Settings on phones.
 
-- **Search is a full screen on a phone,** with a taller box and a thumb-sized close. Each result is two lines: the title first, up to two lines of it rather than cut to a word, then when and where under it. Dates leave the year off when it's this year ("Fri, Oct 9 · 3:00 AM"), on every screen.
-- **An event opens in the event sheet everywhere on a phone,** and in the side panel on a desktop: search results, notification links, the Agenda's multi-day lines, People, Activity, grouped events and trip members used to open the older full page on a phone. Only a trip keeps its own page.
-- **Back works everywhere on a phone.** It closes search and the sidebar drawer, and from Settings, People, Review or any other page it returns to the calendar; before, Back on those left the app. Opening a page from the drawer, or moving between pages, never leaves a dead Back step behind.
-- **The sidebar drawer is wider on a phone** (86% of the screen, up to 360 points), so calendar names fit beside Only and the gear.
-- **Settings on a phone:** every tab is in view (they wrap to a second row instead of scrolling off the edge unannounced), controls are thumb-sized with 16-point text, and the Event panel setting, which only applies to wide screens, is hidden.
+- **Search is a full screen on a phone,** each result two lines: the title, then when and where.
+- **An event opens in the event sheet everywhere on a phone,** and in the side panel on a desktop.
+- **Back works everywhere on a phone,** returning to the calendar instead of leaving the app.
+- **The sidebar drawer is wider on a phone,** so calendar names fit.
+- **Settings on a phone:** every tab in view and thumb-sized controls.
 
 ## 0.6.8 (2026-10-03)
 
-- **Settings labels read as headings on a phone,** where each sits above what it names: 16 points and bold, a step above the content under it, with a thin rule between settings. On a desktop they are bolder too. The content (device names, values) keeps its size.
+- **Settings labels read as headings on a phone,** and are bolder on a desktop too.
 
 ## 0.6.7 (2026-10-03)
 
-- **Reminder devices are named:** "Android phone · Chrome app", "Windows · Chrome", "iPhone · Safari app". Every Chromium browser on every platform uses Google's push service, so the list used to call a phone and a desktop the same thing, "Chrome, Edge or Android". A device now says what it is when it signs up, and one signed up earlier names itself the next time the app opens there. Until then its entry says so. Entries also say when no reminder has reached them yet, and the Activity log uses the names.
+- **Reminder devices are named,** like "Android phone · Chrome app" or "iPhone · Safari app".
 
 ## 0.6.6 (2026-10-03)
 
-- **A reminder's Map button opens the place on Google Maps again,** whose page offers to open it in the Maps app. The Android intent link tried in 0.6.4 can't be launched from a notification, so it is gone.
+- **A reminder's Map button opens the place on Google Maps again.** The Android intent link from 0.6.4 is gone.
 
 ## 0.6.5 (2026-10-03)
 
-- **Undo on a toast works on the first tap with the event sheet open.** A press outside the sheet closes it and is swallowed, and the toast counted as outside, so the first tap only closed the sheet. Toasts now answer for themselves.
-- **The toast's countdown is easier to see:** a 4-pixel line in the accent colour.
-- **A reinstalled phone signs back up for reminders.** Reinstalling the app drops its push subscription and nothing noticed. At launch, a device that isn't signed up now signs up quietly if notifications are already allowed for it, or offers "Get reminders on this device?" with Turn on if they were never asked (only a press may bring up the permission prompt). A device you switched off with Disable is left alone.
-- **Settings tells this device's state from this device.** It used to fall back to whether the account had any device, so a phone with a dead old registration on the list looked enabled after Disable or a reinstall, and Enable stayed greyed out. A registered phone the browser has allowed but that isn't signed up now reads "Off on this device" with Enable.
-- **Settings labels sit level with the first line of what they name,** not halfway down a list (Devices receiving reminders).
+- **A reinstalled phone signs back up for reminders,** or offers to. A device you switched off with Disable is left alone.
+- **Fixes:** Settings tells this device's reminder state from this device, the toast's countdown is easier to see, Undo on a toast works on the first tap with the event sheet open, and Settings labels sit level with what they name.
 
 ## 0.6.4 (2026-10-03)
 
-- **Folded sidebar groups stay folded across reloads** (calendar folders, All calendars, People), kept per device, so a phone and a desktop can be set up differently.
-- **A reminder's Map button asks for the Google Maps app on Android** (an intent link naming it), since a plain link from a notification opens in a browser tab. Without the app it falls back to the same place on the web, and a browser that refuses the request gets the plain link as before.
-- **The web app manifest names the app's identity and has a full-bleed PNG icon,** which Android's adaptive icons and Chrome's full install both use. A full install has its own notification icon and no "Open in Chrome" item in the notification shade.
+- **Folded sidebar groups stay folded across reloads,** kept per device.
+- **A reminder's Map button asks for the Google Maps app on Android,** falling back to the web.
+- **The web app manifest names the app's identity and has a full-bleed PNG icon,** so a full install has its own notification icon.
 
 ## 0.6.3 (2026-10-03)
 
-- **Better-Cal's notification icon is a calendar, not a square.** Android draws the small status-bar and notification-header icon from the image's shape alone, and the full-colour app icon is solid all over, so it showed as a plain square. Notifications now carry a white calendar silhouette for that spot.
-- **Reminders have buttons:** Map for an event with a place, opening that place in Google Maps by name at its coordinates (the way Directions does in the app), and Join for a video call (Zoom, Meet, Teams, Webex) in the location, link or description. A tap on the notification itself still opens the event.
-- **Settings' test notification shows a Map button,** so it can be tried without waiting for a reminder.
+- **Reminders have buttons:** Map for an event with a place, and Join for a video call (Zoom, Meet, Teams, Webex).
+- **Fixes:** Better-Cal's notification icon is a calendar, not a square.
 
 ## 0.6.2 (2026-10-03)
 
-- **For me on a repeating event asks right where you tapped.** The choice of this occurrence, this and following, or all of them opens under the switch on the phone sheet; it used to open at the top of the sheet, out of view whenever the sheet had scrolled, so Planned and Maybe seemed to do nothing.
-- **Quick fill keeps the place in the title.** "Lunch at Luna Trattoria at 12PM" is titled "Lunch at Luna Trattoria", with Luna Trattoria in Location too. Only date and time phrases leave the title now ("Coffee @ Example Cafe" reads "Coffee at Example Cafe"). The AI reading follows the same rule, and when it drops words the text kept, the plain reading's title wins.
-- **A place quick fill finds opens the Location choices,** biased to where you'll be, so you pick the right Luna Trattoria rather than leaving it to a later guess. Nothing is picked for you. While you type it only opens; Enter or Fill moves the cursor there to pick with the arrows and Enter.
+- **A place quick fill finds opens the Location choices,** biased to where you'll be.
 - **A new event starts in the quick-fill box;** editing an event starts in the title.
-- **Toasts:** ten seconds when there's an Undo (six otherwise), with a thin countdown along the bottom; the toast leaves when it runs out, and a tap on its message dismisses it. On a phone it's bigger, Undo is a real button, and the close button never wraps to its own line.
-- **Day lists line up:** every row's dot and title start at the same place, whether the chip is tinted, timed or runs overnight. An event that continues past the day shows a chevron inside the chip's edge instead of an angled cut, which broke the gold "happening" ring and the trip outline into floating tips.
+- **Toasts last ten seconds when there's an Undo** (six otherwise), with a countdown.
+- **Fixes:** For me on a repeating event asks right where you tapped, quick fill keeps the place in the title, and day list rows line up.
 
 ## 0.6.1 (2026-09-28)
 
-- **The phone event sheet puts the event first.** The band of big buttons at the bottom is gone. Edit and More are two small icons beside the title; For me is a small switch at the end of the calendar line, where it reads as part of what the event is to you; everything rarer (Move, More like, Less like, Copy to another calendar) is in More, which opens as a sheet from the bottom edge. The collapsed sheet shows more of the event in the same space, and an address keeps to two lines until the sheet is pulled up. Invitation replies and Directions are a size smaller.
-- **The editor takes focus when it opens:** the title, or the plain-language box when text came with it. The Filter box (or whatever had focus) used to keep it. On a phone, editing an event doesn't raise the keyboard by itself.
-- **Unticking All day makes an hour, not a day.** Ticking it leaves the times at midnight to midnight; unticking now turns those into one hour, at the next quarter hour today or 9 AM on another day. Times you set before ticking it are kept.
+- **The phone event sheet puts the event first:** Edit and More are small icons beside the title, and everything rarer is in More.
+- **The editor takes focus when it opens.** On a phone, editing an event doesn't raise the keyboard by itself.
+- **Unticking All day makes an hour, not a day.**
 
 ## 0.6.0 (2026-09-27)
 
 Creating events on phones.
 
-- **The event editor is a full screen on a phone,** sliding up, instead of a drawer with a sliver of calendar beside it. Close, the title and Create sit in a top bar, so the keyboard never hides Create; Delete and the Google note stay at the bottom when editing.
-- **Back closes it,** as it closes the event sheet (with Undo if you'd typed anything). Opened with Edit from an event, it takes over that screen's place in history, so one Back leaves both.
-- **Thumb-sized and readable:** 44-point rows, 16-point text (which also stops iPhones zooming in on every field), bigger checkboxes, For me and the length and zone chips.
-- **Pickers on touch:** a tap on a time opens the quarter-hour list without the keyboard, with "Type a time" pinned at its top for an exact time; a tap on a date opens the phone's own calendar. The list rows are tap-sized.
-- **Dates fit:** on a phone a date this year leaves the year off ("Sun, Sep 27"), so the box never cuts it short.
-- **The form shrinks above the Android keyboard** instead of sliding under it.
-- **New on a day:** the day sheet (a day tapped in month view, or its +more) has a New button: today starts at the next quarter hour, any other day at 9 AM.
+- **The event editor is a full screen on a phone,** with Close, the title and Create in a top bar the keyboard never hides.
+- **Back closes it.** Rows and text are thumb-sized and readable.
+- **Pickers on touch:** times open the quarter-hour list, dates the phone's own calendar.
+- **New on a day:** the day sheet has a New button.
+- **Fixes:** dates this year leave the year off so they fit, and the form shrinks above the Android keyboard.
 
 ## 0.5.10 (2026-09-27)
 
-- **Directions (and every map link) open the place itself in Google Maps,** not a pin on bare coordinates. The link searches the event's own place text, its name and address, with the map already at its stored coordinates, so Google shows that place's card (hours, phone, reviews, Directions) and an ambiguous address can't land in another city. Coordinates alone are used only when the text has nothing findable in it (empty, "available once RSVP'd", a link, or a pair of numbers).
+- **Directions (and every map link) open the place itself in Google Maps,** not a pin on bare coordinates.
 
 ## 0.5.9 (2026-09-26)
 
-- **The location dropdown no longer waits for your device's position.** Each search used to ask the browser where you are first, when location was allowed. A browser can stay silent (Chrome on a Mac with Location Services off for it), and then the dropdown never came. Search now goes out at once with the best place already known, and a fresh position is fetched in the background for the next search.
-- **Location search looks near where your calendar puts you on that date:** the planned event with a known place nearest in time to the one you're editing (within a day and a half; a stay spanning it counts first). A dinner added during a trip searches near the trip. Then your device's position, your device's time zone when you're away from Home, your Home location, and the zone.
-- **"and" and "&" find the same place.** "Smith and Sons" finds "Smith & Sons" (both spellings are asked at once).
-- **The panel and sidebar ease over 300ms** instead of 220ms.
+- **Location search looks near where your calendar puts you on that date,** then your device's position, then your Home location.
+- **Fixes:** the location dropdown no longer waits for your device's position, and "and" and "&" find the same place.
 
 ## 0.5.8 (2026-09-26)
 
-- **Copy to another calendar moved into More,** on the desktop panel and the phone sheet. It is rarely used, and on its own a copy icon read as "duplicate this event".
-- **More says what each group acts on:** the event (Copy to another calendar), the calendar it is on ("Calendar: Partiful", with its colour, then Calendar settings and Hide this calendar), and the site it came from ("Source: partiful.com", then "Open on partiful.com", marked new tab, and "Copy the partiful.com link"). Nothing reads as a page or link of this app when it is the source's. That matters more once calendars can be shared.
-- **On the desktop panel, More's rows are list-sized** for a mouse, with hover, rather than thumb-sized.
+- **Copy to another calendar moved into More.**
+- **More says what each group acts on:** the event, the calendar it's on, and the site it came from.
 
 ## 0.5.7 (2026-09-26)
 
-- **Forwarded emails are read on the clock of the place they're about.** A booking in Tokyo is 3 PM Tokyo time whatever your Home zone is: the reader names the zone of the event's address, venue or city (or a zone the email states, like "3pm ET"), and the event keeps that zone. An email naming no place is read on the clock where your device last was, then Home. "Add to Google Calendar" links keep their own zone too, and a time without an offset is never read on the server's clock. Before this, emailed events were all stamped with Home's zone, so a correct 3 PM in Tokyo also said "11:00 PM in Los Angeles" for the day before.
-- **The app tells the server where you are** (your device's time zone) whenever it changes, for the rule above.
-- **The event panel's actions sit in a fixed toolbar at the top:** Edit and Move with their words, Copy and More as icons, For me on the right. It is the same height for every event, so stepping through a day never moves a button or the details under it.
-- **The calendar eases over when the event panel opens or closes,** and the sidebar slides out and back instead of vanishing (220ms; off with reduced motion). The sidebar keeps its width as it slides, so nothing inside it reflows.
-- **The event editor has labels on the left and one line per field,** grouped by thin rules instead of boxes: a large title, Calendar, Start, End, then All day, the length and the time zone on one line; Location, Link and Description; People, Tags, For me and the trip box; Reminders and Repeat. Create and Cancel stay pinned at the bottom however long the form is. The natural-language box is one line.
-- **The time zone is a visible control in the editor,** a globe chip naming the zone ("Lisbon time") that opens the zone list. It was a plain link before, and easy to miss.
-- **Deploys keep the newest 5 backups** of the app and the database, not 20.
+- **Forwarded emails are read on the clock of the place they're about:** a booking in Tokyo is 3 PM Tokyo time, and the event keeps that zone.
+- **The app tells the server your device's time zone** whenever it changes.
+- **The event panel's actions sit in a fixed toolbar at the top,** the same height for every event.
+- **The event editor has labels on the left and one line per field.**
+- **The time zone is a visible control in the editor:** a globe chip naming the zone.
+
+Maintainers: deploys keep the newest 5 backups, not 20.
 
 ## 0.5.6 (2026-09-26)
 
-- **Dates and times in the event editor are plain text boxes now.** Clicking in selects the whole value, so you just type over it: "7p", "7:30", "1930" or "noon" for a time, "fri", "tomorrow", "10/5", "oct 5" or a day of the month for a date. Enter or moving on applies it; anything unreadable puts the old value back and marks the field, and Esc undoes the typing without closing the editor. The calendar button beside each date still opens the date picker.
-- **Times have a quarter-hour list,** opened when you click in: one click for the usual choices, and any exact time can still be typed. The end list starts after the start and shows each length ("1 hr", "1.5 hr"), so an overnight end is one pick.
-- **The end follows the start.** Moving the start keeps the event's length (the lock, now showing that length, turns this off). With the lock off, a start that passes the end pushes the end to an hour later. An hour typed without am or pm reads sensibly: the start keeps its half of the day, the end takes the first time after the start, and an end earlier than the start means the next morning when that makes 12 hours or less (10 PM to "1"). Otherwise the editor says the end is before the start, offers to fix it, and won't save until it's fixed.
-- **Maybe when you create an event.** "For me: Planned / Maybe" sits in the editor for events on your own calendars; Maybe saves the event as tentative, which other calendar apps and Google see too.
-- **A tighter editor.** It is as wide as the event panel (480). Start and end each sit on one line with their labels, All day and the length share a line under them, the trip checkbox is shorter and shares its line with For me, and Reminders and Repeat sit side by side, reminders listed first with Add reminder under them.
-- **A blank new event starts at the next quarter hour,** not at the current minute.
-- **Every production deploy backs up first:** the app directory and the database, into backups/ beside the app, keeping the newest 20 of each. A failed backup stops the deploy.
+- **Dates and times in the event editor are plain text boxes:** click in and type over the value ("7p", "noon", "fri", "oct 5").
+- **Times have a quarter-hour list.** The end list shows each length, so an overnight end is one pick.
+- **The end follows the start,** keeping the event's length unless you turn off the lock.
+- **Maybe when you create an event:** "For me: Planned / Maybe" on your own calendars. Maybe saves it as tentative, which other calendar apps and Google see too.
+- **A tighter editor,** and a blank new event starts at the next quarter hour.
+
+Maintainers: every production deploy backs up the app directory and the database first, keeping the newest 20 of each. A failed backup stops the deploy.
 
 ## 0.5.5 (2026-09-26)
 
-- **On desktop, an event opens in a panel on the right** instead of a small card beside it. The panel is the same place and size every time, 480 points wide at full height under the top bar, so stepping through a day never moves or resizes it. It holds everything at once, the map included, so there's no separate full view to open; double-clicking an event (or anything that used to open the full view) opens the panel too. Trips keep their own view.
-- **The calendar makes room for it** rather than hiding under it, so every day stays visible and clickable, with the open event outlined. Clicking another event opens it in the panel; clicking anywhere else closes it, as does Esc. [ and ] step through the day.
-- **The sidebar tucks away while the panel is open,** giving the days back their width, and returns when you close it. Settings, General, "Event panel" turns that off.
-- **Same contents as the phone's event sheet,** at desktop sizes: For me and labelled actions (Edit, Move, Copy to, More; or More like, Less like, Copy to, More) under the title, then when, the invitation reply, where with Directions or Join, reminders, people, the map, the description, plugin data and the source.
+- **On desktop, an event opens in a panel on the right,** the same place and size every time, with everything in it.
+- **The calendar makes room for it,** so every day stays visible.
+- **The sidebar tucks away while the panel is open.** Settings → General → Event panel turns that off.
 
 ## 0.5.4 (2026-09-26)
 
-- **Addresses with extra words now find their place on the map.** Feeds often decorate an address: "123 Example St, Springfield, NY 10000, USA (The Lounge)", "[Upstairs] 5 Main St", or a venue name ahead of the street. When the full text finds nothing, Better-Cal now tries it without the bracketed parts, and then from the street number on, and uses the first that resolves. Addresses that had already been marked "couldn't place" get the retry too: the map appears the next time the event is opened, and the background matching picks them up on its next pass.
+- **Addresses with extra words now find their place on the map,** including ones already marked "couldn't place".
 
 ## 0.5.3 (2026-09-26)
 
-- **Pulled up, the phone's event sheet is the full view.** Under the address, a map (a still image until you tap it, so it doesn't catch your scrolling); the full description with its links tappable; any plugin information; for feed events, the feed with a link to its source; and when the event was added and last updated. The separate full-screen view is no longer needed on phones, so "All details" leaves the More menu.
-- **Invitations can be answered from the sheet:** Accept, Maybe or Decline, right under the time, in the quick view as well as pulled up.
-- **Lighter controls:** For me and the invitation reply size to their labels at 36 points instead of stretching across the sheet, and the action bar is 48 points tall.
-- Fixed: on an event with a lot in it, the sheet's rows could squeeze into each other instead of the sheet scrolling.
+- **Pulled up, the phone's event sheet is the full view:** map, description, plugin information and source included.
+- **Invitations can be answered from the sheet:** Accept, Maybe or Decline.
+- **Fixes:** on an event with a lot in it, the sheet scrolls instead of squeezing its rows.
 
 ## 0.5.2 (2026-09-26)
 
-- **The phone's event sheet, redone inside.** Bigger type (the title at 22 points, the facts at 16) and the event as rows with an icon each: when (with how it repeats and the time where it is), where, reminders, people, tags, the description and the event's link. Nothing to tap is smaller than 44 points.
-- **One bar at the bottom at a time.** While an event is open the app's bottom bar slides away and the sheet's actions take its place, under the thumb; it slides back when the sheet closes.
-- **Four labelled actions for every event.** Your events: Edit, Move, Copy to, More. Feed and suggested events: More like, Less like, Copy to, More. Delete is in More, set apart in red, away from Edit.
-- **"For me" as buttons,** pinned just above the actions: Planned or Maybe for your own events; Planned, Maybe or Hide for suggestions (tap the lit one again to put it back to available).
-- **More** holds Manage (opens the event's calendar settings in the sidebar: rename, colour, folders, what it is, unsubscribe or delete), Hide this calendar, the event's own page and link, All details (the map, invitation replies and source, until those move into the sheet) and Delete.
-- **Meeting links are a Join button** (Zoom, Google Meet, Teams, Webex), with Copy beside it, instead of a raw address with a "Map" link. A real address gets Directions; a web address in the location gets Open.
+- **The phone's event sheet, redone inside:** bigger type and rows with an icon each.
+- **One bar at the bottom at a time:** while an event is open, the sheet's actions take the place of the app's bottom bar.
+- **Four labeled actions for every event:** Edit, Move, Copy to, More for yours; More like, Less like, Copy to, More for feed and suggested events. Delete is in More.
+- **"For me" as buttons:** Planned or Maybe for your own events; Planned, Maybe or Hide for suggestions.
+- **Meeting links are a Join button** (Zoom, Google Meet, Teams, Webex) and a real address gets Directions.
 
 ## 0.5.1 (2026-09-25)
 
-- **The phone's event sheet points at the day you're on.** Stepping onto a multi-day event outlines it where the browsed day shows it: its segment in that day's week in month view, its row on that day in lists, or, where a list shows the event as a rail between its first and last rows, the rail beside that day. The list no longer jumps back to the event's first day.
-- **With the sheet open, tapping another event opens it** in the sheet straight away, instead of first only closing the sheet. A tap anywhere else still just closes it, and a row's swipe actions never take a tap through.
+- **The phone's event sheet points at the day you're on** when you step onto a multi-day event.
+- **With the sheet open, tapping another event opens it** straight away.
 
 ## 0.5.0 (2026-09-25)
 
-- **On phones, an event opens in a sheet that holds still.** It opens at one height for every event, so stepping through a day changes what's in it, never where its top edge is. The event you tapped scrolls into view just above it in the calendar, outlined, and the outline follows as you step.
-- **Swipe the sheet sideways** to step through the day's events, or tap the larger arrows either side of the date; dots show where you are in the day.
-- **Pull it up for everything,** by dragging the handle, tapping it, or tapping the title or More: the same sheet grows to full height instead of switching to a different screen. Drag down to shrink it, and again to close. The phone's back gesture steps it down the same way, rather than leaving the calendar. Tapping above the sheet still closes it. (Its expand button, once grown, still opens the separate full view for the map, invitation replies and source, until those move into the sheet.)
-- **Stepping through a day follows what the view shows,** on phones and desktop alike: calendars you've hidden, events you've hidden, kinds the Show filter has switched off and context such as sunset are skipped, and the count ("3 of 4") no longer changes as you step.
+- **On phones, an event opens in a sheet that holds still,** at one height for every event.
+- **Swipe the sheet sideways** or tap the arrows to step through the day's events.
+- **Pull it up for everything:** drag the handle up to grow it, down to shrink or close it.
+- **Stepping through a day follows what the view shows,** skipping what's hidden.
 
 ## 0.4.18 (2026-09-25)
 
-- **The calendar picker's list looks scrollable at rest,** like the sidebar: a soft shadow at the top or bottom edge wherever there are more calendars that way, and a scroll bar that stays (on touch screens, a thin drawn thumb, since the platform's bar only flashes while scrolling).
+- **The calendar picker's list looks scrollable at rest.**
 
 ## 0.4.17 (2026-09-25)
 
-- **The calendar picker shows each calendar's colour** when creating or editing an event, and in quick add: a dot beside every name in the list and on the closed picker, so the right calendar is found by colour at a glance. This uses the browser's customizable select (Chrome and Edge 135 and later, desktop and Android); other browsers keep the plain list of names.
-- Escape while a dropdown list is open now just closes the list, not the editor it's in.
+- **The calendar picker shows each calendar's color** in the editor and quick add (Chrome and Edge 135 and later; other browsers keep the plain list).
+- **Fixes:** Escape while a dropdown list is open just closes the list, not the editor.
 
 ## 0.4.16 (2026-09-25)
 
-- **A dropped ssh connection can no longer take the site down mid-deploy.** The deploy scripts opened a new ssh connection for each step. While the server's sshd was busy turning away brute-force logins, it dropped one of them right after the code was copied, the ownership fix never ran, and the web server refused every file until the deploy was re-run. Now one connection, opened with retries before anything changes, carries every step, and the server side of rsync writes as the app user, so copied files have the right owner the moment they land (with any rsync on the deploying machine, including macOS's built-in one).
-- **A failed deploy says so.** If a step fails after the code was copied, the script prints which step, whether the site's health check still answers, and that the deploy needs re-running. A failure before that says nothing on the server changed. A failing health check in the final smoke test now fails the deploy; before, it was printed and ignored.
-- **Deploys no longer re-own the whole app directory,** only stray files a root shell left behind, and never the `.env`, which briefly passed to the app user on every deploy.
-- Self-hosters: the deploy login still needs passwordless sudo (or is root); rsync is now received through `sudo -n -u APP_USER`.
+- **A dropped ssh connection can no longer take the site down mid-deploy:** one connection carries every step, and copied files have the right owner the moment they land.
+- **A failed deploy says so,** and a failing health check now fails it.
+- **Deploys no longer re-own the whole app directory,** and never the `.env`.
+
+Self-hosters: the deploy login still needs passwordless sudo (or is root); rsync is now received through `sudo -n -u APP_USER`.
 
 ## 0.4.15 (2026-09-25)
 
-- **Holidays are written with the date, not as context.** A holiday calendar's days read "Mon, Oct 12 · Columbus Day" in agenda headings (and Split's list) and the day list, after the day number in week heads and desktop month cells, and after the date in the desktop day view's title. They no longer sit among the weather and other context tokens, where their names were cut short or cut the date. In the phone's day view the holiday gets its own line at the top of the day, in full. In the phone's full month, where a cell has room for a letter or two, it's a small flag after the day number; tap it for the name. Holiday calendars are recognized by name, as before; tapping a holiday opens it.
+- **Holidays are written with the date, not as context,** so their names aren't cut short. In the phone's full month, tap the small flag for the name.
 
 ## 0.4.14 (2026-09-25)
 
-- **The date title's hint is a small "jump to a date" icon** (a calendar page with a magnifier) instead of a dropdown caret, on phones and desktop.
+- **The date title's hint is a small "jump to a date" icon** instead of a dropdown caret.
 
 ## 0.4.13 (2026-09-25)
 
-- **Phone day view: the date in each day's divider reads the same as the top bar** ("Tue, Oct 13"), so it doesn't reorder itself as it scrolls up to become the title.
-- **The date in the top bar is never cut short;** the weather and other context after it clip instead.
-- **Weather and other values come before named days** (a holiday, someone away) wherever a day's context is listed, so in a tight header it's the name that gets cut, not the numbers.
+- **The top bar's date is never cut short:** the weather after it clips instead, and in a tight header named days get cut before numbers.
+- **Fixes:** phone day view dividers read the same as the top bar.
 
 ## 0.4.12 (2026-09-25)
 
-- **Phone day view: the day's weather sits to the right of the date** in the top bar, on one line ("Thu, Sep 24 · 79/55 · AQI 68"), instead of on a cramped second line under it. The date shortens to make room.
+- **Phone day view: the day's weather sits beside the date** in the top bar, on one line.
 
 ## 0.4.11 (2026-09-25)
 
-- **Phone day view: one date, not two.** The top bar already names the day you're on, so each day's date and weather are now a thin divider line that scrolls up under the bar, and the bar then shows that day (as "Thursday, Sep 24") with its weather on a small line under it. The sticky header below keeps only the day's all-day items, and a day without any has none, so the hours start a whole row higher. Nothing changes height as days pass the top, so the hours don't jump.
-- **The today button reads as a date:** "25th" rather than a bare "25", on a small calendar-page shape (a heavier top edge).
-- **The date title shows it opens the date picker,** with a small caret after it, on phones and desktop.
+- **Phone day view: one date, not two.** Each day's date is a thin divider that scrolls up under the top bar.
+- **The today button reads as a date** ("25th"), and the date title has a caret showing it opens the date picker.
 
 ## 0.4.10 (2026-09-25)
 
-- **Week view: all-day bars keep their order as you scroll.** Lanes are now worked out from real dates across everything loaded (earlier start on top, then the longer one, trips first on a shared start), so a bar no longer hops between lines as you scroll left and right. A line that's empty across the days in view still closes up, keeping the same order.
-- **Fixed: the ends of finished multi-day bars trailed along the left edge** of the week's all-day area after scrolling past them (from 0.4.8's title-stays-in-view change, which could stretch a bar past its own end).
-- **The "which occurrences?" choice for a repeating event fits a phone:** it spans the screen and wraps, with the question on its own line, so Cancel is no longer off the right edge.
+- **Week view: all-day bars keep their order as you scroll.**
+- **Fixes:** finished multi-day bars no longer trail along the left edge, and the "which occurrences?" choice fits a phone.
 
 ## 0.4.9 (2026-09-25)
 
-- **Creating and moving events by touch in week and day views.** Tap an empty time to start a one-hour event there; press and hold, then drag, to draw a longer one (dragging across days makes it all-day), or to pick up an event and move it to a new time or day. A short buzz says it's picked up. A finger that moves first is scrolling and creates nothing, and a tap that stops a scroll in motion isn't taken as a create. Until now touch creation was switched off in these views and a held event dropped as soon as your finger moved.
-- **Fixed: "+N" in week view did nothing.** The all-day "+N" on phones, and the weather and context "+N" in desktop week heads, now open that day's full list.
-- **Phone week: the weather goes back above the date,** as in the other views, instead of under it.
+- **Create and move events by touch in week and day views:** tap an empty time for a one-hour event, or press and hold, then drag.
+- **Fixes:** "+N" in week view opens that day's full list, and phone week puts the weather back above the date.
 
 ## 0.4.8 (2026-09-25)
 
-- **Phone week: pinch sideways to set how wide days are.** Spread two fingers for wider days, pinch in to fit up to about seven across. The day under your fingers stays put, and the phone remembers the width. It starts where it always has, about 2.3 days across (one setting in the code).
-- **Phone week: blocks show their title only, wrapped over the block,** instead of a cut-off title with the time under it; the hour column already says when. Overlaps keep the same cascade as before.
-- **Phone week: a thinner all-day area.** Three slim lanes, then a "+N" line under any day with more (tap it for that day's full list), at one steady height, so the grid no longer grows by a lane per overlap or jumps as you scroll sideways. Day heads are the date with the weather under it, the hour column is narrower ("8a"), and when days get narrow the weekday shows as its first letter.
-- **Phone day view: all-day items get full-width rows** under the date, with their full names and where they are in their span ("day 2 of 3"), instead of a narrow column beside the date. Up to four show before "+N more".
-- **Week view, everywhere: a long all-day bar keeps its title in view.** A trip that began weeks ago used to show as a bare outline because its title was back at its start, off screen; the title now stays at the visible left edge.
+- **Phone week: pinch sideways to set how wide days are.** The phone remembers it.
+- **Phone week: blocks show their title only,** and the all-day area is three slim lanes plus "+N".
+- **Phone day view: all-day items get full-width rows** with their full names.
+- **Week view: a long all-day bar keeps its title in view.**
 
 ## 0.4.7 (2026-09-25)
 
-- **"Location available once RSVP'd" and the like** now show as a small lock with "After RSVP" ("RSVP" in phone rows; the feed's own wording on hover). They're no longer offered as a map, sent off to be placed on one, or shown on timeline blocks as if they were an address.
-- **Split: steadier scrubbing, no flick.** The weeks move in the same frame as the list instead of one frame behind, and finger movement is applied once per frame. A flick no longer carries on after you let go: in whole-week glides it moved faster than you could follow. A trackpad or wheel keeps its own momentum.
-- **One view order everywhere:** Split is last on phones too, as on desktop.
-- **The sidebar's buttons no longer shift** when its scroll bar appears or goes away (folding or unfolding a group): the bar's space is always kept.
+- **"Location available once RSVP'd" shows as a lock with "After RSVP",** not as a map.
+- **Split: steadier scrubbing, no flick.**
+- **Fixes:** Split is last on phones too, and the sidebar's buttons no longer shift when its scroll bar appears.
 
 ## 0.4.6 (2026-09-25)
 
-- **Split: scrolling over the weeks scrubs through the days.** The weeks no longer slide on their own: moving your finger (or the wheel) over them walks the day being read through the week, one row's height of travel per week, with the list following. The weeks hold still, the day moves along its row, and at the end of the week they glide one row. A flick carries on and slows to a stop. Both halves now move the same way, and the current week never slides half out of view.
-- **Split: with three or more weeks showing, the current week sits in the middle row**, a week of context above it (one above centre when the count is even); with two, at the top.
-- **Phone lists: rows with actions carry a grip** (⋮) at their end, so a suggested event you can triage looks different from one you can only open; tapping the grip opens the actions too.
-- **Folded "nothing on" days** have a halo around their text so it reads over the hatch, and a clearer icon: arrows pressing in on a dashed fold.
-- **Sidebar on phones:** it no longer scrolls a couple of pixels sideways (the enlarged tap areas of its right-edge buttons reached past it), so no stray scroll bars flash as it slides in. It has a scroll bar that stays visible and soft shadows at the top and bottom edges wherever there's more to scroll.
+- **Split: scrolling over the weeks scrubs through the days,** with the list following.
+- **Split: with three or more weeks showing, the current week sits in the middle row.**
+- **Phone lists: rows with actions carry a grip** (⋮); tap it for the actions.
+- **Fixes:** folded "nothing on" days read more clearly, and the phone sidebar no longer scrolls sideways and keeps its scroll bar visible.
 
 ## 0.4.5 (2026-09-25)
 
-- In the phone's swipe actions, Hide is soft rose, the one action that takes an event off your calendar, and no longer the same grey as Less like this. The two thumbs sit a little apart from Maybe, Planned and Hide, since they're feedback on suggestions rather than a choice about the event.
+- **Phone swipe actions:** Hide is soft rose, and the two thumbs sit a little apart from Maybe, Planned and Hide.
 
 ## 0.4.4 (2026-09-25)
 
-- The swipe actions on phones sit in a slightly taller tray that stands just proud of its row, so icons and labels have room instead of touching the edges. The buttons are soft tints of their colors (amber, green, grey, blue, slate) with labels in a deeper shade of the same hue: pastel in light mode, muted in dark. The row itself keeps its height.
-- Fixed: a thin sliver of the closed tray showed at the end of every row, and the last event of a day had the bottom of its tray cut off.
+- **Phone swipe actions sit in a slightly taller tray** with soft tints of their colors.
+- **Fixes:** no sliver of the closed tray at the end of rows, and the last event's tray isn't cut off.
 
 ## 0.4.3 (2026-09-25)
 
-A compact list on phones, for Split and the Agenda view (the agenda redesign, brought forward from 0.5.0 for phones; desktop styling comes separately).
+A compact list on phones, for Split and the Agenda view.
 
-- **One line per event:** the start time in a narrow column ("8p", "8:30p", "all day", "1/4" for a day of a multi-day event), the title at full width, then the place, muted. A meeting link shows just its site ("zoom.us"). The full details stay on the event card, one tap away.
-- **Triage on a swipe:** drag a suggested event left to reveal Maybe, Planned, Hide, More like this and Less like this. Let go past halfway and they stay open; a tap anywhere else closes them without doing anything else. The row of buttons on every event is gone.
-- **Slimmer day headings:** "Fri, Sep 25" on one line with the weather and sunset.
-- **Unchanged:** the rails and tinted rows that mark multi-day events, now sized to the smaller rows.
-- **Folded empty days** (Split) have a stronger hatch, so they read as skipped time at a glance, on desktop too.
+- **One line per event:** the start time, the title, then the place. Full details stay on the event card.
+- **Triage on a swipe:** drag a suggested event left for Maybe, Planned, Hide, More like this and Less like this.
+- **Fixes:** slimmer day headings, and a stronger hatch on folded empty days.
 
 ## 0.4.2 (2026-09-25)
 
-- The phone's month uses each day's full height. A fixed limit of three events per day showed "+2" with room for two more still empty below; now a day shows as many as fit, and "+N" appears only when it truly overflows. Split's weeks get the same room.
-- Week numbers no longer collide with the month name pinned at the top of the left column: they slide under it and fade out as they reach it.
+- **The phone's month uses each day's full height,** with "+N" only when a day truly overflows.
+- **Fixes:** week numbers no longer collide with the month name in the left column.
 
 ## 0.4.1 (2026-09-25)
 
-- The server refuses a request for more than two years of events with a clear error, instead of quietly returning only the first two years. The app already asks for long spans in pieces (0.4.0), and the refresh after an edit now does too, so this only shows if something is wrong, as the "couldn't load" note.
-- Split's list never claims "nothing on" for days it hasn't loaded. A stretch not fetched yet reads "not loaded yet", in a dashed outline, and fills in as it loads.
-- Jumping somewhere in Split (Today, the arrows, jump to date) lands the moment that day's events arrive, with no fixed delay. Scrolling the list yourself while it waits cancels the jump. Landing on a day inside a folded run outlines that day, not the run's first.
-- Split's day outline no longer drops out after a long jump; it's put back whenever the weeks redraw.
+- **Split never claims "nothing on" for days it hasn't loaded:** they read "not loaded yet".
+- **Fixes:** jumping in Split lands as soon as that day's events arrive, the server refuses more than two years of events with a clear error, and Split's day outline no longer drops out after a long jump.
 
 ## 0.4.0 (2026-09-25)
 
 A new view: Split.
 
-- **Split** puts a strip of weeks over a list that runs on without a break. The weeks are the month you know: titles in every day, trips and stays as bars across the days they cover, "+N" when a day is full. The list below is every day in order, with weather and sunset in each day's heading and multi-day events drawn with their rails.
-- **The two move together.** Scroll the list and the weeks follow: they hold through a week and glide to the next as Saturday turns into Sunday, and the day at the top of the list is outlined. Scroll the weeks and the list follows; tap a day number and the list goes there. Today, the arrows and jump to date move both. Nothing pages or snaps.
-- **Drag the handle between them** to show more weeks or more list, from part of a week to the whole screen. It's remembered on each device; two weeks to start.
-- **Empty days fold.** In Split's list, each run of days with nothing on becomes one line ("Thu, Oct 22 to Fri, Oct 23 · nothing on"), set in italics over a faint hatch so it reads as skipped time. When a trip or stay runs through those days it says "nothing else on".
-- Split is in the view menu, the phone's View sheet (after 3 day), the command palette and on key 7, so the other views keep their number keys. The phone still opens on 3 day unless you've picked another view.
-- The 3-day view on phones drops the start time from each event, which took half of every pill; the title gets the room.
-- Fixed: a request for more than about two years of events was quietly cut short by the server, and the app then treated the whole span as loaded, so the later part stayed empty. Long spans are now fetched in pieces.
+- **Split** puts a strip of weeks over a list that runs on without a break. Scroll either and the other follows.
+- **Drag the handle between them** to show more weeks or more list.
+- **Empty days fold** into one "nothing on" line.
+- **Find Split** in the view menu, the phone's View sheet, the command palette and on key 7.
+- **Fixes:** the phone's 3-day view drops start times so titles get the room, and long spans of events are fetched in pieces so the later part no longer stays empty.
 
 ## 0.3.10 (2026-09-24)
 
-- The month and 3-day views' left column (month names and week numbers) now alternates by month along with the days, in both themes. Before, only the day cells did.
+- **Fixes:** the month and 3-day views' left column alternates by month along with the days.
 
 ## 0.3.9 (2026-09-24)
 
-- Coming back to the app after an update, or after the phone set it aside, opens where you were: the same view, the same place in the calendar, the saved view in use and the filter text. Before, a reload opened on today in the default view. Updates now apply only while the app is out of sight, or after 10 minutes untouched (was 20 seconds), and a fresh launch, or a return after half an hour, still opens on today.
-- On phones and narrow windows, swipe the sidebar in from the left edge of the calendar (the column with the month names) and swipe it back out, as in Google Calendar's app. It follows the finger and finishes past a third of the way or with a flick. On Android, start just inside the screen edge; the edge itself is the system's back gesture.
-- Phone top bar: previous and next sit together before the month name, so they no longer move as the month's name gets longer or shorter. Today is back in the top bar, at the right, as a badge showing today's date. The menu icon is larger.
-- Phone bottom bar: Review (invitations, held changes and proposals waiting on a decision, with their count) takes the slot Today left. The bar stays on the Review page; tap Review again, or any other button, to go back to the calendar.
-- The New button has a ring in the bottom bar's own colour and edge, and a soft glow, so it stands out from the calendar behind it.
-- Month and 3-day views: the month names in the left column are larger and bolder, and alternate months are shaded more clearly, in both themes.
-- The mark beside a day when the Show filter hides some of its events is now the half-filled circle the sidebar uses for "some shown", and on touch screens it can be tapped (it shows everything again, as clicking it does on desktop). Before, a tap missed it and opened a new event.
+- **Coming back after an update opens where you were.** A fresh launch, or a return after half an hour, still opens on today.
+- **Swipe the sidebar in from the left edge** on phones and narrow windows.
+- **Phone top bar:** previous and next sit before the month name, and Today is back at the right as a badge.
+- **Phone bottom bar: Review** (invitations, held changes and proposals) takes Today's slot.
+- **Fixes:** the New button stands out more, month names are larger and bolder, and the "some shown" mark can be tapped on touch screens.
 
 ## 0.3.8 (2026-09-24)
 
 Phones: the top bar and the bottom bar's edge.
 
-- Previous and next are back on phones, either side of the month name: small to look at, the full bar height to tap. The logo is gone from the phone's top bar.
-- Previous, next and Today now glide the month grid to where they land when it is near, so the days in between pass by instead of the grid cutting to a new place, on desktop too. Far jumps still move at once, and nothing glides if the device asks for reduced motion. Pressing Next again mid-glide steps on from where the glide is going.
-- While anything narrows the calendar, a row of chips under the phone's top bar says what: the saved view in use, the Show setting ("Planned only", "No context") and the filter text. Tapping a chip opens its control (the Show menu right there, the Filter sheet with its text field focused, the View sheet); its × clears it. The row is gone when nothing is narrowed.
-- The bottom bar has a firmer top edge, so it reads as separate from the calendar in both light and dark themes.
-- Menus on touch screens no longer list keyboard shortcuts (the p, m, a, x beside the Show choices).
+- **Previous and next are back on phones,** either side of the month name.
+- **Previous, next and Today glide the month grid** when where they land is near.
+- **Chips under the phone's top bar say what narrows the calendar;** tap one to open its control, or its × to clear it.
+- **Fixes:** a firmer bottom bar edge, and no keyboard shortcuts in touch menus.
 
 ## 0.3.7 (2026-09-24)
 
-- On a phone, the full month no longer squeezes context (weather, AQI, sun, tides) beside each day number, and the 3-day view shows one item, usually the weather, without a "+N". Opening a day still lists all of them. Desktop is unchanged.
+- **Less context on phones:** none beside the full month's day numbers, and one item in the 3-day view.
 
 ## 0.3.6 (2026-09-24)
 
-- The installed app picks up new versions when you come back to it. The browser only checks for an update when a page loads, and an installed app brought back from the background loads nothing, so a phone could keep running an old version for hours after a release. It now checks each time the app comes back into view (at most once a minute) and every 30 minutes while open, then updates at the next quiet moment as before.
+- **The installed app picks up new versions when you come back to it.**
 
 ## 0.3.5 (2026-09-24)
 
-- Press and hold on the phone's New and Today buttons no longer ends with an extra tap. On iPhone, lifting your finger after a hold sent a click to whatever was now under it, which was the New sheet's "Calendar" row; the click that ends a hold is now dropped wherever it lands.
-- After dragging an event on a touch screen, the next tap works. A drag that ended without a click left the app waiting to ignore one, so the next real tap did nothing.
+- **Fixes:** press and hold on the phone's New and Today buttons no longer ends with an extra tap, and the next tap after dragging an event works.
 
 ## 0.3.4 (2026-09-24)
 
-- Next and Previous in the Month view work in tall windows. They moved the grid to the 1st of the month, which left the old month filling most of a tall screen, so the month name didn't change and the next click went to the same place: Next appeared to do nothing. They now land mid-month, as jump-to-date already did.
+- **Fixes:** Next and Previous in the Month view work in tall windows.
 
 ## 0.3.3 (2026-09-24)
 
-- A click or tap outside an open menu, popover, card or sheet now only closes it. Before, the same press also did whatever it landed on: tapping the grid to dismiss a menu could start a new event, tapping another event to dismiss an event card opened that event, tapping a toolbar button pressed it. This covers the view, saved-view, Show, New and calendar-mode menus, jump-to-date, quick add, event and "+N more" cards, the drop and plugin chips, the phone sheets and the sidebar backdrop, on desktop and phone. Full-screen dialogs already worked this way.
+- **A click or tap outside an open menu, popover, card or sheet only closes it.**
 
 ## 0.3.2 (2026-09-24)
 
-- Phone Filter sheet: checked Show choices keep plain text with a check mark, instead of every checked row turning blue.
+- **Fixes:** checked Show choices in the phone Filter sheet no longer turn blue.
 
 ## 0.3.1 (2026-09-24)
 
 Phones, phase 2 of the mobile pass: the phone frame.
 
-- On a phone, the toolbar becomes a thin top bar: the menu, the month (tap it to jump to a date) and the name of a saved view in use. Previous and next go away; the scroll is the navigation.
-- A bottom bar holds the five actions reached for most: View, Search, New, Filter and Today.
-  - View opens a sheet with the views, your saved views (with the same save-or-discard step as the desktop menu) and, in the agenda, its order.
-  - New is centred and raised. Tap opens quick add; press and hold offers Event, Trip, Person and Calendar.
-  - Filter holds the text filter and the Show choices, and shows a dot while anything is filtered. The Show filter was hidden on phones until now.
-  - Today shows today's date. Tap returns to today; press and hold opens jump-to-date.
-- Sheets open from the bottom with a dimmed backdrop, a handle you can pull down to close, and 48-point rows.
-- The keyboard-shortcuts button hides on touch screens.
-- One set of breakpoints: phone below 640 pixels, compact below 800, defined once. The month grid's phone layout moved from 600 to 640 pixels to match the rest.
+- **A thin top bar on phones:** the menu, the month (tap it to jump to a date) and a saved view's name.
+- **A bottom bar with View, Search, New, Filter and Today.** Press and hold New or Today for more.
+- **Sheets open from the bottom** with a handle you can pull down to close.
+- **Fixes:** the keyboard-shortcuts button hides on touch screens, and there's one set of breakpoints (phone below 640 pixels, compact below 800).
 
 ## 0.3.0 (2026-09-24)
 
-Phones and touch, phase 1 of the mobile pass: fixes only, no layout changes yet.
+Phones and touch, phase 1 of the mobile pass: fixes only.
 
-- On touch screens every button, link and menu item gets a tap area of at least 44 by 44 points, without changing how anything looks. Menu items and sidebar rows are taller. Controls that sit side by side (triage buttons, segmented choices, the two halves of New) grow only vertically, so a tap never lands on the neighbor.
-- On touch screens text fields, pickers and the description editor use at least 16px text, so iPhone Safari no longer zooms the page when you tap into one.
-- Agenda on a phone: the triage buttons no longer run off the right edge. The title shrinks instead; thumbs and location stay on the event card.
-- The time-zone notice on a phone keeps its message readable, with the two choices beneath it, instead of a one-word-wide column over half the screen.
-- People on a phone: each card's buttons wrap instead of pushing the page sideways.
-- The loading skeleton takes the phone layout, instead of a desktop sidebar squeezing the grid.
-- Quick add's time fields fit their text ("06:00 PM" was clipped to "06:00 P"), on desktop too.
+- **Fixes:** tap areas of at least 44 by 44 points on touch screens, no zoom on iPhone Safari when you tap into a text field, phone layouts that fit the screen, and quick add's time fields fit their text.
 
 ## 0.2.6 (2026-09-24)
 
 Two visible fixes.
 
-- All-day events edit as dates (#34). The event card's quick editor and the full editor used to show all-day events as date-and-time fields at 12:00 AM, ending the day after the event ends. They now show plain date fields, and the end field is the last day ("Sep 12 to Sep 27"). Ticking All day on a timed event keeps it on its own day.
-- Search results show an all-day event on its own date; west of UTC it showed a day early.
-- A calendar that cannot load its events says so (#48). A failed request for a range of dates used to leave the grid empty with no message until you scrolled. Now a note over the view says the events could not load (or that you are offline and those dates are not saved on this device), retries on a growing delay and as soon as the device is back online, and has a Retry now button. A cold load that takes a moment shows "Loading events…".
+- **All-day events edit as dates (#34).**
+- **A calendar that cannot load its events says so (#48),** retries, and has a Retry now button.
+- **Fixes:** search results show an all-day event on its own date.
 
 ## 0.2.5 (2026-09-24)
 
 Nothing generated is committed any more.
 
-- The modulepreload block in `index.html` and the service worker's version and file list are now filled in by the server as it serves those two files, and cached until something under `web/` changes. They used to be written into the repository by a script at deploy time, which left the working tree modified after every deploy and the release tags out of step with what shipped.
-- Removed: `scripts/gen-preload.mjs`, the pre-commit hook, and the deploy step that ran the generator.
-- **Self-hosters:** `/sw.js` must reach `index.php`. Remove any web server rule that serves it from disk (`docs/install.md` no longer has one). If it is still served raw, the worker leaves the app's files to the network: the app works online but loses offline start.
-- The page registers only `/sw.js`; the `/assets/sw.js` fallback is gone.
+Maintainers: the server fills in the modulepreload block and service worker list; `scripts/gen-preload.mjs` and the pre-commit hook are gone.
+
+Operators: `/sw.js` must reach `index.php`. Remove any web server rule that serves it from disk (`docs/install.md` no longer has one), or the app loses offline start. The `/assets/sw.js` fallback is gone.
 
 ## 0.2.4 (2026-09-24)
 
 Sign out everywhere else, for a lost or stolen device.
 
-- Settings, Account shows how many other browsers are signed in, with a **Sign out everywhere else** button. It signs out every other browser, forgets every other remembered browser (so none of them gets past the sign-in brake any more) and stops push reminders to every other device. The browser you use stays signed in and keeps its reminders. API keys are left alone; revoke them on the same page.
-- It is written to Activity. An API token cannot use it.
-- SECURITY.md's lost-device steps now start here; resetting the password on the server is the fallback.
+- **Settings → Account → Sign out everywhere else** signs out every other browser and stops their push reminders. It's written to Activity; API keys are left alone.
+- **SECURITY.md's lost-device steps** now start here.
 
 ## 0.2.3 (2026-09-24)
 
 Your own browsers get past the sign-in brake (issue #59, layer 1).
 
-- A successful password sign-in now leaves a device cookie in the browser: random, stored only as a hash, valid for a year, sent only to the sign-in endpoints, and replaced with a fresh one on every sign-in. Signing out keeps it.
-- While the overall brake is on (many failed sign-ins from many addresses at once), a browser carrying a valid device cookie can sign in from any network, the same way a recently used address can. The password is still required and the per-address limit still applies.
-- Wrong passwords sent with a device cookie count against that cookie; after 3 in 15 minutes it stops helping, so a copied cookie is no use for guessing.
-- A password reset forgets every remembered browser, and `seed.php` says how many.
-- When the brake refuses a sign-in, the message now says new devices are paused, rather than blaming the network for wrong passwords.
-- Migration 030 adds the `trusted_devices` table.
+- **Remembered browsers:** a browser you've signed in with can still sign in while the overall brake is on. The password is still required.
+- **A password reset forgets every remembered browser.**
+- **Fixes:** when the brake refuses a sign-in, the message says new devices are paused.
+
+Operators: migration 030 adds the `trusted_devices` table.
 
 ## 0.2.2 (2026-09-24)
 
 Bundled plugins for context calendars.
 
-- Weather (0.2.0): each day carries an icon for its conditions (sun, cloud, rain, snow, storm) and a title like "64°/57° rain"; air quality is included as one "AQI 54 (Moderate)" event per day with the air icon (a new setting, on by default), and unhealthy air raises a warning like severe weather does.
-- Tides (0.2.0): high and low tides carry their own icons instead of arrow characters in the title.
-- New Sun plugin: sunrise and sunset for a place, computed on the server with no network access or key.
-- Context tokens keep a plugin's icon and still show just the value ("5.2 ft", "54", "64/57").
+- **Weather (0.2.0):** condition icons, and air quality as a daily event (a new setting, on by default).
+- **Tides (0.2.0):** high and low tides carry their own icons.
+- **New Sun plugin:** sunrise and sunset for a place, with no network access or key.
 
 ## 0.2.1 (2026-09-23)
 
-API tokens get their capabilities back, safely. In 0.1.2 to 0.2.0 an API token could not manage outbound feeds, push devices or the reminder email address, because something a stolen token created could outlive the token. Now anything a token creates belongs to it instead:
+API tokens get their capabilities back, safely.
 
-- An outbound feed or push device created with an API token is removed when that token is revoked, and stops working while it is expired. Feeds and devices you create signed in are never touched by revoking a token.
-- A token listing outbound feeds sees the addresses only of feeds it created itself.
-- A reminder email address set with an API token is used only while that token is valid; after that reminders go to the account address again.
-- Linking a Google account still needs you signed in with your password.
+- **Anything an API token creates belongs to it:** its outbound feeds and push devices go when it's revoked, and a reminder address it sets lasts only while it's valid.
+- **Google:** linking an account still needs you signed in with your password.
 
-Also: the deploy scripts only change `.env` ownership when running as root, and the install guide says how to protect `.env` on shared hosting. The README has a Security section.
+Operators: the deploy scripts only change `.env` ownership when running as root, and the install guide says how to protect `.env` on shared hosting.
 
 ## 0.2.0 (2026-09-23)
 
-The security pass is complete. This release contains every fix from the 2026-09-23 scan (0.1.1 to 0.1.5) and from the three adversarial reviews of those fixes (0.1.6 to 0.1.8); see those entries for the details and `SECURITY.md` for what was reviewed and what remains as accepted residuals. No functional changes beyond them.
+The security pass is complete: every fix from 0.1.1 to 0.1.8, with `SECURITY.md` for what was reviewed. What works differently:
 
-Things that work differently after the pass, in one place:
-
-- API tokens cannot link Google accounts (sign in with your password for that). In 0.2.0 they also could not manage outbound feeds, push devices or the reminder address; 0.2.1 restores those, bound to the token.
-- A password reset removes all push devices; each browser registers again when you next open the app there.
-- `seed.php --revoke-tokens` also gives outbound feeds new addresses and resets a custom reminder email address.
-- `seed.php` asks for the password instead of taking it on the command line.
-- Feeds, imports and CalDAV objects over their event or line budget are refused with a clear error rather than processed.
-- Repeat rules with an interval over 1,000 or a count over 100,000 are treated as single events.
-- The editor auto-links `https://` and `www.` addresses, not bare `example.com/page`.
-- The Google connect page no longer names the account it connected.
-- CalDAV clients using API tokens are not subject to the password rate limit; clients using the password are.
+- **API tokens can't link Google accounts;** sign in with your password for that.
+- **A password reset removes all push devices;** each browser registers again when you next open the app.
+- **`seed.php`** asks for the password, and `--revoke-tokens` also gives outbound feeds new addresses and resets a custom reminder email address.
+- **Limits:** oversized feeds, imports and CalDAV objects are refused, and huge repeat rules are treated as single events.
+- **The editor auto-links `https://` and `www.` addresses,** not bare `example.com/page`.
+- **CalDAV clients using API tokens** aren't subject to the password rate limit.
 
 ## 0.1.8 (2026-09-23)
 
 Follow-up fixes from a third adversarial review.
 
-- Calendar-file budgets normalise every line ending the parser accepts, so extra carriage returns cannot hide events.
-- Sign-in: the overall brake needs failures from 10 different addresses (20 let a mid-size attacker guess without limit); a burst from one address gets at most 3 extra checks in flight.
-- Exported descriptions (CalDAV, outbound feeds) keep the words after a stray unclosed tag such as "the <style> element".
-- CalDAV object names issued by 0.1.3 to 0.1.5 still resolve.
-- Settings shows "Enabled" only when this device is registered, so removing this device offers Enable again.
-- The event popover's plain-text preview scans script/style blocks in linear time.
+- **Calendar-file budgets** can't be dodged with extra carriage returns.
+- **The overall sign-in brake** needs failures from 10 different addresses.
+- **Fixes:** exported descriptions keep text after a stray unclosed tag, older CalDAV object names still resolve, and Settings shows "Enabled" only when this device is registered.
 
 ## 0.1.7 (2026-09-23)
 
 Closing the gaps a second adversarial review found in the security releases.
 
-- The overall sign-in brake now needs failures from at least 20 different addresses (0.1.4's bar of 6 was already implied by the per-address limit, so it changed nothing). A CalDAV request authenticated with an API token no longer marks its address as a trusted one.
-- Calendar-file budgets (imports, feeds, CalDAV, email) count events the way the parser reads them, so line folding cannot hide events, and also bound the number of lines, so one event with a flood of properties is refused too.
-- The last two slow patterns on untrusted text are gone: calendar data embedded in an email body, and script/style removal when descriptions are exported over CalDAV and outbound feeds.
-- The MCP server marks third-party text in every tool result, not only the list tools.
-- CalDAV clients syncing from a change recorded before 0.1.3 get the safe object name.
-- Connecting, disconnecting and adding Google calendars needs you signed in with your password; an API token cannot link a Google account.
-- The editor's link matcher bounds itself, so a very long paste no longer slows down link detection.
+- **The overall sign-in brake** needs failures from at least 20 different addresses.
+- **Calendar-file budgets** count events the way the parser reads them and bound the number of lines.
+- **The last slow patterns on untrusted text are gone.**
+- **The MCP server marks third-party text** in every tool result.
+- **Google:** connecting, disconnecting and adding Google calendars needs you signed in with your password.
 
 ## 0.1.6 (2026-09-23)
 
 Fixes for regressions an adversarial review found in the security releases above.
 
-- CalDAV: an API token is accepted outside the password limit, so devices syncing with tokens keep working even when another device at the same address has used up the password attempts (for example one still using an old password). Several simultaneous connections with a correct password are no longer refused.
-- CalDAV: only UIDs that actually break a path (a "/" or "\\") get an encoded object name; 0.1.3 renamed more than that, which could leave some clients with stale entries.
-- Reminders: a device removed in Settings stays removed when that browser next opens the app, and opening the app no longer keeps a dead device from being cleaned up. Removing this device also turns push off in this browser.
-- Mail: stripping a forwarded message's header no longer fails on some non-English text, and an unclosed script or style block in an email is treated as running to the end, as a browser would.
-- Outbound fetches on IPv6-only servers can reach public IPv4 hosts through standard NAT64 again.
-- Prompt filters and ranking work with non-Gemini models on the same API.
-- An API token may send settings that include the reminder address unchanged.
-- Operators: the dev clone keeps Google calendars as local copies (they no longer fail every poll there), and `DB_USER` is only needed when cloning; database and user names may contain hyphens.
+- **CalDAV:** devices syncing with API tokens keep working when the password limit is hit, and simultaneous correct-password connections aren't refused.
+- **Reminders:** a device removed in Settings stays removed.
+- **Fixes:** mail with some non-English text, IPv6-only servers reaching IPv4 hosts through NAT64, and prompt filters with non-Gemini models.
+
+Operators: the dev clone keeps Google calendars as local copies, `DB_USER` is only needed when cloning, and database and user names may contain hyphens.
 
 ## 0.1.5 (2026-09-23)
 
 Security fixes from the 2026-09-23 scan (remaining low-severity findings).
 
-- The Google sign-in landing page shows fixed messages, never text from the link, so nobody can put their own words in the app's voice with a crafted link. After connecting it says "Google account connected" rather than naming the address.
-- Accepting an organizer's emailed change keeps the invitation bound to its original organizer.
-- Outbound fetches to IPv6 addresses outside global unicast are refused, closing a way to reach private IPv4 through NAT64, 6to4 and similar wrappers.
-- The push-notification Topic header is an opaque hash, so the push service no longer sees which event or when.
-- Prompt filters and ranking send event text to the model as separate, clearly marked third-party data.
-- The MCP server marks third-party text in its results as data, not instructions, and labels destructive tools.
-- Descriptions with crafted text no longer freeze the event detail view or the editor. Typing a bare address like "example.com/page" in the editor is no longer turned into a link automatically; "https://" and "www." addresses still are.
+- **The Google sign-in landing page shows fixed messages,** never text from the link.
+- **Accepting an organizer's emailed change** keeps the invitation bound to its original organizer.
+- **Outbound fetches can't reach private IPv4 through IPv6 wrappers.**
+- **The push service no longer sees which event or when.**
+- **Prompt filters, ranking and the MCP server** mark third-party text as data, not instructions.
+- **Crafted descriptions** no longer freeze the event view or the editor, and bare addresses like "example.com/page" aren't auto-linked.
 
 ## 0.1.4 (2026-09-23)
 
 Security fixes from the 2026-09-23 scan (sign-in hardening).
 
-- A sign-in attempt is counted before the password is checked, so a burst of simultaneous guesses can no longer slip past the limit. Successful sign-ins still never count against it.
-- An unknown email address now takes exactly as long to reject as a known one, so response times no longer reveal which addresses have accounts, on the login form or CalDAV.
-- The overall sign-in brake (which refuses new devices during a wide attack) now needs failures from at least six different addresses, so one or two attackers cannot shut out your new devices.
-- `seed.php` asks for the password with echo off, or reads `BETTERCAL_SEED_PASSWORD`; `--password=` still works but warns, since it is visible to other users and stays in shell history.
+- **Sign-in limits** hold against simultaneous guesses, and response times no longer reveal which email addresses have accounts.
+- **The overall sign-in brake** needs failures from at least six different addresses.
+- **`seed.php` asks for the password with echo off** or reads `BETTERCAL_SEED_PASSWORD`; `--password=` still works but warns.
 
 ## 0.1.3 (2026-09-23)
 
 Security fixes from the 2026-09-23 scan.
 
-- An event UID with unusual characters (a "/" in particular) no longer breaks CalDAV sync for its whole calendar. Ordinary UIDs keep their object names; unusual ones are named by an encoded form. A CalDAV client may re-download a calendar that held such an event once.
-- A subscribed feed is checked for size before it is parsed, like an import: one with more events than the server can hold in memory (20,000 by default, `BETTERCAL_LIMIT_FEED_EVENTS`) is refused with a clear poll error instead of crashing the background worker.
-- Incoming email HTML is scanned for script, style and embedded event markup in linear time, so a crafted message can no longer hold up mail processing.
+- **Unusual event UIDs no longer break CalDAV sync.** A CalDAV client may re-download such a calendar once.
+- **Oversized subscribed feeds are refused** with a clear poll error (`BETTERCAL_LIMIT_FEED_EVENTS`, 20,000 by default).
+- **Crafted email** can no longer hold up mail processing.
 
 ## 0.1.2 (2026-09-23)
 
 Security fixes from the 2026-09-23 scan. Updating is recommended for every install.
 
-- Revoking access now revokes everything. A password reset removes every device registered for push reminders (your own browsers register again when you sign in), and the compromise reset (`seed.php --revoke-tokens`) also gives every outbound feed a new address and clears a reminder email address that is not the account's.
-- An API token can no longer create or read outbound feed addresses, register a push device, or change where reminders go; those need you signed in with your password.
-- New in Settings, Notifications: the list of every device reminders go to, with the one you are on marked, and Remove for any you do not recognise. New devices, removed devices, new outbound feeds and a changed reminder address are written to Activity.
-- Operators: the deploy leaves the app's `.env` readable but not writable by the web app, and the dev-instance clone no longer puts the MySQL root password on a command line, takes its database user from `scripts/deploy.env` (new `DB_USER` setting), and strips sessions, tokens, push devices, feeds and Google links from the copy.
+- **Revoking access revokes everything:** a password reset removes every push device, and `seed.php --revoke-tokens` also resets outbound feed addresses and the reminder email address.
+- **API tokens can't manage outbound feeds, push devices or where reminders go.**
+- **Settings → Notifications lists every device reminders go to,** with Remove. Changes are written to Activity.
+
+Operators: the deploy leaves `.env` readable but not writable by the web app. The dev-instance clone takes its database user from `scripts/deploy.env` (new `DB_USER` setting) and strips sessions, tokens, push devices, feeds and Google links.
 
 ## 0.1.1 (2026-09-23)
 
-Security fixes from the 2026-09-23 scan (advisories to be published once all related fixes ship):
+Security fixes from the 2026-09-23 scan.
 
-- A successful sign-in or CalDAV request no longer resets the source's failed-password count; failures expire with the rate-limit window.
-- A repeat rule with an out-of-range interval or count, from a feed, import, CalDAV, mail or Google, is dropped where it comes in, and a single event that cannot be expanded no longer fails the whole calendar.
+- **A successful sign-in no longer resets the failed-password count.**
+- **Out-of-range repeat rules are dropped,** and one event that can't be expanded no longer fails its calendar.
 
 ## 0.1.0 (2026-09-23)
 

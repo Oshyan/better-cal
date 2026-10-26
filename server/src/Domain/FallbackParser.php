@@ -476,21 +476,41 @@ final class FallbackParser
         // Harbor", "Drinks at Sunday Social"), so the first weekday not in
         // that spot is the date.
         // Short names ("Fri", "Sat") too, but not where they start a name
-        // ("Sun Valley", "Sat Nav"): followed by a capitalized word.
+        // ("Sun Valley", "Sat Nav": followed by a capitalized word), in a
+        // day range ("Mon-Fri"), or as the first word unless a time follows
+        // ("Sat exam prep" vs "Sat 10am brunch"); a full name wins over them.
         $abbrAlt = implode('|', array_keys(self::WEEKDAY_ABBR));
         preg_match_all('/\b(?:(next|this)\s+)?(' . $dayAlt . '|(?:' . $abbrAlt . ')\.?(?!\s+(?-i:[A-Z])))(?![\w\'])/i', $work, $all, PREG_SET_ORDER | PREG_OFFSET_CAPTURE);
+        $pick = null;
         foreach ($all as $m) {
-            if (preg_match('/\b(?:to|at)\s+$/i', substr($work, 0, $m[0][1])) === 1) {
+            $before = substr($work, 0, $m[0][1]);
+            if (preg_match('/\b(?:to|at)\s+$/i', $before) === 1) {
                 continue;
             }
-            $name = strtolower(rtrim($m[2][0], '.'));
+            if (!isset(self::WEEKDAYS[strtolower($m[2][0])])) {
+                $after = substr($work, $m[0][1] + strlen($m[0][0]));
+                if (preg_match('/[-–—]\s*$/u', $before) === 1 || preg_match('/^\s*[-–—]\s*\w/u', $after) === 1
+                    || (trim($before) === '' && $m[1][0] === '' && preg_match('/^\s*(?:at\s+)?\d/i', $after) !== 1)) {
+                    continue;
+                }
+                $pick ??= $m;
+                continue;
+            }
+            $pick = $m;
+            break;
+        }
+        if ($pick !== null) {
+            $name = strtolower(rtrim($pick[2][0], '.'));
             $target = self::WEEKDAYS[$name] ?? self::WEEKDAY_ABBR[$name];
             $todayW = (int) $now->format('w');
             $diff = ($target - $todayW + 7) % 7;
-            if (strtolower($m[1][0] ?? '') === 'next' && $diff === 0) {
+            if (strtolower($pick[1][0] ?? '') === 'next' && $diff === 0) {
                 $diff = 7;
             }
-            return [self::cut($work, $m[0][0]), $now->add(new \DateInterval('P' . $diff . 'D')), true, null];
+            // Cut at the match itself, not an earlier copy of the same word
+            // ("Meet at Sat Nam Yoga Sat 10am").
+            $rest = substr($work, 0, $pick[0][1]) . ' ' . substr($work, $pick[0][1] + strlen($pick[0][0]));
+            return [$rest, $now->add(new \DateInterval('P' . $diff . 'D')), true, null];
         }
 
         return [$work, $date, $found, null];
@@ -549,22 +569,25 @@ final class FallbackParser
         }
         // "h:mm" with no am/pm: 24-hour, except that 1:00 to 7:59 written
         // without a leading zero means the afternoon ("at 2:30" is 2:30 PM,
-        // #33); "07:30" and "19:00" are taken as written.
+        // #33), unless the text says morning ("Breakfast at 7:30");
+        // "07:30" and "19:00" are taken as written.
+        $morning = preg_match('/\b(?:morning|breakfast|sunrise|dawn)\b/i', $work) === 1;
         if (preg_match('/\b(?:at\s+)?(\d{1,2}):(\d{2})\b' . $zoneAlt . '/', $work, $m)) {
             $h = (int) $m[1];
             $min = (int) $m[2];
             if ($h <= 23 && $min <= 59) {
-                if ($h >= 1 && $h <= 7 && $m[1][0] !== '0') $h += 12;
+                if ($h >= 1 && $h <= 7 && $m[1][0] !== '0' && !$morning) $h += 12;
                 return [self::cut($work, $m[0]), [$h, $min], null, true, $zone($m, 3)];
             }
         }
         // "at 1", "at 11": an hour on its own, after "at" and before the end
         // or another part of the phrase (never "at 5 Main St"). 1 to 7 is the
-        // afternoon, 8 to 11 the morning, 12 noon.
+        // afternoon (unless the text says morning), 8 to 11 the morning, 12
+        // noon.
         if (preg_match('/\bat\s+(\d{1,2})\b' . $zoneAlt . '(?=\s*(?:$|,|;|\b(?:with|w\/|for|on|in|at|tomorrow|today|tonight|next|this|every)\b))/i', $work, $m)) {
             $h = (int) $m[1];
             if ($h >= 1 && $h <= 12) {
-                return [self::cut($work, $m[0]), [$h <= 7 ? $h + 12 : $h, 0], null, true, $zone($m, 2)];
+                return [self::cut($work, $m[0]), [$h <= 7 && !$morning ? $h + 12 : $h, 0], null, true, $zone($m, 2)];
             }
         }
         if (preg_match('/\b(?:at\s+)?noon\b/i', $work, $m)) {
@@ -664,7 +687,11 @@ final class FallbackParser
         if (preg_match('/\b(?:for\s+)?(?:an?\s+)?(week|month)[\s-]long\b/i', $work, $m)) {
             return [self::cut($work, $m[0]), ['n' => 1, 'unit' => strtolower($m[1])]];
         }
-        if (preg_match('/\b(?:for\s+)?(' . $numAlt . ')[\s-]+(day|week|month)s?(?:[\s-]+long)?\b/i', $work, $m)) {
+        // Bare "2 weeks" only at the end ("Lisbon trip 2 weeks"); before a
+        // noun it describes the thing ("2 week sprint review").
+        if (preg_match('/\bfor\s+(' . $numAlt . ')[\s-]+(day|week|month)s?(?:[\s-]+long)?\b/i', $work, $m)
+            || preg_match('/\b(' . $numAlt . ')[\s-]+(day|week|month)s?[\s-]+long\b/i', $work, $m)
+            || preg_match('/\b(' . $numAlt . ')[\s-]+(day|week|month)s?\b(?=[\s,.;!]*$)/i', $work, $m)) {
             $n = ctype_digit($m[1]) ? (int) $m[1] : self::NUMBER_WORDS[strtolower($m[1])];
             if ($n >= 1 && $n <= 366) {
                 return [self::cut($work, $m[0]), ['n' => $n, 'unit' => strtolower($m[2])]];

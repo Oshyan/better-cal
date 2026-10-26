@@ -551,11 +551,22 @@ $phraseCases = [
     ['Call with Sam tomorrow 3pm alert 30 minutes', 'Call with Sam', '2026-07-31T15:00', '2026-07-31T16:00', [30]],
     ['Remind me tomorrow at 3PM to call the bank', 'Call the bank', '2026-07-31T15:00', '2026-07-31T16:00', [0]],
     ['Dentist Friday 10am with a 1 hour reminder', 'Dentist', '2026-07-31T10:00', '2026-07-31T11:00', [60]],
+    // Text that already read right keeps its reading
+    ['Wed planning', 'Wed planning', '2026-07-30T11:00', '2026-07-30T12:00', null],
+    ['Fri drinks Saturday 10am', 'Fri drinks', '2026-08-01T10:00', '2026-08-01T11:00', null],
+    ['Sat 10am brunch', 'Brunch', '2026-08-01T10:00', '2026-08-01T11:00', null],
+    ['Mon-Fri check', 'Mon-Fri check', '2026-07-30T11:00', '2026-07-30T12:00', null],
+    ['2 week sprint review tomorrow 3pm', '2 week sprint review', '2026-07-31T15:00', '2026-07-31T16:00', null],
+    ['Meet at Sat Nav Club Sat 10am', 'Meet at Sat Nav Club', '2026-08-01T10:00', '2026-08-01T11:00', null],
+    ['Brunch at Sunday Social Sunday', 'Brunch at Sunday Social', '2026-08-02T00:00', '2026-08-03T00:00', null],
+    ['Breakfast at 7:30 tomorrow', 'Breakfast', '2026-07-31T07:30', '2026-07-31T08:30', null],
+    ['Morning run tomorrow at 7', 'Morning run', '2026-07-31T07:00', '2026-07-31T08:00', null],
 ];
 foreach ($phraseCases as [$text, $title, $start, $end, $reminders]) {
     $d = $p($text);
     checkEq("phrase '$text'", [$title, $start, $end, $reminders], [$d['title'], substr($d['start'], 0, 16), substr($d['end'], 0, 16), $d['reminders']]);
 }
+require __DIR__ . '/quickadd-golden.php';
 
 $invalid = [];
 foreach ($repeatCases as [$text, , , $rrule]) {

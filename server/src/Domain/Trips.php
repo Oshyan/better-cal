@@ -10,7 +10,7 @@ use BetterCal\Infra\Db;
 use BetterCal\Support\Time;
 
 /**
- * Trips (design-containers.md): a normal event row with is_container=1 groups
+ * Trips (docs/api-contract.md, Trips): a normal event row with is_container=1 groups
  * other events through event_links. Membership is a relationship, not
  * ownership — members keep their own calendar, times and lifecycle, feed
  * events can be members (the link is user-local metadata, like tags), and

@@ -168,7 +168,7 @@ Every event has a `tzid` (IANA zone). For a timed event it's the clock the event
 
 ## Trips
 
-A trip ([design-containers.md](design-containers.md)) is a normal event with `isContainer: true` that groups other events. Attaching is a relationship, not ownership: members keep their own calendar, colors, times and lifecycle. Feed events can be members (the link is user-local, like tags and reminders, and survives polls), and same-calendar membership works like cross-calendar. One level only: a trip can't be attached to another trip. The API allows an event in several trips; the app attaches each to one. Growing a trip's span is up to the client (the app asks "Extend trip to include this?"); the server never grows it silently.
+A trip is a normal event with `isContainer: true` that groups other events. Attaching is a relationship, not ownership: members keep their own calendar, colors, times and lifecycle. Feed events can be members (the link is user-local, like tags and reminders, and survives polls), and same-calendar membership works like cross-calendar. One level only: a trip can't be attached to another trip. The API allows an event in several trips; the app attaches each to one. Growing a trip's span is up to the client (the app asks "Extend trip to include this?"); the server never grows it silently.
 
 - `POST /events/:id/links` `{eventId}` → `{ok:true}` (201): attaches `eventId` to trip `:id`. Idempotent when already attached. 400 `trip_invalid` when `:id` isn't a trip, `eventId` is a trip, or on self-attach; 404 when either event is missing or not yours; 409 `event_changed` when either event moved calendars mid-request (reload and retry).
 - `DELETE /events/:id/links/:eventId` → `{ok:true}`; 404 when the event isn't attached.
@@ -182,8 +182,6 @@ A trip ([design-containers.md](design-containers.md)) is a normal event with `is
 - `GET /search?q=text&limit=50&when=all&calendar=` → `{results:[occurrence]}`: full-text, past included, ranked by relevance, then newest first. `limit` is clamped to 1 to 200. `when` is `all` (default), `upcoming` or `past`, applied before the limit; `calendar` narrows to one calendar id. Each result carries `upcoming` (a series counts until its `UNTIL`, and an upcoming one shows its next occurrence); `when=upcoming` also returns `pastCount`. Tag and people names match too, tag matches after text matches; `#term` searches tags only (newest first), `@term` people only.
 
 ## People and Availability
-
-See [design-availability.md](design-availability.md).
 
 - `GET /people` → `{people:[{id, name, notes, eventCount, nextStart, showOnCalendar, currentSpan, nextSpan}]}`: everyone, linked to events or not, alphabetical. `eventCount` counts undeleted events; `nextStart` is the soonest future start (UTC ISO) or null; `currentSpan` is the away or busy span covering now, or null. People are created by `POST /people`, or implicitly by `personNames` on events and quick add's "with X". The app's editor always creates explicitly, then links by `personIds`, so a name it doesn't recognize becomes a question rather than a silent new person.
 - `POST /people` `{name, notes?}` → `{id, name, notes, created}`: 201 when new; when the name is taken, the existing person with `created: false`.

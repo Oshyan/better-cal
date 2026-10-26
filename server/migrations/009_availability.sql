@@ -1,4 +1,4 @@
--- Person availability (docs/design-availability.md): activates the dormant
+-- Person availability (docs/api-contract.md, People and Availability): activates the dormant
 -- availability table from 001. show_on_calendar gates whether a person's
 -- away/busy spans render as calendar bands (per-person opt-in, toggled from
 -- the sidebar People folder and persisted here so it round-trips to the

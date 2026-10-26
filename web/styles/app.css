@@ -2780,7 +2780,7 @@ body.bc-rescheduling { user-select: none; }
 }
 .bc-person-link:hover { text-decoration: underline; }
 
-/* --- availability (docs/design-availability.md; append-only section) -------- */
+/* --- availability (docs/api-contract.md, People and Availability; append-only) */
 
 /* Sidebar People folder: away people dim; kind pill. */
 /* Away: italic + the away pill. Never dimmed — dimming is reserved for

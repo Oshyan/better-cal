@@ -633,7 +633,7 @@ final class Ics
      * Handles VTIMEZONE, DATE values, RRULE, EXDATE and RECURRENCE-ID.
      * RELATED-TO properties are deliberately ignored on import for now: trip
      * membership is user-local metadata created only through the API (see
-     * docs/design-containers.md), so inbound feeds and file imports never
+     * docs/api-contract.md, Trips), so inbound feeds and file imports never
      * create or mutate event_links rows.
      *
      * @return list<array<string,mixed>> keys: uid, title, description, location, url,

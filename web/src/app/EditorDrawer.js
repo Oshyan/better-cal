@@ -342,7 +342,7 @@ export function EditorDrawer() {
     else clearEditorDraft();
   }, [form, nlText]); // eslint-disable-line
 
-  // Scheduling assist (docs/design-availability.md §4): when the event's
+  // Scheduling assist (docs/api-contract.md, People and Availability): when the event's
   // people are away/busy during its time, warn inline under the People
   // field. Best-effort and debounced; never blocks saving.
   const [availWarn, setAvailWarn] = useState([]);

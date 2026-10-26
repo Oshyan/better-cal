@@ -627,7 +627,7 @@ export function sendFeedback(occ, signal) {
 
 export { undo, refreshWindow };
 
-// --- trips (container events, docs/design-containers.md) ---------------------
+// --- trips (container events, docs/api-contract.md, Trips) -------------------
 // Attach/detach are relationships, not edits: members keep their own
 // calendar, colors and lifecycle. Every link change bumps tripLinksSeq (open
 // trip detail views refetch their member list) and refreshes the window so
@@ -1221,7 +1221,7 @@ export async function rsvpEvent(occ, answer, retryUncertain = false) {
   }
 }
 
-// --- people availability (docs/design-availability.md) ----------------------
+// --- people availability (docs/api-contract.md, People and Availability) -----
 
 // Toggle whether a person's away/busy spans render as calendar bands.
 // Persisted server-side (round-trips to the People page).

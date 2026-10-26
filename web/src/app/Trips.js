@@ -1,4 +1,4 @@
-// Trip UI (container events, docs/design-containers.md):
+// Trip UI (container events, docs/api-contract.md, Trips):
 // - TripSheetBody: what the side panel (desktop) or the sheet (phone) shows
 //   for a trip (0.7.0). Span, place, a map of its places, its events
 //   (GET /events/:id/links), adding and creating events, and the two-option

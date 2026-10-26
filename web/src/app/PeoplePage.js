@@ -1,7 +1,7 @@
 // People management page: everyone linked to events (via the editor's People
 // field or quick-add "with X"), with usage stats, freeform notes, rename
 // (renaming onto an existing name merges the two), delete, availability
-// spans (away/busy, docs/design-availability.md), the show-on-calendar
+// spans (away/busy, docs/api-contract.md, People and Availability), the show-on-calendar
 // toggle (mirrors the sidebar People folder), and an expandable per-person
 // event list whose rows jump the calendar to the event.
 

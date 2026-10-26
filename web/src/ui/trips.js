@@ -1,5 +1,5 @@
 // Pure trip (container event) math: span labels, backdrop band segmentation,
-// attach-candidate filtering, and span-extension math (docs/design-containers.md).
+// attach-candidate filtering, and span-extension math (docs/api-contract.md, Trips).
 // No DOM, no preact: unit-testable from the smoke suite.
 
 import { occurrenceDaySpan, rowSpanSegments } from './monthmath.js';

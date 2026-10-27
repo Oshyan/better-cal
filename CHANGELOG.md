@@ -12,7 +12,7 @@ Security fixes are tracked privately as GitHub security advisories until they sh
 - **Edit approved senders as text:** Settings, Invitations, Approved senders, Edit as text: one per line, with `*.example.com` for a domain's subdomains. Paste a list or import a CSV; lines that can't be used are left out and listed with the reason.
 - **A number on the app icon:** Settings, Notifications, Show on app icon: Review items waiting, events today, or events still to come today, on the installed app's icon on a computer, iPhone or iPad. Off by default.
 - **Event links become events:** paste or share a Luma, Partiful, Eventbrite, Meetup or Pie link into quick add and it fills in the title, time, place and link from the page, for you to check before saving.
-- **Holidays stand out:** a holiday's day has its header tinted in the holiday calendar's color, in every view. In the phone's 3-day view the holiday is a flag you tap to see it, instead of a name too squeezed to read.
+- **Holidays stand out:** a holiday's day has a stripe across the top of its header in the holiday calendar's color, in every view. In the phone's 3-day view the holiday is a flag you tap to see it, instead of a name too squeezed to read.
 - **Phone taps in a day's header:** weather and other context tokens open when tapped, a tap that misses them in the header no longer starts a new event, and pressing and holding a date offers New event or Day view.
 - **Reorder the sidebar:** drag a folder's header, or All calendars, People or Plugins, to a new place in the sidebar, or use Sidebar order, Edit, under Calendars & folders.
 - **Paste anywhere:** on a computer, Cmd/Ctrl+V on the calendar opens quick add with the link or text you copied, already read. Enter adds it.

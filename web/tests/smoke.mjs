@@ -31,6 +31,7 @@ import { sortByMatch } from '../src/lib/rank.js';
 import { zoneIndex, filterZones, parseOffset } from '../src/lib/zonesearch.js';
 import { parseJumpText, jumpGranularity, parseJumpTarget } from '../src/lib/jumpparse.js';
 import { activeMarker, markerSuggestions, applyMarkerPick, calendarMarker, personMarker, SUGGEST_MAX } from '../src/lib/markersuggest.js';
+import { pastedText } from '../src/lib/pastetext.js';
 import { parseClockText, resolveClock, minsToHHMM, hhmmToMins, parseDateText, durationLabel } from '../src/lib/whenparse.js';
 import { monthWeeks, stepMonthOf } from '../src/lib/minimonth.js';
 import { buildRange } from '../src/lib/quickrange.js';
@@ -761,6 +762,16 @@ console.log('--- quick add marker suggestions (#169) ---');
   eq('pick: at the end adds a space to keep typing', JSON.stringify(applyMarkerPick('Gym #f', activeMarker('Gym #f', 6), '#food')),
     JSON.stringify({ text: 'Gym #food ', caret: 10 }));
 }
+
+console.log('--- paste anywhere ---');
+eq('paste: plain text as is', pastedText('  Party at mine tomorrow 8pm \n', ''), 'Party at mine tomorrow 8pm');
+eq('paste: a copied title brings its one link', pastedText('Halloween party', '<a href="https://events.example.test/e/abc?x=1&amp;y=2">Halloween party</a>'),
+  'Halloween party https://events.example.test/e/abc?x=1&y=2');
+eq('paste: text with its own link keeps it alone', pastedText('See https://events.example.test/e/abc', '<a href="https://other.example.test/">x</a>'), 'See https://events.example.test/e/abc');
+eq('paste: several links say nothing about which', pastedText('Two events', '<a href="https://a.example.test/1">a</a> <a href="https://b.example.test/2">b</a>'), 'Two events');
+eq('paste: the same link twice is one link', pastedText('Gig', '<a href="https://a.example.test/1">a</a><a href=\'https://a.example.test/1\'>b</a>'), 'Gig https://a.example.test/1');
+eq('paste: mail and anchor links are not event links', pastedText('Ask', '<a href="mailto:host@example.test">x</a><a href="#top">y</a>'), 'Ask');
+eq('paste: nothing is nothing', pastedText('', ''), '');
 
 console.log('--- week start setting ---');
 // All earlier week tests ran under the default (Monday). Flip to Sunday and

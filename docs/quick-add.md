@@ -52,6 +52,12 @@ Typing a marker lists what it can name, narrowing as you type: `/` your calendar
 - **Away and busy times:** "Sam is away Aug 10-15", "Sam busy tomorrow".
 - **Links:** an event page's link, pasted or shared from a phone, becomes that event. See [Event Links](#event-links).
 
+## Paste Anywhere
+
+On a computer you don't have to open quick add first: copy an event's link, or a message like "party at mine tomorrow 8pm", and press Cmd+V (Ctrl+V on Windows) anywhere on the calendar. Quick add opens with it already read; Enter adds it, Esc leaves it. A Google Calendar link opens as that event in the editor, and a calendar's `.ics` or `webcal://` address opens Subscribe. Copy part of a web page or an email whose title links to the event, and that link comes along too.
+
+It only listens on the calendar itself: a paste into a text box, or while the editor or a dialog is open, does what it always did. On a phone, paste into quick add's box, or share the link or text to Better-Cal.
+
 ## Event Links
 
 Paste or share an event's link into quick add, alone or with a few words around it, and Better-Cal reads the page and fills in the title, time, place and the event's own link for you to check. Nothing is saved until you do.

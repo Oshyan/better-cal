@@ -54,6 +54,7 @@ What it doesn't do (for now): send invitations to guests, offer booking pages, o
 - A rule-based parser first; the LLM helps only when the parse is incomplete, with guards so it can never move an event into the past, drop companions or rewrite the title. Parse mode (smart, always, never) is a setting.
 - Quick add from outside the app: a "New event" shortcut on the installed app's icon, and an optional key (you choose it) in the Chrome extension that opens it from any app.
 - Paste a Google Calendar template link into quick add and it becomes the event, recurrence and all.
+- Paste anywhere: Cmd/Ctrl+V on the calendar opens quick add with what you copied, already read, so Enter adds it.
 - Paste or share an event page's link (Luma, Partiful, Eventbrite, Meetup, Pie) into quick add and the page fills in the title, time, place and link. [Event links](docs/quick-add.md#event-links) lists the sites it handles.
 - Drag to create (opens the editor pre-filled), drag and resize to reschedule.
 - Reschedule mode (`r`, or Move on an open event): the event follows your pointer as a ghost while you scroll or jump anywhere (months or years away), and a click drops it. For a repeating event it moves this occurrence only.

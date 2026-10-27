@@ -17,6 +17,7 @@ import { collapseDuplicates } from '../ui/duplicates.js';
 import { hidesCancelled } from '../ui/daysteps.js';
 import { sortByMatch } from '../lib/rank.js';
 import { installKeyboard } from './keyboard.js';
+import { installPasteAnywhere } from './pasteanywhere.js';
 import {
   addDaysKey, dateOfDayKey, toISOWithOffset, parseISO, epochDayOfKey,
   occDayKey, dayKeyOf, todayKey,
@@ -200,6 +201,8 @@ export function App() {
   };
 
   useEffect(() => installKeyboard(), []);
+  // Cmd/Ctrl+V on the calendar opens quick add with what was pasted.
+  useEffect(() => installPasteAnywhere(), []);
 
   // The app icon's number (#170): follow the setting, and show nothing once
   // signed out.

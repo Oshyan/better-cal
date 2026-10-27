@@ -96,6 +96,48 @@ export async function takeHandoff() {
   }
 }
 
+// A Google Calendar template link IS the event: one parser for every entry
+// path (QuickAdd handles GCal template links), into the full editor.
+async function openGcal(url) {
+  const data = await api('/quickadd', { method: 'POST', body: { text: url, tz: localTz() } });
+  const d = data && data.draft;
+  if (!d || !d.start) { toast('Could not read that calendar link', { error: true }); return; }
+  set({
+    editor: {
+      mode: 'create',
+      draft: {
+        title: d.title, start: d.start, end: d.end, allDay: d.allDay,
+        location: d.location, description: d.description, rrule: d.rrule,
+        calendarId: d.calendarId,
+      },
+    },
+  });
+}
+
+function openSubscribe(url) {
+  if (url && url.startsWith('webcal://')) url = 'https://' + url.slice('webcal://'.length);
+  set({ createDrawer: { kind: 'subscribe', url: url || '' } });
+}
+
+// Text that arrived from outside (shared from another app, or pasted onto
+// the calendar): the first link in it decides where it goes. A Google
+// Calendar link opens as that event, a calendar's .ics or webcal address
+// opens Subscribe, and anything else, an event page's link included, lands
+// in quick add for the parser to read.
+export async function openSharedText(shared) {
+  const text = String(shared || '').trim();
+  if (!text) return;
+  const m = text.match(/https?:\/\/\S+|webcal:\/\/\S+/i);
+  const url = m ? m[0] : null;
+  if (url && /calendar\.google\.com\/calendar\/(u\/\d+\/)?(r\/eventedit|render)\?/i.test(url)) {
+    await openGcal(url);
+  } else if (url && (/\.ics(\?|$)/i.test(url) || url.startsWith('webcal://'))) {
+    openSubscribe(url);
+  } else {
+    set({ quickAddOpen: true, quickAddSeed: text, route: 'calendar' });
+  }
+}
+
 export async function runHandoff(handoff) {
   if (!handoff) return;
   if (handoff.error) {
@@ -107,27 +149,6 @@ export async function runHandoff(handoff) {
     ? '?' + handoff.hash.slice(1) : (handoff.search || '');
   if (search.length > MAX_HANDOFF_BYTES) { toast('That link is too large to open.', { error: true }); return; }
   const params = new URLSearchParams(search);
-
-  const openGcal = async (url) => {
-    // One parser for every entry path: QuickAdd handles GCal template links.
-    const data = await api('/quickadd', { method: 'POST', body: { text: url, tz: localTz() } });
-    const d = data && data.draft;
-    if (!d || !d.start) { toast('Could not read that calendar link', { error: true }); return; }
-    set({
-      editor: {
-        mode: 'create',
-        draft: {
-          title: d.title, start: d.start, end: d.end, allDay: d.allDay,
-          location: d.location, description: d.description, rrule: d.rrule,
-          calendarId: d.calendarId,
-        },
-      },
-    });
-  };
-  const openSubscribe = (url) => {
-    if (url && url.startsWith('webcal://')) url = 'https://' + url.slice('webcal://'.length);
-    set({ createDrawer: { kind: 'subscribe', url: url || '' } });
-  };
 
   if (path === '/add') {
     // /add carries the GCal template params verbatim (extension redirect);
@@ -176,17 +197,6 @@ export async function runHandoff(handoff) {
       toast('That shared item was too large or invalid, so it was not opened.', { error: true });
       return;
     }
-    const shared = [p.url, p.text, p.title].filter(Boolean).join(' ').trim();
-    // First URL in the shared payload decides the route.
-    const m = shared.match(/https?:\/\/\S+|webcal:\/\/\S+/i);
-    const sharedUrl = m ? m[0] : null;
-    if (sharedUrl && /calendar\.google\.com\/calendar\/(u\/\d+\/)?(r\/eventedit|render)\?/i.test(sharedUrl)) {
-      await openGcal(sharedUrl);
-    } else if (sharedUrl && (/\.ics(\?|$)/i.test(sharedUrl) || sharedUrl.startsWith('webcal://'))) {
-      openSubscribe(sharedUrl);
-    } else if (shared) {
-      // Anything else lands in quick add for the parser to chew on.
-      set({ quickAddOpen: true, quickAddSeed: shared });
-    }
+    await openSharedText([p.url, p.text, p.title].filter(Boolean).join(' '));
   }
 }

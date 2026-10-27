@@ -320,7 +320,7 @@ export async function moveEvent({ instanceId, newStart, newEnd, scope }) {
     });
     patchOccurrence(instanceId, { _optimistic: false });
     const viaPlugin = pluginBacked(occ);
-    toast(viaPlugin ? 'Moved in ' + viaPlugin : googleBacked(occ) ? 'Event moved at Google' : 'Event moved', { undoable: !googleBacked(occ) && !viaPlugin, note: NO_UNDO });
+    toast(viaPlugin ? 'Moved in ' + viaPlugin : googleBacked(occ) ? 'Event moved at Google' : 'Event moved', { undoable: !googleBacked(occ), note: NO_UNDO });
     refreshWindow();
     maybePromptTripExit(occ, newStart, newEnd);
     return true;
@@ -342,7 +342,7 @@ export async function resizeEvent({ instanceId, newStart, newEnd, scope }) {
     });
     patchOccurrence(instanceId, { _optimistic: false });
     const viaPlugin = pluginBacked(occ);
-    toast(viaPlugin ? 'Changed in ' + viaPlugin : googleBacked(occ) ? 'Event resized at Google' : 'Event resized', { undoable: !googleBacked(occ) && !viaPlugin, note: NO_UNDO });
+    toast(viaPlugin ? 'Changed in ' + viaPlugin : googleBacked(occ) ? 'Event resized at Google' : 'Event resized', { undoable: !googleBacked(occ), note: NO_UNDO });
     refreshWindow();
     maybePromptTripExit(occ, newStart, newEnd);
     return true;

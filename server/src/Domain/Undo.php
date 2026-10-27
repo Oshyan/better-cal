@@ -161,6 +161,9 @@ final class Undo
         if ($mutation === null) {
             throw HttpError::notFound('Nothing to undo', 'nothing_to_undo');
         }
+        if ((string) $mutation['entity'] === 'plugin_edit') {
+            return $this->undoPluginEdit($mutation);
+        }
         return $this->apply($mutation);
     }
 
@@ -195,6 +198,9 @@ final class Undo
             if ($newer !== null) {
                 throw HttpError::badRequest('Newer changes exist for this item; undoing would overwrite them', 'stale_undo');
             }
+        }
+        if ((string) $mutation['entity'] === 'plugin_edit') {
+            return $this->undoPluginEdit($mutation);
         }
         return $this->apply($mutation);
     }
@@ -238,6 +244,54 @@ final class Undo
     }
 
     /** @return array{entity:string,op:string} */
+    /**
+     * Undo a time change a plugin wrote back to its source (Events'
+     * plugin write-through): send the earlier time to the source the same
+     * way, then store what it confirms. No local snapshot to restore: the
+     * row is the source's.
+     *
+     * @return array{entity:string,op:string}
+     */
+    private function undoPluginEdit(array $mutation): array
+    {
+        $details = json_decode((string) ($mutation['details_json'] ?? ''), true);
+        $span = is_array($details) ? ($details['span'] ?? null) : null;
+        $pluginId = is_array($details) ? (string) ($details['pluginId'] ?? '') : '';
+        $userId = (int) $mutation['user_id'];
+        $event = $this->db->one('SELECT * FROM events WHERE id = ? AND user_id = ? AND deleted_at IS NULL', [(int) $mutation['entity_id'], $userId]);
+        if (!is_array($span) || $pluginId === '' || $event === null) {
+            throw HttpError::badRequest('That event is no longer here to move back', 'not_undoable');
+        }
+        $calendar = $this->db->one('SELECT * FROM calendars WHERE id = ?', [(int) $event['calendar_id']]);
+        $plugins = new Plugins($this->db, null, config());
+        if ($calendar === null || (string) ($calendar['plugin_id'] ?? '') !== $pluginId || !$plugins->calendarReschedulable($calendar)) {
+            throw HttpError::badRequest('That event can no longer be moved back from here', 'not_undoable');
+        }
+        $prefix = 'plg-' . $pluginId . '-';
+        $uid = (string) $event['uid'];
+        $result = $plugins->applyEdit($userId, $pluginId, [
+            'sourceKey' => str_starts_with($uid, $prefix) ? substr($uid, strlen($prefix)) : $uid,
+            'eventId' => (int) $event['id'],
+            'calendarId' => (int) $event['calendar_id'],
+            'title' => (string) $event['title'],
+            'before' => Events::pluginSpan((string) $event['start_utc'], (string) $event['end_utc'], (int) $event['all_day'] === 1),
+            'after' => $span,
+        ]);
+        [$startUtc, $endUtc, $allDay] = \BetterCal\Plugin\PluginHost::spanToUtc($result);
+        $this->db->tx(function () use ($event, $startUtc, $endUtc, $allDay, $mutation): void {
+            $this->db->update('events', [
+                'start_utc' => $startUtc,
+                'end_utc' => $endUtc,
+                'all_day' => $allDay ? 1 : 0,
+                'tzid' => 'UTC',
+                'updated_at' => \BetterCal\Support\Time::nowDb(),
+            ], 'id = ?', [(int) $event['id']]);
+            ChangeLog::record($this->db, (int) $event['calendar_id'], (string) $event['uid'], ChangeLog::OP_MODIFY);
+            $this->db->update('mutations', ['undone' => 1], 'id = ?', [(int) $mutation['id']]);
+        });
+        return ['entity' => 'event', 'op' => 'update'];
+    }
+
     private function apply(array $mutation): array
     {
 

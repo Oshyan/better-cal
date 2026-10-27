@@ -944,7 +944,12 @@ final class Plugins
         if (!is_array($span) || !is_string($span['start'] ?? null) || !is_string($span['end'] ?? null)) {
             throw new HttpError('plugin_edit_failed', $name . ' gave back no time for the event', 502);
         }
-        return ['start' => $span['start'], 'end' => $span['end'], 'allDay' => !empty($span['allDay'])];
+        $out = ['start' => $span['start'], 'end' => $span['end'], 'allDay' => !empty($span['allDay'])];
+        $undo = $span['undo'] ?? null;
+        if (is_array($undo) && is_string($undo['start'] ?? null) && is_string($undo['end'] ?? null)) {
+            $out['undo'] = ['start' => $undo['start'], 'end' => $undo['end'], 'allDay' => !empty($undo['allDay'])];
+        }
+        return $out;
     }
 
     // ---- execution ------------------------------------------------------

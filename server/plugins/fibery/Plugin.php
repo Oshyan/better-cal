@@ -382,7 +382,7 @@ return new class implements PluginInterface, EditablePlugin {
      *
      * @return array{0:array{start:string,end:string,allDay:bool},1:?string}|null
      */
-    private function displaySpan(array $plan, mixed $value, array $s, \DateTimeZone $tz, bool $final): ?array
+    private function displaySpan(array $plan, mixed $value, array $s, \DateTimeZone $tz, bool $final, bool $roll = true): ?array
     {
         if ($value === null || $value === '' || $value === []) {
             return null;
@@ -433,7 +433,7 @@ return new class implements PluginInterface, EditablePlugin {
         $today = (new \DateTimeImmutable('now', $tz))->format('Y-m-d');
         $single = in_array($plan['dateType'], ['fibery/date', 'fibery/date-time'], true);
         $day = $span['allDay'] ? $span['start'] : (new \DateTimeImmutable($span['start']))->setTimezone($tz)->format('Y-m-d');
-        if ($plan['slot'] === 'task' && $single && !empty($plan['workflow']) && !$final && !empty($s['overdueOnToday']) && $day < $today) {
+        if ($roll && $plan['slot'] === 'task' && $single && !empty($plan['workflow']) && !$final && !empty($s['overdueOnToday']) && $day < $today) {
             $todayStart = new \DateTimeImmutable($today, $tz);
             return [self::allDay($todayStart, $todayStart->modify('+1 day')), (new \DateTimeImmutable($day, $tz))->format('D, M j')];
         }
@@ -495,7 +495,10 @@ return new class implements PluginInterface, EditablePlugin {
         }
         $final = $plan['workflow'] && !empty($current['workflow/state']['workflow/Final']);
         $shown = $this->displaySpan($plan, $value, $s, $tz, $final);
-        return $shown !== null ? $shown[0] : $after;
+        // What undo sends back to restore the previous value: its real date,
+        // not today for a task that was showing there because it's overdue.
+        $previous = $this->displaySpan($plan, $current[$plan['dateField']] ?? null, ['taskTimes' => 'timed'] + $s, $tz, $final, false);
+        return ($shown !== null ? $shown[0] : $after) + ($previous !== null ? ['undo' => $previous[0]] : []);
     }
 
     /**

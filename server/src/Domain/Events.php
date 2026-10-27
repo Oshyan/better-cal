@@ -154,7 +154,7 @@ final class Events
     }
 
     /** @return array{start:string,end:string,allDay:bool} */
-    private static function pluginSpan(string $startUtc, string $endUtc, bool $allDay): array
+    public static function pluginSpan(string $startUtc, string $endUtc, bool $allDay): array
     {
         $s = Time::fromDb($startUtc);
         $e = Time::fromDb($endUtc);
@@ -207,7 +207,14 @@ final class Events
             ], 'id = ?', [(int) $event['id']]);
             ChangeLog::record($this->db, (int) $event['calendar_id'], (string) $event['uid'], ChangeLog::OP_MODIFY);
         });
-        $this->undo->record($userId, 'event', (int) $event['id'], 'update', null, null, "Moved '" . (string) $event['title'] . "' in " . $name);
+        // Undoable like any move: undoing writes the previous time back to
+        // the source (Undo::undoPluginEdit). The plugin may say exactly what
+        // to put back (an overdue task shown on today goes back to its real
+        // due date); otherwise it's where the event showed before.
+        $this->undo->record($userId, 'plugin_edit', (int) $event['id'], 'update', [], [], "Moved '" . (string) $event['title'] . "' in " . $name, [
+            'pluginId' => $pluginId,
+            'span' => $span['undo'] ?? $before,
+        ], [(int) $event['calendar_id']]);
     }
 
     // ---- Google write-through ---------------------------------------------------

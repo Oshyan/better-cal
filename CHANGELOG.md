@@ -6,7 +6,7 @@ Security fixes are tracked privately as GitHub security advisories until they sh
 
 ## Unreleased
 
-- **Fibery plugin:** your Fibery tasks and projects on the calendar. Drag one (or use Move) and its date changes in Fibery; changes made there arrive within a minute. [Fibery](docs/plugins/fibery.md) has the setup.
+- **Fibery plugin:** your Fibery tasks and projects on the calendar. Drag one (or use Move) and its date changes in Fibery, with Undo; changes made there arrive within a minute. [Fibery](docs/plugins/fibery.md) has the setup.
 - **Drag events out of a day's full list:** in a busy month day, open the full list ("+N more") and drag any event onto another day. The list steps aside while you drag and comes back afterwards, so you can move several in a row. The list is also wider (up to 520 pixels on a big screen), long titles wrap instead of being cut off, and each event shows its time inside it, as in the grid; clicking an event opens it, so the separate open buttons are gone.
 - **The "Better-Cal was updated" banner is at the top,** under the toolbar and in a stronger color, with Reload right beside the message; at the bottom of a large screen it was easy to miss.
 - **Questions you can't take back ask in the app:** adopting a calendar, removing a subscription or a person, sending an invitation reply again, undoing over newer changes and stopping reminders on a device now ask in a dialog with Cancel first and a button that says what it does. Deleting a folder, or an event with the Delete key, no longer asks; Undo is in the notice instead.

@@ -19,6 +19,6 @@ Tasks and projects each get their own calendar (Fibery tasks, Fibery projects), 
 
 ## Changing Dates Here
 
-Only the time can change from Better-Cal; titles, details and everything else are edited in Fibery. A task moved to another day keeps its time of day, so one due at midnight stays at midnight; it has one date, so it moves but doesn't stretch. A project keeps its length when moved, and a resize changes its start or end. If Fibery refuses a change, the event goes back and the message says why. Like Google calendars, these changes can't be undone in Better-Cal; Fibery keeps its own history.
+Only the time can change from Better-Cal; titles, details and everything else are edited in Fibery. A task moved to another day keeps its time of day, so one due at midnight stays at midnight; it has one date, so it moves but doesn't stretch. A project keeps its length when moved, and a resize changes its start or end. If Fibery refuses a change, the event goes back and the message says why. Undo works as for any move: it puts the date back in Fibery (an overdue task goes back to its real due date, not today).
 
 Dates follow Fibery's own rules: date-times are shown in your Home time zone, and date-only fields and date ranges never shift between zones.

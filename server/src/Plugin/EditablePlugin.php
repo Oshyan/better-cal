@@ -26,11 +26,14 @@ interface EditablePlugin
      *
      * Return the span the source now holds (usually `after`, but it may
      * differ, say a date-only field that keeps the day and drops a time).
+     * Optionally add `undo`: the span that, sent back as `after`, restores
+     * what the source held before (when that isn't simply `before`, say an
+     * item shown on a different day than its real date). Undo uses it.
      * Throw PluginEditRefused with a sentence the person can read when the
      * source refuses; the event is put back where it was.
      *
      * @param array<string,mixed> $edit
-     * @return array{start:string,end:string,allDay:bool}
+     * @return array{start:string,end:string,allDay:bool,undo?:array{start:string,end:string,allDay:bool}}
      */
     public function applyEdit(PluginHost $host, array $edit): array;
 }

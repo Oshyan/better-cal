@@ -298,7 +298,7 @@ public function applyEdit(PluginHost $host, array $edit): array
 
 `$edit` is `{sourceKey, eventId, calendarId, title, before, after}`, where `before` and `after` are `{start, end, allDay}` spans in the shapes `syncEvents` takes. Write `after` to your source and return the span it now holds (usually `after`). Throw `PluginEditRefused` with one plain sentence when the source says no: the event goes back and the person reads your sentence. Any other exception reads as "<your plugin> couldn't make the change".
 
-It runs while the person waits, like a Google calendar's write, so keep it to the write itself. Your next sync then finds the source already changed. There's no undo for these edits; the source keeps its own history. See `fibery` for a working example.
+It runs while the person waits, like a Google calendar's write, so keep it to the write itself. Your next sync then finds the source already changed. Undo writes the earlier time back through `applyEdit` too. Return `undo` alongside the span when the source's previous value isn't simply `before` (Fibery shows an overdue task on today, but undo must restore its real due date). See `fibery` for a working example.
 
 ### Text and HTML
 

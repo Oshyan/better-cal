@@ -2026,6 +2026,17 @@ body.bc-dragging * { cursor: grabbing !important; }
 .bc-set-value code { font-family: var(--mono); background: var(--bg-inset); border-radius: 4px; padding: 0 4px; }
 .bc-set-away { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--fg-muted); }
 .bc-set-hint { flex-basis: 100%; margin-left: 182px; color: var(--fg-muted); font-size: 12px; }
+/* Approved senders (#151): the list wraps inline, each with its remove; the
+   text editor takes the control's full width. */
+.bc-sender { display: inline-flex; align-items: center; gap: 2px; padding: 1px 2px 1px 8px; border: 1px solid var(--border); border-radius: 999px; font-size: 13px; }
+.bc-sender .bc-icon-btn { width: 20px; height: 20px; }
+.bc-senders-text { flex-basis: 100%; width: 100%; min-height: 9em; resize: vertical; font-family: var(--mono); font-size: 13px; }
+.bc-senders-actions { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.bc-senders-import { position: relative; overflow: hidden; }
+.bc-senders-import input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+.bc-senders-leftout { flex-basis: 100%; color: var(--fg-muted); font-size: 12px; }
+.bc-senders-leftout ul { margin: 2px 0 4px; padding-left: 18px; }
+.bc-senders-leftout code { font-family: var(--mono); }
 
 @media (max-width: 640px), (pointer: coarse) and (max-height: 500px) and (max-width: 1000px) {
   /* On a phone the label sits above what it names, so it has to read as the

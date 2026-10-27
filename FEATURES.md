@@ -110,7 +110,7 @@ What it doesn't do (for now): send invitations to guests, offer booking pages, o
 
 ### Email Ingest and RSVP
 
-- A dedicated ingest mailbox, read every 2 minutes; forward event emails to it, by hand or with a filter. [Email ingest](docs/email-ingest.md) has the setup.
+- A dedicated ingest mailbox, read every 2 minutes; forward event emails to it, by hand or with a filter. New events from approved senders (addresses, domains or `*.example.com`, approved from Review or edited as a list) are added; others wait in Review. [Email ingest](docs/email-ingest.md) has the setup.
 - Events are read by the most reliable route a message offers: invitation files, schema.org data, embedded add-to-Google links (which survive forwarding), then an LLM pass over the text.
 - Guards so a forward's own timestamp can never become the event date, and no event is invented without a date in the message.
 - A Review queue instead of silent changes: when an organizer emails a change or a cancellation for something already on your calendar, it waits with a from/to view of exactly what would change. Email isn't authenticated, so nothing an email says can move or cancel your event until you accept it, and accepting is an ordinary, undoable edit. Forged organizers and replayed old versions are refused and logged.

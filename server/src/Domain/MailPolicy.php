@@ -41,7 +41,7 @@ final class MailPolicy
         return self::domainAllowed($domain) ? $domain : null;
     }
 
-    /** Canonical entries also support the later bulk editor's *.example.com syntax. */
+    /** Canonical entries: an exact address, a domain, or *.example.com for its subdomains. */
     public static function rules(mixed $values): array
     {
         if (!is_array($values) || !array_is_list($values)) {
@@ -51,18 +51,76 @@ final class MailPolicy
         foreach ($values as $value) {
             if (!is_string($value)) throw HttpError::badRequest('Each approved sender must be text');
             $value = strtolower(trim($value));
-            if (self::address($value) === null) {
-                $domain = str_starts_with($value, '*.') ? substr($value, 2) : $value;
-                if (strlen($domain) > 253 || preg_match('/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/D', $domain) !== 1) {
-                    throw HttpError::badRequest('Invalid approved sender: ' . $value);
-                }
-                if (!self::domainAllowed($domain)) {
-                    throw HttpError::badRequest('Shared mail providers can only be approved as exact email addresses.');
-                }
+            $problem = self::ruleProblem($value);
+            if ($problem === 'shared') {
+                throw HttpError::badRequest('Shared mail providers can only be approved as exact email addresses.');
             }
+            if ($problem !== null) throw HttpError::badRequest('Invalid approved sender: ' . $value);
             $out[$value] = true;
         }
         return array_keys($out);
+    }
+
+    /** Why a canonical (lowercased, trimmed) entry can't be a rule: 'invalid', 'shared', or null when it can. */
+    private static function ruleProblem(string $value): ?string
+    {
+        if (self::address($value) !== null) return null;
+        $domain = str_starts_with($value, '*.') ? substr($value, 2) : $value;
+        if (strlen($domain) > 253 || preg_match('/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/D', $domain) !== 1) {
+            return 'invalid';
+        }
+        return self::domainAllowed($domain) ? null : 'shared';
+    }
+
+    public const LIST_TEXT_MAX = 200_000;
+    public const LIST_LINES_MAX = 5_000;
+
+    /**
+     * The approved senders typed or pasted as text, one per line, for the
+     * bulk editor: what can be approved, in order with duplicates merged, and
+     * each line that can't, with the reason, so one bad line never sinks the
+     * rest. A pasted CSV works too (the first column is used), as do
+     * "Name <address>" and "@example.com". Blank lines and # comments are
+     * skipped. Nothing is saved here.
+     *
+     * @return array{rules: list<string>, invalid: list<array{line: string, reason: string}>}
+     */
+    public static function parseList(string $text): array
+    {
+        if (strlen($text) > self::LIST_TEXT_MAX) {
+            throw HttpError::badRequest('That list is too long to read at once.');
+        }
+        $lines = preg_split('/\r\n|\r|\n/', $text) ?: [];
+        if (count($lines) > self::LIST_LINES_MAX) {
+            throw HttpError::badRequest('That list has more than ' . number_format(self::LIST_LINES_MAX) . ' lines.');
+        }
+        $rules = [];
+        $invalid = [];
+        foreach ($lines as $raw) {
+            $line = trim($raw);
+            if ($line === '' || str_starts_with($line, '#')) continue;
+            $entry = $line;
+            if (preg_match('/<([^<>]+)>/', $entry, $m) === 1) {
+                $entry = $m[1]; // "Example Bookings <bookings@example.com>"
+            } else {
+                $entry = preg_split('/[,;\t]/', $entry)[0]; // a CSV row: its first column
+            }
+            $entry = strtolower(trim($entry, " \t\"'"));
+            if (str_starts_with($entry, 'mailto:')) $entry = substr($entry, 7);
+            if (str_starts_with($entry, '@')) $entry = substr($entry, 1);
+            $problem = $entry === '' ? 'invalid' : self::ruleProblem($entry);
+            if ($problem === null) {
+                $rules[$entry] = true;
+                continue;
+            }
+            $invalid[] = [
+                'line' => mb_substr($line, 0, 200),
+                'reason' => $problem === 'shared'
+                    ? 'a shared mail provider, which can only be approved as an exact address'
+                    : 'not an address or a domain',
+            ];
+        }
+        return ['rules' => array_keys($rules), 'invalid' => $invalid];
     }
 
     public static function addsAutomatically(array $settings, string $from): bool

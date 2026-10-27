@@ -56,6 +56,36 @@ foreach ([
     [['mailApprovedSenders' => ['sam@gmail.com']], 'sam@gmail.com', true],
 ] as [$settings, $from, $expected]) checkEq('mail policy: mode and domain boundaries', $expected, MailPolicy::addsAutomatically($settings, $from));
 
+// The bulk editor's text (#151): one bad line never sinks the rest.
+$parsed = MailPolicy::parseList(implode("\n", [
+    'email,name',
+    '"bookings@example.test","Example Bookings"',
+    'Ticket Desk <Tickets@Shows.example.test>',
+    '',
+    '# venues',
+    '@venue.example.test',
+    '*.events.example.test',
+    'mailto:host@example.test',
+    'example.test; the whole domain',
+    'BOOKINGS@example.test',
+    'gmail.com',
+    'alex.example@gmail.com',
+    'not a sender',
+]));
+checkEq('mail list: CSV, angle brackets, @domain, wildcard and mailto read; duplicates merged', [
+    'bookings@example.test', 'tickets@shows.example.test', 'venue.example.test',
+    '*.events.example.test', 'host@example.test', 'example.test', 'alex.example@gmail.com',
+], $parsed['rules']);
+checkEq('mail list: bad lines are kept back with a reason, blanks and comments skipped', [
+    ['line' => 'email,name', 'reason' => 'not an address or a domain'],
+    ['line' => 'gmail.com', 'reason' => 'a shared mail provider, which can only be approved as an exact address'],
+    ['line' => 'not a sender', 'reason' => 'not an address or a domain'],
+], $parsed['invalid']);
+checkEq('mail list: what it reads saves as is', $parsed['rules'], MailPolicy::rules($parsed['rules']));
+checkEq('mail list: empty text is an empty list', ['rules' => [], 'invalid' => []], MailPolicy::parseList("\n  \n"));
+try { MailPolicy::parseList(str_repeat("a@example.test\n", MailPolicy::LIST_LINES_MAX + 1)); check('mail list: too many lines refused', false); }
+catch (BetterCal\Http\HttpError) { check('mail list: too many lines refused', true); }
+
 $db = $mailDb();
 foreach ([['created', 'orders@example.test'], ['updated', 'sam@gmail.com'], ['held', 'unknown@example.test'], ['error', 'broken@example.test']] as [$outcome, $sender]) {
     $db->insert('mail_ingest', ['outcome' => $outcome, 'from_addr' => $sender]);

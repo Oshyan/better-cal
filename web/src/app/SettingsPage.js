@@ -10,6 +10,7 @@ import { api, logout, loadSystemHealth, loadCalendars, loadReviewCount, loadUpda
 import { fmtSince } from '../lib/since.js';
 import { adoptSettings } from './settings.js';
 import { saveSetting } from './actions.js';
+import { holdReload } from './drafts.js';
 import { recentStarts } from './resume.js';
 import { needsAttention, WorkerNote } from './system.js';
 import { stalledStart } from './bootlog.js';
@@ -453,6 +454,68 @@ function ChangePasswordRow() {
       <button type="button" class="bc-link-btn" disabled=${busy} onClick=${() => { setOpen(false); setCurrent(''); setNext(''); }}>Cancel</button>
     </form>`}
   <//>`;
+}
+
+// The approved senders list (#151): remove one at a time, or edit it all as
+// text. The server reads the text (MailPolicy::parseList), so a line it can't
+// use is left out and listed with the reason instead of failing the save.
+const SENDERS_FILE_MAX = 200000;
+function ApprovedSenders({ senders, save }) {
+  const [text, setText] = useState(null); // null: showing the list
+  const [busy, setBusy] = useState(false);
+  const [leftOut, setLeftOut] = useState([]);
+  const editing = text !== null;
+  const dirty = editing && text !== senders.join('\n');
+  const holdKey = 'approved-senders';
+  useEffect(() => { holdReload(holdKey, dirty); }, [dirty]);
+  useEffect(() => () => holdReload(holdKey, false), []);
+
+  const importFile = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    if (file.size > SENDERS_FILE_MAX) { toast('That file is too large for a sender list', { error: true }); return; }
+    const added = await file.text();
+    setText((cur) => (cur && cur.trim() ? cur.replace(/\s*$/, '\n') : '') + added);
+  };
+  const saveText = async () => {
+    setBusy(true);
+    try {
+      const res = await api('/settings/mail-senders/parse', { method: 'POST', body: { text } });
+      if (await save(res.rules)) {
+        setLeftOut(res.invalid || []);
+        setText(null);
+      }
+    } catch (e) {
+      toast('Could not read the list: ' + e.message, { error: true });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (editing) {
+    return html`<textarea
+        class="bc-senders-text" aria-label="Approved senders, one per line" spellcheck="false"
+        placeholder=${'bookings@example.com\nexample.com\n*.example.com'}
+        value=${text} onInput=${(e) => setText(e.target.value)}
+      ></textarea>
+      <span class="bc-senders-actions">
+        <button type="button" class="bc-btn bc-btn-primary" disabled=${busy} onClick=${saveText}>${busy ? 'Saving' : 'Save list'}</button>
+        <button type="button" class="bc-btn" disabled=${busy} onClick=${() => setText(null)}>Cancel</button>
+        <label class="bc-btn bc-senders-import">Import CSV<input type="file" accept=".csv,.txt,text/csv,text/plain" onChange=${importFile} /></label>
+      </span>`;
+  }
+  return html`${senders.length === 0 && html`<span>No approved senders yet. The first event from a sender waits in Review.</span>`}
+    ${senders.map((sender) => html`<span class="bc-sender" key=${sender}>
+      <span>${sender}</span>
+      <button type="button" class="bc-icon-btn" aria-label=${'Remove ' + sender} title="Remove" onClick=${() => save(senders.filter((s) => s !== sender))}><${Icon} name="close" size=${12} /></button>
+    </span>`)}
+    <button type="button" class="bc-link-btn" onClick=${() => { setLeftOut([]); setText(senders.join('\n')); }}>Edit as text</button>
+    ${leftOut.length > 0 && html`<div class="bc-senders-leftout" role="status">
+      <span>Left out ${leftOut.length === 1 ? 'one line' : leftOut.length + ' lines'}:</span>
+      <ul>${leftOut.map((x, i) => html`<li key=${i}><code>${x.line}</code>: ${x.reason}</li>`)}</ul>
+      <button type="button" class="bc-link-btn" onClick=${() => setLeftOut([])}>Dismiss</button>
+    </div>`}`;
 }
 
 function Row({ label, hint, children }) {
@@ -928,11 +991,8 @@ export function SettingsPage() {
           <option value="review">Hold everything for Review</option>
         </select>
       <//>
-      <${Row} label="Approved senders" hint="Approve an address or a domain from Review. Shared mail providers can only be approved as exact addresses. Sender addresses can be forged; keep your ingest address private. Approvals are used only in From approved senders mode.">
-        ${(settings.mailApprovedSenders || []).length === 0 && html`<span>No approved senders yet. The first event from a sender waits in Review.</span>`}
-        ${(settings.mailApprovedSenders || []).map((sender) => html`<div key=${sender}>
-          <span>${sender}</span> <button type="button" class="bc-link-btn" onClick=${() => save('mailApprovedSenders')((settings.mailApprovedSenders || []).filter((s) => s !== sender))}>Remove</button>
-        </div>`)}
+      <${Row} label="Approved senders" hint="Approve an address or a domain from Review, or edit the list as text: one per line, an address, a domain, or *.example.com for its subdomains (a pasted CSV uses its first column). Shared mail providers can only be approved as exact addresses. Sender addresses can be forged; keep your ingest address private. Approvals are used only in From approved senders mode.">
+        <${ApprovedSenders} senders=${settings.mailApprovedSenders || []} save=${save('mailApprovedSenders')} />
       <//>
       <${Row} label="Cancelled invitations" hint="When an organizer cancels, the cancellation waits in Review. Accepting it normally keeps the event, struck through, as a record. With this on, accepting removes it instead; Undo brings it back.">
         <label class="bc-set-check"><input

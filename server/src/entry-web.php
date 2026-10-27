@@ -341,6 +341,7 @@ function bc_handle_api(Request $request, array $cfg): void
 
         $router->add('GET', "$base/settings", [$settingsController, 'index']);
         $router->add('PATCH', "$base/settings", [$settingsController, 'patch']);
+        $router->add('POST', "$base/settings/mail-senders/parse", [$settingsController, 'parseMailSenders']);
         $router->add('GET', "$base/updates", [$updatesController, 'status']);
         $router->add('POST', "$base/updates/check", [$updatesController, 'check']);
         $router->add('POST', "$base/updates/dismiss", [$updatesController, 'dismiss']);

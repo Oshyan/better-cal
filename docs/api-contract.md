@@ -290,6 +290,7 @@ Preferences are stored per user. The server stores and validates them; the clien
 
 - `GET /settings` → `{settings:{...}}` with every key in the table.
 - `PATCH /settings` (any subset of the writable keys) → `{settings:{...}}`, the full merged object. Unknown or read-only keys are 400 `unknown_setting`; invalid values are 400.
+- `POST /settings/mail-senders/parse` `{text}` → `{rules:[string], invalid:[{line, reason}]}`: reads an approved-senders list typed or pasted as text (one per line; a CSV row's first column, `Name <address>`, `@example.com` and `mailto:` work; blank lines and `#` comments are skipped) into canonical rules, with each line it can't use. Saves nothing: send `rules` as `mailApprovedSenders` in `PATCH /settings`. Text over 200,000 bytes or 5,000 lines is 400.
 
 | Key | Values | Default | Notes |
 |---|---|---|---|

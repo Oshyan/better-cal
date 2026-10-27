@@ -12,6 +12,7 @@ import { html, useState, useEffect, useRef } from '../../vendor/index.js';
 import { PlaceInput } from './PlaceInput.js';
 import { useStore } from './store.js';
 import { api } from './api.js';
+import { holdReload } from './drafts.js';
 import { Icon } from '../ui/icons.js';
 
 const PENDING = 'Choices appear here after the plugin connects (within a minute of saving).';
@@ -252,7 +253,12 @@ export function SchemaForm({ schema, values, onSave, saveLabel = 'Save', pluginI
   // Reloading another plugin replaces the values object too. Only a real
   // saved-value change should reset this form, not an unrelated list refresh.
   useEffect(() => { setDraft({ ...values }); }, [JSON.stringify(values)]);
-  const dirty = create || (schema || []).some((f) => JSON.stringify(draft[f.key]) !== JSON.stringify(values[f.key]));
+  const changed = (schema || []).some((f) => JSON.stringify(draft[f.key]) !== JSON.stringify(values[f.key]));
+  const dirty = create || changed;
+  // Unsaved changes hold the app's background update reload (drafts.js).
+  const holdKey = useRef({});
+  useEffect(() => { holdReload(holdKey.current, changed); }, [changed]);
+  useEffect(() => () => holdReload(holdKey.current, false), []);
 
   const save = async () => {
     setBusy(true);
@@ -277,7 +283,9 @@ export function SchemaForm({ schema, values, onSave, saveLabel = 'Save', pluginI
     ${rows(schema, draft).map(({ fields: [f, ...joined], heading }) => {
       // A checklist is a group of checkboxes, so it can't sit inside one label.
       const Tag = joined.length > 0 || f.type === 'checklist' || f.type === 'location' ? 'div' : 'label';
-      const missing = f.required && (draft[f.key] == null || draft[f.key] === '');
+      const v = draft[f.key];
+      // A secret is there once stored ({set: true}) or typed.
+      const missing = f.required && (v == null || v === '' || (typeof v === 'object' && !Array.isArray(v) && v.set === false));
       const control = (field) => html`<${Field} field=${field} value=${draft[field.key]} pluginId=${pluginId} placeSources=${placeSources} onChange=${(v) => setDraft({ ...draft, [field.key]: v })} />`;
       return html`
         ${heading && html`<h4 key=${'s-' + f.key} class="bc-schema-section">${heading}</h4>`}

@@ -6656,6 +6656,39 @@ return new class implements BetterCal\Plugin\PluginInterface, BetterCal\Plugin\E
     rmdir($dir);
 }
 
+// A plugin with required settings waits for them: no scheduled runs, no
+// run now, until they're filled (a key counts once it's stored).
+{
+    $dir = sys_get_temp_dir() . '/bc-setup-plugins-' . bin2hex(random_bytes(4));
+    mkdir($dir . '/needy', 0700, true);
+    file_put_contents($dir . '/needy/plugin.json', json_encode(['id' => 'needy', 'name' => 'Needy', 'version' => '1.0.0', 'jobs' => [['id' => 'sync', 'interval' => 'PT1M']], 'settings' => [
+        ['key' => 'workspace', 'type' => 'text', 'label' => 'Workspace', 'required' => true],
+        ['key' => 'token', 'type' => 'secret', 'label' => 'API key', 'required' => true],
+        ['key' => 'extra', 'type' => 'text', 'label' => 'Extra'],
+    ]]));
+    file_put_contents($dir . '/needy/Plugin.php', '<?php
+return new class implements BetterCal\\Plugin\\PluginInterface {
+    public function runJob(BetterCal\\Plugin\\PluginHost $host, string $jobId): void { $GLOBALS["needyRan"] = true; }
+    public function validateSettings(array $values): array { return []; }
+};');
+    $ndb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $ndb->run('CREATE TABLE plugins (id TEXT PRIMARY KEY, enabled INTEGER, settings_json TEXT, consecutive_failures INTEGER DEFAULT 0, disabled_reason TEXT, changed_by_token_id INTEGER)');
+    $ndb->run('CREATE TABLE plugin_runs (id INTEGER PRIMARY KEY, plugin_id TEXT, job_id TEXT, run_id TEXT, started_at TEXT, duration_ms INTEGER, outcome TEXT, log_tail TEXT)');
+    $ndb->run("INSERT INTO plugins (id, enabled, settings_json) VALUES ('needy', 1, ?)", [json_encode(['workspace' => '  '])]);
+    $needy = new BetterCal\Domain\Plugins($ndb, $dir, ['session_secret' => str_repeat('k', 32)]);
+    checkEq('setup: required settings still empty are named', ['Workspace', 'API key'], $needy->missingRequired('needy'));
+    checkEq('setup: a plugin waiting for them has no jobs due', [], $needy->dueJobs());
+    $GLOBALS['needyRan'] = false;
+    checkEq('setup: a queued run does nothing', 'skipped', $needy->runJob(1, 'needy', 'sync')['outcome']);
+    check('setup: and runs no plugin code', $GLOBALS['needyRan'] === false);
+    $ndb->run("UPDATE plugins SET settings_json = ? WHERE id = 'needy'", [json_encode(['workspace' => 'sample', 'token' => ['__bettercalSecret' => 'sealed']])]);
+    checkEq('setup: once filled (the key stored), nothing is missing', [], (new BetterCal\Domain\Plugins($ndb, $dir, []))->missingRequired('needy'));
+    checkEq('setup: and its job comes due', [['plugin' => 'needy', 'job' => 'sync']], (new BetterCal\Domain\Plugins($ndb, $dir, []))->dueJobs());
+    array_map('unlink', glob($dir . '/needy/*'));
+    rmdir($dir . '/needy');
+    rmdir($dir);
+}
+
 // Calendars a person adds to a plugin one at a time (ownCalendars), each
 // with its own settings; a location setting can follow another calendar's
 // place; long choice lists are searched on the server.

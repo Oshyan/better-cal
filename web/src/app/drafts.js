@@ -156,6 +156,16 @@ export function restoreDraftsAfterBoot() {
 // who were only reading.
 let armed = false;
 
+// Forms with unsaved changes (a plugin's settings, a key half pasted) hold
+// the background reload: it would discard them, and settings, unlike event
+// drafts, aren't saved across one. The reload waits for the next time the
+// app goes out of sight with nothing held. The banner's Reload still works.
+const reloadHolds = new Set();
+
+export function holdReload(key, on) {
+  if (on) reloadHolds.add(key); else reloadHolds.delete(key);
+}
+
 // A fresh navigation rather than location.reload(), so the document is asked
 // for again, not reused; the new document's versioned script addresses
 // (server/src/Http/AppShell.php) then load the new version. iPhone Safari had
@@ -174,11 +184,11 @@ export function armBackgroundReload() {
   armed = true;
   // Out of sight already (the half-hourly check found it in a background
   // tab): apply it now, so coming back finds the new version.
-  if (document.visibilityState === 'hidden') {
+  if (document.visibilityState === 'hidden' && reloadHolds.size === 0) {
     reloadForUpdate();
     return;
   }
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden') reloadForUpdate();
+    if (document.visibilityState === 'hidden' && reloadHolds.size === 0) reloadForUpdate();
   });
 }

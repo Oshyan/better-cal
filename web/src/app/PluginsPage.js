@@ -71,10 +71,14 @@ function PluginRow({ p }) {
     }
   };
 
+  const needs = p.needsSetup || [];
+  const needsText = 'Fill in ' + needs.join(' and ') + ' to start.';
+  // Turning on a plugin that still needs settings opens them: it waits for
+  // them rather than running (and failing) every minute.
   const toggle = () => act(
     () => api('/plugins/' + p.id + '/' + (p.enabled ? 'disable' : 'enable'), { method: 'POST' }),
-    p.enabled ? p.name + ' turned off' : p.name + ' turned on. Its first run starts within a minute.',
-  );
+    p.enabled ? p.name + ' turned off' : p.name + ' turned on. ' + (needs.length > 0 ? needsText : 'Its first run starts within a minute.'),
+  ).then(() => { if (!p.enabled && needs.length > 0) setOpenSettings(true); });
 
   const runNow = () => act(async () => {
     const d = await api('/plugins/' + p.id + '/run', { method: 'POST' });
@@ -118,7 +122,7 @@ function PluginRow({ p }) {
         ${p.permissions.map((perm) => html`<span key=${perm} class="bc-plugin-perm">${perm}</span>`)}
       </div>
       <div class="bc-plugin-tools">
-        ${p.enabled && html`<button type="button" class="bc-btn" disabled=${busy} onClick=${runNow}>Run now</button>`}
+        ${p.enabled && html`<button type="button" class="bc-btn" disabled=${busy || needs.length > 0} title=${needs.length > 0 ? needsText : 'Run its jobs now'} onClick=${runNow}>Run now</button>`}
         ${p.enabled && p.settingsSchema.length > 0 && html`<button type="button" class="bc-icon-btn${openSettings ? ' is-open' : ''}" title="Settings" onClick=${() => setOpenSettings(!openSettings)}><${Icon} name="settings" size=${13} /></button>`}
         ${p.installed && html`<button type="button" class="bc-icon-btn" title="Delete data" disabled=${busy} onClick=${() => setConfirming(true)}><${Icon} name="trash" size=${13} /></button>`}
       </div>
@@ -139,7 +143,9 @@ function PluginRow({ p }) {
     ${p.errors.length > 0 && html`<div class="bc-plugin-errors">${p.errors.map((e) => html`<div key=${e}><${Icon} name="warning" size=${12} /> ${e}</div>`)}</div>`}
     ${p.disabledReason && html`<div class="bc-plugin-errors"><div><${Icon} name="warning" size=${12} /> ${p.disabledReason}</div></div>`}
     ${p.enabled && html`<div class="bc-plugin-status">
-      ${lr
+      ${needs.length > 0
+        ? html`<span class="bc-plugin-run is-setup">${needsText} ${!openSettings && html`<button type="button" class="bc-link-btn" onClick=${() => setOpenSettings(true)}>Open settings</button>`}</span>`
+        : lr
         ? html`<span class=${'bc-plugin-run is-' + lr.outcome} title=${lr.logTail}>${lr.outcome === 'ok' ? 'Last run' : 'Last run ' + lr.outcome} · ${lr.job} · ${fmtAgo(lr.at)}${lr.durationMs != null ? ' · ' + lr.durationMs + ' ms' : ''}</span>`
         : html`<span class="bc-plugin-run">No runs yet. The first starts within a minute.</span>`}
       ${lr && lr.runId && lr.undoableMutations > 0 && html`<button

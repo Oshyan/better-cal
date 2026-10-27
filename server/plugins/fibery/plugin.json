@@ -41,6 +41,7 @@
       "section": "Connection",
       "type": "text",
       "label": "Workspace",
+      "required": true,
       "help": "Its address, like yourteam.fibery.io",
       "maxLength": 200
     },
@@ -48,6 +49,7 @@
       "key": "token",
       "type": "secret",
       "label": "API key",
+      "required": true,
       "help": "In Fibery: your avatar, Settings, API Keys, then Generate."
     },
     {

@@ -19,12 +19,15 @@ function component(file, name, globals = {}, initial = []) {
 }
 const schema = [{ key: 'credential', label: 'Credential', type: 'secret' }, { key: 'mode', label: 'Mode', type: 'text' }];
 const writes = [];
-const form = component('SchemaForm.js', 'SchemaForm', { PlaceInput: () => {} });
+const reloadHolds = [];
+const holdKeyRef = { current: {} };
+const form = component('SchemaForm.js', 'SchemaForm', { PlaceInput: () => {}, useRef: () => holdKeyRef, holdReload: (key, on) => reloadHolds.push(on) });
 const props = { schema, values: { credential: { set: true }, mode: 'before' }, onSave: async (body) => { writes.push(body); return true; } };
 form.render(props);
 form.slots[0].mode = 'after';
 form.render({ ...props, values: { credential: { set: true }, mode: 'before' } });
 assert.equal(form.slots[0].mode, 'after', 'unrelated plugin reload preserves unsaved edits');
+assert.equal(reloadHolds.at(-1), true, 'unsaved edits hold the background update reload');
 const save = (tree) => walk(tree).filter((n) => typeof n === 'function').at(-1)();
 await save(form.render(props));
 assert.equal(Object.hasOwn(writes.at(-1), 'credential'), false, 'omitted secret is never re-submitted as its status object');

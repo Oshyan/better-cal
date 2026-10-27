@@ -72,7 +72,7 @@ final class PluginsController
         }
         $queued = [];
         // Only a save that changed something: an empty one is no reason to run.
-        if ($onSave !== [] && is_array($req->body) && $req->body !== []) {
+        if ($onSave !== [] && is_array($req->body) && $req->body !== [] && $this->plugins->missingRequired($id) === []) {
             $result = $this->plugins->withAuthority(RequestAuthority::request($req), fn() => $this->queue->enqueuePluginJobs((int) $req->user['id'], $id, $onSave));
             $queued = array_merge($result['queued'] ?? [], $result['alreadyQueued'] ?? []);
         }
@@ -159,6 +159,10 @@ final class PluginsController
         $m = $this->plugins->manifest($id);
         if ($m === null) {
             throw HttpError::badRequest('Unknown plugin');
+        }
+        $missing = $this->plugins->missingRequired($id, $m);
+        if ($missing !== []) {
+            throw HttpError::conflict('plugin_needs_setup', 'Fill in ' . implode(' and ', $missing) . ' first.');
         }
         $jobIds = [];
         foreach (($m['jobs'] ?? []) as $job) {

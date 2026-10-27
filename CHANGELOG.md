@@ -4,6 +4,11 @@ Better-Cal uses [semantic versioning](https://semver.org). Minor versions bring 
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
+## Unreleased
+
+- **Plugins wait for their settings:** one that needs a key or account (Fibery) opens its settings when you turn it on, says what to fill in, and doesn't run until you have.
+- **Fixes:** typing in a plugin's settings is no longer lost when Better-Cal updates itself in the background; the update now waits until nothing is unsaved.
+
 ## 1.3.0 (2026-10-26)
 
 A Fibery plugin, tide calendars per station with full filtering, and Sun and Weather for any place.

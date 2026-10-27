@@ -395,6 +395,9 @@ final class Plugins
                 // Shown on the ops page so an unmet dependency reads as a
                 // reason rather than as a mysterious refusal to enable.
                 'unmetRequires' => $this->unmetRequirements($id),
+                // Required settings still empty: the plugin waits for them
+                // (no runs) and its card says what to fill in.
+                'needsSetup' => $this->missingRequired($id, $m, $st),
                 'errors' => $p['errors'],
                 'installed' => $st !== null,
                 'enabled' => $st !== null && (int) $st['enabled'] === 1,
@@ -443,6 +446,31 @@ final class Plugins
             // open proposal disappeared without ever being counted.
             'proposals' => (int) $this->db->one("SELECT COUNT(*) c FROM plugin_proposals WHERE plugin_id = ? AND status = 'open'", [$id])['c'],
         ];
+    }
+
+    /**
+     * The labels of plugin settings marked `required` that are still empty
+     * (a secret counts once it's stored). Until they're filled the plugin
+     * doesn't run: nothing to do yet, and nothing to fail at every minute.
+     *
+     * @return list<string>
+     */
+    public function missingRequired(string $id, ?array $manifest = null, ?array $stateRow = null): array
+    {
+        $manifest ??= $this->manifest($id) ?? [];
+        $stateRow ??= $this->db->one('SELECT settings_json FROM plugins WHERE id = ?', [$id]);
+        $values = $this->settingsValues($id, $manifest, $stateRow);
+        $missing = [];
+        foreach (($manifest['settings'] ?? []) as $f) {
+            if (empty($f['required'])) {
+                continue;
+            }
+            $v = $values[(string) $f['key']] ?? null;
+            if ($v === null || (is_string($v) && trim($v) === '') || $v === []) {
+                $missing[] = (string) $f['label'];
+            }
+        }
+        return $missing;
     }
 
     private function settingsValues(string $id, array $manifest, ?array $stateRow): array
@@ -1523,6 +1551,10 @@ final class Plugins
         if ($state === null || $m === null) {
             return ['outcome' => 'error', 'error' => 'plugin not enabled or invalid'];
         }
+        if ($this->missingRequired($id, $m, $state) !== []) {
+            // Queued before its settings were cleared, say: nothing to do.
+            return ['outcome' => 'skipped', 'error' => null];
+        }
         // A key can also stop being valid without a revocation (it expired):
         // the plugin it enabled stops the same way, on its next run.
         $tokenId = $state['changed_by_token_id'] ?? null;
@@ -1596,7 +1628,7 @@ final class Plugins
         foreach ($this->db->all('SELECT id FROM plugins WHERE enabled = 1') as $row) {
             $id = (string) $row['id'];
             $m = $this->manifest($id);
-            if ($m === null) {
+            if ($m === null || $this->missingRequired($id, $m) !== []) {
                 continue;
             }
             foreach (($m['jobs'] ?? []) as $job) {

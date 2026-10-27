@@ -50,7 +50,26 @@ Typing a marker lists what it can name, narrowing as you type: `/` your calendar
 - **Alerts:** alert 30 minutes, remind me 15 min before, with a 1 hour reminder. Up to four weeks.
 - **People and places:** "with Sam", "w/ Sam and Alex", and "at Luna" or "@ Luna" at the end for the place.
 - **Away and busy times:** "Sam is away Aug 10-15", "Sam busy tomorrow".
-- **Links:** a pasted Google Calendar event link becomes that event. So does an event page's link (Luma, Partiful, Eventbrite, Meetup, Pie and the like), pasted or shared from a phone, with a few words around it or none: Better-Cal reads the page and fills in the title, time, place and the event's link for you to check. It reads the event data the page publishes (for Pie, the plan's public details), or an "Add to Google Calendar" link on it, and the AI model (when one is set up) only when neither is there. A page behind a sign-in has nothing to read, and the card says so.
+- **Links:** an event page's link, pasted or shared from a phone, becomes that event. See [Event Links](#event-links).
+
+## Event Links
+
+Paste or share an event's link into quick add, alone or with a few words around it, and Better-Cal reads the page and fills in the title, time, place and the event's own link for you to check. Nothing is saved until you do.
+
+These are the links it handles on purpose, and how each was last checked:
+
+| Site | Link looks like | Read from | Last checked |
+|---|---|---|---|
+| Luma | `lu.ma/…`, `luma.com/…` | the event data on the page | 2026-10-27 |
+| Partiful | `partiful.com/e/…` | the event data on the page | 2026-10-27 |
+| Eventbrite | `eventbrite.com/e/…` | the event data on the page | 2026-10-27 |
+| Meetup | `meetup.com/<group>/events/…` | the event data on the page | 2026-10-27 |
+| Pie | `plan.getpie.app/plans/…` | Pie's public details for the plan (its pages carry no date) | 2026-10-27 |
+| Google Calendar | `calendar.google.com/calendar/render?action=TEMPLATE…` | the link itself, including repeats | 2026-10-27 |
+
+Any other page works the same way when it publishes standard event data (schema.org `Event`, which most ticketing and events sites do) or has an "Add to Google Calendar" link on it. When it has neither and an AI model is set up, the model reads the page's text, but only if there's a date in it. A page behind a sign-in has nothing to read, and the card says so.
+
+Not events: a calendar's `.ics` or `webcal://` address opens Subscribe instead.
 
 ## Limits
 

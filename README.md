@@ -83,7 +83,7 @@ MIT (see [LICENSE](LICENSE)). Use it, fork it, host it, sell it. If you build so
 - [Installing](docs/install.md): requirements, install with SSH or from a control panel and the browser, updating (with a backup first and a way back), and Nginx and Apache setup.
 - [Moving from Google Calendar](docs/migration.md): ways to start, from subscribing to try it to a full switch, and going back.
 - [The app and reminders](docs/app-and-reminders.md): installing it on a phone or computer and turning on reminders.
-- [Quick add](docs/quick-add.md): what you can type to make an event.
+- [Quick add](docs/quick-add.md): what you can type to make an event, and the [event links](docs/quick-add.md#event-links) it reads.
 - [Calendar roles and event relationships](docs/relationships.md): planned, maybe, available and context.
 - [CalDAV](docs/caldav.md), [Email ingest](docs/email-ingest.md), [Google Calendar connector](docs/google-calendar.md), [Geocoding and place search](docs/geocoding.md)
 - [Scale and limits](docs/limits.md): who it's sized for, and the limits you might run into.

@@ -10,6 +10,10 @@ use BetterCal\Infra\LlmGateway;
 use BetterCal\Support\Time;
 
 /**
+ * The sites this handles on purpose, and when each was last checked, are
+ * listed in docs/quick-add.md (Event Links): keep that list in step when a
+ * site reader is added here or a site changes.
+ *
  * An event page's link in quick add (#105): shared from a phone or pasted,
  * a Luma, Eventbrite or Meetup page becomes a filled-in draft. The page is
  * read the way email ingest reads a booking mail (MailIngest): schema.org

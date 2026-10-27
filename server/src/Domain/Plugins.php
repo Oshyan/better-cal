@@ -537,9 +537,11 @@ final class Plugins
                 $this->db->run('DELETE FROM events WHERE calendar_id = ?', [$cid]);
                 $this->db->run('DELETE FROM calendars WHERE id = ?', [$cid]);
             } else {
-                // Archive: an ordinary hidden local calendar named for its origin.
+                // Keep: an ordinary local calendar named for its origin, as
+                // visible as it was (the person chose to keep it). It no
+                // longer syncs; turning the plugin on again starts a new one.
                 $this->db->run(
-                    "UPDATE calendars SET kind = 'local', plugin_id = NULL, visible = 0, name = CONCAT(name, ' (archived)') WHERE id = ?",
+                    "UPDATE calendars SET kind = 'local', plugin_id = NULL, name = CONCAT(name, ' (archived)') WHERE id = ?",
                     [$cid]
                 );
             }

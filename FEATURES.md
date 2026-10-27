@@ -152,7 +152,7 @@ What it doesn't do (for now): send invitations to guests, offer booking pages, o
 
 ### Plugins
 
-- Bundled server-side plugins, each turned on and set up on the Plugins page, which shows its permissions, last run, what it has made, any warnings, Run now, and uninstall with a preview of what goes.
+- Bundled server-side plugins, each turned on and set up on the Plugins page, which shows its permissions, last run, what it has made, any warnings, Run now, and Delete data with a preview of what goes (or untick it to pause and keep everything).
 - Weather: a daily forecast from Open-Meteo (no API key) with an icon and the high and low, plus the day's air quality (US AQI); severe weather and unhealthy air raise warnings.
 - Sun: sunrise and sunset for a place, computed on the server (no network, no key), in each day's header and as a line on the timeline.
 - Fibery: tasks and projects from any Fibery database with a date field, with the fields you pick shown in each event's details and a link back. Drag one (or use Move) and its date changes in Fibery; changes made in Fibery arrive within a minute. [Fibery](docs/plugins/fibery.md) has the setup.

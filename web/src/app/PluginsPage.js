@@ -70,7 +70,7 @@ function PluginRow({ p }) {
 
   const toggle = () => act(
     () => api('/plugins/' + p.id + '/' + (p.enabled ? 'disable' : 'enable'), { method: 'POST' }),
-    p.enabled ? p.name + ' disabled' : p.name + ' enabled — first run is queued for the next worker tick',
+    p.enabled ? p.name + ' turned off' : p.name + ' turned on. Its first run starts within a minute.',
   );
 
   const runNow = () => act(async () => {
@@ -85,13 +85,15 @@ function PluginRow({ p }) {
   useEffect(() => { if (confirming && cancelRef.current) cancelRef.current.focus(); }, [confirming]);
   const uninstall = (deleteCalendars) => {
     setConfirming(false);
+    setOpenSettings(false);
     act(
       () => api('/plugins/' + p.id + '/uninstall', { method: 'POST', body: { deleteCalendars } }),
-      p.name + ' uninstalled',
+      p.name + "'s data deleted",
     ).then(() => loadCalendars());
   };
   const c = p.counts;
-  const removes = ['its settings and stored data', c.ranges > 0 && c.ranges + ' bands', c.warnings > 0 && c.warnings + ' warnings'].filter(Boolean);
+  const secretWord = (p.settingsSchema || []).some((f) => f.type === 'secret') ? ' (including any key)' : '';
+  const removes = ['its settings' + secretWord + ' and stored data', c.ranges > 0 && c.ranges + ' bands', c.warnings > 0 && c.warnings + ' warnings'].filter(Boolean);
 
   const loadWarnings = async () => {
     if (warnings !== null) { setWarnings(null); return; }
@@ -106,26 +108,28 @@ function PluginRow({ p }) {
         <input type="checkbox" checked=${p.enabled} disabled=${busy || p.errors.length > 0} onChange=${toggle} />
       </label>
       <div class="bc-plugin-title">
-        <span class="bc-plugin-name">${p.name}</span>
+        ${p.enabled && p.settingsSchema.length > 0
+          ? html`<button type="button" class="bc-plugin-name bc-link-btn" aria-expanded=${openSettings} title="Settings" onClick=${() => setOpenSettings(!openSettings)}>${p.name}</button>`
+          : html`<span class="bc-plugin-name">${p.name}</span>`}
         <span class="bc-plugin-version">v${p.version}</span>
         ${p.permissions.map((perm) => html`<span key=${perm} class="bc-plugin-perm">${perm}</span>`)}
       </div>
       <div class="bc-plugin-tools">
         ${p.enabled && html`<button type="button" class="bc-btn" disabled=${busy} onClick=${runNow}>Run now</button>`}
         ${p.enabled && p.settingsSchema.length > 0 && html`<button type="button" class="bc-icon-btn${openSettings ? ' is-open' : ''}" title="Settings" onClick=${() => setOpenSettings(!openSettings)}><${Icon} name="settings" size=${13} /></button>`}
-        ${p.installed && html`<button type="button" class="bc-icon-btn" title="Uninstall" disabled=${busy} onClick=${() => setConfirming(true)}><${Icon} name="trash" size=${13} /></button>`}
+        ${p.installed && html`<button type="button" class="bc-icon-btn" title="Delete data" disabled=${busy} onClick=${() => setConfirming(true)}><${Icon} name="trash" size=${13} /></button>`}
       </div>
     </div>
-    ${confirming && html`<div class="bc-plugin-confirm" role="alertdialog" aria-label=${'Uninstall ' + p.name}
+    ${confirming && html`<div class="bc-plugin-confirm" role="alertdialog" aria-label=${'Delete ' + p.name + ' data'}
       onKeyDown=${(e) => { if (e.key === 'Escape') { e.stopPropagation(); setConfirming(false); } }}>
-      <p><strong>Uninstall ${p.name}?</strong> It stops running, and ${removes.join(', ').replace(/, ([^,]*)$/, ' and $1')} are removed.${c.events > 0
-        ? ' Its ' + c.events + ' events can stay, on hidden local calendars, or be deleted (which can\'t be undone).' : ''}</p>
+      <p><strong>Delete ${p.name}'s data?</strong> This turns ${p.name} off and deletes ${removes.join(', ').replace(/, ([^,]*)$/, ' and $1')}. To pause it and keep everything, untick it instead.${c.events > 0
+        ? ' Its ' + c.events + ' events can stay as an ordinary local calendar that no longer syncs (turning ' + p.name + ' on again starts fresh beside it), or be deleted, which can\'t be undone.' : ''}</p>
       <div class="bc-plugin-confirm-actions">
         <button type="button" class="bc-btn" ref=${cancelRef} onClick=${() => setConfirming(false)}>Cancel</button>
         ${c.events > 0
-          ? html`<button type="button" class="bc-btn" onClick=${() => uninstall(false)}>Uninstall, keep its events</button>
-            <button type="button" class="bc-btn bc-btn-danger" onClick=${() => uninstall(true)}>Uninstall and delete its events</button>`
-          : html`<button type="button" class="bc-btn bc-btn-danger" onClick=${() => uninstall(false)}>Uninstall</button>`}
+          ? html`<button type="button" class="bc-btn" onClick=${() => uninstall(false)}>Delete data, keep events as a local calendar</button>
+            <button type="button" class="bc-btn bc-btn-danger" onClick=${() => uninstall(true)}>Delete data and events</button>`
+          : html`<button type="button" class="bc-btn bc-btn-danger" onClick=${() => uninstall(false)}>Delete data</button>`}
       </div>
     </div>`}
     <p class="bc-plugin-desc">${p.description}</p>
@@ -134,7 +138,7 @@ function PluginRow({ p }) {
     ${p.enabled && html`<div class="bc-plugin-status">
       ${lr
         ? html`<span class=${'bc-plugin-run is-' + lr.outcome} title=${lr.logTail}>${lr.outcome === 'ok' ? 'Last run' : 'Last run ' + lr.outcome} · ${lr.job} · ${fmtAgo(lr.at)}${lr.durationMs != null ? ' · ' + lr.durationMs + ' ms' : ''}</span>`
-        : html`<span class="bc-plugin-run">No runs yet — queued for the next worker tick</span>`}
+        : html`<span class="bc-plugin-run">No runs yet. The first starts within a minute.</span>`}
       ${lr && lr.runId && lr.undoableMutations > 0 && html`<button
         type="button" class="bc-link-btn" disabled=${busy}
         title=${'Reverse all ' + lr.undoableMutations + ' change(s) this run made'}
@@ -151,11 +155,11 @@ function PluginRow({ p }) {
     </div>`}
     ${warnings && html`<ul class="bc-plugin-warnlist">
       ${warnings.map((w) => html`<li key=${w.id} class=${'is-' + w.severity}>
-        ${w.message}${w.fix ? html`<span class="bc-plugin-fix"> — ${w.fix}</span>` : ''}
+        ${w.message}${w.fix ? html`<span class="bc-plugin-fix">. ${w.fix}</span>` : ''}
       </li>`)}
       ${warnings.length === 0 && html`<li>No open warnings.</li>`}
     </ul>`}
-    ${openSettings && html`<${SchemaForm}
+    ${openSettings && p.enabled && html`<${SchemaForm}
       schema=${p.settingsSchema}
       values=${p.settings}
       onSave=${async (draft) => {

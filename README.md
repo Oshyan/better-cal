@@ -88,7 +88,7 @@ MIT (see [LICENSE](LICENSE)). Use it, fork it, host it, sell it. If you build so
 - [CalDAV](docs/caldav.md), [Email ingest](docs/email-ingest.md), [Google Calendar connector](docs/google-calendar.md), [Geocoding and place search](docs/geocoding.md)
 - [Scale and limits](docs/limits.md): who it's sized for, and the limits you might run into.
 - [Architecture](docs/architecture.md), [private files](docs/private-files.md), [API contract](docs/api-contract.md), [agent API](docs/agent-api.md), [writing a plugin](docs/plugins/authoring.md)
-- Roadmap: the [GitHub issues](https://github.com/Oshyan/better-cal/issues). There's no separate roadmap document.
+- [Roadmap](ROADMAP.md): where it's headed through 2.0, a work in progress that will change. The details live in the [GitHub issues](https://github.com/Oshyan/better-cal/issues).
 
 ## Configuration
 

@@ -4525,6 +4525,17 @@ checkEq('pd fail -> highlight', 'highlight', Filters::promptDisposition($promptR
     $d = $EP::fromHtml('<a href="https://calendar.google.com/calendar/render?action=TEMPLATE&amp;text=Sample+Talk&amp;dates=20261110T180000Z/20261110T190000Z&amp;location=Example+Library">Add to Google</a>',
         'https://talks.example.test/t/1', 'UTC', $epNow);
     checkEq('event page: an "Add to Google Calendar" link when there is no markup', ['Sample Talk', 'Example Library', 'page-gcal'], [$d['title'], $d['location'], $d['source']]);
+    // Pie: the page draws its plan in the browser; its public details address has it.
+    checkEq('event page: a Pie plan link asks Pie\'s public details address', ['https://plans-service.getpie.app/api/public/v2/plans/details/0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0', null], [
+        ($EP::siteSource('https://plan.getpie.app/plans/0F1E2D3C-4B5A-6978-8796-A5B4C3D2E1F0?source=post_feed') ?? [null])[0],
+        $EP::siteSource('https://plan.getpie.app/user/0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0'),
+    ]);
+    $d = $EP::fromPie(['planTitle' => 'Sample Potluck', 'startAt' => '2026-10-29T04:00:00Z', 'endAt' => '2026-10-29T08:00:00Z',
+        'locationString' => 'Example Hall', 'addressString' => '1 Sample St, Exampleton, CA 94000, USA',
+        'analytics' => ['metadata' => ['timezone' => 'America/Los_Angeles']]], 'https://plan.getpie.app/plans/x');
+    checkEq('event page: a Pie plan in its own zone, with venue and address', ['Sample Potluck', '2026-10-28T21:00:00-07:00', '2026-10-29T01:00:00-07:00', 'America/Los_Angeles', 'Example Hall, 1 Sample St, Exampleton, CA 94000, USA', 'page-site'],
+        [$d['title'], $d['start'], $d['end'], $d['tzid'], $d['location'], $d['source']]);
+    checkEq('event page: a Pie answer without a start is nothing', null, $EP::fromPie(['planTitle' => 'Sample'], 'https://plan.getpie.app/plans/x'));
     checkEq('event page: a place named twice is said once', ['Example Hall, Exampleton, CA', 'Exampleton, CA, California', 'Sample St 5, Exampleton'], [
         $EP::tidyPlace('Example Hall, Exampleton, CA, Exampleton, CA'),
         $EP::tidyPlace('Exampleton, CA, Exampleton, California'),

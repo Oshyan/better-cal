@@ -110,6 +110,46 @@ final class EventPage
         return $first;
     }
 
+    /**
+     * Sites whose pages draw the event in the browser, so their HTML has no
+     * date, but which serve it from a public address of their own: that
+     * address, and the reader for its answer. Pie's plan pages are one.
+     *
+     * @return ?array{0:string,1:callable(array,string):?array}
+     */
+    public static function siteSource(string $url): ?array
+    {
+        if (preg_match('~^https://(?:plan\.|www\.)?getpie\.app/plans/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)~i', $url, $m) === 1) {
+            return ['https://plans-service.getpie.app/api/public/v2/plans/details/' . strtolower($m[1]), [self::class, 'fromPie']];
+        }
+        return null;
+    }
+
+    /** A Pie plan's public details as a draft: its times, its own zone, the venue and address. */
+    public static function fromPie(array $j, string $pageUrl): ?array
+    {
+        $title = is_string($j['planTitle'] ?? null) ? $j['planTitle'] : '';
+        $start = is_string($j['startAt'] ?? null) ? $j['startAt'] : '';
+        if (trim($title) === '' || $start === '') {
+            return null;
+        }
+        $zone = $j['analytics']['metadata']['timezone'] ?? null;
+        $place = implode(', ', array_filter([
+            is_string($j['locationString'] ?? null) ? trim($j['locationString']) : '',
+            is_string($j['addressString'] ?? null) ? trim($j['addressString']) : '',
+        ]));
+        return self::draft([
+            'title' => $title,
+            'start' => $start,
+            'end' => is_string($j['endAt'] ?? null) ? $j['endAt'] : null,
+            'allDay' => false,
+            'location' => $place !== '' ? $place : null,
+            'tzid' => is_string($zone) ? $zone : null,
+            'url' => $pageUrl,
+            'source' => 'page-site',
+        ], $pageUrl, 'UTC');
+    }
+
     /** The page as text for the model: its title, then what a reader sees. */
     public static function textForModel(string $html): string
     {
@@ -135,10 +175,23 @@ final class EventPage
         if ($cached !== null) {
             return $cached;
         }
+        // A site with its own public address for the event: ask there first,
+        // and read the page as usual if that doesn't answer.
+        $site = self::siteSource($url);
+        if ($site !== null) {
+            try {
+                $r = $this->get($site[0], 'application/json');
+                $j = (int) ($r['status'] ?? 0) === 200 ? json_decode((string) ($r['body'] ?? ''), true) : null;
+                $draft = is_array($j) ? ($site[1])($j, $url) : null;
+                if ($draft !== null) {
+                    return $this->keep($key, ['draft' => $draft, 'note' => null]);
+                }
+            } catch (\RuntimeException) {
+                // fall back to the page
+            }
+        }
         try {
-            $r = $this->fetch !== null ? ($this->fetch)($url) : $this->http()->get($url, [
-                'Accept: text/html,application/xhtml+xml;q=0.9,*/*;q=0.5',
-            ]);
+            $r = $this->get($url, 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.5');
         } catch (\RuntimeException) {
             return ['draft' => null, 'note' => 'Couldn\'t open that page.'];
         }
@@ -234,6 +287,12 @@ final class EventPage
             $said .= ' ' . $norm;
         }
         return $kept !== [] ? implode(', ', $kept) : null;
+    }
+
+    /** @return array{status:int,body:string} */
+    private function get(string $url, string $accept): array
+    {
+        return $this->fetch !== null ? ($this->fetch)($url) : $this->http()->get($url, ['Accept: ' . $accept]);
     }
 
     private function http(): HttpClient

@@ -190,9 +190,9 @@ final class GoogleWriter
         return $matches[0] ?? null;
     }
 
-    public function insert(array $calendar, array $row): array
+    public function insert(array $calendar, array $row, ?\Closure $beforeSend = null): array
     {
-        return $this->call($calendar, 'POST', '', self::body($row));
+        return $this->call($calendar, 'POST', '', self::body($row), beforeSend: $beforeSend);
     }
 
     public function get(array $calendar, string $googleId): array
@@ -205,9 +205,9 @@ final class GoogleWriter
         return $this->call($calendar, 'PATCH', '/' . rawurlencode($googleId), $body, beforeSend: $beforeSend);
     }
 
-    public function delete(array $calendar, string $googleId): void
+    public function delete(array $calendar, string $googleId, ?\Closure $beforeSend = null): void
     {
-        $this->call($calendar, 'DELETE', '/' . rawurlencode($googleId), null);
+        $this->call($calendar, 'DELETE', '/' . rawurlencode($googleId), null, beforeSend: $beforeSend);
     }
 
     /**

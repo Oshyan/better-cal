@@ -74,7 +74,7 @@ final class QuickAdd
     }
 
     /** @return array{draft:array, event:?array} */
-    public function run(int $userId, string $text, string $tz, bool $commit, ?int $calendarId, ?int $tokenId = null): array
+    public function run(int $userId, string $text, string $tz, bool $commit, ?int $calendarId, ?int $tokenId = null, ?RequestAuthority $authority = null): array
     {
         $text = trim($text);
         if ($text === '') {
@@ -110,7 +110,7 @@ final class QuickAdd
                         'description' => $draft['description'],
                         'rrule' => $draft['rrule'],
                         'personNames' => [],
-                    ]));
+                    ], $authority));
                 }
                 return ['draft' => $draft, 'event' => $event];
             }
@@ -251,7 +251,7 @@ final class QuickAdd
             ] + ($draft['tags'] !== [] ? ['tagNames' => $draft['tags']] : []) + (!empty($draft['reminders']) ? [
                 // "alert 30 minutes" (#33): this event's own reminder.
                 'reminders' => array_map(static fn($m): array => ['minutes' => (int) $m], $draft['reminders']),
-            ] : [])));
+            ] : []), $authority));
         }
 
         return ['draft' => $draft, 'event' => $event];

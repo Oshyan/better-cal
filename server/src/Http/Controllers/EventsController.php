@@ -62,7 +62,7 @@ final class EventsController
     public function create(Request $req): Response
     {
         try {
-            $occurrence = $this->events->create((int) $req->user['id'], $req->body);
+            $occurrence = $this->events->create((int) $req->user['id'], $req->body, RequestAuthority::request($req));
         } catch (\InvalidArgumentException $e) {
             throw HttpError::badRequest($e->getMessage());
         }
@@ -86,7 +86,7 @@ final class EventsController
         }
         try {
             $occurrence = $this->events->copyTo((int) $req->user['id'], (int) $params['id'], $calendarId, $scope, $req->str('instanceStart'),
-                $req->str('start'), $req->str('end'), $duplicate);
+                $req->str('start'), $req->str('end'), $duplicate, RequestAuthority::request($req));
         } catch (\InvalidArgumentException $e) {
             throw HttpError::badRequest($e->getMessage());
         }
@@ -110,7 +110,8 @@ final class EventsController
                 (int) $req->user['id'],
                 (int) $params['id'],
                 $req->str('scope') ?? $req->q('scope'),
-                $req->str('instanceStart') ?? $req->q('instanceStart')
+                $req->str('instanceStart') ?? $req->q('instanceStart'),
+                RequestAuthority::request($req)
             );
         } catch (\InvalidArgumentException $e) {
             throw HttpError::badRequest($e->getMessage());
@@ -139,7 +140,8 @@ final class EventsController
             (int) $params['id'],
             (string) ($req->str('relationship') ?? ''),
             $scope,
-            $req->str('instanceStart')
+            $req->str('instanceStart'),
+            RequestAuthority::request($req)
         );
         return Response::json(['ok' => true] + self::split($this->events));
     }

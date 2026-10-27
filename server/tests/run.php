@@ -6723,6 +6723,126 @@ return new class implements BetterCal\Plugin\PluginInterface, BetterCal\Plugin\E
     rmdir($dir);
 }
 
+// Google write-through carries the request's exact credential the same way:
+// it's checked just before each Google call and again when Google's answer
+// is saved here, so a session or API key revoked before or during the call
+// can't finish a create, copy, edit or delete on a Google calendar.
+{
+    $gw = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $gw->run('CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, settings_json TEXT)');
+    $gw->run("INSERT INTO users VALUES (1, 'owner@example.com', '{\"tz\":\"UTC\"}')");
+    $gw->run('CREATE TABLE sessions (token_hash TEXT, user_id INTEGER, authenticated_at TEXT, expires_at TEXT)');
+    $gw->run('CREATE TABLE api_tokens (id INTEGER PRIMARY KEY, user_id INTEGER, expires_at TEXT)');
+    $gw->run('CREATE TABLE google_accounts (id INTEGER PRIMARY KEY, user_id INTEGER, email TEXT, refresh_token_enc TEXT, scopes TEXT, status TEXT, reauth_required_at TEXT, last_error TEXT, created_at TEXT)');
+    $gw->run('INSERT INTO google_accounts (id, user_id, email, refresh_token_enc, scopes, status, created_at) VALUES (1, 1, ?, ?, ?, ?, ?)', [
+        'owner@example.com', BetterCal\Infra\Secrets::seal('1//sample-refresh', 'secret-a'), BetterCal\Domain\GoogleAuth::SCOPES, 'ok', BetterCal\Support\Time::nowDb(),
+    ]);
+    $gw->run("CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, color TEXT, kind TEXT DEFAULT 'local', provider TEXT DEFAULT 'ics', plugin_id TEXT, visible INTEGER DEFAULT 1, position INTEGER DEFAULT 0, subscription_authority TEXT, settings_json TEXT, role TEXT DEFAULT 'mine', created_at TEXT DEFAULT CURRENT_TIMESTAMP, synctoken INTEGER DEFAULT 1,
+        source_url TEXT, google_account_id INTEGER, google_calendar_id TEXT, google_access_role TEXT, google_binding_version INTEGER DEFAULT 0, google_sync_token TEXT, last_polled_at TEXT, last_poll_status TEXT, last_poll_error TEXT, content_changed_at TEXT)");
+    $gw->run("INSERT INTO calendars (id, user_id, name, kind) VALUES (1, 1, 'Home', 'local')");
+    $gw->run("INSERT INTO calendars (id, user_id, name, kind, provider, google_account_id, google_calendar_id, google_access_role) VALUES (2, 1, 'Sample team', 'subscribed', 'google', 1, 'team@example.test', 'owner')");
+    davJournal($gw);
+    $gw->run("CREATE TABLE events (
+        id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, description TEXT, location TEXT,
+        location_lat REAL, location_lng REAL, geocoded_at TEXT, url TEXT, start_utc TEXT, end_utc TEXT, all_day INTEGER,
+        tzid TEXT, rrule TEXT, exdates_json TEXT, recurrence_parent_id INTEGER, recurrence_instance_utc TEXT,
+        status TEXT DEFAULT 'confirmed', source TEXT DEFAULT 'local', attendance TEXT DEFAULT 'none', score REAL,
+        style_json TEXT, dynamic_json TEXT, icon TEXT, is_container INTEGER DEFAULT 0, reminders_json TEXT,
+        invite_json TEXT, created_via TEXT, created_at TEXT, updated_at TEXT, deleted_at TEXT, google_event_id TEXT,
+        location_source TEXT, location_provider TEXT, location_placed_at TEXT
+    )");
+    $gw->run("INSERT INTO events (id, user_id, calendar_id, uid, title, start_utc, end_utc, all_day, tzid, source, google_event_id) VALUES
+        (10, 1, 2, 'single@google', 'Sample meeting', '2030-06-01 10:00:00', '2030-06-01 11:00:00', 0, 'UTC', 'feed', 'g-single')");
+    $gw->run("INSERT INTO events (id, user_id, calendar_id, uid, title, start_utc, end_utc, all_day, tzid, rrule, source, google_event_id) VALUES
+        (11, 1, 2, 'series@google', 'Sample standup', '2030-06-01 09:00:00', '2030-06-01 09:30:00', 0, 'UTC', 'FREQ=DAILY;COUNT=6', 'feed', 'g-series')");
+    $gw->run("INSERT INTO events (id, user_id, calendar_id, uid, title, start_utc, end_utc, all_day, tzid, recurrence_parent_id, recurrence_instance_utc, source, google_event_id) VALUES
+        (12, 1, 2, 'series@google', 'Sample standup, later', '2030-06-02 10:00:00', '2030-06-02 10:30:00', 0, 'UTC', 11, '2030-06-02 09:00:00', 'feed', 'g-series_20300602T090000Z')");
+    $gw->run("INSERT INTO events (id, user_id, calendar_id, uid, title, start_utc, end_utc, all_day, tzid, source) VALUES
+        (20, 1, 1, 'local-sample', 'Sample lunch', '2030-06-05 12:00:00', '2030-06-05 13:00:00', 0, 'UTC', 'local')");
+    $gw->run('CREATE TABLE tags (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT)');
+    $gw->run('CREATE TABLE people (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT)');
+    $gw->run('CREATE TABLE event_tags (event_id INTEGER, tag_id INTEGER)');
+    $gw->run('CREATE TABLE event_people (event_id INTEGER, person_id INTEGER)');
+    $gw->run('CREATE TABLE event_links (id INTEGER PRIMARY KEY, container_id INTEGER, event_id INTEGER, position INTEGER)');
+    $gw->run('CREATE TABLE event_duplicates (id INTEGER PRIMARY KEY, user_id INTEGER, event_a INTEGER, event_b INTEGER, status TEXT, basis TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, decided_at TEXT, UNIQUE(event_a, event_b))');
+    $gw->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT, undone INTEGER DEFAULT 0, created_at TEXT DEFAULT CURRENT_TIMESTAMP)');
+    $gw->run('CREATE TABLE filter_evals (id INTEGER PRIMARY KEY, filter_id INTEGER, event_id INTEGER, verdict TEXT, score REAL, evaluated_at TEXT)');
+
+    // Google stand-in: every call is recorded, a hook can run while it's
+    // "in flight", and a write answers with what was sent plus an id.
+    $googleCalls = [];
+    $googleDuring = null;
+    $googleUids = ['g-single' => 'single@google'];
+    $transport = static function (string $method, string $url, ?array $payload) use (&$googleCalls, &$googleDuring, $googleUids): array {
+        $googleCalls[] = $method;
+        if ($googleDuring !== null) {
+            ($googleDuring)();
+        }
+        if ($method === 'DELETE') {
+            return ['status' => 204, 'body' => ''];
+        }
+        $id = $method === 'POST' ? 'g-new-' . count($googleCalls) : rawurldecode(basename((string) parse_url($url, PHP_URL_PATH)));
+        return ['status' => 200, 'body' => json_encode(($payload ?? []) + ['id' => $id, 'iCalUID' => $googleUids[$id] ?? $id . '@google', 'status' => 'confirmed'])];
+    };
+    $gcfgW = ['session_secret' => 'secret-a', 'google' => ['client_id' => 'cid', 'client_secret' => 'cs']];
+    $gauthW = new BetterCal\Domain\GoogleAuth($gw, $gcfgW, static fn(string $url, array $fields, ?float $deadline): array => ['status' => 200, 'body' => json_encode(['access_token' => 'sample-access', 'expires_in' => 3600])]);
+    $gundo = new BetterCal\Domain\Undo($gw);
+    $gev = new BetterCal\Domain\Events($gw, new Recurrence(), $gundo, new BetterCal\Domain\Labels($gw), new Filters($gw, $gundo, new BetterCal\Infra\JobQueue($gw)), new BetterCal\Domain\Trips($gw, $gundo), null,
+        new BetterCal\Domain\GoogleWriter($gw, $gauthW, new BetterCal\Domain\Feeds($gw), $transport));
+
+    $live = static function () use ($gw): void {
+        $gw->run('DELETE FROM sessions');
+        $gw->run('DELETE FROM api_tokens');
+        $gw->run("INSERT INTO sessions VALUES (?, 1, '2030-01-01 00:00:00', '2099-01-01 00:00:00')", [hash('sha256', 'sample-session')]);
+        $gw->run('INSERT INTO api_tokens (id, user_id, expires_at) VALUES (5, 1, NULL)');
+    };
+    $kinds = [
+        'session' => [BetterCal\Domain\RequestAuthority::credential(1, null, 'sample-session'), 'DELETE FROM sessions', 'session_revoked'],
+        'API key' => [BetterCal\Domain\RequestAuthority::credential(1, 5, null), 'DELETE FROM api_tokens', 'token_revoked'],
+    ];
+    $ops = [
+        'create' => static fn($a) => $gev->create(1, ['calendarId' => 2, 'title' => 'New sample', 'start' => '2030-07-01T10:00:00+00:00', 'end' => '2030-07-01T11:00:00+00:00', 'allDay' => false, 'tzid' => 'UTC'], $a),
+        'copy onto it' => static fn($a) => $gev->copyTo(1, 20, 2, 'all', null, null, null, false, $a),
+        'edit' => static fn($a) => $gev->patch(1, 10, ['title' => 'Renamed sample'], $a),
+        'edit one occurrence' => static fn($a) => $gev->patch(1, 11, ['title' => 'One day', 'scope' => 'this', 'instanceStart' => '2030-06-02T09:00:00+00:00'], $a),
+        'edit following' => static fn($a) => $gev->patch(1, 11, ['title' => 'From here', 'scope' => 'following', 'instanceStart' => '2030-06-02T09:00:00+00:00'], $a),
+        'mark maybe' => static fn($a) => $gev->setRelationship(1, 10, 'maybe', null, null, $a),
+        'delete' => static fn($a) => $gev->deleteEvent(1, 10, null, null, $a),
+        'delete one occurrence' => static fn($a) => $gev->deleteEvent(1, 11, 'this', '2030-06-02T09:00:00+00:00', $a),
+        'delete following' => static fn($a) => $gev->deleteEvent(1, 11, 'following', '2030-06-02T09:00:00+00:00', $a),
+        'delete a changed occurrence' => static fn($a) => $gev->deleteEvent(1, 12, null, null, $a),
+    ];
+    $state = static fn(): array => [$gw->all('SELECT * FROM events ORDER BY id'), (int) $gw->scalar('SELECT COUNT(*) FROM mutations')];
+    foreach ($kinds as $label => [$authority, $revoke, $code]) {
+        foreach ($ops as $op => $call) {
+            // Revoked before the request reaches Google.
+            $live();
+            $gw->run($revoke);
+            $googleCalls = [];
+            $before = $state();
+            $caught = null;
+            try { $call($authority); } catch (HttpError $e) { $caught = $e; }
+            check("google authority ($label): $op revoked before Google is asked is refused, Google untouched, nothing saved",
+                $caught !== null && $caught->errorCode === $code && $googleCalls === [] && $state() === $before);
+            // Revoked while Google is answering.
+            $live();
+            $googleDuring = static fn() => $gw->run($revoke);
+            $caught = null;
+            try { $call($authority); } catch (HttpError $e) { $caught = $e; }
+            $googleDuring = null;
+            check("google authority ($label): $op revoked during the Google call isn't saved here",
+                $caught !== null && $caught->errorCode === $code && $googleCalls !== [] && $state() === $before);
+        }
+    }
+    $live();
+    $googleCalls = [];
+    $gev->patch(1, 10, ['title' => 'Renamed sample'], $kinds['session'][0]);
+    checkEq('google authority: with the credential still valid, the edit reaches Google and is saved', [['PATCH'], 'Renamed sample'], [$googleCalls, $gw->scalar('SELECT title FROM events WHERE id = 10')]);
+    $googleCalls = [];
+    $gev->deleteEvent(1, 10, null, null, $kinds['API key'][0]);
+    checkEq('google authority: and a delete with a live API key goes through', [['DELETE'], 0], [$googleCalls, (int) $gw->scalar('SELECT COUNT(*) FROM events WHERE id = 10 AND deleted_at IS NULL')]);
+}
+
 // A plugin with required settings waits for them: no scheduled runs, no
 // run now, until they're filled (a key counts once it's stored).
 {

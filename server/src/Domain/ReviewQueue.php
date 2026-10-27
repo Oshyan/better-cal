@@ -677,7 +677,8 @@ final class ReviewQueue
                 $tier = in_array($payload['tier'] ?? 'imip', ['imip', 'markup', 'gcal-link', 'llm'], true) ? ($payload['tier'] ?? 'imip') : 'imip';
                 $occurrence = ActivityContext::with('mail:' . $tier . ':review', fn(): array => $this->events->create(
                     $userId,
-                    ($request ? ['status' => 'tentative'] : []) + $fields + ['calendarId' => $calendarId, 'uid' => $uid]
+                    ($request ? ['status' => 'tentative'] : []) + $fields + ['calendarId' => $calendarId, 'uid' => $uid],
+                    $authority
                 ));
                 $eventId = (int) $occurrence['eventId'];
                 MailIngest::storeInvite($this->db, $eventId, $incoming, false);
@@ -727,7 +728,7 @@ final class ReviewQueue
                         : self::decisionError('review_stale', 'That occurrence already matches this change. The item has been closed.');
                 }
                 if ($cancel) {
-                    $this->events->deleteEvent($userId, $eventId, 'this', $instance);
+                    $this->events->deleteEvent($userId, $eventId, 'this', $instance, $authority);
                     $this->close((int) $row['id'], 'accepted');
                     return ['eventId' => $eventId, 'removed' => false];
                 }
@@ -750,7 +751,7 @@ final class ReviewQueue
                 if ($overrideRow !== null && (string) ($overrideRow['status'] ?? '') === 'cancelled') {
                     $patch['status'] = 'confirmed';
                 }
-                $this->events->patch($userId, $eventId, $patch);
+                $this->events->patch($userId, $eventId, $patch, $authority);
                 // The occurrence keeps its own sequence watermark; the series'
                 // organizer stays the one the owner approved.
                 $applied = self::occurrenceRow($this->db, $eventId, $occurrence);
@@ -804,7 +805,7 @@ final class ReviewQueue
             if (!empty($event['rrule']) && empty($event['recurrence_parent_id'])) {
                 $patch['scope'] = 'all';
             }
-            $this->events->patch($userId, $eventId, $patch);
+            $this->events->patch($userId, $eventId, $patch, $authority);
             MailIngest::storeInvite($this->db, $eventId, $incoming === [] ? null : $incoming, true);
             $this->close((int) $row['id'], 'accepted');
             // The owner's choice (#132): an accepted cancellation removes the
@@ -812,7 +813,7 @@ final class ReviewQueue
             // leaving it struck through.
             $removed = false;
             if ($method === 'CANCEL' && (new Settings($this->db))->forUser($userId)['removeAcceptedCancellations'] === true) {
-                $this->events->deleteEvent($userId, $eventId, null, null);
+                $this->events->deleteEvent($userId, $eventId, null, null, $authority);
                 $removed = true;
             }
             $this->reconcilePending($userId, $eventId, (string) $row['source_key']);

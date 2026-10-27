@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace BetterCal\Http\Controllers;
 
 use BetterCal\Domain\QuickAdd;
+use BetterCal\Domain\RequestAuthority;
 use BetterCal\Http\Request;
 use BetterCal\Http\Response;
 
@@ -23,6 +24,7 @@ final class QuickAddController
             $req->bool('commit'),
             isset($req->body['calendarId']) ? (int) $req->body['calendarId'] : null,
             $req->authMethod === 'token' ? $req->tokenId : null,
+            RequestAuthority::request($req),
         );
         $out = ['draft' => $result['draft']];
         if ($result['event'] !== null) {

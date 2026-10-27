@@ -90,7 +90,7 @@ final class Events
      * it is the private attendance mark. Scope applies to a series as for
      * any other change.
      */
-    public function setRelationship(int $userId, int $id, string $relationship, ?string $scope = null, ?string $instanceStart = null): void
+    public function setRelationship(int $userId, int $id, string $relationship, ?string $scope = null, ?string $instanceStart = null, ?RequestAuthority $authority = null): void
     {
         $event = $this->get($userId, $id);
         $role = (string) ($this->calendarMeta((int) $event['calendar_id'])['role'] ?? 'mine');
@@ -112,7 +112,7 @@ final class Events
                 $in['scope'] = $scope ?? 'all';
                 $in['instanceStart'] = $instanceStart;
             }
-            $this->patch($userId, $id, $in);
+            $this->patch($userId, $id, $in, $authority);
             return;
         }
         if (!isset(self::ATTENDANCE_ALIASES[$relationship])) {
@@ -130,6 +130,8 @@ final class Events
         private readonly Trips $trips,
         /** The plugin registry for plugin calendars' write-through (tests pass one with a stand-in plugin). */
         private readonly ?Plugins $pluginRegistry = null,
+        /** Google write-through (tests pass one with a stand-in transport); built on first use otherwise. */
+        private ?GoogleWriter $googleWriter = null,
     ) {
     }
 
@@ -139,7 +141,6 @@ final class Events
     private array $userReminderDefaults = [];
     /** @var array<int, ?string> recurrence parent id => rrule, memoized per request */
     private array $parentRrules = [];
-    private ?GoogleWriter $googleWriter = null;
 
     // ---- plugin write-through ---------------------------------------------------
     // A plugin calendar whose plugin declares `events:edit` (EditablePlugin)
@@ -232,6 +233,11 @@ final class Events
     // coordinates) are applied to the resulting row. Activity gets a plain
     // entry, not an undoable one: an undo would have to be a second write
     // to Google, and the row is Google's, not a snapshot of ours.
+    //
+    // The credential behind the request is checked just before each Google
+    // call (after any token refresh) and again first thing in the
+    // transaction that saves Google's answer here, so a session or API key
+    // revoked mid-request can't finish the change.
 
     /** The calendar row when this event lives on a writable Google calendar, else null. */
     private function googleCalendarFor(int $calendarId): ?array
@@ -258,6 +264,21 @@ final class Events
         return $this->googleWriter ??= new GoogleWriter($this->db, new GoogleAuth($this->db, config()), new Feeds($this->db, null, config()));
     }
 
+    /** Runs just before a Google call; null when no request credential is attached. */
+    private function googleBeforeSend(?RequestAuthority $authority): ?\Closure
+    {
+        return $authority === null ? null : fn() => $authority->assertValid($this->db, false);
+    }
+
+    /** Saves Google's answer (and the local-only parts of the edit) behind the credential check. */
+    private function googleCommit(?RequestAuthority $authority, callable $fn): mixed
+    {
+        return $this->db->tx(function () use ($authority, $fn): mixed {
+            $authority?->assertValid($this->db);
+            return $fn();
+        });
+    }
+
     private static function requireGoogleId(array $row): string
     {
         $id = (string) ($row['google_event_id'] ?? '');
@@ -281,16 +302,16 @@ final class Events
         $this->undo->record($userId, 'event', $eventId ?? 0, 'update', null, null, $summary . " on Google calendar '" . (string) $calendar['name'] . "'");
     }
 
-    private function googleCreate(int $userId, array $calendar, array $row, array $in): array
+    private function googleCreate(int $userId, array $calendar, array $row, array $in, ?RequestAuthority $authority = null): array
     {
-        $resp = $this->google()->insert($calendar, $row);
-        $this->google()->apply($calendar, [$resp]);
-        $created = $this->google()->rowByGoogleId((int) $calendar['id'], (string) ($resp['id'] ?? ''));
-        if ($created === null) {
-            throw new HttpError('google_write_failed', 'Google accepted the event but it did not come back on the calendar', 502);
-        }
-        $id = (int) $created['id'];
-        $this->db->tx(function () use ($row, $id, $userId, $in): void {
+        $resp = $this->google()->insert($calendar, $row, $this->googleBeforeSend($authority));
+        $id = $this->googleCommit($authority, function () use ($calendar, $resp, $row, $userId, $in): ?int {
+            $this->google()->apply($calendar, [$resp]);
+            $created = $this->google()->rowByGoogleId((int) $calendar['id'], (string) ($resp['id'] ?? ''));
+            if ($created === null) {
+                return null; // what Google answered is still kept
+            }
+            $id = (int) $created['id'];
             [, $local] = self::splitGoogleFields(array_intersect_key($row, array_flip(['reminders_json', 'is_container', 'location_lat', 'location_lng', 'location_source', 'location_provider', 'location_placed_at'])));
             if ($local !== []) {
                 $this->db->update('events', $local, 'id = ?', [$id]);
@@ -299,22 +320,29 @@ final class Events
                 $this->labels->setEventTags($userId, $id, $in['tagNames']);
             }
             $this->applyPeoplePatch($userId, $id, $in);
+            return $id;
         });
+        if ($id === null) {
+            throw new HttpError('google_write_failed', 'Google accepted the event but it did not come back on the calendar', 502);
+        }
         $this->googleJournal($userId, "Created '" . (string) $row['title'] . "'", $calendar, $id);
         return $this->get($userId, $id);
     }
 
-    private function googlePatchAll(int $userId, array $calendar, array $event, array $in): void
+    private function googlePatchAll(int $userId, array $calendar, array $event, array $in, ?RequestAuthority $authority = null): void
     {
         $id = (int) $event['id'];
         $in = $this->rebaseSeriesEdit($event, $in);
         [$googleFields, $localFields] = self::splitGoogleFields($this->columnPatch($event, $in));
+        $resp = null;
         if ($googleFields !== []) {
             $googleId = self::requireGoogleId($event);
-            $resp = $this->google()->patch($calendar, $googleId, GoogleWriter::body(array_merge($event, $googleFields)));
-            $this->google()->apply($calendar, [$resp]);
+            $resp = $this->google()->patch($calendar, $googleId, GoogleWriter::body(array_merge($event, $googleFields)), $this->googleBeforeSend($authority));
         }
-        $this->db->tx(function () use ($id, $userId, $localFields, $in): void {
+        $this->googleCommit($authority, function () use ($calendar, $resp, $id, $userId, $localFields, $in): void {
+            if ($resp !== null) {
+                $this->google()->apply($calendar, [$resp]);
+            }
             if ($localFields !== []) {
                 $this->db->update('events', $localFields + ['updated_at' => Time::nowDb()], 'id = ?', [$id]);
             }
@@ -328,7 +356,7 @@ final class Events
         }
     }
 
-    private function googlePatchThis(int $userId, array $calendar, array $master, array $in): void
+    private function googlePatchThis(int $userId, array $calendar, array $master, array $in, ?RequestAuthority $authority = null): void
     {
         $instanceUtc = $this->requireInstance($in, $master);
         $masterId = (int) $master['id'];
@@ -337,6 +365,8 @@ final class Events
             'SELECT * FROM events WHERE recurrence_parent_id = ? AND recurrence_instance_utc = ? AND deleted_at IS NULL',
             [$masterId, $instanceUtc]
         );
+        $resp = null;
+        $instanceId = null;
         if ($existing !== null) {
             [$googleFields, $localFields] = self::splitGoogleFields($this->columnPatch($existing, $in, $instanceUtc, forOverride: true));
             if ($googleFields !== []) {
@@ -345,10 +375,8 @@ final class Events
                 $googleId = !empty($existing['google_event_id'])
                     ? (string) $existing['google_event_id']
                     : GoogleWriter::instanceId(self::requireGoogleId($master), $instanceUtc, $allDay, (string) $master['tzid']);
-                $resp = $this->google()->patch($calendar, $googleId, GoogleWriter::body(array_merge($existing, $googleFields)));
-                $this->google()->apply($calendar, [$resp]);
+                $resp = $this->google()->patch($calendar, $googleId, GoogleWriter::body(array_merge($existing, $googleFields)), $this->googleBeforeSend($authority));
             }
-            $rowId = (int) $existing['id'];
         } else {
             // The occurrence becomes an exception at Google: patch its
             // instance id with the occurrence as it should now be.
@@ -363,18 +391,24 @@ final class Events
             [, $localFields] = self::splitGoogleFields($patch);
             $override = array_merge($override, $patch);
             $instanceId = GoogleWriter::instanceId(self::requireGoogleId($master), $instanceUtc, $allDay, (string) $master['tzid']);
-            $resp = $this->google()->patch($calendar, $instanceId, GoogleWriter::body($override));
-            $this->google()->apply($calendar, [$resp]);
-            $created = $this->google()->rowByGoogleId((int) $calendar['id'], (string) ($resp['id'] ?? $instanceId));
-            if ($created === null) {
-                throw new HttpError('google_write_failed', 'Google accepted the change but the occurrence did not come back', 502);
-            }
-            $rowId = (int) $created['id'];
-            // Same event on one day: it starts with the series' tags and people.
-            $this->db->run($this->db->insertIgnore() . ' INTO event_tags (event_id, tag_id) SELECT ?, tag_id FROM event_tags WHERE event_id = ?', [$rowId, $masterId]);
-            $this->db->run($this->db->insertIgnore() . ' INTO event_people (event_id, person_id) SELECT ?, person_id FROM event_people WHERE event_id = ?', [$rowId, $masterId]);
+            $resp = $this->google()->patch($calendar, $instanceId, GoogleWriter::body($override), $this->googleBeforeSend($authority));
         }
-        $this->db->tx(function () use ($rowId, $userId, $localFields, $in): void {
+        $found = $this->googleCommit($authority, function () use ($calendar, $resp, $existing, $instanceId, $masterId, $userId, $localFields, $in): bool {
+            if ($resp !== null) {
+                $this->google()->apply($calendar, [$resp]);
+            }
+            if ($existing !== null) {
+                $rowId = (int) $existing['id'];
+            } else {
+                $created = $this->google()->rowByGoogleId((int) $calendar['id'], (string) ($resp['id'] ?? $instanceId));
+                if ($created === null) {
+                    return false; // what Google answered is still kept
+                }
+                $rowId = (int) $created['id'];
+                // Same event on one day: it starts with the series' tags and people.
+                $this->db->run($this->db->insertIgnore() . ' INTO event_tags (event_id, tag_id) SELECT ?, tag_id FROM event_tags WHERE event_id = ?', [$rowId, $masterId]);
+                $this->db->run($this->db->insertIgnore() . ' INTO event_people (event_id, person_id) SELECT ?, person_id FROM event_people WHERE event_id = ?', [$rowId, $masterId]);
+            }
             if ($localFields !== []) {
                 $this->db->update('events', $localFields + ['updated_at' => Time::nowDb()], 'id = ?', [$rowId]);
             }
@@ -382,11 +416,15 @@ final class Events
                 $this->labels->setEventTags($userId, $rowId, $in['tagNames']);
             }
             $this->applyPeoplePatch($userId, $rowId, $in);
+            return true;
         });
+        if (!$found) {
+            throw new HttpError('google_write_failed', 'Google accepted the change but the occurrence did not come back', 502);
+        }
         $this->googleJournal($userId, "Updated one occurrence of '" . (string) $master['title'] . "'", $calendar, $masterId);
     }
 
-    private function googlePatchFollowing(int $userId, array $calendar, array $master, array $in): void
+    private function googlePatchFollowing(int $userId, array $calendar, array $master, array $in, ?RequestAuthority $authority = null): void
     {
         $instanceUtc = $this->requireInstance($in, $master);
         $masterId = (int) $master['id'];
@@ -399,7 +437,7 @@ final class Events
         $oldRrule = Recurrence::setUntil((string) $master['rrule'], Recurrence::splitUntil($instStart), $allDay, (string) $master['tzid']);
         $endOld = $this->google()->patch($calendar, $masterGoogleId, [
             'recurrence' => GoogleWriter::recurrenceLines($oldRrule, $this->decodeExdates($master), $allDay, (string) $master['tzid']),
-        ]);
+        ], $this->googleBeforeSend($authority));
 
         $newMaster = $this->copyForChild($master);
         $newMaster['start_utc'] = Time::toDb($instStart);
@@ -412,33 +450,34 @@ final class Events
         if (isset($in['rrule']) && $in['rrule'] !== null && $in['rrule'] !== '') {
             $newMaster['rrule'] = (string) $in['rrule'];
         }
-        $created = $this->google()->insert($calendar, $newMaster);
-        $this->google()->apply($calendar, [$endOld, $created]);
-        $row = $this->google()->rowByGoogleId((int) $calendar['id'], (string) ($created['id'] ?? ''));
-        if ($row !== null) {
+        $created = $this->google()->insert($calendar, $newMaster, $this->googleBeforeSend($authority));
+        $this->googleCommit($authority, function () use ($calendar, $endOld, $created, $userId, $localFields, $in): void {
+            $this->google()->apply($calendar, [$endOld, $created]);
+            $row = $this->google()->rowByGoogleId((int) $calendar['id'], (string) ($created['id'] ?? ''));
+            if ($row === null) {
+                return;
+            }
             $rowId = (int) $row['id'];
             $this->splitEventId = $rowId;
-            $this->db->tx(function () use ($rowId, $userId, $localFields, $in): void {
-                if ($localFields !== []) {
-                    $this->db->update('events', $localFields + ['updated_at' => Time::nowDb()], 'id = ?', [$rowId]);
-                }
-                if (array_key_exists('tagNames', $in) && is_array($in['tagNames'])) {
-                    $this->labels->setEventTags($userId, $rowId, $in['tagNames']);
-                }
-                $this->applyPeoplePatch($userId, $rowId, $in);
-            });
-        }
+            if ($localFields !== []) {
+                $this->db->update('events', $localFields + ['updated_at' => Time::nowDb()], 'id = ?', [$rowId]);
+            }
+            if (array_key_exists('tagNames', $in) && is_array($in['tagNames'])) {
+                $this->labels->setEventTags($userId, $rowId, $in['tagNames']);
+            }
+            $this->applyPeoplePatch($userId, $rowId, $in);
+        });
         $this->googleJournal($userId, "Changed '" . (string) $master['title'] . "' from " . $instStart->format('M j') . " on", $calendar, $masterId);
     }
 
-    private function googleDeleteAll(int $userId, array $calendar, array $event): void
+    private function googleDeleteAll(int $userId, array $calendar, array $event, ?RequestAuthority $authority = null): void
     {
-        $this->google()->delete($calendar, self::requireGoogleId($event));
-        $this->google()->apply($calendar, [], [GoogleWriter::tombstone((string) $event['uid'], null)]);
+        $this->google()->delete($calendar, self::requireGoogleId($event), $this->googleBeforeSend($authority));
+        $this->googleCommit($authority, fn() => $this->google()->apply($calendar, [], [GoogleWriter::tombstone((string) $event['uid'], null)]));
         $this->googleJournal($userId, "Deleted '" . (string) $event['title'] . "'", $calendar, (int) $event['id']);
     }
 
-    private function googleDeleteThis(int $userId, array $calendar, array $master, ?string $instanceStart): void
+    private function googleDeleteThis(int $userId, array $calendar, array $master, ?string $instanceStart, ?RequestAuthority $authority = null): void
     {
         $instanceUtc = $this->requireInstance(['instanceStart' => $instanceStart], $master);
         // Refuse before mutating Google: otherwise its delete could succeed
@@ -452,24 +491,24 @@ final class Events
         $googleId = $override !== null && !empty($override['google_event_id'])
             ? (string) $override['google_event_id']
             : GoogleWriter::instanceId(self::requireGoogleId($master), $instanceUtc, $allDay, (string) $master['tzid']);
-        $this->google()->delete($calendar, $googleId);
-        $this->google()->apply($calendar, [], [GoogleWriter::tombstone((string) $master['uid'], $instanceUtc)]);
+        $this->google()->delete($calendar, $googleId, $this->googleBeforeSend($authority));
+        $this->googleCommit($authority, fn() => $this->google()->apply($calendar, [], [GoogleWriter::tombstone((string) $master['uid'], $instanceUtc)]));
         $this->googleJournal($userId, "Deleted one occurrence of '" . (string) $master['title'] . "'", $calendar, (int) $master['id']);
     }
 
-    private function googleDeleteFollowing(int $userId, array $calendar, array $master, ?string $instanceStart): void
+    private function googleDeleteFollowing(int $userId, array $calendar, array $master, ?string $instanceStart, ?RequestAuthority $authority = null): void
     {
         $instanceUtc = $this->requireInstance(['instanceStart' => $instanceStart], $master);
         $allDay = (int) $master['all_day'] === 1;
         $newRrule = Recurrence::setUntil((string) $master['rrule'], Recurrence::splitUntil(Time::fromDb($instanceUtc)), $allDay, (string) $master['tzid']);
         $resp = $this->google()->patch($calendar, self::requireGoogleId($master), [
             'recurrence' => GoogleWriter::recurrenceLines($newRrule, $this->decodeExdates($master), $allDay, (string) $master['tzid']),
-        ]);
-        $this->google()->apply($calendar, [$resp]);
+        ], $this->googleBeforeSend($authority));
+        $this->googleCommit($authority, fn() => $this->google()->apply($calendar, [$resp]));
         $this->googleJournal($userId, "Ended '" . (string) $master['title'] . "' before " . Time::fromDb($instanceUtc)->format('M j'), $calendar, (int) $master['id']);
     }
 
-    private function googleDeleteOverride(int $userId, array $calendar, array $override): void
+    private function googleDeleteOverride(int $userId, array $calendar, array $override, ?RequestAuthority $authority = null): void
     {
         if (!empty($override['recurrence_parent_id'])) {
             $parent = $this->db->one('SELECT * FROM events WHERE id = ?', [(int) $override['recurrence_parent_id']]);
@@ -477,8 +516,8 @@ final class Events
                 $this->withExdate($parent, (string) $override['recurrence_instance_utc']);
             }
         }
-        $this->google()->delete($calendar, self::requireGoogleId($override));
-        $this->google()->apply($calendar, [], [GoogleWriter::tombstone((string) $override['uid'], (string) $override['recurrence_instance_utc'])]);
+        $this->google()->delete($calendar, self::requireGoogleId($override), $this->googleBeforeSend($authority));
+        $this->googleCommit($authority, fn() => $this->google()->apply($calendar, [], [GoogleWriter::tombstone((string) $override['uid'], (string) $override['recurrence_instance_utc'])]));
         $this->googleJournal($userId, "Deleted one occurrence of '" . (string) $override['title'] . "'", $calendar, (int) $override['id']);
     }
 
@@ -931,10 +970,13 @@ final class Events
     }
 
     /** @return array occurrence for the created event (first instance) */
-    public function create(int $userId, array $in): array
+    public function create(int $userId, array $in, ?RequestAuthority $authority = null): array
     {
         $calendarId = (int) ($in['calendarId'] ?? 0);
-        return $this->db->tx(function () use ($userId, $in, $calendarId): array {
+        return $this->db->tx(function () use ($userId, $in, $calendarId, $authority): array {
+            // The request's credential is locked first (user before calendar),
+            // so the checks around a Google write below keep the lock order.
+            $authority?->assertValid($this->db);
             $calendar = CalendarMoveGuard::lockCalendar($this->db, $calendarId);
             if ($calendar !== null && (int) $calendar['user_id'] === $userId && (string) $calendar['kind'] === 'local') {
                 CalendarMoveGuard::assertMutableLocked($this->db, $calendarId);
@@ -942,12 +984,12 @@ final class Events
             // Keep the row lock through the sink even for a subscription. It
             // prevents adopt() from changing its authority between this
             // decision and a Google/local write.
-            return $this->createLocked($userId, $in);
+            return $this->createLocked($userId, $in, $authority);
         });
     }
 
     /** @return array occurrence for the created event (first instance) */
-    private function createLocked(int $userId, array $in): array
+    private function createLocked(int $userId, array $in, ?RequestAuthority $authority = null): array
     {
         $calendarId = (int) ($in['calendarId'] ?? 0);
         $calendar = $this->db->one('SELECT * FROM calendars WHERE id = ? AND user_id = ?', [$calendarId, $userId]);
@@ -1036,7 +1078,7 @@ final class Events
         $row = array_merge($row, self::alignedStart($row));
 
         if ($google !== null) {
-            return $this->serializeSingle($this->googleCreate($userId, $google, $row, $in));
+            return $this->serializeSingle($this->googleCreate($userId, $google, $row, $in, $authority));
         }
 
         $id = $this->db->tx(function () use ($row, $userId, $in): int {
@@ -1073,6 +1115,7 @@ final class Events
         ?string $start = null,
         ?string $end = null,
         bool $duplicate = false,
+        ?RequestAuthority $authority = null,
     ): array {
         $event = $this->get($userId, $id);
         if ($targetCalendarId <= 0 && $duplicate) {
@@ -1143,7 +1186,7 @@ final class Events
             $in['start'] = $start;
             $in['end'] = $end;
         }
-        $copy = $this->create($userId, $in);
+        $copy = $this->create($userId, $in, $authority);
         // A copy made on purpose is not a duplicate of its source (#9).
         Duplicates::markDistinct($this->db, $userId, (int) $event['id'], (int) $copy['eventId']);
         return $copy;
@@ -1199,7 +1242,9 @@ final class Events
         }
         sort($memberCalendarIds, SORT_NUMERIC);
         $memberCalendarIds = array_values(array_unique($memberCalendarIds));
-        $this->db->tx(function () use ($userId, $id, $in, $calendarIds, $movingMembers, $memberCalendarIds, $memberAuthority, $event, $snapshotChanging): void {
+        $this->db->tx(function () use ($userId, $id, $in, $calendarIds, $movingMembers, $memberCalendarIds, $memberAuthority, $event, $snapshotChanging, $authority): void {
+            // As in create(): the credential is locked before the calendars.
+            $authority?->assertValid($this->db);
             $locked = CalendarMoveGuard::lockCalendars($this->db, $calendarIds);
             $localIds = [];
             foreach ($locked as $calendarId => $calendar) {
@@ -1243,7 +1288,7 @@ final class Events
                     }
                 }
             }
-            $this->patchLocked($userId, $id, $in);
+            $this->patchLocked($userId, $id, $in, $authority);
         });
     }
 
@@ -1255,7 +1300,7 @@ final class Events
             && (string) ($member['provider'] ?? '') === 'ics';
     }
 
-    private function patchLocked(int $userId, int $id, array $in): void
+    private function patchLocked(int $userId, int $id, array $in, ?RequestAuthority $authority = null): void
     {
         $event = $this->get($userId, $id);
         if (isset($in['calendarId']) && !self::isCalendarChange($event, $in)) {
@@ -1347,9 +1392,9 @@ final class Events
 
         if ($google !== null) {
             match ($scope) {
-                'this' => $this->googlePatchThis($userId, $google, $event, $in),
-                'following' => $this->googlePatchFollowing($userId, $google, $event, $in),
-                'all' => $this->googlePatchAll($userId, $google, $event, $in),
+                'this' => $this->googlePatchThis($userId, $google, $event, $in, $authority),
+                'following' => $this->googlePatchFollowing($userId, $google, $event, $in, $authority),
+                'all' => $this->googlePatchAll($userId, $google, $event, $in, $authority),
             };
             return;
         }
@@ -1869,10 +1914,12 @@ final class Events
         return $newId;
     }
 
-    public function deleteEvent(int $userId, int $id, ?string $scope, ?string $instanceStart): void
+    public function deleteEvent(int $userId, int $id, ?string $scope, ?string $instanceStart, ?RequestAuthority $authority = null): void
     {
         $event = $this->get($userId, $id);
-        $this->db->tx(function () use ($userId, $id, $scope, $instanceStart, $event): void {
+        $this->db->tx(function () use ($userId, $id, $scope, $instanceStart, $event, $authority): void {
+            // As in create(): the credential is locked before the calendar.
+            $authority?->assertValid($this->db);
             $calendarId = (int) $event['calendar_id'];
             $calendar = CalendarMoveGuard::lockCalendar($this->db, $calendarId);
             if ($calendar !== null && (string) $calendar['kind'] === 'local') {
@@ -1882,11 +1929,11 @@ final class Events
             if ((int) $fresh['calendar_id'] !== $calendarId) {
                 throw HttpError::conflict('event_changed', 'This event changed calendars; reload it and try again.');
             }
-            $this->deleteEventLocked($userId, $id, $scope, $instanceStart);
+            $this->deleteEventLocked($userId, $id, $scope, $instanceStart, $authority);
         });
     }
 
-    private function deleteEventLocked(int $userId, int $id, ?string $scope, ?string $instanceStart): void
+    private function deleteEventLocked(int $userId, int $id, ?string $scope, ?string $instanceStart, ?RequestAuthority $authority = null): void
     {
         $event = $this->get($userId, $id);
         $google = $event['source'] === 'feed' ? $this->googleCalendarFor((int) $event['calendar_id']) : null;
@@ -1901,7 +1948,7 @@ final class Events
         // Deleting an override row directly = deleting that one occurrence.
         if (!empty($event['recurrence_parent_id'])) {
             if ($google !== null) {
-                $this->googleDeleteOverride($userId, $google, $event);
+                $this->googleDeleteOverride($userId, $google, $event, $authority);
                 return;
             }
             $this->deleteOverrideInstance($userId, $event);
@@ -1920,9 +1967,9 @@ final class Events
 
         if ($google !== null) {
             match ($scope) {
-                'this' => $this->googleDeleteThis($userId, $google, $event, $instanceStart),
-                'following' => $this->googleDeleteFollowing($userId, $google, $event, $instanceStart),
-                'all' => $this->googleDeleteAll($userId, $google, $event),
+                'this' => $this->googleDeleteThis($userId, $google, $event, $instanceStart, $authority),
+                'following' => $this->googleDeleteFollowing($userId, $google, $event, $instanceStart, $authority),
+                'all' => $this->googleDeleteAll($userId, $google, $event, $authority),
             };
             return;
         }

@@ -67,7 +67,8 @@ const BARE_WORD = /^(?:(?:next|this) )?([a-z]+)$/;
 const MONTH_YEAR = /^([a-z]+) (\d{4})$/;
 
 function normalize(text) {
-  return String(text || '').trim().toLowerCase().replace(/\s+/g, ' ').replace(/,/g, '');
+  return String(text || '').trim().toLowerCase().replace(/\s+/g, ' ').replace(/,/g, '')
+    .replace(/\b(\d{1,2})(?:st|nd|rd|th)\b/g, '$1'); // "june 9th"
 }
 
 // How much of a date the text actually pinned down: 'day' | 'month' | 'year'.
@@ -82,6 +83,53 @@ export function jumpGranularity(text) {
   const my = t.match(MONTH_YEAR);
   if (my && wordIndex(my[1], MONTH_NAMES) != null) return 'month';
   return 'day';
+}
+
+// View words a jump may name, at either end: "day view of june 9",
+// "june 9 day view", "september month view", "agenda from next tuesday".
+// Closed vocabulary, matching the views that exist (actions.js VIEWS, plus the
+// phone's 3-day overview). Longest phrases first so "3 weeks" never reads as
+// "week".
+const VIEW_PHRASES = [
+  ['three weeks', 'weeks3'], ['three week', 'weeks3'], ['3 weeks', 'weeks3'], ['3 week', 'weeks3'],
+  ['two weeks', 'weeks2'], ['two week', 'weeks2'], ['2 weeks', 'weeks2'], ['2 week', 'weeks2'],
+  ['full month', 'month'], ['3 days', '3day'], ['3 day', '3day'],
+  ['schedule', 'agenda'], ['agenda', 'agenda'], ['month', 'month'],
+  ['split', 'split'], ['week', 'week'], ['day', 'day'],
+];
+const VIEW_ALT = VIEW_PHRASES.map(([p]) => p).join('|');
+const LEADING_VIEW = new RegExp('^(?:in |show )?(?:the |a )?(' + VIEW_ALT + ')(?: view)?(?: (?:of|for|from|on|at|starting))? (.+)$');
+const TRAILING_VIEW = new RegExp('^(.+?) (?:in |as )?(?:the |a )?(' + VIEW_ALT + ')(?: view)?$');
+// "june 9 calendar view": a word we don't know, followed by "view", is dropped
+// rather than failing the jump.
+const UNKNOWN_LEADING = /^[a-z]+ view(?: (?:of|for|from|on|at|starting))? (.+)$/;
+const UNKNOWN_TRAILING = /^(.+?) (?:in |as )?(?:the |a )?[a-z]+ view$/;
+
+function viewOf(phrase) {
+  const hit = VIEW_PHRASES.find(([p]) => p === phrase);
+  return hit ? hit[1] : null;
+}
+
+// A jump's full target: the day (as parseJumpText), how much of a date was
+// named (as jumpGranularity), and the view it asked for, or null to stay in
+// the current one. Null when no date is recognized, view word or not.
+export function parseJumpTarget(text, baseKey) {
+  const t = normalize(text).replace(/\b(\d)-(weeks?|days?)\b/g, '$1 $2');
+  if (!t || !baseKey) return null;
+  const target = (rest, view) => {
+    const dayKey = parseJumpText(rest, baseKey);
+    return dayKey ? { dayKey, granularity: jumpGranularity(rest), view } : null;
+  };
+  const direct = target(t, null);
+  if (direct) return direct;
+  let m = t.match(LEADING_VIEW);
+  const lead = m && target(m[2], viewOf(m[1]));
+  if (lead) return lead;
+  m = t.match(TRAILING_VIEW);
+  const trail = m && target(m[1], viewOf(m[2]));
+  if (trail) return trail;
+  m = t.match(UNKNOWN_LEADING) || t.match(UNKNOWN_TRAILING);
+  return m ? target(m[1], null) : null;
 }
 
 export function parseJumpText(text, baseKey) {

@@ -29,7 +29,7 @@ import { collapseDuplicates } from '../src/ui/duplicates.js';
 import { dayStepList } from '../src/ui/daysteps.js';
 import { sortByMatch } from '../src/lib/rank.js';
 import { zoneIndex, filterZones, parseOffset } from '../src/lib/zonesearch.js';
-import { parseJumpText, jumpGranularity } from '../src/lib/jumpparse.js';
+import { parseJumpText, jumpGranularity, parseJumpTarget } from '../src/lib/jumpparse.js';
 import { parseClockText, resolveClock, minsToHHMM, hhmmToMins, parseDateText, durationLabel } from '../src/lib/whenparse.js';
 import { monthWeeks, stepMonthOf } from '../src/lib/minimonth.js';
 import { buildRange } from '../src/lib/quickrange.js';
@@ -690,6 +690,26 @@ eq('gran: empty is a day', jumpGranularity('   '), 'day');
 // Garbage in, null out.
 eq('jump: gibberish', parseJumpText('fnord', JB), null);
 eq('jump: empty', parseJumpText('   ', JB), null);
+eq('jump: ordinal day', parseJumpText('june 9th', JB), '2027-06-09');
+
+// A view named at either end, with noise words; an odd view word never stops
+// the jump, and no view word means stay in the current view.
+const jt = (text) => JSON.stringify(parseJumpTarget(text, JB));
+const tgt = (dayKey, granularity, view) => JSON.stringify({ dayKey, granularity, view });
+eq('target: plain date has no view', jt('8/15'), tgt('2026-08-15', 'day', null));
+eq('target: view first', jt('day view of June 9th'), tgt('2027-06-09', 'day', 'day'));
+eq('target: view last', jt('june 9 day view'), tgt('2027-06-09', 'day', 'day'));
+eq('target: month view frames the month', jt('September month view'), tgt('2026-09-01', 'month', 'month'));
+eq('target: day view of a month lands on the 1st', jt('day view of september'), tgt('2026-09-01', 'month', 'day'));
+eq('target: agenda from a weekday', jt('agenda from next tuesday'), tgt('2026-08-04', 'day', 'agenda'));
+eq('target: schedule is agenda', jt('schedule for 8/20'), tgt('2026-08-20', 'day', 'agenda'));
+eq('target: 3 weeks is not week', jt('aug 10 3 weeks'), tgt('2026-08-10', 'day', 'weeks3'));
+eq('target: hyphenated 2-week view', jt('2-week view of aug 10'), tgt('2026-08-10', 'day', 'weeks2'));
+eq('target: "in" before the view', jt('today in week view'), tgt('2026-07-31', 'day', 'week'));
+eq('target: weekday ending in "day" is a date', jt('sunday'), tgt('2026-08-02', 'day', null));
+eq('target: unknown view word is ignored', jt('june 9 calendar view'), tgt('2027-06-09', 'day', null));
+eq('target: a view with no date is nothing', jt('day view'), 'null');
+eq('target: gibberish', jt('fnord'), 'null');
 
 console.log('--- week start setting ---');
 // All earlier week tests ran under the default (Monday). Flip to Sunday and

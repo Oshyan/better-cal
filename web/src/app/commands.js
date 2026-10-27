@@ -12,12 +12,12 @@ import { handlers } from './keyboard.js';
 import { STATIC_COMMANDS, MANAGE_ITEMS, VIEW_LABELS, VIEW_ICONS } from './commanddefs.js';
 import { HOTKEYS } from './hotkeys.js';
 import {
-  VIEWS, setView, rosterViews, applySavedView, toggleCalendarVisible, jumpToDate, showOnlyRel, showAllRel,
-  jumpAnchorFor,
+  VIEWS, setView, rosterViews, applySavedView, toggleCalendarVisible, showOnlyRel, showAllRel,
+  jumpToTarget,
 } from './actions.js';
 import { api, loadPeople } from './api.js';
 import { localTz } from '../lib/dates.js';
-import { parseJumpText, jumpGranularity } from '../lib/jumpparse.js';
+import { parseJumpTarget } from '../lib/jumpparse.js';
 
 // Which context a `needs` gate is asking about.
 function hasContext(need) {
@@ -97,9 +97,9 @@ export function buildCommands() {
         label: 'Go to',
         placeholder: 'e.g. next tuesday, aug 14, 2027-03-01',
         run: (text) => {
-          const key = parseJumpText(text, state.anchor);
-          if (!key) { toast('Could not read "' + text + '" as a date', { error: true }); return false; }
-          jumpToDate(jumpAnchorFor(key, jumpGranularity(text)));
+          const target = parseJumpTarget(text, state.anchor);
+          if (!target) { toast('Could not read "' + text + '" as a date', { error: true }); return false; }
+          jumpToTarget(target);
           return true;
         },
       };

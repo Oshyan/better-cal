@@ -33,7 +33,7 @@ What it doesn't do (for now): send invitations to guests, offer booking pages, o
 - Day numbers open the day view, the strip beside them expands a crowded day in place (with an open button per row), and a hover + creates an event. Week and day headers click through to the day view too.
 - Each day's context (weather, air quality, sunrise and sunset, tides) sits in its header, as many tokens as fit with "+N" for the rest; holidays are written with the date.
 - Sidebar: collapsible (remembered), with a mini-month for fast jumps and hover-revealed visibility checkboxes. Hidden calendars and people are dimmed with a light strikethrough; an away person is italic, so "away" never looks like "hidden". Day and week views have a collapsible all-day lane.
-- Quick jump (`g`): type a date or a phrase and land there. Command palette (Cmd/Ctrl-K): find a view, a calendar or an action, go to a date, or create an event from the text.
+- Quick jump (`g`): type a date or a phrase and land there, optionally in a view ("day view of June 9th", "september month view"). Command palette (Cmd/Ctrl-K): find a view, a calendar or an action, go to a date, or create an event from the text.
 - Hotkeys for navigation, views, the Show filter, creating, editing and deleting events, search and filter, with a `?` cheat sheet built from the live bindings.
 - Saved views capture a view and its filters and restore them in one click; any one can be the default.
 - Coming back within half an hour of a reload or an update puts you where you were: the view, the day, the filter and saved view, an open event or search, and the page you were on.

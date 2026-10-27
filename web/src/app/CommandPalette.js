@@ -15,8 +15,8 @@ import { useStore, set, state } from './store.js';
 import { buildCommands, quickAddFallback } from './commands.js';
 import { COMMAND_GROUPS } from './commanddefs.js';
 import { rankByFuzzy } from '../lib/fuzzy.js';
-import { parseJumpText, jumpGranularity } from '../lib/jumpparse.js';
-import { jumpToDate, jumpAnchorFor } from './actions.js';
+import { parseJumpTarget } from '../lib/jumpparse.js';
+import { jumpToTarget, jumpViewPhrase } from './actions.js';
 import { trapFocus } from '../ui/DayExpand.js';
 import { dateOfDayKey, fmtDateFull } from '../lib/dates.js';
 
@@ -68,7 +68,7 @@ export function CommandPalette() {
 
   // The date row: only when the text actually parses, so it never occupies a
   // slot for a query that was never about a date.
-  const dateKey = !prompt && text ? parseJumpText(text, state.anchor) : null;
+  const jump = !prompt && text ? parseJumpTarget(text, state.anchor) : null;
 
   const matches = useMemo(() => {
     if (prompt) return [];
@@ -81,14 +81,14 @@ export function CommandPalette() {
   // Row list: date row first (it is the most specific reading of the text),
   // then commands, then the quick-add escape hatch.
   const rows = [];
-  if (dateKey) {
+  if (jump) {
     rows.push({
       kind: 'date',
-      id: 'goto:' + dateKey,
-      label: 'Go to ' + fmtDateFull(dateOfDayKey(dateKey)),
+      id: 'goto:' + jump.dayKey,
+      label: 'Go to ' + fmtDateFull(dateOfDayKey(jump.dayKey)) + jumpViewPhrase(jump.view),
       group: 'Go to',
       icon: 'calendar',
-      run: () => { jumpToDate(jumpAnchorFor(dateKey, jumpGranularity(text))); return true; },
+      run: () => { jumpToTarget(jump); return true; },
     });
   }
   for (const c of matches) rows.push({ ...c, kind: 'command' });

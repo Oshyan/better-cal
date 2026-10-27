@@ -13,6 +13,7 @@ import { shiftOccurrenceDays } from '../ui/monthmath.js';
 import { extendTripSpan } from '../ui/trips.js';
 import { dayStepList } from '../ui/daysteps.js';
 import { REL_KINDS, showRelFromConfig } from '../lib/relfilter.js';
+import { VIEW_LABELS } from './commanddefs.js';
 
 // Split sits last so the number keys of the older views stay where they were.
 export const VIEWS = ['month', 'weeks3', 'weeks2', 'week', 'day', 'agenda', 'split'];
@@ -116,6 +117,32 @@ export function jumpAnchorFor(dayKey, granularity) {
   if (granularity !== 'month' && granularity !== 'year') return dayKey;
   if (!['month', 'weeks3', 'weeks2'].includes(state.view)) return dayKey;
   return dayKey.slice(0, 8) + '15';
+}
+
+// A typed jump (parseJumpTarget): switch to the view it names, if this screen
+// has that view, then go to the day, framed for the view it lands in. On a
+// phone "month" and "3 day" pick the overview mode, as the view menu does.
+export function jumpToTarget({ dayKey, granularity, view }) {
+  if (jumpViewApplies(view)) {
+    if (state.viewportNarrow && (view === 'month' || view === '3day')) setOverviewMode(view);
+    else set({ view });
+  }
+  jumpToDate(jumpAnchorFor(dayKey, granularity));
+}
+
+// Whether a view a jump names exists on this screen (3 weeks isn't on a
+// phone, 3 day is only on a phone); one that doesn't is ignored.
+export function jumpViewApplies(view) {
+  if (!view) return false;
+  if (view === '3day') return !!state.viewportNarrow;
+  return rosterViews().includes(view);
+}
+
+// " in day view", for a jump's preview, or '' when it stays in this view.
+export function jumpViewPhrase(view) {
+  if (!jumpViewApplies(view)) return '';
+  const label = view === '3day' ? '3 day' : (VIEW_LABELS[view] || view).toLowerCase();
+  return ' in ' + label + ' view';
 }
 
 export function jumpToDate(dayKey, flashId) {

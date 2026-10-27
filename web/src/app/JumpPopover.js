@@ -7,9 +7,9 @@
 import { html, useState, useRef, useEffect } from '../../vendor/index.js';
 import { useStore, set, state } from './store.js';
 import { useBackClose } from './backclose.js';
-import { jumpToDate, jumpAnchorFor } from './actions.js';
+import { jumpToDate, jumpToTarget, jumpViewPhrase } from './actions.js';
 import { trapFocus } from '../ui/DayExpand.js';
-import { parseJumpText, jumpGranularity } from '../lib/jumpparse.js';
+import { parseJumpTarget } from '../lib/jumpparse.js';
 import { monthWeeks, stepMonthOf, weekdayHeads } from '../lib/minimonth.js';
 import { Icon } from '../ui/icons.js';
 import { onOutsidePress } from '../ui/outside.js';
@@ -65,20 +65,24 @@ export function JumpPopover() {
   if (!open || !disp) return null;
 
   const tKey = todayKey();
-  const parsed = text.trim() ? parseJumpText(text, tKey) : null;
+  const parsed = text.trim() ? parseJumpTarget(text, tKey) : null;
 
-  // A typed month ("june 2027") frames that month; a day picked off the grid
-  // is always exactly that day, whatever the text says.
-  const go = (dayKey, fromText) => {
+  // Typed text can name a view and a whole month ("september month view"),
+  // framed to suit; a day picked off the grid is always exactly that day.
+  const go = (dayKey) => {
     set({ jumpOpen: false });
-    jumpToDate(fromText ? jumpAnchorFor(dayKey, jumpGranularity(text)) : dayKey);
+    jumpToDate(dayKey);
+  };
+  const goTyped = () => {
+    set({ jumpOpen: false });
+    jumpToTarget(parsed);
   };
 
   const stepMonth = (n) => setDisp(stepMonthOf(disp.year, disp.month, n));
   const stepYear = (n) => setDisp({ year: disp.year + n, month: disp.month });
 
   const onKeyDown = (e) => {
-    if (e.key === 'Enter' && parsed) { e.preventDefault(); go(parsed, true); }
+    if (e.key === 'Enter' && parsed) { e.preventDefault(); goTyped(); }
   };
 
   const weeks = monthWeeks(disp.year, disp.month);
@@ -89,7 +93,7 @@ export function JumpPopover() {
       <input
         ref=${inputRef}
         class="bc-jump-input"
-        placeholder="June 2027, next tuesday, 8/15"
+        placeholder="June 2027, next tuesday, 8/15 day view"
         value=${text}
         onInput=${(e) => setText(e.target.value)}
         onKeyDown=${onKeyDown}
@@ -99,7 +103,7 @@ export function JumpPopover() {
     </div>
     <div class="bc-jump-preview" aria-live="polite">
       ${text.trim()
-        ? (parsed ? html`Enter jumps to <strong>${fmtDayLong(dateOfDayKey(parsed))}</strong>` : 'No date recognized')
+        ? (parsed ? html`Enter jumps to <strong>${fmtDayLong(dateOfDayKey(parsed.dayKey))}</strong>${jumpViewPhrase(parsed.view)}` : 'No date recognized')
         : 'Type a date, or pick one below'}
     </div>
 

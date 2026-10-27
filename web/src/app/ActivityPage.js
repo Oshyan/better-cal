@@ -9,6 +9,7 @@ import { jumpToDate, openDetail } from './actions.js';
 import { occDayKey } from '../lib/dates.js';
 import { PageShell, EmptyState, Skeleton } from './PageShell.js';
 import { Icon } from '../ui/icons.js';
+import { askConfirm } from './ConfirmDialog.js';
 
 // Source key -> label + manual/automated group. mail:* tiers collapse into
 // the "mail" filter server-side but keep their tier in the badge.
@@ -123,7 +124,12 @@ export function ActivityPage() {
       refreshWindow();
     } catch (e) {
       if (e.code === 'stale_undo') {
-        if (window.confirm('This item has newer changes; undoing will overwrite them. Undo anyway?')) {
+        if (await askConfirm({
+          title: 'Undo anyway?',
+          body: 'This item has changed since. Undoing puts it back as it was before this change, overwriting the newer changes.',
+          confirmLabel: 'Undo anyway',
+          danger: true,
+        })) {
           setBusyId(null);
           return undoEntry(entry, true);
         }

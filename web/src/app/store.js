@@ -52,6 +52,7 @@ export const state = {
   pluginRanges: {},   // plugin id -> {truncated, ranges: [...]} for the loaded window
   pluginSeq: 0,       // bump to force a plugin ranges/list refetch
   pluginFocus: null,  // plugin id whose settings the Plugins page opens on arrival
+  confirmAsk: null,   // the open "are you sure?" (ConfirmDialog.js), or null
   activitySeq: 0,     // bumped by the change poll; an open Activity page adds new entries
   reviewCount: 0,     // everything awaiting a decision, including paused calendar updates (sidebar badge)
   systemHealth: null, // GET /system/health: {rows, emailAlerts}; Settings panel, boot notices, device banner

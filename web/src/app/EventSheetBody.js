@@ -25,6 +25,7 @@ import { stripToText, hasHtml, sanitizeHtml } from '../lib/richtext.js';
 import { gmapsUrl, isPendingLocation } from '../lib/maps.js';
 import { meetingLinkInText, safeWebUrl } from '../lib/urls.js';
 import { onOutsidePress, insideAny } from '../ui/outside.js';
+import { askConfirm } from './ConfirmDialog.js';
 
 // Video meetings: the link is a Join button, not an address. The providers
 // are shared with the server's push notifications (lib/patterns.js).
@@ -141,7 +142,11 @@ function InviteBlock({ occ }) {
   }
   const answer = async (a) => {
     const uncertain = ['sending', 'uncertain'].includes(inv.reply?.reason);
-    if (uncertain && !window.confirm('The previous reply may have been sent. Send another reply?')) return;
+    if (uncertain && !(await askConfirm({
+      title: 'Send another reply?',
+      body: 'Your previous reply may already have gone to the organizer. Sending again could give them two.',
+      confirmLabel: 'Send again',
+    }))) return;
     setBusy(true);
     const r = await rsvpEvent(occ, a, uncertain);
     setBusy(false);

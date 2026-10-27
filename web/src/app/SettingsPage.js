@@ -32,6 +32,7 @@ import {
   BATTERY_TIP_TITLE, BATTERY_TIP_BODY, batteryTipApplies, batteryTipDismissed, dismissBatteryTip,
 } from '../lib/batterytip.js';
 import { TimedDefault, AllDayDefault } from './ReminderDefaults.js';
+import { askConfirm } from './ConfirmDialog.js';
 
 const VIEW_OPTIONS = [
   ['month', 'Month'], ['weeks3', '3 weeks'], ['weeks2', '2 weeks'],
@@ -514,7 +515,11 @@ function NotificationsSection({ settings, user }) {
   };
   useEffect(refresh, []);
   const removeDevice = async (d) => {
-    if (!window.confirm('Stop sending reminders to this device (' + d.service + ')?')) return;
+    if (!(await askConfirm({
+      title: 'Stop reminders on this device?',
+      body: 'Reminders stop going to ' + d.service + '. Turn them on again from that device to get them back.',
+      confirmLabel: 'Stop reminders',
+    }))) return;
     try {
       await removePushDevice(d.id);
       // This browser: drop its own subscription too, so it is gone at both ends.

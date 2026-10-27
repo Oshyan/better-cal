@@ -12,6 +12,7 @@ import { jumpToDate, openDetail, addAvailabilitySpan, updateAvailabilitySpan, de
 import { PageShell, EmptyState, Skeleton } from './PageShell.js';
 import { CalDot, Icon } from '../ui/icons.js';
 import { parseISO, occDayKey, fmtTime, dateOfDayKey, dayKeyOf, toISOWithOffset } from '../lib/dates.js';
+import { askConfirm } from './ConfirmDialog.js';
 
 function fmtDay(iso) {
   return parseISO(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
@@ -325,7 +326,14 @@ export function PeoplePage() {
             <button
               type="button" class="bc-icon-btn bc-pop-trash" title=${'Remove ' + p.name + ' (events kept)'}
               aria-label=${'Remove ' + p.name}
-              onClick=${() => { if (window.confirm('Remove ' + p.name + '? Their events stay on your calendars.')) remove(p); }}
+              onClick=${async () => {
+                if (await askConfirm({
+                  title: 'Remove ' + p.name + '?',
+                  body: 'Their events stay on your calendars, but they are no longer linked to them, and their notes and away times go. This can\'t be undone.',
+                  confirmLabel: 'Remove ' + p.name,
+                  danger: true,
+                })) remove(p);
+              }}
             ><${Icon} name="trash" size=${14} /></button>
           </div>
         </div>

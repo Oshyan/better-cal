@@ -349,7 +349,7 @@ function FolderHead({ folder, cals, collapsed, onToggleCollapse }) {
         '; remove them from the folder first (calendar settings > folders)', { error: true });
       return;
     }
-    if (window.confirm('Delete folder "' + folder.name + '"?')) deleteFolder(folder);
+    deleteFolder(folder); // undoable from its notice
   };
 
   const submitRename = async (e) => {

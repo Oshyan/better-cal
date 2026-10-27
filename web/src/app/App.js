@@ -43,6 +43,7 @@ import { ShortcutsSheet } from './ShortcutsSheet.js';
 import { MoveDialog } from './MoveToGoogle.js';
 import { CommandPalette } from './CommandPalette.js';
 import { Toasts } from './Toasts.js';
+import { ConfirmHost } from './ConfirmDialog.js';
 import { SystemBanner, WorkerBanner } from './system.js';
 import { UpdateBanner, OfflineBanner, AppReloadBanner } from './updates.js';
 import { Login } from './Login.js';
@@ -745,32 +746,32 @@ export function App() {
   }
   if (state.quickAddWindow) return html`<${QuickAddWindow} />`;
   if (s.route === 'organize') {
-    return html`<div class="bc-app"><${WorkerBanner} /><${OrganizePage} /><${CreateDrawer} /><${ShortcutsSheet} /><${MoveDialog} /><${CommandPalette} /><${AppBanners} /><${Toasts} /></div>`;
+    return html`<div class="bc-app"><${WorkerBanner} /><${OrganizePage} /><${CreateDrawer} /><${ShortcutsSheet} /><${MoveDialog} /><${CommandPalette} /><${AppBanners} /><${Toasts} /><${ConfirmHost} /></div>`;
   }
   if (s.route === 'outfeeds') {
-    return html`<div class="bc-app"><${WorkerBanner} /><${OutfeedsPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${MoveDialog} /><${CommandPalette} /><${AppBanners} /><${Toasts} /></div>`;
+    return html`<div class="bc-app"><${WorkerBanner} /><${OutfeedsPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${MoveDialog} /><${CommandPalette} /><${AppBanners} /><${Toasts} /><${ConfirmHost} /></div>`;
   }
   if (s.route === 'filters') {
-    return html`<div class="bc-app"><${WorkerBanner} /><${FiltersPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${MoveDialog} /><${CommandPalette} /><${AppBanners} /><${Toasts} /></div>`;
+    return html`<div class="bc-app"><${WorkerBanner} /><${FiltersPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${MoveDialog} /><${CommandPalette} /><${AppBanners} /><${Toasts} /><${ConfirmHost} /></div>`;
   }
   if (s.route === 'views') {
-    return html`<div class="bc-app"><${WorkerBanner} /><${SavedViewsPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${MoveDialog} /><${CommandPalette} /><${AppBanners} /><${Toasts} /></div>`;
+    return html`<div class="bc-app"><${WorkerBanner} /><${SavedViewsPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${MoveDialog} /><${CommandPalette} /><${AppBanners} /><${Toasts} /><${ConfirmHost} /></div>`;
   }
   if (s.route === 'settings') {
-    return html`<div class="bc-app"><${WorkerBanner} /><${SettingsPage} /><${Welcome} /><${CreateDrawer} /><${ShortcutsSheet} /><${MoveDialog} /><${CommandPalette} /><${AppBanners} /><${Toasts} /></div>`;
+    return html`<div class="bc-app"><${WorkerBanner} /><${SettingsPage} /><${Welcome} /><${CreateDrawer} /><${ShortcutsSheet} /><${MoveDialog} /><${CommandPalette} /><${AppBanners} /><${Toasts} /><${ConfirmHost} /></div>`;
   }
   if (s.route === 'people') {
-    return html`<div class="bc-app"><${WorkerBanner} /><${PeoplePage} /><${CreateDrawer} /><${ShortcutsSheet} /><${MoveDialog} /><${CommandPalette} /><${AppBanners} /><${Toasts} /></div>`;
+    return html`<div class="bc-app"><${WorkerBanner} /><${PeoplePage} /><${CreateDrawer} /><${ShortcutsSheet} /><${MoveDialog} /><${CommandPalette} /><${AppBanners} /><${Toasts} /><${ConfirmHost} /></div>`;
   }
   if (s.route === 'review') {
     // Review is a tab of the phone's bottom bar, so the bar stays.
-    return html`<div class="bc-app"><${WorkerBanner} /><${ReviewPage} /><${BottomBar} /><${CreateDrawer} /><${ShortcutsSheet} /><${MoveDialog} /><${CommandPalette} /><${AppBanners} /><${Toasts} /></div>`;
+    return html`<div class="bc-app"><${WorkerBanner} /><${ReviewPage} /><${BottomBar} /><${CreateDrawer} /><${ShortcutsSheet} /><${MoveDialog} /><${CommandPalette} /><${AppBanners} /><${Toasts} /><${ConfirmHost} /></div>`;
   }
   if (s.route === 'plugins') {
-    return html`<div class="bc-app"><${WorkerBanner} /><${PluginsPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${MoveDialog} /><${CommandPalette} /><${AppBanners} /><${Toasts} /></div>`;
+    return html`<div class="bc-app"><${WorkerBanner} /><${PluginsPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${MoveDialog} /><${CommandPalette} /><${AppBanners} /><${Toasts} /><${ConfirmHost} /></div>`;
   }
   if (s.route === 'activity') {
-    return html`<div class="bc-app"><${WorkerBanner} /><${ActivityPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${MoveDialog} /><${CommandPalette} /><${AppBanners} /><${Toasts} /></div>`;
+    return html`<div class="bc-app"><${WorkerBanner} /><${ActivityPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${MoveDialog} /><${CommandPalette} /><${AppBanners} /><${Toasts} /><${ConfirmHost} /></div>`;
   }
 
   let view = null;
@@ -1031,7 +1032,7 @@ export function App() {
       onExit=${exitReschedule}
     />`}
     <${BottomBar} />
-    <${AppBanners} /><${Toasts} />
+    <${AppBanners} /><${Toasts} /><${ConfirmHost} />
   </div>`;
 }
 

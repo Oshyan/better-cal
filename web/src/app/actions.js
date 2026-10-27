@@ -1089,7 +1089,7 @@ export async function renameFolder(folder, name) {
 export async function deleteFolder(folder) {
   try {
     await api('/folders/' + folder.id, { method: 'DELETE' });
-    toast('Folder deleted');
+    toast('Folder "' + folder.name + '" deleted', { undoable: true });
     await loadCalendars();
     return true;
   } catch (e) {

@@ -16,6 +16,7 @@ import { MoveToGoogle } from './MoveToGoogle.js';
 import { usePasswordStepUp } from './PasswordStepUp.js';
 import { TimedDefault, AllDayDefault } from './ReminderDefaults.js';
 import { summarizeDefaults, FOLLOW_DEFAULTS } from '../lib/reminders.js';
+import { askConfirm } from './ConfirmDialog.js';
 
 // Preset grid: the app palette plus teal and slate to round out 12.
 const SWATCHES = [...PALETTE, '#3aa695', '#708090'];
@@ -277,9 +278,14 @@ export function CalendarSettings({ cal, folders, onClose }) {
         type="button" class="bc-btn"
         title="Sever the feed link and make every event a local, editable copy (one-way; used when migrating off the old calendar)"
         onClick=${async () => {
-          if (!window.confirm('Adopt "' + cal.name + '" as a local calendar? ' + (cal.provider === 'google'
-            ? 'It stops syncing with Google in both directions and becomes yours here; the copy at Google is left as it is.'
-            : 'It will stop syncing from its feed and all events become editable.'))) return;
+          if (!(await askConfirm({
+            title: 'Adopt "' + cal.name + '" as a local calendar?',
+            body: (cal.provider === 'google'
+              ? 'It stops syncing with Google in both directions and becomes yours here; the copy at Google is left as it is.'
+              : 'It stops updating from its feed, and all its events become editable.') + ' This can\'t be undone.',
+            confirmLabel: 'Adopt as local',
+            danger: true,
+          }))) return;
           try {
             await api('/calendars/' + cal.id + '/adopt', { method: 'POST' });
             toast('Adopted as local calendar');

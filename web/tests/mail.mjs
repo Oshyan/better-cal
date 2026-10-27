@@ -11,7 +11,7 @@ let confirm = false, confirmations = 0;
 const sent = [];
 const InviteBlock = runInNewContext(block + '\nInviteBlock', {
   html, Icon: () => null, useState: (value) => [value, () => {}],
-  window: { confirm: () => { confirmations++; return confirm; } },
+  askConfirm: async () => { confirmations++; return confirm; },
   rsvpEvent: async (...args) => { sent.push(args); return {}; },
 });
 const occurrence = { invite: { kind: 'invitation', canReply: true, myPartstat: 'ACCEPTED', reply: { partstat: 'ACCEPTED', sent: false, reason: 'uncertain', message: 'The reply may have been sent.' } } };

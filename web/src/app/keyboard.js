@@ -75,11 +75,10 @@ export const handlers = {
       set({ deletePrompt: occ.instanceId }); // asks on the open surface, saying it cannot be undone
       return true;
     }
-    if (window.confirm('Delete "' + (occ.title || 'this event') + '"?')) {
-      set({ popover: null });
-      deleteEvent(occ);
-    }
-    return true; // key consumed either way
+    // Like Delete in the event's panel: no question, Undo in the notice.
+    set({ popover: null });
+    deleteEvent(occ);
+    return true;
   },
   detailPrev: () => (state.popover ? (stepPopoverSameDay(-1), true) : false),
   detailNext: () => (state.popover ? (stepPopoverSameDay(1), true) : false),

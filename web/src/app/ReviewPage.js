@@ -34,6 +34,7 @@ import { adoptSettings } from './settings.js';
 import { usePasswordStepUp } from './PasswordStepUp.js';
 import { fmtSince } from '../lib/since.js';
 import { parseISO, dateOfDayKey, fmtRange, fmtDayMedium, fmtTime } from '../lib/dates.js';
+import { askConfirm } from './ConfirmDialog.js';
 
 const KIND_LABEL = { invite_new: 'New emailed invitation', invite_change: 'Invitation change', mail_error: 'Unreadable email', mail_limit: 'Email automation paused', model_limit: 'AI processing paused', rsvp: 'Invitation', proposal: 'Proposal', duplicate: 'Possible duplicate', subscription: 'Calendar updates paused', plugin: 'Plugin turned off' };
 const KIND_ICON = { invite_new: 'mail', invite_change: 'mail', mail_error: 'warning', mail_limit: 'warning', model_limit: 'warning', rsvp: 'mail', proposal: 'proposals', duplicate: 'stack', subscription: 'calendar', plugin: 'warning' };
@@ -75,7 +76,12 @@ function ReviewCard({ item, onChanged }) {
   const run = async (action) => {
     setBusy(true);
     try {
-      if (item.kind === 'subscription' && action.name === 'remove' && !window.confirm('Remove this subscription and its saved events?')) return;
+      if (item.kind === 'subscription' && action.name === 'remove' && !(await askConfirm({
+        title: 'Remove this subscription?',
+        body: 'The calendar and the events it saved are deleted. This can\'t be undone.',
+        confirmLabel: 'Remove and delete events',
+        danger: true,
+      }))) return;
       const send = () => api(action.path, { method: action.method || 'POST', body: action.body || {} });
       const res = item.kind === 'subscription' && action.name === 'keep_updating'
         ? await stepUp.run('keep this subscription updating', send) : await send();

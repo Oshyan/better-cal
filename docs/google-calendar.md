@@ -61,6 +61,15 @@ If Google stops accepting an account's grant, Settings says **Reconnect needed**
 
 **After an account compromise:** an ordinary password change keeps Google connections. The server-side compromise reset, `php server/bin/seed.php --email=you@example.com --revoke-tokens`, pauses every Google account, stops unfinished moves, and then asks Google to revoke their refresh tokens. Cached events stay visible, but Google calendars are read-only and stop polling until each account is reconnected. A request already in flight may finish, events a partial move already uploaded stay at Google (Better-Cal can't retract them from an account the owner may no longer control), and cancelled moves are never resumed automatically.
 
+## Work Accounts (Google Workspace)
+
+A work account managed by a company's IT department follows that department's settings, which decide what's possible here. Whether you may copy work calendar data to a server you run is a matter of your employer's policies, and checking and following them is entirely your responsibility; Better-Cal can't tell. What to try:
+
+- **Connect the account** as above. Where IT restricts third-party apps, Google says your administrator has blocked access. IT can allow one app by its OAuth client ID, but be realistic: few IT departments approve a self-hosted app from a one-person project. If you ask, the [security reviews](../SECURITY.md#what-has-been-reviewed) may help make the case.
+- **Subscribe by its secret iCal address** (the calendar's settings in Google Calendar, "Secret address in iCal format"). Companies that limit sharing outside the organization often hide it.
+- **Share the work calendar with a personal Google account**, and connect that one. Where outside sharing is limited to free/busy, you get your busy times without the details.
+- **Forward single invitations** to Better-Cal's mail address ([Email ingest](email-ingest.md)). Automatic forwarding to an outside address is usually blocked.
+
 ## Moving a Calendar to Google
 
 For a calendar that started in Better-Cal and now needs to be seen by people who use Google Calendar: a trip calendar for travel companions, say, or a family calendar. An outbound feed also works for read-only sharing, but Google refreshes it on its own schedule (often once a day) and nobody at Google can add to it.

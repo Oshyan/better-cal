@@ -8,6 +8,7 @@ import { state, set } from './store.js';
 import {
   rosterViews, setView, cycleView, goToday, navigate, closeOverlays,
   enterReschedule, deleteEvent, stepPopoverSameDay, googleBacked, toggleRel, applyDefaultView, editFromView,
+  toggleFitRows,
 } from './actions.js';
 import { HOTKEYS } from './hotkeys.js';
 
@@ -87,6 +88,8 @@ export const handlers = {
   relMaybe: () => { toggleRel('maybe'); return true; },
   relAvailable: () => { toggleRel('available'); return true; },
   relContext: () => { toggleRel('context'); return true; },
+  // Month view only: elsewhere the key falls through.
+  fitRows: () => { if (state.view !== 'month') return false; toggleFitRows(); return true; },
   search: () => set({ searchOpen: true }),
   filter: () => {
     const el = document.querySelector('.bc-filter-input');

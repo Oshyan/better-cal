@@ -63,6 +63,9 @@ final class Settings
         // a jump): with a row or two before it for context, or at the top
         // so the screen is what's ahead (#91).
         'gridAnchor' => 'context',
+        // Month view rows on a desktop: all one height, or each as tall as
+        // its busiest day needs, up to the screen's height (#171).
+        'monthRows' => 'fixed',
         // Accepting an emailed cancellation deletes the event (with Undo)
         // instead of keeping it struck through (#132).
         'removeAcceptedCancellations' => false,
@@ -240,6 +243,7 @@ final class Settings
                 'sidebarActiveOnly' => self::bool($key, $value),
                 'panelTucksSidebar' => self::bool($key, $value),
                 'gridAnchor' => self::enum($key, $value, ['context', 'top']),
+                'monthRows' => self::enum($key, $value, ['fixed', 'fit']),
                 'removeAcceptedCancellations' => self::bool($key, $value),
                 'mailEventMode' => self::enum($key, $value, ['any', 'approved', 'review']),
                 'mailApprovedSenders' => MailPolicy::rules($value),

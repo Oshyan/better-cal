@@ -28,6 +28,7 @@ export const HOTKEYS = [
   { id: 'relContext', keys: ['x'], label: 'Show or hide context (information) events', group: 'Views' },
   { id: 'setView', keys: ['1', '2', '3', '4', '5', '6', '7'], display: ['1-7'], label: 'Views in switcher order', group: 'Views' },
   { id: 'defaultView', keys: ['0'], label: 'Default view (reset filters, month, today)', group: 'Views' },
+  { id: 'fitRows', keys: ['H'], display: ['Shift', 'H'], label: 'Month rows: fit their days, or all the same height', group: 'Views' },
 
   // Events
   { id: 'quickAdd', keys: ['c'], label: 'Quick add (plain language)', group: 'Events' },

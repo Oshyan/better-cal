@@ -994,6 +994,25 @@ export async function deleteSavedView(view) {
 // Save one setting immediately (per-control, no debounce) and apply it
 // client-side on success. scrollSeq bumps so grids re-anchor if week math
 // changed while the calendar stayed mounted.
+/**
+ * Month rows: each as tall as its busiest day, or all the same height
+ * (#171). A view switch, not a settings change: it applies at once and in
+ * place (saveSetting would go back to the day you last went to, and say
+ * "Setting saved"), and is remembered in the background. Only a failed save
+ * says anything, and puts it back.
+ */
+export async function toggleFitRows() {
+  const prev = state.settings.monthRows === 'fit' ? 'fit' : 'fixed';
+  const next = prev === 'fit' ? 'fixed' : 'fit';
+  adoptSettings({ monthRows: next });
+  try {
+    await api('/settings', { method: 'PATCH', body: { monthRows: next } });
+  } catch (e) {
+    adoptSettings({ monthRows: prev });
+    toast('Could not switch month rows: ' + e.message, { error: true });
+  }
+}
+
 export async function saveSetting(key, value) {
   try {
     const data = await api('/settings', { method: 'PATCH', body: { [key]: value } });

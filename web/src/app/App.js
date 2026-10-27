@@ -11,8 +11,7 @@ import {
   moveEvent, resizeEvent, sendFeedback, exitReschedule, googleBacked, setRelationship, showAllRel,
   jumpToDate, openDetail, effectiveOverviewMode,
   moveAvailabilitySpan, moveTrip, moveEventToCalendar, linkPersonToEvent, attachToTrip,
-  resizeAvailabilitySpanDays, copyEventAt, copyEventTo,
-} from './actions.js';
+  resizeAvailabilitySpanDays, copyEventAt, copyEventTo, toggleFitRows } from './actions.js';
 import { groupOccurrences, itemMatchesFilter } from '../ui/grouping.js';
 import { collapseDuplicates } from '../ui/duplicates.js';
 import { sortByMatch } from '../lib/rank.js';
@@ -137,6 +136,7 @@ export function App() {
       visibleMonth: st.reschedule ? st.visibleMonth : null,
       overviewMode: st.settings.overviewMode,
       gridAnchor: st.settings.gridAnchor,
+      monthRows: st.settings.monthRows,
       nowMinute: st.nowMinute,
       viewportNarrow: st.viewportNarrow,
       phoneWide: st.phoneWide,
@@ -813,6 +813,8 @@ export function App() {
       scrollSeq=${s.scrollSeq}
       glide=${s.glideSeq === s.scrollSeq}
       anchorAtTop=${s.gridAnchor === 'top'}
+      fitRows=${s.view === 'month' && !ribbon && s.monthRows === 'fit'}
+      onToggleFit=${s.view === 'month' && !ribbon ? toggleFitRows : null}
       dimSet=${dimSet}
       nowMs=${nowMs}
       onRequestWindow=${onRequestWindow}

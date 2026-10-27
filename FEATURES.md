@@ -24,6 +24,7 @@ What it doesn't do (for now): send invitations to guests, offer booking pages, o
 ### Views and Navigation
 
 - Month, 3-week, 2-week, week, day, agenda and Split views. The month slot scrolls infinitely, the week view scrolls sideways and the day view scrolls day to day. ISO week numbers in the month gutter, month dividers in long scrolls, and prev and next chevrons that stay put for rapid stepping.
+- Month rows that fit their days, on a computer: a switch in the corner above the week numbers (or Shift+H) makes each week as tall as its busiest day needs, up to the height of the screen, so a busy day shows everything instead of "+N more". It switches in place and is remembered; the view stays put while weeks load and grow.
 - Split: a strip of weeks over a day list that runs on without a break, the two moving together as you scroll. Empty days fold into one line, and a handle trades weeks for list.
 - Event rendering follows GCal's lead: all-day events are filled bars (with angled ends where they continue past the row or day), timed events are quiet dot-and-time rows, so dense days stay readable.
 - Overlapping events in day and week views cascade at full opacity rather than shrinking into translucent slivers, and hovering brings one to the front, so every title stays readable.

@@ -324,3 +324,75 @@ export function dominantMonthOfRows(firstRow, rowCount, columns = 7) {
   }
   return { year: Math.floor(best / 12), month: (best % 12) + 1 };
 }
+
+// --- Row geometry -------------------------------------------------------
+// Where each week row of the month grid sits. Fixed rows are all one height,
+// so a week's top is (index - minWeek) * rowH: exactly the arithmetic the grid
+// has always used. Rows that fit their contents (#171) each have their own
+// height, kept in a running total so top() is a lookup and weekAt() a binary
+// search. Both answer the same four questions, and the grid asks only these.
+
+export function fixedGeometry(minWeek, maxWeek, rowH) {
+  return {
+    fit: false,
+    top: (wi) => (wi - minWeek) * rowH,
+    height: () => rowH,
+    weekAt: (y) => Math.max(minWeek, Math.min(maxWeek, minWeek + Math.floor(y / rowH))),
+    total: () => (maxWeek - minWeek + 1) * rowH,
+  };
+}
+
+// heights: Map weekIndex -> px for the weeks taller than baseH; every other
+// week is baseH.
+export function fitGeometry(minWeek, maxWeek, baseH, heights) {
+  const n = maxWeek - minWeek + 1;
+  const tops = new Float64Array(n + 1);
+  for (let i = 0; i < n; i++) tops[i + 1] = tops[i] + (heights.get(minWeek + i) ?? baseH);
+  const clampIdx = (i) => Math.max(0, Math.min(n, i));
+  return {
+    fit: true,
+    top: (wi) => tops[clampIdx(wi - minWeek)],
+    height: (wi) => heights.get(wi) ?? baseH,
+    // The week whose rows cover y: the last top at or above it.
+    weekAt: (y) => {
+      let lo = 0, hi = n - 1;
+      while (lo < hi) {
+        const mid = (lo + hi + 1) >> 1;
+        if (tops[mid] <= y) lo = mid; else hi = mid - 1;
+      }
+      return minWeek + lo;
+    },
+    total: () => tops[n],
+  };
+}
+
+// The rows to render around a scroll position, with any row geometry.
+export function weekRangeIn(geo, scrollTop, viewportH, minWeek, maxWeek, buffer = 3) {
+  return {
+    first: Math.max(minWeek, geo.weekAt(scrollTop) - buffer),
+    last: Math.min(maxWeek, geo.weekAt(scrollTop + viewportH) + buffer),
+  };
+}
+
+// The month covering most of the screen when rows differ in height: each
+// week's days count by how much of that week is on screen, so one tall week
+// of the old month doesn't outvote the screenful of the new one. weeks:
+// [{weekIndex, px}].
+export function dominantMonthOfWeeks(weeks, columns = 7) {
+  const counts = new Map();
+  for (const { weekIndex, px } of weeks) {
+    if (!(px > 0)) continue;
+    const start = firstEpochDayOfRow(weekIndex, columns);
+    for (let i = 0; i < columns; i++) {
+      const [y, m] = keyOfEpochDay(start + i).split('-').map(Number);
+      const k = y * 12 + (m - 1);
+      counts.set(k, (counts.get(k) || 0) + px);
+    }
+  }
+  let best = null, bestN = 0;
+  for (const [k, n2] of counts) {
+    if (n2 > bestN || (n2 === bestN && (best === null || k > best))) { best = k; bestN = n2; }
+  }
+  if (best === null) return dominantMonthOfRows(weeks.length ? weeks[0].weekIndex : 0, 1, columns);
+  return { year: Math.floor(best / 12), month: (best % 12) + 1 };
+}

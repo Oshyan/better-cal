@@ -602,6 +602,14 @@ html.bc-resizing-sidebar, html.bc-resizing-sidebar * { cursor: col-resize !impor
   width: var(--bc-gutter-w, 44px); flex: none;
   background: var(--bg-inset); border-right: 1px solid var(--border);
 }
+/* The month-rows switch (#171) sits in the corner above the week numbers. */
+.bc-month-head-gutter { display: flex; align-items: center; justify-content: center; }
+.bc-fit-toggle {
+  display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 20px; padding: 0;
+  border: 1px solid transparent; border-radius: 5px; background: none; color: var(--fg-muted); cursor: pointer;
+}
+.bc-fit-toggle:hover { color: var(--fg); background: var(--bg-raised); border-color: var(--border); }
+.bc-fit-toggle.is-on { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
 .bc-month-head-day {
   flex: 1; text-align: center; font-size: 11.5px; font-weight: 600;
   color: var(--fg-muted); padding: 3px 0; text-transform: uppercase; letter-spacing: 0.4px;
@@ -3672,6 +3680,9 @@ button.bc-review-title { color: var(--fg); padding: 0; }
 /* Split: the weeks don't scroll on their own; wheel and touch over them
    scrub through the days instead (ui/SplitView.js). */
 .bc-split-grid .bc-month-scroll { overflow-y: hidden; touch-action: none; scrollbar-gutter: auto; }
+/* Rows that fit their contents keep your place themselves as heights change
+   (MonthGrid's fitAnchorRef); the browser's own scroll anchoring would fight it. */
+.bc-month.is-fit .bc-month-scroll { overflow-anchor: none; }
 
 /* A location that arrives after you RSVP: a short lock mark, not the
    sentence the feed sent (lib/maps.js isPendingLocation). */

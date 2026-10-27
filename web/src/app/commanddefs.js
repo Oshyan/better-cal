@@ -31,6 +31,7 @@ export const STATIC_COMMANDS = [
   { id: 'deleteEvent', icon: 'trash', label: 'Delete event', group: 'Event', hotkey: 'deleteEvent', needs: 'occ', keywords: 'remove' },
 
   { id: 'defaultView', icon: 'visAll', label: 'Default view', group: 'Views', hotkey: 'defaultView', keywords: 'reset clear filters home saved view' },
+  { id: 'fitRows', icon: 'rowsFit', label: 'Month rows: fit their days, or all the same height', group: 'Views', hotkey: 'fitRows', keywords: 'tall height expand full busy rows month more' },
   { id: 'relPlanned', icon: 'check', label: 'Show or hide planned events', group: 'Views', hotkey: 'relPlanned', keywords: 'show filter relationship doing' },
   { id: 'relMaybe', icon: 'star', label: 'Show or hide maybe events', group: 'Views', hotkey: 'relMaybe', keywords: 'show filter relationship tentative' },
   { id: 'relAvailable', icon: 'visAll', label: 'Show or hide available events', group: 'Views', hotkey: 'relAvailable', keywords: 'show filter relationship opportunities feed' },

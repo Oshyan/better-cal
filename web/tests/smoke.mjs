@@ -1635,6 +1635,36 @@ console.log('--- chronological ordering across timezone offsets ---');
   eq('clamp: a span wholly off screen highlights nothing', clampDayRange(10, 20, 30, 40), null);
 }
 
+// --- Month rows that fit their contents (#171): row geometry ----------------------
+{
+  const { fixedGeometry, fitGeometry, weekRangeIn, dominantMonthOfWeeks, weekTop, totalHeight, visibleWeekRange } = await import('../src/ui/monthmath.js');
+  // Fixed rows must be exactly the arithmetic the grid always used.
+  const fx = fixedGeometry(100, 300, 120);
+  eq('geometry: fixed tops are index x height', [fx.top(100), fx.top(150), fx.top(300)], [weekTop(100, 100, 120), weekTop(150, 100, 120), weekTop(300, 100, 120)]);
+  eq('geometry: fixed total is the old spacer', fx.total(), totalHeight(100, 300, 120));
+  eq('geometry: fixed weekAt is the old floor', [fx.weekAt(0), fx.weekAt(119), fx.weekAt(120), fx.weekAt(6000)], [100, 100, 101, 150]);
+  // Fit: two tall weeks among 120px ones.
+  const ft = fitGeometry(0, 20, 120, new Map([[5, 300], [7, 500]]));
+  eq('geometry: a week below a tall one starts after it', [ft.top(5), ft.top(6), ft.top(7), ft.top(8)], [600, 900, 1020, 1520]);
+  eq('geometry: heights come back per week', [ft.height(4), ft.height(5), ft.height(7)], [120, 300, 500]);
+  eq('geometry: the week under a point, by binary search', [ft.weekAt(0), ft.weekAt(599), ft.weekAt(600), ft.weekAt(899), ft.weekAt(900), ft.weekAt(1519), ft.weekAt(1520)], [0, 4, 5, 5, 6, 7, 8]);
+  eq('geometry: points past either end stay on the first and last week', [ft.weekAt(-50), ft.weekAt(1e9)], [0, 20]);
+  eq('geometry: total adds every height', ft.total(), 19 * 120 + 300 + 500);
+  eq('geometry: a week past the end has the total as its top', ft.top(21), ft.total());
+  eq('geometry: the rendered range covers the screen plus the buffer', weekRangeIn(ft, 900, 700, 0, 20, 2), { first: 4, last: 10 });
+  eq('geometry: with fixed rows it renders what it always did, give or take one buffer row', (() => {
+    const a = weekRangeIn(fx, 3000, 700, 100, 300, 3);
+    const b = visibleWeekRange(3000, 700, 120, 100, 300, 3);
+    return a.first === b.first && Math.abs(a.last - b.last) <= 1;
+  })(), true);
+  // The month on screen, weighing each week by how much of it shows.
+  const { rowIndexOfDayKey: rowOf } = await import('../src/ui/monthmath.js');
+  const late = rowOf('2026-09-28', 7); // Sep 28 - Oct 4 (Monday start or Sunday start, mostly late Sep / early Oct)
+  const next = rowOf('2026-10-12', 7);
+  eq('month by area: a sliver of a September week loses to a screenful of October', dominantMonthOfWeeks([{ weekIndex: late, px: 20 }, { weekIndex: next, px: 700 }], 7), { year: 2026, month: 10 });
+  eq('month by area: and wins when it fills the screen', dominantMonthOfWeeks([{ weekIndex: rowOf('2026-09-14', 7), px: 700 }, { weekIndex: next, px: 30 }], 7), { year: 2026, month: 9 });
+}
+
 // --- Home zone vs device zone -------------------------------------------------
 {
   const { tzOffsetMinutes, tzOffsetLabel, tzCity, sameClock } = await import('../src/lib/dates.js');

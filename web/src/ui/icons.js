@@ -178,6 +178,10 @@ export function Icon({ name, size = 15 }) {
       <path d="M5.2 5.4h5.6" />`,
     viewAgenda: html`<path d="M5.6 4.2h8M5.6 8h8M5.6 11.8h8" />
       <path d="M2.5 4.2h.01M2.5 8h.01M2.5 11.8h.01" />`,
+    // Month rows that fit their days (#171): a page whose middle row has
+    // grown, with the arrows that grew it.
+    rowsFit: html`<rect x="2.2" y="2.6" width="11.6" height="11.2" rx="1.4" />
+      <path d="M2.2 5.2h11.6M2.2 11.2h11.6M8 6.6v3.2M6.9 7.6L8 6.5l1.1 1.1M6.9 8.8L8 9.9l1.1-1.1" />`,
     // Split: a strip of weeks over a list.
     viewSplit: html`<rect x="2.2" y="2.4" width="11.6" height="5.4" rx="1.2" />
       <path d="M6.1 2.4v5.4M9.9 2.4v5.4M2.6 10.6h10.8M2.6 13.4h7.4" />`,

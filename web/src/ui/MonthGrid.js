@@ -28,7 +28,7 @@ import {
   spanRowCount, rowSegmentAt, clampDayRange, LONG_SPAN_ROWS,
   rowIndexOfDayKey, firstEpochDayOfRow, dayKeysOfRow, isWeekendEpochDay,
   monthStartsInRange, dominantMonthOfRows, ANCHOR_LINE,
-  planCell,
+  planCell, fixedGeometry, fitGeometry, weekRangeIn, dominantMonthOfWeeks,
 } from './monthmath.js';
 import { assignLanes } from './layout.js';
 import { EventChip, EventBar, TripBand, HiddenMark } from './EventChip.js';
@@ -137,6 +137,85 @@ function rowEntries(idx, kind, wi, columns) {
   return out;
 }
 
+// One row's lanes: trip bands (at most MAX_BAND_LANES) along the top, then
+// multi-day bars (at most barLaneLimit(bandOffset) lanes), what didn't get a
+// lane counted against each day it covers, and where each day's single chips
+// start. The row draws from this, and rows that fit their contents measure
+// from it, so the two can't disagree about a row's height.
+//
+// The filter box hides events that don't match (dimSet, drawn with
+// display:none), so they take no lane and no slot: an invisible bar used to
+// keep its lane and leave an empty row above the matches. Quiet events
+// (grayed out by a dim filter) yield their lanes to the rest and don't count
+// toward "+N" (planCell, #126).
+function weekLanes(bars, bands, dimSet, columns, barLaneLimit, chipRow, bandH) {
+  const shownByFilter = (o) => !(dimSet && dimSet.has(o.occ ? o.occ.instanceId : o.instanceId));
+  const isQuiet = (occ) => !!occ.dimmed;
+  const bandList = (bands || []).filter(shownByFilter);
+  const bandLanes = assignLanes(
+    bandList.map((b) => ({ id: b.occ.instanceId + ':' + b.seg.startCol, startCol: b.seg.startCol, endCol: b.seg.endCol, quiet: isQuiet(b.occ) })),
+    MAX_BAND_LANES,
+  );
+  let bandLaneCount = 0;
+  for (const l of bandLanes.values()) if (l < MAX_BAND_LANES) bandLaneCount = Math.max(bandLaneCount, l + 1);
+  const bandOffset = Math.min(bandLaneCount, MAX_BAND_LANES) * bandH;
+  const bandExtraByCol = new Array(columns).fill(0);
+  const visibleBands = [];
+  for (const b of bandList) {
+    const lane = bandLanes.get(b.occ.instanceId + ':' + b.seg.startCol);
+    if (lane < MAX_BAND_LANES) visibleBands.push({ ...b, lane });
+    else if (!isQuiet(b.occ)) for (let c = b.seg.startCol; c <= b.seg.endCol; c++) bandExtraByCol[c]++;
+  }
+  // Lanes are reserved PER COLUMN, not per row: a band or bar on Wednesday
+  // must not push Monday's chips down. Multi-day segments still align across
+  // the columns they actually cover, because their lane index is shared.
+  const bandLanesByCol = new Array(columns).fill(0);
+  for (const b of visibleBands) {
+    for (let c = b.seg.startCol; c <= b.seg.endCol; c++) bandLanesByCol[c] = Math.max(bandLanesByCol[c], b.lane + 1);
+  }
+  const barList = (bars || []).filter(shownByFilter);
+  const maxBarLanes = barLaneLimit(bandOffset);
+  const lanes = assignLanes(
+    barList.map((b) => ({ id: b.occ.instanceId + ':' + b.seg.startCol, startCol: b.seg.startCol, endCol: b.seg.endCol, quiet: isQuiet(b.occ) })),
+    maxBarLanes,
+  );
+  // Hidden bar segments count toward each covered day's overflow, unless
+  // they're quiet.
+  const extraByCol = new Array(columns).fill(0);
+  const visibleBars = [];
+  for (const b of barList) {
+    const lane = lanes.get(b.occ.instanceId + ':' + b.seg.startCol);
+    if (lane < maxBarLanes) visibleBars.push({ ...b, lane });
+    else if (!isQuiet(b.occ)) for (let c = b.seg.startCol; c <= b.seg.endCol; c++) extraByCol[c]++;
+  }
+  const barLanesByCol = new Array(columns).fill(0);
+  for (const b of visibleBars) {
+    for (let c = b.seg.startCol; c <= b.seg.endCol; c++) barLanesByCol[c] = Math.max(barLanesByCol[c], b.lane + 1);
+  }
+  // Chips begin below whatever actually covers THIS day. Bars share one
+  // row-wide top (they span columns), so a day carrying a bar clears the band
+  // block too; a day with only bands clears just its own bands; a day with
+  // neither starts flush under the date number.
+  const chipTopByCol = barLanesByCol.map((n, col) => (n > 0
+    ? CELL_HEAD + bandOffset + n * chipRow
+    : CELL_HEAD + bandLanesByCol[col] * bandH));
+  return { visibleBands, bandExtraByCol, bandOffset, visibleBars, extraByCol, chipTopByCol, shownByFilter, isQuiet };
+}
+
+// The height a week needs to show everything (rows that fit their contents,
+// #171): every bar its own lane, every day's chips below them, and a slot
+// for "+N" only on a day with trip bands beyond the two that show.
+function weekNeed(idx, wi, columns, dimSet, chipRow, bandH) {
+  const L = weekLanes(rowEntries(idx, 'bars', wi, columns), rowEntries(idx, 'bands', wi, columns), dimSet, columns, () => Infinity, chipRow, bandH);
+  let need = CELL_HEAD + L.bandOffset + 4;
+  dayKeysOfRow(wi, columns).forEach((k, col) => {
+    const singles = (idx.byDay.get(k) || []).filter(L.shownByFilter).length;
+    const more = L.bandExtraByCol[col] > 0 ? 1 : 0;
+    need = Math.max(need, L.chipTopByCol[col] + (singles + more) * chipRow + 4);
+  });
+  return need;
+}
+
 // ISO 8601 week number (GCal's gutter numbering). Thursday-anchored.
 function isoWeekOfDate(d) {
   const t = new Date(d.getFullYear(), d.getMonth(), d.getDate());
@@ -158,6 +237,10 @@ export function MonthGrid({
   fixedRows = false, apiRef,
   // The day gone to sits at the very top instead of a little above centre (#91).
   anchorAtTop = false,
+  // Each week row as tall as its busiest day needs (#171). The desktop month
+  // only: phones, the 3-day ribbon and Split view keep fixed rows.
+  // onToggleFit puts the switch for it in the corner above the week numbers.
+  fitRows = false, onToggleFit = null,
 }) {
   const scrollRef = useRef(null);
   const [viewH, setViewH] = useState(600);
@@ -209,6 +292,34 @@ export function MonthGrid({
   viewHRef.current = viewH;
 
   const idx = useMemo(() => indexOccurrences(occurrences, columns), [occurrences, columns]);
+
+  // Rows that fit their contents. A week's height comes from its events as
+  // they're laid out (weekNeed), never from the DOM, so it's known before
+  // paint. Never shorter than the fixed row (a light week looks as it always
+  // has) and never taller than the screen, so a whole week can always be
+  // seen; past that, the day shows "+N more" again (capped).
+  const fit = fitRows && !mobile && columns === 7 && !fixedRows;
+  const bandHpx = mobile ? BAND_H_MOBILE : BAND_H;
+  const maxFitH = Math.max(rowH, viewH);
+  const fitHeights = useMemo(() => {
+    if (!fit) return null;
+    const weeks = new Set([...idx.barsByRow.keys(), ...idx.bandsByRow.keys()]);
+    for (const k of idx.byDay.keys()) weeks.add(rowIndexOfDayKey(k, columns));
+    const heights = new Map();
+    const capped = new Set();
+    for (const wi of weeks) {
+      if (wi < minWeek || wi > maxWeek) continue;
+      const need = weekNeed(idx, wi, columns, dimSet, chipRow, bandHpx);
+      if (need <= rowH) continue;
+      heights.set(wi, Math.min(need, maxFitH));
+      if (need > maxFitH) capped.add(wi);
+    }
+    return { heights, capped };
+  }, [fit, idx, dimSet, columns, chipRow, bandHpx, rowH, maxFitH, minWeek, maxWeek]);
+  const geo = useMemo(
+    () => (fitHeights ? fitGeometry(minWeek, maxWeek, rowH, fitHeights.heights) : fixedGeometry(minWeek, maxWeek, rowH)),
+    [fitHeights, minWeek, maxWeek, rowH],
+  );
   // The day's context tokens and its label (a holiday), which needs the
   // calendars to tell a holiday calendar.
   const dayInfo = useMemo(() => ({
@@ -231,25 +342,54 @@ export function MonthGrid({
   // component life. A version with rowH captured in its closure can be invoked
   // late (rAF-throttled scroll events) after rowH changed, computing the range
   // against the wrong geometry and blanking the grid.
-  const geomRef = useRef({ rowH, minWeek, maxWeek });
-  geomRef.current = { rowH, minWeek, maxWeek };
+  const geomRef = useRef({ rowH, minWeek, maxWeek, geo });
+  geomRef.current = { rowH, minWeek, maxWeek, geo };
   const recompute = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
     const g = geomRef.current;
-    const r = visibleWeekRange(el.scrollTop, el.clientHeight, g.rowH, g.minWeek, g.maxWeek, 3);
-    const exact = el.scrollTop / g.rowH;
-    r.top = Math.max(g.minWeek, Math.min(g.maxWeek, g.minWeek + Math.floor(exact)));
-    // How much of that top row is scrolled off, 0..1. The month label samples
-    // rows from r.top, and a row that is 90% above the fold should not get an
-    // equal vote in deciding which month you are looking at — with tall rows
-    // that one stale row was enough to keep naming the previous month, which
-    // in turn made the Next-month button appear to do nothing (it steps from
-    // the reported month, so it kept recomputing the month already on screen).
-    r.topOffset = exact - Math.floor(exact);
+    let r;
+    if (g.geo.fit) {
+      r = weekRangeIn(g.geo, el.scrollTop, el.clientHeight, g.minWeek, g.maxWeek, 3);
+      r.top = g.geo.weekAt(el.scrollTop);
+      r.topOffset = (el.scrollTop - g.geo.top(r.top)) / g.geo.height(r.top);
+    } else {
+      r = visibleWeekRange(el.scrollTop, el.clientHeight, g.rowH, g.minWeek, g.maxWeek, 3);
+      const exact = el.scrollTop / g.rowH;
+      r.top = Math.max(g.minWeek, Math.min(g.maxWeek, g.minWeek + Math.floor(exact)));
+      // How much of that top row is scrolled off, 0..1. The month label samples
+      // rows from r.top, and a row that is 90% above the fold should not get an
+      // equal vote in deciding which month you are looking at — with tall rows
+      // that one stale row was enough to keep naming the previous month, which
+      // in turn made the Next-month button appear to do nothing (it steps from
+      // the reported month, so it kept recomputing the month already on screen).
+      r.topOffset = exact - Math.floor(exact);
+    }
     topWeekRef.current = r.top;
     setRange((prev) => (prev.first === r.first && prev.last === r.last && prev.top === r.top
       && Math.abs((prev.topOffset ?? 0) - r.topOffset) < 0.1 ? prev : r));
+  }, []);
+
+  // Rows that fit their contents change height as events load, which moves
+  // every row below. Where you are is kept as a week and how far into it the
+  // screen's top is (fitAnchorRef): scrolling sets it, going to a day sets it
+  // to that day's week at its line, and a height change puts scrollTop back on
+  // it, so what you're looking at doesn't move. A scroll this code made
+  // itself (setTopRef) doesn't count as you scrolling.
+  //
+  // The distance into the week is kept in pixels while only other weeks
+  // change, and scaled with the week when every row changes (a window
+  // resize changes the base height): pixels would overshoot a shorter week
+  // and land in the next one.
+  const fitAnchorRef = useRef(null);
+  const fitAnchorAt = (g, week, delta) => ({ week, delta, h: g.geo.height(week), base: g.rowH });
+  const fitAnchorTop = (g, a) => g.geo.top(a.week) + (a.base === g.rowH ? a.delta : a.delta * (g.geo.height(a.week) / a.h));
+  const setTopRef = useRef(null);
+  const setTop = useCallback((y) => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTop = y;
+    setTopRef.current = el.scrollTop;
   }, []);
 
   // Scroll handling via rAF throttle.
@@ -258,6 +398,12 @@ export function MonthGrid({
     if (!el) return;
     let raf = 0;
     const onScroll = () => {
+      const g = geomRef.current;
+      if (g.geo.fit && (setTopRef.current == null || Math.abs(el.scrollTop - setTopRef.current) >= 1)) {
+        const w = g.geo.weekAt(el.scrollTop);
+        fitAnchorRef.current = fitAnchorAt(g, w, el.scrollTop - g.geo.top(w));
+        setTopRef.current = null;
+      }
       if (raf) return;
       raf = requestAnimationFrame(() => { raf = 0; recompute(); });
     };
@@ -286,16 +432,20 @@ export function MonthGrid({
   const anchorTop = useCallback((row) => {
     const el = scrollRef.current;
     const h = (el && el.clientHeight) || 0;
-    const lead = anchorAtTop ? 0 : Math.max(0, Math.round((h - rowHRef.current) * ANCHOR_LINE));
-    return Math.max(0, weekTop(row, minWeek, rowHRef.current) - lead);
-  }, [minWeek, anchorAtTop]);
+    const g = geomRef.current.geo;
+    const lead = anchorAtTop ? 0 : Math.max(0, Math.round((h - g.height(row)) * ANCHOR_LINE));
+    return Math.max(0, g.top(row) - lead);
+  }, [anchorAtTop]);
   const applyAnchor = useCallback((row) => {
     const el = scrollRef.current;
     if (!el) return;
-    el.scrollTop = anchorTop(row);
-    topWeekRef.current = Math.max(minWeek, minWeek + Math.floor(el.scrollTop / rowHRef.current));
+    const g = geomRef.current.geo;
+    setTop(anchorTop(row));
+    topWeekRef.current = Math.max(minWeek, g.weekAt(el.scrollTop));
+    // The day gone to stays at its line while the weeks around it load.
+    if (g.fit) fitAnchorRef.current = fitAnchorAt(geomRef.current, row, el.scrollTop - g.top(row));
     anchoredRef.current = true;
-  }, [minWeek, anchorTop]);
+  }, [minWeek, anchorTop, setTop]);
 
   // An anchor is only SETTLED once the box we positioned against is the same
   // height that rowH was derived from. Until the ResizeObserver has measured
@@ -310,17 +460,35 @@ export function MonthGrid({
     if (el && Math.abs(el.clientHeight - viewHRef.current) <= 2) pendingRowRef.current = null;
   }, []);
 
+  // The geometry the scroller was last positioned in: switching rows between
+  // fixed and fit keeps the same week, and the same part of it, on screen.
+  const prevGeoRef = useRef(geo);
   useLayoutEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
+    const prev = prevGeoRef.current;
+    prevGeoRef.current = geo;
     if (pendingRowRef.current != null && el.clientHeight > 0) {
       applyAnchor(pendingRowRef.current);
       settleAnchor();
+    } else if (prev !== geo && prev.fit !== geo.fit) {
+      const w = prev.weekAt(el.scrollTop);
+      const frac = (el.scrollTop - prev.top(w)) / prev.height(w);
+      setTop(geo.top(w) + frac * geo.height(w));
+      topWeekRef.current = w;
+      fitAnchorRef.current = geo.fit ? fitAnchorAt(geomRef.current, w, el.scrollTop - geo.top(w)) : null;
+    } else if (geo.fit && fitAnchorRef.current) {
+      const g = geomRef.current;
+      const a = fitAnchorRef.current;
+      setTop(fitAnchorTop(g, a));
+      // Kept in this geometry's terms, so the next change starts from here.
+      fitAnchorRef.current = fitAnchorAt(g, a.week, scrollRef.current.scrollTop - geo.top(a.week));
     } else if (topWeekRef.current != null) {
-      el.scrollTop = weekTop(topWeekRef.current, minWeek, rowH);
+      if (geo.fit) setTop(geo.top(topWeekRef.current));
+      else el.scrollTop = weekTop(topWeekRef.current, minWeek, rowH);
     }
     recompute();
-  }, [rowH, viewH, minWeek, recompute, applyAnchor, settleAnchor]);
+  }, [rowH, viewH, minWeek, recompute, applyAnchor, settleAnchor, geo, setTop]);
 
   // Programmatic scroll to an anchor date (today button, arrows, search jump).
   // Fires only on explicit navigation (scrollSeq); geometry changes are handled
@@ -380,15 +548,33 @@ export function MonthGrid({
       // already on screen and appeared to do nothing at all.
       const topRaw = range.top != null ? range.top : range.first;
       const top = Math.min(range.last, topRaw + ((range.topOffset ?? 0) > 0.5 ? 1 : 0));
-      const rows = Math.min(
-        Math.max(1, Math.round(viewH / rowH)), // rows the viewport shows
-        range.last - top + 1,                  // never beyond rendered rows
-      );
-      // With the day gone to pinned at the top (gridAnchor 'top', #91) the
-      // top row is where you are: it names the month, so today's month
-      // stays the label until its row scrolls away, even with the next
-      // month filling the rest of the screen.
-      const month = dominantMonthOfRows(top, anchorAtTop ? 1 : rows, columns);
+      let rows;
+      let month;
+      if (geo.fit) {
+        // Rows differ in height: count the weeks actually on screen, and
+        // weigh each by how much of it shows, so one tall week of the old
+        // month doesn't outvote the new month filling the rest.
+        const el = scrollRef.current;
+        const st = el ? el.scrollTop : geo.top(topRaw);
+        const lastW = Math.min(range.last, geo.weekAt(st + viewH - 1));
+        const weeks = [];
+        for (let w = topRaw; w <= lastW; w++) {
+          const t = geo.top(w);
+          weeks.push({ weekIndex: w, px: Math.min(t + geo.height(w), st + viewH) - Math.max(t, st) });
+        }
+        rows = Math.max(1, lastW - top + 1);
+        month = anchorAtTop ? dominantMonthOfRows(top, 1, columns) : dominantMonthOfWeeks(weeks, columns);
+      } else {
+        rows = Math.min(
+          Math.max(1, Math.round(viewH / rowH)), // rows the viewport shows
+          range.last - top + 1,                  // never beyond rendered rows
+        );
+        // With the day gone to pinned at the top (gridAnchor 'top', #91) the
+        // top row is where you are: it names the month, so today's month
+        // stays the label until its row scrolls away, even with the next
+        // month filling the rest of the screen.
+        month = dominantMonthOfRows(top, anchorAtTop ? 1 : rows, columns);
+      }
       // The days on screen, so the mini-month can keep the selected day in
       // view (MiniMonth.js).
       const days = {
@@ -402,7 +588,7 @@ export function MonthGrid({
       const end = dateOfDayKey(keyOfEpochDay(firstEpochDayOfRow(range.last + 1, columns) + 28));
       onRequestWindow({ start: toISOWithOffset(start), end: toISOWithOffset(end) });
     }
-  }, [range.first, range.last, range.top, range.topOffset, columns, viewH, rowH, anchorAtTop]);
+  }, [range.first, range.last, range.top, range.topOffset, columns, viewH, rowH, anchorAtTop, geo]);
 
   // --- drag helpers ---------------------------------------------------------
 
@@ -415,9 +601,9 @@ export function MonthGrid({
     const colW = (r.width - GUTTER_W) / columns;
     const col = Math.max(0, Math.min(columns - 1, Math.floor((pt.x - r.left - GUTTER_W) / colW)));
     const yContent = pt.y - r.top + el.scrollTop;
-    const wi = Math.max(minWeek, Math.min(maxWeek, minWeek + Math.floor(yContent / rowH)));
+    const wi = geo.weekAt(yContent);
     return keyOfEpochDay(firstEpochDayOfRow(wi, columns) + col);
-  }, [minWeek, maxWeek, rowH, columns]);
+  }, [geo, columns]);
 
   // The day keys of [a..b] that have a cell on screen. Drag highlighting used
   // to build a key, and run a DOM query, for EVERY day of the span being
@@ -660,10 +846,11 @@ export function MonthGrid({
   for (let wi = range.first; wi <= range.last; wi++) {
     weeks.push(html`<${WeekRow}
       key=${wi} weekIndex=${wi} columns=${columns} ribbon=${ribbon}
-      top=${weekTop(wi, minWeek, rowH)} rowH=${rowH}
+      top=${geo.top(wi)} rowH=${geo.height(wi)}
+      fit=${geo.fit} capped=${!!(fitHeights && fitHeights.capped.has(wi))}
       byDay=${idx.byDay} bars=${rowEntries(idx, 'bars', wi, columns)} bands=${rowEntries(idx, 'bands', wi, columns)} calendars=${calendars}
       hiddenDays=${hiddenDays} onShowHidden=${onShowHidden} ctxByDay=${dayInfo.ctxByDay} labelsByDay=${dayInfo.labelsByDay}
-      capacity=${capacity} chipRow=${chipRow} mobile=${mobile} todayKey=${tKey} dimSet=${dimSet} nowMs=${nowMs}
+      capacity=${geo.fit ? Infinity : capacity} chipRow=${chipRow} mobile=${mobile} todayKey=${tKey} dimSet=${dimSet} nowMs=${nowMs}
       sel=${sel}
       onOpenEvent=${onOpenEvent} onExpandDay=${onExpandDay} onOpenDay=${onOpenDay}
       dragMoveOcc=${dragMoveOcc} dragResizeOcc=${dragResizeOcc} dragCreate=${dragCreate}
@@ -685,8 +872,8 @@ export function MonthGrid({
   );
   const labels = monthStarts.map(({ weekIndex, year, month }, i) => {
     const next = monthStarts[i + 1];
-    const top = weekTop(weekIndex, minWeek, rowH);
-    const bottom = next ? weekTop(next.weekIndex, minWeek, rowH) : top + lookRows * rowH;
+    const top = geo.top(weekIndex);
+    const bottom = next ? geo.top(next.weekIndex) : geo.top(weekIndex + lookRows);
     return html`<div
       key=${'m' + year + '-' + month}
       class="bc-gutter-month"
@@ -705,28 +892,34 @@ export function MonthGrid({
   // marks the month, and the line marks exactly where the days change.
   const colX = (c) => `(var(--bc-gutter-w) + (100% - var(--bc-gutter-w)) * ${c} / ${columns})`;
   const rules = monthStarts.flatMap(({ weekIndex, year, month, col }) => {
-    const top = weekTop(weekIndex, minWeek, rowH);
+    const top = geo.top(weekIndex);
+    const h = geo.height(weekIndex);
     const key = 'r' + year + '-' + month;
     if (col === 0) {
       return [html`<div key=${key} class="bc-month-rule" style=${`top:${top}px;left:var(--bc-gutter-w);right:0`}></div>`];
     }
     return [
       html`<div key=${key + 't'} class="bc-month-rule" style=${`top:${top}px;left:calc(${colX(col)} - 1px);right:0`}></div>`,
-      html`<div key=${key + 'v'} class="bc-month-rule" style=${`top:${top}px;height:${rowH + 2}px;width:2px;left:calc(${colX(col)} - 1px)`}></div>`,
-      html`<div key=${key + 'b'} class="bc-month-rule" style=${`top:${top + rowH}px;left:var(--bc-gutter-w);width:calc(${colX(col)} - var(--bc-gutter-w) + 1px)`}></div>`,
+      html`<div key=${key + 'v'} class="bc-month-rule" style=${`top:${top}px;height:${h + 2}px;width:2px;left:calc(${colX(col)} - 1px)`}></div>`,
+      html`<div key=${key + 'b'} class="bc-month-rule" style=${`top:${top + h}px;left:var(--bc-gutter-w);width:calc(${colX(col)} - var(--bc-gutter-w) + 1px)`}></div>`,
     ];
   });
 
   return html`<div
-    class="bc-month${ribbon ? ' is-ribbon' : ''}"
+    class="bc-month${ribbon ? ' is-ribbon' : ''}${geo.fit ? ' is-fit' : ''}"
     style=${`--bc-gutter-w:${GUTTER_W}px;--chip-h:${chipRow - 2}px;--bc-cols:${columns}`}
   >
     ${!ribbon && html`<div class="bc-month-head">
-      <div class="bc-month-head-gutter"></div>
+      <div class="bc-month-head-gutter">${onToggleFit && !mobile && columns === 7 && !fixedRows && html`<button
+        type="button" class=${'bc-fit-toggle' + (geo.fit ? ' is-on' : '')} aria-pressed=${geo.fit}
+        aria-label="Rows fit their days"
+        title=${geo.fit ? 'Rows fit their days. Click for rows all the same height (Shift+H)' : 'Rows all the same height. Click to fit each row to its days (Shift+H)'}
+        onClick=${onToggleFit}
+      ><${Icon} name="rowsFit" size=${14} /></button>`}</div>
       ${weekdayNames().map((w) => html`<div key=${w} class="bc-month-head-day">${w}</div>`)}
     </div>`}
     <div class="bc-month-scroll" ref=${scrollRef}>
-      <div class="bc-month-spacer" style=${`height:${totalHeight(minWeek, maxWeek, rowH)}px`}>
+      <div class="bc-month-spacer" style=${`height:${geo.total()}px`}>
         ${rules}
         ${labels}
         ${weeks}
@@ -738,7 +931,7 @@ export function MonthGrid({
 function WeekRow({
   weekIndex, columns, ribbon, top, rowH, byDay, bars, bands, calendars, capacity, chipRow, mobile,
   todayKey: tKey, dimSet, nowMs, sel, onOpenEvent, onExpandDay, onOpenDay, dragMoveOcc, dragResizeOcc, dragCreate,
-  cellClickSelect, quickCreateDay, hiddenDays, onShowHidden, ctxByDay, labelsByDay,
+  cellClickSelect, quickCreateDay, hiddenDays, onShowHidden, ctxByDay, labelsByDay, fit = false, capped = false,
 }) {
   const keys = dayKeysOfRow(weekIndex, columns);
   // Week-of-year in the gutter (7-col rows only): taken from the row's
@@ -748,11 +941,6 @@ function WeekRow({
   // Trip backdrop bands: stacked under the day-number strip, capped at
   // MAX_BAND_LANES (extras overflow into the day expand via the +N counter).
   // Bars and chips shift down by the band block so bands never eat lanes.
-  // The filter box hides events that don't match (dimSet, drawn with
-  // display:none), so they take no lane and no slot: an invisible bar used
-  // to keep its lane and leave an empty row above the matches.
-  const shownByFilter = (o) => !(dimSet && dimSet.has(o.occ ? o.occ.instanceId : o.instanceId));
-  const bandList = (bands || []).filter(shownByFilter);
   const bandH = mobile ? BAND_H_MOBILE : BAND_H;
   // Context tokens (weather, sun, tides) beside the day number. On a phone
   // the full month's cells have no room for them: none there, and one in the
@@ -761,72 +949,21 @@ function WeekRow({
   // On a desktop they fit the cell's width (#108): a wide screen shows them
   // all, not two and "+N".
   const ctxMax = mobile ? (columns >= 7 ? 0 : 1) : Infinity;
-  // Quiet: grayed out by a dim filter (still drawn, faded). They yield their
-  // slots to the rest and don't count toward "+N" (planCell, #126).
-  const isQuiet = (occ) => !!occ.dimmed;
-  const bandLanes = assignLanes(
-    bandList.map((b) => ({ id: b.occ.instanceId + ':' + b.seg.startCol, startCol: b.seg.startCol, endCol: b.seg.endCol, quiet: isQuiet(b.occ) })),
-    MAX_BAND_LANES,
-  );
-  let bandLaneCount = 0;
-  for (const l of bandLanes.values()) if (l < MAX_BAND_LANES) bandLaneCount = Math.max(bandLaneCount, l + 1);
-  const shownBandLanes = Math.min(bandLaneCount, MAX_BAND_LANES);
-  const bandOffset = shownBandLanes * bandH;
-  const bandExtraByCol = new Array(columns).fill(0);
-  const visibleBands = [];
-  for (const b of bandList) {
-    const lane = bandLanes.get(b.occ.instanceId + ':' + b.seg.startCol);
-    if (lane < MAX_BAND_LANES) visibleBands.push({ ...b, lane });
-    else if (!isQuiet(b.occ)) for (let c = b.seg.startCol; c <= b.seg.endCol; c++) bandExtraByCol[c]++;
-  }
-  // Lanes are reserved PER COLUMN, not per row: a band or bar on Wednesday
-  // must not push Monday's chips down. Multi-day segments still align across
-  // the columns they actually cover, because their lane index is shared.
-  const bandLanesByCol = new Array(columns).fill(0);
-  for (const b of visibleBands) {
-    for (let c = b.seg.startCol; c <= b.seg.endCol; c++) {
-      bandLanesByCol[c] = Math.max(bandLanesByCol[c], b.lane + 1);
-    }
-  }
-  // Rows carrying bands have less chip room; recompute against the real
-  // remaining height (never below one lane).
-  const cap = Math.min(capacity, Math.max(1, Math.floor((rowH - CELL_HEAD - bandOffset - 4) / chipRow)));
-
-  const barList = (bars || []).filter(shownByFilter);
-  const maxBarLanes = Math.max(1, cap - 1);
-  const lanes = assignLanes(
-    barList.map((b) => ({ id: b.occ.instanceId + ':' + b.seg.startCol, startCol: b.seg.startCol, endCol: b.seg.endCol, quiet: isQuiet(b.occ) })),
-    maxBarLanes,
-  );
-  let barLaneCount = 0;
-  for (const l of lanes.values()) if (l < maxBarLanes) barLaneCount = Math.max(barLaneCount, l + 1);
-  const chipStartLane = barLaneCount;
-  // Hidden bar segments count toward each covered day's overflow, unless
-  // they're quiet.
-  const extraByCol = new Array(columns).fill(0);
-  const visibleBars = [];
-  for (const b of barList) {
-    const lane = lanes.get(b.occ.instanceId + ':' + b.seg.startCol);
-    if (lane < maxBarLanes) visibleBars.push({ ...b, lane });
-    else if (!isQuiet(b.occ)) for (let c = b.seg.startCol; c <= b.seg.endCol; c++) extraByCol[c]++;
-  }
-  const barLanesByCol = new Array(columns).fill(0);
-  for (const b of visibleBars) {
-    for (let c = b.seg.startCol; c <= b.seg.endCol; c++) {
-      barLanesByCol[c] = Math.max(barLanesByCol[c], b.lane + 1);
-    }
-  }
+  // Rows carrying bands have less chip room; bars get the lanes the rest of
+  // the row allows, keeping one for "+N" (never below one lane). A row that
+  // fits its contents is tall enough for every bar, so it keeps none back,
+  // unless it was capped at the screen's height.
+  const laneLimit = (bandOffset) => {
+    const cap = Math.min(capacity, Math.max(1, Math.floor((rowH - CELL_HEAD - bandOffset - 4) / chipRow)));
+    return fit && !capped ? Infinity : Math.max(1, cap - 1);
+  };
+  const L = weekLanes(bars, bands, dimSet, columns, laneLimit, chipRow, bandH);
+  const { visibleBands, bandExtraByCol, bandOffset, visibleBars, extraByCol, chipTopByCol, shownByFilter, isQuiet } = L;
 
   const cells = keys.map((k, col) => {
     const [y, m, d] = k.split('-').map(Number);
     const singles = (byDay.get(k) || []).filter(shownByFilter);
-    // Chips begin below whatever actually covers THIS day. Bars share one
-    // row-wide top (they span columns), so a day carrying a bar clears the
-    // band block too; a day with only bands clears just its own bands; a day
-    // with neither starts flush under the date number.
-    const chipTop = barLanesByCol[col] > 0
-      ? CELL_HEAD + bandOffset + barLanesByCol[col] * chipRow
-      : CELL_HEAD + bandLanesByCol[col] * bandH;
+    const chipTop = chipTopByCol[col];
     const room = Math.max(0, Math.min(capacity, Math.floor((rowH - chipTop - 4) / chipRow)));
     const plan = planCell(singles, isQuiet, room, extraByCol[col] + bandExtraByCol[col]);
     const hidden = plan.hidden;

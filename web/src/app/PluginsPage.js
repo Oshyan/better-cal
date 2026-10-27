@@ -21,15 +21,21 @@ async function reloadPlugins() {
 // what it found (a database's fields, say) appears without a manual reload.
 // A run that starts right away (the server runs it after answering) is
 // checked every 1.5 seconds; one left to the worker's next minute every 4,
-// giving up after two minutes.
+// giving up after two minutes. It keeps following after you go back to the
+// calendar, which then reloads the plugin's events as soon as the run is
+// done.
 async function followRunAfterSave(id, lastRunAt, now = false) {
   const every = now ? 1500 : 4000;
   for (let i = 0; i < 120000 / every; i++) {
     await new Promise((r) => setTimeout(r, every));
-    if (state.route !== 'plugins') return;
     await reloadPlugins();
     const p = (state.plugins || []).find((x) => x.id === id);
-    if (p && p.lastRun && p.lastRun.at !== lastRunAt) return;
+    if (p && p.lastRun && p.lastRun.at !== lastRunAt) {
+      // The run has changed the plugin's events: the calendar picks them
+      // up now, not at its next 30-second check.
+      window.dispatchEvent(new Event('bc-check-changes'));
+      return;
+    }
   }
 }
 

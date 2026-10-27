@@ -278,6 +278,10 @@ export function App() {
     };
     const timer = setInterval(check, 30000);
     const onWake = () => { if (document.visibilityState === 'visible') check(); };
+    // Something here knows the server just changed (a plugin run it started
+    // has finished) or the calendar is back on screen: look now rather than
+    // at the next 30-second check.
+    window.addEventListener('bc-check-changes', onWake);
     window.addEventListener('focus', onWake);
     window.addEventListener('online', onWake);
     document.addEventListener('visibilitychange', onWake);
@@ -285,6 +289,7 @@ export function App() {
     return () => {
       stopped = true;
       clearInterval(timer);
+      window.removeEventListener('bc-check-changes', onWake);
       window.removeEventListener('focus', onWake);
       window.removeEventListener('online', onWake);
       document.removeEventListener('visibilitychange', onWake);
@@ -714,6 +719,9 @@ export function App() {
     if (firstRoute.current) { firstRoute.current = false; return; }
     reloadIfReady();
     lookForUpdate();
+    // Back on the calendar from a page that may have changed it (a plugin's
+    // settings, say): pick up what moved now.
+    if (route === 'calendar') window.dispatchEvent(new Event('bc-check-changes'));
   }, [route]);
   useEffect(() => {
     if (!route || route === 'calendar') return undefined;

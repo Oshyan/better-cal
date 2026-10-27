@@ -6586,6 +6586,7 @@ return new class implements BetterCal\Plugin\PluginInterface, BetterCal\Plugin\E
     public function runJob(BetterCal\Plugin\PluginHost $host, string $jobId): void {}
     public function validateSettings(array $values): array { return []; }
     public function applyEdit(BetterCal\Plugin\PluginHost $host, array $edit): array {
+        $GLOBALS["moverLastEdit"] = $edit;
         if ($edit["title"] === "refuse") throw new BetterCal\Plugin\PluginEditRefused("The source said no.");
         if ($edit["title"] === "boom") throw new RuntimeException("socket closed");
         return $edit["after"];
@@ -6616,6 +6617,40 @@ return new class implements BetterCal\Plugin\PluginInterface, BetterCal\Plugin\E
     $resolved = $plugins->resolveSchema('mover', [['key' => 'db', 'type' => 'select', 'label' => 'DB', 'optionsFrom' => 'databases'], ['key' => 'more', 'type' => 'select', 'label' => 'More', 'optionsFrom' => 'unknown']]);
     checkEq('plugin settings: discovered choices fill the field', [['value' => 'Work/Task', 'label' => 'Work / Task']], $resolved[0]['options']);
     check('plugin settings: and say they were loaded', $resolved[0]['optionsLoaded'] === true && $resolved[1]['optionsLoaded'] === false && $resolved[1]['options'] === []);
+    // Undoing a plugin edit sends the recorded earlier time back through
+    // the plugin and stores what it confirms (Undo::undoPluginEdit).
+    $edb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, plugin_id TEXT, provider TEXT, synctoken INTEGER NOT NULL DEFAULT 0)');
+    davJournal($edb);
+    $edb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, start_utc TEXT, end_utc TEXT, all_day INTEGER, tzid TEXT, deleted_at TEXT, updated_at TEXT)');
+    $edb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT, calendar_ids_json TEXT, undone INTEGER DEFAULT 0, created_at TEXT DEFAULT CURRENT_TIMESTAMP)');
+    $edb->run('CREATE TABLE mutation_calendar_refs (mutation_id INTEGER, calendar_id INTEGER)');
+    $edb->run("INSERT INTO calendars (id, user_id, kind, plugin_id) VALUES (1, 1, 'plugin', 'mover')");
+    $edb->run("INSERT INTO events (id, user_id, calendar_id, uid, title, start_utc, end_utc, all_day, tzid) VALUES (1, 1, 1, 'plg-mover-item:7', 'Moved item', '2030-03-06 00:00:00', '2030-03-07 00:00:00', 1, 'UTC')");
+    $undo = new BetterCal\Domain\Undo($edb, $plugins);
+    $undo->record(1, 'plugin_edit', 1, 'update', [], [], "Moved 'Moved item' in Mover", ['pluginId' => 'mover', 'span' => ['start' => '2030-03-02', 'end' => '2030-03-03', 'allDay' => true]], [1]);
+    $GLOBALS['moverLastEdit'] = null;
+    $undone = $undo->undoLatest(1);
+    checkEq('plugin undo: the earlier time goes back through the plugin', ['start' => '2030-03-02', 'end' => '2030-03-03', 'allDay' => true], $GLOBALS['moverLastEdit']['after'] ?? null);
+    checkEq('plugin undo: the plugin is told where the event is now', ['start' => '2030-03-06', 'end' => '2030-03-07', 'allDay' => true], $GLOBALS['moverLastEdit']['before'] ?? null);
+    checkEq('plugin undo: and gets its own key, without the host prefix', 'item:7', $GLOBALS['moverLastEdit']['sourceKey'] ?? null);
+    checkEq('plugin undo: the event shows the restored time', '2030-03-02 00:00:00', $edb->scalar('SELECT start_utc FROM events WHERE id = 1'));
+    checkEq('plugin undo: the entry is marked undone', 1, (int) $edb->scalar("SELECT undone FROM mutations WHERE entity = 'plugin_edit'"));
+    checkEq('plugin undo: CalDAV clients hear of the change', 1, (int) $edb->scalar('SELECT COUNT(*) FROM dav_changes WHERE calendar_id = 1'));
+    checkEq('plugin undo: it reports an event update', ['entity' => 'event', 'op' => 'update'], $undone);
+
+    $edb->run("UPDATE events SET title = 'refuse' WHERE id = 1");
+    $undo->record(1, 'plugin_edit', 1, 'update', [], [], 'Moved again', ['pluginId' => 'mover', 'span' => ['start' => '2030-03-09', 'end' => '2030-03-10', 'allDay' => true]], [1]);
+    $caught = null;
+    try { $undo->undoLatest(1); } catch (BetterCal\Http\HttpError $e) { $caught = $e; }
+    check("plugin undo: a source's refusal reaches the person", $caught !== null && $caught->status === 422);
+    checkEq('plugin undo: and leaves the entry undoable and the event where it was', [0, '2030-03-02 00:00:00'],
+        [(int) $edb->scalar("SELECT undone FROM mutations WHERE summary = 'Moved again'"), $edb->scalar('SELECT start_utc FROM events WHERE id = 1')]);
+
+    $edb->run("UPDATE plugins SET enabled = 0 WHERE id = 'mover'");
+    $caught = null;
+    try { (new BetterCal\Domain\Undo($edb, new BetterCal\Domain\Plugins($edb, $dir, [])))->undoLatest(1); } catch (BetterCal\Http\HttpError $e) { $caught = $e; }
+    check('plugin undo: with the plugin off, it says so instead of changing anything', $caught !== null && $caught->errorCode === 'not_undoable');
+
     array_map('unlink', glob($dir . '/mover/*'));
     rmdir($dir . '/mover');
     rmdir($dir);

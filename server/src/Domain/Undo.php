@@ -31,7 +31,8 @@ final class Undo
         'event_people' => ['event_id', 'person_id'],
     ];
 
-    public function __construct(private readonly Db $db)
+    /** $plugins: the plugin registry undo uses for plugin edits (tests pass one with a stand-in plugin). */
+    public function __construct(private readonly Db $db, private readonly ?Plugins $plugins = null)
     {
     }
 
@@ -263,7 +264,7 @@ final class Undo
             throw HttpError::badRequest('That event is no longer here to move back', 'not_undoable');
         }
         $calendar = $this->db->one('SELECT * FROM calendars WHERE id = ?', [(int) $event['calendar_id']]);
-        $plugins = new Plugins($this->db, null, config());
+        $plugins = $this->plugins ?? new Plugins($this->db, null, config());
         if ($calendar === null || (string) ($calendar['plugin_id'] ?? '') !== $pluginId || !$plugins->calendarReschedulable($calendar)) {
             throw HttpError::badRequest('That event can no longer be moved back from here', 'not_undoable');
         }

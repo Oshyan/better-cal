@@ -12,6 +12,7 @@ import { html, useState, useEffect, useRef } from '../../vendor/index.js';
 import { PlaceInput } from './PlaceInput.js';
 import { useStore } from './store.js';
 import { api } from './api.js';
+import { Icon } from '../ui/icons.js';
 
 const PENDING = 'Choices appear here after the plugin connects (within a minute of saving).';
 const NONE = 'None to choose from.';
@@ -123,22 +124,39 @@ function SearchSelectField({ field, value, onChange, pluginId }) {
 // A place picked here, or "same place as" another plugin calendar (a sun
 // calendar following a tide calendar's station). The link is resolved each
 // time the plugin runs, so it follows when the other calendar changes.
+// Unlinking keeps the place it has now, as its own.
 function LocationField({ value, onChange, placeSources }) {
+  const calendars = useStore((s) => s.calendars);
+  const [choosing, setChoosing] = useState(false);
   const linked = value && typeof value === 'object' && value.link != null;
   const sources = placeSources || [];
+  const target = linked ? (calendars || []).find((c) => c.id === value.link) : null;
+  const label = (c) => {
+    const place = c.place && c.place.name;
+    return place && !c.name.includes(place) ? c.name + ' (' + place + ')' : c.name;
+  };
+  const picker = html`<select class="bc-schema-input" aria-label="Same place as another calendar"
+    value=${linked ? String(value.link) : ''}
+    onChange=${(e) => { setChoosing(false); if (e.target.value) onChange({ link: Number(e.target.value) }); }}>
+    <option value="">${linked ? 'Choose a calendar…' : 'Or the same place as…'}</option>
+    ${sources.map((c) => html`<option key=${c.id} value=${String(c.id)}>${label(c)}</option>`)}
+  </select>`;
+  if (linked) {
+    const unlink = () => onChange(target && target.place ? { name: target.place.name || '', lat: target.place.lat, lng: target.place.lng } : null);
+    return html`<span class="bc-schema-location">
+      <span class="bc-schema-linked"><${Icon} name="link" size=${12} />${target ? html`Same place as <strong>${label(target)}</strong>` : 'Its linked calendar is gone. Pick a place.'}</span>
+      ${choosing ? picker : sources.length > 0 && html`<button type="button" class="bc-link-btn" onClick=${() => setChoosing(true)}>Change</button>`}
+      <button type="button" class="bc-link-btn" title="Keep this place as its own, and stop following the other calendar" onClick=${unlink}>Unlink</button>
+    </span>`;
+  }
   return html`<span class="bc-schema-location">
-    ${!linked && html`<${PlaceInput}
+    <${PlaceInput}
       value=${value ? (value.name || '') : ''}
       onText=${(t) => { if (!t) onChange(null); }}
       onPick=${(p) => onChange(p ? { name: p.name || '', lat: p.lat, lng: p.lng } : null)}
       placeholder="Search for a place…"
-    />`}
-    ${sources.length > 0 && html`<select class="bc-schema-input" aria-label="Same place as another calendar"
-      value=${linked ? String(value.link) : ''}
-      onChange=${(e) => onChange(e.target.value ? { link: Number(e.target.value) } : null)}>
-      <option value="">${linked ? 'A place of its own' : 'Or the same place as…'}</option>
-      ${sources.map((c) => html`<option key=${c.id} value=${String(c.id)}>${c.name}${c.place && c.place.name ? ' (' + c.place.name + ')' : ''}</option>`)}
-    </select>`}
+    />
+    ${sources.length > 0 && picker}
   </span>`;
 }
 

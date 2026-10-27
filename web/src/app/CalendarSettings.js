@@ -11,7 +11,7 @@ import { api, loadCalendars, loadReviewCount } from './api.js';
 import { state, set, toast } from './store.js';
 import { parseHex, PALETTE } from '../lib/color.js';
 import { SchemaForm } from './SchemaForm.js';
-import { OwnCalendarSettings, AddForPlace, pluginFor } from './OwnCalendar.js';
+import { OwnCalendarSettings, LinkedCalendars, pluginFor } from './OwnCalendar.js';
 import { Icon, GoogleG } from '../ui/icons.js';
 import { MoveToGoogle } from './MoveToGoogle.js';
 import { usePasswordStepUp } from './PasswordStepUp.js';
@@ -219,14 +219,14 @@ export function CalendarSettings({ cal, folders, onClose }) {
         <strong>${(cal.pluginName || 'A') + ' plugin'}</strong>${cal.reschedulable
           ? '. Moving an event here changes it there; everything else is edited there. '
           : '. It fills this calendar, so its events are read-only here. '}
-        <button type="button" class="bc-link-btn" onClick=${() => { if (onClose) onClose(); set({ route: 'plugins', pluginFocus: cal.pluginId }); }}>Plugin settings</button>
+        <button type="button" class="bc-link-btn" onClick=${() => { if (onClose) onClose(); set({ route: 'plugins', pluginFocus: cal.pluginId, pluginCalendarFocus: cal.ownSettings ? cal.id : null }); }}>Plugin settings</button>
       </span></span>
     </div>`}
     ${cal.kind === 'plugin' && cal.ownSettings && pluginFor(cal) && html`<div class="bc-calset-plugin">
       <span class="bc-calset-pluginhead"><${Icon} name="plugins" size=${12} /> This ${pluginFor(cal).ownCalendars ? pluginFor(cal).ownCalendars.noun : 'calendar'}</span>
       <${OwnCalendarSettings} cal=${cal} plugin=${pluginFor(cal)} />
     </div>`}
-    ${cal.kind === 'plugin' && html`<${AddForPlace} cal=${cal} />`}
+    ${cal.kind === 'plugin' && html`<${LinkedCalendars} cal=${cal} />`}
     ${subscribed && html`<div class="bc-calset-field">
       <span class="bc-calset-label">Source</span>
       ${cal.provider === 'google'

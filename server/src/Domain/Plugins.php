@@ -258,6 +258,9 @@ final class Plugins
                 if (isset($f['optionsFrom']) && (!is_string($f['optionsFrom']) || preg_match('/^[a-zA-Z][a-zA-Z0-9._-]{0,80}$/', $f['optionsFrom']) !== 1)) {
                     $errs[] = $section . '.' . $f['key'] . ': optionsFrom must be a short name (letters, digits, . _ -)';
                 }
+                if (!empty($f['place']) && (($f['type'] ?? null) !== 'select' || !isset($f['optionsFrom']))) {
+                    $errs[] = $section . '.' . $f['key'] . ': place is for a select whose options come from optionsFrom';
+                }
                 if (!empty($f['searchable']) && (($f['type'] ?? null) !== 'select' || !isset($f['optionsFrom']))) {
                     $errs[] = $section . '.' . $f['key'] . ': searchable is for a select whose options come from optionsFrom';
                 }
@@ -1159,12 +1162,23 @@ final class Plugins
             return ['name' => (string) ($published['name'] ?? ''), 'lat' => (float) $published['lat'], 'lng' => (float) $published['lng']];
         }
         $own = self::storedOwn($cal['settings_json'] !== null ? (string) $cal['settings_json'] : null);
-        foreach ((($this->manifest($pluginId) ?? [])['ownCalendarSettings'] ?? []) as $f) {
-            if (($f['type'] ?? '') !== 'location') {
+        $schema = (($this->manifest($pluginId) ?? [])['ownCalendarSettings'] ?? []);
+        foreach ($schema as $f) {
+            if (($f['type'] ?? '') === 'location') {
+                return $this->resolvePlace($userId, $own[(string) $f['key']] ?? ($f['default'] ?? null), $depth);
+            }
+        }
+        // A chosen option that is a place (a tide station with coordinates),
+        // until the plugin's first run says where the calendar is.
+        foreach ($schema as $f) {
+            if (empty($f['place']) || !isset($own[(string) $f['key']])) {
                 continue;
             }
-            $v = $own[(string) $f['key']] ?? ($f['default'] ?? null);
-            return $this->resolvePlace($userId, $v, $depth);
+            foreach ($this->optionList($pluginId, (string) $f['optionsFrom']) ?? [] as $o) {
+                if ((string) $o['value'] === (string) $own[(string) $f['key']] && isset($o['lat'], $o['lng'])) {
+                    return ['name' => (string) ($o['label'] ?? $o['value']), 'lat' => (float) $o['lat'], 'lng' => (float) $o['lng']];
+                }
+            }
         }
         return null;
     }
@@ -1268,7 +1282,7 @@ final class Plugins
             $name = $this->templateName($userId, $id, $m, $plain);
         }
         $color = $color !== null && preg_match('/^#[0-9a-fA-F]{6}$/', $color) === 1 ? $color : $decl['color'];
-        $calId = $this->db->tx(function () use ($userId, $id, $m, $decl, $name, $color, $plain, $authority): int {
+        $calId = $this->db->tx(function () use ($userId, $id, $m, $decl, $name, $color, $plain, $authority, $autoName): int {
             $authority?->assertValid($this->db);
             $count = (int) $this->db->scalar("SELECT COUNT(*) FROM calendars WHERE user_id = ? AND kind = 'plugin' AND plugin_id = ?", [$userId, $id]);
             if ($count >= $decl['max']) {

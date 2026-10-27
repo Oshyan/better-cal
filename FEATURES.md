@@ -153,7 +153,7 @@ What it doesn't do (for now): send invitations to guests, offer booking pages, o
 ### Plugins
 
 - Bundled server-side plugins, each turned on and set up on the Plugins page, which shows its permissions, last run, what it has made, any warnings, Run now, and Delete data with a preview of what goes (or untick it to pause and keep everything).
-- Plugins that work per place or per source let you add as many calendars as you like, each with its own settings, and a calendar can follow another's place: a tide calendar's "Add for" buttons give it sunrise, sunset and the forecast for its station in one click, and they follow when the station changes.
+- Plugins that work per place or per source let you add as many calendars as you like, each with its own settings, and a calendar can follow another's place: a tide calendar's "Linked calendars" add sunrise, sunset and the forecast for its station in one click, and they follow when the station changes.
 - Tides: NOAA predictions for 3,500 US stations, searched by name, one station per calendar, each with its own choice of tides: lows or highs, at or beyond a height, in daylight (with minutes after sunrise or before sunset), within times of day, on chosen weekdays, up to a year ahead, optionally shaded on the calendar. [Tides](docs/plugins/tides.md) has the details.
 - Weather: a daily forecast from Open-Meteo (no API key) with an icon and the high and low, plus the day's air quality (US AQI); severe weather and unhealthy air raise warnings. One calendar per place.
 - Sun: sunrise and sunset for a place, computed on the server (no network, no key), in each day's header and as a line on the timeline. One calendar per place.

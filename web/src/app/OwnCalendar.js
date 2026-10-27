@@ -2,11 +2,11 @@
 // settings (a tide calendar per station, a weather calendar per place). The
 // same pieces show on the plugin's card (Plugins page) and in each
 // calendar's own settings: the settings form and the plugin's status line,
-// the form for adding one, and "Add for this place", which makes another
-// plugin's calendar follow this calendar's place.
+// the form for adding one, and "Linked calendars", the other plugins'
+// calendars that use this calendar's place (add, open or unlink them).
 
-import { html, useState } from '../../vendor/index.js';
-import { state, toast, useStore } from './store.js';
+import { html, useState, useEffect, useRef } from '../../vendor/index.js';
+import { state, set, toast, useStore } from './store.js';
 import { api, loadCalendars, loadPlugins, refreshWindow } from './api.js';
 import { SchemaForm } from './SchemaForm.js';
 import { Icon } from '../ui/icons.js';
@@ -14,9 +14,38 @@ import { Icon } from '../ui/icons.js';
 const defaultsOf = (schema) => Object.fromEntries((schema || []).map((f) => [f.key, f.default ?? null]));
 const locationKey = (plugin) => ((plugin.ownCalendarSettingsSchema || []).find((f) => f.type === 'location') || {}).key || null;
 
-/** Plugin calendars a location setting may follow: those that know their place (not this one). */
-export function placeSourcesFor(calendars, selfId = null) {
-  return (calendars || []).filter((c) => c.kind === 'plugin' && c.place && c.id !== selfId);
+/**
+ * Calendars a location setting may follow: plugin calendars with a place of
+ * their own (a tide station, a place entered), from other plugins. Ones that
+ * follow a place themselves are left out, so each place is offered once, by
+ * the calendar it comes from.
+ */
+export function placeSourcesFor(calendars, self = null) {
+  return (calendars || []).filter((c) => c.kind === 'plugin' && c.place && c.place.via == null
+    && (!self || (c.id !== self.id && c.pluginId !== self.pluginId)));
+}
+
+/** "Tides, Sample Harbor" as is; a calendar whose name doesn't say its place gets it after. */
+export function sourceLabel(c) {
+  const place = c.place && c.place.name;
+  return place && !c.name.includes(place) ? c.name + ' (' + place + ')' : c.name;
+}
+
+/** The plugin calendars whose place follows this one, with the setting that links them. */
+function followersOf(cal, calendars) {
+  const out = [];
+  for (const c of calendars || []) {
+    if (!c.ownSettings) continue;
+    for (const [key, v] of Object.entries(c.ownSettings)) {
+      if (v && typeof v === 'object' && v.link === cal.id) { out.push({ cal: c, key }); break; }
+    }
+  }
+  return out;
+}
+
+/** Open one plugin calendar's settings on the Plugins page. */
+export function openOwnCalendar(c) {
+  set({ route: 'plugins', pluginFocus: c.pluginId, pluginCalendarFocus: c.id });
 }
 
 function fmtAgo(iso) {
@@ -46,7 +75,7 @@ export function OwnCalendarSettings({ cal, plugin }) {
       schema=${plugin.ownCalendarSettingsSchema}
       values=${cal.ownSettings}
       pluginId=${plugin.id}
-      placeSources=${placeSourcesFor(calendars, cal.id)}
+      placeSources=${placeSourcesFor(calendars, cal)}
       onSave=${async (draft) => {
         try {
           await api('/plugins/' + plugin.id + '/calendars/' + cal.id, { method: 'PATCH', body: draft });
@@ -73,7 +102,7 @@ export function AddOwnCalendar({ plugin, onDone }) {
       schema=${plugin.ownCalendarSettingsSchema}
       values=${defaultsOf(plugin.ownCalendarSettingsSchema)}
       pluginId=${plugin.id}
-      placeSources=${placeSourcesFor(calendars)}
+      placeSources=${placeSourcesFor(calendars, { id: null, pluginId: plugin.id })}
       create=${true}
       saveLabel=${'Add ' + decl.noun}
       onCancel=${onDone}
@@ -102,48 +131,77 @@ export function AddOwnCalendar({ plugin, onDone }) {
 }
 
 /**
- * "Add for this place": one click makes another plugin's calendar (sun,
- * weather, air quality) that follows this calendar's place, so a tide
- * calendar gets its sunrise and sunset without entering the place again.
+ * On a calendar with a place of its own (a tide station): the other
+ * plugins' calendars that use that place, each opening its settings or
+ * unlinked (it keeps the place, fixed, and stops following), and one-click
+ * buttons to add the ones it doesn't have yet.
  */
-export function AddForPlace({ cal }) {
+export function LinkedCalendars({ cal }) {
   const plugins = useStore((s) => s.plugins);
   const calendars = useStore((s) => s.calendars);
-  const [busy, setBusy] = useState(null);
-  if (!cal.place) return null;
-  const followers = new Set((calendars || []).filter((c) => c.ownSettings && Object.values(c.ownSettings).some((v) => v && v.link === cal.id)).map((c) => c.pluginId));
-  const offers = (plugins || []).filter((p) => p.enabled && p.ownCalendars && p.id !== cal.pluginId && locationKey(p));
-  if (offers.length === 0) return null;
-  const add = async (p) => {
-    setBusy(p.id);
+  const [busy, setBusy] = useState(false);
+  if (!cal.place || cal.place.via != null) return null;
+  const followers = followersOf(cal, calendars);
+  const linkedPlugins = new Set(followers.map((f) => f.cal.pluginId));
+  const offers = (plugins || []).filter((p) => p.enabled && p.ownCalendars && p.id !== cal.pluginId && locationKey(p) && !linkedPlugins.has(p.id));
+  if (followers.length === 0 && offers.length === 0) return null;
+  const place = cal.place.name || 'this place';
+  const run = async (fn, ok) => {
+    setBusy(true);
     try {
-      await api('/plugins/' + p.id + '/calendars', { method: 'POST', body: { settings: { [locationKey(p)]: { link: cal.id } } } });
-      toast(p.name + ' added for ' + (cal.place.name || cal.name) + '. It fills within a minute.');
+      await fn();
+      toast(ok);
       await Promise.all([loadCalendars(), loadPlugins()]);
       refreshWindow();
     } catch (e) {
-      toast(e.message || 'Could not add it', { error: true });
+      toast(e.message || 'That didn\'t work', { error: true });
     } finally {
-      setBusy(null);
+      setBusy(false);
     }
   };
-  return html`<div class="bc-own-place">
-    <span class="bc-own-place-label">Add for ${cal.place.name || 'this place'}</span>
-    <span class="bc-own-offers">
-      ${offers.map((p) => followers.has(p.id)
-        ? html`<span key=${p.id} class="bc-own-offer is-done" title=${'A ' + p.name + ' calendar already follows this place'}><${Icon} name="check" size=${12} /> ${p.name}</span>`
-        : html`<button key=${p.id} type="button" class="bc-btn bc-own-offer" disabled=${busy !== null} title=${'Add a ' + p.ownCalendars.noun + ' that follows ' + (cal.place.name || 'this place')}
-            onClick=${() => add(p)}><${Icon} name="plus" size=${12} /> ${p.name}</button>`)}
-    </span>
+  const add = (p) => run(
+    () => api('/plugins/' + p.id + '/calendars', { method: 'POST', body: { settings: { [locationKey(p)]: { link: cal.id } } } }),
+    p.name + ' added for ' + place + '. It fills within a minute.',
+  );
+  const unlink = (f) => run(
+    () => api('/plugins/' + f.cal.pluginId + '/calendars/' + f.cal.id, { method: 'PATCH', body: { [f.key]: { name: cal.place.name || '', lat: cal.place.lat, lng: cal.place.lng } } }),
+    f.cal.name + ' keeps ' + place + ' as its own place now.',
+  );
+  return html`<div class="bc-own-linked">
+    <span class="bc-own-linked-head">Linked calendars<span class="bc-schema-help">${followers.length > 0
+      ? 'Other calendars for ' + place + '. They follow this one if its place changes.'
+      : 'Add calendars for ' + place + ' that follow this one if its place changes.'}</span></span>
+    ${followers.map((f) => html`<div key=${f.cal.id} class="bc-own-linked-row">
+      <button type="button" class="bc-own-chip" title="Open its settings" onClick=${() => openOwnCalendar(f.cal)}>
+        <span class="bc-own-dot" style=${'background:' + f.cal.color}></span>${f.cal.name}
+      </button>
+      <button type="button" class="bc-link-btn" disabled=${busy} title=${'Keep ' + place + ' as its own place, and stop following this calendar'} onClick=${() => unlink(f)}>Unlink</button>
+    </div>`)}
+    ${offers.length > 0 && html`<div class="bc-own-linked-row">
+      ${offers.map((p) => html`<button key=${p.id} type="button" class="bc-btn bc-own-offer" disabled=${busy}
+        title=${'Add a ' + p.ownCalendars.noun + ' for ' + place} onClick=${() => add(p)}><${Icon} name="plus" size=${12} /> ${p.name}</button>`)}
+    </div>`}
   </div>`;
 }
 
 /** On a plugin's card: its calendars, each opening to its own settings, and "Add". */
 export function OwnCalendarsList({ plugin }) {
   const calendars = useStore((s) => s.calendars);
+  const focus = useStore((s) => s.pluginCalendarFocus);
   const [open, setOpen] = useState(null);
   const [adding, setAdding] = useState(false);
+  const openRef = useRef(null);
   const mine = (calendars || []).filter((c) => c.kind === 'plugin' && c.pluginId === plugin.id);
+  // Arriving from one calendar's "Plugin settings" (or a linked calendar)
+  // opens that calendar here and brings it into view, after the card's own
+  // scroll.
+  useEffect(() => {
+    if (focus == null || !mine.some((c) => c.id === focus)) return;
+    setOpen(focus);
+    setAdding(false);
+    set({ pluginCalendarFocus: null });
+    requestAnimationFrame(() => requestAnimationFrame(() => { if (openRef.current) openRef.current.scrollIntoView({ block: 'start', behavior: 'smooth' }); }));
+  }, [focus, mine.length]);
   const decl = plugin.ownCalendars;
   const full = mine.length >= decl.max;
   return html`<div class="bc-own-list">
@@ -157,9 +215,9 @@ export function OwnCalendarsList({ plugin }) {
         <${Icon} name="plus" size=${12} /> Add ${decl.noun}</button>`}
     </div>
     ${adding && html`<${AddOwnCalendar} plugin=${plugin} onDone=${() => setAdding(false)} />`}
-    ${mine.filter((c) => c.id === open).map((c) => html`<div key=${c.id}>
+    ${mine.filter((c) => c.id === open).map((c) => html`<div key=${c.id} ref=${openRef} class="bc-own-open">
       <${OwnCalendarSettings} cal=${c} plugin=${plugin} />
-      <${AddForPlace} cal=${c} />
+      <${LinkedCalendars} cal=${c} />
     </div>`)}
   </div>`;
 }

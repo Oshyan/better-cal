@@ -135,7 +135,8 @@ $late = $tidesClass::describe($tide, 'ft', 'Sample Harbor, CA', '9999901', ['ris
 check('tides: a tide after sunset says how long after', str_contains($late, '(1 h 30 min after sunset)'));
 check('tides: the description gives both units', str_contains($late, '-0.8 ft (-0.24 m)'));
 checkEq('tides: spans read plainly', ['20 min', '2 h', '1 h 5 min'], [$tidesClass::span(1200), $tidesClass::span(7200), $tidesClass::span(3900)]);
-$opts = $tidesClass::stationOptions(['9999902' => ['name' => 'Beta Point', 'state' => 'WA'], '9999901' => ['name' => 'Alpha Cove', 'state' => 'ME']]);
+$opts = $tidesClass::stationOptions(['9999902' => ['name' => 'Beta Point', 'state' => 'WA', 'lat' => 47.5, 'lng' => -122.5], '9999901' => ['name' => 'Alpha Cove', 'state' => 'ME', 'lat' => 44.0, 'lng' => -68.0]]);
+checkEq('tides: each station choice carries its place', [44.0, -68.0], [$opts[0]['lat'], $opts[0]['lng']]);
 checkEq('tides: station choices are sorted by name, labelled with the state', ['Alpha Cove, ME', 'Beta Point, WA'], array_column($opts, 'label'));
 
 $sunPlugin = loadPlugin('sun');

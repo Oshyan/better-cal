@@ -6743,6 +6743,10 @@ return new class implements BetterCal\Plugin\PluginInterface {
     try { $own->createOwnCalendar(1, 'stations', null, null, ['station' => '9999903']); } catch (BetterCal\Http\HttpError $e) { $caught = $e; }
     check('own calendars: the manifest limit holds', $caught !== null && $caught->errorCode === 'calendar_limit');
     checkEq('own calendars: saving changes only what was sent', ['station' => '9999901', 'days' => 20], $own->saveOwnCalendarSettings(1, $a, 'stations', ['days' => 20]));
+    $own->saveOwnCalendarSettings(1, $a, 'stations', ['station' => '9999903']);
+    $own->saveOwnCalendarSettings(1, $b, 'stations', ['station' => '9999903']);
+    checkEq('own calendars: a name made from its settings follows them; one given stays', ['Stations, North Alpha Bay, OR', 'My own name'], [$odb->scalar('SELECT name FROM calendars WHERE id = ?', [$a]), $odb->scalar('SELECT name FROM calendars WHERE id = ?', [$b])]);
+    $own->saveOwnCalendarSettings(1, $a, 'stations', ['station' => '9999901']);
     $caught = null;
     try { $own->saveOwnCalendarSettings(2, $a, 'stations', ['days' => 5]); } catch (BetterCal\Http\HttpError $e) { $caught = $e; }
     check("own calendars: someone else's calendar can't be changed", $caught !== null && $caught->status === 404);
@@ -6755,6 +6759,19 @@ return new class implements BetterCal\Plugin\PluginInterface {
 
     // Places: a station calendar publishes its place; a follower links to it.
     check('places: a calendar has none until its plugin says', $own->calendarPlace(1, $a) === null);
+    $placeOwn = new BetterCal\Domain\Plugins($odb, $dir . '-place', []);
+    mkdir($dir . '-place/stations', 0700, true);
+    $placeManifest = json_decode((string) file_get_contents($dir . '/stations/plugin.json'), true);
+    $placeManifest['ownCalendarSettings'][0]['place'] = true;
+    file_put_contents($dir . '-place/stations/plugin.json', json_encode($placeManifest));
+    copy($dir . '/stations/Plugin.php', $dir . '-place/stations/Plugin.php');
+    $odb->run("UPDATE plugin_kv SET v_json = ? WHERE plugin_id = 'stations' AND k = '__options.stations'", [json_encode([
+        ['value' => '9999901', 'label' => 'Alpha Cove, ME', 'lat' => 44.1, 'lng' => -68.2], ['value' => '9999902', 'label' => 'Beta Point, WA'], ['value' => '9999903', 'label' => 'North Alpha Bay, OR'],
+    ])]);
+    checkEq("places: a station chosen is the calendar's place before its plugin runs", ['name' => 'Alpha Cove, ME', 'lat' => 44.1, 'lng' => -68.2], $placeOwn->calendarPlace(1, $a));
+    array_map('unlink', glob($dir . '-place/stations/*'));
+    rmdir($dir . '-place/stations');
+    rmdir($dir . '-place');
     $odb->run("INSERT INTO plugin_kv (plugin_id, k, v_json) VALUES ('stations', ?, ?)", ['__calplace.' . $a, json_encode(['name' => 'Alpha Cove, ME', 'lat' => 44.1, 'lng' => -68.2])]);
     checkEq('places: then it has the published place', ['name' => 'Alpha Cove, ME', 'lat' => 44.1, 'lng' => -68.2], $own->calendarPlace(1, $a));
     $odb->run("INSERT INTO plugin_kv (plugin_id, k, v_json) VALUES ('other', ?, ?)", ['__calplace.' . $b, json_encode(['name' => 'Forged', 'lat' => 1, 'lng' => 1])]);

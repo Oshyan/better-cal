@@ -30,7 +30,7 @@ Each tide is a moment ("Low tide -0.8 ft"), in the day's header and as a line on
 
 ## Sunrise, Sunset and Weather for the Same Place
 
-A tide calendar knows where its station is. Its settings offer "Add for" that place, with a button for each plugin that takes a place: Sun for that day's sunrise and sunset there, Weather for the forecast. These calendars follow the station: move the tide calendar to another station and they move with it, renamed to match. You can also set any Sun or Weather calendar to "the same place as" a tide calendar in its own settings.
+A tide calendar knows where its station is as soon as you pick it. Its settings show "Linked calendars", with a button for each plugin that takes a place: Sun for that day's sunrise and sunset there, Weather for the forecast. The calendars you add this way follow the station: move the tide calendar to another station and they move with it, renamed to match. Each is listed there, opens with a click, and has Unlink, which keeps the place it has and stops following. You can also set any Sun or Weather calendar to "the same place as" a tide calendar in its own settings.
 
 ## Sharing
 

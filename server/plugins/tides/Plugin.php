@@ -95,12 +95,12 @@ return new class implements PluginInterface, OwnCalendarsPlugin {
         return $byId;
     }
 
-    /** @return list<array{value:string,label:string}> "Sample Harbor, CA" style labels, sorted */
+    /** @return list<array{value:string,label:string,lat:float,lng:float}> "Sample Harbor, CA" style labels, sorted, with each station's place */
     public static function stationOptions(array $byId): array
     {
         $out = [];
         foreach ($byId as $id => $st) {
-            $out[] = ['value' => (string) $id, 'label' => self::stationName($st)];
+            $out[] = ['value' => (string) $id, 'label' => self::stationName($st), 'lat' => (float) $st['lat'], 'lng' => (float) $st['lng']];
         }
         usort($out, static fn($a, $b) => strcmp($a['label'], $b['label']) ?: strcmp($a['value'], $b['value']));
         return $out;

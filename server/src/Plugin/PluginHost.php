@@ -623,7 +623,16 @@ final class PluginHost
                 continue;
             }
             $label = is_array($o) && is_scalar($o['label'] ?? null) ? (string) $o['label'] : (string) $value;
-            $clean[] = ['value' => (string) $value, 'label' => mb_substr($label, 0, 200)];
+            $item = ['value' => (string) $value, 'label' => mb_substr($label, 0, 200)];
+            // A choice that is a place (a tide station) may carry its
+            // coordinates: a select marked `place` then gives its calendar
+            // that place as soon as it's chosen, before the plugin runs.
+            if (is_array($o) && is_numeric($o['lat'] ?? null) && is_numeric($o['lng'] ?? null)
+                && abs((float) $o['lat']) <= 90 && abs((float) $o['lng']) <= 180) {
+                $item['lat'] = round((float) $o['lat'], 5);
+                $item['lng'] = round((float) $o['lng'], 5);
+            }
+            $clean[] = $item;
         }
         $this->kvSet(\BetterCal\Domain\Plugins::OPTIONS_KV_PREFIX . $name, $clean);
     }

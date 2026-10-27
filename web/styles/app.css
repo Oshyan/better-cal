@@ -4609,8 +4609,11 @@ button.bc-es-alsoon-cal { cursor: pointer; text-decoration: underline; text-deco
 .bc-own-status small { margin-left: auto; font-variant-numeric: tabular-nums; }
 .bc-own-status.is-warn, .bc-own-status.is-error { color: var(--warn-strong); }
 .bc-own .bc-schema-form, .bc-own-add .bc-schema-form { margin-top: 6px; }
-.bc-own-place { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; margin-top: 8px; }
-.bc-own-place-label { font-size: 12.5px; font-weight: 650; }
+/* Other plugins' calendars using this calendar's place. */
+.bc-own-linked { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); }
+.bc-own-linked-head { display: flex; flex-direction: column; gap: 2px; font-size: 13px; font-weight: 650; }
+.bc-own-linked-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; }
+.bc-own-open { scroll-margin-top: 12px; }
+.bc-schema-linked { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; }
 .bc-own-offers { display: inline-flex; flex-wrap: wrap; gap: 6px; }
 .bc-own-offer { display: inline-flex; align-items: center; gap: 4px; font-size: 12.5px; }
-.bc-own-offer.is-done { color: var(--fg-muted); }

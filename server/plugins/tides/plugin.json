@@ -29,6 +29,7 @@
       "type": "select",
       "optionsFrom": "stations",
       "searchable": true,
+      "place": true,
       "required": true,
       "label": "Station",
       "help": "Any of NOAA's US tide stations.",

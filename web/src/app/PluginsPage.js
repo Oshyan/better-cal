@@ -43,17 +43,19 @@ function fmtAgo(iso) {
 
 function PluginRow({ p }) {
   // Arriving from a calendar's "Plugin settings" link opens this plugin's
-  // settings and brings them into view.
-  const focused = state.pluginFocus === p.id;
-  const [openSettings, setOpenSettings] = useState(focused);
+  // settings (or, for one of its own calendars, that calendar's) and brings
+  // them into view. Watched, so a link followed on this page works too.
+  const focus = useStore((s) => s.pluginFocus);
+  const [openSettings, setOpenSettings] = useState(focus === p.id && state.pluginCalendarFocus == null);
   const [warnings, setWarnings] = useState(null);
   const [busy, setBusy] = useState(false);
   const cardRef = useRef(null);
   useEffect(() => {
-    if (!focused) return;
+    if (focus !== p.id) return;
     set({ pluginFocus: null });
+    if (state.pluginCalendarFocus == null) setOpenSettings(true);
     if (cardRef.current) cardRef.current.scrollIntoView({ block: 'start' });
-  }, []); // eslint-disable-line
+  }, [focus]);
 
   const act = async (fn, okMsg) => {
     setBusy(true);

@@ -120,6 +120,11 @@ function parseWants(d) {
 }
 
 // "Aug 10 – Aug 15" for an availability draft (end exclusive -> inclusive).
+// The site a draft was read from (#105), for its chip: "lu.ma".
+function pageHost(url) {
+  try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return 'the page'; }
+}
+
 function fmtAvailRange(d) {
   const f = (x) => x.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
   const s = parseISO(d.start);
@@ -346,6 +351,8 @@ export function QuickAdd() {
       ...(parsed.length ? { personIds: parsed.map((n) => knownPerson(n).id) } : {}),
       // "#food" in the text (#86).
       ...(d && Array.isArray(d.tags) && d.tags.length ? { tagNames: d.tags } : {}),
+      // Read from an event page (#105): the page is the event's link.
+      ...(d && typeof d.url === 'string' && /^https?:\/\//i.test(d.url) ? { url: d.url } : {}),
     });
     setBusy(false);
   };
@@ -515,6 +522,8 @@ export function QuickAdd() {
           title=${knownPerson(n) ? 'In your people' : 'Not in your people yet — you will be asked'}
         >with ${n}</span>`)}
         ${draft && draft.source === 'fallback' && html`<span class="bc-qchip bc-qchip-fallback" title="Parsed without the language model">basic parse</span>`}
+        ${draft && String(draft.source || '').startsWith('page-') && html`<span class="bc-qchip" title=${'Read from the page: ' + (draft.url || '')}><${Icon} name="link" size=${12} />from ${pageHost(draft.url)}</span>`}
+        ${draft && draft.pageNote && html`<span class="bc-qchip bc-qchip-fallback" title="Read from the text instead">${draft.pageNote}</span>`}
         ${draft && draft.modelLimit && html`<span class="bc-qchip bc-qchip-fallback" title=${draft.modelLimit.message || 'AI parsing is temporarily paused'}>AI paused</span>`}
       </div>`}
       ${(!draft || draft.intent !== 'availability') && html`<div class="bc-quickadd-strip">

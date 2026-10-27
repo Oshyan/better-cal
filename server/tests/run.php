@@ -4493,6 +4493,83 @@ checkEq('pd fail -> highlight', 'highlight', Filters::promptDisposition($promptR
     Limits::reset();
 }
 
+// An event page's link in quick add (#105).
+{
+    $EP = BetterCal\Domain\EventPage::class;
+    checkEq('event page: a bare link, or one with a few words', ['https://events.example.test/e/abc', 'https://events.example.test/e/abc'],
+        [$EP::urlIn('https://events.example.test/e/abc'), $EP::urlIn("Sample Meetup Night\nhttps://events.example.test/e/abc.")]);
+    checkEq('event page: Google template links, .ics files, two links and long text keep their own routes', [null, null, null, null, null], [
+        $EP::urlIn('https://calendar.google.com/calendar/render?action=TEMPLATE&text=X&dates=20260901/20260902'),
+        $EP::urlIn('https://feeds.example.test/team.ics'),
+        $EP::urlIn('https://a.example.test/1 and https://b.example.test/2'),
+        $EP::urlIn('Dinner tomorrow 7pm'),
+        $EP::urlIn(str_repeat('word ', 40) . 'https://events.example.test/e/abc'),
+    ]);
+
+    $epNow = new DateTimeImmutable('2026-10-27T12:00:00Z');
+    $ld = static fn(array ...$events): string => '<html><head><script type="application/ld+json">'
+        . json_encode(count($events) === 1 ? $events[0] : $events) . '</script></head><body>x</body></html>';
+    $page = $ld(['@type' => 'Event', 'name' => 'Sample &amp; Co Social', 'startDate' => '2026-11-05T19:00:00-08:00', 'endDate' => '2026-11-05T21:30:00-08:00',
+        'location' => ['@type' => 'Place', 'name' => 'Example Hall', 'address' => ['streetAddress' => '1 Sample St', 'addressLocality' => 'Exampleton']],
+        'url' => 'https://events.example.test/e/abc?canonical=1']);
+    $d = $EP::fromHtml($page, 'https://events.example.test/e/abc', 'America/Los_Angeles', $epNow);
+    checkEq('event page: markup gives title, times in the page\'s zone, place and its own link',
+        ['Sample & Co Social', '2026-11-05T19:00:00-08:00', '2026-11-05T21:30:00-08:00', false, 'Example Hall, 1 Sample St, Exampleton', 'https://events.example.test/e/abc?canonical=1', 'page-markup'],
+        [$d['title'], $d['start'], $d['end'], $d['allDay'], $d['location'], $d['url'], $d['source']]);
+    $d = $EP::fromHtml($ld(
+        ['@type' => 'Event', 'name' => 'Last month', 'startDate' => '2026-09-01T18:00:00Z'],
+        ['@type' => 'Event', 'name' => 'Next month', 'startDate' => '2026-11-20'],
+    ), 'https://events.example.test/group', 'UTC', $epNow);
+    checkEq('event page: of several, the first that hasn\'t ended; a date alone is all day, linked to the page',
+        ['Next month', true, 'https://events.example.test/group'], [$d['title'], $d['allDay'], $d['url']]);
+    $d = $EP::fromHtml('<a href="https://calendar.google.com/calendar/render?action=TEMPLATE&amp;text=Sample+Talk&amp;dates=20261110T180000Z/20261110T190000Z&amp;location=Example+Library">Add to Google</a>',
+        'https://talks.example.test/t/1', 'UTC', $epNow);
+    checkEq('event page: an "Add to Google Calendar" link when there is no markup', ['Sample Talk', 'Example Library', 'page-gcal'], [$d['title'], $d['location'], $d['source']]);
+    checkEq('event page: a place named twice is said once', ['Example Hall, Exampleton, CA', 'Exampleton, CA, California', 'Sample St 5, Exampleton'], [
+        $EP::tidyPlace('Example Hall, Exampleton, CA, Exampleton, CA'),
+        $EP::tidyPlace('Exampleton, CA, Exampleton, California'),
+        $EP::tidyPlace('Sample St 5, Exampleton, Exampleton'),
+    ]);
+    checkEq('event page: nothing readable is nothing', null, $EP::fromHtml('<html><body>Hello</body></html>', 'https://x.example.test/', 'UTC', $epNow));
+    checkEq('event page: the model reads the title and the text', "Sample Night\n\nJoin us Nov 5", $EP::textForModel('<title>Sample Night</title><body><p>Join us Nov 5</p><script>var x;</script></body>'));
+
+    // Through quick add, with the page fetch stood in for.
+    $epdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $epdb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, settings_json TEXT)');
+    $epdb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, position INTEGER, name TEXT)');
+    $epdb->run("INSERT INTO users (id, settings_json) VALUES (1, '{\"nlParseMode\":\"never\"}')");
+    $epdb->run("INSERT INTO calendars (id, user_id, kind, position, name) VALUES (10, 1, 'local', 0, 'Home')");
+    $fetched = [];
+    $responses = [
+        'https://events.example.test/e/abc' => ['status' => 200, 'body' => $page],
+        'https://events.example.test/private' => ['status' => 403, 'body' => 'Sign in'],
+        'https://events.example.test/plain' => ['status' => 200, 'body' => '<html><body>No event here</body></html>'],
+    ];
+    $epFetch = function (string $url) use (&$fetched, $responses): array {
+        $fetched[] = $url;
+        if (!isset($responses[$url])) throw new RuntimeException('refused');
+        return $responses[$url];
+    };
+    $epQa = new QuickAdd($epdb, new LlmGateway([]), (new ReflectionClass(Events::class))->newInstanceWithoutConstructor(), new Settings($epdb),
+        null, null, new BetterCal\Domain\EventPage($epdb, new LlmGateway([]), $epFetch));
+    $r = $epQa->run(1, "Sample & Co Social\nhttps://events.example.test/e/abc", 'America/Los_Angeles', false, null);
+    checkEq('event page quick add: a shared title and link become the page\'s event, not saved', ['Sample & Co Social', 10, 'page-markup', null],
+        [$r['draft']['title'], $r['draft']['calendarId'], $r['draft']['source'], $r['event']]);
+    $r = $epQa->run(1, 'https://events.example.test/private', 'UTC', false, null);
+    checkEq('event page quick add: a page behind a sign-in says so, and the text is parsed as usual',
+        ['That page needs a sign-in, so there was nothing to read.', 'fallback'], [$r['draft']['pageNote'] ?? null, $r['draft']['source']]);
+    checkEq('event page quick add: a page without an event, and one that can\'t be reached, say which', [
+        'No event found on that page.', 'Couldn\'t open that page.',
+    ], [
+        $epQa->run(1, 'https://events.example.test/plain', 'UTC', false, null)['draft']['pageNote'] ?? null,
+        $epQa->run(1, 'https://10.0.0.1/admin', 'UTC', false, null)['draft']['pageNote'] ?? null,
+    ]);
+    checkEq('event page quick add: plain text never fetches anything', 4, (function () use ($epQa, &$fetched): int {
+        $epQa->run(1, 'Dinner tomorrow 7pm', 'UTC', false, null);
+        return count($fetched);
+    })());
+}
+
 // Quick add markers (#86): /calendar, #tag, @person, "literal title".
 {
     $m = BetterCal\Domain\QuickAddMarkers::extract('Dinner with @Sam on Tuesday #food /friends');

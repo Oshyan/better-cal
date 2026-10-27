@@ -28,6 +28,7 @@ final class QuickAdd
         private readonly Settings $settings,
         private readonly ?People $people = null,
         private readonly ?ModelAdmission $modelAdmission = null,
+        private readonly ?EventPage $eventPage = null,
     ) {
     }
 
@@ -114,6 +115,37 @@ final class QuickAdd
                 }
                 return ['draft' => $draft, 'event' => $event];
             }
+        }
+
+        // An event page's link, shared or pasted (#105): the page says what
+        // the event is. When it can't be read, the text is parsed as usual
+        // and the draft says why (pageNote).
+        $pageNote = null;
+        $pageUrl = EventPage::urlIn($text);
+        if ($pageUrl !== null) {
+            $mode = (string) ($this->settings->forUser($userId)['nlParseMode'] ?? 'smart');
+            $page = ($this->eventPage ?? new EventPage($this->db, $this->llm))
+                ->read($userId, $pageUrl, $tz, $now, $mode !== 'never', $this->modelAdmission, $tokenId);
+            if ($page['draft'] !== null) {
+                $draft = $page['draft'];
+                $draft['calendarId'] = $this->resolveCalendarId($userId, $calendarId);
+                $event = null;
+                if ($commit) {
+                    $event = ActivityContext::with(self::activitySource(), fn() => $this->events->create($userId, [
+                        'calendarId' => $draft['calendarId'],
+                        'title' => $draft['title'],
+                        'start' => $draft['start'],
+                        'end' => $draft['end'],
+                        'allDay' => $draft['allDay'],
+                        'tzid' => $draft['tzid'] ?? $tz,
+                        'location' => $draft['location'],
+                        'url' => $draft['url'],
+                        'personNames' => [],
+                    ], $authority));
+                }
+                return ['draft' => $draft, 'event' => $event];
+            }
+            $pageNote = $page['note'];
         }
 
         // Availability statements divert to a span draft — but only when the
@@ -221,6 +253,9 @@ final class QuickAdd
         // The text's own calendar wins over the one the caller suggests.
         $draft['calendarId'] = $markedCalendarId ?? $this->resolveCalendarId($userId, $calendarId);
         $draft['calendarFromText'] = $markedCalendarId !== null;
+        if ($pageNote !== null) {
+            $draft['pageNote'] = $pageNote;
+        }
         $draft['tags'] = $markers['tags'];
         if ($markers['people'] !== []) {
             $directory = $this->directory($userId);

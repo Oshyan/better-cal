@@ -50,7 +50,7 @@ Typing a marker lists what it can name, narrowing as you type: `/` your calendar
 - **Alerts:** alert 30 minutes, remind me 15 min before, with a 1 hour reminder. Up to four weeks.
 - **People and places:** "with Sam", "w/ Sam and Alex", and "at Luna" or "@ Luna" at the end for the place.
 - **Away and busy times:** "Sam is away Aug 10-15", "Sam busy tomorrow".
-- **Links:** a pasted Google Calendar event link becomes that event.
+- **Links:** a pasted Google Calendar event link becomes that event. So does an event page's link (Luma, Partiful, Eventbrite, Meetup and the like), pasted or shared from a phone, with a few words around it or none: Better-Cal reads the page and fills in the title, time, place and the event's link for you to check. It reads the event data the page publishes, or an "Add to Google Calendar" link on it, and the AI model (when one is set up) only when neither is there. A page behind a sign-in has nothing to read, and the card says so.
 
 ## Limits
 

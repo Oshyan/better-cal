@@ -7,6 +7,7 @@ namespace BetterCal\Domain;
 use BetterCal\Dav\ChangeLog;
 use BetterCal\Http\HttpError;
 use BetterCal\Infra\Db;
+use BetterCal\Plugin\PluginHost;
 use BetterCal\Support\Ids;
 use BetterCal\Support\ExpansionBudget;
 use BetterCal\Support\Limits;
@@ -137,6 +138,77 @@ final class Events
     /** @var array<int, ?string> recurrence parent id => rrule, memoized per request */
     private array $parentRrules = [];
     private ?GoogleWriter $googleWriter = null;
+
+    // ---- plugin write-through ---------------------------------------------------
+    // A plugin calendar whose plugin declares `events:edit` (EditablePlugin)
+    // takes new times, and only times: the source system gets the change
+    // first, while the person waits, and what it confirms is what's stored.
+    // Like a Google edit, Activity gets a plain entry and there's no undo:
+    // the row is the source's, and the source keeps its own history.
+
+    private ?Plugins $pluginsSvc = null;
+
+    private function plugins(): Plugins
+    {
+        return $this->pluginsSvc ??= new Plugins($this->db, null, config());
+    }
+
+    /** @return array{start:string,end:string,allDay:bool} */
+    private static function pluginSpan(string $startUtc, string $endUtc, bool $allDay): array
+    {
+        $s = Time::fromDb($startUtc);
+        $e = Time::fromDb($endUtc);
+        return $allDay
+            ? ['start' => $s->format('Y-m-d'), 'end' => $e->format('Y-m-d'), 'allDay' => true]
+            : ['start' => Time::iso($s), 'end' => Time::iso($e), 'allDay' => false];
+    }
+
+    private function pluginReschedule(int $userId, array $event, array $in, array $calendar): void
+    {
+        $pluginId = (string) $calendar['plugin_id'];
+        $name = $this->plugins()->displayName($pluginId);
+        $extra = array_diff(array_keys($in), ['start', 'end', 'allDay', 'tzid', 'scope', 'instanceStart', 'tagNames', 'reminders']);
+        if ($extra !== []) {
+            throw HttpError::forbidden('plugin_readonly', 'On a ' . $name . ' calendar only the time can be changed here; edit the rest in ' . $name);
+        }
+        $time = array_intersect_key($in, ['start' => true, 'end' => true, 'allDay' => true, 'tzid' => true]);
+        if ($time === []) {
+            return;
+        }
+        $cols = $this->columnPatch($event, $time);
+        $allDay = (int) ($cols['all_day'] ?? $event['all_day']) === 1;
+        $before = self::pluginSpan((string) $event['start_utc'], (string) $event['end_utc'], (int) $event['all_day'] === 1);
+        $after = self::pluginSpan((string) ($cols['start_utc'] ?? $event['start_utc']), (string) ($cols['end_utc'] ?? $event['end_utc']), $allDay);
+        if ($after == $before) {
+            return;
+        }
+        $prefix = 'plg-' . $pluginId . '-';
+        $uid = (string) $event['uid'];
+        $span = $this->plugins()->applyEdit($userId, $pluginId, [
+            'sourceKey' => str_starts_with($uid, $prefix) ? substr($uid, strlen($prefix)) : $uid,
+            'eventId' => (int) $event['id'],
+            'calendarId' => (int) $event['calendar_id'],
+            'title' => (string) $event['title'],
+            'before' => $before,
+            'after' => $after,
+        ]);
+        try {
+            [$startUtc, $endUtc, $isAllDay] = PluginHost::spanToUtc($span);
+        } catch (\Throwable) {
+            throw new HttpError('plugin_edit_failed', $name . ' gave back a time Better-Cal could not read', 502);
+        }
+        $this->db->tx(function () use ($event, $startUtc, $endUtc, $isAllDay): void {
+            $this->db->update('events', [
+                'start_utc' => $startUtc,
+                'end_utc' => $endUtc,
+                'all_day' => $isAllDay ? 1 : 0,
+                'tzid' => 'UTC',
+                'updated_at' => Time::nowDb(),
+            ], 'id = ?', [(int) $event['id']]);
+            ChangeLog::record($this->db, (int) $event['calendar_id'], (string) $event['uid'], ChangeLog::OP_MODIFY);
+        });
+        $this->undo->record($userId, 'event', (int) $event['id'], 'update', null, null, "Moved '" . (string) $event['title'] . "' in " . $name);
+    }
 
     // ---- Google write-through ---------------------------------------------------
     // A Google calendar the connected account may edit takes writes here, but
@@ -1078,6 +1150,17 @@ final class Events
     {
         $event = $this->get($userId, $id);
         $editKeys = array_diff(array_keys($in), ['scope', 'instanceStart', 'tagNames', 'reminders']);
+        if ($editKeys !== [] && !str_starts_with(ActivityContext::get(), 'plugin:')) {
+            $calendar = $this->db->one('SELECT * FROM calendars WHERE id = ?', [(int) $event['calendar_id']]);
+            if ($calendar !== null && $this->plugins()->calendarReschedulable($calendar)) {
+                $this->pluginReschedule($userId, $event, $in, $calendar);
+                $local = array_intersect_key($in, ['tagNames' => true, 'reminders' => true]);
+                if ($local !== []) {
+                    $this->patch($userId, $id, $local);
+                }
+                return;
+            }
+        }
         $structuralScope = !empty($event['rrule']) && empty($event['recurrence_parent_id'])
             && in_array((string) ($in['scope'] ?? ''), ['this', 'following'], true);
         $snapshotChanging = $editKeys !== [] || $structuralScope;

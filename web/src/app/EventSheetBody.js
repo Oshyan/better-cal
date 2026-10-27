@@ -235,9 +235,9 @@ function MoreMenu({ occ, cal, isFeed, onClose, onDelete, onCopy, phone = false, 
   const sourceUrl = safeWebUrl(occ.url);
   const host = sourceUrl ? sourceHost(sourceUrl) : '';
   return html`<div class=${'bc-es-menu' + (phone ? ' is-phone' : '')} role="menu" ref=${ref}>
-    ${phone && !isFeed && onMove && item('reschedule', 'Move to another time', onMove)}
-    ${phone && isFeed && !context && item(html`<${ThumbIcon} dir="up" size=${18} />`, 'More like this', () => sendFeedback(occ, 'up'), '', occ.feedback === 'up' ? 'Chosen' : null, occ.feedback === 'up')}
-    ${phone && isFeed && !context && item(html`<${ThumbIcon} dir="down" size=${18} />`, 'Less like this', () => sendFeedback(occ, 'down'), '', occ.feedback === 'down' ? 'Chosen' : null, occ.feedback === 'down')}
+    ${phone && (!isFeed || (cal && cal.reschedulable)) && onMove && item('reschedule', 'Move to another time', onMove)}
+    ${phone && isFeed && !context && !(cal && cal.kind === 'plugin') && item(html`<${ThumbIcon} dir="up" size=${18} />`, 'More like this', () => sendFeedback(occ, 'up'), '', occ.feedback === 'up' ? 'Chosen' : null, occ.feedback === 'up')}
+    ${phone && isFeed && !context && !(cal && cal.kind === 'plugin') && item(html`<${ThumbIcon} dir="down" size=${18} />`, 'Less like this', () => sendFeedback(occ, 'down'), '', occ.feedback === 'down' ? 'Chosen' : null, occ.feedback === 'down')}
     ${canDuplicate && item('plus', 'Duplicate', () => duplicateEvent(occ), '', 'then set its date')}
     ${item('copy', 'Copy to another calendar…', onCopy)}
     ${cal && html`<hr />
@@ -314,9 +314,9 @@ export function EventSheetBody({ occ, cal, isFeed, full, panel = false, onFull, 
   const tools = html`<div class="bc-es-tools" role="toolbar" aria-label="Event actions">
       <span class="bc-es-tools-acts">
         ${!isFeed && tool(html`<${Icon} name="pencil" size=${15} />`, 'Edit', openEdit, { word: true })}
-        ${!isFeed && tool(html`<${Icon} name="reschedule" size=${15} />`, 'Move', openMove, { word: true })}
-        ${isFeed && !context && tool(html`<${ThumbIcon} dir="up" size=${16} />`, 'More like this', () => sendFeedback(occ, 'up'), { on: occ.feedback === 'up', pressed: occ.feedback === 'up' })}
-        ${isFeed && !context && tool(html`<${ThumbIcon} dir="down" size=${16} />`, 'Less like this', () => sendFeedback(occ, 'down'), { on: occ.feedback === 'down', pressed: occ.feedback === 'down' })}
+        ${(!isFeed || (cal && cal.reschedulable)) && tool(html`<${Icon} name="reschedule" size=${15} />`, 'Move', openMove, { word: true })}
+        ${isFeed && !context && !(cal && cal.kind === 'plugin') && tool(html`<${ThumbIcon} dir="up" size=${16} />`, 'More like this', () => sendFeedback(occ, 'up'), { on: occ.feedback === 'up', pressed: occ.feedback === 'up' })}
+        ${isFeed && !context && !(cal && cal.kind === 'plugin') && tool(html`<${ThumbIcon} dir="down" size=${16} />`, 'Less like this', () => sendFeedback(occ, 'down'), { on: occ.feedback === 'down', pressed: occ.feedback === 'down' })}
         ${tool(html`<${Icon} name="more" size=${16} />`, 'More', () => setMoreOpen(!moreOpen), { on: moreOpen, expanded: moreOpen, popup: 'menu' })}
       </span>
       ${!context && html`<${ForMe} occ=${occ} cal=${cal} onHidden=${close} />`}
@@ -408,7 +408,7 @@ export function EventSheetBody({ occ, cal, isFeed, full, panel = false, onFull, 
       ${full && html`<${EventPluginData} eventId=${occ.eventId} readOnly=${isFeed} />`}
       ${full && isFeed && cal && html`<div class="bc-es-row">
         <${Icon} name="calendar" size=${20} />
-        <div class="bc-es-rt">${cal.name}<small>${cal.sourceUrl ? 'Subscribed feed' : 'Read-only calendar'}</small></div>
+        <div class="bc-es-rt">${cal.name}<small>${cal.sourceUrl ? 'Subscribed feed' : cal.reschedulable ? 'Its times change in ' + (cal.pluginName || 'its source') : 'Read-only calendar'}</small></div>
         ${cal.sourceUrl && html`<a class="bc-es-rowbtn" href=${cal.sourceUrl} target="_blank" rel="noopener noreferrer">Source <${Icon} name="arrowUpRight" size=${14} /></a>`}
       </div>`}
       ${full && occ.createdAt && html`<div class="bc-es-meta">

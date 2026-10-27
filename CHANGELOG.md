@@ -6,7 +6,9 @@ Security fixes are tracked privately as GitHub security advisories until they sh
 
 ## Unreleased
 
-- **Fixes:** a Google calendar's "Check for updates" menu offers every 5 minutes, its starting setting; the menu showed 15 minutes, and choosing anything slowed it down for good.
+- **Fibery plugin:** your Fibery tasks and projects on the calendar. Drag one (or use Move) and its date changes in Fibery; changes made there arrive within a minute. [Fibery](docs/plugins/fibery.md) has the setup.
+- **Plugins can write times back:** a plugin can let you drag, resize or Move its events and send the new time to its source, and its settings can offer choices it finds there ([writing a plugin](docs/plugins/authoring.md#rescheduling-from-the-calendar)).
+- **Fixes:** a Google calendar's "Check for updates" menu offers every 5 minutes, its starting setting (it showed 15 minutes, and choosing anything slowed it down for good); a plugin's key field now has Show and a character count, so you can tell a paste landed.
 
 Maintainers: a second hardware security key signs releases, and the first release listing it must be signed by a key already listed ([Signing](docs/releasing.md#signing)).
 

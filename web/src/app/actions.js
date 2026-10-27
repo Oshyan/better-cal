@@ -232,7 +232,7 @@ export function enterReschedule(instanceId) {
   const occ = state.occ.get(instanceId);
   if (!occ) return;
   const cal = state.calendars.find((c) => c.id === occ.calendarId);
-  if (cal && !cal.editable) return;
+  if (cal && !cal.editable && !cal.reschedulable) return;
   set({
     reschedule: { instanceId, grabbed: true },
     popover: null,
@@ -255,6 +255,12 @@ export function exitReschedule() {
 export function googleBacked(occ) {
   const cal = state.calendars.find((c) => c.id === occ.calendarId);
   return !!(cal && cal.provider === 'google');
+}
+// A plugin calendar whose times go back to their source (Fibery, say): the
+// plugin's name for the toast, or null for any other calendar.
+export function pluginBacked(occ) {
+  const cal = state.calendars.find((c) => c.id === occ.calendarId);
+  return cal && cal.reschedulable ? (cal.pluginName || 'its source') : null;
 }
 export const GOOGLE_NO_UNDO = "Goes to Google; can't be undone";
 export const NO_UNDO = "Can't be undone";
@@ -313,7 +319,8 @@ export async function moveEvent({ instanceId, newStart, newEnd, scope }) {
       body: { start: newStart, end: newEnd, ...scopeFields(occ, scope) },
     });
     patchOccurrence(instanceId, { _optimistic: false });
-    toast(googleBacked(occ) ? 'Event moved at Google' : 'Event moved', { undoable: !googleBacked(occ), note: NO_UNDO });
+    const viaPlugin = pluginBacked(occ);
+    toast(viaPlugin ? 'Moved in ' + viaPlugin : googleBacked(occ) ? 'Event moved at Google' : 'Event moved', { undoable: !googleBacked(occ) && !viaPlugin, note: NO_UNDO });
     refreshWindow();
     maybePromptTripExit(occ, newStart, newEnd);
     return true;
@@ -334,7 +341,8 @@ export async function resizeEvent({ instanceId, newStart, newEnd, scope }) {
       body: { start: newStart, end: newEnd, ...scopeFields(occ, scope) },
     });
     patchOccurrence(instanceId, { _optimistic: false });
-    toast(googleBacked(occ) ? 'Event resized at Google' : 'Event resized', { undoable: !googleBacked(occ), note: NO_UNDO });
+    const viaPlugin = pluginBacked(occ);
+    toast(viaPlugin ? 'Changed in ' + viaPlugin : googleBacked(occ) ? 'Event resized at Google' : 'Event resized', { undoable: !googleBacked(occ) && !viaPlugin, note: NO_UNDO });
     refreshWindow();
     maybePromptTripExit(occ, newStart, newEnd);
     return true;

@@ -42,7 +42,7 @@ $manifestOf = static fn(string $id): array => json_decode(
 // Every bundled plugin: manifest validity and interface shape
 // ---------------------------------------------------------------------------
 
-$bundled = ['weather', 'tides', 'lint', 'travel', 'dayplanner', 'visit-intents', 'trip-planner'];
+$bundled = ['weather', 'tides', 'lint', 'travel', 'dayplanner', 'visit-intents', 'trip-planner', 'fibery'];
 foreach ($bundled as $id) {
     $m = $manifestOf($id);
     checkEq("plugin $id: manifest id matches directory", $id, $m['id'] ?? null);
@@ -232,3 +232,61 @@ checkEq('trip-planner: an unknown forecast scores neutrally, not zero', 0.5,
 
 checkEq('trip-planner: mean of an empty set is zero', 0.0, callPrivate($tp, 'mean', [[]]));
 checkEq('trip-planner: mean averages', 2.0, callPrivate($tp, 'mean', [[1.0, 2.0, 3.0]]));
+
+// ---------------------------------------------------------------------------
+// fibery: workspace addresses, and dates read and written the way Fibery does
+// (UTC instants shown in the person's zone; date ranges with an exclusive end;
+// a date-time range's end one second past the shown end). Invented data.
+// ---------------------------------------------------------------------------
+
+$fb = loadPlugin('fibery');
+check('fibery: implements EditablePlugin', $fb instanceof BetterCal\Plugin\EditablePlugin);
+checkEq('fibery: a bare workspace name gets its domain', 'example.fibery.io', callPrivate($fb, 'workspaceHost', ['example']));
+checkEq('fibery: a full address is reduced to its host', 'example.fibery.io', callPrivate($fb, 'workspaceHost', ['https://Example.fibery.io/Work/Task/12']));
+checkEq('fibery: another domain is refused, so the key never goes elsewhere', null, callPrivate($fb, 'workspaceHost', ['example.com']));
+checkEq('fibery: settings refuse a workspace that is not Fibery', ['workspace' => 'Enter your Fibery address, like yourteam.fibery.io'], $fb->validateSettings(['workspace' => 'evil.example']));
+checkEq('fibery: a field reads by its last part', 'Due Date', callPrivate($fb, 'label', ['Work/Due Date']));
+checkEq("fibery: Fibery's own field names lose their hyphens", 'Creation date', callPrivate($fb, 'label', ['fibery/creation-date']));
+checkEq("fibery: a person's field keeps its hyphen", 'Sub-tasks', callPrivate($fb, 'label', ['Work/Sub-tasks']));
+checkEq('fibery: an item links to its page', 'https://example.fibery.io/Work_Space/Task/42', callPrivate($fb, 'entityUrl', ['example.fibery.io', 'Work Space/Task', '42']));
+
+$la = new DateTimeZone('America/Los_Angeles');
+$taskPlan = ['slot' => 'task', 'dateType' => 'fibery/date-time'];
+$future = (new DateTimeImmutable('now', $la))->modify('+10 days');
+$day = $future->format('Y-m-d');
+$midnightUtc = (new DateTimeImmutable($day . ' 00:00', $la))->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d\TH:i:s.000\Z');
+$span = callPrivate($fb, 'displaySpan', [$taskPlan, $midnightUtc, ['taskTimes' => 'allday'], $la, false]);
+checkEq('fibery: a task due at local midnight is all-day on that date', ['start' => $day, 'end' => $future->modify('+1 day')->format('Y-m-d'), 'allDay' => true], $span[0]);
+$evening = (new DateTimeImmutable($day . ' 18:30', $la))->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d\TH:i:s.000\Z');
+checkEq('fibery: an evening due time stays on its local date, not the next UTC day', $day, callPrivate($fb, 'displaySpan', [$taskPlan, $evening, [], $la, false])[0]['start']);
+$timed = callPrivate($fb, 'displaySpan', [$taskPlan, $evening, ['taskTimes' => 'timed'], $la, false])[0];
+check('fibery: with times on, a non-midnight task is timed', $timed['allDay'] === false && str_contains($timed['start'], 'T18:30'));
+
+$past = (new DateTimeImmutable('now', $la))->modify('-3 days');
+$pastUtc = (new DateTimeImmutable($past->format('Y-m-d') . ' 09:00', $la))->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d\TH:i:s.000\Z');
+$overdue = callPrivate($fb, 'displaySpan', [$taskPlan, $pastUtc, ['overdueOnToday' => true], $la, false]);
+checkEq('fibery: an unfinished overdue task shows on today', (new DateTimeImmutable('now', $la))->format('Y-m-d'), $overdue[0]['start']);
+check('fibery: and says when it was due', is_string($overdue[1]));
+checkEq('fibery: a finished one stays on its day', $past->format('Y-m-d'), callPrivate($fb, 'displaySpan', [$taskPlan, $pastUtc, ['overdueOnToday' => true], $la, true])[0]['start']);
+
+$rangePlan = ['slot' => 'project', 'dateType' => 'fibery/date-range'];
+checkEq("fibery: a date range's stored end is already exclusive", ['start' => '2030-03-02', 'end' => '2030-03-07', 'allDay' => true],
+    callPrivate($fb, 'displaySpan', [$rangePlan, ['start' => '2030-03-02', 'end' => '2030-03-07'], [], $la, false])[0]);
+$dtRange = callPrivate($fb, 'displaySpan', [['slot' => 'project', 'dateType' => 'fibery/date-time-range'], ['start' => '2030-03-02T17:00:00.000Z', 'end' => '2030-03-02T18:00:01.000Z'], [], $la, false])[0];
+check("fibery: a date-time range's end loses Fibery's extra second", str_contains($dtRange['end'], 'T10:00:00'));
+
+// Writing back: the field's own form.
+checkEq('fibery: a date-only field takes the date', '2030-03-05',
+    callPrivate($fb, 'newValue', [['dateType' => 'fibery/date'], null, ['start' => '2030-03-05', 'end' => '2030-03-06', 'allDay' => true], $la]));
+checkEq('fibery: a midnight due time stays midnight on the new day (summer, UTC-7)', '2030-07-10T07:00:00.000Z',
+    callPrivate($fb, 'newValue', [['dateType' => 'fibery/date-time'], '2030-07-01T07:00:00.000Z', ['start' => '2030-07-10', 'end' => '2030-07-11', 'allDay' => true], $la]));
+checkEq('fibery: and across the clock change (winter, UTC-8)', '2030-11-20T08:00:00.000Z',
+    callPrivate($fb, 'newValue', [['dateType' => 'fibery/date-time'], '2030-07-01T07:00:00.000Z', ['start' => '2030-11-20', 'end' => '2030-11-21', 'allDay' => true], $la]));
+checkEq('fibery: a task keeps its time of day when moved to another day', '2030-07-12T18:15:30.000Z',
+    callPrivate($fb, 'newValue', [['dateType' => 'fibery/date-time'], '2030-07-01T18:15:30.000Z', ['start' => '2030-07-12', 'end' => '2030-07-13', 'allDay' => true], $la]));
+checkEq('fibery: dropped at a time, a task takes that time', '2030-07-12T16:00:00.000Z',
+    callPrivate($fb, 'newValue', [['dateType' => 'fibery/date-time'], '2030-07-01T18:15:30.000Z', ['start' => '2030-07-12T09:00:00-07:00', 'end' => '2030-07-12T09:30:00-07:00', 'allDay' => false], $la]));
+checkEq('fibery: a moved date range keeps its exclusive end', ['start' => '2030-03-03', 'end' => '2030-03-08'],
+    callPrivate($fb, 'newValue', [['dateType' => 'fibery/date-range'], null, ['start' => '2030-03-03', 'end' => '2030-03-08', 'allDay' => true], $la]));
+checkEq("fibery: a date-time range gets Fibery's extra second back", ['start' => '2030-03-02T17:00:00.000Z', 'end' => '2030-03-02T18:00:01.000Z'],
+    callPrivate($fb, 'newValue', [['dateType' => 'fibery/date-time-range'], null, ['start' => '2030-03-02T09:00:00-08:00', 'end' => '2030-03-02T10:00:00-08:00', 'allDay' => false], $la]));

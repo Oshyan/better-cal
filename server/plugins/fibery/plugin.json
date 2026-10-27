@@ -1,0 +1,146 @@
+{
+  "id": "fibery",
+  "name": "Fibery",
+  "version": "0.1.0",
+  "minHost": "0.1.0",
+  "description": "Your Fibery tasks and projects on the calendar, from any database with a date field. Move one here (drag it, or Move) and its date changes in Fibery; change it in Fibery and the calendar follows within a minute.",
+  "permissions": [
+    "http",
+    "events:write",
+    "events:edit",
+    "warnings"
+  ],
+  "jobs": [
+    {
+      "id": "sync",
+      "interval": "PT1M",
+      "runOnSave": true
+    }
+  ],
+  "decoration": {
+    "icon": "check"
+  },
+  "settings": [
+    {
+      "key": "workspace",
+      "type": "text",
+      "label": "Workspace",
+      "help": "Its address, like yourteam.fibery.io",
+      "maxLength": 200
+    },
+    {
+      "key": "token",
+      "type": "secret",
+      "label": "API key",
+      "help": "In Fibery: your avatar, Settings, API Keys, then Generate."
+    },
+    {
+      "key": "taskDatabase",
+      "type": "select",
+      "label": "Tasks",
+      "help": "The database whose items are tasks",
+      "optionsFrom": "databases",
+      "pendingText": "Your databases appear here once the workspace and API key are saved (within a minute)."
+    },
+    {
+      "key": "taskDateField",
+      "type": "select",
+      "label": "Task date",
+      "help": "The date field that puts a task on the calendar",
+      "optionsFrom": "taskDateFields",
+      "pendingText": "Choose the task database and save; its date fields appear here."
+    },
+    {
+      "key": "taskTimes",
+      "type": "select",
+      "label": "Task times",
+      "options": [
+        {
+          "value": "allday",
+          "label": "Always all-day, on the due date"
+        },
+        {
+          "value": "timed",
+          "label": "At their time, unless it's midnight"
+        }
+      ],
+      "default": "allday"
+    },
+    {
+      "key": "taskDetails",
+      "type": "checklist",
+      "label": "Task details to show",
+      "help": "Shown in the event's details",
+      "optionsFrom": "taskFields",
+      "pendingText": "Choose the task database and save; its fields appear here."
+    },
+    {
+      "key": "taskHideWhen",
+      "type": "select",
+      "label": "Hide tasks marked",
+      "help": "Optional: a checkbox field that keeps a task off the calendar",
+      "optionsFrom": "taskBoolFields",
+      "pendingText": "Choose the task database and save; its checkbox fields appear here."
+    },
+    {
+      "key": "overdueOnToday",
+      "type": "toggle",
+      "label": "Overdue tasks on today",
+      "help": "Unfinished tasks whose date has passed show on today, marked overdue",
+      "default": true
+    },
+    {
+      "key": "projectDatabase",
+      "type": "select",
+      "label": "Projects",
+      "help": "Optional: a database whose items are projects",
+      "optionsFrom": "databases",
+      "pendingText": "Your databases appear here once the workspace and API key are saved (within a minute)."
+    },
+    {
+      "key": "projectDateField",
+      "type": "select",
+      "label": "Project dates",
+      "help": "Usually a date range, shown as a bar across its days",
+      "optionsFrom": "projectDateFields",
+      "pendingText": "Choose the project database and save; its date fields appear here."
+    },
+    {
+      "key": "projectDetails",
+      "type": "checklist",
+      "label": "Project details to show",
+      "optionsFrom": "projectFields",
+      "pendingText": "Choose the project database and save; its fields appear here."
+    },
+    {
+      "key": "projectHideWhen",
+      "type": "select",
+      "label": "Hide projects marked",
+      "optionsFrom": "projectBoolFields",
+      "pendingText": "Choose the project database and save; its checkbox fields appear here."
+    },
+    {
+      "key": "projectMaxDays",
+      "type": "number",
+      "label": "Longest project to show",
+      "help": "In days. Longer ones, like ongoing areas of work, stay off the calendar. 0 shows all.",
+      "min": 0,
+      "max": 3650,
+      "default": 60
+    },
+    {
+      "key": "hideFinished",
+      "type": "toggle",
+      "label": "Hide finished items",
+      "help": "Items in a final workflow state, such as Done or Cancelled",
+      "default": true
+    },
+    {
+      "key": "includeDescription",
+      "type": "toggle",
+      "label": "Include descriptions",
+      "help": "Each item's description, in plain text, below its details",
+      "default": false
+    }
+  ]
+}

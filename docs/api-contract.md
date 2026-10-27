@@ -43,11 +43,12 @@ What a token creates belongs to that exact token and stops with it, whether it's
 
 ## Calendars and Folders
 
-- `GET /calendars` → `{calendars:[calendar], folders:[{id,name,position}], tags:[{id,name}]}`. A calendar is `{id, name, color, kind, role, provider, sourceUrl, googleCalendarId, googleAccessRole, googleAccountEmail, editable, pluginId, pluginSettings, visible, position, pollIntervalMinutes, staleAfterDays, folderIds:[], groupSimilar, reminderDefaults, subscriptionAuthorization, health}`.
+- `GET /calendars` → `{calendars:[calendar], folders:[{id,name,position}], tags:[{id,name}]}`. A calendar is `{id, name, color, kind, role, provider, sourceUrl, googleCalendarId, googleAccessRole, googleAccountEmail, editable, reschedulable, pluginId, pluginName, pluginSettings, visible, position, pollIntervalMinutes, staleAfterDays, folderIds:[], groupSimilar, reminderDefaults, subscriptionAuthorization, health}`.
   - `kind`: `local`, `subscribed` (both ICS and Google) or `plugin`.
   - `role` is what the calendar is to the person: `mine` (events are planned unless tentative), `opportunities` (events are available until picked) or `context` (information: never planned, never busy, drawn quietly). Defaults: local → mine, subscribed → opportunities, plugin → context.
   - `provider` is `ics` (an address the server fetches; `sourceUrl` set) or `google` (through a connected Google account; `googleCalendarId` and `googleAccessRole` set, `sourceUrl` null). A bearer token gets an ICS `sourceUrl` only for a subscription that exact token created, here and in calendar mutation responses; otherwise it's null.
   - `editable`: whether events can be created, edited and deleted here. True for local calendars and for Google calendars whose role is `writer` or `owner` (written through to Google, see [google-calendar.md](google-calendar.md)); false for feeds, view-only Google calendars and plugin calendars. Gate editing on `editable`, not `kind`.
+  - `reschedulable`: a plugin calendar whose events take new times (its plugin declares `events:edit`). `PATCH /events/:id` with `start`, `end` and `allDay` (tags and reminders too) goes to the plugin's source before it returns; anything else is 403 `plugin_readonly`. 422 `plugin_edit_refused` carries the source's reason, 502 `plugin_edit_failed` means it couldn't be reached. `pluginName` names the plugin.
   - `subscriptionAuthorization`: `{status:"active"|"paused", origin:"owner"|"token"|"legacy_review"|"session_review", reason}` for an ICS subscription, else null. `session_review` follows a pause from `POST /auth/sign-out-others` or a password reset.
   - `groupSimilar`: whether the client groups near-duplicate events on this calendar. Default `true` for subscribed, `false` for local. The server only stores it; see [Frontend State Contract](#frontend-state-contract).
   - `reminderDefaults`: see `PATCH` below.
@@ -350,7 +351,7 @@ The operations side of plugins (writing one: [plugins/authoring.md](plugins/auth
 - `GET /plugins` → `{plugins:[{id, name, version, description, permissions, jobs, settingsSchema, calendarSettingsSchema, eventSettingsSchema, decoration, requires, optional, unmetRequires, errors, installed, enabled, disabledReason, consecutiveFailures, settings, lastRun:{job, at, durationMs, outcome, logTail, runId, undoableMutations}|null}]}`.
 - `POST /plugins/:id/enable`, `POST /plugins/:id/disable` → `{ok:true}`.
 - `POST /plugins/:id/uninstall` `{deleteCalendars?}` → `{ok:true, purged}`. Session only.
-- `PATCH /plugins/:id/settings` (values per `settingsSchema`) → `{settings}`. `PATCH /plugins/:id/calendar-settings/:calendarId` (per `calendarSettingsSchema`) → `{settings}`.
+- `PATCH /plugins/:id/settings` (values per `settingsSchema`) → `{settings, queued}`, where `queued` lists the jobs marked `runOnSave` that will run within a minute. A field with `optionsFrom` comes with the `options` its plugin discovered and `optionsLoaded`; a `checklist` value is a list. `PATCH /plugins/:id/calendar-settings/:calendarId` (per `calendarSettingsSchema`) → `{settings}`.
 - `POST /plugins/:id/run?job=` → `{queued:[jobId], alreadyQueued:[jobId]}`: queues every job, or the one named, for the worker's next run. Matching pending or running jobs coalesce. 409 for a disabled plugin, 400 for an unknown job, 429 when run limits are used up ([limits.md](limits.md)).
 - `GET /plugins/:id/warnings` → `{warnings:[{id, eventId, severity, message, fix, ...}]}`.
 - `POST /plugins/runs/:runId/undo` → `{undone, skipped}`: reverses every change one run made, newest first. Session only.

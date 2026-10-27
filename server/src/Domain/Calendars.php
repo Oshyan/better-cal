@@ -573,6 +573,11 @@ final class Calendars
             // write to (write-through, GoogleWriter). Feeds and plugin
             // calendars are content someone else owns.
             'editable' => $c['kind'] === 'local' || GoogleWriter::writable($c),
+            // A plugin calendar whose events can be moved to a new time (the
+            // plugin writes it back to its source, EditablePlugin), and the
+            // plugin's name for saying where the change went.
+            'reschedulable' => $this->pluginsSvc()->calendarReschedulable($c),
+            'pluginName' => $c['kind'] === 'plugin' && !empty($c['plugin_id']) ? $this->pluginsSvc()->displayName((string) $c['plugin_id']) : null,
             'subscriptionAuthorization' => $subscriptionAuthorization,
             'visible' => (int) $c['visible'] === 1,
             'position' => (int) $c['position'],
@@ -595,6 +600,13 @@ final class Calendars
                 'stale' => $stale,
             ],
         ];
+    }
+
+    private ?Plugins $plugins = null;
+
+    private function pluginsSvc(): Plugins
+    {
+        return $this->plugins ??= new Plugins($this->db, null, config());
     }
 
     private function setFolders(int $userId, int $calendarId, array $folderIds): void

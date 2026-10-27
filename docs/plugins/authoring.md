@@ -2,11 +2,11 @@
 
 A plugin is a directory under `server/plugins/<id>/` with two files: `plugin.json` (the manifest) and `Plugin.php` (the code). Drop it in, open Manage → Plugins and enable it. There's no build step, registration or autoloader.
 
-This guide is the contract. The bundled plugins are working references: `weather` and `sun` for materialized events with per-event icons (`sun` needs no network), `tides` for events plus overlay bands, `lint` for warnings, and `dayplanner`, `travel`, `trip-planner` and `visit-intents` for proposals, cross-plugin reads and heavier logic.
+This guide is the contract. The bundled plugins are working references: `weather` and `sun` for materialized events with per-event icons (`sun` needs no network), `tides` for events plus overlay bands, `lint` for warnings, `fibery` for an authenticated API, discovered settings and two-way dates, and `dayplanner`, `travel`, `trip-planner` and `visit-intents` for proposals, cross-plugin reads and heavier logic.
 
 ## The One Rule
 
-Your code runs in exactly two places: inside a worker job (`runJob`), and inside `validateSettings` when a user saves plugin-scope settings. It never runs during a page request; request handlers only read the tables your jobs wrote. There's no hook on the render path, so a plugin can't slow the calendar down.
+Your code runs in a worker job (`runJob`) and inside `validateSettings` when a user saves plugin-scope settings. The one exception is `applyEdit` (see [Rescheduling From the Calendar](#rescheduling-from-the-calendar)), which runs when the person moves one of your events. Nothing runs on the render path; request handlers only read the tables your jobs wrote, so a plugin can't slow the calendar down.
 
 So do your fetching, computing and writing in `runJob`. Everything the user sees is a side effect of a completed run.
 
@@ -33,8 +33,8 @@ So do your fetching, computing and writing in `runJob`. Everything the user sees
 
 - `id`: lowercase kebab-case, 3-64 characters, starting with a letter, and matching the directory name. `name` is required.
 - `version`: semver (`x.y.z`). `minHost` (optional) refuses install on an older host.
-- `permissions`, shown on the ops page: `http`, `events:write`, `ranges`, `warnings`, `geocode`, `people`, `notify`, `llm`, `propose`. The four that reach outside your own data (`people`, `notify`, `llm`, `propose`) are **enforced**: calling them undeclared throws. The rest are disclosure (see Trust).
-- `jobs`: each has a kebab-case `id` and an ISO 8601 `interval` (`PT3H`, `PT12H`, `P1D`). Staleness is judged from the last run, so a failing job still waits its interval.
+- `permissions`, shown on the ops page: `http`, `events:write`, `events:edit`, `ranges`, `warnings`, `geocode`, `people`, `notify`, `llm`, `propose`. The four that reach outside your own data (`people`, `notify`, `llm`, `propose`) are **enforced**: calling them undeclared throws. `events:edit` makes your calendars reschedulable. The rest are disclosure (see Trust).
+- `jobs`: each has a kebab-case `id` and an ISO 8601 `interval` (`PT1M`, `PT3H`, `P1D`). Staleness is judged from the last run, so a failing job still waits its interval. `"runOnSave": true` also runs it right after the user saves your settings.
 - `settings`, `calendarSettings`, `eventSettings`: field schemas the host renders on the ops page, in the calendar gear panel, and in the event detail view.
 - `requires` / `optional`: lists of plugin ids (see Working With Other Plugins).
 - `decoration` (optional): `{icon, iconPath, color, animation}`, where `animation` is `none`, `pulse` or `shimmer`. The icon appears on your overlay bands and replaces the color dot on your calendar's sidebar row.
@@ -47,10 +47,13 @@ Each field needs a `key`, a `label` and a `type`:
 - `textarea`: multi-line, 10,000 characters; `rows` sets its height. There's no list type, so use a `textarea` with one item per line.
 - `secret`: a write-only credential, at most 16,384 bytes (see Secrets).
 - `number`: optional `min` / `max`.
-- `select`: `options` is required, as strings or `{value, label}` objects.
+- `select`: `options` as strings or `{value, label}` objects, or `optionsFrom` (below).
+- `checklist`: several choices, stored as a list; `options` or `optionsFrom`.
 - `toggle`.
 - `location`: a place picker that stores `{name, lat, lng}`; coordinates are range-checked.
 - `person`: a name picked from the user's People.
+
+`help` adds a short line under the label. **Discovered choices:** `"optionsFrom": "name"` fills a `select` or `checklist` with what your job found, written with `$host->setSettingOptions('name', $options)` (a service's databases, say, or the fields of the one the user picked). Pass `null` when nothing is known yet; the form then shows the field's `pendingText`. Pair it with a `runOnSave` job so the choices appear within a minute of saving.
 
 Every field except `secret` may have a `default`. `text` and `textarea` accept `maxLength` to lower their ceiling (a `textarea` can't go above 10,000). A `default` longer than its own field is refused at install.
 
@@ -126,14 +129,14 @@ Reading the calendar:
 
 Network and location:
 
-- `http(): HttpClient`: `get($url)` / `getJson($url)`. Refuses private, loopback, link-local and metadata addresses (checked before connecting and pinned against DNS rebinding), caps each request at 5 MB, 20 s and 3 redirects, and allows **60 requests per run** (each redirect hop counts). Three slow requests at 20 s each already use the whole 60 s run budget, so the clock usually binds first.
+- `http(): HttpClient`: `get($url, $headers)` / `getJson($url, $headers)`, and `json($method, $url, $payload, $headers)` for an API that takes JSON (POST, PATCH and so on; no redirects, and you judge the status it returns). Headers are lines like `'Authorization: Token ' . $key`. Refuses private, loopback, link-local and metadata addresses (checked before connecting and pinned against DNS rebinding), caps each request at 5 MB, 20 s and 3 redirects, and allows **60 requests per run** (each redirect hop counts). Three slow requests at 20 s each already use the whole 60 s run budget, so the clock usually binds first.
 - `httpCached(url, ttl)` / `getJsonCached(url, ttl)`: the same client through a cache shared by every plugin (see Working With Other Plugins). `getJsonCached` throws on non-2xx or non-JSON.
 - `geocode(string $query, ?float $biasLat = null, ?float $biasLng = null): ?array`: the host geocoder (cached). Returns `{lat, lng, display, kind}`, or null (see [Geocoding](#geocoding)).
 - `llmJson(string $prompt, array $schemaHint = []): ?array`: ask the model for JSON. **Returns null when unconfigured or on failure, indistinguishably**, so always have a deterministic fallback. One call may take up to 45 s of the 60 s budget, so **two model calls can't fit in one job**. Requires `llm`.
 
 Writing:
 
-- `ensureCalendar(name, color): int`: find or create a calendar your plugin owns (name up to 160 characters; a color that isn't `#rrggbb` becomes `#5b8dd9`).
+- `ensureCalendar(name, color, role = 'context'): int`: find or create a calendar your plugin owns (name up to 160 characters; a color that isn't `#rrggbb` becomes `#5b8dd9`). `role` is what a new one starts as: `context` for information, `mine` for things the person does (tasks), `opportunities`. A `mine` one starts with no reminders.
 - `syncEvents(calId, events): [added, updated, removed]`: feed-style upsert by `sourceKey` into a calendar you own; keys that disappear are deleted. See [Materialized Events](#materialized-events).
 - `replaceRanges(ranges): int`: **wholesale-replace** your overlay bands; whatever you leave out this run is gone. Range: `{sourceKey, start, end, label?, color?, detailHtml?}`, with `start`/`end` as `YYYY-MM-DD` (end exclusive) or ISO instants. You may write up to 2,000, but **one window request returns at most 500 per plugin** (with a `truncated` flag the client reads), so ranges past that are stored and never seen. If you produce more than a few hundred, emit fewer.
 - `replaceWarnings(warnings): int`: **wholesale-replace** your findings, the same way. Warning: `{message, severity?, eventId?, fix?}`.
@@ -278,10 +281,22 @@ Since `myProposals()` returns no content, "has anything changed since I last pro
 
 ### Materialized Events
 
-An event is `{sourceKey, title, start, end?, allDay?, description?, location?, icon?}`. `start`/`end` are `YYYY-MM-DD` for all-day (end exclusive) or ISO instants; a date-only `start` is all-day unless you say otherwise.
+An event is `{sourceKey, title, start, end?, allDay?, description?, location?, icon?, url?}`, where `url` links to the item in its source. `start`/`end` are `YYYY-MM-DD` for all-day (end exclusive) or ISO instants; a date-only `start` is all-day unless you say otherwise.
 
 - One sync is all or nothing. A snapshot over 2,000 events or 8 MiB of event data is refused (it throws and the previous snapshot is kept; see [limits.md](../limits.md)), and if the run budget runs out mid-sync, every change from that call is rolled back.
 - `icon` is optional, per event, and takes a host icon name or one glyph exactly like `decoration.icon`. On a context calendar (the role a plugin calendar gets by default) it's what the day header shows beside the value: a weather plugin says `rain` on the rainy day and `sun` on the sunny one, an air-quality plugin `air`, a tides plugin `tideLow`/`tideHigh`, a sun plugin `sunrise`/`sunset`. Without one, the host guesses from the title (numbers like `72/58 fog`, the words AQI, sunset, sunrise, high/low tide) and otherwise shows the calendar's square.
+
+### Rescheduling From the Calendar
+
+A plugin that declares `events:edit` and also implements `EditablePlugin` makes its calendars reschedulable: the person can drag, resize or Move your events, and the API and MCP can change their times. Titles and everything else stay yours. The host calls:
+
+```php
+public function applyEdit(PluginHost $host, array $edit): array
+```
+
+`$edit` is `{sourceKey, eventId, calendarId, title, before, after}`, where `before` and `after` are `{start, end, allDay}` spans in the shapes `syncEvents` takes. Write `after` to your source and return the span it now holds (usually `after`). Throw `PluginEditRefused` with one plain sentence when the source says no: the event goes back and the person reads your sentence. Any other exception reads as "<your plugin> couldn't make the change".
+
+It runs while the person waits, like a Google calendar's write, so keep it to the write itself. Your next sync then finds the source already changed. There's no undo for these edits; the source keeps its own history. See `fibery` for a working example.
 
 ### Text and HTML
 

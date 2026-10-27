@@ -470,6 +470,34 @@ final class PluginHost
         );
     }
 
+    /**
+     * The choices a settings field with `optionsFrom: $name` offers, as
+     * found by this plugin (a service's databases, a database's fields).
+     * Each is a string or {value, label}; at most 500, values up to 500
+     * characters and labels up to 200. Replaces what was there. An empty
+     * list says there's nothing to choose; null says nothing is known yet
+     * (the form then shows the field's pendingText).
+     *
+     * @param list<string|array{value:string,label?:string}>|null $options
+     */
+    public function setSettingOptions(string $name, ?array $options): void
+    {
+        if ($options === null) {
+            $this->kvDelete(\BetterCal\Domain\Plugins::OPTIONS_KV_PREFIX . $name);
+            return;
+        }
+        $clean = [];
+        foreach (array_slice(array_values($options), 0, \BetterCal\Domain\Plugins::OPTIONS_MAX) as $o) {
+            $value = is_array($o) ? ($o['value'] ?? null) : $o;
+            if (!is_scalar($value) || (string) $value === '' || mb_strlen((string) $value) > \BetterCal\Domain\Plugins::TEXT_MAX) {
+                continue;
+            }
+            $label = is_array($o) && is_scalar($o['label'] ?? null) ? (string) $o['label'] : (string) $value;
+            $clean[] = ['value' => (string) $value, 'label' => mb_substr($label, 0, 200)];
+        }
+        $this->kvSet(\BetterCal\Domain\Plugins::OPTIONS_KV_PREFIX . $name, $clean);
+    }
+
     public function kvDelete(string $key): void
     {
         $this->db->run('DELETE FROM plugin_kv WHERE plugin_id = ? AND k = ?', [$this->pluginId, $key]);
@@ -678,7 +706,13 @@ final class PluginHost
     // ---- output: owned calendar + events --------------------------------
 
     /** Find or create this plugin's calendar of the given name. */
-    public function ensureCalendar(string $name, string $color): int
+    /**
+     * Find or create a calendar this plugin owns. $role is what a new one
+     * starts as: 'context' (information, the default), 'mine' (things the
+     * person does, say tasks) or 'opportunities'. The person can change it
+     * later, and an existing calendar keeps whatever they chose.
+     */
+    public function ensureCalendar(string $name, string $color, string $role = 'context'): int
     {
         $row = $this->db->one(
             "SELECT id FROM calendars WHERE user_id = ? AND kind = 'plugin' AND plugin_id = ? AND name = ?",
@@ -688,13 +722,17 @@ final class PluginHost
             return (int) $row['id'];
         }
         $id = $this->db->insert('calendars', [
-            'role' => 'context', // injected information, not the person's plans
+            'role' => in_array($role, ['mine', 'opportunities', 'context'], true) ? $role : 'context',
             'user_id' => $this->userId,
             'name' => mb_substr($name, 0, 160),
             'color' => preg_match('/^#[0-9a-fA-F]{6}$/', $color) === 1 ? $color : '#5b8dd9',
             'kind' => 'plugin',
             'plugin_id' => $this->pluginId,
             'subscription_authority' => \BetterCal\Domain\SubscriptionAuthority::OWNER,
+            // A Mine calendar would follow the global reminders, and a plugin
+            // can bring hundreds of items (every task due today), so it starts
+            // with none. The person turns them on in its calendar settings.
+            'settings_json' => $role === 'mine' ? json_encode(['reminderDefaults' => ['timed' => [], 'allDay' => []]]) : null,
         ]);
         (new Undo($this->db))->record(
             $this->userId,
@@ -750,7 +788,7 @@ final class PluginHost
                 throw new \RuntimeException('syncEvents: the stored plugin snapshot is over the safe repair limit; no rows were changed');
             }
             $existing = [];
-            foreach ($this->db->all('SELECT id, uid, title, start_utc, end_utc, all_day, description, location FROM events WHERE calendar_id = ? AND deleted_at IS NULL', [$calendarId]) as $r) {
+            foreach ($this->db->all('SELECT id, uid, title, start_utc, end_utc, all_day, description, location, icon, url FROM events WHERE calendar_id = ? AND deleted_at IS NULL', [$calendarId]) as $r) {
                 $existing[(string) $r['uid']] = $r;
             }
             $added = 0;
@@ -777,6 +815,8 @@ final class PluginHost
                     'tzid' => 'UTC',
                     // Per-event icon (host name or one glyph); a bad one is dropped, not fatal.
                     'icon' => isset($ev['icon']) && \BetterCal\Domain\Plugins::iconError($ev['icon']) === null ? trim((string) $ev['icon']) : null,
+                    // A link to the item in its source, shown on the event.
+                    'url' => self::sourceUrl($ev['url'] ?? null),
                 ];
                 $cur = $existing[$key] ?? null;
                 if ($cur === null) {
@@ -853,7 +893,7 @@ final class PluginHost
     private static function eventInputBytes(array $events, int $stopAfter): int
     {
         $bytes = 0;
-        $fields = ['sourceKey', 'title', 'start', 'end', 'allDay', 'description', 'location', 'icon'];
+        $fields = ['sourceKey', 'title', 'start', 'end', 'allDay', 'description', 'location', 'icon', 'url'];
         foreach ($events as $event) {
             if (!is_array($event)) {
                 return $stopAfter + 1;
@@ -944,8 +984,18 @@ final class PluginHost
 
     // ---- helpers --------------------------------------------------------
 
+    /** An absolute http(s) link of at most 2,000 characters, or null. */
+    private static function sourceUrl(mixed $url): ?string
+    {
+        if (!is_string($url) || $url === '' || strlen($url) > 2000) {
+            return null;
+        }
+        $scheme = strtolower((string) parse_url($url, PHP_URL_SCHEME));
+        return in_array($scheme, ['http', 'https'], true) && filter_var($url, FILTER_VALIDATE_URL) !== false ? $url : null;
+    }
+
     /** @return array{0:string,1:string,2:bool} [startUtc, endUtc, allDay] */
-    private static function spanToUtc(array $ev): array
+    public static function spanToUtc(array $ev): array
     {
         $start = (string) ($ev['start'] ?? '');
         $end = (string) ($ev['end'] ?? '');

@@ -6550,6 +6550,78 @@ checkEq(
 }
 
 // ---------------------------------------------------------------------------
+// Plugin settings whose choices a plugin discovers, and the checklist type.
+{
+    $field = static fn(array $f): array => $f + ['label' => 'Field'];
+    $manifest = ['id' => 'sample-tool', 'name' => 'Sample', 'version' => '1.0.0', 'permissions' => ['events:edit'],
+        'settings' => [$field(['key' => 'db', 'type' => 'select', 'optionsFrom' => 'databases']),
+            $field(['key' => 'show', 'type' => 'checklist', 'options' => ['a', 'b']])]];
+    checkEq('plugin settings: optionsFrom stands in for options, and events:edit is a permission', [], BetterCal\Domain\Plugins::manifestErrors($manifest));
+    $manifest['settings'][] = $field(['key' => 'empty', 'type' => 'checklist']);
+    check('plugin settings: a checklist needs options or optionsFrom', str_contains(implode(' ', BetterCal\Domain\Plugins::manifestErrors($manifest)), 'checklist needs options or optionsFrom'));
+
+    $schema = [$field(['key' => 'db', 'type' => 'select', 'optionsFrom' => 'databases', 'options' => []]),
+        $field(['key' => 'show', 'type' => 'checklist', 'options' => ['a', 'b']])];
+    [$clean, $errs] = BetterCal\Domain\Plugins::validateAgainstSchema($schema, ['db' => 'Not yet listed']);
+    checkEq('plugin settings: a discovered choice not loaded yet is kept', ['db' => 'Not yet listed'], $clean);
+    $schema[0]['options'] = [['value' => 'Work/Task', 'label' => 'Work / Task']];
+    [, $errs] = BetterCal\Domain\Plugins::validateAgainstSchema($schema, ['db' => 'Elsewhere/Thing']);
+    check('plugin settings: once loaded, only a listed choice is accepted', isset($errs['db']));
+    [$clean, $errs] = BetterCal\Domain\Plugins::validateAgainstSchema($schema, ['show' => ['b', 'a', 'b']]);
+    checkEq('plugin settings: a checklist keeps each choice once, in order', ['show' => ['b', 'a']], $clean);
+    [, $errs] = BetterCal\Domain\Plugins::validateAgainstSchema($schema, ['show' => ['c']]);
+    check('plugin settings: a checklist refuses a choice it does not offer', isset($errs['show']));
+    [, $errs] = BetterCal\Domain\Plugins::validateAgainstSchema($schema, ['show' => 'a']);
+    check('plugin settings: a checklist value must be a list', isset($errs['show']));
+}
+
+// Plugins whose events can be rescheduled (EditablePlugin): which calendars
+// qualify, and how the plugin's answer or refusal reaches the person.
+{
+    $dir = sys_get_temp_dir() . '/bc-edit-plugins-' . bin2hex(random_bytes(4));
+    mkdir($dir . '/mover', 0700, true);
+    file_put_contents($dir . '/mover/plugin.json', json_encode(['id' => 'mover', 'name' => 'Mover', 'version' => '1.0.0', 'permissions' => ['events:edit'], 'jobs' => []]));
+    file_put_contents($dir . '/mover/Plugin.php', '<?php
+return new class implements BetterCal\Plugin\PluginInterface, BetterCal\Plugin\EditablePlugin {
+    public function runJob(BetterCal\Plugin\PluginHost $host, string $jobId): void {}
+    public function validateSettings(array $values): array { return []; }
+    public function applyEdit(BetterCal\Plugin\PluginHost $host, array $edit): array {
+        if ($edit["title"] === "refuse") throw new BetterCal\Plugin\PluginEditRefused("The source said no.");
+        if ($edit["title"] === "boom") throw new RuntimeException("socket closed");
+        return $edit["after"];
+    }
+};');
+    $edb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $edb->run('CREATE TABLE plugins (id TEXT PRIMARY KEY, enabled INTEGER, settings_json TEXT, consecutive_failures INTEGER DEFAULT 0, disabled_reason TEXT, changed_by_token_id INTEGER)');
+    $edb->run('CREATE TABLE plugin_kv (plugin_id TEXT, k TEXT, v_json TEXT)');
+    $edb->run("INSERT INTO plugins (id, enabled) VALUES ('mover', 1)");
+    $plugins = new BetterCal\Domain\Plugins($edb, $dir, []);
+    check('rescheduling: a plugin calendar of an enabled events:edit plugin can be rescheduled', $plugins->calendarReschedulable(['kind' => 'plugin', 'plugin_id' => 'mover']));
+    check('rescheduling: a local calendar is not a plugin calendar', !$plugins->calendarReschedulable(['kind' => 'local', 'plugin_id' => null]));
+    $edb->run("UPDATE plugins SET enabled = 0 WHERE id = 'mover'");
+    check('rescheduling: a disabled plugin\'s calendar is read-only again', !(new BetterCal\Domain\Plugins($edb, $dir, []))->calendarReschedulable(['kind' => 'plugin', 'plugin_id' => 'mover']));
+    $edb->run("UPDATE plugins SET enabled = 1 WHERE id = 'mover'");
+
+    $after = ['start' => '2030-03-04', 'end' => '2030-03-05', 'allDay' => true];
+    $edit = static fn(string $title): array => ['sourceKey' => 'k', 'eventId' => 1, 'calendarId' => 1, 'title' => $title, 'before' => ['start' => '2030-03-03', 'end' => '2030-03-04', 'allDay' => true], 'after' => $after];
+    checkEq('rescheduling: the span the source confirms comes back', $after, $plugins->applyEdit(1, 'mover', $edit('fine')));
+    $caught = null;
+    try { $plugins->applyEdit(1, 'mover', $edit('refuse')); } catch (BetterCal\Http\HttpError $e) { $caught = $e; }
+    check("rescheduling: a refusal is a 422 with the plugin's own sentence", $caught !== null && $caught->status === 422 && $caught->getMessage() === 'The source said no.');
+    $caught = null;
+    try { $plugins->applyEdit(1, 'mover', $edit('boom')); } catch (BetterCal\Http\HttpError $e) { $caught = $e; }
+    check('rescheduling: any other failure is a 502 naming the plugin', $caught !== null && $caught->status === 502 && str_starts_with($caught->getMessage(), "Mover couldn't make the change"));
+
+    $edb->run("INSERT INTO plugin_kv (plugin_id, k, v_json) VALUES ('mover', '__options.databases', ?)", [json_encode([['value' => 'Work/Task', 'label' => 'Work / Task']])]);
+    $resolved = $plugins->resolveSchema('mover', [['key' => 'db', 'type' => 'select', 'label' => 'DB', 'optionsFrom' => 'databases'], ['key' => 'more', 'type' => 'select', 'label' => 'More', 'optionsFrom' => 'unknown']]);
+    checkEq('plugin settings: discovered choices fill the field', [['value' => 'Work/Task', 'label' => 'Work / Task']], $resolved[0]['options']);
+    check('plugin settings: and say they were loaded', $resolved[0]['optionsLoaded'] === true && $resolved[1]['optionsLoaded'] === false && $resolved[1]['options'] === []);
+    array_map('unlink', glob($dir . '/mover/*'));
+    rmdir($dir . '/mover');
+    rmdir($dir);
+}
+
+// ---------------------------------------------------------------------------
 // The bundled plugins' own pure logic (parsers, interval maths, date maths).
 require __DIR__ . '/plugins.php';
 
@@ -9290,7 +9362,7 @@ use BetterCal\Domain\GoogleWriter;
     $pdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
     $pdb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, plugin_id TEXT, synctoken INTEGER NOT NULL DEFAULT 0)');
     davJournal($pdb);
-    $pdb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, description TEXT, location TEXT, start_utc TEXT, end_utc TEXT, all_day INTEGER, tzid TEXT, icon TEXT, source TEXT, created_via TEXT, deleted_at TEXT, updated_at TEXT)');
+    $pdb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, description TEXT, location TEXT, start_utc TEXT, end_utc TEXT, all_day INTEGER, tzid TEXT, icon TEXT, url TEXT, source TEXT, created_via TEXT, deleted_at TEXT, updated_at TEXT)');
     $pdb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT, calendar_ids_json TEXT, undone INTEGER DEFAULT 0, created_at TEXT DEFAULT CURRENT_TIMESTAMP)');
     $pdb->run("INSERT INTO calendars (id, user_id, kind, plugin_id) VALUES (1, 1, 'plugin', 'sample')");
     $pdb->run("INSERT INTO events (id, user_id, calendar_id, uid, title, start_utc, end_utc, all_day, tzid, source, created_via) VALUES (1, 1, 1, 'plg-sample-first', 'Original', '2026-10-01 00:00:00', '2026-10-02 00:00:00', 1, 'UTC', 'local', 'plugin:sample')");

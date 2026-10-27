@@ -59,7 +59,23 @@ final class PluginsController
 
     public function saveSettings(Request $req, array $params): Response
     {
-        return Response::json(['settings' => $this->plugins->saveSettings((string) $params['id'], is_array($req->body) ? $req->body : [], RequestAuthority::request($req))]);
+        $id = (string) $params['id'];
+        $settings = $this->plugins->saveSettings($id, is_array($req->body) ? $req->body : [], RequestAuthority::request($req));
+        // Jobs marked runOnSave run right after a save, so choices a plugin
+        // discovers from what was just entered (a service's databases once a
+        // key is in) show up within a minute rather than at the next interval.
+        $onSave = [];
+        foreach (($this->plugins->manifest($id)['jobs'] ?? []) as $job) {
+            if (!empty($job['runOnSave'])) {
+                $onSave[] = (string) $job['id'];
+            }
+        }
+        $queued = [];
+        if ($onSave !== []) {
+            $result = $this->plugins->withAuthority(RequestAuthority::request($req), fn() => $this->queue->enqueuePluginJobs((int) $req->user['id'], $id, $onSave));
+            $queued = array_merge($result['queued'] ?? [], $result['alreadyQueued'] ?? []);
+        }
+        return Response::json(['settings' => $settings, 'queued' => $queued]);
     }
 
     public function saveCalendarSettings(Request $req, array $params): Response

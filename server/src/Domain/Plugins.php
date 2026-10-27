@@ -7,6 +7,8 @@ namespace BetterCal\Domain;
 use BetterCal\Http\HttpError;
 use BetterCal\Infra\Db;
 use BetterCal\Infra\HttpClient;
+use BetterCal\Plugin\EditablePlugin;
+use BetterCal\Plugin\PluginEditRefused;
 use BetterCal\Plugin\PluginHost;
 use BetterCal\Plugin\PluginInterface;
 use BetterCal\Support\Ids;
@@ -24,7 +26,11 @@ final class Plugins
     public const HOST_VERSION = '0.1.0';
     public const FAILURE_DISABLE_THRESHOLD = 5;
     public const RANGE_RESPONSE_CAP = 500; // per plugin per window request
-    private const FIELD_TYPES = ['text', 'textarea', 'secret', 'number', 'select', 'toggle', 'location', 'person'];
+    private const FIELD_TYPES = ['text', 'textarea', 'secret', 'number', 'select', 'checklist', 'toggle', 'location', 'person'];
+    /** Most choices one setting may offer, and most a checklist may hold. */
+    public const OPTIONS_MAX = 500;
+    /** The kv prefix a plugin's discovered choices live under (PluginHost::setSettingOptions). */
+    public const OPTIONS_KV_PREFIX = '__options.';
     public const TEXT_MAX = 500;       // single-line
     public const TEXTAREA_MAX = 10000; // list-shaped settings live here
     /** Declarative chip animations a plugin may request (host-provided CSS). */
@@ -154,7 +160,7 @@ final class Plugins
             $errs[] = 'requires host >= ' . $m['minHost'] . ' (this is ' . self::HOST_VERSION . ')';
         }
         foreach (($m['permissions'] ?? []) as $p) {
-            if (!in_array($p, ['http', 'events:write', 'ranges', 'warnings', 'geocode', 'people', 'notify', 'llm', 'propose'], true)) {
+            if (!in_array($p, ['http', 'events:write', 'events:edit', 'ranges', 'warnings', 'geocode', 'people', 'notify', 'llm', 'propose'], true)) {
                 $errs[] = 'unknown permission: ' . (is_string($p) ? $p : gettype($p));
             }
         }
@@ -209,8 +215,12 @@ final class Plugins
                 if ($f['key'] === PluginSecrets::PRIVATE_DIAGNOSTICS) {
                     $errs[] = $section . ': reserved field key';
                 }
-                if (($f['type'] ?? null) === 'select' && (!isset($f['options']) || !is_array($f['options']) || $f['options'] === [])) {
-                    $errs[] = $section . '.' . $f['key'] . ': select needs options';
+                if (isset($f['optionsFrom']) && (!is_string($f['optionsFrom']) || preg_match('/^[a-zA-Z][a-zA-Z0-9._-]{0,80}$/', $f['optionsFrom']) !== 1)) {
+                    $errs[] = $section . '.' . $f['key'] . ': optionsFrom must be a short name (letters, digits, . _ -)';
+                }
+                if (in_array($f['type'] ?? null, ['select', 'checklist'], true) && !isset($f['optionsFrom'])
+                    && (!isset($f['options']) || !is_array($f['options']) || $f['options'] === [])) {
+                    $errs[] = $section . '.' . $f['key'] . ': ' . $f['type'] . ' needs options or optionsFrom';
                 }
                 // A default longer than its own field could never be re-saved
                 // by the user once they edited it, so refuse it at install.
@@ -305,8 +315,8 @@ final class Plugins
                 'description' => (string) ($m['description'] ?? ''),
                 'permissions' => array_values($m['permissions'] ?? []),
                 'jobs' => array_values($m['jobs'] ?? []),
-                'settingsSchema' => PluginSecrets::schema($m['settings'] ?? []),
-                'calendarSettingsSchema' => PluginSecrets::schema($m['calendarSettings'] ?? []),
+                'settingsSchema' => PluginSecrets::schema($this->resolveSchema($id, $m['settings'] ?? [])),
+                'calendarSettingsSchema' => PluginSecrets::schema($this->resolveSchema($id, $m['calendarSettings'] ?? [])),
                 'eventSettingsSchema' => PluginSecrets::schema($m['eventSettings'] ?? []),
                 'decoration' => is_array($m['decoration'] ?? null) ? $m['decoration'] : null,
                 'requires' => array_values($m['requires'] ?? []),
@@ -586,6 +596,37 @@ final class Plugins
         return max(1, min($asked, $ceiling));
     }
 
+    /** @return list<string> the values a select or checklist offers */
+    private static function optionValues(array $field): array
+    {
+        return array_map(
+            static fn($o) => is_array($o) ? (string) ($o['value'] ?? '') : (string) $o,
+            is_array($field['options'] ?? null) ? $field['options'] : []
+        );
+    }
+
+    /**
+     * Fill in the choices of fields whose options a plugin discovers
+     * (optionsFrom: a name the plugin wrote with setSettingOptions). Fields
+     * with nothing discovered yet get an empty list.
+     */
+    public function resolveSchema(string $id, array $schema): array
+    {
+        foreach ($schema as &$field) {
+            if (!is_array($field) || !is_string($field['optionsFrom'] ?? null)) {
+                continue;
+            }
+            $raw = $this->db->scalar('SELECT v_json FROM plugin_kv WHERE plugin_id = ? AND k = ?', [$id, self::OPTIONS_KV_PREFIX . $field['optionsFrom']]);
+            $list = is_string($raw) ? json_decode($raw, true) : null;
+            $field['options'] = is_array($list) ? array_values(array_filter($list, static fn($o) => is_array($o) && isset($o['value']))) : [];
+            // Discovered and empty (a database with no checkbox fields) reads
+            // differently from not discovered yet.
+            $field['optionsLoaded'] = is_array($list);
+        }
+        unset($field);
+        return $schema;
+    }
+
     public static function validateAgainstSchema(array $schema, array $values): array
     {
         $clean = [];
@@ -629,15 +670,31 @@ final class Plugins
                     $clean[$k] = filter_var($v, FILTER_VALIDATE_BOOL);
                     break;
                 case 'select':
-                    $opts = array_map(
-                        static fn($o) => is_array($o) ? (string) ($o['value'] ?? '') : (string) $o,
-                        $f['options'] ?? []
-                    );
-                    if (!in_array((string) $v, $opts, true)) {
-                        $errs[$k] = 'must be one of ' . implode(', ', $opts);
+                    $opts = self::optionValues($f);
+                    // Choices a plugin discovers (optionsFrom) may not be
+                    // loaded yet: then any short text is kept, and the
+                    // plugin checks it when it runs.
+                    if (!is_scalar($v) || ($opts === [] && isset($f['optionsFrom']) ? mb_strlen((string) $v) > self::TEXT_MAX : !in_array((string) $v, $opts, true))) {
+                        $errs[$k] = $opts === [] ? 'must be text' : 'must be one of ' . implode(', ', array_slice($opts, 0, 20));
                     } else {
                         $clean[$k] = (string) $v;
                     }
+                    break;
+                case 'checklist':
+                    $opts = self::optionValues($f);
+                    if (!is_array($v) || !array_is_list($v) || count($v) > self::OPTIONS_MAX) {
+                        $errs[$k] = 'must be a list of at most ' . self::OPTIONS_MAX . ' choices';
+                        break;
+                    }
+                    $picked = [];
+                    foreach ($v as $item) {
+                        if (!is_scalar($item) || mb_strlen((string) $item) > self::TEXT_MAX || ($opts !== [] && !in_array((string) $item, $opts, true))) {
+                            $errs[$k] = 'has a choice that is not offered';
+                            break 2;
+                        }
+                        $picked[(string) $item] = true;
+                    }
+                    $clean[$k] = array_keys($picked);
                     break;
                 case 'location':
                     // {name, lat, lng} from the place picker.
@@ -696,7 +753,7 @@ final class Plugins
             throw HttpError::badRequest('Unknown plugin');
         }
         $authority?->assertValid($this->db, false);
-        [$clean, $errs] = self::validateAgainstSchema($m['settings'] ?? [], $values);
+        [$clean, $errs] = self::validateAgainstSchema($this->resolveSchema($id, $m['settings'] ?? []), $values);
         if ($errs === []) {
             // Plugin-level validation hook (short, synchronous, explicit save).
             try {
@@ -797,6 +854,77 @@ final class Plugins
             if ($m !== null) $out[] = ['id' => (string) $r['id'], 'name' => (string) ($m['name'] ?? $r['id'])];
         }
         return $out;
+    }
+
+    // ---- rescheduling plugin events ---------------------------------------
+
+    /** @var array<string,bool> plugin id => may its calendars be rescheduled (per request) */
+    private array $editableMemo = [];
+
+    /**
+     * Can this calendar's events be rescheduled? A plugin calendar whose
+     * plugin is enabled and declares `events:edit` (it implements
+     * EditablePlugin; applyEdit checks that before calling it).
+     */
+    public function calendarReschedulable(array $calendar): bool
+    {
+        if (($calendar['kind'] ?? '') !== 'plugin' || empty($calendar['plugin_id'])) {
+            return false;
+        }
+        $id = (string) $calendar['plugin_id'];
+        if (!array_key_exists($id, $this->editableMemo)) {
+            $enabled = (int) ($this->db->scalar('SELECT enabled FROM plugins WHERE id = ?', [$id]) ?? 0) === 1;
+            $m = $enabled ? $this->manifest($id) : null;
+            $this->editableMemo[$id] = $m !== null && in_array('events:edit', $m['permissions'] ?? [], true);
+        }
+        return $this->editableMemo[$id];
+    }
+
+    /** The plugin's display name, for messages like "Moved in Fibery". */
+    public function displayName(string $id): string
+    {
+        $m = $this->manifest($id);
+        return (string) ($m['name'] ?? $id);
+    }
+
+    /**
+     * Ask the plugin that owns an event to apply a new time in its source
+     * system (EditablePlugin). Runs while the person waits, like a Google
+     * write. Returns the span the source now holds. A refusal becomes a 422
+     * with the plugin's sentence; any other failure a 502 that says only
+     * which plugin failed, since a plugin with credentials keeps its
+     * diagnostics private.
+     *
+     * @param array<string,mixed> $edit
+     * @return array{start:string,end:string,allDay:bool}
+     */
+    public function applyEdit(int $userId, string $id, array $edit): array
+    {
+        $state = $this->db->one('SELECT * FROM plugins WHERE id = ? AND enabled = 1', [$id]);
+        $m = $this->manifest($id);
+        $name = (string) ($m['name'] ?? $id);
+        if ($state === null || $m === null || !in_array('events:edit', $m['permissions'] ?? [], true)) {
+            throw HttpError::forbidden('plugin_readonly', $name . ' events are read-only here');
+        }
+        $instance = $this->load($id);
+        if (!$instance instanceof EditablePlugin) {
+            throw HttpError::forbidden('plugin_readonly', $name . ' events are read-only here');
+        }
+        $host = new PluginHost($this->db, $id, $userId, new HttpClient(), $m, $this->cfg, null);
+        try {
+            $span = ActivityContext::with('plugin:' . $id, fn() => $instance->applyEdit($host, $edit));
+        } catch (PluginEditRefused $e) {
+            throw new HttpError('plugin_edit_refused', mb_substr(trim($e->getMessage()), 0, 300) ?: $name . ' refused the change', 422);
+        } catch (HttpError $e) {
+            throw $e;
+        } catch (\Throwable $e) {
+            $detail = $this->privateDiagnostics($id, $m, $state) ? '' : ': ' . mb_substr($e->getMessage(), 0, 200);
+            throw new HttpError('plugin_edit_failed', $name . " couldn't make the change" . $detail, 502);
+        }
+        if (!is_array($span) || !is_string($span['start'] ?? null) || !is_string($span['end'] ?? null)) {
+            throw new HttpError('plugin_edit_failed', $name . ' gave back no time for the event', 502);
+        }
+        return ['start' => $span['start'], 'end' => $span['end'], 'allDay' => !empty($span['allDay'])];
     }
 
     // ---- execution ------------------------------------------------------

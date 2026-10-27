@@ -826,6 +826,11 @@ export function MonthGrid({
   const cellClickSelect = useCallback((ev) => {
     if (ev.target !== ev.currentTarget) return;
     if (!onCreateRange) return;
+    // A tap in the day's header band (its date, holiday flag and context
+    // tokens) that missed them does nothing: it was aimed at one of them.
+    // New event from the header is the "+" or, on a phone, a press and hold
+    // on the date.
+    if (ev.clientY - ev.currentTarget.getBoundingClientRect().top < CELL_HEAD) return;
     onCreateRange(dayRangeDraft(ev.currentTarget.dataset.day, ev.currentTarget.dataset.day));
   }, [onCreateRange]);
 

@@ -90,6 +90,8 @@ export function Icon({ name, size = 15 }) {
     // Two offset pages: a stack of near-duplicate events.
     stack: html`<rect x="2.2" y="4.8" width="8" height="8" rx="1.3" />
       <path d="M5.4 4.8V3.6c0-.7.6-1.3 1.3-1.3h5.5c.7 0 1.3.6 1.3 1.3v5.5c0 .7-.6 1.3-1.3 1.3h-1.2" />`,
+    // Six dots: a handle to drag a row to a new place.
+    grip: html`<path d="M6 3.8h.01M10 3.8h.01M6 8h.01M10 8h.01M6 12.2h.01M10 12.2h.01" stroke-width="2.3" stroke-linecap="round" />`,
     // Hamburger: sidebar toggle.
     menu: html`<path d="M2.5 4.2h11M2.5 8h11M2.5 11.8h11" />`,
     // Small caret for dropdown triggers.

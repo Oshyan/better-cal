@@ -7,7 +7,7 @@
 // folders stays possible through "+ Add to another folder". The gear expands
 // the same per-calendar settings panel the sidebar opens.
 
-import { html, useState } from '../../vendor/index.js';
+import { html, useState, useRef } from '../../vendor/index.js';
 import { useStore, toast, shallowEq } from './store.js';
 import {
   updateCalendar, renameFolder, deleteFolder, createFolder, setSidebarOrder,
@@ -160,39 +160,88 @@ function FolderSection({ folder, cals, folders }) {
 
 const BUILT_IN_NAMES = { all: 'All calendars', people: 'People', plugins: 'Plugins' };
 
-// The sidebar's groups in order, each with Move up and Move down: the way to
-// reorder on a phone or from the keyboard (on a computer the sidebar's
-// headers also drag). Built-in groups move like folders. Only the groups the
-// sidebar shows are listed (People with someone in it, Plugins with a plugin
-// drawing on the calendar); a move steps past the next one shown.
+// The sidebar's order: one line naming the groups, and Edit for a list to
+// reorder them in, each with a handle to drag and Move up and Move down
+// (phones and the keyboard). Every move saves at once. Built-in groups move
+// like folders. Only the groups the sidebar shows are listed (People with
+// someone in it, Plugins with a plugin drawing on the calendar); a move
+// steps past the next one shown. On a computer the sidebar's headers drag
+// too.
 function SidebarOrder({ keys, shown, folders }) {
+  const [editing, setEditing] = useState(false);
+  const [drag, setDrag] = useState(null); // {key, list}: the order while a handle is held
+  const listRef = useRef(null);
   const nameOf = (k) => BUILT_IN_NAMES[k] || folderNameOf(folders, Number(k.slice(1)));
+  // The full order with the shown groups in `list`'s order: they take the
+  // shown groups' places in turn, and a hidden group stays where it was.
+  const placeAs = (list) => {
+    let i = 0;
+    return keys.map((k) => (shown.includes(k) ? list[i++] : k));
+  };
   const move = (k, by) => {
     const next = shown[shown.indexOf(k) + by];
     if (!next) return;
     const rest = keys.filter((x) => x !== k);
     setSidebarOrder(moveGroup(keys, k, rest.indexOf(next) + (by > 0 ? 1 : 0)));
   };
+
+  // Drag by the handle: the row follows the pointer through the list, and
+  // the order is saved when it's let go.
+  const onHandleDown = (k, e) => {
+    if (e.button > 0) return;
+    e.preventDefault();
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* a pointer that can't be captured still drags */ }
+    setDrag({ key: k, list: shown.slice() });
+  };
+  const onHandleMove = (e) => {
+    if (!drag || !listRef.current) return;
+    const rows = [...listRef.current.querySelectorAll('[data-order-key]')];
+    let at = rows.length - 1;
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i].getBoundingClientRect();
+      if (e.clientY < r.top + r.height / 2) { at = i; break; }
+    }
+    const without = drag.list.filter((x) => x !== drag.key);
+    const target = Math.min(at, without.length);
+    const list = [...without.slice(0, target), drag.key, ...without.slice(target)];
+    if (list.join() !== drag.list.join()) setDrag({ ...drag, list });
+  };
+  const onHandleUp = () => {
+    if (!drag) return;
+    const list = drag.list;
+    setDrag(null);
+    if (list.join() !== shown.join()) setSidebarOrder(placeAs(list));
+  };
+
+  const order = drag ? drag.list : shown;
   return html`<section class="bc-org-order">
     <div class="bc-org-sect-head">
       <span class="bc-org-folder-name">Sidebar order</span>
-      <span class="bc-org-count">Drag a group's header in the sidebar, or move it here.</span>
+      ${!editing && html`<span class="bc-org-order-summary">${shown.map(nameOf).join(' · ')}</span>`}
+      <span class="bc-org-tools">
+        <button type="button" class="bc-btn" aria-expanded=${editing} onClick=${() => setEditing(!editing)}>${editing ? 'Done' : 'Edit'}</button>
+      </span>
     </div>
-    <ol class="bc-org-order-list">
-      ${shown.map((k, i) => html`<li key=${k} class=${'bc-org-order-item' + (BUILT_IN_NAMES[k] ? ' is-builtin' : '')}>
-        <span>${nameOf(k)}</span>
+    ${editing && html`<ol class="bc-org-order-list" ref=${listRef}>
+      ${order.map((k, i) => html`<li key=${k} data-order-key=${k} class=${'bc-org-order-item' + (BUILT_IN_NAMES[k] ? ' is-builtin' : '') + (drag && drag.key === k ? ' is-dragging' : '')}>
+        <span
+          class="bc-org-grip" role="img" aria-label=${'Drag ' + nameOf(k)} title="Drag to reorder"
+          onPointerDown=${(e) => onHandleDown(k, e)} onPointerMove=${onHandleMove}
+          onPointerUp=${onHandleUp} onPointerCancel=${onHandleUp}
+        ><${Icon} name="grip" size=${14} /></span>
+        <span class="bc-org-order-name">${nameOf(k)}</span>
         <button
-          type="button" class="bc-icon-btn" disabled=${i === 0}
+          type="button" class="bc-icon-btn" disabled=${!!drag || i === 0}
           aria-label=${'Move ' + nameOf(k) + ' up'} title="Move up"
           onClick=${() => move(k, -1)}
-        ><${Icon} name="chevronUp" size=${12} /></button>
+        ><${Icon} name="chevronUp" size=${13} /></button>
         <button
-          type="button" class="bc-icon-btn" disabled=${i === shown.length - 1}
+          type="button" class="bc-icon-btn" disabled=${!!drag || i === order.length - 1}
           aria-label=${'Move ' + nameOf(k) + ' down'} title="Move down"
           onClick=${() => move(k, 1)}
-        ><${Icon} name="chevronDown" size=${12} /></button>
+        ><${Icon} name="chevronDown" size=${13} /></button>
       </li>`)}
-    </ol>
+    </ol>`}
   </section>`;
 }
 
@@ -238,7 +287,6 @@ export function OrganizePage() {
       />
       <button type="submit" class="bc-btn" disabled=${!newName.trim()}>Add folder</button>
     </form>
-    ${calendars.length > 0 && html`<${SidebarOrder} keys=${groupKeys} shown=${shownKeys} folders=${folders} />`}
     ${folders.length === 0 && calendars.length > 0 && html`<${EmptyState} text="No folders yet. Create one above to group calendars in the sidebar." />`}
     ${byFolder.map(({ folder, cals }) => html`<${FolderSection} key=${folder.id} folder=${folder} cals=${cals} folders=${folders} />`)}
     ${unfiled.length > 0 && html`<section class="bc-org-section">
@@ -249,6 +297,7 @@ export function OrganizePage() {
       </div>
       ${unfiled.map((c) => html`<${CalendarRow} key=${c.id} cal=${c} folders=${folders} contextFolderId=${null} />`)}
     </section>`}
+    ${calendars.length > 0 && html`<${SidebarOrder} keys=${groupKeys} shown=${shownKeys} folders=${folders} />`}
     ${calendars.length === 0 && html`<${EmptyState} text="No calendars yet. Add one from the sidebar." />`}
   <//>`;
 }

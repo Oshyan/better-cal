@@ -3,7 +3,7 @@
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { changelogEntry, absoluteLinks, releaseNotes, UPDATING_URL } from '../release-notes.mjs';
+import { changelogEntry, absoluteLinks, releaseNotes, bareMentions, UPDATING_URL } from '../release-notes.mjs';
 
 let passed = 0;
 let failed = 0;
@@ -31,6 +31,13 @@ check('entry: the last section runs to the end', changelogEntry(sample, '1.2.2')
 check('entry: 1.2.2 does not match 1.2.23', changelogEntry('## 1.2.23 (2026-01-01)\n\n- x', '1.2.2') === null);
 check('links: repository paths become absolute at the tag', absoluteLinks('[S](SECURITY.md#a)', 'v1.2.3') === '[S](https://github.com/Oshyan/better-cal/blob/v1.2.3/SECURITY.md#a)');
 check('links: web links and anchors stay', absoluteLinks('[a](https://x.example/) [b](#c)', 'v1') === '[a](https://x.example/) [b](#c)');
+
+check('mentions: an @name in prose is found', JSON.stringify(bareMentions('("@Sam" finds Sam Sample)')) === '["@Sam"]');
+check('mentions: in backticks or a code block it is text', bareMentions('Type `@Sam` or\n```\nDinner with @Sam\n```') .length === 0);
+check('mentions: email addresses are not mentions', bareMentions('Write to someone@example.test').length === 0);
+let mentionError = '';
+try { releaseNotes('## 2.0.0 (2026-01-03)\n\n- Link a person with @Sam.', '2.0.0'); } catch (e) { mentionError = e.message; }
+check('mentions: a release with one is refused, naming it', mentionError.includes('@Sam') && mentionError.includes('backticks'));
 
 const notes = releaseNotes(sample, '1.2.3', 'v1.2.2');
 check('notes: carry the Operators line', notes.includes('Operators: run the migration.'));

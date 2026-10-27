@@ -33,9 +33,24 @@ export function absoluteLinks(md, tag) {
   return md.replace(/\]\((?!https?:|mailto:|#)([^)\s]+)\)/g, (_, path) => `](${REPO_URL}/blob/${tag}/${path.replace(/^\.\//, '')})`);
 }
 
+/**
+ * @names outside code. GitHub reads each as a mention of that account: the
+ * person is notified and listed as a contributor on the release (a quick add
+ * example's "@Sam" did this to a real account called sam). In backticks
+ * they're just text. Email addresses aren't mentions.
+ */
+export function bareMentions(md) {
+  const prose = md.replace(/```[\s\S]*?```/g, ' ').replace(/`[^`\n]*`/g, ' ');
+  return [...prose.matchAll(/(?<![\w.@/`])@([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))/g)].map((m) => '@' + m[1]);
+}
+
 export function releaseNotes(changelog, version, previousTag = null) {
   const entry = changelogEntry(changelog, version);
   if (entry === null) throw new Error(`CHANGELOG.md has no ${version} section`);
+  const mentions = bareMentions(entry);
+  if (mentions.length > 0) {
+    throw new Error(`CHANGELOG.md ${version} has ${[...new Set(mentions)].join(', ')} outside backticks; GitHub would notify that account and list it as a contributor. Put it in backticks.`);
+  }
   const tag = `v${version}`;
   return [
     absoluteLinks(entry, tag),

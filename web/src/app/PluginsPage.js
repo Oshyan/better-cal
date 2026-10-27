@@ -18,15 +18,16 @@ async function reloadPlugins() {
 
 // After a save queues a run (a job marked runOnSave), follow the plugin until
 // that run has finished, so the choices it discovers appear without a manual
-// reload. Checks every few seconds and gives up after two minutes: the run
-// waits for the worker's next minute, then takes a few seconds itself.
-async function followRunAfterSave(id, savedAt) {
+// reload. Checks every few seconds until a run newer than the one shown at
+// save time appears, giving up after two minutes: the run waits for the
+// worker's next minute, then takes a few seconds itself.
+async function followRunAfterSave(id, lastRunAt) {
   for (let i = 0; i < 30; i++) {
     await new Promise((r) => setTimeout(r, 4000));
     if (state.route !== 'plugins') return;
     await reloadPlugins();
     const p = (state.plugins || []).find((x) => x.id === id);
-    if (p && p.lastRun && new Date(p.lastRun.at).getTime() >= savedAt) return;
+    if (p && p.lastRun && p.lastRun.at !== lastRunAt) return;
   }
 }
 
@@ -140,12 +141,12 @@ function PluginRow({ p }) {
       values=${p.settings}
       onSave=${async (draft) => {
         try {
-          const savedAt = Date.now() - 1000;
+          const lastRunAt = p.lastRun ? p.lastRun.at : null;
           const d = await api('/plugins/' + p.id + '/settings', { method: 'PATCH', body: draft });
           const following = (d.queued || []).length > 0;
           toast(p.name + (following ? ' settings saved. It runs within a minute, and this page updates when it has.' : ' settings saved. They take effect on its next run.'));
           await reloadPlugins();
-          if (following) followRunAfterSave(p.id, savedAt).catch(() => {});
+          if (following) followRunAfterSave(p.id, lastRunAt).catch(() => {});
           return true;
         } catch (e) {
           toast(e.message || 'Save failed', { error: true });

@@ -43,11 +43,25 @@ return new class implements PluginInterface, EditablePlugin {
     private const TIMED_MINUTES = 30;        // length of a timed task
     private const FINISHED_LOOKBACK_DAYS = 90;
 
+    // Failures talking to Fibery, by exception code. Only these become
+    // messages the person sees; anything else (a database error, say) stays
+    // a generic failure, so its details never pose as Fibery's answer.
+    private const E_KEY = 7101;
+    private const E_BUSY = 7102;
+    private const E_UNREACHABLE = 7103;
+    private const E_REFUSED = 7104;
+    private const MIN_GAP = 0.35;            // seconds between requests: Fibery allows 3 a second per key
+
+    private float $lastRequestAt = 0.0;
+
     public function validateSettings(array $values): array
     {
         if (array_key_exists('workspace', $values) && $values['workspace'] !== null && $values['workspace'] !== ''
             && self::workspaceHost((string) $values['workspace']) === null) {
             return ['workspace' => 'Enter your Fibery address, like yourteam.fibery.io'];
+        }
+        if (is_string($values['token'] ?? null) && preg_match('/\s/', trim($values['token'])) === 1) {
+            return ['token' => 'The key has a space or line break in it; paste just the key'];
         }
         return [];
     }
@@ -58,45 +72,61 @@ return new class implements PluginInterface, EditablePlugin {
     {
         $s = $host->settings();
         $ws = self::workspaceHost((string) ($s['workspace'] ?? ''));
-        $token = (string) ($s['token'] ?? '');
+        $token = trim((string) ($s['token'] ?? ''));
         if ($ws === null || $token === '') {
-            $host->replaceWarnings([['severity' => 'info', 'message' => 'Add your Fibery workspace and API key in the plugin settings.']]);
+            $host->replaceWarnings([['severity' => 'info', 'code' => 'needs-setup']]);
             return;
         }
+        try {
+            $this->sync($host, $s, $ws, $token);
+        } catch (\RuntimeException $e) {
+            // Fibery refusing the key, asking for a pause or being out of
+            // reach is a warning, not a failed run: five failed runs in a row
+            // would turn the plugin off, and at one run a minute a short
+            // outage would do that. The calendar keeps what it last had.
+            $code = self::failureCode($e);
+            if ($code === null) {
+                throw $e;
+            }
+            $host->replaceWarnings([['severity' => 'warn', 'code' => $code]]);
+        }
+    }
+
+    private function sync(PluginHost $host, array $s, string $ws, string $token): void
+    {
         $schema = $this->schema($host, $ws, $token);
         $this->publishOptions($host, $schema, $s);
 
         $warnings = [];
         $tz = $host->timezone();
-        $calendars = [];
-        foreach ($host->calendars() as $c) {
-            if (($c['kind'] ?? '') === 'plugin') {
-                $calendars[(string) $c['name']] = (int) $c['id'];
-            }
-        }
-        $queries = [];
         $plans = [];
         foreach (self::SLOTS as $slot => $keys) {
             $plan = $this->plan($schema, $s, $slot);
             if (is_string($plan)) {
                 if ($plan !== '') {
-                    $warnings[] = ['severity' => 'warn', 'message' => $plan];
+                    $warnings[] = ['severity' => 'warn', 'code' => $plan];
                 }
                 // An unconfigured slot empties a calendar it made earlier.
-                if (isset($calendars[$keys['calendar']])) {
-                    $host->syncEvents($calendars[$keys['calendar']], []);
+                $existing = $this->calendarId($host, $slot, false);
+                if ($existing !== null) {
+                    $host->syncEvents($existing, []);
                 }
                 continue;
             }
             $plans[$slot] = $plan;
-            $queries[$slot] = $this->query($plan, $s, null);
         }
         if ($plans === []) {
-            $host->replaceWarnings($warnings === [] ? [['severity' => 'info', 'message' => 'Choose a task or project database in the plugin settings.']] : $warnings);
+            $host->replaceWarnings($warnings === [] ? [['severity' => 'info', 'code' => 'choose-database']] : $warnings);
             return;
         }
 
-        $rows = $this->fetchAll($host, $ws, $token, $plans, $queries, $s);
+        $rows = [];
+        foreach ($plans as $slot => $plan) {
+            [$rows[$slot], $complete] = $this->fetchAll($host, $ws, $token, $this->query($plan, $s, null));
+            if (!$complete) {
+                $warnings[] = ['severity' => 'info', 'code' => 'too-many'];
+            }
+        }
         $docs = !empty($s['includeDescription']) ? $this->descriptions($host, $ws, $token, $plans, $rows) : [];
 
         foreach ($plans as $slot => $plan) {
@@ -107,17 +137,46 @@ return new class implements PluginInterface, EditablePlugin {
                     $events[] = $ev;
                 }
             }
-            $calId = $host->ensureCalendar(self::SLOTS[$slot]['calendar'], self::SLOTS[$slot]['color'], 'mine');
-            [$added, $updated, $removed] = $host->syncEvents($calId, $events);
+            [$added, $updated, $removed] = $host->syncEvents($this->calendarId($host, $slot, true), $events);
             $host->log($slot . ': ' . count($events) . ' items (' . $added . ' added, ' . $updated . ' updated, ' . $removed . ' removed)');
         }
         $host->replaceWarnings($warnings);
     }
 
     /**
+     * The calendar a slot syncs into, remembered by id so renaming it in
+     * Better-Cal doesn't start a second one. Null when there's none yet and
+     * $create is false.
+     */
+    private function calendarId(PluginHost $host, string $slot, bool $create): ?int
+    {
+        $known = $host->kvGet('calendars', []);
+        $known = is_array($known) ? $known : [];
+        $ours = [];
+        foreach ($host->calendars() as $c) {
+            if (($c['kind'] ?? '') === 'plugin') {
+                $ours[(int) $c['id']] = (string) $c['name'];
+            }
+        }
+        $id = isset($known[$slot]) ? (int) $known[$slot] : null;
+        if ($id !== null && isset($ours[$id])) {
+            return $id;
+        }
+        $name = self::SLOTS[$slot]['calendar'];
+        $byName = array_search($name, $ours, true);
+        if ($byName === false && !$create) {
+            return null;
+        }
+        $id = $byName !== false ? (int) $byName : $host->ensureCalendar($name, self::SLOTS[$slot]['color'], 'mine');
+        $known[$slot] = $id;
+        $host->kvSet('calendars', $known);
+        return $id;
+    }
+
+    /**
      * What one slot needs to query: its database, date field and the fields
-     * to show, checked against the schema. A string is the reason it can't
-     * run ('' when the slot simply isn't set up).
+     * to show, checked against the schema. A string is the code of the
+     * message saying why it can't run ('' when the slot isn't set up).
      *
      * @return array<string,mixed>|string
      */
@@ -130,15 +189,15 @@ return new class implements PluginInterface, EditablePlugin {
         }
         $type = $schema['types'][$db] ?? null;
         if ($type === null) {
-            return 'The ' . $slot . ' database "' . $db . '" is no longer in Fibery. Choose it again in the settings.';
+            return $slot . '-database-gone';
         }
         $dateField = (string) ($s[$keys['date']] ?? '');
         if ($dateField === '') {
-            return 'Choose which date field puts a ' . $slot . ' on the calendar.';
+            return $slot . '-date-missing';
         }
         $date = $type['fields'][$dateField] ?? null;
         if ($date === null || !in_array($date['type'], self::DATE_TYPES, true)) {
-            return 'The ' . $slot . ' date field "' . self::label($dateField) . '" is no longer a date field in Fibery. Choose another.';
+            return $slot . '-date-gone';
         }
         $details = [];
         foreach ((array) ($s[$keys['details']] ?? []) as $name) {
@@ -205,42 +264,35 @@ return new class implements PluginInterface, EditablePlugin {
         ];
     }
 
-    /** @return array<string,list<array>> rows per slot */
-    private function fetchAll(PluginHost $host, string $ws, string $token, array $plans, array $queries, array $s): array
+    /**
+     * Every row a query matches, a page at a time (Fibery's own cursor:
+     * order by id, ask for one more than a page, continue after the last id).
+     * One database per request keeps each answer well under the 5 MB cap.
+     *
+     * @return array{0:list<array>,1:bool} rows, and whether they're all of them
+     */
+    private function fetchAll(PluginHost $host, string $ws, string $token, array $query): array
     {
-        $rows = array_fill_keys(array_keys($plans), []);
-        $after = array_fill_keys(array_keys($plans), null);
-        $open = array_keys($plans);
-        for ($page = 0; $page < self::MAX_PAGES && $open !== []; $page++) {
-            $commands = [];
-            foreach ($open as $slot) {
-                $q = $queries[$slot];
-                $params = $q['_params'];
-                unset($q['_params']);
-                if ($after[$slot] !== null) {
-                    $q['q/where'] = ['q/and', $q['q/where'], ['>', ['fibery/id'], '$after']];
-                    $params['$after'] = $after[$slot];
-                }
-                $commands[] = ['command' => 'fibery.entity/query', 'args' => ['query' => $q, 'params' => $params]];
+        $params = $query['_params'];
+        unset($query['_params']);
+        $base = $query['q/where'];
+        $rows = [];
+        $after = null;
+        for ($page = 0; $page < self::MAX_PAGES; $page++) {
+            if ($after !== null) {
+                $query['q/where'] = ['q/and', $base, ['>', ['fibery/id'], '$after']];
+                $params['$after'] = $after;
             }
-            $results = $this->commands($host, $ws, $token, $commands);
-            $next = [];
-            foreach ($open as $i => $slot) {
-                $batch = $results[$i];
-                $more = count($batch) > self::PAGE;
-                $batch = array_slice($batch, 0, self::PAGE);
-                array_push($rows[$slot], ...$batch);
-                if ($more && $batch !== []) {
-                    $after[$slot] = (string) end($batch)['fibery/id'];
-                    $next[] = $slot;
-                }
+            $batch = $this->commands($host, $ws, $token, [['command' => 'fibery.entity/query', 'args' => ['query' => $query, 'params' => $params]]])[0];
+            $more = count($batch) > self::PAGE;
+            $batch = array_slice($batch, 0, self::PAGE);
+            array_push($rows, ...$batch);
+            if (!$more || $batch === []) {
+                return [$rows, true];
             }
-            $open = $next;
+            $after = (string) end($batch)['fibery/id'];
         }
-        if ($open !== []) {
-            $host->log('more items than one run reads; showing the first ' . (self::PAGE * self::MAX_PAGES) . ' per database');
-        }
-        return $rows;
+        return [$rows, false];
     }
 
     /** Plain-text descriptions, by document secret, fetched only when changed. */
@@ -298,7 +350,7 @@ return new class implements PluginInterface, EditablePlugin {
         // Very long projects (an ongoing area, a year-long goal) would run
         // across every week of the calendar; the person sets the limit.
         $maxDays = (int) ($s['projectMaxDays'] ?? 0);
-        if ($plan['slot'] === 'project' && $maxDays > 0 && $span['allDay']
+        if ($plan['slot'] === 'project' && $maxDays > 0
             && (new \DateTimeImmutable($span['start']))->diff(new \DateTimeImmutable($span['end']))->days > $maxDays) {
             return null;
         }
@@ -374,11 +426,13 @@ return new class implements PluginInterface, EditablePlugin {
         } catch (\Throwable) {
             return null;
         }
-        // An unfinished task whose day has passed shows on today.
+        // An unfinished task whose day has passed shows on today. Only where
+        // a workflow says what's finished: without one, every past task would
+        // pile onto today.
         $today = (new \DateTimeImmutable('now', $tz))->format('Y-m-d');
         $single = in_array($plan['dateType'], ['fibery/date', 'fibery/date-time'], true);
         $day = $span['allDay'] ? $span['start'] : (new \DateTimeImmutable($span['start']))->setTimezone($tz)->format('Y-m-d');
-        if ($plan['slot'] === 'task' && $single && !$final && !empty($s['overdueOnToday']) && $day < $today) {
+        if ($plan['slot'] === 'task' && $single && !empty($plan['workflow']) && !$final && !empty($s['overdueOnToday']) && $day < $today) {
             $todayStart = new \DateTimeImmutable($today, $tz);
             return [self::allDay($todayStart, $todayStart->modify('+1 day')), (new \DateTimeImmutable($day, $tz))->format('D, M j')];
         }
@@ -391,16 +445,27 @@ return new class implements PluginInterface, EditablePlugin {
     {
         $s = $host->settings();
         $ws = self::workspaceHost((string) ($s['workspace'] ?? ''));
-        $token = (string) ($s['token'] ?? '');
+        $token = trim((string) ($s['token'] ?? ''));
         [$slot, $id] = array_pad(explode(':', (string) ($edit['sourceKey'] ?? ''), 2), 2, '');
         if ($ws === null || $token === '' || !isset(self::SLOTS[$slot]) || $id === '') {
             throw new PluginEditRefused('This Fibery item can no longer be changed from here. Check the Fibery plugin settings.');
         }
+        $before = (array) ($edit['before'] ?? []);
+        $after = (array) ($edit['after'] ?? []);
         try {
-            $schema = $this->schema($host, $ws, $token);
+            // The cached schema even past its ten minutes: the person is
+            // waiting, and the sync job refreshes it.
+            $schema = $this->schema($host, $ws, $token, true);
             $plan = $this->plan($schema, $s, $slot);
             if (is_string($plan)) {
-                throw new PluginEditRefused($plan !== '' ? $plan : 'The Fibery ' . $slot . ' database is no longer set up.');
+                throw new PluginEditRefused('The Fibery ' . $slot . ' settings need attention; open the Fibery plugin settings.');
+            }
+            // A single date can move but not stretch: a resize that keeps
+            // the start (or a task shown on today because it's overdue) would
+            // otherwise write a date nobody chose.
+            if (in_array($plan['dateType'], ['fibery/date', 'fibery/date-time'], true)
+                && ($after['start'] ?? null) === ($before['start'] ?? null) && !empty($after['allDay']) === !empty($before['allDay'])) {
+                throw new PluginEditRefused('A Fibery ' . $slot . ' has one date, so it can\'t be stretched. Drag it to another day instead.');
             }
             $current = $this->commands($host, $ws, $token, [[
                 'command' => 'fibery.entity/query',
@@ -414,19 +479,22 @@ return new class implements PluginInterface, EditablePlugin {
                 throw new PluginEditRefused('That item is no longer in Fibery.');
             }
             $tz = $host->timezone();
-            $value = $this->newValue($plan, $current[$plan['dateField']] ?? null, (array) $edit['after'], $tz);
+            $value = $this->newValue($plan, $current[$plan['dateField']] ?? null, $after, $tz);
             $this->commands($host, $ws, $token, [[
                 'command' => 'fibery.entity/update',
                 'args' => ['type' => $plan['db'], 'entity' => ['fibery/id' => $id, $plan['dateField'] => $value]],
             ]]);
-        } catch (PluginEditRefused $e) {
-            throw $e;
         } catch (\RuntimeException $e) {
+            // Only Fibery's own answers are worded for the person; anything
+            // else fails as the host's generic message.
+            if (self::failureCode($e) === null) {
+                throw $e;
+            }
             throw new PluginEditRefused('Fibery didn\'t take the change: ' . $e->getMessage());
         }
         $final = $plan['workflow'] && !empty($current['workflow/state']['workflow/Final']);
         $shown = $this->displaySpan($plan, $value, $s, $tz, $final);
-        return $shown !== null ? $shown[0] : (array) $edit['after'];
+        return $shown !== null ? $shown[0] : $after;
     }
 
     /**
@@ -467,13 +535,13 @@ return new class implements PluginInterface, EditablePlugin {
 
     /**
      * The workspace's databases and fields, reduced to what this plugin uses
-     * and cached for ten minutes: {types: {name: {title, fields: {name: {type,
-     * collection, formula}}}}}.
+     * and cached for ten minutes (any age with $stale): {types: {name: {title,
+     * fields: {name: {type, collection, formula}}}}}.
      */
-    private function schema(PluginHost $host, string $ws, string $token): array
+    private function schema(PluginHost $host, string $ws, string $token, bool $stale = false): array
     {
         $cached = $host->kvGet('schema');
-        if (is_array($cached) && ($cached['ws'] ?? '') === $ws && time() - (int) ($cached['at'] ?? 0) < self::SCHEMA_TTL) {
+        if (is_array($cached) && ($cached['ws'] ?? '') === $ws && ($stale || time() - (int) ($cached['at'] ?? 0) < self::SCHEMA_TTL)) {
             return $cached;
         }
         $raw = $this->commands($host, $ws, $token, [['command' => 'fibery.schema/query']])[0];
@@ -616,8 +684,9 @@ return new class implements PluginInterface, EditablePlugin {
                 case 'fibery/date-time':
                     return (new \DateTimeImmutable((string) $value))->setTimezone($tz)->format('D, M j, Y g:i A');
                 case 'fibery/date-range':
-                    $end = (new \DateTimeImmutable((string) ($value['end'] ?? $value['start'])))->modify('-1 day');
-                    return (new \DateTimeImmutable((string) $value['start']))->format('M j') . ' to ' . $end->format('M j, Y');
+                    $start = new \DateTimeImmutable((string) $value['start']);
+                    $end = !empty($value['end']) ? (new \DateTimeImmutable((string) $value['end']))->modify('-1 day') : $start;
+                    return $end > $start ? $start->format('M j') . ' to ' . $end->format('M j, Y') : $start->format('D, M j, Y');
                 case 'fibery/date-time-range':
                     return (new \DateTimeImmutable((string) $value['start']))->setTimezone($tz)->format('M j g:i A') . ' to '
                         . (new \DateTimeImmutable((string) ($value['end'] ?? $value['start'])))->setTimezone($tz)->modify('-1 second')->format('M j g:i A');
@@ -657,37 +726,69 @@ return new class implements PluginInterface, EditablePlugin {
     {
         $out = $this->post($host, 'https://' . $ws . '/api/commands', $token, $commands);
         if (!is_array($out) || count($out) !== count($commands)) {
-            throw new \RuntimeException('Fibery sent an unexpected answer');
+            throw new \RuntimeException('Fibery sent an unexpected answer', self::E_UNREACHABLE);
         }
         $results = [];
         foreach ($out as $r) {
             if (!is_array($r) || empty($r['success'])) {
                 $msg = is_array($r) && is_array($r['result'] ?? null) ? (string) ($r['result']['message'] ?? '') : '';
-                throw new \RuntimeException($msg !== '' ? mb_substr($msg, 0, 200) : 'Fibery refused the request');
+                throw new \RuntimeException($msg !== '' ? mb_substr($msg, 0, 200) : 'Fibery refused the request', self::E_REFUSED);
             }
             $results[] = $r['result'];
         }
         return $results;
     }
 
+    /**
+     * One request, spaced to stay under Fibery's three a second per key, and
+     * tried once more after a pause when Fibery asks for one.
+     */
     private function post(PluginHost $host, string $url, string $token, array $payload): mixed
     {
-        $r = $host->http()->json('POST', $url, $payload, ['Authorization: Token ' . $token]);
-        $status = (int) $r['status'];
+        for ($attempt = 0; ; $attempt++) {
+            $wait = $this->lastRequestAt + self::MIN_GAP - microtime(true);
+            if ($wait > 0) {
+                usleep((int) ($wait * 1_000_000));
+            }
+            $this->lastRequestAt = microtime(true);
+            try {
+                $r = $host->http()->json('POST', $url, $payload, ['Authorization: Token ' . $token]);
+            } catch (\RuntimeException $e) {
+                throw new \RuntimeException('Couldn\'t reach Fibery', self::E_UNREACHABLE, $e);
+            }
+            $status = (int) $r['status'];
+            if ($status === 429 && $attempt === 0 && $host->budgetRemaining() > 10) {
+                usleep(1_200_000);
+                continue;
+            }
+            break;
+        }
         if ($status === 401 || $status === 403) {
-            throw new \RuntimeException('Fibery didn\'t accept the API key; check it in the plugin settings');
+            throw new \RuntimeException('Fibery didn\'t accept the API key; check it in the plugin settings', self::E_KEY);
         }
         if ($status === 429) {
-            throw new \RuntimeException('Fibery asked for a pause (too many requests); trying again shortly');
+            throw new \RuntimeException('Fibery asked for a pause (too many requests); try again in a moment', self::E_BUSY);
         }
         if ($status < 200 || $status >= 300) {
-            throw new \RuntimeException('Fibery answered with error ' . $status);
+            throw new \RuntimeException('Fibery answered with error ' . $status, $status >= 500 ? self::E_UNREACHABLE : self::E_REFUSED);
         }
         $data = json_decode((string) $r['body'], true);
         if ($data === null) {
-            throw new \RuntimeException('Fibery sent an answer that isn\'t JSON');
+            throw new \RuntimeException('Fibery sent an answer that isn\'t JSON', self::E_UNREACHABLE);
         }
         return $data;
+    }
+
+    /** The message code for a failure talking to Fibery, or null for any other exception. */
+    private static function failureCode(\Throwable $e): ?string
+    {
+        return match ($e->getCode()) {
+            self::E_KEY => 'key-refused',
+            self::E_BUSY => 'busy',
+            self::E_UNREACHABLE => 'unreachable',
+            self::E_REFUSED => 'refused',
+            default => null,
+        };
     }
 
     // ---- small helpers ------------------------------------------------------------

@@ -774,7 +774,8 @@ final class PluginHost
         if ($cal === null) {
             throw new \RuntimeException('syncEvents: calendar ' . $calendarId . ' is not owned by ' . $this->pluginId);
         }
-        $result = $this->db->tx(function () use ($calendarId, $events, $maxEvents): array {
+        $runStartedDb = gmdate('Y-m-d H:i:s', (int) floor($this->startedAt));
+        $result = $this->db->tx(function () use ($calendarId, $events, $maxEvents, $runStartedDb): array {
             // Check and load the existing snapshot inside the same transaction
             // so a concurrent writer cannot grow it between admission and
             // materialization.
@@ -788,7 +789,7 @@ final class PluginHost
                 throw new \RuntimeException('syncEvents: the stored plugin snapshot is over the safe repair limit; no rows were changed');
             }
             $existing = [];
-            foreach ($this->db->all('SELECT id, uid, title, start_utc, end_utc, all_day, description, location, icon, url FROM events WHERE calendar_id = ? AND deleted_at IS NULL', [$calendarId]) as $r) {
+            foreach ($this->db->all('SELECT id, uid, title, start_utc, end_utc, all_day, description, location, icon, url, updated_at FROM events WHERE calendar_id = ? AND deleted_at IS NULL', [$calendarId]) as $r) {
                 $existing[(string) $r['uid']] = $r;
             }
             $added = 0;
@@ -819,6 +820,12 @@ final class PluginHost
                     'url' => self::sourceUrl($ev['url'] ?? null),
                 ];
                 $cur = $existing[$key] ?? null;
+                // Changed here after this run read its source (the person moved
+                // it, and the plugin wrote it back): this run's copy is older,
+                // so leave the row for the next run rather than move it back.
+                if ($cur !== null && (string) ($cur['updated_at'] ?? '') > $runStartedDb) {
+                    continue;
+                }
                 if ($cur === null) {
                     $this->db->insert('events', $cols + [
                         'user_id' => $this->userId,
@@ -965,8 +972,16 @@ final class PluginHost
         $private = $this->privateDiagnostics();
         $this->db->run('DELETE FROM plugin_warnings WHERE plugin_id = ?', [$this->pluginId]);
         $n = 0;
+        $declared = is_array($this->manifest['messages'] ?? null) ? $this->manifest['messages'] : [];
         foreach (array_slice($warnings, 0, 500) as $w) {
-            $msg = $private ? PluginSecrets::HIDDEN_DIAGNOSTIC : mb_substr(Sanitize::toText((string) ($w['message'] ?? '')), 0, 500);
+            // A message the manifest declares (by its code) is fixed text, so
+            // it's shown even when this plugin's free-form diagnostics are
+            // hidden: it can't carry a credential.
+            $code = is_string($w['code'] ?? null) ? $w['code'] : null;
+            $fixed = $code !== null && is_string($declared[$code] ?? null);
+            $msg = $fixed
+                ? mb_substr(Sanitize::toText($declared[$code]), 0, 500)
+                : ($private ? PluginSecrets::HIDDEN_DIAGNOSTIC : mb_substr(Sanitize::toText((string) ($w['message'] ?? '')), 0, 500));
             if ($msg === '') {
                 continue;
             }
@@ -975,7 +990,7 @@ final class PluginHost
                 'event_id' => isset($w['eventId']) ? (int) $w['eventId'] : null,
                 'severity' => ($w['severity'] ?? 'warn') === 'info' ? 'info' : 'warn',
                 'message' => $msg,
-                'fix_text' => !$private && isset($w['fix']) ? mb_substr(Sanitize::toText((string) $w['fix']), 0, 300) : null,
+                'fix_text' => !$fixed && !$private && isset($w['fix']) ? mb_substr(Sanitize::toText((string) $w['fix']), 0, 300) : null,
             ]);
             $n++;
         }

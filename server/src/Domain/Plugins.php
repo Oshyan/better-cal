@@ -231,6 +231,18 @@ final class Plugins
                 }
             }
         }
+        if (isset($m['messages'])) {
+            if (!is_array($m['messages']) || array_is_list($m['messages']) && $m['messages'] !== []) {
+                $errs[] = 'messages must be an object of code: text';
+            } else {
+                foreach ($m['messages'] as $code => $text) {
+                    if (!is_string($code) || preg_match('/^[a-z][a-z0-9-]{0,63}$/', $code) !== 1 || !is_string($text) || $text === '' || mb_strlen($text) > 300) {
+                        $errs[] = 'messages: each needs a kebab-case code and up to 300 characters of text';
+                        break;
+                    }
+                }
+            }
+        }
         if (isset($m['decoration'])) {
             $d = $m['decoration'];
             if (!is_array($d)) {
@@ -259,8 +271,14 @@ final class Plugins
      *
      * @return list<array<string,mixed>>
      */
+    /** @var ?list<array> one directory scan per request */
+    private ?array $scanned = null;
+
     public function scan(): array
     {
+        if ($this->scanned !== null) {
+            return $this->scanned;
+        }
         $out = [];
         foreach (glob($this->dir() . '/*/plugin.json') ?: [] as $file) {
             $dirId = basename(dirname($file));
@@ -279,7 +297,7 @@ final class Plugins
             ];
         }
         usort($out, static fn($a, $b) => strcmp((string) $a['id'], (string) $b['id']));
-        return $out;
+        return $this->scanned = $out;
     }
 
     public function manifest(string $id): ?array
@@ -791,7 +809,7 @@ final class Plugins
         if ($m === null) {
             throw HttpError::badRequest('Unknown plugin');
         }
-        [$clean, $errs] = self::validateAgainstSchema($m['calendarSettings'] ?? [], $values);
+        [$clean, $errs] = self::validateAgainstSchema($this->resolveSchema($id, $m['calendarSettings'] ?? []), $values);
         if ($errs !== []) {
             throw HttpError::badRequest('Invalid settings: ' . json_encode($errs));
         }
@@ -910,7 +928,7 @@ final class Plugins
         if (!$instance instanceof EditablePlugin) {
             throw HttpError::forbidden('plugin_readonly', $name . ' events are read-only here');
         }
-        $host = new PluginHost($this->db, $id, $userId, new HttpClient(), $m, $this->cfg, null);
+        $host = new PluginHost($this->db, $id, $userId, new HttpClient(requestBudget: 10, totalTimeoutMs: 10_000, absoluteDeadline: microtime(true) + 20.0), $m, $this->cfg, null);
         try {
             $span = ActivityContext::with('plugin:' . $id, fn() => $instance->applyEdit($host, $edit));
         } catch (PluginEditRefused $e) {
@@ -1074,12 +1092,15 @@ final class Plugins
 
     public function warnings(string $id): array
     {
-        $private = $this->privateDiagnostics($id, $this->manifest($id) ?? []);
+        $manifest = $this->manifest($id) ?? [];
+        $private = $this->privateDiagnostics($id, $manifest);
+        // Messages the manifest declares are fixed text: shown either way.
+        $declared = array_values(array_filter(is_array($manifest['messages'] ?? null) ? $manifest['messages'] : [], 'is_string'));
         return array_map(static fn($r) => [
             'id' => (int) $r['id'],
             'eventId' => $r['event_id'] !== null ? (int) $r['event_id'] : null,
             'severity' => (string) $r['severity'],
-            'message' => $private ? PluginSecrets::HIDDEN_DIAGNOSTIC : (string) $r['message'],
+            'message' => $private && !in_array((string) $r['message'], $declared, true) ? PluginSecrets::HIDDEN_DIAGNOSTIC : (string) $r['message'],
             'fix' => $private ? null : ($r['fix_text'] !== null ? (string) $r['fix_text'] : null),
         ], $this->db->all('SELECT * FROM plugin_warnings WHERE plugin_id = ? AND dismissed_at IS NULL ORDER BY severity DESC, id', [$id]));
     }

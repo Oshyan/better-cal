@@ -38,6 +38,7 @@ So do your fetching, computing and writing in `runJob`. Everything the user sees
 - `settings`, `calendarSettings`, `eventSettings`: field schemas the host renders on the ops page, in the calendar gear panel, and in the event detail view.
 - `requires` / `optional`: lists of plugin ids (see Working With Other Plugins).
 - `decoration` (optional): `{icon, iconPath, color, animation}`, where `animation` is `none`, `pulse` or `shimmer`. The icon appears on your overlay bands and replaces the color dot on your calendar's sidebar row.
+- `messages` (optional): `{"code": "text"}`, the warnings you'll raise, up to 300 characters each. A warning that names one by `code` always shows its text, even when your diagnostics are hidden (see Secrets).
 
 ### Settings Fields
 
@@ -74,7 +75,8 @@ Declare a credential as `{"key": "credential", "label": "Credential", "type": "s
 - API reads and saves return only `{set: true}` or `{set: false}` for that key, for browsers and tokens alike. An omitted field keeps the stored value; `null` clears it. The browser shows an empty replacement field, never the saved value.
 - The host encrypts new values with `BETTERCAL_SESSION_SECRET` and decrypts them for your runtime settings and event-data reads. Changing that secret without migrating the encrypted values makes them unreadable.
 - An existing plain-text field changed to `secret` is hidden immediately and encrypted the next time it's saved.
-- A plugin with any secret field gets generic validation and failure messages, and its free-form logs, warning text and fix details are suppressed, including earlier run tails. This stays in effect after a secret is cleared. You lose detailed diagnostics, but the host doesn't have to recognize every way a credential could be printed.
+- A plugin with any secret field gets generic validation and failure messages, and its free-form logs, warning text and fix details are suppressed, including earlier run tails. This stays in effect after a secret is cleared. You lose detailed diagnostics, but the host doesn't have to recognize every way a credential could be printed. Declared `messages` still show, since they're fixed text: use them for anything the person must act on (a missing setting, a refused key).
+- Don't fail a run for an outage. Five failed runs in a row turn a plugin off, and a job that runs every minute would get there in five minutes; raise a declared warning and return instead.
 - Never copy a secret into event titles, ordinary fields, proposals or other visible output. Plugins run as trusted native PHP, and the host can't sandbox malicious code.
 
 ## Code (`Plugin.php`)
@@ -139,7 +141,7 @@ Writing:
 - `ensureCalendar(name, color, role = 'context'): int`: find or create a calendar your plugin owns (name up to 160 characters; a color that isn't `#rrggbb` becomes `#5b8dd9`). `role` is what a new one starts as: `context` for information, `mine` for things the person does (tasks), `opportunities`. A `mine` one starts with no reminders.
 - `syncEvents(calId, events): [added, updated, removed]`: feed-style upsert by `sourceKey` into a calendar you own; keys that disappear are deleted. See [Materialized Events](#materialized-events).
 - `replaceRanges(ranges): int`: **wholesale-replace** your overlay bands; whatever you leave out this run is gone. Range: `{sourceKey, start, end, label?, color?, detailHtml?}`, with `start`/`end` as `YYYY-MM-DD` (end exclusive) or ISO instants. You may write up to 2,000, but **one window request returns at most 500 per plugin** (with a `truncated` flag the client reads), so ranges past that are stored and never seen. If you produce more than a few hundred, emit fewer.
-- `replaceWarnings(warnings): int`: **wholesale-replace** your findings, the same way. Warning: `{message, severity?, eventId?, fix?}`.
+- `replaceWarnings(warnings): int`: **wholesale-replace** your findings, the same way. Warning: `{message, severity?, eventId?, fix?}`, or `{code, severity?, eventId?}` for one of your declared `messages`.
 - `setEventData(int $eventId, string $key, mixed $value): void`: write one per-event value (null deletes), only for events the user owns. It's an **upsert that persists forever**: if you write a computed value (a travel estimate, say), you clear it when it goes stale, or an event that moved keeps yesterday's answer. Sweep your leftovers with `eventsWithData()`.
 - `notify(string $title, string $body, string $url = '/'): array`: one notification now, through the user's configured channel; silent if none is configured. It does **not** dedupe: a 6-hourly job that keeps finding the same conflict notifies every run, so record what you've said in `kvSet` and stay quiet. Requires `notify`.
 - `propose(array $proposal): array`, `withdrawProposal(string $sourceKey): bool`, `myProposals(?string $status = 'open'): array`: see [Proposals](#proposals). All three require `propose`.

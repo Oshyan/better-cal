@@ -188,7 +188,9 @@ function copyText(text, what) {
 // lit one puts it back to available. A series asks which occurrences.
 function ForMe({ occ, cal, onHidden }) {
   const role = (cal && cal.role) || (occ.source === 'feed' ? 'opportunities' : 'mine');
-  const allowed = relationshipOptions(role);
+  // A plugin's own Mine calendar: Maybe would be a change to the item in its
+  // source, which only takes new times.
+  const allowed = cal && cal.kind === 'plugin' && role === 'mine' ? [] : relationshipOptions(role);
   const options = ['planned', 'maybe', 'hidden'].filter((v) => allowed.includes(v)); // commitment first, Hide last
   if (options.length === 0) return null;
   const current = occ.attendance === 'hidden' ? 'hidden' : (occ.relationship || options[0]);

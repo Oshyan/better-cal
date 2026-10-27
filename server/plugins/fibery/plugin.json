@@ -20,6 +20,21 @@
   "decoration": {
     "icon": "check"
   },
+  "messages": {
+    "needs-setup": "Add your Fibery workspace and API key in the plugin settings.",
+    "choose-database": "Choose a task or project database in the plugin settings.",
+    "task-database-gone": "The chosen task database is no longer in Fibery. Choose it again in the settings.",
+    "project-database-gone": "The chosen project database is no longer in Fibery. Choose it again in the settings.",
+    "task-date-missing": "Choose which date field puts a task on the calendar.",
+    "project-date-missing": "Choose which date field puts a project on the calendar.",
+    "task-date-gone": "The chosen task date field is no longer a date field in Fibery. Choose another.",
+    "project-date-gone": "The chosen project date field is no longer a date field in Fibery. Choose another.",
+    "key-refused": "Fibery didn't accept the API key. Check it in the plugin settings; the calendar keeps what it last had.",
+    "unreachable": "Couldn't reach Fibery on the last try. It tries again every minute; the calendar keeps what it last had.",
+    "busy": "Fibery asked for a pause (too many requests). It tries again in a minute.",
+    "refused": "Fibery refused a request. Check the chosen databases and fields in the plugin settings.",
+    "too-many": "A database has more dated items than one run reads, so only the first 3,000 show."
+  },
   "settings": [
     {
       "key": "workspace",

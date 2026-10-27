@@ -71,7 +71,8 @@ final class PluginsController
             }
         }
         $queued = [];
-        if ($onSave !== []) {
+        // Only a save that changed something: an empty one is no reason to run.
+        if ($onSave !== [] && is_array($req->body) && $req->body !== []) {
             $result = $this->plugins->withAuthority(RequestAuthority::request($req), fn() => $this->queue->enqueuePluginJobs((int) $req->user['id'], $id, $onSave));
             $queued = array_merge($result['queued'] ?? [], $result['alreadyQueued'] ?? []);
         }

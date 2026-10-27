@@ -9355,6 +9355,33 @@ use BetterCal\Domain\GoogleWriter;
     checkEq('weather: the manifest is still valid', [], BetterCal\Domain\Plugins::manifestErrors(json_decode((string) file_get_contents(dirname(__DIR__) . '/plugins/weather/plugin.json'), true)));
 }
 
+// A sync leaves a row alone that was changed after the run began (the person
+// moved it and the plugin wrote it back): the run's copy of the source is
+// older. And a plugin with a credential still shows its declared messages.
+{
+    $rdb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $rdb->run('CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, kind TEXT, plugin_id TEXT, synctoken INTEGER NOT NULL DEFAULT 0)');
+    davJournal($rdb);
+    $rdb->run('CREATE TABLE events (id INTEGER PRIMARY KEY, user_id INTEGER, calendar_id INTEGER, uid TEXT, title TEXT, description TEXT, location TEXT, start_utc TEXT, end_utc TEXT, all_day INTEGER, tzid TEXT, icon TEXT, url TEXT, source TEXT, created_via TEXT, deleted_at TEXT, updated_at TEXT)');
+    $rdb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT, calendar_ids_json TEXT, undone INTEGER DEFAULT 0, created_at TEXT DEFAULT CURRENT_TIMESTAMP)');
+    $rdb->run('CREATE TABLE plugins (id TEXT PRIMARY KEY, enabled INTEGER, settings_json TEXT)');
+    $rdb->run('CREATE TABLE plugin_warnings (id INTEGER PRIMARY KEY, plugin_id TEXT, event_id INTEGER, severity TEXT, message TEXT, fix_text TEXT, dismissed_at TEXT)');
+    $rdb->run("INSERT INTO plugins (id, enabled) VALUES ('sample', 1)");
+    $rdb->run("INSERT INTO calendars (id, user_id, kind, plugin_id) VALUES (1, 1, 'plugin', 'sample')");
+    $future = gmdate('Y-m-d H:i:s', time() + 120);
+    $rdb->run("INSERT INTO events (id, user_id, calendar_id, uid, title, start_utc, end_utc, all_day, tzid, source, created_via, updated_at) VALUES (1, 1, 1, 'plg-sample-moved', 'Moved here', '2030-03-05 00:00:00', '2030-03-06 00:00:00', 1, 'UTC', 'local', 'plugin:sample', ?)", [$future]);
+    $manifest = ['settings' => [['key' => 'token', 'type' => 'secret', 'label' => 'Key']], 'messages' => ['needs-key' => 'Add your key in the settings.']];
+    $rhost = new BetterCal\Plugin\PluginHost($rdb, 'sample', 1, new BetterCal\Infra\HttpClient(), $manifest, []);
+    $rhost->syncEvents(1, [['sourceKey' => 'moved', 'title' => 'Moved here', 'start' => '2030-03-04', 'allDay' => true]]);
+    checkEq('plugin sync: a row edited after the run began keeps its new time', '2030-03-05 00:00:00', $rdb->scalar("SELECT start_utc FROM events WHERE id = 1"));
+    checkEq('plugin sync: and is not deleted as missing', 1, (int) $rdb->scalar('SELECT COUNT(*) FROM events WHERE id = 1'));
+
+    $rhost->replaceWarnings([['code' => 'needs-key'], ['message' => 'free text that could quote a key']]);
+    $shown = array_column((new BetterCal\Domain\Plugins($rdb, null, []))->warnings('sample'), 'message');
+    checkEq('plugin warnings: a declared message shows; free text from a plugin with a credential stays hidden',
+        ['Add your key in the settings.', BetterCal\Domain\PluginSecrets::HIDDEN_DIAGNOSTIC], $shown);
+}
+
 // Plugin snapshots are admitted before writes and replaced atomically. A bad
 // later row must roll back an earlier update rather than leaving a mixed old/new
 // calendar that the next snapshot could then delete from.

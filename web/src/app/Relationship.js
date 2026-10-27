@@ -22,7 +22,8 @@ export function relationshipOptions(role) {
 
 export function RelationshipControl({ occ, cal, onHidden, compact }) {
   const role = (cal && cal.role) || (occ.source === 'feed' ? 'opportunities' : 'mine');
-  const options = relationshipOptions(role);
+  // Not on a plugin's own Mine calendar (see ForMe in EventSheetBody.js).
+  const options = cal && cal.kind === 'plugin' && role === 'mine' ? [] : relationshipOptions(role);
   if (options.length === 0) return null;
   const current = occ.attendance === 'hidden' ? 'hidden' : (occ.relationship || options[0]);
   const choose = async (value) => {

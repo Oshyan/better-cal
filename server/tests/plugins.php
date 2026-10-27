@@ -251,7 +251,7 @@ checkEq("fibery: a person's field keeps its hyphen", 'Sub-tasks', callPrivate($f
 checkEq('fibery: an item links to its page', 'https://example.fibery.io/Work_Space/Task/42', callPrivate($fb, 'entityUrl', ['example.fibery.io', 'Work Space/Task', '42']));
 
 $la = new DateTimeZone('America/Los_Angeles');
-$taskPlan = ['slot' => 'task', 'dateType' => 'fibery/date-time'];
+$taskPlan = ['slot' => 'task', 'dateType' => 'fibery/date-time', 'workflow' => true];
 $future = (new DateTimeImmutable('now', $la))->modify('+10 days');
 $day = $future->format('Y-m-d');
 $midnightUtc = (new DateTimeImmutable($day . ' 00:00', $la))->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d\TH:i:s.000\Z');
@@ -268,6 +268,16 @@ $overdue = callPrivate($fb, 'displaySpan', [$taskPlan, $pastUtc, ['overdueOnToda
 checkEq('fibery: an unfinished overdue task shows on today', (new DateTimeImmutable('now', $la))->format('Y-m-d'), $overdue[0]['start']);
 check('fibery: and says when it was due', is_string($overdue[1]));
 checkEq('fibery: a finished one stays on its day', $past->format('Y-m-d'), callPrivate($fb, 'displaySpan', [$taskPlan, $pastUtc, ['overdueOnToday' => true], $la, true])[0]['start']);
+checkEq('fibery: without a workflow nothing is known to be unfinished, so nothing moves to today', $past->format('Y-m-d'),
+    callPrivate($fb, 'displaySpan', [['workflow' => false] + $taskPlan, $pastUtc, ['overdueOnToday' => true], $la, false])[0]['start']);
+checkEq('fibery: a key with a line break in it is refused', ['token' => 'The key has a space or line break in it; paste just the key'], $fb->validateSettings(['token' => "abc\ndef"]));
+checkEq('fibery: a key with only a trailing newline is fine (it is trimmed)', [], $fb->validateSettings(['token' => "abcdef\n"]));
+checkEq("fibery: Fibery refusing the key is a message, not a crash", 'key-refused', callPrivate($fb, 'failureCode', [new RuntimeException('x', 7101)]));
+checkEq('fibery: any other exception stays an error', null, callPrivate($fb, 'failureCode', [new RuntimeException('x', 0)]));
+$fm = $manifestOf('fibery');
+foreach (['needs-setup', 'choose-database', 'key-refused', 'unreachable', 'busy', 'refused', 'too-many', 'task-database-gone', 'project-date-gone', 'task-date-missing'] as $code) {
+    check("fibery: declares the '$code' message it uses", is_string($fm['messages'][$code] ?? null));
+}
 
 $rangePlan = ['slot' => 'project', 'dateType' => 'fibery/date-range'];
 checkEq("fibery: a date range's stored end is already exclusive", ['start' => '2030-03-02', 'end' => '2030-03-07', 'allDay' => true],

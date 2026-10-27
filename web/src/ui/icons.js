@@ -179,10 +179,12 @@ export function Icon({ name, size = 15 }) {
     viewAgenda: html`<path d="M5.6 4.2h8M5.6 8h8M5.6 11.8h8" />
       <path d="M2.5 4.2h.01M2.5 8h.01M2.5 11.8h.01" />`,
     // Month rows that fit their days (#171): a page whose middle row has
-    // grown, with the arrows that grew it.
-    rowsFit: html`<rect x="2.2" y="2.6" width="11.6" height="11.2" rx="1.4" />
-      <path d="M2.2 4.8h11.6M2.2 11.6h11.6" />
-      <path d="M8 6.4v3.6M6.7 7.6L8 6.3l1.3 1.3M6.7 8.8L8 10.1l1.3-1.3" stroke-width="1" />`,
+    // grown, with the arrows that grew it. Drawn at 18px, so its strokes are
+    // a little finer than the set's (which is drawn at 14 to 15) to land at
+    // the same weight on screen.
+    rowsFit: html`<g stroke-width="1.15"><rect x="2.2" y="2.6" width="11.6" height="11.2" rx="1.4" />
+      <path d="M2.2 4.8h11.6M2.2 11.6h11.6" /></g>
+      <path d="M8 6.4v3.6M6.7 7.6L8 6.3l1.3 1.3M6.7 8.8L8 10.1l1.3-1.3" stroke-width="0.85" />`,
     // Split: a strip of weeks over a list.
     viewSplit: html`<rect x="2.2" y="2.4" width="11.6" height="5.4" rx="1.2" />
       <path d="M6.1 2.4v5.4M9.9 2.4v5.4M2.6 10.6h10.8M2.6 13.4h7.4" />`,

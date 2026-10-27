@@ -25,7 +25,7 @@ jobs:
   libraries:
     name: PHP libraries on PHP 8.4
     runs-on: ubuntu-latest
-    container: php:8.4-cli@sha256:1d2cf2b7d715b5b3aa959f0150ccbcc7b71e0181b637e443abf40a7fb56bf79a
+    container: php:8.4-cli@sha256:debadc2e36b857657846e2e952cbaf52702e55482dd3c2c43806f68d8c534a70
     steps:
       - name: The tag is a release version
         env:

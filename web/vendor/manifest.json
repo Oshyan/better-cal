@@ -3,16 +3,16 @@
   "files": {
     "preact.module.js": {
       "package": "preact",
-      "version": "11.0.1",
+      "version": "11.0.2",
       "license": "MIT",
       "path": "dist/preact.mjs",
       "transform": "strip-sourcemap",
-      "upstreamSha256": "3a3201e9ccef7d30ef1273427f1b17ef8323e464b2c8d73b4fd5636af730433e",
-      "sha256": "17598141bfddaf9bc74873b88e19e4cfee3605078752a3d693d15a57019865d4"
+      "upstreamSha256": "4d2617f3f082550223d37f781114b5f723362fc4a337459715a7083664dc10c1",
+      "sha256": "3bfb01ccb2130f85c688ac2751ff059eda1019dd86cd6f05b06fa15a72a37d54"
     },
     "hooks.module.js": {
       "package": "preact",
-      "version": "11.0.1",
+      "version": "11.0.2",
       "license": "MIT",
       "path": "hooks/dist/hooks.mjs",
       "transform": "strip-sourcemap+preact-import",
@@ -29,11 +29,11 @@
     },
     "squire/squire-raw.js": {
       "package": "squire-rte",
-      "version": "2.4.9",
+      "version": "2.4.10",
       "license": "MIT",
       "path": "dist/squire-raw.js",
-      "upstreamSha256": "e20befa153892153e92307989c4d09d18d6b35b3b61af52e991b246ed8abbab2",
-      "sha256": "e20befa153892153e92307989c4d09d18d6b35b3b61af52e991b246ed8abbab2"
+      "upstreamSha256": "e2e9afc30b7e9d2bb01cbd7109e58c21c3fe4b67556b3e12c308a392768ad8a2",
+      "sha256": "e2e9afc30b7e9d2bb01cbd7109e58c21c3fe4b67556b3e12c308a392768ad8a2"
     },
     "squire/purify.min.js": {
       "package": "dompurify",

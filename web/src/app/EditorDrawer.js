@@ -34,6 +34,7 @@ import {
 import { CalendarSelect } from '../ui/CalendarSelect.js';
 import { PHONE_QUERY } from '../lib/breakpoints.js';
 import { DateField, TimeField } from './WhenFields.js';
+import { useMarkerSuggest } from './MarkerSuggest.js';
 import { parseClockText, resolveClock, minsToHHMM, hhmmToMins, durationLabel } from '../lib/whenparse.js';
 
 const BYDAY = [['MO', 'Mon'], ['TU', 'Tue'], ['WE', 'Wed'], ['TH', 'Thu'], ['FR', 'Fri'], ['SA', 'Sat'], ['SU', 'Sun']];
@@ -310,6 +311,10 @@ export function EditorDrawer() {
       runNlParse(nlText, true);
     }
   };
+
+  // `/`, `#` and `@` offer calendars, tags and people, as in quick add (#169).
+  const nlInputRef = useRef(null);
+  const nlMarkers = useMarkerSuggest(nlInputRef, nlText, (v) => onNlInput({ target: { value: v } }));
 
   useEffect(() => () => { clearTimeout(nlTimer.current); clearTimeout(flashTimer.current); }, []);
 
@@ -822,14 +827,18 @@ export function EditorDrawer() {
       ${!occ && html`<div class="bc-nl" title="Fills the fields below as you type. Enter or Fill applies it now; everything stays editable.">
         <div class="bc-nl-row">
           <${Icon} name="quickadd" size=${15} />
-          <input
-            class="bc-nl-input"
-            placeholder=${phoneOpen ? 'Type it: Lunch with Ada Fri noon' : 'Type it naturally: Lunch with Ada Friday noon at Luna Trattoria'}
-            value=${nlText}
-            onInput=${onNlInput}
-            onKeyDown=${onNlKeyDown}
-            aria-label="Describe the event in plain language"
-          />
+          <div class="bc-msuggest-anchor">
+            <input
+              ref=${nlInputRef}
+              class="bc-nl-input"
+              placeholder=${phoneOpen ? 'Type it: Lunch with Ada Fri noon' : 'Type it naturally: Lunch with Ada Friday noon at Luna Trattoria'}
+              value=${nlText}
+              onInput=${onNlInput}
+              onKeyDown=${(e) => { nlMarkers.onKeyDown(e); if (!e.defaultPrevented) onNlKeyDown(e); }}
+              aria-label="Describe the event in plain language"
+            />
+            ${nlMarkers.list}
+          </div>
           <button type="button" class="bc-btn bc-nl-go" title="Fill the fields now" onClick=${() => { clearTimeout(nlTimer.current); runNlParse(nlText, true); }}>Fill</button>
         </div>
       </div>`}

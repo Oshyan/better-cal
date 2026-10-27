@@ -41,6 +41,18 @@ final class QuickAddMarkers
         // The placeholder characters are ours: typed ones go.
         $text = str_replace([self::OPEN, self::CLOSE], '', $text);
         $literals = [];
+        // `@"Alex Example"`: a person by their whole name (a shared first
+        // name can't say which). Kept as a literal too, so the name in the
+        // title is never read as a date ("June", "May").
+        $quotedPeople = [];
+        $text = preg_replace_callback('/(?<=^|\s)@["“”]([^"“”@]{1,64})["“”]/u', static function (array $m) use (&$quotedPeople): string {
+            $name = trim(preg_replace('/\s+/u', ' ', $m[1]) ?? $m[1]);
+            if ($name === '') {
+                return $m[0];
+            }
+            $quotedPeople[] = $name;
+            return '"' . $name . '"';
+        }, $text) ?? $text;
         $work = preg_replace_callback('/(?<![\p{L}\p{N}])(["“”])([^"“”]{1,200})["“”]/u', static function (array $m) use (&$literals): string {
             $inner = trim($m[2]);
             if ($inner === '') {
@@ -67,7 +79,7 @@ final class QuickAddMarkers
             return '';
         }, $work) ?? $work;
 
-        $people = [];
+        $people = $quotedPeople;
         $work = preg_replace_callback('/(?<=^|\s)@(\p{L}[\p{L}\p{N}\'’._-]{0,63})/u', static function (array $m) use (&$people): string {
             $name = rtrim($m[1], '.');
             // "@noon", "@home": the old shorthand for at, not a person.

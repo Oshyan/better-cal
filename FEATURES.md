@@ -50,7 +50,7 @@ What it doesn't do (for now): send invitations to guests, offer booking pages, o
 
 ### Creating and Editing
 
-- Natural-language quick add with a confirmation strip the parse fills in (your edits win), Enter to commit, click outside to dismiss. [Quick add](docs/quick-add.md) has what it understands.
+- Natural-language quick add with a confirmation strip the parse fills in (your edits win), Enter to commit, click outside to dismiss. Typing `/`, `#` or `@` suggests your calendars, tags and people. [Quick add](docs/quick-add.md) has what it understands.
 - A rule-based parser first; the LLM helps only when the parse is incomplete, with guards so it can never move an event into the past, drop companions or rewrite the title. Parse mode (smart, always, never) is a setting.
 - Quick add from outside the app: a "New event" shortcut on the installed app's icon, and an optional key (you choose it) in the Chrome extension that opens it from any app.
 - Paste a Google Calendar template link into quick add and it becomes the event, recurrence and all.

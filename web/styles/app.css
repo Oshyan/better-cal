@@ -1573,6 +1573,28 @@ body.bc-dragging * { cursor: grabbing !important; }
   border-radius: var(--radius); box-shadow: var(--shadow); padding: 12px;
 }
 .bc-quickadd-input { width: 100%; font-size: 16px; padding: 8px 10px; }
+/* Marker suggestions (#169): a list under the box on a computer; on a phone
+   a wrapping row in the card's flow, so it covers nothing below it. */
+.bc-msuggest-anchor { position: relative; flex: 1; min-width: 0; }
+.bc-msuggest-anchor > input { width: 100%; box-sizing: border-box; }
+.bc-msuggest {
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: 5;
+  min-width: 220px; max-width: 100%; margin: 0; padding: 4px; list-style: none;
+  background: var(--bg-raised); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow);
+}
+.bc-msuggest-item {
+  display: flex; align-items: center; gap: 7px; padding: 5px 8px; border-radius: 5px;
+  font-size: 13px; cursor: pointer; white-space: nowrap; overflow: hidden;
+}
+.bc-msuggest-label { overflow: hidden; text-overflow: ellipsis; }
+.bc-msuggest-item.is-active { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+@media (max-width: 640px) {
+  .bc-msuggest {
+    position: static; display: flex; flex-wrap: wrap; gap: 6px; min-width: 0;
+    margin-top: 6px; padding: 0; background: none; border: none; box-shadow: none;
+  }
+  .bc-msuggest-item { border: 1px solid var(--border); border-radius: 14px; padding: 5px 10px; background: var(--bg-inset); }
+}
 .bc-quickadd-preview { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
 .bc-qchip {
   display: inline-flex; align-items: center; gap: 5px;

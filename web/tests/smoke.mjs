@@ -30,6 +30,7 @@ import { dayStepList, hidesCancelled } from '../src/ui/daysteps.js';
 import { sortByMatch } from '../src/lib/rank.js';
 import { zoneIndex, filterZones, parseOffset } from '../src/lib/zonesearch.js';
 import { parseJumpText, jumpGranularity, parseJumpTarget } from '../src/lib/jumpparse.js';
+import { activeMarker, markerSuggestions, applyMarkerPick, calendarMarker, personMarker, SUGGEST_MAX } from '../src/lib/markersuggest.js';
 import { parseClockText, resolveClock, minsToHHMM, hhmmToMins, parseDateText, durationLabel } from '../src/lib/whenparse.js';
 import { monthWeeks, stepMonthOf } from '../src/lib/minimonth.js';
 import { buildRange } from '../src/lib/quickrange.js';
@@ -723,6 +724,43 @@ eq('target: weekday ending in "day" is a date', jt('sunday'), tgt('2026-08-02', 
 eq('target: unknown view word is ignored', jt('june 9 calendar view'), tgt('2027-06-09', 'day', null));
 eq('target: a view with no date is nothing', jt('day view'), 'null');
 eq('target: gibberish', jt('fnord'), 'null');
+
+console.log('--- quick add marker suggestions (#169) ---');
+{
+  const at = (text, caret = text.length) => JSON.stringify(activeMarker(text, caret));
+  eq('marker: / at the start of a word', at('Lunch /fr'), JSON.stringify({ kind: '/', query: 'fr', start: 6, end: 9 }));
+  eq('marker: a bare # opens the list', at('Gym #'), JSON.stringify({ kind: '#', query: '', start: 4, end: 5 }));
+  eq('marker: the whole word is replaced, caret mid-word', at('Call @Sam now', 8), JSON.stringify({ kind: '@', query: 'Sa', start: 5, end: 9 }));
+  eq('marker: w/ is not a marker', at('Lunch w/'), 'null');
+  eq('marker: a date is not', at('Lunch 7/31'), 'null');
+  eq('marker: a web address is not', at('see https://example.test/a'), 'null');
+  eq('marker: an email address is not', at('mail sam@exa'), 'null');
+  eq('marker: inside quotes is not', at('"Meet #te'), 'null');
+  eq('marker: after a closed quote it is', at('"Meet" #te'), JSON.stringify({ kind: '#', query: 'te', start: 7, end: 10 }));
+  eq('marker: a space ends it', at('Gym #health '), 'null');
+
+  const cals = [{ id: 1, name: 'Personal' }, { id: 2, name: 'Work Travel' }, { id: 3, name: 'Friends & Family' }, { id: 4, name: 'Workouts' }];
+  const people = [{ id: 1, name: 'Sam Sample' }, { id: 2, name: 'Alex Example' }, { id: 3, name: 'Alex' }, { id: 4, name: 'Robin' }];
+  const tags = [{ id: 1, name: 'food' }, { id: 2, name: 'fitness' }, { id: 3, name: 'road trip' }, { id: 4, name: 'family-fun' }];
+  const sug = (text) => markerSuggestions(activeMarker(text, text.length), { calendars: cals, tags, people }).map((s) => s.insert).join(' ');
+  eq('suggest: calendars by same name, start, then a word in it', sug('x /w'), '/Work-Travel /Workouts');
+  eq('suggest: a word inside a calendar name', sug('x /fam'), '/Friends-Family');
+  eq('suggest: an empty / lists every calendar in order', sug('x /'), '/Personal /Work-Travel /Friends-Family /Workouts');
+  eq('suggest: tags a marker can hold, best first', sug('x #f'), '#food #fitness #family-fun');
+  eq('suggest: a tag with a space is not offered', sug('x #road'), '');
+  eq('suggest: a unique first name is enough', sug('x @sa'), '@Sam');
+  eq('suggest: a shared first name: the one-word name as is, the other whole', sug('x @alex'), '@Alex @"Alex Example"');
+  eq('suggest: a one-word name', sug('x @rob'), '@Robin');
+  eq('suggest: capped', markerSuggestions(activeMarker('#', 1), { tags: Array.from({ length: 40 }, (_, i) => ({ id: i, name: 'tag' + i })) }).length, SUGGEST_MAX);
+  eq('suggest: the server reads a picked calendar as that calendar', calendarMarker('Friends & Family'), '/Friends-Family');
+  eq('suggest: a person alone with one name', personMarker({ id: 9, name: 'Taylor' }, [{ id: 9, name: 'Taylor' }, { id: 10, name: 'Taylor Test' }]), '@Taylor');
+
+  const m = activeMarker('Coffee @al tomorrow', 10);
+  eq('pick: replaces the word and leaves the rest', JSON.stringify(applyMarkerPick('Coffee @al tomorrow', m, '@"Alex Example"')),
+    JSON.stringify({ text: 'Coffee @"Alex Example" tomorrow', caret: 23 }));
+  eq('pick: at the end adds a space to keep typing', JSON.stringify(applyMarkerPick('Gym #f', activeMarker('Gym #f', 6), '#food')),
+    JSON.stringify({ text: 'Gym #food ', caret: 10 }));
+}
 
 console.log('--- week start setting ---');
 // All earlier week tests ran under the default (Monday). Flip to Sunday and

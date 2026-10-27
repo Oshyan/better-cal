@@ -4521,6 +4521,17 @@ checkEq('pd fail -> highlight', 'highlight', Filters::promptDisposition($promptR
         BetterCal\Domain\QuickAddMarkers::matchPerson('Sam', $dir),
         BetterCal\Domain\QuickAddMarkers::matchPerson('Alex', $dir),
         BetterCal\Domain\QuickAddMarkers::matchPerson('Robin', $dir)]);
+    // A whole name in quotes (#169): for a first name two people share.
+    $m = BetterCal\Domain\QuickAddMarkers::extract('Coffee with @"Alex Example" on June 3 #work');
+    checkEq('markers: @"whole name" is one person, kept whole in the title and never read as a date', [['Alex Example'], ['Alex Example'], ['work']],
+        [$m['people'], $m['literals'], $m['tags']]);
+    checkEq('markers: @"whole name" title text comes back as typed', 'Coffee with Alex Example on June 3',
+        BetterCal\Domain\QuickAddMarkers::restore($m['text'], $m['literals']));
+    checkEq('markers: @"whole name" resolves to that person', 'Alex Example', BetterCal\Domain\QuickAddMarkers::matchPerson($m['people'][0], $dir));
+    $m = BetterCal\Domain\QuickAddMarkers::extract('Call "@ home" and @"Sam Sample" or @Sam');
+    checkEq('markers: both forms are read, and a quote mid-text is still a literal', [['Sam Sample', 'Sam'], ['@ home', 'Sam Sample']],
+        [$m['people'], $m['literals']]);
+    checkEq('markers: one person by both forms links once', ['Sam Sample'], QuickAdd::markedPeople($m['people'], [], $dir));
     checkEq('markers: a marked name replaces the with-clause reading of it', ['Sam Sample', 'Robin'],
         QuickAdd::markedPeople(['Sam'], ['Sam', 'Robin'], $dir));
     checkEq('markers: restore puts quoted text back from either stand-in', ['Wacky Wednesday party', 'Wacky Wednesday party'], [

@@ -27,11 +27,13 @@ It works without AI. If you've set up an AI model, Settings → General → **Na
 
 Markers say something outright. Each counts only at the start of a word, so `7/31`, `w/ Sam`, web and email addresses are left alone. The full editor's text box takes them too.
 
+Typing a marker lists what it can name, narrowing as you type: `/` your calendars, `#` your tags, `@` your people. Arrow keys move, Enter or Tab fills one in, Esc closes the list; Enter creates the event as usual when no list is showing. On a phone the choices sit in a row under the box.
+
 | Marker | Example | What it does |
 |---|---|---|
 | `/calendar` | `/friends`, `/w` | Puts it on the calendar with that name, or the first one starting with it. A `/word` matching none stays in the title. |
 | `#tag` | `#food` | Adds a tag. Needs a letter, so `Room #5` stays text. |
-| `@person` | `@Sam` | Links a person and keeps the name in the title. A unique first name is enough; someone new is asked about first. `@noon`, `@home` and `@work` mean "at". |
+| `@person` | `@Sam`, `@"Sam Sample"` | Links a person and keeps the name in the title. A unique first name is enough; quote the whole name when two people share one. Someone new is asked about first. `@noon`, `@home` and `@work` mean "at". |
 | `"quotes"` | `"Wacky Wednesday"` | Title text that's never read as a date or time. |
 
 ## What It Reads

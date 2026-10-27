@@ -37,6 +37,7 @@ import { CalendarSelect } from '../ui/CalendarSelect.js';
 import { DateField, TimeField } from './WhenFields.js';
 import { parseClockText, resolveClock, minsToHHMM, hhmmToMins, durationLabel } from '../lib/whenparse.js';
 import { buildRange } from '../lib/quickrange.js';
+import { useMarkerSuggest } from './MarkerSuggest.js';
 
 const hm = (d) => pad(d.getHours()) + ':' + pad(d.getMinutes());
 const reads24h = () => /13/.test(fmtTime(new Date(2000, 0, 1, 13, 0)));
@@ -194,6 +195,10 @@ export function QuickAdd() {
 
   useEffect(() => () => { clearTimeout(timerRef.current); clearTimeout(flashTimer.current); }, []);
 
+  // `/`, `#` and `@` offer calendars, tags and people as you type (#169).
+  // onInput is declared below; a pick sets the text the way typing does.
+  const markers = useMarkerSuggest(inputRef, text, (v) => onInput({ target: { value: v } }));
+
   if (!open) return null;
 
   // Fill the strip from a parse. Untouched fields always follow the parse;
@@ -243,7 +248,7 @@ export function QuickAdd() {
     }
   };
 
-  const onInput = (e) => {
+  function onInput(e) {
     const v = e.target.value;
     setText(v);
     clearTimeout(timerRef.current);
@@ -255,7 +260,7 @@ export function QuickAdd() {
         if (id === reqRef.current) applyParse(d, v.trim());
       } catch { /* parse preview is best-effort */ }
     }, 400);
-  };
+  }
 
   const touch = (field, value) => {
     touchedRef.current.add(field);
@@ -349,7 +354,7 @@ export function QuickAdd() {
   // their own activation, and the date and time boxes for applying what was
   // typed in them. Esc is handled by the global keyboard map.
   const onCardKeyDown = (e) => {
-    if (e.key !== 'Enter') return;
+    if (e.key !== 'Enter' || e.defaultPrevented) return; // a marker pick took it
     const tag = e.target.tagName;
     if (tag === 'BUTTON' || tag === 'A') return;
     if (e.target.closest && e.target.closest('.bc-when-date, .bc-when-time')) return;
@@ -475,14 +480,18 @@ export function QuickAdd() {
 
   return html`<div class="bc-quickadd-wrap">
     <div class="bc-quickadd" ref=${cardRef} role="dialog" aria-label="Quick add event" onKeyDown=${onCardKeyDown}>
-      <input
-        ref=${inputRef}
-        class="bc-quickadd-input"
-        placeholder="Dinner with Sam next Thursday 7pm at Luna Trattoria"
-        value=${text}
-        onInput=${onInput}
-        aria-label="Describe the event"
-      />
+      <div class="bc-msuggest-anchor">
+        <input
+          ref=${inputRef}
+          class="bc-quickadd-input"
+          placeholder="Dinner with Sam next Thursday 7pm at Luna Trattoria"
+          value=${text}
+          onInput=${onInput}
+          onKeyDown=${markers.onKeyDown}
+          aria-label="Describe the event"
+        />
+        ${markers.list}
+      </div>
       ${draft && draft.intent === 'availability' && html`<div class="bc-quickadd-preview">
         <span class="bc-qchip bc-qchip-title">${draft.personName}</span>
         <span class="bc-qchip bc-away-pill is-${draft.kind}">${draft.kind}</span>

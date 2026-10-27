@@ -77,6 +77,10 @@ final class Settings
         // Internal idempotency marker, never client-writable.
         'mailSenderMigrationDone' => false,
         'pluginHidden' => [],
+        // The sidebar's groups in the order chosen: 'f' + folder id, 'all',
+        // 'people', 'plugins'. Unlisted groups take their default place
+        // (web/src/lib/sidebarorder.js).
+        'sidebarOrder' => [],
         'tz' => null,
         // Where the owner's device last was (its IANA zone), reported by the
         // app at boot. Mail that names no place is read on this clock: an
@@ -208,6 +212,24 @@ final class Settings
         return $out;
     }
 
+    /** @return list<string> */
+    private static function sidebarOrder(mixed $value): array
+    {
+        if (!is_array($value) || !array_is_list($value) || count($value) > 500) {
+            throw HttpError::badRequest('sidebarOrder must be a list of up to 500 group keys');
+        }
+        $out = [];
+        foreach ($value as $key) {
+            if (!is_string($key) || preg_match('/^(?:f[1-9]\d{0,9}|all|people|plugins)$/D', $key) !== 1) {
+                throw HttpError::badRequest('sidebarOrder keys are f<folder id>, all, people or plugins');
+            }
+            if (!in_array($key, $out, true)) {
+                $out[] = $key;
+            }
+        }
+        return $out;
+    }
+
     public static function withDefaults(array $stored): array
     {
         $out = self::DEFAULTS;
@@ -252,6 +274,7 @@ final class Settings
                 'mailEventMode' => self::enum($key, $value, ['any', 'approved', 'review']),
                 'mailApprovedSenders' => MailPolicy::rules($value),
                 'pluginHidden' => self::pluginHidden($value),
+                'sidebarOrder' => self::sidebarOrder($value),
                 'tz' => self::tzid($value),
                 'hereTz' => self::tzid($value),
                 'reminderTimed' => Reminders::validateTimedList($value),

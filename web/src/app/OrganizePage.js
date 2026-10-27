@@ -10,8 +10,9 @@
 import { html, useState } from '../../vendor/index.js';
 import { useStore, toast, shallowEq } from './store.js';
 import {
-  updateCalendar, renameFolder, deleteFolder, createFolder,
+  updateCalendar, renameFolder, deleteFolder, createFolder, setSidebarOrder,
 } from './actions.js';
+import { sidebarGroups, moveGroup } from '../lib/sidebarorder.js';
 import { PageShell, EmptyState } from './PageShell.js';
 import { CalendarSettings } from './CalendarSettings.js';
 import { Icon, CalDot } from '../ui/icons.js';
@@ -157,11 +158,55 @@ function FolderSection({ folder, cals, folders }) {
   </section>`;
 }
 
+const BUILT_IN_NAMES = { all: 'All calendars', people: 'People', plugins: 'Plugins' };
+
+// The sidebar's groups in order, each with Move up and Move down: the way to
+// reorder on a phone or from the keyboard (on a computer the sidebar's
+// headers also drag). Built-in groups move like folders. Only the groups the
+// sidebar shows are listed (People with someone in it, Plugins with a plugin
+// drawing on the calendar); a move steps past the next one shown.
+function SidebarOrder({ keys, shown, folders }) {
+  const nameOf = (k) => BUILT_IN_NAMES[k] || folderNameOf(folders, Number(k.slice(1)));
+  const move = (k, by) => {
+    const next = shown[shown.indexOf(k) + by];
+    if (!next) return;
+    const rest = keys.filter((x) => x !== k);
+    setSidebarOrder(moveGroup(keys, k, rest.indexOf(next) + (by > 0 ? 1 : 0)));
+  };
+  return html`<section class="bc-org-order">
+    <div class="bc-org-sect-head">
+      <span class="bc-org-folder-name">Sidebar order</span>
+      <span class="bc-org-count">Drag a group's header in the sidebar, or move it here.</span>
+    </div>
+    <ol class="bc-org-order-list">
+      ${shown.map((k, i) => html`<li key=${k} class=${'bc-org-order-item' + (BUILT_IN_NAMES[k] ? ' is-builtin' : '')}>
+        <span>${nameOf(k)}</span>
+        <button
+          type="button" class="bc-icon-btn" disabled=${i === 0}
+          aria-label=${'Move ' + nameOf(k) + ' up'} title="Move up"
+          onClick=${() => move(k, -1)}
+        ><${Icon} name="chevronUp" size=${12} /></button>
+        <button
+          type="button" class="bc-icon-btn" disabled=${i === shown.length - 1}
+          aria-label=${'Move ' + nameOf(k) + ' down'} title="Move down"
+          onClick=${() => move(k, 1)}
+        ><${Icon} name="chevronDown" size=${12} /></button>
+      </li>`)}
+    </ol>
+  </section>`;
+}
+
 export function OrganizePage() {
-  const { calendars, folders } = useStore(
-    (s) => ({ calendars: s.calendars, folders: s.folders }),
+  const { calendars, folders, sidebarOrder, hasPeople, hasLayers } = useStore(
+    (s) => ({
+      calendars: s.calendars, folders: s.folders, sidebarOrder: s.settings.sidebarOrder,
+      hasPeople: (s.people || []).length > 0,
+      hasLayers: (s.plugins || []).some((pl) => pl.enabled && (pl.permissions || []).includes('ranges')),
+    }),
     shallowEq,
   );
+  const groupKeys = sidebarGroups(folders, sidebarOrder);
+  const shownKeys = groupKeys.filter((k) => (k !== 'people' || hasPeople) && (k !== 'plugins' || hasLayers));
   const [newName, setNewName] = useState('');
 
   const submitNew = async (e) => {
@@ -172,7 +217,9 @@ export function OrganizePage() {
   };
 
   const inFolder = new Set();
-  const byFolder = folders.map((f) => {
+  // Folders in the sidebar's order.
+  const ordered = groupKeys.filter((k) => k.startsWith('f')).map((k) => folders.find((f) => 'f' + f.id === k)).filter(Boolean);
+  const byFolder = ordered.map((f) => {
     const cals = calendars.filter((c) => (c.folderIds || []).includes(f.id));
     for (const c of cals) inFolder.add(c.id);
     return { folder: f, cals };
@@ -191,6 +238,7 @@ export function OrganizePage() {
       />
       <button type="submit" class="bc-btn" disabled=${!newName.trim()}>Add folder</button>
     </form>
+    ${calendars.length > 0 && html`<${SidebarOrder} keys=${groupKeys} shown=${shownKeys} folders=${folders} />`}
     ${folders.length === 0 && calendars.length > 0 && html`<${EmptyState} text="No folders yet. Create one above to group calendars in the sidebar." />`}
     ${byFolder.map(({ folder, cals }) => html`<${FolderSection} key=${folder.id} folder=${folder} cals=${cals} folders=${folders} />`)}
     ${unfiled.length > 0 && html`<section class="bc-org-section">

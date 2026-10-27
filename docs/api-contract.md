@@ -311,6 +311,7 @@ Preferences are stored per user. The server stores and validates them; the clien
 | `folderVisibility` | object: folder id → `{mode:"all"\|"none"\|"custom", custom:[calendarId]}` (at most 200 folders, 500 ids each) | `{}` | per-folder calendar visibility; meaning is up to the client |
 | `sidebarActiveOnly` | boolean | `false` | sidebar lists only checked calendars and people; display only |
 | `panelTucksSidebar` | boolean | `true` | desktop: the sidebar tucks away while an event's panel is open; display only |
+| `sidebarOrder` | list of group keys: `f<folder id>`, `all`, `people`, `plugins` | `[]` | the sidebar's groups in the order chosen; a group not listed takes its default place (folders in their own order, then All calendars, People, Plugins), and a new folder joins the folders; display only |
 | `appBadge` | `none`\|`review`\|`today`\|`remaining` | `none` | what the installed app's icon shows; see `GET /badge` |
 | `gridAnchor` | `context`\|`top` | `context` | where month, 3-week and 2-week views put the day they go to (today, a jump): a row or two below the top, or at the top; display only |
 | `removeAcceptedCancellations` | boolean | `false` | accepting an emailed cancellation in Review deletes the event (with Undo) instead of keeping it struck through; the accept response carries `removed: true` |

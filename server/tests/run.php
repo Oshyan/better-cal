@@ -2983,6 +2983,12 @@ check('settings: a new account can start with it pending', \BetterCal\Domain\Set
 checkEq('settings: welcome steps dedupe', ['import', 'google'], \BetterCal\Domain\Settings::validate(['welcomeSteps' => ['import', 'google', 'import']])['welcomeSteps']);
 $threw = false; try { \BetterCal\Domain\Settings::validate(['welcomeSteps' => ['nope']]); } catch (\Throwable) { $threw = true; }
 check('settings: unknown welcome step refused', $threw);
+checkEq('settings: sidebar order keeps folder and built-in group keys once, in order', ['all', 'f12', 'people', 'plugins', 'f3'],
+    \BetterCal\Domain\Settings::validate(['sidebarOrder' => ['all', 'f12', 'people', 'f12', 'plugins', 'f3']])['sidebarOrder']);
+foreach ([['f0'], ['folder1'], [12], 'all', ['x' => 'all']] as $bad) {
+    $threw = false; try { \BetterCal\Domain\Settings::validate(['sidebarOrder' => $bad]); } catch (\Throwable) { $threw = true; }
+    check('settings: sidebar order refuses ' . json_encode($bad), $threw);
+}
 $nowSql = '2026-10-03 12:00:00';
 check('search upcoming: an event that has not ended', \BetterCal\Domain\Search::isUpcoming(['end_utc' => '2026-10-03 13:00:00', 'rrule' => null], $nowSql));
 check('search upcoming: one that ended is past', !\BetterCal\Domain\Search::isUpcoming(['end_utc' => '2026-10-03 11:00:00', 'rrule' => null], $nowSql));

@@ -32,6 +32,7 @@ import { zoneIndex, filterZones, parseOffset } from '../src/lib/zonesearch.js';
 import { parseJumpText, jumpGranularity, parseJumpTarget } from '../src/lib/jumpparse.js';
 import { activeMarker, markerSuggestions, applyMarkerPick, calendarMarker, personMarker, SUGGEST_MAX } from '../src/lib/markersuggest.js';
 import { pastedText } from '../src/lib/pastetext.js';
+import { sidebarGroups, moveGroup } from '../src/lib/sidebarorder.js';
 import { parseClockText, resolveClock, minsToHHMM, hhmmToMins, parseDateText, durationLabel } from '../src/lib/whenparse.js';
 import { monthWeeks, stepMonthOf } from '../src/lib/minimonth.js';
 import { buildRange } from '../src/lib/quickrange.js';
@@ -772,6 +773,22 @@ eq('paste: several links say nothing about which', pastedText('Two events', '<a 
 eq('paste: the same link twice is one link', pastedText('Gig', '<a href="https://a.example.test/1">a</a><a href=\'https://a.example.test/1\'>b</a>'), 'Gig https://a.example.test/1');
 eq('paste: mail and anchor links are not event links', pastedText('Ask', '<a href="mailto:host@example.test">x</a><a href="#top">y</a>'), 'Ask');
 eq('paste: nothing is nothing', pastedText('', ''), '');
+
+console.log('--- sidebar group order ---');
+{
+  const fs = [{ id: 3 }, { id: 1 }, { id: 7 }];
+  eq('order: none chosen is folders, then All calendars, People, Plugins', sidebarGroups(fs, []).join(' '), 'f3 f1 f7 all people plugins');
+  eq('order: a chosen order is kept', sidebarGroups(fs, ['all', 'f7', 'people', 'f3', 'f1', 'plugins']).join(' '), 'all f7 people f3 f1 plugins');
+  eq('order: a new folder joins the other folders, before a group placed after them',
+    sidebarGroups([...fs, { id: 9 }], ['all', 'f7', 'f3', 'f1', 'people', 'plugins']).join(' '), 'all f7 f3 f1 f9 people plugins');
+  eq('order: a deleted folder and an unknown key are skipped', sidebarGroups([{ id: 1 }], ['f2', 'people', 'bogus', 'f1']).join(' '), 'people f1 all plugins');
+  eq('order: repeats once', sidebarGroups([{ id: 1 }], ['f1', 'f1', 'all']).join(' '), 'f1 all people plugins');
+  const keys = ['f3', 'f1', 'all', 'people'];
+  eq('move: up one', moveGroup(keys, 'all', 1).join(' '), 'f3 all f1 people');
+  eq('move: to the top', moveGroup(keys, 'people', 0).join(' '), 'people f3 f1 all');
+  eq('move: past the end stays last', moveGroup(keys, 'f3', 99).join(' '), 'f1 all people f3');
+  eq('move: an unknown key changes nothing', moveGroup(keys, 'f9', 0).join(' '), 'f3 f1 all people');
+}
 
 console.log('--- week start setting ---');
 // All earlier week tests ran under the default (Monday). Flip to Sunday and

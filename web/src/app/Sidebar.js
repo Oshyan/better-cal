@@ -18,8 +18,12 @@ import {
   toggleCalendarVisible, createFolder, deleteFolder,
   folderMode, setFolderVisibilityMode, ALL_GROUP_ID, setSidebarActiveOnly,
   togglePersonVisible, enterPeopleSolo, exitPeopleSolo,
-  peopleVisibilityMode, setPeopleVisibilityMode, linkPersonToEvent, saveSetting,
+  peopleVisibilityMode, setPeopleVisibilityMode, linkPersonToEvent, saveSetting, setSidebarOrder,
 } from './actions.js';
+import { sidebarGroups, moveGroup } from '../lib/sidebarorder.js';
+
+// What a dragged sidebar group carries, so other drags never read as one.
+const GROUP_MIME = 'application/x-bettercal-group';
 import { startPointerDrag, externalDropTarget, setDropRowHighlight } from '../ui/DragController.js';
 import { CalendarSettings } from './CalendarSettings.js';
 import { needsAttention } from './system.js';
@@ -339,7 +343,7 @@ function PeopleModeButton() {
 
 // Folder header: collapse, visibility mode, hover-revealed + (new calendar
 // in this folder) and a gear opening a small options panel (rename, delete).
-function FolderHead({ folder, cals, collapsed, onToggleCollapse }) {
+function FolderHead({ folder, cals, collapsed, onToggleCollapse, dragProps }) {
   const [options, setOptions] = useState(false);
   const [renameTo, setRenameTo] = useState(folder.name);
 
@@ -366,7 +370,7 @@ function FolderHead({ folder, cals, collapsed, onToggleCollapse }) {
   };
 
   return html`<div class="bc-folder-headwrap">
-    <div class="bc-folder-headrow">
+    <div class="bc-folder-headrow" ...${dragProps || {}}>
       <button
         type="button" class="bc-folder-head"
         aria-expanded=${!collapsed}
@@ -481,12 +485,12 @@ export function Sidebar({ open, collapsed, onClose }) {
     setManageCollapsed(next);
     try { localStorage.setItem('bc-manage-collapsed', next ? '1' : '0'); } catch { /* private mode */ }
   };
-  const { calendars, folders, collapsedFolders, route, people, collapsedAllCals, collapsedPeople, peopleSolo, activeOnly, plugins, pluginHidden, reviewCount, attention } = useStore(
+  const { calendars, folders, collapsedFolders, route, people, collapsedAllCals, sidebarOrder, collapsedPeople, peopleSolo, activeOnly, plugins, pluginHidden, reviewCount, attention } = useStore(
     (s) => ({
       calendars: s.calendars, folders: s.folders,
       collapsedFolders: s.collapsedFolders, route: s.route,
       folderVisibility: s.folderVisibility,
-      people: s.people, collapsedAllCals: s.collapsedAllCals,
+      people: s.people, collapsedAllCals: s.collapsedAllCals, sidebarOrder: s.settings.sidebarOrder,
       plugins: s.plugins, pluginHidden: s.settings.pluginHidden || {},
       reviewCount: s.reviewCount,
       attention: needsAttention(s.systemHealth),
@@ -495,6 +499,9 @@ export function Sidebar({ open, collapsed, onClose }) {
     }),
     shallowEq,
   );
+  // A group being dragged to a new place, and where it would land.
+  const [dragGroup, setDragGroup] = useState(null);
+  const [dropAt, setDropAt] = useState(null); // {key, after}
   // A calendar filed in a folder is listed twice — once under its folder and
   // once in All calendars — so the open gear is keyed by SECTION as well as
   // id; keying by id alone opened both copies of the settings panel at once.
@@ -671,28 +678,62 @@ export function Sidebar({ open, collapsed, onClose }) {
       && html`<span class="bc-manage-badge" aria-label=${reviewCount + ' awaiting a decision'}>${reviewCount}</span>`}${r === 'settings' && attention && html`<span class="bc-attn-dot" role="img" aria-label="Needs attention" title="Something needs your attention: Settings, System"></span>`}</button>`)}
   </nav>`;
 
-  return html`<aside class="bc-sidebar${open ? ' is-open' : ''}${collapsed ? ' is-collapsed' : ''}">
-    ${!phone && html`<${SidebarResize} />`}
-    ${onClose && html`<div class="bc-sidebar-mobilehead">
-      <span class="bc-manage-head">Better-Cal</span>
-      <button type="button" class="bc-icon-btn" aria-label="Close sidebar" onClick=${onClose}><${Icon} name="close" size=${15} /></button>
-    </div>`}
-    <div class="bc-sidebar-scroll bc-scroll-edges" ref=${scrollRef}>
-      <${MiniMonth} />
-      ${phone && html`<div class="bc-folder-headrow bc-sb-calhead">
-        <span class="bc-folder-head bc-folder-static">Calendars</span>
-        ${allCalTools}
-      </div>`}
-      ${byFolder.map(({ folder, cals }) => html`<section key=${'f' + folder.id} class="bc-folder">
+  // The groups by key, shown in the order chosen (lib/sidebarorder.js). On
+  // a computer a group's header drags to a new place; the Organize page has
+  // Move up and Move down for phones and the keyboard.
+  const groupKeys = sidebarGroups(folders, sidebarOrder);
+  const groupDrag = (key) => (phone ? {} : {
+    draggable: true,
+    onDragStart: (e) => {
+      e.dataTransfer.setData(GROUP_MIME, key);
+      e.dataTransfer.effectAllowed = 'move';
+      setDragGroup(key);
+    },
+    onDragEnd: () => { setDragGroup(null); setDropAt(null); },
+  });
+  const onGroupDragOver = (e) => {
+    if (!dragGroup) return;
+    const sec = e.target.closest && e.target.closest('[data-group]');
+    if (!sec) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    const r = sec.getBoundingClientRect();
+    const key = sec.dataset.group;
+    const after = e.clientY > r.top + r.height / 2;
+    if (!dropAt || dropAt.key !== key || dropAt.after !== after) setDropAt({ key, after });
+  };
+  const onGroupDrop = (e) => {
+    if (!dragGroup) return;
+    e.preventDefault();
+    const target = dropAt;
+    const moving = dragGroup;
+    setDragGroup(null);
+    setDropAt(null);
+    if (!target || target.key === moving) return;
+    const rest = groupKeys.filter((k) => k !== moving);
+    const at = rest.indexOf(target.key) + (target.after ? 1 : 0);
+    const next = moveGroup(groupKeys, moving, at);
+    if (next.join() !== groupKeys.join()) setSidebarOrder(next);
+  };
+  const groupCls = (key) => 'bc-folder'
+    + (dragGroup === key ? ' is-dragging' : '')
+    + (dropAt && dragGroup && dropAt.key === key && key !== dragGroup ? (dropAt.after ? ' is-drop-after' : ' is-drop-before') : '');
+
+  const groupNodes = {};
+  for (const { folder, cals } of byFolder) {
+    const key = 'f' + folder.id;
+    groupNodes[key] = html`<section key=${key} data-group=${key} class=${groupCls(key)}>
         <${FolderHead}
           folder=${folder} cals=${cals}
           collapsed=${!!collapsedFolders[folder.id]}
           onToggleCollapse=${() => toggleFolder(folder.id)}
+          dragProps=${groupDrag(key)}
         />
         ${!collapsedFolders[folder.id] && html`<div class="bc-folder-body">${rows(cals, 'f' + folder.id)}</div>`}
-      </section>`)}
-      ${phone ? (unfiled.length > 0 && html`<section class="bc-folder">
-        ${byFolder.length > 0 && html`<div class="bc-folder-headrow">
+      </section>`;
+  }
+  groupNodes.all = phone ? (unfiled.length > 0 && html`<section key="all" data-group="all" class=${groupCls('all')}>
+        ${byFolder.length > 0 && html`<div class="bc-folder-headrow" ...${groupDrag('all')}>
           <button
             type="button" class="bc-folder-head bc-folder-static"
             aria-expanded=${!collapsedAllCals}
@@ -700,8 +741,8 @@ export function Sidebar({ open, collapsed, onClose }) {
           ><span class="bc-folder-caret${collapsedAllCals ? ' is-closed' : ''}"><${Icon} name="chevronDown" size=${13} /></span>Other calendars</button>
         </div>`}
         ${(byFolder.length === 0 || !collapsedAllCals) && rows(unfiled, 'all')}
-      </section>`) : html`<section class="bc-folder">
-        ${byFolder.length > 0 && html`<div class="bc-folder-headrow">
+      </section>`) : html`<section key="all" data-group="all" class=${groupCls('all')}>
+        ${byFolder.length > 0 && html`<div class="bc-folder-headrow" ...${groupDrag('all')}>
           <button
             type="button" class="bc-folder-head bc-folder-static"
             aria-expanded=${!collapsedAllCals}
@@ -710,9 +751,9 @@ export function Sidebar({ open, collapsed, onClose }) {
           ${allCalTools}
         </div>`}
         ${(byFolder.length === 0 || !collapsedAllCals) && rows(calendars, 'all')}
-      </section>`}
-      ${people.length > 0 && html`<section class="bc-folder">
-        <div class="bc-folder-headrow">
+      </section>`;
+  groupNodes.people = people.length > 0 && html`<section key="people" data-group="people" class=${groupCls('people')}>
+        <div class="bc-folder-headrow" ...${groupDrag('people')}>
           <button
             type="button" class="bc-folder-head bc-folder-static"
             aria-expanded=${!collapsedPeople}
@@ -741,9 +782,9 @@ export function Sidebar({ open, collapsed, onClose }) {
             })}
           />`;
         })}
-      </section>`}
-      ${layerPlugins.length > 0 && html`<section class="bc-folder" aria-label="Plugin layers">
-        <div class="bc-folder-head">
+      </section>`;
+  groupNodes.plugins = layerPlugins.length > 0 && html`<section key="plugins" data-group="plugins" class=${groupCls('plugins')} aria-label="Plugin layers">
+        <div class="bc-folder-head" ...${groupDrag('plugins')}>
           <span class="bc-folder-name"><${Icon} name="plugins" size=${13} /> Plugins</span>
         </div>
         ${layerPlugins.map((pl) => html`<div key=${pl.id} class="bc-cal-item">
@@ -760,7 +801,21 @@ export function Sidebar({ open, collapsed, onClose }) {
             <button type="button" class="bc-icon-btn" title="Plugin settings" onClick=${() => set({ route: 'plugins', pluginFocus: pl.id })}><${Icon} name="settings" size=${13} /></button>
           </div>
         </div>`)}
-      </section>`}
+      </section>`;
+
+  return html`<aside class="bc-sidebar${open ? ' is-open' : ''}${collapsed ? ' is-collapsed' : ''}">
+    ${!phone && html`<${SidebarResize} />`}
+    ${onClose && html`<div class="bc-sidebar-mobilehead">
+      <span class="bc-manage-head">Better-Cal</span>
+      <button type="button" class="bc-icon-btn" aria-label="Close sidebar" onClick=${onClose}><${Icon} name="close" size=${15} /></button>
+    </div>`}
+    <div class="bc-sidebar-scroll bc-scroll-edges" ref=${scrollRef} onDragOver=${onGroupDragOver} onDrop=${onGroupDrop}>
+      <${MiniMonth} />
+      ${phone && html`<div class="bc-folder-headrow bc-sb-calhead">
+        <span class="bc-folder-head bc-folder-static">Calendars</span>
+        ${allCalTools}
+      </div>`}
+      ${groupKeys.map((k) => groupNodes[k])}
       <${AddMenu} />
       ${phone && pagesGrid}
       ${soloCal && html`<div class="bc-solo-banner" role="status">

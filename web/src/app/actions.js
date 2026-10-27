@@ -1040,6 +1040,19 @@ export async function toggleFitRows() {
   }
 }
 
+// The sidebar's group order (lib/sidebarorder.js): shown at once, saved in
+// the background, put back with a note if the save fails.
+export async function setSidebarOrder(order) {
+  const prev = state.settings.sidebarOrder || [];
+  adoptSettings({ sidebarOrder: order });
+  try {
+    await api('/settings', { method: 'PATCH', body: { sidebarOrder: order } });
+  } catch (e) {
+    adoptSettings({ sidebarOrder: prev });
+    toast('Could not save the order: ' + e.message, { error: true });
+  }
+}
+
 export async function saveSetting(key, value) {
   try {
     const data = await api('/settings', { method: 'PATCH', body: { [key]: value } });

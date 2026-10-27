@@ -12,6 +12,7 @@ Security fixes are tracked privately as GitHub security advisories until they sh
 - **Edit approved senders as text:** Settings, Invitations, Approved senders, Edit as text: one per line, with `*.example.com` for a domain's subdomains. Paste a list or import a CSV; lines that can't be used are left out and listed with the reason.
 - **A number on the app icon:** Settings, Notifications, Show on app icon: Review items waiting, events today, or events still to come today, on the installed app's icon on a computer, iPhone or iPad. Off by default.
 - **Event links become events:** paste or share a Luma, Partiful, Eventbrite, Meetup or Pie link into quick add and it fills in the title, time, place and link from the page, for you to check before saving.
+- **Reorder the sidebar:** drag a folder's header, or All calendars, People or Plugins, to a new place in the sidebar, or use Move up and Move down under Calendars & folders.
 - **Paste anywhere:** on a computer, Cmd/Ctrl+V on the calendar opens quick add with the link or text you copied, already read. Enter adds it.
 - **Quick add suggests as you type:** `/` lists your calendars, `#` your tags and `@` your people, in quick add and the editor's text box. Enter or Tab fills one in. `@"Full Name"` links someone whose first name another person shares.
 - **Plugins wait for their settings:** one that needs a key or account (Fibery) opens its settings when you turn it on, says what to fill in, and doesn't run until you have.

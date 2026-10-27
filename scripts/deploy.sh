@@ -54,9 +54,15 @@ if [ "${SKIP_TESTS:-0}" != "1" ]; then
   # and east of UTC, UTC itself, a half-hour offset, and a southern-hemisphere
   # DST zone past +12. It used to pass only in Pacific time, which hid all-day
   # events moving a day for anyone east of their event's zone.
+  # A run that fails shows its last lines, errors included: a rare failure
+  # once stopped a deploy with nothing to go on but the last passing test.
   for zone in America/Los_Angeles UTC Europe/Berlin Asia/Kolkata Pacific/Auckland; do
     printf '%-20s ' "${zone}"
-    TZ="${zone}" node "${DEPLOY_SNAPSHOT}/web/tests/smoke.mjs" 2>/dev/null | tail -1
+    if ! smoke_out="$(TZ="${zone}" node "${DEPLOY_SNAPSHOT}/web/tests/smoke.mjs" 2>&1)"; then
+      printf 'FAILED\n%s\n' "$(printf '%s\n' "${smoke_out}" | tail -40)"
+      false
+    fi
+    printf '%s\n' "${smoke_out}" | tail -1
   done
   php "${DEPLOY_SNAPSHOT}/server/tests/run.php" | tail -1
   # Vendored frontend libraries must be exactly the pinned releases.

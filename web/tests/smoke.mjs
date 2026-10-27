@@ -1982,25 +1982,35 @@ console.log('--- API offline session transitions ---');
   const makeWorker = (source = swSource, { failHandoffWrites = false } = {}) => {
     const stores = new Map(); // cache name -> Map(url -> Response)
     const keyOf = (r) => (typeof r === 'string' ? r : r.url);
+    // Every cache call the worker makes is tracked, so settle() can wait for
+    // its un-awaited writes to finish instead of guessing how long they take
+    // (a fixed 5 ms wait failed when the machine was busy).
+    const pending = new Set();
+    const tracked = (fn) => (...args) => {
+      const p = Promise.resolve().then(() => fn(...args));
+      pending.add(p);
+      p.finally(() => pending.delete(p)).catch(() => {});
+      return p;
+    };
     const caches = {
-      keys: async () => [...stores.keys()],
-      delete: async (name) => stores.delete(name),
-      open: async (name) => {
+      keys: tracked(async () => [...stores.keys()]),
+      delete: tracked(async (name) => stores.delete(name)),
+      open: tracked(async (name) => {
         if (!stores.has(name)) stores.set(name, new Map());
         const m = stores.get(name);
         return {
-          put: async (req, res) => {
+          put: tracked(async (req, res) => {
             if (failHandoffWrites && name === 'bc-handoff') throw new Error('quota');
             m.set(keyOf(req), res);
-          },
-          match: async (req) => (m.has(keyOf(req)) ? m.get(keyOf(req)).clone() : undefined),
-          delete: async (req) => m.delete(keyOf(req)),
+          }),
+          match: tracked(async (req) => (m.has(keyOf(req)) ? m.get(keyOf(req)).clone() : undefined)),
+          delete: tracked(async (req) => m.delete(keyOf(req))),
         };
-      },
-      match: async (req) => {
+      }),
+      match: tracked(async (req) => {
         for (const m of stores.values()) if (m.has(keyOf(req))) return m.get(keyOf(req)).clone();
         return undefined;
-      },
+      }),
     };
     const handlers = {};
     const net = { respond: null }; // set per test: (url) => Response | Promise<Response>, or throws for offline
@@ -2037,7 +2047,15 @@ console.log('--- API offline session transitions ---');
       const response = stores.get('bc-handoff')?.get('/__handoff');
       return response ? response.clone().json() : null;
     };
-    const settle = () => new Promise((r) => setTimeout(r, 5)); // let the un-awaited cache write land
+    // Let the worker's un-awaited cache writes land: wait until no cache call
+    // is in flight, and none starts in the turn after (a write's next step).
+    const settle = async () => {
+      for (;;) {
+        await Promise.allSettled([...pending]);
+        await new Promise((r) => setImmediate(r));
+        if (pending.size === 0) return;
+      }
+    };
     // Dispatch a fetch and report whether the worker took it (respondWith) or left it to the network.
     const takes = (path, mode) => {
       let took = false;

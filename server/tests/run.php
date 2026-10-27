@@ -6021,7 +6021,7 @@ checkEq('push validate stores the canonical spelling', 'https://fcm.googleapis.c
         new SystemHealth($p5db),
         $p5subs,
         new BetterCal\Infra\EmailSender([]),
-        [],
+        ['app_root' => dirname(__DIR__, 2)], // a real install always sets it
     );
     $p5health = json_decode($p5system->health($p5sessionReq)->body, true);
     checkEq('push health: identifies this device by endpoint hash', PushSubscriptions::endpointHash($endpoints[2]), $p5health['rows'][0]['endpointHash'] ?? null);
@@ -8987,7 +8987,7 @@ checkEq('google sync: without a synctoken the poll applies as before', false,
         new BetterCal\Domain\SystemHealth(new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null])),
         new BetterCal\Domain\PushSubscriptions(new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null])),
         new BetterCal\Infra\EmailSender([]),
-        [],
+        ['app_root' => dirname(__DIR__, 2)], // a real install always sets it
     );
     $ceReq = static function (array $body, string $auth = 'session'): BetterCal\Http\Request {
         $r = new BetterCal\Http\Request('POST', '/api/v1/system/client-event', [], $body);
@@ -11346,7 +11346,7 @@ check('access code: process/security regression suite', $accessStatus === 0, $ac
     $wdb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, created_at TEXT, settings_json TEXT)');
     $wroot = sys_get_temp_dir() . '/bc-worker-watch-' . bin2hex(random_bytes(3));
     mkdir($wroot);
-    $wcfg = ['app_root' => $wroot, 'db' => [], 'alert_email' => ''];
+    $wcfg = ['app_root' => $wroot, 'db' => ['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null], 'alert_email' => ''];
     $noMail = new BetterCal\Infra\EmailSender([]);
     $WW = BetterCal\Domain\WorkerWatch::class;
     $t = static fn(string $iso): DateTimeImmutable => new DateTimeImmutable($iso, new DateTimeZone('UTC'));

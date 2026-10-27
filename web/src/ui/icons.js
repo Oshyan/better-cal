@@ -181,7 +181,8 @@ export function Icon({ name, size = 15 }) {
     // Month rows that fit their days (#171): a page whose middle row has
     // grown, with the arrows that grew it.
     rowsFit: html`<rect x="2.2" y="2.6" width="11.6" height="11.2" rx="1.4" />
-      <path d="M2.2 5.2h11.6M2.2 11.2h11.6M8 6.6v3.2M6.9 7.6L8 6.5l1.1 1.1M6.9 8.8L8 9.9l1.1-1.1" />`,
+      <path d="M2.2 4.8h11.6M2.2 11.6h11.6" />
+      <path d="M8 6.4v3.6M6.7 7.6L8 6.3l1.3 1.3M6.7 8.8L8 10.1l1.3-1.3" stroke-width="1" />`,
     // Split: a strip of weeks over a list.
     viewSplit: html`<rect x="2.2" y="2.4" width="11.6" height="5.4" rx="1.2" />
       <path d="M6.1 2.4v5.4M9.9 2.4v5.4M2.6 10.6h10.8M2.6 13.4h7.4" />`,

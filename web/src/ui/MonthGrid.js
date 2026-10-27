@@ -17,6 +17,7 @@
 // dismissing the editor is the cancel.
 
 import { html, useState, useRef, useMemo, useEffect, useLayoutEffect, useCallback } from '../../vendor/index.js';
+import { gridMove } from './gridmove.js';
 import {
   keyOfEpochDay, epochDayOfKey, weekIndexOfKey,
   dayKeysOfWeek, dateOfDayKey, addDaysDate, parseISO, toISOWithOffset,
@@ -447,7 +448,9 @@ export function MonthGrid({
   const occByIdRef = useRef(new Map());
   occByIdRef.current = useMemo(() => new Map(occurrences.map((o) => [o.instanceId, o])), [occurrences]);
 
-  const dragMoveOcc = useCallback((occ, ev) => {
+  // `from` is set when the drag starts outside the grid (the expanded day,
+  // through gridMove): the day it was picked up from, and the caller's hooks.
+  const dragMoveOcc = useCallback((occ, ev, from = null) => {
     if (String(occ.instanceId).startsWith('plg:')) return; // plugin bands are job-owned
     ev.stopPropagation();
     const src = ev.currentTarget;
@@ -470,7 +473,7 @@ export function MonthGrid({
     } : null;
     const { startKey, endKey } = occurrenceDaySpan(occ);
     const spanDays = epochDayOfKey(endKey) - epochDayOfKey(startKey);
-    const grabKey = dayKeyAtPoint({ x: ev.clientX, y: ev.clientY }) || startKey;
+    const grabKey = (from && from.grabKey) || dayKeyAtPoint({ x: ev.clientX, y: ev.clientY }) || startKey;
     const grabOffset = epochDayOfKey(grabKey) - epochDayOfKey(startKey);
     startPointerDrag(ev, {
       makeGhost: () => cloneAsGhost(src),
@@ -478,6 +481,7 @@ export function MonthGrid({
       // Option/Alt copies an ordinary event (not a trip, a person's away
       // time or a plugin band) on a calendar that takes new events.
       copyable: !isFeed && !occ.isContainer && !/^(avail|plg):/.test(String(occ.instanceId)),
+      onLift: from && from.onLift ? () => from.onLift() : undefined,
       onMove: (pt) => {
         if (extKinds) {
           const ext = externalDropTarget(pt, extKinds);
@@ -501,6 +505,7 @@ export function MonthGrid({
         dropRef.current.ext = null;
         setDropRowHighlight(null);
         highlightDays([]);
+        if (from && from.onEnd) from.onEnd();
         if (ext) {
           if (ext.kind === 'cal' && onDropToCalendar) onDropToCalendar(occ, ext.id, pt);
           else if (ext.kind === 'person' && onDropToPerson) onDropToPerson(occ, ext.name, pt);
@@ -530,9 +535,14 @@ export function MonthGrid({
         // `at` lets the caller raise the repeating-scope chip at the pointer.
         if (onMoveEvent) onMoveEvent({ instanceId: occ.instanceId, newStart, newEnd, at: pt });
       },
-      onCancel: () => { setDropRowHighlight(null); dropRef.current.ext = null; highlightDays([]); },
+      onCancel: () => { setDropRowHighlight(null); dropRef.current.ext = null; highlightDays([]); if (from && from.onEnd) from.onEnd(); },
     });
   }, [dayKeyAtPoint, highlightDays, renderedDayKeys, onMoveEvent, onMoveSpan, onMoveTrip, onDropToCalendar, onDropToPerson, onDropToTrip, calendars]);
+  // The expanded day's rows drag through this (gridmove.js).
+  useEffect(() => {
+    gridMove.start = dragMoveOcc;
+    return () => { if (gridMove.start === dragMoveOcc) gridMove.start = null; };
+  }, [dragMoveOcc]);
 
   const dragResizeOcc = useCallback((occ, edge, ev) => {
     if (String(occ.instanceId).startsWith('plg:')) return; // plugin bands are job-owned

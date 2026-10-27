@@ -11,6 +11,7 @@ import { occurrenceDaySpan } from './monthmath.js';
 import { Icon } from './icons.js';
 import { TokenIcon, DayLabel } from './ContextStrip.js';
 import { isContext, isDayLabel, contextToken, contextText, contextTitle } from '../lib/context.js';
+import { gridMove } from './gridmove.js';
 
 export const MOBILE_QUERY = PHONE_QUERY;
 const EVENTS_PER_PAGE = 200;
@@ -34,6 +35,14 @@ export function DayExpand({ dayKey, anchorRect, occurrences, calendars, dimSet, 
   useBackClose(isMobile(), onClose);
   const [eventPage, setEventPage] = useState(0);
   const [contextPage, setContextPage] = useState(0);
+  // Dragging a row out: the panel steps aside while the drag is on (hidden,
+  // still mounted, so the drag keeps its source) and comes back after the
+  // drop, without the event that moved, ready for the next one.
+  const [dragging, setDragging] = useState(false);
+  const dragOut = (occ, ev) => {
+    if (isMobile() || ev.button !== 0 || !gridMove.start) return;
+    gridMove.start(occ, ev, { grabKey: dayKey, onLift: () => setDragging(true), onEnd: () => setDragging(false) });
+  };
 
   useEffect(() => {
     setEventPage(0);
@@ -85,7 +94,7 @@ export function DayExpand({ dayKey, anchorRect, occurrences, calendars, dimSet, 
     style = `left:${p.left}px;top:${p.top}px;width:${w}px;max-height:${maxH}px`;
   }
 
-  return html`<div class="bc-overlay" onClick=${(e) => { if (e.target === e.currentTarget) onClose(); }}>
+  return html`<div class=${'bc-overlay' + (dragging ? ' is-dragging-out' : '')} onClick=${(e) => { if (e.target === e.currentTarget) onClose(); }}>
     <div
       class="bc-dayexpand${mobile ? ' bc-sheet' : ''}"
       style=${style}
@@ -139,6 +148,7 @@ export function DayExpand({ dayKey, anchorRect, occurrences, calendars, dimSet, 
               occ=${occ} cal=${calendars[occ.calendarId]} showTime=${false} seg=${seg}
               dimmed=${dimSet && dimSet.has(occ.instanceId)} nowMs=${nowMs}
               onOpen=${(id, rect) => onOpenEvent && onOpenEvent(id, rect, openOpts)}
+              onPointerDown=${(ev) => dragOut(occ, ev)}
             />
             ${onOpenDetail && !occ.isGroup && html`<button
               type="button" class="bc-icon-btn bc-dayexpand-open"

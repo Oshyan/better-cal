@@ -3120,6 +3120,9 @@ body.bc-rescheduling { user-select: none; }
   border: 1px solid var(--border-strong); border-radius: 999px; padding: 0 6px; color: var(--fg-muted);
 }
 .bc-plugin-tools { margin-left: auto; display: flex; align-items: center; gap: 6px; flex: none; }
+/* An event dragged out of the expanded day: the panel steps aside so the
+   days it can land on show. */
+.bc-overlay.is-dragging-out { visibility: hidden; }
 .bc-plugin-desc { margin: 6px 0 0; font-size: 12.5px; color: var(--fg-muted); }
 /* The uninstall question, asked in the card itself. */
 .bc-plugin-confirm { margin: 8px 0 2px; padding: 10px 12px; border: 1px solid var(--danger); border-radius: var(--radius); font-size: 13px; }

@@ -2466,8 +2466,10 @@ final class Events
                 $newStart = isset($in['start']) ? Time::parseIso((string) $in['start'], $tzid) : $curStart;
                 $newEnd = isset($in['end']) ? Time::parseIso((string) $in['end'], $tzid) : $curEnd;
             }
-            if ($newEnd <= $newStart) {
-                throw HttpError::badRequest('end must be after start');
+            // Equal is allowed: a moment with no length (a task's due time,
+            // an iCal DTEND equal to DTSTART) moves as one.
+            if ($newEnd < $newStart) {
+                throw HttpError::badRequest('end must not be before start');
             }
             $fields['start_utc'] = Time::toDb($newStart);
             $fields['end_utc'] = Time::toDb($newEnd);

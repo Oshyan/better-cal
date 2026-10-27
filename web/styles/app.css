@@ -2372,6 +2372,10 @@ body.bc-rescheduling { user-select: none; }
 .bc-tg-track .bc-tg-col.is-month-start {
   box-shadow: inset 2px 0 0 color-mix(in srgb, var(--accent) 60%, var(--border-strong));
 }
+/* The header's words start clear of that line, even when a holiday's name
+   fills the header (New Year's Day). */
+.bc-tg-head-day.is-month-start { padding-left: 7px; }
+.bc-tg-phone .bc-tg-head-day.is-month-start { padding-left: 4px; }
 .bc-tg-month-line {
   position: absolute; top: 0; bottom: 0; width: 2px;
   background: color-mix(in srgb, var(--accent) 60%, var(--border-strong));

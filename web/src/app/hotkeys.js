@@ -41,6 +41,8 @@ export const HOTKEYS = [
   // Shown in the sheet only: a modifier held during a drag, read by DragController;
   // keyboard.js ignores any key pressed with Alt, so this binds nothing.
   { id: 'dragCopy', keys: ['Alt'], display: ['Option / Alt', 'drag'], label: 'Copy an event instead of moving it (hold while dragging)', group: 'Events' },
+  // Shown in the sheet only: the editor handles it (EditorDrawer.js).
+  { id: 'editorSave', keys: ['Enter'], mod: true, display: ['⌘/Ctrl', 'Enter'], label: 'Create or save (in the editor)', group: 'Events' },
 
   // Overlays
   { id: 'palette', keys: ['k'], mod: true, display: ['⌘/Ctrl', 'K'], label: 'Command palette', group: 'Overlays' },

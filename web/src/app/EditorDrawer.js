@@ -316,6 +316,27 @@ export function EditorDrawer() {
   const nlInputRef = useRef(null);
   const nlMarkers = useMarkerSuggest(nlInputRef, nlText, (v) => onNlInput({ target: { value: v } }));
 
+  // Cmd/Ctrl+Enter anywhere in the editor does what Create (or Save) does.
+  // From the plain-language box its text is read first, so typing and saving
+  // is one step. The submit waits for the render that has the read fields.
+  const [submitSoon, setSubmitSoon] = useState(false);
+  useEffect(() => {
+    if (!submitSoon) return;
+    setSubmitSoon(false);
+    if (panelRef.current) panelRef.current.requestSubmit();
+  }, [submitSoon]);
+  const onFormKeyDown = async (e) => {
+    if (e.key !== 'Enter' || !(e.metaKey || e.ctrlKey) || e.isComposing) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.target.closest && e.target.closest('.bc-nl') && nlText.trim()) {
+      clearTimeout(nlTimer.current);
+      await runNlParse(nlText, true);
+    }
+    setSubmitSoon(true);
+  };
+  const saveKeys = /Mac|iPhone|iPad/.test(navigator.platform || '') ? '⌘ Enter' : 'Ctrl+Enter';
+
   useEffect(() => () => { clearTimeout(nlTimer.current); clearTimeout(flashTimer.current); }, []);
 
   // The rich-text editor rewrites the description into its own canonical
@@ -817,7 +838,7 @@ export function EditorDrawer() {
   const lab = (text, cls = '') => html`<span class=${'bc-ed-lab' + cls}>${text}</span>`;
 
   return html`<div class="bc-drawer-backdrop" onClick=${(e) => { if (e.target === e.currentTarget) requestClose(); }}>
-    <form class="bc-drawer bc-editor" ref=${panelRef} onSubmit=${submit} role="dialog" aria-modal="true" aria-label=${(occ ? 'Edit ' : 'New ') + (form.isContainer ? 'trip' : 'event')}>
+    <form class="bc-drawer bc-editor" ref=${panelRef} onSubmit=${submit} onKeyDown=${onFormKeyDown} role="dialog" aria-modal="true" aria-label=${(occ ? 'Edit ' : 'New ') + (form.isContainer ? 'trip' : 'event')}>
       <div class="bc-drawer-head">
         <button type="button" class="bc-icon-btn bc-ed-x" aria-label="Close" onClick=${requestClose}><${Icon} name="close" size=${phoneOpen ? 20 : 15} /></button>
         <h2>${(occ ? 'Edit ' : 'New ') + (form.isContainer ? 'trip' : 'event')}</h2>
@@ -834,7 +855,7 @@ export function EditorDrawer() {
               placeholder=${phoneOpen ? 'Type it: Lunch with Ada Fri noon' : 'Type it naturally: Lunch with Ada Friday noon at Luna Trattoria'}
               value=${nlText}
               onInput=${onNlInput}
-              onKeyDown=${(e) => { nlMarkers.onKeyDown(e); if (!e.defaultPrevented) onNlKeyDown(e); }}
+              onKeyDown=${(e) => { nlMarkers.onKeyDown(e); if (!e.defaultPrevented && !(e.metaKey || e.ctrlKey)) onNlKeyDown(e); }}
               aria-label="Describe the event in plain language"
             />
             ${nlMarkers.list}
@@ -1055,7 +1076,7 @@ export function EditorDrawer() {
       </div>
 
       <div class="bc-drawer-actions bc-ed-actions">
-        <button type="submit" class="bc-btn bc-btn-primary" disabled=${backwards} title=${backwards ? 'The end is before the start' : undefined}>${occ ? 'Save' : 'Create'}</button>
+        <button type="submit" class="bc-btn bc-btn-primary" disabled=${backwards} title=${backwards ? 'The end is before the start' : (occ ? 'Save' : 'Create') + ' (' + saveKeys + ')'}>${occ ? 'Save' : 'Create'}</button>
         <button type="button" class="bc-btn" onClick=${requestClose}>Cancel</button>
         ${googleCalendar(Number(form.calendarId)) && html`<span class="bc-drawer-note" title="This calendar lives at Google. Better-Cal writes straight through and cannot restore the previous version.">${occ ? 'Saves' : 'Creates'} at Google; can't be undone</span>`}
         ${occ && html`<button type="button" class="bc-btn bc-btn-danger bc-ed-delete" onClick=${() => deleteEvent(occ, scope)}>Delete</button>`}

@@ -44,6 +44,7 @@ What it doesn't do (for now): send invitations to guests, offer booking pages, o
 - Split (above) with every title in the weeks, plus full month, 3 day, week (pinch for day width), day and agenda.
 - Events open in a sheet: step through the day, pull it up for everything (map, full description, invitation replies, plugin data). Trips open the same way.
 - A full-screen editor with typed dates and times and quarter-hour lists, and quick add from the New button. In week and day views, tap an empty time to create, or press and hold to draw an event or pick one up and move it.
+- In the editor, Cmd/Ctrl+Enter creates or saves from any field; from the plain-language box it reads the text first.
 - Swipe a suggested event in a list to triage it (Maybe, Planned, Hide, More like this, Less like this).
 - Back works everywhere (the sheet, search, the editor, the drawer, every page), and the sidebar drawer swipes in from the edge. In the drawer, each calendar is listed once in its folder; press and hold one to show only it or open its settings.
 - Push reminders with Map and Join buttons.

@@ -102,11 +102,12 @@ final class JobQueue
                 }
             }
 
+            $ids = [];
             foreach ($new as $item) {
                 if ($manual) {
                     $admission->record($userId, ExternalActionAdmission::PLUGIN_MANUAL_RUN, $item['hash'], null, $now);
                 }
-                $this->enqueue('plugin_job', [
+                $ids[] = $this->enqueue('plugin_job', [
                     'userId' => $userId,
                     'plugin' => $pluginId,
                     'job' => $item['job'],
@@ -115,7 +116,7 @@ final class JobQueue
                 ] + ($calendarId !== null ? ['calendarId' => $calendarId] : []), $now);
                 $queued[] = $item['job'];
             }
-            return ['status' => 'ok', 'queued' => $queued, 'alreadyQueued' => $already, 'retryAt' => null];
+            return ['status' => 'ok', 'queued' => $queued, 'alreadyQueued' => $already, 'retryAt' => null, 'ids' => $ids];
         });
     }
 
@@ -203,6 +204,16 @@ final class JobQueue
         }
         $job['attempts'] = (int) $job['attempts'] + 1;
         return $job;
+    }
+
+    /** Claim one pending job by id (run now, outside the worker); null if it's gone or taken. */
+    public function claimById(int $jobId): ?array
+    {
+        $claimed = $this->db->run(
+            "UPDATE jobs SET status = 'running', attempts = attempts + 1 WHERE id = ? AND status = 'pending'",
+            [$jobId]
+        )->rowCount();
+        return $claimed === 0 ? null : $this->db->one('SELECT * FROM jobs WHERE id = ?', [$jobId]);
     }
 
     public function markDone(int $jobId): void

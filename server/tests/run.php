@@ -6684,6 +6684,15 @@ return new class implements BetterCal\\Plugin\\PluginInterface {
     $ndb->run("UPDATE plugins SET settings_json = ? WHERE id = 'needy'", [json_encode(['workspace' => 'sample', 'token' => ['__bettercalSecret' => 'sealed']])]);
     checkEq('setup: once filled (the key stored), nothing is missing', [], (new BetterCal\Domain\Plugins($ndb, $dir, []))->missingRequired('needy'));
     checkEq('setup: and its job comes due', [['plugin' => 'needy', 'job' => 'sync']], (new BetterCal\Domain\Plugins($ndb, $dir, []))->dueJobs());
+
+    // Run now: a queued job is claimed by id, so the worker can't run it
+    // too; where the server can't answer early (the command line), it stays
+    // queued for the worker.
+    $ndb->run('CREATE TABLE jobs (id INTEGER PRIMARY KEY, type TEXT, payload_json TEXT, run_after TEXT, status TEXT, attempts INTEGER DEFAULT 0, last_error TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT DEFAULT CURRENT_TIMESTAMP)');
+    $jq = new BetterCal\Infra\JobQueue($ndb);
+    $jobId = $jq->enqueue('plugin_job', ['userId' => 1, 'plugin' => 'needy', 'job' => 'sync']);
+    check('run now: without an early answer the job is left for the worker', !(new BetterCal\Domain\Plugins($ndb, $dir, []))->runAfterResponse([$jobId]) && $ndb->scalar('SELECT status FROM jobs WHERE id = ?', [$jobId]) === 'pending');
+    checkEq('run now: a pending job is claimed once', ['running', null], [$jq->claimById($jobId)['status'] ?? null, $jq->claimById($jobId)]);
     array_map('unlink', glob($dir . '/needy/*'));
     rmdir($dir . '/needy');
     rmdir($dir);

@@ -62,6 +62,8 @@ import { installDrawerSwipe } from '../ui/drawerswipe.js';
 import { SplitView } from '../ui/SplitView.js';
 import { stepBack, afterHistorySettles } from './historysteps.js';
 import { primeKeyboard } from '../lib/ioskeyboard.js';
+import { noticeServerVersion, lookForUpdate } from './appversion.js';
+import { reloadIfReady } from './drafts.js';
 
 const MONTH_ROWS = { month: 6, weeks3: 3, weeks2: 2 };
 
@@ -230,6 +232,8 @@ export function App() {
       inFlight = true;
       try {
         const d = await api('/changes/cursor');
+        // A different version installed on the server: look for it now.
+        if (d) noticeServerVersion(d.app);
         if (!stopped && d && d.cursor) {
           // Each part reloads only what it covers, merged into what's on
           // screen: no reload, no lost place, nothing taken out of your hands.
@@ -703,6 +707,14 @@ export function App() {
   // returns to the calendar instead of leaving the app (0.6.9). Moving from
   // one page to another reuses the entry.
   const route = s.route;
+  // A page change takes a new version that's waiting (drafts.js), and looks
+  // for one, so a page opened after a deploy is the new version's page.
+  const firstRoute = useRef(true);
+  useEffect(() => {
+    if (firstRoute.current) { firstRoute.current = false; return; }
+    reloadIfReady();
+    lookForUpdate();
+  }, [route]);
   useEffect(() => {
     if (!route || route === 'calendar') return undefined;
     let popped = false;

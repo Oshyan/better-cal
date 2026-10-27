@@ -6,6 +6,7 @@ import { set, toast } from './store.js';
 import { fetchMe } from './api.js';
 import { loadSession, startSession } from './session.js';
 import { armBackgroundReload, UPDATED_PARAM } from './drafts.js';
+import { setUpdateChecker } from './appversion.js';
 import { restoreResume, recordStart } from './resume.js';
 import { takeHandoff, runHandoff } from './handoff.js';
 import { QA_WINDOW_KEY } from './QuickAddWindow.js';
@@ -153,6 +154,8 @@ if ('serviceWorker' in navigator) {
         // 30 minutes while it stays open. Each look asks whether sw.js
         // changed; a new version reports 'sw-updated'.
         const check = () => reg.update().catch(() => { /* offline: try again next time */ });
+        // The change check and page changes can ask for a look too (appversion.js).
+        setUpdateChecker(check);
         check();
         document.addEventListener('visibilitychange', () => {
           if (document.visibilityState === 'visible') check();

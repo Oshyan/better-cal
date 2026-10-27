@@ -71,12 +71,14 @@ final class PluginsController
             }
         }
         $queued = [];
+        $now = false;
         // Only a save that changed something: an empty one is no reason to run.
         if ($onSave !== [] && is_array($req->body) && $req->body !== [] && $this->plugins->missingRequired($id) === []) {
             $result = $this->plugins->withAuthority(RequestAuthority::request($req), fn() => $this->queue->enqueuePluginJobs((int) $req->user['id'], $id, $onSave));
             $queued = array_merge($result['queued'] ?? [], $result['alreadyQueued'] ?? []);
+            $now = $this->plugins->runAfterResponse($result['ids'] ?? []);
         }
-        return Response::json(['settings' => $settings, 'queued' => $queued]);
+        return Response::json(['settings' => $settings, 'queued' => $queued, 'now' => $now]);
     }
 
     public function saveCalendarSettings(Request $req, array $params): Response
@@ -101,11 +103,14 @@ final class PluginsController
     private function queueForCalendar(Request $req, string $id, int $calendarId): array
     {
         $ids = $this->plugins->calendarJobIds($id);
-        if ($ids === []) {
-            return [];
+        if ($ids === [] || $this->plugins->missingRequired($id) !== []) {
+            return ['queued' => [], 'now' => false];
         }
         $result = $this->plugins->withAuthority(RequestAuthority::request($req), fn() => $this->queue->enqueuePluginJobs((int) $req->user['id'], $id, $ids, false, null, $calendarId));
-        return array_merge($result['queued'] ?? [], $result['alreadyQueued'] ?? []);
+        return [
+            'queued' => array_merge($result['queued'] ?? [], $result['alreadyQueued'] ?? []),
+            'now' => $this->plugins->runAfterResponse($result['ids'] ?? []),
+        ];
     }
 
     /** Add one of a plugin's calendars: {name?, color?, settings}. */
@@ -121,7 +126,7 @@ final class PluginsController
             is_array($body['settings'] ?? null) ? $body['settings'] : [],
             RequestAuthority::request($req),
         );
-        return Response::json(['calendarId' => $calendarId, 'queued' => $this->queueForCalendar($req, $id, $calendarId)], 201);
+        return Response::json(['calendarId' => $calendarId] + $this->queueForCalendar($req, $id, $calendarId), 201);
     }
 
     /** Change one of a plugin's calendars' own settings (only the keys sent). */
@@ -130,13 +135,13 @@ final class PluginsController
         $id = (string) $params['id'];
         $calendarId = (int) $params['calendarId'];
         $settings = $this->plugins->saveOwnCalendarSettings((int) $req->user['id'], $calendarId, $id, is_array($req->body) ? $req->body : [], RequestAuthority::request($req));
-        $queued = [];
+        $run = ['queued' => [], 'now' => false];
         if (is_array($req->body) && $req->body !== []) {
-            $queued = $this->queueForCalendar($req, $id, $calendarId);
+            $run = $this->queueForCalendar($req, $id, $calendarId);
             // Its place may have changed: calendars following it refill too.
             $this->plugins->withAuthority(RequestAuthority::request($req), fn() => $this->plugins->queuePlaceFollowers((int) $req->user['id'], $calendarId, $this->queue));
         }
-        return Response::json(['settings' => $settings, 'queued' => $queued]);
+        return Response::json(['settings' => $settings] + $run);
     }
 
     /** Matches for a searchable setting: ?q= text, or ?value= one exact value (its label). */
@@ -185,7 +190,7 @@ final class PluginsController
         if ($result['status'] === 'rate') {
             throw new HttpError('plugin_run_rate_limited', 'Too many manual plugin runs were requested. Try again later.', 429);
         }
-        return Response::json(['queued' => $result['queued'], 'alreadyQueued' => $result['alreadyQueued']]);
+        return Response::json(['queued' => $result['queued'], 'alreadyQueued' => $result['alreadyQueued'], 'now' => $this->plugins->runAfterResponse($result['ids'] ?? [])]);
     }
 
     public function warnings(Request $req, array $params): Response

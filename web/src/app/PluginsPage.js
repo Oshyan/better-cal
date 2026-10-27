@@ -17,14 +17,15 @@ async function reloadPlugins() {
   set({ plugins: d.plugins || [], pluginSeq: state.pluginSeq + 1 });
 }
 
-// After a save queues a run (a job marked runOnSave), follow the plugin until
-// that run has finished, so the choices it discovers appear without a manual
-// reload. Checks every few seconds until a run newer than the one shown at
-// save time appears, giving up after two minutes: the run waits for the
-// worker's next minute, then takes a few seconds itself.
-async function followRunAfterSave(id, lastRunAt) {
-  for (let i = 0; i < 30; i++) {
-    await new Promise((r) => setTimeout(r, 4000));
+// After a save or Run now, follow the plugin until that run has finished, so
+// what it found (a database's fields, say) appears without a manual reload.
+// A run that starts right away (the server runs it after answering) is
+// checked every 1.5 seconds; one left to the worker's next minute every 4,
+// giving up after two minutes.
+async function followRunAfterSave(id, lastRunAt, now = false) {
+  const every = now ? 1500 : 4000;
+  for (let i = 0; i < 120000 / every; i++) {
+    await new Promise((r) => setTimeout(r, every));
     if (state.route !== 'plugins') return;
     await reloadPlugins();
     const p = (state.plugins || []).find((x) => x.id === id);
@@ -81,8 +82,14 @@ function PluginRow({ p }) {
   ).then(() => { if (!p.enabled && needs.length > 0) setOpenSettings(true); });
 
   const runNow = () => act(async () => {
+    const lastRunAt = p.lastRun ? p.lastRun.at : null;
     const d = await api('/plugins/' + p.id + '/run', { method: 'POST' });
-    toast('Queued: ' + (d.queued || []).join(', ') + ' (runs within a minute)');
+    if ((d.queued || []).length === 0 && (d.alreadyQueued || []).length > 0) {
+      toast(p.name + ' is already running or about to.');
+    } else {
+      toast(d.now ? 'Running ' + p.name + ' now. This page updates when it\'s done.' : p.name + ' runs within a minute.');
+    }
+    followRunAfterSave(p.id, lastRunAt, !!d.now).catch(() => {});
   });
 
   // Uninstalling asks here, in the card, rather than in two browser dialogs:
@@ -177,9 +184,11 @@ function PluginRow({ p }) {
           const lastRunAt = p.lastRun ? p.lastRun.at : null;
           const d = await api('/plugins/' + p.id + '/settings', { method: 'PATCH', body: draft });
           const following = (d.queued || []).length > 0;
-          toast(p.name + (following ? ' settings saved. It runs within a minute, and this page updates when it has.' : ' settings saved. They take effect on its next run.'));
+          toast(p.name + (following
+            ? (d.now ? ' settings saved. It\'s running now, and this page updates when it\'s done.' : ' settings saved. It runs within a minute, and this page updates when it has.')
+            : ' settings saved. They take effect on its next run.'));
           await reloadPlugins();
-          if (following) followRunAfterSave(p.id, lastRunAt).catch(() => {});
+          if (following) followRunAfterSave(p.id, lastRunAt, !!d.now).catch(() => {});
           return true;
         } catch (e) {
           toast(e.message || 'Save failed', { error: true });

@@ -13,6 +13,7 @@ use BetterCal\Plugin\PluginEditRefused;
 use BetterCal\Plugin\PluginHost;
 use BetterCal\Plugin\PluginInterface;
 use BetterCal\Support\Ids;
+use BetterCal\Support\Maintenance;
 use BetterCal\Support\Time;
 
 /**
@@ -1613,6 +1614,58 @@ final class Plugins
             }
         }
         return ['outcome' => $outcome, 'error' => $error, 'durationMs' => $ms, 'runId' => $runId];
+    }
+
+    /** Can a queued job run straight after the response, in this request's process (PHP-FPM, LiteSpeed)? */
+    public static function canRunAfterResponse(): bool
+    {
+        return function_exists('fastcgi_finish_request') || function_exists('litespeed_finish_request');
+    }
+
+    /**
+     * Run plugin jobs just queued (Run now, a save, a new calendar) as soon
+     * as the response has been sent, instead of at the worker's next
+     * minute. The person isn't kept waiting: the page follows the run. Each
+     * job is claimed from the queue first, so the worker can't run it too;
+     * where the server can't finish a response early, the worker runs them
+     * as before. Returns whether they'll run now.
+     *
+     * @param list<int> $jobIds
+     */
+    public function runAfterResponse(array $jobIds): bool
+    {
+        if ($jobIds === [] || !self::canRunAfterResponse()
+            || Maintenance::active((string) ($this->cfg['app_root'] ?? dirname(__DIR__, 3)))) {
+            return false;
+        }
+        register_shutdown_function(function () use ($jobIds): void {
+            try {
+                ignore_user_abort(true);
+                @set_time_limit(PluginHost::RUN_BUDGET_SECONDS * count($jobIds) + 30);
+                if (function_exists('fastcgi_finish_request')) {
+                    fastcgi_finish_request();
+                } else {
+                    litespeed_finish_request();
+                }
+                $queue = new \BetterCal\Infra\JobQueue($this->db);
+                foreach ($jobIds as $jobId) {
+                    $job = $queue->claimById($jobId);
+                    if ($job === null) {
+                        continue; // the worker took it meanwhile
+                    }
+                    try {
+                        $payload = json_decode((string) ($job['payload_json'] ?? '{}'), true) ?: [];
+                        $this->runJob((int) ($payload['userId'] ?? 0), (string) ($payload['plugin'] ?? ''), (string) ($payload['job'] ?? ''), isset($payload['calendarId']) ? (int) $payload['calendarId'] : null);
+                        $queue->markDone((int) $job['id']);
+                    } catch (\Throwable $e) {
+                        $queue->markFailed($job, $e->getMessage());
+                    }
+                }
+            } catch (\Throwable $e) {
+                error_log('Better-Cal: running a plugin job now: ' . $e->getMessage());
+            }
+        });
+        return true;
     }
 
     /**

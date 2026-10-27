@@ -179,6 +179,15 @@ export function reloadForUpdate() {
   location.replace('/?' + UPDATED_PARAM + '=' + Date.now().toString(36));
 }
 
+/**
+ * A page change (App.js) is a safe moment to take a new version that's
+ * already waiting: you land on the page you asked for, in the new version,
+ * instead of finishing it with the old code. Not while a form is unsaved.
+ */
+export function reloadIfReady() {
+  if (armed && reloadHolds.size === 0) reloadForUpdate();
+}
+
 export function armBackgroundReload() {
   if (armed) return;
   armed = true;

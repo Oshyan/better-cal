@@ -231,7 +231,12 @@ function bc_handle_api(Request $request, array $cfg): void
         // tab polls every 30 seconds while visible, refetching only what the
         // part that moved covers: events, Review, and background status.
         $router->add('GET', "$base/changes/cursor", function (Request $req) use ($db): Response {
-            return Response::json((new Domain\ChangeCursor($db))->all((int) $req->user['id']));
+            // `app`: the version of the app now installed, so an open page
+            // running an older one notices within one check (web/src/app/
+            // appversion.js) rather than at its next half-hourly look.
+            $webRoot = realpath(dirname(__DIR__, 2) . '/web');
+            $app = $webRoot !== false ? AppShell::forWebRoot($webRoot)->version() : null;
+            return Response::json((new Domain\ChangeCursor($db))->all((int) $req->user['id']) + ['app' => $app]);
         });
 
         $router->add('GET', "$base/people", [$peopleController, 'index']);

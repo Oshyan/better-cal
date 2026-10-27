@@ -48,6 +48,28 @@ export function openOwnCalendar(c) {
   set({ route: 'plugins', pluginFocus: c.pluginId, pluginCalendarFocus: c.id });
 }
 
+/**
+ * After adding or changing one of these calendars, refresh the calendars
+ * until its plugin has filled it (its status line moves on), so the events
+ * and status appear without a reload. Quick when the server runs the plugin
+ * right away, slower when it waits for the worker; gives up after two minutes.
+ */
+async function followFill(calendarId, now) {
+  const before = (state.calendars || []).find((c) => c.id === calendarId);
+  const at = before && before.ownStatus ? before.ownStatus.at : null;
+  const every = now ? 1500 : 5000;
+  for (let i = 0; i < 120000 / every; i++) {
+    await new Promise((r) => setTimeout(r, every));
+    await loadCalendars();
+    const c = (state.calendars || []).find((x) => x.id === calendarId);
+    if (!c) return;
+    if (c.ownStatus && c.ownStatus.at !== at) {
+      refreshWindow();
+      return;
+    }
+  }
+}
+
 function fmtAgo(iso) {
   const min = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
   if (min < 1) return 'just now';
@@ -78,9 +100,10 @@ export function OwnCalendarSettings({ cal, plugin }) {
       placeSources=${placeSourcesFor(calendars, cal)}
       onSave=${async (draft) => {
         try {
-          await api('/plugins/' + plugin.id + '/calendars/' + cal.id, { method: 'PATCH', body: draft });
-          toast(cal.name + ' saved. It refills within a minute.');
+          const d = await api('/plugins/' + plugin.id + '/calendars/' + cal.id, { method: 'PATCH', body: draft });
+          toast(cal.name + (d.now ? ' saved. Refilling it now.' : ' saved. It refills within a minute.'));
           await loadCalendars();
+          followFill(cal.id, !!d.now).catch(() => {});
           return true;
         } catch (e) {
           toast(e.message || 'Save failed', { error: true });
@@ -108,10 +131,11 @@ export function AddOwnCalendar({ plugin, onDone }) {
       onCancel=${onDone}
       onSave=${async (draft) => {
         try {
-          await api('/plugins/' + plugin.id + '/calendars', { method: 'POST', body: { name: name.trim() || null, settings: draft } });
-          toast('Added. It fills within a minute.');
+          const d = await api('/plugins/' + plugin.id + '/calendars', { method: 'POST', body: { name: name.trim() || null, settings: draft } });
+          toast(d.now ? 'Added. Filling it now.' : 'Added. It fills within a minute.');
           await Promise.all([loadCalendars(), loadPlugins()]);
           refreshWindow();
+          followFill(d.calendarId, !!d.now).catch(() => {});
           onDone();
           return true;
         } catch (e) {
@@ -160,8 +184,11 @@ export function LinkedCalendars({ cal }) {
     }
   };
   const add = (p) => run(
-    () => api('/plugins/' + p.id + '/calendars', { method: 'POST', body: { settings: { [locationKey(p)]: { link: cal.id } } } }),
-    p.name + ' added for ' + place + '. It fills within a minute.',
+    async () => {
+      const d = await api('/plugins/' + p.id + '/calendars', { method: 'POST', body: { settings: { [locationKey(p)]: { link: cal.id } } } });
+      followFill(d.calendarId, !!d.now).catch(() => {});
+    },
+    p.name + ' added for ' + place + '.',
   );
   const unlink = (f) => run(
     () => api('/plugins/' + f.cal.pluginId + '/calendars/' + f.cal.id, { method: 'PATCH', body: { [f.key]: { name: cal.place.name || '', lat: cal.place.lat, lng: cal.place.lng } } }),

@@ -7,6 +7,8 @@ Security fixes are tracked privately as GitHub security advisories until they sh
 ## Unreleased
 
 - **Plugins wait for their settings:** one that needs a key or account (Fibery) opens its settings when you turn it on, says what to fill in, and doesn't run until you have.
+- **Run now runs now:** Run now, saving a plugin's settings and adding or changing a tide, sun or weather calendar start the plugin straight away instead of at the next minute, so Fibery's databases and fields appear within seconds of saving. (Where the server can't, they run within a minute as before.)
+- **An open page picks up an update sooner:** it notices a new version within 30 seconds (it could take half an hour) and moves to it when you next change page, as well as when you switch away.
 - **Fixes:** typing in a plugin's settings is no longer lost when Better-Cal updates itself in the background; the update now waits until nothing is unsaved.
 
 ## 1.3.0 (2026-10-26)

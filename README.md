@@ -55,7 +55,7 @@ It's had less use on iPhone than on Android, so if you have one, I'd especially 
 For a one-person project, taking security seriously means doing the work in public rather than making promises:
 
 - **Five full scans** of the whole codebase before 1.0 (Codex Security and Claude Security). Every finding was independently verified, then fixed or, in a handful of cases, accepted with the reason recorded. Each fix commit names the finding it closes, and [SECURITY.md](SECURITY.md#what-has-been-reviewed) lists each round, what it found and what remains.
-- **Latest review:** 2026-10-27, Codex Security (Daybreak Blue), of the changes in 1.1.1 to 1.3.0: 3 Low findings, fixed in the next release. [Every review](SECURITY.md#what-has-been-reviewed).
+- **Latest review:** 2026-10-27, Codex Security (Daybreak Blue), of the changes in 1.1.1 to 1.3.0: 3 Low findings, fixed in 1.4.0. [Every review](SECURITY.md#what-has-been-reviewed).
 - **The fixes reviewed too**, for gaps, ways around them and anything they broke.
 - **Tests** run on every change and before every deploy, including a regression test for each security fix.
 - **Published advisories**, listed in [SECURITY.md](SECURITY.md#past-advisories) with the affected and fixed versions.

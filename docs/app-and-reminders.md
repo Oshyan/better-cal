@@ -21,7 +21,7 @@ The welcome screen's **Install the app** row offers to do it when your browser a
 - **Mac, Safari:** **File**, then **Add to Dock**.
 - **Firefox on a computer** has no install. Chrome, Edge or Safari do.
 
-Updates arrive on their own: the app picks up a new version within the next open or two.
+Updates arrive on their own: an open app notices a new version within about 30 seconds and moves to it when you next change page or switch away, never while something is unsaved.
 
 ## Turning On Reminders
 

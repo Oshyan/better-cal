@@ -51,7 +51,7 @@ Every call's arguments are checked against the tool's schema before any request:
 | `list_events` | `start`, `end`, `calendars?`, `q?` | Expanded occurrences in a window |
 | `search_events` | `q`, `limit?` | Full-text search, past included |
 | `create_event` | `calendarId`, `title`, `start`, `end`, `allDay?`, `location?`, `description?`, `rrule?`, `tzid?`, `url?` | Create an event |
-| `quick_add` | `text`, `commit?`, `calendarId?`, `tz?` | Natural-language parse; `commit: true` creates |
+| `quick_add` | `text`, `commit?`, `calendarId?`, `tz?` | Natural-language parse; `commit: true` creates. An event page's link (Luma, Eventbrite and the like) is read from the page |
 | `update_event` | `id`, patch fields, `scope?`, `instanceStart?` | Patch an event (`scope` required when recurring) |
 | `delete_event` | `id`, `scope?`, `instanceStart?` | Delete an event or instances |
 | `set_attendance` | `id`, `attendance` | `none`, `interested`, `going` or `hidden` |

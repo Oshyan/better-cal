@@ -5,8 +5,8 @@ The Fibery plugin puts tasks and projects from your Fibery workspace on the cale
 ## Setting It Up
 
 1. In Fibery, open your avatar menu, then Settings, API Keys, and generate a key.
-2. In Better-Cal, open Plugins, turn on Fibery and open its settings. Enter your workspace (`yourteam.fibery.io`) and the key, then Save.
-3. Within a minute your databases appear. Choose the one that holds tasks and save; its date fields and other fields appear next. Pick the date field, tick the details you want to see, and save again. Projects work the same way and are optional.
+2. In Better-Cal, open Plugins and turn on Fibery; its settings open and say what to fill in. Enter your workspace (`yourteam.fibery.io`) and the key, then Save. It doesn't run until both are there.
+3. Within a few seconds your databases appear. Choose the one that holds tasks and save; its date fields and other fields appear next. Pick the date field, tick the details you want to see, and save again. Projects work the same way and are optional.
 
 Tasks and projects each get their own calendar (Fibery tasks, Fibery projects), so you can hide either from the sidebar. Both start as Mine, with no reminders; turn reminders on in a calendar's settings if you want them.
 

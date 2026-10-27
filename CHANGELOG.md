@@ -4,25 +4,29 @@ Better-Cal uses [semantic versioning](https://semver.org). Minor versions bring 
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
-## Unreleased
+## 1.4.0 (2026-10-27)
+
+Month rows that fit their days, event links and paste anywhere into quick add, suggestions as you type, a number on the app icon, and a phone 3-day view that's easier to tap.
 
 - **Month rows that fit their days:** on a computer, the switch in the corner above the week numbers (or Shift+H) makes each week in month view as tall as its busiest day needs, so 25 tasks on one day all show instead of "+20 more". Switch back the same way.
+- **Event links become events:** paste or share a Luma, Partiful, Eventbrite, Meetup or Pie link into quick add and it fills in the title, time, place and link from the page, for you to check before saving. [Event links](docs/quick-add.md#event-links) lists the sites.
+- **Paste anywhere:** on a computer, Cmd/Ctrl+V on the calendar opens quick add with the link or text you copied, already read. Enter adds it.
+- **Quick add suggests as you type:** `/` lists your calendars, `#` your tags and `@` your people, in quick add and the editor's text box. Enter or Tab fills one in. `@"Full Name"` links someone whose first name another person shares.
 - **Jump to a view as well as a date:** the jump box (`g`) and the command palette take a view at either end, like "day view of June 9th", "september month view" or "agenda from next tuesday".
-- **Hide cancelled events from a feed:** a subscribed calendar's settings have "Hide cancelled events", which leaves events the feed marks cancelled off the calendar instead of striking them through. One the feed un-cancels comes back.
-- **Edit approved senders as text:** Settings, Invitations, Approved senders, Edit as text: one per line, with `*.example.com` for a domain's subdomains. Paste a list or import a CSV; lines that can't be used are left out and listed with the reason.
-- **A number on the app icon:** Settings, Notifications, Show on app icon: Review items waiting, events today, or events still to come today, on the installed app's icon on a computer, iPhone or iPad. Off by default.
-- **Event links become events:** paste or share a Luma, Partiful, Eventbrite, Meetup or Pie link into quick add and it fills in the title, time, place and link from the page, for you to check before saving.
 - **Save from the editor with Cmd/Ctrl+Enter:** from any field, including the plain-language box, which is read first.
+- **A number on the app icon:** Settings, Notifications, Show on app icon: Review items waiting, events today, or events still to come today, on the installed app's icon on a computer, iPhone or iPad. Off by default. [The app and reminders](docs/app-and-reminders.md#changing-notification-settings) says where it shows.
 - **Holidays stand out:** a holiday's day has a stripe across the top of its header in the holiday calendar's color, in every view. In the phone's 3-day view the holiday is a flag you tap to see it, instead of a name too squeezed to read.
 - **Phone taps in a day's header:** weather and other context tokens open when tapped, a tap that misses them in the header no longer starts a new event, and pressing and holding a date offers New event or Day view.
 - **Reorder the sidebar:** drag a folder's header, or All calendars, People or Plugins, to a new place in the sidebar, or use Sidebar order, Edit, under Calendars & folders.
-- **Paste anywhere:** on a computer, Cmd/Ctrl+V on the calendar opens quick add with the link or text you copied, already read. Enter adds it.
-- **Quick add suggests as you type:** `/` lists your calendars, `#` your tags and `@` your people, in quick add and the editor's text box. Enter or Tab fills one in. `@"Full Name"` links someone whose first name another person shares.
+- **Hide cancelled events from a feed:** a subscribed calendar's settings have "Hide cancelled events", which leaves events the feed marks cancelled off the calendar instead of striking them through. One the feed un-cancels comes back.
+- **Edit approved senders as text:** Settings, Invitations, Approved senders, Edit as text: one per line, with `*.example.com` for a domain's subdomains. Paste a list or import a CSV; lines that can't be used are left out and listed with the reason.
 - **Plugins wait for their settings:** one that needs a key or account (Fibery) opens its settings when you turn it on, says what to fill in, and doesn't run until you have.
-- **Run now runs now:** Run now, saving a plugin's settings and adding or changing a tide, sun or weather calendar start the plugin straight away instead of at the next minute, so Fibery's databases and fields appear within seconds of saving, and the calendar shows a changed setting (overdue tasks on today, say) as soon as the run is done. (Where the server can't, they run within a minute as before.)
+- **Run now runs now:** Run now, saving a plugin's settings, and adding or changing a tide, sun or weather calendar start the plugin straight away, and the calendar shows the result as soon as it's done. (Where the server can't, they run within a minute as before.)
 - **An open page picks up an update sooner:** it notices a new version within 30 seconds (it could take half an hour) and moves to it when you next change page, as well as when you switch away.
-- **Fixes:** typing in a plugin's settings is no longer lost when Better-Cal updates itself in the background; the update now waits until nothing is unsaved. A session or API key revoked while a Fibery move or its undo was under way can no longer finish it: the credential is checked again just before Fibery is changed and when the change is saved. The same now holds for adding, copying, editing or deleting an event on a Google calendar.
+- **Fixes:** typing in a plugin's settings is no longer lost when Better-Cal updates itself in the background; the update now waits until nothing is unsaved. A session or API key revoked while a Fibery move or its undo was under way can no longer finish it (the 2026-10-27 security review's Low finding): the credential is checked again just before Fibery is changed and when the change is saved. The same now holds for adding, copying, editing or deleting an event on a Google calendar.
 - **Library updates:** Preact 11.0.2, the Squire editor 2.4.10 and Guzzle 8.3.1, all bug fixes.
+
+Operators: no database changes; update as usual. Reading an event page from quick add is a new outbound request, made through the same address checks as feeds ([SECURITY.md](SECURITY.md#scope-notes)).
 
 ## 1.3.0 (2026-10-26)
 

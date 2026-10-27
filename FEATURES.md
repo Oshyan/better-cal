@@ -31,8 +31,8 @@ What it doesn't do (for now): send invitations to guests, offer booking pages, o
 - Multi-day events show their length beside the title on every segment, trip bands and agenda entries included, and beside the dates in event and trip details: exact days, exact whole weeks, or `1mo` for 28 to 31 days, never rounded otherwise. All-day events count calendar dates; a timed event counts as a day once it runs 24 hours, keeping the leftover hours and minutes. Hover cards, screen-reader labels and date editors give the exact length. The label isn't part of the saved title.
 - Hover any event for a card with its full title, when, calendar and place, and a short line for each reason it looks the way it does: maybe, ended, happening now, new, cancelled, or which filter highlighted or dimmed it and where it matched.
 - Day numbers open the day view, the strip beside them expands a crowded day in place (with an open button per row), and a hover + creates an event. Week and day headers click through to the day view too.
-- Each day's context (weather, air quality, sunrise and sunset, tides) sits in its header, as many tokens as fit with "+N" for the rest; holidays are written with the date and draw a stripe across the top of the day's header in their calendar's color (a tappable flag on a phone's tight headers). On a phone, press and hold a date for New event or Day view.
-- Sidebar: collapsible (remembered), its groups (folders, All calendars, People, Plugins) in any order you drag them to, with a mini-month for fast jumps and hover-revealed visibility checkboxes. Hidden calendars and people are dimmed with a light strikethrough; an away person is italic, so "away" never looks like "hidden". Day and week views have a collapsible all-day lane.
+- Each day's context (weather, air quality, sunrise and sunset, tides) sits in its header, as many tokens as fit with "+N" for the rest; holidays are written with the date and draw a stripe across the top of the day's header in their calendar's color (a tappable flag where the name won't fit).
+- Sidebar: collapsible (remembered), its groups (folders, All calendars, People, Plugins) in any order: drag a group's header, or use Sidebar order, Edit, under Calendars & folders. With a mini-month for fast jumps and hover-revealed visibility checkboxes. Hidden calendars and people are dimmed with a light strikethrough; an away person is italic, so "away" never looks like "hidden". Day and week views have a collapsible all-day lane.
 - Quick jump (`g`): type a date or a phrase and land there, optionally in a view ("day view of June 9th", "september month view"). Command palette (Cmd/Ctrl-K): find a view, a calendar or an action, go to a date, or create an event from the text.
 - Hotkeys for navigation, views, the Show filter, creating, editing and deleting events, search and filter, with a `?` cheat sheet built from the live bindings.
 - Saved views capture a view and its filters and restore them in one click; any one can be the default.
@@ -44,7 +44,7 @@ What it doesn't do (for now): send invitations to guests, offer booking pages, o
 - Split (above) with every title in the weeks, plus full month, 3 day, week (pinch for day width), day and agenda.
 - Events open in a sheet: step through the day, pull it up for everything (map, full description, invitation replies, plugin data). Trips open the same way.
 - A full-screen editor with typed dates and times and quarter-hour lists, and quick add from the New button. In week and day views, tap an empty time to create, or press and hold to draw an event or pick one up and move it.
-- In the editor, Cmd/Ctrl+Enter creates or saves from any field; from the plain-language box it reads the text first.
+- In full month and 3 day: tap a date for its day, tap the weather or a holiday's flag to open it, and press and hold a date for New event or Day view. A tap that misses them in the header does nothing; a tap in the day's empty space starts a new event.
 - Swipe a suggested event in a list to triage it (Maybe, Planned, Hide, More like this, Less like this).
 - Back works everywhere (the sheet, search, the editor, the drawer, every page), and the sidebar drawer swipes in from the edge. In the drawer, each calendar is listed once in its folder; press and hold one to show only it or open its settings.
 - Push reminders with Map and Join buttons.
@@ -52,6 +52,7 @@ What it doesn't do (for now): send invitations to guests, offer booking pages, o
 ### Creating and Editing
 
 - Natural-language quick add with a confirmation strip the parse fills in (your edits win), Enter to commit, click outside to dismiss. Typing `/`, `#` or `@` suggests your calendars, tags and people. [Quick add](docs/quick-add.md) has what it understands.
+- In the editor, Cmd/Ctrl+Enter creates or saves from any field; from the plain-language box it reads the text first.
 - A rule-based parser first; the LLM helps only when the parse is incomplete, with guards so it can never move an event into the past, drop companions or rewrite the title. Parse mode (smart, always, never) is a setting.
 - Quick add from outside the app: a "New event" shortcut on the installed app's icon, and an optional key (you choose it) in the Chrome extension that opens it from any app.
 - Paste a Google Calendar template link into quick add and it becomes the event, recurrence and all.
@@ -156,7 +157,7 @@ What it doesn't do (for now): send invitations to guests, offer booking pages, o
 
 ### Plugins
 
-- Bundled server-side plugins, each turned on and set up on the Plugins page, which shows its permissions, last run, what it has made, any warnings, Run now, and Delete data with a preview of what goes (or untick it to pause and keep everything).
+- Bundled server-side plugins, each turned on and set up on the Plugins page, which shows its permissions, last run, what it has made, any warnings, Run now, and Delete data with a preview of what goes (or untick it to pause and keep everything). One that needs a key or account opens its settings when turned on and waits until they're filled in. Run now, saving settings and adding a plugin calendar start a run straight away, and the calendar shows the result as soon as it's done.
 - Plugins that work per place or per source let you add as many calendars as you like, each with its own settings, and a calendar can follow another's place: a tide calendar's "Linked calendars" add sunrise, sunset and the forecast for its station in one click, and they follow when the station changes.
 - Tides: NOAA predictions for 3,500 US stations, searched by name, one station per calendar, each with its own choice of tides: lows or highs, at or beyond a height, in daylight (with minutes after sunrise or before sunset), within times of day, on chosen weekdays, up to a year ahead, optionally shaded on the calendar. [Tides](docs/plugins/tides.md) has the details.
 - Weather: a daily forecast from Open-Meteo (no API key) with an icon and the high and low, plus the day's air quality (US AQI); severe weather and unhealthy air raise warnings. One calendar per place.

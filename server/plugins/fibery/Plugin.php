@@ -40,7 +40,6 @@ return new class implements PluginInterface, EditablePlugin {
     private const PAGE = 1000;               // entities per query page (Fibery's recommendation)
     private const MAX_PAGES = 3;             // per database per run
     private const DESCRIPTION_CHARS = 1500;
-    private const TIMED_MINUTES = 30;        // length of a timed task
     private const FINISHED_LOOKBACK_DAYS = 90;
 
     // Failures talking to Fibery, by exception code. Only these become
@@ -397,7 +396,9 @@ return new class implements PluginInterface, EditablePlugin {
                 case 'fibery/date-time':
                     $at = (new \DateTimeImmutable((string) $value))->setTimezone($tz);
                     if (($s['taskTimes'] ?? 'allday') === 'timed' && $plan['slot'] === 'task' && $at->format('H:i') !== '00:00') {
-                        $span = ['start' => $at->format(DATE_ATOM), 'end' => $at->modify('+' . self::TIMED_MINUTES . ' minutes')->format(DATE_ATOM), 'allDay' => false];
+                        // A due time is a moment in Fibery, with no length: so here too.
+                        // The day and week views still draw it tall enough to grab.
+                        $span = ['start' => $at->format(DATE_ATOM), 'end' => $at->format(DATE_ATOM), 'allDay' => false];
                     } else {
                         $day = new \DateTimeImmutable($at->format('Y-m-d'), $tz);
                         $span = self::allDay($day, $day->modify('+1 day'));
@@ -417,7 +418,7 @@ return new class implements PluginInterface, EditablePlugin {
                     }
                     $start = (new \DateTimeImmutable((string) $value['start']))->setTimezone($tz);
                     $end = !empty($value['end']) ? (new \DateTimeImmutable((string) $value['end']))->setTimezone($tz)->modify('-1 second') : $start;
-                    $end = $end > $start ? $end : $start->modify('+' . self::TIMED_MINUTES . ' minutes');
+                    $end = $end > $start ? $end : $start;
                     $span = ['start' => $start->format(DATE_ATOM), 'end' => $end->format(DATE_ATOM), 'allDay' => false];
                     break;
                 default:

@@ -13,7 +13,7 @@ Tasks and projects each get their own calendar (Fibery tasks, Fibery projects), 
 ## What Shows
 
 - **Items with a date in the chosen field.** Finished items (a final workflow state, like Done or Cancelled) are hidden unless you turn that off, and an optional checkbox field can keep items off the calendar too.
-- **Tasks** are all-day on their date, or at their time with Times set that way under Tasks (midnight still reads as all-day). An unfinished task whose date has passed shows on today, marked overdue, unless you turn that off.
+- **Tasks** are all-day on their date, or at their time with Times set that way under Tasks (midnight still reads as all-day). A due time is a moment with no length, as in Fibery, so a task due late at night stays on its day. An unfinished task whose date has passed shows on today, marked overdue, unless you turn that off.
 - **Projects** with a date range show as a bar across their days. "Longest to show" under Projects (60 days to start) keeps ongoing ones, like a year-long area of work, from running across every week.
 - **Details** you tick (state, priority, project, tags and so on) are listed in the event's details, with a link to the item in Fibery. "Include descriptions" adds each item's description as plain text.
 

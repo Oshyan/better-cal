@@ -261,6 +261,7 @@ $evening = (new DateTimeImmutable($day . ' 18:30', $la))->setTimezone(new DateTi
 checkEq('fibery: an evening due time stays on its local date, not the next UTC day', $day, callPrivate($fb, 'displaySpan', [$taskPlan, $evening, [], $la, false])[0]['start']);
 $timed = callPrivate($fb, 'displaySpan', [$taskPlan, $evening, ['taskTimes' => 'timed'], $la, false])[0];
 check('fibery: with times on, a non-midnight task is timed', $timed['allDay'] === false && str_contains($timed['start'], 'T18:30'));
+checkEq('fibery: a due time is a moment, with no length, so a late one stays on its day', $timed['start'], $timed['end']);
 
 $past = (new DateTimeImmutable('now', $la))->modify('-3 days');
 $pastUtc = (new DateTimeImmutable($past->format('Y-m-d') . ' 09:00', $la))->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d\TH:i:s.000\Z');

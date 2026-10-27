@@ -59,7 +59,7 @@ final class Plugins
     public const ICON_NAMES = [
         'settings', 'outfeeds', 'filters', 'plus', 'search', 'quickadd', 'close',
         'chevronLeft', 'chevronRight', 'chevronUp', 'arrowUpRight', 'check', 'star',
-        'video', 'warning', 'stack', 'menu', 'chevronDown', 'brand', 'activity',
+        'video', 'warning', 'stack', 'menu', 'chevronDown', 'brand', 'activity', 'grip',
         'views', 'folder', 'mixed', 'visAll', 'visNone', 'reschedule', 'pencil',
         'trash', 'arrowLeft', 'note', 'keyboard', 'expand', 'bell', 'activeOnly',
         'lock', 'unlock', 'calendar', 'today', 'viewMonth', 'viewWeek',

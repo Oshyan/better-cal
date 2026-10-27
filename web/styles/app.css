@@ -1435,6 +1435,16 @@ body.bc-dragging * { cursor: grabbing !important; }
 /* The stopped-worker banner sits at the top, under the toolbar: at the bottom
    of a tall window it went unseen. */
 .bc-sysbanner-top { font-size: 13.5px; font-weight: 500; }
+/* A new version: tinted more strongly than other news so it reads at a
+   glance across a wide screen. */
+.bc-sysbanner.is-update {
+  background: color-mix(in srgb, var(--accent) 22%, var(--bg));
+  border-bottom-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+}
+/* Reload sits right after the sentence, not across a wide screen from it;
+   only the dismiss × goes to the far end. */
+.bc-sysbanner.is-update > span { flex: 0 1 auto; min-width: 0; }
+.bc-sysbanner.is-update > .bc-icon-btn { margin-left: auto; }
 
 /* A red dot: something needs the owner (system.js needsAttention). On Settings
    in the sidebar and on the System tab; it stays when the banner is dismissed. */

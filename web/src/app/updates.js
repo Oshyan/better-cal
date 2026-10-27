@@ -33,7 +33,10 @@ export function UpdateBanner() {
 export function AppReloadBanner() {
   const ready = useStore((s) => s.appUpdateReady);
   if (!ready) return null;
-  return html`<div class="bc-sysbanner is-info" role="status">
+  // At the top, under the toolbar, like the stopped-worker warning: at the
+  // bottom of a large screen it went unseen. Not a dialog, since the update
+  // also applies itself once the app is out of sight.
+  return html`<div class="bc-sysbanner bc-sysbanner-top is-info is-update" role="status">
     <span>Better-Cal was updated. Reload to use the new version.</span>
     <button type="button" class="bc-btn bc-btn-primary" onClick=${reloadForUpdate}>Reload</button>
     <button type="button" class="bc-icon-btn" aria-label="Not now" title="Not now" onClick=${() => set({ appUpdateReady: false })}>×</button>

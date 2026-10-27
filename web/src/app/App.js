@@ -66,7 +66,7 @@ import { primeKeyboard } from '../lib/ioskeyboard.js';
 const MONTH_ROWS = { month: 6, weeks3: 3, weeks2: 2 };
 
 function AppBanners() {
-  return html`<${AppReloadBanner} /><${OfflineBanner} /><${UpdateBanner} /><${SystemBanner} />`;
+  return html`<${OfflineBanner} /><${UpdateBanner} /><${SystemBanner} />`;
 }
 // Rows the month view will hold on screen before it starts squashing row
 // height. Six is a month's worst case, not its usual one, so a short window
@@ -746,32 +746,32 @@ export function App() {
   }
   if (state.quickAddWindow) return html`<${QuickAddWindow} />`;
   if (s.route === 'organize') {
-    return html`<div class="bc-app"><${WorkerBanner} /><${OrganizePage} /><${CreateDrawer} /><${ShortcutsSheet} /><${MoveDialog} /><${CommandPalette} /><${AppBanners} /><${Toasts} /><${ConfirmHost} /></div>`;
+    return html`<div class="bc-app"><${WorkerBanner} /><${AppReloadBanner} /><${OrganizePage} /><${CreateDrawer} /><${ShortcutsSheet} /><${MoveDialog} /><${CommandPalette} /><${AppBanners} /><${Toasts} /><${ConfirmHost} /></div>`;
   }
   if (s.route === 'outfeeds') {
-    return html`<div class="bc-app"><${WorkerBanner} /><${OutfeedsPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${MoveDialog} /><${CommandPalette} /><${AppBanners} /><${Toasts} /><${ConfirmHost} /></div>`;
+    return html`<div class="bc-app"><${WorkerBanner} /><${AppReloadBanner} /><${OutfeedsPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${MoveDialog} /><${CommandPalette} /><${AppBanners} /><${Toasts} /><${ConfirmHost} /></div>`;
   }
   if (s.route === 'filters') {
-    return html`<div class="bc-app"><${WorkerBanner} /><${FiltersPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${MoveDialog} /><${CommandPalette} /><${AppBanners} /><${Toasts} /><${ConfirmHost} /></div>`;
+    return html`<div class="bc-app"><${WorkerBanner} /><${AppReloadBanner} /><${FiltersPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${MoveDialog} /><${CommandPalette} /><${AppBanners} /><${Toasts} /><${ConfirmHost} /></div>`;
   }
   if (s.route === 'views') {
-    return html`<div class="bc-app"><${WorkerBanner} /><${SavedViewsPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${MoveDialog} /><${CommandPalette} /><${AppBanners} /><${Toasts} /><${ConfirmHost} /></div>`;
+    return html`<div class="bc-app"><${WorkerBanner} /><${AppReloadBanner} /><${SavedViewsPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${MoveDialog} /><${CommandPalette} /><${AppBanners} /><${Toasts} /><${ConfirmHost} /></div>`;
   }
   if (s.route === 'settings') {
-    return html`<div class="bc-app"><${WorkerBanner} /><${SettingsPage} /><${Welcome} /><${CreateDrawer} /><${ShortcutsSheet} /><${MoveDialog} /><${CommandPalette} /><${AppBanners} /><${Toasts} /><${ConfirmHost} /></div>`;
+    return html`<div class="bc-app"><${WorkerBanner} /><${AppReloadBanner} /><${SettingsPage} /><${Welcome} /><${CreateDrawer} /><${ShortcutsSheet} /><${MoveDialog} /><${CommandPalette} /><${AppBanners} /><${Toasts} /><${ConfirmHost} /></div>`;
   }
   if (s.route === 'people') {
-    return html`<div class="bc-app"><${WorkerBanner} /><${PeoplePage} /><${CreateDrawer} /><${ShortcutsSheet} /><${MoveDialog} /><${CommandPalette} /><${AppBanners} /><${Toasts} /><${ConfirmHost} /></div>`;
+    return html`<div class="bc-app"><${WorkerBanner} /><${AppReloadBanner} /><${PeoplePage} /><${CreateDrawer} /><${ShortcutsSheet} /><${MoveDialog} /><${CommandPalette} /><${AppBanners} /><${Toasts} /><${ConfirmHost} /></div>`;
   }
   if (s.route === 'review') {
     // Review is a tab of the phone's bottom bar, so the bar stays.
-    return html`<div class="bc-app"><${WorkerBanner} /><${ReviewPage} /><${BottomBar} /><${CreateDrawer} /><${ShortcutsSheet} /><${MoveDialog} /><${CommandPalette} /><${AppBanners} /><${Toasts} /><${ConfirmHost} /></div>`;
+    return html`<div class="bc-app"><${WorkerBanner} /><${AppReloadBanner} /><${ReviewPage} /><${BottomBar} /><${CreateDrawer} /><${ShortcutsSheet} /><${MoveDialog} /><${CommandPalette} /><${AppBanners} /><${Toasts} /><${ConfirmHost} /></div>`;
   }
   if (s.route === 'plugins') {
-    return html`<div class="bc-app"><${WorkerBanner} /><${PluginsPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${MoveDialog} /><${CommandPalette} /><${AppBanners} /><${Toasts} /><${ConfirmHost} /></div>`;
+    return html`<div class="bc-app"><${WorkerBanner} /><${AppReloadBanner} /><${PluginsPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${MoveDialog} /><${CommandPalette} /><${AppBanners} /><${Toasts} /><${ConfirmHost} /></div>`;
   }
   if (s.route === 'activity') {
-    return html`<div class="bc-app"><${WorkerBanner} /><${ActivityPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${MoveDialog} /><${CommandPalette} /><${AppBanners} /><${Toasts} /><${ConfirmHost} /></div>`;
+    return html`<div class="bc-app"><${WorkerBanner} /><${AppReloadBanner} /><${ActivityPage} /><${CreateDrawer} /><${ShortcutsSheet} /><${MoveDialog} /><${CommandPalette} /><${AppBanners} /><${Toasts} /><${ConfirmHost} /></div>`;
   }
 
   let view = null;
@@ -997,7 +997,7 @@ export function App() {
   const tuckSidebar = evPanel && tuckSetting !== false;
   return html`<div class="bc-app${dimSet ? ' is-page-filtering' : ''}">
     <${Toolbar} onToggleSidebar=${toggleSidebar} />
-    <${WorkerBanner} />
+    <${WorkerBanner} /><${AppReloadBanner} />
     ${reschedActive && html`<${RescheduleBanner} occ=${reschedOcc} onExit=${exitReschedule} />`}
     <div class=${'bc-main' + (evPanel ? ' has-evpanel' : '')}>
       ${sidebarOpen && html`<div

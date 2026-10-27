@@ -915,7 +915,7 @@ export function MonthGrid({
         aria-label="Rows fit their days"
         title=${geo.fit ? 'Rows fit their days. Click for rows all the same height (Shift+H)' : 'Rows all the same height. Click to fit each row to its days (Shift+H)'}
         onClick=${onToggleFit}
-      ><${Icon} name="rowsFit" size=${14} /></button>`}</div>
+      ><${Icon} name="rowsFit" size=${18} /></button>`}</div>
       ${weekdayNames().map((w) => html`<div key=${w} class="bc-month-head-day">${w}</div>`)}
     </div>`}
     <div class="bc-month-scroll" ref=${scrollRef}>

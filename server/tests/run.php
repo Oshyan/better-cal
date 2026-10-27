@@ -6587,6 +6587,7 @@ return new class implements BetterCal\Plugin\PluginInterface, BetterCal\Plugin\E
     public function validateSettings(array $values): array { return []; }
     public function applyEdit(BetterCal\Plugin\PluginHost $host, array $edit): array {
         $GLOBALS["moverLastEdit"] = $edit;
+        if (isset($GLOBALS["moverDuring"])) { ($GLOBALS["moverDuring"])(); }
         if ($edit["title"] === "refuse") throw new BetterCal\Plugin\PluginEditRefused("The source said no.");
         if ($edit["title"] === "boom") throw new RuntimeException("socket closed");
         return $edit["after"];
@@ -6650,6 +6651,72 @@ return new class implements BetterCal\Plugin\PluginInterface, BetterCal\Plugin\E
     $caught = null;
     try { (new BetterCal\Domain\Undo($edb, new BetterCal\Domain\Plugins($edb, $dir, [])))->undoLatest(1); } catch (BetterCal\Http\HttpError $e) { $caught = $e; }
     check('plugin undo: with the plugin off, it says so instead of changing anything', $caught !== null && $caught->errorCode === 'not_undoable');
+
+    // The credential behind a move or an undo is checked just before the
+    // source is changed and again when the result is saved here: a session
+    // or API key revoked before or during the write can't finish it.
+    $edb->run("UPDATE plugins SET enabled = 1 WHERE id = 'mover'");
+    $edb->run("UPDATE events SET title = 'Moved item', start_utc = '2030-03-02 00:00:00', end_utc = '2030-03-03 00:00:00' WHERE id = 1");
+    $edb->run('CREATE TABLE users (id INTEGER PRIMARY KEY, settings_json TEXT)');
+    $edb->run("INSERT INTO users (id, settings_json) VALUES (1, '{}')");
+    $edb->run('CREATE TABLE sessions (token_hash TEXT, user_id INTEGER, authenticated_at TEXT, expires_at TEXT)');
+    $edb->run('CREATE TABLE api_tokens (id INTEGER PRIMARY KEY, user_id INTEGER, expires_at TEXT)');
+    $live = static function () use ($edb): void {
+        $edb->run('DELETE FROM sessions');
+        $edb->run('DELETE FROM api_tokens');
+        $edb->run("INSERT INTO sessions VALUES (?, 1, '2030-01-01 00:00:00', '2099-01-01 00:00:00')", [hash('sha256', 'sample-session')]);
+        $edb->run("INSERT INTO api_tokens (id, user_id, expires_at) VALUES (5, 1, NULL)");
+    };
+    $kinds = [
+        'session' => [BetterCal\Domain\RequestAuthority::credential(1, null, 'sample-session'), 'DELETE FROM sessions', 'session_revoked'],
+        'API key' => [BetterCal\Domain\RequestAuthority::credential(1, 5, null), 'DELETE FROM api_tokens', 'token_revoked'],
+    ];
+    $authUndo = new BetterCal\Domain\Undo($edb, $plugins);
+    $authEvents = new BetterCal\Domain\Events($edb, new Recurrence(), $authUndo, new BetterCal\Domain\Labels($edb), new Filters($edb, $authUndo, new BetterCal\Infra\JobQueue($edb)), new BetterCal\Domain\Trips($edb, $authUndo), $plugins);
+    $move = ['start' => '2030-04-01', 'end' => '2030-04-02', 'allDay' => true];
+    $state = static fn(): array => [$edb->scalar('SELECT start_utc FROM events WHERE id = 1'), (int) $edb->scalar("SELECT COUNT(*) FROM mutations WHERE entity = 'plugin_edit' AND undone = 0")];
+    foreach ($kinds as $label => [$authority, $revoke, $code]) {
+        // Revoked before the request reaches the source.
+        $live();
+        $edb->run($revoke);
+        $GLOBALS['moverLastEdit'] = null;
+        $before = $state();
+        $caught = null;
+        try { $authEvents->patch(1, 1, $move, $authority); } catch (BetterCal\Http\HttpError $e) { $caught = $e; }
+        check("authority ($label): a move revoked before the source is asked is refused", $caught !== null && $caught->errorCode === $code);
+        check("authority ($label): and the source is never asked, nothing changes here", $GLOBALS['moverLastEdit'] === null && $state() === $before);
+        // Revoked while the source is being changed.
+        $live();
+        $GLOBALS['moverDuring'] = static fn() => $edb->run($revoke);
+        $caught = null;
+        try { $authEvents->patch(1, 1, $move, $authority); } catch (BetterCal\Http\HttpError $e) { $caught = $e; }
+        unset($GLOBALS['moverDuring']);
+        check("authority ($label): a move revoked during the source's write isn't saved here", $caught !== null && $caught->errorCode === $code && $state() === $before);
+
+        // Undo, latest and by id, the same two ways.
+        $live();
+        $authUndo->record(1, 'plugin_edit', 1, 'update', [], [], 'Sample move', ['pluginId' => 'mover', 'span' => ['start' => '2030-05-01', 'end' => '2030-05-02', 'allDay' => true]], [1]);
+        $entry = (int) $edb->scalar("SELECT MAX(id) FROM mutations WHERE summary = 'Sample move'");
+        $before = $state();
+        foreach (['latest' => static fn() => $authUndo->undoLatest(1, $authority), 'by id' => static fn() => $authUndo->undoById(1, $entry, true, $authority)] as $how => $call) {
+            $live();
+            $edb->run($revoke);
+            $GLOBALS['moverLastEdit'] = null;
+            $caught = null;
+            try { $call(); } catch (BetterCal\Http\HttpError $e) { $caught = $e; }
+            check("authority ($label): undo $how revoked before the source is asked is refused, the source untouched", $caught !== null && $caught->errorCode === $code && $GLOBALS['moverLastEdit'] === null && $state() === $before);
+            $live();
+            $GLOBALS['moverDuring'] = static fn() => $edb->run($revoke);
+            $caught = null;
+            try { $call(); } catch (BetterCal\Http\HttpError $e) { $caught = $e; }
+            unset($GLOBALS['moverDuring']);
+            check("authority ($label): undo $how revoked during the source's write isn't saved, still undoable", $caught !== null && $caught->errorCode === $code && $state() === $before);
+        }
+        $edb->run("UPDATE mutations SET undone = 1 WHERE id = ?", [$entry]);
+    }
+    $live();
+    $authEvents->patch(1, 1, $move, $kinds['session'][0]);
+    checkEq('authority: with the credential still valid, the move goes through', '2030-04-01 00:00:00', $edb->scalar('SELECT start_utc FROM events WHERE id = 1'));
 
     array_map('unlink', glob($dir . '/mover/*'));
     rmdir($dir . '/mover');

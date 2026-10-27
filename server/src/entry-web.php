@@ -197,7 +197,7 @@ function bc_handle_api(Request $request, array $cfg): void
 
         $router->add('POST', "$base/quickadd", [$quickAddController, 'run']);
         $router->add('POST', "$base/undo", function (Request $req) use ($undo): Response {
-            $undone = $undo->undoLatest((int) $req->user['id']);
+            $undone = $undo->undoLatest((int) $req->user['id'], Domain\RequestAuthority::request($req));
             return Response::json(['ok' => true, 'undone' => $undone]);
         });
 
@@ -216,7 +216,7 @@ function bc_handle_api(Request $request, array $cfg): void
             ]));
         });
         $router->add('POST', "$base/activity/:id/undo", function (Request $req, array $params) use ($undo): Response {
-            $undone = $undo->undoById((int) $req->user['id'], (int) $params['id'], (bool) ($req->body['force'] ?? false));
+            $undone = $undo->undoById((int) $req->user['id'], (int) $params['id'], (bool) ($req->body['force'] ?? false), Domain\RequestAuthority::request($req));
             return Response::json(['ok' => true, 'undone' => $undone]);
         });
         // Single-event occurrence, for activity jump-to-event.

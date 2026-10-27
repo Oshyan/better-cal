@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace BetterCal\Http\Controllers;
 
 use BetterCal\Domain\Events;
+use BetterCal\Domain\RequestAuthority;
 use BetterCal\Domain\Trips;
 use BetterCal\Http\HttpError;
 use BetterCal\Http\Request;
@@ -95,7 +96,7 @@ final class EventsController
     public function patch(Request $req, array $params): Response
     {
         try {
-            $this->events->patch((int) $req->user['id'], (int) $params['id'], $req->body);
+            $this->events->patch((int) $req->user['id'], (int) $params['id'], $req->body, RequestAuthority::request($req));
         } catch (\InvalidArgumentException $e) {
             throw HttpError::badRequest($e->getMessage());
         }

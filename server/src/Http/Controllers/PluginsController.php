@@ -272,7 +272,7 @@ final class PluginsController
     public function undoRun(Request $req, array $params): Response
     {
         $req->requireSession('Plugin management');
-        $result = $this->undo->undoRun((int) $req->user['id'], (string) $params['runId']);
+        $result = $this->undo->undoRun((int) $req->user['id'], (string) $params['runId'], false, RequestAuthority::request($req));
         return Response::json($result);
     }
 

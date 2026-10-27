@@ -150,7 +150,7 @@ final class Undo
     }
 
     /** @return array{entity:string,op:string} */
-    public function undoLatest(int $userId): array
+    public function undoLatest(int $userId, ?RequestAuthority $authority = null): array
     {
         $mutation = $this->db->one(
             // A creation has only an after snapshot; it is undone by deleting
@@ -163,9 +163,9 @@ final class Undo
             throw HttpError::notFound('Nothing to undo', 'nothing_to_undo');
         }
         if ((string) $mutation['entity'] === 'plugin_edit') {
-            return $this->undoPluginEdit($mutation);
+            return $this->undoPluginEdit($mutation, $authority);
         }
-        return $this->apply($mutation);
+        return $this->apply($mutation, $authority);
     }
 
     /**
@@ -176,7 +176,7 @@ final class Undo
      *
      * @return array{entity:string,op:string}
      */
-    public function undoById(int $userId, int $mutationId, bool $force = false): array
+    public function undoById(int $userId, int $mutationId, bool $force = false, ?RequestAuthority $authority = null): array
     {
         $mutation = $this->db->one(
             'SELECT * FROM mutations WHERE id = ? AND user_id = ?',
@@ -201,9 +201,9 @@ final class Undo
             }
         }
         if ((string) $mutation['entity'] === 'plugin_edit') {
-            return $this->undoPluginEdit($mutation);
+            return $this->undoPluginEdit($mutation, $authority);
         }
-        return $this->apply($mutation);
+        return $this->apply($mutation, $authority);
     }
 
     /**
@@ -216,7 +216,7 @@ final class Undo
      *
      * @return array{undone:int,skipped:int}
      */
-    public function undoRun(int $userId, string $runId, bool $strict = false): array
+    public function undoRun(int $userId, string $runId, bool $strict = false, ?RequestAuthority $authority = null): array
     {
         $rows = $this->db->all(
             'SELECT id FROM mutations WHERE user_id = ? AND run_id = ? AND undone = 0 ORDER BY id DESC',
@@ -232,10 +232,11 @@ final class Undo
         $skipped = 0;
         foreach ($rows as $row) {
             try {
-                $this->undoById($userId, (int) $row['id'], !$strict);
+                $this->undoById($userId, (int) $row['id'], !$strict, $authority);
                 $undone++;
             } catch (\Throwable $e) {
-                if ($strict) {
+                // A revoked credential stops the whole run, not just one entry.
+                if ($strict || ($e instanceof HttpError && in_array($e->errorCode, ['session_revoked', 'token_revoked'], true))) {
                     throw $e;
                 }
                 $skipped++; // log-only entries and already-undone rows
@@ -253,7 +254,7 @@ final class Undo
      *
      * @return array{entity:string,op:string}
      */
-    private function undoPluginEdit(array $mutation): array
+    private function undoPluginEdit(array $mutation, ?RequestAuthority $authority = null): array
     {
         $details = json_decode((string) ($mutation['details_json'] ?? ''), true);
         $span = is_array($details) ? ($details['span'] ?? null) : null;
@@ -270,6 +271,9 @@ final class Undo
         }
         $prefix = 'plg-' . $pluginId . '-';
         $uid = (string) $event['uid'];
+        // As for the move itself: the credential is checked just before the
+        // source is changed and again when the result is saved here.
+        $authority?->assertValid($this->db, false);
         $result = $plugins->applyEdit($userId, $pluginId, [
             'sourceKey' => str_starts_with($uid, $prefix) ? substr($uid, strlen($prefix)) : $uid,
             'eventId' => (int) $event['id'],
@@ -279,7 +283,8 @@ final class Undo
             'after' => $span,
         ]);
         [$startUtc, $endUtc, $allDay] = \BetterCal\Plugin\PluginHost::spanToUtc($result);
-        $this->db->tx(function () use ($event, $startUtc, $endUtc, $allDay, $mutation): void {
+        $this->db->tx(function () use ($event, $startUtc, $endUtc, $allDay, $mutation, $authority): void {
+            $authority?->assertValid($this->db);
             $this->db->update('events', [
                 'start_utc' => $startUtc,
                 'end_utc' => $endUtc,
@@ -293,7 +298,7 @@ final class Undo
         return ['entity' => 'event', 'op' => 'update'];
     }
 
-    private function apply(array $mutation): array
+    private function apply(array $mutation, ?RequestAuthority $authority = null): array
     {
 
         $before = self::tables($mutation['before_json']);
@@ -312,7 +317,9 @@ final class Undo
             }
         }
 
-        $this->db->tx(function () use ($mutation, $before, $after, $calendarIds): void {
+        $this->db->tx(function () use ($mutation, $before, $after, $calendarIds, $authority): void {
+            // The credential that asked for the undo must still be valid as it's saved.
+            $authority?->assertValid($this->db);
             // Recovery uses this lock before changing channel authorization.
             if ($this->db->forUpdate() !== '') {
                 $this->db->one('SELECT id FROM users WHERE id = ? FOR UPDATE', [(int) $mutation['user_id']]);

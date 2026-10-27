@@ -128,6 +128,8 @@ final class Events
         private readonly Labels $labels,
         private readonly Filters $filters,
         private readonly Trips $trips,
+        /** The plugin registry for plugin calendars' write-through (tests pass one with a stand-in plugin). */
+        private readonly ?Plugins $pluginRegistry = null,
     ) {
     }
 
@@ -150,7 +152,7 @@ final class Events
 
     private function plugins(): Plugins
     {
-        return $this->pluginsSvc ??= new Plugins($this->db, null, config());
+        return $this->pluginsSvc ??= $this->pluginRegistry ?? new Plugins($this->db, null, config());
     }
 
     /** @return array{start:string,end:string,allDay:bool} */
@@ -163,7 +165,7 @@ final class Events
             : ['start' => Time::iso($s), 'end' => Time::iso($e), 'allDay' => false];
     }
 
-    private function pluginReschedule(int $userId, array $event, array $in, array $calendar): void
+    private function pluginReschedule(int $userId, array $event, array $in, array $calendar, ?RequestAuthority $authority = null): void
     {
         $pluginId = (string) $calendar['plugin_id'];
         $name = $this->plugins()->displayName($pluginId);
@@ -184,6 +186,10 @@ final class Events
         }
         $prefix = 'plg-' . $pluginId . '-';
         $uid = (string) $event['uid'];
+        // The credential behind this request is checked again just before the
+        // source is changed and once more when the change is saved here, so
+        // a session or key revoked mid-request can't finish the move.
+        $authority?->assertValid($this->db, false);
         $span = $this->plugins()->applyEdit($userId, $pluginId, [
             'sourceKey' => str_starts_with($uid, $prefix) ? substr($uid, strlen($prefix)) : $uid,
             'eventId' => (int) $event['id'],
@@ -197,7 +203,8 @@ final class Events
         } catch (\Throwable) {
             throw new HttpError('plugin_edit_failed', $name . ' gave back a time Better-Cal could not read', 502);
         }
-        $this->db->tx(function () use ($event, $startUtc, $endUtc, $isAllDay): void {
+        $this->db->tx(function () use ($event, $startUtc, $endUtc, $isAllDay, $authority): void {
+            $authority?->assertValid($this->db);
             $this->db->update('events', [
                 'start_utc' => $startUtc,
                 'end_utc' => $endUtc,
@@ -1153,17 +1160,17 @@ final class Events
         return isset($in['calendarId']) && (int) $in['calendarId'] !== (int) $event['calendar_id'];
     }
 
-    public function patch(int $userId, int $id, array $in): void
+    public function patch(int $userId, int $id, array $in, ?RequestAuthority $authority = null): void
     {
         $event = $this->get($userId, $id);
         $editKeys = array_diff(array_keys($in), ['scope', 'instanceStart', 'tagNames', 'reminders']);
         if ($editKeys !== [] && !str_starts_with(ActivityContext::get(), 'plugin:')) {
             $calendar = $this->db->one('SELECT * FROM calendars WHERE id = ?', [(int) $event['calendar_id']]);
             if ($calendar !== null && $this->plugins()->calendarReschedulable($calendar)) {
-                $this->pluginReschedule($userId, $event, $in, $calendar);
+                $this->pluginReschedule($userId, $event, $in, $calendar, $authority);
                 $local = array_intersect_key($in, ['tagNames' => true, 'reminders' => true]);
                 if ($local !== []) {
-                    $this->patch($userId, $id, $local);
+                    $this->patch($userId, $id, $local, $authority);
                 }
                 return;
             }

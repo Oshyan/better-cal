@@ -840,6 +840,17 @@ div.bc-duration-exact { display: flex; align-items: center; gap: 10px; flex-wrap
 .bc-ctx-more { flex: none; font-size: 10px; color: var(--fg-muted); padding: 3px 3px; border-radius: 4px; cursor: pointer; }
 .bc-ctx-more:hover { background: var(--bg-inset); color: var(--fg); }
 .bc-cell-head { position: relative; z-index: 2; display: flex; align-items: center; gap: 2px; height: 24px; padding-right: 2px; overflow: hidden; pointer-events: none; }
+/* A holiday tints the day's header in its calendar's colour, in every view,
+   so a phone that can't fit the holiday's name still shows there is one. */
+.bc-cell.is-holiday .bc-cell-head,
+.bc-tg-head-day.is-holiday,
+.bc-tg-vday-head.is-holiday { background: color-mix(in srgb, var(--bc-holiday, #4f9d69) 20%, transparent); }
+/* Touch: the header's tokens and flag reach the header's full height, so a
+   fingertip on a weather token opens it instead of starting a new event. */
+@media (pointer: coarse) {
+  .bc-cell-head .bc-ctx-token, .bc-cell-head .bc-daylabel.is-flag { position: relative; }
+  .bc-cell-head .bc-ctx-token::after, .bc-cell-head .bc-daylabel.is-flag::after { content: ""; position: absolute; left: -3px; right: -3px; top: -6px; bottom: -6px; }
+}
 .bc-cell:hover .bc-cell-head { padding-right: 46px; }
 .bc-cell-head > * { pointer-events: auto; }
 /* Week header: the day's context tokens on a line above the day label (up

@@ -21,7 +21,7 @@ import { gridMove } from './gridmove.js';
 import {
   keyOfEpochDay, epochDayOfKey, weekIndexOfKey,
   dayKeysOfWeek, dateOfDayKey, addDaysDate, parseISO, toISOWithOffset,
-  todayKey, fmtMonthShort, fmtWeekdayShort, getWeekStart, byStart,
+  todayKey, fmtMonthShort, fmtWeekdayShort, getWeekStart, byStart, fmtDayLong,
 } from '../lib/dates.js';
 import {
   visibleWeekRange, weekTop, totalHeight, occurrenceDaySpan, rowSpanSegments, shiftOccurrenceDays,
@@ -35,6 +35,7 @@ import { EventChip, EventBar, TripBand, HiddenMark } from './EventChip.js';
 import { ContextStrip, DayLabel } from './ContextStrip.js';
 import { contextByDay, dayLabelsByDay, isContext } from '../lib/context.js';
 import { Icon } from './icons.js';
+import { useLongPress, RowMenu } from './rowmenu.js';
 import { PHONE_QUERY } from '../lib/breakpoints.js';
 import { startPointerDrag, cloneAsGhost, externalDropTarget, setDropRowHighlight } from './DragController.js';
 import { normalizeDayRange, dayRangeDraft } from '../lib/quickcreate.js';
@@ -833,6 +834,11 @@ export function MonthGrid({
     if (onCreateRange) onCreateRange(dayRangeDraft(k, k));
   }, [onCreateRange]);
 
+  // Press and hold a date (phones): New event or Day view for that day. A
+  // tap on the date still opens its day view, and a tap in the day's empty
+  // space still starts a new event.
+  const [dayMenu, setDayMenu] = useState(null);
+
   // --- render ---------------------------------------------------------------
 
   const ribbon = columns !== 7;
@@ -852,7 +858,7 @@ export function MonthGrid({
       hiddenDays=${hiddenDays} onShowHidden=${onShowHidden} ctxByDay=${dayInfo.ctxByDay} labelsByDay=${dayInfo.labelsByDay}
       capacity=${geo.fit ? Infinity : capacity} chipRow=${chipRow} mobile=${mobile} todayKey=${tKey} dimSet=${dimSet} nowMs=${nowMs}
       sel=${sel}
-      onOpenEvent=${onOpenEvent} onExpandDay=${onExpandDay} onOpenDay=${onOpenDay}
+      onOpenEvent=${onOpenEvent} onExpandDay=${onExpandDay} onOpenDay=${onOpenDay} onDayMenu=${mobile ? setDayMenu : null}
       dragMoveOcc=${dragMoveOcc} dragResizeOcc=${dragResizeOcc} dragCreate=${dragCreate}
       cellClickSelect=${cellClickSelect} quickCreateDay=${quickCreateDay}
     />`);
@@ -925,12 +931,34 @@ export function MonthGrid({
         ${weeks}
       </div>
     </div>
+    ${dayMenu && html`<${RowMenu}
+      head=${fmtDayLong(dateOfDayKey(dayMenu))} color=${null}
+      onClose=${() => setDayMenu(null)}
+      items=${[
+        onCreateRange && ['plus', 'New event', () => quickCreateDay(dayMenu)],
+        (onOpenDay || onExpandDay) && ['viewDay', 'Day view', () => (onOpenDay ? onOpenDay(dayMenu) : onExpandDay(dayMenu))],
+      ]}
+    />`}
   </div>`;
+}
+
+// The date in a day's header: a tap opens its day view; on a phone a press
+// and hold opens New event and Day view for it.
+function DayNum({ k, label, onOpenDay, onExpandDay, onMenu }) {
+  const press = useLongPress(() => { if (onMenu) onMenu(k); });
+  const hold = onMenu ? press : {};
+  return html`<button
+    type="button" class="bc-daynum" aria-label=${'Open day view for ' + k}
+    title="Open day view"
+    ...${hold}
+    onPointerDown=${(e) => { e.stopPropagation(); if (hold.onPointerDown) hold.onPointerDown(e); }}
+    onClick=${(e) => { e.stopPropagation(); if (onOpenDay) onOpenDay(k); else if (onExpandDay) onExpandDay(k); }}
+  >${label}</button>`;
 }
 
 function WeekRow({
   weekIndex, columns, ribbon, top, rowH, byDay, bars, bands, calendars, capacity, chipRow, mobile,
-  todayKey: tKey, dimSet, nowMs, sel, onOpenEvent, onExpandDay, onOpenDay, dragMoveOcc, dragResizeOcc, dragCreate,
+  todayKey: tKey, dimSet, nowMs, sel, onOpenEvent, onExpandDay, onOpenDay, onDayMenu, dragMoveOcc, dragResizeOcc, dragCreate,
   cellClickSelect, quickCreateDay, hiddenDays, onShowHidden, ctxByDay, labelsByDay, fit = false, capped = false,
 }) {
   const keys = dayKeysOfRow(weekIndex, columns);
@@ -976,22 +1004,21 @@ function WeekRow({
     const label = d === 1
       ? fmtMonthShort(dateOfDayKey(k)) + ' 1'
       : (ribbon ? fmtWeekdayShort(dateOfDayKey(k)) + ' ' + d : d);
+    // A holiday tints the day's header in its calendar's colour.
+    const holiday = labelsByDay && labelsByDay.get(k);
+    const holidayCal = holiday && holiday.length ? calendars[holiday[0].calendarId] : null;
     return html`<div
       key=${k}
-      class="bc-cell${weekend ? ' is-weekend' : ''}${k === tKey ? ' is-today' : ''}${d === 1 ? ' is-month-start' : ''}${selected ? ' bc-drop-target' : ''}"
+      class="bc-cell${weekend ? ' is-weekend' : ''}${k === tKey ? ' is-today' : ''}${d === 1 ? ' is-month-start' : ''}${selected ? ' bc-drop-target' : ''}${holiday && holiday.length ? ' is-holiday' : ''}"
+      style=${holidayCal && holidayCal.color ? '--bc-holiday:' + holidayCal.color : null}
       data-day=${k}
       onPointerDown=${dragCreate}
       onClick=${cellClickSelect}
     >
       <div class="bc-cell-head">
-        <button
-          type="button" class="bc-daynum" aria-label=${'Open day view for ' + k}
-          title="Open day view"
-          onPointerDown=${(e) => e.stopPropagation()}
-          onClick=${(e) => { e.stopPropagation(); if (onOpenDay) onOpenDay(k); else if (onExpandDay) onExpandDay(k); }}
-        >${label}</button>
+        <${DayNum} k=${k} label=${label} onOpenDay=${onOpenDay} onExpandDay=${onExpandDay} onMenu=${onDayMenu} />
         ${hiddenDays && hiddenDays.get(k) && html`<${HiddenMark} count=${hiddenDays.get(k)} onShow=${onShowHidden} />`}
-        ${labelsByDay && html`<${DayLabel} occs=${labelsByDay.get(k)} onOpen=${onOpenEvent} flag=${mobile && columns >= 7} />`}
+        ${labelsByDay && html`<${DayLabel} occs=${labelsByDay.get(k)} onOpen=${onOpenEvent} flag=${mobile} />`}
         ${ctxByDay && ctxByDay.get(k) && ctxMax > 0 && html`<${ContextStrip}
           occs=${ctxByDay.get(k)} calendars=${calendars} max=${ctxMax} fit=${mobile ? null : 4} more=${!mobile} zone=${false}
           onOpen=${onOpenEvent} onMore=${() => { if (onExpandDay) onExpandDay(k); }}

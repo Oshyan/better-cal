@@ -922,15 +922,22 @@ export function TimeGrid({
   // all-day context: every day gets the same row (empty or not), so the day
   // labels line up across the week. It goes only when there is none at all.
   const hasCtxRow = [...ctxByDay.values()].some((list) => list.some((o) => o.allDay));
+  // A holiday tints the day's header in its calendar's colour.
+  const holidayStyle = (k) => {
+    const h = labelsByDay.get(k);
+    const cal = h && h.length ? calendars[h[0].calendarId] : null;
+    return cal && cal.color ? '--bc-holiday:' + cal.color : '';
+  };
   const headCells = days.map((k) => {
     const d = dateOfDayKey(k);
     const weekend = infinite && isWeekendEpochDay(epochDayOfKey(k));
     const monthStart = infinite && d.getDate() === 1;
+    const holiday = labelsByDay.has(k);
     return html`<button
       type="button"
       key=${k}
-      class="bc-tg-head-day${k === tKey ? ' is-today' : ''}${weekend ? ' is-weekend' : ''}${monthStart ? ' is-month-start' : ''}"
-      style=${infinite ? `left:${dayLeft(k)}px;width:${colW}px` : undefined}
+      class="bc-tg-head-day${k === tKey ? ' is-today' : ''}${weekend ? ' is-weekend' : ''}${monthStart ? ' is-month-start' : ''}${holiday ? ' is-holiday' : ''}"
+      style=${(infinite ? `left:${dayLeft(k)}px;width:${colW}px;` : '') + holidayStyle(k) || undefined}
       title="Open day view"
       aria-label=${'Open day view for ' + k}
       onClick=${() => { if (onOpenDay) onOpenDay(k); }}
@@ -1072,7 +1079,7 @@ export function TimeGrid({
                 >${d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</button>${ctxStrip}</div>`;
             return html`<section key=${k} class="bc-tg-vday" data-vday=${k}>
               ${divider}
-              ${(!phone || bars.length > 0 || labelsByDay.has(k)) && html`<header class="bc-tg-vday-head${k === tKey ? ' is-today' : ''}">
+              ${(!phone || bars.length > 0 || labelsByDay.has(k)) && html`<header class="bc-tg-vday-head${k === tKey ? ' is-today' : ''}${labelsByDay.has(k) ? ' is-holiday' : ''}" style=${holidayStyle(k) || undefined}>
                 ${phone && labelsByDay.has(k) && html`<div class="bc-tg-vday-labelrow"><${DayLabel} occs=${labelsByDay.get(k)} onOpen=${onOpenEvent} /></div>`}
                 ${!phone && dateBtn}
                 ${!phone && html`<${DayLabel} occs=${labelsByDay.get(k)} onOpen=${onOpenEvent} sep=${true} />`}

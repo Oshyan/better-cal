@@ -152,10 +152,12 @@ export function SchemaForm({ schema, values, onSave, saveLabel = 'Save' }) {
     ${schema.map((f) => {
       // A checklist is a group of checkboxes, so it can't sit inside one label.
       const Tag = f.type === 'checklist' ? 'div' : 'label';
-      return html`<${Tag} key=${f.key} class="bc-schema-field">
-        <span class="bc-schema-label">${f.label}${f.help && html`<span class="bc-schema-help">${f.help}</span>`}</span>
-        <${Field} field=${f} value=${draft[f.key]} onChange=${(v) => setDraft({ ...draft, [f.key]: v })} />
-      </${Tag}>`;
+      return html`
+        ${f.section && html`<h4 key=${'s-' + f.key} class="bc-schema-section">${f.section}</h4>`}
+        <${Tag} key=${f.key} class="bc-schema-field">
+          <span class="bc-schema-label">${f.label}${f.help && html`<span class="bc-schema-help">${f.help}</span>`}</span>
+          <${Field} field=${f} value=${draft[f.key]} onChange=${(v) => setDraft({ ...draft, [f.key]: v })} />
+        </${Tag}>`;
     })}
     <div class="bc-schema-actions">
       <button type="button" class="bc-btn bc-btn-primary" disabled=${busy || !dirty} onClick=${save}>${saveLabel}</button>

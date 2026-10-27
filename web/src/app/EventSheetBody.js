@@ -410,7 +410,7 @@ export function EventSheetBody({ occ, cal, isFeed, full, panel = false, onFull, 
       ${full && html`<${EventPluginData} eventId=${occ.eventId} readOnly=${isFeed} />`}
       ${full && isFeed && cal && html`<div class="bc-es-row">
         <${Icon} name="calendar" size=${20} />
-        <div class="bc-es-rt">${cal.name}<small>${cal.sourceUrl ? 'Subscribed feed' : cal.reschedulable ? 'Its times change in ' + (cal.pluginName || 'its source') : 'Read-only calendar'}</small></div>
+        <div class="bc-es-rt">${cal.name}<small>${cal.sourceUrl ? 'Subscribed feed' : cal.reschedulable ? 'Synced with ' + (cal.pluginName || 'its source') + '; moving it here changes it there' : 'Read-only calendar'}</small></div>
         ${cal.sourceUrl && html`<a class="bc-es-rowbtn" href=${cal.sourceUrl} target="_blank" rel="noopener noreferrer">Source <${Icon} name="arrowUpRight" size=${14} /></a>`}
       </div>`}
       ${full && occ.createdAt && html`<div class="bc-es-meta">

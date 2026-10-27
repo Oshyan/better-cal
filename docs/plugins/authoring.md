@@ -54,7 +54,7 @@ Each field needs a `key`, a `label` and a `type`:
 - `location`: a place picker that stores `{name, lat, lng}`; coordinates are range-checked.
 - `person`: a name picked from the user's People.
 
-`help` adds a short line under the label. **Discovered choices:** `"optionsFrom": "name"` fills a `select` or `checklist` with what your job found, written with `$host->setSettingOptions('name', $options)` (a service's databases, say, or the fields of the one the user picked). Pass `null` when nothing is known yet; the form then shows the field's `pendingText`. Pair it with a `runOnSave` job so the choices appear within a minute of saving.
+`help` adds a short line under the label, and `section` puts a heading above the field that starts a group. **Discovered choices:** `"optionsFrom": "name"` fills a `select` or `checklist` with what your job found, written with `$host->setSettingOptions('name', $options)` (a service's databases, say, or the fields of the one the user picked). Pass `null` when nothing is known yet; the form then shows the field's `pendingText`. Pair it with a `runOnSave` job so the choices appear within a minute of saving.
 
 Every field except `secret` may have a `default`. `text` and `textarea` accept `maxLength` to lower their ceiling (a `textarea` can't go above 10,000). A `default` longer than its own field is refused at install.
 

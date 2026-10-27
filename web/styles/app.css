@@ -3127,8 +3127,13 @@ body.bc-rescheduling { user-select: none; }
 /* List-shaped settings need room to read as a list, not a 260px slot. */
 .bc-schema-area { max-width: 460px; width: 100%; resize: vertical; line-height: 1.45; font-family: inherit; }
 .bc-schema-toggle span { font-size: 12.5px; color: var(--fg-muted); }
-.bc-schema-label { display: flex; flex-direction: column; gap: 2px; }
-.bc-schema-help { font-size: 11.5px; color: var(--fg-muted); line-height: 1.35; }
+/* The setting's name reads first, like the main Settings rows: bold, in the
+   text color; its help is the quiet line under it. */
+.bc-schema-label { display: flex; flex-direction: column; gap: 2px; color: var(--fg); font-weight: 650; font-size: 13px; }
+.bc-schema-help { font-size: 11.5px; font-weight: 400; color: var(--fg-muted); line-height: 1.35; }
+/* A manifest `section` starts a group, the way Settings blocks do. */
+.bc-schema-section { margin: 10px 0 0; padding-top: 10px; border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent); font-size: 14px; font-weight: 700; }
+.bc-schema-section:first-child { margin-top: 0; padding-top: 0; border-top: none; }
 .bc-schema-field:has(.bc-schema-checklist) { align-items: flex-start; }
 .bc-schema-secret { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12.5px; }
 .bc-schema-count { color: var(--fg-muted); font-variant-numeric: tabular-nums; }

@@ -6656,6 +6656,139 @@ return new class implements BetterCal\Plugin\PluginInterface, BetterCal\Plugin\E
     rmdir($dir);
 }
 
+// Calendars a person adds to a plugin one at a time (ownCalendars), each
+// with its own settings; a location setting can follow another calendar's
+// place; long choice lists are searched on the server.
+{
+    $dir = sys_get_temp_dir() . '/bc-own-plugins-' . bin2hex(random_bytes(4));
+    foreach (['stations' => [
+        'id' => 'stations', 'name' => 'Stations', 'version' => '1.0.0', 'permissions' => ['events:write'],
+        'jobs' => [['id' => 'refresh', 'interval' => 'PT1H', 'runOnSave' => true], ['id' => 'other', 'interval' => 'PT1H']],
+        'ownCalendars' => ['noun' => 'station calendar', 'name' => 'Stations, {station}', 'color' => '#336699', 'max' => 2],
+        'ownCalendarSettings' => [
+            ['key' => 'station', 'type' => 'select', 'label' => 'Station', 'optionsFrom' => 'stations', 'searchable' => true, 'required' => true],
+            ['key' => 'days', 'type' => 'number', 'label' => 'Days', 'min' => 1, 'max' => 30, 'default' => 7],
+        ],
+    ], 'follower' => [
+        'id' => 'follower', 'name' => 'Follower', 'version' => '1.0.0', 'permissions' => ['events:write'],
+        'jobs' => [['id' => 'refresh', 'interval' => 'PT1H']],
+        'ownCalendars' => ['noun' => 'follower calendar', 'name' => 'Follow, {place}'],
+        'ownCalendarSettings' => [['key' => 'place', 'type' => 'location', 'label' => 'Place', 'required' => true]],
+    ]] as $pid => $manifest) {
+        mkdir($dir . '/' . $pid, 0700, true);
+        file_put_contents($dir . '/' . $pid . '/plugin.json', json_encode($manifest));
+    }
+    file_put_contents($dir . '/stations/Plugin.php', '<?php
+return new class implements BetterCal\Plugin\PluginInterface, BetterCal\Plugin\OwnCalendarsPlugin {
+    public function runJob(BetterCal\Plugin\PluginHost $host, string $jobId): void {}
+    public function validateSettings(array $values): array { return []; }
+    public function validateCalendarSettings(array $values): array { return (int) $values["days"] === 13 ? ["days" => "unlucky"] : []; }
+};');
+    file_put_contents($dir . '/follower/Plugin.php', '<?php
+return new class implements BetterCal\Plugin\PluginInterface {
+    public function runJob(BetterCal\Plugin\PluginHost $host, string $jobId): void {}
+    public function validateSettings(array $values): array { return []; }
+};');
+    checkEq('own calendars: both test manifests are valid', [[], []], [BetterCal\Domain\Plugins::manifestErrors(json_decode((string) file_get_contents($dir . '/stations/plugin.json'), true)), BetterCal\Domain\Plugins::manifestErrors(json_decode((string) file_get_contents($dir . '/follower/plugin.json'), true))]);
+    check('own calendars: a manifest needs a noun', in_array('ownCalendars.noun is required (what one calendar is called, e.g. "tide calendar")', BetterCal\Domain\Plugins::manifestErrors(['id' => 'abc', 'name' => 'A', 'version' => '1.0.0', 'ownCalendars' => ['name' => 'x']]), true));
+    check('own calendars: settings without ownCalendars are refused', in_array('ownCalendarSettings needs ownCalendars', BetterCal\Domain\Plugins::manifestErrors(['id' => 'abc', 'name' => 'A', 'version' => '1.0.0', 'ownCalendarSettings' => []]), true));
+    check('own calendars: searchable only on a select with optionsFrom', BetterCal\Domain\Plugins::manifestErrors(['id' => 'abc', 'name' => 'A', 'version' => '1.0.0', 'settings' => [['key' => 'k', 'label' => 'K', 'type' => 'text', 'searchable' => true]]]) !== []);
+    [$tv, $te] = BetterCal\Domain\Plugins::validateAgainstSchema([['key' => 't', 'type' => 'time', 'label' => 'T']], ['t' => '07:45']);
+    [, $te2] = BetterCal\Domain\Plugins::validateAgainstSchema([['key' => 't', 'type' => 'time', 'label' => 'T']], ['t' => '7:45 pm']);
+    check('plugin settings: a time of day is HH:MM', $tv === ['t' => '07:45'] && $te === [] && isset($te2['t']));
+    [, $le] = BetterCal\Domain\Plugins::validateAgainstSchema([['key' => 'p', 'type' => 'location', 'label' => 'P']], ['p' => ['link' => 3]]);
+    check('plugin settings: a place link is refused outside a calendar\'s own settings', isset($le['p']));
+
+    $odb = new BetterCal\Infra\Db(['dsn' => 'sqlite::memory:', 'user' => null, 'pass' => null]);
+    $odb->run('CREATE TABLE plugins (id TEXT PRIMARY KEY, enabled INTEGER, settings_json TEXT, consecutive_failures INTEGER DEFAULT 0, disabled_reason TEXT, changed_by_token_id INTEGER)');
+    $odb->run('CREATE TABLE plugin_kv (plugin_id TEXT, k TEXT, v_json TEXT, PRIMARY KEY (plugin_id, k))');
+    $odb->run("CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, color TEXT, kind TEXT, plugin_id TEXT, role TEXT, subscription_authority TEXT, settings_json TEXT, position INTEGER DEFAULT 0, visible INTEGER DEFAULT 1)");
+    $odb->run('CREATE TABLE mutations (id INTEGER PRIMARY KEY, user_id INTEGER, entity TEXT, entity_id INTEGER, op TEXT, before_json TEXT, after_json TEXT, source TEXT, run_id TEXT, summary TEXT, details_json TEXT, calendar_ids_json TEXT, undone INTEGER DEFAULT 0, created_at TEXT DEFAULT CURRENT_TIMESTAMP)');
+    $odb->run('CREATE TABLE mutation_calendar_refs (mutation_id INTEGER, calendar_id INTEGER)');
+    $odb->run('CREATE TABLE plugin_ranges (id INTEGER PRIMARY KEY, plugin_id TEXT, calendar_id INTEGER, source_key TEXT, start_utc TEXT, end_utc TEXT, label TEXT, color TEXT, detail_html TEXT)');
+    $odb->run("INSERT INTO plugins (id, enabled) VALUES ('stations', 1), ('follower', 1)");
+    $own = new BetterCal\Domain\Plugins($odb, $dir, []);
+    $caught = null;
+    try { $own->createOwnCalendar(1, 'stations', null, null, ['station' => '9999901']); } catch (BetterCal\Http\HttpError $e) { $caught = $e; }
+    check('own calendars: before the list is published, any station is kept (the plugin checks it)', $caught === null);
+    $odb->run('DELETE FROM calendars');
+    $odb->run('DELETE FROM mutations');
+    $odb->run("INSERT INTO plugin_kv (plugin_id, k, v_json) VALUES ('stations', '__options.stations', ?)", [json_encode([
+        ['value' => '9999901', 'label' => 'Alpha Cove, ME'], ['value' => '9999902', 'label' => 'Beta Point, WA'], ['value' => '9999903', 'label' => 'North Alpha Bay, OR'],
+    ])]);
+    checkEq('search: a name prefix comes first, then names containing it', ['Alpha Cove, ME', 'North Alpha Bay, OR'], array_column($own->searchOptions('stations', 'station', 'alpha'), 'label'));
+    checkEq('search: a station number prefix matches', ['9999902'], array_column($own->searchOptions('stations', 'station', '9999902'), 'value'));
+    checkEq('search: an exact value gives its label', [['value' => '9999903', 'label' => 'North Alpha Bay, OR']], $own->searchOptions('stations', 'station', '', '9999903'));
+    $resolvedOwn = $own->resolveSchema('stations', json_decode((string) file_get_contents($dir . '/stations/plugin.json'), true)['ownCalendarSettings']);
+    check('search: the form gets a count, not the whole list', $resolvedOwn[0]['options'] === [] && $resolvedOwn[0]['optionCount'] === 3 && $resolvedOwn[0]['optionsLoaded'] === true);
+
+    $caught = null;
+    try { $own->createOwnCalendar(1, 'stations', null, null, ['days' => 3]); } catch (BetterCal\Http\HttpError $e) { $caught = $e; }
+    check('own calendars: a required setting left out is refused, naming it', $caught !== null && $caught->status === 400 && str_contains($caught->getMessage(), 'Station: is required'));
+    $caught = null;
+    try { $own->createOwnCalendar(1, 'stations', null, null, ['station' => '1234567']); } catch (BetterCal\Http\HttpError $e) { $caught = $e; }
+    check('own calendars: a station not in the published list is refused', $caught !== null && str_contains($caught->getMessage(), 'not one of the choices'));
+    $caught = null;
+    try { $own->createOwnCalendar(1, 'stations', null, null, ['station' => '9999901', 'days' => 13]); } catch (BetterCal\Http\HttpError $e) { $caught = $e; }
+    check("own calendars: the plugin's own check runs", $caught !== null && str_contains($caught->getMessage(), 'unlucky'));
+    $a = $own->createOwnCalendar(1, 'stations', null, null, ['station' => '9999901']);
+    $row = $odb->one('SELECT * FROM calendars WHERE id = ?', [$a]);
+    checkEq('own calendars: the name comes from the settings', 'Stations, Alpha Cove, ME', $row['name']);
+    checkEq('own calendars: with the manifest colour, as a plugin calendar of its own', ['#336699', 'plugin', 'stations', 'context'], [$row['color'], $row['kind'], $row['plugin_id'], $row['role']]);
+    checkEq('own calendars: its settings are stored with defaults filled', ['station' => '9999901', 'days' => 7], $own->ownSettingsPublic('stations', $row['settings_json']));
+    checkEq('own calendars: adding one is undoable', 1, (int) $odb->scalar("SELECT COUNT(*) FROM mutations WHERE entity = 'calendar' AND op = 'create' AND entity_id = ?", [$a]));
+    $b = $own->createOwnCalendar(1, 'stations', 'My own name', '#aa0000', ['station' => '9999902']);
+    checkEq('own calendars: a name and colour given are kept', ['My own name', '#aa0000'], [$odb->scalar('SELECT name FROM calendars WHERE id = ?', [$b]), $odb->scalar('SELECT color FROM calendars WHERE id = ?', [$b])]);
+    $caught = null;
+    try { $own->createOwnCalendar(1, 'stations', null, null, ['station' => '9999903']); } catch (BetterCal\Http\HttpError $e) { $caught = $e; }
+    check('own calendars: the manifest limit holds', $caught !== null && $caught->errorCode === 'calendar_limit');
+    checkEq('own calendars: saving changes only what was sent', ['station' => '9999901', 'days' => 20], $own->saveOwnCalendarSettings(1, $a, 'stations', ['days' => 20]));
+    $caught = null;
+    try { $own->saveOwnCalendarSettings(2, $a, 'stations', ['days' => 5]); } catch (BetterCal\Http\HttpError $e) { $caught = $e; }
+    check("own calendars: someone else's calendar can't be changed", $caught !== null && $caught->status === 404);
+    checkEq('own calendars: the jobs that fill one are those marked runOnSave', ['refresh'], $own->calendarJobIds('stations'));
+    $odb->run("UPDATE plugins SET enabled = 0 WHERE id = 'follower'");
+    $caught = null;
+    try { $own->createOwnCalendar(1, 'follower', null, null, ['place' => ['name' => 'Somewhere', 'lat' => 10, 'lng' => 20]]); } catch (BetterCal\Http\HttpError $e) { $caught = $e; }
+    check('own calendars: a plugin that is off adds none', $caught !== null && $caught->errorCode === 'plugin_disabled');
+    $odb->run("UPDATE plugins SET enabled = 1 WHERE id = 'follower'");
+
+    // Places: a station calendar publishes its place; a follower links to it.
+    check('places: a calendar has none until its plugin says', $own->calendarPlace(1, $a) === null);
+    $odb->run("INSERT INTO plugin_kv (plugin_id, k, v_json) VALUES ('stations', ?, ?)", ['__calplace.' . $a, json_encode(['name' => 'Alpha Cove, ME', 'lat' => 44.1, 'lng' => -68.2])]);
+    checkEq('places: then it has the published place', ['name' => 'Alpha Cove, ME', 'lat' => 44.1, 'lng' => -68.2], $own->calendarPlace(1, $a));
+    $odb->run("INSERT INTO plugin_kv (plugin_id, k, v_json) VALUES ('other', ?, ?)", ['__calplace.' . $b, json_encode(['name' => 'Forged', 'lat' => 1, 'lng' => 1])]);
+    check("places: only a calendar's own plugin can say where it is", $own->calendarPlace(1, $b) === null);
+    $f = $own->createOwnCalendar(1, 'follower', null, null, ['place' => ['link' => $a]]);
+    checkEq('places: a follower is named after the place it follows', 'Follow, Alpha Cove, ME', $odb->scalar('SELECT name FROM calendars WHERE id = ?', [$f]));
+    checkEq('places: a follower has the place it follows, saying via what', ['name' => 'Alpha Cove, ME', 'lat' => 44.1, 'lng' => -68.2, 'via' => $a], $own->calendarPlace(1, $f));
+    checkEq('places: the calendar knows who follows it', [['id' => $f, 'plugin' => 'follower']], $own->placeFollowers(1, $a));
+    $host = new BetterCal\Plugin\PluginHost($odb, 'follower', 1, new BetterCal\Infra\HttpClient(), json_decode((string) file_get_contents($dir . '/follower/plugin.json'), true), [], null, $f);
+    checkEq('places: the follower plugin reads a plain place, resolved', [['id' => $f, 'place' => ['name' => 'Alpha Cove, ME', 'lat' => 44.1, 'lng' => -68.2, 'via' => $a]]], array_map(static fn($c) => ['id' => $c['id'], 'place' => $c['settings']['place']], $host->ownCalendars()));
+    check('places: a run for one calendar names it', $host->targetCalendar() === $f);
+    $caught = null;
+    try { $own->saveOwnCalendarSettings(1, $f, 'follower', ['place' => ['link' => $f]]); } catch (BetterCal\Http\HttpError $e) { $caught = $e; }
+    check('places: a calendar cannot follow itself', $caught !== null && str_contains($caught->getMessage(), 'another of your plugin calendars'));
+    $g = $own->createOwnCalendar(1, 'follower', 'Second', null, ['place' => ['link' => $f]]);
+    checkEq('places: a place can be followed through a follower', 'Alpha Cove, ME', $own->calendarPlace(1, $g)['name'] ?? null);
+    $caught = null;
+    try { $own->saveOwnCalendarSettings(1, $f, 'follower', ['place' => ['link' => $g]]); } catch (BetterCal\Http\HttpError $e) { $caught = $e; }
+    check('places: following in a circle is refused', $caught !== null && str_contains($caught->getMessage(), 'circle'));
+    $odb->run('DELETE FROM calendars WHERE id = ?', [$a]);
+    check('places: a follower of a deleted calendar has no place (and says so when it runs)', $own->calendarPlace(1, $f) === null);
+
+    // Bands that belong to a calendar go with it.
+    $odb->run("INSERT INTO plugin_ranges (plugin_id, calendar_id, source_key, start_utc, end_utc, label) VALUES ('stations', ?, 'x', '2030-01-01 10:00:00', '2030-01-01 11:00:00', 'gone'), ('stations', ?, 'y', '2030-01-01 10:00:00', '2030-01-01 11:00:00', 'kept'), ('stations', NULL, 'z', '2030-01-01 10:00:00', '2030-01-01 11:00:00', 'plugin-wide')", [$a, $b]);
+    $bands = $own->rangesForWindow(new DateTimeImmutable('2030-01-01T00:00:00Z'), new DateTimeImmutable('2030-01-02T00:00:00Z'))['stations']['ranges'];
+    checkEq("bands: a deleted calendar's bands stop showing; the rest carry their calendar", [['kept', $b], ['plugin-wide', null]], array_map(static fn($r) => [$r['label'], $r['calendarId']], $bands));
+
+    foreach (['stations', 'follower'] as $pid) {
+        array_map('unlink', glob($dir . '/' . $pid . '/*'));
+        rmdir($dir . '/' . $pid);
+    }
+    rmdir($dir);
+}
+
 // ---------------------------------------------------------------------------
 // The bundled plugins' own pure logic (parsers, interval maths, date maths).
 require __DIR__ . '/plugins.php';
@@ -9410,6 +9543,17 @@ use BetterCal\Domain\GoogleWriter;
     $rhost->syncEvents(1, [['sourceKey' => 'moved', 'title' => 'Moved here', 'start' => '2030-03-04', 'allDay' => true]]);
     checkEq('plugin sync: a row edited after the run began keeps its new time', '2030-03-05 00:00:00', $rdb->scalar("SELECT start_utc FROM events WHERE id = 1"));
     checkEq('plugin sync: and is not deleted as missing', 1, (int) $rdb->scalar('SELECT COUNT(*) FROM events WHERE id = 1'));
+    // Every column the sync writes is compared with what's stored: the zone
+    // used to be left out of the comparison, so each run rewrote every event
+    // and told CalDAV clients they had all changed.
+    $steady = [
+        ['sourceKey' => 'moved', 'title' => 'Moved here', 'start' => '2030-03-04', 'allDay' => true],
+        ['sourceKey' => 'steady', 'title' => 'Steady', 'start' => '2030-03-10T10:00:00Z', 'end' => '2030-03-10T10:00:00Z', 'icon' => 'tideLow', 'location' => 'Sample Harbor'],
+    ];
+    $rhost->syncEvents(1, $steady);
+    $changesBefore = (int) $rdb->scalar('SELECT COUNT(*) FROM dav_changes');
+    checkEq('plugin sync: an unchanged run changes nothing', [0, 0, 0], (new BetterCal\Plugin\PluginHost($rdb, 'sample', 1, new BetterCal\Infra\HttpClient(), $manifest, []))->syncEvents(1, $steady));
+    checkEq('plugin sync: and tells CalDAV clients of nothing', $changesBefore, (int) $rdb->scalar('SELECT COUNT(*) FROM dav_changes'));
 
     $rhost->replaceWarnings([['code' => 'needs-key'], ['message' => 'free text that could quote a key']]);
     $shown = array_column((new BetterCal\Domain\Plugins($rdb, null, []))->warnings('sample'), 'message');

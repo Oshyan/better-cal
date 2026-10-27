@@ -348,6 +348,36 @@ const TOOLS = [
     handler: (a) => api('PATCH', `/plugins/${pluginSegment(a.pluginId)}/calendar-settings/${idSegment(a.calendarId)}`, { body: a.values }),
   },
   {
+    name: 'add_plugin_calendar',
+    description: 'Add one of a plugin\'s calendars with its own settings (a tide calendar for one station, a weather calendar for one place), for plugins whose list_plugins entry has ownCalendars. Settings follow its ownCalendarSettingsSchema; a location may be {link: calendarId} to follow another plugin calendar\'s place. Name is optional (the plugin names it from its settings). The plugin fills it within a minute.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pluginId: PLUGIN_ID,
+        name: { type: 'string', maxLength: 160 },
+        color: { type: 'string', pattern: '^#[0-9a-fA-F]{6}$' },
+        settings: PLUGIN_VALUES,
+      },
+      required: ['pluginId', 'settings'],
+    },
+    handler: (a) => api('POST', `/plugins/${pluginSegment(a.pluginId)}/calendars`, { body: { name: a.name, color: a.color, settings: a.settings } }),
+  },
+  {
+    name: 'update_plugin_calendar',
+    description: 'Change the own settings of one of a plugin\'s calendars (only the keys given). It refills within a minute, and so do calendars that follow its place.',
+    inputSchema: { type: 'object', properties: { pluginId: PLUGIN_ID, calendarId: EVENT_ID, values: PLUGIN_VALUES }, required: ['pluginId', 'calendarId', 'values'] },
+    handler: (a) => api('PATCH', `/plugins/${pluginSegment(a.pluginId)}/calendars/${idSegment(a.calendarId)}`, { body: a.values }),
+  },
+  {
+    name: 'search_plugin_options',
+    description: 'Search the choices of a searchable plugin setting (a field with searchable: true, such as a tide station among thousands). Returns up to 20 {value, label} matches.',
+    inputSchema: { type: 'object', properties: { pluginId: PLUGIN_ID, field: { type: 'string', pattern: '^[A-Za-z][A-Za-z0-9_.-]{0,80}$' }, query: { type: 'string', maxLength: 100 } }, required: ['pluginId', 'field', 'query'] },
+    handler: (a) => {
+      if (!/^[A-Za-z][A-Za-z0-9_.-]{0,80}$/.test(a.field)) throw new Error('field must be a setting key');
+      return api('GET', `/plugins/${pluginSegment(a.pluginId)}/options/${encodeURIComponent(a.field)}`, { query: { q: a.query } });
+    },
+  },
+  {
     name: 'set_plugin_enabled',
     description: 'Enable or disable an installed plugin. Enabling permits its scheduled work and may cause outside effects; disabling stops pending work.',
     inputSchema: { type: 'object', properties: { pluginId: PLUGIN_ID, enabled: { type: 'boolean' } }, required: ['pluginId', 'enabled'] },
@@ -402,6 +432,9 @@ const EFFECTS = {
   get_system_health:               { readOnlyHint: true,  destructiveHint: false, idempotentHint: true,  openWorldHint: false },
   update_plugin_settings:          { readOnlyHint: false, destructiveHint: true,  idempotentHint: true,  openWorldHint: true },
   update_plugin_calendar_settings: { readOnlyHint: false, destructiveHint: true,  idempotentHint: true,  openWorldHint: true },
+  add_plugin_calendar:             { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  update_plugin_calendar:          { readOnlyHint: false, destructiveHint: true,  idempotentHint: true,  openWorldHint: true },
+  search_plugin_options:           { readOnlyHint: true,  destructiveHint: false, idempotentHint: true,  openWorldHint: false },
   set_plugin_enabled:              { readOnlyHint: false, destructiveHint: true,  idempotentHint: true,  openWorldHint: true },
   run_plugin:                      { readOnlyHint: false, destructiveHint: true,  idempotentHint: false, openWorldHint: true },
   update_event_plugin_data:        { readOnlyHint: false, destructiveHint: true,  idempotentHint: true,  openWorldHint: true },

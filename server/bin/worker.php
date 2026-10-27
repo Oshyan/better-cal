@@ -302,7 +302,7 @@ try {
                     // validation): budgeted, health-recorded, circuit-broken.
                     $payload = json_decode((string) $job['payload_json'], true) ?: [];
                     $uidP = (int) ($payload['userId'] ?? ($db->scalar('SELECT id FROM users ORDER BY id LIMIT 1') ?? 0));
-                    $r = $pluginsDomain->runJob($uidP, (string) ($payload['plugin'] ?? ''), (string) ($payload['job'] ?? ''));
+                    $r = $pluginsDomain->runJob($uidP, (string) ($payload['plugin'] ?? ''), (string) ($payload['job'] ?? ''), isset($payload['calendarId']) ? (int) $payload['calendarId'] : null);
                     echo bc_ts() . ' plugin_job ' . ($payload['plugin'] ?? '?') . '/' . ($payload['job'] ?? '?')
                         . ' outcome=' . $r['outcome'] . (isset($r['durationMs']) ? ' ' . $r['durationMs'] . 'ms' : '')
                         . ($r['error'] !== null ? ' error=' . $r['error'] : '') . "\n";

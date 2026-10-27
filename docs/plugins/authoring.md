@@ -35,7 +35,8 @@ So do your fetching, computing and writing in `runJob`. Everything the user sees
 - `version`: semver (`x.y.z`). `minHost` (optional) refuses install on an older host.
 - `permissions`, shown on the ops page: `http`, `events:write`, `events:edit`, `ranges`, `warnings`, `geocode`, `people`, `notify`, `llm`, `propose`. The four that reach outside your own data (`people`, `notify`, `llm`, `propose`) are **enforced**: calling them undeclared throws. `events:edit` makes your calendars reschedulable. The rest are disclosure (see Trust).
 - `jobs`: each has a kebab-case `id` and an ISO 8601 `interval` (`PT1M`, `PT3H`, `P1D`). Staleness is judged from the last run, so a failing job still waits its interval. `"runOnSave": true` also runs it right after the user saves your settings.
-- `settings`, `calendarSettings`, `eventSettings`: field schemas the host renders on the ops page, in the calendar gear panel, and in the event detail view.
+- `settings`, `calendarSettings`, `eventSettings`: field schemas the host renders on the ops page, in the calendar gear panel (on every calendar), and in the event detail view.
+- `ownCalendars` and `ownCalendarSettings` (optional): calendars the person adds one at a time, each with its own settings (see [Calendars the Person Adds](#calendars-the-person-adds)).
 - `requires` / `optional`: lists of plugin ids (see Working With Other Plugins).
 - `decoration` (optional): `{icon, iconPath, color, animation}`, where `animation` is `none`, `pulse` or `shimmer`. The icon appears on your overlay bands and replaces the color dot on your calendar's sidebar row.
 - `messages` (optional): `{"code": "text"}`, the warnings you'll raise, up to 300 characters each. A warning that names one by `code` always shows its text, even when your diagnostics are hidden (see Secrets).
@@ -51,10 +52,15 @@ Each field needs a `key`, a `label` and a `type`:
 - `select`: `options` as strings or `{value, label}` objects, or `optionsFrom` (below).
 - `checklist`: several choices, stored as a list; `options` or `optionsFrom`.
 - `toggle`.
-- `location`: a place picker that stores `{name, lat, lng}`; coordinates are range-checked.
+- `time`: a time of day, stored as 24-hour `HH:MM`.
+- `location`: a place picker that stores `{name, lat, lng}`; coordinates are range-checked. In `ownCalendarSettings` it can instead follow another calendar's place (see [Places](#places)).
 - `person`: a name picked from the user's People.
 
 `help` adds a short line under the label, and `section` puts a heading above the field that starts a group. **Discovered choices:** `"optionsFrom": "name"` fills a `select` or `checklist` with what your job found, written with `$host->setSettingOptions('name', $options)` (a service's databases, say, or the fields of the one the user picked). Pass `null` when nothing is known yet; the form then shows the field's `pendingText`. Pair it with a `runOnSave` job so the choices appear within a minute of saving.
+
+**Long lists:** add `"searchable": true` to an `optionsFrom` select whose list runs to thousands (tide stations, say; up to 10,000 instead of 500). The list stays on the server, and the form searches it as the person types: a match is the start of a value or any part of a label, with labels that start with the query first. Choose labels that read well on their own ("Sample Harbor, CA"), since a calendar name can be built from one.
+
+**Shaping the form:** `required: true` refuses a save that leaves the field empty and marks it in the form. `showIf: {"key": value}` (or a list of values) shows a field only while another has that value, so high-tide filters hide until high tides are on. `join: true` puts a field on the same line as the shown field before it, with its label in front ("Not before [ ] not after [ ]"). `placeholder` sets the text in an empty field.
 
 Every field except `secret` may have a `default`. `text` and `textarea` accept `maxLength` to lower their ceiling (a `textarea` can't go above 10,000). A `default` longer than its own field is refused at install.
 
@@ -117,6 +123,8 @@ Settings and context:
 
 - `settings(): array`: plugin-scope values (stored over manifest defaults). Only keys your current manifest declares are returned.
 - `calendarSettings(int $calendarId): array`: your per-calendar values.
+- `ownCalendars(): array`: the calendars the person added to your plugin, each `{id, name, color, visible, settings}`; just one when this run follows a save to it. See [Calendars the Person Adds](#calendars-the-person-adds).
+- `ownCalendarSettings(int $calendarId): array` and `targetCalendar(): ?int`: one of them by id, and the calendar this run is for (null for a full run).
 - `calendars(): array`: the user's calendars (`id`, `name`, `kind`, `visible`).
 - `timezone(): DateTimeZone`: **the user's** zone. Use it for any local time you build; `date_default_timezone_get()` is the server's zone and may be a continent away.
 - `runId(): ?string`: the id grouping this run's changes, so the ops page can undo a run in one step.
@@ -140,7 +148,9 @@ Writing:
 
 - `ensureCalendar(name, color, role = 'context'): int`: find or create a calendar your plugin owns (name up to 160 characters; a color that isn't `#rrggbb` becomes `#5b8dd9`). `role` is what a new one starts as: `context` for information, `mine` for things the person does (tasks), `opportunities`. A `mine` one starts with no reminders.
 - `syncEvents(calId, events): [added, updated, removed]`: feed-style upsert by `sourceKey` into a calendar you own; keys that disappear are deleted. See [Materialized Events](#materialized-events).
-- `replaceRanges(ranges): int`: **wholesale-replace** your overlay bands; whatever you leave out this run is gone. Range: `{sourceKey, start, end, label?, color?, detailHtml?}`, with `start`/`end` as `YYYY-MM-DD` (end exclusive) or ISO instants. You may write up to 2,000, but **one window request returns at most 500 per plugin** (with a `truncated` flag the client reads), so ranges past that are stored and never seen. If you produce more than a few hundred, emit fewer.
+- `replaceRanges(ranges, ?calendarId = null): int`: **wholesale-replace** your overlay bands; whatever you leave out this run is gone. With a `calendarId`, the bands belong to that calendar of yours: only its bands are replaced, and they hide with it and go when it's deleted. Without one, only your plugin-wide bands are replaced. Range: `{sourceKey, start, end, label?, color?, detailHtml?}`, with `start`/`end` as `YYYY-MM-DD` (end exclusive) or ISO instants. You may write up to 2,000, but **one window request returns at most 500 per plugin** (with a `truncated` flag the client reads), so ranges past that are stored and never seen. If you produce more than a few hundred, emit fewer.
+- `setCalendarStatus(calId, ?text, severity = 'info')`: a line about one of your calendars, shown in its settings ("38 low tides in the next 90 days", "Station not found"). Severity is `info`, `warn` or `error`; null clears it.
+- `setCalendarPlace(calId, ?{name, lat, lng})`: say what place one of your calendars is about, when that isn't simply its `location` setting (a tide station's coordinates). See [Places](#places).
 - `replaceWarnings(warnings): int`: **wholesale-replace** your findings, the same way. Warning: `{message, severity?, eventId?, fix?}`, or `{code, severity?, eventId?}` for one of your declared `messages`.
 - `setEventData(int $eventId, string $key, mixed $value): void`: write one per-event value (null deletes), only for events the user owns. It's an **upsert that persists forever**: if you write a computed value (a travel estimate, say), you clear it when it goes stale, or an event that moved keeps yesterday's answer. Sweep your leftovers with `eventsWithData()`.
 - `notify(string $title, string $body, string $url = '/'): array`: one notification now, through the user's configured channel; silent if none is configured. It does **not** dedupe: a 6-hourly job that keeps finding the same conflict notifies every run, so record what you've said in `kvSet` and stay quiet. Requires `notify`.
@@ -287,6 +297,43 @@ An event is `{sourceKey, title, start, end?, allDay?, description?, location?, i
 
 - One sync is all or nothing. A snapshot over 2,000 events or 8 MiB of event data is refused (it throws and the previous snapshot is kept; see [limits.md](../limits.md)), and if the run budget runs out mid-sync, every change from that call is rolled back.
 - `icon` is optional, per event, and takes a host icon name or one glyph exactly like `decoration.icon`. On a context calendar (the role a plugin calendar gets by default) it's what the day header shows beside the value: a weather plugin says `rain` on the rainy day and `sun` on the sunny one, an air-quality plugin `air`, a tides plugin `tideLow`/`tideHigh`, a sun plugin `sunrise`/`sunset`. Without one, the host guesses from the title (numbers like `72/58 fog`, the words AQI, sunset, sunrise, high/low tide) and otherwise shows the calendar's square.
+
+### Calendars the Person Adds
+
+A plugin whose output depends on a place or a source (a tide station, a forecast location) can let the person add as many calendars as they like, each with its own settings. Declare both in `plugin.json`:
+
+```json
+"jobs": [{ "id": "refresh", "interval": "PT12H", "runOnSave": true }],
+"ownCalendars": { "noun": "tide calendar", "name": "Tides, {station}", "color": "#2e8b8b", "role": "context", "max": 20 },
+"ownCalendarSettings": [
+  { "key": "station", "type": "select", "optionsFrom": "stations", "searchable": true, "required": true, "label": "Station" },
+  { "key": "days", "type": "number", "label": "Days ahead", "min": 1, "max": 365, "default": 90 }
+]
+```
+
+- `noun` names one calendar in the UI ("Add tide calendar"). `name` is the name a new calendar gets when the person leaves it empty, with `{key}` filled from that setting (a choice's label, a place's name). A calendar named that way is renamed when its settings change, until the person renames it. `color` and `role` are what it starts with, and `max` limits how many there can be (50 at most).
+- Your plugin's card lists its calendars with "Add"; each opens its own settings, which also show in the calendar's gear panel. The API and MCP can add and change them too.
+- Adding or changing one runs your `runOnSave` jobs (all your jobs if none is marked) **for that calendar alone**: `ownCalendars()` then returns just it, and `targetCalendar()` says which. A scheduled run returns them all. So a run is a loop:
+
+```php
+foreach ($host->ownCalendars() as $cal) {
+    $s = $cal['settings'];          // stored values over defaults, places resolved
+    // ... fetch for $s, then:
+    $host->syncEvents($cal['id'], $events);
+    $host->replaceRanges($bands, $cal['id']);
+    $host->setCalendarStatus($cal['id'], count($events) . ' tides in the next ' . $s['days'] . ' days.');
+}
+```
+
+- Implement `OwnCalendarsPlugin` to check one calendar's complete settings beyond the schema (`validateCalendarSettings(array $values): array`, key => message), as `validateSettings` does for plugin settings.
+- Warnings stay plugin-wide; a run for one calendar should leave them alone (`targetCalendar() !== null`) rather than replace them with that calendar's alone. See `weather`.
+- Deleting one is an ordinary calendar delete, undoable, and its bands go with it. Calendars from `ensureCalendar` are listed too; a plugin moving to `ownCalendars` can give its old one its settings in a migration (Tides, Sun and Weather did).
+
+### Places
+
+A calendar can be *about* a place: its first `location` setting, or what its plugin says with `setCalendarPlace` (a tide calendar publishes its station). Other plugins' calendars can then follow it: in `ownCalendarSettings`, a `location` may be `{link: calendarId}` instead of a place, chosen in the form as "the same place as" one of the person's plugin calendars. Your job never sees the link: `ownCalendars()` hands you that calendar's place now (`{name, lat, lng, via}`), or null while it has none yet, so say so with `setCalendarStatus`.
+
+When a calendar's place changes, the calendars following it are refilled (a run for each), and renamed if their names came from it. A calendar that has a place offers "Add for" buttons in its settings for each plugin with a `location` setting, which add that plugin's calendar already following it: a tide calendar gets its sunrise and sunset, or its forecast, in one click. A link may go through up to three calendars, and one that would lead back to itself is refused.
 
 ### Rescheduling From the Calendar
 

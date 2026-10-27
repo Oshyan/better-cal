@@ -90,6 +90,67 @@ final class PluginsController
         )]);
     }
 
+    // ---- calendars the person adds (ownCalendars) ---------------------------
+
+    /**
+     * The jobs that fill a new or changed calendar: those marked runOnSave,
+     * or every job when none is. Queued for that calendar alone.
+     *
+     * @return list<string>
+     */
+    private function queueForCalendar(Request $req, string $id, int $calendarId): array
+    {
+        $ids = $this->plugins->calendarJobIds($id);
+        if ($ids === []) {
+            return [];
+        }
+        $result = $this->plugins->withAuthority(RequestAuthority::request($req), fn() => $this->queue->enqueuePluginJobs((int) $req->user['id'], $id, $ids, false, null, $calendarId));
+        return array_merge($result['queued'] ?? [], $result['alreadyQueued'] ?? []);
+    }
+
+    /** Add one of a plugin's calendars: {name?, color?, settings}. */
+    public function createCalendar(Request $req, array $params): Response
+    {
+        $id = (string) $params['id'];
+        $body = is_array($req->body) ? $req->body : [];
+        $calendarId = $this->plugins->createOwnCalendar(
+            (int) $req->user['id'],
+            $id,
+            is_string($body['name'] ?? null) ? $body['name'] : null,
+            is_string($body['color'] ?? null) ? $body['color'] : null,
+            is_array($body['settings'] ?? null) ? $body['settings'] : [],
+            RequestAuthority::request($req),
+        );
+        return Response::json(['calendarId' => $calendarId, 'queued' => $this->queueForCalendar($req, $id, $calendarId)], 201);
+    }
+
+    /** Change one of a plugin's calendars' own settings (only the keys sent). */
+    public function saveOwnCalendar(Request $req, array $params): Response
+    {
+        $id = (string) $params['id'];
+        $calendarId = (int) $params['calendarId'];
+        $settings = $this->plugins->saveOwnCalendarSettings((int) $req->user['id'], $calendarId, $id, is_array($req->body) ? $req->body : [], RequestAuthority::request($req));
+        $queued = [];
+        if (is_array($req->body) && $req->body !== []) {
+            $queued = $this->queueForCalendar($req, $id, $calendarId);
+            // Its place may have changed: calendars following it refill too.
+            $this->plugins->withAuthority(RequestAuthority::request($req), fn() => $this->plugins->queuePlaceFollowers((int) $req->user['id'], $calendarId, $this->queue));
+        }
+        return Response::json(['settings' => $settings, 'queued' => $queued]);
+    }
+
+    /** Matches for a searchable setting: ?q= text, or ?value= one exact value (its label). */
+    public function searchOptions(Request $req, array $params): Response
+    {
+        $value = isset($req->query['value']) ? (string) $req->query['value'] : null;
+        return Response::json(['options' => $this->plugins->searchOptions(
+            (string) $params['id'],
+            (string) $params['field'],
+            mb_substr((string) ($req->query['q'] ?? ''), 0, 100),
+            $value,
+        )]);
+    }
+
     /** "Run now": enqueue every job (or one, via ?job=) for the worker's next tick. */
     public function runNow(Request $req, array $params): Response
     {

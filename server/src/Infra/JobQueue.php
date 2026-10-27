@@ -40,10 +40,11 @@ final class JobQueue
         array $jobIds,
         bool $manual = false,
         ?\DateTimeImmutable $now = null,
+        ?int $calendarId = null,
     ): array {
         $now ??= Time::nowUtc();
         $jobIds = array_values(array_unique(array_filter(array_map('strval', $jobIds), static fn(string $id): bool => $id !== '')));
-        return $this->db->tx(function () use ($userId, $pluginId, $jobIds, $manual, $now): array {
+        return $this->db->tx(function () use ($userId, $pluginId, $jobIds, $manual, $now, $calendarId): array {
             $admission = new ExternalActionAdmission($this->db);
             $admission->lock();
             if ($this->db->scalar('SELECT id FROM plugins WHERE id = ? AND enabled = 1', [$pluginId]) === null) {
@@ -55,7 +56,9 @@ final class JobQueue
             $new = [];
             $extract = $this->hashExpression();
             foreach ($jobIds as $jobId) {
-                $hash = 'plugin:' . $pluginId . ':' . $jobId;
+                // A run for one calendar (after a save to it) is its own
+                // job, so it doesn't wait behind or merge with a full run.
+                $hash = 'plugin:' . $pluginId . ':' . $jobId . ($calendarId !== null ? ':cal' . $calendarId : '');
                 if ($this->db->scalar(
                     "SELECT id FROM jobs WHERE type = 'plugin_job' AND status IN ('pending', 'running') AND $extract = ? LIMIT 1",
                     [$hash]
@@ -109,7 +112,7 @@ final class JobQueue
                     'job' => $item['job'],
                     'hash' => $item['hash'],
                     'manual' => $manual,
-                ], $now);
+                ] + ($calendarId !== null ? ['calendarId' => $calendarId] : []), $now);
                 $queued[] = $item['job'];
             }
             return ['status' => 'ok', 'queued' => $queued, 'alreadyQueued' => $already, 'retryAt' => null];

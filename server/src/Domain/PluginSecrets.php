@@ -16,7 +16,7 @@ final class PluginSecrets
 
     public static function hasSecrets(array $manifest): bool
     {
-        foreach (['settings', 'calendarSettings', 'eventSettings'] as $scope) {
+        foreach (['settings', 'calendarSettings', 'eventSettings', 'ownCalendarSettings'] as $scope) {
             foreach ($manifest[$scope] ?? [] as $field) {
                 if (($field['type'] ?? '') === 'secret') return true;
             }

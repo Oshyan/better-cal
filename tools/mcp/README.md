@@ -61,6 +61,9 @@ Every call's arguments are checked against the tool's schema before any request:
 | `get_system_health` | none | Worker and failure status, without private host and destination details |
 | `update_plugin_settings` | `pluginId`, `values` | Save global plugin fields |
 | `update_plugin_calendar_settings` | `pluginId`, `calendarId`, `values` | Save calendar-specific plugin fields |
+| `add_plugin_calendar` | `pluginId`, `settings`, `name?`, `color?` | Add one of a plugin's calendars (a tide station, a weather place) |
+| `update_plugin_calendar` | `pluginId`, `calendarId`, `values` | Change one of those calendars' own settings |
+| `search_plugin_options` | `pluginId`, `field`, `query` | Search a long choice list, such as tide stations |
 | `set_plugin_enabled` | `pluginId`, `enabled` | Enable or disable an installed plugin |
 | `run_plugin` | `pluginId`, `job?` | Queue plugin jobs for the worker |
 | `update_event_plugin_data` | `pluginId`, `id`, `values` | Save event-specific plugin fields |

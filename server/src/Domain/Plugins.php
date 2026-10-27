@@ -8,6 +8,7 @@ use BetterCal\Http\HttpError;
 use BetterCal\Infra\Db;
 use BetterCal\Infra\HttpClient;
 use BetterCal\Plugin\EditablePlugin;
+use BetterCal\Plugin\OwnCalendarsPlugin;
 use BetterCal\Plugin\PluginEditRefused;
 use BetterCal\Plugin\PluginHost;
 use BetterCal\Plugin\PluginInterface;
@@ -26,11 +27,23 @@ final class Plugins
     public const HOST_VERSION = '0.1.0';
     public const FAILURE_DISABLE_THRESHOLD = 5;
     public const RANGE_RESPONSE_CAP = 500; // per plugin per window request
-    private const FIELD_TYPES = ['text', 'textarea', 'secret', 'number', 'select', 'checklist', 'toggle', 'location', 'person'];
+    private const FIELD_TYPES = ['text', 'textarea', 'secret', 'number', 'select', 'checklist', 'toggle', 'time', 'location', 'person'];
     /** Most choices one setting may offer, and most a checklist may hold. */
     public const OPTIONS_MAX = 500;
     /** The kv prefix a plugin's discovered choices live under (PluginHost::setSettingOptions). */
     public const OPTIONS_KV_PREFIX = '__options.';
+    /** Most choices a searchable setting may offer (the list stays on the server; the form asks for matches). */
+    public const SEARCH_OPTIONS_MAX = 10000;
+    /** Matches one search of a searchable setting returns. */
+    public const SEARCH_RESULTS = 20;
+    /** The kv prefix of the status line a plugin writes for one of its calendars. */
+    public const CALENDAR_STATUS_KV_PREFIX = '__calstatus.';
+    /** The kv prefix of the place a plugin says one of its calendars is about (PluginHost::setCalendarPlace). */
+    public const CALENDAR_PLACE_KV_PREFIX = '__calplace.';
+    /** How many calendars a place may be followed through (a sun calendar following a tide calendar following a trip). */
+    private const PLACE_LINK_DEPTH = 3;
+    /** Most calendars a person may add to one plugin, when its manifest sets no lower limit. */
+    public const OWN_CALENDARS_MAX = 50;
     public const TEXT_MAX = 500;       // single-line
     public const TEXTAREA_MAX = 10000; // list-shaped settings live here
     /** Declarative chip animations a plugin may request (host-provided CSS). */
@@ -200,7 +213,34 @@ final class Plugins
                 }
             }
         }
-        foreach (['settings', 'calendarSettings', 'eventSettings'] as $section) {
+        // Calendars the person adds one at a time, each with its own settings
+        // (a tide station per calendar, a place per weather calendar).
+        if (isset($m['ownCalendars'])) {
+            $oc = $m['ownCalendars'];
+            if (!is_array($oc) || array_is_list($oc)) {
+                $errs[] = 'ownCalendars must be an object';
+            } else {
+                if (!is_string($oc['noun'] ?? null) || trim($oc['noun']) === '' || mb_strlen($oc['noun']) > 40) {
+                    $errs[] = 'ownCalendars.noun is required (what one calendar is called, e.g. "tide calendar")';
+                }
+                if (isset($oc['name']) && (!is_string($oc['name']) || mb_strlen($oc['name']) > 160)) {
+                    $errs[] = 'ownCalendars.name must be text (a name, optionally with {fieldKey} placeholders)';
+                }
+                if (isset($oc['color']) && (!is_string($oc['color']) || preg_match('/^#[0-9a-fA-F]{6}$/', $oc['color']) !== 1)) {
+                    $errs[] = 'ownCalendars.color must be #rrggbb';
+                }
+                if (isset($oc['role']) && !in_array($oc['role'], ['mine', 'opportunities', 'context'], true)) {
+                    $errs[] = 'ownCalendars.role must be mine, opportunities or context';
+                }
+                if (isset($oc['max']) && (!is_int($oc['max']) || $oc['max'] < 1 || $oc['max'] > self::OWN_CALENDARS_MAX)) {
+                    $errs[] = 'ownCalendars.max must be 1-' . self::OWN_CALENDARS_MAX;
+                }
+            }
+        }
+        if (isset($m['ownCalendarSettings']) && !isset($m['ownCalendars'])) {
+            $errs[] = 'ownCalendarSettings needs ownCalendars';
+        }
+        foreach (['settings', 'calendarSettings', 'eventSettings', 'ownCalendarSettings'] as $section) {
             foreach (($m[$section] ?? []) as $f) {
                 if (!is_array($f) || !is_string($f['key'] ?? null) || !is_string($f['label'] ?? null)) {
                     $errs[] = $section . ': each field needs key + label';
@@ -217,6 +257,9 @@ final class Plugins
                 }
                 if (isset($f['optionsFrom']) && (!is_string($f['optionsFrom']) || preg_match('/^[a-zA-Z][a-zA-Z0-9._-]{0,80}$/', $f['optionsFrom']) !== 1)) {
                     $errs[] = $section . '.' . $f['key'] . ': optionsFrom must be a short name (letters, digits, . _ -)';
+                }
+                if (!empty($f['searchable']) && (($f['type'] ?? null) !== 'select' || !isset($f['optionsFrom']))) {
+                    $errs[] = $section . '.' . $f['key'] . ': searchable is for a select whose options come from optionsFrom';
                 }
                 if (in_array($f['type'] ?? null, ['select', 'checklist'], true) && !isset($f['optionsFrom'])
                     && (!isset($f['options']) || !is_array($f['options']) || $f['options'] === [])) {
@@ -336,6 +379,13 @@ final class Plugins
                 'settingsSchema' => PluginSecrets::schema($this->resolveSchema($id, $m['settings'] ?? [])),
                 'calendarSettingsSchema' => PluginSecrets::schema($this->resolveSchema($id, $m['calendarSettings'] ?? [])),
                 'eventSettingsSchema' => PluginSecrets::schema($m['eventSettings'] ?? []),
+                'ownCalendars' => $this->ownCalendarsDecl($m),
+                'ownCalendarSettingsSchema' => PluginSecrets::schema($this->resolveSchema($id, $m['ownCalendarSettings'] ?? [])),
+                'calendars' => array_map(static fn($r) => [
+                    'id' => (int) $r['id'],
+                    'name' => (string) $r['name'],
+                    'color' => (string) $r['color'],
+                ], $this->db->all("SELECT id, name, color FROM calendars WHERE user_id = ? AND kind = 'plugin' AND plugin_id = ? ORDER BY position, id", [$userId, $id])),
                 'decoration' => is_array($m['decoration'] ?? null) ? $m['decoration'] : null,
                 'requires' => array_values($m['requires'] ?? []),
                 'optional' => array_values($m['optional'] ?? []),
@@ -636,9 +686,16 @@ final class Plugins
             if (!is_array($field) || !is_string($field['optionsFrom'] ?? null)) {
                 continue;
             }
-            $raw = $this->db->scalar('SELECT v_json FROM plugin_kv WHERE plugin_id = ? AND k = ?', [$id, self::OPTIONS_KV_PREFIX . $field['optionsFrom']]);
-            $list = is_string($raw) ? json_decode($raw, true) : null;
-            $field['options'] = is_array($list) ? array_values(array_filter($list, static fn($o) => is_array($o) && isset($o['value']))) : [];
+            $list = $this->optionList($id, (string) $field['optionsFrom']);
+            if (!empty($field['searchable'])) {
+                // Too many to send with the form (thousands of stations):
+                // the form asks searchOptions for matches as the person types.
+                $field['options'] = [];
+                $field['optionsLoaded'] = is_array($list);
+                $field['optionCount'] = is_array($list) ? count($list) : 0;
+                continue;
+            }
+            $field['options'] = is_array($list) ? $list : [];
             // Discovered and empty (a database with no checkbox fields) reads
             // differently from not discovered yet.
             $field['optionsLoaded'] = is_array($list);
@@ -647,7 +704,96 @@ final class Plugins
         return $schema;
     }
 
-    public static function validateAgainstSchema(array $schema, array $values): array
+    /** @return ?list<array{value:string,label:string}> a plugin's published choices, null when not published yet */
+    private function optionList(string $id, string $name): ?array
+    {
+        $raw = $this->db->scalar('SELECT v_json FROM plugin_kv WHERE plugin_id = ? AND k = ?', [$id, self::OPTIONS_KV_PREFIX . $name]);
+        $list = is_string($raw) ? json_decode($raw, true) : null;
+        return is_array($list) ? array_values(array_filter($list, static fn($o) => is_array($o) && isset($o['value']))) : null;
+    }
+
+    /**
+     * Matches for a searchable setting (a select over thousands of choices).
+     * Reads the list the plugin published; runs no plugin code. A query
+     * matches the start of the value (a station id) or any part of the label;
+     * labels that start with it come first. $value looks one up exactly, so
+     * a form can show the label of what is already chosen.
+     *
+     * @return list<array{value:string,label:string}>
+     */
+    public function searchOptions(string $id, string $field, string $query, ?string $value = null): array
+    {
+        $m = $this->manifest($id);
+        $f = null;
+        foreach (['settings', 'calendarSettings', 'ownCalendarSettings'] as $scope) {
+            foreach (($m[$scope] ?? []) as $candidate) {
+                if (is_array($candidate) && ($candidate['key'] ?? null) === $field && !empty($candidate['searchable'])) {
+                    $f = $candidate;
+                    break 2;
+                }
+            }
+        }
+        if ($f === null) {
+            throw HttpError::notFound('No such searchable setting', 'unknown_setting');
+        }
+        $list = $this->optionList($id, (string) $f['optionsFrom']) ?? [];
+        if ($value !== null) {
+            foreach ($list as $o) {
+                if ((string) $o['value'] === $value) {
+                    return [['value' => (string) $o['value'], 'label' => (string) ($o['label'] ?? $o['value'])]];
+                }
+            }
+            return [];
+        }
+        $q = mb_strtolower(trim($query));
+        if ($q === '') {
+            return [];
+        }
+        $first = [];
+        $rest = [];
+        foreach ($list as $o) {
+            $label = (string) ($o['label'] ?? $o['value']);
+            $low = mb_strtolower($label);
+            $item = ['value' => (string) $o['value'], 'label' => $label];
+            if (str_starts_with($low, $q) || str_starts_with(mb_strtolower((string) $o['value']), $q)) {
+                $first[] = $item;
+            } elseif (str_contains($low, $q)) {
+                $rest[] = $item;
+            }
+            if (count($first) >= self::SEARCH_RESULTS) {
+                break;
+            }
+        }
+        $byLabel = static fn($a, $b) => strcmp($a['label'], $b['label']);
+        usort($first, $byLabel);
+        usort($rest, $byLabel);
+        return array_slice([...$first, ...$rest], 0, self::SEARCH_RESULTS);
+    }
+
+    /**
+     * Refuse a searchable value the plugin's list doesn't hold. Before the
+     * plugin has published its list (its first run), any value is kept and
+     * the plugin checks it when it runs.
+     *
+     * @return array<string,string> errors by key
+     */
+    private function checkSearchable(string $id, array $schema, array $clean): array
+    {
+        $errs = [];
+        foreach ($schema as $f) {
+            $k = (string) ($f['key'] ?? '');
+            if (empty($f['searchable']) || !isset($clean[$k])) {
+                continue;
+            }
+            $list = $this->optionList($id, (string) $f['optionsFrom']);
+            if ($list !== null && !in_array((string) $clean[$k], array_map(static fn($o) => (string) $o['value'], $list), true)) {
+                $errs[$k] = 'is not one of the choices';
+            }
+        }
+        return $errs;
+    }
+
+    public static function validateAgainstSchema(array $schema, array $values, bool $allowPlaceLinks = false): array
     {
         $clean = [];
         $errs = [];
@@ -689,7 +835,25 @@ final class Plugins
                 case 'toggle':
                     $clean[$k] = filter_var($v, FILTER_VALIDATE_BOOL);
                     break;
+                case 'time':
+                    // A time of day, 24-hour HH:MM.
+                    if (!is_string($v) || preg_match('/^([01]\d|2[0-3]):[0-5]\d$/', $v) !== 1) {
+                        $errs[$k] = 'must be a time of day (HH:MM)';
+                    } else {
+                        $clean[$k] = $v;
+                    }
+                    break;
                 case 'select':
+                    if (!empty($f['searchable'])) {
+                        // Checked against the plugin's stored list by
+                        // checkSearchable (the schema carries no options).
+                        if (!is_scalar($v) || (string) $v === '' || mb_strlen((string) $v) > self::TEXT_MAX) {
+                            $errs[$k] = 'must be text';
+                        } else {
+                            $clean[$k] = (string) $v;
+                        }
+                        break;
+                    }
                     $opts = self::optionValues($f);
                     // Choices a plugin discovers (optionsFrom) may not be
                     // loaded yet: then any short text is kept, and the
@@ -714,9 +878,21 @@ final class Plugins
                         }
                         $picked[(string) $item] = true;
                     }
-                    $clean[$k] = array_keys($picked);
+                    // PHP turns numeric keys ("6") into ints; choices stay text.
+                    $clean[$k] = array_map('strval', array_keys($picked));
                     break;
                 case 'location':
+                    // {link: calendarId}: the place another calendar is
+                    // about, followed as it changes (own calendar settings
+                    // only; Plugins::calendarPlace resolves it).
+                    if ($allowPlaceLinks && is_array($v) && array_key_exists('link', $v)) {
+                        if (!is_int($v['link']) && !(is_string($v['link']) && ctype_digit($v['link']))) {
+                            $errs[$k] = 'must link to a calendar id';
+                        } else {
+                            $clean[$k] = ['link' => (int) $v['link']];
+                        }
+                        break;
+                    }
                     // {name, lat, lng} from the place picker.
                     if (!is_array($v) || !is_numeric($v['lat'] ?? null) || !is_numeric($v['lng'] ?? null)) {
                         $errs[$k] = 'must be a place (name + coordinates)';
@@ -774,6 +950,7 @@ final class Plugins
         }
         $authority?->assertValid($this->db, false);
         [$clean, $errs] = self::validateAgainstSchema($this->resolveSchema($id, $m['settings'] ?? []), $values);
+        $errs += $this->checkSearchable($id, $m['settings'] ?? [], $clean);
         if ($errs === []) {
             // Plugin-level validation hook (short, synchronous, explicit save).
             try {
@@ -812,6 +989,7 @@ final class Plugins
             throw HttpError::badRequest('Unknown plugin');
         }
         [$clean, $errs] = self::validateAgainstSchema($this->resolveSchema($id, $m['calendarSettings'] ?? []), $values);
+        $errs += $this->checkSearchable($id, $m['calendarSettings'] ?? [], $clean);
         if ($errs !== []) {
             throw HttpError::badRequest('Invalid settings: ' . json_encode($errs));
         }
@@ -827,6 +1005,360 @@ final class Plugins
             $this->markTokenChange($id, $authority);
             return $this->publicValues($id, 'calendarSettings', $all['plugins'][$id]);
         });
+    }
+
+    // ---- calendars the person adds (ownCalendars) -------------------------
+
+    /** The manifest's ownCalendars declaration with its defaults filled in, or null. */
+    public function ownCalendarsDecl(array $m): ?array
+    {
+        $oc = $m['ownCalendars'] ?? null;
+        if (!is_array($oc)) {
+            return null;
+        }
+        return [
+            'noun' => (string) $oc['noun'],
+            'name' => (string) ($oc['name'] ?? ($m['name'] ?? '')),
+            'color' => (string) ($oc['color'] ?? '#5b8dd9'),
+            'role' => (string) ($oc['role'] ?? 'context'),
+            'max' => (int) ($oc['max'] ?? self::OWN_CALENDARS_MAX),
+        ];
+    }
+
+    /** Stored values over manifest defaults, still sealed where secret. */
+    private static function withDefaults(array $schema, array $stored): array
+    {
+        $out = [];
+        foreach ($schema as $f) {
+            $k = (string) $f['key'];
+            $out[$k] = array_key_exists($k, $stored) ? $stored[$k] : ($f['default'] ?? null);
+        }
+        return $out;
+    }
+
+    /** @return array<string,mixed> one calendar's own settings as stored (sealed) */
+    private static function storedOwn(?string $settingsJson): array
+    {
+        $all = is_string($settingsJson) ? (json_decode($settingsJson, true) ?: []) : [];
+        return is_array($all['own'] ?? null) ? $all['own'] : [];
+    }
+
+    /** One calendar's own settings for the calendars payload (secrets as set/unset only). */
+    public function ownSettingsPublic(string $id, ?string $settingsJson): ?array
+    {
+        $schema = ($this->manifest($id) ?? [])['ownCalendarSettings'] ?? null;
+        if (!is_array($schema) || $schema === []) {
+            return null;
+        }
+        return PluginSecrets::project($schema, self::withDefaults($schema, self::storedOwn($settingsJson)));
+    }
+
+    /** The status line a plugin last wrote for one of its calendars: {text, severity, at} or null. */
+    public function calendarStatus(string $id, int $calendarId): ?array
+    {
+        $raw = $this->db->scalar('SELECT v_json FROM plugin_kv WHERE plugin_id = ? AND k = ?', [$id, self::CALENDAR_STATUS_KV_PREFIX . $calendarId]);
+        $v = is_string($raw) ? json_decode($raw, true) : null;
+        return is_array($v) && is_string($v['text'] ?? null) ? $v : null;
+    }
+
+    /**
+     * Check a calendar's complete settings: schema types, required fields,
+     * searchable choices, then the plugin's own validateCalendarSettings.
+     * Returns the plain values to store.
+     *
+     * @param array<string,mixed> $current the stored values, opened
+     * @return array<string,mixed>
+     */
+    private function validatedOwn(int $userId, ?int $selfId, string $id, array $m, array $current, array $patch): array
+    {
+        $schema = $this->resolveSchema($id, $m['ownCalendarSettings'] ?? []);
+        [$clean, $errs] = self::validateAgainstSchema($schema, $patch, true);
+        foreach ($clean as $k => $v) {
+            if (!is_array($v) || !isset($v['link'])) {
+                continue;
+            }
+            $target = $this->db->one("SELECT id FROM calendars WHERE id = ? AND user_id = ? AND kind = 'plugin'", [$v['link'], $userId]);
+            if ($target === null || $v['link'] === $selfId) {
+                $errs[$k] = 'must follow another of your plugin calendars';
+            } elseif ($selfId !== null && $this->followsPlace($userId, $v['link'], $selfId)) {
+                $errs[$k] = 'would follow itself in a circle';
+            }
+        }
+        $errs += $this->checkSearchable($id, $m['ownCalendarSettings'] ?? [], $clean);
+        $merged = self::withDefaults($schema, array_merge($current, $clean));
+        foreach ($schema as $f) {
+            $k = (string) $f['key'];
+            if (!empty($f['required']) && !isset($errs[$k]) && ($merged[$k] === null || $merged[$k] === '' || $merged[$k] === [])) {
+                $errs[$k] = 'is required';
+            }
+        }
+        if ($errs === []) {
+            try {
+                $instance = $this->load($id);
+                $errs = $instance instanceof OwnCalendarsPlugin ? $instance->validateCalendarSettings($merged) : [];
+            } catch (\Throwable $e) {
+                $errs = ['_' => 'plugin validation failed: ' . $e->getMessage()];
+            }
+        }
+        if ($errs !== []) {
+            $labels = [];
+            foreach ($schema as $f) $labels[(string) $f['key']] = (string) $f['label'];
+            $parts = [];
+            foreach ($errs as $k => $e) $parts[] = (isset($labels[$k]) ? $labels[$k] . ': ' : '') . $e;
+            throw new HttpError('invalid_settings', implode('. ', $parts), 400);
+        }
+        return $merged;
+    }
+
+    /** What a {key} placeholder in a calendar name shows: the chosen option's label, a place's name, or the text. */
+    private function displayValue(string $id, array $field, mixed $v, int $userId = 0): string
+    {
+        if (is_array($v) && isset($v['link'])) {
+            return (string) ($this->calendarPlace($userId, (int) $v['link'])['name'] ?? '');
+        }
+        if (is_array($v)) {
+            return (string) ($v['name'] ?? '');
+        }
+        if ($v === null || is_bool($v)) {
+            return '';
+        }
+        if (($field['type'] ?? '') === 'select') {
+            $options = !empty($field['searchable'])
+                ? $this->searchOptions($id, (string) $field['key'], '', (string) $v)
+                : ($this->resolveSchema($id, [$field])[0]['options'] ?? []);
+            foreach ($options as $o) {
+                if (is_array($o) && (string) ($o['value'] ?? '') === (string) $v) {
+                    return (string) ($o['label'] ?? $v);
+                }
+            }
+        }
+        return (string) $v;
+    }
+
+    // ---- places: what a calendar is about, for others to follow ------------
+
+    /**
+     * The place one of the person's plugin calendars is about: what its
+     * plugin published (a tide station's coordinates), else the first place
+     * among its own settings, following a link to another calendar's place.
+     * {name, lat, lng, via?} or null.
+     */
+    public function calendarPlace(int $userId, int $calendarId, int $depth = 0): ?array
+    {
+        if ($depth > self::PLACE_LINK_DEPTH) {
+            return null;
+        }
+        $cal = $this->db->one("SELECT id, plugin_id, settings_json FROM calendars WHERE id = ? AND user_id = ? AND kind = 'plugin'", [$calendarId, $userId]);
+        if ($cal === null || empty($cal['plugin_id'])) {
+            return null;
+        }
+        $pluginId = (string) $cal['plugin_id'];
+        $raw = $this->db->scalar('SELECT v_json FROM plugin_kv WHERE plugin_id = ? AND k = ?', [$pluginId, self::CALENDAR_PLACE_KV_PREFIX . $calendarId]);
+        $published = is_string($raw) ? json_decode($raw, true) : null;
+        if (is_array($published) && is_numeric($published['lat'] ?? null) && is_numeric($published['lng'] ?? null)) {
+            return ['name' => (string) ($published['name'] ?? ''), 'lat' => (float) $published['lat'], 'lng' => (float) $published['lng']];
+        }
+        $own = self::storedOwn($cal['settings_json'] !== null ? (string) $cal['settings_json'] : null);
+        foreach ((($this->manifest($pluginId) ?? [])['ownCalendarSettings'] ?? []) as $f) {
+            if (($f['type'] ?? '') !== 'location') {
+                continue;
+            }
+            $v = $own[(string) $f['key']] ?? ($f['default'] ?? null);
+            return $this->resolvePlace($userId, $v, $depth);
+        }
+        return null;
+    }
+
+    /** A location setting's value as a place: as entered, or the linked calendar's place now. */
+    public function resolvePlace(int $userId, mixed $v, int $depth = 0): ?array
+    {
+        if (!is_array($v)) {
+            return null;
+        }
+        if (isset($v['link'])) {
+            $place = $this->calendarPlace($userId, (int) $v['link'], $depth + 1);
+            return $place === null ? null : $place + ['via' => (int) $v['link']];
+        }
+        return is_numeric($v['lat'] ?? null) && is_numeric($v['lng'] ?? null)
+            ? ['name' => (string) ($v['name'] ?? ''), 'lat' => (float) $v['lat'], 'lng' => (float) $v['lng']]
+            : null;
+    }
+
+    /** Does calendar $from reach $to by following place links? (A circle would never resolve.) */
+    private function followsPlace(int $userId, int $from, int $to, int $depth = 0): bool
+    {
+        if ($from === $to) {
+            return true;
+        }
+        if ($depth > self::PLACE_LINK_DEPTH) {
+            return false;
+        }
+        $raw = $this->db->scalar("SELECT settings_json FROM calendars WHERE id = ? AND user_id = ? AND kind = 'plugin'", [$from, $userId]);
+        foreach (self::storedOwn(is_string($raw) ? $raw : null) as $v) {
+            if (is_array($v) && isset($v['link']) && $this->followsPlace($userId, (int) $v['link'], $to, $depth + 1)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** @return list<array{id:int,plugin:string}> the person's plugin calendars whose settings follow this calendar's place */
+    public function placeFollowers(int $userId, int $calendarId): array
+    {
+        $out = [];
+        foreach ($this->db->all("SELECT id, plugin_id, settings_json FROM calendars WHERE user_id = ? AND kind = 'plugin' AND id <> ?", [$userId, $calendarId]) as $r) {
+            foreach (self::storedOwn($r['settings_json'] !== null ? (string) $r['settings_json'] : null) as $v) {
+                if (is_array($v) && (int) ($v['link'] ?? 0) === $calendarId) {
+                    $out[] = ['id' => (int) $r['id'], 'plugin' => (string) $r['plugin_id']];
+                    break;
+                }
+            }
+        }
+        return $out;
+    }
+
+    /** The jobs that fill a new or changed calendar: those marked runOnSave, or every job when none is. */
+    public function calendarJobIds(string $id): array
+    {
+        $jobs = ($this->manifest($id) ?? [])['jobs'] ?? [];
+        $onSave = array_values(array_map(static fn($j) => (string) $j['id'], array_filter($jobs, static fn($j) => !empty($j['runOnSave']))));
+        return $onSave !== [] ? $onSave : array_values(array_map(static fn($j) => (string) $j['id'], $jobs));
+    }
+
+    /**
+     * Refill the calendars that follow this one's place (its place just
+     * changed), each with a run for that calendar alone. Followers of
+     * followers follow on their own runs.
+     */
+    public function queuePlaceFollowers(int $userId, int $calendarId, \BetterCal\Infra\JobQueue $queue): void
+    {
+        foreach ($this->placeFollowers($userId, $calendarId) as $f) {
+            $jobs = $this->calendarJobIds($f['plugin']);
+            if ($jobs !== []) {
+                $queue->enqueuePluginJobs($userId, $f['plugin'], $jobs, false, null, $f['id']);
+            }
+        }
+    }
+
+    /**
+     * Add one of a plugin's calendars, with its own settings (a tide
+     * calendar for one station, a weather calendar for one place). The
+     * name may be left out: the manifest's name template fills it from the
+     * settings ("Tides, {station}"). Undoable like any new calendar.
+     *
+     * @param array<string,mixed> $values
+     */
+    public function createOwnCalendar(int $userId, string $id, ?string $name, ?string $color, array $values, ?RequestAuthority $authority = null): int
+    {
+        $m = $this->manifest($id);
+        $decl = $m !== null ? $this->ownCalendarsDecl($m) : null;
+        if ($decl === null) {
+            throw HttpError::badRequest('This plugin has no calendars to add', 'no_own_calendars');
+        }
+        $authority?->assertValid($this->db, false);
+        if ((int) ($this->db->scalar('SELECT enabled FROM plugins WHERE id = ?', [$id]) ?? 0) !== 1) {
+            throw HttpError::conflict('plugin_disabled', 'Turn ' . (string) $m['name'] . ' on before adding a ' . $decl['noun'] . '.');
+        }
+        $plain = $this->validatedOwn($userId, null, $id, $m, [], $values);
+        $name = trim((string) $name);
+        // A name made from the settings follows them (a new station renames
+        // it) until the person names the calendar themselves.
+        $autoName = $name === '';
+        if ($autoName) {
+            $name = $this->templateName($userId, $id, $m, $plain);
+        }
+        $color = $color !== null && preg_match('/^#[0-9a-fA-F]{6}$/', $color) === 1 ? $color : $decl['color'];
+        $calId = $this->db->tx(function () use ($userId, $id, $m, $decl, $name, $color, $plain, $authority): int {
+            $authority?->assertValid($this->db);
+            $count = (int) $this->db->scalar("SELECT COUNT(*) FROM calendars WHERE user_id = ? AND kind = 'plugin' AND plugin_id = ?", [$userId, $id]);
+            if ($count >= $decl['max']) {
+                throw HttpError::conflict('calendar_limit', (string) $m['name'] . ' allows ' . $decl['max'] . ' calendars.');
+            }
+            $settings = ['own' => $this->sealValues($id, 'ownCalendarSettings', $plain)] + ($autoName ? ['autoName' => true] : []);
+            if ($decl['role'] === 'mine') {
+                // As ensureCalendar: a plugin's Mine calendar starts without reminders.
+                $settings['reminderDefaults'] = ['timed' => [], 'allDay' => []];
+            }
+            $calId = $this->db->insert('calendars', [
+                'role' => $decl['role'],
+                'user_id' => $userId,
+                'name' => mb_substr($name, 0, 160),
+                'color' => $color,
+                'kind' => 'plugin',
+                'plugin_id' => $id,
+                'subscription_authority' => SubscriptionAuthority::OWNER,
+                'settings_json' => json_encode($settings),
+            ]);
+            $this->markTokenChange($id, $authority);
+            return $calId;
+        });
+        (new Undo($this->db))->record($userId, 'calendar', $calId, 'create', null, null, "Added " . $decl['noun'] . " '" . $name . "'");
+        return $calId;
+    }
+
+    /**
+     * Change one of a plugin's calendars' own settings (only the keys sent;
+     * a secret left out keeps its value). Returns the public values.
+     *
+     * @param array<string,mixed> $values
+     */
+    public function saveOwnCalendarSettings(int $userId, int $calendarId, string $id, array $values, ?RequestAuthority $authority = null): array
+    {
+        $m = $this->manifest($id);
+        if ($m === null || $this->ownCalendarsDecl($m) === null) {
+            throw HttpError::badRequest('This plugin has no calendars of its own', 'no_own_calendars');
+        }
+        $authority?->assertValid($this->db, false);
+        $cal = $this->db->one("SELECT settings_json FROM calendars WHERE id = ? AND user_id = ? AND kind = 'plugin' AND plugin_id = ?", [$calendarId, $userId, $id]);
+        if ($cal === null) {
+            throw HttpError::notFound('No such ' . (string) $m['name'] . ' calendar');
+        }
+        $secret = (string) ($this->cfg['session_secret'] ?? '');
+        $current = PluginSecrets::open($id, 'ownCalendarSettings', self::storedOwn($cal['settings_json'] !== null ? (string) $cal['settings_json'] : null), $secret);
+        $plain = $this->validatedOwn($userId, $calendarId, $id, $m, $current, $values);
+        return $this->db->tx(function () use ($userId, $calendarId, $id, $plain, $authority): array {
+            $authority?->assertValid($this->db);
+            $raw = $this->db->scalar('SELECT settings_json FROM calendars WHERE id = ? AND user_id = ?' . $this->db->forUpdate(), [$calendarId, $userId]);
+            $all = is_string($raw) ? (json_decode($raw, true) ?: []) : [];
+            $all['own'] = $this->sealValues($id, 'ownCalendarSettings', $plain);
+            $this->db->run('UPDATE calendars SET settings_json = ? WHERE id = ?', [json_encode($all), $calendarId]);
+            $this->markTokenChange($id, $authority);
+            $this->refreshAutoName($userId, $calendarId);
+            return $this->publicValues($id, 'ownCalendarSettings', $all['own']);
+        });
+    }
+
+    /** The manifest's name template filled from these settings ("Tides, {station}" -> "Tides, Sample Harbor"). */
+    private function templateName(int $userId, string $id, array $m, array $plain): string
+    {
+        $byKey = [];
+        foreach ($m['ownCalendarSettings'] ?? [] as $f) $byKey[(string) $f['key']] = $f;
+        $template = (string) (($m['ownCalendars']['name'] ?? null) ?: ($m['name'] ?? $id));
+        $name = trim((string) preg_replace_callback('/\{([A-Za-z0-9_.-]+)\}/', fn($x) => isset($byKey[$x[1]]) ? $this->displayValue($id, $byKey[$x[1]], $plain[$x[1]] ?? null, $userId) : '', $template));
+        return mb_substr(trim((string) preg_replace('/[\s,:;-]+$/u', '', $name)) ?: (string) ($m['name'] ?? $id), 0, 160);
+    }
+
+    /**
+     * Rename a calendar whose name came from its settings, after they (or
+     * the place it follows) changed. A calendar the person named keeps it.
+     */
+    public function refreshAutoName(int $userId, int $calendarId): void
+    {
+        $cal = $this->db->one("SELECT name, plugin_id, settings_json FROM calendars WHERE id = ? AND user_id = ? AND kind = 'plugin'", [$calendarId, $userId]);
+        $settings = $cal !== null && is_string($cal['settings_json']) ? (json_decode($cal['settings_json'], true) ?: []) : [];
+        if (empty($settings['autoName'])) {
+            return;
+        }
+        $id = (string) $cal['plugin_id'];
+        $m = $this->manifest($id);
+        if ($m === null) {
+            return;
+        }
+        $plain = PluginSecrets::open($id, 'ownCalendarSettings', self::withDefaults($m['ownCalendarSettings'] ?? [], self::storedOwn((string) $cal['settings_json'])), (string) ($this->cfg['session_secret'] ?? ''));
+        $name = $this->templateName($userId, $id, $m, $plain);
+        if ($name !== (string) $cal['name']) {
+            $this->db->run('UPDATE calendars SET name = ? WHERE id = ?', [$name, $calendarId]);
+        }
     }
 
     /**
@@ -969,7 +1501,7 @@ final class Plugins
      * circuit breaker, auto-disables after FAILURE_DISABLE_THRESHOLD
      * consecutive failures.
      */
-    public function runJob(int $userId, string $id, string $jobId): array
+    public function runJob(int $userId, string $id, string $jobId, ?int $calendarId = null): array
     {
         $this->rememberPrivateDiagnostics($id);
         $state = $this->db->one('SELECT * FROM plugins WHERE id = ? AND enabled = 1', [$id]);
@@ -989,7 +1521,14 @@ final class Plugins
             return ['outcome' => 'error', 'error' => 'Plugin.php missing or does not return a PluginInterface'];
         }
         $runId = Ids::ulid();
-        $host = new PluginHost($this->db, $id, $userId, new HttpClient(), $m, $this->cfg, $runId);
+        $host = new PluginHost($this->db, $id, $userId, new HttpClient(), $m, $this->cfg, $runId, $calendarId);
+        if (isset($m['ownCalendars'])) {
+            // A calendar named after the place it follows takes the new name
+            // when that place changed (a tide calendar moved to a new station).
+            foreach ($this->db->all("SELECT id FROM calendars WHERE user_id = ? AND kind = 'plugin' AND plugin_id = ?" . ($calendarId !== null ? ' AND id = ?' : ''), $calendarId !== null ? [$userId, $id, $calendarId] : [$userId, $id]) as $c) {
+                $this->refreshAutoName($userId, (int) $c['id']);
+            }
+        }
         $t0 = microtime(true);
         $startedAt = Time::nowDb();
         $outcome = 'ok';
@@ -1073,9 +1612,13 @@ final class Plugins
         $enabled = array_map(static fn($r) => (string) $r['id'], $this->db->all('SELECT id FROM plugins WHERE enabled = 1'));
         $out = [];
         foreach ($enabled as $id) {
+            // A band tied to a calendar goes with it: a deleted calendar's
+            // bands stop showing (and return if the delete is undone).
             $rows = $this->db->all(
-                'SELECT id, source_key, start_utc, end_utc, label, color, detail_html FROM plugin_ranges
-                 WHERE plugin_id = ? AND start_utc < ? AND end_utc > ? ORDER BY start_utc LIMIT ' . (self::RANGE_RESPONSE_CAP + 1),
+                'SELECT r.id, r.source_key, r.start_utc, r.end_utc, r.label, r.color, r.detail_html, r.calendar_id FROM plugin_ranges r
+                 LEFT JOIN calendars c ON c.id = r.calendar_id
+                 WHERE r.plugin_id = ? AND r.start_utc < ? AND r.end_utc > ? AND (r.calendar_id IS NULL OR c.id IS NOT NULL)
+                 ORDER BY r.start_utc LIMIT ' . (self::RANGE_RESPONSE_CAP + 1),
                 [$id, Time::toDb($end), Time::toDb($start)]
             );
             $truncated = count($rows) > self::RANGE_RESPONSE_CAP;
@@ -1091,6 +1634,7 @@ final class Plugins
                     'label' => (string) $r['label'],
                     'color' => $r['color'] !== null ? (string) $r['color'] : null,
                     'detailHtml' => $r['detail_html'] !== null ? (string) $r['detail_html'] : null,
+                    'calendarId' => $r['calendar_id'] !== null ? (int) $r['calendar_id'] : null,
                 ], $rows),
             ];
         }

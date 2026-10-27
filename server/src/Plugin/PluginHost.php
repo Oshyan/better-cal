@@ -53,6 +53,7 @@ final class PluginHost
         private readonly array $manifest,
         private readonly array $cfg = [],
         private readonly ?string $runId = null,
+        private readonly ?int $targetCalendarId = null,
     ) {
         $this->startedAt = microtime(true);
     }
@@ -187,6 +188,127 @@ final class PluginHost
         } catch (\Throwable) {
             return new \DateTimeZone('UTC');
         }
+    }
+
+    // ---- calendars the person adds (ownCalendars) ------------------------
+
+    /**
+     * The calendars this plugin should fill on this run, each with its own
+     * settings (stored values over defaults, secrets opened). Normally all
+     * of them; when the run follows a save to one calendar, just that one,
+     * so adding a fifth tide station doesn't refetch the other four.
+     *
+     * @return list<array{id:int,name:string,color:string,visible:bool,settings:array<string,mixed>}>
+     */
+    public function ownCalendars(): array
+    {
+        $sql = "SELECT id, name, color, visible, settings_json FROM calendars WHERE user_id = ? AND kind = 'plugin' AND plugin_id = ?";
+        $params = [$this->userId, $this->pluginId];
+        if ($this->targetCalendarId !== null) {
+            $sql .= ' AND id = ?';
+            $params[] = $this->targetCalendarId;
+        }
+        $out = [];
+        foreach ($this->db->all($sql . ' ORDER BY position, id', $params) as $r) {
+            $out[] = [
+                'id' => (int) $r['id'],
+                'name' => (string) $r['name'],
+                'color' => (string) $r['color'],
+                'visible' => (int) $r['visible'] === 1,
+                'settings' => $this->ownSettingsFrom($r['settings_json'] !== null ? (string) $r['settings_json'] : null),
+            ];
+        }
+        return $out;
+    }
+
+    /** One of this plugin's calendars' own settings (stored over defaults). */
+    public function ownCalendarSettings(int $calendarId): array
+    {
+        $raw = $this->db->scalar("SELECT settings_json FROM calendars WHERE id = ? AND user_id = ? AND kind = 'plugin' AND plugin_id = ?", [$calendarId, $this->userId, $this->pluginId]);
+        return $this->ownSettingsFrom(is_string($raw) ? $raw : null);
+    }
+
+    private function ownSettingsFrom(?string $settingsJson): array
+    {
+        $all = is_string($settingsJson) ? (json_decode($settingsJson, true) ?: []) : [];
+        $mine = is_array($all['own'] ?? null) ? $all['own'] : [];
+        $out = [];
+        foreach (($this->manifest['ownCalendarSettings'] ?? []) as $field) {
+            $k = (string) $field['key'];
+            $out[$k] = array_key_exists($k, $mine) ? $mine[$k] : ($field['default'] ?? null);
+            // A place that follows another calendar arrives as that
+            // calendar's place now ({name, lat, lng, via}), or null while it
+            // has none, so a plugin reads every location the same way.
+            if (($field['type'] ?? '') === 'location' && is_array($out[$k]) && isset($out[$k]['link'])) {
+                $out[$k] = $this->registry()->resolvePlace($this->userId, $out[$k]);
+            }
+        }
+        return PluginSecrets::open($this->pluginId, 'ownCalendarSettings', $out, (string) ($this->cfg['session_secret'] ?? ''));
+    }
+
+    private ?\BetterCal\Domain\Plugins $registry = null;
+
+    private function registry(): \BetterCal\Domain\Plugins
+    {
+        return $this->registry ??= new \BetterCal\Domain\Plugins($this->db, null, $this->cfg);
+    }
+
+    /**
+     * Say what place one of this plugin's calendars is about, when that
+     * isn't simply a location setting (a tide calendar's station). Other
+     * calendars can follow it: a sun or weather calendar set to "same place
+     * as" this one. When it changes, those calendars are refilled.
+     *
+     * @param ?array{name:string,lat:float,lng:float} $place
+     */
+    public function setCalendarPlace(int $calendarId, ?array $place): void
+    {
+        $owned = $this->db->one("SELECT id FROM calendars WHERE id = ? AND user_id = ? AND kind = 'plugin' AND plugin_id = ?", [$calendarId, $this->userId, $this->pluginId]);
+        if ($owned === null) {
+            throw new \RuntimeException('setCalendarPlace: calendar ' . $calendarId . ' is not owned by ' . $this->pluginId);
+        }
+        $key = \BetterCal\Domain\Plugins::CALENDAR_PLACE_KV_PREFIX . $calendarId;
+        $before = $this->kvGet($key);
+        if ($place === null) {
+            $value = null;
+        } else {
+            $lat = (float) ($place['lat'] ?? 0);
+            $lng = (float) ($place['lng'] ?? 0);
+            if (!is_numeric($place['lat'] ?? null) || !is_numeric($place['lng'] ?? null) || $lat < -90 || $lat > 90 || $lng < -180 || $lng > 180) {
+                throw new \RuntimeException('setCalendarPlace: lat/lng out of range');
+            }
+            $value = ['name' => mb_substr(Sanitize::toText((string) ($place['name'] ?? '')), 0, 200), 'lat' => round($lat, 5), 'lng' => round($lng, 5)];
+        }
+        if ($value === $before) {
+            return;
+        }
+        $value === null ? $this->kvDelete($key) : $this->kvSet($key, $value);
+        $this->registry()->queuePlaceFollowers($this->userId, $calendarId, new JobQueue($this->db));
+    }
+
+    /** The calendar this run was started for (a save to its settings), or null for a full run. */
+    public function targetCalendar(): ?int
+    {
+        return $this->targetCalendarId;
+    }
+
+    /**
+     * A short line about one of this plugin's calendars, shown in its
+     * settings ("38 low tides in the next 90 days", "Station not found").
+     * Severity is info, warn or error; null text clears it.
+     */
+    public function setCalendarStatus(int $calendarId, ?string $text, string $severity = 'info'): void
+    {
+        $key = \BetterCal\Domain\Plugins::CALENDAR_STATUS_KV_PREFIX . $calendarId;
+        if ($text === null || trim($text) === '') {
+            $this->kvDelete($key);
+            return;
+        }
+        $this->kvSet($key, [
+            'text' => mb_substr(Sanitize::toText($text), 0, 300),
+            'severity' => in_array($severity, ['info', 'warn', 'error'], true) ? $severity : 'info',
+            'at' => Time::iso(Time::nowUtc()),
+        ]);
     }
 
     /** @return list<array{id:int,name:string,kind:string,visible:bool}> the user's calendars */
@@ -486,8 +608,16 @@ final class PluginHost
             $this->kvDelete(\BetterCal\Domain\Plugins::OPTIONS_KV_PREFIX . $name);
             return;
         }
+        $max = \BetterCal\Domain\Plugins::OPTIONS_MAX;
+        foreach (['settings', 'calendarSettings', 'ownCalendarSettings'] as $scope) {
+            foreach (($this->manifest[$scope] ?? []) as $f) {
+                if (($f['optionsFrom'] ?? null) === $name && !empty($f['searchable'])) {
+                    $max = \BetterCal\Domain\Plugins::SEARCH_OPTIONS_MAX;
+                }
+            }
+        }
         $clean = [];
-        foreach (array_slice(array_values($options), 0, \BetterCal\Domain\Plugins::OPTIONS_MAX) as $o) {
+        foreach (array_slice(array_values($options), 0, $max) as $o) {
             $value = is_array($o) ? ($o['value'] ?? null) : $o;
             if (!is_scalar($value) || (string) $value === '' || mb_strlen((string) $value) > \BetterCal\Domain\Plugins::TEXT_MAX) {
                 continue;
@@ -789,7 +919,7 @@ final class PluginHost
                 throw new \RuntimeException('syncEvents: the stored plugin snapshot is over the safe repair limit; no rows were changed');
             }
             $existing = [];
-            foreach ($this->db->all('SELECT id, uid, title, start_utc, end_utc, all_day, description, location, icon, url, updated_at FROM events WHERE calendar_id = ? AND deleted_at IS NULL', [$calendarId]) as $r) {
+            foreach ($this->db->all('SELECT id, uid, title, start_utc, end_utc, all_day, tzid, description, location, icon, url, updated_at FROM events WHERE calendar_id = ? AND deleted_at IS NULL', [$calendarId]) as $r) {
                 $existing[(string) $r['uid']] = $r;
             }
             $added = 0;
@@ -929,13 +1059,27 @@ final class PluginHost
      *
      * @param list<array<string,mixed>> $ranges
      */
-    public function replaceRanges(array $ranges): int
+    public function replaceRanges(array $ranges, ?int $calendarId = null): int
     {
         if (count($ranges) > self::MAX_RANGES_PER_SYNC) {
             $this->log('ranges truncated: ' . count($ranges) . ' -> ' . self::MAX_RANGES_PER_SYNC);
             $ranges = array_slice($ranges, 0, self::MAX_RANGES_PER_SYNC);
         }
-        $this->db->run('DELETE FROM plugin_ranges WHERE plugin_id = ?', [$this->pluginId]);
+        if ($calendarId !== null) {
+            // Bands that belong to one calendar: hidden with it, gone with it,
+            // and replaced per calendar so one calendar's run leaves the
+            // others' bands alone.
+            $cal = $this->db->one(
+                "SELECT id FROM calendars WHERE id = ? AND user_id = ? AND kind = 'plugin' AND plugin_id = ?",
+                [$calendarId, $this->userId, $this->pluginId]
+            );
+            if ($cal === null) {
+                throw new \RuntimeException('replaceRanges: calendar ' . $calendarId . ' is not owned by ' . $this->pluginId);
+            }
+            $this->db->run('DELETE FROM plugin_ranges WHERE plugin_id = ? AND calendar_id = ?', [$this->pluginId, $calendarId]);
+        } else {
+            $this->db->run('DELETE FROM plugin_ranges WHERE plugin_id = ? AND calendar_id IS NULL', [$this->pluginId]);
+        }
         $n = 0;
         $seen = [];
         foreach ($ranges as $r) {
@@ -947,7 +1091,8 @@ final class PluginHost
             [$startUtc, $endUtc] = self::rangeToUtc($r);
             $this->db->insert('plugin_ranges', [
                 'plugin_id' => $this->pluginId,
-                'source_key' => $key,
+                'calendar_id' => $calendarId,
+                'source_key' => $calendarId !== null ? mb_substr($calendarId . ':' . $key, 0, 160) : $key,
                 'start_utc' => $startUtc,
                 'end_utc' => $endUtc,
                 'label' => mb_substr(Sanitize::toText((string) ($r['label'] ?? '')), 0, 200),

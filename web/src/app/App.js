@@ -412,6 +412,7 @@ export function App() {
   const pluginRanges = useStore((st) => st.pluginRanges);
   const pluginSeq = useStore((st) => st.pluginSeq);
   const pluginHidden = useStore((st) => st.settings.pluginHidden);
+  const calendarsForRanges = useStore((st) => st.calendars);
   const plugRangeKeyRef = useRef(null);
   useEffect(() => {
     if (!visMonthKey) return;
@@ -431,9 +432,12 @@ export function App() {
     const out = [];
     const decoBy = {};
     for (const pl of (state.plugins || [])) if (pl.decoration) decoBy[pl.id] = pl.decoration;
+    // A band that belongs to one of a plugin's calendars hides with it.
+    const calVisible = new Map((calendarsForRanges || []).map((c) => [c.id, c.visible]));
     for (const [pid, entry] of Object.entries(pluginRanges)) {
       if (pluginHidden && pluginHidden[pid]) continue;
       for (const r of entry.ranges || []) {
+        if (r.calendarId != null && calVisible.get(r.calendarId) !== true) continue;
         const startKey = dayKeyOf(parseISO(r.start));
         const endKey = dayKeyOf(new Date(parseISO(r.end).getTime() - 60000));
         out.push({
@@ -460,7 +464,7 @@ export function App() {
       }
     }
     return out;
-  }, [pluginRanges, pluginHidden]);
+  }, [pluginRanges, pluginHidden, calendarsForRanges]);
 
   const occurrencesWithAvail = useMemo(
     () => {

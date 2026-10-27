@@ -2,12 +2,16 @@
 // The HOST renders every control from the schema — plugins ship data, never
 // markup — so styling, accessibility, and sanitisation stay in one place.
 // Field types: text, textarea, secret, number, select, checklist, toggle,
-// location (PlaceInput), person. A select or checklist with `optionsFrom`
-// offers what the plugin discovered (the server fills `options` in).
+// time, location (PlaceInput), person. A select or checklist with
+// `optionsFrom` offers what the plugin discovered (the server fills
+// `options` in); a `searchable` select asks the server for matches instead,
+// for lists too long to send (thousands of tide stations). `showIf` hides a
+// field until another has a given value.
 
-import { html, useState, useEffect } from '../../vendor/index.js';
+import { html, useState, useEffect, useRef } from '../../vendor/index.js';
 import { PlaceInput } from './PlaceInput.js';
 import { useStore } from './store.js';
+import { api } from './api.js';
 
 const PENDING = 'Choices appear here after the plugin connects (within a minute of saving).';
 const NONE = 'None to choose from.';
@@ -63,14 +67,90 @@ function SelectField({ field, value, onChange }) {
   </select>`;
 }
 
-function Field({ field, value, onChange }) {
+// Type to search a long list the plugin published; the server returns
+// the best matches. The chosen value's label is looked up once, so a saved
+// station shows its name rather than its id.
+function SearchSelectField({ field, value, onChange, pluginId }) {
+  const [query, setQuery] = useState(null);
+  const [label, setLabel] = useState('');
+  const [matches, setMatches] = useState([]);
+  const [active, setActive] = useState(0);
+  const seq = useRef(0);
+  // null while the chosen value's label loads: the field says so rather
+  // than showing a bare id or looking empty.
+  useEffect(() => {
+    setLabel(value == null || value === '' || !pluginId ? '' : null);
+    if (value == null || value === '' || !pluginId) return;
+    api('/plugins/' + pluginId + '/options/' + field.key + '?' + new URLSearchParams({ value: String(value) }))
+      .then((d) => setLabel(d.options && d.options[0] ? d.options[0].label : String(value) + ' (no longer found)'))
+      .catch(() => setLabel(String(value)));
+  }, [value, pluginId, field.key]);
+  useEffect(() => {
+    if (query === null || query.trim().length < 2) { setMatches([]); return undefined; }
+    const n = ++seq.current;
+    const t = setTimeout(() => {
+      api('/plugins/' + pluginId + '/options/' + field.key + '?' + new URLSearchParams({ q: query.trim() }))
+        .then((d) => { if (n === seq.current) { setMatches(d.options || []); setActive(0); } })
+        .catch(() => {});
+    }, 200);
+    return () => clearTimeout(t);
+  }, [query]);
+  if (!field.optionsLoaded) return html`<span class="bc-schema-pending">${emptyText(field)}</span>`;
+  const pick = (o) => { onChange(o.value); setLabel(o.label); setQuery(null); setMatches([]); };
+  const onKey = (e) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); setActive(Math.min(active + 1, matches.length - 1)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setActive(Math.max(active - 1, 0)); }
+    else if (e.key === 'Enter' && matches[active]) { e.preventDefault(); pick(matches[active]); }
+    else if (e.key === 'Escape' && query !== null) { e.stopPropagation(); setQuery(null); setMatches([]); }
+  };
+  return html`<span class="bc-schema-search">
+    <input type="text" class="bc-schema-input" role="combobox" aria-expanded=${matches.length > 0} autocomplete="off" spellcheck="false"
+      aria-label=${field.label}
+      placeholder=${label === null ? 'Loading…' : field.placeholder || 'Type to search ' + field.optionCount + ' choices'}
+      value=${query !== null ? query : label || ''}
+      onFocus=${(e) => e.target.select()}
+      onInput=${(e) => setQuery(e.target.value)}
+      onBlur=${() => setTimeout(() => { setQuery(null); setMatches([]); }, 150)}
+      onKeyDown=${onKey} />
+    ${matches.length > 0 && html`<ul class="bc-schema-matches" role="listbox">
+      ${matches.map((o, i) => html`<li key=${o.value} role="option" aria-selected=${i === active} class=${i === active ? 'is-active' : ''}
+        onMouseDown=${(e) => { e.preventDefault(); pick(o); }}><span>${o.label}</span><small>${o.value}</small></li>`)}
+    </ul>`}
+    ${query !== null && query.trim().length >= 2 && matches.length === 0 && html`<span class="bc-schema-pending">No matches</span>`}
+  </span>`;
+}
+
+// A place picked here, or "same place as" another plugin calendar (a sun
+// calendar following a tide calendar's station). The link is resolved each
+// time the plugin runs, so it follows when the other calendar changes.
+function LocationField({ value, onChange, placeSources }) {
+  const linked = value && typeof value === 'object' && value.link != null;
+  const sources = placeSources || [];
+  return html`<span class="bc-schema-location">
+    ${!linked && html`<${PlaceInput}
+      value=${value ? (value.name || '') : ''}
+      onText=${(t) => { if (!t) onChange(null); }}
+      onPick=${(p) => onChange(p ? { name: p.name || '', lat: p.lat, lng: p.lng } : null)}
+      placeholder="Search for a place…"
+    />`}
+    ${sources.length > 0 && html`<select class="bc-schema-input" aria-label="Same place as another calendar"
+      value=${linked ? String(value.link) : ''}
+      onChange=${(e) => onChange(e.target.value ? { link: Number(e.target.value) } : null)}>
+      <option value="">${linked ? 'A place of its own' : 'Or the same place as…'}</option>
+      ${sources.map((c) => html`<option key=${c.id} value=${String(c.id)}>${c.name}${c.place && c.place.name ? ' (' + c.place.name + ')' : ''}</option>`)}
+    </select>`}
+  </span>`;
+}
+
+function Field({ field, value, onChange, pluginId, placeSources }) {
   const people = useStore((s) => s.people);
+  if (field.type === 'select' && field.searchable) return html`<${SearchSelectField} field=${field} value=${value} onChange=${onChange} pluginId=${pluginId} />`;
   switch (field.type) {
     case 'secret':
       return html`<${SecretField} field=${field} value=${value} onChange=${onChange} />`;
     case 'number':
       return html`<input
-        type="number" class="bc-schema-input"
+        type="number" class="bc-schema-input bc-schema-number"
         min=${field.min} max=${field.max} step=${field.step || 1}
         value=${value ?? ''}
         onInput=${(e) => onChange(e.target.value === '' ? null : Number(e.target.value))}
@@ -84,15 +164,13 @@ function Field({ field, value, onChange }) {
         <input type="checkbox" checked=${!!value} onChange=${(e) => onChange(e.target.checked)} />
         <span>${value ? 'On' : 'Off'}</span>
       </label>`;
+    case 'time':
+      return html`<input type="time" class="bc-schema-input bc-schema-time" value=${value ?? ''}
+        onInput=${(e) => onChange(e.target.value === '' ? null : e.target.value)} />`;
     case 'location':
       // A location value is only valid once picked from the dropdown (the
       // server requires coordinates); typing alone just searches.
-      return html`<${PlaceInput}
-        value=${value ? (value.name || '') : ''}
-        onText=${(t) => { if (!t) onChange(null); }}
-        onPick=${(p) => onChange(p ? { name: p.name || '', lat: p.lat, lng: p.lng } : null)}
-        placeholder="Search for a place…"
-      />`;
+      return html`<${LocationField} value=${value} onChange=${onChange} placeSources=${placeSources} />`;
     case 'person':
       return html`<select class="bc-schema-input" value=${value ?? ''} onChange=${(e) => onChange(e.target.value || null)}>
         <option value="">(none)</option>
@@ -118,17 +196,45 @@ function Field({ field, value, onChange }) {
 }
 
 /**
+ * The form's rows: shown fields, where a field marked `join` shares the
+ * line of the shown field before it ("Not before [ ] Not after [ ]"), and
+ * a section heading goes with the first shown field of its section.
+ */
+function rows(schema, draft) {
+  const out = [];
+  let section = null;
+  let sectionShown = true;
+  for (const f of schema || []) {
+    if (f.section) { section = f.section; sectionShown = false; }
+    if (!fieldShown(f, draft)) continue;
+    const prev = out[out.length - 1];
+    if (f.join && prev && !f.section) { prev.fields.push(f); continue; }
+    out.push({ fields: [f], heading: !sectionShown ? section : null });
+    sectionShown = true;
+  }
+  return out;
+}
+
+/** Is this field shown, given the form's current values? showIf: {key: value | [values]}. */
+export function fieldShown(field, draft) {
+  if (!field.showIf) return true;
+  return Object.entries(field.showIf).every(([k, want]) => (Array.isArray(want) ? want : [want]).some((w) => JSON.stringify(draft[k] ?? null) === JSON.stringify(w)));
+}
+
+/**
  * Controlled schema form with its own draft + save button.
  * props: schema (manifest field list), values (current), onSave(draft) ->
- * Promise resolving truthy on success.
+ * Promise resolving truthy on success. pluginId: for searchable fields.
+ * placeSources: plugin calendars a location may follow. create: a new
+ * calendar's form (every value is sent, Save is on from the start).
  */
-export function SchemaForm({ schema, values, onSave, saveLabel = 'Save' }) {
+export function SchemaForm({ schema, values, onSave, saveLabel = 'Save', pluginId = null, placeSources = null, create = false, onCancel = null, children = null }) {
   const [draft, setDraft] = useState(() => ({ ...values }));
   const [busy, setBusy] = useState(false);
   // Reloading another plugin replaces the values object too. Only a real
   // saved-value change should reset this form, not an unrelated list refresh.
   useEffect(() => { setDraft({ ...values }); }, [JSON.stringify(values)]);
-  const dirty = (schema || []).some((f) => JSON.stringify(draft[f.key]) !== JSON.stringify(values[f.key]));
+  const dirty = create || (schema || []).some((f) => JSON.stringify(draft[f.key]) !== JSON.stringify(values[f.key]));
 
   const save = async () => {
     setBusy(true);
@@ -138,7 +244,7 @@ export function SchemaForm({ schema, values, onSave, saveLabel = 'Save' }) {
         if (field.type === 'secret' && (body[field.key] === '' || typeof body[field.key] === 'object' && body[field.key] !== null)) delete body[field.key];
         // Only changed fields go up: a discovered choice that hasn't loaded
         // yet must not be sent back and refused.
-        if (JSON.stringify(body[field.key]) === JSON.stringify(values[field.key])) delete body[field.key];
+        if (!create && JSON.stringify(body[field.key]) === JSON.stringify(values[field.key])) delete body[field.key];
       }
       const ok = await onSave(body);
       if (ok) setDraft((current) => Object.fromEntries(Object.entries(current).map(([key, value]) => [key, schema.some((f) => f.key === key && f.type === 'secret') && typeof value === 'string' ? { set: value !== '' } : value])));
@@ -149,18 +255,25 @@ export function SchemaForm({ schema, values, onSave, saveLabel = 'Save' }) {
 
   if (!schema || schema.length === 0) return null;
   return html`<div class="bc-schema-form">
-    ${schema.map((f) => {
+    ${children}
+    ${rows(schema, draft).map(({ fields: [f, ...joined], heading }) => {
       // A checklist is a group of checkboxes, so it can't sit inside one label.
-      const Tag = f.type === 'checklist' ? 'div' : 'label';
+      const Tag = joined.length > 0 || f.type === 'checklist' || f.type === 'location' ? 'div' : 'label';
+      const missing = f.required && (draft[f.key] == null || draft[f.key] === '');
+      const control = (field) => html`<${Field} field=${field} value=${draft[field.key]} pluginId=${pluginId} placeSources=${placeSources} onChange=${(v) => setDraft({ ...draft, [field.key]: v })} />`;
       return html`
-        ${f.section && html`<h4 key=${'s-' + f.key} class="bc-schema-section">${f.section}</h4>`}
+        ${heading && html`<h4 key=${'s-' + f.key} class="bc-schema-section">${heading}</h4>`}
         <${Tag} key=${f.key} class="bc-schema-field">
-          <span class="bc-schema-label">${f.label}${f.help && html`<span class="bc-schema-help">${f.help}</span>`}</span>
-          <${Field} field=${f} value=${draft[f.key]} onChange=${(v) => setDraft({ ...draft, [f.key]: v })} />
+          <span class="bc-schema-label">${f.label}${missing && html`<span class="bc-schema-required">Required</span>`}${f.help && html`<span class="bc-schema-help">${f.help}</span>`}</span>
+          ${joined.length === 0 ? control(f) : html`<span class="bc-schema-joined">
+            ${control(f)}
+            ${joined.map((j) => html`<label key=${j.key} class="bc-schema-join"><span class="bc-schema-joinlabel">${j.label}</span>${control(j)}</label>`)}
+          </span>`}
         </${Tag}>`;
     })}
     <div class="bc-schema-actions">
       <button type="button" class="bc-btn bc-btn-primary" disabled=${busy || !dirty} onClick=${save}>${saveLabel}</button>
+      ${onCancel && html`<button type="button" class="bc-btn" disabled=${busy} onClick=${onCancel}>Cancel</button>`}
     </div>
   </div>`;
 }

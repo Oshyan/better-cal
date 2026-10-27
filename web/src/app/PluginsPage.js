@@ -10,6 +10,7 @@ import { api, refreshWindow, loadCalendars } from './api.js';
 import { PageShell, EmptyState, Skeleton } from './PageShell.js';
 import { Icon } from '../ui/icons.js';
 import { SchemaForm } from './SchemaForm.js';
+import { OwnCalendarsList } from './OwnCalendar.js';
 
 async function reloadPlugins() {
   const d = await api('/plugins');
@@ -159,6 +160,7 @@ function PluginRow({ p }) {
       </li>`)}
       ${warnings.length === 0 && html`<li>No open warnings.</li>`}
     </ul>`}
+    ${p.enabled && p.ownCalendars && html`<${OwnCalendarsList} plugin=${p} />`}
     ${openSettings && p.enabled && html`<${SchemaForm}
       schema=${p.settingsSchema}
       values=${p.settings}

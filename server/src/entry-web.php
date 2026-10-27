@@ -254,6 +254,9 @@ function bc_handle_api(Request $request, array $cfg): void
         $router->add('POST', "$base/plugins/:id/uninstall", [$pluginsController, 'uninstall']);
         $router->add('PATCH', "$base/plugins/:id/settings", [$pluginsController, 'saveSettings']);
         $router->add('PATCH', "$base/plugins/:id/calendar-settings/:calendarId", [$pluginsController, 'saveCalendarSettings']);
+        $router->add('POST', "$base/plugins/:id/calendars", [$pluginsController, 'createCalendar']);
+        $router->add('PATCH', "$base/plugins/:id/calendars/:calendarId", [$pluginsController, 'saveOwnCalendar']);
+        $router->add('GET', "$base/plugins/:id/options/:field", [$pluginsController, 'searchOptions']);
         $router->add('POST', "$base/plugins/:id/run", [$pluginsController, 'runNow']);
         $router->add('GET', "$base/plugins/:id/warnings", [$pluginsController, 'warnings']);
         $router->add('POST', "$base/plugins/runs/:runId/undo", [$pluginsController, 'undoRun']);

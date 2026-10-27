@@ -194,6 +194,8 @@ async function main() {
     update_plugin_calendar_settings: [false, true, true, true], set_plugin_enabled: [false, true, true, true],
     run_plugin: [false, true, false, true], update_event_plugin_data: [false, true, true, true],
     resolve_duplicate: [false, true, false, false], undo: [false, true, false, false],
+    add_plugin_calendar: [false, false, false, true], update_plugin_calendar: [false, true, true, true],
+    search_plugin_options: [true, false, true, false],
   };
   for (const [name, expected] of Object.entries(expectedEffects)) {
     const a = byName[name]?.annotations || {};
@@ -207,6 +209,7 @@ async function main() {
     (list.result?.tools ?? []).map((t) => t.name).sort());
   const names = (list.result?.tools ?? []).map((t) => t.name).sort();
   checkEq('tools/list names', [
+    'add_plugin_calendar',
     'create_event',
     'delete_event',
     'get_system_health',
@@ -218,11 +221,13 @@ async function main() {
     'resolve_duplicate',
     'run_plugin',
     'search_events',
+    'search_plugin_options',
     'set_attendance',
     'set_plugin_enabled',
     'undo',
     'update_event',
     'update_event_plugin_data',
+    'update_plugin_calendar',
     'update_plugin_calendar_settings',
     'update_plugin_settings',
   ], names);
@@ -323,6 +328,9 @@ async function main() {
     ['get_system_health', {}, 'GET', '/system/health'],
     ['update_plugin_settings', { pluginId: 'sample-plugin', values: { credential: 'invented-secret' } }, 'PATCH', '/plugins/sample-plugin/settings'],
     ['update_plugin_calendar_settings', { pluginId: 'sample-plugin', calendarId: 7, values: { types: 'music' } }, 'PATCH', '/plugins/sample-plugin/calendar-settings/7'],
+    ['add_plugin_calendar', { pluginId: 'sample-plugin', settings: { place: { link: 3 } } }, 'POST', '/plugins/sample-plugin/calendars'],
+    ['update_plugin_calendar', { pluginId: 'sample-plugin', calendarId: 7, values: { days: 10 } }, 'PATCH', '/plugins/sample-plugin/calendars/7'],
+    ['search_plugin_options', { pluginId: 'sample-plugin', field: 'station', query: 'cove' }, 'GET', '/plugins/sample-plugin/options/station?q=cove'],
     ['set_plugin_enabled', { pluginId: 'sample-plugin', enabled: true }, 'POST', '/plugins/sample-plugin/enable'],
     ['set_plugin_enabled', { pluginId: 'sample-plugin', enabled: false }, 'POST', '/plugins/sample-plugin/disable'],
     ['run_plugin', { pluginId: 'sample-plugin', job: 'refresh' }, 'POST', '/plugins/sample-plugin/run?job=refresh'],
@@ -337,7 +345,7 @@ async function main() {
   received.length = 0;
   await rpc('tools/call', { name: 'quick_add', arguments: { text: 'dinner fri 7pm', tz: 'UTC' } });
   checkEq('quick_add: parses only unless commit is set', { text: 'dinner fri 7pm', tz: 'UTC', commit: false }, received[0]?.body);
-  for (const name of ['run_plugin', 'set_plugin_enabled', 'update_plugin_settings', 'update_plugin_calendar_settings', 'update_event_plugin_data']) {
+  for (const name of ['run_plugin', 'set_plugin_enabled', 'update_plugin_settings', 'update_plugin_calendar_settings', 'add_plugin_calendar', 'update_plugin_calendar', 'update_event_plugin_data']) {
     check(`${name}: outside effects declared`, byName[name]?.annotations?.openWorldHint === true);
   }
   for (const pluginId of ['../tokens', 'sample/../../settings', 'sample%2Fsettings', '', 'sample?x=1']) {

@@ -3171,15 +3171,38 @@ body.bc-rescheduling { user-select: none; }
 .bc-schema-pending { font-size: 12.5px; color: var(--fg-muted); font-style: italic; }
 /* Discovered fields to show: as many per line as fit, not a tall column. */
 .bc-schema-checklist { display: flex; flex-wrap: wrap; gap: 4px 14px; max-width: 520px; font-size: 12.5px; }
-/* A phone has no room for a label column beside the controls: the label goes
-   above, and the control takes the width (a select was cut off at the edge). */
-@media (max-width: 600px) {
+/* A narrow form has no room for a label column beside the controls: the
+   label goes above, and the control takes the width (a select was cut off at
+   the edge). Measured on the form, not the screen, so a calendar's settings
+   in the sidebar stack too. */
+.bc-schema-form { container-type: inline-size; }
+@container (max-width: 480px) {
   .bc-schema-field { flex-direction: column; align-items: stretch; gap: 4px; }
   .bc-schema-label { width: auto; }
   .bc-schema-input { max-width: 100%; }
+  .bc-schema-search > .bc-schema-input { width: 100%; }
   .bc-schema-checklist { gap: 6px 16px; }
 }
-.bc-schema-actions { display: flex; justify-content: flex-end; }
+.bc-schema-actions { display: flex; justify-content: flex-end; gap: 8px; }
+/* Settings that share a line ("Not before [ ] Not after [ ]"). */
+.bc-schema-joined { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px 14px; }
+.bc-schema-join { display: inline-flex; align-items: center; gap: 6px; }
+.bc-schema-joinlabel { font-size: 12.5px; color: var(--fg-muted); }
+.bc-schema-number { width: 5.5em; }
+.bc-schema-required { font-size: 11px; font-weight: 600; color: var(--warn-strong); }
+.bc-schema-time { width: 7.5em; }
+/* A searchable list (thousands of stations): matches drop under the input. */
+.bc-schema-search { position: relative; display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.bc-schema-search > .bc-schema-input { width: 260px; }
+.bc-schema-matches {
+  position: absolute; top: calc(100% + 2px); left: 0; z-index: 30; margin: 0; padding: 3px 0; list-style: none;
+  width: max(260px, 100%); max-width: min(420px, calc(100vw - 32px)); max-height: 280px; overflow-y: auto;
+  background: var(--bg-raised); border: 1px solid var(--border-strong); border-radius: var(--radius); box-shadow: var(--shadow);
+}
+.bc-schema-matches li { display: flex; justify-content: space-between; gap: 10px; padding: 4px 10px; font-size: 12.5px; cursor: pointer; }
+.bc-schema-matches li small { color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+.bc-schema-matches li.is-active, .bc-schema-matches li:hover { background: var(--bg-inset); }
+.bc-schema-location { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .bc-calset-plugin { border-top: 1px solid var(--border); padding-top: 8px; margin-top: 8px; }
 .bc-calset-pluginhead { font-size: 12px; font-weight: 700; color: var(--fg-muted); display: inline-flex; align-items: center; gap: 5px; }
 
@@ -3224,6 +3247,13 @@ body.bc-rescheduling { user-select: none; }
 .bc-epd-k { color: var(--fg-muted); }
 .bc-epd .bc-schema-form { border-top: none; padding-top: 4px; margin-top: 2px; }
 .bc-epd .bc-schema-label { width: 120px; }
+/* The event panel keeps its compact side-by-side rows. */
+.bc-epd .bc-schema-form { container-type: normal; }
+@media (max-width: 600px) {
+  .bc-epd .bc-schema-field { flex-direction: column; align-items: stretch; gap: 4px; }
+  .bc-epd .bc-schema-label { width: auto; }
+  .bc-epd .bc-schema-input { max-width: 100%; }
+}
 
 /* Proposals */
 /* Review queue: one compact card per decision. Head and body are single rows
@@ -4562,3 +4592,25 @@ button.bc-es-alsoon-cal { cursor: pointer; text-decoration: underline; text-deco
   .bc-evsheet-grab, .bc-bsheet-grip { display: none; }
 }
 @keyframes bc-sheet-in-right { from { transform: translateX(30%); opacity: 0.6; } }
+
+/* Calendars a person adds to a plugin (a tide calendar per station): a line
+   of chips on the plugin's card, each opening its own settings. */
+.bc-own-list { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.bc-own-rows { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.bc-own-empty { font-size: 12.5px; color: var(--fg-muted); }
+.bc-own-chip {
+  display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; font-size: 12.5px;
+  border: 1px solid var(--border); border-radius: 999px; background: var(--bg-raised); color: var(--fg); cursor: pointer;
+}
+.bc-own-chip.is-open { border-color: var(--accent); }
+.bc-own-chip.is-warn, .bc-own-chip.is-error { border-color: var(--warn); }
+.bc-own-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.bc-own-status { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--fg-muted); margin-top: 4px; }
+.bc-own-status small { margin-left: auto; font-variant-numeric: tabular-nums; }
+.bc-own-status.is-warn, .bc-own-status.is-error { color: var(--warn-strong); }
+.bc-own .bc-schema-form, .bc-own-add .bc-schema-form { margin-top: 6px; }
+.bc-own-place { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; margin-top: 8px; }
+.bc-own-place-label { font-size: 12.5px; font-weight: 650; }
+.bc-own-offers { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+.bc-own-offer { display: inline-flex; align-items: center; gap: 4px; font-size: 12.5px; }
+.bc-own-offer.is-done { color: var(--fg-muted); }

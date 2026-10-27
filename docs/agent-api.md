@@ -136,6 +136,7 @@ curl -s "$BC/events/42" -X DELETE -H "@$AUTH_FILE" -H 'Content-Type: application
 | Decide duplicates | `POST /duplicates/:id` | `resolve_duplicate` | `linked` or `dismissed` |
 | Plugins and health | `GET /plugins`, `GET /system/health` | `list_plugins`, `get_system_health` | Secrets show only set or unset; health hides server details |
 | Configure plugins | `PATCH /plugins/:id/settings`, `PATCH /plugins/:id/calendar-settings/:calendarId`, `PATCH /events/:id/plugin-data/:pluginId` | `update_plugin_settings`, `update_plugin_calendar_settings`, `update_event_plugin_data` | Can change what the plugin does outside Better-Cal |
+| Add plugin calendars | `POST /plugins/:id/calendars`, `PATCH /plugins/:id/calendars/:calendarId`, `GET /plugins/:id/options/:field?q=` | `add_plugin_calendar`, `update_plugin_calendar`, `search_plugin_options` | A tide calendar per station, a weather calendar per place; the plugin then fetches for it |
 | Enable or run plugins | `POST /plugins/:id/enable`, `/disable`, `/run` | `set_plugin_enabled`, `run_plugin` | Can have outside effects; runs are queued for the worker |
 | List calendars | `GET /calendars` | `list_calendars` | Includes folders, tags and feed health |
 | Undo | `POST /undo` | `undo` | Each call undoes the most recent change not yet undone, so repeating it steps further back (within 7 days) |

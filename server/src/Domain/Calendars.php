@@ -308,6 +308,15 @@ final class Calendars
             $fields['settings_json'] = json_encode($settings);
         }
 
+        if (array_key_exists('name', $in)) {
+            // Named by the person now: a plugin calendar named after its
+            // settings (a tide station) stops following them.
+            $settings = json_decode((string) ($fields['settings_json'] ?? $before['settings_json'] ?? ''), true);
+            if (is_array($settings) && isset($settings['autoName'])) {
+                unset($settings['autoName']);
+                $fields['settings_json'] = json_encode($settings);
+            }
+        }
         $this->db->tx(function () use ($userId, $id, $fields, $in): void {
             if ($fields !== []) {
                 $this->db->update('calendars', $fields, 'id = ?', [$id]);
@@ -578,6 +587,12 @@ final class Calendars
             // plugin's name for saying where the change went.
             'reschedulable' => $this->pluginsSvc()->calendarReschedulable($c),
             'pluginName' => $c['kind'] === 'plugin' && !empty($c['plugin_id']) ? $this->pluginsSvc()->displayName((string) $c['plugin_id']) : null,
+            // A calendar the person added to a plugin (a tide station, a
+            // weather place): its own settings, the plugin's latest status
+            // line for it, and the place it's about (others can follow it).
+            'ownSettings' => $c['kind'] === 'plugin' && !empty($c['plugin_id']) ? $this->pluginsSvc()->ownSettingsPublic((string) $c['plugin_id'], $c['settings_json'] !== null ? (string) $c['settings_json'] : null) : null,
+            'ownStatus' => $c['kind'] === 'plugin' && !empty($c['plugin_id']) ? $this->pluginsSvc()->calendarStatus((string) $c['plugin_id'], (int) $c['id']) : null,
+            'place' => $c['kind'] === 'plugin' && !empty($c['plugin_id']) ? $this->pluginsSvc()->calendarPlace((int) $c['user_id'], (int) $c['id']) : null,
             'subscriptionAuthorization' => $subscriptionAuthorization,
             'visible' => (int) $c['visible'] === 1,
             'position' => (int) $c['position'],

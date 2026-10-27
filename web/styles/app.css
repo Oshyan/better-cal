@@ -846,7 +846,6 @@ div.bc-duration-exact { display: flex; align-items: center; gap: 10px; flex-wrap
    behind text or coloured chips (the options weighed are in
    docs/design/day-marks.md). */
 .bc-cell.is-holiday .bc-cell-head,
-.bc-tg-head-day.is-holiday,
 .bc-tg-vday-head.is-holiday { box-shadow: inset 0 3px 0 var(--bc-holiday, #4f9d69); }
 /* Touch: the header's tokens and flag reach the header's full height, so a
    fingertip on a weather token opens it instead of starting a new event. */
@@ -2373,10 +2372,6 @@ body.bc-rescheduling { user-select: none; }
 .bc-tg-track .bc-tg-col.is-month-start {
   box-shadow: inset 2px 0 0 color-mix(in srgb, var(--accent) 60%, var(--border-strong));
 }
-/* A holiday on a month's first day (New Year's Day) keeps both marks. */
-.bc-tg-head-day.is-month-start.is-holiday {
-  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--accent) 60%, var(--border-strong)), inset 0 3px 0 var(--bc-holiday, #4f9d69);
-}
 .bc-tg-month-line {
   position: absolute; top: 0; bottom: 0; width: 2px;
   background: color-mix(in srgb, var(--accent) 60%, var(--border-strong));
@@ -2386,6 +2381,17 @@ body.bc-rescheduling { user-select: none; }
    label for orientation while panning. */
 .bc-tg-head-day.is-weekend { background: color-mix(in srgb, var(--fg) 4%, transparent); }
 .bc-tg-head-day.is-weekend .bc-tg-dow { color: color-mix(in srgb, var(--accent) 50%, var(--fg-muted)); }
+/* The week track's day headers are square, so they meet their columns: the
+   holiday stripe stays flat and the month-start line runs straight into the
+   grid (rounded, each header read as a floating card). The stripe stops a
+   little short of each side, since these headers have no borders between
+   them: two holidays in a row read as two, not as one long bar. It's a
+   background, after the weekend tint, so it keeps the month-start line. */
+.bc-tg-infinite .bc-tg-head-day, .bc-tg-head-day.is-holiday, .bc-tg-head-day.is-month-start { border-radius: 0; }
+.bc-tg-head-day.is-holiday {
+  background-image: linear-gradient(var(--bc-holiday, #4f9d69), var(--bc-holiday, #4f9d69));
+  background-size: calc(100% - 8px) 3px; background-position: center top; background-repeat: no-repeat;
+}
 .bc-tg-col.is-weekend:not(.is-today) { background-color: color-mix(in srgb, var(--fg) 4%, transparent); }
 /* Blocks must not block horizontal panning on the track. */
 .bc-tg-infinite .bc-block { touch-action: pan-x pan-y; }

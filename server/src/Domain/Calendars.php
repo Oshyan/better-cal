@@ -291,11 +291,18 @@ final class Calendars
         if (array_key_exists('staleAfterDays', $in)) {
             $fields['stale_after_days'] = max(1, (int) $in['staleAfterDays']);
         }
-        if (array_key_exists('groupSimilar', $in) || array_key_exists('reminderDefaults', $in)) {
+        if (array_key_exists('groupSimilar', $in) || array_key_exists('reminderDefaults', $in) || array_key_exists('hideCancelled', $in)) {
             $settings = json_decode((string) ($before['settings_json'] ?? ''), true);
             $settings = is_array($settings) ? $settings : [];
             if (array_key_exists('groupSimilar', $in)) {
                 $settings['groupSimilar'] = filter_var($in['groupSimilar'], FILTER_VALIDATE_BOOL);
+            }
+            if (array_key_exists('hideCancelled', $in)) {
+                if (filter_var($in['hideCancelled'], FILTER_VALIDATE_BOOL)) {
+                    $settings['hideCancelled'] = true;
+                } else {
+                    unset($settings['hideCancelled']);
+                }
             }
             if (array_key_exists('reminderDefaults', $in)) {
                 $validated = Reminders::validateDefaults($in['reminderDefaults']);
@@ -606,6 +613,9 @@ final class Calendars
             'reminderDefaults' => self::reminderDefaultsFor(
                 $c['settings_json'] !== null ? (string) $c['settings_json'] : null
             ),
+            'hideCancelled' => self::hideCancelledFor(
+                $c['settings_json'] !== null ? (string) $c['settings_json'] : null
+            ),
             'health' => [
                 'lastPolledAt' => $c['last_polled_at'] !== null ? Time::dbToIso((string) $c['last_polled_at']) : null,
                 'status' => (string) $c['last_poll_status'],
@@ -652,6 +662,17 @@ final class Calendars
         }
         unset($settings);
         return $values;
+    }
+
+    /**
+     * Whether the app leaves out events this calendar's source marks
+     * cancelled, instead of striking them through. Hidden, not deleted: a
+     * later sync that un-cancels one brings it back. Off unless chosen.
+     */
+    public static function hideCancelledFor(?string $settingsJson): bool
+    {
+        $settings = $settingsJson !== null && $settingsJson !== '' ? json_decode($settingsJson, true) : null;
+        return is_array($settings) && ($settings['hideCancelled'] ?? false) === true;
     }
 
     public static function groupSimilarFor(?string $settingsJson, string $kind): bool

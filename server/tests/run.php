@@ -4946,6 +4946,12 @@ checkEq('cal groupSimilar stored true wins', true, Calendars::groupSimilarFor('{
 checkEq('cal groupSimilar bad json falls back to kind', true, Calendars::groupSimilarFor('not json', 'subscribed'));
 checkEq('cal groupSimilar unrelated settings fall back', false, Calendars::groupSimilarFor('{"other":1}', 'local'));
 
+// Calendars::hideCancelledFor: off unless chosen (#135).
+checkEq('cal hideCancelled default off', false, Calendars::hideCancelledFor(null));
+checkEq('cal hideCancelled stored on', true, Calendars::hideCancelledFor('{"hideCancelled":true}'));
+checkEq('cal hideCancelled other settings leave it off', false, Calendars::hideCancelledFor('{"groupSimilar":true}'));
+checkEq('cal hideCancelled bad json is off', false, Calendars::hideCancelledFor('not json'));
+
 // ---------------------------------------------------------------------------
 // Ranking: signal-to-example serialization and score validation (pure)
 // ---------------------------------------------------------------------------

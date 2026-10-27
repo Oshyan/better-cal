@@ -26,7 +26,7 @@ import { mapMosaic, stadiaStyle, mapTilerStyle, isPendingLocation, gmapsUrl, val
 import { safeWebUrl, meetingLinkInText } from '../src/lib/urls.js';
 import { baseTitle, groupOccurrences, itemMatchesFilter, isGroupId } from '../src/ui/grouping.js';
 import { collapseDuplicates } from '../src/ui/duplicates.js';
-import { dayStepList } from '../src/ui/daysteps.js';
+import { dayStepList, hidesCancelled } from '../src/ui/daysteps.js';
 import { sortByMatch } from '../src/lib/rank.js';
 import { zoneIndex, filterZones, parseOffset } from '../src/lib/zonesearch.js';
 import { parseJumpText, jumpGranularity, parseJumpTarget } from '../src/lib/jumpparse.js';
@@ -571,6 +571,19 @@ assert('duplicates: visible spokes collapse without their sparse hub',
     ids(dayStepList(all, opts(['s1'], { maybe: false }))), 's7,s1,s4');
   eq('steps: an opened context item is still steppable back to',
     ids(dayStepList(all, opts(['s1', 's5']))), 's7,s1,s4,s5,s6');
+
+  // A calendar set to hide cancelled events (#135) leaves them out; one that
+  // isn't keeps them (struck through), and an opened one stays steppable.
+  const gone = timed('s8', 2, '15', { status: 'cancelled' });
+  const kept = timed('s9', 1, '16', { status: 'cancelled' });
+  const hideCals = cals.map((c) => (c.id === 2 ? { ...c, hideCancelled: true } : c));
+  const hopts = (keep) => ({ dayKey: '2026-06-18', calendars: hideCals, keep });
+  eq('steps: cancelled events leave a calendar that hides them, only that one',
+    ids(dayStepList([...all, gone, kept], hopts(['s1']))), 's7,s1,s4,s6,s9');
+  eq('steps: an opened cancelled event stays steppable back to',
+    ids(dayStepList([...all, gone, kept], hopts(['s1', 's8']))), 's7,s1,s4,s6,s8,s9');
+  eq('steps: hidesCancelled lists only the calendars that chose it',
+    [...hidesCancelled(hideCals)].join(','), '2');
 }
 
 // baseTitle strips one trailing parenthetical, keeps everything else.

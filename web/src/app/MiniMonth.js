@@ -14,6 +14,7 @@ import {
   epochDayOfKey, keyOfEpochDay,
 } from '../lib/dates.js';
 import { occurrenceDaySpan } from '../ui/monthmath.js';
+import { hidesCancelled } from '../ui/daysteps.js';
 import { Icon } from '../ui/icons.js';
 import { primeKeyboard } from '../lib/ioskeyboard.js';
 
@@ -52,9 +53,11 @@ export function MiniMonth() {
     const firstEd = epochDayOfKey(weeks[0][0]);
     const lastEd = epochDayOfKey(weeks[weeks.length - 1][6]);
     const visible = new Set(s.calendars.filter((c) => c.visible).map((c) => c.id));
+    const hideCancelled = hidesCancelled(s.calendars);
     const dots = new Set();
     for (const occ of state.occ.values()) {
       if (!visible.has(occ.calendarId) || occ.attendance === 'hidden') continue;
+      if (occ.status === 'cancelled' && hideCancelled.has(occ.calendarId)) continue;
       const { startKey, endKey } = occurrenceDaySpan(occ);
       let ed = Math.max(epochDayOfKey(startKey), firstEd);
       const end = Math.min(epochDayOfKey(endKey), lastEd);

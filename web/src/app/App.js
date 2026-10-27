@@ -14,6 +14,7 @@ import {
   resizeAvailabilitySpanDays, copyEventAt, copyEventTo, toggleFitRows } from './actions.js';
 import { groupOccurrences, itemMatchesFilter } from '../ui/grouping.js';
 import { collapseDuplicates } from '../ui/duplicates.js';
+import { hidesCancelled } from '../ui/daysteps.js';
 import { sortByMatch } from '../lib/rank.js';
 import { installKeyboard } from './keyboard.js';
 import {
@@ -339,9 +340,12 @@ export function App() {
   const showRel = useStore((st) => st.showRel);
   const occurrences = useMemo(() => {
     const visible = new Set(s.calendars.filter((c) => c.visible).map((c) => c.id));
+    const hideCancelled = hidesCancelled(s.calendars);
     const out = [];
     for (const occ of state.occ.values()) {
       if (!visible.has(occ.calendarId)) continue;
+      // A calendar set to hide what its source cancelled (#135).
+      if (occ.status === 'cancelled' && hideCancelled.has(occ.calendarId)) continue;
       // The relationship quick filter: a kind switched off leaves every view.
       if (occ.relationship && showRel[occ.relationship] === false) continue;
       out.push(occ);

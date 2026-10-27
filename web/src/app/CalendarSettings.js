@@ -273,6 +273,14 @@ export function CalendarSettings({ cal, folders, onClose }) {
       />
       <span>Group similar events</span>
     </label>
+    <label class="bc-check" title="Events the feed marks cancelled are left off the calendar instead of struck through. They come back if the feed un-cancels them.">
+      <input
+        type="checkbox"
+        checked=${!!cal.hideCancelled}
+        onChange=${(e) => updateCalendar(cal, { hideCancelled: e.target.checked })}
+      />
+      <span>Hide cancelled events</span>
+    </label>
     <div class="bc-calset-field">
       <button type="button" class="bc-btn" disabled=${refreshing || subscriptionPaused} onClick=${refresh}>
         ${subscriptionPaused ? 'Updates paused' : refreshing ? 'Refreshing' : 'Refresh now'}

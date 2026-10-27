@@ -17,6 +17,11 @@ import { epochDayOfKey, startMs } from '../lib/dates.js';
 import { occurrenceDaySpan } from './monthmath.js';
 import { collapseDuplicates } from './duplicates.js';
 
+// Ids of calendars set to hide events their source marks cancelled (#135).
+export function hidesCancelled(calendars) {
+  return new Set(calendars.filter((c) => c.hideCancelled).map((c) => c.id));
+}
+
 /**
  * @param {Iterable<object>} occs every loaded occurrence
  * @param {{dayKey:string, calendars:object[], showRel?:object, keep?:string[]}} opts
@@ -25,12 +30,14 @@ import { collapseDuplicates } from './duplicates.js';
 export function dayStepList(occs, { dayKey, calendars, showRel = {}, keep = [] }) {
   const ed = epochDayOfKey(dayKey);
   const visible = new Set(calendars.filter((c) => c.visible).map((c) => c.id));
+  const hideCancelled = hidesCancelled(calendars);
   const kept = new Set(keep.filter(Boolean));
   const list = [];
   for (const o of occs) {
     if (!kept.has(o.instanceId)) {
       if (!visible.has(o.calendarId)) continue;
       if (o.attendance === 'hidden') continue;
+      if (o.status === 'cancelled' && hideCancelled.has(o.calendarId)) continue;
       if (o.relationship === 'context') continue;
       if (o.relationship && showRel[o.relationship] === false) continue;
     }

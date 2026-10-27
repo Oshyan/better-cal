@@ -4,7 +4,7 @@
 // impact preview. Nothing here executes plugin code; it reads what worker
 // runs wrote and flips flags.
 
-import { html, useState, useEffect } from '../../vendor/index.js';
+import { html, useState, useEffect, useRef } from '../../vendor/index.js';
 import { state, set, toast, useStore } from './store.js';
 import { api, refreshWindow, loadCalendars } from './api.js';
 import { PageShell, EmptyState, Skeleton } from './PageShell.js';
@@ -41,9 +41,18 @@ function fmtAgo(iso) {
 }
 
 function PluginRow({ p }) {
-  const [openSettings, setOpenSettings] = useState(false);
+  // Arriving from a calendar's "Plugin settings" link opens this plugin's
+  // settings and brings them into view.
+  const focused = state.pluginFocus === p.id;
+  const [openSettings, setOpenSettings] = useState(focused);
   const [warnings, setWarnings] = useState(null);
   const [busy, setBusy] = useState(false);
+  const cardRef = useRef(null);
+  useEffect(() => {
+    if (!focused) return;
+    set({ pluginFocus: null });
+    if (cardRef.current) cardRef.current.scrollIntoView({ block: 'start' });
+  }, []); // eslint-disable-line
 
   const act = async (fn, okMsg) => {
     setBusy(true);
@@ -69,22 +78,20 @@ function PluginRow({ p }) {
     toast('Queued: ' + (d.queued || []).join(', ') + ' (runs within a minute)');
   });
 
-  const uninstall = () => {
-    const c = p.counts;
-    const keep = window.confirm(
-      'Uninstall ' + p.name + '?\n\nThis purges ' + c.ranges + ' bands, ' + c.warnings + ' warnings and its stored data.\n\n'
-      + 'OK = keep its ' + c.events + ' events (calendars archived, hidden)\nCancel = choose again with delete',
-    );
-    let deleteCalendars = false;
-    if (!keep) {
-      if (!window.confirm('Delete its ' + c.calendars + ' calendar(s) and ' + c.events + ' events instead? This cannot be undone.')) return;
-      deleteCalendars = true;
-    }
+  // Uninstalling asks here, in the card, rather than in two browser dialogs:
+  // what goes, and the plain choices, with Cancel focused (Esc cancels).
+  const [confirming, setConfirming] = useState(false);
+  const cancelRef = useRef(null);
+  useEffect(() => { if (confirming && cancelRef.current) cancelRef.current.focus(); }, [confirming]);
+  const uninstall = (deleteCalendars) => {
+    setConfirming(false);
     act(
       () => api('/plugins/' + p.id + '/uninstall', { method: 'POST', body: { deleteCalendars } }),
       p.name + ' uninstalled',
     ).then(() => loadCalendars());
   };
+  const c = p.counts;
+  const removes = ['its settings and stored data', c.ranges > 0 && c.ranges + ' bands', c.warnings > 0 && c.warnings + ' warnings'].filter(Boolean);
 
   const loadWarnings = async () => {
     if (warnings !== null) { setWarnings(null); return; }
@@ -93,7 +100,7 @@ function PluginRow({ p }) {
   };
 
   const lr = p.lastRun;
-  return html`<div class="bc-plugin-card${p.enabled ? '' : ' is-off'}">
+  return html`<div class="bc-plugin-card${p.enabled ? '' : ' is-off'}" ref=${cardRef}>
     <div class="bc-plugin-head">
       <label class="bc-check bc-plugin-toggle" title=${p.enabled ? 'Disable' : 'Enable'}>
         <input type="checkbox" checked=${p.enabled} disabled=${busy || p.errors.length > 0} onChange=${toggle} />
@@ -106,9 +113,21 @@ function PluginRow({ p }) {
       <div class="bc-plugin-tools">
         ${p.enabled && html`<button type="button" class="bc-btn" disabled=${busy} onClick=${runNow}>Run now</button>`}
         ${p.enabled && p.settingsSchema.length > 0 && html`<button type="button" class="bc-icon-btn${openSettings ? ' is-open' : ''}" title="Settings" onClick=${() => setOpenSettings(!openSettings)}><${Icon} name="settings" size=${13} /></button>`}
-        ${p.installed && html`<button type="button" class="bc-icon-btn" title="Uninstall" disabled=${busy} onClick=${uninstall}><${Icon} name="trash" size=${13} /></button>`}
+        ${p.installed && html`<button type="button" class="bc-icon-btn" title="Uninstall" disabled=${busy} onClick=${() => setConfirming(true)}><${Icon} name="trash" size=${13} /></button>`}
       </div>
     </div>
+    ${confirming && html`<div class="bc-plugin-confirm" role="alertdialog" aria-label=${'Uninstall ' + p.name}
+      onKeyDown=${(e) => { if (e.key === 'Escape') { e.stopPropagation(); setConfirming(false); } }}>
+      <p><strong>Uninstall ${p.name}?</strong> It stops running, and ${removes.join(', ').replace(/, ([^,]*)$/, ' and $1')} are removed.${c.events > 0
+        ? ' Its ' + c.events + ' events can stay, on hidden local calendars, or be deleted (which can\'t be undone).' : ''}</p>
+      <div class="bc-plugin-confirm-actions">
+        <button type="button" class="bc-btn" ref=${cancelRef} onClick=${() => setConfirming(false)}>Cancel</button>
+        ${c.events > 0
+          ? html`<button type="button" class="bc-btn" onClick=${() => uninstall(false)}>Uninstall, keep its events</button>
+            <button type="button" class="bc-btn bc-btn-danger" onClick=${() => uninstall(true)}>Uninstall and delete its events</button>`
+          : html`<button type="button" class="bc-btn bc-btn-danger" onClick=${() => uninstall(false)}>Uninstall</button>`}
+      </div>
+    </div>`}
     <p class="bc-plugin-desc">${p.description}</p>
     ${p.errors.length > 0 && html`<div class="bc-plugin-errors">${p.errors.map((e) => html`<div key=${e}><${Icon} name="warning" size=${12} /> ${e}</div>`)}</div>`}
     ${p.disabledReason && html`<div class="bc-plugin-errors"><div><${Icon} name="warning" size=${12} /> ${p.disabledReason}</div></div>`}

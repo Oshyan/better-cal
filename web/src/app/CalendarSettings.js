@@ -8,7 +8,7 @@
 import { html, useState } from '../../vendor/index.js';
 import { updateCalendar, refreshCalendar, deleteCalendar } from './actions.js';
 import { api, loadCalendars, loadReviewCount } from './api.js';
-import { state, toast } from './store.js';
+import { state, set, toast } from './store.js';
 import { parseHex, PALETTE } from '../lib/color.js';
 import { SchemaForm } from './SchemaForm.js';
 import { Icon, GoogleG } from '../ui/icons.js';
@@ -211,6 +211,15 @@ export function CalendarSettings({ cal, folders, onClose }) {
       </select>
     </div>
     <${ReminderField} cal=${cal} />
+    ${cal.kind === 'plugin' && html`<div class="bc-calset-field">
+      <span class="bc-calset-label">Source</span>
+      <span class="bc-calset-source"><${Icon} name="plugins" size=${13} /><span>
+        <strong>${(cal.pluginName || 'A') + ' plugin'}</strong>${cal.reschedulable
+          ? '. Moving an event here changes it there; everything else is edited there. '
+          : '. It fills this calendar, so its events are read-only here. '}
+        <button type="button" class="bc-link-btn" onClick=${() => { if (onClose) onClose(); set({ route: 'plugins', pluginFocus: cal.pluginId }); }}>Plugin settings</button>
+      </span></span>
+    </div>`}
     ${subscribed && html`<div class="bc-calset-field">
       <span class="bc-calset-label">Source</span>
       ${cal.provider === 'google'

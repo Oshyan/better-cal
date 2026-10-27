@@ -757,7 +757,7 @@ export function Sidebar({ open, collapsed, onClose }) {
               />
               <span class="bc-cal-name">${pl.name}</span>
             </label>
-            <button type="button" class="bc-icon-btn" title="Plugin settings" onClick=${() => set({ route: 'plugins' })}><${Icon} name="settings" size=${13} /></button>
+            <button type="button" class="bc-icon-btn" title="Plugin settings" onClick=${() => set({ route: 'plugins', pluginFocus: pl.id })}><${Icon} name="settings" size=${13} /></button>
           </div>
         </div>`)}
       </section>`}

@@ -4,7 +4,9 @@ Better-Cal uses [semantic versioning](https://semver.org). Minor versions bring 
 
 Security fixes are tracked privately as GitHub security advisories until they ship, then published; [SECURITY.md](SECURITY.md#past-advisories) lists past advisories with the affected and patched versions.
 
-## Unreleased
+## 1.3.0 (2026-10-26)
+
+A Fibery plugin, tide calendars per station with full filtering, and Sun and Weather for any place.
 
 - **Fibery plugin:** your Fibery tasks and projects on the calendar. Drag one (or use Move) and its date changes in Fibery, with Undo; changes made there arrive within a minute. [Fibery](docs/plugins/fibery.md) has the setup.
 - **Tide calendars, as many as you like:** each is one NOAA station (search by name) with its own choice of tides: lows or highs, how low or high, in daylight, at times of day, on days of the week, up to a year ahead. Add one from the Tides card in Plugins. Your current station becomes the first one. [Tides](docs/plugins/tides.md) has the details.
@@ -15,6 +17,8 @@ Security fixes are tracked privately as GitHub security advisories until they sh
 - **Questions you can't take back ask in the app:** adopting a calendar, removing a subscription or a person, sending an invitation reply again, undoing over newer changes and stopping reminders on a device now ask in a dialog with Cancel first and a button that says what it does. Deleting a folder, or an event with the Delete key, no longer asks; Undo is in the notice instead.
 - **Plugins can write times back:** a plugin can let you drag, resize or Move its events and send the new time to its source, and its settings can offer choices it finds there ([writing a plugin](docs/plugins/authoring.md#rescheduling-from-the-calendar)). A plugin calendar's settings name its plugin and link to that plugin's settings.
 - **Fixes:** plugin calendars no longer rewrite every event on each run (CalDAV apps were told they had all changed); a Google calendar's "Check for updates" menu offers every 5 minutes, its starting setting (it showed 15 minutes, and choosing anything slowed it down for good); a plugin's key field now has Show and a character count, so you can tell a paste landed; a plugin's Uninstall is now Delete data, since the plugin stays (untick it to pause): it asks once, in its card, with Cancel first and the choice to keep or delete its events spelled out (Cancel used to lead on to a second question), and kept calendars stay visible.
+
+Operators: two database changes, applied automatically by `update.php` or the database update page. Existing Tides, Sun and Weather calendars keep their station or place. Tides now shows highs and lows with no shading until you set its filters.
 
 Maintainers: a second hardware security key signs releases, and the first release listing it must be signed by a key already listed ([Signing](docs/releasing.md#signing)).
 
